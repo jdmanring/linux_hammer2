@@ -83,7 +83,7 @@ strategy would meet the same format.
 | `hammer2_io.c:43-47` | one folio per `hammer2_io`, via a 64 KiB block size |
 | `hammer2_io.c:72` | the `BLK_MAX_BLOCK_SIZE` static assert |
 | `hammer2_io.c:87-95` | `hammer2_io_index()` assuming the mapping's folio order |
-| `hammer2_io.c:231,254` | `KKASSERT(folio_size(folio) >= dio->psize)` |
+| `hammer2_io.c:231,254` | `KKASSERT(folio_size(folio) >= (size_t)dio->psize)` |
 | `hammer2_os.h:54-62` | the 6.15 version floor, which exists only for the above |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
