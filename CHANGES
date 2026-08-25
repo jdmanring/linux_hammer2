@@ -5,6 +5,16 @@ doc/README.roadmap.md for the exit criteria of each milestone.
 
 Nothing here is released. No tag exists, and the driver does not mount.
 
+v0.1.10
+=======
+- Reader-facing documents audited against the tree: three gates named in
+  no document or CI step, a control claim that was false for four of six
+  gates, an errno count that had never matched its baseline, two drifted
+  line counts, a CI comment naming the wrong kernel floor
+- Origin table's line counts now derived rather than maintained by hand
+- Verified by: script/test-inventory.sh, falsified on a perturbed doc, a
+  perturbed file, and a non-numeric count column
+
 v0.1.9
 ======
 - Citation gate anchors on the whole backticked token rather than its
