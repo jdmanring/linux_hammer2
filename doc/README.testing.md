@@ -21,7 +21,7 @@ the `LIST_HEAD` and `RB_ROOT` redefinitions, which is what made those
 credible rather than stylistic. A warning in a file under `src/` fails the
 gate; one in a kernel header does not, since we do not own those and
 cannot fix them. gcc is optional and the gate says so when it is absent.
-It also and carries two more controls: a wrong folio call that the
+It carries two more controls: a wrong folio call that the
 same headers must refuse, and the 64KB ceiling guard, which must fire when
 the ceiling is shrunk. Set `KDIR` to test against a tree other than the
 running kernel's.
