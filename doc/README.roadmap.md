@@ -124,6 +124,7 @@ here on a row is added when the deliverable is verified.
 | 0.1.4 | 2026-08-25 | vendored headers stopped redefining the kernel's `LIST_HEAD` and `RB_ROOT`, found by adding gcc and a W=1 warning set beside clang (`8877e3f`) | `script/test-syntax.sh`, now 7 checks across two compilers |
 | 0.1.5 | 2026-08-25 | the 64 KiB inventory: thirteen sites, seven the on-disk format and six the folio decision, in `IO_MODEL.md` (`3ad0dd4`) | the inventory itself, each site cited to a line |
 | 0.1.6 | 2026-08-25 | this table got a reader, the module's absent `MODULE_LICENSE` was recorded with what decides its value (`d95e3aa`), and the style gate stopped writing a baseline and exiting 0 when it found none (`f42446e`) | `script/test-history.sh`, falsified on an unresolvable hash and on a table whose rows stop matching; the checkpatch branch exercised through a stub, all three cases read one invocation at a time |
+| 0.1.7 | 2026-08-25 | a gate over the three hand-maintained lists that claim to cover `src/sys/fs/hammer2/`: the origin table, the Makefile's `hammer2-y`, and the filenames `script/test-syntax.sh` names one by one (`1bc6b92`) | `script/test-inventory.sh`, falsified with a planted `.c` that produces one finding per list; population asserted |
 
 ## Fixtures, and which milestone each serves
 
