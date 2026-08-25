@@ -88,7 +88,7 @@ TAILQ_HEAD(hammer2_devvp_list, hammer2_devvp); /* <-> hammer2_devvp::entry */
 typedef struct hammer2_devvp_list hammer2_devvp_list_t;
 
 /* per PFS list of inode */
-LIST_HEAD(hammer2_ipdep_list, hammer2_inode); /* <-> hammer2_inode::ientry */
+BSD_LIST_HEAD(hammer2_ipdep_list, hammer2_inode);	/* XXX Linux: LIST_HEAD is the kernel's */ /* <-> hammer2_inode::ientry */
 typedef struct hammer2_ipdep_list hammer2_ipdep_list_t;
 
 /* per chain rbtree of sub-chain */

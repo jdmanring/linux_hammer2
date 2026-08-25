@@ -14,7 +14,14 @@ must fail. Without that control a gate whose healthy signature is silence
 cannot be told from a gate that never opened the file.
 
 `test-syntax.sh` compiles `hammer2.h` and `hammer2_io.c` against the real
-kernel headers, and carries two more controls: a wrong folio call that the
+kernel headers **with two compilers**, clang and gcc, under a W=1-class
+warning set. Two compilers because they disagree about what is worth
+saying, and a single one is a single opinion: both independently reported
+the `LIST_HEAD` and `RB_ROOT` redefinitions, which is what made those
+credible rather than stylistic. A warning in a file under `src/` fails the
+gate; one in a kernel header does not, since we do not own those and
+cannot fix them. gcc is optional and the gate says so when it is absent.
+It also and carries two more controls: a wrong folio call that the
 same headers must refuse, and the 64KB ceiling guard, which must fire when
 the ceiling is shrunk. Set `KDIR` to test against a tree other than the
 running kernel's.

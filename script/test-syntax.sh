@@ -26,9 +26,16 @@ fi
 S=$(dirname "$K")/source
 [ -d "$S" ] || S=$K
 
+# TWO COMPILERS, because they disagree about what is worth saying and a
+# single one is a single opinion. Both found the LIST_HEAD and RB_ROOT
+# collisions independently, which is what made those credible rather than
+# stylistic. gcc is optional: if it is absent the clang pass still runs and
+# the count below says how many compilers were used.
 CC=${CC:-clang}
 command -v "$CC" >/dev/null 2>&1 || { echo "syntax: COULD-NOT-RUN: no $CC"; exit 2; }
 RES=$("$CC" -print-file-name=include)
+CC2=${CC2:-gcc}
+command -v "$CC2" >/dev/null 2>&1 || CC2=""
 
 # CC_FLAGS_DIALECT from the kernel's own Makefile. Linux 7.x declares
 # tagged anonymous struct members (struct __filename_head in fs.h) and
@@ -51,14 +58,29 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 	-mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -fno-PIE -fno-strict-aliasing
 	-Wall -Werror=implicit-function-declaration -Werror=implicit-int
 	-Werror=incompatible-pointer-types -Wno-unused-function
+	# W=1 class. The kernel's own W=1 is a kbuild target we cannot reach
+	# without building, so this is the subset that works under
+	# -fsyntax-only. It is what found the two macro redefinitions.
+	-Wextra -Wmissing-prototypes -Wold-style-definition
+	-Wno-unused-parameter -Wno-sign-compare
 	-I src/sys/fs/hammer2 -I src/sys -I test)
 
 fail=0 ran=0
+# A WARNING IN OUR OWN FILES IS A FAILURE, and it has to be counted rather
+# than made fatal: -Werror would also fail on the kernel headers, which we
+# do not own and cannot fix. Anchoring on `src/` is what separates the two.
 check() { # name expect file cflags...
 	local name="$1" expect="$2" file="$3"; shift 3
 	ran=$((ran + 1))
 	if "$CC" "${CFLAGS[@]}" "$@" "$file" >/tmp/h2syn.$$ 2>&1; then got=pass; else got=fail; fi
-	if [ "$got" = "$expect" ]; then echo "  ok    $name ($expect)"
+	local ours
+	ours=$(command grep -c "^src/.*warning:" /tmp/h2syn.$$ || true)
+	if [ "$got" = "$expect" ] && { [ "$expect" = fail ] || [ "$ours" = 0 ]; }; then
+		echo "  ok    $name ($expect)"
+	elif [ "$got" = "$expect" ]; then
+		echo "  FAIL  $name: $expect, but $ours warning(s) in our own files"
+		command grep "^src/.*warning:" /tmp/h2syn.$$ | sed 's/^/        /' | head -5
+		fail=$((fail + 1))
 	else
 		echo "  FAIL  $name: expected $expect, got $got"
 		sed 's/^/        /' /tmp/h2syn.$$ | head -8
@@ -82,6 +104,36 @@ check "negative control: wrong folio call refused" fail \
 # ceiling and the static_assert must fire.
 check "ceiling guard fires without THP" fail \
 	src/sys/fs/hammer2/hammer2_io.c -include test/contract/ctl-shrink-ceiling.h
+
+# The second compiler, over the same two subjects. Same rule: a warning in
+# our files fails, one in a kernel header does not.
+if [ -n "$CC2" ]; then
+	# gcc rejects clang-only flags outright rather than ignoring them, so
+	# the shared array is filtered rather than duplicated: one list stays
+	# the source of truth for include paths and prefix headers.
+	CFLAGS2=()
+	for a in "${CFLAGS[@]}"; do
+		case "$a" in
+			--target=*|-Wno-gnu|-Wno-microsoft-anon-tag) ;;
+			*) CFLAGS2+=("$a") ;;
+		esac
+	done
+	for f in test/hammer2-header.c src/sys/fs/hammer2/hammer2_io.c; do
+		ran=$((ran + 1))
+		"$CC2" "${CFLAGS2[@]}" "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
+		ours=$(command grep -c "^src/.*warning:" /tmp/h2syn2.$$ || true)
+		if [ "$rc" = 0 ] && [ "$ours" = 0 ]; then
+			echo "  ok    $CC2: $(basename "$f") (pass)"
+		else
+			echo "  FAIL  $CC2: $(basename "$f") rc=$rc, $ours warning(s) in our files"
+			command grep -E "^src/|error:" /tmp/h2syn2.$$ | sed 's/^/        /' | head -6
+			fail=$((fail + 1))
+		fi
+		rm -f /tmp/h2syn2.$$
+	done
+else
+	echo "  note  second compiler absent, one opinion only"
+fi
 
 echo "syntax: $ran check(s), $fail failed"
 [ "$fail" = 0 ]

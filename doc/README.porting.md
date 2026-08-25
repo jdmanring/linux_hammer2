@@ -111,7 +111,19 @@ has twelve `RB_` sites in `hammer2_chain.c` alone; converting them turns a
 carry into a rewrite for no gain. The `makefs` port vendors the same two
 files for the same reason.
 
-The one edit to those vendored files is that `__unused` is spelled
+Two names in those vendored files collide with the kernel's own macros and
+are spelled `BSD_LIST_HEAD` and `BSD_RB_ROOT` here, with the two core use
+sites updated (`hammer2.h`, `hammer2_rb.h`) and marked. Both compilers
+reported the redefinition independently once the W=1 warning set was
+turned on. This is not cosmetic: `hammer2_io.c` includes four kernel
+headers *after* `sys/queue.h` and `sys/tree.h`, so the BSD definitions are
+live for the rest of every translation unit, and the day a kernel header
+uses `LIST_HEAD` or `RB_ROOT` at file scope the build breaks somewhere
+that has nothing to do with either file. `sys/cdefs.h` states the rule the
+vendored copies were violating: nothing here may be a name the kernel
+uses.
+
+The other edit to those vendored files is that `__unused` is spelled
 `__always_unused`. `__unused` is a *field name* in the Linux uapi headers
 (`struct stat`, `struct icmphdr`, `struct __sysctl_args`); defining it as
 an attribute macro makes an array field so declared a compile error and a

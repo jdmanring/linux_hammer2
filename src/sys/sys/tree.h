@@ -348,8 +348,8 @@ struct {								\
 #define RB_PARENT(elm, field)		_RB_PTR(_RB_UP(elm, field))
 #define RB_LEFT(elm, field)		_RB_LINK(elm, _RB_L, field)
 #define RB_RIGHT(elm, field)		_RB_LINK(elm, _RB_R, field)
-#define RB_ROOT(head)			(head)->rbh_root
-#define RB_EMPTY(head)			(RB_ROOT(head) == NULL)
+#define BSD_RB_ROOT(head)			(head)->rbh_root
+#define RB_EMPTY(head)			(BSD_RB_ROOT(head) == NULL)
 
 #define RB_SET_PARENT(dst, src, field) do {				\
 	_RB_BITSUP(dst, field) = (__uintptr_t)src |			\
@@ -385,7 +385,7 @@ struct {								\
 
 #define RB_SWAP_CHILD(head, par, out, in, field) do {			\
 	if (par == NULL)						\
-		RB_ROOT(head) = (in);					\
+		BSD_RB_ROOT(head) = (in);					\
 	else if ((out) == RB_LEFT(par, field))				\
 		RB_LEFT(par, field) = (in);				\
 	else								\
@@ -849,7 +849,7 @@ attr struct type *							\
 name##_RB_INSERT(struct name *head, struct type *elm)			\
 {									\
 	struct type *tmp;						\
-	struct type **tmpp = &RB_ROOT(head);				\
+	struct type **tmpp = &BSD_RB_ROOT(head);				\
 	struct type *parent = NULL;					\
 									\
 	while ((tmp = *tmpp) != NULL) {					\
@@ -870,7 +870,7 @@ name##_RB_INSERT(struct name *head, struct type *elm)			\
 attr struct type *							\
 name##_RB_FIND(struct name *head, struct type *elm)			\
 {									\
-	struct type *tmp = RB_ROOT(head);				\
+	struct type *tmp = BSD_RB_ROOT(head);				\
 	__typeof(cmp(NULL, NULL)) comp;					\
 	while (tmp) {							\
 		comp = cmp(elm, tmp);					\
@@ -889,7 +889,7 @@ name##_RB_FIND(struct name *head, struct type *elm)			\
 attr struct type *							\
 name##_RB_NFIND(struct name *head, struct type *elm)			\
 {									\
-	struct type *tmp = RB_ROOT(head);				\
+	struct type *tmp = BSD_RB_ROOT(head);				\
 	struct type *res = NULL;					\
 	__typeof(cmp(NULL, NULL)) comp;					\
 	while (tmp) {							\
@@ -992,7 +992,7 @@ name##_RB_INSERT_PREV(struct name *head,				\
 attr struct type *							\
 name##_RB_MINMAX(struct name *head, int val)				\
 {									\
-	struct type *tmp = RB_ROOT(head);				\
+	struct type *tmp = BSD_RB_ROOT(head);				\
 	struct type *parent = NULL;					\
 	while (tmp) {							\
 		parent = tmp;						\

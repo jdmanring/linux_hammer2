@@ -100,7 +100,7 @@ _##name##_RB_SCAN(struct name *head,					\
 	/*								\
 	 * Locate the first element.					\
 	 */								\
-	tmp = RB_ROOT(head);						\
+	tmp = BSD_RB_ROOT(head);						\
 	best = NULL;							\
 	while (tmp) {							\
 		comp = scancmp(tmp, data);				\
