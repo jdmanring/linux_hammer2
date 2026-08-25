@@ -123,6 +123,7 @@ here on a row is added when the deliverable is verified.
 | 0.1.6 | 2026-08-25 | this table got a reader, the module's absent `MODULE_LICENSE` was recorded with what decides its value (`d95e3aa`), and the style gate stopped writing a baseline and exiting 0 when it found none (`f42446e`) | `script/test-history.sh`, falsified on an unresolvable hash and on a table whose rows stop matching; the checkpatch branch exercised through a stub, all three cases read one invocation at a time |
 | 0.1.7 | 2026-08-25 | a gate over the three hand-maintained lists that claim to cover `src/sys/fs/hammer2/`: the origin table, the Makefile's `hammer2-y`, and the filenames `script/test-syntax.sh` names one by one (`1bc6b92`) | `script/test-inventory.sh`, falsified with a planted `.c` that produces one finding per list; population asserted |
 | 0.1.8 | 2026-08-25 | the 0.1.x rows audited claim by claim against the tree rather than against this table, and the one overclaim found corrected: `README.status.md` said "the first eight of those are expected to carry", which put `inode` and `subr` in the carried set on no cited authority and pre-decided what 0.2 routes to the provenance CSV. The measured set is the six of `H1_ESTIMATE.md` (`f573dc4`). A gate now reads every `file:line` citation in `doc/` against the line it names | `script/test-citations.sh`, falsified one invocation at a time on a one-line drift, a citation to a file that does not exist, a line past end of file, and an emptied population, which returns COULD-NOT-RUN rather than passing; what it cannot catch is named in its own header |
+| 0.1.9 | 2026-08-25 | the citation gate's anchor strengthened, because the count it printed overstated what it checked: it took the first backticked IDENTIFIER in a row's prose, so `dio->psize` anchored on `dio` and `struct hammer2_dev` would have anchored on `struct`, either of which matches almost any line in the cited file. The ten passes were real only because they had been read by hand (`3a4ad3e`) | the whole backticked token is the anchor, with a trailing `()` stripped; a token that is not a plain identifier is matched in full and reported as literal-anchored rather than counted with the symbol-anchored ones, so pass strength is visible instead of averaged. The repair's own first version left the previous row's symbol in place on a `case` with no matching branch, which was caught by rerunning rather than by reading |
 
 ## Fixtures, and which milestone each serves
 
@@ -527,9 +528,9 @@ each names what it blocks so the cost of leaving it open is visible.
 |---|---|---|
 | The first compile of a module against a kernel tree | 0.3 and everything after it | open |
 | Booting the DragonFly guest for the rest of the F2 set | 0.4 criteria 3 and 6 | open; the first F2 image was taken with the guest shut off and needed no decision |
-| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the plan's lean is iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap by the storage program, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's licence string must be "Dual BSD/GPL" (0.2). The maintainer confirms or overrules at the start of 0.5 |
+| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the plan's lean is iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap by the storage program, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's `MODULE_LICENSE` string must be "Dual BSD/GPL" (0.2). CONFIRMED by James, 2026-08-25: iomap. The license half was verified the same day against the target kernel family's own source rather than from training. `include/linux/license.h` enumerates the GPL-compatible tags and plain "BSD" is not among them, so it would block every `EXPORT_SYMBOL_GPL` symbol iomap needs and taint the module; `module.h` states that the tag "does neither replace the proper license identifiers in the corresponding source file nor amends them in any way". "Dual BSD/GPL" is therefore required by the kernel and changes nothing about the BSD grant. His condition, recorded: BSD is the license, the dual tag exists only because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
 | A workqueue-backed XOP pool against synchronous XOPs | 0.9 criterion 3 | synchronous for 0.2 to 0.6, the FreeBSD port's choice; the pool is decided on F6's numbers |
-| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the distribution's tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | recommended this tree, `test/fixtures/`, 2026-08-25, so the port carries its own evidence when it changes hands; the generators take their toolchain from the environment and the nix package that builds it stays with the distribution. Moved at the next stop of both sessions, not before |
+| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the distribution's tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | recommended this tree, `test/fixtures/`, 2026-08-25, so the port carries its own evidence when it changes hands; the generators take their toolchain from the environment and the nix package that builds it stays with the distribution. CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`. The move still waits for the next stop of both sessions |
 | The two upstream filings | 1.0 criterion 3 | drafted, unfiled |
 | In-tree submission | nothing before 1.0 | deferred past qualification by the plan |
 
@@ -562,9 +563,12 @@ non-goals; point releases go in the history table instead.
   section. Then hostile audit rounds against the sources named above
   until one found nothing, all findings applied; the rounds are recorded
   in the distribution's tracker.
-- 2026-08-25: the iomap and fixture-home rows of the decisions table
-  carry dated recommendations with their reasons; each remains the
-  maintainer's to confirm (the distribution's own tracker).
+- 2026-08-25: the iomap and fixture-home rows of the decisions table are
+  confirmed by James. File data goes through iomap, and the fixtures move
+  to this tree's `test/fixtures/` at the next stop of both sessions. The
+  `MODULE_LICENSE` question the iomap row raised was settled by reading
+  the target kernel family's own headers rather than from training
+  (the distribution's own tracker).
 
 ## Proposing a change
 
