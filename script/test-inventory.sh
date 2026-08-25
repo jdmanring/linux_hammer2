@@ -55,16 +55,12 @@ for f in $srcs $hdrs; do
 		echo "  FAIL $f: no origin row in $STATUS"; fail=$((fail+1))
 		continue
 	fi
-	# The row is `| \`name\` | <lines> | <origin> |`. Take the second
-	# column and compare it against the file. A row whose second column
-	# is not a number is not a count row and is left alone rather than
+	# The row is `| \`name\` | <lines> | <origin> |`, so the leading pipe
+	# makes the line count the THIRD pipe-delimited field, not the second.
+	# Take the text between the second and third pipes. A field that is
+	# not a number is not a count row and is left alone rather than
 	# guessed at, so a table that changes shape reports nothing here
 	# instead of reporting every file wrong.
-	# sed rather than awk -F'|': a single-character FS is used literally
-	# by POSIX awk, but `|` is also a regex metacharacter and the runners
-	# this must survive ship mawk while this machine has only gawk, so the
-	# behaviour could not be tested here. sed has no field separator to
-	# disagree about. Take the text between the second and third pipes.
 	want=$(printf '%s' "$row" | sed -n 's/^[^|]*|[^|]*|\([^|]*\)|.*/\1/p' | tr -d ' ')
 	case "$want" in
 	''|*[!0-9]*) ;;
