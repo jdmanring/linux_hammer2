@@ -124,11 +124,16 @@ vendored copies were violating: nothing here may be a name the kernel
 uses.
 
 The other edit to those vendored files is that `__unused` is spelled
-`__always_unused`. `__unused` is a *field name* in the Linux uapi headers
-(`struct stat`, `struct icmphdr`, `struct __sysctl_args`); defining it as
-an attribute macro makes an array field so declared a compile error and a
-scalar one vanish with only a warning, silently changing the struct's
-layout.
+`__always_unused`. `__unused` is a *field name* in the Linux uapi headers,
+and defining it as an attribute macro makes an array field so declared a
+compile error and a scalar one vanish with only a warning, silently
+changing the struct's layout. Both shapes are real: a sweep of
+`include/uapi` for a bare `__unused` field returns exactly two headers,
+one of each. `struct icmphdr` has the scalar, `__be16 __unused` inside its
+`frag` member; `struct __sysctl_args` has the array, `unsigned long
+__unused[4]`. The `__unused4` and `__unused5` fields in `struct stat` are
+NOT instances: a macro named `__unused` does not collide with them, and
+counting them would overstate the exposure.
 
 ## The module declares no license, and it will need one at the first build
 
