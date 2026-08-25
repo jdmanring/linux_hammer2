@@ -30,9 +30,9 @@ wrong wherever it disagrees with that source.
 
 | part of this file | taken from | not taken from |
 |---|---|---|
-| the stages H0 to H7 and the qualification bar | the port-stage section of the storage proposal this port serves (the distribution's storage proposal set, document 07, sections 6 and 8), restated here so this tree stands alone | this tree's own preferences |
-| exit criteria per milestone | the distribution's `research/hammer2-linux/HAMMER2_LINUX_PORT_PLAN.md`, stage by stage | the roadmap's previous rows |
-| the fixture set | `HAMMER2_TEST_FIXTURE_PLAN.md` in the same directory; F1 and the first F2 image exist as of 2026-08-25 (`tests/storage/hammer2/` in the distribution's tree) | this tree, which holds no fixture yet |
+| the stages H0 to H7 and the qualification bar | the port-stage section of the storage proposal this port serves (the companion project's storage proposal set, document 07, sections 6 and 8), restated here so this tree stands alone | this tree's own preferences |
+| exit criteria per milestone | the companion project's `HAMMER2_LINUX_PORT_PLAN.md`, stage by stage | the roadmap's previous rows |
+| the fixture set | `HAMMER2_TEST_FIXTURE_PLAN.md` in the same directory; F1 and the first F2 image exist as of 2026-08-25 (`tests/storage/hammer2/` in the companion tree) | this tree, which holds no fixture yet |
 | what is verified today | the gates' own printed counts, never a figure copied here. On the day of writing there were three (`test-shim.sh` 3 checks, `test-syntax.sh` 7, of which 3 are controls that must fail and do, with the style gate COULD-NOT-RUN on a tree without `checkpatch.pl`); there are six now, and the number moves whenever one is added, which is why it is not asserted in this file. `README.status.md` points at the gates as the authority | memory, or a count written down here |
 | the calibration | the commit dates of Kusumi's FreeBSD port on the forge (`kusumi/freebsd_hammer2`): v1.0.0, the first read-only mount, 2022-11-25; v1.1.5, mandatory read-only dropped, 2023-09-25. The local clone is shallow and its `CHANGES` carries no dates | any estimate of our own |
 | decisions | `README.porting.md` for the ones taken; the port plan's "decisions this plan takes, and the ones it leaves" for the open ones | this file |
@@ -88,7 +88,7 @@ the history table below with its date and the gate that verified it.
 The milestones map onto the port stages of the plan this tree implements;
 the stage names are kept beside the numbers so a reader of that plan and a
 reader of this file are looking at the same thing. H0, archaeology, is
-done in the plan's own terms and its deliverables live in the distribution's tree,
+done in the plan's own terms and its deliverables live in the companion tree,
 not here; this tree begins inside H1, and 0.1 is H1's first slice.
 
 **Current version: 0.1.x.**
@@ -149,7 +149,7 @@ needs one of those needs the column first, and says so below.
 
 The fixture plan, the scripts that produce F1 and F2, and the provenance
 CSV (`research/hammer2-linux/legal/hammer2-provenance.csv`) live in the
-the distribution tree today. Whether they move here is a decision below; until it
+companion tree today. Whether they move here is a decision below; until it
 is taken the gates here name them by their path there.
 
 ## Milestones
@@ -159,7 +159,8 @@ the gate that measures it, who owns the work, what it depends on, and what
 happens if a risk lands. "Gate" always means a script that exits 0 on
 pass, nonzero on fail, and 2 when it could not run, which is not a
 verdict. "Maintainer" is the owner of this repository; "contributor" is
-anyone else sending a change; "the storage program" is the distribution's storage model work, which this port serves and does not contain.
+anyone else sending a change; "the storage program" is the companion
+project's storage model work, which this port serves and does not contain.
 
 ### 0.2 Whole core type-checks, ready to build
 
@@ -279,7 +280,7 @@ Exit criteria:
 
 Gate: a read-only fixture gate, unwritten, that builds the module, boots a
 guest, mounts every F1 and F2 fixture, compares manifests, runs F3, and
-exits 2 without a guest. The distribution's plan names it
+exits 2 without a guest. The companion project's plan names it
 `test-hammer2-linux-ro.sh`; whichever tree it lands in, this file points at
 it once it exists.
 
@@ -531,7 +532,7 @@ each names what it blocks so the cost of leaving it open is visible.
 | Booting the DragonFly guest for the rest of the F2 set | 0.4 criteria 3 and 6 | open; the first F2 image was taken with the guest shut off and needed no decision |
 | iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the plan's lean is iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap by the storage program, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's `MODULE_LICENSE` string must be "Dual BSD/GPL" (0.2). CONFIRMED by James, 2026-08-25: iomap. The license half was verified the same day against the target kernel family's own source rather than from training. `include/linux/license.h` enumerates the GPL-compatible tags and plain "BSD" is not among them, so it would block every `EXPORT_SYMBOL_GPL` symbol iomap needs and taint the module; `module.h` states that the tag "does neither replace the proper license identifiers in the corresponding source file nor amends them in any way". "Dual BSD/GPL" is therefore required by the kernel and changes nothing about the BSD grant. His condition, recorded: BSD is the license, the dual tag exists only because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
 | A workqueue-backed XOP pool against synchronous XOPs | 0.9 criterion 3 | synchronous for 0.2 to 0.6, the FreeBSD port's choice; the pool is decided on F6's numbers |
-| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the distribution's tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | recommended this tree, `test/fixtures/`, 2026-08-25, so the port carries its own evidence when it changes hands; the generators take their toolchain from the environment and the nix package that builds it stays with the distribution. CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`. The move still waits for the next stop of both sessions |
+| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the companion tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | recommended this tree, `test/fixtures/`, 2026-08-25, so the port carries its own evidence when it changes hands; the generators take their toolchain from the environment and the nix package that builds it stays in the companion tree. CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`. The move still waits for the next stop of both sessions |
 | The two upstream filings | 1.0 criterion 3 | drafted, unfiled |
 | In-tree submission | nothing before 1.0 | deferred past qualification by the plan |
 
@@ -563,13 +564,13 @@ non-goals; point releases go in the history table instead.
   dependencies and risks, the decisions table, the non-goals, and this
   section. Then hostile audit rounds against the sources named above
   until one found nothing, all findings applied; the rounds are recorded
-  in the distribution's tracker.
+  in the companion project's internal tracker.
 - 2026-08-25: the iomap and fixture-home rows of the decisions table are
   confirmed by James. File data goes through iomap, and the fixtures move
   to this tree's `test/fixtures/` at the next stop of both sessions. The
   `MODULE_LICENSE` question the iomap row raised was settled by reading
-  the target kernel family's own headers rather than from training
-  (the distribution's own tracker).
+  the target kernel family's own headers rather than from training; the
+  reading is in the decisions table above.
 
 ## Proposing a change
 

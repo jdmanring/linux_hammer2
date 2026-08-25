@@ -18,6 +18,17 @@
 # LC_ALL=C on both sorts, because the baseline is compared byte for byte
 # and glibc collation differs between machines: the first CI run failed
 # with every count identical and four lines in a different order.
+#
+# A BASELINE IS A CLAIM ABOUT A CHECKER VERSION. checkpatch.pl changes with
+# the kernel, so the same tree scores differently under different copies of
+# it: measured 2026-08-25, this tree is 579 hits under torvalds/master and
+# 582 under v6.15, the difference being three more `Argument 'X' is not
+# used in function-like macro`. Comparing a byte-exact baseline against a
+# moving checker fails red for a reason that is not this code, and, worse,
+# goes quietly green when a check is dropped upstream. So the version is
+# recorded in the first line of the baseline file, where it cannot drift
+# away from the numbers it qualifies, and comment lines are stripped from
+# both sides before the comparison.
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
@@ -40,11 +51,11 @@ base=doc/checkpatch-baseline.txt
 # success - a gate answering a question it had just made unanswerable. The
 # file is tracked, so the window is narrow; the exit code was the problem,
 # because 0 here means "the set did not move" and nothing had been compared.
-# Found by sweeping what these gates WRITE rather than by a symptom, which
-# is the reading the distribution's fourth instance of this class bought.
+# Found by sweeping what these gates WRITE rather than by a symptom.
 if [ ! -f "$base" ]; then
 	if [ "${1:-}" = "--write" ]; then
-		printf '%s\n' "$got" > "$base"
+		printf '# checkpatch.pl from linux %s\n' "${CHECKPATCH_REF:-UNRECORDED - set CHECKPATCH_REF}" > "$base"
+		printf '%s\n' "$got" >> "$base"
 		echo "checkpatch: baseline WRITTEN from this tree, $(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits."
 		echo "            This run compared nothing. Read the file before committing it."
 		exit 2
@@ -55,11 +66,15 @@ if [ ! -f "$base" ]; then
 	exit 2
 fi
 
-if diff -u "$base" <(printf '%s\n' "$got"); then
-	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits)"
+ref=$(sed -n '1s/^# *//p' "$base")
+if diff -u <(grep -v '^#' "$base") <(printf '%s\n' "$got"); then
+	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits, baseline: ${ref:-version unrecorded})"
 else
-	echo "checkpatch: the deviation set MOVED. If the change is deliberate,"
-	echo "            update doc/checkpatch-baseline.txt and say why in"
-	echo "            doc/README.kernel-style.md."
+	echo "checkpatch: the deviation set MOVED against ${ref:-an unrecorded version}."
+	echo "            Check your checkpatch.pl is that version FIRST: a"
+	echo "            different one moves the counts on unchanged code."
+	echo "            If the change is deliberate, update"
+	echo "            doc/checkpatch-baseline.txt, including its first"
+	echo "            line, and say why in doc/README.kernel-style.md."
 	exit 1
 fi

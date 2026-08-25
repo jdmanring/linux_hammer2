@@ -38,12 +38,13 @@ load-bearing.
 
 ## The companion tree
 
-Several documents here cite a "distribution tree": the fixture plan, the
-provenance CSV, the exit criteria behind the milestones, and the
-line-count estimate for the carried core. That is the distribution project
-this port was started to serve. It is a separate repository and it is not
-public yet, so a citation into it is a record of where a number came from
-rather than a link a reader can follow today.
+Several documents here cite a "companion tree" or "companion project":
+the fixture plan, the provenance CSV, the exit criteria behind the
+milestones, and the line-count estimate for the carried core. That is the
+Linux distribution this port was started to serve. It is a separate
+repository, it is not public, and its name is not settled, so a citation
+into it records where a number came from rather than offering a link a
+reader can follow.
 
 Nothing in this tree depends on it to build or to run its gates. Where a
 figure originates there, the document says so instead of restating it as
