@@ -60,7 +60,12 @@ for f in $srcs $hdrs; do
 	# is not a number is not a count row and is left alone rather than
 	# guessed at, so a table that changes shape reports nothing here
 	# instead of reporting every file wrong.
-	want=$(printf '%s' "$row" | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+	# sed rather than awk -F'|': a single-character FS is used literally
+	# by POSIX awk, but `|` is also a regex metacharacter and the runners
+	# this must survive ship mawk while this machine has only gawk, so the
+	# behaviour could not be tested here. sed has no field separator to
+	# disagree about. Take the text between the second and third pipes.
+	want=$(printf '%s' "$row" | sed -n 's/^[^|]*|[^|]*|\([^|]*\)|.*/\1/p' | tr -d ' ')
 	case "$want" in
 	''|*[!0-9]*) ;;
 	*)
