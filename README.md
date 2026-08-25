@@ -36,6 +36,19 @@ wrong. They are listed with their reasoning in
 [doc/README.porting.md](doc/README.porting.md), and several are
 load-bearing.
 
+## Why a kernel module, when hammer2-fuse exists
+
+[hammer2-fuse](https://github.com/kusumi/hammer2-fuse) already reads
+HAMMER2 on Linux in userspace, and for inspecting a volume it is the
+easier answer. A kernel driver buys three things FUSE cannot: the page
+cache holds the filesystem's own buffers rather than copying through a
+userspace daemon, the volume can be a root filesystem, and the write path
+can order its flushes against the block layer directly, which is what a
+copy-on-write filesystem's crash consistency depends on.
+
+Neither replaces the other. This port carries the same core that FUSE
+implementation reads, so a format fix found in one belongs in both.
+
 ## Requirements
 
 + Linux 6.15 or newer, and developed against 7.2
