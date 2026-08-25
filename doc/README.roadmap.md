@@ -123,6 +123,7 @@ here on a row is added when the deliverable is verified.
 | 0.1.3 | 2026-08-25 | the folio ceiling's design recorded: a mount-time capability check by name, `mapping_max_folio_size_supported()`, with the build-time THP assert kept as the bootstrap instrument until a mount path exists (`0c80e3e`, documentation only; the check itself is 0.3 criterion 3) | `README.porting.md`, The DIO layer |
 | 0.1.4 | 2026-08-25 | vendored headers stopped redefining the kernel's `LIST_HEAD` and `RB_ROOT`, found by adding gcc and a W=1 warning set beside clang (`8877e3f`) | `script/test-syntax.sh`, now 7 checks across two compilers |
 | 0.1.5 | 2026-08-25 | the 64 KiB inventory: thirteen sites, seven the on-disk format and six the folio decision, in `IO_MODEL.md` (`3ad0dd4`) | the inventory itself, each site cited to a line |
+| 0.1.6 | 2026-08-25 | this table got a reader, the module's absent `MODULE_LICENSE` was recorded with what decides its value (`d95e3aa`), and the style gate stopped writing a baseline and exiting 0 when it found none (`f42446e`) | `script/test-history.sh`, falsified on an unresolvable hash and on a table whose rows stop matching; the checkpatch branch exercised through a stub, all three cases read one invocation at a time |
 
 ## Fixtures, and which milestone each serves
 
