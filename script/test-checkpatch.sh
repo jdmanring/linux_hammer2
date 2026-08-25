@@ -33,7 +33,27 @@ got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 	LC_ALL=C sort | uniq -c | awk '{$1=$1; print}' | LC_ALL=C sort -k2)
 
 base=doc/checkpatch-baseline.txt
-[ -f "$base" ] || { echo "checkpatch: no baseline; writing one"; printf '%s\n' "$got" > "$base"; exit 0; }
+# AN ABSENT BASELINE IS COULD-NOT-RUN, NOT A LICENCE TO WRITE ONE. Until
+# 2026-08-25 this line wrote the baseline from whatever the tree happened to
+# produce and exited 0, so a run against a tree whose baseline had been
+# deleted, or a partial checkout, PUBLISHED a new deviation set and reported
+# success - a gate answering a question it had just made unanswerable. The
+# file is tracked, so the window is narrow; the exit code was the problem,
+# because 0 here means "the set did not move" and nothing had been compared.
+# Found by sweeping what these gates WRITE rather than by a symptom, which
+# is the reading the distribution's fourth instance of this class bought.
+if [ ! -f "$base" ]; then
+	if [ "${1:-}" = "--write" ]; then
+		printf '%s\n' "$got" > "$base"
+		echo "checkpatch: baseline WRITTEN from this tree, $(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits."
+		echo "            This run compared nothing. Read the file before committing it."
+		exit 2
+	fi
+	echo "checkpatch: COULD-NOT-RUN: no baseline at $base, so there is nothing" >&2
+	echo "            to compare against. Restore it (it is tracked), or pass" >&2
+	echo "            --write to record a new one deliberately." >&2
+	exit 2
+fi
 
 if diff -u "$base" <(printf '%s\n' "$got"); then
 	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits)"
