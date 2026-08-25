@@ -25,17 +25,17 @@ is trying to become, what is done, what is next, and where to help.
 
 ## How this file was built, and how to check it
 
-Every part of this file has a source a reader can open, and the file is
-wrong wherever it disagrees with that source.
+Every part of this file either names a source a reader can open, or is
+stated here as this tree's own decision. Where it names a source and
+disagrees with it, the file is wrong.
 
 | part of this file | taken from | not taken from |
 |---|---|---|
-| the stages H0 to H7 and the qualification bar | the port-stage section of the storage proposal this port serves (the companion project's storage proposal set, document 07, sections 6 and 8), restated here so this tree stands alone | this tree's own preferences |
-| exit criteria per milestone | the companion project's `HAMMER2_LINUX_PORT_PLAN.md`, stage by stage | the roadmap's previous rows |
-| the fixture set | `HAMMER2_TEST_FIXTURE_PLAN.md` in the same directory; F1 and the first F2 image exist as of 2026-08-25 (`tests/storage/hammer2/` in the companion tree) | this tree, which holds no fixture yet |
+| the stages H0 to H7, the qualification bar, and the exit criteria per milestone | this file. They were drafted before this repository existed and are restated here, which makes this tree their statement of record | the roadmap's previous rows |
+| the fixture set | the fixture table below, which is its statement of record. F1 and the first F2 image exist as of 2026-08-25 and land in `test/fixtures/` | this tree, which holds no fixture yet |
 | what is verified today | the gates' own printed counts, never a figure copied here. On the day of writing there were three (`test-shim.sh` 3 checks, `test-syntax.sh` 7, of which 3 are controls that must fail and do, with the style gate COULD-NOT-RUN on a tree without `checkpatch.pl`); there are six now, and the number moves whenever one is added, which is why it is not asserted in this file. `README.status.md` points at the gates as the authority | memory, or a count written down here |
 | the calibration | the commit dates of Kusumi's FreeBSD port on the forge (`kusumi/freebsd_hammer2`): v1.0.0, the first read-only mount, 2022-11-25; v1.1.5, mandatory read-only dropped, 2023-09-25. The local clone is shallow and its `CHANGES` carries no dates | any estimate of our own |
-| decisions | `README.porting.md` for the ones taken; the port plan's "decisions this plan takes, and the ones it leaves" for the open ones | this file |
+| decisions | `README.porting.md` for the ones taken; the decisions table below for the open ones | this file |
 
 ## Where we are
 
@@ -85,11 +85,9 @@ deliverable lands inside the current milestone (a file imported with its
 gate, a gate added, a decision taken and implemented) and is recorded in
 the history table below with its date and the gate that verified it.
 
-The milestones map onto the port stages of the plan this tree implements;
-the stage names are kept beside the numbers so a reader of that plan and a
-reader of this file are looking at the same thing. H0, archaeology, is
-done in the plan's own terms and its deliverables live in the companion tree,
-not here; this tree begins inside H1, and 0.1 is H1's first slice.
+The milestones carry stage names, H0 to H7, beside their version numbers.
+H0, archaeology, was finished before this repository existed and left no
+artifact in it; this tree begins inside H1, and 0.1 is H1's first slice.
 
 **Current version: 0.1.x.**
 
@@ -147,10 +145,10 @@ needs one of those needs the column first, and says so below.
 | F5 | images captured mid-write under the crash matrix, first from the FreeBSD port as calibration | a crash harness in QEMU | 0.6 | needs 0.5 |
 | F6 | a `makefs` image of a real Nix closure, hundreds of thousands of paths | `makefs -t hammer2` | 0.9 | needs a build host's closure |
 
-The fixture plan, the scripts that produce F1 and F2, and the provenance
-CSV (`research/hammer2-linux/legal/hammer2-provenance.csv`) live in the
-companion tree today. Whether they move here is a decision below; until it
-is taken the gates here name them by their path there.
+F1 and the first F2 image exist, with the scripts that produce them and
+the provenance CSV. They land in this tree's `test/fixtures/`, decided in
+the table below and not yet done; every gate from 0.4 on exits 2 until
+they are here.
 
 ## Milestones
 
@@ -159,8 +157,7 @@ the gate that measures it, who owns the work, what it depends on, and what
 happens if a risk lands. "Gate" always means a script that exits 0 on
 pass, nonzero on fail, and 2 when it could not run, which is not a
 verdict. "Maintainer" is the owner of this repository; "contributor" is
-anyone else sending a change; "the storage program" is the companion
-project's storage model work, which this port serves and does not contain.
+anyone else sending a change.
 
 ### 0.2 Whole core type-checks, ready to build
 
@@ -255,7 +252,7 @@ Last reviewed: 2026-08-25.
 ### 0.4 Read-only mount of DragonFly-written media
 
 This is the first milestone that proves anything about the format, and
-the reason the port exists. It is the plan's H1 exit.
+the reason the port exists. It is H1's exit.
 
 Exit criteria:
 
@@ -280,9 +277,8 @@ Exit criteria:
 
 Gate: a read-only fixture gate, unwritten, that builds the module, boots a
 guest, mounts every F1 and F2 fixture, compares manifests, runs F3, and
-exits 2 without a guest. The companion project's plan names it
-`test-hammer2-linux-ro.sh`; whichever tree it lands in, this file points at
-it once it exists.
+exits 2 without a guest. Working name `test-hammer2-linux-ro.sh`; this
+file points at it once it exists.
 
 Work items:
 
@@ -393,18 +389,17 @@ Exit criteria:
    snapshot conformance suite of the storage model this port serves.
 
 Gate: criterion 1 by an ioctl exerciser added to the read-only gate;
-criterion 2 by the storage model's conformance suite, which belongs to
-that program and not to this tree.
+criterion 2 by the conformance suite of whatever storage model consumes
+the adapter, which belongs with that consumer rather than in this tree.
 
-Owners: contributors for the ioctls; the storage program for the suite
-and the adapter's contract.
+Owners: contributors for the ioctls; the adapter's contract is settled
+with its consumer.
 
-Depends on: 0.6; the storage model's own epics S1 to S3 (the model, the
-registry and the reference backend). This is where the port and the
-storage program meet, and the plan does not let this milestone start
-before those exist, because an adapter written against no model is a
-second model. A contributor who wants HAMMER2 snapshots without the
-storage model gets criterion 1 and stops there.
+Depends on: 0.6, and on a storage model existing to write the adapter
+against. This milestone does not start before one does, because an
+adapter written against no model is a second model. A contributor who
+wants HAMMER2 snapshots and no adapter gets criterion 1 and stops
+there.
 
 Risks and contingency:
 
@@ -530,11 +525,11 @@ each names what it blocks so the cost of leaving it open is visible.
 |---|---|---|
 | The first compile of a module against a kernel tree | 0.3 and everything after it | open |
 | Booting the DragonFly guest for the rest of the F2 set | 0.4 criteria 3 and 6 | open; the first F2 image was taken with the guest shut off and needed no decision |
-| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the plan's lean is iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap by the storage program, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's `MODULE_LICENSE` string must be "Dual BSD/GPL" (0.2). CONFIRMED by James, 2026-08-25: iomap. The license half was verified the same day against the target kernel family's own source rather than from training. `include/linux/license.h` enumerates the GPL-compatible tags and plain "BSD" is not among them, so it would block every `EXPORT_SYMBOL_GPL` symbol iomap needs and taint the module; `module.h` states that the tag "does neither replace the proper license identifiers in the corresponding source file nor amends them in any way". "Dual BSD/GPL" is therefore required by the kernel and changes nothing about the BSD grant. His condition, recorded: BSD is the license, the dual tag exists only because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
+| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the lean was iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's `MODULE_LICENSE` string must be "Dual BSD/GPL" (0.2). CONFIRMED by James, 2026-08-25: iomap. The license half was verified the same day against the target kernel family's own source rather than from training. `include/linux/license.h` enumerates the GPL-compatible tags and plain "BSD" is not among them, so it would block every `EXPORT_SYMBOL_GPL` symbol iomap needs and taint the module; `module.h` states that the tag "does neither replace the proper license identifiers in the corresponding source file nor amends them in any way". "Dual BSD/GPL" is therefore required by the kernel and changes nothing about the BSD grant. His condition, recorded: BSD is the license, the dual tag exists only because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
 | A workqueue-backed XOP pool against synchronous XOPs | 0.9 criterion 3 | synchronous for 0.2 to 0.6, the FreeBSD port's choice; the pool is decided on F6's numbers |
-| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the companion tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | recommended this tree, `test/fixtures/`, 2026-08-25, so the port carries its own evidence when it changes hands; the generators take their toolchain from the environment and the nix package that builds it stays in the companion tree. CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`. The move still waits for the next stop of both sessions |
+| Where the fixtures, their generator scripts and the provenance CSV live | every gate from 0.4 on, and 0.2's provenance check, name a path to them | CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. The generators take their toolchain from the environment. Not moved yet |
 | The two upstream filings | 1.0 criterion 3 | drafted, unfiled |
-| In-tree submission | nothing before 1.0 | deferred past qualification by the plan |
+| In-tree submission | nothing before 1.0 | deferred past qualification |
 
 ## Not on the roadmap
 
@@ -553,7 +548,7 @@ each names what it blocks so the cost of leaving it open is visible.
 
 ## Revisions of this file
 
-Dated, so a reader knows what changed in the plan and not only in the
+Dated, so a reader knows what changed in the roadmap and not only in the
 driver. A revision is a change to structure, criteria, decisions or
 non-goals; point releases go in the history table instead.
 
@@ -563,11 +558,10 @@ non-goals; point releases go in the history table instead.
   fixtures, per-milestone criteria with gates, work items, owners,
   dependencies and risks, the decisions table, the non-goals, and this
   section. Then hostile audit rounds against the sources named above
-  until one found nothing, all findings applied; the rounds are recorded
-  in the companion project's internal tracker.
+  until one found nothing, all findings applied.
 - 2026-08-25: the iomap and fixture-home rows of the decisions table are
   confirmed by James. File data goes through iomap, and the fixtures move
-  to this tree's `test/fixtures/` at the next stop of both sessions. The
+  to this tree's `test/fixtures/`, not yet done. The
   `MODULE_LICENSE` question the iomap row raised was settled by reading
   the target kernel family's own headers rather than from training; the
   reading is in the decisions table above.

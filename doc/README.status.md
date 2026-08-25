@@ -95,8 +95,7 @@ Every remaining core file: `hammer2_chain.c`, `hammer2_flush.c`,
 Six of those are the measured carried set: `hammer2_chain.c`,
 `hammer2_flush.c`, `hammer2_freemap.c`, `hammer2_bulkfree.c`,
 `hammer2_xops.c`, `hammer2_admin.c`, at 10,556 lines
-(an estimate document in the companion tree, which measured them against all
-three BSD ports). Whether `hammer2_inode.c`, `hammer2_subr.c` and
+(measured against all three BSD ports). Whether `hammer2_inode.c`, `hammer2_subr.c` and
 `hammer2_ondisk.c` join them is what the provenance CSV's carry column
 says file by file, and that CSV is unwritten: see the roadmap's 0.2.
 `hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
