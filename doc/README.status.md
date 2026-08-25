@@ -13,17 +13,22 @@ is a defect.
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_io.c` | 899 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 471 | ours, the OS shim |
-| `hammer2_compat.h` | 112 | ours, kernel look-alikes |
+| `hammer2_os.h` | 473 | ours, the OS shim |
+| `hammer2_compat.h` | 111 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
 
 ## What has been verified
 
-All six gates pass. Each prints its own count; the gates are the
-authority, and the dated figures below are snapshots of a particular
-run, not the record.
+All six gates pass on a machine that can run all six. Each prints its own
+count; the gates are the authority, and the dated figures below are
+snapshots of a particular run rather than the record.
+`test-checkpatch.sh` is the one that commonly cannot run: it needs
+`checkpatch.pl`, which no kernel headers package ships, so it returns exit
+2 unless `CHECKPATCH` or `KDIR` points at a full source tree. That is
+could-not-run and not a pass, which is the distinction the exit code
+exists to keep.
 
 - `script/test-shim.sh` and `script/test-syntax.sh`: 3 and 7 on 2026-08-25,
   three of the ten being controls that must fail and do.
@@ -40,7 +45,11 @@ run, not the record.
   `script/test-syntax.sh` names one by one. A `.c` missing from the second
   is dead code; missing from the third is a file no compiler ever sees while
   every check still reports passing. Written before the core import rather
-  than after it, which is the only useful time.
+  than after it, which is the only useful time. It also checks the origin
+  table's LINE COUNT against the file, which is the column that rots on an
+  ordinary edit rather than on an import: two rows had drifted before the
+  check existed. A row whose count column is not a number is left alone
+  rather than guessed at.
 
 - `script/test-citations.sh`: every `file:line` citation in a `doc/` table
   resolves, and where the row names a symbol that symbol is ON the line. The

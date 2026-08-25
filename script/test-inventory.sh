@@ -2,9 +2,14 @@
 # THE DIRECTORY IS THE POPULATION. Three lists claim to cover it and none of
 # them is derived from it, so each can silently fall behind:
 #
-#   1. README.status.md's origin table - what each file is and where it came
-#      from. A carried file with no row has no recorded provenance, which is
-#      the one thing this port cannot reconstruct later.
+#   1. README.status.md's origin table - what each file is, where it came
+#      from, and how long it is. A carried file with no row has no recorded
+#      provenance, which is the one thing this port cannot reconstruct
+#      later. The LINE COUNT in that row is checked too, because it is the
+#      one column that goes stale on an ordinary edit rather than on an
+#      import: measured 2026-08-25, hammer2_os.h had drifted 471 -> 473 and
+#      hammer2_compat.h 112 -> 111 with nothing to notice. A number in a
+#      published table that nothing derives is a number that rots.
 #   2. the Makefile's `hammer2-y` - what actually gets compiled into the
 #      module. A .c absent from it is dead code that still passes review.
 #   3. script/test-syntax.sh - which files the compile gate names. It names
@@ -45,8 +50,26 @@ for f in $srcs $hdrs; do
 	# The origin table backticks the bare filename. sys/tree.h and
 	# sys/queue.h are vendored one directory up and are listed together,
 	# which is why this asks about $DIR's own files only.
-	grep -q "\`$f\`" "$STATUS" || {
-		echo "  FAIL $f: no origin row in $STATUS"; fail=$((fail+1)); }
+	row=$(grep "\`$f\`" "$STATUS" | head -1)
+	if [ -z "$row" ]; then
+		echo "  FAIL $f: no origin row in $STATUS"; fail=$((fail+1))
+		continue
+	fi
+	# The row is `| \`name\` | <lines> | <origin> |`. Take the second
+	# column and compare it against the file. A row whose second column
+	# is not a number is not a count row and is left alone rather than
+	# guessed at, so a table that changes shape reports nothing here
+	# instead of reporting every file wrong.
+	want=$(printf '%s' "$row" | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+	case "$want" in
+	''|*[!0-9]*) ;;
+	*)
+		have=$(wc -l < "$DIR/$f")
+		[ "$want" = "$have" ] || {
+			echo "  FAIL $f: origin row says $want lines, file has $have"
+			fail=$((fail+1)); }
+		;;
+	esac
 done
 
 for f in $srcs; do

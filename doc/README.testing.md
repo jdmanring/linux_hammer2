@@ -1,11 +1,22 @@
 Testing
 =======
 
-Three gates run today, all cheap.
+Six gates run today, all cheap. They fall into two groups, and the split
+matters when you are deciding which to run: the compile gates need a
+toolchain and a kernel tree, the repository gates need neither.
+
+Compile gates:
 
     $ bash script/test-shim.sh        # needs only a C compiler
     $ bash script/test-syntax.sh      # needs kernel headers and clang
     $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
+
+Repository gates, POSIX sh over grep, sed and git, no kernel and no
+network:
+
+    $ bash script/test-inventory.sh   # the three lists that claim to cover src/
+    $ bash script/test-citations.sh   # every file:line citation in doc/
+    $ bash script/test-history.sh     # every roadmap row's commit hash
 
 `test-shim.sh` compiles `hammer2_os.h` and `hammer2_compat.h` against the
 stubs in `test/stub`, in both positions of the `HAMMER2_INVARIANTS` knob,
@@ -34,11 +45,27 @@ style on purpose and what that means for mainline. Both of its sorts are
 collation differs between machines; the first CI run failed with every
 count identical and four lines in a different order.
 
-None of the three runs anything. `-fsyntax-only` compiles nothing and links nothing,
-which is the honest limit of what can be checked before a module builds.
+None of the compile gates runs anything. `-fsyntax-only` compiles nothing
+and links nothing, which is the honest limit of what can be checked before
+a module builds.
 
-Exit 2 from either means the instrument could not run (no compiler, no
-kernel headers). That is not a verdict on the code, and it should not be
+The repository gates check the documentation against the tree rather than
+the tree against a compiler. `test-inventory.sh` reads the three
+hand-maintained lists that claim to cover `src/sys/fs/hammer2/`, reports a
+file missing from any of them, and compares the origin table's line count
+against the file it names. `test-citations.sh` reads every
+`file:line` citation in `doc/` against the line it names, comparing
+against the source rather than a stored baseline, and grades each pass by
+how specific its anchor is, so a row anchored on a common token is
+reported as weak rather than counted with the strong ones.
+`test-history.sh` checks that every roadmap row's commit hash resolves
+with a matching subject, and names any deliverable commit that has no row.
+What none of them can check is whether a row's CLAIM is true; that takes a
+person reading the artifact the row names.
+
+Exit 2 from any of the six means the instrument could not run: no
+compiler, no kernel headers, no `checkpatch.pl`, or a population that came
+back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.
 
 ## What the real test will be

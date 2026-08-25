@@ -30,7 +30,7 @@ script on the day it matters.
 | do not add new typedefs | 67 | required by the carried core; converts with the core |
 | function argument without identifier name | 391 | BSD prototype style; mechanical |
 | return is not a function, parentheses not required | 22 | BSD style; mechanical |
-| return of an errno should be negative | 17 | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
+| return of an errno should be negative | 14 | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
 | plain inline preferred over `__inline` | 9 | in vendored `sys/tree.h` and `sys/queue.h`; leave, they track freebsd-src |
 | spaces at the start of a line | 43 | continuation alignment in carried macros |
 | misplaced or missing SPDX tag in line 1 | 6 | three files are byte-exact from Kusumi's ports and keep his header shape; ours are fixed |

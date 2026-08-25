@@ -35,20 +35,36 @@ do, so the next sync can find it.
 sending a patch that converts `return (x);` to `return x;`. The whole tree
 converts at once, at submission, or not at all.
 
-**Every change comes with the gate that would have caught it.** The two
-compile gates are cheap and both carry controls that must fail. A patch
-that changes behavior with no way to observe the change is hard to review
-and harder to keep.
+**Every change comes with the gate that would have caught it.** All six
+are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
+that must fail on every run; the others buy the same assurance
+differently, and `doc/README.testing.md` says how for each. A patch that
+changes behavior with no way to observe the change is hard to review and
+harder to keep.
 
 ## Before sending
 
+    $ bash script/test-inventory.sh
+    $ bash script/test-citations.sh
+    $ bash script/test-history.sh
     $ bash script/test-shim.sh
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
 
-The third needs `checkpatch.pl`; point `CHECKPATCH` or `KDIR` at one. All
-three exit 2 when the instrument itself could not run, which is not a
-failure.
+The first three are POSIX sh over grep, sed and git. They need no kernel
+and no network, they take about a second, and they are what a
+documentation-only patch breaks: they check that the lists claiming to
+cover `src/` are complete, that every `file:line` citation in `doc/`
+resolves to the line it names, and that every roadmap row's commit hash
+resolves with a matching subject.
+
+The last three need a toolchain. `test-syntax.sh` wants kernel headers
+6.15 or newer, which is the module's own floor; set `KDIR` to build
+against a tree other than the running kernel's. `test-checkpatch.sh`
+needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
+
+All six exit 2 when the instrument itself could not run, which is not a
+failure and must not be recorded as one.
 
 ## Licensing
 

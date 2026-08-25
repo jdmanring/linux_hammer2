@@ -1,4 +1,4 @@
-# The compile gates, on every push and pull request.
+# Every gate, on every push and pull request.
 #
 # NOT YET RUN. GitHub Actions is disabled at the account level on this
 # repository's owner, so this file is inert until the repository is made
@@ -6,10 +6,19 @@
 # the gates themselves are exercised locally and pass, this workflow's
 # plumbing around them is not evidence of anything yet.
 #
-# The syntax gate needs kernel headers 6.12 or newer, which a runner may
-# not have. It reports exit 2 for "could not run", and this job records
-# that as a skip rather than a pass, because a gate that cannot run and a
-# gate that passed must not print the same thing.
+# The syntax gate needs kernel headers 6.15 or newer, which a runner may
+# not have. That floor is the module's own, enforced by an #error in
+# hammer2_os.h and measured rather than guessed: BLK_MAX_BLOCK_SIZE is
+# absent in v6.14 and present in v6.15. Below it the compile fails outright
+# rather than reporting could-not-run, so a runner with older headers is a
+# real failure and not a skip. The gate reports exit 2 for "could not run"
+# when the headers are absent altogether, and this job records that as a
+# skip rather than a pass, because a gate that cannot run and a gate that
+# passed must not print the same thing.
+#
+# The repository gates run first and unconditionally. They are POSIX sh
+# over grep, sed and git, so a runner cannot fail to provide what they
+# need, and they are what a documentation-only patch breaks.
 name: CI
 
 on:
@@ -21,6 +30,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # test-history.sh resolves every roadmap row's commit hash, so a
+          # shallow clone would fail it on rows older than the fetch depth.
+          fetch-depth: 0
+
+      - name: Inventory (the lists that claim to cover src/)
+        run: bash script/test-inventory.sh
+
+      - name: Citations (every file:line in doc/)
+        run: bash script/test-citations.sh
+
+      - name: History (every roadmap row's commit)
+        run: bash script/test-history.sh
 
       - name: Shim (stubs, no kernel needed)
         run: bash script/test-shim.sh

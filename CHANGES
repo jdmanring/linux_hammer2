@@ -1,6 +1,83 @@
+Versions are milestones, not calendar releases, and the third number is
+the point release: it increments when a verified deliverable lands inside
+the current milestone. Each entry names the gate that verified it. See
+doc/README.roadmap.md for the exit criteria of each milestone.
+
+Nothing here is released. No tag exists, and the driver does not mount.
+
+v0.1.9
+======
+- Citation gate anchors on the whole backticked token rather than its
+  first identifier, so a row anchored on a common word is reported as
+  weak instead of counted as a pass
+- Verified by: script/test-citations.sh, which now grades each pass by
+  anchor strength
+
+v0.1.8
+======
+- The 0.1.x rows audited against the tree rather than against the table,
+  and the one overclaim corrected: README.status.md had put inode and
+  subr in the carried set on no cited authority
+- Verified by: script/test-citations.sh, falsified one invocation at a
+  time on a one-line drift, a citation to a file that does not exist, a
+  line past end of file, and an emptied population
+
+v0.1.7
+======
+- Gate over the three hand-maintained lists that claim to cover
+  src/sys/fs/hammer2: the origin table, the Makefile's hammer2-y, and
+  the filenames script/test-syntax.sh names one by one
+- Verified by: script/test-inventory.sh, falsified with a planted .c
+  that produces one finding per list; population asserted
+
+v0.1.6
+======
+- The roadmap's history table got a gate
+- The module's absent MODULE_LICENSE recorded with what decides its value
+- Style gate stopped writing a baseline and exiting 0 when it found none
+- Verified by: script/test-history.sh, falsified on an unresolvable hash
+  and on a table whose rows stop matching
+
+v0.1.5
+======
+- The 64 KiB inventory: thirteen sites, seven belonging to the on-disk
+  format and six to the folio decision, in doc/IO_MODEL.md
+- Verified by: the inventory itself, each site cited to a line
+
+v0.1.4
+======
+- Vendored sys/tree.h and sys/queue.h stopped redefining the kernel's
+  LIST_HEAD and RB_ROOT
+- Verified by: script/test-syntax.sh, extended to gcc beside clang under
+  a W=1 warning set; both compilers reported the redefinitions
+  independently, which is what made them credible rather than stylistic
+
+v0.1.3
+======
+- The folio ceiling's design recorded: a mount-time capability check by
+  name, mapping_max_folio_size_supported(), with the build-time
+  transparent hugepage assert kept as the bootstrap instrument until a
+  mount path exists
+- Verified by: doc/README.porting.md, The DIO layer
+
+v0.1.2
+======
+- Kernel version floor corrected from memory to measurement: 6.15, set by
+  BLK_MAX_BLOCK_SIZE, with each symbol dated at the tag where it appeared
+- Verified by: the table in doc/README.status.md, and an #error in
+  hammer2_os.h that matches it
+
+v0.1.1
+======
+- Style gate's sort made locale-independent, after a first CI run failed
+  with every count identical and four lines in a different order
+- Verified by: script/test-checkpatch.sh byte-comparing its baseline
+
 v0.1.0
 ======
 - Initial import
 - OS shim (hammer2_os.h, hammer2_compat.h)
 - DIO layer on the block device page cache
 - On-disk format, ioctl and in-memory headers
+- Vendored sys/tree.h and sys/queue.h
+- Verified by: script/test-shim.sh, script/test-syntax.sh

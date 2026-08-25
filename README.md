@@ -70,6 +70,17 @@ than about a shared bug.
         $ cd linux_hammer2
         $ make
 
+`make` builds against `/lib/modules/$(uname -r)/build`. Point `KDIR` at a
+different tree when the running kernel is not the one you mean to build
+for, which is the usual case on a development machine:
+
+        $ make KDIR=/path/to/linux-7.2/build
+
+Three build knobs, the same three the FreeBSD and NetBSD ports carry:
+`HAMMER2_INVARIANTS` turns on `KKASSERT` and `KASSERTMSG`,
+`HAMMER2_MALLOC` turns on the allocation leak counters, and
+`HAMMER2_ATIME` turns on atime updates. Pass them on the `make` line.
+
 ## Install
 
         $ cd linux_hammer2
@@ -82,14 +93,32 @@ than about a shared bug.
 
 ## Test
 
+Six gates, in two groups. The compile gates need a toolchain and a kernel
+tree:
+
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
         $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
 
-Each gate carries a control that must fail, because a check whose healthy
+The repository gates check the documentation against the tree. They are
+POSIX sh over grep, sed and git, so they run anywhere:
+
+        $ bash script/test-inventory.sh   # the lists that claim to cover src/
+        $ bash script/test-citations.sh   # every file:line citation in doc/
+        $ bash script/test-history.sh     # every roadmap row's commit hash
+
+No gate here is trusted on silence alone, because a check whose healthy
 signature is silence cannot otherwise be told from a check that never ran.
+How that is bought differs by gate, and they are not interchangeable:
+`test-shim.sh` and `test-syntax.sh` carry built-in controls that must fail
+on every run, `test-checkpatch.sh` compares against a recorded deviation
+set rather than asking for silence, and each repository gate asserts the
+population it searched before checking anything, so a glob that matches
+nothing cannot report a clean run.
+
 Exit 2 means the instrument could not run, which is not a verdict on the
-code. [doc/README.testing.md](doc/README.testing.md) has the detail.
+code. [doc/README.testing.md](doc/README.testing.md) has the detail,
+including what each gate cannot catch.
 
 ## Documentation
 
