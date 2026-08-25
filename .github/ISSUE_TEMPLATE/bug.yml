@@ -1,0 +1,41 @@
+name: Bug
+description: Something built, loaded or mounted and then misbehaved
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read doc/README.status.md first. Nothing mounts yet, so a mount
+        bug is expected rather than a report.
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel version
+      placeholder: uname -r
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      placeholder: git rev-parse --short HEAD
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include dmesg. HAMMER2 messages carry the function name.
+    validations:
+      required: true
+  - type: textarea
+    id: volume
+    attributes:
+      label: The volume
+      description: Which implementation wrote it, and with what newfs_hammer2 arguments.
+  - type: textarea
+    id: gates
+    attributes:
+      label: Gate output
+      description: script/test-shim.sh and script/test-syntax.sh.
+      render: shell

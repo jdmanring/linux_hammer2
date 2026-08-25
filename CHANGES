@@ -1,0 +1,6 @@
+v0.1.0
+======
+- Initial import
+- OS shim (hammer2_os.h, hammer2_compat.h)
+- DIO layer on the block device page cache
+- On-disk format, ioctl and in-memory headers

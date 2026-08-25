@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: HAMMER2 design (DragonFly)
+    url: https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs/hammer2/DESIGN
+    about: What the filesystem is, before asking what this port does with it.
+  - name: The BSD ports
+    url: https://github.com/kusumi/hammer2
+    about: FreeBSD, NetBSD and OpenBSD ports, and the userland utilities.

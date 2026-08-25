@@ -1,0 +1,52 @@
+# The compile gates, on every push and pull request.
+#
+# NOT YET RUN. GitHub Actions is disabled at the account level on this
+# repository's owner, so this file is inert until the repository is made
+# public and Actions is turned on. Treat the first run as a first run:
+# the gates themselves are exercised locally and pass, this workflow's
+# plumbing around them is not evidence of anything yet.
+#
+# The syntax gate needs kernel headers 6.12 or newer, which a runner may
+# not have. It reports exit 2 for "could not run", and this job records
+# that as a skip rather than a pass, because a gate that cannot run and a
+# gate that passed must not print the same thing.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shim (stubs, no kernel needed)
+        run: bash script/test-shim.sh
+
+      - name: Kernel headers
+        id: headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y "linux-headers-$(uname -r)" || \
+            echo "no headers for $(uname -r)"
+
+      - name: Syntax (real kernel headers)
+        run: |
+          sudo apt-get install -y clang
+          set +e
+          bash script/test-syntax.sh
+          rc=$?
+          set -e
+          if [ "$rc" = 2 ]; then
+            echo "::warning::syntax gate COULD-NOT-RUN on this runner"
+            exit 0
+          fi
+          exit "$rc"
+
+      - name: Kernel style (bounded, not clean)
+        run: |
+          curl -sSLo /tmp/checkpatch.pl \
+            https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl
+          CHECKPATCH=/tmp/checkpatch.pl bash script/test-checkpatch.sh

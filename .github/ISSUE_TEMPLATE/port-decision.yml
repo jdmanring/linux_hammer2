@@ -1,0 +1,28 @@
+name: Port decision looks wrong
+description: Challenge one of the decisions in doc/README.porting.md
+labels: ["port-decision"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful issue you can open here. Several port
+        decisions are load-bearing and only one person has reviewed them.
+  - type: input
+    id: decision
+    attributes:
+      label: Which decision
+      description: Quote the line or name the section of doc/README.porting.md.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is wrong
+      description: What breaks, and under what conditions.
+    validations:
+      required: true
+  - type: textarea
+    id: prior
+    attributes:
+      label: What the BSD ports do here
+      description: If FreeBSD, NetBSD or OpenBSD solved this differently, say how. Not required.
