@@ -21,8 +21,10 @@ is a defect.
 
 ## What has been verified
 
-`script/test-shim.sh` and `script/test-syntax.sh` both pass, 8 checks, of
-which 2 are controls that must fail and do. That means the shim is valid C
+All three gates pass: `script/test-shim.sh` and `script/test-syntax.sh`
+are 8 checks between them, of which 3 are controls that must fail and do,
+and `script/test-checkpatch.sh` holds the style deviation set at its
+recorded 579 hits. That means the shim is valid C
 in both knob positions, and that `hammer2.h` and `hammer2_io.c` type-check
 against the real kernel headers of a 7.2 tree with clang 22.
 

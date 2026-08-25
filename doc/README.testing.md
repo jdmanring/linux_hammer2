@@ -1,10 +1,11 @@
 Testing
 =======
 
-Two gates run today, both cheap, both with controls.
+Three gates run today, all cheap.
 
-    $ bash script/test-shim.sh      # needs only a C compiler
-    $ bash script/test-syntax.sh    # needs kernel headers and clang
+    $ bash script/test-shim.sh        # needs only a C compiler
+    $ bash script/test-syntax.sh      # needs kernel headers and clang
+    $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
 
 `test-shim.sh` compiles `hammer2_os.h` and `hammer2_compat.h` against the
 stubs in `test/stub`, in both positions of the `HAMMER2_INVARIANTS` knob,
@@ -18,7 +19,15 @@ same headers must refuse, and the 64KB ceiling guard, which must fire when
 the ceiling is shrunk. Set `KDIR` to test against a tree other than the
 running kernel's.
 
-Neither runs anything. `-fsyntax-only` compiles nothing and links nothing,
+`test-checkpatch.sh` is the odd one: it does not ask for silence, it asks
+that the recorded deviation set has not grown. See
+[README.kernel-style.md](README.kernel-style.md) for why this tree is BSD
+style on purpose and what that means for mainline. Both of its sorts are
+`LC_ALL=C`, because the baseline is compared byte for byte and glibc
+collation differs between machines; the first CI run failed with every
+count identical and four lines in a different order.
+
+None of the three runs anything. `-fsyntax-only` compiles nothing and links nothing,
 which is the honest limit of what can be checked before a module builds.
 
 Exit 2 from either means the instrument could not run (no compiler, no
