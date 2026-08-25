@@ -129,3 +129,27 @@ The other edit to those vendored files is that `__unused` is spelled
 an attribute macro makes an array field so declared a compile error and a
 scalar one vanish with only a warning, silently changing the struct's
 layout.
+
+## The module declares no license, and it will need one at the first build
+
+Measured 2026-08-25: `MODULE_LICENSE` appears nowhere under `src/`, and
+neither does `MODULE_AUTHOR` or `MODULE_DESCRIPTION`. That is not yet a
+defect, because no module has ever been built - it becomes one the day a
+`.ko` is produced, and the day it does the build will say so.
+
+What decides the value is not sentiment about the code's origin. The file
+data path this port is heading for is iomap, and `iomap_read_folio`,
+`iomap_file_buffered_write` and `iomap_writepages` are all
+`EXPORT_SYMBOL_GPL`: a module that does not declare a GPL-compatible
+license cannot link them, and the failure is at load time rather than at
+compile time. The carried code is DragonFly's under a BSD license, so the
+declaration that keeps both true is `MODULE_LICENSE("Dual BSD/GPL")` - the
+kernel treats it as GPL-compatible for symbol purposes and it does not
+relicense anything.
+
+Recorded here rather than written into a source file, because a declaration
+with no artifact is worse than an absent one: there is no module to attach
+it to yet, and adding it now would put a claim in the tree that nothing
+exercises. It goes in with the first `MODULE_INIT`. Raised by the
+specification session from its own reading of xfs at v6.15, which is the one
+mainline filesystem above page size and runs its data path on iomap.
