@@ -21,12 +21,15 @@ is a defect.
 
 ## What has been verified
 
-All three gates pass: `script/test-shim.sh` and `script/test-syntax.sh`
-are 8 checks between them, of which 3 are controls that must fail and do,
-and `script/test-checkpatch.sh` holds the style deviation set at its
-recorded 579 hits. That means the shim is valid C
-in both knob positions, and that `hammer2.h` and `hammer2_io.c` type-check
-against the real kernel headers of a 7.2 tree with clang 22.
+All three gates pass. Each prints its own count, so read that rather than a
+figure here: `script/test-shim.sh` and `script/test-syntax.sh` were 3 and 7
+on 2026-08-25, three of the ten being controls that must fail and do, and
+`script/test-checkpatch.sh` holds the style deviation set at its recorded
+579 hits. The sentence said 8 for a day after the gcc pair landed with
+8877e3f, which is why the counts are dated now and the gates are the
+authority. That the gates pass means the shim is valid C in both knob
+positions, and that `hammer2.h` and `hammer2_io.c` type-check against the
+real kernel headers of a 7.2 tree with both clang 22 and gcc.
 
 It does not mean anything runs. `-fsyntax-only` compiles nothing and links
 nothing, and no module has been built or loaded. There is no VFS layer, no
