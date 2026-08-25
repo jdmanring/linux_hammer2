@@ -9,6 +9,7 @@ when the check beside it passes, not when the code is written.
 | 1 | OS shim and DIO layer | both compile against real kernel headers, controls fail. **done** |
 | 2 | Carried core files import | the whole core compiles as a module against the shim |
 | 3 | First module build and load | `insmod` succeeds and `rmmod` leaves nothing behind |
+| 3a | Folio capability check at mount | `mapping_max_folio_size_supported()` is consulted and a kernel that cannot supply a 64KB folio is refused by name, not by a build-time assert |
 | 4 | Read-only mount | a volume written by DragonFly `newfs_hammer2` mounts read-only and `ls -lR` matches |
 | 5 | Read path | file contents, symlinks, directory iteration and stat match the source volume byte for byte |
 | 6 | fsck and utils | [hammer2-utils](https://github.com/kusumi/hammer2-utils) drives this volume on Linux |

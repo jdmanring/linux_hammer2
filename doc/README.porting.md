@@ -70,6 +70,22 @@ only under `CONFIG_TRANSPARENT_HUGEPAGE`. Without it the mount fails
 `EINVAL` saying nothing about why, so a second `static_assert` moves that
 to the build.
 
+That assert is a bootstrap instrument and not the intended one. The kernel
+supplies `mapping_max_folio_size_supported()` (`linux/pagemap.h`), whose
+own comment reads: "The filesystem should call this function at mount time
+if there is a requirement on the folio mapping size in the page cache." It
+returns `PAGE_SIZE` without `CONFIG_TRANSPARENT_HUGEPAGE` and
+`1U << (PAGE_SHIFT + MAX_PAGECACHE_ORDER)` with it, so the compile-time
+test reaches the correct answer on today's kernels by asking the wrong
+question: it reads a config symbol where the kernel offers a capability.
+
+**The mount path must call it and refuse by name**, rather than inheriting
+a build-time assert. The block layer's own direction is to derive the
+ceiling from the maximum supported folio size rather than from a THP test,
+so "THP required" is a fact about 6.15 through 7.2 and not an
+architecture. What must never happen is silently splitting one HAMMER2
+physical buffer, which would change on-disk semantics.
+
 ## Types and conventions
 
 Errnos inside the module are **positive**, the BSD convention the carried
