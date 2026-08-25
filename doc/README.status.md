@@ -73,6 +73,20 @@ Every remaining core file: `hammer2_chain.c`, `hammer2_flush.c`,
 `hammer2_freemap.c`, `hammer2_inode.c`, `hammer2_subr.c`, `hammer2_xops.c`,
 `hammer2_admin.c`, `hammer2_bulkfree.c`, `hammer2_cluster.c`,
 `hammer2_ondisk.c`, `hammer2_strategy.c`, `hammer2_ioctl.c`,
-`hammer2_vfsops.c`, `hammer2_vnops.c`, plus the check algorithms. The
-first eight of those are expected to carry with few or no edits; the last
-four are the OS-facing ones and are rewrites.
+`hammer2_vfsops.c`, `hammer2_vnops.c`, plus the check algorithms.
+
+Six of those are the measured carried set: `hammer2_chain.c`,
+`hammer2_flush.c`, `hammer2_freemap.c`, `hammer2_bulkfree.c`,
+`hammer2_xops.c`, `hammer2_admin.c`, at 10,556 lines
+(`H1_ESTIMATE.md` in the distribution's tree, which measured them against all
+three BSD ports). Whether `hammer2_inode.c`, `hammer2_subr.c` and
+`hammer2_ondisk.c` join them is what the provenance CSV's carry column
+says file by file, and that CSV is unwritten: see the roadmap's 0.2.
+`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
+`hammer2_vnops.c` are the OS-facing ones and are rewrites.
+
+This paragraph read "the first eight of those are expected to carry"
+until 2026-08-25, which put `inode` and `subr` in the carried set on no
+cited authority and pre-decided what the roadmap routes to the CSV. It
+also counted POSITIONS into a prose list, so reordering the list above
+would have silently changed which files the sentence claimed.
