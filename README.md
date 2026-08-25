@@ -93,6 +93,8 @@ code. [doc/README.testing.md](doc/README.testing.md) has the detail.
 |---|---|
 | [doc/README.status.md](doc/README.status.md) | what exists, what is verified, what is missing |
 | [doc/README.roadmap.md](doc/README.roadmap.md) | the order, with the check that ends each step |
+| [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | the layering, the shim boundary, the object and locking model |
+| [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
 | [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
 | [doc/README.kernel-style.md](doc/README.kernel-style.md) | licensing, and the path to mainline |
