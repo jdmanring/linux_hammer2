@@ -90,5 +90,5 @@ hammer2_syntax_check_all(void)
 	 */
 	_Static_assert(65536 <= BLK_MAX_BLOCK_SIZE,
 		       "HAMMER2_PBUFSIZE exceeds BLK_MAX_BLOCK_SIZE; see "
-		       "research/hammer2-linux/H1_READING_2_DIO_DESIGN.md");
+		       "doc/README.porting.md");
 }

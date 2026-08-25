@@ -12,11 +12,10 @@
  * function is called with the right argument types, that a primitive
  * behaves as assumed, or that the header compiles against the real
  * headers at all. A stub agreeing with the shim proves the two agree with
- * each other. Only a build against linux-7.1.8-cachyos answers the rest,
- * and that build is James's decision under the compile authorization.
+ * each other. Only a build against a real kernel answers the rest, and
+ * script/test-syntax.sh is the gate that does it.
  *
- * Every prototype here was transcribed from the kernel's own headers at
- * v7.1 so a disagreement is at least likely to show up; a stub written to
+ * Every prototype here was transcribed from the kernel's own headers so a disagreement is at least likely to show up; a stub written to
  * match the shim rather than the kernel would turn this gate into a
  * mirror. Where a signature was not checked, the comment says so.
  */

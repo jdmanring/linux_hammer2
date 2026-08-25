@@ -37,7 +37,7 @@ converts at once, at submission, or not at all.
 
 **Every change comes with the gate that would have caught it.** The two
 compile gates are cheap and both carry controls that must fail. A patch
-that changes behaviour with no way to observe the change is hard to review
+that changes behavior with no way to observe the change is hard to review
 and harder to keep.
 
 ## Before sending

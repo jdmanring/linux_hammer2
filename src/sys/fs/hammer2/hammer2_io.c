@@ -49,7 +49,7 @@
  * The format sits exactly on BLK_MAX_BLOCK_SIZE, which is 64KB only under
  * CONFIG_TRANSPARENT_HUGEPAGE. Without it the mount would fail EINVAL
  * saying nothing about why, so the assert below moves that to the build.
- * See docs/PORTING.md.
+ * See doc/README.porting.md.
  */
 
 #include "hammer2.h"
@@ -72,13 +72,13 @@
 static_assert(HAMMER2_PBUFSIZE <= BLK_MAX_BLOCK_SIZE,
 	      "HAMMER2_PBUFSIZE exceeds BLK_MAX_BLOCK_SIZE: this kernel lacks "
 	      "CONFIG_TRANSPARENT_HUGEPAGE and cannot mount HAMMER2; "
-	      "see docs/PORTING.md");
+	      "see doc/README.porting.md");
 /*
  * hammer2_io_data() hands the core a pointer it keeps across sleeps, so
  * the folio's memory must be permanently mapped: folio_address(), not
  * kmap_local_folio().  True on every 64-bit target; a 32-bit HIGHMEM
  * kernel would need the core to map and unmap around every access.
- * DEFER(a 32-bit target is wanted): map per access in the callers.
+ * XXX A 32-bit HIGHMEM target would need mapping per access here.
  */
 static_assert(!IS_ENABLED(CONFIG_HIGHMEM),
 	      "hammer2 assumes a permanently mapped page cache");
@@ -216,7 +216,7 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
  * Readahead: the BSDs pass a cluster hint (hammer2_cluster_*_read) to
  * cluster_read().  The block device mapping has the kernel's own
  * readahead behind read_cache_folio(); nothing is passed.
- * DEFER(sequential-read throughput measured against DragonFly in H6):
+ * XXX Measure sequential-read throughput against DragonFly first:
  * page_cache_sync_ra() with the same hint, if the measurement wants it.
  */
 static int

@@ -40,7 +40,7 @@
  *
  * Section order, structs and prototypes follow the FreeBSD port, which
  * already deletes the dmsg/iocom/ccms layer and the XOP thread pool. What
- * is OS-facing is marked in place. See docs/PORTING.md.
+ * is OS-facing is marked in place. See doc/README.porting.md.
  */
 
 #ifndef _FS_HAMMER2_HAMMER2_H_
