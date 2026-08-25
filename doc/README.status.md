@@ -30,6 +30,22 @@ It does not mean anything runs. `-fsyntax-only` compiles nothing and links
 nothing, and no module has been built or loaded. There is no VFS layer, no
 mount path and no fsck integration, so there is nothing to run yet.
 
+## The version floor, and how it was established
+
+`BLK_MAX_BLOCK_SIZE` is the binding constraint, at **6.15**. Each symbol
+was dated by reading the header at the tag rather than from memory:
+
+| symbol | absent at | present at |
+|---|---|---|
+| `bdev_file_open_by_path` | | v6.10 |
+| three-argument `kvrealloc` | v6.11 | v6.12 |
+| `folio_mark_dirty_lock` | v6.12 | v6.13 |
+| `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
+
+Nothing between 6.15 and 7.2 has been compiled against; the gates run on
+7.2. So 6.15 is the floor the code requires, not a floor that has been
+exercised, and a report from anything older than 7.2 is useful.
+
 ## What is not here
 
 Every remaining core file: `hammer2_chain.c`, `hammer2_flush.c`,

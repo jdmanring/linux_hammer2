@@ -1,6 +1,11 @@
 Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs/hammer2/DESIGN)
 ========
 
+[![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
+[![Status](https://img.shields.io/badge/status-does%20not%20mount%20yet-red.svg)](doc/README.status.md)
+[![Kernel](https://img.shields.io/badge/linux-6.15%2B-informational.svg)](doc/README.status.md)
+
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
 
 HAMMER2 is Matthew Dillon's copy-on-write filesystem for DragonFly BSD:
@@ -33,7 +38,7 @@ load-bearing.
 
 ## Requirements
 
-+ Linux 6.12 or newer
++ Linux 6.15 or newer, and developed against 7.2
 
 + kernel headers for the running kernel
 
@@ -84,6 +89,22 @@ code. [doc/README.testing.md](doc/README.testing.md) has the detail.
 [CONTRIBUTING.md](CONTRIBUTING.md). Questions, corrections and review of
 the port decisions are as welcome as patches, and more useful at this
 stage.
+
+## Credit
+
+**Matthew Dillon** designed and wrote HAMMER2 for DragonFly BSD. The
+format, the algorithms and the core carried here are his.
+
+**Tomohiro Kusumi** wrote the FreeBSD, NetBSD and OpenBSD kernel ports and
+the entire Linux userland. This port is his method applied a fourth time,
+and it borrows more than the method: the repository layout, the
+`hammer2_os.h` / `hammer2_compat.h` split and its section order, the make
+knobs, the `XXX` convention at non-mechanical mappings, and the
+`<os>_hammer2` name. Where a port decision had a precedent in one of his
+three trees, that precedent was followed and
+[doc/README.porting.md](doc/README.porting.md) says which tree.
+
+The work here is the Linux OS layer and the gates around it.
 
 ## License
 

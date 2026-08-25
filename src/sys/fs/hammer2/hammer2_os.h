@@ -51,12 +51,15 @@
 #include "hammer2_compat.h"
 
 /*
- * kvrealloc(3 args) and folio based page cache API. See Linux commit
- * a0309faf1cb0 ("mm: kvrealloc drop the old size argument").
+ * The floor is BLK_MAX_BLOCK_SIZE, which the DIO layer needs to assert the
+ * 64KB physical buffer against. Measured by reading each header at the
+ * tag: BLK_MAX_BLOCK_SIZE absent in v6.14 and present in v6.15,
+ * folio_mark_dirty_lock absent in v6.12 and present in v6.13, kvrealloc
+ * still four arguments in v6.11 and three in v6.12.
  */
-#define LINUX_KVREALLOC_3ARG	KERNEL_VERSION(6, 12, 0)
-#if LINUX_VERSION_CODE < LINUX_KVREALLOC_3ARG
-#error "HAMMER2 requires Linux 6.12 or newer"
+#define LINUX_BLK_MAX_BLOCK_SIZE	KERNEL_VERSION(6, 15, 0)
+#if LINUX_VERSION_CODE < LINUX_BLK_MAX_BLOCK_SIZE
+#error "HAMMER2 requires Linux 6.15 or newer"
 #endif
 
 #define print_backtrace()	dump_stack()
