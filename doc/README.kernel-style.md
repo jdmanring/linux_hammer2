@@ -25,7 +25,12 @@ script on the day it matters.
 
 ## The recorded deviations, and which are convertible
 
-| category | count at import | disposition |
+Counts below are what `checkpatch.pl` from linux v6.15 reports, which is
+the version `doc/checkpatch-baseline.txt` names in its first line and the
+version CI fetches. A different copy of checkpatch moves these numbers on
+unchanged code, so the version travels with them.
+
+| category | count | disposition |
 |---|---|---|
 | do not add new typedefs | 67 | required by the carried core; converts with the core |
 | function argument without identifier name | 391 | BSD prototype style; mechanical |
@@ -34,7 +39,7 @@ script on the day it matters.
 | plain inline preferred over `__inline` | 9 | in vendored `sys/tree.h` and `sys/queue.h`; leave, they track freebsd-src |
 | spaces at the start of a line | 43 | continuation alignment in carried macros |
 | misplaced or missing SPDX tag in line 1 | 6 | three files are byte-exact from Kusumi's ports and keep his header shape; ours are fixed |
-| everything else | 1 to 15 each | carried code |
+| everything else | 1 to 18 each | carried code |
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module
