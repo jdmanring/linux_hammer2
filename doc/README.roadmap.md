@@ -528,9 +528,9 @@ each names what it blocks so the cost of leaving it open is visible.
 |---|---|---|
 | The first compile of a module against a kernel tree | 0.3 and everything after it | open |
 | Booting the DragonFly guest for the rest of the F2 set | 0.4 criteria 3 and 6 | open; the first F2 image was taken with the guest shut off and needed no decision |
-| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the plan's lean is iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | open, due at the start of 0.5 |
+| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the plan's lean is iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap by the storage program, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's licence string must be "Dual BSD/GPL" (0.2). The maintainer confirms or overrules at the start of 0.5 |
 | A workqueue-backed XOP pool against synchronous XOPs | 0.9 criterion 3 | synchronous for 0.2 to 0.6, the FreeBSD port's choice; the pool is decided on F6's numbers |
-| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the distribution's tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | open; they stay where they are until taken |
+| Where the fixtures, their generator scripts and the provenance CSV live: this tree, or the distribution's tree that holds them today | every gate from 0.4 on, and 0.2's provenance check, name a path there | recommended this tree, `test/fixtures/`, 2026-08-25, so the port carries its own evidence when it changes hands; the generators take their toolchain from the environment and the nix package that builds it stays with the distribution. Moved at the next stop of both sessions, not before |
 | The two upstream filings | 1.0 criterion 3 | drafted, unfiled |
 | In-tree submission | nothing before 1.0 | deferred past qualification by the plan |
 
@@ -563,6 +563,9 @@ non-goals; point releases go in the history table instead.
   section. Then hostile audit rounds against the sources named above
   until one found nothing, all findings applied; the rounds are recorded
   in the distribution's tracker.
+- 2026-08-25: the iomap and fixture-home rows of the decisions table
+  carry dated recommendations with their reasons; each remains the
+  maintainer's to confirm (the distribution's own tracker).
 
 ## Proposing a change
 

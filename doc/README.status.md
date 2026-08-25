@@ -21,7 +21,7 @@ is a defect.
 
 ## What has been verified
 
-All four gates pass. Each prints its own count, so read that rather than a
+All five gates pass. Each prints its own count, so read that rather than a
 figure here; this sentence said eight checks for a day after the gcc pair
 landed with `8877e3f`, which is why the counts below are dated and the gates
 are the authority.
@@ -35,6 +35,13 @@ are the authority.
   commits touching `src/` or `script/` have landed since the newest row.
   That second half never fails: whether a commit deserves a version row is a
   judgment and not a gate's to make.
+- `script/test-inventory.sh`: the DIRECTORY is the population, and three
+  lists that claim to cover it are each maintained by hand - the origin
+  table in this file, the Makefile's `hammer2-y`, and the filenames
+  `script/test-syntax.sh` names one by one. A `.c` missing from the second
+  is dead code; missing from the third is a file no compiler ever sees while
+  every check still reports passing. Written before the core import rather
+  than after it, which is the only useful time.
 
 That the gates pass means the shim is valid C in both knob positions, and
 that `hammer2.h` and `hammer2_io.c` type-check against the real kernel
