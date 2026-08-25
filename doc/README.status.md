@@ -21,7 +21,7 @@ is a defect.
 
 ## What has been verified
 
-All five gates pass. Each prints its own count, so read that rather than a
+All six gates pass. Each prints its own count, so read that rather than a
 figure here; this sentence said eight checks for a day after the gcc pair
 landed with `8877e3f`, which is why the counts below are dated and the gates
 are the authority.
@@ -42,6 +42,14 @@ are the authority.
   is dead code; missing from the third is a file no compiler ever sees while
   every check still reports passing. Written before the core import rather
   than after it, which is the only useful time.
+
+- `script/test-citations.sh`: every `file:line` citation in a `doc/` table
+  resolves, and where the row names a symbol that symbol is ON the line. The
+  64 KiB inventory is thirteen such rows and nothing had ever read them; a
+  line number rots on the next edit while still LOOKING like a citation, and
+  the 0.2 import edits exactly those files. It compares against the source
+  line, never a stored baseline. A row naming no symbol is reported as
+  unanchored rather than dropped.
 
 That the gates pass means the shim is valid C in both knob positions, and
 that `hammer2.h` and `hammer2_io.c` type-check against the real kernel
