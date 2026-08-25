@@ -14,6 +14,10 @@
 #
 # Exit 2 is COULD-NOT-RUN: no checkpatch.pl. Point CHECKPATCH at one, or
 # set KDIR to a full kernel source tree.
+#
+# LC_ALL=C on both sorts, because the baseline is compared byte for byte
+# and glibc collation differs between machines: the first CI run failed
+# with every count identical and four lines in a different order.
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
@@ -26,7 +30,7 @@ files=$(ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h)
 got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 	sed 's/^.*: \(WARNING\|ERROR\): //' |
 	sed "s/'[^']*'/'X'/g" |
-	sort | uniq -c | awk '{$1=$1; print}' | sort -k2)
+	LC_ALL=C sort | uniq -c | awk '{$1=$1; print}' | LC_ALL=C sort -k2)
 
 base=doc/checkpatch-baseline.txt
 [ -f "$base" ] || { echo "checkpatch: no baseline; writing one"; printf '%s\n' "$got" > "$base"; exit 0; }

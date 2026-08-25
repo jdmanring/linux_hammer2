@@ -1,14 +1,14 @@
 15 Argument 'X' is not used in function-like macro
 2 Avoid unnecessary line continuations
-1 code indent should use tabs where possible
-67 do not add new typedefs
-1 do not use assignment in if condition
-391 function definition argument 'X' should also have an identifier name
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
 3 Misplaced SPDX-License-Identifier tag - use line 1 instead
 1 Missing a blank line after declarations
 3 Missing or malformed SPDX-License-Identifier tag in line 1
+1 code indent should use tabs where possible
+67 do not add new typedefs
+1 do not use assignment in if condition
+391 function definition argument 'X' should also have an identifier name
 9 plain inline is preferred over __inline
 1 please, no space before tabs
 43 please, no spaces at the start of a line
