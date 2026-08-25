@@ -1,10 +1,16 @@
 # Every gate, on every push and pull request.
 #
-# NOT YET RUN. GitHub Actions is disabled at the account level on this
-# repository's owner, so this file is inert until the repository is made
-# public and Actions is turned on. Treat the first run as a first run:
-# the gates themselves are exercised locally and pass, this workflow's
-# plumbing around them is not evidence of anything yet.
+# This workflow is live. The repository is public and Actions is enabled,
+# so a push runs it and the README badge reports a real result. That was
+# not true when this file was written, and the comment saying so outlived
+# its subject by long enough to mislead: a claim about what is currently
+# switched off has a shelf life measured in days, and nothing here
+# rechecks one. Read the badge or the Actions tab for the state; this
+# comment describes the mechanism only.
+#
+# What IS unexercised is any step added since the last green run. A step
+# that has never run on a runner is not evidence, however well it behaves
+# locally, because the runner differs in what it has installed.
 #
 # The syntax gate needs kernel headers 6.15 or newer, which a runner may
 # not have. That floor is the module's own, enforced by an #error in

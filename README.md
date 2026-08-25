@@ -36,6 +36,22 @@ wrong. They are listed with their reasoning in
 [doc/README.porting.md](doc/README.porting.md), and several are
 load-bearing.
 
+## The companion tree
+
+Several documents here cite a "distribution tree": the fixture plan, the
+provenance CSV, the exit criteria behind the milestones, and the
+line-count estimate for the carried core. That is the distribution project
+this port was started to serve. It is a separate repository and it is not
+public yet, so a citation into it is a record of where a number came from
+rather than a link a reader can follow today.
+
+Nothing in this tree depends on it to build or to run its gates. Where a
+figure originates there, the document says so instead of restating it as
+though it had been measured here.
+[doc/README.roadmap.md](doc/README.roadmap.md) has the full division: what
+that tree owns, what this one owns, and which items are waiting on a
+decision about where they live.
+
 ## Why a kernel module, when hammer2-fuse exists
 
 [hammer2-fuse](https://github.com/kusumi/hammer2-fuse) already reads
