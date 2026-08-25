@@ -21,10 +21,9 @@ is a defect.
 
 ## What has been verified
 
-All six gates pass. Each prints its own count, so read that rather than a
-figure here; this sentence said eight checks for a day after the gcc pair
-landed with `8877e3f`, which is why the counts below are dated and the gates
-are the authority.
+All six gates pass. Each prints its own count; the gates are the
+authority, and the dated figures below are snapshots of a particular
+run, not the record.
 
 - `script/test-shim.sh` and `script/test-syntax.sh`: 3 and 7 on 2026-08-25,
   three of the ten being controls that must fail and do.
@@ -35,7 +34,7 @@ are the authority.
   commits touching `src/` or `script/` have landed since the newest row.
   That second half never fails: whether a commit deserves a version row is a
   judgment and not a gate's to make.
-- `script/test-inventory.sh`: the DIRECTORY is the population, and three
+- `script/test-inventory.sh`: the directory itself is the population, and three
   lists that claim to cover it are each maintained by hand - the origin
   table in this file, the Makefile's `hammer2-y`, and the filenames
   `script/test-syntax.sh` names one by one. A `.c` missing from the second
@@ -46,7 +45,7 @@ are the authority.
 - `script/test-citations.sh`: every `file:line` citation in a `doc/` table
   resolves, and where the row names a symbol that symbol is ON the line. The
   64 KiB inventory is thirteen such rows and nothing had ever read them; a
-  line number rots on the next edit while still LOOKING like a citation, and
+  line number rots on the next edit while still looking like a citation, and
   the 0.2 import edits exactly those files. It compares against the source
   line, never a stored baseline. A row naming no symbol is reported as
   unanchored rather than dropped.
@@ -93,8 +92,3 @@ says file by file, and that CSV is unwritten: see the roadmap's 0.2.
 `hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
 `hammer2_vnops.c` are the OS-facing ones and are rewrites.
 
-This paragraph read "the first eight of those are expected to carry"
-until 2026-08-25, which put `inode` and `subr` in the carried set on no
-cited authority and pre-decided what the roadmap routes to the CSV. It
-also counted POSITIONS into a prose list, so reordering the list above
-would have silently changed which files the sentence claimed.

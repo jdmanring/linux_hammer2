@@ -46,13 +46,12 @@ userspace daemon, the volume can be a root filesystem, and the write path
 can order its flushes against the block layer directly, which is what a
 copy-on-write filesystem's crash consistency depends on.
 
-Neither replaces the other, and they are INDEPENDENT implementations rather
-than two front ends on one core: hammer2-fuse is Rust over `libhammer2`,
-this port is C carried from DragonFly. That independence is the reason it is
-useful here at all - it is a second reader that shares no code with this one,
-so agreement between them is evidence about the FORMAT rather than about a
-shared bug. This sentence claimed a common core until 2026-08-25 and was
-wrong.
+Neither replaces the other. They are independent implementations, not two
+front ends on one core: hammer2-fuse is Rust over `libhammer2`, this port
+is C carried from DragonFly. That independence is what makes hammer2-fuse
+a useful cross-check - a second reader sharing no code with this one, so
+agreement between the two says something about the on-disk format rather
+than about a shared bug.
 
 ## Requirements
 

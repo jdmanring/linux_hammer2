@@ -25,11 +25,8 @@ is trying to become, what is done, what is next, and where to help.
 
 ## How this file was built, and how to check it
 
-Rewritten 2026-08-25 from the table of steps and checks this file used to
-be, which named nothing else: no fixtures, no owners, no decisions, no
-risks, no record of what had already shipped. Every part of it has a
-source a reader can open, and the file is wrong wherever it disagrees
-with that source.
+Every part of this file has a source a reader can open, and the file is
+wrong wherever it disagrees with that source.
 
 | part of this file | taken from | not taken from |
 |---|---|---|
