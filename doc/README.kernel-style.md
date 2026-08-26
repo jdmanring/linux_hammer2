@@ -171,6 +171,18 @@ two words sit either side of a line break, and only the checker's own
 report located it. The other two are the BSD start-of-line indent and a
 split quoted string.
 
+906 to 911 when the device half of the mount path landed: 476 lines
+for 5 hits, one per 95 and the sparsest batch yet, which is what a
+mostly-carried function looks like when its rewritten parts are comment.
+Three are a quoted string split across lines, one is the BSD
+continuation indent on the file's first forward declaration, and the
+fifth is a repeated word, `inode` in upstream's note about the two
+directions of locking. That is the second repeated word in two commits
+and it has the same shape as the first: the two words sit either side of
+a line break in a comment upstream wrote, so no one-line `grep` reaches
+it and no edit to it would be this port's to make. No category is new
+and nothing was fixed rather than baselined.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

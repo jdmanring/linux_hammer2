@@ -449,7 +449,7 @@ hammer2_inode_to_gid(const hammer2_inode_t *ip)
  * HAMMER2 carries a real fsid in the volume header, which is the
  * obvious source and a better one than a path hash.
  *
- * DEFER(hammer2_vfsops.c gains ->statfs): use the volume header's fsid,
+ * DEFER(the PFS half of hammer2_get_tree() lands): use the volume header's fsid,
  * and record it in doc/README.porting.md.  The alternative this used to
  * name, huge_encode_dev(sb->s_bdev->bd_dev), is not available: the mount
  * design settled on 2026-08-26 follows btrfs and takes an anonymous

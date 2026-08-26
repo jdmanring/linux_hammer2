@@ -89,13 +89,19 @@ none of them has without saying why in the same commit.
 
 ## What does not exist yet
 
-There is a `file_system_type` and a `module_init`, so the tree has an
-entry point; there is no superblock behind it. `hammer2_get_tree()` fails
-every mount, deliberately and with an error rather than a stub, and
-carries a `DEFER` naming the fill-super as its trigger. `hammer2_vfsops.c`
-holds the PFS half, which is DragonFly's, plus the globals and the module
-entry, which are this port's; the mount path itself is what it still owes,
-and its design is recorded in that file's opening comment. The gates
+There is a `file_system_type`, a `module_init` and a `->get_tree` that
+opens the device; there is no root inode behind it. `hammer2_get_tree()`
+splits `fc->source`, creates an anonymous superblock, opens the volumes,
+builds the `hammer2_dev` and reads its super-root, and then tears all of
+it back down and fails the mount, deliberately and with an error rather
+than a stub. What it still owes is the PFS half: the label lookup under
+the super-root, the `pmp` it yields, and a fill-super. Two `DEFER` rows
+name that, one for the half itself and one for the read-write recovery
+upstream runs before it, which is not run for a mount that cannot
+succeed. `hammer2_vfsops.c` holds the PFS support half, which is
+DragonFly's, plus the globals, the module entry and the mount entry,
+which are this port's; the design is recorded in that file's opening
+comment. The gates
 compile and type-check; nothing here has ever been loaded into a kernel,
 and the first kbuild compile is a decision rather than a task.
 `doc/README.status.md` is the authority on what is done.

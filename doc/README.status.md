@@ -21,7 +21,7 @@ is a defect.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 458 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 984 | FreeBSD port; the PFS half carried, the module entry and the globals this port's, the mount path itself not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 1460 | FreeBSD port; the PFS half carried, the module entry, the globals and the device half of the mount path this port's, the PFS half of the mount path not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -338,9 +338,10 @@ against the source is the same shape as an empty one.
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
-| `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the volume header's own fsid. All three BSD ports hash the mount path, which Linux never tells a filesystem. This row named `huge_encode_dev()` on the root device as the alternative until 2026-08-26, when the mount design took an anonymous super following btrfs and left no `sb->s_bdev` to encode |
+| `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(the PFS half of hammer2_get_tree() lands)` | the volume header's own fsid. All three BSD ports hash the mount path, which Linux never tells a filesystem. This row named `huge_encode_dev()` on the root device as the alternative until 2026-08-26, when the mount design took an anonymous super following btrfs and left no `sb->s_bdev` to encode |
 | `hammer2_inode.c`, at `hammer2_igetv()` | `DEFER(super_operations gains ->evict_inode)` | the other half of `hammer2_iget_set()`: a `hammer2_inode_drop()` and clearing `ip->vp`. `iget5_locked()`'s set callback takes the inode's reference on the `hammer2_inode`, and nothing gives it back until `->evict_inode` exists, so every inode constructed today leaks one reference, including down `iget_failed()` |
-| `hammer2_vfsops.c`, at `hammer2_get_tree()` | `DEFER(the fill-super lands)` | `->get_tree` fails every mount rather than stubbing a success. The design it owes, `sget_fc()` with `set_anon_super_fc()` and no `sb->s_bdev`, is in the file's opening `XXX` comment |
+| `hammer2_vfsops.c`, at the end of `hammer2_get_tree()` | `DEFER(the PFS half of this function lands)` | the device half runs: `fc->source` is split, the superblock is created, the volumes are opened, the `hmp` is built and its super-root read, and then all of it is torn back down and the mount fails. What remains is the label lookup under `spmp->iroot`, the `hammer2_pfsalloc()` on the chain it finds, the `pmp->mp` check that answers whether that PFS is already mounted, and a fill-super |
+| `hammer2_vfsops.c`, in `hammer2_get_tree()` before `hammer2_update_pmps()` | `DEFER(a mount can succeed)` | upstream runs `hammer2_recovery()` and `hammer2_fixup_pfses()` on a read-write mount. Both write to the device, and every mount still fails a few lines later, so running them would repair a filesystem for a mount about to be torn down. Until it closes, a read-write mount does not replay an interrupted flush |
 | `hammer2_vfsops.c`, at `hammer2_context_ops` | `DEFER(a super_block exists to reconfigure)` | `->reconfigure`, where FreeBSD's `MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS refuses a remount, which is the right answer while there is nothing to remount |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 
@@ -380,7 +381,7 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 19 | 1 | 18 |
 | `hammer2_inode.c` | 23 | 6 | 17 |
-| `hammer2_vfsops.c` | 16 | 6 | 10 |
+| `hammer2_vfsops.c` | 20 | 6 | 14 |
 | `hammer2.h` | 6 | 3 | 3 |
 | `hammer2_disk.h` | 1 | 1 | 0 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
@@ -391,18 +392,17 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Sixty-eight are this port's, the right-hand column summed. Eighteen
-sit in `hammer2_ondisk.c`, the first file whose OS half was
-rewritten rather than carried; it arrived with nineteen and lost one when
-`lookup_bdev()` collapsed two marks into one. Fifteen came with
-`hammer2_inode.c` and the
-two header lines it needed, five more when `hammer2_igetv()` was written
-against `iget5_locked()`, five with `hammer2_vfsops.c`, three more when
-that file gained the module entry, one with the mount options and one
-with the teardown path. Sixty sit in
-a file that holds upstream text; the other eight are the two files this
-port wrote from nothing: six in `hammer2_os.h`, and two of
-`hammer2_io.c`'s four.
+Seventy-two are this port's, the right-hand column summed, and they
+fall in eight files: eighteen in `hammer2_ondisk.c`, seventeen in
+`hammer2_inode.c`, fourteen in `hammer2_vfsops.c`, seven in
+`hammer2_subr.c`, six in `hammer2_os.h`, five in `hammer2_flush.c`,
+three in `hammer2.h` and two in `hammer2_io.c`. That is the whole of
+them; the paragraphs below walk the three largest sets site by site and
+do not add up to seventy-two on their own.
+
+Sixty-four sit in a file that holds upstream text. The other eight are
+the two files this port wrote from nothing: six in `hammer2_os.h`, and
+two of `hammer2_io.c`'s four.
 
 `hammer2.h` has a row for the first time. It is a carried header this port
 edits in place rather than a file it wrote, so its two marks are counted
@@ -467,10 +467,26 @@ lock above and one the `M_WAITOK` contract. The count read six until
 2026-08-26, written before the two shim edits `hammer2_inode.c` needed,
 and seven for the few hours before `M_WAITOK` was fixed.
 
-`hammer2_vfsops.c`'s five are the file's opening comment, the two
-`hashinit(9)` substitutions and the helper they name, and the
-`__maybe_unused` rename. Its other two marks are upstream's own, both
-inside `hammer2_pfsalloc()`. The opening comment makes a deliberately
+`hammer2_vfsops.c`'s fourteen are the largest set in the tree after
+`hammer2_ondisk.c`'s, and the file is the fastest-moving in it, so they
+are listed by site rather than counted: the file's opening comment; the
+`sysctl(9)` block that became module parameters; the two `hashinit(9)`
+substitutions and the helper they name; the `hashdestroy(9)` mark; the
+`__maybe_unused` rename; the `desiredvnodes` derivation in
+`hammer2_init_limits()`; the mount options; four in `hammer2_get_tree()`
+for the `"from"` option, the `MNAMELEN` buffer, the device match and the
+`vfs_mountedon()` check Linux answers at the open; the `void` return of
+`->kill_sb`; and `uma_zcreate(9)` being infallible where
+`kmem_cache_create()` is not. The read to make against that list is that
+none of them is inside a carried function: the four in
+`hammer2_get_tree()` are in the Linux entry point, not in the PFS body
+it will call. This paragraph read "five" from 2026-08-26 until the
+device half landed the same day, having been written when the file held
+seven marks and not revisited as it tripled.
+
+The other six are upstream's own: two inside `hammer2_pfsalloc()` and
+four `hprintf` strings in `hammer2_unmount_helper()` that upstream
+already spells `XXX`. The opening comment makes a deliberately
 weaker claim than `hammer2_ondisk.c`'s: statements carry there and the
 control flow does not move, but here the function boundary itself moves,
 because Linux redistributes FreeBSD's `hammer2_mount()` across

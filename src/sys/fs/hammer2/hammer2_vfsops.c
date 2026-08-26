@@ -44,6 +44,10 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 
+static void hammer2_update_pmps(hammer2_dev_t *);
+static void hammer2_unmount_helper(struct super_block *, hammer2_pfs_t *,
+    hammer2_dev_t *);
+
 /*
  * The globals upstream keeps in this file.  Nothing in the tree defined
  * them until now, which is why nothing linked: every carried file that
@@ -149,7 +153,12 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
  *   because the carried files arrive with statics their unported
  *   callers would have used.  So nothing mechanical stops an
  *   unreachable helper from landing here ahead of its caller, and the
- *   rule that none does is a discipline rather than a gate.
+ *   rule that none does is a discipline rather than a gate.  The
+ *   converse IS a gate, and caught a missing carry the first time this
+ *   file used a forward declaration: a static DECLARED and never
+ *   defined is -Wundefined-internal in clang and "used but never
+ *   defined" in gcc, and neither is suppressed here.  The two halves of
+ *   what looks like one check are not both on.
  *
  * - hammer2_pfsfree_scan() keeps its hammer2_vfs_sync_pmp() call, which is
  *   declared in hammer2.h and not yet defined anywhere.  That is deliberate:
@@ -624,18 +633,485 @@ hammer2_free_fs_context(struct fs_context *fc)
 	fc->fs_private = NULL;
 }
 
+/*
+ * The device half of FreeBSD's hammer2_mount().  Given fc->source, this
+ * ends with an hmp on hammer2_mntlist whose volumes are open, whose
+ * vchain and fchain are set up, whose super-root inode is read, and whose
+ * PFSs are on hammer2_pfslist.  The PFS half, which picks one of those
+ * PFSs by label and builds a root inode and a root dentry, is what
+ * remains.
+ *
+ * Two orderings differ from FreeBSD and neither is a preference.
+ *
+ * sget_fc() comes before the device is opened, where FreeBSD is handed a
+ * struct mount and opens whenever it likes.  Opening a block device
+ * claims it for a holder, the holder ops any filesystem passes are
+ * fs_holder_ops, and all four of its callbacks start at
+ * bdev_super_lock(), which does sb = bdev->bd_holder and then requires
+ * s_root and SB_ACTIVE.  The holder has to be a live superblock, so
+ * there has to be one before the open.  btrfs orders it the same way.
+ * Both read at the kernel of record.
+ *
+ * The superblock is created with a NULL test function, so every mount
+ * gets a fresh one and sget_fc() never hands back an existing
+ * superblock.  That is deliberate: upstream answers "is this PFS already
+ * mounted" with an explicit pmp->mp check, and a test function would be
+ * a second answer to the same question that could disagree with the
+ * first.  One question, one place.
+ */
 static int
-hammer2_get_tree(struct fs_context *fc __maybe_unused)
+hammer2_get_tree(struct fs_context *fc)
 {
+	struct hammer2_fs_context *ctx = fc->fs_private;
+	struct super_block *sb;
+	hammer2_dev_t *hmp = NULL, *hmp_tmp;
+	hammer2_pfs_t *pmp = NULL, *spmp;
+	hammer2_devvp_list_t devvpl;
+	hammer2_devvp_t *e, *e_tmp;
+	hammer2_chain_t *parent, *schain;
+	const hammer2_inode_data_t *ripdata;
+	hammer2_key_t key_dummy;
+	hammer2_xop_head_t *xop;
+	char *devstr, *label;
+	int rdonly = (fc->sb_flags & SB_RDONLY) != 0;
+	int i, error, devvp_found;
+
 	/*
-	 * DEFER(the fill-super lands): until then the
-	 * filesystem is registered and every mount of it fails.  The
-	 * design this owes is in this file's opening comment.  Returning
-	 * an error rather than stubbing a success is the point: a mount
-	 * that appears to work and has no root is the failure this port
-	 * cannot afford to make quiet.
+	 * XXX Linux: FreeBSD reads the device out of the "from" mount
+	 * option and errors if it is absent.  fc->source is the same
+	 * string, and it is checked here for the same reason: this
+	 * filesystem is FS_REQUIRES_DEV, but the VFS only enforces that
+	 * through get_tree_bdev(), which a multi-device filesystem cannot
+	 * use.  Nothing else would reject a bare "mount -t hammer2 none".
 	 */
+	if (fc->source == NULL || fc->source[0] == '\0')
+		return (-EINVAL);	/* Linux: the VFS half is negative */
+
+	/*
+	 * XXX Linux: FreeBSD copies the device string into an MNAMELEN
+	 * stack buffer because the '@' split writes a NUL into it.  A
+	 * private copy is still needed for that reason, but it is taken
+	 * on the heap and sized to the string: MNAMELEN is 1024 and this
+	 * is a kernel stack.  fc->source itself must not be written to,
+	 * because a later reconfigure and every mount error message read
+	 * it back whole.
+	 */
+	devstr = hstrdup(fc->source);
+	debug_hprintf("devstr \"%s\"\n", devstr);
+
+	/*
+	 * Extract device and label, automatically mount @DATA if no label
+	 * specified.  Error out if no label or device is specified.  This is
+	 * a convenience to match the default label created by newfs_hammer2,
+	 * our preference is that a label always be specified.
+	 *
+	 * NOTE: We allow 'mount @LABEL <blah>'... that is, a mount command
+	 *	 that does not specify a device, as long as some HAMMER2 label
+	 *	 has already been mounted from that device.  This makes
+	 *	 mounting snapshots a lot easier.
+	 */
+	label = strchr(devstr, '@');
+	if (label == NULL || label[1] == 0) {
+		/*
+		 * DragonFly HAMMER2 uses either "BOOT", "ROOT" or "DATA"
+		 * based on label[-1].
+		 */
+		label = "DATA";
+	} else {
+		*label = '\0';
+		label++;
+	}
+
+	debug_hprintf("device \"%s\" label \"%s\" rdonly %d\n",
+	    devstr, label, rdonly);
+
+	/*
+	 * Linux: the superblock has to exist before a device can be opened
+	 * under it, for the holder reason in this function's comment.  From
+	 * here on every failure goes through deactivate_locked_super(),
+	 * which reaches ->kill_sb, so anything hung off the superblock is
+	 * unwound by the VFS and anything not yet hung off it is unwound
+	 * here.
+	 */
+	sb = sget_fc(fc, NULL, set_anon_super_fc);
+	if (IS_ERR(sb))
+		return (PTR_ERR(sb));	/* Linux: already negative */
+
+	/* Initialize all device vnodes. */
+	TAILQ_INIT(&devvpl);
+	error = hammer2_init_devvp(sb, devstr, &devvpl);
+	if (error) {
+		hprintf("failed to initialize devvp in %s\n", devstr);
+		hammer2_cleanup_devvp(&devvpl);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+		return (-error);	/* Linux: the VFS half is negative */
+	}
+
+	/*
+	 * Determine if the device has already been mounted.  After this
+	 * check hmp will be non-NULL if we are doing the second or more
+	 * HAMMER2 mounts from the same device.
+	 */
+	hammer2_lk_ex(&hammer2_mntlk);
+	if (!TAILQ_EMPTY(&devvpl)) {
+		/*
+		 * XXX Linux: FreeBSD matches the device vnode pointer and
+		 * falls back to the underlying device, because devfs can
+		 * hand out more than one vnode for one device.  There is no
+		 * vnode here and nothing is open yet, so the fallback is
+		 * the whole comparison: e->devno is what lookup_bdev()
+		 * resolved and is the same quantity as v_rdev.
+		 */
+		TAILQ_FOREACH(hmp_tmp, &hammer2_mntlist, mntentry) {
+			TAILQ_FOREACH(e_tmp, &hmp_tmp->devvp_list, entry) {
+				devvp_found = 0;
+				TAILQ_FOREACH(e, &devvpl, entry) {
+					if (e_tmp->devno == e->devno)
+						devvp_found = 1;
+				}
+				if (!devvp_found)
+					goto next_hmp;
+			}
+			hmp = hmp_tmp;
+			debug_hprintf("hmp matched\n");
+			break;
+next_hmp:
+			continue;
+		}
+		/*
+		 * XXX Linux: FreeBSD checks here that a device it has not
+		 * matched is not mounted by something else, on a
+		 * vfs_mountedon() call its own port already has commented
+		 * out.  Linux answers that question at the open instead:
+		 * bdev_file_open_by_path() claims the device for a holder
+		 * and fails with EBUSY if another holder has it, so a
+		 * device carrying some other filesystem is refused by
+		 * hammer2_open_devvp() below rather than here.
+		 */
+	} else {
+		/* Match the label to a pmp already probed. */
+		TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
+			for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+				if (pmp->pfs_names[i] &&
+				    strcmp(pmp->pfs_names[i], label) == 0) {
+					hmp = pmp->pfs_hmps[i];
+					break;
+				}
+			}
+			if (hmp)
+				break;
+		}
+		if (hmp == NULL) {
+			hprintf("PFS label \"%s\" not found\n", label);
+			hammer2_cleanup_devvp(&devvpl);
+			hammer2_lk_unlock(&hammer2_mntlk);
+			hstrfree(devstr);
+			deactivate_locked_super(sb);
+			return (-ENOENT);
+		}
+	}
+
+	/*
+	 * Open the device if this isn't a secondary mount and construct the
+	 * HAMMER2 device mount (hmp).
+	 */
+	if (hmp == NULL) {
+		/* Now open the device(s). */
+		KKASSERT(!TAILQ_EMPTY(&devvpl));
+		error = hammer2_open_devvp(sb, &devvpl);
+		if (error) {
+			hammer2_close_devvp(&devvpl);
+			hammer2_cleanup_devvp(&devvpl);
+			hammer2_lk_unlock(&hammer2_mntlk);
+			hstrfree(devstr);
+			deactivate_locked_super(sb);
+			return (-error);
+		}
+
+		/* Construct volumes and link with device vnodes. */
+		hmp = hmalloc(sizeof(*hmp), M_HAMMER2, M_WAITOK | M_ZERO);
+		hmp->bdev_file = NULL;
+		error = hammer2_init_volumes(&devvpl, hmp->volumes,
+		    &hmp->voldata, &hmp->volhdrno, &hmp->bdev_file);
+		if (error) {
+			hammer2_close_devvp(&devvpl);
+			hammer2_cleanup_devvp(&devvpl);
+			hammer2_lk_unlock(&hammer2_mntlk);
+			hfree(hmp, M_HAMMER2, sizeof(*hmp));
+			hstrfree(devstr);
+			deactivate_locked_super(sb);
+			return (-error);
+		}
+		if (!hmp->bdev_file) {
+			hprintf("failed to initialize root volume\n");
+			hammer2_unmount_helper(NULL, NULL, hmp);
+			hammer2_lk_unlock(&hammer2_mntlk);
+			hstrfree(devstr);
+			deactivate_locked_super(sb);
+			return (-EINVAL);
+		}
+
+		hmp->rdonly = rdonly;
+		hmp->hflags = ctx->hflags & HMNT2_DEVFLAGS;
+
+		TAILQ_INSERT_TAIL(&hammer2_mntlist, hmp, mntentry);
+		hammer2_mtx_init(&hmp->iohash_lock, "h2dev_iohash");
+		hammer2_io_hash_init(hmp);
+
+		hammer2_lk_init(&hmp->vollk, "h2dev_vol");
+		hammer2_lk_init(&hmp->bulklk, "h2dev_bulk");
+		hammer2_lk_init(&hmp->bflk, "h2dev_bf");
+
+		/*
+		 * vchain setup.  vchain.data is embedded.
+		 * vchain.refs is initialized and will never drop to 0.
+		 */
+		hmp->vchain.hmp = hmp;
+		hmp->vchain.refs = 1;
+		hmp->vchain.data = (void *)&hmp->voldata;
+		hmp->vchain.bref.type = HAMMER2_BREF_TYPE_VOLUME;
+		hmp->vchain.bref.data_off = 0 | HAMMER2_PBUFRADIX;
+		hammer2_chain_init(&hmp->vchain);
+
+		/*
+		 * fchain setup.  fchain.data is embedded.
+		 * fchain.refs is initialized and will never drop to 0.
+		 *
+		 * The data is not used but needs to be initialized to
+		 * pass assertion muster.  We use this chain primarily
+		 * as a placeholder for the freemap's top-level radix tree
+		 * so it does not interfere with the volume's topology
+		 * radix tree.
+		 */
+		hmp->fchain.hmp = hmp;
+		hmp->fchain.refs = 1;
+		hmp->fchain.data = (void *)&hmp->voldata.freemap_blockset;
+		hmp->fchain.bref.type = HAMMER2_BREF_TYPE_FREEMAP;
+		hmp->fchain.bref.data_off = 0 | HAMMER2_PBUFRADIX;
+		hmp->fchain.bref.methods =
+		    HAMMER2_ENC_CHECK(HAMMER2_CHECK_FREEMAP) |
+		    HAMMER2_ENC_COMP(HAMMER2_COMP_NONE);
+		hammer2_chain_init(&hmp->fchain);
+
+		/* Initialize volume header related fields. */
+		KKASSERT(hmp->voldata.magic == HAMMER2_VOLUME_ID_HBO ||
+		    hmp->voldata.magic == HAMMER2_VOLUME_ID_ABO);
+		hmp->volsync = hmp->voldata;
+		hmp->free_reserved = hmp->voldata.allocator_size / 20;
+
+		/*
+		 * Must use hmp instead of volume header for these two
+		 * in order to handle volume versions transparently.
+		 */
+		if (hmp->voldata.version >= HAMMER2_VOL_VERSION_MULTI_VOLUMES) {
+			hmp->nvolumes = hmp->voldata.nvolumes;
+			hmp->total_size = hmp->voldata.total_size;
+		} else {
+			hmp->nvolumes = 1;
+			hmp->total_size = hmp->voldata.volu_size;
+		}
+		KKASSERT(hmp->nvolumes > 0);
+
+		/* Move devvpl entries to hmp. */
+		TAILQ_INIT(&hmp->devvp_list);
+		while ((e = TAILQ_FIRST(&devvpl)) != NULL) {
+			TAILQ_REMOVE(&devvpl, e, entry);
+			TAILQ_INSERT_TAIL(&hmp->devvp_list, e, entry);
+		}
+		KKASSERT(TAILQ_EMPTY(&devvpl));
+		KKASSERT(!TAILQ_EMPTY(&hmp->devvp_list));
+
+		/*
+		 * Really important to get these right or teardown code
+		 * will get confused.
+		 */
+		hmp->spmp = hammer2_pfsalloc(NULL, NULL, hmp);
+		spmp = hmp->spmp;
+		spmp->pfs_hmps[0] = hmp;
+
+		/*
+		 * Dummy-up vchain and fchain's modify_tid.
+		 * mirror_tid is inherited from the volume header.
+		 */
+		hmp->vchain.bref.mirror_tid = hmp->voldata.mirror_tid;
+		hmp->vchain.bref.modify_tid = hmp->vchain.bref.mirror_tid;
+		hmp->vchain.pmp = spmp;
+		hmp->fchain.bref.mirror_tid = hmp->voldata.freemap_tid;
+		hmp->fchain.bref.modify_tid = hmp->fchain.bref.mirror_tid;
+		hmp->fchain.pmp = spmp;
+
+		/*
+		 * First locate the super-root inode, which is key 0
+		 * relative to the volume header's blockset.
+		 *
+		 * Then locate the root inode by scanning the directory keyspace
+		 * represented by the label.
+		 */
+		parent = hammer2_chain_lookup_init(&hmp->vchain, 0);
+		schain = hammer2_chain_lookup(&parent, &key_dummy,
+		    HAMMER2_SROOT_KEY, HAMMER2_SROOT_KEY, &error, 0);
+		hammer2_chain_lookup_done(parent);
+		if (schain == NULL) {
+			hprintf("invalid super-root\n");
+			hammer2_unmount_helper(NULL, NULL, hmp);
+			hammer2_lk_unlock(&hammer2_mntlk);
+			hstrfree(devstr);
+			deactivate_locked_super(sb);
+			return (-EINVAL);
+		}
+		if (schain->error) {
+			hprintf("chain error %08x reading super-root\n",
+			    schain->error);
+			hammer2_chain_unlock(schain);
+			hammer2_chain_drop(schain);
+			schain = NULL;
+			hammer2_unmount_helper(NULL, NULL, hmp);
+			hammer2_lk_unlock(&hammer2_mntlk);
+			hstrfree(devstr);
+			deactivate_locked_super(sb);
+			return (-EINVAL);
+		}
+
+		/*
+		 * The super-root always uses an inode_tid of 1 when
+		 * creating PFSs.
+		 */
+		spmp->inode_tid = 1;
+		spmp->modify_tid = schain->bref.modify_tid + 1;
+
+		/*
+		 * Sanity-check schain's pmp and finish initialization.
+		 * Any chain belonging to the super-root topology should
+		 * have a NULL pmp (not even set to spmp).
+		 */
+		ripdata = &schain->data->ipdata;
+		KKASSERT(schain->pmp == NULL);
+		spmp->pfs_clid = ripdata->meta.pfs_clid;
+
+		/*
+		 * Replace the dummy spmp->iroot with a real one.  It's
+		 * easier to just do a wholesale replacement than to try
+		 * to update the chain and fixup the iroot fields.
+		 *
+		 * The returned inode is locked with the supplied cluster.
+		 */
+		xop = uma_zalloc(hammer2_zone_xops, M_WAITOK | M_ZERO);
+		hammer2_dummy_xop_from_chain(xop, schain);
+		hammer2_inode_drop(spmp->iroot);
+		spmp->iroot = hammer2_inode_get(spmp, xop, -1, -1);
+		spmp->spmp_hmp = hmp;
+		spmp->pfs_types[0] = ripdata->meta.pfs_type;
+		spmp->rdonly = rdonly;
+		hammer2_inode_ref(spmp->iroot);
+		hammer2_inode_unlock(spmp->iroot);
+		hammer2_chain_unlock(schain);
+		hammer2_chain_drop(schain);
+		schain = NULL;
+		uma_zfree(hammer2_zone_xops, xop);
+		/* Leave spmp->iroot with one ref. */
+
+		/*
+		 * DEFER(a mount can succeed): upstream runs
+		 * hammer2_recovery() and hammer2_fixup_pfses() here when the
+		 * mount is read-write.  Both WRITE to the device, and every
+		 * mount still fails a few lines below, so running them now
+		 * would mean repairing a filesystem on behalf of a mount
+		 * that is about to be torn down.  The gap is real and it is
+		 * this: until it closes, a read-write mount does not replay
+		 * an interrupted flush.  It closes when a mount can succeed,
+		 * not before, because there is nothing else to condition it
+		 * on that is not a lie.
+		 */
+		if (!hmp->rdonly)
+			debug_hprintf("recovery skipped, no mount can "
+			    "succeed yet\n");
+
+		/*
+		 * A false-positive lock order reversal may be detected.
+		 * There are 2 directions of locking, which is a bad design.
+		 * chain is locked -> hammer2_inode_get() -> lock inode
+		 * inode is locked -> hammer2_inode_chain() -> lock chain
+		 */
+		hammer2_update_pmps(hmp);
+		hammer2_bulkfree_init(hmp);
+	} else {
+		/* hmp->devvp_list is already constructed. */
+		hammer2_cleanup_devvp(&devvpl);
+		if (ctx->hflags & HMNT2_DEVFLAGS)
+			hprintf("WARNING: mount flags pertaining to the whole "
+			    "device may only be specified on the first mount "
+			    "of the device: %08x\n",
+			    ctx->hflags & HMNT2_DEVFLAGS);
+	}
+
+	/*
+	 * DEFER(the PFS half of this function lands): what remains is
+	 * upstream's lookup of the label under spmp->iroot, the
+	 * hammer2_pfsalloc() that turns the chain it finds into a pmp, the
+	 * pmp->mp check that answers whether that PFS is already mounted,
+	 * and a fill-super that gives this superblock a root inode and a
+	 * root dentry.  Until then a mount that got this far has proved the
+	 * device probe works and is torn back down, which is what the
+	 * unmount helper below is being asked to do.
+	 *
+	 * Failing rather than stubbing a success is the point: a mount that
+	 * appears to work and has no root is the failure this port cannot
+	 * afford to make quiet.
+	 */
+	hammer2_unmount_helper(NULL, NULL, hmp);
+	hammer2_lk_unlock(&hammer2_mntlk);
+	hstrfree(devstr);
+	deactivate_locked_super(sb);
+
 	return (-EINVAL);	/* Linux: the VFS half is negative */
+}
+
+/*
+ * Scan PFSs under the super-root and create hammer2_pfs structures.
+ */
+static void
+hammer2_update_pmps(hammer2_dev_t *hmp)
+{
+	hammer2_dev_t *force_local;
+	hammer2_pfs_t *spmp;
+	const hammer2_inode_data_t *ripdata;
+	hammer2_chain_t *parent;
+	hammer2_chain_t *chain;
+	hammer2_key_t key_next;
+	int error;
+
+	/*
+	 * Force local mount (disassociate all PFSs from their clusters).
+	 * Used primarily for debugging.
+	 */
+	force_local = (hmp->hflags & HMNT2_LOCAL) ? hmp : NULL;
+
+	/* Lookup mount point under the media-localized super-root. */
+	spmp = hmp->spmp;
+	hammer2_inode_lock(spmp->iroot, 0);
+	parent = hammer2_inode_chain(spmp->iroot, 0, HAMMER2_RESOLVE_ALWAYS);
+	chain = hammer2_chain_lookup(&parent, &key_next, HAMMER2_KEY_MIN,
+	    HAMMER2_KEY_MAX, &error, 0);
+	while (chain) {
+		if (chain->error) {
+			hprintf("chain error %08x reading PFS root\n",
+			    chain->error);
+		} else if (chain->bref.type != HAMMER2_BREF_TYPE_INODE) {
+			hprintf("non inode chain type %d under super-root\n",
+			    chain->bref.type);
+		} else {
+			ripdata = &chain->data->ipdata;
+			hammer2_pfsalloc(chain, ripdata, force_local);
+		}
+		chain = hammer2_chain_next(&parent, chain, &key_next,
+		    HAMMER2_KEY_MAX, &error, 0);
+	}
+	if (parent) {
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+	}
+	hammer2_inode_unlock(spmp->iroot);
 }
 
 /*

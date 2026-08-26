@@ -10,7 +10,7 @@
 15 Misplaced SPDX-License-Identifier tag - use line 1 instead
 2 Missing a blank line after declarations
 15 Missing or malformed SPDX-License-Identifier tag in line 1
-2 Possible repeated word: 'X'
+3 Possible repeated word: 'X'
 1 Prefer 'X' to bare use of 'X'
 1 Statements terminations use 1 semicolon
 1 braces {} are not necessary for single statement blocks
@@ -22,8 +22,8 @@
 394 function definition argument 'X' should also have an identifier name
 13 plain inline is preferred over __inline
 1 please, no space before tabs
-123 please, no spaces at the start of a line
-30 quoted string split across lines
+124 please, no spaces at the start of a line
+33 quoted string split across lines
 140 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EACCES)
 3 return of an errno should typically be negative (ie: return -EAGAIN)
