@@ -49,12 +49,16 @@ in 0.2 can be prepared without it.
    `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
    `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
    Started 2026-08-26 with the PFS half of `hammer2_vfsops.c`, which is
-   carried; what remains there is the Linux mount entry, and the design
-   for it is settled and recorded in that file's opening comment.
-   `hammer2_igetv()` is written, on `iget5_locked()`, which is the inode
-   lifecycle decision this row names and what a fill-super needs to
-   construct a root. What it owes back is `->evict_inode`, in the
-   ledger.
+   carried. `hammer2_igetv()` is written, on `iget5_locked()`, which is
+   the inode lifecycle decision this row names and what a fill-super
+   needs to construct a root; what it owes back is `->evict_inode`, in
+   the ledger. The module entry is written too: `file_system_type`,
+   `module_init` and the globals, so the tree has an entry point and
+   would link. What remains in that file is the mount path itself,
+   `->parse_param` and a `->get_tree` that builds a super_block, and its
+   design is settled and recorded in the file's opening comment.
+   `->get_tree` fails every mount today, with an error rather than a
+   stub.
 3. The first `make`, when authorized: 0.3.
 4. Read-only mount of F1, then of the F2 root image: 0.4.
 
