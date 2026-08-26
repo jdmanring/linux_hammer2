@@ -79,6 +79,37 @@ jobs:
       # something else declined. The syntax gate takes that path on every
       # hosted runner, since the kernel of record is the latest release and
       # ubuntu-latest ships headers years behind it.
+      # THE ORIGIN CLONE, so the provenance gate's one check with teeth is
+      # not confined to the machine the imports were made on. Without it
+      # that gate can only establish the table agrees with itself, and it
+      # says so and exits 2; with it, every "identical" row is re-run
+      # through cmp on every push.
+      #
+      # The commit is read out of the CSV rather than written here. Pinned
+      # in two places it would drift, and the copy that drifted would be
+      # the one nothing reads. A clone that fails leaves the gate exactly
+      # where it was - COULD-NOT-RUN, reported as a skip - so this step
+      # can add verification and cannot take any away.
+      - name: Origin clone for the provenance gate
+        continue-on-error: true
+        run: |
+          set +e
+          commit=$(awk -F, '$2 == "freebsd-hammer2-upstream" {print $3; exit}' \
+            doc/provenance.csv)
+          [ -n "$commit" ] || { echo "::warning::no freebsd row in the CSV"; exit 0; }
+          d="$HOME/Projects/freebsd-hammer2-upstream"
+          mkdir -p "$HOME/Projects"
+          git clone --quiet https://github.com/kusumi/freebsd_hammer2 "$d" || {
+            echo "::warning::clone failed; the provenance gate stays COULD-NOT-RUN"
+            exit 0
+          }
+          git -C "$d" checkout --quiet "$commit" || {
+            echo "::warning::$commit not in the clone; gate stays COULD-NOT-RUN"
+            rm -rf "$d"
+            exit 0
+          }
+          echo "origin clone at $commit"
+
       - name: Gates (every script/test-*.sh)
         run: |
           set +e
