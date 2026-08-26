@@ -33,7 +33,11 @@ check() { # name expect cflags... source
 	rm -f /tmp/h2shim.$$
 }
 
-echo "hammer2 shim, syntax and guards:"
+# WHICH COMPILER, because the default and a deliberate run answer different
+# questions and the output could not say which happened. cc here is gcc and
+# a reviewer reaching for clang gets a different opinion by construction -
+# that difference is the whole reason the syntax gate runs two of them.
+echo "hammer2 shim, syntax and guards, with $("$CC" --version | head -1):"
 check "compiles, invariants off" pass -Wall -Wextra -Wno-unused-parameter test/syntax-check.c
 check "compiles, invariants on"  pass -Wall -Wextra -Wno-unused-parameter -DHAMMER2_INVARIANTS test/syntax-check.c
 

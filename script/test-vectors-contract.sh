@@ -60,6 +60,9 @@ src_check() { # name file pattern
 }
 
 echo "hammer2 vector contract:"
+# Named for the same reason the shim gate names its compiler: the
+# behavioural half below links whatever xxHash this machine has, and a run
+# that could not link one is a different run from one that did.
 # 1. The consumer arms its control by defining this. Losing it silently
 #    disarms a negative control in another tree.
 # ANCHORED ON THE DIRECTIVE, NOT THE NAME. Every pattern here is anchored
@@ -115,7 +118,7 @@ fi
 
 ran=$((ran + 1))
 if "$tmp/probe" >/dev/null 2>&1; then
-	echo "  ok    exit status 0 on correct vectors"
+	echo "  ok    exit status 0 on correct vectors, under $("$CC" --version | head -1)"
 else
 	echo "  FAIL  the vectors do not pass against the system xxHash"
 	fail=$((fail + 1))
