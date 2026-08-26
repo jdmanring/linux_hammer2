@@ -143,7 +143,7 @@ rather than summarised:
       dialect -fms-extensions, with clang version 22.1.8, matching the tree's own:
     syntax: 7 check(s), 0 failed against the kernel of record (7.2)
 
-measured at `ee4a8fc`. A gate result quoted without the revision it ran
+measured at `ca4c07a`. A gate result quoted without the revision it ran
 against is a figure without its scope, and this tree is a live checkout
 that another repository reads while work is being committed to it:
 ArtNix's delegator saw 6 gates where it expected 7 because it walked the
