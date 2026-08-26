@@ -9,7 +9,7 @@ is a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1315 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1322 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -20,7 +20,7 @@ is a defect.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_ondisk.c` | 839 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 860 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
@@ -324,13 +324,14 @@ against the source is the same shape as an empty one.
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_vnops.c is written)` | the conversion between `enum vtype` and `S_IFMT` belongs at the VFS boundary, and there is no caller to shape it against yet |
+| `hammer2_ondisk.c`, at `hammer2_access_devvp()` | `DEFER(hammer2_vfsops.c calls hammer2_access_devvp)` | whether `bdev_file_open_by_path()` reflects `BLK_OPEN_WRITE` into `f_mode`. The kernel tree of record here is headers only, so `block/bdev.c` cannot be read; the alternative is branching on `sb->s_flags & SB_RDONLY`. Nothing calls the function yet |
 | `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the fsid choice, between the volume header's own and `huge_encode_dev()` on the root device. All three BSD ports hash the mount path, which Linux never tells a filesystem |
 
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a
 failure rather than a drift.
 
-Three of the four lift with the read-side VFS entry, which is the next
+Four of the five lift with the read-side VFS entry, which is the next
 move on the roadmap.
 
 ### `XXX` marks: how much of the core is not a carry
@@ -353,12 +354,12 @@ against the FreeBSD port at
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
-| `hammer2_ondisk.c` | 18 | 1 | 17 |
+| `hammer2_ondisk.c` | 19 | 1 | 18 |
 
-Thirty-five are this port's, the right-hand column summed, and the count
-rose by seventeen on 2026-08-26 with `hammer2_ondisk.c`, which is the
-first file whose OS half was rewritten rather than carried. Twenty-nine of
-the thirty-five sit in a file that came from upstream; the other six are
+Thirty-six are this port's, the right-hand column summed, and the count
+rose by eighteen on 2026-08-26 with `hammer2_ondisk.c`, which is the
+first file whose OS half was rewritten rather than carried. Thirty of
+the thirty-six sit in a file that came from upstream; the other six are
 in the two files this port wrote from nothing.
 
 `hammer2_admin.c`, `hammer2_freemap.c`,
@@ -376,11 +377,12 @@ carried `hammer2.h` had already chosen, one is the include line, one the
 timestamp call, one the signal check, one the pair of functions that are
 not carried at all, and one the local variable the timestamp changed.
 
-`hammer2_ondisk.c`'s seventeen are the port's largest set and split nine
-to eight, counted by function on 2026-08-26. Nine are on the device side,
+`hammer2_ondisk.c`'s eighteen are the port's largest set and split ten
+to eight, counted by function on 2026-08-26. Ten are on the device side,
 which is the half this port wrote: the file's opening comment, the GEOM
 open and close, the init and cleanup split the Linux open call forced, and
-`hammer2_access_devvp()`. The other eight are in the carried half, and
+`hammer2_access_devvp()`, and the note in `hammer2_init_devvp()` recording
+that the error reporting moved to open along with the lookup. The other eight are in the carried half, and
 every one of them is a one-line substitution rather than a change of
 logic: four in `hammer2_verify_volumes_common()` (the GEOM consumer local,
 the media size read off the block device, the `devvp` field name, and the

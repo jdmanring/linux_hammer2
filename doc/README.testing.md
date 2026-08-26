@@ -19,7 +19,7 @@ Compile gates:
 Repository gates, POSIX sh over grep, sed and git, no kernel and no
 network:
 
-    $ bash script/test-inventory.sh   # the three lists that claim to cover src/
+    $ bash script/test-inventory.sh   # the lists covering src/ and test/, and the DEFER ledger
     $ bash script/test-citations.sh   # every file:line citation in doc/
     $ bash script/test-history.sh     # every roadmap row's commit hash
     $ bash script/test-provenance.sh  # every file under src/ has an origin row

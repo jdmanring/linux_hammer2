@@ -121,7 +121,9 @@ That collapses two functions and splits one differently:
   FreeBSD splits it the other way, holding a vnode reference from `init`
   and calling `g_vfs_open()` from `open`. The `struct super_block *` the
   header declares on `init_devvp` is unused and kept so the four trees read
-  side by side.
+  side by side. The error reporting moved with the resolution: FreeBSD
+  diagnoses a bad device path in `init_devvp`, and here nothing in that
+  function can fail, so a bad path is diagnosed at open.
 - `hammer2_gaccess_devvp()`, `hammer2_getw_devvp()` and
   `hammer2_putw_devvp()` are not carried. They adjust a GEOM consumer's
   write count around a volume-header write. Linux states the access it

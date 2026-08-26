@@ -154,7 +154,7 @@ hammer2_init_devvp(const struct super_block *sb, const char *blkdevs,
 	hammer2_devvp_t *e;
 	const char *p;
 	char *path;
-	int i, error = 0;
+	int i;
 
 	KKASSERT(TAILQ_EMPTY(devvpl));
 	KKASSERT(blkdevs); /* Could be empty string. */
@@ -211,7 +211,14 @@ hammer2_init_devvp(const struct super_block *sb, const char *blkdevs,
 	}
 	hfree(path, M_TEMP, PATH_MAX);
 
-	return (error);
+	/* XXX Linux: FreeBSD returns hammer2_lookup_device()'s error, and
+	 * a bad device path is diagnosed here.  Nothing can fail in this
+	 * function once the lookup is gone, so the diagnosis moved to
+	 * hammer2_open_devvp() along with the resolution.  The int return
+	 * stays because the carried hammer2.h declares it and because a
+	 * later parse error would use it.
+	 */
+	return (0);
 }
 
 void
@@ -235,8 +242,15 @@ hammer2_cleanup_devvp(hammer2_devvp_list_t *devvpl)
 		 * be held for the life of the module.
 		 */
 		if (e->bdev_file) {
-			WARN_ONCE(1, "hammer2: %s still open at cleanup\n",
-				  e->path ? e->path : "(null)");
+			/* Linux: debug_hprintf and not WARN_ONCE.  A WARN
+			 * says "this cannot happen", taints the kernel and
+			 * kills a panic_on_warn box, and until the contract
+			 * at the declaration in hammer2.h has a caller to
+			 * hold to it, reaching here is an ordinary mount
+			 * failure unwinding rather than a bug.
+			 */
+			debug_hprintf("%s still open at cleanup\n",
+			    e->path ? e->path : "(null)");
 			bdev_fput(e->bdev_file);
 			e->bdev_file = NULL;
 			e->open = 0;
@@ -829,6 +843,13 @@ hammer2_access_devvp(struct file *bdev_file, int rdonly)
 	 * ask is whether the file that call returned was actually opened
 	 * for writing, which is a different question at a different layer
 	 * and the one a caller passing rdonly==0 means.
+	 *
+	 * DEFER(hammer2_vfsops.c calls hammer2_access_devvp): confirm that
+	 * bdev_file_open_by_path() reflects BLK_OPEN_WRITE into f_mode, or
+	 * branch on sb->s_flags & SB_RDONLY instead.  That it compiles says
+	 * the field exists, not that the open sets it, and the kernel tree
+	 * of record here is headers only so block/bdev.c cannot be read.
+	 * Nothing calls this yet, so nothing depends on the answer today.
 	 */
 	KKASSERT(bdev_file);
 

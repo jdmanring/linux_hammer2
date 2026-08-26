@@ -82,7 +82,7 @@ hits in the port's own `XXX` blocks and was fixed rather than baselined:
 a checker complaint about a comment this port wrote is not a carried idiom
 and has no claim on the exception the BSD style gets here.
 
-782 to 856 when `hammer2_ondisk.c` landed: 839 lines for 74 hits, one per
+782 to 856 when `hammer2_ondisk.c` landed: 860 lines for 74 hits, one per
 11 and by far the densest, which is what happens when a file is added
 whose carried half is dense in `return (x);` and whose rewritten half was
 written in the same BSD style deliberately. Thirty-one of the seventy-four

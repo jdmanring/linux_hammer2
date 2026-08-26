@@ -1095,6 +1095,13 @@ int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
 /* hammer2_ondisk.c */
 int hammer2_open_devvp(struct super_block *, const hammer2_devvp_list_t *);
 int hammer2_close_devvp(const hammer2_devvp_list_t *);
+/*
+ * Linux: hammer2_close_devvp() must be called before
+ * hammer2_cleanup_devvp(), which frees the list.  FreeBSD's cleanup
+ * vrele()s whatever is left, and this one puts whatever is left for the
+ * same reason, but a caller relying on that leaks nothing and reports
+ * nothing either.
+ */
 int hammer2_init_devvp(const struct super_block *, const char *,
     hammer2_devvp_list_t *);
 void hammer2_cleanup_devvp(hammer2_devvp_list_t *);

@@ -186,7 +186,13 @@ done
 # a possible and correct state, but it is also what a broken pattern looks
 # like, so the two are separated: zero markers is reported, not passed
 # over in silence.
+# mktemp with a trap, matching test-posix.sh, rather than $$ in /tmp: a
+# predictable name in a shared directory is another user's to create, and
+# the errors from the loops below are not discarded, since a gate that can
+# fail silently is the thing this check exists to prevent.
 LEDGER=doc/README.status.md
+dtmp=$(mktemp -d) || exit 2
+trap 'rm -rf "$dtmp"' EXIT
 defers=$(command grep -rhoE 'DEFER\([^)]*\)' src/ | LC_ALL=C sort -u)
 ndefer=$(printf '%s' "$defers" | command grep -c . || true)
 if [ "$ndefer" = 0 ]; then
@@ -217,12 +223,11 @@ else
 		printf '%s\n' "$rows" | while IFS= read -r r; do
 			command grep -rqF -- "$r" src/ ||
 				echo "  FAIL $LEDGER: row for $r, which src/ no longer holds"
-		done > /tmp/h2-defer2.$$ 2>/dev/null
-		if [ -s /tmp/h2-defer2.$$ ]; then
-			cat /tmp/h2-defer2.$$
-			fail=$((fail + $(command grep -c . /tmp/h2-defer2.$$)))
+		done > "$dtmp/stale"
+		if [ -s "$dtmp/stale" ]; then
+			cat "$dtmp/stale"
+			fail=$((fail + $(command grep -c . "$dtmp/stale")))
 		fi
-		rm -f /tmp/h2-defer2.$$
 	fi
 fi
 
