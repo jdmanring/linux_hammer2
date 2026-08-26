@@ -87,10 +87,20 @@ strategy would meet the same format.
 | `hammer2_os.h:54-62` | the 6.15 version floor, which exists only for the above |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
-`hammer2.h:111`, `HAMMER2_LIMIT_DIRTY_INODES`, is 65536 and is neither: it
+`HAMMER2_LIMIT_DIRTY_INODES` in `hammer2.h` is 65536 and is neither: it
 bounds a count of inodes and merely shares the number. It is defined and not
 yet referenced anywhere in this tree. Listed so the next sweep does not
 classify it as either.
+
+Citations into the kernel's own headers are by expression throughout this
+document, never by line. They cannot be checked by
+`script/test-citations.sh`, which reads this tree only, so a line number
+in one is precision no instrument backs - and the sibling repository's
+`blkdev.h` citation, carrying a line that matched neither the tag it named
+nor the one before it, is what that costs. Read against the 7.1.9 headers
+on this workstation on 2026-08-26, every kernel expression named here
+resolves; the kernel of record is 7.2, where the lines will differ and the
+expressions will not.
 
 ## Why the bootstrap choice needs THP
 
@@ -114,7 +124,7 @@ So THP is a hard requirement of the CURRENT design and not of HAMMER2.
 Handoff section 37 item 4 asks for the narrowest compatible design. Read at
 the kernel of record:
 
-`mapping_max_folio_size_supported()` (`pagemap.h:395`) returns
+`mapping_max_folio_size_supported()` in `include/linux/pagemap.h` returns
 `1U << (PAGE_SHIFT + MAX_PAGECACHE_ORDER)` under THP and `PAGE_SIZE`
 otherwise. Its own comment says the filesystem SHOULD call it at mount time
 when it has a folio-size requirement, which is exactly our case.
@@ -135,7 +145,8 @@ say the name. Neither is written yet: `sb_set_blocksize` appears in this
 tree only inside a comment, because there is no mount path.
 
 `mapping_set_folio_min_order()` and `mapping_set_folio_order_range()`
-(`pagemap.h:418,438`) are how a filesystem states the requirement rather
+(both `static inline` in `include/linux/pagemap.h`) are how a filesystem
+states the requirement rather
 than inferring it. They are the right call sites when the mount path lands.
 
 ### The narrower design, and its cost

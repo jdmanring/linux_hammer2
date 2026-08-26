@@ -139,8 +139,10 @@ counting them would overstate the exposure.
 
 The mapping is the BSD ports' and the consequence is not. All three map
 DragonFly's `KKASSERT` onto their own `KASSERT`, gated on the kernel's
-assertion build (`freebsd_hammer2` `hammer2_compat.h:49`, `netbsd_hammer2`
-`hammer2_compat.h:60`), and all three define `hpanic` as `panic()`
+assertion build (`freebsd_hammer2` defines `KKASSERT(exp)` as `KASSERTMSG`,
+`netbsd_hammer2` as bare `KASSERT`, both in their own
+`src/sys/fs/hammer2/hammer2_compat.h`), and all three define `hpanic` as
+`panic()`
 verbatim. This port follows both.
 
 | site | what it is |

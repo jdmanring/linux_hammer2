@@ -134,6 +134,39 @@ if [ "$rows" -eq 0 ]; then
 	exit 2
 fi
 
-echo "citations: $rows row(s), $checked symbol-anchored pass(es), $weakpass literal-anchored, $unanchored unanchored, $fail failure(s)"
+# WHAT THIS GATE DOES NOT COVER, PRINTED BESIDE WHAT IT DOES. It reads
+# citations in TABLE ROWS. A citation in prose, or one naming a kernel
+# header or another port's tree, is matched by nothing here and is never
+# mentioned - so it sits in the same document as covered ones and inherits
+# their credibility. A citation no instrument covers, among citations that
+# are covered, reads as covered. Measured 2026-08-26: 20 citation-shaped
+# tokens in doc/, 15 of them in rows this gate reads.
+#
+# The floor exists because ZERO UNCOVERED is also what a broken counting
+# pattern prints, and it reads as "nothing uncovered" rather than "nothing
+# asked", which is the reassuring direction nobody re-measures. The
+# uncovered ones are not checked and this does not move toward checking
+# them; it makes them visibly unchecked.
+allcites=$(command grep -roE '`[A-Za-z0-9_./-]+\.(c|h|sh|md|txt|pl):[0-9]+' doc/ 2>/dev/null | wc -l | tr -d ' ')
+if [ "$allcites" -lt "$rows" ]; then
+	echo "citations: FAIL: counted $allcites citation-shaped tokens in doc/ but" >&2
+	echo "  read $rows table rows, so the counting pattern has stopped" >&2
+	echo "  matching and the uncovered figure below would understate" >&2
+	exit 1
+fi
+uncovered=$((allcites - rows))
+
+echo "citations: $rows row(s) read, $checked symbol-anchored pass(es), $weakpass literal-anchored, $unanchored unanchored note(s), $fail failure(s)"
+echo "citations: $uncovered of $allcites citation-shaped tokens in doc/ are OUTSIDE a table row and unchecked here"
+# NAMED, NOT JUST COUNTED. A bare number is a mystery a reader resolves by
+# guessing which ones it means, and guessing is how the covered ones get
+# credited with the uncovered one's correctness.
+if [ "$uncovered" -gt 0 ]; then
+	command grep -roE '`[A-Za-z0-9_./-]+\.(c|h|sh|md|txt|pl):[0-9]+[0-9,-]*`' doc/ 2>/dev/null |
+		sed 's/`//g' | while IFS=: read -r doc rest; do
+			cited=$rest
+			command grep -qF -- "| \`$cited\` |" "$doc" || echo "  unchecked  $doc: $cited"
+		done
+fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
