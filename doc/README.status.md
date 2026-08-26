@@ -235,6 +235,13 @@ carried files held every other call site and printed anonymously. The
 name now lives in `hprintf` itself, which is this port's macro, so there
 is one copy of it and no file has to remember anything.
 
+**The literal prefix is `hammer2: `**, and a gate matching dmesg from 0.3
+on should match that. It is `KBUILD_MODNAME`, which kbuild derives from
+`obj-m += hammer2.o` in `src/sys/fs/hammer2/Makefile`, so it cannot drift
+without the module's own filename drifting with it. Under
+`HAMMER2_INVARIANTS` the function name, command and pid follow it; without
+the knob, the function name alone. Both shapes start with `hammer2: `.
+
 The second is `printf`, which on a BSD kernel appends to the open line;
 `hammer2_bulkfree.c` prints a range with `hprintf` and no newline and
 finishes it with `printf`. `pr_info` closes a record per call, so that
