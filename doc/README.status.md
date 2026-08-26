@@ -17,10 +17,11 @@ is a defect.
 | `hammer2_xops.c` | 1449 | FreeBSD port, carried byte-for-byte |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
 | `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 943 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 620 | ours, the OS shim |
+| `hammer2_os.h` | 647 | ours, the OS shim |
 | `hammer2_compat.h` | 134 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -188,11 +189,11 @@ at all to follow.
 
 ## What is not here
 
-`hammer2_flush.c`, `hammer2_inode.c`, `hammer2_subr.c`,
-`hammer2_cluster.c`, `hammer2_ondisk.c`, `hammer2_strategy.c`,
-`hammer2_ioctl.c`, `hammer2_vfsops.c`, `hammer2_vnops.c`.
+`hammer2_inode.c`, `hammer2_subr.c`, `hammer2_cluster.c`,
+`hammer2_ondisk.c`, `hammer2_strategy.c`, `hammer2_ioctl.c`,
+`hammer2_vfsops.c`, `hammer2_vnops.c`.
 
-The carried set is six files at 10,556 lines, measured against all three BSD
+The carried set is six files at 10,561 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
 `hammer2_bulkfree.c`, `hammer2_xops.c` and `hammer2_admin.c`. Whether
 `hammer2_inode.c`, `hammer2_subr.c` and `hammer2_ondisk.c` join them is what
@@ -212,11 +213,32 @@ costs no correctness. The flag is set in `hammer2_inode.c`, so that half
 of the change lands when that file does, and until then the port has a
 non-recursive lock and no code that recurses it.
 
-`hammer2_flush.c` is next and needs a port decision rather than a shim: it
-issues a device cache flush, FreeBSD through GEOM (`g_alloc_bio`,
-`BIO_FLUSH`) and NetBSD through `DIOCCACHESYNC`. The ports already
-disagree, so there is no precedent to follow and Linux's answer is
-`blkdev_issue_flush()`.
+`hammer2_flush.c` landed on 2026-08-26 and took the port decision it needed
+rather than a shim. Its OS-dependent surface is one function,
+`hammer2_xop_inode_flush`, and everything else in the file is chain logic
+that carried unchanged. Three edits, each marked `XXX` in place:
+
+The device cache flush. DragonFly hands a zero-length `BUF_CMD_FLUSH` buf to
+`vn_strategy()`, FreeBSD allocates a GEOM bio carrying `BIO_FLUSH`, and
+NetBSD and OpenBSD both collapse it to one `VOP_IOCTL(DIOCCACHESYNC)`.
+Linux has that single call, `blkdev_issue_flush()`, so this follows the two
+ports that agree rather than the one this tree otherwise carries.
+
+The per-device `VOP_FSYNC`, which writes back a device vnode's dirty
+buffers. Linux writes back a block device's dirty pages with
+`sync_blockdev()`, which needs no lock from the caller, so the
+`vn_lock`/`VOP_UNLOCK` pair around it went with it.
+
+The volume header write. FreeBSD uses `getblk`/`bwrite` on the buffer
+cache; this port keeps the device's pages in the DIO layer, so it goes
+through `hammer2_io_bread` and `hammer2_io_bwrite` instead. The DIO layer
+does not export the read-skipping form of `getblk`, so the block is read
+before all 64 KiB of it is overwritten. The write is the same size either
+way, and the path does not execute until the write milestone.
+
+None of the three is exercised. The whole core type-checks under both
+compilers with warnings as failures, which is what 0.2 claims and all it
+claims; nothing here has run.
 
 ### Logging
 

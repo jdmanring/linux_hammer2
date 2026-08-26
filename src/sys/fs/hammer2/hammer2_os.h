@@ -617,4 +617,31 @@ uma_zfree(uma_zone_t zone, void *addr)
 	kmem_cache_free(zone, addr);
 }
 
+/*
+ * Flushing the device beneath the volume header.  The core issues two
+ * operations in order: write back the device's dirty pages, then tell the
+ * drive to empty its own write cache.  The second without the first is a
+ * barrier around nothing.
+ *
+ * DragonFly builds a zero-length buf with BUF_CMD_FLUSH and hands it to
+ * vn_strategy().  FreeBSD's port allocates a GEOM bio carrying BIO_FLUSH;
+ * NetBSD's and OpenBSD's both collapse it to one VOP_IOCTL(DIOCCACHESYNC).
+ * Linux has that single call, so these follow NetBSD and OpenBSD.
+ *
+ * Both return a positive errno, by the core's convention.
+ */
+/* Linux */
+static inline int
+hammer2_dev_writeback(struct file *bdev_file)
+{
+	return (-sync_blockdev(file_bdev(bdev_file)));
+}
+
+/* Linux */
+static inline int
+hammer2_dev_cache_flush(struct file *bdev_file)
+{
+	return (-blkdev_issue_flush(file_bdev(bdev_file)));
+}
+
 #endif /* !_FS_HAMMER2_OS_H_ */
