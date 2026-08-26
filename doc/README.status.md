@@ -42,13 +42,16 @@ of one run.
 `CHECKPATCH` or `KDIR` points at a full source tree. That is could-not-run,
 not a pass.
 
-- `script/test-shim.sh` and `script/test-syntax.sh`: 3 and 7 on 2026-08-25,
-  three of the ten being controls that must fail and do.
+- `script/test-shim.sh` and `script/test-syntax.sh`: 6 and 25 on 2026-08-26,
+  two of the thirty-one being controls that must fail and do. The shim
+  gate's sixth check is the one that reads its own coverage: an inline the
+  driver never calls is barely checked by the compile, and the count says
+  whether any are missed.
 - `script/test-checkpatch.sh`: holds the style deviation set at its recorded
-  583 hits under the checkpatch.pl the baseline names, and under the kernel
+  760 hits under the checkpatch.pl the baseline names, and under the kernel
   of record's own patched copy, which differs by sha256 and produces an
   identical set. Neither figure travels without the checker that produced it;
-  583 quoted bare reads as a mainline number and is not one. With no baseline
+  760 quoted bare reads as a mainline number and is not one. With no baseline
   present the gate refuses rather than writing one.
 - `script/test-history.sh`: resolves every commit the roadmap's history
   table pins and checks its subject still matches, then prints how many
@@ -174,7 +177,7 @@ holds gdb helpers.
 
 That checker is not mainline's: its `sha256` differs from the one the
 baseline records. Run on 2026-08-26 it produced the deviation set unchanged
-at 583 hits, so cachyos's patches do not move this tree's style figures. The
+at 760 hits, so cachyos's patches do not move this tree's style figures. The
 gate says the hash does not match while accepting the version its own tree
 reports, and prints the two halves separately.
 

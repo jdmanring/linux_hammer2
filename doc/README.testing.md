@@ -151,9 +151,17 @@ only the careful one is ever right, while both print the same summary. It
 was live on 2026-08-26 in the syntax gate, which needed `KDIR` typed to
 reach the kernel of record, and in the style gate, which read the host's
 build tree while the record's own `checkpatch.pl` sat in the store. It was
-latent in `test-shim.sh` and in the vectors contract, whose `cc` is gcc
-here while a reviewer reaching for clang gets a different opinion by
-construction.
+live in `test-shim.sh` too, though not in the direction that sentence
+guessed. It said a reviewer reaching for clang would get a different
+opinion; what happened on 2026-08-26 is that two versions of the same
+compiler disagreed. GCC 13 on the runner accepted a `struct file` the
+stub tree never declared and GCC 16 here warned about it, so `346dac6`
+was green in CI and red on the workstation. The gate names its compiler
+in its header line and does not require one, which is the right trade for
+a gate whose whole point is needing nothing but `cc`: two opinions are
+worth more than one pinned opinion, as long as a disagreement is read as
+a finding rather than a flake. It is still true of the vectors
+contract.
 
 That sentence opened with a count instead of naming them, and
 `script/test-inventory.sh` failed it: a number word immediately before
