@@ -12,7 +12,7 @@ is a defect.
 | `hammer2.h` | 1315 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
-| `hammer2_io.c` | 899 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 953 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 473 | ours, the OS shim |
 | `hammer2_compat.h` | 111 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |

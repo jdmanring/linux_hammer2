@@ -52,6 +52,16 @@
  * See doc/README.porting.md.
  */
 
+/*
+ * Every message this file prints goes through hprintf, whose HFMT is the
+ * function name and nothing else, so without this the module's own name
+ * never reaches dmesg.  It must precede the first kernel header, since
+ * <linux/printk.h> defines an empty pr_fmt when it does not find one.
+ * Per .c file rather than in a shared header for that reason: a header
+ * cannot guarantee it is read before the kernel's.
+ */
+#define pr_fmt(fmt)	KBUILD_MODNAME ": " fmt
+
 #include "hammer2.h"
 
 #include <linux/blkdev.h>
@@ -98,6 +108,38 @@ static inline struct address_space *
 hammer2_io_mapping(hammer2_io_t *dio)
 {
 	return dio->bdev_file->f_mapping;
+}
+
+/*
+ * The folio must cover the whole physical buffer, because
+ * hammer2_io_data() hands the core a folio_address() pointer and the core
+ * reads and writes psize bytes through it.  A short folio is a buffer
+ * overrun, so this is a length check and not an assertion: KKASSERT is
+ * compiled out unless HAMMER2_INVARIANTS is set, which is not the default
+ * build, and the invariant has to hold in the build people run.
+ *
+ * The guarantee comes from the mapping's minimum folio order, which the
+ * mount path sets with sb_set_blocksize().  There is no mount path yet,
+ * so nothing enforces it today; when there is, reaching here means the
+ * request did not take, and the only safe answer is to fail the I/O.
+ * Returns a positive errno, the core's convention.
+ *
+ * FreeBSD has no equivalent: getblk() is told the size it must return.
+ * The folio order is a property of the mapping rather than of the call,
+ * so this check is ours and has no upstream counterpart to track.
+ */
+static int
+hammer2_io_folio_check(hammer2_io_t *dio, struct folio *folio)
+{
+	if (likely(folio_size(folio) >= (size_t)dio->psize))
+		return (0);
+
+	WARN_ONCE(1, "hammer2: folio %zu < psize %d at pbase %016llx: "
+		  "the mapping's minimum folio order is not set\n",
+		  folio_size(folio), dio->psize,
+		  (unsigned long long)dio->pbase);
+
+	return (EIO);
 }
 
 static __inline void
@@ -223,12 +265,17 @@ static int
 hammer2_bread(hammer2_dev_t *hmp, hammer2_io_t *dio)
 {
 	struct folio *folio;
+	int error;
 
 	folio = read_mapping_folio(hammer2_io_mapping(dio),
 				   hammer2_io_index(dio), dio->bdev_file);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
-	KKASSERT(folio_size(folio) >= (size_t)dio->psize);
+	error = hammer2_io_folio_check(dio, folio);
+	if (error) {
+		folio_put(folio);
+		return (error);
+	}
 	dio->folio = folio;
 	hammer2_inc_iostat(&hmp->iostat_read, dio->btype, dio->psize);
 
@@ -246,12 +293,19 @@ static int
 hammer2_getblk_new(hammer2_io_t *dio, int zero)
 {
 	struct folio *folio;
+	int error;
 
 	folio = filemap_grab_folio(hammer2_io_mapping(dio),
 				   hammer2_io_index(dio));
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
-	KKASSERT(folio_size(folio) >= (size_t)dio->psize);
+	error = hammer2_io_folio_check(dio, folio);
+	if (error) {
+		/* grab returns it locked, and it never became uptodate. */
+		folio_unlock(folio);
+		folio_put(folio);
+		return (error);
+	}
 	if (zero)
 		folio_zero_range(folio, 0, dio->psize);
 	folio_mark_uptodate(folio);
