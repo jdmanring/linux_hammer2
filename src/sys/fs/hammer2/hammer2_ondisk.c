@@ -224,11 +224,23 @@ hammer2_cleanup_devvp(hammer2_devvp_list_t *devvpl)
 		TAILQ_REMOVE(devvpl, e, entry);
 
 		/* XXX Linux: FreeBSD vrele()s the device vnode it took a
-		 * reference to in hammer2_init_devvp().  Nothing is held
-		 * here: hammer2_close_devvp() has already put the file.
+		 * reference to in hammer2_init_devvp().  Normally there is
+		 * nothing to put here, because hammer2_close_devvp() ran
+		 * first.  It is done unconditionally anyway, exactly as
+		 * FreeBSD's vrele() is: hammer2_open_devvp() returns from
+		 * the middle of its loop when one device fails, leaving the
+		 * ones before it open, and the caller that has to unwind
+		 * that is hammer2_vfsops.c.  A KKASSERT here would be
+		 * compiled out of the default build and the reference would
+		 * be held for the life of the module.
 		 */
-		KKASSERT(!e->open);
-		KKASSERT(!e->bdev_file);
+		if (e->bdev_file) {
+			WARN_ONCE(1, "hammer2: %s still open at cleanup\n",
+				  e->path ? e->path : "(null)");
+			bdev_fput(e->bdev_file);
+			e->bdev_file = NULL;
+			e->open = 0;
+		}
 
 		/* Cleanup path. */
 		KKASSERT(e->path);

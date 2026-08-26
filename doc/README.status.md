@@ -20,7 +20,7 @@ is a defect.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_ondisk.c` | 827 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 839 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
@@ -352,13 +352,19 @@ carried `hammer2.h` had already chosen, one is the include line, one the
 timestamp call, one the signal check, one the pair of functions that are
 not carried at all, and one the local variable the timestamp changed.
 
-`hammer2_ondisk.c`'s seventeen are the port's largest set and are all in
-one half of the file. Every one of them is on the device side: the GEOM
-open and close, the two functions the Linux open call absorbed, the three
-it made meaningless, the sector-size and media-size reads, and the two
-uuid formatters. The volume-header verification half carries no mark at
-all, which is the property that makes the file reviewable: a reader
-comparing it against FreeBSD's can skip to the marks.
+`hammer2_ondisk.c`'s seventeen are the port's largest set and split nine
+to eight, counted by function on 2026-08-26. Nine are on the device side,
+which is the half this port wrote: the file's opening comment, the GEOM
+open and close, the init and cleanup split the Linux open call forced, and
+`hammer2_access_devvp()`. The other eight are in the carried half, and
+every one of them is a one-line substitution rather than a change of
+logic: four in `hammer2_verify_volumes_common()` (the GEOM consumer local,
+the media size read off the block device, the `devvp` field name, and the
+uuid comparison the kernel has no formatter for), two signature lines in
+`hammer2_init_volumes()`, the read call in `hammer2_read_volume_header()`,
+and the formatter in `hammer2_print_uuid_mismatch()`. That is the property
+worth checking: no carried function here had its control flow edited, and
+a reviewer can confirm it one mark at a time.
 
 The other six are in the two files this port writes: two in `hammer2_io.c`
 and four in `hammer2_os.h`, one of them the non-recursive lock above.
