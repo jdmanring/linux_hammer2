@@ -48,9 +48,30 @@ The third number increments when a verified deliverable lands inside the
 current milestone: a file imported with its gate, a gate added, a decision
 taken and implemented.
 
-Milestones carry the stage names H0 to H7 beside their version numbers. H0,
-archaeology, finished before this repository existed; the tree begins inside
-H1.
+Milestones carry the stage names H0 to H7 beside their version numbers. They
+come from a port plan written before this repository existed and held outside
+it, so they are defined here rather than cited: a name whose definition is one
+directory away becomes unreachable the moment the tree is handed to someone
+else, and these names are already in the source comments.
+
+| stage | what it produces |
+|---|---|
+| H0 | archaeology: what the format is, what may be carried, under which licence |
+| H1 | a read-only driver that builds, loads and mounts DragonFly-written media |
+| H2 | the write path, verified against DragonFly |
+| H3 | crash recovery |
+| H4 | snapshots and checkpoints |
+| H5 | PFS as storage domains |
+| H6 | hardening at scale |
+| H7 | advanced storage: multi-device, replication, remote checkpoints |
+
+H0 finished before the first commit here. What it produced that this tree
+carries is the origin table in `README.status.md`, `provenance.csv` and the
+vendored-library audit the xxHash header cites in place.
+
+`H2` is two things in this file and in the source. As a stage it is the write
+path; in a comment carried from DragonFly it is the filesystem's own
+abbreviation. The stage is only ever written beside a version number.
 
 **Current version: 0.2.x.**
 
