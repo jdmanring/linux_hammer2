@@ -35,7 +35,10 @@ jobs:
   gates:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v7.0.1 is current; v4 targeted Node 20 and the runner was forcing
+      # it onto Node 24 with a deprecation notice. The pin rule applies to
+      # the actions as much as to the kernel and the style checker.
+      - uses: actions/checkout@v7
         with:
           # test-history.sh resolves every roadmap row's commit hash, so a
           # shallow clone would fail it on rows older than the fetch depth.
@@ -44,7 +47,10 @@ jobs:
       - name: Toolchain and kernel headers
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y clang || echo "no clang"
+          # libxxhash-dev turns the vectors gate's behavioural half from
+          # COULD-NOT-RUN into a real run: without an xxHash to link, it
+          # checks the source contract only and says so.
+          sudo apt-get install -y clang libxxhash-dev || echo "toolchain incomplete"
           sudo apt-get install -y "linux-headers-$(uname -r)" || \
             echo "no headers for $(uname -r)"
 
