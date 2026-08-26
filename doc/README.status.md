@@ -21,12 +21,12 @@ is a defect.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 458 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 1460 | FreeBSD port; the PFS half carried, the module entry, the globals and the device half of the mount path this port's, the PFS half of the mount path not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 1475 | FreeBSD port; the PFS half carried, the module entry, the globals and the device half of the mount path this port's, the PFS half of the mount path not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 685 | ours, the OS shim |
+| `hammer2_os.h` | 699 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -375,7 +375,7 @@ against the FreeBSD port at
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 1 | 1 | 0 |
 | `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 6 | 0 | 6 |
+| `hammer2_os.h` | 7 | 0 | 7 |
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
@@ -392,16 +392,16 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Seventy-two are this port's, the right-hand column summed, and they
+Seventy-three are this port's, the right-hand column summed, and they
 fall in eight files: eighteen in `hammer2_ondisk.c`, seventeen in
 `hammer2_inode.c`, fourteen in `hammer2_vfsops.c`, seven in
-`hammer2_subr.c`, six in `hammer2_os.h`, five in `hammer2_flush.c`,
+`hammer2_subr.c`, seven in `hammer2_os.h`, five in `hammer2_flush.c`,
 three in `hammer2.h` and two in `hammer2_io.c`. That is the whole of
 them; the paragraphs below walk the three largest sets site by site and
 do not add up to seventy-two on their own.
 
-Sixty-four sit in a file that holds upstream text. The other eight are
-the two files this port wrote from nothing: six in `hammer2_os.h`, and
+Sixty-four sit in a file that holds upstream text. The other nine are
+the two files this port wrote from nothing: seven in `hammer2_os.h`, and
 two of `hammer2_io.c`'s four.
 
 `hammer2.h` has a row for the first time. It is a carried header this port
@@ -461,11 +461,13 @@ and the formatter in `hammer2_print_uuid_mismatch()`. That is the property
 worth checking: no carried function here had its control flow edited, and
 a reviewer can confirm it one mark at a time.
 
-The other eight are in the two files this port writes: two in
-`hammer2_io.c` and six in `hammer2_os.h`, one of them the non-recursive
-lock above and one the `M_WAITOK` contract. The count read six until
-2026-08-26, written before the two shim edits `hammer2_inode.c` needed,
-and seven for the few hours before `M_WAITOK` was fixed.
+The other nine are in the two files this port writes: two in
+`hammer2_io.c` and seven in `hammer2_os.h`, one of them the non-recursive
+lock above, one the `M_WAITOK` contract and one `hstrdup()`, which was
+allocating outside that contract until the mount path dereferenced it.
+The `hammer2_os.h` count read six until 2026-08-26, written before the
+two shim edits `hammer2_inode.c` needed, and seven for the few hours
+before `M_WAITOK` was fixed.
 
 `hammer2_vfsops.c`'s fourteen are the largest set in the tree after
 `hammer2_ondisk.c`'s, and the file is the fastest-moving in it, so they

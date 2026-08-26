@@ -534,13 +534,27 @@ hfree(void *addr, void *type, size_t freedsize)
 	kvfree(addr);
 }
 
+/*
+ * XXX Linux: FreeBSD's hstrdup() is strdup(9) with M_WAITOK, which is
+ * the same contract as the block above and cannot return NULL, so no
+ * caller here or upstream checks one.  This passed a plain GFP_KERNEL
+ * until 2026-08-26 and so could: hammer2_pfsalloc() would have stored
+ * NULL in pfs_names[], hammer2_init_devvp() would have stored it in
+ * e->path against a KKASSERT the default build compiles out, and
+ * hammer2_get_tree() would have dereferenced it two lines later.  It
+ * goes through hammer2_gfp() now for exactly the reason hmalloc() does,
+ * and hstrfree()'s strlen() is safe for the same reason.
+ */
 static inline char *
 hstrdup(const char *str)
 {
-	size_t len = strlen(str) + 1;
+	char *addr;
 
-	adjust_malloc_leak(len, M_TEMP);
-	return (kstrdup(str, GFP_KERNEL));
+	addr = kstrdup(str, hammer2_gfp(M_WAITOK));
+	KASSERTMSG(addr, "len %ld", (long)strlen(str));
+	if (addr)
+		adjust_malloc_leak(strlen(str) + 1, M_TEMP);
+	return (addr);
 }
 
 static inline void

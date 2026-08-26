@@ -1022,6 +1022,21 @@ next_hmp:
 		 * an interrupted flush.  It closes when a mount can succeed,
 		 * not before, because there is nothing else to condition it
 		 * on that is not a lie.
+		 *
+		 * The same reasoning has to hold for the teardown a few
+		 * lines below, which flushes vchain and fchain when either
+		 * carries a HAMMER2_CHAIN_FLUSH_MASK bit, and it does: the
+		 * four bits in that mask are set in nine places, all of
+		 * them in hammer2_chain_modify(), hammer2_chain_create(),
+		 * hammer2_chain_setflush(), hammer2_chain_lastdrop(), the
+		 * two chain deletes, the two flush functions and
+		 * hammer2_voldata_modify().  The device half calls none of
+		 * them.  The one it reaches indirectly is lastdrop, through
+		 * the drop of a chain it only read, and that sets DESTROY
+		 * on the chain being dropped and propagates it downward to
+		 * children, never up to an anchor whose refs never reach
+		 * zero.  So the flush in the unwind is a no-op here, and
+		 * this mount writes nothing.
 		 */
 		if (!hmp->rdonly)
 			debug_hprintf("recovery skipped, no mount can "
