@@ -59,8 +59,8 @@ is the only place the filesystem meets Linux memory. See `doc/IO_MODEL.md`
 for its lifetime, which is where the port's real design decisions are.
 
 `hammer2_dev` holds the per-mount state, including the device `struct file`
-and the dio hash. There is no mount path yet, so its Linux lifetime is not
-yet written; it is the first thing the mount work defines.
+and the dio hash. Its Linux lifetime is what the mount work defines, and
+`doc/README.status.md` says how much of `hammer2_vfsops.c` exists.
 
 ## Locking
 
@@ -89,9 +89,10 @@ none of them has without saying why in the same commit.
 
 ## What does not exist yet
 
-No mount path, no `file_system_type`, no superblock. The device layer in
-`hammer2_ondisk.c` opens and sizes block devices and is called by a
-`hammer2_vfsops.c` that does not exist yet, so nothing in this tree has an
-entry point. The gates therefore compile and type-check; nothing here has ever been loaded into a kernel, and the first
+No `file_system_type`, no superblock, and so no entry point: nothing in
+this tree can be reached from Linux. `hammer2_vfsops.c` exists and holds
+the PFS half, which is DragonFly's; the Linux mount entry is what it
+still owes, and its design is recorded in that file's opening comment.
+`doc/README.status.md` is the authority on how much of it is written. The gates therefore compile and type-check; nothing here has ever been loaded into a kernel, and the first
 kbuild compile is a decision rather than a task. `doc/README.status.md` is
 the authority on what is done.

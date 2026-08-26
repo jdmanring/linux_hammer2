@@ -147,9 +147,17 @@ say the name; that refusal is not written yet.
 on each device as it opens it, and fails the open on a non-zero return.
 `sb_set_blocksize()` is the call an ordinary Linux filesystem makes here,
 and it is the wrong one for HAMMER2: it acts on `sb->s_bdev_file`, and a
-HAMMER2 filesystem spans up to `HAMMER2_MAX_VOLUMES` devices of which only
-the root volume is ever `sb->s_bdev`. The mount path still owes
-`sb->s_blocksize` itself.
+HAMMER2 filesystem spans up to `HAMMER2_MAX_VOLUMES` devices. This
+paragraph said "of which only the root volume is ever `sb->s_bdev`" until
+2026-08-26, when the mount design settled on an anonymous super following
+btrfs, so no volume is ever `sb->s_bdev` and the field stays NULL. That
+strengthens the conclusion rather than changing it, and it removes the
+other half of the same trap: `get_tree_bdev()` is out for the same
+reason, because what it runs is `setup_bdev_super()`, which opens one
+device itself and ends in `sb_set_blocksize(sb, block_size(bdev))` -- the
+device's block size, not `HAMMER2_PBUFSIZE`. The mount path still owes
+`sb->s_blocksize` itself, and now owes it with nothing underneath to
+infer it from. See the opening comment of `hammer2_vfsops.c`.
 
 `mapping_set_folio_min_order()` and `mapping_set_folio_order_range()`
 (both `static inline` in `include/linux/pagemap.h`) are how a filesystem
