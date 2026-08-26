@@ -6,27 +6,11 @@ for handoff section 37 items 3 and 4. Nothing here is designed: it is a
 reading of the current tree and of the kernel headers the gate compiles
 against, with the version of record stated so it can be re-measured.
 
-Kernel of record: 7.2. Everything below was read against the 7.1.9 headers
-on this workstation, which is not that, and the difference is stated
-because it is the point.
-
-This paragraph said "7.2.0-cachyos, the newest realized `linux-*-dev`
-output in the store" until 2026-08-26 and closed by telling the reader to
-re-read rather than cite it. Nobody did, and both halves were wrong.
-Measured that day: no such output is realized, in the store or anywhere on
-this machine; and the nix fallback it names fires only when
-`/lib/modules/$(uname -r)/build` is absent, which it is not, so that path
-had never once been taken. The gate was compiling against 7.1.9 while this
-line named the kernel it was supposed to be. It now refuses any tree that
-is not the kernel of record rather than reporting a pass.
-
-The 7.2.0-cachyos `dev` output exists, prebuilt and signed, in the
-CachyOS project's own cache: `nyx-cache.chaotic.cx`, store path
-`sil5r7r2a25nsshkqpd5jjjd0g7ywyi7-...-7.2.0-dev`, `NarSize` 687385816,
-deriver matching the `.drv` in this machine's store. Confirmed by reading
-the narinfo on 2026-08-26. So reaching the kernel of record is a download
-and its closure, not a kernel build, which is a different decision from
-the one this tree recorded an hour earlier.
+Kernel of record: 7.2, pinned as `KERNEL_REF` in `script/test-syntax.sh`,
+which refuses any other tree rather than reporting a pass against it. The
+kernel expressions quoted below were read at 7.1.9 on 2026-08-26 and are
+cited by expression rather than by line for that reason: the expressions do
+not move between those two versions and the line numbers do.
 
 ## The object
 
@@ -112,11 +96,10 @@ classify it as either.
 Citations into the kernel's own headers are by expression throughout this
 document, never by line. They cannot be checked by
 `script/test-citations.sh`, which reads this tree only, so a line number
-in one is precision no instrument backs - and the sibling repository's
-`blkdev.h` citation, carrying a line that matched neither the tag it named
-nor the one before it, is what that costs. Read against the 7.1.9 headers
-on this workstation on 2026-08-26, every kernel expression named here
-resolves; the kernel of record is 7.2, where the lines will differ and the
+in one is precision no instrument backs, and a sibling repository's
+`blkdev.h` citation carried a line matching neither the tag it named nor the
+one before it. Read against the 7.1.9 headers on 2026-08-26, every kernel
+expression named here resolves. At 7.2 the lines will differ and the
 expressions will not.
 
 ## Why the bootstrap choice needs THP
@@ -125,10 +108,10 @@ expressions will not.
 and `PAGE_SIZE` otherwise, in `include/linux/blkdev.h`. Cited by the
 expression and not by a line: this is the one citation in these documents
 that points outside the tree, so `script/test-citations.sh` cannot check
-it and a number here would be precision no instrument backs. It read
-`:286` and `:288` in the 7.1.9 headers on this workstation on 2026-08-26,
-and a sibling repository's citation of `:287 at v7.2` matched no tag at
-all while naming one. The substance is byte-identical wherever it sits.
+it and a number here would be precision no instrument backs. It read `:286`
+and `:288` in the 7.1.9 headers on 2026-08-26, while a sibling repository's
+citation of `:287 at v7.2` matched no tag at all. The substance is
+byte-identical wherever it sits.
 With 4 KiB pages and no THP the
 ceiling is 4 KiB, `set_blocksize` refuses 64 KiB, and the mount fails EINVAL
 saying nothing about why. That is what the build-time assert exists to move

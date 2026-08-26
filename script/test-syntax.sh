@@ -171,7 +171,7 @@ S=$(dirname "$K")/source
 # requires and is a different claim. This gate has always printed the kernel
 # it used in its header line, and every document said the port is developed
 # against 7.2, and nothing put those two strings next to each other. The
-# newest tree on this workstation was 7.1.9, with no 7.2 in /lib/modules,
+# newest tree on the development host was 7.1.9, with no 7.2 in /lib/modules,
 # /usr/src or the store, so every green run was measured against a kernel that
 # is not the one of record and read as though it were. Nobody reads a header
 # line for a verdict; they read "0 failed".
@@ -314,7 +314,7 @@ check() { # name expect file cflags...
 # not against whatever is newest. Printed and compared, not enforced, since
 # which compiler is correct depends on the tree. Measured 2026-08-26: the
 # 7.2.0-cachyos kernel of record was built with "clang version 22.1.8" and
-# this workstation's clang is byte-identical, which is why that version is
+# the development host's clang is byte-identical, which is why that version is
 # the right one and not an old one.
 ccv=$("$CC" --version | head -1)
 kcc=$(sed -n 's/^CONFIG_CC_VERSION_TEXT="\(.*\)"$/\1/p' "$K/.config" 2>/dev/null | head -1)
@@ -397,7 +397,7 @@ fi
 # An overridden run must not print what a real one prints. Until 2026-08-26 it
 # did, byte for byte: "syntax: 7 check(s), 0 failed" whether the tree was the
 # kernel of record or a version somebody typed into H2_KERNEL_REF to get a
-# green line. Every such line from this workstation that day came from an
+# green line. Every such line reported that day came from an
 # overridden run, there being no 7.2 tree here, so the summary was true about
 # the checks and silent about what they were checked against.
 if [ "$want" != "$KERNEL_REF" ]; then

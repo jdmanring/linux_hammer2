@@ -100,22 +100,26 @@ and exits 2 until then.
 
 ## Guests
 
-Measured on this workstation with `virsh -c qemu:///system`:
+Every milestone from 0.3 on needs a machine this repository does not contain:
 
-| what a milestone asks for | what exists |
-|---|---|
-| DragonFly, to write the F2 reference media | `dragonflybsd642`, 12 CPUs and 4 GiB, shut off |
-| the three BSD ports' own systems | `freebsd15`, `netbsd10-1`, `openbsd79` |
-| Linux with the kernel of record and `CONFIG_PROVE_LOCKING`, for 0.3 and 0.4 | none. Sixty domains exist and none is built for this; the debug options are a kernel build, not a distribution image |
+| guest | needed by | for |
+|---|---|---|
+| Linux at the kernel of record, `CONFIG_PROVE_LOCKING` on | 0.3, 0.4 | loading the module, and every mount |
+| DragonFly 6.4.2 | 0.4 | writing the F2 reference media |
+| DragonFly or FreeBSD | 0.5, 0.6 | the F4 round trip, and calibrating the crash matrix |
+| FreeBSD, NetBSD, OpenBSD | any milestone | reading a port against the host it was written for |
 
-That last row is 0.3's real dependency, and it has to be built, not
-downloaded. QEMU, libvirt and `virt-install` are all installed, so the
-harness is not blocked on tooling.
+The Linux guest is 0.3's real dependency, and it is a kernel build rather
+than a distribution image, since no shipped kernel enables the debug options
+0.3 asks for. QEMU, libvirt and `virt-install` are enough to build the
+harness around it. The DragonFly guest already exists on the maintainer's
+machine, so the F2 set is a scheduling question; the Linux one does not, so
+0.3 is a blocking one.
 
-This repository holds no instrument that drives a guest: `doc/`, `script/` and
-`test/` mention neither `qemu` nor `virsh` nor `virt-install`. The gates here
-are compile-time and repository-time, and every runtime criterion from 0.3 on
-is unverifiable for that reason, not for want of a guest.
+No instrument in this repository drives a guest: `doc/`, `script/` and
+`test/` mention neither `qemu` nor `virsh` nor `virt-install`. The gates are
+compile-time and repository-time, which is why every runtime criterion from
+0.3 on is unverifiable here.
 
 ## Milestones
 
@@ -357,9 +361,9 @@ Each is the maintainer's, and each names what it blocks.
 |---|---|---|
 | the first compile of a module against a kernel tree | 0.3 and everything after | open |
 | booting the DragonFly guest for the rest of F2 | 0.4 criteria 3 and 6 | open. The first F2 image was taken with the guest shut off |
-| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default | confirmed 2026-08-25: iomap. xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses. Its entry points are `EXPORT_SYMBOL_GPL`, so `MODULE_LICENSE` must read "Dual BSD/GPL"; `include/linux/license.h` does not list plain "BSD" as GPL-compatible, and `module.h` states the tag neither replaces nor amends the license identifiers in the source. James's condition: BSD is the license, the dual tag exists because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
+| iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default | confirmed by the maintainer 2026-08-25: iomap. xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses. Its entry points are `EXPORT_SYMBOL_GPL`, so `MODULE_LICENSE` must read "Dual BSD/GPL"; `include/linux/license.h` does not list plain "BSD" as GPL-compatible, and `module.h` states the tag neither replaces nor amends the license identifiers in the source. The maintainer's condition: BSD is the license, the dual tag exists because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
 | a workqueue-backed XOP pool against synchronous XOPs | 0.9 | synchronous through 0.6, the FreeBSD port's choice; decided on F6's numbers |
-| where the fixture scripts and the provenance CSV live | every gate from 0.4 on | confirmed 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. Scripts, manifests and CSV only; images are build output. Not moved yet |
+| where the fixture scripts and the provenance CSV live | every gate from 0.4 on | confirmed by the maintainer 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. Scripts, manifests and CSV only; images are build output. Not moved yet |
 | the two upstream filings | 1.0 | drafted, unfiled |
 | in-tree submission | nothing before 1.0 | deferred past qualification |
 

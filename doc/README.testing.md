@@ -58,10 +58,9 @@ fallback that has never fired is indistinguishable from one that works.
 That is not hypothetical here: `IO_MODEL.md` described the nix branch as
 the source of the kernel of record while the `/lib/modules` path was
 present on every run, so the document and the script agreed in wording and
-disagreed in behaviour, and nothing could notice. Point `KDIR` at a path
-that does not exist to exercise the fallback; on this workstation it
-resolves nothing and returns COULD-NOT-RUN naming itself, which is the
-first time that branch has ever run.
+disagreed in behaviour, and nothing could notice. Point `KDIR` at a path that
+does not exist to exercise the fallback: it then resolves nothing and returns
+COULD-NOT-RUN naming itself.
 
 It also refuses a kernel that is not the one of record: this tree compiles
 against the latest Linux, the pin is `KERNEL_REF` in the script, and a
@@ -328,12 +327,10 @@ typed list for a better reason: extensionless documents have no extension
 to enumerate on.
 
 The syntax selftest's second direction, that an unoverridden run carries
-no override warning, was NOT in that table while it was vacuous: an
-unoverridden run on this workstation was COULD-NOT-RUN and carried no
-warning either way. It stopped being vacuous on 2026-08-26 when the kernel
-of record arrived in the store and such a run began really compiling. The
-comment describing it as weak was stale within minutes of the tree
-landing, which is the price of a sentence about the current state.
+no override warning, was left out of that table while it was vacuous: with no
+kernel of record installed, an unoverridden run is COULD-NOT-RUN and carries
+no warning either way. It stopped being vacuous on 2026-08-26, when such a
+run began really compiling.
 
 ## Run from outside this tree, by a gate in another repository
 

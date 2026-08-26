@@ -57,7 +57,7 @@ src_check() { # name file pattern
 
 echo "hammer2 vector contract:"
 # Named for the same reason the shim gate names its compiler: the
-# behavioural half below links whatever xxHash this machine has, and a run
+# behavioural half below links whatever xxHash the host provides, and a run
 # that could not link one is a different run from one that did.
 # 1. The consumer arms its control by defining this. Losing it silently
 #    disarms a negative control in another tree.

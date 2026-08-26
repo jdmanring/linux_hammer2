@@ -31,8 +31,8 @@ version CI fetches. Its second line records that checker's `sha256`, which
 is the identity the file answers for itself: a version read off the tree a
 checker was cut from does not survive the checker being copied out of that
 tree, and the pinned copy always lives outside one. `checkpatch.pl`'s own
-`my $V` is no help, reading `0.32` in v6.15, v7.2 and this workstation's
-7.1 copy alike. A different copy of checkpatch moves these numbers on
+`my $V` is no help, reading `0.32` in v6.15, v7.2 and a 7.1 distribution
+copy alike. A different copy of checkpatch moves these numbers on
 unchanged code, so the version travels with them.
 
 The pin was v6.15 until 2026-08-26, chosen to match the module's kernel
@@ -62,9 +62,9 @@ between a continuation and splitting every such line in two while
 dropping the second half's prefix. It carries a `DEFER` naming its
 upgrade: build the line in a buffer and emit it once, which is a core
 edit and waits for a reason.
-That is also the signature this workstation's own 7.1 `checkpatch.pl`
-produced against the old baseline, which the gate had been correctly
-reporting as a version mismatch rather than a style regression.
+It is also the signature a 7.1 distribution `checkpatch.pl` produced against
+the old baseline, which the gate reported as a version mismatch rather than a
+style regression.
 
 | category | count | disposition |
 |---|---|---|

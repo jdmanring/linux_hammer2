@@ -28,10 +28,9 @@ is a defect.
 
 ## What has been verified
 
-All nine gates pass, and since 2026-08-26 they pass on this workstation with
-no environment variables set: the kernel of record is in the store, the
-syntax gate finds it, and the style gate finds that tree's own
-`checkpatch.pl`. ArtNix's delegator, which runs these same gates from another
+All nine gates pass, and since 2026-08-26 they pass with no environment
+variables set on a machine that has the kernel of record installed: the
+syntax gate finds that tree, and the style gate finds its `checkpatch.pl`. ArtNix's delegator, which runs these same gates from another
 repository, enumerates `script/test-*.sh` instead of naming them, so a gate
 added here is picked up there without an edit. Each gate prints its own
 count, and the gates are the authority; the dated figures below are snapshots
@@ -121,11 +120,10 @@ What has actually been compiled, measured rather than assumed, on
 | 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers, under the override |
 | 6.18.46-1-lts | 7 checks, 0 failed, both compilers, under the override |
 
-A 7.2 version string is already on this machine and means nothing here.
-`linux-api-headers 7.2-1` is installed, so `/usr/include/linux/version.h`
-reads `LINUX_VERSION_MAJOR 7` and `LINUX_VERSION_PATCHLEVEL 2` with no build
-tree near it: UAPI headers, no `Makefile`, nothing to compile a module
-against. Anything answering "is 7.2 here" by grepping for a version string
+A 7.2 version string can be present with no 7.2 build tree behind it. Where
+`linux-api-headers 7.2-1` is installed, `/usr/include/linux/version.h` reads
+`LINUX_VERSION_MAJOR 7` and `LINUX_VERSION_PATCHLEVEL 2` beside no build tree
+at all: UAPI headers, no `Makefile`, nothing to compile a module against. Anything answering "is 7.2 here" by grepping for a version string
 finds that and is wrong. `script/test-syntax.sh` reads `VERSION` and
 `PATCHLEVEL` from the build tree's own `Makefile` instead.
 

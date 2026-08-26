@@ -118,8 +118,8 @@ command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; 
 # assertion; the Makefile two levels up is derived from the tree the checker
 # sits in. The comparison below treats them identically, which is right, but a
 # reader who sees "v7.2" cannot tell whether the gate measured it or was told,
-# and every run on this workstation was told, the pinned copy living outside a
-# kernel tree. So the origin is printed beside the version.
+# and a run against a copy pinned outside a kernel tree is always told. So the
+# origin is printed beside the version.
 #
 # The strongest identity is the one the file answers for itself. A version
 # taken from the tree the checker was cut from does not survive the checker
@@ -128,7 +128,7 @@ command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; 
 # cannot be asserted wrong and travels with the file.
 #
 # checkpatch.pl's own `my $V = '0.32'` is not a discriminator: it reads 0.32
-# in v6.15, v7.2 and this workstation's 7.1 copy alike.
+# in v6.15, v7.2 and a 7.1 distribution copy alike.
 base=doc/checkpatch-baseline.txt
 cpsha=$(sha256sum "$CP" 2>/dev/null | cut -d' ' -f1)
 basesha=$(sed -n 's/^# sha256 //p' "$base" 2>/dev/null | head -1)
@@ -186,7 +186,7 @@ ref=$(sed -n '1s/^# *//p' "$base")
 refver=$(printf '%s\n' "$ref" | sed -n 's/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 
 # A proven version mismatch cannot be attributed to this code, so it is
-# COULD-NOT-RUN and not a failure. Measured 2026-08-25 on this workstation:
+# COULD-NOT-RUN and not a failure. Measured 2026-08-25:
 # baseline v6.15 against the Artix 7.1 checkpatch.pl gives one differing
 # category, 18 hits against 15 of `Argument 'X' is not used in
 # function-like macro`, every other line byte-identical. That is the same

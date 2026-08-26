@@ -2,7 +2,7 @@
 # whether it is a byte-for-byte carry. script/test-provenance.sh reads
 # this: it fails if a file under src/ has no row, if a row names a file
 # that is not there, and it re-runs `cmp` for every row claiming
-# "identical" against the origin clone when that clone is on this machine.
+# "identical" against the origin clone when that clone is present.
 #
 # carry:  identical -- byte-for-byte from origin at origin_commit
 #         derived   -- from origin, edited here; the note says how
