@@ -138,6 +138,13 @@ nothing. The first attempt to document this failed the same check again,
 because writing the offending phrase in an explanation is still writing
 it - the check reads the file, not the intent.
 
+On a hosted runner exactly one gate declines: `test-syntax.sh`, because
+the kernel of record is the latest release and `ubuntu-latest` ships
+headers years behind it. That is recorded as a skip and never as a pass.
+Everything else runs there, including the vectors contract's behavioural
+half, which had been declining for want of an xxHash to link until
+`libxxhash-dev` was added to the runner on 2026-08-26.
+
 Exit 2 from any of the seven means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
