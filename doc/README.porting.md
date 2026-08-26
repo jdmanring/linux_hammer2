@@ -460,8 +460,10 @@ flag a filesystem sets for that and works it out from the absence of a
 network superblock.
 
 `hammer2_mount_helper()` is deliberately not here. It is the other half
-of `hammer2_unmount_helper()` and its only caller is the mount path, so
-it lands with `->get_tree`. Nothing mechanical enforces that:
+of `hammer2_unmount_helper()`, and its only caller is the part of the
+mount path that connects a PFS to a superblock, so it lands with the PFS
+half of `->get_tree` and not with the device half that landed on
+2026-08-26. Nothing mechanical enforces that:
 `script/test-syntax.sh` passes `-Wno-unused-function`, because the
 carried files arrive with statics whose unported callers would have used
 them, so an unused static *variable* fails the gate and an unused static
@@ -469,6 +471,15 @@ them, so an unused static *variable* fails the gate and an unused static
 its caller is a discipline here rather than a check, and that is written
 into the file's opening comment so the next reader is not misled by the
 one it can see enforced.
+
+The converse is a check, and it is worth knowing which half is which,
+because reaching the conclusion from one direction gets the other
+backwards. A static *declared and never defined* is
+`-Wundefined-internal` under clang and "used but never defined" under
+gcc, neither suppressed here, and the gate caught a missing carry that
+way the first time this file used a forward declaration. So the gate is
+silent about a helper that arrives too early and loud about one that
+never arrives at all.
 
 ## The gate needed a Kbuild define before a file could include <linux/module.h>
 
