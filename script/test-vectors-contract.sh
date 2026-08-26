@@ -40,10 +40,18 @@ fail=0 ran=0
 # has actually occurred here was a lowercasing, so a case-insensitive
 # check would pass the one failure this gate was written for. `command
 # grep` because only it ignores no ignore file.
+# THE MATCH ITSELF, so the control and the checks cannot diverge. Until
+# 2026-08-26 the control below ran its own inline grep, which meant a `-i`
+# added to src_check would have left the control green while every check it
+# guards went case-blind: the expected status coming from a different
+# statement than the one under test. Read in ArtNix's errata for the same
+# trap, where a falsification never reached the gate it was written for.
+matches() { command grep -q -- "$2" "$1"; }
+
 src_check() { # name file pattern
 	name="$1" file="$2" pat="$3"
 	ran=$((ran + 1))
-	if command grep -q -- "$pat" "$file"; then
+	if matches "$file" "$pat"; then
 		echo "  ok    $name"
 	else
 		echo "  FAIL  $name: $file no longer matches $pat"
@@ -75,7 +83,7 @@ ran=$((ran + 1))
 tmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$tmp"' EXIT
 tr 'A-F' 'a-f' < "$XXH" > "$tmp/lowered.c" || exit 2
-if command grep -q -- '0xEF46DB3751D8E999ULL' "$tmp/lowered.c"; then
+if matches "$tmp/lowered.c" '0xEF46DB3751D8E999ULL'; then
 	echo "  FAIL  negative control: a lowercased copy still matched, so the"
 	echo "        comparison above is not case-sensitive"
 	fail=$((fail + 1))
