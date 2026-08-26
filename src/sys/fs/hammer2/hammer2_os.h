@@ -217,12 +217,16 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
  * exactly as a NetBSD krwlock does, so the mapping follows the NetBSD
  * port: there is no recursive lock, the two call sites
  * (hammer2_chain_init and hammer2_inode_get) get a plain lock, and the
- * ONE path that recursed is disabled instead.  That path is
- * hammer2_chain_lookup() reaching chain->lock again for an inode in
- * DIRECTDATA mode; NetBSD stops it by never setting
+ * ONE path that recursed is disabled for inodes this port creates.  That
+ * path is hammer2_chain_lookup() reaching chain->lock again for an inode
+ * in DIRECTDATA mode; NetBSD stops it by never setting
  * HAMMER2_OPFLAG_DIRECTDATA, which costs a data block for a tiny file
- * and costs no correctness.  That half of the change lands with
- * hammer2_inode.c, which is where the flag is set.
+ * and costs no correctness.  This port sets it nowhere, because its only
+ * setter is in hammer2_inode_create_normal(), which is not carried.
+ * XXX The flag is ON DISK, so a filesystem written elsewhere still has
+ * DIRECTDATA inodes and the lookup still reaches that branch.  Not
+ * setting the flag does not close the READ path.  See
+ * doc/README.porting.md; open for the read-only mount at 0.4.
  * XXX Not a recursive lock.  A caller that genuinely recurses will
  * deadlock rather than fail, so any new recursion must be resolved at
  * its call site the same way.
@@ -588,7 +592,14 @@ pause(const char *wmesg __always_unused, int timo)
 /* Linux */
 typedef struct kmem_cache *uma_zone_t;
 
+extern uma_zone_t hammer2_zone_inode;	/* hammer2_vfsops.c */
 extern uma_zone_t hammer2_zone_xops;	/* hammer2_vfsops.c */
+/*
+ * FreeBSD declares two more here, hammer2_zone_rbuf and hammer2_zone_wbuf,
+ * for the compression bounce buffers in its strategy write path.  That
+ * path is a rewrite here and no carried file names them, so they are not
+ * declared until something calls them.
+ */
 
 static inline uma_zone_t
 uma_zcreate(const char *name, size_t size)

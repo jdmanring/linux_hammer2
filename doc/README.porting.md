@@ -51,17 +51,32 @@ is closed rather than accommodated.
 There is one such path, not a class of them. `hammer2_chain_lookup()`,
 reached from the strategy read and write, takes `chain->lock` again for an
 inode in DIRECTDATA mode, where the inode's own block holds the file's
-data. NetBSD closes it by never setting `HAMMER2_OPFLAG_DIRECTDATA`, so a
-small file always gets a data block. That costs one block per tiny file
-and no correctness, and it is reversible the day a recursive lock exists.
+data. NetBSD closes the creation half by never setting
+`HAMMER2_OPFLAG_DIRECTDATA`, so a small file this port creates always gets
+a data block. That costs one block per tiny file and no correctness, and
+it is reversible the day a recursive lock exists.
+
+**It closes the creation half and not the reading half, and the earlier
+wording here did not say so.** The flag lives in the on-disk inode. A
+filesystem written by DragonFly or by one of the BSD ports has DIRECTDATA
+inodes in it whoever is reading, and `hammer2_chain_lookup()` reads
+`parent->data->ipdata.meta.op_flags` off the media rather than off
+anything this port set. The branch it takes calls `hammer2_chain_lock()`
+with `HAMMER2_RESOLVE_LOCKAGAIN`, which is `down_read()` on an
+`rw_semaphore` this thread already holds for reading: legal until a writer
+queues between the two, which is what lockdep reports and what deadlocks.
+So reading a small file on a foreign HAMMER2 filesystem is an open
+question for the read-only mount at 0.4, not a closed one. Measured
+2026-08-26 by reading `hammer2_chain.c:2189` and the `LOCKAGAIN` branch of
+`hammer2_chain_lock()` it reaches; nothing has been run.
 
 The two call sites that ask for the recursive lock are
-`hammer2_chain_init()` and `hammer2_inode_get()`. The first is in
-`hammer2_chain.c`, carried 2026-08-26. The second is in
-`hammer2_inode.c`, which is not here yet and is where the DIRECTDATA flag
-is set, so the flag half of NetBSD's change lands with that file. Until
-then the port has a non-recursive lock and no code that recurses it,
-which is why carrying `hammer2_chain.c` needed no core edit.
+`hammer2_chain_init()` and `hammer2_inode_get()`, and both are carried and
+take a plain lock. The flag's only setter was
+`hammer2_inode_create_normal()`, which this port does not carry at all, so
+the creation half is closed more completely than NetBSD's `#if 0` closes
+it. NetBSD's edit is recorded at the `DEFER` where that function would be,
+because it is the edit to restore when the write path lands.
 
 ## The DIO layer
 

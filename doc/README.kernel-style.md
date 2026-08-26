@@ -96,6 +96,15 @@ checked line by line and are all BSD continuation indent on a function's
 second parameter line, which is upstream's convention and the one this
 port matches on purpose.
 
+856 to 882 when `hammer2_inode.c` landed: 1,482 lines for 26 hits, one per
+57 and the sparsest since `hammer2_flush.c`, which is what a carried file
+looks like when the OS-touching functions were left out rather than
+rewritten. Twelve are `return (x);`, seven are the BSD continuation
+indent, four are the errno sign, and two are the SPDX pair every carried
+file adds. No category is new. One hit was fixed rather than baselined,
+the same one as at 782: a trailing `*/` on a comment this port wrote,
+which the BSD-style exception does not cover.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not
@@ -113,11 +122,11 @@ style regression.
 |---|---|---|
 | do not add new typedefs | 73 | required by the carried core; converts with the core |
 | function argument without identifier name | 391 | BSD prototype style; mechanical |
-| return is not a function, parentheses not required | 120 | BSD style; mechanical |
-| return of an errno should be negative | 44 across 13 errnos | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
-| plain inline preferred over `__inline` | 12 | `hammer2.h` 6, `hammer2_admin.c` 2, `hammer2_io.c` 2, `hammer2_chain.c` 1, `hammer2_rb.h` 1, recounted per file on 2026-08-26; the earlier reading of this row named three files and summed to nine against a baseline of eleven, which is the shape of a count written from the files a reader happened to open. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
-| spaces at the start of a line | 112 | continuation alignment, in carried macros and in the BSD second-parameter-line indent every prototype and definition here uses |
-| misplaced or missing SPDX tag in line 1 | 13 misplaced, 13 missing | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. The count tracks the number of carried files and rose with 0.2's imports |
+| return is not a function, parentheses not required | 132 | BSD style; mechanical |
+| return of an errno should be negative | 48 across 13 errnos | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
+| plain inline preferred over `__inline` | 13 | `hammer2.h` 6, `hammer2_admin.c` 2, `hammer2_io.c` 2, `hammer2_chain.c` 1, `hammer2_inode.c` 1, `hammer2_rb.h` 1, recounted per file on 2026-08-26; the earlier reading of this row named three files and summed to nine against a baseline of eleven, which is the shape of a count written from the files a reader happened to open. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
+| spaces at the start of a line | 119 | continuation alignment, in carried macros and in the BSD second-parameter-line indent every prototype and definition here uses |
+| misplaced or missing SPDX tag in line 1 | 14 misplaced, 14 missing | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. The count tracks the number of carried files and rose with 0.2's imports |
 | everything else | 1 to 15 each | carried code |
 
 ## What this gate does not see

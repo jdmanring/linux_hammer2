@@ -25,13 +25,16 @@ in 0.2 can be prepared without it.
 ### Next moves
 
 1. Done on 2026-08-26. `hammer2_cluster.c` went in unedited,
-   `hammer2_subr.c` with seven `XXX` marks, and `hammer2_ondisk.c` with
-   its device half rewritten on `bdev_file_open_by_path()`. That closes
-   everything between the core and the VFS entry that could be written by
-   reading the BSD ports side by side. `hammer2_inode.c` is the one
-   remaining non-entry file and is deliberately not next: it holds the
-   `HAMMER2_OPFLAG_DIRECTDATA` half of the non-recursive-lock decision,
-   and the VFS entry is what shapes its inode lifecycle.
+   `hammer2_subr.c` with seven `XXX` marks, `hammer2_ondisk.c` with its
+   device half rewritten on `bdev_file_open_by_path()`, and
+   `hammer2_inode.c` carried apart from `hammer2_igetv()` and the create
+   path. This list said `hammer2_inode.c` was deliberately not next,
+   because the VFS entry shapes its inode lifecycle. That reason still
+   holds and is why those two functions are `DEFER`red; what changed the
+   order is a dependency measurement, that `hammer2_pfsalloc()` in the
+   VFS entry calls four `hammer2_inode_*` functions, so reading the file
+   first is what lets the entry be written against something real.
+   Nothing else can be imported: the four files left are rewrites.
 2. Next: the read-side VFS entry (`fs_context`, `super_operations`,
    `lookup`, `getattr`, `iterate_shared`, `read_folio`, `statfs`) against
    the F1 manifests. This is also what resolves the inode and dentry

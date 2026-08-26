@@ -74,7 +74,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:1163` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
-| `hammer2.h:515` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
+| `hammer2.h:528` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.

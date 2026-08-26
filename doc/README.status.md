@@ -9,7 +9,7 @@ is a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1322 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1335 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -20,11 +20,12 @@ is a defect.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
+| `hammer2_inode.c` | 1482 | FreeBSD port; carried except `hammer2_igetv()` and the create path, which are `DEFER`red on the VFS entry and on the write path |
 | `hammer2_ondisk.c` | 860 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 647 | ours, the OS shim |
+| `hammer2_os.h` | 658 | ours, the OS shim |
 | `hammer2_compat.h` | 153 | ours, kernel look-alikes; the BSD `vtype` enum, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -204,8 +205,10 @@ at all to follow.
 
 ## What is not here
 
-`hammer2_inode.c`, `hammer2_strategy.c`, `hammer2_ioctl.c`,
-`hammer2_vfsops.c`, `hammer2_vnops.c`.
+`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c`,
+`hammer2_vnops.c`. All four are OS-facing and all four are rewrites, so
+the import phase is over: everything a BSD port could be read side by side
+for is in.
 
 The carried set is eight files at 11,204 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
@@ -226,9 +229,17 @@ shim and the one path that recursed is closed instead of accommodated.
 That path is `hammer2_chain_lookup()` reaching `chain->lock` again for an
 inode in DIRECTDATA mode; NetBSD closes it by never setting
 `HAMMER2_OPFLAG_DIRECTDATA`, which costs a data block for a tiny file and
-costs no correctness. The flag is set in `hammer2_inode.c`, so that half
-of the change lands when that file does, and until then the port has a
-non-recursive lock and no code that recurses it.
+costs no correctness. This port sets the flag nowhere at all, because its
+only setter was in `hammer2_inode_create_normal()`, which is not carried.
+
+That closes the creation half. It does not close the reading half, and
+the wording here said otherwise until 2026-08-26: the flag lives in the
+on-disk inode, so a filesystem written by DragonFly or by a BSD port has
+DIRECTDATA inodes in it whoever mounts them, and the lookup reads the flag
+off the media. Reading a small file on a foreign filesystem is therefore
+an open question for the read-only mount at 0.4.
+`doc/README.porting.md` has the reading it rests on, which is a reading
+and not a run.
 
 `hammer2_flush.c` landed on 2026-08-26 and took the port decision it needed
 rather than a shim. Its OS-dependent surface is one function,
@@ -324,6 +335,8 @@ against the source is the same shape as an empty one.
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_vnops.c is written)` | the conversion between `enum vtype` and `S_IFMT` belongs at the VFS boundary, and there is no caller to shape it against yet |
+| `hammer2_inode.c`, where `hammer2_igetv()` would be | `DEFER(hammer2_vfsops.c defines super_operations)` | the inode lifecycle. FreeBSD's body is `vfs_hash_get()`, `getnewvnode()`, `insmntque()` and `vfs_hash_insert()`; Linux's `iget5_locked()` is all four in one call, and the carried `hammer2.h` has already chosen a `struct inode *` pointer rather than an embedded inode, so the association is `i_private` and not `container_of()` |
+| `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
 | `hammer2_ondisk.c`, at `hammer2_access_devvp()` | `DEFER(hammer2_vfsops.c calls hammer2_access_devvp)` | whether `bdev_file_open_by_path()` reflects `BLK_OPEN_WRITE` into `f_mode`. The kernel tree of record here is headers only, so `block/bdev.c` cannot be read; the alternative is branching on `sb->s_flags & SB_RDONLY`. Nothing calls the function yet |
 | `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the fsid choice, between the volume header's own and `huge_encode_dev()` on the root device. All three BSD ports hash the mount path, which Linux never tells a filesystem |
 
@@ -331,8 +344,12 @@ The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a
 failure rather than a drift.
 
-Four of the five lift with the read-side VFS entry, which is the next
-move on the roadmap.
+Five of the seven lift with the read-side VFS entry, which is the next
+move on the roadmap. The `enum vtype` row's trigger was re-checked when
+`hammer2_inode.c` landed, since that file converts object types: the only
+conversion in it is in the create path, which is not carried, so
+`hammer2_vnops.c` is still the right trigger. The gate below matches
+marker text and cannot check that, so it was checked by hand.
 
 ### `XXX` marks: how much of the core is not a carry
 
@@ -350,17 +367,24 @@ against the FreeBSD port at
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 1 | 1 | 0 |
 | `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 4 | 0 | 4 |
+| `hammer2_os.h` | 5 | 0 | 5 |
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 19 | 1 | 18 |
+| `hammer2_inode.c` | 19 | 6 | 13 |
+| `hammer2.h` | 5 | 3 | 2 |
 
-Thirty-six are this port's, the right-hand column summed, and the count
-rose by eighteen on 2026-08-26 with `hammer2_ondisk.c`, which is the
-first file whose OS half was rewritten rather than carried. Thirty of
-the thirty-six sit in a file that came from upstream; the other six are
-in the two files this port wrote from nothing.
+Fifty-two are this port's, the right-hand column summed. Eighteen arrived
+with `hammer2_ondisk.c`, the first file whose OS half was rewritten rather
+than carried, and fifteen more with `hammer2_inode.c` and the two header
+lines it needed. Forty-five sit in a file that came from upstream; the
+other seven are in `hammer2_os.h`, which this port wrote from nothing, and
+two of `hammer2_io.c`'s four.
+
+`hammer2.h` has a row for the first time. It is a carried header this port
+edits in place rather than a file it wrote, so its two marks are counted
+where the other carried files' are.
 
 `hammer2_admin.c`, `hammer2_freemap.c`,
 `hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c`,

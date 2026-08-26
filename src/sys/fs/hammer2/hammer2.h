@@ -430,6 +430,19 @@ struct hammer2_inode {
 	hammer2_depend_t	*depend;	/* non-NULL if SIDEQ */
 	hammer2_depend_t	depend_static;	/* (in-place allocation) */
 	hammer2_mtx_t		lock;		/* inode lock */
+	/*
+	 * XXX Linux: the SYNCQ wait channel.  FreeBSD's hammer2_lkc_t is an
+	 * int and its sleep is msleep(9) on an ADDRESS, so that port sleeps
+	 * on &ip->flags with nothing in the structure.  A Linux
+	 * wait_queue_head_t is an object and has to live somewhere, and
+	 * this port's hammer2_os.h already made that choice for every other
+	 * condition variable in the tree (inp_cv, xop_cv, trans_cv below).
+	 * The alternative was the shim's tsleep(), which its own XXX says
+	 * ignores the wakeup: this site has a real waker in
+	 * hammer2_inode_unlock(), so that mapping would turn an exclusive
+	 * inode lock into a poll with a tick of latency.
+	 */
+	hammer2_lkc_t		syncq_cv;
 	hammer2_mtx_t		truncate_lock;	/* prevent truncates */
 	hammer2_spin_t		cluster_spin;	/* update cluster */
 	hammer2_cluster_t	cluster;
