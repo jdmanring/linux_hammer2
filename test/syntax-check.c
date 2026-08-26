@@ -79,6 +79,13 @@ hammer2_syntax_check_all(void)
 	KASSERTMSG(1, "no %d", 0);
 	hprintf("hello %d", 1);
 	debug_hprintf("dbg %d", 1);
+	/*
+	 * hpanic is noreturn, so it is expanded behind a constant false
+	 * rather than called: an unexpanded macro is an unchecked one, and
+	 * this one carries a prefix that only kbuild normally supplies.
+	 */
+	if (0)
+		hpanic("boom %d", 1);
 	cpu_pause();
 	cpu_ccfence();
 	(void)getticks();

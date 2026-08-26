@@ -48,6 +48,14 @@ typedef unsigned int gfp_t;
 #define WARN_ON(cond)	(!!(cond))
 #define BUILD_BUG_ON_MSG(cond, msg)	_Static_assert(!(cond), msg)
 
+/* kbuild passes -DKBUILD_MODNAME on every real build and there is no
+ * kbuild here, so hpanic's module-name prefix would not expand without
+ * this. Not transcribed from a kernel header: it is what kbuild supplies
+ * on the command line. */
+#ifndef KBUILD_MODNAME
+#define KBUILD_MODNAME	"hammer2"
+#endif
+
 int pr_info(const char *fmt, ...);
 void panic(const char *fmt, ...) __attribute__((noreturn));
 void cpu_relax(void);

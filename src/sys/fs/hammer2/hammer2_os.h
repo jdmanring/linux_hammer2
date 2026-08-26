@@ -73,7 +73,14 @@
 #endif
 
 #define hprintf(X, ...)	pr_info(HFMT X, HARGS, ## __VA_ARGS__)
-#define hpanic(X, ...)	panic(HFMT X, HARGS, ## __VA_ARGS__)
+/*
+ * hprintf gets the module name from each .c file's pr_fmt, which panic()
+ * does not read: it is not a pr_* macro and takes its format verbatim. So
+ * hpanic carries the name itself, which is one token of divergence from
+ * the three BSD ports and the reason for it.
+ */
+/* Linux */
+#define hpanic(X, ...)	panic(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__)
 /*
  * DEFER(the VFS layer lands, giving a super_block to mark): panic() is
  * what the three BSD ports do, and on Linux it is a machine-wide event

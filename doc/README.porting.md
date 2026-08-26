@@ -147,7 +147,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:51` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:52` | `KASSERTMSG`, which panics under the same knob |
-| `hammer2_os.h:76` | `hpanic`, `panic()` unconditionally |
+| `hammer2_os.h:83` | `hpanic`, `panic()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 
