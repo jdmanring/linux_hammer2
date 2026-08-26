@@ -2,21 +2,19 @@
 # The changelog is the only place a version number is bound to
 # a commit, and nothing read it until 2026-08-25.
 #
-# TWO CHECKS, AND THEY ARE DELIBERATELY DIFFERENT IN KIND.
+# Two checks, different in kind.
 #
-# The first is a GATE and fails: every hash pinned in the table must resolve
-# in this repository, and its subject line must still be the one the row
-# describes. A rebase, a rewrite or a typo makes a version row point at
-# something else, and a row that names the wrong commit is worse than no row
-# because it reads as checked.
+# The first is a gate and fails. Every hash pinned in the table must resolve
+# here, and its subject must still be the one the row describes. A rebase, a
+# rewrite or a typo makes a row point at something else, and a row naming the
+# wrong commit is worse than no row because it reads as checked.
 #
-# The second is a PROMPT and never fails: how many commits touching src/ or
-# script/ have landed since the newest pinned hash. Zero is the healthy
-# signature. Nonzero is not a defect - it is the question "does one of these
-# deserve a row", asked where somebody will read it. A check that forced a
-# row per commit would make the table meaningless, because a row is a
-# judgment. Scoped to src/ and script/ so a documentation commit does not
-# nag.
+# The second is a prompt and never fails: how many commits touching src/ or
+# script/ have landed since the newest pinned hash. Nonzero is not a defect,
+# it is the question "does one of these deserve a row", asked where somebody
+# will read it. Forcing a row per commit would make the table meaningless,
+# since a row is a judgment. Scoped to src/ and script/ so documentation
+# commits do not nag.
 #
 # Exit 2 is COULD-NOT-RUN. Exit 1 is a failed assertion.
 set -u
@@ -32,12 +30,10 @@ rows=0; bad=0; newest=""; newest_depth=0
 # is the last backticked 7-to-40 hex token on the line, because the text
 # also backticks symbol names.
 while IFS= read -r line; do
-	# THREE COMPONENTS, WHICH IS THE DISCRIMINATOR AND NOT A HEURISTIC.
-	# A released version is X.Y.Z and pins a commit; a MILESTONE is X.Y and
-	# pins nothing because it has not happened. Both are tables of rows
-	# opening with a number in this file, so a two-component match reported
-	# ten milestones as rows missing a hash - correctly, about the wrong
-	# table.
+	# Three components is the discriminator. A released version is X.Y.Z
+	# and pins a commit; a milestone is X.Y and pins nothing, having not
+	# happened. Both open a table row with a number, so a two-component
+	# match reports ten milestones as rows missing a hash.
 	ver=$(printf '%s' "$line" | sed -n 's/^| \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) |.*/\1/p')
 	[ -n "$ver" ] || continue
 	h=$(printf '%s' "$line" | grep -o '`[0-9a-f]\{7,40\}`' | tail -1 | tr -d '`')
@@ -53,28 +49,27 @@ while IFS= read -r line; do
 	echo "  ok   $ver -> $h  $subj"
 	vers="${vers:-}$ver
 "
-	# NEWEST BY THE GRAPH, NOT BY TABLE ORDER. A row inserted out of order,
-	# or a table sorted descending later, would otherwise make the prompt
-	# below measure from the wrong commit and report a reassuring zero.
+	# Newest by the graph, not by table order. A row inserted out of order,
+	# or a table sorted descending later, would make the prompt below
+	# measure from the wrong commit and report zero.
 	d=$(git rev-list --count "$h")
 	if [ "$d" -gt "${newest_depth:-0}" ]; then newest="$h"; newest_depth="$d"; fi
 	rows=$((rows+1))
 done < "$DOC"
 
-# THE POPULATION IS ASSERTED. A parser that stops matching reports a clean
-# zero, and a clean zero here reads exactly like a table with no defects.
+# Assert the population. A parser that stops matching reports zero rows, and
+# zero rows here is indistinguishable from a table with no defects.
 [ "$rows" -gt 0 ] || {
 	echo "history: FAIL: parsed no version rows from $DOC. Either the table" >&2
 	echo "  lost its rows or this matcher stopped matching; an empty" >&2
 	echo "  population passing is what this check exists to prevent." >&2
 	exit 1; }
 
-# A VERSION NUMBER IS A HAND-MAINTAINED SEQUENCE AND NOTHING READ IT EITHER.
-# Every row above can resolve, match its subject and still be numbered the
-# same as its neighbour: two rows sharing a version make the older one
-# unreachable by name, and the table is where a reader looks a version up.
-# Added 2026-08-26 after writing two rows numbered 0.1.13 in one edit, which
-# every check here passed.
+# The version numbers are a hand-maintained sequence. Every row above can
+# resolve and match its subject while carrying its neighbour's number, which
+# makes the older of the two unreachable by name in the one table a reader
+# looks a version up in. Two rows were numbered 0.1.13 in a single edit before
+# this check existed.
 dups=$(printf '%s' "${vers:-}" | LC_ALL=C sort | uniq -d)
 if [ -n "$dups" ]; then
 	for v in $dups; do
@@ -86,7 +81,7 @@ fi
 echo "history: $rows row(s), $bad bad"
 [ "$bad" = 0 ] || exit 1
 
-# THE PROMPT. Never fails; see the header.
+# The prompt. Never fails; see the header.
 since=$(git rev-list --count "$newest"..HEAD -- src script 2>/dev/null || echo "?")
 if [ "$since" = 0 ]; then
 	echo "history: no deliverable commit since the newest row ($newest)"

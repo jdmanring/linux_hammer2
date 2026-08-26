@@ -1,25 +1,23 @@
 #!/bin/sh
-# THE DIRECTORY IS THE POPULATION. Three lists claim to cover it and none of
-# them is derived from it, so each can silently fall behind:
+# The directory is the population. Three lists claim to cover it, none of them
+# derived from it, so each can fall behind without saying so:
 #
 #   1. README.status.md's origin table - what each file is, where it came
 #      from, and how long it is. A carried file with no row has no recorded
 #      provenance, which is the one thing this port cannot reconstruct
-#      later. The LINE COUNT in that row is checked too, because it is the
-#      one column that goes stale on an ordinary edit rather than on an
-#      import: measured 2026-08-25, hammer2_os.h had drifted 471 -> 473 and
-#      hammer2_compat.h 112 -> 111 with nothing to notice. A number in a
-#      published table that nothing derives is a number that rots.
+#      later. The line count in that row is checked too, being the one column
+#      that goes stale on an ordinary edit rather than on an import: measured
+#      2026-08-25, hammer2_os.h had drifted 471 -> 473 and hammer2_compat.h
+#      112 -> 111 with nothing to notice.
 #   2. the Makefile's `hammer2-y` - what actually gets compiled into the
 #      module. A .c absent from it is dead code that still passes review.
 #   3. script/test-syntax.sh - which files the compile gate names. It names
 #      them one by one rather than enumerating, so a .c nobody adds to it is
 #      never compiled and the gate still reports every check passing.
 #
-# All three fail the same way: quietly, in the direction that reads as
-# healthy. That matters most during an import, which is exactly when files
-# arrive in bulk - so this gate exists BEFORE the import rather than after
-# it, which is the only useful time to write it.
+# All three fail quietly, in the direction that reads as healthy, and they do
+# it during an import, when files arrive in bulk. So this gate was written
+# before the 0.2 import rather than after it.
 #
 # Exit 2 is COULD-NOT-RUN. Exit 1 is a count of failed assertions.
 set -u
@@ -37,9 +35,9 @@ done
 srcs=$(ls "$DIR"/*.c 2>/dev/null | xargs -r -n1 basename)
 hdrs=$(ls "$DIR"/*.h 2>/dev/null | xargs -r -n1 basename)
 
-# THE POPULATION IS ASSERTED BEFORE ANYTHING IS CHECKED. A glob that matches
-# nothing makes every loop below vacuous, and a run with zero findings is
-# what this gate looks like when it is working.
+# Assert the population before checking anything. A glob that matches nothing
+# makes every loop below vacuous, and zero findings is also what this gate
+# looks like when it is working.
 [ -n "$srcs" ] || { echo "inventory: FAIL: no .c files in $DIR at all" >&2; exit 1; }
 [ -n "$hdrs" ] || { echo "inventory: FAIL: no .h files in $DIR at all" >&2; exit 1; }
 
@@ -51,15 +49,14 @@ for f in $srcs $hdrs; do
 	# sys/queue.h are vendored one directory up and are listed together,
 	# which is why this asks about $DIR's own files only.
 	#
-	# ANCHORED ON THE FIRST COLUMN. An unanchored match plus `head -1`
-	# takes whichever row MENTIONS the file first, and a row's origin
-	# note names other files: on 2026-08-26 hammer2_chain.c landed and
+	# Anchored on the first column. An unanchored match plus `head -1`
+	# takes whichever row mentions the file first, and a row's origin
+	# note names other files: hammer2_chain.c landed on 2026-08-26 and
 	# this read hammer2_mount.h's row, whose note says "hammer2_chain.c
-	# includes it", then reported the new 4929-line file as a 58-line
-	# one. The wrong row is a worse failure than no row, because it
-	# compares a real number against a real number and so reads as a
-	# finding about the file rather than about this line. `command grep`
-	# because only it ignores no ignore file.
+	# includes it", then reported the new 4929-line file as 58 lines.
+	# The wrong row is worse than no row, since it compares one real
+	# number against another and so reads as a finding about the file.
+	# `command grep` because only it honours no ignore file.
 	row=$(command grep "^| \`$f\` |" "$STATUS" | head -1)
 	if [ -z "$row" ]; then
 		echo "  FAIL $f: no origin row in $STATUS"; fail=$((fail+1))
@@ -93,20 +90,15 @@ for f in $srcs; do
 		fail=$((fail+1)); }
 done
 
-# THE SECOND POPULATION IS test/, AND IT HAD NOBODY COUNTING IT. Measured
-# 2026-08-26: crc32c-vectors.c and xxh64-vectors.c are tracked, are named by
-# no gate here and by no document, and one of them includes a header that is
-# not in this tree. A test file that nothing runs reads exactly like a test
-# file that passes, which is the failure this whole gate exists to close -
-# and the population it was written against was src/ only, so the class
-# stayed open one directory away.
+# The second population is test/, which nothing counted until 2026-08-26.
+# crc32c-vectors.c and xxh64-vectors.c are tracked, named by no gate and no
+# document here, and one includes a header that is not in this tree. A test
+# file nothing runs reads the same as one that passes.
 #
-# WHAT THIS GATE CANNOT SEE, stated because the first version of this
-# comment asserted the opposite: it cannot tell whether anything runs a
-# file, only whether something here NAMES it. Both of those two are
-# compiled by a gate in another repository, which no search of this tree
-# could report; README.testing.md holds that contract. So a finding here
-# means unaccounted-for, never unused.
+# This gate cannot tell whether anything runs a file, only whether something
+# here names it. Both of those two are compiled by a gate in another
+# repository, which no search of this tree can see; README.testing.md holds
+# that contract. A finding here means unaccounted-for, never unused.
 #
 # Accounted for means one of two things, and the second is deliberate: a
 # gate names it (directly, or by a directory a gate passes with -I), or
@@ -140,25 +132,21 @@ for f in $tests; do
 		fail=$((fail+1)); }
 done
 
-# THE THIRD POPULATION IS THE GATE COUNT ITSELF, which five documents state
-# in prose and nothing derived. This repository has already been bitten by
-# it once (0.1.10: three gates existed that no document mentioned), and
-# adding a seventh on 2026-08-26 falsified the word "six" in five files at
-# the same instant. A count in a published document that nothing derives is
-# a number that rots - the same sentence the origin table's line count is
-# checked for, one level up.
+# The third population is the gate count itself, stated in prose by five
+# documents and derived by nothing. At 0.1.10 three gates existed that no
+# document mentioned, and adding a seventh on 2026-08-26 falsified the word
+# "six" in five files at once.
 #
-# The documents are READ AS ONE LINE, because prose wraps: "All six" ended a
-# line in CONTRIBUTING.md with "gates are cheap" on the next, and a
-# line-at-a-time matcher cannot see the phrase at all. A rule about writing
-# does not fire while you are reading output; this one is about reading.
-# THE COUNT AND THE LIST ARE DIFFERENT CLAIMS. A document can say "eight
-# gates" correctly and enumerate seven of them, which is what the agent
-# instructions file did on 2026-08-26 before it was untracked: the count
-# check passed while the list a future reader runs was missing the newest
-# gate. These print runnable command lists, so every gate must appear in
-# each; documents that merely MENTION a gate are not in this set, since
-# requiring all of them there would be wrong.
+# The documents are read as one line, because prose wraps: "All six" ended a
+# line in CONTRIBUTING.md with "gates are cheap" on the next, where a
+# line-at-a-time matcher sees no phrase at all.
+#
+# The count and the list are separate claims. A document can say "eight gates"
+# correctly and enumerate seven, which is what the agent instructions file did
+# on 2026-08-26 before it was untracked: the count passed while the list a
+# reader actually runs was missing the newest gate. The documents below print
+# runnable command lists, so every gate must appear in each. Documents that
+# only mention a gate in passing are not in this set.
 LIST_DOCS="README.md CONTRIBUTING.md"
 for d in $LIST_DOCS; do
 	[ -f "$d" ] || continue

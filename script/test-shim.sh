@@ -33,26 +33,23 @@ check() { # name expect cflags... source
 	rm -f /tmp/h2shim.$$
 }
 
-# WHICH COMPILER, because the default and a deliberate run answer different
-# questions and the output could not say which happened. cc here is gcc and
-# a reviewer reaching for clang gets a different opinion by construction -
-# that difference is the whole reason the syntax gate runs two of them.
+# Print which compiler ran. cc is gcc here, and a reviewer reaching for clang
+# gets a different opinion by construction, which is why the syntax gate runs
+# both.
 echo "hammer2 shim, syntax and guards, with $("$CC" --version | head -1):"
 check "compiles, invariants off" pass -Wall -Wextra -Wno-unused-parameter test/syntax-check.c
 check "compiles, invariants on"  pass -Wall -Wextra -Wno-unused-parameter -DHAMMER2_INVARIANTS test/syntax-check.c
 
-# THE LOG PREFIX IS READ OUT OF THE EXPANSION, NOT ASSERTED IN A COMMENT.
-# A filesystem's log lines have to name the filesystem, and nothing that
-# compiles can tell you whether they do: an empty pr_fmt is valid C and
-# prints a bare message forever. Measured 2026-08-26, when exactly that
-# was true of every carried file. So the two macros are preprocessed and
-# the result is inspected.
+# Read the log prefix out of the expansion. A filesystem's log lines have to
+# name the filesystem, and nothing that compiles can tell you whether they do:
+# an empty pr_fmt is valid C and prints a bare message forever, which was true
+# of every carried file on 2026-08-26. So both macros are preprocessed and the
+# result inspected.
 #
-# The second half is the one that is easy to get wrong twice: printf must
-# expand to pr_cont and not pr_info, because the core builds one log line
-# out of several calls and pr_info would close a record between them.
-# Both halves fail toward the FAULT: a missing name and a split line are
-# invisible in a compile and invisible in a diff review.
+# The second half is the easier one to get wrong. printf must expand to
+# pr_cont, not pr_info, because the core builds one log line out of several
+# calls and pr_info would close a record between them. A missing name and a
+# split line are both invisible in a compile and in a diff review.
 tmp_pfx=$(mktemp -d) || exit 2
 printf '#include "%s/src/sys/fs/hammer2/hammer2_os.h"\n' "$PWD" > "$tmp_pfx/pfx.c"
 printf 'void f(void) { hprintf("r %%d\\n", 1); printf("(cont)\\n"); }\n' >> "$tmp_pfx/pfx.c"
@@ -85,9 +82,8 @@ fi
 # cannot be told from one that never opened the file, so break the header
 # on a copy and require the failure.
 tmp=$(mktemp -d) || exit 2
-# ONE trap, both directories. A second `trap ... EXIT` REPLACES the first
-# rather than adding to it, so the earlier temporary would leak on every
-# run with nothing to show for it.
+# One trap, both directories. A second `trap ... EXIT` replaces the first
+# instead of adding to it, so the earlier temporary would leak on every run.
 trap 'rm -rf "$tmp" "$tmp_pfx"' EXIT
 cp -r src test "$tmp/" || exit 2
 sed -i 's/^hammer2_mtx_refs(hammer2_mtx_t \*p)$/hammer2_mtx_refs(hammer2_mtx_t *p) THIS_IS_NOT_C/' \

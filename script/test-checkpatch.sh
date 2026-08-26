@@ -19,7 +19,7 @@
 # and glibc collation differs between machines: the first CI run failed
 # with every count identical and four lines in a different order.
 #
-# A BASELINE IS A CLAIM ABOUT A CHECKER VERSION. checkpatch.pl changes with
+# A baseline is a claim about a checker version. checkpatch.pl changes with
 # the kernel, so the same tree scores differently under different copies of
 # it: measured 2026-08-25, this tree is 579 hits under torvalds/master and
 # 582 under v6.15, the difference being three more `Argument 'X' is not
@@ -32,12 +32,12 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
-# --selftest: the sha256 provenance line, which nothing read either. It
-# copies the checker it was given, appends a comment so the CONTENT differs
-# while the behaviour does not, and requires the gate to notice. The
-# assertion branch is the one that mattered: a wrong checker carrying
+# --selftest exercises the sha256 provenance line, which nothing read either.
+# It copies the checker it was given, appends a comment so the content differs
+# while the behaviour does not, and requires the gate to notice. The assertion
+# branch is the one that mattered: until 2026-08-26 a wrong checker carrying
 # CHECKPATCH_REF for the right version was reported as a style regression
-# against this code until 2026-08-26.
+# against this code.
 if [ "${1:-}" = "--selftest" ]; then
 	cp0=${CHECKPATCH:-${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl}
 	[ -f "$cp0" ] || { echo "selftest: COULD-NOT-RUN: no checkpatch.pl at $cp0"; exit 2; }
@@ -56,19 +56,20 @@ if [ "${1:-}" = "--selftest" ]; then
 	exit 1
 fi
 
-# WHICH BRANCH FOUND THE CHECKER, PRINTED AND NOT PINNED. Which one is
-# right depends on the machine, so constraining it would break the case the
-# fallback exists for; naming it is the whole fix.
-# THE DEFAULT MUST REACH THE KERNEL OF RECORD, the same defect the syntax
-# gate had: this looked only at the host's build tree, so it reported
-# COULD-NOT-RUN on a machine where the kernel the port targets was sitting
-# in the store with a checkpatch.pl in it. A nixpkgs kernel dev output
-# keeps the script under source/scripts - build/scripts holds gdb helpers.
+# Print which branch found the checker, and do not pin it: which one is right
+# depends on the machine, so constraining it would break the case the fallback
+# exists for.
 #
-# The candidate whose sha256 MATCHES THE BASELINE is preferred, because
-# that is the checker the recorded deviation set was produced with and the
-# only one whose disagreement is attributable to this code. Otherwise the
-# first that exists, whose provenance is then printed as unmatched.
+# The default has to reach the kernel of record, which is the defect the
+# syntax gate had. This looked only at the host's build tree and so reported
+# COULD-NOT-RUN on a machine where the kernel the port targets sat in the
+# store with a checkpatch.pl in it. A nixpkgs kernel dev output keeps the
+# script under source/scripts; build/scripts holds gdb helpers.
+#
+# The candidate whose sha256 matches the baseline wins, being the checker the
+# recorded deviation set was produced with and the only one whose disagreement
+# is attributable to this code. Otherwise the first that exists, with its
+# provenance printed as unmatched.
 base=doc/checkpatch-baseline.txt
 basesha=$(sed -n 's/^# sha256 //p' "$base" 2>/dev/null | head -1)
 CP=${CHECKPATCH:-}
@@ -102,40 +103,38 @@ fi
 [ -f "$CP" ] || { echo "checkpatch: COULD-NOT-RUN: no checkpatch.pl at $CP"; exit 2; }
 command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; exit 2; }
 
-# THE VERSION IS A THIRD WAY THIS GATE CANNOT ANSWER, and until now it was
-# the only one that exited 1. The block above already says a baseline is a
-# claim about a checker version, and the failure text below already tells
-# the reader to check their checkpatch.pl is that version FIRST - so the
-# version was known to matter, was printed, and was still not tested. A
-# wrong-version run and a real style regression left by the same exit code,
-# which is the status a runner reads.
+# The checker's version is the third thing this gate cannot answer, and until
+# now it was the only one that exited 1. The block above already says a
+# baseline is a claim about a checker version, and the failure text below
+# already tells the reader to check their checkpatch.pl is that version first,
+# so the version was known to matter, was printed, and was still not tested. A
+# wrong-version run and a real style regression left by the same exit code.
 #
 # `checkpatch.pl` carries no version of its own, so it is taken from the
-# kernel tree it sits in: `scripts/checkpatch.pl` puts the Makefile two
-# levels up. `CHECKPATCH_REF` overrides, for a copy pulled out of its tree.
-# THE VERSION HAS TWO SOURCES AND THEY ARE NOT THE SAME KIND OF THING.
-# CHECKPATCH_REF is a human ASSERTION; the Makefile two levels up is
-# DERIVED from the tree the checker sits in. The comparison below treats
-# them identically, which is correct - but a reader who sees "v7.2" cannot
-# tell whether the gate measured it or was told, and every run of this gate
-# on this workstation was told, because the pinned copy lives outside a
-# kernel tree. So the origin is printed beside the version.
-# THE STRONGEST IDENTITY IS THE ONE THE FILE ANSWERS FOR ITSELF. A version
-# taken from the tree the checker was cut from does not survive the checker
-# being copied out of that tree, which is the condition that created the
-# problem here: the pinned copy lives outside a kernel tree, so every run
-# fell back to an ASSERTION and the gate printed agreement with itself. A
-# content hash cannot be asserted wrong and travels with the file.
+# kernel tree it sits in: `scripts/checkpatch.pl` puts the Makefile two levels
+# up. `CHECKPATCH_REF` overrides, for a copy pulled out of its tree.
 #
-# checkpatch.pl's own `my $V = '0.32'` is not a discriminator: it reads
-# 0.32 in v6.15, v7.2 and this workstation's 7.1 copy alike. A version
-# field that never changes reads like an instrument and is not one.
+# Those two sources are not the same kind of thing. CHECKPATCH_REF is an
+# assertion; the Makefile two levels up is derived from the tree the checker
+# sits in. The comparison below treats them identically, which is right, but a
+# reader who sees "v7.2" cannot tell whether the gate measured it or was told,
+# and every run on this workstation was told, the pinned copy living outside a
+# kernel tree. So the origin is printed beside the version.
+#
+# The strongest identity is the one the file answers for itself. A version
+# taken from the tree the checker was cut from does not survive the checker
+# being copied out of it, which is the condition here, so every run fell back
+# to an assertion and the gate printed agreement with itself. A content hash
+# cannot be asserted wrong and travels with the file.
+#
+# checkpatch.pl's own `my $V = '0.32'` is not a discriminator: it reads 0.32
+# in v6.15, v7.2 and this workstation's 7.1 copy alike.
 base=doc/checkpatch-baseline.txt
 cpsha=$(sha256sum "$CP" 2>/dev/null | cut -d' ' -f1)
 basesha=$(sed -n 's/^# sha256 //p' "$base" 2>/dev/null | head -1)
 cpver=${CHECKPATCH_REF:-}
 if [ -n "$cpsha" ] && [ -n "$basesha" ] && [ "$cpsha" = "$basesha" ]; then
-	# The file IS the one the baseline was produced with. Nothing a
+	# The file is the one the baseline was produced with. Nothing a
 	# Makefile or an environment variable says can improve on that.
 	cpver=$(sed -n '1s/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$base")
 	versrc="derived from the checker's own content, sha256 matches the baseline"
@@ -159,14 +158,13 @@ got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 	sed "s/'[^']*'/'X'/g" |
 	LC_ALL=C sort | uniq -c | awk '{$1=$1; print}' | LC_ALL=C sort -k2)
 
-# AN ABSENT BASELINE IS COULD-NOT-RUN, NOT A LICENCE TO WRITE ONE. Until
+# An absent baseline is COULD-NOT-RUN, not a licence to write one. Until
 # 2026-08-25 this line wrote the baseline from whatever the tree happened to
-# produce and exited 0, so a run against a tree whose baseline had been
-# deleted, or a partial checkout, PUBLISHED a new deviation set and reported
-# success - a gate answering a question it had just made unanswerable. The
-# file is tracked, so the window is narrow; the exit code was the problem,
-# because 0 here means "the set did not move" and nothing had been compared.
-# Found by sweeping what these gates WRITE rather than by a symptom.
+# produce and exited 0, so a run against a deleted baseline or a partial
+# checkout published a new deviation set and reported success. The file is
+# tracked, so the window is narrow; the exit code was the problem, since 0
+# here means the set did not move and nothing had been compared. Found by
+# sweeping what these gates write, not by a symptom.
 if [ ! -f "$base" ]; then
 	if [ "${1:-}" = "--write" ]; then
 		printf '# checkpatch.pl from linux %s\n' "${CHECKPATCH_REF:-UNRECORDED - set CHECKPATCH_REF}" > "$base"
@@ -187,12 +185,12 @@ ref=$(sed -n '1s/^# *//p' "$base")
 # compared as a string and mismatching on formatting.
 refver=$(printf '%s\n' "$ref" | sed -n 's/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 
-# A PROVEN MISMATCH CANNOT BE ATTRIBUTED TO THIS CODE, so it is
+# A proven version mismatch cannot be attributed to this code, so it is
 # COULD-NOT-RUN and not a failure. Measured 2026-08-25 on this workstation:
 # baseline v6.15 against the Artix 7.1 checkpatch.pl gives one differing
 # category, 18 hits against 15 of `Argument 'X' is not used in
-# function-like macro`, every other line byte-identical - the same
-# signature the block at the top of this file already records for
+# function-like macro`, every other line byte-identical. That is the same
+# signature the block at the top of this file records for
 # master-against-v6.15.
 if [ -n "$cpver" ] && [ -n "$refver" ] && [ "$cpver" != "$refver" ]; then
 	echo "checkpatch: COULD-NOT-RUN: checkpatch.pl is from linux $cpver," >&2
@@ -206,10 +204,10 @@ if diff -u <(grep -v '^#' "$base") <(printf '%s\n' "$got"); then
 	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits, baseline: ${ref:-version unrecorded})"
 	echo "checkpatch: checker from $cpsrc, version ${cpver:-unestablished} $versrc"
 else
-	# PROVENANCE PRINTS ON THIS BRANCH TOO. It only printed on the
-	# passing path until 2026-08-26, which is the branch where nobody
-	# needs it: on a diff the reader has to decide whether to blame the
-	# code, and that decision IS the provenance question.
+	# Provenance prints on this branch too. Until 2026-08-26 it printed
+	# only on the passing path, which is the branch where nobody needs
+	# it: on a diff the reader has to decide whether to blame the code,
+	# and that decision is the provenance question.
 	echo "checkpatch: checker from $cpsrc, version ${cpver:-unestablished} $versrc"
 	echo "checkpatch: the deviation set MOVED against ${ref:-an unrecorded version}."
 	echo "            Check your checkpatch.pl is that version FIRST: a"
@@ -217,17 +215,15 @@ else
 	echo "            If the change is deliberate, update"
 	echo "            doc/checkpatch-baseline.txt, including its first"
 	echo "            line, and say why in doc/README.kernel-style.md."
-	# AN UNESTABLISHED VERSION IS ONLY DISQUALIFYING ON A DIFF. An
-	# unchanged set is unchanged whatever produced it, so this never turns
-	# a green into COULD-NOT-RUN; but a set that MOVED cannot be blamed on
-	# the code unless the checker is known to be the baseline's.
-	# AN ASSERTION IS NOT EVIDENCE, and on a diff that distinction decides
-	# the exit code. A checker whose content does not match the baseline's
-	# recorded sha256, carrying a CHECKPATCH_REF that names the right
-	# version anyway, was reported as a real style regression: the
-	# assertion laundered a wrong checker into a verdict about this code.
-	# Measured 2026-08-26 by pointing the gate at the v6.15 copy with
-	# CHECKPATCH_REF=v7.2, which exited 1.
+	# An unestablished version is only disqualifying on a diff. An
+	# unchanged set is unchanged whatever produced it, so this never
+	# turns a green into COULD-NOT-RUN. A set that moved cannot be
+	# blamed on the code unless the checker is known to be the
+	# baseline's, and there an assertion is not evidence: a checker whose
+	# content does not match the baseline's recorded sha256, carrying a
+	# CHECKPATCH_REF naming the right version anyway, was reported as a
+	# real style regression. Measured 2026-08-26 by pointing the gate at
+	# the v6.15 copy with CHECKPATCH_REF=v7.2, which exited 1.
 	if [ -n "$basesha" ] && [ -n "$cpsha" ] && [ "$cpsha" != "$basesha" ]; then
 		echo "            The checker's sha256 does not match the one the" >&2
 		echo "            baseline records, so whatever names it carries," >&2

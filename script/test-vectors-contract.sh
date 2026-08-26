@@ -1,28 +1,24 @@
 #!/bin/sh
-# The two vector files' OUTPUT and SPELLING are an interface, and this
-# freezes that here rather than in the consumer that depends on it.
+# The two vector files' output and spelling are an interface, frozen here
+# rather than in the consumer that depends on it.
 #
-# WHY THIS GATE EXISTS. test/xxh64-vectors.c and test/crc32c-vectors.c are
-# compiled by a gate in another repository, which reaches in through an
-# environment variable and, until 2026-08-26, perturbed one of these files'
-# TEXT to arm its own negative control. So a legitimate edit here - the
-# rewrite that fixed these files' logic lowercased a hex constant - broke
-# that control silently, and this repository reported six green gates for
-# an hour while the consumer reported, correctly, that it was comparing
-# nothing.
+# test/xxh64-vectors.c and test/crc32c-vectors.c are compiled by a gate in
+# another repository, which reaches in through an environment variable and,
+# until 2026-08-26, perturbed one of these files' text to arm its own negative
+# control. A legitimate edit here, the rewrite that fixed these files' logic,
+# lowercased a hex constant and broke that control silently: this repository
+# reported six green gates for an hour while the consumer reported, correctly,
+# that it was comparing nothing.
 #
-# The wrong lesson is "a gate here should check the consumer". It should
-# not, and it does not: nothing below knows the consumer exists at
-# runtime, reads its variable, or touches anything outside this tree. What
-# it does is DECLARE that these three things are this repository's
-# interface and freeze them, so an edit that breaks them fails here, in
-# the tree where the edit happens, instead of somewhere the author cannot
-# see. That is less coupling than leaving the contract in someone else's
-# sed, not more: it is the difference between a promise and a guess.
+# Nothing below knows the consumer exists at runtime, reads its variable, or
+# touches anything outside this tree. What it does is declare that these three
+# things are this repository's interface and freeze them, so an edit that
+# breaks them fails in the tree where the edit happens instead of somewhere
+# the author cannot see.
 #
-# What it CANNOT do, said plainly: it freezes THIS side. It cannot detect
-# the consumer changing how it reads these files. A contract wants an
-# assertion at each end and this is one of them.
+# It freezes this side only. It cannot detect the consumer changing how it
+# reads these files. A contract wants an assertion at each end, and this is
+# one of them.
 #
 # Exit 2 is COULD-NOT-RUN. Exit 1 is a count of failed assertions.
 set -u
@@ -36,16 +32,16 @@ done
 
 fail=0 ran=0
 
-# THE COMPARISON IS CASE-SENSITIVE AND THAT IS THE POINT. The defect that
-# has actually occurred here was a lowercasing, so a case-insensitive
-# check would pass the one failure this gate was written for. `command
-# grep` because only it ignores no ignore file.
-# THE MATCH ITSELF, so the control and the checks cannot diverge. Until
-# 2026-08-26 the control below ran its own inline grep, which meant a `-i`
-# added to src_check would have left the control green while every check it
-# guards went case-blind: the expected status coming from a different
-# statement than the one under test. Read in ArtNix's errata for the same
-# trap, where a falsification never reached the gate it was written for.
+# The comparison is case-sensitive on purpose. The defect that has actually
+# occurred here was a lowercasing, so a case-insensitive check would pass the
+# one failure this gate was written for. `command grep` because only it
+# honours no ignore file.
+#
+# The control below shares this function so the two cannot diverge. Until
+# 2026-08-26 it ran its own inline grep, so a `-i` added to src_check would
+# have left the control green while every check it guards went case-blind,
+# the expected status coming from a different statement than the one under
+# test.
 matches() { command grep -q -- "$2" "$1"; }
 
 src_check() { # name file pattern
@@ -65,30 +61,29 @@ echo "hammer2 vector contract:"
 # that could not link one is a different run from one that did.
 # 1. The consumer arms its control by defining this. Losing it silently
 #    disarms a negative control in another tree.
-# ANCHORED ON THE DIRECTIVE, NOT THE NAME. Every pattern here is anchored
-# on the code that has the effect rather than on a token, because these
-# files DOCUMENT their own contract in comments and a token check passes on
-# the prose after the code is gone. Measured while writing this gate: the
-# crc32c check below matched a comment quoting the wording, so deleting the
-# printf left it green, and only the control found it.
+# Anchored on the directive, not the name. Every pattern here matches the code
+# that has the effect rather than a token, because these files document their
+# own contract in comments and a token check passes on the prose after the
+# code is gone. Measured while writing this gate: the crc32c check below
+# matched a comment quoting the wording, so deleting the printf left it green
+# and only the control found it.
 src_check "xxh64: -DXXH_VECTORS_CONTROL hook present" "$XXH" '#ifdef XXH_VECTORS_CONTROL'
 # 2. The two constants, frozen on their own merit rather than on the
 #    consumer's behalf. Until 2026-08-26 the consumer armed its control by
 #    `sed`-ing `0xEF46DB3751D8E999ULL`, and lowercasing it here broke that
-#    silently; it now uses the compile-time hook above and reads neither
-#    constant, so the original reason to freeze the CASE is gone. The
-#    freeze stays because the VALUES are what the file is for: the first
-#    is xxHash's own reference digest for the empty input and the second
-#    is HAMMER2's seed, and a vector file whose expected values drift is
-#    a test that cannot fail. The case-sensitivity below is now this
-#    tree's own consistency rule, which is a smaller claim than the one
-#    this comment used to make.
+#    silently. It now uses the compile-time hook above and reads neither
+#    constant, so the original reason to freeze the case is gone. The
+#    freeze stays because the values are what the file is for: the first
+#    is xxHash's own reference digest for the empty input, the second is
+#    HAMMER2's seed, and a vector file whose expected values drift is a
+#    test that cannot fail. The case-sensitivity is now this tree's own
+#    consistency rule.
 src_check "xxh64: constants uppercase" "$XXH" '0xEF46DB3751D8E999ULL'
 src_check "xxh64: HAMMER2 seed uppercase" "$XXH" '0x4D617474446C6C6EULL'
 # 3. The wording the consumer greps, in the order it greps it.
 src_check "crc32c: a printf writes 'Castagnoli' then 'MATCH'" "$CRC" 'printf(.*Castagnoli.*MATCH'
 
-# NEGATIVE CONTROL, RUN EVERY TIME. Lowercase the constant on a copy and
+# Negative control, run every time. Lowercase the constant on a copy and
 # require the check to fail: a case-sensitive comparison and a
 # case-insensitive one are indistinguishable while both are passing, and
 # the case-insensitive one cannot catch the defect that has happened.
@@ -104,7 +99,7 @@ else
 	echo "  ok    negative control (a lowercased copy fails)"
 fi
 
-# THE BEHAVIOURAL HALF. The exit status is the other half of the contract
+# The behavioural half. The exit status is the other half of the contract
 # and a status only ever seen as 0 is not tested, so both directions are
 # required. It needs an xxHash to link against, which this tree does not
 # carry until 0.2; the system library is used when present and its absence

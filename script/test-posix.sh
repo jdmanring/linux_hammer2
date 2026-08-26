@@ -1,27 +1,18 @@
 #!/bin/sh
 # The gates that declare #!/bin/sh are parsed by shells that are not bash.
 #
-# WHY THIS EXISTS. Every gate here is normally run by bash - by hand, by
-# CI, and by ArtNix's delegator - so a bash-only construct in a script
-# declaring #!/bin/sh runs fine forever and breaks the day something
-# honours the shebang. That is not hypothetical: on 2026-08-26 both
-# --selftest paths re-invoked their gate with `sh "$0"`, which works where
-# /bin/sh is bash and is a syntax error under dash, so they passed on this
-# workstation and failed on the runner with `Syntax error: "(" unexpected`.
-# A local run could not reach it by construction.
+# Every gate here is normally run by bash, by hand and by CI, so a bash-only
+# construct in a script declaring #!/bin/sh runs fine forever and breaks the
+# day something honours the shebang. On 2026-08-26 both --selftest paths
+# re-invoked their gate with `sh "$0"`, which works where /bin/sh is bash and
+# is a syntax error under dash: they passed on the workstation and failed on
+# the runner with `Syntax error: "(" unexpected`. Grepping for the usual tells
+# had reported all four clean, because a grep is not a parse.
 #
-# I THEN CLAIMED THESE FOUR WERE CLEAN AFTER GREPPING FOR THE USUAL TELLS,
-# and a grep is not a parse. I also recorded that no POSIX shell existed
-# here, having asked `command -v`, which reads PATH - and PATH is not the
-# machine. Both shells were already realized in the store, and the same two
-# errors were made in the ArtNix tree within the hour before the store
-# copies were found.
-#
-# WHAT A CLEAN RUN HERE IS WORTH. A parse reaches far less than it appears
-# to. The gate MEASURES its own reach on every run and prints it; the table
-# below is one dated observation of that, kept for a reader rather than
-# relied on by the code, and it has been wrong twice already - first at
-# three constructs in dash, where there are four. Observed 2026-08-26:
+# What a clean run is worth. A parse reaches less than it appears to, so the
+# gate measures its own reach on every run and prints it. The table below is
+# one dated observation of that, kept for a reader and not relied on by the
+# code. Observed 2026-08-26:
 #
 #   construct                  dash        busybox ash
 #   process substitution       REJECT      accept
@@ -33,10 +24,10 @@
 #   local x=1                  accept      accept
 #   a+=2                       accept      accept
 #
-# Four constructs in dash and two in ash, and BLIND to [[, declare, local,
-# +=, arithmetic, ANSI-C quoting and brace expansion - ordinary words to a
-# POSIX shell, failing only at runtime. A clean run means "no bash SYNTAX"
-# and never "no bashisms".
+# Four constructs in dash and two in ash, and blind to [[, declare, local, +=,
+# arithmetic, ANSI-C quoting and brace expansion, which are ordinary words to a
+# POSIX shell and fail only at runtime. A clean run means no bash syntax, never
+# no bashisms.
 #
 # Exit 2 is COULD-NOT-RUN: no shell realized. Exit 1 is a parse failure.
 set -u
@@ -72,18 +63,15 @@ parse() { # shell file -> status
 
 fail=0 ran=0
 
-# THE REACH IS MEASURED ON EVERY RUN AND PRINTED AS OBSERVED, never
-# asserted. An earlier version hardcoded the table above as expectations,
-# which is a gate STATING ITS OWN COVERAGE - a claim nothing checks, in the
-# one place a reader uses to decide whether a clean run means anything, and
-# wrong again the next time a shell version moves. It was also wrong when
-# written: it claimed three constructs in dash where there are four, and
-# the copy of it in the ArtNix tree claimed one. An UNDER-claim is still a false
-# claim and it is the one nobody re-checks, because a modest statement
-# about your own instrument reads as rigour.
+# The reach is measured on every run and printed as observed, never asserted.
+# An earlier version hardcoded the table above as expectations, which is a gate
+# stating its own coverage: a claim nothing checks, in the one place a reader
+# uses to decide whether a clean run means anything, and wrong the next time a
+# shell version moves. It was wrong when written too, claiming three constructs
+# in dash where there are four.
 #
-# What is asserted instead are two properties of a WORKING CHECKER, which
-# hold whatever the reach turns out to be:
+# What is asserted instead are two properties of a working checker, which hold
+# whatever the reach turns out to be:
 #
 #   1. each shell must reject at least one probe, or it is inert here and
 #      a clean result means nothing;
@@ -136,9 +124,9 @@ for sh in $shells; do
 	fi
 done
 
-# THE POPULATION IS ASSERTED. A glob that matches nothing parses nothing
-# and prints a clean count of failures among no files, which is what this
-# gate looks like when it is broken.
+# Assert the population. A glob that matches nothing parses nothing and prints
+# a clean count of failures among no files, which is what this gate looks like
+# when it is broken.
 n=0
 for f in script/*.sh; do
 	case "$(head -1 "$f")" in *bash*) continue ;; esac
