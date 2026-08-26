@@ -187,12 +187,20 @@ run having examined nothing, and the summary looks identical either way.
 Measured 2026-08-26 by naming a compiler that does not exist:
 `test-shim.sh`, `test-syntax.sh` and `test-vectors-contract.sh` each exit
 2 and name what was missing, and the vectors gate says which half it still
-completed. The absent-`perl` path in `test-checkpatch.sh` is NOT verified:
-the obvious probe, emptying `PATH`, breaks the shell before the gate runs
-and so measures nothing, and perl cannot be hidden by directory on this
-machine because it shares one with everything else the gate needs. Listed
-as unverified rather than assumed, which is the difference between the two
-readings a green run supports.
+completed. `test-checkpatch.sh` exits 2 with `no perl` under a `PATH`
+assembled from store paths for coreutils, sed, grep, diff, awk and bash,
+which contains no perl.
+
+That fourth one was recorded here as UNVERIFIED for an hour, on the
+grounds that emptying `PATH` breaks the shell and perl cannot be hidden by
+directory because it shares one with everything else the gate needs. Both
+facts are true and the conclusion was wrong: a nix machine keeps each tool
+in its own store path, so a `PATH` without perl is assembled rather than
+subtracted. **"I cannot check this" is itself a claim about an
+instrument** and decays like any other. The honest form is UNVERIFIED BY
+THIS ROUTE with the route named, because naming the index is what lets the
+next reader see the wrong one was asked - "perl cannot be hidden" carries
+no trace of "by directory, on a PATH-shaped machine".
 
 Exit 2 from any of the eight means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
@@ -238,6 +246,9 @@ check comes with the run that showed it failing, added here.
 | 2026-08-26 | `an overridden run says so in its summary` | the override warning deleted, and again partially |
 | 2026-08-26 | `a UAPI-shaped tree claiming 7.2 is COULD-NOT-RUN` | a `version.h` fallback added, the improvement a later maintainer plausibly writes |
 | 2026-08-26 | the checkpatch selftest | the `sha256` mismatch text deleted |
+| 2026-08-26 | `posix`: each shell rejects a probe | every probe body replaced with `echo`, which reports the shell inert |
+| 2026-08-26 | `posix`: a plain script is accepted | the plain script made unparseable, which reports a clean result unreachable |
+| 2026-08-26 | `test-checkpatch.sh` declines without perl | run under a `PATH` assembled from store paths holding no perl |
 
 **A DATE REPAIRS AGING AND NEVER FALSIFICATION**, and the two get treated
 as one thing. A dated completeness claim still says something false the
