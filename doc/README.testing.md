@@ -113,13 +113,21 @@ Every gate that uses a toolchain names the one it used, and every gate
 that resolves a tree names how it resolved it. The reason is a shape worth
 recognising: where the DEFAULT invocation and a deliberate one answer
 different questions, the unattended run and the careful run disagree and
-only the careful one is ever right, while both print the same summary. Two
-gates had that as a live defect on 2026-08-26 - the syntax gate needed
-`KDIR` typed to reach the kernel of record, and the style gate read the
-host's build tree while the record's own `checkpatch.pl` sat in the store -
-and two more had it latent, `test-shim.sh` and the vectors contract, whose
-`cc` is gcc here while a reviewer reaching for clang gets a different
-opinion by construction.
+only the careful one is ever right, while both print the same summary. It
+was live on 2026-08-26 in the syntax gate, which needed `KDIR` typed to
+reach the kernel of record, and in the style gate, which read the host's
+build tree while the record's own `checkpatch.pl` sat in the store. It was
+latent in `test-shim.sh` and in the vectors contract, whose `cc` is gcc
+here while a reviewer reaching for clang gets a different opinion by
+construction.
+
+That sentence opened with a count instead of naming them, and
+`script/test-inventory.sh` failed it: a number word immediately before
+"gates" is compared against how many gates exist, so a PARTIAL count in
+that shape is a finding. The gate was right, and naming them costs
+nothing. The first attempt to document this failed the same check again,
+because writing the offending phrase in an explanation is still writing
+it - the check reads the file, not the intent.
 
 Exit 2 from any of the seven means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
