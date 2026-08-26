@@ -202,5 +202,19 @@ else
 	echo "  note  second compiler absent, one opinion only"
 fi
 
-echo "syntax: $ran check(s), $fail failed"
+# AN OVERRIDDEN RUN MUST NOT PRINT WHAT A REAL ONE PRINTS. Until 2026-08-26
+# it did, byte for byte: "syntax: 7 check(s), 0 failed" whether the tree was
+# the kernel of record or a version somebody typed into H2_KERNEL_REF to get
+# a green line. Every such line reported from this workstation that day came
+# from an overridden run, because there is no 7.2 tree here - so the summary
+# was true about the checks and silent about what they were checked against.
+# The override is the loosened threshold; the summary is where it hides.
+if [ "$want" != "$KERNEL_REF" ]; then
+	echo "syntax: $ran check(s), $fail failed AGAINST LINUX $want, WHICH IS NOT"
+	echo "        THE KERNEL OF RECORD ($KERNEL_REF). H2_KERNEL_REF was set, so"
+	echo "        this run is a reading about $want and not evidence about the"
+	echo "        kernel this tree targets."
+else
+	echo "syntax: $ran check(s), $fail failed against the kernel of record ($KERNEL_REF)"
+fi
 [ "$fail" = 0 ]

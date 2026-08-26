@@ -104,12 +104,17 @@ What has actually been compiled, measured rather than assumed, on
 
 | kernel tree | result |
 |---|---|
-| 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers |
-| 6.18.46-1-lts | 7 checks, 0 failed, both compilers |
+| 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers, under the override |
+| 6.18.46-1-lts | 7 checks, 0 failed, both compilers, under the override |
 | 7.2 | not on this machine. The 7.2.0-cachyos `dev` output is prebuilt and signed in `nyx-cache.chaotic.cx` at 687 MB, so this is a download and its closure rather than a kernel build; the gate reports COULD-NOT-RUN until it is here |
 
 So the current state is that the port is UNVERIFIED against its own kernel
-of record, and says so out loud instead of printing green.
+of record, and says so out loud instead of printing green. An overridden
+run says so in its own summary line too: until 2026-08-26 it printed
+`syntax: 7 check(s), 0 failed`, identical to what a real reading would
+print, and every such line reported from this workstation that day came
+from an overridden run. The override is a loosened threshold and the
+summary line is where a loosened threshold hides.
 
 ## What is not here
 
