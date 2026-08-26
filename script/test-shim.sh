@@ -16,7 +16,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 CC=${CC:-cc}
-command -v "$CC" >/dev/null 2>&1 || { echo "shim: no $CC"; exit 2; }
+command -v "$CC" >/dev/null 2>&1 || { echo "shim: COULD-NOT-RUN: no $CC"; exit 2; }
 
 fail=0 ran=0
 check() { # name expect cflags... source

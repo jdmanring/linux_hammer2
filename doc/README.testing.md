@@ -181,6 +181,36 @@ not the machine. Both were already in the nix store. Asking PATH about a
 machine whose software lives in a store is the same error as asking a
 package version about an artifact.
 
+## Every COULD-NOT-RUN branch has been driven
+
+An error path nobody has driven is an untested branch wearing the costume
+of a safety net: it reads as defensive prose rather than as code, so it is
+the last thing anyone thinks to exercise. Every such branch across the
+eight gates was driven on 2026-08-26, in a scratch copy of the tree, by
+removing the input each one names:
+
+| gate | branch | how it was driven |
+|---|---|---|
+| `test-citations.sh` | no `doc/*.md` | the directory moved aside |
+| `test-history.sh` | not a repository | `.git` moved aside |
+| `test-history.sh` | no roadmap | the file moved aside |
+| `test-inventory.sh` | no `src/sys/fs/hammer2` | moved aside |
+| `test-inventory.sh` | no `test/` | moved aside |
+| `test-checkpatch.sh` | no baseline | moved aside |
+| `test-checkpatch.sh` | no `checkpatch.pl` | `CHECKPATCH` at a path that does not exist |
+| `test-checkpatch.sh` | no perl | a `PATH` assembled from store paths holding none |
+| `test-vectors-contract.sh` | a vector file missing | moved aside |
+| `test-shim.sh` | no compiler | `CC` naming one that does not exist |
+| `test-syntax.sh` | no kernel build dir | `KDIR` at a path that does not exist |
+| `test-posix.sh` | no shell realized | `H2_DASH` and `H2_BUSYBOX` at paths that do not exist |
+
+All exit 2 and name what was missing. Two defects fell out of driving
+them: `test-shim.sh` was the only gate whose message omitted the
+`COULD-NOT-RUN` prefix, so anything scanning output rather than status
+would have missed it; and `test-posix.sh` had no way to reach its own
+no-shell branch, because the store lookup finds a shell on any machine
+that has one, which is why the override exists.
+
 **An absent tool must decline, never pass.** A probe whose success is
 cheap to satisfy trivially - an absent binary above all - reports a clean
 run having examined nothing, and the summary looks identical either way.

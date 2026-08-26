@@ -45,9 +45,14 @@ cd "$(dirname "$0")/.." || exit 2
 # PATH first, then the store, because a nix machine keeps its software
 # where PATH cannot see it and nothing is installed here to serve a target
 # system.
-DASH=$(command -v dash 2>/dev/null)
+# H2_DASH and H2_BUSYBOX override, which is what makes the COULD-NOT-RUN
+# branch below drivable at all: the store lookup finds a shell on any
+# machine that has one, so without an override that branch is an untested
+# path wearing the costume of a safety net. Point them at something that
+# does not exist to drive it.
+DASH=${H2_DASH-$(command -v dash 2>/dev/null)}
 [ -n "$DASH" ] || DASH=$(ls -d /nix/store/*-dash-*/bin/dash 2>/dev/null | head -1)
-BB=$(command -v busybox 2>/dev/null)
+BB=${H2_BUSYBOX-$(command -v busybox 2>/dev/null)}
 [ -n "$BB" ] || BB=$(ls -d /nix/store/*-busybox-*/bin/busybox 2>/dev/null | head -1)
 
 shells=""
