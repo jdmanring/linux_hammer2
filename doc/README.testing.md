@@ -1,9 +1,10 @@
 Testing
 =======
 
-Six gates run today, all cheap. They fall into two groups, and the split
+Seven gates run today, all cheap. Most fall into two groups, and the split
 matters when you are deciding which to run: the compile gates need a
-toolchain and a kernel tree, the repository gates need neither.
+toolchain and a kernel tree, the repository gates need neither. The
+seventh, `test-vectors-contract.sh`, is neither and is described below.
 
 Compile gates:
 
@@ -73,6 +74,24 @@ Exit 2 from any of the six means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.
+
+`test-vectors-contract.sh` is the seventh and belongs to neither group. It
+asserts that this repository still keeps the promises the next section
+describes: the `-DXXH_VECTORS_CONTROL` hook, the uppercase hex constants,
+and the `printf` that writes `Castagnoli ... MATCH`. Where an xxHash is
+available to link against it also runs the vectors and requires exit 0,
+then compiles with the control define and requires nonzero, because a
+status only ever observed as 0 is not tested. It carries a negative
+control that runs every time: a lowercased copy of the file must fail the
+comparison, since a case-sensitive check and a case-insensitive one look
+identical while both are passing, and only the case-sensitive one catches
+the defect that actually happened.
+
+Every pattern in it is anchored on the code rather than on a token. These
+files describe their own contract in comments, so a check for
+`Castagnoli.*MATCH` matched the comment quoting it and stayed green after
+the `printf` was deleted. That was found by running the control, not by
+reading the gate.
 
 ## Run from outside this tree, by a gate in another repository
 

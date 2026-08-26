@@ -130,5 +130,36 @@ for f in $tests; do
 		fail=$((fail+1)); }
 done
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $fail finding(s)"
+# THE THIRD POPULATION IS THE GATE COUNT ITSELF, which five documents state
+# in prose and nothing derived. This repository has already been bitten by
+# it once (0.1.10: three gates existed that no document mentioned), and
+# adding a seventh on 2026-08-26 falsified the word "six" in five files at
+# the same instant. A count in a published document that nothing derives is
+# a number that rots - the same sentence the origin table's line count is
+# checked for, one level up.
+#
+# The documents are READ AS ONE LINE, because prose wraps: "All six" ended a
+# line in CONTRIBUTING.md with "gates are cheap" on the next, and a
+# line-at-a-time matcher cannot see the phrase at all. A rule about writing
+# does not fire while you are reading output; this one is about reading.
+COUNT_DOCS="README.md CONTRIBUTING.md CLAUDE.md doc/README.testing.md doc/README.status.md"
+ngates=$(ls script/test-*.sh 2>/dev/null | wc -l | tr -d ' ')
+[ "$ngates" -gt 0 ] || { echo "inventory: FAIL: no test-*.sh in script/ at all" >&2; exit 1; }
+word=$(awk -v n="$ngates" 'BEGIN{split("one two three four five six seven eight nine ten",w," "); print (n>=1 && n<=10) ? w[n] : ""}')
+for d in $COUNT_DOCS; do
+	[ -f "$d" ] || continue
+	# Any number word immediately before "gate"/"gates" is a claim about
+	# this count. Partial counts must not be written in that shape; say
+	# "the compile gates" rather than "three gates".
+	claims=$(tr '\n' ' ' < "$d" | tr -s ' ' |
+		command grep -oiE '(one|two|three|four|five|six|seven|eight|nine|ten) gates?' |
+		awk '{print tolower($1)}' | LC_ALL=C sort -u)
+	for c in $claims; do
+		[ "$c" = "$word" ] && continue
+		echo "  FAIL $d: says \"$c gates\" where script/ holds $ngates"
+		fail=$((fail+1))
+	done
+done
+
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1

@@ -35,8 +35,8 @@ do, so the next sync can find it.
 sending a patch that converts `return (x);` to `return x;`. The whole tree
 converts at once, at submission, or not at all.
 
-**Every change comes with the gate that would have caught it.** All six
-are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
+**Every change comes with the gate that would have caught it.** All seven
+gates are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
 that must fail on every run; the others buy the same assurance
 differently, and `doc/README.testing.md` says how for each. A patch that
 changes behavior with no way to observe the change is hard to review and
@@ -50,6 +50,7 @@ harder to keep.
     $ bash script/test-shim.sh
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
+    $ bash script/test-vectors-contract.sh
 
 The first three are POSIX sh over grep, sed and git. They need no kernel
 and no network, they take about a second, and they are what a
@@ -66,8 +67,8 @@ module's floor and a separate claim. Set `KDIR` to point at another tree,
 and `H2_KERNEL_REF` to check another version deliberately. `test-checkpatch.sh`
 needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
 
-All six exit 2 when the instrument itself could not run, which is not a
-failure and must not be recorded as one.
+All seven gates exit 2 when the instrument itself could not run, which is
+not a failure and must not be recorded as one.
 
 ## Licensing
 

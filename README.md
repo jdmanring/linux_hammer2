@@ -96,8 +96,7 @@ Three build knobs, the same three the FreeBSD and NetBSD ports carry:
 
 ## Test
 
-Six gates, in two groups. The compile gates need a toolchain and a kernel
-tree:
+Seven gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
@@ -109,6 +108,13 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-inventory.sh   # the lists that claim to cover src/ and test/
         $ bash script/test-citations.sh   # every file:line citation in doc/
         $ bash script/test-history.sh     # every roadmap row's commit hash
+
+One is neither. `script/test-vectors-contract.sh` freezes the output and
+the constant spelling of the two files in `test/` that a gate in another
+repository compiles, so an edit that breaks that consumer fails here
+rather than there:
+
+        $ bash script/test-vectors-contract.sh
 
 No gate here is trusted on silence alone, because a check whose healthy
 signature is silence cannot otherwise be told from a check that never ran.

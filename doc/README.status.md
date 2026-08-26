@@ -21,7 +21,7 @@ is a defect.
 
 ## What has been verified
 
-All six gates pass on a machine that can run all six. Each prints its own
+All seven gates pass on a machine that can run them all. Each prints its own
 count; the gates are the authority, and the dated figures below are
 snapshots of a particular run rather than the record.
 `test-checkpatch.sh` is the one that commonly cannot run: it needs
