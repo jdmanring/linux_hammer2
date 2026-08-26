@@ -87,7 +87,17 @@ must either be named by a gate or be listed as staged below.
 What none of them can check is whether a row's CLAIM is true; that takes a
 person reading the artifact the row names.
 
-Exit 2 from any of the six means the instrument could not run: no
+`test-syntax.sh --selftest` and `test-checkpatch.sh --selftest` check the
+two prints that separate a loosened run from a real one: the override
+warning and the checker's `sha256` provenance. Both prints were added on
+2026-08-26 to fix the class where output nobody reads is trusted, and
+neither was read by anything, which is that same defect arriving inside its
+own repair. The syntax selftest failed on its first run because the warning
+WRAPS and the matcher read one line at a time - a rule about matching
+wrapped prose not firing while writing a matcher for wrapped prose. CI runs
+both.
+
+Exit 2 from any of the seven means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.

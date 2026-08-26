@@ -32,6 +32,30 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# --selftest: the sha256 provenance line, which nothing read either. It
+# copies the checker it was given, appends a comment so the CONTENT differs
+# while the behaviour does not, and requires the gate to notice. The
+# assertion branch is the one that mattered: a wrong checker carrying
+# CHECKPATCH_REF for the right version was reported as a style regression
+# against this code until 2026-08-26.
+if [ "${1:-}" = "--selftest" ]; then
+	cp0=${CHECKPATCH:-${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl}
+	[ -f "$cp0" ] || { echo "selftest: COULD-NOT-RUN: no checkpatch.pl at $cp0"; exit 2; }
+	t=$(mktemp -d) || exit 2
+	trap 'rm -rf "$t"' EXIT
+	cp "$cp0" "$t/cp.pl" || exit 2
+	printf '# selftest: content changed, behaviour identical\n' >> "$t/cp.pl"
+	out=$(CHECKPATCH="$t/cp.pl" CHECKPATCH_REF=v7.2 sh "$0" 2>&1)
+	if printf '%s' "$out" | command grep -q 'sha256 does NOT match'; then
+		echo "  ok    a checker whose content differs is named as such"
+		echo "selftest: 1 check(s), 0 failed"
+		exit 0
+	fi
+	echo "  FAIL  a modified checker was not distinguished from the recorded one:"
+	printf '%s\n' "$out" | tail -2 | sed 's/^/        /'
+	exit 1
+fi
+
 # WHICH BRANCH FOUND THE CHECKER, PRINTED AND NOT PINNED. Which one is
 # right depends on the machine, so constraining it would break the case the
 # fallback exists for; naming it is the whole fix.

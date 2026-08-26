@@ -17,6 +17,46 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# --selftest: A PRINT WITH NO TEST IS A CLAIM ABOUT OUTPUT NOBODY CHECKS.
+# The override warning below is the only thing separating a loosened run
+# from a real one, it was added on 2026-08-26 to fix exactly that class,
+# and nothing read it - the defect arriving inside its own repair. This
+# runs the gate against the local tree under H2_KERNEL_REF and requires the
+# warning, then requires an unoverridden run not to carry it. Two seconds.
+if [ "${1:-}" = "--selftest" ]; then
+	k=${KDIR:-/lib/modules/$(uname -r)/build}
+	[ -f "$k/Makefile" ] || { echo "selftest: COULD-NOT-RUN: no kernel tree"; exit 2; }
+	lv=$(sed -n 's/^VERSION *= *//p' "$k/Makefile" | head -1)
+	lp=$(sed -n 's/^PATCHLEVEL *= *//p' "$k/Makefile" | head -1)
+	# NORMALIZED FIRST, because the warning WRAPS: "WHICH IS NOT" ends one
+	# line and "THE KERNEL OF RECORD" starts the next, so a line-at-a-time
+	# matcher reports the warning missing while it is plainly there. This
+	# fixture failed that way on its first run, which is the same defect
+	# the inventory gate's document reader was fixed for hours earlier -
+	# a rule about matching wrapped prose did not fire while writing a
+	# matcher for wrapped prose.
+	flat() { printf '%s' "$1" | tr '\n' ' ' | tr -s ' '; }
+	out=$(H2_KERNEL_REF="$lv.$lp" sh "$0" 2>&1)
+	if flat "$out" | command grep -q 'NOT THE KERNEL OF RECORD'; then
+		echo "  ok    an overridden run says so in its summary"
+	else
+		echo "  FAIL  an overridden run printed no override warning:"
+		printf '%s\n' "$out" | tail -2 | sed 's/^/        /'
+		exit 1
+	fi
+	# The other direction. On a machine whose tree IS the kernel of record
+	# this is the meaningful half; here that run is COULD-NOT-RUN, which
+	# also carries no warning, so this is weaker than it looks and says so.
+	out2=$(sh "$0" 2>&1)
+	if flat "$out2" | command grep -q 'NOT THE KERNEL OF RECORD'; then
+		echo "  FAIL  an unoverridden run carried the override warning"
+		exit 1
+	fi
+	echo "  ok    an unoverridden run does not (weak here: it is COULD-NOT-RUN)"
+	echo "selftest: 2 check(s), 0 failed"
+	exit 0
+fi
+
 # WHICH BRANCH WAS TAKEN, NOT WHICH ONE WOULD BE. A fallback that has never
 # fired is indistinguishable from a fallback that works, and this one had
 # never fired: IO_MODEL.md described the nix-store branch as the source of

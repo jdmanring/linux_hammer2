@@ -51,6 +51,8 @@ harder to keep.
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
     $ bash script/test-vectors-contract.sh
+    $ bash script/test-syntax.sh --selftest
+    $ bash script/test-checkpatch.sh --selftest
 
 The first three are POSIX sh over grep, sed and git. They need no kernel
 and no network, they take about a second, and they are what a

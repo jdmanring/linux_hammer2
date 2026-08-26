@@ -82,6 +82,21 @@ jobs:
           fi
           exit "$rc"
 
+      # THE SELFTESTS, because a print with no test is a claim about output
+      # nobody checks, and both of these prints exist to keep a loosened run
+      # from reading like a real one. Exit 2 is could-not-run, same as the
+      # gates themselves.
+      - name: Gate selftests (the provenance prints)
+        run: |
+          set +e
+          for g in test-syntax test-checkpatch; do
+            bash "script/$g.sh" --selftest
+            rc=$?
+            [ "$rc" = 2 ] && echo "::warning::$g selftest COULD-NOT-RUN here" && continue
+            [ "$rc" = 0 ] || exit "$rc"
+          done
+          exit 0
+
       - name: Kernel style (bounded, not clean)
         run: |
           # Pinned, not master. checkpatch.pl changes with the kernel and
