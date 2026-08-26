@@ -20,9 +20,10 @@ is a defect.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
+| `hammer2_ondisk.c` | 827 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 943 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 647 | ours, the OS shim |
 | `hammer2_compat.h` | 153 | ours, kernel look-alikes; the BSD `vtype` enum, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
@@ -57,10 +58,10 @@ not a pass.
   driver never calls is barely checked by the compile, and the count says
   whether any are missed.
 - `script/test-checkpatch.sh`: holds the style deviation set at its recorded
-  764 hits under the checkpatch.pl the baseline names, and under the kernel
+  856 hits under the checkpatch.pl the baseline names, and under the kernel
   of record's own patched copy, which differs by sha256 and produces an
   identical set. Neither figure travels without the checker that produced it;
-  764 quoted bare reads as a mainline number and is not one. With no baseline
+  856 quoted bare reads as a mainline number and is not one. With no baseline
   present the gate refuses rather than writing one.
 - `script/test-history.sh`: resolves every commit the roadmap's history
   table pins and checks its subject still matches, then prints how many
@@ -185,8 +186,10 @@ evidence. And `checkpatch.pl` lives under `source/scripts`; `build/scripts`
 holds gdb helpers.
 
 That checker is not mainline's: its `sha256` differs from the one the
-baseline records. Run on 2026-08-26 it produced the deviation set unchanged
-at 764 hits, so cachyos's patches do not move this tree's style figures. The
+baseline records. Run against this tree it has twice produced the deviation
+set unchanged, at 764 hits on 2026-08-26 and at 856 after `hammer2_ondisk.c`
+landed the same day, so cachyos's patches do not move this tree's style
+figures. Both readings are of the tree as it stood, not of a constant. The
 gate says the hash does not match while accepting the version its own tree
 reports, and prints the two halves separately.
 
@@ -201,15 +204,17 @@ at all to follow.
 
 ## What is not here
 
-`hammer2_inode.c`, `hammer2_ondisk.c`, `hammer2_strategy.c`,
-`hammer2_ioctl.c`, `hammer2_vfsops.c`, `hammer2_vnops.c`.
+`hammer2_inode.c`, `hammer2_strategy.c`, `hammer2_ioctl.c`,
+`hammer2_vfsops.c`, `hammer2_vnops.c`.
 
 The carried set is eight files at 11,204 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
 `hammer2_bulkfree.c`, `hammer2_xops.c`, `hammer2_admin.c`,
-`hammer2_cluster.c` and `hammer2_subr.c`. Whether
-`hammer2_inode.c` and `hammer2_ondisk.c` join them is what
-`doc/provenance.csv`'s carry column says, file by file.
+`hammer2_cluster.c` and `hammer2_subr.c`. `hammer2_ondisk.c` landed on
+2026-08-26 and is not in it: half of it is carried and the device half is
+this port's, which is what `doc/provenance.csv` records as `derived`.
+Whether `hammer2_inode.c` joins the carried set is what that same carry
+column will say.
 `hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
 `hammer2_vnops.c` are the OS-facing ones and are rewrites.
 
@@ -324,9 +329,15 @@ against the FreeBSD port at
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
+| `hammer2_ondisk.c` | 18 | 1 | 17 |
 
-Eighteen, and twelve of them are in carried files, which was not true
-before 2026-08-26. `hammer2_admin.c`, `hammer2_freemap.c`,
+Thirty-five are this port's, the right-hand column summed, and the count
+rose by seventeen on 2026-08-26 with `hammer2_ondisk.c`, which is the
+first file whose OS half was rewritten rather than carried. Twenty-nine of
+the thirty-five sit in a file that came from upstream; the other six are
+in the two files this port wrote from nothing.
+
+`hammer2_admin.c`, `hammer2_freemap.c`,
 `hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c`,
 `hammer2_cluster.c` and `hammer2_mount.h` are still byte-identical to that
 upstream commit under `cmp`, so most of the carried core has no port edit
@@ -340,6 +351,14 @@ OS-touching helpers looks like: two are the `timespec64` signatures the
 carried `hammer2.h` had already chosen, one is the include line, one the
 timestamp call, one the signal check, one the pair of functions that are
 not carried at all, and one the local variable the timestamp changed.
+
+`hammer2_ondisk.c`'s seventeen are the port's largest set and are all in
+one half of the file. Every one of them is on the device side: the GEOM
+open and close, the two functions the Linux open call absorbed, the three
+it made meaningless, the sector-size and media-size reads, and the two
+uuid formatters. The volume-header verification half carries no mark at
+all, which is the property that makes the file reviewable: a reader
+comparing it against FreeBSD's can skip to the marks.
 
 The other six are in the two files this port writes: two in `hammer2_io.c`
 and four in `hammer2_os.h`, one of them the non-recursive lock above.

@@ -40,9 +40,9 @@
  *
  * The hash and dedup halves are the FreeBSD port's, which replaced the
  * lockless DIO_INPROG state machine with a per-dio mutex. The OS-facing
- * half is written against the block device page cache: sb_set_blocksize()
- * makes every folio in that mapping a 64KB folio, so one hammer2_io holds
- * exactly one. Caching, writeback and reclaim belong to the page cache;
+ * half is written against the block device page cache: set_blocksize(),
+ * called per device by hammer2_open_devvp(), makes every folio in that
+ * mapping a 64KB folio, so one hammer2_io holds exactly one. Caching, writeback and reclaim belong to the page cache;
  * this file holds a folio reference for the life of DIO_GOOD, dirties it
  * on a dirty last drop, and kicks writeback on DIO_FLUSH.
  *
@@ -108,10 +108,11 @@ hammer2_io_mapping(hammer2_io_t *dio)
  * compiled out unless HAMMER2_INVARIANTS is set, which is not the default
  * build, and the invariant has to hold in the build people run.
  *
- * The guarantee comes from the mapping's minimum folio order, which the
- * mount path sets with sb_set_blocksize().  There is no mount path yet,
- * so nothing enforces it today; when there is, reaching here means the
- * request did not take, and the only safe answer is to fail the I/O.
+ * The guarantee comes from the mapping's minimum folio order, which
+ * hammer2_open_devvp() sets with set_blocksize() on every device before
+ * any read, and whose failure it treats as a mount failure.  Reaching
+ * here means that request did not take, and the only safe answer is to
+ * fail the I/O.
  * Returns a positive errno, the core's convention.
  *
  * FreeBSD has no equivalent: getblk() is told the size it must return.

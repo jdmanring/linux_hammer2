@@ -24,14 +24,15 @@ in 0.2 can be prepared without it.
 
 ### Next moves
 
-1. Carry `hammer2_subr.c` and port `hammer2_ondisk.c`. Both stand between
-   the core and the VFS entry, and neither needs a decision the VFS entry
-   would make: `subr` is four thread references and a timestamp over 460
-   lines, `ondisk` is device open, close and rescan, which is where
-   FreeBSD's GEOM calls have to become `bdev_file_open_by_path()` and its
-   pair. `hammer2_cluster.c` was the third and went in unedited on
-   2026-08-26.
-2. Then the read-side VFS entry (`fs_context`, `super_operations`,
+1. Done on 2026-08-26. `hammer2_cluster.c` went in unedited,
+   `hammer2_subr.c` with seven `XXX` marks, and `hammer2_ondisk.c` with
+   its device half rewritten on `bdev_file_open_by_path()`. That closes
+   everything between the core and the VFS entry that could be written by
+   reading the BSD ports side by side. `hammer2_inode.c` is the one
+   remaining non-entry file and is deliberately not next: it holds the
+   `HAMMER2_OPFLAG_DIRECTDATA` half of the non-recursive-lock decision,
+   and the VFS entry is what shapes its inode lifecycle.
+2. Next: the read-side VFS entry (`fs_context`, `super_operations`,
    `lookup`, `getattr`, `iterate_shared`, `read_folio`, `statfs`) against
    the F1 manifests. This is also what resolves the inode and dentry
    lifecycle question. It is listed second because it is the first thing

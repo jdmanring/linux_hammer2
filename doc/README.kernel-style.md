@@ -82,6 +82,20 @@ hits in the port's own `XXX` blocks and was fixed rather than baselined:
 a checker complaint about a comment this port wrote is not a carried idiom
 and has no claim on the exception the BSD style gets here.
 
+782 to 856 when `hammer2_ondisk.c` landed: 827 lines for 74 hits, one per
+11 and by far the densest, which is what happens when a file is added
+whose carried half is dense in `return (x);` and whose rewritten half was
+written in the same BSD style deliberately. Thirty-one of the seventy-four
+are `return (x);` and twenty-six are the errno sign, both of them the two
+largest standing rows. One category is new, `return of an errno should
+typically be negative (ie: return -EACCES)`, and it is the errno row
+again rather than a new kind of finding: `hammer2_access_devvp()` is the
+first place in the tree to return `EACCES`. Nothing here was fixed rather
+than baselined. The eight new `spaces at the start of a line` hits were
+checked line by line and are all BSD continuation indent on a function's
+second parameter line, which is upstream's convention and the one this
+port matches on purpose.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not
@@ -97,13 +111,13 @@ style regression.
 
 | category | count | disposition |
 |---|---|---|
-| do not add new typedefs | 72 | required by the carried core; converts with the core |
+| do not add new typedefs | 73 | required by the carried core; converts with the core |
 | function argument without identifier name | 391 | BSD prototype style; mechanical |
-| return is not a function, parentheses not required | 38 | BSD style; mechanical |
-| return of an errno should be negative | 15 | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
-| plain inline preferred over `__inline` | 11 | `hammer2.h` 6, `hammer2_io.c` 2, `hammer2_rb.h` 1, counted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
-| spaces at the start of a line | 64 | continuation alignment in carried macros |
-| misplaced or missing SPDX tag in line 1 | 8 misplaced, 8 missing | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. The count tracks the number of carried files and rose with 0.2's imports |
+| return is not a function, parentheses not required | 120 | BSD style; mechanical |
+| return of an errno should be negative | 44 across 13 errnos | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
+| plain inline preferred over `__inline` | 12 | `hammer2.h` 6, `hammer2_admin.c` 2, `hammer2_io.c` 2, `hammer2_chain.c` 1, `hammer2_rb.h` 1, recounted per file on 2026-08-26; the earlier reading of this row named three files and summed to nine against a baseline of eleven, which is the shape of a count written from the files a reader happened to open. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
+| spaces at the start of a line | 112 | continuation alignment, in carried macros and in the BSD second-parameter-line indent every prototype and definition here uses |
+| misplaced or missing SPDX tag in line 1 | 13 misplaced, 13 missing | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. The count tracks the number of carried files and rose with 0.2's imports |
 | everything else | 1 to 15 each | carried code |
 
 ## What this gate does not see

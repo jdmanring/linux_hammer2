@@ -84,7 +84,7 @@ strategy would meet the same format.
 | `hammer2_io.c:43-47` | one folio per `hammer2_io`, via a 64 KiB block size |
 | `hammer2_io.c:72` | the `BLK_MAX_BLOCK_SIZE` static assert |
 | `hammer2_io.c:92-100` | `hammer2_io_index()` assuming the mapping's folio order |
-| `hammer2_io.c:122` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
+| `hammer2_io.c:123` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
 | `hammer2_os.h:54-62` | the 6.15 version floor, which exists only for the above |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
@@ -138,11 +138,18 @@ knowing before writing the mount path:
 - `mapping_max_folio_size_supported()` is the capability, and under THP with
   4 KiB pages it is larger than 64 KiB.
 
-For `sb_set_blocksize` the policy cap is the binding one, so the existing
+For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6
 asks for should consult the capability helper as its comment instructs, and
-say the name. Neither is written yet: `sb_set_blocksize` appears in this
-tree only inside a comment, because there is no mount path.
+say the name; that refusal is not written yet.
+
+`hammer2_open_devvp()` calls `set_blocksize(bdev_file, HAMMER2_PBUFSIZE)`
+on each device as it opens it, and fails the open on a non-zero return.
+`sb_set_blocksize()` is the call an ordinary Linux filesystem makes here,
+and it is the wrong one for HAMMER2: it acts on `sb->s_bdev_file`, and a
+HAMMER2 filesystem spans up to `HAMMER2_MAX_VOLUMES` devices of which only
+the root volume is ever `sb->s_bdev`. The mount path still owes
+`sb->s_blocksize` itself.
 
 `mapping_set_folio_min_order()` and `mapping_set_folio_order_range()`
 (both `static inline` in `include/linux/pagemap.h`) are how a filesystem

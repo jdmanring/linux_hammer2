@@ -66,8 +66,9 @@ which is why carrying `hammer2_chain.c` needed no core edit.
 ## The DIO layer
 
 On the BSDs a `hammer2_io` holds a `struct buf *`, and the DIO layer
-decides when it is written and released. Here the mount calls
-`sb_set_blocksize(sb, HAMMER2_PBUFSIZE)`, which reaches
+decides when it is written and released. Here `hammer2_open_devvp()` calls
+`set_blocksize(bdev_file, HAMMER2_PBUFSIZE)` on each device as it opens it,
+which reaches
 `mapping_set_folio_min_order()` on the block device's mapping, so every
 folio in that mapping is a 64KB folio and one `hammer2_io` holds exactly
 one. Caching, writeback, readahead and reclaim belong to the page cache;
@@ -101,6 +102,63 @@ ceiling from the maximum supported folio size rather than from a THP test,
 so "THP required" is a fact about 6.15 through 7.2 and not an
 architecture. What must never happen is silently splitting one HAMMER2
 physical buffer, which would change on-disk semantics.
+
+## The device layer
+
+`hammer2_ondisk.c` landed on 2026-08-26 and is the first file where the OS
+half was rewritten rather than carried. FreeBSD reaches the device through
+GEOM: `namei()` resolves a path to a vnode, `vn_isdisk_error()` checks it
+is a disk, `VOP_ACCESS()` checks the permission, and `g_vfs_open()` later
+attaches a consumer. Linux has one call that does the first three,
+`bdev_file_open_by_path()`, and it opens as well as resolves.
+
+That collapses two functions and splits one differently:
+
+- `hammer2_lookup_device()` is not carried. It is the three checks the one
+  Linux call already performs.
+- `hammer2_init_devvp()` here parses the colon-separated device list and
+  records paths, opening nothing. `hammer2_open_devvp()` does the opening.
+  FreeBSD splits it the other way, holding a vnode reference from `init`
+  and calling `g_vfs_open()` from `open`. The `struct super_block *` the
+  header declares on `init_devvp` is unused and kept so the four trees read
+  side by side.
+- `hammer2_gaccess_devvp()`, `hammer2_getw_devvp()` and
+  `hammer2_putw_devvp()` are not carried. They adjust a GEOM consumer's
+  write count around a volume-header write. Linux states the access it
+  wants once, as a `blk_mode_t` at open time, and has nothing to adjust
+  afterwards.
+- `hammer2_access_devvp()` is declared in the carried `hammer2.h` and so
+  has a body, but not FreeBSD's. `VOP_ACCESS()` plus
+  `priv_check(PRIV_VFS_MOUNT_PERM)` asks two questions Linux answered
+  earlier: the mount capability before `->get_tree()` ran, and the device
+  permission inside `bdev_file_open_by_path()`. What is left is whether
+  the file that call returned is open for writing, which is what a caller
+  passing `rdonly == 0` means.
+
+The holder passed to the open is the superblock and the holder ops are the
+kernel's own `fs_holder_ops`, which is what every in-tree filesystem
+passes and what makes the device's freeze, sync and `mark_dead` callbacks
+reach a mounted filesystem at all.
+
+Two reads replace GEOM provider fields: `bdev_logical_block_size()` for
+the sector-size check `hammer2_open_devvp()` inherits from FreeBSD, and
+`bdev_nr_bytes()` for the media size that both `hammer2_read_volume_header()`
+and `hammer2_verify_volumes_common()` compare volume sizes against.
+
+`hammer2_read_volume_header()` runs before any `hammer2_dev_t` exists, so
+it cannot use the DIO layer. It reads the same block device page cache
+directly with `read_mapping_folio()`, which is legal for the same reason
+the DIO layer's reads are: process context, and the mapping's minimum
+folio order already set. It also length-checks the folio it gets, for the
+same reason `hammer2_io_folio_check()` does.
+
+The kernel has no in-kernel uuid formatter or parser of the shape the BSDs
+use. `snprintf_uuid(9)` appears twice in this file, once to compare the
+filesystem type uuid against `HAMMER2_UUID_STRING` and once to print a
+mismatch. The comparison is done as bytes against a `static const struct
+uuid` spelled out beside the string it equals, and both print paths use
+the kernel's `%pUl` extension, which reads the DCE layout `struct uuid`
+already has.
 
 ## Types and conventions
 

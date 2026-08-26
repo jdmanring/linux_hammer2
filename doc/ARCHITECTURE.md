@@ -89,8 +89,9 @@ none of them has without saying why in the same commit.
 
 ## What does not exist yet
 
-No mount path, no `file_system_type`, no superblock. `sb_set_blocksize`
-appears in this tree only inside a comment. The gates therefore compile and
-type-check; nothing here has ever been loaded into a kernel, and the first
+No mount path, no `file_system_type`, no superblock. The device layer in
+`hammer2_ondisk.c` opens and sizes block devices and is called by a
+`hammer2_vfsops.c` that does not exist yet, so nothing in this tree has an
+entry point. The gates therefore compile and type-check; nothing here has ever been loaded into a kernel, and the first
 kbuild compile is a decision rather than a task. `doc/README.status.md` is
 the authority on what is done.
