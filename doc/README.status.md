@@ -104,9 +104,9 @@ What has actually been compiled, measured rather than assumed, on
 
 | kernel tree | result |
 |---|---|
+| **7.2.0-cachyos**, the kernel of record | **7 checks, 0 failed, both compilers, no override** |
 | 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers, under the override |
 | 6.18.46-1-lts | 7 checks, 0 failed, both compilers, under the override |
-| 7.2 | no build tree on this machine, and the sentence needs the qualifier: the HOST runs 7.1.9-artix1-2 and Artix offers no newer kernel, while the STORE holds the 7.2.0-cachyos derivation with neither output realized. The `dev` output is prebuilt and signed in `nyx-cache.chaotic.cx` at 687 MB, so reaching it is a substitution and its closure, not a kernel build. The gate reports COULD-NOT-RUN until it is here |
 
 A 7.2 VERSION STRING IS ALREADY ON THIS MACHINE AND MEANS NOTHING FOR THIS
 GATE. `linux-api-headers 7.2-1` is installed, so
@@ -118,13 +118,28 @@ wrong. `script/test-syntax.sh` reads `VERSION`/`PATCHLEVEL` from the build
 tree's own `Makefile`, which is why it cannot be fooled by this, and it is
 recorded because the next reader will not know the difference exists.
 
-So the current state is that the port is UNVERIFIED against its own kernel
-of record, and says so out loud instead of printing green. An overridden
-run says so in its own summary line too: until 2026-08-26 it printed
-`syntax: 7 check(s), 0 failed`, identical to what a real reading would
-print, and every such line reported from this workstation that day came
-from an overridden run. The override is a loosened threshold and the
-summary line is where a loosened threshold hides.
+**The port type-checks against its kernel of record**, measured 2026-08-26
+after the chaotic 7.2.0-cachyos `dev` output was substituted into the store
+(679 MB, `sil5r7r2a25nsshkqpd5jjjd0g7ywyi7`). The gate's own line, quoted
+rather than summarised:
+
+    hammer2 against 7.2.0-cachyos via KDIR, dialect -fms-extensions, with clang version 22.1.8:
+    syntax: 7 check(s), 0 failed against the kernel of record (7.2)
+
+Every syntax result recorded before that timestamp was measured against
+7.1.9 and read as 7.2. An overridden run now says so in its own summary
+line: until that day it printed `syntax: 7 check(s), 0 failed`, identical
+to what a real reading prints, and the override is a loosened threshold
+whose hiding place was that line.
+
+The first run against the real tree FAILED, and the guard was wrong rather
+than the tree. A nix dev output's `build/Makefile` is a three-line stub
+that sets `KBUILD_OUTPUT` and includes the real Makefile from the `source`
+directory beside it, so `VERSION` and `PATCHLEVEL` are not in the file the
+gate was reading. It follows the `include` line the stub itself names now,
+which is derived from the artifact rather than assuming a sibling
+directory, and `linux-api-headers` still fails because it has no `Makefile`
+at all to follow.
 
 ## What is not here
 

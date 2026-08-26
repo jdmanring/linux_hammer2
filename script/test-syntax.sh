@@ -129,9 +129,24 @@ S=$(dirname "$K")/source
 # is the direction that gets noticed.
 KERNEL_REF=7.2
 kver=""
-if [ -f "$K/Makefile" ]; then
-	v=$(sed -n 's/^VERSION *= *//p' "$K/Makefile" | head -1)
-	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$K/Makefile" | head -1)
+kmk=$K/Makefile
+# A NIX DEV OUTPUT'S BUILD MAKEFILE IS A THREE-LINE STUB that sets
+# KBUILD_OUTPUT and includes the real Makefile from the source directory
+# beside it, so VERSION and PATCHLEVEL are not in the file this points at.
+# The first version of this check rejected the chaotic 7.2.0-cachyos tree
+# for that reason, which is a legitimate build tree with scripts/, arch/,
+# Module.symvers and include/generated - the guard was right about the
+# shape it was written for and wrong about this one.
+#
+# The stub NAMES the file it includes, so that name is followed rather
+# than a sibling directory being assumed: derived from the artifact, not
+# from a convention. linux-api-headers still fails here, because it has no
+# Makefile at all and so nothing to follow.
+if [ -f "$kmk" ]; then
+	inc=$(sed -n 's/^include \(.*\/Makefile\)$/\1/p' "$kmk" | head -1)
+	[ -n "$inc" ] && [ -f "$inc" ] && kmk=$inc
+	v=$(sed -n 's/^VERSION *= *//p' "$kmk" | head -1)
+	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$kmk" | head -1)
 	[ -n "$v" ] && [ -n "$pl" ] && kver="$v.$pl"
 fi
 want=${H2_KERNEL_REF:-$KERNEL_REF}
