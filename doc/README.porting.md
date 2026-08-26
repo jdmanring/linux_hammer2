@@ -480,3 +480,48 @@ read at the kernel of record). `script/test-syntax.sh` now passes the
 define and not the flag: `-mfentry` is codegen and the gate is
 `-fsyntax-only`, and gcc rejects `-mfentry` outright without `-pg`, which
 would have taken the second compiler out of the gate to buy nothing.
+
+## Why the device is resolved twice, and why the open cannot come first
+
+FreeBSD's `hammer2_init_devvp()` calls `namei()` on each device path and
+holds the vnode it gets back. Two things in the mount path need that
+vnode before anything is opened. A bad path is diagnosed there, before
+the mount lock is taken. And the second-or-later mount of the same
+device is recognized by matching `devvp->v_rdev` against the devices
+already on `hammer2_mntlist`, which is what tells the mount path to reuse
+an existing `hmp` instead of building one.
+
+The obvious Linux reading is that `bdev_file_open_by_path()` does all of
+`namei()` plus `vn_isdisk_error()` plus `VOP_ACCESS()` in one call, so
+`hammer2_init_devvp()` has nothing left to do but record the path. That
+was this port's first reading and it is wrong on both counts, because it
+makes the resolution and the open one event when the mount path needs
+them to be two.
+
+The reason they cannot be one event is the holder. Opening a block
+device claims it for a holder, and the holder ops every filesystem passes
+are `fs_holder_ops`, whose four callbacks all begin at `bdev_super_lock()`
+in `fs/super.c`, which does `sb = bdev->bd_holder` and then requires
+`sb->s_root` and `SB_ACTIVE`. The holder is dereferenced as a
+`struct super_block *`, so it has to be one, and there is no superblock
+until `sget_fc()` has run. btrfs does exactly this ordering:
+`sget_fc()` first, then `btrfs_open_devices(fs_devices, mode, sb)` with
+the superblock as the holder. Both read at the kernel of record.
+
+So the open stays in `hammer2_open_devvp()`, after the superblock exists,
+and `hammer2_init_devvp()` recovers what `namei()` was doing with
+`lookup_bdev()`, which resolves a path in the caller's namespace and
+yields the `dev_t` without opening anything and without a reference to
+release. `struct hammer2_devvp` gains a `devno` field, which is
+`v_rdev` under the name Linux uses, and the mount path's device match is
+the same comparison FreeBSD makes on the same quantity. `lookup_bdev()`
+fails with `ENOTBLK` for a path that is not a block device and `EACCES`
+under a `nodev` mount, which is the diagnosis FreeBSD gets from
+`vn_isdisk_error()` and `VOP_ACCESS()` and gets in the same place.
+
+There is a cost and it is worth naming: the path is resolved twice, once
+here and once inside `bdev_file_open_by_path()`, and a device that is
+renamed between the two calls is resolved to two different devices. The
+window is the same one FreeBSD has between `namei()` and `g_vfs_open()`,
+and it closes at the open, which is the call that decides what the
+filesystem actually reads.

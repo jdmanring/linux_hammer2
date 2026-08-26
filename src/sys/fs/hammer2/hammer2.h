@@ -766,6 +766,7 @@ struct hammer2_devvp {
 	TAILQ_ENTRY(hammer2_devvp) entry;
 	struct file		*bdev_file;	/* Linux: was struct vnode *devvp */
 	char			*path;		/* device path */
+	dev_t			devno;		/* Linux: was devvp->v_rdev */
 	int			open;		/* 1 if bdev_file open */
 };
 

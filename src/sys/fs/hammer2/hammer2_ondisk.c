@@ -48,11 +48,17 @@
  *   - hammer2_lookup_device() is not carried.  It is NDINIT/namei plus
  *     vn_isdisk_error() plus VOP_ACCESS(), which is exactly the path
  *     resolution, the block-device test and the permission check that
- *     bdev_file_open_by_path() already performs.
- *   - because that one call both resolves and opens, hammer2_init_devvp()
- *     here records paths and opens nothing, and hammer2_open_devvp() does
- *     the opening.  FreeBSD splits it the other way, holding a vnode
- *     reference from init and calling g_vfs_open() later.
+ *     lookup_bdev() and bdev_file_open_by_path() perform between them.
+ *   - hammer2_init_devvp() here resolves each path with lookup_bdev()
+ *     and opens nothing; hammer2_open_devvp() does the opening.  The
+ *     split is not the same as FreeBSD's, which holds a vnode reference
+ *     from init and calls g_vfs_open() later, but it keeps what that
+ *     reference was FOR: a bad path is diagnosed in init, and the mount
+ *     path gets a dev_t to match a second mount of the same device
+ *     against before anything is opened.  The open has to come second on
+ *     Linux because bdev_file_open_by_path() claims the device for a
+ *     holder, and the holder fs_holder_ops requires is a live superblock
+ *     (fs/super.c, bdev_super_lock(), read at the kernel of record).
  *   - hammer2_gaccess_devvp() and its two callers hammer2_getw_devvp() and
  *     hammer2_putw_devvp() are not carried.  They adjust a GEOM consumer's
  *     write count around a volume-header write; Linux states the access it
@@ -154,7 +160,8 @@ hammer2_init_devvp(const struct super_block *sb, const char *blkdevs,
 	hammer2_devvp_t *e;
 	const char *p;
 	char *path;
-	int i;
+	dev_t devno;
+	int i, error;
 
 	KKASSERT(TAILQ_EMPTY(devvpl));
 	KKASSERT(blkdevs); /* Could be empty string. */
@@ -199,25 +206,33 @@ hammer2_init_devvp(const struct super_block *sb, const char *blkdevs,
 			}
 		}
 
-		/* XXX Linux: FreeBSD looks the device vnode up here and
-		 * holds a reference to it.  bdev_file_open_by_path() does
-		 * the lookup and the open in one call, so the path is all
-		 * that is kept and hammer2_open_devvp() does the rest.
+		/* XXX Linux: FreeBSD looks the device vnode up here with
+		 * namei() and holds a reference to it, both to diagnose a
+		 * bad path before anything is opened and to give the mount
+		 * path a devvp->v_rdev to match a second mount of the same
+		 * device against.  lookup_bdev() answers the same two
+		 * questions without opening anything and without a
+		 * reference to release: it resolves the path in the
+		 * caller's namespace and yields the dev_t.  The open
+		 * itself still belongs to hammer2_open_devvp(), which
+		 * cannot run before there is a superblock to hold the
+		 * device.
 		 */
+		error = lookup_bdev(path, &devno);
+		if (error) {
+			hprintf("failed to resolve %s %d\n", path, -error);
+			hfree(path, M_TEMP, PATH_MAX);
+			return (-error);		/* Linux: positive */
+		}
+
 		e = hmalloc(sizeof(*e), M_HAMMER2, M_WAITOK | M_ZERO);
 		e->bdev_file = NULL;
 		e->path = hstrdup(path);
+		e->devno = devno;
 		TAILQ_INSERT_TAIL(devvpl, e, entry);
 	}
 	hfree(path, M_TEMP, PATH_MAX);
 
-	/* XXX Linux: FreeBSD returns hammer2_lookup_device()'s error, and
-	 * a bad device path is diagnosed here.  Nothing can fail in this
-	 * function once the lookup is gone, so the diagnosis moved to
-	 * hammer2_open_devvp() along with the resolution.  The int return
-	 * stays because the carried hammer2.h declares it and because a
-	 * later parse error would use it.
-	 */
 	return (0);
 }
 

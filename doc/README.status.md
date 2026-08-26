@@ -9,7 +9,7 @@ is a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1346 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1347 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -22,7 +22,7 @@ is a defect.
 | `hammer2_subr.c` | 458 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 984 | FreeBSD port; the PFS half carried, the module entry and the globals this port's, the mount path itself not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_ondisk.c` | 866 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
@@ -378,7 +378,7 @@ against the FreeBSD port at
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
-| `hammer2_ondisk.c` | 20 | 1 | 19 |
+| `hammer2_ondisk.c` | 19 | 1 | 18 |
 | `hammer2_inode.c` | 23 | 6 | 17 |
 | `hammer2_vfsops.c` | 16 | 6 | 10 |
 | `hammer2.h` | 6 | 3 | 3 |
@@ -391,13 +391,15 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Sixty-nine are this port's, the right-hand column summed. Nineteen
-arrived with `hammer2_ondisk.c`, the first file whose OS half was
-rewritten rather than carried, fifteen more with `hammer2_inode.c` and the
+Sixty-eight are this port's, the right-hand column summed. Eighteen
+sit in `hammer2_ondisk.c`, the first file whose OS half was
+rewritten rather than carried; it arrived with nineteen and lost one when
+`lookup_bdev()` collapsed two marks into one. Fifteen came with
+`hammer2_inode.c` and the
 two header lines it needed, five more when `hammer2_igetv()` was written
 against `iget5_locked()`, five with `hammer2_vfsops.c`, three more when
 that file gained the module entry, one with the mount options and one
-with the teardown path. Sixty-one sit in
+with the teardown path. Sixty sit in
 a file that holds upstream text; the other eight are the two files this
 port wrote from nothing: six in `hammer2_os.h`, and two of
 `hammer2_io.c`'s four.
@@ -437,15 +439,15 @@ carried `hammer2.h` had already chosen, one is the include line, one the
 timestamp call, one the signal check, one the pair of functions that are
 not carried at all, and one the local variable the timestamp changed.
 
-`hammer2_ondisk.c`'s nineteen are the port's largest set and split
-eleven to eight, counted mark by mark on 2026-08-26 and listed here so
-the number can be checked rather than taken. Eleven are on the device
+`hammer2_ondisk.c`'s eighteen are the port's largest set and split ten
+to eight, counted mark by mark on 2026-08-26 and listed here so the
+number can be checked rather than taken. Ten are on the device
 side, which is the half this port wrote: the file's opening comment; in
 `hammer2_open_devvp()`, the `g_vfs_open()` mapping and the logical-size
 comparison; the `g_vfs_close()` mapping in `hammer2_close_devvp()`; in
 `hammer2_init_devvp()`, the unused superblock argument, the `strlcpy`
-rename, the lookup that moved to open, and the constant return that
-moved with it; the `vrele()` mapping in `hammer2_cleanup_devvp()`; and in
+rename, and the `namei()` mapping onto `lookup_bdev()`; the `vrele()`
+mapping in `hammer2_cleanup_devvp()`; and in
 `hammer2_access_devvp()`, the `VOP_ACCESS()` mapping and the trace
 through `blk_to_file_flags()` and `OPEN_FMODE()` that replaced a `DEFER`
 once `block/bdev.c` was read at the tag the kernel of record is pinned
