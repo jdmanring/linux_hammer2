@@ -61,7 +61,6 @@ hammer2_lk_t hammer2_mntlk;
 uma_zone_t hammer2_zone_inode;
 uma_zone_t hammer2_zone_xops;
 
-static int hammer2_supported_version = HAMMER2_VOL_VERSION_DEFAULT;
 int hammer2_cluster_meta_read = 1;	/* for physical read-ahead */
 int hammer2_cluster_data_read = 4;	/* for physical read-ahead */
 int hammer2_cluster_write;		/* for physical write clustering */
@@ -86,27 +85,35 @@ int malloc_leak_m_temp;
  * XXX Linux: upstream exports the block above through sysctl(9) under
  * vfs.hammer2, read-write for the tunables and read-only for the
  * counters.  Linux's nearest thing that costs nothing to build is
- * module_param_named(), which puts the same names under
- * /sys/module/hammer2/parameters/ with the same two permissions.  The
- * names are upstream's with the hammer2_ prefix dropped, exactly as
- * sysctl drops it.
+ * module_param_named(), which puts the read-write half under
+ * /sys/module/hammer2/parameters/ at 0644.  The names are upstream's
+ * with the hammer2_ prefix dropped, exactly as sysctl drops it.
+ *
+ * Only the tunables.  Upstream's read-only sysctls, the four allocation
+ * counters and supported_version, are NOT here and cannot be, because
+ * perm is visibility in sysfs and nothing else: a 0444 parameter is
+ * still settable on the insmod command line
+ * (include/linux/moduleparam.h says so in as many words at the kernel of
+ * record).  A counter that can be handed a value at load is a counter
+ * hammer2_assert_clean() cannot trust, in both directions -- a nonzero
+ * at load reports a leak that never happened, and a negative one hides a
+ * real leak under a sum that reaches zero.  That is the check this file
+ * moved to the unload path to make work, so exposing the counters this
+ * way would take it back.  supported_version goes with them rather than
+ * being settable to a version the code does not support; there is no
+ * variable for it until there is somewhere read-only to put it.
  *
  * DEFER(a second filesystem-wide knob wants a per-mount value): move
- * these to /sys/fs/hammer2/, which is where ext4 and btrfs put theirs
- * and the only place a per-mount knob can live.  A module parameter is
- * one value for every mount on the machine, which is what sysctl gave
- * upstream too, so nothing is lost until that day.
+ * these to /sys/fs/hammer2/, which is where ext4 and btrfs put theirs.
+ * That is also the only place the counters and supported_version can go,
+ * so the same move carries them.  A module parameter is one value for
+ * every mount on the machine, which is what sysctl gave upstream too, so
+ * nothing is lost on the tunables until that day.
  */
-module_param_named(supported_version, hammer2_supported_version, int, 0444);
-MODULE_PARM_DESC(supported_version, "Highest supported HAMMER2 version");
 module_param_named(cluster_meta_read, hammer2_cluster_meta_read, int, 0644);
 module_param_named(cluster_data_read, hammer2_cluster_data_read, int, 0644);
 module_param_named(cluster_write, hammer2_cluster_write, int, 0644);
 module_param_named(dedup_enable, hammer2_dedup_enable, int, 0644);
-module_param_named(inode_allocated, hammer2_count_inode_allocated, int, 0444);
-module_param_named(chain_allocated, hammer2_count_chain_allocated, int, 0444);
-module_param_named(chain_modified, hammer2_count_chain_modified, int, 0444);
-module_param_named(dio_allocated, hammer2_count_dio_allocated, int, 0444);
 module_param_named(dio_limit, hammer2_dio_limit, int, 0644);
 module_param_named(bulkfree_tps, hammer2_bulkfree_tps, int, 0644);
 module_param_named(limit_scan_depth, hammer2_limit_scan_depth, int, 0644);
@@ -642,12 +649,19 @@ hammer2_module_exit(void)
 	unregister_filesystem(&hammer2_fs_type);
 	hammer2_lk_destroy(&hammer2_mntlk);
 
+	/*
+	 * Before the zones, not after.  A nonzero counter here means live
+	 * objects in the cache about to be destroyed, and
+	 * kmem_cache_destroy() complains about that itself; running the
+	 * check first puts the message that says which counter ahead of
+	 * the one that says the cache was not empty.
+	 */
+	hammer2_assert_clean();
+
 	uma_zdestroy(hammer2_zone_xops);
 	hammer2_zone_xops = NULL;
 	uma_zdestroy(hammer2_zone_inode);
 	hammer2_zone_inode = NULL;
-
-	hammer2_assert_clean();
 }
 
 module_init(hammer2_module_init);

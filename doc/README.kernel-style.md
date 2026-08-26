@@ -131,7 +131,7 @@ four `return (x);`, one start-of-line space, one `EINVAL` and one
 baselined.
 
 898 to 902 when `hammer2_vfsops.c` gained the module entry, the globals
-and the tunables: 253 lines for 4 hits, all four `return (x);`. No
+and the tunables: 267 lines for 4 hits, all four `return (x);`. No
 category is new and nothing was fixed rather than baselined. The absence
 worth naming is the errno row, which did not move: the Linux half of this
 file returns to the VFS, so its errnos are negative already and

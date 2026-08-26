@@ -330,17 +330,36 @@ carried core reads was declared `extern` in `hammer2.h` and defined
 nowhere, so nothing could have linked. Four decisions came with it, and
 none of them is a translation.
 
-**The sysctl block becomes module parameters.** FreeBSD exports fifteen
-values under `vfs.hammer2`, read-write for the tunables and read-only for
-the counters. Linux's nearest mechanism that costs nothing to build is
-`module_param_named()`, which puts the same names under
-`/sys/module/hammer2/parameters/` with the same two permissions, and
-drops the `hammer2_` prefix exactly as `sysctl` does. The upgrade is
-`/sys/fs/hammer2/`, where ext4 and btrfs put theirs and the only place a
-*per-mount* value can live; it carries a `DEFER` naming that trigger. A
-module parameter is one value for every mount on the machine, which is
-what `sysctl` gave upstream too, so nothing is lost until a knob wants to
-differ between two mounts.
+**The read-write half of the sysctl block becomes module parameters, and
+the read-only half cannot.** FreeBSD exports fifteen values under
+`vfs.hammer2`, read-write for the tunables and read-only for the four
+allocation counters and `supported_version`. Linux's nearest mechanism
+that costs nothing to build is `module_param_named()`, which puts the
+nine tunables under `/sys/module/hammer2/parameters/` at 0644 and drops
+the `hammer2_` prefix exactly as `sysctl` does.
+
+The counters are not there, and the reason is that `perm` is visibility
+in sysfs and nothing else. `include/linux/moduleparam.h` says it in as
+many words at the kernel of record: `@perm` is 0 if the variable is not
+to appear in sysfs, and the name "becomes the module parameter, or
+(prefixed by `KBUILD_MODNAME` and a `.`) the kernel commandline
+parameter." So a 0444 parameter is still settable at `insmod`. A counter
+that can be handed a value at load is a counter `hammer2_assert_clean()`
+cannot trust in either direction: a positive one at load reports a leak
+that never happened, and a negative one hides a real leak under a sum
+that reaches zero. That is precisely the check this file moved to the
+unload path in order to make it work, so exposing the counters this way
+would have taken it straight back. `supported_version` goes with them
+rather than being settable to a version the code does not support, and
+there is no variable for it at all until there is somewhere read-only to
+put it.
+
+The upgrade for all of it is `/sys/fs/hammer2/`, where ext4 and btrfs put
+theirs. It is the only place the counters can go and the only place a
+*per-mount* value can live, and it carries a `DEFER` naming the second
+trigger. A module parameter is one value for every mount on the machine,
+which is what `sysctl` gave upstream too, so nothing is lost on the
+tunables until a knob wants to differ between two mounts.
 
 **`hammer2_assert_clean()` moves from load to unload.** Upstream calls it
 from `vfs_init`. On Linux the module loader has just zeroed every global
@@ -348,7 +367,11 @@ at that point, so the check can only ever read zero and can only ever
 pass: it would be a leak check that cannot report a leak. At unload the
 counters can be anything, which is the only place the check discriminates.
 Zero is the healthy signature in one place and the inert one in the other,
-and the two are indistinguishable from the check's own output.
+and the two are indistinguishable from the check's own output. It runs
+before the two `uma_zdestroy()` calls, not after: a nonzero counter means
+live objects in a cache about to be destroyed, `kmem_cache_destroy()`
+complains about that itself, and the message naming which counter is more
+use ahead of the one saying the cache was not empty.
 
 **`uma_zcreate(9)` cannot fail and `kmem_cache_create()` can.** Upstream
 asserts the zone pointer is non-NULL. `kmem_cache_create()` returns NULL
