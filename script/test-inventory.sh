@@ -50,7 +50,17 @@ for f in $srcs $hdrs; do
 	# The origin table backticks the bare filename. sys/tree.h and
 	# sys/queue.h are vendored one directory up and are listed together,
 	# which is why this asks about $DIR's own files only.
-	row=$(grep "\`$f\`" "$STATUS" | head -1)
+	#
+	# ANCHORED ON THE FIRST COLUMN. An unanchored match plus `head -1`
+	# takes whichever row MENTIONS the file first, and a row's origin
+	# note names other files: on 2026-08-26 hammer2_chain.c landed and
+	# this read hammer2_mount.h's row, whose note says "hammer2_chain.c
+	# includes it", then reported the new 4929-line file as a 58-line
+	# one. The wrong row is a worse failure than no row, because it
+	# compares a real number against a real number and so reads as a
+	# finding about the file rather than about this line. `command grep`
+	# because only it ignores no ignore file.
+	row=$(command grep "^| \`$f\` |" "$STATUS" | head -1)
 	if [ -z "$row" ]; then
 		echo "  FAIL $f: no origin row in $STATUS"; fail=$((fail+1))
 		continue

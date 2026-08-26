@@ -41,10 +41,17 @@ latest release and the checker should be that release's, so the pin
 follows the kernel of record and not the floor. Re-pinning moved exactly
 one category, `Argument 'X' is not used in function-like macro`, from 18
 to 15, and the total from 586 to 583; every other line was byte-identical.
-The totals moved again on 2026-08-26 when 0.2's first four carried files
-landed: 583 to 649 over roughly 4,300 added lines of DragonFly code, which
-is the deviation density of the carried core rather than of anything this
-port wrote.
+The totals moved again on 2026-08-26 when 0.2's carried files landed: 583
+to 649 over roughly 4,300 added lines of DragonFly code, then 649 to 745
+when `hammer2_chain.c` added 4,929 more. That is the deviation density of
+the carried core rather than of anything this port wrote: 66 hits over the
+first 4,300 lines and 96 over the next 4,929, so roughly one hit per 55
+lines of carried DragonFly either way. Four categories are new with
+`hammer2_chain.c` and each is one or two hits: a repeated word, a brace
+around a single statement, a static initialised to 0, and an `else` after
+a `return`. None is a new KIND of debt -- they are the same BSD idioms the
+open rows already describe, appearing for the first time because this is
+the first carried file long enough to contain them.
 That is also the signature this workstation's own 7.1 `checkpatch.pl`
 produced against the old baseline, which the gate had been correctly
 reporting as a version mismatch rather than a style regression.

@@ -58,6 +58,17 @@
 #define INVARIANTS	1
 #endif
 
+/*
+ * FreeBSD's cdefs marks a local that only an assertion reads, so the
+ * compiler does not warn about it when INVARIANTS is off.  The OpenBSD
+ * port defines it in this same file and spells it __unused; here that
+ * name belongs to the kernel, and __maybe_unused is Linux's word for the
+ * same thing.  It stays unconditional for the reason OpenBSD's does:
+ * "may be unused" is true in both knob positions, so one spelling is
+ * correct in both and cannot drift.
+ */
+#define __diagused	__maybe_unused
+
 /* DragonFly KKASSERT is FreeBSD KASSERT equivalent. */
 #ifdef HAMMER2_INVARIANTS
 #define KKASSERT(exp)		BUG_ON(!(exp))

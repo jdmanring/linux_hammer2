@@ -197,6 +197,28 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
 	init_rwsem(&p->lock);
 }
 
+/*
+ * The recursive variant, which DragonFly and FreeBSD provide and this
+ * port does not.  A Linux rw_semaphore deadlocks against its own holder
+ * exactly as a NetBSD krwlock does, so the mapping follows the NetBSD
+ * port: there is no recursive lock, the two call sites
+ * (hammer2_chain_init and hammer2_inode_get) get a plain lock, and the
+ * ONE path that recursed is disabled instead.  That path is
+ * hammer2_chain_lookup() reaching chain->lock again for an inode in
+ * DIRECTDATA mode; NetBSD stops it by never setting
+ * HAMMER2_OPFLAG_DIRECTDATA, which costs a data block for a tiny file
+ * and costs no correctness.  That half of the change lands with
+ * hammer2_inode.c, which is where the flag is set.
+ * XXX Not a recursive lock.  A caller that genuinely recurses will
+ * deadlock rather than fail, so any new recursion must be resolved at
+ * its call site the same way.
+ */
+static inline void
+hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s)
+{
+	hammer2_mtx_init(p, s);
+}
+
 static inline void
 hammer2_mtx_ex(hammer2_mtx_t *p)
 {
@@ -505,6 +527,19 @@ tsleep(const void *ident __always_unused, int flags __always_unused,
 {
 	schedule_timeout_interruptible(timo);
 	return (signal_pending(current) ? EINTR : 0);
+}
+
+/*
+ * pause() is DragonFly's uninterruptible sibling of tsleep, used by the
+ * chain and flush code to back off a lost race for one tick.  Nothing
+ * wakes the channel, so the timeout is the whole contract and the
+ * mapping is exact.  FreeBSD's port passes it straight through to its
+ * own pause(); NetBSD's uses kpause().
+ */
+static inline void
+pause(const char *wmesg __always_unused, int timo)
+{
+	schedule_timeout_uninterruptible(timo);
 }
 
 /*

@@ -16,11 +16,12 @@ is a defect.
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
 | `hammer2_xops.c` | 1449 | FreeBSD port, carried byte-for-byte |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
+| `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 953 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 554 | ours, the OS shim |
-| `hammer2_compat.h` | 123 | ours, kernel look-alikes |
+| `hammer2_os.h` | 589 | ours, the OS shim |
+| `hammer2_compat.h` | 134 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
@@ -196,23 +197,54 @@ at all to follow.
 
 ## What is not here
 
-`hammer2_chain.c`, `hammer2_flush.c`, `hammer2_inode.c`, `hammer2_subr.c`,
+`hammer2_flush.c`, `hammer2_inode.c`, `hammer2_subr.c`,
 `hammer2_cluster.c`, `hammer2_ondisk.c`, `hammer2_strategy.c`,
 `hammer2_ioctl.c`, `hammer2_vfsops.c`, `hammer2_vnops.c`.
 
-The two that are next each need a PORT DECISION rather than a shim, which
-is why they did not land with the other four on 2026-08-26:
+`hammer2_chain.c` landed on 2026-08-26 and the lock recursion it forced is
+decided, following the NetBSD port: there is no recursive lock. A Linux
+`rw_semaphore` deadlocks against its own holder exactly as a NetBSD
+`krwlock` does, so `hammer2_mtx_init_recurse()` is a plain init in the
+shim and the one path that recursed is closed instead of accommodated.
+That path is `hammer2_chain_lookup()` reaching `chain->lock` again for an
+inode in DIRECTDATA mode; NetBSD closes it by never setting
+`HAMMER2_OPFLAG_DIRECTDATA`, which costs a data block for a tiny file and
+costs no correctness. The flag is set in `hammer2_inode.c`, so that half
+of the change lands when that file does, and until then the port has a
+non-recursive lock and no code that recurses it.
 
-- `hammer2_chain.c` calls `hammer2_mtx_init_recurse()` and `pause()`. The
-  first is the lock recursion `README.porting.md` records as the remaining
-  gap: DragonFly and FreeBSD let the inode and chain locks recurse, a
-  Linux `rw_semaphore` deadlocks against itself, and NetBSD solves it at
-  the two call sites rather than in the shim. Those call sites are in this
-  file, so the decision is now due.
-- `hammer2_flush.c` issues a device cache flush. FreeBSD does it through
-  GEOM (`g_alloc_bio`, `BIO_FLUSH`), NetBSD through `DIOCCACHESYNC`; the
-  ports already disagree, so there is no precedent to follow and Linux's
-  answer is `blkdev_issue_flush()`.
+`hammer2_flush.c` is next and needs a PORT DECISION rather than a shim: it
+issues a device cache flush, FreeBSD through GEOM (`g_alloc_bio`,
+`BIO_FLUSH`) and NetBSD through `DIOCCACHESYNC`. The ports already
+disagree, so there is no precedent to follow and Linux's answer is
+`blkdev_issue_flush()`.
+
+### `XXX` marks: how much of the core is not a carry
+
+0.2's fourth exit criterion asks for this count, because an `XXX` is the
+BSD ports' mark for a mapping that is not mechanical, and the number is
+how a reader knows how many places to distrust. Counting raw `XXX`
+occurrences answers the wrong question: the carried files arrive with
+upstream's own. Measured 2026-08-26 against the FreeBSD port at
+`3df307f` (v1.2.13), by file, ours minus upstream's:
+
+| file | `XXX` | upstream's | this port's |
+|---|---|---|---|
+| `hammer2_chain.c` | 18 | 18 | 0 |
+| `hammer2_freemap.c` | 6 | 6 | 0 |
+| `hammer2_bulkfree.c` | 4 | 4 | 0 |
+| `hammer2_xops.c` | 1 | 1 | 0 |
+| `hammer2_io.c` | 4 | 2 | 2 |
+| `hammer2_os.h` | 4 | 0 | 4 |
+
+Six, and none of them is in a carried file. The stronger statement is
+available and was taken instead of inferred: `hammer2_admin.c`,
+`hammer2_freemap.c`, `hammer2_xops.c`, `hammer2_bulkfree.c`,
+`hammer2_chain.c` and `hammer2_mount.h` are byte-identical to that
+upstream commit under `cmp`, so the carried core has no port edit of any
+kind, marked or unmarked. The six are in the two files this port writes:
+two in `hammer2_io.c` and four in `hammer2_os.h`, one of which is the
+non-recursive lock above.
 
 Six of those are the measured carried set: `hammer2_chain.c`,
 `hammer2_flush.c`, `hammer2_freemap.c`, `hammer2_bulkfree.c`,

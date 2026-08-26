@@ -41,11 +41,27 @@ of a `_try` handles failure, and the core's failure path drops and
 re-acquires exclusively, revalidating what it read. OpenBSD unlocks and
 retries for the same reason.
 
-Recursion is the remaining gap. DragonFly and FreeBSD allow the inode and
-chain locks to recurse; a Linux `rw_semaphore` deadlocks against itself
-and lockdep says so. NetBSD has the same problem and solves it at the two
-call sites rather than in the shim, and this port will follow NetBSD
-there when those files land.
+Recursion is decided, and the decision is NetBSD's. DragonFly and FreeBSD
+allow the inode and chain locks to recurse; a Linux `rw_semaphore`
+deadlocks against itself and lockdep says so, exactly as a NetBSD
+`krwlock` does. So there is no recursive lock here:
+`hammer2_mtx_init_recurse()` is a plain init, and the path that recursed
+is closed rather than accommodated.
+
+There is one such path, not a class of them. `hammer2_chain_lookup()`,
+reached from the strategy read and write, takes `chain->lock` again for an
+inode in DIRECTDATA mode, where the inode's own block holds the file's
+data. NetBSD closes it by never setting `HAMMER2_OPFLAG_DIRECTDATA`, so a
+small file always gets a data block. That costs one block per tiny file
+and no correctness, and it is reversible the day a recursive lock exists.
+
+The two call sites that ask for the recursive lock are
+`hammer2_chain_init()` and `hammer2_inode_get()`. The first is in
+`hammer2_chain.c`, carried 2026-08-26. The second is in
+`hammer2_inode.c`, which is not here yet and is where the DIRECTDATA flag
+is set, so the flag half of NetBSD's change lands with that file. Until
+then the port has a non-recursive lock and no code that recurses it,
+which is why carrying `hammer2_chain.c` needed no core edit.
 
 ## The DIO layer
 
@@ -147,8 +163,8 @@ verbatim. This port follows both.
 
 | site | what it is |
 |---|---|
-| `hammer2_compat.h:63` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
-| `hammer2_compat.h:64` | `KASSERTMSG`, which panics under the same knob |
+| `hammer2_compat.h:74` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
+| `hammer2_compat.h:75` | `KASSERTMSG`, which panics under the same knob |
 | `hammer2_os.h:83` | `hpanic`, `panic()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.

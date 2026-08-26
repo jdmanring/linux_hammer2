@@ -288,7 +288,16 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 # multiple of its own size, and that the struct is 128 bytes, so this
 # suppression rests on a measurement the compiler re-takes every run and
 # fails in the same build if the format moves.
-CARRIED=-Wno-address-of-packed-member
+#
+# -Wno-pointer-sign is a different kind of entry: it is not a judgement
+# call, it is what the kernel of record itself compiles every file with
+# (scripts/Makefile.warn:68), so the module build cannot see this warning
+# and a gate that fails on it is testing a build nobody performs. It is
+# still confined to the carried files, which leaves this gate stricter
+# than the real build on the half of the tree we write. What it hides
+# upstream: hammer2_chain_base_and_count() takes `int *count` and two
+# callers in hammer2_chain.c pass `unsigned int *`.
+CARRIED="-Wno-address-of-packed-member -Wno-pointer-sign"
 
 fail=0 ran=0
 # A WARNING IN OUR OWN FILES IS A FAILURE, and it has to be counted rather
@@ -344,6 +353,8 @@ check "hammer2_xops.c: invariants on"  pass src/sys/fs/hammer2/hammer2_xops.c -D
 check "hammer2_xops.c: invariants off" pass src/sys/fs/hammer2/hammer2_xops.c $CARRIED
 check "hammer2_bulkfree.c: invariants on"  pass src/sys/fs/hammer2/hammer2_bulkfree.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_bulkfree.c: invariants off" pass src/sys/fs/hammer2/hammer2_bulkfree.c $CARRIED
+check "hammer2_chain.c: invariants on"     pass src/sys/fs/hammer2/hammer2_chain.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_chain.c: invariants off"    pass src/sys/fs/hammer2/hammer2_chain.c $CARRIED
 # Negative control: a wrong kernel call must be refused by the same
 # headers, or a pass above proves only that the compiler ran. Both
 # controls are prefix headers applied AFTER the kernel header they
@@ -373,7 +384,8 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_admin.c \
 		src/sys/fs/hammer2/hammer2_freemap.c \
 		src/sys/fs/hammer2/hammer2_xops.c \
-		src/sys/fs/hammer2/hammer2_bulkfree.c; do
+		src/sys/fs/hammer2/hammer2_bulkfree.c \
+		src/sys/fs/hammer2/hammer2_chain.c; do
 		ran=$((ran + 1))
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
