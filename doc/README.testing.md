@@ -138,7 +138,7 @@ nothing. The first attempt to document this failed the same check again,
 because writing the offending phrase in an explanation is still writing
 it - the check reads the file, not the intent.
 
-On a hosted runner exactly one gate declines: `test-syntax.sh`, because
+On a hosted runner `test-syntax.sh` is the only gate that declines, because
 the kernel of record is the latest release and `ubuntu-latest` ships
 headers years behind it. That is recorded as a skip and never as a pass.
 Everything else runs there, including the vectors contract's behavioural
