@@ -309,6 +309,30 @@ both: build the line in a buffer and emit it once, which is a core edit.
 checkpatch flags `pr_cont` deliberately and by name, and the deviation is
 recorded in `README.kernel-style.md`.
 
+### `DEFER` markers: the deliberate floors and what lifts each one
+
+An `XXX` marks a mapping a reader should distrust. A `DEFER` marks
+something this port chose not to build yet, and the rule the tree follows
+is that a deferral without a named trigger is rot rather than pragmatism,
+so each one carries the condition that lifts it. `test-inventory.sh`
+checks that every `DEFER(` in `src/` appears in this table and that the
+table has no row for a marker that is gone, because a ledger nothing reads
+against the source is the same shape as an empty one.
+
+| where | marker, verbatim | what is deferred |
+|---|---|---|
+| `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
+| `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
+| `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_vnops.c is written)` | the conversion between `enum vtype` and `S_IFMT` belongs at the VFS boundary, and there is no caller to shape it against yet |
+| `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the fsid choice, between the volume header's own and `huge_encode_dev()` on the root device. All three BSD ports hash the mount path, which Linux never tells a filesystem |
+
+The middle column is the marker as it is spelled in the source, because
+that is what the gate matches on: a reworded trigger in either place is a
+failure rather than a drift.
+
+Three of the four lift with the read-side VFS entry, which is the next
+move on the roadmap.
+
 ### `XXX` marks: how much of the core is not a carry
 
 0.2's fourth exit criterion asks for this count. An `XXX` is the BSD ports'

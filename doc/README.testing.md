@@ -100,6 +100,15 @@ how specific its anchor is, so a row anchored on a common token is
 reported as weak rather than counted with the strong ones.
 `test-history.sh` checks that every roadmap row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
+`test-inventory.sh` also reads the `DEFER` ledger in
+`doc/README.status.md` against `src/` in both directions: a marker with no
+row, and a row whose marker the source no longer holds. The second is the
+one nothing else would catch, since a deleted marker leaves a row reading
+as outstanding work forever. The match is on the marker text verbatim, so
+rewording a trigger in one place and not the other is a failure rather
+than a drift. Both directions were driven on 2026-08-26 by making each
+break in turn.
+
 `test-inventory.sh` has a second population, `test/`, where every file
 must either be named by a gate or be listed as staged below. It also
 checks two DIFFERENT claims about the gates themselves: that no document

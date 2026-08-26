@@ -20,7 +20,8 @@ Linux userland ([hammer2-utils](https://github.com/kusumi/hammer2-utils),
 Linux is the piece that has been missing.
 
 This is that piece, built the way his three ports are built: the DragonFly
-core is carried unchanged, and an OS shim makes it compile. Same file
+core is carried and kept readable as DragonFly's, with every port edit
+marked in place, and an OS shim makes it compile. Same file
 names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 

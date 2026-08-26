@@ -177,9 +177,11 @@ itself.
 
 Remaining work, all for contributors, the maintainer merging:
 
-- `hammer2_flush.c`, which needs the flush decision above. The five other
-  carried files are in. Whether `inode`, `subr` and `ondisk` join them is what
-  the CSV's carry column says, file by file.
+- `hammer2_inode.c`, the last non-entry file. Everything else here is in:
+  `hammer2_flush.c` on 2026-08-26 with the flush decision above,
+  `hammer2_cluster.c` unedited, `hammer2_subr.c` with seven `XXX` marks,
+  and `hammer2_ondisk.c` half carried and half rewritten. Whether `inode`
+  joins the carried set is what the CSV's carry column will say.
 - the check algorithms, using the kernel's own xxHash, LZ4 and zlib, which a
   vendored-library audit found stock. xxHash is in as `hammer2_xxhash.h`; LZ4
   and zlib wait on a compression path to call them.

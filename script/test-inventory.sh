@@ -176,5 +176,55 @@ for d in $COUNT_DOCS; do
 	done
 done
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $fail finding(s)"
+# EVERY `DEFER(` IN src/ IS A ROW IN doc/README.status.md's LEDGER, AND
+# EVERY ROW IS A MARKER THAT STILL EXISTS. A deferral is only pragmatism
+# while its trigger is written down, and the ledger is the only place the
+# four are collected; a marker deleted from the source leaves a row that
+# reads as outstanding work forever, which is the reassuring direction.
+#
+# The population is asserted first. A tree with no DEFER markers at all is
+# a possible and correct state, but it is also what a broken pattern looks
+# like, so the two are separated: zero markers is reported, not passed
+# over in silence.
+LEDGER=doc/README.status.md
+defers=$(command grep -rhoE 'DEFER\([^)]*\)' src/ | LC_ALL=C sort -u)
+ndefer=$(printf '%s' "$defers" | command grep -c . || true)
+if [ "$ndefer" = 0 ]; then
+	echo "  note src/ holds no DEFER markers, so the ledger check below"
+	echo "       compared nothing"
+else
+	printf '%s\n' "$defers" | while IFS= read -r d; do
+		command grep -qF -- "$d" "$LEDGER" ||
+			echo "  FAIL $LEDGER: no ledger row for $d"
+	done > /tmp/h2-defer.$$ 2>/dev/null
+	if [ -s /tmp/h2-defer.$$ ]; then
+		cat /tmp/h2-defer.$$
+		fail=$((fail + $(command grep -c . /tmp/h2-defer.$$)))
+	fi
+	rm -f /tmp/h2-defer.$$
+
+	# The other direction. A marker deleted from the source leaves a row
+	# that reads as outstanding work forever, and nothing else here would
+	# notice: the check above only walks src/.
+	rows=$(command grep -oE 'DEFER\([^)]*\)' "$LEDGER" | LC_ALL=C sort -u)
+	nrows=$(printf '%s' "$rows" | command grep -c . || true)
+	if [ "$nrows" = 0 ]; then
+		echo "  FAIL $LEDGER: src/ holds $ndefer DEFER marker(s) and the"
+		echo "       ledger table has no row at all, so the check above"
+		echo "       matched against nothing"
+		fail=$((fail + 1))
+	else
+		printf '%s\n' "$rows" | while IFS= read -r r; do
+			command grep -rqF -- "$r" src/ ||
+				echo "  FAIL $LEDGER: row for $r, which src/ no longer holds"
+		done > /tmp/h2-defer2.$$ 2>/dev/null
+		if [ -s /tmp/h2-defer2.$$ ]; then
+			cat /tmp/h2-defer2.$$
+			fail=$((fail + $(command grep -c . /tmp/h2-defer2.$$)))
+		fi
+		rm -f /tmp/h2-defer2.$$
+	fi
+fi
+
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
