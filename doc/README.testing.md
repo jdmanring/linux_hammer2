@@ -171,11 +171,13 @@ grep. The specification repository reached the same answer about its own
 typed list for a better reason: extensionless documents have no extension
 to enumerate on.
 
-The syntax selftest's second direction, that an unoverridden run carries no
-override warning, is NOT in that table. On this workstation that run is
-COULD-NOT-RUN and would carry no warning either way, so it cannot be
-falsified here; it becomes meaningful on a machine whose tree is the
-kernel of record.
+The syntax selftest's second direction, that an unoverridden run carries
+no override warning, was NOT in that table while it was vacuous: an
+unoverridden run on this workstation was COULD-NOT-RUN and carried no
+warning either way. It stopped being vacuous on 2026-08-26 when the kernel
+of record arrived in the store and such a run began really compiling. The
+comment describing it as weak was stale within minutes of the tree
+landing, which is the price of a sentence about the current state.
 
 ## Run from outside this tree, by a gate in another repository
 

@@ -44,15 +44,21 @@ if [ "${1:-}" = "--selftest" ]; then
 		printf '%s\n' "$out" | tail -2 | sed 's/^/        /'
 		exit 1
 	fi
-	# The other direction. On a machine whose tree IS the kernel of record
-	# this is the meaningful half; here that run is COULD-NOT-RUN, which
-	# also carries no warning, so this is weaker than it looks and says so.
+	# The other direction, which BECAME meaningful on 2026-08-26 when the
+	# kernel of record arrived in the store. Before that an unoverridden
+	# run here was COULD-NOT-RUN and carried no warning either way, so the
+	# check was vacuous and said so; now such a run really does compile
+	# and really must not carry the warning. The label was stale within
+	# minutes of the tree landing, which is what a claim about the current
+	# state costs.
 	out2=$(sh "$0" 2>&1)
 	if flat "$out2" | command grep -q 'NOT THE KERNEL OF RECORD'; then
 		echo "  FAIL  an unoverridden run carried the override warning"
 		exit 1
 	fi
-	echo "  ok    an unoverridden run does not (weak here: it is COULD-NOT-RUN)"
+	if [ -n "$(sh "$0" 2>&1 | command grep -c 'check(s)')" ]; then
+		echo "  ok    an unoverridden run does not carry it"
+	fi
 
 	# A GUARD NOBODY DESIGNED IS A GUARD NOBODY MAINTAINS. This gate reads
 	# VERSION and PATCHLEVEL from a build tree's own Makefile, so the
@@ -89,16 +95,63 @@ fi
 # disagreed in behaviour with nothing between them to notice. The
 # resolution is reported in the header line now, so every run says which
 # path it took, including the runs delegated from another repository.
+# The version a tree reports, following the stub a nix dev output leaves in
+# build/Makefile: three lines setting KBUILD_OUTPUT and including the real
+# Makefile from the source directory beside it. The stub NAMES that file,
+# so it is followed rather than a sibling being assumed - derived from the
+# artifact. linux-api-headers has no Makefile at all and so answers here
+# with nothing, which is what keeps it out.
+treever() { # dir -> "X.Y" or empty
+	mk=$1/Makefile
+	[ -f "$mk" ] || return 0
+	inc=$(sed -n 's/^include \(.*\/Makefile\)$/\1/p' "$mk" | head -1)
+	[ -n "$inc" ] && [ -f "$inc" ] && mk=$inc
+	v=$(sed -n 's/^VERSION *= *//p' "$mk" | head -1)
+	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$mk" | head -1)
+	[ -n "$v" ] && [ -n "$pl" ] && printf '%s.%s' "$v" "$pl"
+}
+
+KERNEL_REF=7.2
+want=${H2_KERNEL_REF:-$KERNEL_REF}
+
+# THE DEFAULT MUST FIND THE KERNEL OF RECORD, NOT THE ONE THE HOST HAPPENS
+# TO RUN. Until the 7.2 tree was substituted in, "the newest thing present"
+# and "the kernel of record" were the same question here by accident; they
+# are not, and this workstation is now the case that proves it - the host
+# runs 7.1.9 while the tree the port targets sits in the store. A gate that
+# needs KDIR typed to reach the right kernel is a gate that reports
+# COULD-NOT-RUN in CI and in the delegator that runs it from another
+# repository, both of which invoke it with no arguments.
+#
+# So: an explicit KDIR always wins, and otherwise the FIRST candidate whose
+# own Makefile reports the wanted version is taken. Order is deliberate -
+# the running kernel before the store, so an ordinary machine behaves as it
+# always did and never pays for a store scan it does not need.
 if [ -n "${KDIR:-}" ]; then
 	K=$KDIR; ksrc="KDIR"
 else
-	K=/lib/modules/$(uname -r)/build; ksrc="/lib/modules/\$(uname -r)/build"
-fi
-if [ ! -d "$K" ]; then
-	# Nix: the newest realized kernel dev output. Exercise this branch with
-	# KDIR pointing at a path that does not exist.
-	K=$(ls -d /nix/store/*-linux-*-dev/lib/modules/*/build 2>/dev/null | sort -V | tail -1)
-	ksrc="nix store fallback"
+	K=""; ksrc=""
+	for cand in "/lib/modules/$(uname -r)/build" \
+		$(ls -d /nix/store/*-linux-*-dev/lib/modules/*/build 2>/dev/null | sort -V -r); do
+		[ -d "$cand" ] || continue
+		if [ "$(treever "$cand")" = "$want" ]; then
+			K=$cand
+			case "$cand" in
+			/nix/store/*) ksrc="the store, matching the kernel of record" ;;
+			*) ksrc="/lib/modules/\$(uname -r)/build" ;;
+			esac
+			break
+		fi
+	done
+	# Nothing matched. Fall back to what is present so the refusal below
+	# can NAME the version it found rather than reporting an empty path.
+	if [ -z "$K" ]; then
+		K=/lib/modules/$(uname -r)/build; ksrc="/lib/modules/\$(uname -r)/build, no candidate matched"
+		if [ ! -d "$K" ]; then
+			K=$(ls -d /nix/store/*-linux-*-dev/lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+			ksrc="nix store fallback"
+		fi
+	fi
 fi
 [ -n "$K" ] && [ -d "$K" ] || { echo "syntax: COULD-NOT-RUN: no kernel build dir ($ksrc)"; exit 2; }
 S=$(dirname "$K")/source
@@ -127,7 +180,6 @@ S=$(dirname "$K")/source
 # new Linux ships, install its headers, raise KERNEL_REF, run this gate.
 # A pin that is not bumped stops the gate rather than quietly aging, which
 # is the direction that gets noticed.
-KERNEL_REF=7.2
 kver=""
 kmk=$K/Makefile
 # A NIX DEV OUTPUT'S BUILD MAKEFILE IS A THREE-LINE STUB that sets
@@ -149,7 +201,6 @@ if [ -f "$kmk" ]; then
 	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$kmk" | head -1)
 	[ -n "$v" ] && [ -n "$pl" ] && kver="$v.$pl"
 fi
-want=${H2_KERNEL_REF:-$KERNEL_REF}
 if [ -z "$kver" ]; then
 	echo "syntax: COULD-NOT-RUN: no VERSION/PATCHLEVEL in $K/Makefile, so" >&2
 	echo "  the kernel of record ($want) cannot be confirmed" >&2
