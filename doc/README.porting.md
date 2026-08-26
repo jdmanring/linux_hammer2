@@ -392,11 +392,14 @@ clamp and factor unchanged. The clamp does most of the work: at
 end only above 40 TiB, so on any machine this module will run on the value
 is one tenth of the page count.
 
-`hammer2_mntlist`, the global list of `hammer2_dev`, is still not defined.
-It belongs to the mount path and lands with it: a static definition with
-no user is what the syntax gate flags, and silencing that warning would
-hide the fact that the file is part written. `hammer2_mntlk`, which the
-module entry initializes and destroys, is defined.
+`hammer2_mntlist`, the global list of `hammer2_dev`, was deliberately
+left undefined here, because a static definition with no user is what the
+syntax gate flags and silencing that warning would have hidden that the
+file was part written. It got its user on 2026-08-26 with the teardown
+path and is defined now; the paragraph is kept because the reasoning is
+the reusable part, and the same trick is what will keep the next
+half-written global honest. `hammer2_mntlk` was defined from the start,
+since the module entry initializes and destroys it.
 
 ## The mount options: a numeric hflags becomes one named flag
 

@@ -161,8 +161,32 @@ infer it from. See the opening comment of `hammer2_vfsops.c`.
 
 `mapping_set_folio_min_order()` and `mapping_set_folio_order_range()`
 (both `static inline` in `include/linux/pagemap.h`) are how a filesystem
-states the requirement rather
-than inferring it. They are the right call sites when the mount path lands.
+states the requirement rather than inferring it.
+
+They are also why the refusal above has to be explicit, which is worth
+reading before assuming the open path already covers it. As of the device
+half of `->get_tree` landing on 2026-08-26, `hammer2_open_devvp()` calls
+`set_blocksize()` for real, and that call reaches
+`mapping_set_folio_min_order()` on its own. It cannot report the
+condition. Read at the kernel of record: `set_blocksize()` validates
+through `bdev_validate_blocksize()`, which checks `blk_validate_block_size()`
+and the device's logical block size and nothing about folios; then
+`mapping_set_folio_order_range()` returns immediately when
+`CONFIG_TRANSPARENT_HUGEPAGE` is off, and clamps `min` down to
+`MAX_PAGECACHE_ORDER` when it is on. Both are silent, and both leave
+`set_blocksize()` returning 0. So a kernel that cannot give this
+filesystem the folio it needs produces a successful open, which is the
+shape a refusal has to be written against.
+
+Two guards already stand between that and a wrong read, which is why the
+refusal is a diagnosis improvement and not an open hole: the
+`static_assert` on `HAMMER2_PBUFSIZE <= BLK_MAX_BLOCK_SIZE` in
+`hammer2_io.c` fails the build outright without THP, and
+`hammer2_io_folio_check()` re-checks at every read. The clamp case needs
+`MAX_PAGECACHE_ORDER` below `get_order(65536)`, which no configuration
+this module can currently build on reaches. It is roadmap item 3 rather
+than a `DEFER`, because what makes it reachable is a kernel change and
+not anything in this tree.
 
 ### The narrower design, and its cost
 

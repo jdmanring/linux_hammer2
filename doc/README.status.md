@@ -397,8 +397,19 @@ fall in eight files: eighteen in `hammer2_ondisk.c`, seventeen in
 `hammer2_inode.c`, fourteen in `hammer2_vfsops.c`, seven in
 `hammer2_subr.c`, seven in `hammer2_os.h`, five in `hammer2_flush.c`,
 three in `hammer2.h` and two in `hammer2_io.c`. That is the whole of
-them; the paragraphs below walk the three largest sets site by site and
-do not add up to seventy-two on their own.
+them, and it is the only place in this file that adds up to the column.
+
+Three of those eight files are then walked mark by mark below:
+`hammer2_ondisk.c`, `hammer2_vfsops.c`, and the two files this port wrote
+from nothing taken together. Forty-one of the seventy-three are in those
+paragraphs. The other thirty-two are not enumerated anywhere and do not
+need to be: `hammer2_inode.c`'s seventeen, `hammer2_subr.c`'s seven,
+`hammer2_flush.c`'s five and `hammer2.h`'s three are one-line
+substitutions in carried files, which is what the `XXX` mark is for and
+what a reviewer reads at the mark rather than here. **Do not read the
+paragraphs below as a decomposition of the count.** They were read that
+way once, and the sentence that invited it said "the three largest sets"
+while skipping the second largest.
 
 Sixty-four sit in a file that holds upstream text. The other nine are
 the two files this port wrote from nothing: seven in `hammer2_os.h`, and
