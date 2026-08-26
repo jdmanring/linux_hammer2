@@ -309,12 +309,18 @@ against the FreeBSD port at
 | `hammer2_xops.c` | 1 | 1 | 0 |
 | `hammer2_io.c` | 4 | 2 | 2 |
 | `hammer2_os.h` | 4 | 0 | 4 |
+| `hammer2_flush.c` | 13 | 8 | 5 |
 
-Six, none of them in a carried file. The stronger statement was measured
-rather than inferred: `hammer2_admin.c`, `hammer2_freemap.c`,
-`hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c` and
-`hammer2_mount.h` are byte-identical to that upstream commit under `cmp`, so
-the carried core has no port edit of any kind, marked or unmarked. The six
-are in the two files this port writes: two in `hammer2_io.c` and four in
-`hammer2_os.h`, one of them the non-recursive lock above.
+Eleven, and five of them are in a carried file, which was not true before
+2026-08-26. `hammer2_admin.c`, `hammer2_freemap.c`, `hammer2_xops.c`,
+`hammer2_bulkfree.c`, `hammer2_chain.c` and `hammer2_mount.h` are still
+byte-identical to that upstream commit under `cmp`, so the rest of the
+carried core has no port edit of any kind, marked or unmarked.
+`hammer2_flush.c` is the exception and was always going to be: its five
+marks are the three port decisions above and the two local variables those
+decisions changed the type of, all inside one function. Everything else in
+that file carried.
+
+The other six are in the two files this port writes: two in `hammer2_io.c`
+and four in `hammer2_os.h`, one of them the non-recursive lock above.
 

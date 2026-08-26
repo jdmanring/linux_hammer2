@@ -12,11 +12,10 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-Nothing mounts. The OS shim, the DIO layer and the carried core type-check
-against real kernel headers under two compilers, with controls that fail when
-they should. No module has been built, loaded or run. One carried file,
-`hammer2_flush.c`, is still to be imported, and the vnode, inode and mount
-paths have not been started.
+Nothing mounts. The OS shim, the DIO layer and the whole carried core
+type-check against real kernel headers under two compilers, with controls that
+fail when they should. No module has been built, loaded or run. The vnode,
+inode and mount paths have not been started.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile` already
@@ -25,17 +24,12 @@ in 0.2 can be prepared without it.
 
 ### Next moves
 
-1. Import `hammer2_flush.c` and extend the syntax gate to it. It needs a port
-   decision rather than a shim: it issues a device cache flush, which FreeBSD
-   does through GEOM and NetBSD through `DIOCCACHESYNC`. The ports disagree,
-   so there is no precedent to copy, and Linux's answer is
-   `blkdev_issue_flush()`. This closes 0.2 and needs no compile.
-2. Write the read-side VFS entry (`fs_context`, `super_operations`, `lookup`,
+1. Write the read-side VFS entry (`fs_context`, `super_operations`, `lookup`,
    `getattr`, `iterate_shared`, `read_folio`, `statfs`) against the F1
    manifests. This is also what resolves the inode and dentry lifecycle
    question.
-3. The first `make`, when authorized: 0.3.
-4. Read-only mount of F1, then of the F2 root image: 0.4.
+2. The first `make`, when authorized: 0.3.
+3. Read-only mount of F1, then of the F2 root image: 0.4.
 
 ## Versioning
 
@@ -78,7 +72,7 @@ abbreviation. The stage is only ever written beside a version number.
 | version | stage | milestone | state |
 |---|---|---|---|
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
-| 0.2 | H1 | Whole core type-checks, ready to build | criteria 1, 2 and 4 met; 3 waits on `hammer2_flush.c` |
+| 0.2 | H1 | Whole core type-checks, ready to build | met |
 | 0.3 | H1 | Module builds, loads and unloads | blocked on the compile authorization |
 | 0.4 | H1 | Read-only mount of DragonFly-written media | needs 0.3 and a Linux guest |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
@@ -161,7 +155,8 @@ run, which is not a verdict. "Maintainer" is the owner of this repository;
    itself is 0.3.
 4. Every `XXX` mark this port adds is counted apart from the marks the carried
    files arrive with, and the count is in `README.status.md`. Met 2026-08-26:
-   six, all in the two shim files.
+   eleven, five of them in `hammer2_flush.c` and the rest in the two shim
+   files.
 
 Gate: `script/test-syntax.sh`, extended file by file as each lands, and
 `script/test-provenance.sh` for criterion 1. The provenance gate fails on a
