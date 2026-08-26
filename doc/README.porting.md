@@ -135,6 +135,57 @@ __unused[4]`. The `__unused4` and `__unused5` fields in `struct stat` are
 NOT instances: a macro named `__unused` does not collide with them, and
 counting them would overstate the exposure.
 
+## Crashing the kernel: KKASSERT, hpanic, and what Linux expects
+
+The mapping is the BSD ports' and the consequence is not. All three map
+DragonFly's `KKASSERT` onto their own `KASSERT`, gated on the kernel's
+assertion build (`freebsd_hammer2` `hammer2_compat.h:49`, `netbsd_hammer2`
+`hammer2_compat.h:60`), and all three define `hpanic` as `panic()`
+verbatim. This port follows both.
+
+| site | what it is |
+|---|---|
+| `hammer2_compat.h:51` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
+| `hammer2_compat.h:52` | `KASSERTMSG`, which panics under the same knob |
+| `hammer2_os.h:76` | `hpanic`, `panic()` unconditionally |
+
+Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
+
+What differs is the host. A BSD `panic` drops to the debugger or reboots,
+and the operator of a machine running an assertion kernel expects that.
+Linux `panic()` halts or reboots the machine unconditionally, in every
+build, and `BUG()` kills the calling task with an oops while whatever locks
+it held stay held. Neither is how a Linux filesystem is expected to react
+to a corrupt volume or a broken invariant: the convention is to fail the
+operation and take the mount read-only, as `ext4_error()` and btrfs do,
+because the volume being wrong must not take the rest of the machine with
+it. `checkpatch.pl` says the same thing in one line, AVOID_BUG, and the
+style gate cannot see it (`doc/README.kernel-style.md`).
+
+The decision, split by which half the code is in:
+
+- **The carried core keeps its `KKASSERT`s.** They are DragonFly's, they
+  are compiled out in the default build, and rewriting hundreds of them
+  into recovery paths is the rewrite this port exists to avoid. A wrong
+  one is upstream's bug in all four trees.
+- **The OS half this port writes uses `WARN_ONCE` plus recovery**, and
+  fails the operation with an errno instead of asserting. The first
+  instance is `hammer2_io_folio_check()` in `hammer2_io.c`, which replaced
+  a `KKASSERT` on a length that a buffer overrun depends on.
+- **`hpanic` stays `panic()` until there is a mount to fail instead.**
+  Today it has two call sites, both reporting a corrupt block reference
+  with no mount to invalidate and no `super_block` to mark read-only.
+  When the VFS layer lands, `hpanic` becomes the place that marks the
+  mount in error, and the two sites become that.
+
+DEFER(the VFS layer lands, giving a super_block to mark): `hpanic` on
+Linux is a machine-wide event standing in for a per-mount one.
+
+This is the port decision most likely to be raised by a reviewer who has
+not read this file, and it should be: the source shows `BUG_ON` and
+`panic` and nothing next to them says a Linux maintainer's objection was
+already considered.
+
 ## The module declares no license, and it will need one at the first build
 
 Measured 2026-08-25: `MODULE_LICENSE` appears nowhere under `src/`, and

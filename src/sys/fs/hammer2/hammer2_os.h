@@ -74,6 +74,12 @@
 
 #define hprintf(X, ...)	pr_info(HFMT X, HARGS, ## __VA_ARGS__)
 #define hpanic(X, ...)	panic(HFMT X, HARGS, ## __VA_ARGS__)
+/*
+ * DEFER(the VFS layer lands, giving a super_block to mark): panic() is
+ * what the three BSD ports do, and on Linux it is a machine-wide event
+ * standing in for a per-mount one. A Linux filesystem fails the operation
+ * and takes the mount read-only. See doc/README.porting.md.
+ */
 
 #ifdef HAMMER2_INVARIANTS
 #define debug_hprintf	hprintf
