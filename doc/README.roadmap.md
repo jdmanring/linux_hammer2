@@ -44,24 +44,18 @@ in 0.2 can be prepared without it.
    the BSD ports side by side, and the three files above are the ones it
    calls.
 
-   Those seven entry points span three files, so no single file finishes
-   this row: `hammer2_vfsops.c` owns `fs_context`, `super_operations` and
-   `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
-   `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
-   Started 2026-08-26 with the PFS half of `hammer2_vfsops.c`, which is
-   carried. `hammer2_igetv()` is written, on `iget5_locked()`, which is
-   the inode lifecycle decision this row names and what a fill-super
-   needs to construct a root; what it owes back is `->evict_inode`, in
-   the ledger. The module entry is written too: `file_system_type`,
-   `module_init` and the globals, so the tree has an entry point and
-   would link. `->parse_param` is written, and so is the device half of
-   `->get_tree`: it splits `fc->source`, takes an anonymous superblock,
-   opens the volumes, builds the `hammer2_dev` and reads its super-root.
-   What remains in that file is the PFS half, the label lookup that
-   turns a super-root into a `pmp`, and a fill-super that gives the
-   superblock a root. `->get_tree` still fails every mount today, with
-   an error rather than a stub, and the read-write recovery upstream
-   runs is deliberately not run until a mount can succeed.
+    Those seven entry points span three files, so no single file finishes
+    this row: `hammer2_vfsops.c` owns `fs_context`, `super_operations` and
+    `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
+    `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
+    The PFS half of `hammer2_vfsops.c` and the mount path are written:
+    `->get_tree` performs device and volume probing, reads the super-root,
+    looks up the PFS label under `spmp->iroot`, allocates the `pmp`, and
+    runs the Linux fill-super (`super_setup_bdi`, `sb->s_op` pointing to
+    `hammer2_sops` with `->evict_inode`, `hammer2_igetv` on `pmp->iroot`,
+    and `d_make_root` for `sb->s_root`). What remains in `hammer2_vfsops.c`
+    is `->reconfigure`, `->statfs`, `->sync_fs`, and unblocking read-write
+    recovery. The next files are `hammer2_vnops.c` and `hammer2_strategy.c`.
 3. The first `make`, when authorized: 0.3.
 4. Read-only mount of F1, then of the F2 root image: 0.4.
 
