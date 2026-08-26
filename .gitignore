@@ -6,3 +6,6 @@
 *.symvers
 *.order
 .tmp_versions/
+
+# Serena's symbol index, a local tool cache and not part of the port.
+.serena/
