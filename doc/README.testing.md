@@ -60,6 +60,8 @@ how specific its anchor is, so a row anchored on a common token is
 reported as weak rather than counted with the strong ones.
 `test-history.sh` checks that every roadmap row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
+`test-inventory.sh` has a second population, `test/`, where every file
+must either be named by a gate or be listed as staged below.
 What none of them can check is whether a row's CLAIM is true; that takes a
 person reading the artifact the row names.
 
@@ -67,6 +69,24 @@ Exit 2 from any of the six means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.
+
+## Staged, and run by nothing today
+
+A test file nothing runs reads exactly like a test file that passes. These
+two are kept because the vectors in them are the right vectors and would
+otherwise be rewritten from memory later; they are listed here because
+`script/test-inventory.sh` fails on any file under `test/` that neither a
+gate names nor this table lists, so they cannot go quiet again. Both were
+tracked and unmentioned from the initial import until 2026-08-26.
+
+| file | waits for | state on 2026-08-26 |
+|---|---|---|
+| `test/crc32c-vectors.c` | `iscsi_crc32()`, which arrives with the check algorithms in 0.2 | the exit status accepted either CRC-32C or CRC-32 IEEE, so the one question it exists to ask went unanswered while it reported success. Now it accepts Castagnoli only, and names IEEE when it sees it |
+| `test/xxh64-vectors.c` | an `xxhash.h` in this tree, same import | two of three cases asserted nothing, and the seeded case used xxHash's golden-ratio prime where HAMMER2 seeds with `0x4d617474446c6c6e`. Four vectors now, all four measured against xxhsum 0.8.3 and libxxhash 0.8.3, and compiled and run green against the system xxHash on 2026-08-26 |
+
+Neither is wired into a gate, because there is nothing in this tree to
+link either against. They are wired the day 0.2 imports the algorithms,
+and the inventory gate is what remembers to ask.
 
 ## What the real test will be
 

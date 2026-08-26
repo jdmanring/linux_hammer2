@@ -46,7 +46,10 @@ exists to keep.
   `script/test-syntax.sh` names one by one. A `.c` missing from the second
   is dead code; missing from the third is a file no compiler ever sees while
   every check still reports passing. Written before the core import rather
-  than after it, which is the only useful time. It also checks the origin
+  than after it, which is the only useful time. `test/` is a second
+  population, added 2026-08-26 after two staged vector files were found
+  tracked, run by no gate and named in no document; every file there is
+  now either named by a gate or listed as staged in `README.testing.md`. It also checks the origin
   table's LINE COUNT against the file, which is the column that rots on an
   ordinary edit rather than on an import: two rows had drifted before the
   check existed. A row whose count column is not a number is left alone

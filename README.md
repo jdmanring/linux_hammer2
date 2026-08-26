@@ -103,7 +103,7 @@ tree:
 The repository gates check the documentation against the tree. They are
 POSIX sh over grep, sed and git, so they run anywhere:
 
-        $ bash script/test-inventory.sh   # the lists that claim to cover src/
+        $ bash script/test-inventory.sh   # the lists that claim to cover src/ and test/
         $ bash script/test-citations.sh   # every file:line citation in doc/
         $ bash script/test-history.sh     # every roadmap row's commit hash
 

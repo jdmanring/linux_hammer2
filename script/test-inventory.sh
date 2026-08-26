@@ -83,5 +83,46 @@ for f in $srcs; do
 		fail=$((fail+1)); }
 done
 
-echo "inventory: $nc source file(s), $nh header(s), $fail finding(s)"
+# THE SECOND POPULATION IS test/, AND IT HAD NOBODY COUNTING IT. Measured
+# 2026-08-26: crc32c-vectors.c and xxh64-vectors.c are tracked, are named by
+# no gate and by no document, and one of them includes a header that is not
+# in this tree, so it could not compile if anything tried. A test file that
+# nothing runs reads exactly like a test file that passes, which is the
+# failure this whole gate exists to close - and the population it was
+# written against was src/ only, so the class stayed open one directory
+# away.
+#
+# Accounted for means one of two things, and the second is deliberate: a
+# gate names it (directly, or by a directory a gate passes with -I), or
+# README.testing.md lists it as staged and says what it waits for. A file
+# that is neither is a finding.
+TESTDIR=test
+TESTDOC=doc/README.testing.md
+[ -d "$TESTDIR" ] || { echo "inventory: COULD-NOT-RUN: no $TESTDIR"; exit 2; }
+[ -f "$TESTDOC" ] || { echo "inventory: COULD-NOT-RUN: no $TESTDOC"; exit 2; }
+
+tests=$(find "$TESTDIR" -type f | LC_ALL=C sort)
+[ -n "$tests" ] || { echo "inventory: FAIL: no files under $TESTDIR at all" >&2; exit 1; }
+
+nt=0
+for f in $tests; do
+	nt=$((nt+1))
+	# Walk the path's own prefixes, because a gate that passes
+	# `-I test/stub` names the directory and never the headers in it.
+	# The walk stops before the bare top directory on purpose: `test`
+	# alone is a substring of every `script/test-*.sh` filename, so
+	# testing it would pass every file in the tree on a coincidence.
+	ref=
+	p=$f
+	while [ "${p%/*}" != "$p" ]; do
+		if command grep -q -F -- "$p" script/*.sh; then ref=$p; break; fi
+		p=${p%/*}
+	done
+	[ -n "$ref" ] && continue
+	command grep -q -F -- "$f" "$TESTDOC" || {
+		echo "  FAIL $f: no gate names it and $TESTDOC does not list it"
+		fail=$((fail+1)); }
+done
+
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
