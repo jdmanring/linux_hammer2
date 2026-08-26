@@ -33,7 +33,7 @@ exists to keep.
 - `script/test-shim.sh` and `script/test-syntax.sh`: 3 and 7 on 2026-08-25,
   three of the ten being controls that must fail and do.
 - `script/test-checkpatch.sh`: holds the style deviation set at its recorded
-  582 hits under the checkpatch.pl the baseline names, and refuses rather
+  586 hits under the checkpatch.pl the baseline names, and refuses rather
   than writing one when it finds no baseline.
 - `script/test-history.sh`: resolves every commit the roadmap's history
   table pins and checks its subject still matches, then prints how many

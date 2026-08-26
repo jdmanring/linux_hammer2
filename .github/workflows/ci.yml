@@ -76,8 +76,10 @@ jobs:
       - name: Kernel style (bounded, not clean)
         run: |
           # Pinned, not master. checkpatch.pl changes with the kernel and
-          # the baseline is compared byte for byte: the same tree scores
-          # 579 hits under master and 582 under v6.15. The tag matches the
+          # the baseline is compared byte for byte: the same tree scored
+          # 583 hits under master and 586 under v6.15 when this was last
+          # measured, on 2026-08-26. The gap is the point, not the pair of
+          # numbers, which move whenever the tree does. The tag matches the
           # module's declared kernel floor, and the baseline file's first
           # line records it.
           curl -sSLo /tmp/checkpatch.pl \

@@ -14,13 +14,13 @@
 1 please, no space before tabs
 43 please, no spaces at the start of a line
 1 quoted string split across lines
-22 return is not a function, parentheses are not required
+25 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)
 1 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINTR)
 1 return of an errno should typically be negative (ie: return -EINVAL)
-2 return of an errno should typically be negative (ie: return -EIO)
+3 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 1 return of an errno should typically be negative (ie: return -ENOENT)
 1 return of an errno should typically be negative (ie: return -ENOSPC)

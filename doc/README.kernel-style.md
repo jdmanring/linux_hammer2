@@ -34,12 +34,24 @@ unchanged code, so the version travels with them.
 |---|---|---|
 | do not add new typedefs | 67 | required by the carried core; converts with the core |
 | function argument without identifier name | 391 | BSD prototype style; mechanical |
-| return is not a function, parentheses not required | 22 | BSD style; mechanical |
-| return of an errno should be negative | 14 | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
-| plain inline preferred over `__inline` | 9 | in vendored `sys/tree.h` and `sys/queue.h`; leave, they track freebsd-src |
+| return is not a function, parentheses not required | 25 | BSD style; mechanical |
+| return of an errno should be negative | 15 | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
+| plain inline preferred over `__inline` | 9 | `hammer2.h` 6, `hammer2_io.c` 2, `hammer2_rb.h` 1, counted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
 | spaces at the start of a line | 43 | continuation alignment in carried macros |
 | misplaced or missing SPDX tag in line 1 | 6 | three files are byte-exact from Kusumi's ports and keep his header shape; ours are fixed |
 | everything else | 1 to 18 each | carried code |
+
+## What this gate does not see
+
+`checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
+to CHECK when it is run with `--file`, which is the mode this gate runs
+(`checkpatch.pl` v6.15 line 4810). CHECK messages need `--strict`, which
+the gate does not pass, so the eight `BUG_ON` and four `panic()` sites in
+`src/` produce no hits and the baseline has no row for them. That is a
+blind spot in the instrument and not a clean result: the reviewer who
+raises it will be reading the source, not the baseline. The decision
+itself is recorded in `doc/README.porting.md`; new OS-half code uses
+`WARN_ONCE` plus recovery, which is what the demoted message asks for.
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module

@@ -134,8 +134,8 @@ hammer2_io_folio_check(hammer2_io_t *dio, struct folio *folio)
 	if (likely(folio_size(folio) >= (size_t)dio->psize))
 		return (0);
 
-	WARN_ONCE(1, "hammer2: folio %zu < psize %d at pbase %016llx: "
-		  "the mapping's minimum folio order is not set\n",
+	/* One line, not split: a message split across lines cannot be grepped. */
+	WARN_ONCE(1, "hammer2: folio %zu < psize %d at pbase %016llx, minimum folio order not set\n",
 		  folio_size(folio), dio->psize,
 		  (unsigned long long)dio->pbase);
 
