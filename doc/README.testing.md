@@ -94,7 +94,8 @@ warning and the checker's `sha256` provenance. Both prints were added on
 neither was read by anything, which is that same defect arriving inside its
 own repair. The syntax selftest failed on its first run because the warning
 WRAPS and the matcher read one line at a time - a rule about matching
-wrapped prose not firing while writing a matcher for wrapped prose. CI runs both.
+wrapped prose not firing while writing a matcher for wrapped prose. CI runs both, and derives which gates have a `--selftest` rather than
+naming them.
 
 The syntax selftest's third check is a designed guard replacing an
 accidental one. The gate reads `VERSION`/`PATCHLEVEL` from a build tree's

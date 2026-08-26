@@ -41,71 +41,71 @@ jobs:
           # shallow clone would fail it on rows older than the fetch depth.
           fetch-depth: 0
 
-      - name: Inventory (the lists that claim to cover src/)
-        run: bash script/test-inventory.sh
-
-      - name: Citations (every file:line in doc/)
-        run: bash script/test-citations.sh
-
-      - name: History (every roadmap row's commit)
-        run: bash script/test-history.sh
-
-      - name: Shim (stubs, no kernel needed)
-        run: bash script/test-shim.sh
-
-      - name: Kernel headers
-        id: headers
+      - name: Toolchain and kernel headers
         run: |
           sudo apt-get update -qq
+          sudo apt-get install -y clang || echo "no clang"
           sudo apt-get install -y "linux-headers-$(uname -r)" || \
             echo "no headers for $(uname -r)"
 
-      # THIS STEP NOW ALWAYS REPORTS COULD-NOT-RUN ON A HOSTED RUNNER, and
-      # that is the honest reading rather than a regression. The gate
-      # compiles against the kernel of record, which is the latest release,
-      # and ubuntu-latest ships headers years behind it. Before 2026-08-26
-      # the gate accepted whatever headers were present and printed a pass,
-      # so CI's green said "it compiles against something". If this step is
-      # to mean anything again it needs a runner with the kernel of record's
-      # headers, which is a decision about infrastructure and not about this
-      # file.
-      - name: Syntax (real kernel headers)
+      - name: Kernel style checker, pinned to the kernel of record
         run: |
-          sudo apt-get install -y clang
-          set +e
-          bash script/test-syntax.sh
-          rc=$?
-          set -e
-          if [ "$rc" = 2 ]; then
-            echo "::warning::syntax gate COULD-NOT-RUN on this runner"
-            exit 0
-          fi
-          exit "$rc"
+          # The baseline records this file's sha256, so the gate identifies
+          # the checker by content rather than by what anyone says it is.
+          # v7.2 because the checker should be the one shipping with the
+          # kernel this tree compiles against, not the module's 6.15 floor.
+          curl -sSLo /tmp/checkpatch.pl \
+            https://raw.githubusercontent.com/torvalds/linux/v7.2/scripts/checkpatch.pl
+          echo "CHECKPATCH=/tmp/checkpatch.pl" >> "$GITHUB_ENV"
 
-      # THE SELFTESTS, because a print with no test is a claim about output
-      # nobody checks, and both of these prints exist to keep a loosened run
-      # from reading like a real one. Exit 2 is could-not-run, same as the
-      # gates themselves.
+      # THE GATE LIST IS DERIVED, NOT TYPED. It was typed until 2026-08-26
+      # and had already fallen behind: script/test-vectors-contract.sh
+      # existed for hours with CI not running it, and CLAUDE.md DISCLOSED
+      # that instead of fixing it, which is the could-have-didn't shape. A
+      # hand-maintained list of the things that check this tree is the same
+      # defect those checks exist to catch, and ArtNix's delegator - which
+      # runs these same gates from another repository - derived its
+      # population from `ls` a day earlier for exactly this reason.
+      #
+      # Exit 2 is COULD-NOT-RUN and is recorded as a skip, never as a pass.
+      # A failure outranks it: rc is kept per gate rather than folded, so a
+      # gate exiting 1 cannot be reported as "could not run" merely because
+      # something else declined. The syntax gate takes that path on every
+      # hosted runner, since the kernel of record is the latest release and
+      # ubuntu-latest ships headers years behind it.
+      - name: Gates (every script/test-*.sh)
+        run: |
+          set +e
+          rc=0 ran=0 unrun=0
+          for g in script/test-*.sh; do
+            echo "::group::$g"
+            bash "$g"
+            s=$?
+            echo "::endgroup::"
+            case "$s" in
+              0) ran=$((ran+1)) ;;
+              2) unrun=$((unrun+1)); echo "::warning::$g COULD-NOT-RUN on this runner" ;;
+              *) rc=1; echo "::error::$g failed with $s" ;;
+            esac
+          done
+          echo "$ran gate(s) ran, $unrun could not run"
+          [ "$rc" = 0 ] || exit 1
+          [ "$ran" -gt 0 ] || { echo "::error::every gate declined"; exit 1; }
+
+      # THE SELFTESTS, and this list is derived too. A print with no test is
+      # a claim about output nobody checks, and these prints are what keeps
+      # a loosened run from reading like a real one.
       - name: Gate selftests (the provenance prints)
         run: |
           set +e
-          for g in test-syntax test-checkpatch; do
-            bash "script/$g.sh" --selftest
-            rc=$?
-            [ "$rc" = 2 ] && echo "::warning::$g selftest COULD-NOT-RUN here" && continue
-            [ "$rc" = 0 ] || exit "$rc"
+          rc=0
+          for g in $(command grep -l -- '--selftest' script/test-*.sh); do
+            bash "$g" --selftest
+            s=$?
+            case "$s" in
+              0) ;;
+              2) echo "::warning::$g selftest COULD-NOT-RUN here" ;;
+              *) rc=1; echo "::error::$g selftest failed with $s" ;;
+            esac
           done
-          exit 0
-
-      - name: Kernel style (bounded, not clean)
-        run: |
-          # Pinned, not master. checkpatch.pl changes with the kernel and
-          # the baseline is compared byte for byte. The tag follows the
-          # KERNEL OF RECORD, the latest release, not the module's 6.15
-          # floor: the checker should be the one that ships with the kernel
-          # the tree compiles against. Measured 2026-08-26, re-pinning v6.15
-          # to v7.2 moved exactly one category, 18 hits to 15, and the total
-          # 586 to 583. The baseline file's first line records the version.
-          curl -sSLo /tmp/checkpatch.pl \
-            https://raw.githubusercontent.com/torvalds/linux/v7.2/scripts/checkpatch.pl
-          CHECKPATCH=/tmp/checkpatch.pl bash script/test-checkpatch.sh
+          exit "$rc"
