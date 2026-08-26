@@ -21,7 +21,12 @@ is a defect.
 
 ## What has been verified
 
-All seven gates pass on a machine that can run them all. Each prints its own
+All seven gates pass, and as of 2026-08-26 they pass HERE with no
+environment variables set: the kernel of record is in the store, the
+syntax gate finds it, and the style gate finds that tree's own
+`checkpatch.pl`. ArtNix's delegator, which runs these same gates from
+another repository, reports 7 ran and 0 could not run where it read 5 and
+2 an hour earlier. Each prints its own
 count; the gates are the authority, and the dated figures below are
 snapshots of a particular run rather than the record.
 `test-checkpatch.sh` is the one that commonly cannot run: it needs
