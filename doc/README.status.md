@@ -19,10 +19,10 @@ is a defect.
 | `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
-| `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
+| `hammer2_subr.c` | 458 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1482 | FreeBSD port; carried except `hammer2_igetv()` and the create path, which are `DEFER`red on the VFS entry and on the write path |
 | `hammer2_vfsops.c` | 411 | FreeBSD port; the PFS half carried, the Linux mount entry not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_ondisk.c` | 860 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 866 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
@@ -340,8 +340,7 @@ against the source is the same shape as an empty one.
 | `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_igetv's replacement is written)` | the conversion between `enum vtype` and `S_IFMT`. The BSDs do it in `hammer2_vinit()`, which lives in `hammer2_vnops.c` and is reached from `hammer2_igetv()`; on Linux the type lands in `inode->i_mode` at `iget5_locked()` time, so it fires in whichever file holds the `igetv` replacement. This row and the `hammer2_igetv()` row are one decision, which is why the trigger names the function rather than a file |
 | `hammer2_inode.c`, where `hammer2_igetv()` would be | `DEFER(hammer2_vfsops.c defines super_operations)` | the inode lifecycle. FreeBSD's body is `vfs_hash_get()`, `getnewvnode()`, `insmntque()` and `vfs_hash_insert()`; Linux's `iget5_locked()` is all four in one call, and the carried `hammer2.h` has already chosen a `struct inode *` pointer rather than an embedded inode, so the association is `i_private` and not `container_of()` |
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
-| `hammer2_ondisk.c`, at `hammer2_access_devvp()` | `DEFER(hammer2_vfsops.c calls hammer2_access_devvp)` | whether `bdev_file_open_by_path()` reflects `BLK_OPEN_WRITE` into `f_mode`. The kernel tree of record here is headers only, so `block/bdev.c` cannot be read; the alternative is branching on `sb->s_flags & SB_RDONLY`. Nothing calls the function yet |
-| `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the fsid choice, between the volume header's own and `huge_encode_dev()` on the root device. All three BSD ports hash the mount path, which Linux never tells a filesystem |
+| `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the volume header's own fsid. All three BSD ports hash the mount path, which Linux never tells a filesystem. This row named `huge_encode_dev()` on the root device as the alternative until 2026-08-26, when the mount design took an anonymous super following btrfs and left no `sb->s_bdev` to encode |
 
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a
@@ -377,7 +376,7 @@ against the FreeBSD port at
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
-| `hammer2_ondisk.c` | 19 | 1 | 18 |
+| `hammer2_ondisk.c` | 20 | 1 | 19 |
 | `hammer2_inode.c` | 19 | 6 | 13 |
 | `hammer2_vfsops.c` | 7 | 2 | 5 |
 | `hammer2.h` | 5 | 3 | 2 |
@@ -390,10 +389,10 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Fifty-eight are this port's, the right-hand column summed. Eighteen
+Fifty-nine are this port's, the right-hand column summed. Nineteen
 arrived with `hammer2_ondisk.c`, the first file whose OS half was
 rewritten rather than carried, fifteen more with `hammer2_inode.c` and the
-two header lines it needed, and five with `hammer2_vfsops.c`. Fifty sit in
+two header lines it needed, and five with `hammer2_vfsops.c`. Fifty-one sit in
 a file that holds upstream text; the other eight are the two files this
 port wrote from nothing: six in `hammer2_os.h`, and two of
 `hammer2_io.c`'s four.
@@ -433,12 +432,19 @@ carried `hammer2.h` had already chosen, one is the include line, one the
 timestamp call, one the signal check, one the pair of functions that are
 not carried at all, and one the local variable the timestamp changed.
 
-`hammer2_ondisk.c`'s eighteen are the port's largest set and split ten
-to eight, counted by function on 2026-08-26. Ten are on the device side,
-which is the half this port wrote: the file's opening comment, the GEOM
-open and close, the init and cleanup split the Linux open call forced, and
-`hammer2_access_devvp()`, and the note in `hammer2_init_devvp()` recording
-that the error reporting moved to open along with the lookup. The other eight are in the carried half, and
+`hammer2_ondisk.c`'s nineteen are the port's largest set and split
+eleven to eight, counted mark by mark on 2026-08-26 and listed here so
+the number can be checked rather than taken. Eleven are on the device
+side, which is the half this port wrote: the file's opening comment; in
+`hammer2_open_devvp()`, the `g_vfs_open()` mapping and the logical-size
+comparison; the `g_vfs_close()` mapping in `hammer2_close_devvp()`; in
+`hammer2_init_devvp()`, the unused superblock argument, the `strlcpy`
+rename, the lookup that moved to open, and the constant return that
+moved with it; the `vrele()` mapping in `hammer2_cleanup_devvp()`; and in
+`hammer2_access_devvp()`, the `VOP_ACCESS()` mapping and the trace
+through `blk_to_file_flags()` and `OPEN_FMODE()` that replaced a `DEFER`
+once `block/bdev.c` was read at the tag the kernel of record is pinned
+to. The other eight are in the carried half, and
 every one of them is a one-line substitution rather than a change of
 logic: four in `hammer2_verify_volumes_common()` (the GEOM consumer local,
 the media size read off the block device, the `devvp` field name, and the

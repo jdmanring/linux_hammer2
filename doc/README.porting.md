@@ -177,6 +177,30 @@ uuid` spelled out beside the string it equals, and both print paths use
 the kernel's `%pUl` extension, which reads the DCE layout `struct uuid`
 already has.
 
+## Reading the kernel, not guessing at it
+
+The kernel tree of record on this machine is a headers package: the
+`include/` hierarchy is complete and the `fs/` and `block/` directory
+skeletons are there, but no `.c` file is. Both trees present were checked
+on 2026-08-26 and neither ships one.
+
+That is a fact about the tree and not about the question. Every one of
+those files is published at the tag `KERNEL_REF` names, so a question
+about what a kernel function actually does is answerable in one fetch,
+and the answer is the kernel of record's rather than a nearby version's.
+Three questions were settled that way the same day: whether HAMMER2 can
+mount through `get_tree_bdev()` (`fs/super.c`, `fs/btrfs/super.c`),
+whether `M_WAITOK` can be made not to fail (`mm/slub.c`), and whether
+`bdev_file_open_by_path()` reflects `BLK_OPEN_WRITE` into `f_mode`
+(`block/bdev.c`, `fs/file_table.c`). The last had been a `DEFER` on the
+grounds that the file could not be read.
+
+So: a question about kernel behaviour is not a `DEFER` candidate merely
+because the source is not on disk. Compiling proves a field exists and
+never what sets it, and reading a BSD port proves what BSD does. Cite the
+file and the tag in the comment, as those sites do, since a reading from
+an unnamed version is worth about as much as a guess.
+
 ## Types and conventions
 
 Errnos inside the module are **positive**, the BSD convention the carried

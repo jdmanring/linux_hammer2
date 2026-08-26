@@ -844,12 +844,18 @@ hammer2_access_devvp(struct file *bdev_file, int rdonly)
 	 * for writing, which is a different question at a different layer
 	 * and the one a caller passing rdonly==0 means.
 	 *
-	 * DEFER(hammer2_vfsops.c calls hammer2_access_devvp): confirm that
-	 * bdev_file_open_by_path() reflects BLK_OPEN_WRITE into f_mode, or
-	 * branch on sb->s_flags & SB_RDONLY instead.  That it compiles says
-	 * the field exists, not that the open sets it, and the kernel tree
-	 * of record here is headers only so block/bdev.c cannot be read.
-	 * Nothing calls this yet, so nothing depends on the answer today.
+	 * XXX Linux: the write bit is read off f_mode, and that the open
+	 * sets it was confirmed rather than assumed.  Traced through Linux
+	 * v7.2 on 2026-08-26: sb_open_mode() gives BLK_OPEN_WRITE unless
+	 * SB_RDONLY, block/bdev.c blk_to_file_flags() turns that into
+	 * O_RDWR (with BLK_OPEN_READ) or O_WRONLY, and fs/file_table.c
+	 * sets f->f_mode = OPEN_FMODE(flags) at alloc_file().  So
+	 * FMODE_WRITE is set exactly when the mount asked to write.
+	 *
+	 * This was a DEFER until then, on the grounds that the kernel tree
+	 * of record is headers only and block/bdev.c could not be read.
+	 * That was true of the tree and false of the question: the file is
+	 * published at the tag the tree is pinned to.
 	 */
 	KKASSERT(bdev_file);
 
