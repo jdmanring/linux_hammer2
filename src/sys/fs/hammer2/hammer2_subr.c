@@ -444,15 +444,7 @@ hammer2_inode_to_gid(const hammer2_inode_t *ip)
  * path out of mnt_stat.f_mntonname, and a Linux filesystem is never
  * told its mount path: the same filesystem can be mounted at several
  * places at once, so the value does not exist to be hashed.  Its only
- * caller is hammer2_vfsops.c, which is a rewrite here, and Linux
- * reports an fsid from ->statfs() rather than storing one at mount.
- * HAMMER2 carries a real fsid in the volume header, which is the
- * obvious source and a better one than a path hash.
- *
- * DEFER(the PFS half of hammer2_get_tree() lands): use the volume header's fsid,
- * and record it in doc/README.porting.md.  The alternative this used to
- * name, huge_encode_dev(sb->s_bdev->bd_dev), is not available: the mount
- * design settled on 2026-08-26 follows btrfs and takes an anonymous
- * super, so there is no sb->s_bdev to encode.  Confirm that the fsid is
- * populated by the time ->statfs can be called before relying on it.
+ * caller was hammer2_vfsops.c, and Linux reports an fsid from ->statfs()
+ * rather than storing one at mount time.  HAMMER2 carries a real fsid
+ * in the volume header, which is the source to use.
  */

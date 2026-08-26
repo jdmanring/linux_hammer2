@@ -756,10 +756,9 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	inode->i_mode = ifmt | (ip->meta.mode & 07777);
 
 	/*
-	 * DEFER(super_operations gains ->evict_inode): it owes the other
-	 * half of hammer2_iget_set(), a hammer2_inode_drop() and clearing
-	 * ip->vp.  Until it exists every inode constructed here leaks one
-	 * reference on its hammer2_inode, including down iget_failed().
+	 * hammer2_evict_inode() in hammer2_vfsops.c performs the other
+	 * half of hammer2_iget_set(), calling hammer2_inode_drop() and
+	 * clearing ip->vp when the VFS evicts the inode.
 	 */
 	unlock_new_inode(inode);
 	*vpp = inode;

@@ -45,8 +45,11 @@
 #include <linux/module.h>
 
 static void hammer2_update_pmps(hammer2_dev_t *);
+static void hammer2_mount_helper(struct super_block *, hammer2_pfs_t *);
 static void hammer2_unmount_helper(struct super_block *, hammer2_pfs_t *,
     hammer2_dev_t *);
+static void hammer2_evict_inode(struct inode *);
+static const struct super_operations hammer2_sops;
 
 /*
  * The globals upstream keeps in this file.  Nothing in the tree defined
@@ -664,13 +667,14 @@ hammer2_get_tree(struct fs_context *fc)
 {
 	struct hammer2_fs_context *ctx = fc->fs_private;
 	struct super_block *sb;
-	hammer2_dev_t *hmp = NULL, *hmp_tmp;
+	struct inode *root_inode;
+	hammer2_dev_t *hmp = NULL, *hmp_tmp, *force_local;
 	hammer2_pfs_t *pmp = NULL, *spmp;
 	hammer2_devvp_list_t devvpl;
 	hammer2_devvp_t *e, *e_tmp;
-	hammer2_chain_t *parent, *schain;
+	hammer2_chain_t *parent, *schain, *chain;
 	const hammer2_inode_data_t *ripdata;
-	hammer2_key_t key_dummy;
+	hammer2_key_t key_dummy, key_next, lhc;
 	hammer2_xop_head_t *xop;
 	char *devstr, *label;
 	int rdonly = (fc->sb_flags & SB_RDONLY) != 0;
@@ -1063,25 +1067,132 @@ next_hmp:
 	}
 
 	/*
-	 * DEFER(the PFS half of this function lands): what remains is
-	 * upstream's lookup of the label under spmp->iroot, the
-	 * hammer2_pfsalloc() that turns the chain it finds into a pmp, the
-	 * pmp->mp check that answers whether that PFS is already mounted,
-	 * and a fill-super that gives this superblock a root inode and a
-	 * root dentry.  Until then a mount that got this far has proved the
-	 * device probe works and is torn back down, which is what the
-	 * unmount helper below is being asked to do.
-	 *
-	 * Failing rather than stubbing a success is the point: a mount that
-	 * appears to work and has no root is the failure this port cannot
-	 * afford to make quiet.
+	 * Force local mount (disassociate all PFSs from their clusters).
+	 * Used primarily for debugging.
 	 */
-	hammer2_unmount_helper(NULL, NULL, hmp);
+	force_local = (hmp->hflags & HMNT2_LOCAL) ? hmp : NULL;
+
+	/*
+	 * Lookup the mount point under the media-localized super-root.
+	 * Scanning hammer2_pfslist doesn't help us because it represents
+	 * PFS cluster ids which can aggregate several named PFSs together.
+	 */
+	spmp = hmp->spmp;
+	hammer2_inode_lock(spmp->iroot, 0);
+	parent = hammer2_inode_chain(spmp->iroot, 0, HAMMER2_RESOLVE_ALWAYS);
+	lhc = hammer2_dirhash(label, strlen(label));
+	chain = hammer2_chain_lookup(&parent, &key_next, lhc,
+	    lhc + HAMMER2_DIRHASH_LOMASK, &error, 0);
+	while (chain) {
+		if (chain->bref.type == HAMMER2_BREF_TYPE_INODE &&
+		    strcmp(label, (char *)chain->data->ipdata.filename) == 0)
+			break;
+		chain = hammer2_chain_next(&parent, chain, &key_next,
+		    lhc + HAMMER2_DIRHASH_LOMASK, &error, 0);
+	}
+	if (parent) {
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+	}
+	hammer2_inode_unlock(spmp->iroot);
+
+	/* PFS could not be found? */
+	if (chain == NULL) {
+		hammer2_unmount_helper(NULL, NULL, hmp);
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+
+		if (error) {
+			hprintf("PFS label \"%s\" error %08x\n", label, error);
+			return (-EINVAL);
+		}
+		hprintf("PFS label \"%s\" not found\n", label);
+		return (-ENOENT);
+	}
+
+	/* Acquire the pmp structure. */
+	if (chain->error) {
+		hprintf("PFS label \"%s\" chain error %08x\n",
+		    label, chain->error);
+	} else {
+		ripdata = &chain->data->ipdata;
+		pmp = hammer2_pfsalloc(NULL, ripdata, force_local);
+	}
+	hammer2_chain_unlock(chain);
+	hammer2_chain_drop(chain);
+
+	/* PFS to mount must exist at this point. */
+	if (pmp == NULL) {
+		hprintf("failed to acquire PFS structure\n");
+		hammer2_unmount_helper(NULL, NULL, hmp);
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+		return (-EINVAL);
+	}
+
+	if (pmp->mp) {
+		hprintf("PFS already mounted!\n");
+		hammer2_unmount_helper(NULL, NULL, hmp);
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+		return (-EBUSY);
+	}
+
+	/* Linux fill-super */
+	sb->s_op = &hammer2_sops;
+	sb->s_magic = HAMMER2_VOLUME_ID_HBO;
+	sb->s_maxbytes = MAX_LFS_FILESIZE;
+	sb->s_time_gran = 1;
+	sb->s_blocksize = HAMMER2_PBUFSIZE;
+	sb->s_blocksize_bits = HAMMER2_PBUFRADIX;
+	snprintf(sb->s_id, sizeof(sb->s_id), "%pg",
+	    file_bdev(hmp->bdev_file));
+
+	error = super_setup_bdi(sb);
+	if (error) {
+		hprintf("super_setup_bdi failed: %d\n", error);
+		hammer2_unmount_helper(NULL, NULL, hmp);
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+		return error;
+	}
+
+	/* Connect up mount pointers. */
+	hammer2_mount_helper(sb, pmp);
+
+	/* Update readonly hmp if !rdonly. */
+	pmp->rdonly = rdonly;
+
+	hammer2_inode_lock(pmp->iroot, 0);
+	error = hammer2_igetv(pmp->iroot, 0, &root_inode);
+	hammer2_inode_unlock(pmp->iroot);
+	if (error) {
+		hprintf("failed to get root inode: %d\n", error);
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+		return (-error);
+	}
+
+	sb->s_root = d_make_root(root_inode);
+	if (sb->s_root == NULL) {
+		hprintf("failed to make root dentry\n");
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);
+		return (-ENOMEM);
+	}
+
+	fc->root = dget(sb->s_root);
+	sb->s_flags |= SB_ACTIVE;
 	hammer2_lk_unlock(&hammer2_mntlk);
 	hstrfree(devstr);
-	deactivate_locked_super(sb);
 
-	return (-EINVAL);	/* Linux: the VFS half is negative */
+	return 0;
 }
 
 /*
@@ -1130,6 +1241,50 @@ hammer2_update_pmps(hammer2_dev_t *hmp)
 	}
 	hammer2_inode_unlock(spmp->iroot);
 }
+
+/*
+ * Mount helper, hook the system mount into our PFS.
+ * The mount lock is held.
+ *
+ * We must bump the mount_count on related devices for any mounted PFSs.
+ */
+static void
+hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
+{
+	hammer2_cluster_t *cluster;
+	hammer2_chain_t *rchain;
+	int i;
+
+	sb->s_fs_info = pmp;
+	pmp->mp = sb;
+
+	/* After pmp->mp is set adjust hmp->mount_count. */
+	cluster = &pmp->iroot->cluster;
+	for (i = 0; i < cluster->nchains; ++i) {
+		rchain = cluster->array[i].chain;
+		if (rchain == NULL)
+			continue;
+		++rchain->hmp->mount_count;
+	}
+}
+
+static void
+hammer2_evict_inode(struct inode *inode)
+{
+	hammer2_inode_t *ip = VTOI(inode);
+
+	truncate_inode_pages_final(&inode->i_data);
+	clear_inode(inode);
+
+	if (ip) {
+		ip->vp = NULL;
+		hammer2_inode_drop(ip);
+	}
+}
+
+static const struct super_operations hammer2_sops = {
+	.evict_inode	= hammer2_evict_inode,
+};
 
 /*
  * DEFER(a super_block exists to reconfigure): ->reconfigure, which is

@@ -462,16 +462,16 @@ clears on the mount, has no carried equivalent: Linux has no per-mount
 flag a filesystem sets for that and works it out from the absence of a
 network superblock.
 
-`hammer2_mount_helper()` is deliberately not here. It is the other half
-of `hammer2_unmount_helper()`, and its only caller is the part of the
-mount path that connects a PFS to a superblock, so it lands with the PFS
-half of `->get_tree` and not with the device half that landed on
-2026-08-26. Nothing mechanical enforces that:
-`script/test-syntax.sh` passes `-Wno-unused-function`, because the
-carried files arrive with statics whose unported callers would have used
-them, so an unused static *variable* fails the gate and an unused static
-*function* does not. The rule that no unreachable helper lands ahead of
-its caller is a discipline here rather than a check, and that is written
+`hammer2_mount_helper()` is the other half of `hammer2_unmount_helper()`,
+and connects a PFS to a superblock: it sets `sb->s_fs_info = pmp` and
+`pmp->mp = sb`, and bumps the `mount_count` on all underlying device
+chains. It landed with the PFS half of `->get_tree` and `hammer2_sops`
+(`->evict_inode`). Nothing mechanical enforces that a helper lands only
+with its caller: `script/test-syntax.sh` passes `-Wno-unused-function`,
+because the carried files arrive with statics whose unported callers would
+have used them, so an unused static *variable* fails the gate and an unused
+static *function* does not. The rule that no unreachable helper lands ahead
+of its caller is a discipline here rather than a check, and that is written
 into the file's opening comment so the next reader is not misled by the
 one it can see enforced.
 
