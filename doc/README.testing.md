@@ -387,3 +387,30 @@ blockref and every implementation verifies it, so a subtly wrong port
 produces volumes that read as corrupt on DragonFly rather than as buggy.
 The cross-implementation round trip is the only test that catches that,
 and no amount of self-consistency substitutes for it.
+
+## The gates that will watch a running system
+
+Every gate here reads a file that is not changing while it reads. The gates
+0.3 and after do not: a build-and-load script watches a guest boot, and the
+crash matrix watches a filesystem being cut off mid-write. Those gates can
+fail in a way none of the current ones can, by sampling before the phase
+they are about begins. A guest that has not yet loaded the module reads
+clean for the same reason a healthy one does, and the sample carries no
+timestamp saying which it was, so nothing in the output distinguishes them
+afterwards.
+
+It does not feel like guessing, because the activity is measuring, and it is
+measuring, of the wrong phase. The reading that survives review is the one
+that happened to be right anyway, which is invisible to anyone checking
+answers rather than method.
+
+So a gate that samples a running system carries a positive control: something
+that MUST move during the phase under test, sampled in the same pass as the
+measurement. A module load that has begun has a `dmesg` line; a write that
+has begun has a growing device. An unchanging number with no such control is
+unproven rather than reassuring, and a gate resting on one is asserting its
+own conclusion.
+
+This is the same requirement as the negative controls above, one axis over.
+Those ask whether the instrument can fail at all. This asks whether it was
+looking while there was anything to see.
