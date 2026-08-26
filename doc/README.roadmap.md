@@ -14,8 +14,9 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 Nothing mounts. The OS shim, the DIO layer and the whole carried core
 type-check against real kernel headers under two compilers, with controls that
-fail when they should. No module has been built, loaded or run. The vnode,
-inode and mount paths have not been started.
+fail when they should. No module has been built, loaded or run. What exists
+of the mount path and what has been verified is `README.status.md`; the vnode
+path has not been started.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile` already
@@ -35,12 +36,23 @@ in 0.2 can be prepared without it.
    VFS entry calls four `hammer2_inode_*` functions, so reading the file
    first is what lets the entry be written against something real.
    Nothing else can be imported: the four files left are rewrites.
-2. Next: the read-side VFS entry (`fs_context`, `super_operations`,
-   `lookup`, `getattr`, `iterate_shared`, `read_folio`, `statfs`) against
-   the F1 manifests. This is also what resolves the inode and dentry
-   lifecycle question. It is listed second because it is the first thing
-   here that cannot be written by reading the BSD ports side by side, and
-   the three files above are the ones it calls.
+2. In progress. The read-side VFS entry (`fs_context`,
+   `super_operations`, `lookup`, `getattr`, `iterate_shared`,
+   `read_folio`, `statfs`) against the F1 manifests. This is also what
+   resolves the inode and dentry lifecycle question. It is listed second
+   because it is the first thing here that cannot be written by reading
+   the BSD ports side by side, and the three files above are the ones it
+   calls.
+
+   Those seven entry points span three files, so no single file finishes
+   this row: `hammer2_vfsops.c` owns `fs_context`, `super_operations` and
+   `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
+   `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
+   Started 2026-08-26 with the PFS half of `hammer2_vfsops.c`, which is
+   carried; what remains there is the Linux mount entry, and the design
+   for it is settled and recorded in that file's opening comment.
+   `hammer2_igetv()`'s replacement is what `super_operations` waits on,
+   and it is the same decision as `enum vtype`'s.
 3. The first `make`, when authorized: 0.3.
 4. Read-only mount of F1, then of the F2 root image: 0.4.
 
