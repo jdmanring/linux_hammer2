@@ -106,7 +106,7 @@ What has actually been compiled, measured rather than assumed, on
 |---|---|
 | 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers |
 | 6.18.46-1-lts | 7 checks, 0 failed, both compilers |
-| 7.2 | not on this machine; the gate reports COULD-NOT-RUN until it is |
+| 7.2 | not on this machine. The 7.2.0-cachyos `dev` output is prebuilt and signed in `nyx-cache.chaotic.cx` at 687 MB, so this is a download and its closure rather than a kernel build; the gate reports COULD-NOT-RUN until it is here |
 
 So the current state is that the port is UNVERIFIED against its own kernel
 of record, and says so out loud instead of printing green.

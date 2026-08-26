@@ -6,10 +6,27 @@ for handoff section 37 items 3 and 4. Nothing here is designed: it is a
 reading of the current tree and of the kernel headers the gate compiles
 against, with the version of record stated so it can be re-measured.
 
-Kernel of record: 7.2.0-cachyos, the newest realized `linux-*-dev` output in
-the store, which is what `script/test-syntax.sh` falls back to when
-`/lib/modules/$(uname -r)/build` is absent. That is the TARGET kernel rather
-than the workstation's; re-read rather than citing this line.
+Kernel of record: 7.2. Everything below was read against the 7.1.9 headers
+on this workstation, which is not that, and the difference is stated
+because it is the point.
+
+This paragraph said "7.2.0-cachyos, the newest realized `linux-*-dev`
+output in the store" until 2026-08-26 and closed by telling the reader to
+re-read rather than cite it. Nobody did, and both halves were wrong.
+Measured that day: no such output is realized, in the store or anywhere on
+this machine; and the nix fallback it names fires only when
+`/lib/modules/$(uname -r)/build` is ABSENT, which it is not, so that path
+had never once been taken. The gate was compiling against 7.1.9 while this
+line named the kernel it was supposed to be. It now refuses any tree that
+is not the kernel of record rather than reporting a pass.
+
+The 7.2.0-cachyos `dev` output exists, prebuilt and signed, in the
+CachyOS project's own cache: `nyx-cache.chaotic.cx`, store path
+`sil5r7r2a25nsshkqpd5jjjd0g7ywyi7-...-7.2.0-dev`, `NarSize` 687385816,
+deriver matching the `.drv` in this machine's store. Confirmed by reading
+the narinfo on 2026-08-26. So reaching the kernel of record is a download
+and its closure, not a kernel build, which is a different decision from
+the one this tree recorded an hour earlier.
 
 ## The object
 
