@@ -17,12 +17,26 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
-K=${KDIR:-/lib/modules/$(uname -r)/build}
-if [ ! -d "$K" ]; then
-	# Nix: the newest realized kernel dev output.
-	K=$(ls -d /nix/store/*-linux-*-dev/lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+# WHICH BRANCH WAS TAKEN, NOT WHICH ONE WOULD BE. A fallback that has never
+# fired is indistinguishable from a fallback that works, and this one had
+# never fired: IO_MODEL.md described the nix-store branch as the source of
+# the kernel of record while /lib/modules/$(uname -r)/build was present on
+# every run, so the document and this script agreed in wording and
+# disagreed in behaviour with nothing between them to notice. The
+# resolution is reported in the header line now, so every run says which
+# path it took, including the runs delegated from another repository.
+if [ -n "${KDIR:-}" ]; then
+	K=$KDIR; ksrc="KDIR"
+else
+	K=/lib/modules/$(uname -r)/build; ksrc="/lib/modules/\$(uname -r)/build"
 fi
-[ -n "$K" ] && [ -d "$K" ] || { echo "syntax: COULD-NOT-RUN: no kernel build dir"; exit 2; }
+if [ ! -d "$K" ]; then
+	# Nix: the newest realized kernel dev output. Exercise this branch with
+	# KDIR pointing at a path that does not exist.
+	K=$(ls -d /nix/store/*-linux-*-dev/lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+	ksrc="nix store fallback"
+fi
+[ -n "$K" ] && [ -d "$K" ] || { echo "syntax: COULD-NOT-RUN: no kernel build dir ($ksrc)"; exit 2; }
 S=$(dirname "$K")/source
 [ -d "$S" ] || S=$K
 
@@ -134,7 +148,7 @@ check() { # name expect file cflags...
 	rm -f /tmp/h2syn.$$
 }
 
-echo "hammer2 against $(basename "$(dirname "$K")") with $("$CC" --version | head -1):"
+echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, with $("$CC" --version | head -1):"
 check "hammer2.h: header TU expands (tree, queue, atomics)" pass test/hammer2-header.c
 check "hammer2_io.c: invariants on"  pass src/sys/fs/hammer2/hammer2_io.c -DHAMMER2_INVARIANTS
 check "hammer2_io.c: invariants off" pass src/sys/fs/hammer2/hammer2_io.c

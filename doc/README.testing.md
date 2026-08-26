@@ -33,6 +33,17 @@ the `LIST_HEAD` and `RB_ROOT` redefinitions, which is what made those
 credible rather than stylistic. A warning in a file under `src/` fails the
 gate; one in a kernel header does not, since we do not own those and
 cannot fix them. gcc is optional and the gate says so when it is absent.
+Its header line names WHICH resolution it took - `KDIR`,
+`/lib/modules/$(uname -r)/build`, or the nix-store fallback - because a
+fallback that has never fired is indistinguishable from one that works.
+That is not hypothetical here: `IO_MODEL.md` described the nix branch as
+the source of the kernel of record while the `/lib/modules` path was
+present on every run, so the document and the script agreed in wording and
+disagreed in behaviour, and nothing could notice. Point `KDIR` at a path
+that does not exist to exercise the fallback; on this workstation it
+resolves nothing and returns COULD-NOT-RUN naming itself, which is the
+first time that branch has ever run.
+
 It also refuses a kernel that is not the one of record: this tree compiles
 against the latest Linux, the pin is `KERNEL_REF` in the script, and a
 tree of any other version is COULD-NOT-RUN. `H2_KERNEL_REF` checks another
