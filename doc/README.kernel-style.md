@@ -40,20 +40,24 @@ floor. That was the wrong thing to match: the tree compiles against the
 latest release and the checker should be that release's, so the pin
 follows the kernel of record and not the floor. Re-pinning moved exactly
 one category, `Argument 'X' is not used in function-like macro`, from 18
-to 15, and the total from 586 to 583; every other line is byte-identical.
+to 15, and the total from 586 to 583; every other line was byte-identical.
+The totals moved again on 2026-08-26 when 0.2's first four carried files
+landed: 583 to 649 over roughly 4,300 added lines of DragonFly code, which
+is the deviation density of the carried core rather than of anything this
+port wrote.
 That is also the signature this workstation's own 7.1 `checkpatch.pl`
 produced against the old baseline, which the gate had been correctly
 reporting as a version mismatch rather than a style regression.
 
 | category | count | disposition |
 |---|---|---|
-| do not add new typedefs | 67 | required by the carried core; converts with the core |
+| do not add new typedefs | 72 | required by the carried core; converts with the core |
 | function argument without identifier name | 391 | BSD prototype style; mechanical |
-| return is not a function, parentheses not required | 25 | BSD style; mechanical |
+| return is not a function, parentheses not required | 38 | BSD style; mechanical |
 | return of an errno should be negative | 15 | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
-| plain inline preferred over `__inline` | 9 | `hammer2.h` 6, `hammer2_io.c` 2, `hammer2_rb.h` 1, counted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
-| spaces at the start of a line | 43 | continuation alignment in carried macros |
-| misplaced or missing SPDX tag in line 1 | 6 | three files are byte-exact from Kusumi's ports and keep his header shape; ours are fixed |
+| plain inline preferred over `__inline` | 11 | `hammer2.h` 6, `hammer2_io.c` 2, `hammer2_rb.h` 1, counted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
+| spaces at the start of a line | 64 | continuation alignment in carried macros |
+| misplaced or missing SPDX tag in line 1 | 8 misplaced, 8 missing | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. The count tracks the number of carried files and rose with 0.2's imports |
 | everything else | 1 to 15 each | carried code |
 
 ## What this gate does not see

@@ -1,21 +1,22 @@
 # checkpatch.pl from linux v7.2
 # sha256 f8f32e6b559004fcac021e2f6149b6b7ea486924a8bc48297c0f317eddf5e220
-15 Argument 'X' is not used in function-like macro
+16 Argument 'X' is not used in function-like macro
 2 Avoid unnecessary line continuations
+1 Block comments use * on subsequent lines
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
-3 Misplaced SPDX-License-Identifier tag - use line 1 instead
-1 Missing a blank line after declarations
-3 Missing or malformed SPDX-License-Identifier tag in line 1
+8 Misplaced SPDX-License-Identifier tag - use line 1 instead
+2 Missing a blank line after declarations
+8 Missing or malformed SPDX-License-Identifier tag in line 1
 1 code indent should use tabs where possible
-67 do not add new typedefs
-1 do not use assignment in if condition
+72 do not add new typedefs
+3 do not use assignment in if condition
 391 function definition argument 'X' should also have an identifier name
-9 plain inline is preferred over __inline
+11 plain inline is preferred over __inline
 1 please, no space before tabs
-43 please, no spaces at the start of a line
-1 quoted string split across lines
-25 return is not a function, parentheses are not required
+64 please, no spaces at the start of a line
+11 quoted string split across lines
+38 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)
 1 return of an errno should typically be negative (ie: return -EEXIST)

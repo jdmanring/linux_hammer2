@@ -280,6 +280,16 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 	-Wno-unused-parameter -Wno-sign-compare
 	-I src/sys/fs/hammer2 -I src/sys -I test)
 
+# CARRIED FILES ONLY, and never hammer2_io.c, which is ours. gcc warns
+# -Waddress-of-packed-member where hammer2_freemap.c takes the address of
+# a field in the on-disk __packed struct; it warns categorically rather
+# than by offset, and clang does not warn at all. The address is aligned:
+# test/hammer2-header.c asserts the field is at 0x40, that 0x40 is a
+# multiple of its own size, and that the struct is 128 bytes, so this
+# suppression rests on a measurement the compiler re-takes every run and
+# fails in the same build if the format moves.
+CARRIED=-Wno-address-of-packed-member
+
 fail=0 ran=0
 # A WARNING IN OUR OWN FILES IS A FAILURE, and it has to be counted rather
 # than made fatal: -Werror would also fail on the kernel headers, which we
@@ -326,8 +336,14 @@ echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, dialect $dsrc, wi
 check "hammer2.h: header TU expands (tree, queue, atomics)" pass test/hammer2-header.c
 check "hammer2_io.c: invariants on"  pass src/sys/fs/hammer2/hammer2_io.c -DHAMMER2_INVARIANTS
 check "hammer2_io.c: invariants off" pass src/sys/fs/hammer2/hammer2_io.c
-check "hammer2_admin.c: invariants on"  pass src/sys/fs/hammer2/hammer2_admin.c -DHAMMER2_INVARIANTS
-check "hammer2_admin.c: invariants off" pass src/sys/fs/hammer2/hammer2_admin.c
+check "hammer2_admin.c: invariants on"  pass src/sys/fs/hammer2/hammer2_admin.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_admin.c: invariants off" pass src/sys/fs/hammer2/hammer2_admin.c $CARRIED
+check "hammer2_freemap.c: invariants on"  pass src/sys/fs/hammer2/hammer2_freemap.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_freemap.c: invariants off" pass src/sys/fs/hammer2/hammer2_freemap.c $CARRIED
+check "hammer2_xops.c: invariants on"  pass src/sys/fs/hammer2/hammer2_xops.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_xops.c: invariants off" pass src/sys/fs/hammer2/hammer2_xops.c $CARRIED
+check "hammer2_bulkfree.c: invariants on"  pass src/sys/fs/hammer2/hammer2_bulkfree.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_bulkfree.c: invariants off" pass src/sys/fs/hammer2/hammer2_bulkfree.c $CARRIED
 # Negative control: a wrong kernel call must be refused by the same
 # headers, or a pass above proves only that the compiler ran. Both
 # controls are prefix headers applied AFTER the kernel header they
@@ -354,9 +370,20 @@ if [ -n "$CC2" ]; then
 		esac
 	done
 	for f in test/hammer2-header.c src/sys/fs/hammer2/hammer2_io.c \
-		src/sys/fs/hammer2/hammer2_admin.c; do
+		src/sys/fs/hammer2/hammer2_admin.c \
+		src/sys/fs/hammer2/hammer2_freemap.c \
+		src/sys/fs/hammer2/hammer2_xops.c \
+		src/sys/fs/hammer2/hammer2_bulkfree.c; do
 		ran=$((ran + 1))
-		"$CC2" "${CFLAGS2[@]}" "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
+		# The packed-member suppression applies to the carried files
+		# only, exactly as it does for the first compiler. Our own
+		# hammer2_io.c and the header TU are held to the full set,
+		# and the header TU is where the alignment is asserted.
+		case "$f" in
+		*/hammer2_io.c|test/*) carried= ;;
+		*) carried=$CARRIED ;;
+		esac
+		"$CC2" "${CFLAGS2[@]}" $carried "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
 		ours=$(command grep -c "^src/.*warning:" /tmp/h2syn2.$$ || true)
 		if [ "$rc" = 0 ] && [ "$ours" = 0 ]; then
 			echo "  ok    $CC2: $(basename "$f") (pass)"

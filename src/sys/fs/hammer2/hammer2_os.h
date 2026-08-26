@@ -484,6 +484,30 @@ hstrfree(char *str)
 }
 
 /*
+ * printf() and tsleep() are kernel facilities on every BSD this port
+ * follows, so none of the three shims them and both names reach the
+ * carried core unqualified.  hammer2_bulkfree.c calls each once.
+ *
+ * tsleep's contract is a timed sleep on a wait channel that wakeup()
+ * can cut short.  The one call site is a throttle - bulkfree pausing
+ * between passes - and nothing wakes that channel, so a plain timed
+ * sleep is faithful there and not in general.
+ * XXX A tsleep whose sleeper must be woken early needs the wait queue
+ * hammer2_lkc_t already provides; this mapping would silently ignore
+ * the wakeup.
+ */
+/* Linux */
+#define printf(...)	pr_info(__VA_ARGS__)
+
+static inline int
+tsleep(const void *ident __always_unused, int flags __always_unused,
+    const char *wmesg __always_unused, int timo)
+{
+	schedule_timeout_interruptible(timo);
+	return (signal_pending(current) ? EINTR : 0);
+}
+
+/*
  * The xop allocation zone.  Every BSD port allocates hammer2_xop_t from
  * its kernel's slab allocator rather than from malloc: FreeBSD from a uma
  * zone, NetBSD and OpenBSD from a pool.  Linux's equivalent is a

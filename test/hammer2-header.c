@@ -64,3 +64,21 @@ hammer2_header_check(hammer2_pfs_t *pmp, hammer2_chain_t *chain)
 
 	return (int)(VTOI(ip->vp) == ip) + (int)(MPTOPMP(pmp->mp) == pmp) + n;
 }
+
+/*
+ * gcc warns -Waddress-of-packed-member where hammer2_freemap.c takes
+ * &bmap->bitmapq[n], because the on-disk struct is __packed and gcc warns
+ * categorically rather than by offset. clang does not warn at all. The
+ * address is in fact aligned, and these assert the three facts that make
+ * it so, so that the suppression in script/test-syntax.sh rests on a
+ * measurement the compiler re-takes on every run rather than on a claim.
+ * If the format ever moves the field, this fails and the suppression
+ * stops being justified in the same build.
+ */
+static_assert(offsetof(struct hammer2_bmap_data, bitmapq) == 0x40,
+	      "bitmapq moved; the packed-member suppression is no longer justified");
+static_assert(offsetof(struct hammer2_bmap_data, bitmapq) %
+	      sizeof(hammer2_bitmap_t) == 0,
+	      "bitmapq is not naturally aligned inside its packed struct");
+static_assert(sizeof(struct hammer2_bmap_data) == 128,
+	      "hammer2_bmap_data size moved");

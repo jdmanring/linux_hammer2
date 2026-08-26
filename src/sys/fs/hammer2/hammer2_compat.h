@@ -46,6 +46,18 @@
 /* Taken from sys/sys/cdefs.h in FreeBSD. */
 #define __DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
 
+/*
+ * The carried core guards assertion-only locals on FreeBSD's own
+ * INVARIANTS, not on this port's knob: hammer2_freemap.c declares
+ * `size_t bytes` inside #ifdef INVARIANTS and then asserts on it, so with
+ * only HAMMER2_INVARIANTS defined the file fails to compile in exactly
+ * the configuration the assertions exist for. The knob keeps its name and
+ * lights FreeBSD's spelling too.
+ */
+#ifdef HAMMER2_INVARIANTS
+#define INVARIANTS	1
+#endif
+
 /* DragonFly KKASSERT is FreeBSD KASSERT equivalent. */
 #ifdef HAMMER2_INVARIANTS
 #define KKASSERT(exp)		BUG_ON(!(exp))

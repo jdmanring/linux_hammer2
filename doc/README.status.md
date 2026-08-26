@@ -13,9 +13,14 @@ is a defect.
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
+| `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
+| `hammer2_xops.c` | 1449 | FreeBSD port, carried byte-for-byte |
+| `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
+| `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
+| `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 953 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 530 | ours, the OS shim |
-| `hammer2_compat.h` | 111 | ours, kernel look-alikes |
+| `hammer2_os.h` | 554 | ours, the OS shim |
+| `hammer2_compat.h` | 123 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
