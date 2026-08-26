@@ -32,8 +32,16 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# WHICH BRANCH FOUND THE CHECKER, PRINTED AND NOT PINNED. Which one is
+# right depends on the machine, so constraining it would break the case the
+# fallback exists for; naming it is the whole fix.
 CP=${CHECKPATCH:-}
-[ -n "$CP" ] || CP=${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl
+if [ -n "$CP" ]; then
+	cpsrc="CHECKPATCH"
+else
+	CP=${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl
+	cpsrc="${KDIR:+KDIR}${KDIR:-/lib/modules/\$(uname -r)}/scripts/checkpatch.pl"
+fi
 [ -f "$CP" ] || { echo "checkpatch: COULD-NOT-RUN: no checkpatch.pl at $CP"; exit 2; }
 command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; exit 2; }
 
@@ -48,7 +56,15 @@ command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; 
 # `checkpatch.pl` carries no version of its own, so it is taken from the
 # kernel tree it sits in: `scripts/checkpatch.pl` puts the Makefile two
 # levels up. `CHECKPATCH_REF` overrides, for a copy pulled out of its tree.
+# THE VERSION HAS TWO SOURCES AND THEY ARE NOT THE SAME KIND OF THING.
+# CHECKPATCH_REF is a human ASSERTION; the Makefile two levels up is
+# DERIVED from the tree the checker sits in. The comparison below treats
+# them identically, which is correct - but a reader who sees "v7.2" cannot
+# tell whether the gate measured it or was told, and every run of this gate
+# on this workstation was told, because the pinned copy lives outside a
+# kernel tree. So the origin is printed beside the version.
 cpver=${CHECKPATCH_REF:-}
+if [ -n "$cpver" ]; then versrc="asserted via CHECKPATCH_REF"; else versrc="derived from the checker's own tree"; fi
 if [ -z "$cpver" ]; then
 	mk=$(dirname "$CP")/../Makefile
 	if [ -f "$mk" ]; then
@@ -110,6 +126,7 @@ if [ -n "$cpver" ] && [ -n "$refver" ] && [ "$cpver" != "$refver" ]; then
 fi
 if diff -u <(grep -v '^#' "$base") <(printf '%s\n' "$got"); then
 	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits, baseline: ${ref:-version unrecorded})"
+	echo "checkpatch: checker from $cpsrc, version ${cpver:-unestablished} $versrc"
 else
 	echo "checkpatch: the deviation set MOVED against ${ref:-an unrecorded version}."
 	echo "            Check your checkpatch.pl is that version FIRST: a"

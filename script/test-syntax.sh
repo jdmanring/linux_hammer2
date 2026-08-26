@@ -102,6 +102,14 @@ command -v "$CC2" >/dev/null 2>&1 || CC2=""
 # sizeof(struct filename) fails and every check below reads FAIL
 # uniformly, which is how this line was found.
 DIALECT=$(sed -n 's/^CONFIG_CC_MS_EXTENSIONS=//p' "$K/.config" 2>/dev/null | tr -d '"')
+# An absent .config leaves this empty, and empty is also what a kernel that
+# does not need the flag produces. The two are indistinguishable in the
+# variable and distinguishable here, so say which.
+if [ -f "$K/.config" ]; then
+	dsrc="${DIALECT:-none needed}"
+else
+	dsrc="UNKNOWN, no .config in the tree"
+fi
 
 CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 	-Wno-gnu -Wno-microsoft-anon-tag
@@ -148,7 +156,7 @@ check() { # name expect file cflags...
 	rm -f /tmp/h2syn.$$
 }
 
-echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, with $("$CC" --version | head -1):"
+echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, dialect $dsrc, with $("$CC" --version | head -1):"
 check "hammer2.h: header TU expands (tree, queue, atomics)" pass test/hammer2-header.c
 check "hammer2_io.c: invariants on"  pass src/sys/fs/hammer2/hammer2_io.c -DHAMMER2_INVARIANTS
 check "hammer2_io.c: invariants off" pass src/sys/fs/hammer2/hammer2_io.c
