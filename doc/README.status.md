@@ -28,58 +28,55 @@ is a defect.
 
 ## What has been verified
 
-All sight gates pass, and as of 2026-08-26 they pass HERE with no
-environment variables set: the kernel of record is in the store, the
+All nine gates pass, and since 2026-08-26 they pass on this workstation with
+no environment variables set: the kernel of record is in the store, the
 syntax gate finds it, and the style gate finds that tree's own
-`checkpatch.pl`. ArtNix's delegator, which runs these same gates from
-another repository, enumerates `script/test-*.sh` rather than naming them,
-so a gate added here is picked up there without an edit. Each gate prints
-its own count; the gates are the authority, and the dated figures below are
-snapshots of a particular run rather than the record.
-`test-checkpatch.sh` is the one that commonly cannot run: it needs
-`checkpatch.pl`, which no kernel headers package ships, so it returns exit
-2 unless `CHECKPATCH` or `KDIR` points at a full source tree. That is
-could-not-run and not a pass, which is the distinction the exit code
-exists to keep.
+`checkpatch.pl`. ArtNix's delegator, which runs these same gates from another
+repository, enumerates `script/test-*.sh` instead of naming them, so a gate
+added here is picked up there without an edit. Each gate prints its own
+count, and the gates are the authority; the dated figures below are snapshots
+of one run.
+
+`test-checkpatch.sh` is the one that commonly cannot run. It needs
+`checkpatch.pl`, which no kernel headers package ships, so it exits 2 unless
+`CHECKPATCH` or `KDIR` points at a full source tree. That is could-not-run,
+not a pass.
 
 - `script/test-shim.sh` and `script/test-syntax.sh`: 3 and 7 on 2026-08-25,
   three of the ten being controls that must fail and do.
 - `script/test-checkpatch.sh`: holds the style deviation set at its recorded
-  583 hits under the checkpatch.pl the baseline names, and under the
-  kernel of record's own patched copy too, which differs from it by sha256
-  and produces the identical set. Neither figure travels without the
-  checker that produced it: 583 quoted bare reads as a mainline number and
-  is only half one. It refuses rather
-  than writing one when it finds no baseline.
+  583 hits under the checkpatch.pl the baseline names, and under the kernel
+  of record's own patched copy, which differs by sha256 and produces an
+  identical set. Neither figure travels without the checker that produced it;
+  583 quoted bare reads as a mainline number and is not one. With no baseline
+  present the gate refuses rather than writing one.
 - `script/test-history.sh`: resolves every commit the roadmap's history
   table pins and checks its subject still matches, then prints how many
   commits touching `src/` or `script/` have landed since the newest row.
-  That second half never fails: whether a commit deserves a version row is a
-  judgment and not a gate's to make.
-- `script/test-inventory.sh`: the directory itself is the population, and three
-  lists that claim to cover it are each maintained by hand - the origin
-  table in this file, the Makefile's `hammer2-y`, and the filenames
-  `script/test-syntax.sh` names one by one. A `.c` missing from the second
-  is dead code; missing from the third is a file no compiler ever sees while
-  every check still reports passing. Written before the core import rather
-  than after it, which is the only useful time. `test/` is a second
-  population, added 2026-08-26 after two vector files were found tracked and
-  named in no document here; every file there is now either named by a gate
-  or listed in `README.testing.md`. Both turned out to be run by a gate in
-  ArtNix rather than by nothing, which no search of this repository could
-  have said, so what that table records is a contract with a consumer this
-  tree does not reference. It also checks the origin
-  table's LINE COUNT against the file, which is the column that rots on an
-  ordinary edit rather than on an import: two rows had drifted before the
-  check existed. A row whose count column is not a number is left alone
-  rather than guessed at.
+  That second half never fails, since whether a commit deserves a version row
+  is a judgment.
+- `script/test-inventory.sh`: the directory is the population, and three
+  hand-maintained lists claim to cover it: the origin table in this file, the
+  Makefile's `hammer2-y`, and the filenames `script/test-syntax.sh` names one
+  by one. A `.c` missing from the second is dead code; missing from the third
+  is a file no compiler ever sees while every check reports passing. It also
+  checks the origin table's line count against the file, which is the column
+  that rots on an ordinary edit, and two rows had drifted before the check
+  existed. A count column that is not a number is left alone.
+
+  `test/` is a second population, added 2026-08-26 after two vector files
+  were found tracked and named in no document here. Every file there is now
+  either named by a gate or listed in `README.testing.md`. Both vector files
+  turned out to be compiled by a gate in ArtNix, which no search of this
+  repository could have said, so that table records a contract with a
+  consumer this tree does not reference.
 
 - `script/test-citations.sh`: every `file:line` citation in a `doc/` table
-  resolves, and where the row names a symbol that symbol is ON the line. The
-  64 KiB inventory is thirteen such rows and nothing had ever read them; a
+  resolves, and where the row names a symbol, that symbol is on the line. The
+  64 KiB inventory is thirteen such rows and nothing had ever read them. A
   line number rots on the next edit while still looking like a citation, and
   the 0.2 import edits exactly those files. It compares against the source
-  line, never a stored baseline. A row naming no symbol is reported as
+  line, never a stored baseline, and a row naming no symbol is reported as
   unanchored rather than dropped.
 
 That the gates pass means the shim is valid C in both knob positions, and
@@ -102,18 +99,18 @@ was dated by reading the header at the tag rather than from memory:
 | `folio_mark_dirty_lock` | v6.12 | v6.13 |
 | `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
 
-6.15 is the floor the code requires and not a floor that has been
-exercised. The kernel of record is a different claim: this tree compiles
-against the LATEST Linux, the pin lives in `script/test-syntax.sh` as
-`KERNEL_REF`, and it is bumped when a release ships.
+6.15 is the floor the code requires, not a floor that has been exercised.
+The kernel of record is a different claim: this tree compiles against the
+latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
+when a release ships.
 
 Until 2026-08-26 this file said "the gates run on 7.2" and nothing checked
-it. They did not. The newest kernel tree on the development workstation is
-7.1.9, there is no 7.2 in `/lib/modules`, `/usr/src` or the store, and the
-gate has always printed the kernel it used in its header line while nobody
-compared that string to the rule - a verdict is read off "0 failed", not
-off a header. The gate now refuses a tree that is not the kernel of
-record, with COULD-NOT-RUN rather than a pass.
+it. They did not. The newest kernel tree on the workstation was 7.1.9, with
+no 7.2 in `/lib/modules`, `/usr/src` or the store, and the gate has always
+printed the kernel it used in its header line while nobody compared that
+string to the rule. A verdict is read off "0 failed". The gate now refuses a
+tree that is not the kernel of record, with COULD-NOT-RUN rather than a
+pass.
 
 What has actually been compiled, measured rather than assumed, on
 2026-08-26 under the deliberate `H2_KERNEL_REF` override:
@@ -124,15 +121,13 @@ What has actually been compiled, measured rather than assumed, on
 | 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers, under the override |
 | 6.18.46-1-lts | 7 checks, 0 failed, both compilers, under the override |
 
-A 7.2 VERSION STRING IS ALREADY ON THIS MACHINE AND MEANS NOTHING FOR THIS
-GATE. `linux-api-headers 7.2-1` is installed, so
-`/usr/include/linux/version.h` reads `LINUX_VERSION_MAJOR 7` and
-`LINUX_VERSION_PATCHLEVEL 2` with no build tree anywhere near it: UAPI
-headers, no `Makefile`, nothing to compile a module against. Anything that
-answers "is 7.2 here" by grepping for a version string finds that and is
-wrong. `script/test-syntax.sh` reads `VERSION`/`PATCHLEVEL` from the build
-tree's own `Makefile`, which is why it cannot be fooled by this, and it is
-recorded because the next reader will not know the difference exists.
+A 7.2 version string is already on this machine and means nothing here.
+`linux-api-headers 7.2-1` is installed, so `/usr/include/linux/version.h`
+reads `LINUX_VERSION_MAJOR 7` and `LINUX_VERSION_PATCHLEVEL 2` with no build
+tree near it: UAPI headers, no `Makefile`, nothing to compile a module
+against. Anything answering "is 7.2 here" by grepping for a version string
+finds that and is wrong. `script/test-syntax.sh` reads `VERSION` and
+`PATCHLEVEL` from the build tree's own `Makefile` instead.
 
 **The port type-checks against its kernel of record**, measured 2026-08-26
 after the chaotic 7.2.0-cachyos `dev` output was substituted into the store
@@ -143,15 +138,14 @@ rather than summarised:
       dialect -fms-extensions, with clang version 22.1.8, matching the tree's own:
     syntax: 7 check(s), 0 failed against the kernel of record (7.2)
 
-measured at `ca4c07a`. A gate result quoted without the revision it ran
-against is a figure without its scope, and this tree is a live checkout
-that another repository reads while work is being committed to it:
-ArtNix's delegator saw 6 gates where it expected 7 because it walked the
-tree mid-commit, which is indistinguishable from broken unless the
-revision is printed beside the count.
+measured at `ca4c07a`. The revision matters because this tree is a live
+checkout another repository reads while work is being committed to it:
+ArtNix's delegator once saw 6 gates where it expected 7, having walked the
+tree mid-commit, which is indistinguishable from broken unless the revision
+is printed beside the count.
 
-The compiler is a pin too, and the tree says which one rather than this
-repository asserting one: kbuild records what built the kernel in
+The compiler is a pin too, and the tree says which one instead of this
+repository asserting one. kbuild records what built the kernel in
 `CONFIG_CC_VERSION_TEXT`, which reads `clang version 22.1.8` here, and this
 workstation's clang is byte-identical to it. So that version is the
 matching one rather than an old one, and the gate prints the comparison on
@@ -171,22 +165,21 @@ gate says and is true; "against mainline 7.2" would not be, and the two are
 one word apart.
 
 Two properties of a nixpkgs kernel `dev` output that any later measurement
-against this tree has to know. Its `source/` directory is PRUNED HARD: the
-recipe rsyncs the tree, deletes `drivers` wholesale, deletes unused arches,
-then deletes every file it did not mark read-only. Measured here: 10,944
-headers, 81 `.c` files, no `drivers` directory. So a grep of this tree for
-implementation code measures the prune and not the kernel, and absence is
-the normal case rather than evidence. And `checkpatch.pl` lives under
-`source/scripts`, not `build/scripts`, which holds gdb helpers.
+has to know. Its `source/` directory is pruned hard: the recipe rsyncs the
+tree, deletes `drivers` wholesale, deletes unused arches, then deletes every
+file it did not mark read-only. Measured here: 10,944 headers, 81 `.c` files,
+no `drivers` directory. A grep of that tree for implementation code measures
+the prune, not the kernel, so absence there is the normal case and not
+evidence. And `checkpatch.pl` lives under `source/scripts`; `build/scripts`
+holds gdb helpers.
 
 That checker is not mainline's: its `sha256` differs from the one the
-baseline records. Run on 2026-08-26 it produces the deviation set
-UNCHANGED at 583 hits, so cachyos's patches do not move this tree's style
-figures, and the gate says the hash does not match while accepting the
-version its own tree reports. That is the intended behaviour and the two
-halves are printed separately.
+baseline records. Run on 2026-08-26 it produced the deviation set unchanged
+at 583 hits, so cachyos's patches do not move this tree's style figures. The
+gate says the hash does not match while accepting the version its own tree
+reports, and prints the two halves separately.
 
-The first run against the real tree FAILED, and the guard was wrong rather
+The first run against the real tree failed, and the guard was wrong rather
 than the tree. A nix dev output's `build/Makefile` is a three-line stub
 that sets `KBUILD_OUTPUT` and includes the real Makefile from the `source`
 directory beside it, so `VERSION` and `PATCHLEVEL` are not in the file the
@@ -201,6 +194,14 @@ at all to follow.
 `hammer2_cluster.c`, `hammer2_ondisk.c`, `hammer2_strategy.c`,
 `hammer2_ioctl.c`, `hammer2_vfsops.c`, `hammer2_vnops.c`.
 
+The carried set is six files at 10,556 lines, measured against all three BSD
+ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
+`hammer2_bulkfree.c`, `hammer2_xops.c` and `hammer2_admin.c`. Whether
+`hammer2_inode.c`, `hammer2_subr.c` and `hammer2_ondisk.c` join them is what
+`doc/provenance.csv`'s carry column says, file by file.
+`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
+`hammer2_vnops.c` are the OS-facing ones and are rewrites.
+
 `hammer2_chain.c` landed on 2026-08-26 and the lock recursion it forced is
 decided, following the NetBSD port: there is no recursive lock. A Linux
 `rw_semaphore` deadlocks against its own holder exactly as a NetBSD
@@ -213,7 +214,7 @@ costs no correctness. The flag is set in `hammer2_inode.c`, so that half
 of the change lands when that file does, and until then the port has a
 non-recursive lock and no code that recurses it.
 
-`hammer2_flush.c` is next and needs a PORT DECISION rather than a shim: it
+`hammer2_flush.c` is next and needs a port decision rather than a shim: it
 issues a device cache flush, FreeBSD through GEOM (`g_alloc_bio`,
 `BIO_FLUSH`) and NetBSD through `DIOCCACHESYNC`. The ports already
 disagree, so there is no precedent to follow and Linux's answer is
@@ -248,9 +249,8 @@ finishes it with `printf`. `pr_info` closes a record per call, so that
 mapping turned one line into two and dropped the second's prefix.
 `pr_cont` is Linux's name for the semantics the core is written against.
 
-It is not free, and the cost is stated here rather than left for a reader
-to find in dmesg. `pr_cont` deliberately does not apply `pr_fmt`, so a
-`printf` that OPENS a line prints without the module name. Every plain
+It is not free. `pr_cont` deliberately does not apply `pr_fmt`, so a `printf`
+that opens a line prints without the module name. Every plain
 `printf` in the carried core was classified by hand on 2026-08-26, all
 thirteen of them:
 
@@ -264,8 +264,8 @@ So four lines in the tree print anonymously, all four inside one debug
 tree dumper, and no status or error path is among them. The alternative
 mapping reverses that trade: `pr_info` names those four and splits the
 other nine into eighteen lines, half of them unprefixed anyway. Neither
-macro can be right at both kinds of site, because the discriminator is
-whether the PREVIOUS call ended in a newline, which is a runtime fact.
+macro can be right at both kinds of site, since the discriminator is whether
+the previous call ended in a newline, which is a runtime fact.
 The `DEFER` in `hammer2_os.h` names the only mapping that is right at
 both: build the line in a buffer and emit it once, which is a core edit.
 
@@ -274,11 +274,11 @@ recorded in `README.kernel-style.md`.
 
 ### `XXX` marks: how much of the core is not a carry
 
-0.2's fourth exit criterion asks for this count, because an `XXX` is the
-BSD ports' mark for a mapping that is not mechanical, and the number is
-how a reader knows how many places to distrust. Counting raw `XXX`
-occurrences answers the wrong question: the carried files arrive with
-upstream's own. Measured 2026-08-26 against the FreeBSD port at
+0.2's fourth exit criterion asks for this count. An `XXX` is the BSD ports'
+mark for a mapping that is not mechanical, so the number says how many places
+a reader should distrust. Counting raw occurrences answers the wrong
+question, the carried files arriving with upstream's own. Measured 2026-08-26
+against the FreeBSD port at
 `3df307f` (v1.2.13), by file, ours minus upstream's:
 
 | file | `XXX` | upstream's | this port's |
@@ -290,21 +290,11 @@ upstream's own. Measured 2026-08-26 against the FreeBSD port at
 | `hammer2_io.c` | 4 | 2 | 2 |
 | `hammer2_os.h` | 4 | 0 | 4 |
 
-Six, and none of them is in a carried file. The stronger statement is
-available and was taken instead of inferred: `hammer2_admin.c`,
-`hammer2_freemap.c`, `hammer2_xops.c`, `hammer2_bulkfree.c`,
-`hammer2_chain.c` and `hammer2_mount.h` are byte-identical to that
-upstream commit under `cmp`, so the carried core has no port edit of any
-kind, marked or unmarked. The six are in the two files this port writes:
-two in `hammer2_io.c` and four in `hammer2_os.h`, one of which is the
-non-recursive lock above.
-
-Six of those are the measured carried set: `hammer2_chain.c`,
-`hammer2_flush.c`, `hammer2_freemap.c`, `hammer2_bulkfree.c`,
-`hammer2_xops.c`, `hammer2_admin.c`, at 10,556 lines
-(measured against all three BSD ports). Whether `hammer2_inode.c`, `hammer2_subr.c` and
-`hammer2_ondisk.c` join them is what the provenance CSV's carry column
-says file by file, and that CSV is unwritten: see the roadmap's 0.2.
-`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
-`hammer2_vnops.c` are the OS-facing ones and are rewrites.
+Six, none of them in a carried file. The stronger statement was measured
+rather than inferred: `hammer2_admin.c`, `hammer2_freemap.c`,
+`hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c` and
+`hammer2_mount.h` are byte-identical to that upstream commit under `cmp`, so
+the carried core has no port edit of any kind, marked or unmarked. The six
+are in the two files this port writes: two in `hammer2_io.c` and four in
+`hammer2_os.h`, one of them the non-recursive lock above.
 

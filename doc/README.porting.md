@@ -147,9 +147,9 @@ changing the struct's layout. Both shapes are real: a sweep of
 `include/uapi` for a bare `__unused` field returns exactly two headers,
 one of each. `struct icmphdr` has the scalar, `__be16 __unused` inside its
 `frag` member; `struct __sysctl_args` has the array, `unsigned long
-__unused[4]`. The `__unused4` and `__unused5` fields in `struct stat` are
-NOT instances: a macro named `__unused` does not collide with them, and
-counting them would overstate the exposure.
+__unused[4]`. The `__unused4` and `__unused5` fields in `struct stat` are not instances: a
+macro named `__unused` does not collide with them, and counting them would
+overstate the exposure.
 
 ## Crashing the kernel: KKASSERT, hpanic, and what Linux expects
 
@@ -199,17 +199,16 @@ The decision, split by which half the code is in:
 DEFER(the VFS layer lands, giving a super_block to mark): `hpanic` on
 Linux is a machine-wide event standing in for a per-mount one.
 
-This is the port decision most likely to be raised by a reviewer who has
-not read this file, and it should be: the source shows `BUG_ON` and
-`panic` and nothing next to them says a Linux maintainer's objection was
-already considered.
+A reviewer who has not read this file will raise this, and should: the source
+shows `BUG_ON` and `panic` with nothing beside them saying the objection was
+considered.
 
 ## The module declares no license, and it will need one at the first build
 
 Measured 2026-08-25: `MODULE_LICENSE` appears nowhere under `src/`, and
-neither does `MODULE_AUTHOR` or `MODULE_DESCRIPTION`. That is not yet a
-defect, because no module has ever been built - it becomes one the day a
-`.ko` is produced, and the day it does the build will say so.
+neither does `MODULE_AUTHOR` or `MODULE_DESCRIPTION`. No module has been
+built, so it is not yet a defect. It becomes one the day a `.ko` is
+produced.
 
 What decides the value is not sentiment about the code's origin. The file
 data path this port is heading for is iomap, and `iomap_read_folio`,
@@ -221,9 +220,8 @@ declaration that keeps both true is `MODULE_LICENSE("Dual BSD/GPL")` - the
 kernel treats it as GPL-compatible for symbol purposes and it does not
 relicense anything.
 
-Recorded here rather than written into a source file, because a declaration
-with no artifact is worse than an absent one: there is no module to attach
-it to yet, and adding it now would put a claim in the tree that nothing
+Recorded here rather than written into a source file: there is no module to
+attach it to, and adding it now would put a claim in the tree that nothing
 exercises. It goes in with the first `MODULE_INIT`. Settled by reading xfs at
-v6.15, which is the one mainline filesystem above page size and runs its
-data path on iomap.
+v6.15, the one mainline filesystem above page size, which runs its data path
+on iomap.
