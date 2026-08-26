@@ -402,6 +402,40 @@ Each is the maintainer's, and each names what it blocks.
   disagreement between the two is a finding about one of them.
 - Converting the carried core to kernel style piecemeal.
 
+## How this file was built
+
+An upstream maintainer receiving this port will ask who decided the shape of
+its roadmap and against what. The answer, once, rather than on request.
+
+The genre is Kusumi's. The `freebsd_hammer2`, `netbsd_hammer2` and
+`openbsd_hammer2` trees are the three working precedents for porting this
+filesystem, and their READMEs and CHANGES files are what a maintainer taking
+this one will read it beside. The shape here is theirs: what is done, what is
+next, what is known broken, in the author's own sentences, with no
+per-milestone template and no reviewed-on dates.
+
+An earlier version of this file was written from a template with seven
+headings per milestone, a revisions list duplicating `git log`, and a section
+explaining its own epistemology. It was rejected on sight by the maintainer on
+2026-08-26 and rewritten at `e1df2ed`, 632 lines to 390. The nine milestones
+are not written to a uniform depth on purpose: 0.2 through 0.4 can be started
+today and carry criteria, gate and risks, while 0.5 through 1.0 are a paragraph
+each because detail there would be invention.
+
+What makes it checkable is distributed rather than collected here. Six of the
+nine milestones carry a `Gate:` line, and one of those names a gate that exists
+today; the rest name what has to be written and what it must exit 2 without.
+Every commit hash in the version table is resolved and subject-matched by
+`script/test-history.sh`, every `file:line` by `script/test-citations.sh`, and
+no two rows may carry the same version. The stage names are defined under
+"Versioning" rather than cited, because the plan that defined them is not in
+this repository and will not travel with it.
+
+What this file deliberately does not carry: dates promised for anything,
+progress bars, effort estimates in time, and any milestone marked done that a
+gate cannot show is done. A milestone's state comes from running the gates,
+which cost seconds.
+
 ## Changing this file
 
 A change to a milestone's criteria is a change to what "done" means. Make it
