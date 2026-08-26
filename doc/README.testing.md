@@ -152,14 +152,28 @@ something honours the shebang - which happened on 2026-08-26, when both
 selftests re-invoked their gate with `sh "$0"` and failed on a runner
 whose `/bin/sh` is dash.
 
-It prints its own REACH on every run, because a clean parse is worth much
-less than it looks: measured here, dash rejects process substitution,
-array assignment and the `function` keyword, busybox ash rejects only
-array assignment, and BOTH accept `[[ ]]`, `declare -A`, `local` and `+=`
-as ordinary words. So a clean run means "no bash SYNTAX" and never "no
-bashisms". Those controls re-take that measurement on every invocation
-rather than quoting the table above, and with no shell realized the gate
-exits 2.
+It MEASURES its own reach on every run and prints it as observed, rather
+than asserting a table. A gate stating its own coverage is a claim nothing
+checks, sitting in the one place a reader uses to decide whether a clean
+run means anything - and this one was wrong twice while being written,
+first at one construct, then at three, where there are four. An UNDER-claim
+is still a false claim and it is the one nobody re-checks, because a modest
+statement about your own instrument reads as rigour.
+
+What it asserts instead are two properties of a working checker, which hold
+whatever the reach turns out to be: each shell must reject at least one
+probe, or it is inert here and a clean result means nothing; and a plain
+POSIX script must be accepted, or the instrument refuses everything and a
+clean result is unreachable rather than earned. Falsified both ways -
+making every probe inert, and making the plain script unparseable, each
+fail naming which property broke. With no shell realized the gate exits 2.
+
+Observed on 2026-08-26: dash rejects process substitution, arrays, the
+`function` keyword and here-strings; busybox ash rejects arrays and
+here-strings; both accept `[[ ]]`, `declare`, `local`, `+=`, arithmetic,
+ANSI-C quoting and brace expansion as ordinary words. So a clean run means
+"no bash SYNTAX" and never "no bashisms". The hosted runner reproduced
+those figures exactly, on a different distribution.
 
 Finding the shells was itself the lesson. This repository recorded that no
 POSIX shell existed here, from `command -v`, which reads PATH - and PATH is

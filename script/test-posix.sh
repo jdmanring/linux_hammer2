@@ -17,24 +17,26 @@
 # session made the same two errors within the hour and found the store
 # copies first.
 #
-# WHAT A CLEAN RUN HERE IS WORTH, measured rather than assumed, because a
-# parse reaches far less than it appears to. Fed to both shells on
-# 2026-08-26:
+# WHAT A CLEAN RUN HERE IS WORTH. A parse reaches far less than it appears
+# to. The gate MEASURES its own reach on every run and prints it; the table
+# below is one dated observation of that, kept for a reader rather than
+# relied on by the code, and it has been wrong twice already - first at
+# three constructs in dash, where there are four. Observed 2026-08-26:
 #
 #   construct                  dash        busybox ash
 #   process substitution       REJECT      accept
 #   array assignment a=(1 2)   REJECT      REJECT
 #   function f { }             REJECT      accept
+#   here-string <<< x          REJECT      REJECT
 #   [[ -n x ]]                 accept      accept
 #   declare -A m               accept      accept
 #   local x=1                  accept      accept
 #   a+=2                       accept      accept
 #
-# So this catches three constructs in dash and one in ash, and is BLIND to
-# [[, declare, local and += - which are ordinary words to a POSIX shell
-# and only fail at runtime. A clean run means "no bash SYNTAX", never "no
-# bashisms". The table prints on every run so nobody has to take that on
-# trust.
+# Four constructs in dash and two in ash, and BLIND to [[, declare, local,
+# +=, arithmetic, ANSI-C quoting and brace expansion - ordinary words to a
+# POSIX shell, failing only at runtime. A clean run means "no bash SYNTAX"
+# and never "no bashisms".
 #
 # Exit 2 is COULD-NOT-RUN: no shell realized. Exit 1 is a parse failure.
 set -u
@@ -65,34 +67,68 @@ parse() { # shell file -> status
 
 fail=0 ran=0
 
-# THE REACH IS ASSERTED, NOT DESCRIBED. The table above is a measurement
-# and measurements rot; these controls re-take it on every run. If a shell
-# stops rejecting what it rejected, the table is wrong and this says so
-# rather than continuing to quote it.
+# THE REACH IS MEASURED ON EVERY RUN AND PRINTED AS OBSERVED, never
+# asserted. An earlier version hardcoded the table above as expectations,
+# which is a gate STATING ITS OWN COVERAGE - a claim nothing checks, in the
+# one place a reader uses to decide whether a clean run means anything, and
+# wrong again the next time a shell version moves. It was also wrong when
+# written: it claimed three constructs in dash where there are four, and
+# the ArtNix session's copy claimed one. An UNDER-claim is still a false
+# claim and it is the one nobody re-checks, because a modest statement
+# about your own instrument reads as rigour.
+#
+# What is asserted instead are two properties of a WORKING CHECKER, which
+# hold whatever the reach turns out to be:
+#
+#   1. each shell must reject at least one probe, or it is inert here and
+#      a clean result means nothing;
+#   2. a plain POSIX script must be accepted, or the instrument refuses
+#      everything and a clean result is unreachable rather than earned.
+#
+# The design is the ArtNix implementation session's.
 tmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$tmp"' EXIT
-printf 'cat <(echo x)\n' > "$tmp/procsub.sh"
-printf 'a=(1 2)\n' > "$tmp/array.sh"
-printf 'if [[ -n x ]]; then :; fi\n' > "$tmp/dbracket.sh"
+probe() { printf '%s\n' "$2" > "$tmp/probe-$1.sh"; probes="${probes:-} $1"; }
+probes=""
+probe procsub    'cat <(echo x)'
+probe array      'a=(1 2)'
+probe funckw     'function f { :; }'
+probe herestring 'cat <<< hi'
+probe dbracket   'if [[ -n x ]]; then :; fi'
+probe declare    'declare -A m'
+probe append     'a=1; a+=2'
+printf 'x=1\nif [ "$x" = 1 ]; then :; fi\n' > "$tmp/plain.sh"
 
-expect() { # shell file want name
-	ran=$((ran + 1))
-	if parse "$1" "$2" >/dev/null 2>&1; then got=accept; else got=reject; fi
-	if [ "$got" = "$3" ]; then
-		echo "  ok    reach: $1 ${3}s $4"
-	else
-		echo "  FAIL  reach: $1 ${got}s $4, where this gate's table says ${3}"
-		fail=$((fail + 1))
-	fi
-}
+# The probe set is itself a population: an empty one would make every
+# reach line vacuous and both invariants unfalsifiable.
+[ -n "$probes" ] || { echo "posix: FAIL: no probes defined" >&2; exit 1; }
+
 echo "hammer2 POSIX parse, with $shells:"
 for sh in $shells; do
-	case "$sh" in
-	dash) expect dash "$tmp/procsub.sh" reject "process substitution" ;;
-	ash) expect ash "$tmp/procsub.sh" accept "process substitution" ;;
-	esac
-	expect "$sh" "$tmp/array.sh" reject "array assignment"
-	expect "$sh" "$tmp/dbracket.sh" accept "[[ ]], so this gate is blind to it"
+	rejected=0 reach=""
+	for pr in $probes; do
+		if parse "$sh" "$tmp/probe-$pr.sh" >/dev/null 2>&1; then
+			:
+		else
+			rejected=$((rejected + 1)); reach="$reach $pr"
+		fi
+	done
+	ran=$((ran + 1))
+	if [ "$rejected" -gt 0 ]; then
+		echo "  ok    $sh reaches:$reach ($rejected of $(set -- $probes; echo $#) probes)"
+	else
+		echo "  FAIL  $sh rejected NOTHING, so it is inert here and a clean"
+		echo "        parse below would mean nothing"
+		fail=$((fail + 1))
+	fi
+	ran=$((ran + 1))
+	if parse "$sh" "$tmp/plain.sh" >/dev/null 2>&1; then
+		echo "  ok    $sh accepts a plain POSIX script"
+	else
+		echo "  FAIL  $sh refuses a plain POSIX script, so a clean parse is"
+		echo "        unreachable rather than earned"
+		fail=$((fail + 1))
+	fi
 done
 
 # THE POPULATION IS ASSERTED. A glob that matches nothing parses nothing
