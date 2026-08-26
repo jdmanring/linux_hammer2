@@ -51,6 +51,8 @@ while IFS= read -r line; do
 	fi
 	subj=$(git log --format=%s -1 "$h")
 	echo "  ok   $ver -> $h  $subj"
+	vers="${vers:-}$ver
+"
 	# NEWEST BY THE GRAPH, NOT BY TABLE ORDER. A row inserted out of order,
 	# or a table sorted descending later, would otherwise make the prompt
 	# below measure from the wrong commit and report a reassuring zero.
@@ -66,6 +68,20 @@ done < "$DOC"
 	echo "  lost its rows or this matcher stopped matching; an empty" >&2
 	echo "  population passing is what this check exists to prevent." >&2
 	exit 1; }
+
+# A VERSION NUMBER IS A HAND-MAINTAINED SEQUENCE AND NOTHING READ IT EITHER.
+# Every row above can resolve, match its subject and still be numbered the
+# same as its neighbour: two rows sharing a version make the older one
+# unreachable by name, and the table is where a reader looks a version up.
+# Added 2026-08-26 after writing two rows numbered 0.1.13 in one edit, which
+# every check here passed.
+dups=$(printf '%s' "${vers:-}" | LC_ALL=C sort | uniq -d)
+if [ -n "$dups" ]; then
+	for v in $dups; do
+		echo "  FAIL $v: more than one row carries this version"
+		bad=$((bad+1))
+	done
+fi
 
 echo "history: $rows row(s), $bad bad"
 [ "$bad" = 0 ] || exit 1
