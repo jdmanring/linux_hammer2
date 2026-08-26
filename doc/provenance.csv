@@ -32,3 +32,4 @@ src/sys/sys/queue.h,freebsd-src,,BSD-3-Clause,derived,vendored; names the kernel
 src/sys/sys/tree.h,freebsd-src,,BSD-2-Clause,derived,vendored; names the kernel defines are renamed BSD_*
 src/Makefile,,,BSD-3-Clause,ours,top-level kbuild entry
 src/sys/fs/hammer2/hammer2_flush.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,derived,one function edited: GEOM BIO_FLUSH and the buffer-cache volume header write replaced, marked XXX in place
+src/sys/fs/hammer2/hammer2_cluster.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,byte-for-byte; no OS-dependent line in the file

@@ -18,6 +18,7 @@ is a defect.
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
 | `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
+| `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 943 | hash and dedup halves carried; OS half written on the page cache |
@@ -42,16 +43,16 @@ of one run.
 `CHECKPATCH` or `KDIR` points at a full source tree. That is could-not-run,
 not a pass.
 
-- `script/test-shim.sh` and `script/test-syntax.sh`: 6 and 25 on 2026-08-26,
-  two of the thirty-one being controls that must fail and do. The shim
+- `script/test-shim.sh` and `script/test-syntax.sh`: 6 and 28 on 2026-08-26,
+  two of the thirty-four being controls that must fail and do. The shim
   gate's sixth check is the one that reads its own coverage: an inline the
   driver never calls is barely checked by the compile, and the count says
   whether any are missed.
 - `script/test-checkpatch.sh`: holds the style deviation set at its recorded
-  760 hits under the checkpatch.pl the baseline names, and under the kernel
+  764 hits under the checkpatch.pl the baseline names, and under the kernel
   of record's own patched copy, which differs by sha256 and produces an
   identical set. Neither figure travels without the checker that produced it;
-  760 quoted bare reads as a mainline number and is not one. With no baseline
+  764 quoted bare reads as a mainline number and is not one. With no baseline
   present the gate refuses rather than writing one.
 - `script/test-history.sh`: resolves every commit the roadmap's history
   table pins and checks its subject still matches, then prints how many
@@ -177,7 +178,7 @@ holds gdb helpers.
 
 That checker is not mainline's: its `sha256` differs from the one the
 baseline records. Run on 2026-08-26 it produced the deviation set unchanged
-at 760 hits, so cachyos's patches do not move this tree's style figures. The
+at 764 hits, so cachyos's patches do not move this tree's style figures. The
 gate says the hash does not match while accepting the version its own tree
 reports, and prints the two halves separately.
 
@@ -192,13 +193,14 @@ at all to follow.
 
 ## What is not here
 
-`hammer2_inode.c`, `hammer2_subr.c`, `hammer2_cluster.c`,
-`hammer2_ondisk.c`, `hammer2_strategy.c`, `hammer2_ioctl.c`,
-`hammer2_vfsops.c`, `hammer2_vnops.c`.
+`hammer2_inode.c`, `hammer2_subr.c`, `hammer2_ondisk.c`,
+`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c`,
+`hammer2_vnops.c`.
 
-The carried set is six files at 10,561 lines, measured against all three BSD
+The carried set is seven files at 10,749 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
-`hammer2_bulkfree.c`, `hammer2_xops.c` and `hammer2_admin.c`. Whether
+`hammer2_bulkfree.c`, `hammer2_xops.c`, `hammer2_admin.c` and
+`hammer2_cluster.c`. Whether
 `hammer2_inode.c`, `hammer2_subr.c` and `hammer2_ondisk.c` join them is what
 `doc/provenance.csv`'s carry column says, file by file.
 `hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and

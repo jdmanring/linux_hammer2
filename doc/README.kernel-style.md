@@ -65,6 +65,12 @@ verified by `sha256` against that first line rather than by the copy on
 any workstation, because a differently-sourced v7.2 checker moves these
 numbers on unchanged code and that is the whole reason the hash is there.
 
+760 to 764 when `hammer2_cluster.c` was carried: 188 lines for 4 hits, one
+per 47 and the densest batch so far, which is what a short file of small
+functions looks like once the SPDX pair is counted per file rather than
+per line. Two of the four are exactly that pair, and the other two are
+`return (x);`. No new category.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not

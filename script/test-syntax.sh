@@ -341,6 +341,8 @@ check "hammer2_chain.c: invariants on"     pass src/sys/fs/hammer2/hammer2_chain
 check "hammer2_chain.c: invariants off"    pass src/sys/fs/hammer2/hammer2_chain.c $CARRIED
 check "hammer2_flush.c: invariants on"      pass src/sys/fs/hammer2/hammer2_flush.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_flush.c: invariants off"    pass src/sys/fs/hammer2/hammer2_flush.c $CARRIED
+check "hammer2_cluster.c: invariants on"    pass src/sys/fs/hammer2/hammer2_cluster.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_cluster.c: invariants off"  pass src/sys/fs/hammer2/hammer2_cluster.c $CARRIED
 # Negative control: a wrong kernel call must be refused by the same
 # headers, or a pass above proves only that the compiler ran. Both
 # controls are prefix headers applied after the kernel header they
@@ -372,7 +374,8 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_xops.c \
 		src/sys/fs/hammer2/hammer2_bulkfree.c \
 		src/sys/fs/hammer2/hammer2_chain.c \
-		src/sys/fs/hammer2/hammer2_flush.c; do
+		src/sys/fs/hammer2/hammer2_flush.c \
+		src/sys/fs/hammer2/hammer2_cluster.c; do
 		ran=$((ran + 1))
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
