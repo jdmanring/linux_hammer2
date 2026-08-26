@@ -37,6 +37,27 @@ CP=${CHECKPATCH:-}
 [ -f "$CP" ] || { echo "checkpatch: COULD-NOT-RUN: no checkpatch.pl at $CP"; exit 2; }
 command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; exit 2; }
 
+# THE VERSION IS A THIRD WAY THIS GATE CANNOT ANSWER, and until now it was
+# the only one that exited 1. The block above already says a baseline is a
+# claim about a checker version, and the failure text below already tells
+# the reader to check their checkpatch.pl is that version FIRST - so the
+# version was known to matter, was printed, and was still not tested. A
+# wrong-version run and a real style regression left by the same exit code,
+# which is the status a runner reads.
+#
+# `checkpatch.pl` carries no version of its own, so it is taken from the
+# kernel tree it sits in: `scripts/checkpatch.pl` puts the Makefile two
+# levels up. `CHECKPATCH_REF` overrides, for a copy pulled out of its tree.
+cpver=${CHECKPATCH_REF:-}
+if [ -z "$cpver" ]; then
+	mk=$(dirname "$CP")/../Makefile
+	if [ -f "$mk" ]; then
+		v=$(sed -n 's/^VERSION *= *//p' "$mk" | head -1)
+		pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$mk" | head -1)
+		[ -n "$v" ] && [ -n "$pl" ] && cpver="v$v.$pl"
+	fi
+fi
+
 files=$(ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h)
 got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 	sed 's/^.*: \(WARNING\|ERROR\): //' |
@@ -67,6 +88,26 @@ if [ ! -f "$base" ]; then
 fi
 
 ref=$(sed -n '1s/^# *//p' "$base")
+# Just the version out of "checkpatch.pl from linux vX.Y". Anything that is
+# not that shape is left empty and read as unestablished, rather than being
+# compared as a string and mismatching on formatting.
+refver=$(printf '%s\n' "$ref" | sed -n 's/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
+
+# A PROVEN MISMATCH CANNOT BE ATTRIBUTED TO THIS CODE, so it is
+# COULD-NOT-RUN and not a failure. Measured 2026-08-25 on this workstation:
+# baseline v6.15 against the Artix 7.1 checkpatch.pl gives one differing
+# category, 18 hits against 15 of `Argument 'X' is not used in
+# function-like macro`, every other line byte-identical - the same
+# signature the block at the top of this file already records for
+# master-against-v6.15.
+if [ -n "$cpver" ] && [ -n "$refver" ] && [ "$cpver" != "$refver" ]; then
+	echo "checkpatch: COULD-NOT-RUN: checkpatch.pl is from linux $cpver," >&2
+	echo "            the baseline is from $refver, and the deviation set" >&2
+	echo "            moves with the checker. Point CHECKPATCH at a $refver" >&2
+	echo "            tree, or set CHECKPATCH_REF if you know better." >&2
+	echo "            $CP" >&2
+	exit 2
+fi
 if diff -u <(grep -v '^#' "$base") <(printf '%s\n' "$got"); then
 	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits, baseline: ${ref:-version unrecorded})"
 else
@@ -76,5 +117,15 @@ else
 	echo "            If the change is deliberate, update"
 	echo "            doc/checkpatch-baseline.txt, including its first"
 	echo "            line, and say why in doc/README.kernel-style.md."
+	# AN UNESTABLISHED VERSION IS ONLY DISQUALIFYING ON A DIFF. An
+	# unchanged set is unchanged whatever produced it, so this never turns
+	# a green into COULD-NOT-RUN; but a set that MOVED cannot be blamed on
+	# the code unless the checker is known to be the baseline's.
+	if [ -z "$cpver" ] || [ -z "$refver" ]; then
+		echo "            The checker version could not be established" >&2
+		echo "            (checkpatch ${cpver:-unknown}, baseline ${refver:-unrecorded})," >&2
+		echo "            so this diff is not attributable to the code." >&2
+		exit 2
+	fi
 	exit 1
 fi
