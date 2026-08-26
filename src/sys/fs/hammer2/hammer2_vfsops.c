@@ -49,12 +49,11 @@
  * them until now, which is why nothing linked: every carried file that
  * reads hammer2_dio_limit or bumps hammer2_count_chain_allocated
  * declares it extern in hammer2.h and waits for this file.
- *
- * hammer2_mntlist, the global list of hammer2_dev, is still not here.
- * It is the mount path's and lands with it rather than sitting unused:
- * a definition with no user is what the syntax gate flags, and
- * silencing that would hide the fact that this file is part written.
  */
+TAILQ_HEAD(hammer2_mntlist, hammer2_dev);	/* <-> hammer2_dev::mntentry */
+typedef struct hammer2_mntlist hammer2_mntlist_t;
+static hammer2_mntlist_t hammer2_mntlist;
+
 hammer2_pfslist_t hammer2_pfslist;
 static hammer2_pfslist_t hammer2_spmplist;
 
@@ -144,6 +143,13 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
  *
  * - the PFS half below is DragonFly's and carries.  It is separated from
  *   the Linux entry so that half stays readable against the BSD ports.
+ *
+ * - a static with no user is a warning and a static FUNCTION with no
+ *   user is not: script/test-syntax.sh passes -Wno-unused-function,
+ *   because the carried files arrive with statics their unported
+ *   callers would have used.  So nothing mechanical stops an
+ *   unreachable helper from landing here ahead of its caller, and the
+ *   rule that none does is a discipline rather than a gate.
  *
  * - hammer2_pfsfree_scan() keeps its hammer2_vfs_sync_pmp() call, which is
  *   declared in hammer2.h and not yet defined anywhere.  That is deliberate:
@@ -660,19 +666,233 @@ hammer2_init_fs_context(struct fs_context *fc)
 }
 
 /*
+ * Unmount helper, unhook the system mount from our PFS.
+ *
+ * If hmp is supplied a mount responsible for being the first to open
+ * the block device failed and the block device and all PFSs using the
+ * block device must be cleaned up.
+ *
+ * If pmp is supplied multiple devices might be backing the PFS and each
+ * must be disconnected.  This might not be the last PFS using some of the
+ * underlying devices.  Also, we have to adjust our hmp->mount_count
+ * accounting for the devices backing the pmp which is now undergoing an
+ * unmount.
+ */
+static void
+hammer2_unmount_helper(struct super_block *sb, hammer2_pfs_t *pmp,
+    hammer2_dev_t *hmp)
+{
+	hammer2_cluster_t *cluster;
+	hammer2_chain_t *rchain;
+	int i;
+
+	/*
+	 * If no device supplied this is a high-level unmount and we have to
+	 * to disconnect the mount, adjust mount_count, and locate devices
+	 * that might now have no mounts.
+	 */
+	if (pmp) {
+		KKASSERT(hmp == NULL);
+		KKASSERT(MPTOPMP(sb) == pmp);
+		pmp->mp = NULL;
+		sb->s_fs_info = NULL;
+
+		/*
+		 * After pmp->mp is cleared we have to account for
+		 * mount_count.
+		 */
+		cluster = &pmp->iroot->cluster;
+		for (i = 0; i < cluster->nchains; ++i) {
+			rchain = cluster->array[i].chain;
+			if (rchain == NULL)
+				continue;
+			--rchain->hmp->mount_count;
+			/* Scrapping hmp now may invalidate the pmp. */
+		}
+again:
+		TAILQ_FOREACH(hmp, &hammer2_mntlist, mntentry) {
+			if (hmp->mount_count == 0) {
+				hammer2_unmount_helper(NULL, NULL, hmp);
+				goto again;
+			}
+		}
+		return;
+	}
+
+	/*
+	 * Try to terminate the block device.  We can't terminate it if
+	 * there are still PFSs referencing it.
+	 */
+	if (hmp->mount_count) {
+		hprintf("%d PFS mounts still exist\n", hmp->mount_count);
+		return;
+	}
+
+	hammer2_bulkfree_uninit(hmp);
+	hammer2_pfsfree_scan(hmp, 0);
+
+	/*
+	 * Flush whatever is left.  Unmounted but modified PFS's might still
+	 * have some dirty chains on them.
+	 */
+	hammer2_chain_lock(&hmp->vchain, HAMMER2_RESOLVE_ALWAYS);
+	hammer2_chain_lock(&hmp->fchain, HAMMER2_RESOLVE_ALWAYS);
+
+	if (hmp->fchain.flags & HAMMER2_CHAIN_FLUSH_MASK) {
+		hammer2_voldata_modify(hmp);
+		hammer2_flush(&hmp->fchain,
+		    HAMMER2_FLUSH_TOP | HAMMER2_FLUSH_ALL);
+	}
+	hammer2_chain_unlock(&hmp->fchain);
+
+	if (hmp->vchain.flags & HAMMER2_CHAIN_FLUSH_MASK)
+		hammer2_flush(&hmp->vchain,
+		    HAMMER2_FLUSH_TOP | HAMMER2_FLUSH_ALL);
+	hammer2_chain_unlock(&hmp->vchain);
+
+	if ((hmp->vchain.flags | hmp->fchain.flags) &
+	    HAMMER2_CHAIN_FLUSH_MASK) {
+		hprintf("chains left over after final sync "
+		    "vchain %08x fchain %08x\n",
+		    hmp->vchain.flags, hmp->fchain.flags);
+		KKASSERT(0);
+	}
+
+	hammer2_pfsfree_scan(hmp, 1);
+	KKASSERT(hmp->spmp == NULL);
+
+	/* Finish up with the device vnode. */
+	if (!TAILQ_EMPTY(&hmp->devvp_list)) {
+		hammer2_close_devvp(&hmp->devvp_list);
+		hammer2_cleanup_devvp(&hmp->devvp_list);
+	}
+	KKASSERT(TAILQ_EMPTY(&hmp->devvp_list));
+
+	/*
+	 * Clear vchain/fchain flags that might prevent final cleanup
+	 * of these chains.
+	 */
+	if (hmp->vchain.flags & HAMMER2_CHAIN_MODIFIED) {
+		atomic_add_int(&hammer2_count_chain_modified, -1);
+		atomic_clear_int(&hmp->vchain.flags, HAMMER2_CHAIN_MODIFIED);
+	}
+	if (hmp->vchain.flags & HAMMER2_CHAIN_UPDATE)
+		atomic_clear_int(&hmp->vchain.flags, HAMMER2_CHAIN_UPDATE);
+
+	if (hmp->fchain.flags & HAMMER2_CHAIN_MODIFIED) {
+		atomic_add_int(&hammer2_count_chain_modified, -1);
+		atomic_clear_int(&hmp->fchain.flags, HAMMER2_CHAIN_MODIFIED);
+	}
+	if (hmp->fchain.flags & HAMMER2_CHAIN_UPDATE)
+		atomic_clear_int(&hmp->fchain.flags, HAMMER2_CHAIN_UPDATE);
+
+#ifdef HAMMER2_INVARIANTS
+	hammer2_dump_chain(&hmp->vchain, 0, 0, -1, 'v');
+	hammer2_dump_chain(&hmp->fchain, 0, 0, -1, 'f');
+#endif
+	/*
+	 * Final drop of embedded volume/freemap root chain to clean up
+	 * [vf]chain.core ([vf]chain structure is not flagged ALLOCATED so
+	 * it is cleaned out and then left to rot).
+	 */
+	hammer2_chain_drop(&hmp->vchain);
+	hammer2_chain_drop(&hmp->fchain);
+
+	hammer2_mtx_ex(&hmp->iohash_lock);
+	hammer2_io_hash_cleanup_all(hmp);
+	if (hmp->iofree_count)
+		hprintf("XXX %d I/O's left hanging\n", hmp->iofree_count);
+	hammer2_mtx_unlock(&hmp->iohash_lock);
+
+	TAILQ_REMOVE(&hammer2_mntlist, hmp, mntentry);
+	hammer2_mtx_destroy(&hmp->iohash_lock);
+	hammer2_io_hash_destroy(hmp);
+
+	hammer2_lk_destroy(&hmp->vollk);
+	hammer2_lk_destroy(&hmp->bulklk);
+	hammer2_lk_destroy(&hmp->bflk);
+
+	hammer2_print_iostat(&hmp->iostat_read, "read");
+	hammer2_print_iostat(&hmp->iostat_write, "write");
+
+	hfree(hmp, M_HAMMER2, sizeof(*hmp));
+
+#ifdef HAMMER2_MALLOC
+	if (TAILQ_EMPTY(&hammer2_mntlist)) {
+		if (malloc_leak_m_hammer2)
+			hprintf("XXX M_HAMMER2 %d bytes leaked\n",
+			    malloc_leak_m_hammer2);
+		if (malloc_leak_m_hammer2_lz4)
+			hprintf("XXX M_HAMMER2_LZ4 %d bytes leaked\n",
+			    malloc_leak_m_hammer2_lz4);
+		if (malloc_leak_m_temp)
+			hprintf("XXX M_TEMP %d bytes leaked\n",
+			    malloc_leak_m_temp);
+	}
+#endif
+}
+
+/*
+ * XXX Linux: upstream's hammer2_unmount() returns an error and the VFS
+ * can refuse the unmount on it.  Linux's ->kill_sb returns void and is
+ * called after the unmount has already been decided, so there is no
+ * error to return and no caller to return it to.  What upstream does
+ * with the value is fail the unmount when vflush() fails, which is the
+ * one branch that cannot happen here: kill_anon_super() has already run
+ * by the time this is called, and evicting every inode and the root
+ * dentry is exactly what vflush() was for.
+ */
+static void
+hammer2_unmount(struct super_block *sb)
+{
+	hammer2_pfs_t *pmp = MPTOPMP(sb);
+
+	/* Still NULL during mount before hammer2_mount_helper() called. */
+	if (pmp == NULL)
+		return;
+
+	hammer2_lk_ex(&hammer2_mntlk);
+
+	/*
+	 * If mount initialization proceeded far enough we must sync the
+	 * underlying mount points.  Three syncs are required to fully
+	 * flush the filesystem (freemap updates lag by one flush, and one
+	 * extra for safety).
+	 *
+	 * hammer2_vfs_sync_pmp() is declared and not yet defined, which is
+	 * deliberate and is the same choice hammer2_pfsfree_scan() makes:
+	 * a missing symbol is visible at link time, where a stub returning
+	 * success would be silent on the one path that decides whether an
+	 * unmount lost data.
+	 */
+	if (pmp->iroot) {
+		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
+		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
+		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
+	} else {
+		debug_hprintf("no root inode"); /* failed before allocation */
+	}
+
+	hammer2_unmount_helper(sb, pmp, NULL);
+	hammer2_lk_unlock(&hammer2_mntlk);
+
+	if (TAILQ_EMPTY(&hammer2_mntlist))
+		hammer2_assert_clean();
+}
+
+
+/*
  * kill_anon_super() runs first and the private teardown after, which is
  * the order btrfs_kill_super() uses at v7.2: the generic call drops
  * every inode and the root dentry, and those hold the references the
- * teardown is about to free.
- *
- * DEFER(->get_tree constructs a super_block): the teardown itself,
- * hammer2_close_devvp() and the unmount helpers.  Nothing reaches here
- * while hammer2_get_tree() cannot succeed.
+ * teardown is about to free.  It is also what makes upstream's vflush()
+ * unnecessary here; see hammer2_unmount().
  */
 static void
 hammer2_kill_sb(struct super_block *sb)
 {
 	kill_anon_super(sb);
+	hammer2_unmount(sb);
 }
 
 static struct file_system_type hammer2_fs_type = {
@@ -707,6 +927,7 @@ hammer2_module_init(void)
 	}
 
 	hammer2_lk_init(&hammer2_mntlk, "h2_mnt");
+	TAILQ_INIT(&hammer2_mntlist);
 	TAILQ_INIT(&hammer2_pfslist);
 	TAILQ_INIT(&hammer2_spmplist);
 	hammer2_init_limits();

@@ -21,7 +21,7 @@ is a defect.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 458 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 763 | FreeBSD port; the PFS half carried, the module entry and the globals this port's, the mount path itself not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 984 | FreeBSD port; the PFS half carried, the module entry and the globals this port's, the mount path itself not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_ondisk.c` | 866 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -342,7 +342,6 @@ against the source is the same shape as an empty one.
 | `hammer2_inode.c`, at `hammer2_igetv()` | `DEFER(super_operations gains ->evict_inode)` | the other half of `hammer2_iget_set()`: a `hammer2_inode_drop()` and clearing `ip->vp`. `iget5_locked()`'s set callback takes the inode's reference on the `hammer2_inode`, and nothing gives it back until `->evict_inode` exists, so every inode constructed today leaks one reference, including down `iget_failed()` |
 | `hammer2_vfsops.c`, at `hammer2_get_tree()` | `DEFER(the fill-super lands)` | `->get_tree` fails every mount rather than stubbing a success. The design it owes, `sget_fc()` with `set_anon_super_fc()` and no `sb->s_bdev`, is in the file's opening `XXX` comment |
 | `hammer2_vfsops.c`, at `hammer2_context_ops` | `DEFER(a super_block exists to reconfigure)` | `->reconfigure`, where FreeBSD's `MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS refuses a remount, which is the right answer while there is nothing to remount |
-| `hammer2_vfsops.c`, at `hammer2_kill_sb()` | `DEFER(->get_tree constructs a super_block)` | the private teardown after `kill_anon_super()`: `hammer2_close_devvp()` and the unmount helpers. Nothing reaches it while `->get_tree` cannot succeed |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 
 The middle column is the marker as it is spelled in the source, because
@@ -381,7 +380,7 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 20 | 1 | 19 |
 | `hammer2_inode.c` | 23 | 6 | 17 |
-| `hammer2_vfsops.c` | 11 | 2 | 9 |
+| `hammer2_vfsops.c` | 16 | 6 | 10 |
 | `hammer2.h` | 6 | 3 | 3 |
 | `hammer2_disk.h` | 1 | 1 | 0 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
@@ -392,12 +391,13 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Sixty-eight are this port's, the right-hand column summed. Nineteen
+Sixty-nine are this port's, the right-hand column summed. Nineteen
 arrived with `hammer2_ondisk.c`, the first file whose OS half was
 rewritten rather than carried, fifteen more with `hammer2_inode.c` and the
 two header lines it needed, five more when `hammer2_igetv()` was written
 against `iget5_locked()`, five with `hammer2_vfsops.c`, three more when
-that file gained the module entry and one with the mount options. Sixty sit in
+that file gained the module entry, one with the mount options and one
+with the teardown path. Sixty-one sit in
 a file that holds upstream text; the other eight are the two files this
 port wrote from nothing: six in `hammer2_os.h`, and two of
 `hammer2_io.c`'s four.

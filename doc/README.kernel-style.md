@@ -160,6 +160,17 @@ It is also the signature a 7.1 distribution `checkpatch.pl` produced against
 the old baseline, which the gate reported as a version mismatch rather than a
 style regression.
 
+902 to 906 when the teardown path was carried: 221 lines for 4 hits,
+and all four are upstream's own text rather than this port's. One is a
+`typedef` upstream wrote, `hammer2_mntlist_t`. One is a repeated word,
+`to to` in `hammer2_unmount_helper()`'s comment, which is upstream's
+typo and stays because editing a carried comment to satisfy a checker is
+the trade this port does not make. It is also a small lesson about
+instruments: a one-line `grep` for `to to` finds nothing, because the
+two words sit either side of a line break, and only the checker's own
+report located it. The other two are the BSD start-of-line indent and a
+split quoted string.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

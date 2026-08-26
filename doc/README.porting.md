@@ -430,6 +430,46 @@ once. Linux delivers them one at a time, before there is a
 refuses a remount, which is the right answer while there is nothing to
 remount.
 
+## The teardown path, and the two things kill_anon_super() already did
+
+`hammer2_kill_sb()` calls `kill_anon_super()` and then
+`hammer2_unmount()`, which is the order `btrfs_kill_super()` uses at the
+kernel of record: the generic call drops every inode and the root
+dentry, and those hold the references the private teardown is about to
+free.
+
+That order deletes two things from upstream's `hammer2_unmount()`.
+`vflush()`, which flushes a mount's vnodes and is what upstream fails
+the unmount on, has nothing left to do; and with it goes the return
+value, because Linux's `->kill_sb` returns `void` and is called after
+the unmount has already been decided. `MNT_FORCE`, whose only use
+upstream is to add `FORCECLOSE` to that `vflush()` call, goes with it.
+
+The three `hammer2_vfs_sync_pmp()` calls stay. That symbol is declared
+in `hammer2.h` and defined nowhere, deliberately, and it is the same
+choice `hammer2_pfsfree_scan()` already makes: nothing in this tree
+links yet, and a missing symbol is visible at link time where a stub
+returning success would be silent on the one path that decides whether
+an unmount lost data. Three is upstream's number, and its comment says
+why: freemap updates lag a flush by one, plus one for safety.
+
+`mp->mnt_data` becomes `sb->s_fs_info`, which is the slot the VFS hands
+a filesystem for exactly this. `MNT_LOCAL`, which upstream sets and
+clears on the mount, has no carried equivalent: Linux has no per-mount
+flag a filesystem sets for that and works it out from the absence of a
+network superblock.
+
+`hammer2_mount_helper()` is deliberately not here. It is the other half
+of `hammer2_unmount_helper()` and its only caller is the mount path, so
+it lands with `->get_tree`. Nothing mechanical enforces that:
+`script/test-syntax.sh` passes `-Wno-unused-function`, because the
+carried files arrive with statics whose unported callers would have used
+them, so an unused static *variable* fails the gate and an unused static
+*function* does not. The rule that no unreachable helper lands ahead of
+its caller is a discipline here rather than a check, and that is written
+into the file's opening comment so the next reader is not misled by the
+one it can see enforced.
+
 ## The gate needed a Kbuild define before a file could include <linux/module.h>
 
 `arch/x86/include/asm/ftrace.h` refuses to compile under
