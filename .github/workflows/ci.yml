@@ -105,7 +105,14 @@ jobs:
         run: |
           set +e
           rc=0
-          for g in $(command grep -l -- '--selftest' script/test-*.sh); do
+          # ANCHORED ON THE IMPLEMENTATION, NOT THE NAME. Matching the
+          # bare flag picked up script/test-posix.sh, which only MENTIONS
+          # --selftest in a comment describing the defect it exists for, so
+          # CI ran that gate a second time with an argument it ignores. Same
+          # lesson as the vectors gate, whose pattern matched the comment
+          # quoting its own contract: in a file that documents itself, a
+          # token check finds the prose.
+          for g in $(command grep -l '"${1:-}" = "--selftest"' script/test-*.sh); do
             bash "$g" --selftest
             s=$?
             case "$s" in
