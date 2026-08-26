@@ -145,6 +145,24 @@ rm -f "$orphans"
 fail=$((fail + norph))
 ran=$((ran + norph))
 
+# The vocabulary of the carry column, checked before it is read. A row
+# whose fifth field is anything else is silently NOT an `identical` row:
+# the loop below skips it, the cmp never runs, and the summary counts it
+# among the rows that are unfalsifiable here. Writing `carry` where the
+# format says `identical` is the obvious way to do that by hand, and it
+# happened on 2026-08-26 when hammer2_cluster.c was added. The reassuring
+# direction, since the gate stays green and the strongest check it has is
+# what got turned off.
+badvocab=$(printf '%s\n' "$rows" | awk -F, '$5 != "identical" && $5 != "derived" && $5 != "ours" { print $1 " -> " $5 }')
+if [ -n "$badvocab" ]; then
+	printf '%s\n' "$badvocab" | sed 's/^/  FAIL  carry column is not identical, derived or ours: /'
+	nvocab=$(printf '%s\n' "$badvocab" | command grep -c .) || nvocab=1
+	fail=$((fail + nvocab)); ran=$((ran + nvocab))
+else
+	ran=$((ran + 1))
+	echo "  ok    every row's carry column is one of identical, derived, ours"
+fi
+
 # 3. The claim with teeth: `identical` is re-run, not read.
 identlog="${TMPDIR:-/tmp}/h2ident.$$"
 printf '%s\n' "$rows" | while IFS=, read -r rf origin commit lic carry rest; do
