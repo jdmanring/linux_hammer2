@@ -202,12 +202,11 @@ else
 	printf '%s\n' "$defers" | while IFS= read -r d; do
 		command grep -qF -- "$d" "$LEDGER" ||
 			echo "  FAIL $LEDGER: no ledger row for $d"
-	done > /tmp/h2-defer.$$ 2>/dev/null
-	if [ -s /tmp/h2-defer.$$ ]; then
-		cat /tmp/h2-defer.$$
-		fail=$((fail + $(command grep -c . /tmp/h2-defer.$$)))
+	done > "$dtmp/missing"
+	if [ -s "$dtmp/missing" ]; then
+		cat "$dtmp/missing"
+		fail=$((fail + $(command grep -c . "$dtmp/missing")))
 	fi
-	rm -f /tmp/h2-defer.$$
 
 	# The other direction. A marker deleted from the source leaves a row
 	# that reads as outstanding work forever, and nothing else here would
