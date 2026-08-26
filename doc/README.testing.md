@@ -154,6 +154,23 @@ check comes with the run that showed it failing, added here.
 | 2026-08-26 | `a UAPI-shaped tree claiming 7.2 is COULD-NOT-RUN` | a `version.h` fallback added, the improvement a later maintainer plausibly writes |
 | 2026-08-26 | the checkpatch selftest | the `sha256` mismatch text deleted |
 
+**A DATE REPAIRS AGING AND NEVER FALSIFICATION**, and the two get treated
+as one thing. A dated completeness claim still says something false the
+moment the population grows: the date stays true while the sentence stops
+being, so nothing about it looks stale. That is why this is a table of
+what was done rather than a dated sentence about everything.
+
+**No gate derives this table, and that is deliberate.** The population is
+checks inside scripts. Counting invocations by grep is the
+hand-maintained-list defect one level up wearing a regex, and running
+every gate from inside another gate to read its printed count couples the
+gates for a claim that is documentation rather than behaviour. Written
+here rather than settled in conversation, because a decision not to build
+something is invisible to the next reader unless it is in the tree they
+grep. The specification repository reached the same answer about its own
+typed list for a better reason: extensionless documents have no extension
+to enumerate on.
+
 The syntax selftest's second direction, that an unoverridden run carries no
 override warning, is NOT in that table. On this workstation that run is
 COULD-NOT-RUN and would carry no warning either way, so it cannot be
