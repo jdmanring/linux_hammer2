@@ -100,8 +100,8 @@ port matches on purpose.
 57 and the sparsest since `hammer2_flush.c`, which is what a carried file
 looks like when the OS-touching functions were left out rather than
 rewritten. Twelve are `return (x);`, seven are the BSD continuation
-indent, four are the errno sign, and two are the SPDX pair every carried
-file adds. No category is new. One hit was fixed rather than baselined,
+indent, four are the errno sign, two are the SPDX pair every carried file
+adds, and the twenty-sixth is one `__inline`. No category is new. One hit was fixed rather than baselined,
 the same one as at 782: a trailing `*/` on a comment this port wrote,
 which the BSD-style exception does not cover.
 

@@ -206,9 +206,11 @@ at all to follow.
 ## What is not here
 
 `hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c`,
-`hammer2_vnops.c`. All four are OS-facing and all four are rewrites, so
-the import phase is over: everything a BSD port could be read side by side
-for is in.
+`hammer2_vnops.c`. All four are the OS-facing ones and all four are
+rewrites. That is what makes them the remaining four; it is not a claim
+that nothing in them can be read off a BSD port. `hammer2_strategy.c` in
+particular has chain logic around its buffer handling, and how much of
+that carries is a question for the file, not for this list.
 
 The carried set is eight files at 11,204 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
@@ -334,7 +336,7 @@ against the source is the same shape as an empty one.
 |---|---|---|
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
-| `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_vnops.c is written)` | the conversion between `enum vtype` and `S_IFMT` belongs at the VFS boundary, and there is no caller to shape it against yet |
+| `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_igetv's replacement is written)` | the conversion between `enum vtype` and `S_IFMT`. The BSDs do it in `hammer2_vinit()`, which lives in `hammer2_vnops.c` and is reached from `hammer2_igetv()`; on Linux the type lands in `inode->i_mode` at `iget5_locked()` time, so it fires in whichever file holds the `igetv` replacement. This row and the `hammer2_igetv()` row are one decision, which is why the trigger names the function rather than a file |
 | `hammer2_inode.c`, where `hammer2_igetv()` would be | `DEFER(hammer2_vfsops.c defines super_operations)` | the inode lifecycle. FreeBSD's body is `vfs_hash_get()`, `getnewvnode()`, `insmntque()` and `vfs_hash_insert()`; Linux's `iget5_locked()` is all four in one call, and the carried `hammer2.h` has already chosen a `struct inode *` pointer rather than an embedded inode, so the association is `i_private` and not `container_of()` |
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
 | `hammer2_ondisk.c`, at `hammer2_access_devvp()` | `DEFER(hammer2_vfsops.c calls hammer2_access_devvp)` | whether `bdev_file_open_by_path()` reflects `BLK_OPEN_WRITE` into `f_mode`. The kernel tree of record here is headers only, so `block/bdev.c` cannot be read; the alternative is branching on `sb->s_flags & SB_RDONLY`. Nothing calls the function yet |
@@ -346,10 +348,13 @@ failure rather than a drift.
 
 Five of the seven lift with the read-side VFS entry, which is the next
 move on the roadmap. The `enum vtype` row's trigger was re-checked when
-`hammer2_inode.c` landed, since that file converts object types: the only
-conversion in it is in the create path, which is not carried, so
-`hammer2_vnops.c` is still the right trigger. The gate below matches
-marker text and cannot check that, so it was checked by hand.
+`hammer2_inode.c` landed and was found to name a file rather than the
+thing that fires it: the BSDs convert in `hammer2_vinit()`, in
+`hammer2_vnops.c`, but they reach it from `hammer2_igetv()`, and on Linux
+that is one call. The trigger now names the function, which is true
+whichever file the replacement ends up in. The gate below matches marker
+text and cannot check a trigger's truth, so that is checked by hand at
+each import.
 
 ### `XXX` marks: how much of the core is not a carry
 

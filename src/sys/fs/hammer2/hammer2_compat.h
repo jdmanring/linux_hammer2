@@ -144,7 +144,7 @@
  * have to agree.  VNON is 0 so a zeroed structure reads as "no type",
  * which is the one property the carried code relies on.
  *
- * DEFER(hammer2_vnops.c is written): the conversion to and from S_IFMT
+ * DEFER(hammer2_igetv's replacement is written): the conversion to and from S_IFMT
  * belongs at the VFS boundary, beside the other Linux-facing
  * translations, and there is no caller to shape it against yet.
  */
