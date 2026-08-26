@@ -196,11 +196,23 @@ at all to follow.
 
 ## What is not here
 
-Every remaining core file: `hammer2_chain.c`, `hammer2_flush.c`,
-`hammer2_freemap.c`, `hammer2_inode.c`, `hammer2_subr.c`, `hammer2_xops.c`,
-`hammer2_admin.c`, `hammer2_bulkfree.c`, `hammer2_cluster.c`,
-`hammer2_ondisk.c`, `hammer2_strategy.c`, `hammer2_ioctl.c`,
-`hammer2_vfsops.c`, `hammer2_vnops.c`, plus the check algorithms.
+`hammer2_chain.c`, `hammer2_flush.c`, `hammer2_inode.c`, `hammer2_subr.c`,
+`hammer2_cluster.c`, `hammer2_ondisk.c`, `hammer2_strategy.c`,
+`hammer2_ioctl.c`, `hammer2_vfsops.c`, `hammer2_vnops.c`.
+
+The two that are next each need a PORT DECISION rather than a shim, which
+is why they did not land with the other four on 2026-08-26:
+
+- `hammer2_chain.c` calls `hammer2_mtx_init_recurse()` and `pause()`. The
+  first is the lock recursion `README.porting.md` records as the remaining
+  gap: DragonFly and FreeBSD let the inode and chain locks recurse, a
+  Linux `rw_semaphore` deadlocks against itself, and NetBSD solves it at
+  the two call sites rather than in the shim. Those call sites are in this
+  file, so the decision is now due.
+- `hammer2_flush.c` issues a device cache flush. FreeBSD does it through
+  GEOM (`g_alloc_bio`, `BIO_FLUSH`), NetBSD through `DIOCCACHESYNC`; the
+  ports already disagree, so there is no precedent to follow and Linux's
+  answer is `blkdev_issue_flush()`.
 
 Six of those are the measured carried set: `hammer2_chain.c`,
 `hammer2_flush.c`, `hammer2_freemap.c`, `hammer2_bulkfree.c`,
