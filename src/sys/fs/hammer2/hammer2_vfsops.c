@@ -86,20 +86,17 @@ static hammer2_pfslist_t hammer2_spmplist;
  * initialize it are the whole of it.  The field types in hammer2.h are
  * left as upstream has them so the carried users read unchanged.
  */
-static int
+static void
 hammer2_ipdep_init(hammer2_pfs_t *pmp)
 {
 	int i;
 
-	pmp->ipdep_lists = hmalloc(HAMMER2_IHASH_SIZE * sizeof(*pmp->ipdep_lists),
+	pmp->ipdep_lists = hmalloc(
+	    HAMMER2_IHASH_SIZE * sizeof(*pmp->ipdep_lists),
 	    M_HAMMER2, M_WAITOK | M_ZERO);
-	if (pmp->ipdep_lists == NULL)
-		return (ENOMEM);
 	for (i = 0; i < HAMMER2_IHASH_SIZE; i++)
 		LIST_INIT(&pmp->ipdep_lists[i]);
 	pmp->ipdep_mask = HAMMER2_IHASH_SIZE - 1;
-
-	return (0);
 }
 
 static void
@@ -179,10 +176,7 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		hammer2_inum_hash_init(pmp);
 
 		/* XXX Linux: hashinit(9), see hammer2_ipdep_init(). */
-		if (hammer2_ipdep_init(pmp)) {
-			hfree(pmp, M_HAMMER2, sizeof(*pmp));
-			return (NULL);
-		}
+		hammer2_ipdep_init(pmp);
 
 		if (ripdata) {
 			pmp->pfs_clid = ripdata->meta.pfs_clid;

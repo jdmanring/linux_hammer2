@@ -435,10 +435,37 @@ hammer2_spin_destroy(hammer2_spin_t *p __always_unused)
 #define M_NOWAIT	0x0002
 #define M_ZERO		0x0100
 
+/*
+ * XXX M_WAITOK MUST NOT FAIL, because eighteen carried call sites are
+ * written against malloc(9), where it cannot.  Not one of them checks the
+ * return, and that is upstream being correct rather than sloppy.  This
+ * mapped M_WAITOK to a plain GFP_KERNEL until 2026-08-26, which can
+ * return NULL: the whole carried core would then have dereferenced it,
+ * guarded only by a KASSERTMSG that the default build compiles out.  The
+ * same shape as the KKASSERT that stood in for a device close.
+ *
+ * __GFP_NOFAIL is the kernel's own name for this contract, and kvmalloc
+ * honours it.  Read against Linux v7.2, mm/slub.c: __do_kmalloc_node()
+ * takes the flag directly for a sub-page request, and above PAGE_SIZE
+ * kmalloc_gfp_adjust() strips it with the comment "nofail semantic is
+ * implemented by the vmalloc fallback".  So the one residual is a size
+ * above INT_MAX, which __kvmalloc_node_noprof() refuses with a
+ * WARN_ON_ONCE and a NULL whatever it is passed; the KASSERTMSG at each
+ * caller is left in place for that, and no size in this module is within
+ * three orders of magnitude of it.
+ *
+ * M_NOWAIT keeps GFP_NOWAIT and may still fail, which is also malloc(9)'s
+ * contract and what the carried code expects when it passes it.
+ */
 static inline gfp_t
 hammer2_gfp(int flags)
 {
-	gfp_t gfp = (flags & M_NOWAIT) ? GFP_NOWAIT : GFP_KERNEL;
+	gfp_t gfp;
+
+	if (flags & M_NOWAIT)
+		gfp = GFP_NOWAIT;
+	else
+		gfp = GFP_KERNEL | __GFP_NOFAIL;	/* Linux */
 
 	if (flags & M_ZERO)
 		gfp |= __GFP_ZERO;

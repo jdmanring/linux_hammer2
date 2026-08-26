@@ -24,7 +24,7 @@
 1 please, no space before tabs
 121 please, no spaces at the start of a line
 29 quoted string split across lines
-134 return is not a function, parentheses are not required
+132 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EACCES)
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)
@@ -34,7 +34,6 @@
 4 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 1 return of an errno should typically be negative (ie: return -ENOENT)
-1 return of an errno should typically be negative (ie: return -ENOMEM)
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)

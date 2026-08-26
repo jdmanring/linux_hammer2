@@ -31,6 +31,7 @@ typedef unsigned int gfp_t;
 #define GFP_KERNEL	((gfp_t)0x01)
 #define GFP_NOWAIT	((gfp_t)0x02)
 #define __GFP_ZERO	((gfp_t)0x04)
+#define __GFP_NOFAIL	((gfp_t)0x08)
 
 #define EINTR		4
 #define ETIMEDOUT	110

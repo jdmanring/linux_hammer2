@@ -21,12 +21,12 @@ is a defect.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1482 | FreeBSD port; carried except `hammer2_igetv()` and the create path, which are `DEFER`red on the VFS entry and on the write path |
-| `hammer2_vfsops.c` | 417 | FreeBSD port; the PFS half carried, the Linux mount entry not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 411 | FreeBSD port; the PFS half carried, the Linux mount entry not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_ondisk.c` | 860 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 658 | ours, the OS shim |
+| `hammer2_os.h` | 685 | ours, the OS shim |
 | `hammer2_compat.h` | 164 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -373,7 +373,7 @@ against the FreeBSD port at
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 1 | 1 | 0 |
 | `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 5 | 0 | 5 |
+| `hammer2_os.h` | 6 | 0 | 6 |
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
@@ -390,12 +390,12 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Fifty-seven are this port's, the right-hand column summed. Eighteen
+Fifty-eight are this port's, the right-hand column summed. Eighteen
 arrived with `hammer2_ondisk.c`, the first file whose OS half was
 rewritten rather than carried, fifteen more with `hammer2_inode.c` and the
 two header lines it needed, and five with `hammer2_vfsops.c`. Fifty sit in
-a file that holds upstream text; the other seven are the two files this
-port wrote from nothing: five in `hammer2_os.h`, and two of
+a file that holds upstream text; the other eight are the two files this
+port wrote from nothing: six in `hammer2_os.h`, and two of
 `hammer2_io.c`'s four.
 
 `hammer2.h` has a row for the first time. It is a carried header this port
@@ -448,10 +448,11 @@ and the formatter in `hammer2_print_uuid_mismatch()`. That is the property
 worth checking: no carried function here had its control flow edited, and
 a reviewer can confirm it one mark at a time.
 
-The other seven are in the two files this port writes: two in
-`hammer2_io.c` and five in `hammer2_os.h`, one of them the non-recursive
-lock above. The count read six until 2026-08-26, written before the two
-shim edits `hammer2_inode.c` needed.
+The other eight are in the two files this port writes: two in
+`hammer2_io.c` and six in `hammer2_os.h`, one of them the non-recursive
+lock above and one the `M_WAITOK` contract. The count read six until
+2026-08-26, written before the two shim edits `hammer2_inode.c` needed,
+and seven for the few hours before `M_WAITOK` was fixed.
 
 `hammer2_vfsops.c`'s five are the file's opening comment, the two
 `hashinit(9)` substitutions and the helper they name, and the

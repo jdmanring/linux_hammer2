@@ -105,21 +105,24 @@ adds, and the twenty-sixth is one `__inline`. No category is new. One hit was fi
 the same one as at 782: a trailing `*/` on a comment this port wrote,
 which the BSD-style exception does not cover.
 
-882 to 894 when `hammer2_vfsops.c` landed: 417 lines for 12 hits, one per
-35. The ratio is not comparable with the rows above it: most of those
-twelve are the fixed cost of a file's head, and this file is a third
-written. Eleven of the twelve are the SPDX pair and the BSD idioms a new carried
-file always adds: the SPDX pair, two `return (x);`, three unnamed
-prototype arguments, two start-of-line spaces, and two assignments in an
-`if` condition, both of the last inside `hammer2_pfsalloc()` as upstream
-wrote it. The twelfth is `return of an errno should typically be
-negative`, at one.
+882 to 891 when `hammer2_vfsops.c` landed: 411 lines for 9 hits. The
+ratio is not comparable with the rows above it: most of the nine are the
+fixed cost of a file's head, and this file is a third written. All nine
+are the SPDX pair and the BSD idioms a new carried file always adds: the
+SPDX pair, three unnamed prototype arguments, two start-of-line spaces,
+and two assignments in an `if` condition, both of the last inside
+`hammer2_pfsalloc()` as upstream wrote it. No category is new and nothing
+was fixed rather than baselined.
 
-The errno hit is the recorded port decision reaching a new call site
-rather than a new kind of finding, the same call as at 782: errnos are
-positive inside the module and the VFS boundary negates, so
-`hammer2_ipdep_init()` returns `ENOMEM` and not `-ENOMEM`. Nothing in
-this move was fixed rather than baselined, and no category is new.
+The count reached 894 first, with twelve hits including one `return of an
+errno should typically be negative`. That hit was read as the recorded
+errno convention arriving at a new call site, which is a claim that the
+site runs, and it did not: `hammer2_ipdep_init()` checked `hmalloc()` for
+NULL under `M_WAITOK`, which `malloc(9)` cannot return, so the branch and
+its `ENOMEM` were unreachable. Restoring the `M_WAITOK` contract in the
+shim removed the branch, the category and two `return (x);` with it. A
+new checkpatch category is worth reading as a question about the code
+before it is written down as a property of it.
 
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
