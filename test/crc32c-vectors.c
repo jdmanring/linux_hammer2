@@ -7,10 +7,13 @@
  * written with the wrong one reads as corrupt to every other HAMMER2
  * implementation rather than as buggy here.
  *
- * STAGED, RUN BY NOTHING TODAY. iscsi_crc32() arrives with the check
- * algorithms in 0.2 and there is nothing to link against before then.
- * doc/README.testing.md lists it and script/test-inventory.sh checks that
- * the list still mentions it, so it cannot go quiet again.
+ * NO GATE IN THIS TREE RUNS IT, AND A GATE IN ANOTHER ONE DOES.
+ * iscsi_crc32() arrives with the check algorithms in 0.2 and there is
+ * nothing local to link against before then. ArtNix's
+ * scripts/test-hammer2-checkalg.sh compiles this file against the FreeBSD
+ * port's icrc32.c and greps the output for "Castagnoli ... MATCH", so the
+ * exit status AND that line's wording are an interface.
+ * doc/README.testing.md carries the contract.
  *
  * Until 2026-08-26 the exit status here accepted EITHER polynomial, which
  * left the one question it exists to ask unanswered while reporting

@@ -70,23 +70,43 @@ compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.
 
-## Staged, and run by nothing today
+## Run from outside this tree, by a gate in another repository
 
-A test file nothing runs reads exactly like a test file that passes. These
-two are kept because the vectors in them are the right vectors and would
-otherwise be rewritten from memory later; they are listed here because
+A test file nothing runs reads exactly like a test file that passes, so
+these two were written up on 2026-08-26 as staged and unrun. That was
+wrong within the hour, and wrongly reassuring in the direction that costs
+most: no gate HERE runs them, and ArtNix's
+`scripts/test-hammer2-checkalg.sh` compiles both, against the FreeBSD
+port's vendored `xxhash` and its `icrc32.c`, reaching this tree through
+`LINUX_HAMMER2`. The sweep that concluded "run by nothing" searched this
+repository only, which is the whole of the mistake: a consumer one
+directory over answers a question no local grep can.
+
+**What that makes them.** The exit status of each, the wording of the
+`Castagnoli ... MATCH` line, and the uppercase hex of the xxh64 constants
+are an INTERFACE with a consumer that cannot be seen from here. The
+rewrite that fixed their logic lowercased one constant, ArtNix's negative
+control seds on that literal, and its gate spent an hour reporting
+correctly that it was comparing nothing. `-DXXH_VECTORS_CONTROL` exists so
+that control never has to depend on this file's text again.
+
+No gate here reaches into another repository to check any of that, and
+none should: the port stands on its own. The contract is written down
+instead, in the table below and in each file's header, and
 `script/test-inventory.sh` fails on any file under `test/` that neither a
-gate names nor this table lists, so they cannot go quiet again. Both were
-tracked and unmentioned from the initial import until 2026-08-26.
+gate names nor this table lists.
 
-| file | waits for | state on 2026-08-26 |
+| file | run locally when | state on 2026-08-26 |
 |---|---|---|
 | `test/crc32c-vectors.c` | `iscsi_crc32()`, which arrives with the check algorithms in 0.2 | the exit status accepted either CRC-32C or CRC-32 IEEE, so the one question it exists to ask went unanswered while it reported success. Now it accepts Castagnoli only, and names IEEE when it sees it |
 | `test/xxh64-vectors.c` | an `xxhash.h` in this tree, same import | two of three cases asserted nothing, and the seeded case used xxHash's golden-ratio prime where HAMMER2 seeds with `0x4d617474446c6c6e`. Four vectors now, all four measured against xxhsum 0.8.3 and libxxhash 0.8.3, and compiled and run green against the system xxHash on 2026-08-26 |
 
-Neither is wired into a gate, because there is nothing in this tree to
-link either against. They are wired the day 0.2 imports the algorithms,
-and the inventory gate is what remembers to ask.
+Neither is wired into a gate HERE, because there is nothing in this tree
+to link either against; ArtNix links them against the BSD tree instead.
+They get a local gate the day 0.2 imports the algorithms, and the
+inventory gate is what remembers to ask. Until then, changing either
+file's output shape or exit status breaks a gate in a repository this one
+does not reference.
 
 ## What the real test will be
 

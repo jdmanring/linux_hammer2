@@ -85,12 +85,18 @@ done
 
 # THE SECOND POPULATION IS test/, AND IT HAD NOBODY COUNTING IT. Measured
 # 2026-08-26: crc32c-vectors.c and xxh64-vectors.c are tracked, are named by
-# no gate and by no document, and one of them includes a header that is not
-# in this tree, so it could not compile if anything tried. A test file that
-# nothing runs reads exactly like a test file that passes, which is the
-# failure this whole gate exists to close - and the population it was
-# written against was src/ only, so the class stayed open one directory
-# away.
+# no gate here and by no document, and one of them includes a header that is
+# not in this tree. A test file that nothing runs reads exactly like a test
+# file that passes, which is the failure this whole gate exists to close -
+# and the population it was written against was src/ only, so the class
+# stayed open one directory away.
+#
+# WHAT THIS GATE CANNOT SEE, stated because the first version of this
+# comment asserted the opposite: it cannot tell whether anything runs a
+# file, only whether something here NAMES it. Both of those two are
+# compiled by a gate in another repository, which no search of this tree
+# could report; README.testing.md holds that contract. So a finding here
+# means unaccounted-for, never unused.
 #
 # Accounted for means one of two things, and the second is deliberate: a
 # gate names it (directly, or by a directory a gate passes with -I), or
