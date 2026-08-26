@@ -106,7 +106,17 @@ What has actually been compiled, measured rather than assumed, on
 |---|---|
 | 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers, under the override |
 | 6.18.46-1-lts | 7 checks, 0 failed, both compilers, under the override |
-| 7.2 | not on this machine. The 7.2.0-cachyos `dev` output is prebuilt and signed in `nyx-cache.chaotic.cx` at 687 MB, so this is a download and its closure rather than a kernel build; the gate reports COULD-NOT-RUN until it is here |
+| 7.2 | no build tree on this machine, and the sentence needs the qualifier: the HOST runs 7.1.9-artix1-2 and Artix offers no newer kernel, while the STORE holds the 7.2.0-cachyos derivation with neither output realized. The `dev` output is prebuilt and signed in `nyx-cache.chaotic.cx` at 687 MB, so reaching it is a substitution and its closure, not a kernel build. The gate reports COULD-NOT-RUN until it is here |
+
+A 7.2 VERSION STRING IS ALREADY ON THIS MACHINE AND MEANS NOTHING FOR THIS
+GATE. `linux-api-headers 7.2-1` is installed, so
+`/usr/include/linux/version.h` reads `LINUX_VERSION_MAJOR 7` and
+`LINUX_VERSION_PATCHLEVEL 2` with no build tree anywhere near it: UAPI
+headers, no `Makefile`, nothing to compile a module against. Anything that
+answers "is 7.2 here" by grepping for a version string finds that and is
+wrong. `script/test-syntax.sh` reads `VERSION`/`PATCHLEVEL` from the build
+tree's own `Makefile`, which is why it cannot be fooled by this, and it is
+recorded because the next reader will not know the difference exists.
 
 So the current state is that the port is UNVERIFIED against its own kernel
 of record, and says so out loud instead of printing green. An overridden
