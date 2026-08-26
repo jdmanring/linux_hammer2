@@ -13,9 +13,9 @@
 # I THEN CLAIMED THESE FOUR WERE CLEAN AFTER GREPPING FOR THE USUAL TELLS,
 # and a grep is not a parse. I also recorded that no POSIX shell existed
 # here, having asked `command -v`, which reads PATH - and PATH is not the
-# machine. Both shells were already realized in the store. The ArtNix
-# session made the same two errors within the hour and found the store
-# copies first.
+# machine. Both shells were already realized in the store, and the same two
+# errors were made in the ArtNix tree within the hour before the store
+# copies were found.
 #
 # WHAT A CLEAN RUN HERE IS WORTH. A parse reaches far less than it appears
 # to. The gate MEASURES its own reach on every run and prints it; the table
@@ -78,7 +78,7 @@ fail=0 ran=0
 # one place a reader uses to decide whether a clean run means anything, and
 # wrong again the next time a shell version moves. It was also wrong when
 # written: it claimed three constructs in dash where there are four, and
-# the ArtNix session's copy claimed one. An UNDER-claim is still a false
+# the copy of it in the ArtNix tree claimed one. An UNDER-claim is still a false
 # claim and it is the one nobody re-checks, because a modest statement
 # about your own instrument reads as rigour.
 #
@@ -90,7 +90,7 @@ fail=0 ran=0
 #   2. a plain POSIX script must be accepted, or the instrument refuses
 #      everything and a clean result is unreachable rather than earned.
 #
-# The design is the ArtNix implementation session's.
+# The design is taken from the equivalent gate in the ArtNix tree.
 tmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$tmp"' EXIT
 probe() { printf '%s\n' "$2" > "$tmp/probe-$1.sh"; probes="${probes:-} $1"; }

@@ -1,8 +1,8 @@
 Status
 ======
 
-Nothing mounts yet. This is the state as of the initial import, and it is
-the file to correct rather than to argue with: if a claim here is stale, it
+Nothing mounts yet, and no module has been built or loaded. This file is
+the one to correct rather than to argue with: if a claim here is stale, it
 is a defect.
 
 ## What is in the tree
@@ -32,9 +32,9 @@ All sight gates pass, and as of 2026-08-26 they pass HERE with no
 environment variables set: the kernel of record is in the store, the
 syntax gate finds it, and the style gate finds that tree's own
 `checkpatch.pl`. ArtNix's delegator, which runs these same gates from
-another repository, reports 7 ran and 0 could not run where it read 5 and
-2 an hour earlier. Each prints its own
-count; the gates are the authority, and the dated figures below are
+another repository, enumerates `script/test-*.sh` rather than naming them,
+so a gate added here is picked up there without an edit. Each gate prints
+its own count; the gates are the authority, and the dated figures below are
 snapshots of a particular run rather than the record.
 `test-checkpatch.sh` is the one that commonly cannot run: it needs
 `checkpatch.pl`, which no kernel headers package ships, so it returns exit
@@ -145,10 +145,10 @@ rather than summarised:
 
 measured at `ee4a8fc`. A gate result quoted without the revision it ran
 against is a figure without its scope, and this tree is a live checkout
-that another session reads while this one commits to it: ArtNix's
-delegator saw 6 gates where it expected 7 because it walked the tree
-mid-commit, which is indistinguishable from broken unless the revision is
-printed beside the count.
+that another repository reads while work is being committed to it:
+ArtNix's delegator saw 6 gates where it expected 7 because it walked the
+tree mid-commit, which is indistinguishable from broken unless the
+revision is printed beside the count.
 
 The compiler is a pin too, and the tree says which one rather than this
 repository asserting one: kbuild records what built the kernel in

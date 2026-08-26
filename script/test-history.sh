@@ -16,7 +16,7 @@
 # deserve a row", asked where somebody will read it. A check that forced a
 # row per commit would make the table meaningless, because a row is a
 # judgment. Scoped to src/ and script/ so a documentation commit does not
-# nag. Suggested by the specification session 2026-08-25.
+# nag.
 #
 # Exit 2 is COULD-NOT-RUN. Exit 1 is a failed assertion.
 set -u

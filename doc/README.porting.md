@@ -224,6 +224,6 @@ relicense anything.
 Recorded here rather than written into a source file, because a declaration
 with no artifact is worse than an absent one: there is no module to attach
 it to yet, and adding it now would put a claim in the tree that nothing
-exercises. It goes in with the first `MODULE_INIT`. Raised by the
-specification session from its own reading of xfs at v6.15, which is the one
-mainline filesystem above page size and runs its data path on iomap.
+exercises. It goes in with the first `MODULE_INIT`. Settled by reading xfs at
+v6.15, which is the one mainline filesystem above page size and runs its
+data path on iomap.
