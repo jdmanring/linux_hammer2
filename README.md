@@ -146,6 +146,7 @@ including what each gate cannot catch.
 
 | | |
 |---|---|
+| [CHANGELOG.md](CHANGELOG.md) | every point release, pinned to its commit and its verifying gate |
 | [doc/README.status.md](doc/README.status.md) | what exists, what is verified, what is missing |
 | [doc/README.roadmap.md](doc/README.roadmap.md) | the order, with the check that ends each step |
 | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | the layering, the shim boundary, the object and locking model |

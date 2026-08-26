@@ -1,5 +1,5 @@
 #!/bin/sh
-# The roadmap's history table is the only place a version number is bound to
+# The changelog is the only place a version number is bound to
 # a commit, and nothing read it until 2026-08-25.
 #
 # TWO CHECKS, AND THEY ARE DELIBERATELY DIFFERENT IN KIND.
@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.." || exit 2
 command -v git >/dev/null 2>&1 || { echo "history: COULD-NOT-RUN: no git"; exit 2; }
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "history: COULD-NOT-RUN: not a repository"; exit 2; }
 
-DOC=doc/README.roadmap.md
+DOC=CHANGELOG.md
 [ -f "$DOC" ] || { echo "history: COULD-NOT-RUN: no $DOC"; exit 2; }
 
 rows=0; bad=0; newest=""; newest_depth=0
