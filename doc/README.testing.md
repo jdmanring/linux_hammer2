@@ -94,8 +94,19 @@ warning and the checker's `sha256` provenance. Both prints were added on
 neither was read by anything, which is that same defect arriving inside its
 own repair. The syntax selftest failed on its first run because the warning
 WRAPS and the matcher read one line at a time - a rule about matching
-wrapped prose not firing while writing a matcher for wrapped prose. CI runs
-both.
+wrapped prose not firing while writing a matcher for wrapped prose. CI runs both.
+
+The syntax selftest's third check is a designed guard replacing an
+accidental one. The gate reads `VERSION`/`PATCHLEVEL` from a build tree's
+own `Makefile`, so `linux-api-headers` cannot satisfy it - and that
+immunity was luck of construction, not intent, until the check existed. A
+guard nobody designed is a guard nobody maintains. The specimen is a
+directory holding nothing but an `include/linux/version.h` claiming 7.2,
+which must be COULD-NOT-RUN. Falsified with the plausible improvement a
+later maintainer makes, a `version.h` fallback when the `Makefile` is
+missing: the gate then accepts the fake and prints `7 check(s), 5 failed
+against the kernel of record (7.2)`, charging five failures to this code
+on behalf of a kernel that does not exist.
 
 Exit 2 from any of the seven means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came

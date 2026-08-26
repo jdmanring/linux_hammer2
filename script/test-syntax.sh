@@ -53,7 +53,31 @@ if [ "${1:-}" = "--selftest" ]; then
 		exit 1
 	fi
 	echo "  ok    an unoverridden run does not (weak here: it is COULD-NOT-RUN)"
-	echo "selftest: 2 check(s), 0 failed"
+
+	# A GUARD NOBODY DESIGNED IS A GUARD NOBODY MAINTAINS. This gate reads
+	# VERSION and PATCHLEVEL from a build tree's own Makefile, so the
+	# linux-api-headers package - 7.2-1 here, giving
+	# /usr/include/linux/version.h a LINUX_VERSION_MAJOR of 7 and a
+	# PATCHLEVEL of 2 with no Makefile and nothing to compile against -
+	# cannot satisfy it. That immunity was luck of construction until this
+	# check existed. A UAPI-shaped tree is the specimen: it answers the
+	# version question correctly and about a different subject, which is
+	# worse than an inert reading because it VARIES properly and would say
+	# 7.3 the day Artix ships 7.3, so even a longitudinal check confirms it.
+	fake=$(mktemp -d) || exit 2
+	mkdir -p "$fake/include/linux"
+	printf '#define LINUX_VERSION_MAJOR 7\n#define LINUX_VERSION_PATCHLEVEL 2\n' \
+		> "$fake/include/linux/version.h"
+	out3=$(KDIR="$fake" sh "$0" 2>&1); rc3=$?
+	rm -rf "$fake"
+	if [ "$rc3" = 2 ] && flat "$out3" | command grep -q 'COULD-NOT-RUN'; then
+		echo "  ok    a UAPI-shaped tree claiming 7.2 is COULD-NOT-RUN, not a pass"
+	else
+		echo "  FAIL  a tree with only a version.h was accepted (rc=$rc3):"
+		printf '%s\n' "$out3" | tail -2 | sed 's/^/        /'
+		exit 1
+	fi
+	echo "selftest: 3 check(s), 0 failed"
 	exit 0
 fi
 
