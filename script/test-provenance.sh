@@ -55,15 +55,32 @@ if [ "${1:-}" = "--selftest" ]; then
 	out=$(H2_CLONE_DIR=/nonexistent sh "$0" 2>&1); rc=$?
 	[ "$rc" = 2 ] && echo "  ok    selftest: COULD-NOT-RUN with no clone present" || {
 		echo "  FAIL  selftest: exited $rc with no clone, wanted 2"; sfail=$((sfail + 1)); }
+	#
+	# THE LAST CHECK NEEDS AN ORIGIN CLONE AND SAYS SO WHEN IT HAS NONE.
+	# It swaps one row's filename so a row claiming a carry points at a
+	# file that is not that carry, and requires cmp to catch it. On a
+	# machine with no clone - CI is one - there is nothing to compare
+	# against, and the honest report is COULD-NOT-RUN for the selftest
+	# as a whole. Passing here on the strength of the four checks that
+	# did run would be this gate's own COULD-NOT-RUN defect, one level
+	# up, in the instrument that exists to prove the gate works.
+	sfran=4
 	sed 's#^src/sys/fs/hammer2/hammer2_xops.c,#src/sys/fs/hammer2/hammer2_io.c,#' \
 		doc/provenance.csv > "$t/swap.csv"
 	out=$(H2_PROVENANCE_CSV="$t/swap.csv" sh "$0" 2>&1)
 	if printf '%s\n' "$out" | command grep -q 'says identical but differs'; then
 		echo "  ok    selftest: cmp catches a wrong identical claim"
+		sfran=5
+	elif printf '%s\n' "$out" | command grep -q '^  UNVER'; then
+		echo "selftest: $sfran check(s), $sfail failed; COULD-NOT-RUN: no"
+		echo "          origin clone here, so cmp was never exercised"
+		[ "$sfail" = 0 ] || exit 1
+		exit 2
 	else
 		echo "  FAIL  selftest: a wrong identical claim passed cmp"; sfail=$((sfail + 1))
+		sfran=5
 	fi
-	echo "selftest: 5 check(s), $sfail failed"
+	echo "selftest: $sfran check(s), $sfail failed"
 	[ "$sfail" = 0 ] || exit 1
 	exit 0
 fi
