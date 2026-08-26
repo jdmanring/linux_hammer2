@@ -1026,8 +1026,10 @@ next_hmp:
 		 * The same reasoning has to hold for the teardown a few
 		 * lines below, which flushes vchain and fchain when either
 		 * carries a HAMMER2_CHAIN_FLUSH_MASK bit, and it does: the
-		 * four bits in that mask are set in nine places, all of
-		 * them in hammer2_chain_modify(), hammer2_chain_create(),
+		 * four bits in that mask are set at eleven sites in nine
+		 * functions, counted on 2026-08-26 by grepping
+		 * atomic_set_int() for each of the four, and those nine are
+		 * hammer2_chain_modify(), hammer2_chain_create(),
 		 * hammer2_chain_setflush(), hammer2_chain_lastdrop(), the
 		 * two chain deletes, the two flush functions and
 		 * hammer2_voldata_modify().  The device half calls none of
