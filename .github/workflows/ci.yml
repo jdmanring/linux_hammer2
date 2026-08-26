@@ -30,6 +30,13 @@ name: CI
 on:
   push:
   pull_request:
+  # On demand as well. A push is the normal trigger, but on 2026-08-26 a
+  # push updated main and no run appeared for ten minutes while a rerun of
+  # an older run queued immediately, so the runner was working and the
+  # event was not. Without this the only way to ask for a verdict on a
+  # given commit is an empty commit, which puts a lie in the history to
+  # work around an outage.
+  workflow_dispatch:
 
 jobs:
   gates:
