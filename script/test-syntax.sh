@@ -286,7 +286,25 @@ check() { # name expect file cflags...
 	rm -f /tmp/h2syn.$$
 }
 
-echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, dialect $dsrc, with $("$CC" --version | head -1):"
+# THE COMPILER IS A PIN TOO, and the tree says which one it wants rather
+# than this script asserting one: kbuild records the compiler that built
+# the kernel in CONFIG_CC_VERSION_TEXT, and a module is built by comparison
+# against that, not against whatever is newest. Printed and compared rather
+# than enforced - which compiler is correct depends on the tree, so pinning
+# a version here would be wrong on the next tree. Measured 2026-08-26: the
+# 7.2.0-cachyos kernel of record was built with "clang version 22.1.8" and
+# this workstation's clang is byte-identical, which is why that version is
+# the right one and not an old one.
+ccv=$("$CC" --version | head -1)
+kcc=$(sed -n 's/^CONFIG_CC_VERSION_TEXT="\(.*\)"$/\1/p' "$K/.config" 2>/dev/null | head -1)
+if [ -z "$kcc" ]; then
+	ccnote="the tree records no CONFIG_CC_VERSION_TEXT"
+elif [ "$kcc" = "$ccv" ]; then
+	ccnote="matching the tree's own"
+else
+	ccnote="NOT the tree's own, which is \"$kcc\""
+fi
+echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, dialect $dsrc, with $ccv, $ccnote:"
 check "hammer2.h: header TU expands (tree, queue, atomics)" pass test/hammer2-header.c
 check "hammer2_io.c: invariants on"  pass src/sys/fs/hammer2/hammer2_io.c -DHAMMER2_INVARIANTS
 check "hammer2_io.c: invariants off" pass src/sys/fs/hammer2/hammer2_io.c

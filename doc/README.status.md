@@ -123,14 +123,45 @@ after the chaotic 7.2.0-cachyos `dev` output was substituted into the store
 (679 MB, `sil5r7r2a25nsshkqpd5jjjd0g7ywyi7`). The gate's own line, quoted
 rather than summarised:
 
-    hammer2 against 7.2.0-cachyos via KDIR, dialect -fms-extensions, with clang version 22.1.8:
+    hammer2 against 7.2.0-cachyos via the store, matching the kernel of record,
+      dialect -fms-extensions, with clang version 22.1.8, matching the tree's own:
     syntax: 7 check(s), 0 failed against the kernel of record (7.2)
+
+The compiler is a pin too, and the tree says which one rather than this
+repository asserting one: kbuild records what built the kernel in
+`CONFIG_CC_VERSION_TEXT`, which reads `clang version 22.1.8` here, and this
+workstation's clang is byte-identical to it. So that version is the
+matching one rather than an old one, and the gate prints the comparison on
+every run - against the 6.18 and 7.1.9 trees it says `NOT the tree's own,
+which is "gcc (GCC) 16.2.1 20260810"`.
 
 Every syntax result recorded before that timestamp was measured against
 7.1.9 and read as 7.2. An overridden run now says so in its own summary
 line: until that day it printed `syntax: 7 check(s), 0 failed`, identical
 to what a real reading prints, and the override is a loosened threshold
 whose hiding place was that line.
+
+**It is 7.2.0-cachyos and not mainline 7.2.** `EXTRAVERSION` is set by a
+`sed` in the derivation's `postPatch`, so the release string is the
+distribution's by recipe. "Against the kernel of record (7.2)" is what the
+gate says and is true; "against mainline 7.2" would not be, and the two are
+one word apart.
+
+Two properties of a nixpkgs kernel `dev` output that any later measurement
+against this tree has to know. Its `source/` directory is PRUNED HARD: the
+recipe rsyncs the tree, deletes `drivers` wholesale, deletes unused arches,
+then deletes every file it did not mark read-only. Measured here: 10,944
+headers, 81 `.c` files, no `drivers` directory. So a grep of this tree for
+implementation code measures the prune and not the kernel, and absence is
+the normal case rather than evidence. And `checkpatch.pl` lives under
+`source/scripts`, not `build/scripts`, which holds gdb helpers.
+
+That checker is not mainline's: its `sha256` differs from the one the
+baseline records. Run on 2026-08-26 it produces the deviation set
+UNCHANGED at 583 hits, so cachyos's patches do not move this tree's style
+figures, and the gate says the hash does not match while accepting the
+version its own tree reports. That is the intended behaviour and the two
+halves are printed separately.
 
 The first run against the real tree FAILED, and the guard was wrong rather
 than the tree. A nix dev output's `build/Makefile` is a three-line stub
