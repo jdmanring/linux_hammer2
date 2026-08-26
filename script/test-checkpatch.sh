@@ -59,12 +59,45 @@ fi
 # WHICH BRANCH FOUND THE CHECKER, PRINTED AND NOT PINNED. Which one is
 # right depends on the machine, so constraining it would break the case the
 # fallback exists for; naming it is the whole fix.
+# THE DEFAULT MUST REACH THE KERNEL OF RECORD, the same defect the syntax
+# gate had: this looked only at the host's build tree, so it reported
+# COULD-NOT-RUN on a machine where the kernel the port targets was sitting
+# in the store with a checkpatch.pl in it. A nixpkgs kernel dev output
+# keeps the script under source/scripts - build/scripts holds gdb helpers.
+#
+# The candidate whose sha256 MATCHES THE BASELINE is preferred, because
+# that is the checker the recorded deviation set was produced with and the
+# only one whose disagreement is attributable to this code. Otherwise the
+# first that exists, whose provenance is then printed as unmatched.
+base=doc/checkpatch-baseline.txt
+basesha=$(sed -n 's/^# sha256 //p' "$base" 2>/dev/null | head -1)
 CP=${CHECKPATCH:-}
 if [ -n "$CP" ]; then
 	cpsrc="CHECKPATCH"
 else
-	CP=${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl
-	cpsrc="${KDIR:+KDIR}${KDIR:-/lib/modules/\$(uname -r)}/scripts/checkpatch.pl"
+	# Three tiers, strongest first: the file the baseline was produced
+	# with, identified by content; then any checker whose own tree reports
+	# the baseline's version, which is what makes a distribution's patched
+	# copy usable; then whatever exists, so the refusal can name it.
+	refver=$(sed -n '1s/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$base" 2>/dev/null)
+	CP=""; cpsrc=""; cpver_cand=""
+	for cand in "${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl" \
+		$(ls /nix/store/*-linux-*-dev/lib/modules/*/source/scripts/checkpatch.pl 2>/dev/null | sort -V -r); do
+		[ -f "$cand" ] || continue
+		[ -z "$CP" ] && { CP=$cand; cpsrc="first found, version unmatched"; }
+		if [ -n "$basesha" ] && [ "$(sha256sum "$cand" 2>/dev/null | cut -d' ' -f1)" = "$basesha" ]; then
+			CP=$cand; cpsrc="the checker the baseline records, by sha256"
+			break
+		fi
+		cmk=$(dirname "$cand")/../Makefile
+		if [ -n "$refver" ] && [ -f "$cmk" ]; then
+			cv="v$(sed -n 's/^VERSION *= *//p' "$cmk" | head -1).$(sed -n 's/^PATCHLEVEL *= *//p' "$cmk" | head -1)"
+			if [ "$cv" = "$refver" ] && [ "$cpver_cand" != matched ]; then
+				CP=$cand; cpsrc="a $refver tree's own checker, hash unmatched"; cpver_cand=matched
+			fi
+		fi
+	done
+	[ -n "$CP" ] || { CP=${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl; cpsrc="none found"; }
 fi
 [ -f "$CP" ] || { echo "checkpatch: COULD-NOT-RUN: no checkpatch.pl at $CP"; exit 2; }
 command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; exit 2; }
