@@ -96,7 +96,7 @@ artifact in it; this tree begins inside H1, and 0.1 is H1's first slice.
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | **next** |
 | 0.3 | H1 | Module builds, loads and unloads | blocked on the compile authorization |
-| 0.4 | H1 | Read-only mount of DragonFly-written media | fixtures exist; nothing reads them |
+| 0.4 | H1 | Read-only mount of DragonFly-written media | the generators exist, the images are build output, and no gate here drives a guest |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | waits on the storage model (see decisions) |
@@ -187,10 +187,50 @@ needs one of those needs the column first, and says so below.
 | F5 | images captured mid-write under the crash matrix, first from the FreeBSD port as calibration | a crash harness in QEMU | 0.6 | needs 0.5 |
 | F6 | a `makefs` image of a real Nix closure, hundreds of thousands of paths | `makefs -t hammer2` | 0.9 | needs a build host's closure |
 
-F1 and the first F2 image exist, with the scripts that produce them and
-the provenance CSV. They land in this tree's `test/fixtures/`, decided in
-the table below and not yet done; every gate from 0.4 on exits 2 until
-they are here.
+### What "the fixtures exist" means, and what moves here
+
+The generators exist and have been run; the images do not sit anywhere
+waiting to be read, and cannot. Measured 2026-08-26 from the F1
+generator's own header: `makefs -t hammer2` writes an 8 GiB image and
+exposes no way to shrink it -- `-s` sets a maximum and so conflicts with
+the default rather than lowering it, and there is no `-o Size=`. It is
+not a format floor: `HAMMER2_ZONE_BYTES64` is 2 GiB and
+`FREEMAP_LEVEL1_RADIX` is 30, so a smaller image is an upstream change
+and not a flag. The generator therefore builds, verifies and DELETES each
+image before starting the next, and peak cost is one image rather than
+the set.
+
+So the decision below that fixtures live in this tree's `test/fixtures/`
+is about the SCRIPTS, the manifests and the provenance CSV, which are
+small, and never about the images, which are build output no repository
+can hold. This paragraph used to say "F1 and the first F2 image exist",
+which reads as though a gate from 0.4 on could be pointed at a file. It
+cannot: it has to run a generator first. Nothing here has moved yet, and
+every gate from 0.4 on exits 2 until it does.
+
+### The guests this needs, and which exist
+
+The milestones below say "a guest" without saying whether one exists,
+which leaves the reader unable to tell a scheduling question from a
+blocking one. Measured 2026-08-26 on this workstation, `virsh -c
+qemu:///system`:
+
+| what a milestone asks for | what exists |
+|---|---|
+| DragonFly, to write the F2 reference media | `dragonflybsd642`, DragonFly 6.4.2, 12 CPUs and 4 GiB, shut off |
+| the three BSD ports' own systems, for reading a port against its host | `freebsd15`, `netbsd10-1`, `openbsd79` |
+| Linux with the kernel of record and `CONFIG_PROVE_LOCKING`, for 0.3 and 0.4 | NOT PRESENT. Sixty domains exist and none is built for this: the debug options are a kernel build, not a distribution image |
+
+That last row is 0.3's real dependency and it is a build rather than a
+download, so it is named here rather than discovered when 0.3 starts.
+QEMU, libvirt and `virt-install` are all on this machine, so nothing
+about the harness is blocked on tooling.
+
+This repository holds no instrument that drives any of them: measured by
+searching `doc/`, `script/` and `test/` for `qemu`, `virsh` and
+`virt-install`, which return nothing. The gates here are compile-time and
+repository-time, and every runtime criterion from 0.3 on is unverifiable
+today for that reason rather than for want of a guest.
 
 ## Milestones
 
