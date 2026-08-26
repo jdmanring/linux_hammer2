@@ -66,7 +66,7 @@ jobs:
 
       # THE GATE LIST IS DERIVED, NOT TYPED. It was typed until 2026-08-26
       # and had already fallen behind: script/test-vectors-contract.sh
-      # existed for hours with CI not running it, and CLAUDE.md DISCLOSED
+      # existed for hours with CI not running it, and a document DISCLOSED
       # that instead of fixing it, which is the could-have-didn't shape. A
       # hand-maintained list of the things that check this tree is the same
       # defect those checks exist to catch, and ArtNix's delegator - which

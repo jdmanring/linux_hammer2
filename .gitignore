@@ -9,3 +9,7 @@
 
 # Serena's symbol index, a local tool cache and not part of the port.
 .serena/
+
+# Agent instructions and local tool caches. Not part of the port.
+CLAUDE.md
+.claude/

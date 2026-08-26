@@ -106,7 +106,8 @@ must either be named by a gate or be listed as staged below. It also
 checks two DIFFERENT claims about the gates themselves: that no document
 states a wrong COUNT of them, and that the three documents printing
 runnable command lists NAME every one. Those are not the same check -
-`CLAUDE.md` said "eight" correctly on 2026-08-26 while listing seven, so
+The agent instructions file, since untracked, said "eight" correctly on
+2026-08-26 while listing seven, so
 the count passed and the list a future reader would run was short by the
 newest gate.
 What none of them can check is whether a row's CLAIM is true; that takes a
