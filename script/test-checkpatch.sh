@@ -167,7 +167,13 @@ got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 # sweeping what these gates write, not by a symptom.
 if [ ! -f "$base" ]; then
 	if [ "${1:-}" = "--write" ]; then
+		# BOTH header lines, because the sha256 is what makes a
+		# moved set attributable to the code. Written without it,
+		# this file disarms the check above silently: basesha is
+		# empty, the not-attributable branch cannot fire, and the
+		# next diff against any checker is charged to the tree.
 		printf '# checkpatch.pl from linux %s\n' "${CHECKPATCH_REF:-UNRECORDED - set CHECKPATCH_REF}" > "$base"
+		printf '# sha256 %s\n' "${cpsha:-UNRECORDED - the checker could not be hashed}" >> "$base"
 		printf '%s\n' "$got" >> "$base"
 		echo "checkpatch: baseline WRITTEN from this tree, $(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits."
 		echo "            This run compared nothing. Read the file before committing it."
