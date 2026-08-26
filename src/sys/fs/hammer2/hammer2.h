@@ -1166,6 +1166,8 @@ gid_t hammer2_inode_to_gid(const hammer2_inode_t *);
 hammer2_pfs_t *hammer2_pfsalloc(hammer2_chain_t *, const hammer2_inode_data_t *,
     hammer2_dev_t *);
 void hammer2_pfsdealloc(hammer2_pfs_t *, int, int);
+void hammer2_pfsfree(hammer2_pfs_t *);
+void hammer2_pfsfree_scan(hammer2_dev_t *, int);
 int hammer2_sync(struct super_block *, int);
 int hammer2_vfs_sync_pmp(hammer2_pfs_t *, int);
 void hammer2_voldata_lock(hammer2_dev_t *);

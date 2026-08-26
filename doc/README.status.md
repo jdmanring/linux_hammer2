@@ -9,7 +9,7 @@ is a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1335 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1337 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -21,12 +21,13 @@ is a defect.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1482 | FreeBSD port; carried except `hammer2_igetv()` and the create path, which are `DEFER`red on the VFS entry and on the write path |
+| `hammer2_vfsops.c` | 417 | FreeBSD port; the PFS half carried, the Linux mount entry not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_ondisk.c` | 860 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 658 | ours, the OS shim |
-| `hammer2_compat.h` | 153 | ours, kernel look-alikes; the BSD `vtype` enum, which no Linux header has |
+| `hammer2_compat.h` | 164 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
@@ -378,6 +379,7 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 19 | 1 | 18 |
 | `hammer2_inode.c` | 19 | 6 | 13 |
+| `hammer2_vfsops.c` | 7 | 2 | 5 |
 | `hammer2.h` | 5 | 3 | 2 |
 | `hammer2_disk.h` | 1 | 1 | 0 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
@@ -388,12 +390,13 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Fifty-two are this port's, the right-hand column summed. Eighteen arrived
-with `hammer2_ondisk.c`, the first file whose OS half was rewritten rather
-than carried, and fifteen more with `hammer2_inode.c` and the two header
-lines it needed. Forty-five sit in a file that came from upstream; the
-other seven are the two files this port wrote from nothing: five in
-`hammer2_os.h`, and two of `hammer2_io.c`'s four.
+Fifty-seven are this port's, the right-hand column summed. Eighteen
+arrived with `hammer2_ondisk.c`, the first file whose OS half was
+rewritten rather than carried, fifteen more with `hammer2_inode.c` and the
+two header lines it needed, and five with `hammer2_vfsops.c`. Fifty sit in
+a file that holds upstream text; the other seven are the two files this
+port wrote from nothing: five in `hammer2_os.h`, and two of
+`hammer2_io.c`'s four.
 
 `hammer2.h` has a row for the first time. It is a carried header this port
 edits in place rather than a file it wrote, so its two marks are counted
@@ -414,7 +417,7 @@ directions of that population. It did not until 2026-08-26, and had
 drifted in the way an ungated count does: `hammer2_disk.h` and
 `src/sys/sys/tree.h` were missing while both carry a mark, and
 `hammer2_cluster.c` was listed at zero, which is what made a partial table
-read as an inventory. Neither omission moved the fifty-two. Both marks are
+read as an inventory. Neither omission moved the count, which was fifty-two when this was measured. Both marks are
 their authors': `hammer2_disk.h`'s is Dillon's note on the reserved area,
 present in the FreeBSD commit above, and `tree.h`'s is FreeBSD's own
 `XXXLAS`, which the vendoring left alone. The two remaining columns are a
@@ -449,4 +452,16 @@ The other seven are in the two files this port writes: two in
 `hammer2_io.c` and five in `hammer2_os.h`, one of them the non-recursive
 lock above. The count read six until 2026-08-26, written before the two
 shim edits `hammer2_inode.c` needed.
+
+`hammer2_vfsops.c`'s five are the file's opening comment, the two
+`hashinit(9)` substitutions and the helper they name, and the
+`__maybe_unused` rename. Its other two marks are upstream's own, both
+inside `hammer2_pfsalloc()`. The opening comment makes a deliberately
+weaker claim than `hammer2_ondisk.c`'s: statements carry there and the
+control flow does not move, but here the function boundary itself moves,
+because Linux redistributes FreeBSD's `hammer2_mount()` across
+`->init_fs_context`, `->parse_param`, `->get_tree` and a fill-super, with
+`MNT_UPDATE` splitting off to `->reconfigure`. Claiming the reviewability
+property `hammer2_ondisk.c` has would be false here at four times the
+size.
 

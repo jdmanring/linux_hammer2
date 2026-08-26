@@ -150,4 +150,15 @@
  */
 enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 
+/*
+ * The BSD sync waitfor argument.  All three BSD ports pass MNT_WAIT or
+ * MNT_NOWAIT down from VFS_SYNC(9), and the carried sync path spells it
+ * that way.  Linux's ->sync_fs(sb, int wait) is the same distinction with
+ * the same two values, so these are chosen to BE that argument rather
+ * than to be translated at the boundary: MNT_WAIT is what the VFS passes
+ * as wait=1.  Nothing on disk and nothing outside this module sees them.
+ */
+#define MNT_WAIT	1	/* Linux */
+#define MNT_NOWAIT	0	/* Linux */
+
 #endif /* !_FS_HAMMER2_COMPAT_H_ */

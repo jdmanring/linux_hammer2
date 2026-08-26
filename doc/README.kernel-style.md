@@ -105,6 +105,22 @@ adds, and the twenty-sixth is one `__inline`. No category is new. One hit was fi
 the same one as at 782: a trailing `*/` on a comment this port wrote,
 which the BSD-style exception does not cover.
 
+882 to 894 when `hammer2_vfsops.c` landed: 417 lines for 12 hits, one per
+35. The ratio is not comparable with the rows above it: most of those
+twelve are the fixed cost of a file's head, and this file is a third
+written. Eleven of the twelve are the SPDX pair and the BSD idioms a new carried
+file always adds: the SPDX pair, two `return (x);`, three unnamed
+prototype arguments, two start-of-line spaces, and two assignments in an
+`if` condition, both of the last inside `hammer2_pfsalloc()` as upstream
+wrote it. The twelfth is `return of an errno should typically be
+negative`, at one.
+
+The errno hit is the recorded port decision reaching a new call site
+rather than a new kind of finding, the same call as at 782: errnos are
+positive inside the module and the VFS boundary negates, so
+`hammer2_ipdep_init()` returns `ENOMEM` and not `-ENOMEM`. Nothing in
+this move was fixed rather than baselined, and no category is new.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not
