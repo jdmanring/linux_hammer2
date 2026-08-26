@@ -26,7 +26,7 @@ the line and `XXX` if it is a compromise rather than a translation.
 
 The two-file shim split is Kusumi's, from the FreeBSD and NetBSD ports, and
 it is followed here rather than invented: `hammer2_compat.h` holds things
-that LOOK like DragonFly kernel facilities and are implemented on Linux
+that look like DragonFly kernel facilities and are implemented on Linux
 primitives, `hammer2_os.h` holds the primitives themselves. Section order
 inside `hammer2_os.h` follows the other ports exactly, so the three read
 side by side.
@@ -35,7 +35,7 @@ side by side.
 
 `src/sys/sys/queue.h` and `tree.h` are BSD's, and the kernel has its own
 macros with the same names. Any collision is latent rather than loud:
-`hammer2_io.c` includes four kernel headers AFTER the vendored ones, so a
+`hammer2_io.c` includes four kernel headers after the vendored ones, so a
 BSD definition is live for the rest of the translation unit and the break
 appears somewhere unrelated to either file.
 
@@ -55,7 +55,7 @@ Three objects matter and only one of them is ours.
 `hammer2_chain` is the core's, unchanged, and its lifetime is DragonFly's.
 
 `hammer2_io` is the boundary object. It wraps one 64 KiB physical buffer and
-is the ONLY place the filesystem meets Linux memory. See `doc/IO_MODEL.md`
+is the only place the filesystem meets Linux memory. See `doc/IO_MODEL.md`
 for its lifetime, which is where the port's real design decisions are.
 
 `hammer2_dev` holds the per-mount state, including the device `struct file`

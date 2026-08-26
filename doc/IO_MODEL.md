@@ -15,7 +15,7 @@ output in the store" until 2026-08-26 and closed by telling the reader to
 re-read rather than cite it. Nobody did, and both halves were wrong.
 Measured that day: no such output is realized, in the store or anywhere on
 this machine; and the nix fallback it names fires only when
-`/lib/modules/$(uname -r)/build` is ABSENT, which it is not, so that path
+`/lib/modules/$(uname -r)/build` is absent, which it is not, so that path
 had never once been taken. The gate was compiling against 7.1.9 while this
 line named the kernel it was supposed to be. It now refuses any tree that
 is not the kernel of record rather than reporting a pass.
@@ -79,7 +79,7 @@ sites. It is not two, and the split does not fall where a grep for
 `TRANSPARENT_HUGEPAGE` suggests: most of the 64 KiB in this tree is the
 on-disk format and has nothing to do with folios.
 
-PERMANENT, because it is DragonFly's on-disk format. Changing any of these
+Permanent, being DragonFly's on-disk format. Changing any of these
 changes the filesystem, not the port.
 
 | site | what |
@@ -92,7 +92,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
 | `hammer2.h:515` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
-BOOTSTRAP, because it is this port's page-cache strategy and a different
+Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.
 
 | site | what |
@@ -124,7 +124,7 @@ expressions will not.
 `BLK_MAX_BLOCK_SIZE` is `SZ_64K` inside `#ifdef CONFIG_TRANSPARENT_HUGEPAGE`
 and `PAGE_SIZE` otherwise, in `include/linux/blkdev.h`. Cited by the
 expression and not by a line: this is the one citation in these documents
-that points OUTSIDE the tree, so `script/test-citations.sh` cannot check
+that points outside the tree, so `script/test-citations.sh` cannot check
 it and a number here would be precision no instrument backs. It read
 `:286` and `:288` in the 7.1.9 headers on this workstation on 2026-08-26,
 and a sibling repository's citation of `:287 at v7.2` matched no tag at
@@ -143,7 +143,7 @@ the kernel of record:
 
 `mapping_max_folio_size_supported()` in `include/linux/pagemap.h` returns
 `1U << (PAGE_SHIFT + MAX_PAGECACHE_ORDER)` under THP and `PAGE_SIZE`
-otherwise. Its own comment says the filesystem SHOULD call it at mount time
+otherwise. Its own comment says the filesystem should call it at mount time
 when it has a folio-size requirement, which is exactly our case.
 
 Two ceilings exist and they are not the same number, which is the part worth
@@ -156,7 +156,7 @@ knowing before writing the mount path:
   4 KiB pages it is larger than 64 KiB.
 
 For `sb_set_blocksize` the policy cap is the binding one, so the existing
-static assert names the right constant. The RUNTIME refusal that section 6
+static assert names the right constant. The runtime refusal that section 6
 asks for should consult the capability helper as its comment instructs, and
 say the name. Neither is written yet: `sb_set_blocksize` appears in this
 tree only inside a comment, because there is no mount path.
@@ -168,8 +168,8 @@ than inferring it. They are the right call sites when the mount path lands.
 
 ### The narrower design, and its cost
 
-Decoupling is possible and is not free. The 64 KiB buffer is the format; ONE
-FOLIO is not. A port that set the block size to `PAGE_SIZE` and assembled
+Decoupling is possible and is not free. The 64 KiB buffer is the format; one
+folio is not. A port that set the block size to `PAGE_SIZE` and assembled
 each buffer from sixteen folios would run without THP. It would then owe
 `hammer2_io_data()` a contiguous mapping, and the options are all worse than
 the current one:
