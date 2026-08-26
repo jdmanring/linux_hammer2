@@ -145,6 +145,19 @@ Everything else runs there, including the vectors contract's behavioural
 half, which had been declining for want of an xxHash to link until
 `libxxhash-dev` was added to the runner on 2026-08-26.
 
+**An absent tool must decline, never pass.** A probe whose success is
+cheap to satisfy trivially - an absent binary above all - reports a clean
+run having examined nothing, and the summary looks identical either way.
+Measured 2026-08-26 by naming a compiler that does not exist:
+`test-shim.sh`, `test-syntax.sh` and `test-vectors-contract.sh` each exit
+2 and name what was missing, and the vectors gate says which half it still
+completed. The absent-`perl` path in `test-checkpatch.sh` is NOT verified:
+the obvious probe, emptying `PATH`, breaks the shell before the gate runs
+and so measures nothing, and perl cannot be hidden by directory on this
+machine because it shares one with everything else the gate needs. Listed
+as unverified rather than assumed, which is the difference between the two
+readings a green run supports.
+
 Exit 2 from any of the seven means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
