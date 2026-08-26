@@ -80,7 +80,14 @@ src_check "xxh64: -DXXH_VECTORS_CONTROL hook present" "$XXH" '#ifdef XXH_VECTORS
 #    consistency rule.
 src_check "xxh64: constants uppercase" "$XXH" '0xEF46DB3751D8E999ULL'
 src_check "xxh64: HAMMER2 seed uppercase" "$XXH" '0x4D617474446C6C6EULL'
-# 3. The wording the consumer greps, in the order it greps it.
+# 3. The wording the consumer greps, in the order it greps it. One printf in
+#    the xxh64 file emits both strings, so one pattern anchored on it freezes
+#    the pair: the consumer counts lines opening with `XXH64` against lines
+#    carrying `want` and refuses to run when they disagree or fall below its
+#    floor. Renaming either would make the consumer go red for a change made
+#    here, in the tree that did not make it, which is the reading this gate
+#    exists to prevent.
+src_check "xxh64: a printf opens with XXH64 and carries 'want'" "$XXH" 'printf("XXH64(.*want'
 src_check "crc32c: a printf writes 'Castagnoli' then 'MATCH'" "$CRC" 'printf(.*Castagnoli.*MATCH'
 
 # Negative control, run every time. Lowercase the constant on a copy and
@@ -97,6 +104,20 @@ if matches "$tmp/lowered.c" '0xEF46DB3751D8E999ULL'; then
 	fail=$((fail + 1))
 else
 	echo "  ok    negative control (a lowercased copy fails)"
+fi
+
+# Second negative control, for the wording checks. These files describe their
+# own contract in comments, so a pattern can match the prose after the code
+# emitting it is gone; that happened to the crc32c check while this gate was
+# being written. Strip the printf from a copy and require the check to fail.
+ran=$((ran + 1))
+command grep -v 'printf("XXH64(' "$XXH" > "$tmp/nowording.c" || exit 2
+if matches "$tmp/nowording.c" 'printf("XXH64(.*want'; then
+	echo "  FAIL  negative control: a copy with the printf removed still"
+	echo "        matched, so the wording check is reading a comment"
+	fail=$((fail + 1))
+else
+	echo "  ok    negative control (the wording check reads the printf)"
 fi
 
 # The behavioural half. The exit status is the other half of the contract
@@ -122,10 +143,25 @@ if ! "$CC" -o "$tmp/probe" "$XXH" -lxxhash >/dev/null 2>&1; then
 fi
 
 ran=$((ran + 1))
-if "$tmp/probe" >/dev/null 2>&1; then
+if probe_out=$("$tmp/probe" 2>/dev/null); then
 	echo "  ok    exit status 0 on correct vectors, under $("$CC" --version | head -1)"
 else
 	echo "  FAIL  the vectors do not pass against the system xxHash"
+	fail=$((fail + 1))
+	probe_out=""
+fi
+
+# The wording read out of the program's own output, not only out of its
+# source. The consumer reads stdout, so stdout is the surface the contract is
+# actually on; a source check would still pass if the printf were reached
+# under a condition that never holds.
+ran=$((ran + 1))
+if printf '%s\n' "$probe_out" | command grep -q '^XXH64' &&
+   printf '%s\n' "$probe_out" | command grep -q 'want'; then
+	echo "  ok    the output opens lines with XXH64 and carries 'want'"
+else
+	echo "  FAIL  the output no longer carries both strings the consumer"
+	echo "        counts, so its two counts would disagree or read zero"
 	fail=$((fail + 1))
 fi
 ran=$((ran + 1))

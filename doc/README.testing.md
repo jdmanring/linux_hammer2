@@ -269,10 +269,15 @@ recorded as a failure.
 `test-vectors-contract.sh` belongs to neither group. It
 asserts that this repository still keeps the promises the next section
 describes: the `-DXXH_VECTORS_CONTROL` hook, the uppercase hex constants,
-and the `printf` that writes `Castagnoli ... MATCH`. Where an xxHash is
+the `printf` that writes `Castagnoli ... MATCH`, and the `printf` that
+opens a line with `XXH64` and carries `want`. Where an xxHash is
 available to link against it also runs the vectors and requires exit 0,
 then compiles with the control define and requires nonzero, because a
-status only ever observed as 0 is not tested. It carries a negative
+status only ever observed as 0 is not tested. That run is also where the
+wording is read out of the program's own output rather than only out of
+its source, since stdout is the surface the consumer reads: a `printf`
+left in the file but reached under a condition that never holds passes
+every source check and prints nothing. It carries a negative
 control that runs every time: a lowercased copy of the file must fail the
 comparison, since a case-sensitive check and a case-insensitive one look
 identical while both are passing, and only the case-sensitive one catches
@@ -301,6 +306,9 @@ check comes with the run that showed it failing, added here.
 | 2026-08-26 | `xxh64: constants uppercase` | the constant lowercased |
 | 2026-08-26 | `xxh64: HAMMER2 seed uppercase` | that constant lowercased separately, because sharing a code path with something falsified is not being falsified |
 | 2026-08-26 | `crc32c: a printf writes 'Castagnoli' then 'MATCH'` | the `printf` reworded, comment left in place |
+| 2026-08-26 | `xxh64: a printf opens with XXH64 and carries 'want'` | the prefix renamed to `XXHASH64` in the source |
+| 2026-08-26 | the wording negative control | the `printf` line stripped from a copy, which must stop the pattern matching |
+| 2026-08-26 | `the output opens lines with XXH64 and carries 'want'` | the `printf` guarded by `if (0)`, so the source check passes and stdout is empty. Falsified separately from the source check for that reason: under a rename the gate exits on the source failure and never reaches this one |
 | 2026-08-26 | the vectors negative control | the shared `matches()` made case-insensitive |
 | 2026-08-26 | `an overridden run says so in its summary` | the override warning deleted, and again partially |
 | 2026-08-26 | `a UAPI-shaped tree claiming 7.2 is COULD-NOT-RUN` | a `version.h` fallback added, the improvement a later maintainer plausibly writes |
@@ -344,9 +352,10 @@ port's vendored `xxhash` and its `icrc32.c`, reaching this tree through
 repository only, which is the whole of the mistake: a consumer one
 directory over answers a question no local grep can.
 
-**What that makes them.** The exit status of each, the wording of the
-`Castagnoli ... MATCH` line, and the uppercase hex of the xxh64 constants
-are an INTERFACE with a consumer that cannot be seen from here. The
+**What that makes them.** Four things are an interface with a consumer that
+cannot be seen from here: the exit status of each file, the wording of the
+`Castagnoli ... MATCH` line, the `XXH64` prefix and `want` that the consumer
+counts its vectors by, and the uppercase hex of the xxh64 constants. The
 rewrite that fixed their logic lowercased one constant, ArtNix's negative
 control seds on that literal, and its gate spent an hour reporting
 correctly that it was comparing nothing. `-DXXH_VECTORS_CONTROL` exists so
