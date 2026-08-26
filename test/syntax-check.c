@@ -5,6 +5,8 @@
  * cannot. Every static inline is referenced below, because an unused
  * static inline in a header is not fully checked by every compiler and a
  * gate that skips half the file reads the same as one that passes.
+ * script/test-shim.sh counts that rather than trusting this sentence,
+ * which was wrong about nine of forty-three inlines until 2026-08-26.
  */
 
 #include "../src/sys/fs/hammer2/hammer2_os.h"
@@ -21,6 +23,7 @@ hammer2_syntax_check_all(void)
 	hammer2_lkc_t lkc;
 	hammer2_mtx_t mtx;
 	hammer2_spin_t spin;
+	uma_zone_t zone;
 	void *p;
 	int x;
 
@@ -86,6 +89,25 @@ hammer2_syntax_check_all(void)
 	 */
 	if (0)
 		hpanic("boom %d", 1);
+	/*
+	 * The zone allocator, the sleeps and the leak counter. These were
+	 * unreferenced until 2026-08-26 while both this file and
+	 * script/test-shim.sh said every inline was referenced here, so
+	 * nine of the shim's forty-three went through the gate untouched.
+	 * The gate now counts, rather than the comment claiming.
+	 */
+	zone = uma_zcreate("z", 64);
+	p = uma_zalloc(zone, M_WAITOK);
+	uma_zfree(zone, p);
+	uma_zdestroy(zone);
+	(void)hammer2_gfp(M_WAITOK | M_ZERO);
+	adjust_malloc_leak(64, NULL);
+	adjust_malloc_leak(-64, NULL);
+	hammer2_mtx_init_recurse(&mtx, "mtxr");
+	hammer2_mtx_destroy(&mtx);
+	pause("p", 1);
+	(void)tsleep(&x, 0, "s", 1);
+
 	/*
 	 * The device flush pair, whose arguments the stubs declare rather
 	 * than the shim: a null file is never dereferenced here, only

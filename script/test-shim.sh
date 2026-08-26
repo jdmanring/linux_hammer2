@@ -5,7 +5,10 @@
 # balance, and every static inline they define is internally consistent.
 # Every inline is referenced from test/syntax-check.c, because an unused
 # static inline in a header is not fully checked by every compiler and a
-# gate that skips half the file reads the same as one that passes.
+# gate that skips half the file reads the same as one that passes. That
+# sentence was prose in three places and enforced in none until
+# 2026-08-26, when nine of forty-three turned out to be unreferenced; it
+# is a check below now.
 #
 # Cannot prove: that any kernel function is called correctly, or that the
 # header compiles against a real kernel. It runs against test/stub, and a
@@ -76,6 +79,32 @@ if exp=$($CC -E -std=gnu11 -DKBUILD_MODNAME='"hammer2"' -I test/stub \
 else
 	echo "  FAIL  the preprocessor produced no expansion to read"
 	fail=$((fail + 1))
+fi
+
+# The coverage the header comment claims. An inline nothing calls is parsed
+# and not much else, so the compile above says nothing about it, and the
+# omission is invisible: the gate goes green either way. Assert the
+# population first, because an awk that matches nothing reports every inline
+# covered.
+inlines=$(awk '/^static inline/{f=1;next} f&&/^[A-Za-z_]/{sub(/\(.*/,"");print;f=0}' \
+	src/sys/fs/hammer2/hammer2_os.h src/sys/fs/hammer2/hammer2_compat.h | sort -u)
+ran=$((ran + 1))
+if [ -z "$inlines" ]; then
+	echo "  FAIL  found no static inlines in the shim at all, so the"
+	echo "        coverage check below would pass over an empty set"
+	fail=$((fail + 1))
+else
+	missing=""
+	for n in $inlines; do
+		command grep -q "\b$n\b" test/syntax-check.c || missing="$missing $n"
+	done
+	if [ -z "$missing" ]; then
+		echo "  ok    all $(printf '%s\n' "$inlines" | wc -l | tr -d ' ') shim inlines are referenced by the driver"
+	else
+		echo "  FAIL  shim inlines never referenced by test/syntax-check.c,"
+		echo "        so the compile above did not check them:$missing"
+		fail=$((fail + 1))
+	fi
 fi
 
 # Negative control. A syntax gate whose healthy signature is silence
