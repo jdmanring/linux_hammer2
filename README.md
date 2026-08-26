@@ -55,7 +55,10 @@ than about a shared bug.
 
 ## Requirements
 
-+ Linux 6.15 or newer, and developed against 7.2
++ Linux 6.15 or newer. That is the floor the code requires, enforced by an
+  `#error`. The kernel it is DEVELOPED against is the latest release, and
+  `script/test-syntax.sh` refuses to report a pass against anything else;
+  the pin is `KERNEL_REF` in that script and moves when a release ships
 
 + kernel headers for the running kernel
 

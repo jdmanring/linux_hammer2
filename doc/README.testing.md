@@ -32,6 +32,10 @@ the `LIST_HEAD` and `RB_ROOT` redefinitions, which is what made those
 credible rather than stylistic. A warning in a file under `src/` fails the
 gate; one in a kernel header does not, since we do not own those and
 cannot fix them. gcc is optional and the gate says so when it is absent.
+It also refuses a kernel that is not the one of record: this tree compiles
+against the latest Linux, the pin is `KERNEL_REF` in the script, and a
+tree of any other version is COULD-NOT-RUN. `H2_KERNEL_REF` checks another
+version deliberately, which is the only way that reads as a pass.
 It carries two more controls: a wrong folio call that the
 same headers must refuse, and the 64KB ceiling guard, which must fire when
 the ceiling is shrunk. Set `KDIR` to test against a tree other than the

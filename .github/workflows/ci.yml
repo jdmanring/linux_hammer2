@@ -60,6 +60,15 @@ jobs:
           sudo apt-get install -y "linux-headers-$(uname -r)" || \
             echo "no headers for $(uname -r)"
 
+      # THIS STEP NOW ALWAYS REPORTS COULD-NOT-RUN ON A HOSTED RUNNER, and
+      # that is the honest reading rather than a regression. The gate
+      # compiles against the kernel of record, which is the latest release,
+      # and ubuntu-latest ships headers years behind it. Before 2026-08-26
+      # the gate accepted whatever headers were present and printed a pass,
+      # so CI's green said "it compiles against something". If this step is
+      # to mean anything again it needs a runner with the kernel of record's
+      # headers, which is a decision about infrastructure and not about this
+      # file.
       - name: Syntax (real kernel headers)
         run: |
           sudo apt-get install -y clang

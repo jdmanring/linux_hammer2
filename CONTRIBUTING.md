@@ -58,9 +58,12 @@ cover `src/` are complete, that every `file:line` citation in `doc/`
 resolves to the line it names, and that every roadmap row's commit hash
 resolves with a matching subject.
 
-The last three need a toolchain. `test-syntax.sh` wants kernel headers
-6.15 or newer, which is the module's own floor; set `KDIR` to build
-against a tree other than the running kernel's. `test-checkpatch.sh`
+The last three need a toolchain. `test-syntax.sh` wants the kernel of
+record, which is the latest release and is pinned as `KERNEL_REF` in that
+script; anything else is COULD-NOT-RUN rather than a pass, because a
+result from the wrong kernel is not a result about this code. 6.15 is the
+module's floor and a separate claim. Set `KDIR` to point at another tree,
+and `H2_KERNEL_REF` to check another version deliberately. `test-checkpatch.sh`
 needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
 
 All six exit 2 when the instrument itself could not run, which is not a

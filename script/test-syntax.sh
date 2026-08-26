@@ -26,6 +26,51 @@ fi
 S=$(dirname "$K")/source
 [ -d "$S" ] || S=$K
 
+# THE KERNEL OF RECORD IS THE LATEST RELEASE, AND NOTHING COMPARED IT.
+# This tree compiles against the newest Linux, and the pin below is bumped
+# when one ships rather than left to age; 6.15 in hammer2_os.h is the FLOOR
+# the code requires and is a different claim from this one.
+# This gate has always printed the kernel it used in its header line, and
+# every document said the port is developed against 7.2, and nothing put
+# those two strings next to each other. On this workstation the newest tree
+# is 7.1.9 - there is no 7.2 in /lib/modules, /usr/src or the store - so
+# every green run here was measured against a kernel that is not the one of
+# record, and read as though it were. The header line was not hiding it.
+# Nobody reads a header line for a verdict; they read "0 failed".
+#
+# So a tree that is not the kernel of record is COULD-NOT-RUN, the same
+# status test-checkpatch.sh gives a checkpatch.pl that is not the baseline's
+# version, and for the same reason: a result produced by the wrong
+# instrument cannot be attributed to the code. Set H2_KERNEL_REF to compile
+# against another version deliberately - it must be typed, so a wrong tree
+# can never be mistaken for a pass.
+#
+# BUMPING THIS IS THE WHOLE MAINTENANCE BURDEN AND IT IS ONE LINE: when a
+# new Linux ships, install its headers, raise KERNEL_REF, run this gate.
+# A pin that is not bumped stops the gate rather than quietly aging, which
+# is the direction that gets noticed.
+KERNEL_REF=7.2
+kver=""
+if [ -f "$K/Makefile" ]; then
+	v=$(sed -n 's/^VERSION *= *//p' "$K/Makefile" | head -1)
+	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$K/Makefile" | head -1)
+	[ -n "$v" ] && [ -n "$pl" ] && kver="$v.$pl"
+fi
+want=${H2_KERNEL_REF:-$KERNEL_REF}
+if [ -z "$kver" ]; then
+	echo "syntax: COULD-NOT-RUN: no VERSION/PATCHLEVEL in $K/Makefile, so" >&2
+	echo "  the kernel of record ($want) cannot be confirmed" >&2
+	exit 2
+fi
+if [ "$kver" != "$want" ]; then
+	echo "syntax: COULD-NOT-RUN: this tree is linux $kver and the kernel of" >&2
+	echo "  record is $want. A pass here would be a claim about the wrong" >&2
+	echo "  kernel. Point KDIR at a $want tree, or set H2_KERNEL_REF=$kver" >&2
+	echo "  to check that version deliberately." >&2
+	echo "  $K" >&2
+	exit 2
+fi
+
 # TWO COMPILERS, because they disagree about what is worth saying and a
 # single one is a single opinion. Both found the LIST_HEAD and RB_ROOT
 # collisions independently, which is what made those credible rather than

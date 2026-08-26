@@ -86,9 +86,30 @@ was dated by reading the header at the tag rather than from memory:
 | `folio_mark_dirty_lock` | v6.12 | v6.13 |
 | `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
 
-Nothing between 6.15 and 7.2 has been compiled against; the gates run on
-7.2. So 6.15 is the floor the code requires, not a floor that has been
-exercised, and a report from anything older than 7.2 is useful.
+6.15 is the floor the code requires and not a floor that has been
+exercised. The kernel of record is a different claim: this tree compiles
+against the LATEST Linux, the pin lives in `script/test-syntax.sh` as
+`KERNEL_REF`, and it is bumped when a release ships.
+
+Until 2026-08-26 this file said "the gates run on 7.2" and nothing checked
+it. They did not. The newest kernel tree on the development workstation is
+7.1.9, there is no 7.2 in `/lib/modules`, `/usr/src` or the store, and the
+gate has always printed the kernel it used in its header line while nobody
+compared that string to the rule - a verdict is read off "0 failed", not
+off a header. The gate now refuses a tree that is not the kernel of
+record, with COULD-NOT-RUN rather than a pass.
+
+What has actually been compiled, measured rather than assumed, on
+2026-08-26 under the deliberate `H2_KERNEL_REF` override:
+
+| kernel tree | result |
+|---|---|
+| 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers |
+| 6.18.46-1-lts | 7 checks, 0 failed, both compilers |
+| 7.2 | not on this machine; the gate reports COULD-NOT-RUN until it is |
+
+So the current state is that the port is UNVERIFIED against its own kernel
+of record, and says so out loud instead of printing green.
 
 ## What is not here
 
