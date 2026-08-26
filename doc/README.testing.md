@@ -54,7 +54,13 @@ the ceiling is shrunk. Set `KDIR` to test against a tree other than the
 running kernel's.
 
 `test-checkpatch.sh` is the odd one: it does not ask for silence, it asks
-that the recorded deviation set has not grown. See
+that the recorded deviation set has not grown. It identifies its checker by
+`sha256` against the baseline's second line, and prints where every value
+came from, because an ASSERTED version and a DERIVED one used to render
+identically: pointed at the v6.15 checker with `CHECKPATCH_REF=v7.2`, it
+reported a real style regression, the assertion having laundered a wrong
+checker into a verdict about this code. A content mismatch is
+COULD-NOT-RUN now whatever names the checker carries. See
 [README.kernel-style.md](README.kernel-style.md) for why this tree is BSD
 style on purpose and what that means for mainline. Both of its sorts are
 `LC_ALL=C`, because the baseline is compared byte for byte and glibc

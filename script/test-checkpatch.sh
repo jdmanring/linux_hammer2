@@ -63,8 +63,30 @@ command -v perl >/dev/null 2>&1 || { echo "checkpatch: COULD-NOT-RUN: no perl"; 
 # tell whether the gate measured it or was told, and every run of this gate
 # on this workstation was told, because the pinned copy lives outside a
 # kernel tree. So the origin is printed beside the version.
+# THE STRONGEST IDENTITY IS THE ONE THE FILE ANSWERS FOR ITSELF. A version
+# taken from the tree the checker was cut from does not survive the checker
+# being copied out of that tree, which is the condition that created the
+# problem here: the pinned copy lives outside a kernel tree, so every run
+# fell back to an ASSERTION and the gate printed agreement with itself. A
+# content hash cannot be asserted wrong and travels with the file.
+#
+# checkpatch.pl's own `my $V = '0.32'` is not a discriminator: it reads
+# 0.32 in v6.15, v7.2 and this workstation's 7.1 copy alike. A version
+# field that never changes reads like an instrument and is not one.
+base=doc/checkpatch-baseline.txt
+cpsha=$(sha256sum "$CP" 2>/dev/null | cut -d' ' -f1)
+basesha=$(sed -n 's/^# sha256 //p' "$base" 2>/dev/null | head -1)
 cpver=${CHECKPATCH_REF:-}
-if [ -n "$cpver" ]; then versrc="asserted via CHECKPATCH_REF"; else versrc="derived from the checker's own tree"; fi
+if [ -n "$cpsha" ] && [ -n "$basesha" ] && [ "$cpsha" = "$basesha" ]; then
+	# The file IS the one the baseline was produced with. Nothing a
+	# Makefile or an environment variable says can improve on that.
+	cpver=$(sed -n '1s/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$base")
+	versrc="derived from the checker's own content, sha256 matches the baseline"
+elif [ -n "$cpver" ]; then
+	versrc="asserted via CHECKPATCH_REF; the checker's sha256 does NOT match the baseline's"
+else
+	versrc="derived from the checker's own tree; the checker's sha256 does not match the baseline's"
+fi
 if [ -z "$cpver" ]; then
 	mk=$(dirname "$CP")/../Makefile
 	if [ -f "$mk" ]; then
@@ -80,7 +102,6 @@ got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 	sed "s/'[^']*'/'X'/g" |
 	LC_ALL=C sort | uniq -c | awk '{$1=$1; print}' | LC_ALL=C sort -k2)
 
-base=doc/checkpatch-baseline.txt
 # AN ABSENT BASELINE IS COULD-NOT-RUN, NOT A LICENCE TO WRITE ONE. Until
 # 2026-08-25 this line wrote the baseline from whatever the tree happened to
 # produce and exited 0, so a run against a tree whose baseline had been
@@ -128,6 +149,11 @@ if diff -u <(grep -v '^#' "$base") <(printf '%s\n' "$got"); then
 	echo "checkpatch: deviation set unchanged ($(printf '%s\n' "$got" | awk '{s+=$1} END{print s+0}') hits, baseline: ${ref:-version unrecorded})"
 	echo "checkpatch: checker from $cpsrc, version ${cpver:-unestablished} $versrc"
 else
+	# PROVENANCE PRINTS ON THIS BRANCH TOO. It only printed on the
+	# passing path until 2026-08-26, which is the branch where nobody
+	# needs it: on a diff the reader has to decide whether to blame the
+	# code, and that decision IS the provenance question.
+	echo "checkpatch: checker from $cpsrc, version ${cpver:-unestablished} $versrc"
 	echo "checkpatch: the deviation set MOVED against ${ref:-an unrecorded version}."
 	echo "            Check your checkpatch.pl is that version FIRST: a"
 	echo "            different one moves the counts on unchanged code."
@@ -138,6 +164,21 @@ else
 	# unchanged set is unchanged whatever produced it, so this never turns
 	# a green into COULD-NOT-RUN; but a set that MOVED cannot be blamed on
 	# the code unless the checker is known to be the baseline's.
+	# AN ASSERTION IS NOT EVIDENCE, and on a diff that distinction decides
+	# the exit code. A checker whose content does not match the baseline's
+	# recorded sha256, carrying a CHECKPATCH_REF that names the right
+	# version anyway, was reported as a real style regression: the
+	# assertion laundered a wrong checker into a verdict about this code.
+	# Measured 2026-08-26 by pointing the gate at the v6.15 copy with
+	# CHECKPATCH_REF=v7.2, which exited 1.
+	if [ -n "$basesha" ] && [ -n "$cpsha" ] && [ "$cpsha" != "$basesha" ]; then
+		echo "            The checker's sha256 does not match the one the" >&2
+		echo "            baseline records, so whatever names it carries," >&2
+		echo "            this is not the checker that produced the" >&2
+		echo "            baseline and the diff is not attributable to" >&2
+		echo "            the code." >&2
+		exit 2
+	fi
 	if [ -z "$cpver" ] || [ -z "$refver" ]; then
 		echo "            The checker version could not be established" >&2
 		echo "            (checkpatch ${cpver:-unknown}, baseline ${refver:-unrecorded})," >&2
