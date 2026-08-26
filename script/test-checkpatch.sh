@@ -45,7 +45,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	trap 'rm -rf "$t"' EXIT
 	cp "$cp0" "$t/cp.pl" || exit 2
 	printf '# selftest: content changed, behaviour identical\n' >> "$t/cp.pl"
-	out=$(CHECKPATCH="$t/cp.pl" CHECKPATCH_REF=v7.2 sh "$0" 2>&1)
+	out=$(CHECKPATCH="$t/cp.pl" CHECKPATCH_REF=v7.2 bash "$0" 2>&1)
 	if printf '%s' "$out" | command grep -q 'sha256 does NOT match'; then
 		echo "  ok    a checker whose content differs is named as such"
 		echo "selftest: 1 check(s), 0 failed"

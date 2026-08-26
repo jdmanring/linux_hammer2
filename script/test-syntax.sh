@@ -36,7 +36,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	# a rule about matching wrapped prose did not fire while writing a
 	# matcher for wrapped prose.
 	flat() { printf '%s' "$1" | tr '\n' ' ' | tr -s ' '; }
-	out=$(H2_KERNEL_REF="$lv.$lp" sh "$0" 2>&1)
+	out=$(H2_KERNEL_REF="$lv.$lp" bash "$0" 2>&1)
 	if flat "$out" | command grep -q 'NOT THE KERNEL OF RECORD'; then
 		echo "  ok    an overridden run says so in its summary"
 	else
@@ -51,13 +51,31 @@ if [ "${1:-}" = "--selftest" ]; then
 	# and really must not carry the warning. The label was stale within
 	# minutes of the tree landing, which is what a claim about the current
 	# state costs.
-	out2=$(sh "$0" 2>&1)
+	out2=$(bash "$0" 2>&1)
 	if flat "$out2" | command grep -q 'NOT THE KERNEL OF RECORD'; then
 		echo "  FAIL  an unoverridden run carried the override warning"
 		exit 1
 	fi
-	if [ -n "$(sh "$0" 2>&1 | command grep -c 'check(s)')" ]; then
-		echo "  ok    an unoverridden run does not carry it"
+	# THIS RAN A THIRD TIME AND ASSERTED NOTHING until 2026-08-26: it
+	# tested `[ -n "$(... | grep -c ...)" ]`, and grep -c always prints a
+	# number, so the condition was true whatever the gate did. The run
+	# above already holds the reading; requiring it to have COMPILED is
+	# what makes this direction meaningful rather than trivially satisfied
+	# by a COULD-NOT-RUN.
+	if flat "$out2" | command grep -q 'check(s), .* failed against the kernel of record'; then
+		echo "  ok    an unoverridden run compiles and does not carry it"
+	elif flat "$out2" | command grep -q 'COULD-NOT-RUN'; then
+		# NOT A FAILURE AND NOT A PASS. On a machine without the kernel of
+		# record - every hosted runner - this direction cannot be
+		# exercised, and failing it there would turn an environment
+		# difference into a red gate. Named rather than counted, the way
+		# the gate names an absent second compiler.
+		echo "  note  an unoverridden run is COULD-NOT-RUN here, so this"
+		echo "        direction was NOT exercised"
+	else
+		echo "  FAIL  an unoverridden run neither compiled nor declined:"
+		printf '%s\n' "$out2" | tail -2 | sed 's/^/        /'
+		exit 1
 	fi
 
 	# A GUARD NOBODY DESIGNED IS A GUARD NOBODY MAINTAINS. This gate reads
@@ -74,7 +92,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	mkdir -p "$fake/include/linux"
 	printf '#define LINUX_VERSION_MAJOR 7\n#define LINUX_VERSION_PATCHLEVEL 2\n' \
 		> "$fake/include/linux/version.h"
-	out3=$(KDIR="$fake" sh "$0" 2>&1); rc3=$?
+	out3=$(KDIR="$fake" bash "$0" 2>&1); rc3=$?
 	rm -rf "$fake"
 	if [ "$rc3" = 2 ] && flat "$out3" | command grep -q 'COULD-NOT-RUN'; then
 		echo "  ok    a UAPI-shaped tree claiming 7.2 is COULD-NOT-RUN, not a pass"

@@ -95,7 +95,16 @@ neither was read by anything, which is that same defect arriving inside its
 own repair. The syntax selftest failed on its first run because the warning
 WRAPS and the matcher read one line at a time - a rule about matching
 wrapped prose not firing while writing a matcher for wrapped prose. CI runs both, and derives which gates have a `--selftest` rather than
-naming them.
+naming them. They re-invoke their own gate with `bash`, never `sh`: the
+first version used `sh "$0"`, which works on a machine whose `/bin/sh` is
+bash and is a syntax error under dash, so it passed here and failed on the
+runner. That is the class of defect a local run cannot reach, and it is
+what CI is for.
+
+The syntax selftest's unoverridden direction is exercised only where the
+kernel of record is present. Elsewhere it prints a note saying it was not
+exercised, rather than failing: on a hosted runner that tree is absent, and
+failing there would turn an environment difference into a red gate.
 
 The syntax selftest's third check is a designed guard replacing an
 accidental one. The gate reads `VERSION`/`PATCHLEVEL` from a build tree's
