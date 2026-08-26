@@ -55,6 +55,23 @@ if [ "${1:-}" = "--selftest" ]; then
 	out=$(H2_CLONE_DIR=/nonexistent sh "$0" 2>&1); rc=$?
 	[ "$rc" = 2 ] && echo "  ok    selftest: COULD-NOT-RUN with no clone present" || {
 		echo "  FAIL  selftest: exited $rc with no clone, wanted 2"; sfail=$((sfail + 1)); }
+
+	# A clone at the WRONG COMMIT is the other way the cmp half stops
+	# meaning anything, and it is the likelier one: the clone is a working
+	# tree somebody pulls. It must read UNVER, never FAIL - a carry
+	# compared against a commit the row does not name is a question nobody
+	# asked, not a defect in this tree.
+	sed 's/,3df307f7db9d5106b857afeb877613fd12a19101,/,0000000deadbeef0000000000000000000000000,/' \
+		doc/provenance.csv > "$t/wrongc.csv"
+	out=$(H2_PROVENANCE_CSV="$t/wrongc.csv" sh "$0" 2>&1)
+	if printf '%s\n' "$out" | command grep -q 'not the 0000000... this row names'; then
+		echo "  ok    selftest: a clone at the wrong commit reads UNVER"
+	elif printf '%s\n' "$out" | command grep -q '^  UNVER'; then
+		echo "  ok    selftest: no clone here, so the wrong-commit branch is moot"
+	else
+		echo "  FAIL  selftest: a wrong-commit clone was treated as a carry"
+		sfail=$((sfail + 1))
+	fi
 	#
 	# THE LAST CHECK NEEDS AN ORIGIN CLONE AND SAYS SO WHEN IT HAS NONE.
 	# It swaps one row's filename so a row claiming a carry points at a
@@ -64,13 +81,13 @@ if [ "${1:-}" = "--selftest" ]; then
 	# as a whole. Passing here on the strength of the four checks that
 	# did run would be this gate's own COULD-NOT-RUN defect, one level
 	# up, in the instrument that exists to prove the gate works.
-	sfran=4
+	sfran=5
 	sed 's#^src/sys/fs/hammer2/hammer2_xops.c,#src/sys/fs/hammer2/hammer2_io.c,#' \
 		doc/provenance.csv > "$t/swap.csv"
 	out=$(H2_PROVENANCE_CSV="$t/swap.csv" sh "$0" 2>&1)
 	if printf '%s\n' "$out" | command grep -q 'says identical but differs'; then
 		echo "  ok    selftest: cmp catches a wrong identical claim"
-		sfran=5
+		sfran=6
 	elif printf '%s\n' "$out" | command grep -q '^  UNVER'; then
 		echo "selftest: $sfran check(s), $sfail failed; COULD-NOT-RUN: no"
 		echo "          origin clone here, so cmp was never exercised"
@@ -78,7 +95,7 @@ if [ "${1:-}" = "--selftest" ]; then
 		exit 2
 	else
 		echo "  FAIL  selftest: a wrong identical claim passed cmp"; sfail=$((sfail + 1))
-		sfran=5
+		sfran=6
 	fi
 	echo "selftest: $sfran check(s), $sfail failed"
 	[ "$sfail" = 0 ] || exit 1
@@ -141,6 +158,20 @@ printf '%s\n' "$rows" | while IFS=, read -r rf origin commit lic carry rest; do
 		echo "  UNVER $rf: no $origin clone at $CLONES, so identical is unverified"
 		continue
 	fi
+	# THE CLONE'S COMMIT IS CHECKED, NOT ASSUMED. cmp against a working
+	# tree at an unknown commit answers a different question from the one
+	# the row asks, and answers it confidently: one `git pull` in the
+	# clone and this either goes red for a reason that is not this
+	# repository's, or stays green having compared against a commit the
+	# CSV does not name. Neither is a finding about the carry, so a
+	# mismatch is UNVER and never FAIL.
+	if [ -n "$commit" ] && command -v git >/dev/null 2>&1; then
+		at=$(git -C "$CLONES/$origin" rev-parse HEAD 2>/dev/null) || at=""
+		if [ -n "$at" ] && [ "$at" != "$commit" ]; then
+			echo "  UNVER $rf: the $origin clone is at ${at%"${at#???????}"}..., not the ${commit%"${commit#???????}"}... this row names"
+			continue
+		fi
+	fi
 	if cmp -s "$rf" "$u"; then
 		echo "  ok    $rf identical to $origin"
 	else
@@ -169,7 +200,9 @@ echo "provenance: $ran check(s), $fail finding(s); $nident carry(s) re-verified 
 # is self-consistent", and calling that green would make this gate
 # strongest on the machine where it checked least - which is CI.
 if [ "$nident" = 0 ] && [ "$nunver" != 0 ]; then
-	echo "provenance: COULD-NOT-RUN: no origin clone under $CLONES, so no"
-	echo "            carry was re-verified and only the table was checked"
+	echo "provenance: COULD-NOT-RUN: no origin clone under $CLONES at the"
+	echo "            commit its row names, so no carry was re-verified and"
+	echo "            only the table was checked. The lines above say which"
+	echo "            of the two it was, per row."
 	exit 2
 fi

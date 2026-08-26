@@ -221,7 +221,7 @@ disagree, so there is no precedent to follow and Linux's answer is
 
 ### Logging
 
-Every line the module prints names the module, and a line the core builds
+Every line `hprintf` prints names the module, and a line the core builds
 out of several calls stays one line. Neither was true before 2026-08-26,
 and neither is visible in a compile, so `test-shim.sh` reads both out of
 the preprocessor's own output rather than taking a comment's word.
@@ -239,11 +239,31 @@ The second is `printf`, which on a BSD kernel appends to the open line;
 `hammer2_bulkfree.c` prints a range with `hprintf` and no newline and
 finishes it with `printf`. `pr_info` closes a record per call, so that
 mapping turned one line into two and dropped the second's prefix.
-`pr_cont` is Linux's name for the semantics the core is written against
-and is correct at both kinds of call site, where `pr_info` is correct at
-one. checkpatch flags it, deliberately and by name, and the deviation is
-recorded in `README.kernel-style.md` with the `DEFER` that names its
-upgrade.
+`pr_cont` is Linux's name for the semantics the core is written against.
+
+It is not free, and the cost is stated here rather than left for a reader
+to find in dmesg. `pr_cont` deliberately does not apply `pr_fmt`, so a
+`printf` that OPENS a line prints without the module name. Every plain
+`printf` in the carried core was classified by hand on 2026-08-26, all
+thirteen of them:
+
+| where | sites | kind | under `pr_cont` |
+|---|---|---|---|
+| `hammer2_bulkfree.c` | 7 | continuations of an `hprintf` that opened the line | correct, and one line |
+| `hammer2_chain.c`, in `hammer2_dump_chain` | 2 | continuations | correct, and one line |
+| `hammer2_chain.c`, in `hammer2_dump_chain` | 4 | line starts | correct line structure, no module name |
+
+So four lines in the tree print anonymously, all four inside one debug
+tree dumper, and no status or error path is among them. The alternative
+mapping reverses that trade: `pr_info` names those four and splits the
+other nine into eighteen lines, half of them unprefixed anyway. Neither
+macro can be right at both kinds of site, because the discriminator is
+whether the PREVIOUS call ended in a newline, which is a runtime fact.
+The `DEFER` in `hammer2_os.h` names the only mapping that is right at
+both: build the line in a buffer and emit it once, which is a core edit.
+
+checkpatch flags `pr_cont` deliberately and by name, and the deviation is
+recorded in `README.kernel-style.md`.
 
 ### `XXX` marks: how much of the core is not a carry
 

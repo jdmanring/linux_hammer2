@@ -3,8 +3,12 @@ Testing
 
 Sight gates run today, all cheap. Most fall into two groups, and the split
 matters when you are deciding which to run: the compile gates need a
-toolchain and a kernel tree, the repository gates need neither. The
-seventh, `test-vectors-contract.sh`, is neither and is described below.
+toolchain and a kernel tree, the repository gates need neither. Two belong
+to neither group and are described below, `test-vectors-contract.sh` and
+`test-posix.sh`. No count of them is written in this file: the lists below
+are the statement of record, and a number beside a list is a second claim
+about one population with nothing checking the two against each other,
+which this file has already recorded happening twice.
 
 Compile gates:
 
@@ -18,12 +22,27 @@ network:
     $ bash script/test-inventory.sh   # the three lists that claim to cover src/
     $ bash script/test-citations.sh   # every file:line citation in doc/
     $ bash script/test-history.sh     # every roadmap row's commit hash
+    $ bash script/test-provenance.sh  # every file under src/ has an origin row
 
 `test-shim.sh` compiles `hammer2_os.h` and `hammer2_compat.h` against the
 stubs in `test/stub`, in both positions of the `HAMMER2_INVARIANTS` knob,
 plus a negative control: the header is broken on a copy and the compile
 must fail. Without that control a gate whose healthy signature is silence
 cannot be told from a gate that never opened the file.
+
+`test-provenance.sh` reads `doc/provenance.csv` and asks three things:
+that no file under `src/` lacks a row, that no row names a file that is
+gone, and that every row claiming a byte-for-byte carry still IS one.
+Only the third asks a question this repository cannot answer alone, and it
+is the reason the gate exists: an origin, commit and licence claim is the
+first thing an upstream reviewer checks and the last thing anyone can
+reconstruct afterwards. So it is re-run with `cmp` against the origin
+clone rather than read. Where no clone is on the machine, nothing was
+verified that this tree could not verify about itself, and the gate exits
+2 rather than passing on a table that only agrees with itself; CI clones
+the origin at the commit the CSV names so that check runs on every push.
+What it cannot do is in its own header: `derived` and `ours` rows have no
+mechanical test, so they are counted in the summary rather than checked.
 
 `test-syntax.sh` compiles `hammer2.h` and `hammer2_io.c` against the real
 kernel headers **with two compilers**, clang and gcc, under a W=1-class
@@ -242,12 +261,12 @@ THIS ROUTE with the route named, because naming the index is what lets the
 next reader see the wrong one was asked - "perl cannot be hidden" carries
 no trace of "by directory, on a PATH-shaped machine".
 
-Exit 2 from any of the nine means the instrument could not run: no
+Exit 2 from any gate here means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.
 
-`test-vectors-contract.sh` is the seventh and belongs to neither group. It
+`test-vectors-contract.sh` belongs to neither group. It
 asserts that this repository still keeps the promises the next section
 describes: the `-DXXH_VECTORS_CONTROL` hook, the uppercase hex constants,
 and the `printf` that writes `Castagnoli ... MATCH`. Where an xxHash is
