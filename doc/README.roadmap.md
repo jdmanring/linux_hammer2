@@ -51,8 +51,10 @@ in 0.2 can be prepared without it.
    Started 2026-08-26 with the PFS half of `hammer2_vfsops.c`, which is
    carried; what remains there is the Linux mount entry, and the design
    for it is settled and recorded in that file's opening comment.
-   `hammer2_igetv()`'s replacement is what `super_operations` waits on,
-   and it is the same decision as `enum vtype`'s.
+   `hammer2_igetv()` is written, on `iget5_locked()`, which is the inode
+   lifecycle decision this row names and what a fill-super needs to
+   construct a root. What it owes back is `->evict_inode`, in the
+   ledger.
 3. The first `make`, when authorized: 0.3.
 4. Read-only mount of F1, then of the F2 root image: 0.4.
 
