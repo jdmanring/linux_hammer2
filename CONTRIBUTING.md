@@ -41,7 +41,7 @@ anything, and its own green run is not evidence: three fixtures across
 these repositories passed on 2026-08-26 while testing nothing, each caught
 by running it against the defect rather than by reading it.
 
-**Every change comes with the gate that would have caught it.** All seven
+**Every change comes with the gate that would have caught it.** All eight
 gates are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
 that must fail on every run; the others buy the same assurance
 differently, and `doc/README.testing.md` says how for each. A patch that
@@ -57,6 +57,7 @@ harder to keep.
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
     $ bash script/test-vectors-contract.sh
+    $ bash script/test-posix.sh
     $ bash script/test-syntax.sh --selftest
     $ bash script/test-checkpatch.sh --selftest
 
@@ -75,7 +76,7 @@ module's floor and a separate claim. Set `KDIR` to point at another tree,
 and `H2_KERNEL_REF` to check another version deliberately. `test-checkpatch.sh`
 needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
 
-All seven gates exit 2 when the instrument itself could not run, which is
+All sight gates exit 2 when the instrument itself could not run, which is
 not a failure and must not be recorded as one.
 
 ## Licensing

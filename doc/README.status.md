@@ -21,7 +21,7 @@ is a defect.
 
 ## What has been verified
 
-All seven gates pass, and as of 2026-08-26 they pass HERE with no
+All sight gates pass, and as of 2026-08-26 they pass HERE with no
 environment variables set: the kernel of record is in the store, the
 syntax gate finds it, and the style gate finds that tree's own
 `checkpatch.pl`. ArtNix's delegator, which runs these same gates from

@@ -1,7 +1,7 @@
 Testing
 =======
 
-Seven gates run today, all cheap. Most fall into two groups, and the split
+Sight gates run today, all cheap. Most fall into two groups, and the split
 matters when you are deciding which to run: the compile gates need a
 toolchain and a kernel tree, the repository gates need neither. The
 seventh, `test-vectors-contract.sh`, is neither and is described below.
@@ -145,6 +145,28 @@ Everything else runs there, including the vectors contract's behavioural
 half, which had been declining for want of an xxHash to link until
 `libxxhash-dev` was added to the runner on 2026-08-26.
 
+`test-posix.sh` parses the gates declaring `#!/bin/sh` with dash and
+busybox ash. It exists because every gate here is normally run by bash, so
+a bash-only construct in such a script runs forever and breaks the day
+something honours the shebang - which happened on 2026-08-26, when both
+selftests re-invoked their gate with `sh "$0"` and failed on a runner
+whose `/bin/sh` is dash.
+
+It prints its own REACH on every run, because a clean parse is worth much
+less than it looks: measured here, dash rejects process substitution,
+array assignment and the `function` keyword, busybox ash rejects only
+array assignment, and BOTH accept `[[ ]]`, `declare -A`, `local` and `+=`
+as ordinary words. So a clean run means "no bash SYNTAX" and never "no
+bashisms". Those controls re-take that measurement on every invocation
+rather than quoting the table above, and with no shell realized the gate
+exits 2.
+
+Finding the shells was itself the lesson. This repository recorded that no
+POSIX shell existed here, from `command -v`, which reads PATH - and PATH is
+not the machine. Both were already in the nix store. Asking PATH about a
+machine whose software lives in a store is the same error as asking a
+package version about an artifact.
+
 **An absent tool must decline, never pass.** A probe whose success is
 cheap to satisfy trivially - an absent binary above all - reports a clean
 run having examined nothing, and the summary looks identical either way.
@@ -158,7 +180,7 @@ machine because it shares one with everything else the gate needs. Listed
 as unverified rather than assumed, which is the difference between the two
 readings a green run supports.
 
-Exit 2 from any of the seven means the instrument could not run: no
+Exit 2 from any of the eight means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.

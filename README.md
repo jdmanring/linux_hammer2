@@ -96,7 +96,7 @@ Three build knobs, the same three the FreeBSD and NetBSD ports carry:
 
 ## Test
 
-Seven gates. The compile gates need a toolchain and a kernel tree:
+Sight gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
@@ -115,6 +115,12 @@ repository compiles, so an edit that breaks that consumer fails here
 rather than there:
 
         $ bash script/test-vectors-contract.sh
+
+And one parses the gates that declare `#!/bin/sh` with shells that are not
+bash, because every gate here is normally run by bash and a bash-only
+construct in such a script breaks only when something honours the shebang:
+
+        $ bash script/test-posix.sh
 
 No gate here is trusted on silence alone, because a check whose healthy
 signature is silence cannot otherwise be told from a check that never ran.
