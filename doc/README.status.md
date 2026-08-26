@@ -379,13 +379,21 @@ against the FreeBSD port at
 | `hammer2_ondisk.c` | 19 | 1 | 18 |
 | `hammer2_inode.c` | 19 | 6 | 13 |
 | `hammer2.h` | 5 | 3 | 2 |
+| `hammer2_disk.h` | 1 | 1 | 0 |
+| `hammer2_admin.c` | 0 | 0 | 0 |
+| `hammer2_compat.h` | 0 | 0 | 0 |
+| `hammer2_ioctl.h` | 0 | 0 | 0 |
+| `hammer2_mount.h` | 0 | 0 | 0 |
+| `hammer2_rb.h` | 0 | 0 | 0 |
+| `hammer2_xxhash.h` | 0 | 0 | 0 |
+| `sys/tree.h` | 1 | 1 | 0 |
 
 Fifty-two are this port's, the right-hand column summed. Eighteen arrived
 with `hammer2_ondisk.c`, the first file whose OS half was rewritten rather
 than carried, and fifteen more with `hammer2_inode.c` and the two header
 lines it needed. Forty-five sit in a file that came from upstream; the
-other seven are in `hammer2_os.h`, which this port wrote from nothing, and
-two of `hammer2_io.c`'s four.
+other seven are the two files this port wrote from nothing: five in
+`hammer2_os.h`, and two of `hammer2_io.c`'s four.
 
 `hammer2.h` has a row for the first time. It is a carried header this port
 edits in place rather than a file it wrote, so its two marks are counted
@@ -396,6 +404,20 @@ where the other carried files' are.
 `hammer2_cluster.c` and `hammer2_mount.h` are still byte-identical to that
 upstream commit under `cmp`, so most of the carried core has no port edit
 of any kind, marked or unmarked.
+
+The table covers every `.c` and `.h` under `src/sys/fs/hammer2/` whatever
+its count, and any file elsewhere under `src/` that holds a mark;
+`test-inventory.sh` checks the total column against `grep -c` and both
+directions of that population. It did not until 2026-08-26, and had
+drifted in the way an ungated count does: `hammer2_disk.h` and
+`src/sys/sys/tree.h` were missing while both carry a mark, and
+`hammer2_cluster.c` was listed at zero, which is what made a partial table
+read as an inventory. Neither omission moved the fifty-two. Both marks are
+their authors': `hammer2_disk.h`'s is Dillon's note on the reserved area,
+present in the FreeBSD commit above, and `tree.h`'s is FreeBSD's own
+`XXXLAS`, which the vendoring left alone. The two remaining columns are a
+subtraction against a tree that is not on most machines, so they are not
+gated and carry their measurement date instead.
 
 `hammer2_flush.c`'s five are the three port decisions above and the two
 local variables those decisions changed the type of, all inside one
@@ -421,6 +443,8 @@ and the formatter in `hammer2_print_uuid_mismatch()`. That is the property
 worth checking: no carried function here had its control flow edited, and
 a reviewer can confirm it one mark at a time.
 
-The other six are in the two files this port writes: two in `hammer2_io.c`
-and four in `hammer2_os.h`, one of them the non-recursive lock above.
+The other seven are in the two files this port writes: two in
+`hammer2_io.c` and five in `hammer2_os.h`, one of them the non-recursive
+lock above. The count read six until 2026-08-26, written before the two
+shim edits `hammer2_inode.c` needed.
 

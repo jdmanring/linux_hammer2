@@ -230,5 +230,75 @@ else
 	fi
 fi
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $fail finding(s)"
+# THE `XXX` TABLE IN doc/README.status.md IS A COUNT, AND 0.2's FOURTH EXIT
+# CRITERION TURNS ON IT. Its total column is `grep -c XXX` and nothing more,
+# so it is mechanically checkable and was drifting instead: measured
+# 2026-08-26, the table omitted `hammer2_disk.h` and `src/sys/sys/tree.h`,
+# both of which carry a mark, while listing `hammer2_cluster.c` at zero,
+# which is what makes the table read as a full inventory of a population it
+# did not cover.
+#
+# WHAT IS CHECKED AND WHAT DELIBERATELY IS NOT. The `upstream's` and `this
+# port's` columns are a subtraction against the FreeBSD tree at 3df307f,
+# which is not on most machines, so a gate over them would exit 2 forever
+# and never actually run. They stay prose carrying their dated measurement.
+# The total, and the population, are checked here.
+#
+# The scope is two rules, because one would not do. Every .c and .h under
+# src/sys/fs/hammer2/ needs a row whatever its count, which is what makes
+# the zero rows meaningful rather than arbitrary; and any file anywhere
+# under src/ that HOLDS a mark needs one, which is what caught the vendored
+# header. A file outside the port directory with no mark needs no row.
+#
+# A FAKE PASS HERE LOOKS EXACTLY LIKE A REAL ONE: a table with no rows and a
+# glob matching no files both compare nothing and print zero findings. Both
+# populations are asserted before either is used.
+xtmp=$(mktemp -d) || exit 2
+trap 'rm -rf "$dtmp" "$xtmp"' EXIT
+sed -n '/^| file | `XXX` | upstream.s | this port.s |$/,/^$/p' "$LEDGER" |
+	sed -n 's/^| `\([^`]*\)` | \([0-9][0-9]*\) |.*/\1 \2/p' \
+	> "$xtmp/rows"
+nxrow=$(command grep -c . "$xtmp/rows" || true)
+if [ "$nxrow" = 0 ]; then
+	echo "  FAIL $LEDGER: the XXX table has no parseable row, so the"
+	echo "       comparison below would have nothing to compare against"
+	fail=$((fail + 1))
+else
+	# The files needing a row, by the two rules above.
+	{
+		ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h
+		command grep -rlF XXX src/
+	} 2>/dev/null | LC_ALL=C sort -u > "$xtmp/files"
+	nxfile=$(command grep -c . "$xtmp/files" || true)
+	if [ "$nxfile" = 0 ]; then
+		echo "  FAIL src/ matched no file at all for the XXX table check"
+		fail=$((fail + 1))
+	else
+		while IFS= read -r f; do
+			# The table names a file by its path below src/sys/fs/hammer2/,
+			# or by sys/<name> for the vendored headers.
+			key=${f#src/sys/fs/hammer2/}
+			[ "$key" = "$f" ] && key=${f#src/sys/}
+			want=$(command grep -c XXX "$f" || true)
+			got=$(awk -v k="$key" '$1 == k { print $2; found=1 }
+				END { if (!found) print "-" }' "$xtmp/rows")
+			case "$got" in
+			-)  echo "  FAIL $LEDGER: XXX table has no row for $key ($want mark(s))" ;;
+			"$want") continue ;;
+			*)  echo "  FAIL $LEDGER: XXX table says $key has $got, src/ has $want" ;;
+			esac
+			fail=$((fail + 1))
+		done < "$xtmp/files"
+
+		# The other direction: a row for a file that is gone reads as
+		# outstanding surface forever.
+		while read -r k _; do
+			[ -f "src/sys/fs/hammer2/$k" ] || [ -f "src/sys/$k" ] ||
+				{ echo "  FAIL $LEDGER: XXX table row for $k, which src/ no longer holds"
+				  fail=$((fail + 1)); }
+		done < "$xtmp/rows"
+	fi
+fi
+
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
