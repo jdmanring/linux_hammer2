@@ -326,6 +326,8 @@ echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, dialect $dsrc, wi
 check "hammer2.h: header TU expands (tree, queue, atomics)" pass test/hammer2-header.c
 check "hammer2_io.c: invariants on"  pass src/sys/fs/hammer2/hammer2_io.c -DHAMMER2_INVARIANTS
 check "hammer2_io.c: invariants off" pass src/sys/fs/hammer2/hammer2_io.c
+check "hammer2_admin.c: invariants on"  pass src/sys/fs/hammer2/hammer2_admin.c -DHAMMER2_INVARIANTS
+check "hammer2_admin.c: invariants off" pass src/sys/fs/hammer2/hammer2_admin.c
 # Negative control: a wrong kernel call must be refused by the same
 # headers, or a pass above proves only that the compiler ran. Both
 # controls are prefix headers applied AFTER the kernel header they
@@ -351,7 +353,8 @@ if [ -n "$CC2" ]; then
 			*) CFLAGS2+=("$a") ;;
 		esac
 	done
-	for f in test/hammer2-header.c src/sys/fs/hammer2/hammer2_io.c; do
+	for f in test/hammer2-header.c src/sys/fs/hammer2/hammer2_io.c \
+		src/sys/fs/hammer2/hammer2_admin.c; do
 		ran=$((ran + 1))
 		"$CC2" "${CFLAGS2[@]}" "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
 		ours=$(command grep -c "^src/.*warning:" /tmp/h2syn2.$$ || true)

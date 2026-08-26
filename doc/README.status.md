@@ -12,8 +12,9 @@ is a defect.
 | `hammer2.h` | 1315 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
+| `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
 | `hammer2_io.c` | 953 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 486 | ours, the OS shim |
+| `hammer2_os.h` | 530 | ours, the OS shim |
 | `hammer2_compat.h` | 111 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |

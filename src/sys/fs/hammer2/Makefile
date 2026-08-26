@@ -2,7 +2,7 @@ KDIR ?= /lib/modules/$(shell uname -r)/build
 
 obj-m += hammer2.o
 
-hammer2-y = hammer2_io.o
+hammer2-y = hammer2_io.o hammer2_admin.o
 
 # ../.. is src/sys, which holds the vendored <sys/tree.h> and <sys/queue.h>.
 ccflags-y += -I$(src)/../..

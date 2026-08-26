@@ -483,4 +483,48 @@ hstrfree(char *str)
 	kfree(str);
 }
 
+/*
+ * The xop allocation zone.  Every BSD port allocates hammer2_xop_t from
+ * its kernel's slab allocator rather than from malloc: FreeBSD from a uma
+ * zone, NetBSD and OpenBSD from a pool.  Linux's equivalent is a
+ * kmem_cache, and the FreeBSD names are kept because the carried core and
+ * hammer2.h follow that port -- hammer2_admin.c calls uma_zalloc() by
+ * name, and a rename here would be an edit to the core.
+ *
+ * FreeBSD declares the zone itself in its own hammer2_os.h, so this
+ * follows suit.  It is defined by hammer2_vfsops.c, which has not landed;
+ * until then nothing calls uma_zcreate() and the pointer is NULL.
+ */
+/* Linux */
+typedef struct kmem_cache *uma_zone_t;
+
+extern uma_zone_t hammer2_zone_xops;	/* hammer2_vfsops.c */
+
+static inline uma_zone_t
+uma_zcreate(const char *name, size_t size)
+{
+	return (kmem_cache_create(name, size, 0, 0, NULL));
+}
+
+static inline void
+uma_zdestroy(uma_zone_t zone)
+{
+	kmem_cache_destroy(zone);
+}
+
+static inline void *
+uma_zalloc(uma_zone_t zone, int flags)
+{
+	void *addr = kmem_cache_alloc(zone, hammer2_gfp(flags));
+
+	KASSERTMSG(addr, "flags %x", flags);
+	return (addr);
+}
+
+static inline void
+uma_zfree(uma_zone_t zone, void *addr)
+{
+	kmem_cache_free(zone, addr);
+}
+
 #endif /* !_FS_HAMMER2_OS_H_ */
