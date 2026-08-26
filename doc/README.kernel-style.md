@@ -71,6 +71,17 @@ functions looks like once the SPDX pair is counted per file rather than
 per line. Two of the four are exactly that pair, and the other two are
 `return (x);`. No new category.
 
+764 to 782 when `hammer2_subr.c` was carried: 452 lines for 18 hits, one
+per 25 and denser again, for the same reason plus nine `return (x);` in a
+file that is mostly small switch statements. Two categories are new and
+both are upstream's own lines rather than this port's: `Prefer 'unsigned
+int' to bare use of 'unsigned'` in `hammer2_timespec_to_time`, and
+`Statements terminations use 1 semicolon` in the iostat printer. A third,
+`Block comments use a trailing */ on a separate line`, appeared with three
+hits in the port's own `XXX` blocks and was fixed rather than baselined:
+a checker complaint about a comment this port wrote is not a carried idiom
+and has no claim on the exception the BSD style gets here.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not

@@ -19,11 +19,12 @@ is a defect.
 | `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
+| `hammer2_subr.c` | 455 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 943 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 647 | ours, the OS shim |
-| `hammer2_compat.h` | 134 | ours, kernel look-alikes |
+| `hammer2_compat.h` | 153 | ours, kernel look-alikes; the BSD `vtype` enum, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
@@ -200,15 +201,14 @@ at all to follow.
 
 ## What is not here
 
-`hammer2_inode.c`, `hammer2_subr.c`, `hammer2_ondisk.c`,
-`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c`,
-`hammer2_vnops.c`.
+`hammer2_inode.c`, `hammer2_ondisk.c`, `hammer2_strategy.c`,
+`hammer2_ioctl.c`, `hammer2_vfsops.c`, `hammer2_vnops.c`.
 
-The carried set is seven files at 10,749 lines, measured against all three BSD
+The carried set is eight files at 11,204 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
-`hammer2_bulkfree.c`, `hammer2_xops.c`, `hammer2_admin.c` and
-`hammer2_cluster.c`. Whether
-`hammer2_inode.c`, `hammer2_subr.c` and `hammer2_ondisk.c` join them is what
+`hammer2_bulkfree.c`, `hammer2_xops.c`, `hammer2_admin.c`,
+`hammer2_cluster.c` and `hammer2_subr.c`. Whether
+`hammer2_inode.c` and `hammer2_ondisk.c` join them is what
 `doc/provenance.csv`'s carry column says, file by file.
 `hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
 `hammer2_vnops.c` are the OS-facing ones and are rewrites.
@@ -322,16 +322,24 @@ against the FreeBSD port at
 | `hammer2_io.c` | 4 | 2 | 2 |
 | `hammer2_os.h` | 4 | 0 | 4 |
 | `hammer2_flush.c` | 13 | 8 | 5 |
+| `hammer2_subr.c` | 7 | 0 | 7 |
+| `hammer2_cluster.c` | 0 | 0 | 0 |
 
-Eleven, and five of them are in a carried file, which was not true before
-2026-08-26. `hammer2_admin.c`, `hammer2_freemap.c`, `hammer2_xops.c`,
-`hammer2_bulkfree.c`, `hammer2_chain.c` and `hammer2_mount.h` are still
-byte-identical to that upstream commit under `cmp`, so the rest of the
-carried core has no port edit of any kind, marked or unmarked.
-`hammer2_flush.c` is the exception and was always going to be: its five
-marks are the three port decisions above and the two local variables those
-decisions changed the type of, all inside one function. Everything else in
-that file carried.
+Eighteen, and twelve of them are in carried files, which was not true
+before 2026-08-26. `hammer2_admin.c`, `hammer2_freemap.c`,
+`hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c`,
+`hammer2_cluster.c` and `hammer2_mount.h` are still byte-identical to that
+upstream commit under `cmp`, so most of the carried core has no port edit
+of any kind, marked or unmarked.
+
+`hammer2_flush.c`'s five are the three port decisions above and the two
+local variables those decisions changed the type of, all inside one
+function. `hammer2_subr.c`'s seven are the densest set in the tree and the
+file is the smallest carried one, which is what a file of small
+OS-touching helpers looks like: two are the `timespec64` signatures the
+carried `hammer2.h` had already chosen, one is the include line, one the
+timestamp call, one the signal check, one the pair of functions that are
+not carried at all, and one the local variable the timestamp changed.
 
 The other six are in the two files this port writes: two in `hammer2_io.c`
 and four in `hammer2_os.h`, one of them the non-recursive lock above.

@@ -131,4 +131,23 @@
 #endif
 #define rounddown2(x, y)	((x) & ~((__typeof__(x))(y) - 1))
 
+/*
+ * BSD vnode types.  hammer2_subr.c translates between HAMMER2_OBJTYPE_*
+ * and these in both directions, and every BSD kernel supplies the enum;
+ * Linux is the first host that does not, having S_IFMT bits in i_mode
+ * instead.  Defining the names here is what keeps those two carried
+ * functions readable as DragonFly's.
+ *
+ * The VALUES are this port's own and are deliberately not transcribed
+ * from anyone: nothing on disk holds a vtype and nothing outside this
+ * module sees one, so the enumeration is internal and only the names
+ * have to agree.  VNON is 0 so a zeroed structure reads as "no type",
+ * which is the one property the carried code relies on.
+ *
+ * DEFER(hammer2_vnops.c is written): the conversion to and from S_IFMT
+ * belongs at the VFS boundary, beside the other Linux-facing
+ * translations, and there is no caller to shape it against yet.
+ */
+enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
+
 #endif /* !_FS_HAMMER2_COMPAT_H_ */

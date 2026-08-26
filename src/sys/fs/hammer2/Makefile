@@ -13,6 +13,7 @@ hammer2-y += hammer2_bulkfree.o
 hammer2-y += hammer2_chain.o
 hammer2-y += hammer2_flush.o
 hammer2-y += hammer2_cluster.o
+hammer2-y += hammer2_subr.o
 
 # ../.. is src/sys, which holds the vendored <sys/tree.h> and <sys/queue.h>.
 ccflags-y += -I$(src)/../..

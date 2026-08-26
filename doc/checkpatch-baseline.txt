@@ -7,10 +7,12 @@
 1 Consider removing the code enclosed by this #if 0 and its #endif
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
-11 Misplaced SPDX-License-Identifier tag - use line 1 instead
+12 Misplaced SPDX-License-Identifier tag - use line 1 instead
 2 Missing a blank line after declarations
-11 Missing or malformed SPDX-License-Identifier tag in line 1
+12 Missing or malformed SPDX-License-Identifier tag in line 1
 1 Possible repeated word: 'X'
+1 Prefer 'X' to bare use of 'X'
+1 Statements terminations use 1 semicolon
 1 braces {} are not necessary for single statement blocks
 1 code indent should use tabs where possible
 73 do not add new typedefs
@@ -20,9 +22,9 @@
 391 function definition argument 'X' should also have an identifier name
 12 plain inline is preferred over __inline
 1 please, no space before tabs
-103 please, no spaces at the start of a line
-20 quoted string split across lines
-80 return is not a function, parentheses are not required
+104 please, no spaces at the start of a line
+24 quoted string split across lines
+89 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)
 1 return of an errno should typically be negative (ie: return -EEXIST)
