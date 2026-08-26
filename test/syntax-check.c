@@ -86,6 +86,14 @@ hammer2_syntax_check_all(void)
 	 */
 	if (0)
 		hpanic("boom %d", 1);
+	/*
+	 * The device flush pair, whose arguments the stubs declare rather
+	 * than the shim: a null file is never dereferenced here, only
+	 * type-checked.
+	 */
+	(void)hammer2_dev_writeback(NULL);
+	(void)hammer2_dev_cache_flush(NULL);
+
 	cpu_pause();
 	cpu_ccfence();
 	(void)getticks();
