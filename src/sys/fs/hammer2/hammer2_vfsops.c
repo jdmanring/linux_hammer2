@@ -37,8 +37,10 @@
  */
 
 #include "hammer2.h"
+#include "hammer2_mount.h"
 
 #include <linux/fs_context.h>
+#include <linux/fs_parser.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 
@@ -549,6 +551,73 @@ hammer2_init_limits(void)
 	hammer2_limit_saved_chains = (int)(dirty_chains * 5);
 }
 
+/*
+ * XXX Linux: the mount options.
+ *
+ * FreeBSD's mount_hammer2 hands the kernel an int of HMNT2_* bits under
+ * the name "hflags", because that is what nmount(2) gives it.  Only two
+ * bits are defined, and hammer2_mount() rejects one of them outright:
+ * HMNT2_LOCAL is broken in DragonFly, so the whole of hflags that a
+ * mount can actually set is HMNT2_EMERG.  A single named flag is what
+ * Linux would spell that, so this port does, and there is no numeric
+ * hflags option to get wrong.  hammer2_mount.h keeps the bits, since
+ * the carried core reads pmp->hflags against them.
+ *
+ * "source" is not here.  Returning -ENOPARAM for a key this table does
+ * not know sends it to vfs_parse_fs_param_source(), which is the
+ * generic handling and sets fc->source; read at v7.2 in
+ * fs/fs_context.c, vfs_parse_fs_param().  The device-and-label split
+ * that FreeBSD does on its "from" option happens where fc->source is
+ * final, which is ->get_tree and not here.
+ */
+enum hammer2_param {
+	Opt_emerg,
+};
+
+static const struct fs_parameter_spec hammer2_fs_parameters[] = {
+	fsparam_flag("emerg", Opt_emerg),
+	{}
+};
+
+/*
+ * The fs_context private state.  FreeBSD reads its options straight out
+ * of the mount structure inside hammer2_mount(); Linux parses them one
+ * at a time, before there is a super_block, so they have to be kept
+ * somewhere until ->get_tree runs.
+ */
+struct hammer2_fs_context {
+	int	hflags;
+};
+
+static int
+hammer2_parse_param(struct fs_context *fc, struct fs_parameter *param)
+{
+	struct hammer2_fs_context *ctx = fc->fs_private;
+	struct fs_parse_result result;
+	int opt;
+
+	opt = fs_parse(fc, hammer2_fs_parameters, param, &result);
+	if (opt < 0)
+		return (opt);	/* Linux: -ENOPARAM falls through to source */
+
+	switch (opt) {
+	case Opt_emerg:
+		ctx->hflags |= HMNT2_EMERG;
+		break;
+	default:
+		return (-EINVAL);
+	}
+
+	return (0);
+}
+
+static void
+hammer2_free_fs_context(struct fs_context *fc)
+{
+	kfree(fc->fs_private);
+	fc->fs_private = NULL;
+}
+
 static int
 hammer2_get_tree(struct fs_context *fc __maybe_unused)
 {
@@ -563,13 +632,28 @@ hammer2_get_tree(struct fs_context *fc __maybe_unused)
 	return (-EINVAL);	/* Linux: the VFS half is negative */
 }
 
+/*
+ * DEFER(a super_block exists to reconfigure): ->reconfigure, which is
+ * where FreeBSD's MNT_UPDATE branch of hammer2_mount() goes.  Without
+ * it the VFS refuses a remount, which is the right answer while there
+ * is nothing to remount.
+ */
 static const struct fs_context_operations hammer2_context_ops = {
+	.parse_param	= hammer2_parse_param,
 	.get_tree	= hammer2_get_tree,
+	.free		= hammer2_free_fs_context,
 };
 
 static int
 hammer2_init_fs_context(struct fs_context *fc)
 {
+	struct hammer2_fs_context *ctx;
+
+	ctx = kzalloc_obj(struct hammer2_fs_context);
+	if (ctx == NULL)
+		return (-ENOMEM);
+
+	fc->fs_private = ctx;
 	fc->ops = &hammer2_context_ops;
 
 	return (0);
@@ -595,6 +679,7 @@ static struct file_system_type hammer2_fs_type = {
 	.owner			= THIS_MODULE,
 	.name			= "hammer2",
 	.init_fs_context	= hammer2_init_fs_context,
+	.parameters		= hammer2_fs_parameters,
 	.kill_sb		= hammer2_kill_sb,
 	.fs_flags		= FS_REQUIRES_DEV,
 };

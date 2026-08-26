@@ -398,6 +398,38 @@ no user is what the syntax gate flags, and silencing that warning would
 hide the fact that the file is part written. `hammer2_mntlk`, which the
 module entry initializes and destroys, is defined.
 
+## The mount options: a numeric hflags becomes one named flag
+
+FreeBSD's `mount_hammer2` hands the kernel an `int` of `HMNT2_*` bits
+under the name `hflags`, because that is what `nmount(2)` gives it. Two
+bits are defined and `hammer2_mount()` rejects one of them outright:
+`HMNT2_LOCAL` is broken in DragonFly, so the whole of `hflags` a mount
+can actually set is `HMNT2_EMERG`. A single named flag is how Linux
+spells that, so `hammer2_fs_parameters[]` has exactly one entry,
+`fsparam_flag("emerg", ...)`, and there is no numeric option to get
+wrong. `hammer2_mount.h` keeps the bit definitions, because the carried
+core tests `pmp->hflags` against them.
+
+`source` is not in the table. Returning `-ENOPARAM` for a key the table
+does not know sends the parameter to `vfs_parse_fs_param_source()`,
+which is the generic handling and sets `fc->source`; read at v7.2 in
+`fs/fs_context.c`, `vfs_parse_fs_param()`. The device-and-label split
+FreeBSD does on its `from` option belongs where `fc->source` is final,
+which is `->get_tree`.
+
+The `fs_context` needs private state at all for a reason that is
+structural rather than incidental: FreeBSD reads its options out of the
+mount structure inside `hammer2_mount()`, with the whole set in hand at
+once. Linux delivers them one at a time, before there is a
+`super_block`, so anything parsed has to be kept somewhere until
+`->get_tree` runs. That is `struct hammer2_fs_context`, freed by
+`->free`.
+
+`->reconfigure` is not written and carries a `DEFER`. It is where the
+`MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS
+refuses a remount, which is the right answer while there is nothing to
+remount.
+
 ## The gate needed a Kbuild define before a file could include <linux/module.h>
 
 `arch/x86/include/asm/ftrace.h` refuses to compile under
