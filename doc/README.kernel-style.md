@@ -53,6 +53,18 @@ a `return`. None is a new KIND of debt -- they are the same BSD idioms the
 open rows already describe, appearing for the first time because this is
 the first carried file long enough to contain them.
 
+745 to 760 on 2026-08-26 when `hammer2_flush.c` closed the carried set,
+1,315 lines for 15 hits, one per 88 lines and the sparsest of the three.
+Fourteen of the fifteen fall in categories already open. The fifteenth is
+`Consider removing the code enclosed by this #if 0 and its #endif`, which
+is upstream's `#if 0` around the disabled assert in
+`hammer2_trans_assert_strategy`, carried from the FreeBSD tree; deleting it would be an edit to a carried file to
+satisfy a checker, which is the trade this port does not make. The new
+baseline was produced by the checker the old one records, fetched and
+verified by `sha256` against that first line rather than by the copy on
+any workstation, because a differently-sourced v7.2 checker moves these
+numbers on unchanged code and that is the whole reason the hash is there.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not

@@ -4,24 +4,25 @@
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
 1 Block comments use * on subsequent lines
+1 Consider removing the code enclosed by this #if 0 and its #endif
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
-9 Misplaced SPDX-License-Identifier tag - use line 1 instead
+10 Misplaced SPDX-License-Identifier tag - use line 1 instead
 2 Missing a blank line after declarations
-9 Missing or malformed SPDX-License-Identifier tag in line 1
+10 Missing or malformed SPDX-License-Identifier tag in line 1
 1 Possible repeated word: 'X'
 1 braces {} are not necessary for single statement blocks
 1 code indent should use tabs where possible
-72 do not add new typedefs
+73 do not add new typedefs
 1 do not initialise statics to 0
-9 do not use assignment in if condition
+11 do not use assignment in if condition
 2 else is not generally useful after a break or return
 391 function definition argument 'X' should also have an identifier name
 12 plain inline is preferred over __inline
 1 please, no space before tabs
-102 please, no spaces at the start of a line
-18 quoted string split across lines
-73 return is not a function, parentheses are not required
+103 please, no spaces at the start of a line
+20 quoted string split across lines
+78 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)
 1 return of an errno should typically be negative (ie: return -EEXIST)
