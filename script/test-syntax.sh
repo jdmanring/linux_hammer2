@@ -255,6 +255,15 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 	-include "$S/include/linux/kconfig.h"
 	-include "$S/include/linux/compiler_types.h"
 	-D__KERNEL__ -DMODULE -DKBUILD_MODNAME='"hammer2"' -DKBUILD_BASENAME='"hammer2_io"'
+	# arch/x86/include/asm/ftrace.h refuses to compile under
+	# CONFIG_FUNCTION_TRACER unless this is defined, and it is reached
+	# the moment a file includes <linux/module.h>.  Kbuild defines it
+	# beside -mfentry (Makefile, CC_FLAGS_USING, read at the kernel of
+	# record); only the define belongs here, because -mfentry is
+	# codegen and this gate is -fsyntax-only.  gcc also rejects
+	# -mfentry outright without -pg, so passing the pair would take
+	# the second compiler out.
+	-DCC_USING_FENTRY
 	-mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -fno-PIE -fno-strict-aliasing
 	-Wall -Werror=implicit-function-declaration -Werror=implicit-int
 	-Werror=incompatible-pointer-types -Wno-unused-function

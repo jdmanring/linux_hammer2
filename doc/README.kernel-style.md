@@ -3,8 +3,9 @@ Kernel style, and the path to mainline
 
 The kernel's own `LICENSES/preferred/` lists `BSD-3-Clause`, so this
 tree's license is no barrier to inclusion; it sits in the same category as
-MIT. The module will carry `MODULE_LICENSE("Dual BSD/GPL")` when it
-builds, which keeps `EXPORT_SYMBOL_GPL` symbols reachable. Measured
+MIT. The module carries `MODULE_LICENSE("Dual BSD/GPL")`, in
+`hammer2_vfsops.c` since 2026-08-26, which keeps `EXPORT_SYMBOL_GPL`
+symbols reachable. Measured
 against a 7.2 tree, every page cache symbol the DIO layer calls today is a
 plain `EXPORT_SYMBOL`, but the kernel-wide ratio is 18,117 GPL-only to
 12,853 plain, so the VFS layer will very likely need one.
@@ -128,6 +129,15 @@ before it is written down as a property of it.
 four `return (x);`, one start-of-line space, one `EINVAL` and one
 `ENOMEM`. No category is new and nothing was fixed rather than
 baselined.
+
+898 to 902 when `hammer2_vfsops.c` gained the module entry, the globals
+and the tunables: 253 lines for 4 hits, all four `return (x);`. No
+category is new and nothing was fixed rather than baselined. The absence
+worth naming is the errno row, which did not move: the Linux half of this
+file returns to the VFS, so its errnos are negative already and
+`checkpatch.pl` has nothing to say about them. The row that keeps growing
+is the carried core's convention meeting the boundary, not a habit of this
+port's own code.
 
 The `ENOMEM` row is worth reading against the paragraph above it, which
 records the same row arriving and being removed hours earlier. There it

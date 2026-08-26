@@ -38,15 +38,80 @@
 
 #include "hammer2.h"
 
+#include <linux/fs_context.h>
+#include <linux/mm.h>
+#include <linux/module.h>
+
 /*
- * Upstream keeps the mount-side lists here too.  hammer2_mntlist and
- * hammer2_mntlk are the mount path's, so they land with it rather than
- * sitting unused: a definition with no user is what the syntax gate
- * flags, and silencing that would hide the fact that this file is half
- * written.
+ * The globals upstream keeps in this file.  Nothing in the tree defined
+ * them until now, which is why nothing linked: every carried file that
+ * reads hammer2_dio_limit or bumps hammer2_count_chain_allocated
+ * declares it extern in hammer2.h and waits for this file.
+ *
+ * hammer2_mntlist, the global list of hammer2_dev, is still not here.
+ * It is the mount path's and lands with it rather than sitting unused:
+ * a definition with no user is what the syntax gate flags, and
+ * silencing that would hide the fact that this file is part written.
  */
 hammer2_pfslist_t hammer2_pfslist;
 static hammer2_pfslist_t hammer2_spmplist;
+
+hammer2_lk_t hammer2_mntlk;
+
+uma_zone_t hammer2_zone_inode;
+uma_zone_t hammer2_zone_xops;
+
+static int hammer2_supported_version = HAMMER2_VOL_VERSION_DEFAULT;
+int hammer2_cluster_meta_read = 1;	/* for physical read-ahead */
+int hammer2_cluster_data_read = 4;	/* for physical read-ahead */
+int hammer2_cluster_write;		/* for physical write clustering */
+int hammer2_dedup_enable = 1;
+int hammer2_count_inode_allocated;
+int hammer2_count_chain_allocated;
+int hammer2_count_chain_modified;
+int hammer2_count_dio_allocated;
+int hammer2_dio_limit = 256;
+int hammer2_bulkfree_tps = 5000;
+int hammer2_limit_scan_depth;
+int hammer2_limit_saved_chains;
+int hammer2_always_compress;
+
+#ifdef HAMMER2_MALLOC
+int malloc_leak_m_hammer2;
+int malloc_leak_m_hammer2_lz4;
+int malloc_leak_m_temp;
+#endif
+
+/*
+ * XXX Linux: upstream exports the block above through sysctl(9) under
+ * vfs.hammer2, read-write for the tunables and read-only for the
+ * counters.  Linux's nearest thing that costs nothing to build is
+ * module_param_named(), which puts the same names under
+ * /sys/module/hammer2/parameters/ with the same two permissions.  The
+ * names are upstream's with the hammer2_ prefix dropped, exactly as
+ * sysctl drops it.
+ *
+ * DEFER(a second filesystem-wide knob wants a per-mount value): move
+ * these to /sys/fs/hammer2/, which is where ext4 and btrfs put theirs
+ * and the only place a per-mount knob can live.  A module parameter is
+ * one value for every mount on the machine, which is what sysctl gave
+ * upstream too, so nothing is lost until that day.
+ */
+module_param_named(supported_version, hammer2_supported_version, int, 0444);
+MODULE_PARM_DESC(supported_version, "Highest supported HAMMER2 version");
+module_param_named(cluster_meta_read, hammer2_cluster_meta_read, int, 0644);
+module_param_named(cluster_data_read, hammer2_cluster_data_read, int, 0644);
+module_param_named(cluster_write, hammer2_cluster_write, int, 0644);
+module_param_named(dedup_enable, hammer2_dedup_enable, int, 0644);
+module_param_named(inode_allocated, hammer2_count_inode_allocated, int, 0444);
+module_param_named(chain_allocated, hammer2_count_chain_allocated, int, 0444);
+module_param_named(chain_modified, hammer2_count_chain_modified, int, 0444);
+module_param_named(dio_allocated, hammer2_count_dio_allocated, int, 0444);
+module_param_named(dio_limit, hammer2_dio_limit, int, 0644);
+module_param_named(bulkfree_tps, hammer2_bulkfree_tps, int, 0644);
+module_param_named(limit_scan_depth, hammer2_limit_scan_depth, int, 0644);
+module_param_named(limit_saved_chains, hammer2_limit_saved_chains, int, 0644);
+module_param_named(always_compress, hammer2_always_compress, int, 0644);
 
 /*
  * XXX Linux: this file is a rewrite with a carried body, and that is a
@@ -409,3 +474,191 @@ again:
 		}
 	}
 }
+
+/*
+ * Upstream calls this from its vfs_init, where on Linux it can only read
+ * globals the module loader has just zeroed.  It is moved to the unload
+ * path, which is where the counters can be anything but zero and so the
+ * only place the check can fail.  Zero here is the healthy signature at
+ * unload and the inert one at load, and reading it in the wrong place
+ * would have made a leak check that cannot report a leak.
+ */
+static int
+hammer2_assert_clean(void)
+{
+	int error = 0;
+
+	if (hammer2_count_inode_allocated > 0) {
+		hprintf("%d inode left\n", hammer2_count_inode_allocated);
+		error = EINVAL;
+	}
+	KKASSERT(hammer2_count_inode_allocated == 0);
+
+	if (hammer2_count_chain_allocated > 0) {
+		hprintf("%d chain left\n", hammer2_count_chain_allocated);
+		error = EINVAL;
+	}
+	KKASSERT(hammer2_count_chain_allocated == 0);
+
+	if (hammer2_count_chain_modified > 0) {
+		hprintf("%d modified chain left\n",
+		    hammer2_count_chain_modified);
+		error = EINVAL;
+	}
+	KKASSERT(hammer2_count_chain_modified == 0);
+
+	if (hammer2_count_dio_allocated > 0) {
+		hprintf("%d dio left\n", hammer2_count_dio_allocated);
+		error = EINVAL;
+	}
+	KKASSERT(hammer2_count_dio_allocated == 0);
+
+	return (error);
+}
+
+/*
+ * XXX Linux: upstream derives this from desiredvnodes, FreeBSD's target
+ * size for the vnode cache, which is itself derived from physical
+ * memory.  Linux exports no equivalent, so the derivation is made from
+ * physical memory directly and upstream's clamp is kept unchanged.  The
+ * clamp does most of the work: at pages/10 the low end is only reached
+ * below 40 MiB of RAM and the high end only above 40 TiB, so on any
+ * machine this module will run on the value is one tenth of the page
+ * count, and the factor of five to saved_chains is upstream's.
+ *
+ * hammer2_limit_dirty_chains is a local upstream too, with a comment
+ * saying it was a sysctl once.  Nothing in this tree reads it; only
+ * hammer2_limit_saved_chains has callers, in hammer2_bulkfree.c.
+ */
+static void
+hammer2_init_limits(void)
+{
+	unsigned long dirty_chains = totalram_pages() / 10;
+
+	if (dirty_chains > HAMMER2_LIMIT_DIRTY_CHAINS)
+		dirty_chains = HAMMER2_LIMIT_DIRTY_CHAINS;
+	if (dirty_chains < 1000)
+		dirty_chains = 1000;
+	hammer2_limit_saved_chains = (int)(dirty_chains * 5);
+}
+
+static int
+hammer2_get_tree(struct fs_context *fc __maybe_unused)
+{
+	/*
+	 * DEFER(the fill-super lands): until then the
+	 * filesystem is registered and every mount of it fails.  The
+	 * design this owes is in this file's opening comment.  Returning
+	 * an error rather than stubbing a success is the point: a mount
+	 * that appears to work and has no root is the failure this port
+	 * cannot afford to make quiet.
+	 */
+	return (-EINVAL);	/* Linux: the VFS half is negative */
+}
+
+static const struct fs_context_operations hammer2_context_ops = {
+	.get_tree	= hammer2_get_tree,
+};
+
+static int
+hammer2_init_fs_context(struct fs_context *fc)
+{
+	fc->ops = &hammer2_context_ops;
+
+	return (0);
+}
+
+/*
+ * kill_anon_super() runs first and the private teardown after, which is
+ * the order btrfs_kill_super() uses at v7.2: the generic call drops
+ * every inode and the root dentry, and those hold the references the
+ * teardown is about to free.
+ *
+ * DEFER(->get_tree constructs a super_block): the teardown itself,
+ * hammer2_close_devvp() and the unmount helpers.  Nothing reaches here
+ * while hammer2_get_tree() cannot succeed.
+ */
+static void
+hammer2_kill_sb(struct super_block *sb)
+{
+	kill_anon_super(sb);
+}
+
+static struct file_system_type hammer2_fs_type = {
+	.owner			= THIS_MODULE,
+	.name			= "hammer2",
+	.init_fs_context	= hammer2_init_fs_context,
+	.kill_sb		= hammer2_kill_sb,
+	.fs_flags		= FS_REQUIRES_DEV,
+};
+MODULE_ALIAS_FS("hammer2");
+
+static int __init
+hammer2_module_init(void)
+{
+	int error;
+
+	/*
+	 * XXX Linux: upstream asserts that uma_zcreate(9) never returns
+	 * NULL.  kmem_cache_create() can, so the assertion becomes an
+	 * error path.  This is the one place in the shim's uma_ mapping
+	 * where the Linux primitive is weaker than the BSD one.
+	 */
+	hammer2_zone_inode = uma_zcreate("h2inozone", sizeof(hammer2_inode_t));
+	if (hammer2_zone_inode == NULL)
+		return (-ENOMEM);
+
+	hammer2_zone_xops = uma_zcreate("h2xopszone", sizeof(hammer2_xop_t));
+	if (hammer2_zone_xops == NULL) {
+		error = -ENOMEM;
+		goto fail_xops;
+	}
+
+	hammer2_lk_init(&hammer2_mntlk, "h2_mnt");
+	TAILQ_INIT(&hammer2_pfslist);
+	TAILQ_INIT(&hammer2_spmplist);
+	hammer2_init_limits();
+
+	error = register_filesystem(&hammer2_fs_type);
+	if (error)
+		goto fail_register;
+
+	return (0);
+
+fail_register:
+	hammer2_lk_destroy(&hammer2_mntlk);
+	uma_zdestroy(hammer2_zone_xops);
+	hammer2_zone_xops = NULL;
+fail_xops:
+	uma_zdestroy(hammer2_zone_inode);
+	hammer2_zone_inode = NULL;
+
+	return (error);
+}
+
+static void __exit
+hammer2_module_exit(void)
+{
+	unregister_filesystem(&hammer2_fs_type);
+	hammer2_lk_destroy(&hammer2_mntlk);
+
+	uma_zdestroy(hammer2_zone_xops);
+	hammer2_zone_xops = NULL;
+	uma_zdestroy(hammer2_zone_inode);
+	hammer2_zone_inode = NULL;
+
+	hammer2_assert_clean();
+}
+
+module_init(hammer2_module_init);
+module_exit(hammer2_module_exit);
+
+/*
+ * Dual BSD/GPL, not BSD alone: the tree is BSD-3-Clause, which the
+ * kernel lists in LICENSES/preferred/, and the dual tag is what keeps
+ * EXPORT_SYMBOL_GPL symbols reachable.  doc/README.kernel-style.md has
+ * the reasoning.
+ */
+MODULE_LICENSE("Dual BSD/GPL");
+MODULE_DESCRIPTION("HAMMER2 filesystem");
+MODULE_AUTHOR("James Manring <james_manring@yahoo.com>");

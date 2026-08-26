@@ -89,10 +89,13 @@ none of them has without saying why in the same commit.
 
 ## What does not exist yet
 
-No `file_system_type`, no superblock, and so no entry point: nothing in
-this tree can be reached from Linux. `hammer2_vfsops.c` exists and holds
-the PFS half, which is DragonFly's; the Linux mount entry is what it
-still owes, and its design is recorded in that file's opening comment.
-`doc/README.status.md` is the authority on how much of it is written. The gates therefore compile and type-check; nothing here has ever been loaded into a kernel, and the first
-kbuild compile is a decision rather than a task. `doc/README.status.md` is
-the authority on what is done.
+There is a `file_system_type` and a `module_init`, so the tree has an
+entry point; there is no superblock behind it. `hammer2_get_tree()` fails
+every mount, deliberately and with an error rather than a stub, and
+carries a `DEFER` naming the fill-super as its trigger. `hammer2_vfsops.c`
+holds the PFS half, which is DragonFly's, plus the globals and the module
+entry, which are this port's; the mount path itself is what it still owes,
+and its design is recorded in that file's opening comment. The gates
+compile and type-check; nothing here has ever been loaded into a kernel,
+and the first kbuild compile is a decision rather than a task.
+`doc/README.status.md` is the authority on what is done.

@@ -302,12 +302,13 @@ A reviewer who has not read this file will raise this, and should: the source
 shows `BUG_ON` and `panic` with nothing beside them saying the objection was
 considered.
 
-## The module declares no license, and it will need one at the first build
+## The module license, and why it is Dual BSD/GPL
 
-Measured 2026-08-25: `MODULE_LICENSE` appears nowhere under `src/`, and
-neither does `MODULE_AUTHOR` or `MODULE_DESCRIPTION`. No module has been
-built, so it is not yet a defect. It becomes one the day a `.ko` is
-produced.
+`MODULE_LICENSE("Dual BSD/GPL")`, `MODULE_AUTHOR` and
+`MODULE_DESCRIPTION` are in `hammer2_vfsops.c`, added with the module
+entry on 2026-08-26. They were recorded here and left out of the tree
+until then, because a license tag on a module that cannot be built is a
+claim nothing exercises.
 
 What decides the value is not sentiment about the code's origin. The file
 data path this port is heading for is iomap, and `iomap_read_folio`,
@@ -317,10 +318,70 @@ license cannot link them, and the failure is at load time rather than at
 compile time. The carried code is DragonFly's under a BSD license, so the
 declaration that keeps both true is `MODULE_LICENSE("Dual BSD/GPL")` - the
 kernel treats it as GPL-compatible for symbol purposes and it does not
-relicense anything.
+relicense anything. Settled by reading xfs at v6.15, the one mainline
+filesystem above page size, which runs its data path on iomap.
 
-Recorded here rather than written into a source file: there is no module to
-attach it to, and adding it now would put a claim in the tree that nothing
-exercises. It goes in with the first `MODULE_INIT`. Settled by reading xfs at
-v6.15, the one mainline filesystem above page size, which runs its data path
-on iomap.
+## The module entry, and the four things FreeBSD's vfs_init does that Linux does not
+
+`hammer2_vfsops.c` gained `module_init`, `module_exit` and
+`register_filesystem` on 2026-08-26. That is the point at which the tree
+has an entry point at all: until then every tunable and counter the
+carried core reads was declared `extern` in `hammer2.h` and defined
+nowhere, so nothing could have linked. Four decisions came with it, and
+none of them is a translation.
+
+**The sysctl block becomes module parameters.** FreeBSD exports fifteen
+values under `vfs.hammer2`, read-write for the tunables and read-only for
+the counters. Linux's nearest mechanism that costs nothing to build is
+`module_param_named()`, which puts the same names under
+`/sys/module/hammer2/parameters/` with the same two permissions, and
+drops the `hammer2_` prefix exactly as `sysctl` does. The upgrade is
+`/sys/fs/hammer2/`, where ext4 and btrfs put theirs and the only place a
+*per-mount* value can live; it carries a `DEFER` naming that trigger. A
+module parameter is one value for every mount on the machine, which is
+what `sysctl` gave upstream too, so nothing is lost until a knob wants to
+differ between two mounts.
+
+**`hammer2_assert_clean()` moves from load to unload.** Upstream calls it
+from `vfs_init`. On Linux the module loader has just zeroed every global
+at that point, so the check can only ever read zero and can only ever
+pass: it would be a leak check that cannot report a leak. At unload the
+counters can be anything, which is the only place the check discriminates.
+Zero is the healthy signature in one place and the inert one in the other,
+and the two are indistinguishable from the check's own output.
+
+**`uma_zcreate(9)` cannot fail and `kmem_cache_create()` can.** Upstream
+asserts the zone pointer is non-NULL. `kmem_cache_create()` returns NULL
+on failure, so the assertion becomes an error path with an unwind, and
+`hammer2_module_init()` is the one place in the shim's `uma_` mapping
+where the Linux primitive is weaker than the BSD one rather than equal to
+it. Everywhere else the mapping is exact; see the `M_WAITOK` note above.
+
+**`desiredvnodes` has no Linux equivalent, so the derivation moves to
+physical memory.** Upstream sets its dirty-chain limit to
+`desiredvnodes / 10`, clamped to `[1000, HAMMER2_LIMIT_DIRTY_CHAINS]`, and
+multiplies by five for `hammer2_limit_saved_chains`, which is what
+`hammer2_bulkfree.c` actually reads. `desiredvnodes` is FreeBSD's target
+size for the vnode cache and is itself derived from physical memory, so
+this port derives from `totalram_pages()` directly and keeps upstream's
+clamp and factor unchanged. The clamp does most of the work: at
+`pages / 10` the low end is reached only below 40 MiB of RAM and the high
+end only above 40 TiB, so on any machine this module will run on the value
+is one tenth of the page count.
+
+`hammer2_mntlist`, the global list of `hammer2_dev`, is still not defined.
+It belongs to the mount path and lands with it: a static definition with
+no user is what the syntax gate flags, and silencing that warning would
+hide the fact that the file is part written. `hammer2_mntlk`, which the
+module entry initializes and destroys, is defined.
+
+## The gate needed a Kbuild define before a file could include <linux/module.h>
+
+`arch/x86/include/asm/ftrace.h` refuses to compile under
+`CONFIG_FUNCTION_TRACER` unless `CC_USING_FENTRY` is defined, and that
+header is reached the moment a file includes `<linux/module.h>`. Kbuild
+defines it beside `-mfentry` (the kernel `Makefile`, `CC_FLAGS_USING`,
+read at the kernel of record). `script/test-syntax.sh` now passes the
+define and not the flag: `-mfentry` is codegen and the gate is
+`-fsyntax-only`, and gcc rejects `-mfentry` outright without `-pg`, which
+would have taken the second compiler out of the gate to buy nothing.
