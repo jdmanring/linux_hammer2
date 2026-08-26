@@ -25,10 +25,20 @@ script on the day it matters.
 
 ## The recorded deviations, and which are convertible
 
-Counts below are what `checkpatch.pl` from linux v6.15 reports, which is
+Counts below are what `checkpatch.pl` from linux **v7.2** reports, which is
 the version `doc/checkpatch-baseline.txt` names in its first line and the
 version CI fetches. A different copy of checkpatch moves these numbers on
 unchanged code, so the version travels with them.
+
+The pin was v6.15 until 2026-08-26, chosen to match the module's kernel
+floor. That was the wrong thing to match: the tree compiles against the
+latest release and the checker should be that release's, so the pin
+follows the kernel of record and not the floor. Re-pinning moved exactly
+one category, `Argument 'X' is not used in function-like macro`, from 18
+to 15, and the total from 586 to 583; every other line is byte-identical.
+That is also the signature this workstation's own 7.1 `checkpatch.pl`
+produced against the old baseline, which the gate had been correctly
+reporting as a version mismatch rather than a style regression.
 
 | category | count | disposition |
 |---|---|---|
@@ -39,13 +49,13 @@ unchanged code, so the version travels with them.
 | plain inline preferred over `__inline` | 9 | `hammer2.h` 6, `hammer2_io.c` 2, `hammer2_rb.h` 1, counted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
 | spaces at the start of a line | 43 | continuation alignment in carried macros |
 | misplaced or missing SPDX tag in line 1 | 6 | three files are byte-exact from Kusumi's ports and keep his header shape; ours are fixed |
-| everything else | 1 to 18 each | carried code |
+| everything else | 1 to 15 each | carried code |
 
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
 to CHECK when it is run with `--file`, which is the mode this gate runs
-(`checkpatch.pl` v6.15 line 4810). CHECK messages need `--strict`, which
+(`$msg_level = \&CHK if ($file);`, read at v6.15 line 4810 and again at v7.2 line 4915). CHECK messages need `--strict`, which
 the gate does not pass, so the eight `BUG_ON` and four `panic()` sites in
 `src/` produce no hits and the baseline has no row for them. That is a
 blind spot in the instrument and not a clean result: the reviewer who

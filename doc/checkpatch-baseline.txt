@@ -1,5 +1,5 @@
-# checkpatch.pl from linux v6.15
-18 Argument 'X' is not used in function-like macro
+# checkpatch.pl from linux v7.2
+15 Argument 'X' is not used in function-like macro
 2 Avoid unnecessary line continuations
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses

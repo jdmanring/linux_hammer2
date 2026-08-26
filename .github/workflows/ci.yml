@@ -85,12 +85,12 @@ jobs:
       - name: Kernel style (bounded, not clean)
         run: |
           # Pinned, not master. checkpatch.pl changes with the kernel and
-          # the baseline is compared byte for byte: the same tree scored
-          # 583 hits under master and 586 under v6.15 when this was last
-          # measured, on 2026-08-26. The gap is the point, not the pair of
-          # numbers, which move whenever the tree does. The tag matches the
-          # module's declared kernel floor, and the baseline file's first
-          # line records it.
+          # the baseline is compared byte for byte. The tag follows the
+          # KERNEL OF RECORD, the latest release, not the module's 6.15
+          # floor: the checker should be the one that ships with the kernel
+          # the tree compiles against. Measured 2026-08-26, re-pinning v6.15
+          # to v7.2 moved exactly one category, 18 hits to 15, and the total
+          # 586 to 583. The baseline file's first line records the version.
           curl -sSLo /tmp/checkpatch.pl \
-            https://raw.githubusercontent.com/torvalds/linux/v6.15/scripts/checkpatch.pl
+            https://raw.githubusercontent.com/torvalds/linux/v7.2/scripts/checkpatch.pl
           CHECKPATCH=/tmp/checkpatch.pl bash script/test-checkpatch.sh
