@@ -9,7 +9,7 @@ is a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1337 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1346 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -20,14 +20,14 @@ is a defect.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 458 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1482 | FreeBSD port; carried except `hammer2_igetv()` and the create path, which are `DEFER`red on the VFS entry and on the write path |
+| `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 411 | FreeBSD port; the PFS half carried, the Linux mount entry not written yet. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_ondisk.c` | 866 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 685 | ours, the OS shim |
-| `hammer2_compat.h` | 164 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
+| `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
@@ -337,10 +337,9 @@ against the source is the same shape as an empty one.
 |---|---|---|
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
-| `hammer2_compat.h`, at `enum vtype` | `DEFER(hammer2_igetv's replacement is written)` | the conversion between `enum vtype` and `S_IFMT`. The BSDs do it in `hammer2_vinit()`, which lives in `hammer2_vnops.c` and is reached from `hammer2_igetv()`; on Linux the type lands in `inode->i_mode` at `iget5_locked()` time, so it fires in whichever file holds the `igetv` replacement. This row and the `hammer2_igetv()` row are one decision, which is why the trigger names the function rather than a file |
-| `hammer2_inode.c`, where `hammer2_igetv()` would be | `DEFER(hammer2_vfsops.c defines super_operations)` | the inode lifecycle. FreeBSD's body is `vfs_hash_get()`, `getnewvnode()`, `insmntque()` and `vfs_hash_insert()`; Linux's `iget5_locked()` is all four in one call, and the carried `hammer2.h` has already chosen a `struct inode *` pointer rather than an embedded inode, so the association is `i_private` and not `container_of()` |
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
 | `hammer2_subr.c`, where `hammer2_getnewfsid()` would be | `DEFER(hammer2_vfsops.c gains ->statfs)` | the volume header's own fsid. All three BSD ports hash the mount path, which Linux never tells a filesystem. This row named `huge_encode_dev()` on the root device as the alternative until 2026-08-26, when the mount design took an anonymous super following btrfs and left no `sb->s_bdev` to encode |
+| `hammer2_inode.c`, at `hammer2_igetv()` | `DEFER(super_operations gains ->evict_inode)` | the other half of `hammer2_iget_set()`: a `hammer2_inode_drop()` and clearing `ip->vp`. `iget5_locked()`'s set callback takes the inode's reference on the `hammer2_inode`, and nothing gives it back until `->evict_inode` exists, so every inode constructed today leaks one reference, including down `iget_failed()` |
 
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a
@@ -377,9 +376,9 @@ against the FreeBSD port at
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 20 | 1 | 19 |
-| `hammer2_inode.c` | 19 | 6 | 13 |
+| `hammer2_inode.c` | 23 | 6 | 17 |
 | `hammer2_vfsops.c` | 7 | 2 | 5 |
-| `hammer2.h` | 5 | 3 | 2 |
+| `hammer2.h` | 6 | 3 | 3 |
 | `hammer2_disk.h` | 1 | 1 | 0 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
@@ -389,10 +388,11 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Fifty-nine are this port's, the right-hand column summed. Nineteen
+Sixty-four are this port's, the right-hand column summed. Nineteen
 arrived with `hammer2_ondisk.c`, the first file whose OS half was
 rewritten rather than carried, fifteen more with `hammer2_inode.c` and the
-two header lines it needed, and five with `hammer2_vfsops.c`. Fifty-one sit in
+two header lines it needed, five more when `hammer2_igetv()` was written
+against `iget5_locked()`, and five with `hammer2_vfsops.c`. Fifty-six sit in
 a file that holds upstream text; the other eight are the two files this
 port wrote from nothing: six in `hammer2_os.h`, and two of
 `hammer2_io.c`'s four.

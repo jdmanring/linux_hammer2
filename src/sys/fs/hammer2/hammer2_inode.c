@@ -604,30 +604,168 @@ hammer2_inode_drop(hammer2_inode_t *ip)
 }
 
 /*
- * XXX Linux: hammer2_igetv() is not carried.
+ * XXX Linux: hammer2_igetv()'s replacement.
  *
  * Every line of FreeBSD's body is vnode lifecycle: vfs_hash_get(),
  * getnewvnode(), insmntque(), vfs_hash_insert(), hammer2_vinit(), and a
  * vnode lock taken with LK_NOWITNESS.  Linux has no member of that family
- * with the same shape.  An inode comes from iget5_locked() on the
- * superblock, which does the hash lookup, the allocation and the insert
- * in one call and hands back an inode already in I_NEW or already live,
- * so the temp-release dance around the two racing hash operations here
- * has nothing to race against.
+ * with the same shape.  iget5_locked() does the hash lookup, the
+ * allocation and the insert in one call and hands back an inode either
+ * already live or in I_NEW, so the temp-release dance FreeBSD needs
+ * around its two racing hash operations has nothing to race against and
+ * is gone rather than translated.  This is the file upstream keeps
+ * hammer2_igetv() in, so the replacement stays here.
  *
- * The carried hammer2.h has already decided the two halves this port
- * cannot choose freely: hammer2_igetv() takes a struct inode ** and
+ * The carried hammer2.h had already decided the two halves this port
+ * cannot choose freely: the function takes a struct inode ** and
  * hammer2_inode holds a struct inode *vp rather than embedding one.  A
- * pointer rather than an embedded inode means the association is
- * ip->vp plus inode->i_private, not container_of() from an
- * alloc_inode(), and that is what the VFS entry has to wire up.
+ * pointer rather than an embedded inode means the association is ip->vp
+ * plus inode->i_private, not container_of() from an alloc_inode().
  *
- * DEFER(hammer2_vfsops.c defines super_operations): write it against
- * iget5_locked() with hammer2_inode_t as the test/set argument and
- * unlock_new_inode() where FreeBSD returns a constructed vnode.  It is
- * not written blind here because the inode lifecycle is the VFS entry's
- * decision and there is no caller to shape it against.
+ * THE CONTRACT IS NOT FreeBSD's.  hammer2_igetv() there returns a LOCKED
+ * vnode with a reference.  This returns an inode with a reference and no
+ * HAMMER2 lock held on it, already out of I_NEW.  The declaration in
+ * hammer2.h says so, because that is where a caller looks.
  */
+
+/*
+ * XXX Linux: identity is the hammer2_inode pointer, not the inum.
+ *
+ * That is exact rather than a shortcut, and what makes it exact is
+ * hammer2_inode_get(): every hammer2_inode_t is interned in
+ * pmp->inumhash, so one pointer exists per (pmp, inum) and comparing
+ * pointers compares both at once.  Comparing the inum here would
+ * re-implement that hash's job beside it and could disagree with it.
+ *
+ * iget5_locked() takes a u64 hashval as of Linux v7.2, so the 64-bit inum
+ * is not truncated on the way in.  i_ino is an unsigned long and does
+ * truncate on a 32-bit host, which is a getattr question and not this
+ * one.  Masked with HAMMER2_DIRHASH_USERMSK, as FreeBSD masks it.
+ *
+ * Both callbacks run under inode_hash_lock and must not sleep.  Neither
+ * does: one comparison, and three stores plus an atomic increment.
+ */
+static int
+hammer2_iget_test(struct inode *inode, void *data)
+{
+	return (VTOI(inode) == (hammer2_inode_t *)data);
+}
+
+static int
+hammer2_iget_set(struct inode *inode, void *data)
+{
+	hammer2_inode_t *ip = data;
+
+	inode->i_ino = ip->meta.inum & HAMMER2_DIRHASH_USERMSK;
+	inode->i_private = ip;
+	ip->vp = inode;
+	hammer2_inode_ref(ip);	/* the inode's reference on ip */
+
+	return (0);
+}
+
+/*
+ * XXX Linux: the BSD ports convert HAMMER2_OBJTYPE_* to enum vtype in
+ * hammer2_vinit() and store it in v_type.  Linux has no v_type: the type
+ * lives in the S_IFMT bits of i_mode, so the conversion lands here, at
+ * the one place an inode is constructed.  hammer2_get_vtype() stays the
+ * carried half and this is the Linux half, kept apart so the carried
+ * function reads unchanged.
+ */
+static umode_t
+hammer2_vtype_to_ifmt(int vtype)	/* Linux */
+{
+	switch (vtype) {
+	case VDIR:
+		return (S_IFDIR);
+	case VREG:
+		return (S_IFREG);
+	case VFIFO:
+		return (S_IFIFO);
+	case VSOCK:
+		return (S_IFSOCK);
+	case VCHR:
+		return (S_IFCHR);
+	case VBLK:
+		return (S_IFBLK);
+	case VLNK:
+		return (S_IFLNK);
+	default:
+		return (0);
+	}
+}
+
+int
+hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
+    struct inode **vpp)
+{
+	struct super_block *sb;
+	struct inode *inode;
+	umode_t ifmt;
+	int vtype;
+
+	KKASSERT(ip);
+	KKASSERT(ip->pmp);
+	KKASSERT(ip->pmp->mp);
+	sb = ip->pmp->mp;
+
+	hammer2_mtx_assert_locked(&ip->lock);
+	hammer2_assert_inode_meta(ip);
+
+	*vpp = NULL;
+	inode = iget5_locked(sb, ip->meta.inum & HAMMER2_DIRHASH_USERMSK,
+	    hammer2_iget_test, hammer2_iget_set, ip);
+	if (inode == NULL)
+		return (ENOMEM);	/* Linux: positive, the VFS negates */
+
+	/*
+	 * Already constructed by an earlier caller.  iget5_locked() took the
+	 * reference and there is nothing to fill in.
+	 *
+	 * XXX Linux: i_state became a struct in 7.2 and is read through
+	 * inode_state_read_once(), which is the idiom fs/ext4/inode.c and
+	 * fs/isofs/inode.c use at that tag.  inode_state_read() is the other
+	 * accessor and is wrong here: it asserts i_lock, which is not held
+	 * on return from iget5_locked().
+	 */
+	if ((inode_state_read_once(inode) & I_NEW) == 0) {
+		*vpp = inode;
+		return (0);
+	}
+
+	/*
+	 * XXX Linux: hammer2_vinit()'s body, which the BSD ports run after
+	 * the hash insert.  Only an unallocated inode may have no type.
+	 *
+	 * Every exit from here on is iget_failed() and not iput().
+	 * fs/bad_inode.c at v7.2 defines it as make_bad_inode() plus
+	 * unlock_new_inode() plus iput(), and it is the unlock_new_inode()
+	 * that matters: an I_NEW inode released without it leaves every
+	 * waiter in __wait_on_freeing_inode(), which is a mount that hangs
+	 * rather than one that fails, and a hang writes no report.
+	 */
+	vtype = hammer2_get_vtype(ip->meta.type);
+	ifmt = hammer2_vtype_to_ifmt(vtype);
+	if (ip->meta.mode != 0 && ifmt == 0) {
+		hprintf("inum %016llx has mode %o and no type\n",
+		    (long long)ip->meta.inum, ip->meta.mode);
+		iget_failed(inode);
+		return (EINVAL);
+	}
+
+	inode->i_mode = ifmt | (ip->meta.mode & 07777);
+
+	/*
+	 * DEFER(super_operations gains ->evict_inode): it owes the other
+	 * half of hammer2_iget_set(), a hammer2_inode_drop() and clearing
+	 * ip->vp.  Until it exists every inode constructed here leaks one
+	 * reference on its hammer2_inode, including down iget_failed().
+	 */
+	unlock_new_inode(inode);
+	*vpp = inode;
+
+	return (0);
+}
 
 /*
  * Returns the inode associated with the arguments, allocating a new

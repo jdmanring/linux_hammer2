@@ -124,6 +124,19 @@ shim removed the branch, the category and two `return (x);` with it. A
 new checkpatch category is worth reading as a question about the code
 before it is written down as a property of it.
 
+891 to 898 when `hammer2_igetv()` was written against `iget5_locked()`:
+four `return (x);`, one start-of-line space, one `EINVAL` and one
+`ENOMEM`. No category is new and nothing was fixed rather than
+baselined.
+
+The `ENOMEM` row is worth reading against the paragraph above it, which
+records the same row arriving and being removed hours earlier. There it
+was unreachable, a NULL check under an `M_WAITOK` allocation that cannot
+return NULL. Here it is reachable: `iget5_locked()` returns NULL when it
+cannot allocate, and the caller has to say so. Same category, opposite
+verdict, and what separates them is whether the failure can occur rather
+than whether the code handles it.
+
 One more row is a deliberate port decision rather than a carried idiom:
 `Avoid logging continuation uses where feasible`, at one hit, is
 `pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not

@@ -1051,6 +1051,15 @@ hammer2_chain_t *hammer2_inode_chain_and_parent(hammer2_inode_t *, int,
 hammer2_inode_t *hammer2_inode_lookup(hammer2_pfs_t *, hammer2_tid_t);
 void hammer2_inode_ref(hammer2_inode_t *);
 void hammer2_inode_drop(hammer2_inode_t *);
+/*
+ * XXX Linux: THE CONTRACT DIFFERS FROM THE BSD PORTS'.  There
+ * hammer2_igetv() returns a LOCKED vnode holding a reference.  Here it
+ * returns an inode holding a reference and no HAMMER2 lock, already out
+ * of I_NEW, because iget5_locked() constructs and publishes in one call.
+ * The caller must hold ip->lock across the call and iput() the inode when
+ * done.  The flags argument is accepted and ignored: it carried LK_*
+ * bits, which have no Linux counterpart.
+ */
 int hammer2_igetv(hammer2_inode_t *, int, struct inode **);
 hammer2_inode_t *hammer2_inode_get(hammer2_pfs_t *, hammer2_xop_head_t *,
     hammer2_tid_t, int);

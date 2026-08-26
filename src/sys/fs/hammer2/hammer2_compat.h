@@ -144,9 +144,11 @@
  * have to agree.  VNON is 0 so a zeroed structure reads as "no type",
  * which is the one property the carried code relies on.
  *
- * DEFER(hammer2_igetv's replacement is written): the conversion to and from S_IFMT
- * belongs at the VFS boundary, beside the other Linux-facing
- * translations, and there is no caller to shape it against yet.
+ * The conversion to S_IFMT is hammer2_vtype_to_ifmt() in
+ * hammer2_inode.c, beside hammer2_igetv(), which is the one place an
+ * inode is constructed.  This was a DEFER naming that function as its
+ * trigger until 2026-08-26.  The reverse direction has no caller yet: it
+ * belongs to the create path, which is itself deferred.
  */
 enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 
