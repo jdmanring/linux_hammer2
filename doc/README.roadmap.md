@@ -24,12 +24,21 @@ in 0.2 can be prepared without it.
 
 ### Next moves
 
-1. Write the read-side VFS entry (`fs_context`, `super_operations`, `lookup`,
-   `getattr`, `iterate_shared`, `read_folio`, `statfs`) against the F1
-   manifests. This is also what resolves the inode and dentry lifecycle
-   question.
-2. The first `make`, when authorized: 0.3.
-3. Read-only mount of F1, then of the F2 root image: 0.4.
+1. Carry `hammer2_subr.c` and port `hammer2_ondisk.c`. Both stand between
+   the core and the VFS entry, and neither needs a decision the VFS entry
+   would make: `subr` is four thread references and a timestamp over 460
+   lines, `ondisk` is device open, close and rescan, which is where
+   FreeBSD's GEOM calls have to become `bdev_file_open_by_path()` and its
+   pair. `hammer2_cluster.c` was the third and went in unedited on
+   2026-08-26.
+2. Then the read-side VFS entry (`fs_context`, `super_operations`,
+   `lookup`, `getattr`, `iterate_shared`, `read_folio`, `statfs`) against
+   the F1 manifests. This is also what resolves the inode and dentry
+   lifecycle question. It is listed second because it is the first thing
+   here that cannot be written by reading the BSD ports side by side, and
+   the three files above are the ones it calls.
+3. The first `make`, when authorized: 0.3.
+4. Read-only mount of F1, then of the F2 root image: 0.4.
 
 ## Versioning
 

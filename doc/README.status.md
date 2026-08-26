@@ -32,7 +32,14 @@ is a defect.
 
 All nine gates pass, and since 2026-08-26 they pass with no environment
 variables set on a machine that has the kernel of record installed: the
-syntax gate finds that tree, and the style gate finds its `checkpatch.pl`. ArtNix's delegator, which runs these same gates from another
+syntax gate finds that tree, and the style gate finds its `checkpatch.pl`.
+What that unattended style run can say is narrower than it looks, and the
+narrow half is the useful one: the found checker's `sha256` does not match
+the baseline's, so an unchanged set is reportable and a moved set is not.
+The gate exits 2 rather than charge a move to the code, which means the
+one run that matters, the run after a carried file lands, needs
+`CHECKPATCH` pointed at the checker the baseline names. That happened
+twice on 2026-08-26. ArtNix's delegator, which runs these same gates from another
 repository, enumerates `script/test-*.sh` instead of naming them, so a gate
 added here is picked up there without an edit. Each gate prints its own
 count, and the gates are the authority; the dated figures below are snapshots
