@@ -83,7 +83,13 @@ reported as weak rather than counted with the strong ones.
 `test-history.sh` checks that every roadmap row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
 `test-inventory.sh` has a second population, `test/`, where every file
-must either be named by a gate or be listed as staged below.
+must either be named by a gate or be listed as staged below. It also
+checks two DIFFERENT claims about the gates themselves: that no document
+states a wrong COUNT of them, and that the three documents printing
+runnable command lists NAME every one. Those are not the same check -
+`CLAUDE.md` said "eight" correctly on 2026-08-26 while listing seven, so
+the count passed and the list a future reader would run was short by the
+newest gate.
 What none of them can check is whether a row's CLAIM is true; that takes a
 person reading the artifact the row names.
 

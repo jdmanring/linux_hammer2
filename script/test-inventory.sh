@@ -142,6 +142,22 @@ done
 # line in CONTRIBUTING.md with "gates are cheap" on the next, and a
 # line-at-a-time matcher cannot see the phrase at all. A rule about writing
 # does not fire while you are reading output; this one is about reading.
+# THE COUNT AND THE LIST ARE DIFFERENT CLAIMS. A document can say "eight
+# gates" correctly and enumerate seven of them, which is what CLAUDE.md did
+# on 2026-08-26: the count check passed while the list a future reader runs
+# was missing the newest gate. These three print runnable command lists, so
+# every gate must appear in each; documents that merely MENTION a gate are
+# not in this set, since requiring all eight there would be wrong.
+LIST_DOCS="README.md CONTRIBUTING.md CLAUDE.md"
+for d in $LIST_DOCS; do
+	[ -f "$d" ] || continue
+	for g in script/test-*.sh; do
+		command grep -qF -- "$(basename "$g")" "$d" || {
+			echo "  FAIL $d: does not name $(basename "$g")"
+			fail=$((fail+1)); }
+	done
+done
+
 COUNT_DOCS="README.md CONTRIBUTING.md CLAUDE.md doc/README.testing.md doc/README.status.md"
 ngates=$(ls script/test-*.sh 2>/dev/null | wc -l | tr -d ' ')
 [ "$ngates" -gt 0 ] || { echo "inventory: FAIL: no test-*.sh in script/ at all" >&2; exit 1; }
