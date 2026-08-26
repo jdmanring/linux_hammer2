@@ -35,6 +35,12 @@ do, so the next sync can find it.
 sending a patch that converts `return (x);` to `return x;`. The whole tree
 converts at once, at submission, or not at all.
 
+**Every new check comes with the run that showed it failing**, recorded in
+`doc/README.testing.md`. A check nobody has seen fail is not known to test
+anything, and its own green run is not evidence: three fixtures across
+these repositories passed on 2026-08-26 while testing nothing, each caught
+by running it against the defect rather than by reading it.
+
 **Every change comes with the gate that would have caught it.** All seven
 gates are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
 that must fail on every run; the others buy the same assurance

@@ -132,26 +132,33 @@ files describe their own contract in comments, so a check for
 the `printf` was deleted. That was found by running the control, not by
 reading the gate.
 
-## Every check here has been observed failing
+## What was falsified, and when
 
 A fixture is not shown to work by its own green run, and reading a fixture
 you just wrote is the least reliable way to answer whether it tests
-anything. So on 2026-08-26 each check in `test-vectors-contract.sh` and in
-the two `--selftest` paths was run against the defect it exists for, not
-merely run: the hook removed, each constant lowercased separately, the
-`printf` reworded, the comparison made case-insensitive, the override
-warning deleted, the `sha256` mismatch text deleted, and a `version.h`
-fallback added of the kind a later maintainer plausibly writes. Every one
-failed, naming the right check.
+anything. So each of these was run against the defect it exists for rather
+than merely run. This is a LIST OF WHAT WAS DONE, not a claim that
+everything has been done: an "every check has been falsified" sentence is
+a claim about a population that grows, so it would be false the moment a
+check is added rather than eventually, and nothing would notice. A new
+check comes with the run that showed it failing, added here.
 
-One exception, stated rather than buried: the syntax selftest's second
-direction, that an unoverridden run carries no override warning, is weak
-on this workstation because that run is COULD-NOT-RUN and would carry no
-warning either way. It becomes meaningful on a machine whose tree is the
+| falsified on | check | how |
+|---|---|---|
+| 2026-08-26 | `xxh64: -DXXH_VECTORS_CONTROL hook present` | the `#ifdef` replaced with `#if 0`, comment left in place |
+| 2026-08-26 | `xxh64: constants uppercase` | the constant lowercased |
+| 2026-08-26 | `xxh64: HAMMER2 seed uppercase` | that constant lowercased separately, because sharing a code path with something falsified is not being falsified |
+| 2026-08-26 | `crc32c: a printf writes 'Castagnoli' then 'MATCH'` | the `printf` reworded, comment left in place |
+| 2026-08-26 | the vectors negative control | the shared `matches()` made case-insensitive |
+| 2026-08-26 | `an overridden run says so in its summary` | the override warning deleted, and again partially |
+| 2026-08-26 | `a UAPI-shaped tree claiming 7.2 is COULD-NOT-RUN` | a `version.h` fallback added, the improvement a later maintainer plausibly writes |
+| 2026-08-26 | the checkpatch selftest | the `sha256` mismatch text deleted |
+
+The syntax selftest's second direction, that an unoverridden run carries no
+override warning, is NOT in that table. On this workstation that run is
+COULD-NOT-RUN and would carry no warning either way, so it cannot be
+falsified here; it becomes meaningful on a machine whose tree is the
 kernel of record.
-
-This paragraph is a dated record of a session's work, not a property of
-the gates. It rots the moment a check is added, which is why it says when.
 
 ## Run from outside this tree, by a gate in another repository
 
