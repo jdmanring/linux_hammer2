@@ -95,7 +95,14 @@ classify it as either.
 ## Why the bootstrap choice needs THP
 
 `BLK_MAX_BLOCK_SIZE` is `SZ_64K` inside `#ifdef CONFIG_TRANSPARENT_HUGEPAGE`
-and `PAGE_SIZE` otherwise (`blkdev.h:292`). With 4 KiB pages and no THP the
+and `PAGE_SIZE` otherwise, in `include/linux/blkdev.h`. Cited by the
+expression and not by a line: this is the one citation in these documents
+that points OUTSIDE the tree, so `script/test-citations.sh` cannot check
+it and a number here would be precision no instrument backs. It read
+`:286` and `:288` in the 7.1.9 headers on this workstation on 2026-08-26,
+and a sibling repository's citation of `:287 at v7.2` matched no tag at
+all while naming one. The substance is byte-identical wherever it sits.
+With 4 KiB pages and no THP the
 ceiling is 4 KiB, `set_blocksize` refuses 64 KiB, and the mount fails EINVAL
 saying nothing about why. That is what the build-time assert exists to move
 forward.

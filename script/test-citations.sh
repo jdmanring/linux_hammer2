@@ -100,6 +100,28 @@ for d in $docs; do
 			else
 				echo "FAIL $d: $cite -- '$sym' is not on ${file}:${n}"
 				fail=$((fail + 1))
+				# WHERE IT WENT, because a failure that only says
+				# "not there" gets repaired by re-deriving the
+				# line, and re-deriving is where a wrong number
+				# gets written confidently. LINE drift is
+				# survivable and FILE drift is not: five
+				# citations in a sibling repository survived a
+				# line move and died on a file move, which is
+				# why the search widens to the tree rather than
+				# stopping at the cited path.
+				at=$(command grep -nF -- "$sym" "$path" 2>/dev/null |
+					cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
+				if [ -n "$at" ]; then
+					echo "     it is on ${file}:${at}"
+				else
+					elsewhere=$(command grep -rlF -- "$sym" src doc script test 2>/dev/null |
+						head -3 | tr '\n' ' ')
+					if [ -n "$elsewhere" ]; then
+						echo "     not in $file at all; found in: $elsewhere"
+					else
+						echo "     and '$sym' is nowhere in the tree, so the anchor is gone"
+					fi
+				fi
 			fi
 		done
 	done < "$d"
