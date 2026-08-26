@@ -38,7 +38,11 @@ exists to keep.
 - `script/test-shim.sh` and `script/test-syntax.sh`: 3 and 7 on 2026-08-25,
   three of the ten being controls that must fail and do.
 - `script/test-checkpatch.sh`: holds the style deviation set at its recorded
-  583 hits under the checkpatch.pl the baseline names, and refuses rather
+  583 hits under the checkpatch.pl the baseline names, and under the
+  kernel of record's own patched copy too, which differs from it by sha256
+  and produces the identical set. Neither figure travels without the
+  checker that produced it: 583 quoted bare reads as a mainline number and
+  is only half one. It refuses rather
   than writing one when it finds no baseline.
 - `script/test-history.sh`: resolves every commit the roadmap's history
   table pins and checks its subject still matches, then prints how many
