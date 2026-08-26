@@ -46,8 +46,8 @@ folio-ceiling check the mount path must make is recorded as the design
 (`README.porting.md`) and not yet written, because there is no mount path.
 One carried file, `hammer2_flush.c`, is still to be imported, and the
 vnode, inode and mount paths have not been started at all.
-`README.status.md` has the
-file-by-file inventory, the verified claims, and the version floor (6.15,
+`README.status.md` has the file-by-file inventory, the verified claims,
+and the version floor (6.15,
 required by `BLK_MAX_BLOCK_SIZE`; exercised only at 7.2).
 
 The first compile of a module against a kernel tree is the maintainer's
@@ -61,12 +61,15 @@ prepared without it.
 
 In order, and each unblocked today:
 
-1. Import the carried core files with a provenance row for each, and
-   extend the syntax gate to every one of them. The H1 estimate's carried
-   set is `chain`, `flush`, `freemap`, `bulkfree`, `xops` and `admin`;
-   whether `inode`, `subr` and `ondisk` join it is what the provenance
-   CSV's carry column says, file by file, and not this list. This is the
-   0.2 exit and needs no compile.
+1. Import `hammer2_flush.c`, the last of the H1 estimate's carried set
+   (`chain`, `flush`, `freemap`, `bulkfree`, `xops`, `admin`), and extend
+   the syntax gate to it. It needs a port decision rather than a shim:
+   it issues a device cache flush, which FreeBSD does through GEOM and
+   NetBSD through `DIOCCACHESYNC`, so there is no precedent to copy and
+   Linux's answer is `blkdev_issue_flush()`. Whether `inode`, `subr` and
+   `ondisk` join the carried set is what the provenance CSV's carry
+   column says, file by file, and not this list. This closes 0.2 and
+   needs no compile.
 2. Write the read-side VFS entry (`fs_context`, `super_operations`,
    `lookup`, `getattr`, `iterate_shared`, `read_folio`, `statfs`) against
    the F1 fixtures' manifests, which is also what resolves the inode and
@@ -91,12 +94,12 @@ The milestones carry stage names, H0 to H7, beside their version numbers.
 H0, archaeology, was finished before this repository existed and left no
 artifact in it; this tree begins inside H1, and 0.1 is H1's first slice.
 
-**Current version: 0.1.x.**
+**Current version: 0.2.x.**
 
 | version | stage | milestone | state |
 |---|---|---|---|
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
-| 0.2 | H1 | Whole core type-checks, ready to build | **next** |
+| 0.2 | H1 | Whole core type-checks, ready to build | **in progress**: criteria 1, 2 and 4 met, criterion 3 waits on `hammer2_flush.c` |
 | 0.3 | H1 | Module builds, loads and unloads | blocked on the compile authorization |
 | 0.4 | H1 | Read-only mount of DragonFly-written media | the generators exist, the images are build output, and no gate here drives a guest |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
@@ -182,7 +185,7 @@ needs one of those needs the column first, and says so below.
 
 | set | what | written by | serves | state 2026-08-25 |
 |---|---|---|---|---|
-| F1 | six trees of known shape (empty, flat, deep, sizes one byte under, on and over each block-size boundary, links, names at the length limit) | `makefs -t hammer2` from Kusumi's port | 0.4 | exists; read back through `hammer2-fuse` against the source-tree manifest, byte-identical |
+| F1 | six trees of known shape (empty, flat, deep, sizes one byte under, on and over each block-size boundary, links, names at the length limit) | `makefs -t hammer2` from Kusumi's port | 0.4 | generator run and its output read back through `hammer2-fuse` against the source-tree manifest, byte-identical. The images were deleted as they were written, per the section below; nothing is on disk to point a gate at |
 | F2 | the same trees written by a DragonFly kernel, plus what only the kernel makes: two PFS roots, a snapshot after modification, a tree after bulk-free, deleted files held by a snapshot | DragonFly 6.4.2 in a guest | 0.4, and the F1-against-F2 format-drift comparison | the installed ROOT of a DragonFly guest, read cold: 28,171 inodes, `fsck_hammer2` clean; 67 paths unreadable to an unprivileged user, 58 files recorded with size and `readfail` in place of a hash and 9 directories recorded by type with their contents unlisted; the rest needs the guest booted |
 | F3 | F2 images with metadata deliberately damaged; `fsck_hammer2`'s verdict on each recorded first | a script over F2 | 0.4 (detection without modifying media) and 0.6 | unwritten |
 | F4 | a tree written by this port, mounted and verified on DragonFly, then the reverse | this port and DragonFly | 0.5 | needs 0.5 |
@@ -247,18 +250,22 @@ anyone else sending a change.
 
 Exit criteria:
 
-1. Every carried core file the status document lists as absent is in
-   `src/sys/fs/hammer2/`, and every file under that directory has a row
-   in the provenance CSV naming its origin tree, commit and license.
+1. Every file the provenance CSV's carry column classifies as carried is
+   in `src/sys/fs/hammer2/`, and every file under `src/` has a row in
+   that CSV naming its origin tree, commit and license. The CSV is the
+   authority on which files are carried; an earlier wording pointed at a
+   list of absent files in the status document, which that document has
+   never held.
 2. `script/test-syntax.sh` covers every `.c` under `src/` and passes under
    both compilers with the W=1 warning set, with its two controls still
    failing.
 3. `src/sys/fs/hammer2/Makefile`'s `hammer2-y` lists every object,
    verified by reading it against the directory. The build itself is 0.3.
-4. Every `XXX` mark in the carried files (the BSD ports' convention for a
-   non-mechanical mapping) is counted, and the count is recorded in
-   `README.status.md` so the next reader knows how many places are not a
-   carry.
+4. Every `XXX` mark this port adds (the BSD ports' convention for a
+   non-mechanical mapping) is counted apart from the marks the carried
+   files arrive with, and the count is recorded in `README.status.md` so
+   the next reader knows how many places are not a carry. Met
+   2026-08-26: six, all in the two shim files, none in any carried file.
 
 Gate: `script/test-syntax.sh`, extended file by file as each lands, and
 `script/test-provenance.sh` for criterion 1. That second gate was written
@@ -276,9 +283,9 @@ Work items:
 | item | owner | done when |
 |---|---|---|
 | ~~a check that every file under `src/sys/fs/hammer2/` has a provenance row, with a control that an unlisted file fails it~~ | done 2026-08-26 | `script/test-provenance.sh`, covering `src/` rather than that one directory; `--selftest` drives all four findings, and the unlisted-file control is one of them |
-| import the estimate's six carried files, then `inode`, `subr`, `ondisk` as the CSV classifies them | contributor | each type-checks under both compilers; five of the six are in, `hammer2_flush.c` remains |
-| import the check algorithms, using the kernel's own xxHash, LZ4 and zlib as the vendored-library audit found them stock | contributor | the syntax gate covers them |
-| count the `XXX` marks and record it | contributor | the number is in `README.status.md` |
+| import the estimate's six carried files, then `inode`, `subr`, `ondisk` as the CSV classifies them | contributor | each type-checks under both compilers; five of the six are in, `hammer2_flush.c` remains and needs the flush decision above |
+| import the check algorithms, using the kernel's own xxHash, LZ4 and zlib as the vendored-library audit found them stock | contributor | the syntax gate covers them; xxHash is in as `hammer2_xxhash.h`, LZ4 and zlib wait on a compression path to call them |
+| ~~count the `XXX` marks and record it~~ | done 2026-08-26 | `README.status.md`, `XXX` marks: six added by this port, counted apart from the marks the carried files arrive with |
 
 Owners: contributors for every item; the maintainer for merging.
 
@@ -290,9 +297,10 @@ Risks and contingency:
 | risk | contingency | blocks 0.2? |
 |---|---|---|
 | a carried file will not type-check without a core edit | the edit is made in the shim if the shim can express it, otherwise in place with an `XXX`, and the count in criterion 4 is what makes that visible rather than silent | no |
-| the recursion the inode and chain locks need (`README.porting.md`, Locks) turns out to be reached in more than NetBSD's two call sites | the sites are listed before any is changed, and the shim's `rw_semaphore` decision is re-read against the list rather than patched around | no; yes for 0.3 if the count is large |
+| the recursion the inode and chain locks need (`README.porting.md`, Locks) turns out to be reached in more than NetBSD's two call sites | landed 2026-08-26 without a core edit: the one recursing site was closed rather than accommodated, and `README.porting.md`, Locks, has the reading | no |
 
-Last reviewed: 2026-08-26.
+Last reviewed: 2026-08-26. Criteria 1 and 4 rewritten that day; see the
+revisions section.
 
 ### 0.3 Module builds, loads and unloads
 
@@ -333,7 +341,7 @@ Risks and contingency:
 | risk | contingency | blocks 0.3? |
 |---|---|---|
 | the module links but the load oopses in init | the init path is the shim's, not the core's, so the fault is in fewer than a thousand lines and the guest's console is the instrument | yes, until fixed |
-| the kernel floor of 6.15 is wrong in the exercised direction (a symbol used here changed after 7.2) | the syntax gate is run against the newest tree available, `KDIR` pointing at it, before the floor is quoted again | no |
+| the kernel floor of 6.15 is wrong in the exercised direction (a symbol used here changed after the kernel of record) | the syntax gate pins the kernel of record as `KERNEL_REF` and declines against any other, so the bump is made there and the gate re-run before the floor is quoted again | no |
 
 Last reviewed: 2026-08-25.
 
@@ -615,7 +623,7 @@ each names what it blocks so the cost of leaving it open is visible.
 | Booting the DragonFly guest for the rest of the F2 set | 0.4 criteria 3 and 6 | open; the first F2 image was taken with the guest shut off and needed no decision |
 | iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default; the lean was iomap, which is what a mainline reviewer would ask for, unless the 64 KiB physical buffers argue otherwise | recommended iomap, 2026-08-25, from source: xfs is the one mainline filesystem above page size and it is iomap, on the same folio-order mechanism the DIO layer uses; its entry points are `EXPORT_SYMBOL_GPL`, so the module's `MODULE_LICENSE` string must be "Dual BSD/GPL" (0.2). CONFIRMED by James, 2026-08-25: iomap. The license half was verified the same day against the target kernel family's own source rather than from training. `include/linux/license.h` enumerates the GPL-compatible tags and plain "BSD" is not among them, so it would block every `EXPORT_SYMBOL_GPL` symbol iomap needs and taint the module; `module.h` states that the tag "does neither replace the proper license identifiers in the corresponding source file nor amends them in any way". "Dual BSD/GPL" is therefore required by the kernel and changes nothing about the BSD grant. His condition, recorded: BSD is the license, the dual tag exists only because the kernel demands it, and it must never hinder what can be done with the code or its distribution |
 | A workqueue-backed XOP pool against synchronous XOPs | 0.9 criterion 3 | synchronous for 0.2 to 0.6, the FreeBSD port's choice; the pool is decided on F6's numbers |
-| Where the fixtures, their generator scripts and the provenance CSV live | every gate from 0.4 on, and 0.2's provenance check, name a path to them | CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. The generators take their toolchain from the environment. Not moved yet |
+| Where the fixtures, their generator scripts and the provenance CSV live | every gate from 0.4 on, and 0.2's provenance check, name a path to them | CONFIRMED by James, 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. The generators take their toolchain from the environment. Scoped by the 8 GiB measurement of 2026-08-26 to the scripts, manifests and provenance CSV; the images are build output and never move. Not moved yet |
 | The two upstream filings | 1.0 criterion 3 | drafted, unfiled |
 | In-tree submission | nothing before 1.0 | deferred past qualification |
 
@@ -648,11 +656,20 @@ non-goals; point releases go in the history table instead.
   section. Then hostile audit rounds against the sources named above
   until one found nothing, all findings applied.
 - 2026-08-25: the iomap and fixture-home rows of the decisions table are
-  confirmed by James. File data goes through iomap, and the fixtures move
-  to this tree's `test/fixtures/`, not yet done. The
+  confirmed by James. File data goes through iomap, and the fixture
+  scripts move to this tree's `test/fixtures/`, not yet done. The
   `MODULE_LICENSE` question the iomap row raised was settled by reading
   the target kernel family's own headers rather than from training; the
   reading is in the decisions table above.
+- 2026-08-26: two sections added, on what "the fixtures exist" means and
+  on which guests this needs, both because a milestone that says "a
+  guest" without saying whether one exists leaves a reader unable to tell
+  a scheduling question from a blocking one.
+- 2026-08-26: 0.2's criteria 1 and 4 rewritten to name authorities that
+  exist. Criterion 1 pointed at a list of absent files the status
+  document has never held, and criterion 4 asked for a count over the
+  carried files, where the measured answer is zero and the number a
+  reader wants is the count this port adds.
 
 ## Proposing a change
 
