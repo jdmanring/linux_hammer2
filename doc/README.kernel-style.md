@@ -52,6 +52,16 @@ around a single statement, a static initialised to 0, and an `else` after
 a `return`. None is a new KIND of debt -- they are the same BSD idioms the
 open rows already describe, appearing for the first time because this is
 the first carried file long enough to contain them.
+
+One more row is a deliberate port decision rather than a carried idiom:
+`Avoid logging continuation uses where feasible`, at one hit, is
+`pr_cont` in `hammer2_os.h`. checkpatch is right that new code should not
+use it. The core builds one log line out of several calls, which is what
+a BSD kernel `printf` does and what `pr_info` cannot do, so the choice is
+between a continuation and splitting every such line in two while
+dropping the second half's prefix. It carries a `DEFER` naming its
+upgrade: build the line in a buffer and emit it once, which is a core
+edit and waits for a reason.
 That is also the signature this workstation's own 7.1 `checkpatch.pl`
 produced against the old baseline, which the gate had been correctly
 reporting as a version mismatch rather than a style regression.

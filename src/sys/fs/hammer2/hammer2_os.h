@@ -72,12 +72,26 @@
 #define HARGS	__func__
 #endif
 
-#define hprintf(X, ...)	pr_info(HFMT X, HARGS, ## __VA_ARGS__)
 /*
- * hprintf gets the module name from each .c file's pr_fmt, which panic()
- * does not read: it is not a pr_* macro and takes its format verbatim. So
- * hpanic carries the name itself, which is one token of divergence from
- * the three BSD ports and the reason for it.
+ * THE MODULE NAME IS CARRIED HERE, NOT BY pr_fmt.  Linux's native answer
+ * is a `#define pr_fmt` at the top of every .c file, before the first
+ * kernel header, since <linux/printk.h> supplies an empty one when it
+ * finds none.  That is unavailable to this port for the files that do
+ * most of the logging: they are carried byte-for-byte and adding a line
+ * to them is the edit the whole tree exists to avoid.  Measured
+ * 2026-08-26 with only hammer2_io.c carrying the define: five carried
+ * files hold every other call site and printed to dmesg with no module
+ * name at all, which is the one thing a filesystem's log lines must have.
+ *
+ * So the name goes in the macro, which is this port's own.  It reaches
+ * every file including the carried ones, there is one copy of it, and no
+ * .c file has to remember anything.
+ */
+#define hprintf(X, ...)	pr_info(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__)
+/*
+ * hpanic carries the name for a different reason: panic() is not a pr_*
+ * macro and takes its format verbatim, so it would not read a pr_fmt even
+ * where one exists.  One token of divergence from the three BSD ports.
  */
 /* Linux */
 #define hpanic(X, ...)	panic(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__)
@@ -508,7 +522,24 @@ hstrfree(char *str)
 /*
  * printf() and tsleep() are kernel facilities on every BSD this port
  * follows, so none of the three shims them and both names reach the
- * carried core unqualified.  hammer2_bulkfree.c calls each once.
+ * carried core unqualified.
+ *
+ * printf IS NOT pr_info, AND THE DIFFERENCE IS NOT COSMETIC.  A BSD
+ * kernel printf appends to whatever line is open, so the core builds one
+ * log line out of several calls: hammer2_bulkfree.c prints a range with
+ * hprintf and no trailing newline, then finishes the line with printf.
+ * Linux's pr_info closes a record per call, so that mapping turns one
+ * line into two and drops the second's prefix.  pr_cont is Linux's own
+ * name for "continue the open record", which is the semantics the core
+ * is written against, and on a record that is already closed it simply
+ * starts a new line.  So it is correct at both kinds of call site, where
+ * pr_info is correct at only one.
+ *
+ * DEFER(a message is seen interleaved in a real mount): pr_cont is not
+ * SMP-safe against a concurrent printk, which is why the kernel
+ * discourages it in new code.  The core's multi-call lines are the
+ * reason it is here; the upgrade is to build the line in a buffer and
+ * emit it in one call, which is a core edit and waits for a reason.
  *
  * tsleep's contract is a timed sleep on a wait channel that wakeup()
  * can cut short.  The one call site is a throttle - bulkfree pausing
@@ -519,7 +550,7 @@ hstrfree(char *str)
  * the wakeup.
  */
 /* Linux */
-#define printf(...)	pr_info(__VA_ARGS__)
+#define printf(X, ...)	pr_cont(X, ## __VA_ARGS__)
 
 static inline int
 tsleep(const void *ident __always_unused, int flags __always_unused,

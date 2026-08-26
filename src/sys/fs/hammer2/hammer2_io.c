@@ -52,16 +52,6 @@
  * See doc/README.porting.md.
  */
 
-/*
- * Every message this file prints goes through hprintf, whose HFMT is the
- * function name and nothing else, so without this the module's own name
- * never reaches dmesg.  It must precede the first kernel header, since
- * <linux/printk.h> defines an empty pr_fmt when it does not find one.
- * Per .c file rather than in a shared header for that reason: a header
- * cannot guarantee it is read before the kernel's.
- */
-#define pr_fmt(fmt)	KBUILD_MODNAME ": " fmt
-
 #include "hammer2.h"
 
 #include <linux/blkdev.h>

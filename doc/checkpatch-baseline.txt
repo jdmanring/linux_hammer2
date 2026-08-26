@@ -1,6 +1,7 @@
 # checkpatch.pl from linux v7.2
 # sha256 f8f32e6b559004fcac021e2f6149b6b7ea486924a8bc48297c0f317eddf5e220
 16 Argument 'X' is not used in function-like macro
+1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
 1 Block comments use * on subsequent lines
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged

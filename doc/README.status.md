@@ -19,8 +19,8 @@ is a defect.
 | `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 953 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 589 | ours, the OS shim |
+| `hammer2_io.c` | 943 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_os.h` | 620 | ours, the OS shim |
 | `hammer2_compat.h` | 134 | ours, kernel look-alikes |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -218,6 +218,32 @@ issues a device cache flush, FreeBSD through GEOM (`g_alloc_bio`,
 `BIO_FLUSH`) and NetBSD through `DIOCCACHESYNC`. The ports already
 disagree, so there is no precedent to follow and Linux's answer is
 `blkdev_issue_flush()`.
+
+### Logging
+
+Every line the module prints names the module, and a line the core builds
+out of several calls stays one line. Neither was true before 2026-08-26,
+and neither is visible in a compile, so `test-shim.sh` reads both out of
+the preprocessor's own output rather than taking a comment's word.
+
+Linux's native mechanism for the first is `#define pr_fmt` at the top of
+every `.c` file, ahead of the first kernel header. That is unavailable to
+the files that do most of the logging here: they are carried
+byte-for-byte, and adding a line to one is the edit this tree exists to
+avoid. Measured with only `hammer2_io.c` carrying the define, five
+carried files held every other call site and printed anonymously. The
+name now lives in `hprintf` itself, which is this port's macro, so there
+is one copy of it and no file has to remember anything.
+
+The second is `printf`, which on a BSD kernel appends to the open line;
+`hammer2_bulkfree.c` prints a range with `hprintf` and no newline and
+finishes it with `printf`. `pr_info` closes a record per call, so that
+mapping turned one line into two and dropped the second's prefix.
+`pr_cont` is Linux's name for the semantics the core is written against
+and is correct at both kinds of call site, where `pr_info` is correct at
+one. checkpatch flags it, deliberately and by name, and the deviation is
+recorded in `README.kernel-style.md` with the `DEFER` that names its
+upgrade.
 
 ### `XXX` marks: how much of the core is not a carry
 
