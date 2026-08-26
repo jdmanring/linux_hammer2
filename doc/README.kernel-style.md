@@ -160,16 +160,27 @@ It is also the signature a 7.1 distribution `checkpatch.pl` produced against
 the old baseline, which the gate reported as a version mismatch rather than a
 style regression.
 
-| category | count | disposition |
-|---|---|---|
-| do not add new typedefs | 73 | required by the carried core; converts with the core |
-| function argument without identifier name | 391 | BSD prototype style; mechanical |
-| return is not a function, parentheses not required | 132 | BSD style; mechanical |
-| return of an errno should be negative | 48 across 13 errnos | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md |
-| plain inline preferred over `__inline` | 13 | `hammer2.h` 6, `hammer2_admin.c` 2, `hammer2_io.c` 2, `hammer2_chain.c` 1, `hammer2_inode.c` 1, `hammer2_rb.h` 1, recounted per file on 2026-08-26; the earlier reading of this row named three files and summed to nine against a baseline of eleven, which is the shape of a count written from the files a reader happened to open. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
-| spaces at the start of a line | 119 | continuation alignment, in carried macros and in the BSD second-parameter-line indent every prototype and definition here uses |
-| misplaced or missing SPDX tag in line 1 | 14 misplaced, 14 missing | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. The count tracks the number of carried files and rose with 0.2's imports |
-| everything else | 1 to 15 each | carried code |
+The table below is the dispositions, not the counts. It used to carry a
+count column, and every row of it was stale within a commit or two: the
+SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row
+read 48 across 13 errnos against 50 across 14, and `return (x);` read 132
+against 140. Nothing gated those numbers, because
+`doc/checkpatch-baseline.txt` already holds them and
+`script/test-checkpatch.sh` already fails when they move. A second copy of
+a gated number is not a summary, it is a claim that goes wrong quietly, so
+the counts are gone from here and the baseline is the only place that
+carries them.
+
+| category | disposition |
+|---|---|
+| do not add new typedefs | required by the carried core; converts with the core |
+| function definition argument 'X' should also have an identifier name | BSD prototype style; mechanical |
+| return is not a function, parentheses not required | BSD style; mechanical |
+| return of an errno should be negative | **not a style issue.** Errnos are positive inside the module by the core's convention; the VFS boundary negates. See doc/README.porting.md. The Linux half of a file returns to the VFS and is negative already, so this row counts the carried core only |
+| plain inline preferred over `__inline` | `hammer2.h`, `hammer2_admin.c`, `hammer2_io.c`, `hammer2_chain.c`, `hammer2_inode.c` and `hammer2_rb.h`, recounted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
+| please, no spaces at the start of a line | continuation alignment, in carried macros and in the BSD second-parameter-line indent every prototype and definition here uses |
+| misplaced or missing SPDX tag in line 1 | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. One of each per carried file, so the pair tracks the number of carried files |
+| everything else | carried code |
 
 ## What this gate does not see
 
