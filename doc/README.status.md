@@ -406,7 +406,9 @@ upstream commit under `cmp`, so most of the carried core has no port edit
 of any kind, marked or unmarked.
 
 The table covers every `.c` and `.h` under `src/sys/fs/hammer2/` whatever
-its count, and any file elsewhere under `src/` that holds a mark;
+its count, and any file elsewhere under `src/` that holds a mark, so
+`src/sys/sys/queue.h` is absent by the rule rather than missing from it
+while its sibling `tree.h` has a row;
 `test-inventory.sh` checks the total column against `grep -c` and both
 directions of that population. It did not until 2026-08-26, and had
 drifted in the way an ungated count does: `hammer2_disk.h` and
