@@ -72,7 +72,17 @@ echo "hammer2 vector contract:"
 # crc32c check below matched a comment quoting the wording, so deleting the
 # printf left it green, and only the control found it.
 src_check "xxh64: -DXXH_VECTORS_CONTROL hook present" "$XXH" '#ifdef XXH_VECTORS_CONTROL'
-# 2. Uppercase hex. A consumer that matches the literal must keep matching.
+# 2. The two constants, frozen on their own merit rather than on the
+#    consumer's behalf. Until 2026-08-26 the consumer armed its control by
+#    `sed`-ing `0xEF46DB3751D8E999ULL`, and lowercasing it here broke that
+#    silently; it now uses the compile-time hook above and reads neither
+#    constant, so the original reason to freeze the CASE is gone. The
+#    freeze stays because the VALUES are what the file is for: the first
+#    is xxHash's own reference digest for the empty input and the second
+#    is HAMMER2's seed, and a vector file whose expected values drift is
+#    a test that cannot fail. The case-sensitivity below is now this
+#    tree's own consistency rule, which is a smaller claim than the one
+#    this comment used to make.
 src_check "xxh64: constants uppercase" "$XXH" '0xEF46DB3751D8E999ULL'
 src_check "xxh64: HAMMER2 seed uppercase" "$XXH" '0x4D617474446C6C6EULL'
 # 3. The wording the consumer greps, in the order it greps it.

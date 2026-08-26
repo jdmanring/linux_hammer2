@@ -191,13 +191,17 @@ package version about an artifact.
 
 An error path nobody has driven is an untested branch wearing the costume
 of a safety net: it reads as defensive prose rather than as code, so it is
-the last thing anyone thinks to exercise. Every such branch across the
-eight gates was driven on 2026-08-26, in a scratch copy of the tree, by
-removing the input each one names:
+the last thing anyone thinks to exercise. Every such branch was driven on
+2026-08-26, in a scratch copy of the tree, by removing the input each one
+names. The count is deliberately not written here: it would be a second
+claim about the same population as the table below, with nothing checking
+it, and this file has already recorded one instance of a count and a list
+disagreeing. Read the table.
 
 | gate | branch | how it was driven |
 |---|---|---|
 | `test-citations.sh` | no `doc/*.md` | the directory moved aside |
+| `test-provenance.sh` | no origin clone, so no carry re-verified | `H2_CLONE_DIR` pointed at a path that does not exist |
 | `test-history.sh` | not a repository | `.git` moved aside |
 | `test-history.sh` | no roadmap | the file moved aside |
 | `test-inventory.sh` | no `src/sys/fs/hammer2` | moved aside |
@@ -238,7 +242,7 @@ THIS ROUTE with the route named, because naming the index is what lets the
 next reader see the wrong one was asked - "perl cannot be hidden" carries
 no trace of "by directory, on a PATH-shaped machine".
 
-Exit 2 from any of the eight means the instrument could not run: no
+Exit 2 from any of the nine means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came
 back empty. That is not a verdict on the code, and it should not be
 recorded as a failure.

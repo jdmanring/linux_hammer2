@@ -214,19 +214,23 @@ Exit criteria:
    `README.status.md` so the next reader knows how many places are not a
    carry.
 
-Gate: `script/test-syntax.sh`, extended file by file as each lands. The
-check behind criterion 1, that no file under `src/sys/fs/hammer2/` lacks
-a provenance row, is unwritten: the provenance script today scans the
-upstream clones and answers about them, not about this tree, so the
-import rule exists as prose until that check is the first work item
-below.
+Gate: `script/test-syntax.sh`, extended file by file as each lands, and
+`script/test-provenance.sh` for criterion 1. That second gate was written
+on 2026-08-26 and closed the hole this paragraph used to describe: the
+import rule was prose, holding only as long as whoever added a file
+remembered it. It reads `doc/provenance.csv`, fails on a file with no row
+and on a row with no file, and re-runs `cmp` for every row claiming a
+byte-for-byte carry. With no origin clone on the machine it verified
+nothing that this tree could not verify about itself, and reports
+COULD-NOT-RUN rather than passing on a table that only agrees with
+itself.
 
 Work items:
 
 | item | owner | done when |
 |---|---|---|
-| a check that every file under `src/sys/fs/hammer2/` has a provenance row, with a control that an unlisted file fails it | contributor | it runs from `script/` and exits 2 without the CSV |
-| import the estimate's six carried files, then `inode`, `subr`, `ondisk` as the CSV classifies them | contributor | each type-checks under both compilers |
+| ~~a check that every file under `src/sys/fs/hammer2/` has a provenance row, with a control that an unlisted file fails it~~ | done 2026-08-26 | `script/test-provenance.sh`, covering `src/` rather than that one directory; `--selftest` drives all four findings, and the unlisted-file control is one of them |
+| import the estimate's six carried files, then `inode`, `subr`, `ondisk` as the CSV classifies them | contributor | each type-checks under both compilers; five of the six are in, `hammer2_flush.c` remains |
 | import the check algorithms, using the kernel's own xxHash, LZ4 and zlib as the vendored-library audit found them stock | contributor | the syntax gate covers them |
 | count the `XXX` marks and record it | contributor | the number is in `README.status.md` |
 
@@ -242,7 +246,7 @@ Risks and contingency:
 | a carried file will not type-check without a core edit | the edit is made in the shim if the shim can express it, otherwise in place with an `XXX`, and the count in criterion 4 is what makes that visible rather than silent | no |
 | the recursion the inode and chain locks need (`README.porting.md`, Locks) turns out to be reached in more than NetBSD's two call sites | the sites are listed before any is changed, and the shim's `rw_semaphore` decision is re-read against the list rather than patched around | no; yes for 0.3 if the count is large |
 
-Last reviewed: 2026-08-25.
+Last reviewed: 2026-08-26.
 
 ### 0.3 Module builds, loads and unloads
 

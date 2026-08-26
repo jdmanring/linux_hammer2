@@ -108,6 +108,13 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-inventory.sh   # the lists that claim to cover src/ and test/
         $ bash script/test-citations.sh   # every file:line citation in doc/
         $ bash script/test-history.sh     # every roadmap row's commit hash
+        $ bash script/test-provenance.sh  # every file under src/ has an origin row
+
+`test-provenance.sh` is the one of those four that asks a question this
+repository cannot answer alone: a row claiming a byte-for-byte carry is
+re-run with `cmp` against the origin clone, and where that clone is not on
+the machine it reports COULD-NOT-RUN rather than passing on a table that
+only agrees with itself.
 
 One is neither. `script/test-vectors-contract.sh` freezes the output and
 the constant spelling of the two files in `test/` that a gate in another

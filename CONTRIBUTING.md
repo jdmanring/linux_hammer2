@@ -41,7 +41,7 @@ anything, and its own green run is not evidence: three fixtures across
 these repositories passed on 2026-08-26 while testing nothing, each caught
 by running it against the defect rather than by reading it.
 
-**Every change comes with the gate that would have caught it.** All eight
+**Every change comes with the gate that would have caught it.** All nine
 gates are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
 that must fail on every run; the others buy the same assurance
 differently, and `doc/README.testing.md` says how for each. A patch that
@@ -53,6 +53,7 @@ harder to keep.
     $ bash script/test-inventory.sh
     $ bash script/test-citations.sh
     $ bash script/test-history.sh
+    $ bash script/test-provenance.sh
     $ bash script/test-shim.sh
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
@@ -60,6 +61,7 @@ harder to keep.
     $ bash script/test-posix.sh
     $ bash script/test-syntax.sh --selftest
     $ bash script/test-checkpatch.sh --selftest
+    $ bash script/test-provenance.sh --selftest
 
 The first three are POSIX sh over grep, sed and git. They need no kernel
 and no network, they take about a second, and they are what a

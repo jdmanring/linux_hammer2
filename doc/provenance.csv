@@ -1,0 +1,33 @@
+# Where every file under src/ came from, what licence it carries, and
+# whether it is a byte-for-byte carry. script/test-provenance.sh reads
+# this: it fails if a file under src/ has no row, if a row names a file
+# that is not there, and it re-runs `cmp` for every row claiming
+# "identical" against the origin clone when that clone is on this machine.
+#
+# carry:  identical -- byte-for-byte from origin at origin_commit
+#         derived   -- from origin, edited here; the note says how
+#         ours      -- written for this port
+#
+# origin_commit is the clone's HEAD when the file was taken, not the
+# commit that last touched the file.
+file,origin,origin_commit,license,carry,note
+src/sys/fs/hammer2/hammer2_admin.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,xop dispatch; the allocation zone is shimmed not edited
+src/sys/fs/hammer2/hammer2_bulkfree.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,printf and tsleep reach it through the shim
+src/sys/fs/hammer2/hammer2_chain.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,pause and __diagused shimmed; the recursive lock is NetBSD's non-recursive answer
+src/sys/fs/hammer2/hammer2_freemap.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,needs INVARIANTS spelled FreeBSD's way to compile with assertions on
+src/sys/fs/hammer2/hammer2_xops.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,
+src/sys/fs/hammer2/hammer2_mount.h,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,
+src/sys/fs/hammer2/hammer2_io.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,derived,hash and dedup halves carried; the OS half is written on the Linux page cache
+src/sys/fs/hammer2/hammer2.h,dragonfly-hammer2-upstream,22b0532048862576c5b86662d542247412372265,BSD-3-Clause,derived,DragonFly's in the FreeBSD port's shape; OS-facing types rewritten
+src/sys/fs/hammer2/hammer2_disk.h,dragonfly-hammer2-upstream,22b0532048862576c5b86662d542247412372265,BSD-3-Clause,derived,on-disk format carried; struct uuid defined locally
+src/sys/fs/hammer2/hammer2_ioctl.h,dragonfly-hammer2-upstream,22b0532048862576c5b86662d542247412372265,BSD-3-Clause,derived,linux/ioctl.h; HAMMER2_MAXPATHLEN pinned
+src/sys/fs/hammer2/hammer2_rb.h,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,derived,the FreeBSD port's RB_SCAN
+src/sys/fs/hammer2/hammer2_os.h,,,BSD-3-Clause,ours,the OS shim: Linux primitives under the names the core calls
+src/sys/fs/hammer2/hammer2_compat.h,,,BSD-3-Clause,ours,DragonFly kernel look-alikes on Linux primitives
+src/sys/fs/hammer2/hammer2_xxhash.h,,,BSD-3-Clause,ours,the kernel's xxh64() under the core's XXH64 name with HAMMER2's seed
+src/sys/fs/hammer2/Makefile,,,BSD-3-Clause,ours,kbuild object list
+src/sys/crypto/sha2/sha256.h,,,BSD-3-Clause,ours,the kernel's SHA-256 at the include path the core uses; the argument order is reversed there
+src/sys/sys/cdefs.h,,,BSD-3-Clause,ours,three names the two vendored headers need
+src/sys/sys/queue.h,freebsd-src,,BSD-3-Clause,derived,vendored; names the kernel defines are renamed BSD_*
+src/sys/sys/tree.h,freebsd-src,,BSD-2-Clause,derived,vendored; names the kernel defines are renamed BSD_*
+src/Makefile,,,BSD-3-Clause,ours,top-level kbuild entry
