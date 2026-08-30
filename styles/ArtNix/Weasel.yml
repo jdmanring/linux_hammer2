@@ -1,0 +1,27 @@
+# FreeBSD FDP Primer 12.1.1: "Avoid weasel words like 'should', 'might', 'try',
+# or 'could'. These words imply that the speaker is unsure of the facts, and
+# create doubt in the reader."
+#
+# This project has a sharper reason. A hedge is how "I did not measure it" gets
+# written as though it were a considered position, which the global working
+# disciplines call a defect rather than a disclosure. If the fact is uncertain,
+# name what would settle it.
+extends: existence
+message: "Weasel word '%s': state the fact, or name what would settle it."
+level: warning
+ignorecase: true
+tokens:
+  - presumably
+  - probably
+  - arguably
+  - fairly
+  - somewhat
+  - relatively
+  - largely
+  - mostly
+  - basically
+  - essentially
+  - simply
+  - obviously
+  - clearly
+  - of course

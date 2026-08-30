@@ -1,0 +1,12 @@
+# Zero tolerance, and duplicated in scripts/lint-docs.py on purpose.
+#
+# Vale is optional (it needs a package install); lint-docs.py runs everywhere and
+# is in the cheap gate. The one rule that must never slip through a missing tool
+# is enforced by both, so neither is load-bearing alone.
+extends: existence
+message: "Em-dash or en-dash: use a comma, colon, parentheses, or a full stop."
+level: error
+nonword: true
+tokens:
+  - '—'
+  - '–'

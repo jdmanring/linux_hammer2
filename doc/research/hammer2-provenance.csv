@@ -1,0 +1,140 @@
+original_path,current_project,commit_or_tag,copyright_holder,derived_from,license_expression,SPDX_identifier,port_status,modified_by_port,ArtNix_candidate_use
+sys/vfs/hammer2/CHANGES,dragonfly,22b053204886,,,NONE,,dropped,,docs
+sys/vfs/hammer2/DESIGN,dragonfly,22b053204886,,,NONE,,dropped,,docs
+sys/vfs/hammer2/FREEMAP,dragonfly,22b053204886,,,NONE,,dropped,,docs
+sys/vfs/hammer2/Makefile,dragonfly,22b053204886,,,NONE,,freebsd+netbsd,0.897,docs
+sys/vfs/hammer2/TODO,dragonfly,22b053204886,,,NONE,,dropped,,docs
+sys/vfs/hammer2/hammer2.h,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.592,rewrite
+sys/vfs/hammer2/hammer2_admin.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,freebsd+netbsd+openbsd,0.599,rewrite
+sys/vfs/hammer2/hammer2_bulkfree.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,freebsd+netbsd+openbsd,0.276,carry
+sys/vfs/hammer2/hammer2_ccms.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,dropped,,drop
+sys/vfs/hammer2/hammer2_ccms.h,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,dropped,,drop
+sys/vfs/hammer2/hammer2_chain.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.244,carry
+sys/vfs/hammer2/hammer2_cluster.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,freebsd+netbsd+openbsd,0.669,rewrite
+sys/vfs/hammer2/hammer2_disk.h,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.089,carry
+sys/vfs/hammer2/hammer2_flush.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.221,carry
+sys/vfs/hammer2/hammer2_freemap.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.280,carry
+sys/vfs/hammer2/hammer2_inode.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.305,carry
+sys/vfs/hammer2/hammer2_io.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,freebsd+netbsd+openbsd,0.544,rewrite
+sys/vfs/hammer2/hammer2_iocom.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Daniel Flores,BSD-3-Clause,,dropped,,drop
+sys/vfs/hammer2/hammer2_ioctl.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.394,rewrite
+sys/vfs/hammer2/hammer2_ioctl.h,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.312,rewrite
+sys/vfs/hammer2/hammer2_lz4.c,dragonfly,22b053204886,Yann Collet,,BSD-2-Clause,,freebsd+netbsd+openbsd,0.023,carry
+sys/vfs/hammer2/hammer2_lz4.h,dragonfly,22b053204886,Yann Collet,,BSD-2-Clause,,freebsd+netbsd+openbsd,0.000,carry
+sys/vfs/hammer2/hammer2_lz4_encoder.h,dragonfly,22b053204886,Yann Collet,,BSD-2-Clause,,freebsd+netbsd+openbsd,0.000,carry
+sys/vfs/hammer2/hammer2_mount.h,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,freebsd+netbsd+openbsd,0.197,rewrite
+sys/vfs/hammer2/hammer2_msgops.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,dropped,,drop
+sys/vfs/hammer2/hammer2_ondisk.c,dragonfly,22b053204886,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,,freebsd+netbsd+openbsd,0.385,rewrite
+sys/vfs/hammer2/hammer2_strategy.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas;Daniel Flores,BSD-3-Clause,,freebsd+netbsd+openbsd,0.395,rewrite
+sys/vfs/hammer2/hammer2_subr.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.340,rewrite
+sys/vfs/hammer2/hammer2_synchro.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon,BSD-3-Clause,,dropped,,drop
+sys/vfs/hammer2/hammer2_vfsops.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Daniel Flores,BSD-3-Clause,,freebsd+netbsd+openbsd,0.497,rewrite
+sys/vfs/hammer2/hammer2_vnops.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas;Daniel Flores,BSD-3-Clause,,freebsd+netbsd+openbsd,0.627,rewrite
+sys/vfs/hammer2/hammer2_xops.c,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas;Daniel Flores,BSD-3-Clause,,freebsd+netbsd+openbsd,0.241,carry
+sys/vfs/hammer2/hammer2_xxhash.h,dragonfly,22b053204886,The DragonFly Project,Matthew Dillon;Venkatesh Srinivas,BSD-3-Clause,,freebsd+netbsd+openbsd,0.159,rewrite
+sys/vfs/hammer2/xxhash/xxhash.c,dragonfly,22b053204886,Yann Collet,,BSD-2-Clause,,freebsd+netbsd+openbsd,0.000,stock-kernel
+sys/vfs/hammer2/xxhash/xxhash.h,dragonfly,22b053204886,Yann Collet,,BSD-2-Clause,,freebsd+netbsd+openbsd,0.000,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib.h,dragonfly,22b053204886,Jean-loup Gailly and Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_adler32.c,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_deflate.c,dragonfly,22b053204886,Jean-loup Gailly and Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_deflate.h,dragonfly,22b053204886,Jean-loup Gailly,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inffast.c,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inffast.h,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inffixed.h,dragonfly,22b053204886,,,NONE,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inflate.c,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inflate.h,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inftrees.c,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_inftrees.h,dragonfly,22b053204886,Mark Adler,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_trees.c,dragonfly,22b053204886,Jean-loup Gailly,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_trees.h,dragonfly,22b053204886,,,NONE,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_zconf.h,dragonfly,22b053204886,Jean-loup Gailly,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_zutil.c,dragonfly,22b053204886,Jean-loup Gailly,,Zlib,,dropped,,stock-kernel
+sys/vfs/hammer2/zlib/hammer2_zlib_zutil.h,dragonfly,22b053204886,Jean-loup Gailly,,Zlib,,dropped,,stock-kernel
+src/sys/fs/hammer2/Makefile,freebsd,3df307f7db9d,,,NONE,,port,,docs
+src/sys/fs/hammer2/hammer2.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_admin.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_bulkfree.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_chain.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_cluster.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_compat.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_disk.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_flush.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_freemap.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_inode.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_io.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ioctl.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ioctl.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_lz4.c,freebsd,3df307f7db9d,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_lz4.h,freebsd,3df307f7db9d,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_lz4_encoder.h,freebsd,3df307f7db9d,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_mount.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ondisk.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_os.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_rb.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,carry
+src/sys/fs/hammer2/hammer2_strategy.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_subr.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_vfsops.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_vnops.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_xops.c,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_xxhash.h,freebsd,3df307f7db9d,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/xxhash/xxhash.c,freebsd,3df307f7db9d,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/xxhash/xxhash.h,freebsd,3df307f7db9d,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/Makefile,netbsd,64095c3947f2,,,NONE,,port,,docs
+src/sys/fs/hammer2/hammer2.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_admin.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_bulkfree.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_chain.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_cluster.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_compat.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_disk.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_flush.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_freemap.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_inode.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_io.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ioctl.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ioctl.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_lz4.c,netbsd,64095c3947f2,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_lz4.h,netbsd,64095c3947f2,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_lz4_encoder.h,netbsd,64095c3947f2,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_mount.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ondisk.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_os.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_rb.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_strategy.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_subr.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_vfsops.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_vnops.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_xops.c,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_xxhash.h,netbsd,64095c3947f2,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/xxhash/xxhash.c,netbsd,64095c3947f2,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/xxhash/xxhash.h,netbsd,64095c3947f2,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_admin.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_bulkfree.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_chain.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_cluster.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_compat.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_disk.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_flush.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_freemap.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_inode.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_io.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ioctl.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ioctl.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_lz4.c,openbsd,a3747df96660,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_lz4.h,openbsd,a3747df96660,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_lz4_encoder.h,openbsd,a3747df96660,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/hammer2_mount.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_ondisk.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_os.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_rb.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port-only,,reference
+src/sys/fs/hammer2/hammer2_strategy.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_subr.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_vfsops.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_vnops.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_xops.c,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/hammer2_xxhash.h,openbsd,a3747df96660,Tomohiro Kusumi;The DragonFly Project,Matthew Dillon,BSD-3-Clause,BSD-3-Clause,port,,reference
+src/sys/fs/hammer2/xxhash/xxhash.c,openbsd,a3747df96660,Yann Collet,,BSD-2-Clause,,port,,reference
+src/sys/fs/hammer2/xxhash/xxhash.h,openbsd,a3747df96660,Yann Collet,,BSD-2-Clause,,port,,reference
+sys/sys/queue.h,freebsd-src,96841ea08dcf,The Regents of the University of California,,BSD-3-Clause,BSD-3-Clause,vendored,,carry
+sys/sys/tree.h,freebsd-src,96841ea08dcf,Niels Provos,,BSD-2-Clause,BSD-2-Clause,vendored,,carry

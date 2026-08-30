@@ -1,0 +1,47 @@
+# FreeBSD FDP Primer 12.2: "see csh(1)", not "see `man csh` for more".
+#
+# THIS RULE USED TO CARRY A SECOND CLAUSE AND IT COULD NEVER HAVE WORKED.
+# The primer's other example is "use `git`", not "use the `git` command", and
+# that clause was written as `the <name> command`. It is now deleted rather than
+# fixed, because in THIS configuration it is unenforceable in both directions and
+# the two directions were measured on 2026-08-11:
+#
+#   - With the name OPTIONALLY backticked, the pattern reads "the <any word>
+#     command" and matches every adjective. All EIGHT corpus findings were false
+#     positives: "the whole command line", "the full command it ran", "the bare
+#     command", "the fenced command block", "the repair command". A warning that
+#     is always wrong is worse than no warning, because it sits in one report
+#     with rules that are right and teaches people to skip the report.
+#
+#   - With the name REQUIRED to be backticked, the rule cannot fire at all.
+#     `.vale.ini` sets `TokenIgnores = (`[^`]+`)`, so a backticked span is
+#     removed before any rule sees it. The discriminator that separates a real
+#     finding from an adjective is exactly the thing vale is configured not to
+#     look at. Caught by the selftest reporting DEAD, which is the assertion this
+#     rule set gained after a different clause of THIS SAME FILE shipped dead in
+#     a different way.
+#
+# So the clause has no working form here, and the choice is a rule that cries
+# wolf or a rule that is silent. Both are worse than its absence, and its absence
+# is at least honest about what is checked. Rewriting `.vale.ini` to stop
+# ignoring backticks is not the fix: store paths and command output are not prose
+# and that exclusion is load-bearing for every other rule.
+#
+# WHAT STILL COVERS IT: nothing mechanical. Recorded here so the next person does
+# not re-add the clause and re-measure the same two failures.
+#
+# The surviving clause is a substitution-shaped check written as `existence`.
+# The reason recorded here was that Vale's substitution transform rejects
+# capture groups (E201), so a replacement could not quote the command name
+# back. THAT IS FALSE and was falsified the same week: a capture group
+# substitutes correctly. `existence` is kept because this rule has nothing to
+# quote back that the message does not already say, not because it must be.
+extends: existence
+message: "Redundant noun: cite the manual page as csh(1), not as 'man csh for more'."
+level: warning
+ignorecase: true
+# ONE raw entry. Vale CONCATENATES a `raw` list rather than alternating it, so
+# two entries joined into a pattern nothing can match, and the rule was silently
+# dead until a probe was run against it.
+raw:
+  - '\bman\s+\w[\w.-]*\s+for\s+more\b'

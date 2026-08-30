@@ -1,0 +1,10 @@
+--- a/sys/vfs/hammer2/hammer2_chain.c
++++ b/sys/vfs/hammer2/hammer2_chain.c
+@@ -2327,6 +2327,7 @@ hammer2_chain_repchange(hammer2_chain_t *parent, hammer2_chain_t *chain)
+ 		reptrack->next = parent->core.reptrack;
+ 		parent->core.reptrack = reptrack;
+ 		hammer2_chain_ref(parent);		/* reptrack */
++		hammer2_spin_unex(&reptrack->spin);
+ 
+ 		hammer2_spin_unex(&chain->core.spin);
+ 		hammer2_spin_unex(&parent->core.spin);

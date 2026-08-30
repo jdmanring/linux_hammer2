@@ -1,0 +1,31 @@
+# FreeBSD FDP Primer 12.2, "Avoid redundant phrases": "the command", "the file",
+# and "man command" are usually redundant.
+#   Wrong: Use the `git` command to update sources.
+#   Right: Use `git` to update sources.
+extends: substitution
+message: "Wordy: prefer '%s'."
+level: warning
+ignorecase: true
+swap:
+  in order to: to
+  due to the fact that: because
+  at this point in time: now
+  in the event that: if
+  is able to: can
+  has the ability to: can
+  a number of: several
+  # NARROWED 2026-08-11, and it was wrong in both trees that share this file.
+  # The FreeBSD primer's shape is `in the file /etc/rc.local`, where "the file"
+  # is redundant before a path. Both corpora use "the file" as a HEAD NOUN -
+  # "the username field in the file", "no fork/exec path in the file" - and the
+  # broad form rewrote those to "in it read", which is not English. 18 firings
+  # in the specification tree, all false; 4 here, of which the only true one is
+  # the sentence in docs/STYLE.md that documents this very rule.
+  #
+  # The capture group is the fix and it also falsifies a comment repeated in
+  # two more rule files here: vale does NOT reject capture groups in a
+  # substitution. Probed rather than argued - `(behaviou|colou)r: $1r` swaps
+  # correctly - so whatever earned that E201 was one malformed pattern, not the
+  # construct. Falsified both ways: this form fires on the path shape and stays
+  # silent on the head-noun one, and the broad form fires on both.
+  in the file (/\S+): in $1

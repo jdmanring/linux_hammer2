@@ -1,0 +1,24 @@
+# Self-congratulatory adjectives and generated-text scaffolding.
+#
+# STANDARDS.md states the reason: "A concrete claim with its number reads senior;
+# the adjectives read like filler because they are." None of these words survive
+# the test of being replaced by a measurement.
+extends: existence
+message: "'%s' is filler: replace it with the number, or cut it."
+level: warning
+ignorecase: true
+tokens:
+  - comprehensive
+  - robust
+  - seamless
+  - gold standard
+  - best-in-class
+  - cutting-edge
+  - state of the art
+  - leverage
+  - delve
+  - it is important to note
+  - it should be noted
+  - importantly
+  - that said
+  - needless to say
