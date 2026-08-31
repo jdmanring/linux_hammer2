@@ -34,7 +34,7 @@ is a defect.
 
 ## What has been verified
 
-All nine gates pass, and since 2026-08-26 they pass with no environment
+All ten gates pass, and since 2026-08-26 they pass with no environment
 variables set on a machine that has the kernel of record installed: the
 syntax gate finds that tree, and the style gate finds its `checkpatch.pl`.
 What that unattended style run can say is narrower than it looks, and the

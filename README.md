@@ -110,6 +110,7 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-citations.sh   # every file:line citation in doc/
         $ bash script/test-history.sh     # every roadmap row's commit hash
         $ bash script/test-provenance.sh  # every file under src/ has an origin row
+        $ bash script/test-doc-prose.sh   # vale over doc/, ArtNix's styles
 
 `test-provenance.sh` is the one of those four that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
