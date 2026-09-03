@@ -114,8 +114,13 @@ question: it reads a config symbol where the kernel offers a capability.
 **The mount path must call it and refuse by name**, rather than inheriting
 a build-time assert. The block layer's own direction is to derive the
 ceiling from the maximum supported folio size rather than from a THP test,
-so "THP required" is a fact about 6.15 through 7.2 and not an
-architecture. What must never happen is silently splitting one HAMMER2
+so "THP required" is a fact about a range of releases and not an
+architecture. The range is 6.16 through 7.3-rc1, measured by reading
+`include/linux/blkdev.h` at each tag: v6.15 defines `BLK_MAX_BLOCK_SIZE`
+as `SZ_64K` unconditionally, and v6.16 is the first to put it behind
+`#ifdef CONFIG_TRANSPARENT_HUGEPAGE` with `PAGE_SIZE` on the other side.
+So the floor release is the one release in the supported range that does
+not need the option. What must never happen is silently splitting one HAMMER2
 physical buffer, which would change on-disk semantics.
 
 ## The device layer
