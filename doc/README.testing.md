@@ -365,6 +365,39 @@ not the machine. Both were already in the nix store. Asking PATH about a
 machine whose software lives in a store is the same error as asking a
 package version about an artifact.
 
+## Getting a kernel newer than the distribution ships
+
+The kernel of record moves faster than any guest in the fleet, so testing
+against it means installing a kernel rather than finding one. Two routes
+are known to work and neither needs a kernel build.
+
+Fedora carries the current stable series and the development series side by
+side, and its kernel packages have shallow enough dependencies to install
+across a release. Both of the kernels this port has been loaded on came
+from there, into a guest that was running Fedora 44:
+
+    # dnf --releasever=45 --enablerepo=updates-testing -y \
+        install kernel-7.2.3-300.fc45 kernel-devel-7.2.3-300.fc45
+    # dnf --repofrompath=raw,https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Everything/x86_64/os/ \
+        --repo=raw --nogpgcheck -y install kernel-<exact-nevr> kernel-devel-<exact-nevr>
+    # grubby --set-default /boot/vmlinuz-<version> && reboot
+
+Name the exact version. `dnf install kernel` against a repository that
+already has some kernel installed reports `Nothing to do` and exits 0,
+which reads as success and installs nothing. List first, with
+`list --showduplicates`, and install what the listing names.
+
+Installing across a release upgrades what the kernel package depends on.
+The 7.2.3 install above pulled Fedora 45's glibc, gcc and openssl into a
+Fedora 44 guest. That is fine for a disposable test guest and is worth
+knowing before doing it to one that is not.
+
+The second route is the `chaotic-cx/nyx` nix flake, which packages the
+CachyOS kernels and had a cached 7.3-rc1 build on 2026-09-03. It is a
+substitution rather than a build. The CachyOS pacman repository is a
+different channel with its own cadence and had no 7.3 kernel on the same
+day, so a reading of one says nothing about the other.
+
 ## Every COULD-NOT-RUN branch has been driven
 
 An error path nobody has driven is an untested branch wearing the costume
