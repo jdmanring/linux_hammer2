@@ -14,6 +14,7 @@
 1 Prefer 'X' to bare use of 'X'
 1 Statements terminations use 1 semicolon
 1 braces {} are not necessary for single statement blocks
+1 break is not useful after a return
 1 code indent should use tabs where possible
 74 do not add new typedefs
 1 do not initialise statics to 0
@@ -22,9 +23,9 @@
 394 function definition argument 'X' should also have an identifier name
 13 plain inline is preferred over __inline
 1 please, no space before tabs
-124 please, no spaces at the start of a line
-33 quoted string split across lines
-141 return is not a function, parentheses are not required
+126 please, no spaces at the start of a line
+32 quoted string split across lines
+145 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EACCES)
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)

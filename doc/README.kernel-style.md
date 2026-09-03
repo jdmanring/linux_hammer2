@@ -191,6 +191,17 @@ records rather than defects, and the new file drew nothing else: it is
 this port's, so it was written to the house style from the start, and the
 only carried thing in it is a nine-line loop.
 
+913 to 919 when upstream's `hammer2_recovery()`,
+`hammer2_recovery_scan()` and `hammer2_fixup_pfses()` were carried into
+`hammer2_vfsops.c`: 250 lines for a net 6 hits. Four are `return (x);`,
+two are the four-space continuation lines BSD style uses for a wrapped
+prototype and a wrapped argument list, and one is the `break` after a
+`return` in the recovery scan's type switch, which upstream writes and
+which a carry keeps. One went the other way, a split quoted string
+removed with the placeholder the carry replaced. Every category is one
+this file already records, and nothing in a carried function was
+reformatted to lower a count.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

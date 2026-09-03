@@ -44,6 +44,8 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 
+static int hammer2_recovery(hammer2_dev_t *);
+static int hammer2_fixup_pfses(hammer2_dev_t *);
 static void hammer2_update_pmps(hammer2_dev_t *);
 static void hammer2_mount_helper(struct super_block *, hammer2_pfs_t *);
 static void hammer2_unmount_helper(struct super_block *, hammer2_pfs_t *,
@@ -1036,44 +1038,40 @@ next_hmp:
 		/* Leave spmp->iroot with one ref. */
 
 		/*
-		 * DEFER(flush recovery lands): upstream runs
-		 * hammer2_recovery() and hammer2_fixup_pfses() here when
-		 * the mount is read-write.  Neither is carried, so this
-		 * mount does not replay an interrupted flush, and nothing
-		 * reaches this point read-write: hammer2_get_tree() refuses
-		 * that before the device is opened, and
-		 * hammer2_reconfigure() refuses the remount that would
-		 * arrive at the same state sideways.  Those two refusals
-		 * are what makes the missing recovery a deferral rather
-		 * than a data-loss bug, and they are lifted by the same
-		 * work that lifts this.
+		 * DEFER(recovery is exercised on a device): upstream runs
+		 * this on a read-write mount to replay an interrupted
+		 * flush, and it is carried above.  It WRITES, so it is
+		 * reached only when the mount is read-write, and no mount
+		 * is: hammer2_get_tree() refuses that before the device is
+		 * opened and hammer2_reconfigure() refuses the remount
+		 * that would arrive at the same state sideways.  Carrying
+		 * the code and lifting those refusals are different
+		 * things, and the second one needs a loaded module and a
+		 * scratch device with an interrupted flush on it, which is
+		 * what this trigger names.
 		 *
-		 * The three functions are upstream's hammer2_recovery(),
-		 * hammer2_recovery_scan() and hammer2_fixup_pfses(), 249
-		 * lines naming no FreeBSD-specific construct, so this is a
-		 * carry rather than a rewrite.
-		 *
-		 * Nothing this mount does writes, which is what keeps the
-		 * gap from being a data-loss bug today rather than a
-		 * deferral.  The teardown a few lines below flushes vchain
-		 * and fchain when either carries a
-		 * HAMMER2_CHAIN_FLUSH_MASK bit, and neither does: the
-		 * four bits in that mask are set at eleven sites in nine
-		 * functions, counted on 2026-08-26 by grepping
-		 * atomic_set_int() for each of the four, and those nine are
-		 * hammer2_chain_modify(), hammer2_chain_create(),
-		 * hammer2_chain_setflush(), hammer2_chain_lastdrop(), the
-		 * two chain deletes, the two flush functions and
-		 * hammer2_voldata_modify().  The device half calls none of
-		 * them.  The one it reaches indirectly is lastdrop, through
-		 * the drop of a chain it only read, and that sets DESTROY
-		 * on the chain being dropped and propagates it downward to
-		 * children, never up to an anchor whose refs never reach
-		 * zero.  So the flush in the teardown is a no-op here.
+		 * The teardown a few lines below flushes vchain and fchain
+		 * when either carries a HAMMER2_CHAIN_FLUSH_MASK bit, and
+		 * neither does: the four bits in that mask are set at
+		 * eleven sites in nine functions, counted on 2026-08-26 by
+		 * grepping atomic_set_int() for each of the four, and
+		 * those nine are hammer2_chain_modify(),
+		 * hammer2_chain_create(), hammer2_chain_setflush(),
+		 * hammer2_chain_lastdrop(), the two chain deletes, the two
+		 * flush functions and hammer2_voldata_modify().  The
+		 * device half calls none of them.  The one it reaches
+		 * indirectly is lastdrop, through the drop of a chain it
+		 * only read, and that sets DESTROY on the chain being
+		 * dropped and propagates it downward to children, never up
+		 * to an anchor whose refs never reach zero.  So the flush
+		 * in the teardown is a no-op here.
 		 */
-		if (!hmp->rdonly)
-			debug_hprintf("recovery skipped, no mount can "
-			    "succeed yet\n");
+		if (!hmp->rdonly) {
+			error = hammer2_recovery(hmp);
+			if (error == 0)
+				error |= hammer2_fixup_pfses(hmp);
+			/* XXX do something with error */
+		}
 
 		/*
 		 * A false-positive lock order reversal may be detected.
@@ -1220,6 +1218,258 @@ next_hmp:
 	hstrfree(devstr);
 
 	return 0;
+}
+
+struct hammer2_recovery_elm {
+	TAILQ_ENTRY(hammer2_recovery_elm) entry;
+	hammer2_chain_t *chain;
+	hammer2_tid_t sync_tid;
+};
+
+TAILQ_HEAD(hammer2_recovery_list, hammer2_recovery_elm);
+
+struct hammer2_recovery_info {
+	struct hammer2_recovery_list list;
+	hammer2_tid_t mtid;
+	int depth;
+};
+
+static int hammer2_recovery_scan(hammer2_dev_t *, hammer2_chain_t *,
+    struct hammer2_recovery_info *, hammer2_tid_t);
+
+#define HAMMER2_RECOVERY_MAXDEPTH	10
+
+/*
+ * Recovery re-scans the topology from the last flushed freemap_tid up to
+ * mirror_tid and re-marks the blocks it finds allocated, which is what
+ * makes a filesystem whose last flush was interrupted safe to write to
+ * again.  It WRITES: hammer2_freemap_adjust() with DORECOVER, and
+ * hammer2_flush() at each PFS boundary.
+ *
+ * The recursion is bounded by HAMMER2_RECOVERY_MAXDEPTH rather than by
+ * the shape of the tree.  hammer2_recovery_scan() defers anything deeper
+ * onto info->list, which hammer2_recovery() then drains at depth zero, so
+ * the stack cost is a fixed ten frames whatever the topology is.
+ */
+static int
+hammer2_recovery(hammer2_dev_t *hmp)
+{
+	struct hammer2_recovery_info info;
+	struct hammer2_recovery_elm *elm;
+	hammer2_chain_t *parent;
+	hammer2_tid_t sync_tid, mirror_tid;
+	int error;
+
+	hammer2_trans_init(hmp->spmp, 0);
+
+	sync_tid = hmp->voldata.freemap_tid;
+	mirror_tid = hmp->voldata.mirror_tid;
+
+	if (sync_tid >= mirror_tid)
+		debug_hprintf("no recovery needed\n");
+	else
+		hprintf("freemap recovery %016llx-%016llx\n",
+		    (long long)sync_tid + 1, (long long)mirror_tid);
+
+	TAILQ_INIT(&info.list);
+	info.depth = 0;
+	parent = hammer2_chain_lookup_init(&hmp->vchain, 0);
+	error = hammer2_recovery_scan(hmp, parent, &info, sync_tid);
+	hammer2_chain_lookup_done(parent);
+
+	while ((elm = TAILQ_FIRST(&info.list)) != NULL) {
+		TAILQ_REMOVE(&info.list, elm, entry);
+		parent = elm->chain;
+		sync_tid = elm->sync_tid;
+		hfree(elm, M_HAMMER2, sizeof(*elm));
+
+		hammer2_chain_lock(parent, HAMMER2_RESOLVE_ALWAYS);
+		error |= hammer2_recovery_scan(hmp, parent, &info,
+		    hmp->voldata.freemap_tid);
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent); /* drop elm->chain ref */
+	}
+
+	hammer2_trans_done(hmp->spmp, 0);
+
+	return (error);
+}
+
+static int
+hammer2_recovery_scan(hammer2_dev_t *hmp, hammer2_chain_t *parent,
+    struct hammer2_recovery_info *info, hammer2_tid_t sync_tid)
+{
+	hammer2_chain_t *chain;
+	hammer2_blockref_t bref;
+	struct hammer2_recovery_elm *elm;
+	const hammer2_inode_data_t *ripdata;
+	int tmp_error, rup_error, error, first;
+
+	/* Adjust freemap to ensure that the block(s) are marked allocated. */
+	if (parent->bref.type != HAMMER2_BREF_TYPE_VOLUME)
+		hammer2_freemap_adjust(hmp, &parent->bref,
+		    HAMMER2_FREEMAP_DORECOVER);
+
+	/* Check type for recursive scan. */
+	switch (parent->bref.type) {
+	case HAMMER2_BREF_TYPE_VOLUME:
+		/* data already instantiated */
+		break;
+	case HAMMER2_BREF_TYPE_INODE:
+		/*
+		 * Must instantiate data for DIRECTDATA test and also
+		 * for recursion.
+		 */
+		hammer2_chain_lock(parent, HAMMER2_RESOLVE_ALWAYS);
+		ripdata = &parent->data->ipdata;
+		if (ripdata->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA) {
+			/* not applicable to recovery scan */
+			hammer2_chain_unlock(parent);
+			return (0);
+		}
+		hammer2_chain_unlock(parent);
+		break;
+	case HAMMER2_BREF_TYPE_INDIRECT:
+		/* Must instantiate data for recursion. */
+		hammer2_chain_lock(parent, HAMMER2_RESOLVE_ALWAYS);
+		hammer2_chain_unlock(parent);
+		break;
+	case HAMMER2_BREF_TYPE_DIRENT:
+	case HAMMER2_BREF_TYPE_DATA:
+	case HAMMER2_BREF_TYPE_FREEMAP:
+	case HAMMER2_BREF_TYPE_FREEMAP_NODE:
+	case HAMMER2_BREF_TYPE_FREEMAP_LEAF:
+		/* not applicable to recovery scan */
+		return (0);
+		break;
+	default:
+		return (HAMMER2_ERROR_BADBREF);
+	}
+
+	/* Defer operation if depth limit reached. */
+	if (info->depth >= HAMMER2_RECOVERY_MAXDEPTH) {
+		elm = hmalloc(sizeof(*elm), M_HAMMER2, M_ZERO | M_WAITOK);
+		elm->chain = parent;
+		elm->sync_tid = sync_tid;
+		hammer2_chain_ref(parent);
+		TAILQ_INSERT_TAIL(&info->list, elm, entry);
+		/* unlocked by caller */
+		return (0);
+	}
+
+	/*
+	 * Recursive scan of the last flushed transaction only.  We are
+	 * doing this without pmp assignments so don't leave the chains
+	 * hanging around after we are done with them.
+	 *
+	 * error	Cumulative error this level only
+	 * rup_error	Cumulative error for recursion
+	 * tmp_error	Specific non-cumulative recursion error
+	 */
+	chain = NULL;
+	first = 1;
+	rup_error = 0;
+	error = 0;
+
+	for (;;) {
+		error |= hammer2_chain_scan(parent, &chain, &bref, &first,
+		    HAMMER2_LOOKUP_NODATA);
+		/* Problem during scan or EOF. */
+		if (error)
+			break;
+
+		/* If this is a leaf. */
+		if (chain == NULL) {
+			if (bref.mirror_tid > sync_tid)
+				hammer2_freemap_adjust(hmp, &bref,
+				    HAMMER2_FREEMAP_DORECOVER);
+			continue;
+		}
+
+		/* This may or may not be a recursive node. */
+		atomic_set_int(&chain->flags, HAMMER2_CHAIN_RELEASE);
+		if (bref.mirror_tid > sync_tid) {
+			++info->depth;
+			tmp_error = hammer2_recovery_scan(hmp, chain, info,
+			    sync_tid);
+			--info->depth;
+		} else {
+			tmp_error = 0;
+		}
+
+		/*
+		 * Flush the recovery at the PFS boundary to stage it for
+		 * the final flush of the super-root topology.
+		 */
+		if (tmp_error == 0 &&
+		    (bref.flags & HAMMER2_BREF_FLAG_PFSROOT) &&
+		    (chain->flags & HAMMER2_CHAIN_ONFLUSH))
+			hammer2_flush(chain,
+			    HAMMER2_FLUSH_TOP | HAMMER2_FLUSH_ALL);
+		rup_error |= tmp_error;
+	}
+	return ((error | rup_error) & ~HAMMER2_ERROR_EOF);
+}
+
+/*
+ * This fixes up an error introduced in earlier H2 implementations where
+ * moving a PFS inode into an indirect block wound up causing the
+ * HAMMER2_BREF_FLAG_PFSROOT flag in the bref to get cleared.
+ */
+static int
+hammer2_fixup_pfses(hammer2_dev_t *hmp)
+{
+	const hammer2_inode_data_t *ripdata;
+	hammer2_chain_t *parent, *chain;
+	hammer2_key_t key_next;
+	hammer2_pfs_t *spmp;
+	int error = 0, error2;
+
+	/*
+	 * Lookup mount point under the media-localized super-root.
+	 *
+	 * cluster->pmp will incorrectly point to spmp and must be fixed
+	 * up later on.
+	 */
+	spmp = hmp->spmp;
+	hammer2_inode_lock(spmp->iroot, 0);
+	parent = hammer2_inode_chain(spmp->iroot, 0, HAMMER2_RESOLVE_ALWAYS);
+	chain = hammer2_chain_lookup(&parent, &key_next, HAMMER2_KEY_MIN,
+	    HAMMER2_KEY_MAX, &error, 0);
+
+	while (chain) {
+		if (chain->bref.type != HAMMER2_BREF_TYPE_INODE)
+			continue;
+		if (chain->error) {
+			hprintf("I/O error scanning PFS labels\n");
+			error |= chain->error;
+		} else if ((chain->bref.flags & HAMMER2_BREF_FLAG_PFSROOT) == 0) {
+			ripdata = &chain->data->ipdata;
+			hammer2_trans_init(hmp->spmp, 0);
+			error2 = hammer2_chain_modify(chain,
+			    chain->bref.modify_tid, 0, 0);
+			if (error2 == 0) {
+				hprintf("correct mis-flagged PFS %s\n",
+				    ripdata->filename);
+				chain->bref.flags |= HAMMER2_BREF_FLAG_PFSROOT;
+			} else {
+				error |= error2;
+			}
+			hammer2_flush(chain,
+			    HAMMER2_FLUSH_TOP | HAMMER2_FLUSH_ALL);
+			hammer2_trans_done(hmp->spmp, 0);
+		}
+		chain = hammer2_chain_next(&parent, chain, &key_next,
+		    HAMMER2_KEY_MAX, &error, 0);
+	}
+
+	if (parent) {
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+	}
+	hammer2_inode_unlock(spmp->iroot);
+
+	return (error);
 }
 
 /*
