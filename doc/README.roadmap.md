@@ -67,7 +67,9 @@ in 0.2 can be prepared without it.
    handlers as floors, and `hammer2_vfs_sync_pmp()` became a floor too. The
    result is `hammer2.ko`, warning-clean, license `Dual BSD/GPL`, alias
    `fs-hammer2`, no module dependencies. That is 0.3's first criterion.
-   Loading and unloading are the other two and need the guest below. The
+   Loading and unloading are the other two and need a guest, which exists:
+   see the guest section below, where the version this was blocked on was a
+   misreading of what loading a module requires. The
    build also found seven warnings the syntax gate did not carry the flags
    for, and gates that read kbuild's output as source.
 4. Read-only mount of F1, then of the F2 root image: 0.4.
@@ -160,7 +162,8 @@ Every milestone from 0.3 on needs a machine this repository does not contain:
 
 | guest | needed by | for |
 |---|---|---|
-| Linux at the kernel of record, `CONFIG_PROVE_LOCKING` on | 0.3, 0.4 | loading the module, and every mount |
+| Linux in the supported range | 0.3, 0.4 | loading the module, and every mount |
+| the same, `CONFIG_PROVE_LOCKING` on | 0.3, 0.4 | the lock order this port's shim imposes on a carried core |
 | DragonFly 6.4.2 | 0.4 | writing the F2 reference media |
 | DragonFly or FreeBSD | 0.5, 0.6 | the F4 round trip, and calibrating the crash matrix |
 | FreeBSD, NetBSD, OpenBSD | any milestone | reading a port against the host it was written for |
@@ -174,14 +177,22 @@ said already exists, and a dozen Linux ones including CachyOS, NixOS,
 Fedora, Debian and openSUSE. They are documented in a separate repository,
 `virtual-workbench`, which this one had never named.
 
-What remains open is narrower and is a question rather than a blockage. 0.3
-wants `CONFIG_PROVE_LOCKING`, and a distribution kernel usually ships
-without it: the maintainer's host is `CONFIG_DEBUG_KERNEL=y` with no
-`PROVE_LOCKING`. Whether that holds across the fleet is a count, and a
-count is measured rather than asserted, so it is measured by booting a guest
-and reading its config, starting with a distribution that ships a separate
-debug kernel. A kernel build in a guest is the fallback if none does, not
-the assumed starting point.
+The row above was one row until 2026-09-03 and it read `CONFIG_PROVE_LOCKING`
+as a condition of loading the module. It is not. Loading and unloading are
+0.3's two open criteria and a stock kernel runs them; lockdep makes that test
+worth more, and its absence makes the test weaker rather than impossible.
+Coupling the two is what has had 0.3 recorded as blocked while kernels in the
+supported range sat on the same disk.
+
+`PROVE_LOCKING` is genuinely absent from stock kernels, which is now measured
+rather than supposed. Five configs read straight out of the guest images with
+`virt-cat`, no guest booted: Fedora 44 at 7.1.6, Nobara at 7.1.3, Void at
+6.18.42, Gentoo at 6.18.41 and the maintainer's own host at 7.1.9. Every one
+is `# CONFIG_PROVE_LOCKING is not set`. Four other guests keep `/boot`
+somewhere this sweep did not read, which is unread and not absent. So the
+lockdep half needs a debug kernel package or a build, and the loading half
+needs neither: Nobara at 7.1.3 and Void at 6.18.42 are both inside the range
+this module compiles for.
 
 No instrument in this repository drives a guest: nothing under `script/` or
 `test/` invokes `qemu`, `virsh` or `virt-install`. This paragraph used to

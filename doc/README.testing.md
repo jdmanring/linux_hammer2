@@ -107,6 +107,28 @@ build against some other kernel. COULD-NOT-RUN is a real failure in that job
 rather than a skip: the steps above it exist to provide the tree, so its
 absence means one of them silently did nothing.
 
+Run it before pushing, not after. Between 2026-08-30 and 2026-09-03 this
+repository sent twenty-five failed CI runs, and every one of them failed at
+the module build: symbols undefined at modpost, then a 6.19 spelling against
+the 6.15 floor, then a 7.0 one, then this job's own iterations. Two of the
+twenty-five were the gate's fault and the rest were the tree's, but the
+volume was a working habit rather than a defect rate. CI was being used as a
+compiler, one push per question, and each answer arrived as a failure
+notification to the maintainer.
+
+`build-check.sh` takes a `KDIR`, so the floor job reproduces on any machine
+with a built 6.15 tree:
+
+    $ cd ~/kernels && curl -sSLO https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.15.tar.xz
+    $ tar -xf linux-6.15.tar.xz && cd linux-6.15
+    $ make defconfig && make -j"$(nproc)"        # bc, bison, flex, libelf, openssl
+    $ cd /path/to/linux_hammer2
+    $ sh script/build-check.sh ~/kernels/linux-6.15
+
+The full build is what writes `Module.symvers`, per the kbuild note above,
+and it is the only slow part. Once it exists the check is seconds, and the
+question CI answers in four minutes is answerable before the commit.
+
 `script/floor-symbols.py` bounds the same class from the other side by
 resolving every identifier the tree calls and does not define against the
 floor tree's `include/`. It does not compile, so a signature that changed
