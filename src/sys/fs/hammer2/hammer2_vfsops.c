@@ -692,6 +692,26 @@ hammer2_get_tree(struct fs_context *fc)
 		return (-EINVAL);	/* Linux: the VFS half is negative */
 
 	/*
+	 * DEFER(flush recovery lands): refuse a read-write mount.
+	 * Upstream replays an interrupted flush at mount time and this
+	 * port does not carry that yet, so a read-write mount would take
+	 * a filesystem whose last flush was cut short and go on writing
+	 * to it.  A read-only mount is refused nothing, because the
+	 * recovery upstream runs is conditional on the mount being
+	 * read-write in the first place.
+	 *
+	 * This is the guard and not the fix, and it sits here rather than
+	 * at the recovery site because that site is reached only after
+	 * the device is open and the super-root is read.  Refusing before
+	 * either has happened refuses the operation; refusing there would
+	 * unwind one.  hammer2_reconfigure() covers the remount.
+	 */
+	if (!rdonly) {
+		hprintf("read-write mount refused, flush recovery is not implemented, mount -o ro\n");
+		return (-EROFS);	/* Linux: the VFS half is negative */
+	}
+
+	/*
 	 * XXX Linux: FreeBSD copies the device string into an MNAMELEN
 	 * stack buffer because the '@' split writes a NUL into it.  A
 	 * private copy is still needed for that reason, but it is taken
@@ -1016,20 +1036,22 @@ next_hmp:
 		/* Leave spmp->iroot with one ref. */
 
 		/*
-		 * DEFER(the module is loaded and mounts a device): upstream
-		 * runs hammer2_recovery() and hammer2_fixup_pfses() here
-		 * when the mount is read-write.  Neither is carried yet, so
-		 * a read-write mount does not replay an interrupted flush.
+		 * DEFER(flush recovery lands): upstream runs
+		 * hammer2_recovery() and hammer2_fixup_pfses() here when
+		 * the mount is read-write.  Neither is carried, so this
+		 * mount does not replay an interrupted flush, and nothing
+		 * reaches this point read-write: hammer2_get_tree() refuses
+		 * that before the device is opened, and
+		 * hammer2_reconfigure() refuses the remount that would
+		 * arrive at the same state sideways.  Those two refusals
+		 * are what makes the missing recovery a deferral rather
+		 * than a data-loss bug, and they are lifted by the same
+		 * work that lifts this.
 		 *
-		 * This deferral was once conditioned on the mount path
-		 * failing a few lines below, which made the gap
-		 * unreachable.  The mount path now returns success, so the
-		 * gap is live and the only thing standing in front of it is
-		 * that no module has been loaded.  The three functions are
-		 * upstream's hammer2_recovery(), hammer2_recovery_scan()
-		 * and hammer2_fixup_pfses(), 249 lines that name no
-		 * FreeBSD-specific construct, so this is a carry rather
-		 * than a rewrite.
+		 * The three functions are upstream's hammer2_recovery(),
+		 * hammer2_recovery_scan() and hammer2_fixup_pfses(), 249
+		 * lines naming no FreeBSD-specific construct, so this is a
+		 * carry rather than a rewrite.
 		 *
 		 * Nothing this mount does writes, which is what keeps the
 		 * gap from being a data-loss bug today rather than a
@@ -1292,14 +1314,40 @@ static const struct super_operations hammer2_sops = {
 };
 
 /*
- * DEFER(a super_block exists to reconfigure): ->reconfigure, which is
- * where FreeBSD's MNT_UPDATE branch of hammer2_mount() goes.  Without
- * it the VFS refuses a remount, which is the right answer while there
- * is nothing to remount.
+ * DEFER(flush recovery lands): the read-write refusal in
+ * hammer2_get_tree() covers the mount, and this covers the remount that
+ * would otherwise walk around it.
+ *
+ * A NULL ->reconfigure does NOT make the VFS refuse a remount.
+ * reconfigure_super() calls the operation only when it is present and
+ * then applies fc->sb_flags under fc->sb_flags_mask either way, so
+ * "mount -o remount,rw" on a superblock mounted read-only clears
+ * SB_RDONLY with nothing consulted.  Read at the kernel of record, in
+ * fs/super.c.
+ *
+ * XXX Linux: this is not FreeBSD's MNT_UPDATE branch of
+ * hammer2_mount(), which is what a real ->reconfigure carries.  It is
+ * the refusal alone, and it goes away when recovery lands and the real
+ * one is written.
  */
+static int
+hammer2_reconfigure(struct fs_context *fc)
+{
+	struct super_block *sb = fc->root->d_sb;
+
+	if ((fc->sb_flags_mask & SB_RDONLY) && !(fc->sb_flags & SB_RDONLY) &&
+	    sb_rdonly(sb)) {
+		hprintf("read-write remount refused, flush recovery is not implemented\n");
+		return (-EROFS);	/* Linux: the VFS half is negative */
+	}
+
+	return (0);
+}
+
 static const struct fs_context_operations hammer2_context_ops = {
 	.parse_param	= hammer2_parse_param,
 	.get_tree	= hammer2_get_tree,
+	.reconfigure	= hammer2_reconfigure,
 	.free		= hammer2_free_fs_context,
 };
 
