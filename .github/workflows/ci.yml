@@ -174,9 +174,25 @@ jobs:
             grep -E "^ERROR|error:" /tmp/h2build.log | head -20
             exit 1
           fi
-          if [ "$(grep -c 'warning:' /tmp/h2build.log)" != 0 ]; then
+          # A bare "warning:" also matches kbuild's own banner about the
+          # compiler differing from the one that built the kernel, which is
+          # a fact about the runner and not a diagnostic about this code.
+          # It failed this step for two runs while the build itself was
+          # clean. The pattern requires file:line:column, which every
+          # compiler diagnostic carries and that banner does not. A warning
+          # raised inside a kernel header still matches, deliberately: it is
+          # raised by this code including that header.
+          pat='^[^ ].*:[0-9][0-9]*:[0-9][0-9]*: warning:'
+          # The pattern is checked against a line built to match before it
+          # is trusted on a log that should have none, since "no warnings"
+          # and "the pattern stopped matching" print the same number.
+          if ! printf 'f.c:1:1: warning: x\n' | grep -qE "$pat"; then
+            echo "::error::the warning pattern no longer matches a warning"
+            exit 1
+          fi
+          if [ "$(grep -cE "$pat" /tmp/h2build.log)" != 0 ]; then
             echo "::error::the build is not warning-clean"
-            grep "warning:" /tmp/h2build.log | head -20
+            grep -E "$pat" /tmp/h2build.log | head -20
             exit 1
           fi
           ko=src/sys/fs/hammer2/hammer2.ko
