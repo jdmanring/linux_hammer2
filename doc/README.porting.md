@@ -195,7 +195,7 @@ whether `M_WAITOK` can be made not to fail (`mm/slub.c`), and whether
 (`block/bdev.c`, `fs/file_table.c`). The last had been a `DEFER` on the
 grounds that the file could not be read.
 
-So: a question about kernel behaviour is not a `DEFER` candidate merely
+So: a question about kernel behavior is not a `DEFER` candidate merely
 because the source is not on disk. Compiling proves a field exists and
 never what sets it, and reading a BSD port proves what BSD does. Cite the
 file and the tag in the comment, as those sites do, since a reading from
@@ -348,7 +348,7 @@ that can be handed a value at load is a counter `hammer2_assert_clean()`
 cannot trust in either direction: a positive one at load reports a leak
 that never happened, and a negative one hides a real leak under a sum
 that reaches zero. That is precisely the check this file moved to the
-unload path in order to make it work, so exposing the counters this way
+unload path to make it work, so exposing the counters this way
 would have taken it straight back. `supported_version` goes with them
 rather than being settable to a version the code does not support, and
 there is no variable for it at all until there is somewhere read-only to

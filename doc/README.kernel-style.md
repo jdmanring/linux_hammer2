@@ -49,7 +49,7 @@ the carried core rather than of anything this port wrote: 66 hits over the
 first 4,300 lines and 96 over the next 4,929, so roughly one hit per 55
 lines of carried DragonFly either way. Four categories are new with
 `hammer2_chain.c` and each is one or two hits: a repeated word, a brace
-around a single statement, a static initialised to 0, and an `else` after
+around a single statement, a static initialized to 0, and an `else` after
 a `return`. None is a new KIND of debt -- they are the same BSD idioms the
 open rows already describe, appearing for the first time because this is
 the first carried file long enough to contain them.
@@ -74,7 +74,7 @@ per line. Two of the four are exactly that pair, and the other two are
 
 764 to 782 when `hammer2_subr.c` was carried: 452 lines for 18 hits, one
 per 25 and denser again, for the same reason plus nine `return (x);` in a
-file that is mostly small switch statements. Two categories are new and
+file built from five small switch statements. Two categories are new and
 both are upstream's own lines rather than this port's: `Prefer 'unsigned
 int' to bare use of 'unsigned'` in `hammer2_timespec_to_time`, and
 `Statements terminations use 1 semicolon` in the iostat printer. A third,
@@ -173,7 +173,7 @@ split quoted string.
 
 906 to 911 when the device half of the mount path landed: 476 lines
 for 5 hits, one per 95 and the sparsest batch yet, which is what a
-mostly-carried function looks like when its rewritten parts are comment.
+carried function looks like when the parts this port rewrote are comment.
 Three are a quoted string split across lines, one is the BSD
 continuation indent on the file's first forward declaration, and the
 fifth is a repeated word, `inode` in upstream's note about the two

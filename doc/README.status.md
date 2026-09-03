@@ -146,7 +146,7 @@ finds that and is wrong. `script/test-syntax.sh` reads `VERSION` and
 **The port type-checks against its kernel of record**, measured 2026-08-26
 after the chaotic 7.2.0-cachyos `dev` output was substituted into the store
 (679 MB, `sil5r7r2a25nsshkqpd5jjjd0g7ywyi7`). The gate's own line, quoted
-rather than summarised:
+rather than summarized:
 
     hammer2 against 7.2.0-cachyos via the store, matching the kernel of record,
       dialect -fms-extensions, with clang version 22.1.8, matching the tree's own:

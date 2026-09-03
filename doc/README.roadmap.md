@@ -78,7 +78,7 @@ else, and these names are already in the source comments.
 
 | stage | what it produces |
 |---|---|
-| H0 | archaeology: what the format is, what may be carried, under which licence |
+| H0 | archaeology: what the format is, what may be carried, under which license |
 | H1 | a read-only driver that builds, loads and mounts DragonFly-written media |
 | H2 | the write path, verified against DragonFly |
 | H3 | crash recovery |
