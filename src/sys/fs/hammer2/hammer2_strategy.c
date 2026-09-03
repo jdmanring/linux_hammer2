@@ -58,8 +58,18 @@
  * two compression dependencies are not dependencies on Linux, which was
  * measured rather than assumed: the kernel exports LZ4_decompress_safe()
  * from vmlinux under the name upstream already calls, and zlib_inflate(),
- * zlib_inflateInit2() and zlib_inflate_workspacesize() beside it, all four
- * confirmed present at v7.2.  Nothing needs vendoring.  What remains is
+ * zlib_inflateInit2() and zlib_inflate_workspacesize() beside it.
+ *
+ * Present was the only question asked of them until 2026-09-03, when the
+ * SHA-256 context struct turned out to have been renamed one release above
+ * the declared floor with its function names and argument order unchanged.
+ * A name that resolves says nothing about the shape behind it.  So both
+ * headers were compared rather than looked up: <linux/lz4.h> and
+ * <linux/zlib.h> are byte-identical at v6.15 and at v7.2, which is the
+ * whole range this module claims, and these four declarations cannot have
+ * moved inside it.
+ *
+ * Nothing needs vendoring.  What remains is
  * the buffer, and that is the rewrite: the destination of a read is a
  * folio, which is why hammer2_xop_strategy carries one.
  *
