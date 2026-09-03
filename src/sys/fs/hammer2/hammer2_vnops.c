@@ -83,7 +83,17 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 	struct inode *inode = NULL;
 	int error;
 
-	if (dentry->d_name.len > HAMMER2_INODE_MAXNAME)
+	/*
+	 * Strictly less, which is the bound upstream asserts at both call
+	 * sites in hammer2_inode.c: HAMMER2_INODE_MAXNAME is the size of
+	 * the on-media filename array, so a name of exactly that length
+	 * does not fit the comparison the core makes.  The VFS rejects
+	 * anything past NAME_MAX before ->lookup is reached, which is 255
+	 * and smaller again, so this guard is unreachable through a path
+	 * walk.  It is still the core's bound and is written as the core
+	 * writes it.
+	 */
+	if (dentry->d_name.len >= HAMMER2_INODE_MAXNAME)
 		return (ERR_PTR(-ENAMETOOLONG));	/* Linux: negative */
 
 	hammer2_inode_lock(dip, HAMMER2_RESOLVE_SHARED);
