@@ -107,14 +107,20 @@ build against some other kernel. COULD-NOT-RUN is a real failure in that job
 rather than a skip: the steps above it exist to provide the tree, so its
 absence means one of them silently did nothing.
 
-Run it before pushing, not after. Between 2026-08-30 and 2026-09-03 this
-repository sent twenty-five failed CI runs, and every one of them failed at
-the module build: symbols undefined at modpost, then a 6.19 spelling against
-the 6.15 floor, then a 7.0 one, then this job's own iterations. Two of the
-twenty-five were the gate's fault and the rest were the tree's, but the
-volume was a working habit rather than a defect rate. CI was being used as a
-compiler, one push per question, and each answer arrived as a failure
-notification to the maintainer.
+Run it before pushing, not after. Between 2026-08-29 and 2026-09-03 this
+repository sent twenty-six failed CI runs, counted by asking the API which
+step failed in each rather than by remembering: twenty-one at a module
+build, three at the repository gates, and two at the floor job's own
+assertion that its kernel tree carries a symbol table. The build failures
+were symbols undefined at modpost, then a 6.19 spelling against the 6.15
+floor, then a 7.0 one, then that job's own iterations. Two of the
+twenty-six were the gate's fault, a bare `warning:` matching kbuild's
+compiler banner; every other one was a real defect, in the tree or in the
+workflow being written at the time.
+
+So the gates were right and the volume was still a working habit rather
+than a defect rate. CI was being used as a compiler, one push per question,
+and each answer arrived as a failure notification to the maintainer.
 
 `build-check.sh` takes a `KDIR`, so the floor job reproduces on any machine
 with a built 6.15 tree:
