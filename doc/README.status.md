@@ -1,9 +1,9 @@
 Status
 ======
 
-Nothing mounts yet, and no module has been loaded. This file is the one to
-correct rather than to argue with: if a claim here is stale, it is a
-defect.
+No module has been loaded, so nothing here has been observed running.
+This file is the one to correct rather than to argue with: if a claim here
+is stale, it is a defect.
 
 ## The build
 
@@ -21,9 +21,12 @@ It reached that state on 2026-09-02, in one day and two steps. The first
 undefined. `hammer2_strategy.c` now exists with the dedup function carried
 and both handlers as floors, and the sync is a floor too.
 
-**Four of the module's entry points are floors, and none of them is
-reachable today.** Each warns once and fails; the `DEFER` ledger below
-carries a row for each. A floor here is not a stub returning success:
+**Three of the module's entry points are floors**, and one of the three
+is reachable: `hammer2_vfs_sync_pmp()` is called three times by
+`hammer2_unmount()`, which `->kill_sb` reaches after a mount that
+succeeds. The two strategy handlers are not, because no vnode operation
+starts an XOP yet. Each floor warns once and fails; the `DEFER` ledger
+below carries a row for each. A floor here is not a stub returning success:
 `hammer2_vfs_sync_pmp()` is the one whose replacement was argued about,
 because its two call sites discard the return value, so the warning is the
 only channel it has. What the undefined symbol bought was a build nobody
@@ -50,8 +53,8 @@ the only thing that has ever seen 7.2.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1619 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 1663 | FreeBSD port; the PFS half carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 131 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_vfsops.c` | 1668 | FreeBSD port; the PFS half carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_strategy.c` | 132 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -130,11 +133,11 @@ headers of a 7.2 tree with both clang 22 and gcc.
 
 It does not mean anything runs. `-fsyntax-only` compiles nothing and links
 nothing, which is why the section above records what `make` does instead.
-The module does not link and has not been loaded, and there is no fsck
-integration, so there is nothing to run yet. The VFS layer and the mount
-path exist: `hammer2_get_tree()` probes the device, reads the super-root
-and builds a root dentry, and every mount then fails deliberately at the
-recovery step, which `DEFER(a mount can succeed)` names.
+The module has not been loaded and there is no fsck integration, so
+nothing here has been observed running. The VFS layer and the mount path
+exist: `hammer2_get_tree()` probes the device, reads the super-root,
+builds a root dentry and returns success. It does so without running
+upstream's recovery, which `DEFER(hammer2_recovery() is carried)` names.
 
 ## The version floor, and how it was established
 
@@ -372,7 +375,7 @@ against the source is the same shape as an empty one.
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
-| `hammer2_vfsops.c`, in `hammer2_get_tree()` before `hammer2_update_pmps()` | `DEFER(a mount can succeed)` | upstream runs `hammer2_recovery()` and `hammer2_fixup_pfses()` on a read-write mount. Both write to the device, and every mount still fails a few lines later, so running them would repair a filesystem for a mount about to be torn down. Until it closes, a read-write mount does not replay an interrupted flush |
+| `hammer2_vfsops.c`, in `hammer2_get_tree()` before `hammer2_update_pmps()` | `DEFER(hammer2_recovery() is carried)` | upstream runs `hammer2_recovery()` and `hammer2_fixup_pfses()` on a read-write mount, and neither is carried, so a read-write mount does not replay an interrupted flush. The deferral was once conditioned on the mount path failing, which made the gap unreachable; the mount path returns success now, so the gap is live and only the absence of a loaded module stands in front of it. Upstream's three functions are 249 lines naming no FreeBSD-specific construct |
 | `hammer2_vfsops.c`, at `hammer2_context_ops` | `DEFER(a super_block exists to reconfigure)` | `->reconfigure`, where FreeBSD's `MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS refuses a remount, which is the right answer while there is nothing to remount |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_vfsops.c`, at `hammer2_vfs_sync_pmp()` | `DEFER(->sync_fs lands)` | the floor warns once and returns `EOPNOTSUPP`, and both call sites discard the value. It replaced a symbol deliberately left undefined, which made the absence visible at link time and also made the module unloadable. An unmount that does not sync loses nothing while nothing can be written; on the day the write path lands this is a data-loss bug rather than a deferral |

@@ -46,10 +46,11 @@
  * hammer2_dedup_clear() is carried.  Both XOP handlers are floors: they
  * feed an error through the XOP protocol and warn once.  Neither is
  * reachable today, because an XOP is started from a vnode operation and
- * this port has no ->read_folio and no ->writepages to start one; a mount
- * still fails before any of that, at DEFER(a mount can succeed).  The
- * floors are what makes that unreachability visible at link time rather
- * than asserted here.
+ * this port has no ->read_folio and no ->writepages to start one.  That
+ * is the whole of the reason: the mount path returns success now, so
+ * nothing upstream of the vnode operations holds these back.  The floors
+ * are what makes that unreachability visible at link time rather than
+ * asserted here.
  *
  * WHY A FLOOR RATHER THAN A CARRY.  Upstream's file is 1132 lines and is
  * not carryable: it includes <sys/bio.h>, hammer2_lz4.h and

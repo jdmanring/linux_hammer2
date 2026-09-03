@@ -1016,20 +1016,26 @@ next_hmp:
 		/* Leave spmp->iroot with one ref. */
 
 		/*
-		 * DEFER(a mount can succeed): upstream runs
+		 * DEFER(hammer2_recovery() is carried): upstream runs
 		 * hammer2_recovery() and hammer2_fixup_pfses() here when the
-		 * mount is read-write.  Both WRITE to the device, and every
-		 * mount still fails a few lines below, so running them now
-		 * would mean repairing a filesystem on behalf of a mount
-		 * that is about to be torn down.  The gap is real and it is
-		 * this: until it closes, a read-write mount does not replay
-		 * an interrupted flush.  It closes when a mount can succeed,
-		 * not before, because there is nothing else to condition it
-		 * on that is not a lie.
+		 * mount is read-write.  Neither is carried yet, so a
+		 * read-write mount does not replay an interrupted flush.
 		 *
-		 * The same reasoning has to hold for the teardown a few
-		 * lines below, which flushes vchain and fchain when either
-		 * carries a HAMMER2_CHAIN_FLUSH_MASK bit, and it does: the
+		 * This deferral was once conditioned on the mount path
+		 * failing a few lines below, which made the gap
+		 * unreachable.  The mount path now returns success, so the
+		 * gap is live and the only thing standing in front of it is
+		 * that no module has been loaded.  The three functions are
+		 * upstream's hammer2_recovery(), hammer2_recovery_scan()
+		 * and hammer2_fixup_pfses(), 249 lines that name no
+		 * FreeBSD-specific construct, so this is a carry rather
+		 * than a rewrite.
+		 *
+		 * Nothing this mount does writes, which is what keeps the
+		 * gap from being a data-loss bug today rather than a
+		 * deferral.  The teardown a few lines below flushes vchain
+		 * and fchain when either carries a
+		 * HAMMER2_CHAIN_FLUSH_MASK bit, and neither does: the
 		 * four bits in that mask are set at eleven sites in nine
 		 * functions, counted on 2026-08-26 by grepping
 		 * atomic_set_int() for each of the four, and those nine are
@@ -1041,8 +1047,7 @@ next_hmp:
 		 * the drop of a chain it only read, and that sets DESTROY
 		 * on the chain being dropped and propagates it downward to
 		 * children, never up to an anchor whose refs never reach
-		 * zero.  So the flush in the unwind is a no-op here, and
-		 * this mount writes nothing.
+		 * zero.  So the flush in the teardown is a no-op here.
 		 */
 		if (!hmp->rdonly)
 			debug_hprintf("recovery skipped, no mount can "
