@@ -187,11 +187,18 @@ v6.18 does not, and the version guard redefined it there. Where the kernel
 spells a facility as a macro, asking whether the macro exists is the exact
 question.
 
-6.15 is the floor the code requires. It is no longer entirely unexercised:
-the module builds warning-clean at 6.18, at 7.1.9, and at the kernel of
-record under clang. **CI builds at 6.17, which is what makes it the only
-floor test that runs on every push.** A change that pins CI to a newer
-kernel would take that away without anything saying so.
+6.15 is the floor the code requires, and nothing has ever compiled against
+it. The builds that exist are 6.17 on CI, and 6.18, 7.1.9 and the kernel of
+record under clang on the workstation, so the lowest kernel this tree has
+been through a compiler on is two releases above the floor it declares. The
+only thing that has read 6.15 is `script/floor-symbols.py`, which resolves
+names against that tree's `include/` and does not compile, so it cannot see
+a signature that changed or a macro that stopped expanding.
+
+**CI builds at 6.17, which is the lowest continuous build there is.** A
+change that pins it to a newer kernel would take that away without anything
+saying so, and would leave the gap between the floor and the build wider
+than the two releases that already fit in it.
 The kernel of record is a different claim: this tree compiles against the
 latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
 when a release ships.
