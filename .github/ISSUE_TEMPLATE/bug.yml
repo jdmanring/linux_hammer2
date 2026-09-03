@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Read doc/README.status.md first. Nothing mounts yet, so a mount
-        bug is expected rather than a report.
+        Read doc/README.status.md first. No module has been loaded, so a
+        mount bug is expected rather than a report.
   - type: input
     id: kernel
     attributes:

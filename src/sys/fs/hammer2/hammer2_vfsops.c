@@ -1016,10 +1016,10 @@ next_hmp:
 		/* Leave spmp->iroot with one ref. */
 
 		/*
-		 * DEFER(hammer2_recovery() is carried): upstream runs
-		 * hammer2_recovery() and hammer2_fixup_pfses() here when the
-		 * mount is read-write.  Neither is carried yet, so a
-		 * read-write mount does not replay an interrupted flush.
+		 * DEFER(the module is loaded and mounts a device): upstream
+		 * runs hammer2_recovery() and hammer2_fixup_pfses() here
+		 * when the mount is read-write.  Neither is carried yet, so
+		 * a read-write mount does not replay an interrupted flush.
 		 *
 		 * This deferral was once conditioned on the mount path
 		 * failing a few lines below, which made the gap
