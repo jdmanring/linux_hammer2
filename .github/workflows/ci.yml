@@ -160,45 +160,19 @@ jobs:
       # warnings nobody had seen.
       - name: Module build
         run: |
-          set -u
-          if [ ! -f "/lib/modules/$(uname -r)/build/Makefile" ]; then
-            echo "::warning::no kernel build dir, the module build could not run"
-            exit 0
-          fi
+          # set +e because this step's shell runs under -e: without it a
+          # nonzero build-check.sh aborts here and the rc read below never
+          # happens, which makes COULD-NOT-RUN unreachable and reports it as
+          # whatever -e does instead.
           set +e
-          make > /tmp/h2build.log 2>&1
+          sh script/build-check.sh
           rc=$?
-          set -e
-          if [ "$rc" != 0 ]; then
-            echo "::error::the module did not build"
-            grep -E "^ERROR|error:" /tmp/h2build.log | head -20
-            exit 1
-          fi
-          # A bare "warning:" also matches kbuild's own banner about the
-          # compiler differing from the one that built the kernel, which is
-          # a fact about the runner and not a diagnostic about this code.
-          # It failed this step for two runs while the build itself was
-          # clean. The pattern requires file:line:column, which every
-          # compiler diagnostic carries and that banner does not. A warning
-          # raised inside a kernel header still matches, deliberately: it is
-          # raised by this code including that header.
-          pat='^[^ ].*:[0-9][0-9]*:[0-9][0-9]*: warning:'
-          # The pattern is checked against a line built to match before it
-          # is trusted on a log that should have none, since "no warnings"
-          # and "the pattern stopped matching" print the same number.
-          if ! printf 'f.c:1:1: warning: x\n' | grep -qE "$pat"; then
-            echo "::error::the warning pattern no longer matches a warning"
-            exit 1
-          fi
-          if [ "$(grep -cE "$pat" /tmp/h2build.log)" != 0 ]; then
-            echo "::error::the build is not warning-clean"
-            grep -E "$pat" /tmp/h2build.log | head -20
-            exit 1
-          fi
-          ko=src/sys/fs/hammer2/hammer2.ko
-          [ -f "$ko" ] || { echo "::error::no $ko"; exit 1; }
-          modinfo "$ko" | grep -E "^(license|alias|depends):"
-          echo "links, warning-clean"
+          case "$rc" in
+            0) modinfo src/sys/fs/hammer2/hammer2.ko |
+                 grep -E "^(license|alias|depends):" ;;
+            2) echo "::warning::no kernel build dir, the module build could not run" ;;
+            *) echo "::error::the module build is not clean"; exit 1 ;;
+          esac
 
       - name: Gates (every script/test-*.sh)
         run: |
@@ -243,3 +217,79 @@ jobs:
             esac
           done
           exit "$rc"
+
+  # THE DECLARED FLOOR, BUILT.
+  #
+  # hammer2_os.h carries an #error asserting 6.15, README.status.md justifies
+  # it with BLK_MAX_BLOCK_SIZE, and until this job nothing had ever put a
+  # compiler on it. That gap cost twice on 2026-09-03: inode_state_read_once()
+  # needs 6.19 and kzalloc_obj() needs 7.0, and both surfaced as implicit
+  # declarations in the middle of a build against a NEWER kernel rather than
+  # at the #error that exists to say a kernel is too old. A floor nothing
+  # compiles is an assertion, not a constraint.
+  #
+  # script/floor-symbols.py bounds the same class by resolving names against
+  # the floor tree's include/. It does not compile, so a signature that
+  # changed while keeping its name, or a macro that stopped expanding, is
+  # invisible to it. This job is what closes it.
+  #
+  # The expensive half is modules_prepare, minutes on a hosted runner. It is
+  # cached on the TAG, which is immutable, so it is paid once and restored
+  # thereafter; a cache miss costs time and changes no verdict. The tarball
+  # comes from cdn.kernel.org rather than a git clone because the tag is all
+  # that is wanted and a clone of Linux is far larger than one release.
+  floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain for an out-of-tree module build
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bc bison flex libelf-dev libssl-dev
+
+      - name: Cache the prepared floor tree
+        id: floorcache
+        uses: actions/cache@v4
+        with:
+          path: ~/linux-floor
+          # The version appears once. Bumping the floor means editing this
+          # line and the #error in hammer2_os.h, and the build is what says
+          # whether the two agree.
+          key: linux-floor-6.15-prepared-v1
+
+      - name: Fetch and prepare 6.15
+        if: steps.floorcache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          curl -sSLo /tmp/linux.tar.xz \
+            https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.15.tar.xz
+          mkdir -p "$HOME/linux-floor"
+          tar -xf /tmp/linux.tar.xz -C "$HOME/linux-floor" --strip-components=1
+          make -C "$HOME/linux-floor" defconfig
+          make -C "$HOME/linux-floor" -j"$(nproc)" modules_prepare
+
+      # The tree is asserted to BE the floor before it is built against.
+      # A cache restored from a bumped key, or a tarball that redirected,
+      # would otherwise report a green floor build against some other kernel.
+      - name: The prepared tree is 6.15
+        run: |
+          set -eu
+          v=$(make -s -C "$HOME/linux-floor" kernelversion)
+          echo "prepared tree reports $v"
+          case "$v" in
+            6.15*) ;;
+            *) echo "::error::the floor tree is $v, not 6.15"; exit 1 ;;
+          esac
+
+      - name: Module build at the floor
+        run: |
+          # set +e for the same reason as the other build step: under -e a
+          # nonzero exit would end the step before rc is read.
+          set +e
+          sh script/build-check.sh "$HOME/linux-floor"
+          rc=$?
+          # COULD-NOT-RUN is a real failure here. The steps above exist to
+          # provide the tree, so its absence means one of them silently did
+          # nothing, and a skip would report that as a pass.
+          [ "$rc" = 0 ] || { echo "::error::the module does not build at 6.15"; exit 1; }
