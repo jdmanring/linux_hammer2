@@ -54,10 +54,34 @@
  */
 /* Linux */
 #include <crypto/sha2.h>
+#include <linux/version.h>
 
 #define SHA256_DIGEST_LENGTH	SHA256_DIGEST_SIZE
 
+/*
+ * THE CONTEXT STRUCT WAS RENAMED AT 6.17, sha256_state to sha256_ctx. The
+ * three function names and their argument order are the same on both sides
+ * of that, so this typedef is the whole of the difference. Read at the tags
+ * rather than recalled: struct sha256_state at v6.15 and v6.16, struct
+ * sha256_ctx from v6.17.
+ *
+ * A version comparison rather than a test for the name, because a struct
+ * tag cannot be asked about by the preprocessor the way hammer2_os.h asks
+ * about kzalloc_obj, which is a macro. The comparison carries the risk that
+ * question was introduced to avoid: a stable series that backported the
+ * rename would be misread here. That is accepted rather than overlooked,
+ * an API rename not being the shape a stable series takes.
+ *
+ * The old name is still declared at 6.17 and later, for the crypto API's
+ * own use, so the typedef cannot be guarded on whether sha256_state exists.
+ * It resolves to a different type there and would compile.
+ */
+#define LINUX_SHA256_CTX_RENAME	KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE < LINUX_SHA256_CTX_RENAME
+typedef struct sha256_state SHA256_CTX;	/* Linux */
+#else
 typedef struct sha256_ctx SHA256_CTX;
+#endif
 
 static inline void
 SHA256_Init(SHA256_CTX *ctx)

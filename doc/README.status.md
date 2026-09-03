@@ -156,6 +156,7 @@ was dated by reading the header at the tag rather than from memory:
 | three-argument `kvrealloc` | v6.11 | v6.12 |
 | `folio_mark_dirty_lock` | v6.12 | v6.13 |
 | `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
+| `struct sha256_ctx` | v6.16 | v6.17 |
 | `inode_state_read_once` | v6.18 | v6.19 |
 | `kzalloc_obj` | v6.19 | v7.0 |
 

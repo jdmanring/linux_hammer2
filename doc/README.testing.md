@@ -63,11 +63,55 @@ having tripped. The one that bites latest is the `*.c` glob: kbuild writes
 All four now exclude kbuild's output, and the patterns match `.gitignore`'s.
 The permanent guard is not a new gate but an ordering: CI builds the module
 before it runs any gate, so every gate runs against the tree a developer
-actually has. That step also asserts the build is warning-clean and that
-the undefined set is exactly the four in `doc/README.status.md`, so a fifth
-reference appearing is a red run rather than a line in a log. Both of its
-failing directions were driven on 2026-09-02, by giving `hammer2_io.c` a
-call to an undefined function and then an unused static.
+actually has. Until 2026-09-03 this paragraph also said that step asserts
+the undefined set is exactly the four named in `doc/README.status.md`.
+Nothing asserted that. The step read `modinfo` and counted warnings, and a
+fifth undefined reference would have been a failed link with no list, which
+is a red run but not the one described here.
+
+What it does assert is in `script/build-check.sh`, which is not a gate and
+is named `build-check` rather than `test-` for that reason: the build fails,
+or the build is not warning-clean, or the build reports success and there is
+no `hammer2.ko`. It lives in a script because it has two callers now, the
+kernel of record and the floor, and a check copied into a second caller can
+rot in one copy while the other stays right. Its three failing directions
+were driven on 2026-09-02 and 2026-09-03, by giving `hammer2_io.c` a call to
+an undefined function, then an unused static, and by pointing it at a
+directory holding no kernel, which is COULD-NOT-RUN and not a pass.
+
+Its warning pattern requires `file:line:column`, because a bare `warning:`
+also matches kbuild's banner about the runner's compiler differing from the
+kernel's, which is a fact about the machine. That failed the step for two
+runs while the build was clean. The pattern is therefore checked against a
+line built to match before it is trusted on a log that should have none,
+since no warnings and a pattern that stopped matching print the same number.
+
+## The declared floor is built, since 2026-09-03
+
+`hammer2_os.h` has carried an `#error` asserting 6.15 for as long as there
+has been a shim, and nothing had ever put a compiler on that kernel. The
+lowest build in existence was CI's, two releases above it. A floor nothing
+compiles is an assertion, and it failed as one twice in a day:
+`inode_state_read_once()` needs 6.19 and `kzalloc_obj()` needs 7.0, and each
+surfaced as an implicit declaration in the middle of a build against a newer
+kernel rather than at the `#error` written to report a kernel that is too
+old.
+
+A second CI job fetches the 6.15 tarball, runs `modules_prepare` once and
+caches the prepared tree on the tag, then builds the module against it
+through the same `build-check.sh`. The tag is immutable, so the expensive
+half is paid once; a cache miss costs minutes and changes no verdict. The
+tree is asserted to report 6.15 before anything is built against it, because
+a cache restored under a bumped key would otherwise report a green floor
+build against some other kernel. COULD-NOT-RUN is a real failure in that job
+rather than a skip: the steps above it exist to provide the tree, so its
+absence means one of them silently did nothing.
+
+`script/floor-symbols.py` bounds the same class from the other side by
+resolving every identifier the tree calls and does not define against the
+floor tree's `include/`. It does not compile, so a signature that changed
+while keeping its name, or a macro that stopped expanding, is invisible to
+it. The job is what closes what the sweep can only bound.
 
 `test-doc-prose.sh` runs vale over every `.md` under `doc/` with the
 styles in `styles/`, which are house YAML rather than a downloaded package
