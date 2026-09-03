@@ -629,8 +629,20 @@ from the pull requests rather than from release notes:
 
 None of the three is a reason to raise the floor today, because none of
 them is code this tree currently runs. The reason to raise it is the
-guard count, and that argument is as good at 7.2 as the calendar allows.
-The decision recorded here: the floor moves to 7.2 when the kernel of
-record moves past it with room to spare, and to 7.3 when 7.3 is released
-and is the kernel of record. Neither move happens against an unreleased
-kernel.
+guard count.
+
+The decision recorded here: the floor moves to 7.3, on the release, and
+skips 7.2 entirely. 7.2 is an ordinary stable series and goes end of life
+within weeks of 7.3 shipping, which is what 7.1 has already done, so a
+floor there would be a floor on a kernel nobody can run for long. 7.3 is
+expected to be a longterm release, which is the property that makes a
+floor worth pinning at all: it is what lets one tree claim a range that
+stays buildable. That expectation is not yet a designation, since
+kernel.org marks no 7.x longterm and cannot mark an unreleased kernel, so
+the move waits for the release and is re-checked against the release
+table then rather than assumed.
+
+Until then the floor stays at 6.15 and the guards stay. A floor no
+released kernel satisfies cannot be built by anyone, this repository's own
+CI included, so running on 7.3 and pinning the floor to 7.3 stay separate
+decisions, and only the first has been available.
