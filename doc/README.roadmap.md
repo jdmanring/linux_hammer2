@@ -16,8 +16,8 @@ No module has been loaded, so nothing here has been observed running. The
 OS shim, the DIO layer and the whole carried core type-check against real
 kernel headers under two compilers, with controls that fail when they
 should, and `make` produces a warning-clean `hammer2.ko`. What exists of the
-mount path and what has been verified is `README.status.md`; the vnode path
-has not been started.
+mount path and what has been verified is `README.status.md`; the vnode path has one
+operation, `->lookup`.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile` already

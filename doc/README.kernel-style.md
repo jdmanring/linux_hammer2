@@ -210,6 +210,14 @@ across a range of releases cannot be code for one version, and the guard
 is what keeps the range honest. On submission, where the tree is code for
 the version it is merged to, both go.
 
+920 to 922 when `hammer2_vnops.c` arrived. Two hits, `return is not a
+function, parentheses are not required` and `please, no spaces at the
+start of a line`, both categories this file already records as the BSD
+style the whole tree converts in one pass or not at all. A new file
+written in that style adds to these counts by existing, which is the
+expected direction and the reason the baseline is a set rather than a
+ceiling.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

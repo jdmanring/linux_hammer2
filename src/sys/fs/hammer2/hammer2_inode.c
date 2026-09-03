@@ -702,6 +702,7 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 {
 	struct super_block *sb;
 	struct inode *inode;
+	struct timespec64 ts;	/* Linux */
 	umode_t ifmt;
 	int vtype;
 
@@ -757,6 +758,57 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	}
 
 	inode->i_mode = ifmt | (ip->meta.mode & 07777);
+
+	/*
+	 * XXX Linux: the rest of what hammer2_vinit() has no equivalent
+	 * for.  The BSD ports answer a stat out of the hammer2_inode_t
+	 * through VOP_GETATTR; Linux answers it out of the struct inode,
+	 * so every field a stat reports is copied here and nothing calls
+	 * back into the filesystem for it.
+	 *
+	 * i_size is set with i_size_write() rather than by assignment
+	 * because a 64-bit size is not written atomically on a 32-bit
+	 * kernel, and this module builds on one.  There is no reader to
+	 * race with yet, the inode still being I_NEW, and the helper is
+	 * what the next reader will expect to find.
+	 */
+	i_uid_write(inode, hammer2_inode_to_uid(ip));	/* Linux */
+	i_gid_write(inode, hammer2_inode_to_gid(ip));	/* Linux */
+	i_size_write(inode, ip->meta.size);		/* Linux */
+	set_nlink(inode, ip->meta.nlinks);		/* Linux */
+
+	/*
+	 * Through the accessors, not the members.  i_atime, i_mtime and
+	 * i_ctime became __i_atime and friends behind these, and the
+	 * accessors are what both ends of the supported range provide:
+	 * all three are declared in <linux/fs.h> at v6.15 and at v7.2,
+	 * read at the tags rather than recalled.
+	 */
+	hammer2_time_to_timespec(ip->meta.ctime, &ts);	/* Linux */
+	inode_set_ctime_to_ts(inode, ts);
+	hammer2_time_to_timespec(ip->meta.mtime, &ts);
+	inode_set_mtime_to_ts(inode, ts);
+	hammer2_time_to_timespec(ip->meta.atime, &ts);
+	inode_set_atime_to_ts(inode, ts);
+
+	/*
+	 * XXX Linux: the operations tables, which have no BSD counterpart
+	 * at this point in the code: a BSD vnode is given its vop vector
+	 * by getnewvnode() at allocation, from the mount, and the type
+	 * decides nothing.  Here the type decides the table.
+	 *
+	 * DEFER(the read path lands, with ->read_folio): a regular file
+	 * gets an inode_operations with no methods and no
+	 * file_operations, so it can be looked up and stat'd and not
+	 * opened, and a directory has no ->iterate_shared yet.  Every
+	 * other type falls to the same file table, which is wrong for a
+	 * symlink and for a device node and is not reachable while
+	 * nothing can open one.
+	 */
+	if (S_ISDIR(inode->i_mode))
+		inode->i_op = &hammer2_dir_iops;	/* Linux */
+	else
+		inode->i_op = &hammer2_file_iops;	/* Linux */
 
 	/*
 	 * hammer2_evict_inode() in hammer2_vfsops.c performs the other

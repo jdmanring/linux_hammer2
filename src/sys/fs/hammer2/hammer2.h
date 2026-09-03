@@ -934,6 +934,10 @@ extern int hammer2_always_compress;
 
 extern hammer2_xop_desc_t hammer2_ipcluster_desc;
 extern hammer2_xop_desc_t hammer2_readdir_desc;
+/* hammer2_vnops.c */
+extern const struct inode_operations hammer2_dir_iops;	/* Linux */
+extern const struct inode_operations hammer2_file_iops;	/* Linux */
+
 extern hammer2_xop_desc_t hammer2_nresolve_desc;
 extern hammer2_xop_desc_t hammer2_unlink_desc;
 extern hammer2_xop_desc_t hammer2_nrename_desc;
