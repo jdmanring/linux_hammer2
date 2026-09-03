@@ -1,0 +1,15 @@
+--- a/src/sys/fs/hammer2/hammer2_vfsops.c
++++ b/src/sys/fs/hammer2/hammer2_vfsops.c
+@@ -1545,9 +1545,9 @@ hammer2_fixup_pfses(hammer2_dev_t *hmp)
+ 	    HAMMER2_KEY_MAX, &error, 0);
+ 
+ 	while (chain) {
+-		if (chain->bref.type != HAMMER2_BREF_TYPE_INODE)
+-			continue;
+-		if (chain->error) {
++		if (chain->bref.type != HAMMER2_BREF_TYPE_INODE) {
++			/* not a PFS root, nothing to fix up */
++		} else if (chain->error) {
+ 			hprintf("I/O error scanning PFS labels\n");
+ 			error |= chain->error;
+ 		} else if ((chain->bref.flags & HAMMER2_BREF_FLAG_PFSROOT) == 0) {

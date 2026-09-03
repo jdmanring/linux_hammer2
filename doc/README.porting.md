@@ -551,3 +551,31 @@ renamed between the two calls is resolved to two different devices. The
 window is the same one FreeBSD has between `namei()` and `g_vfs_open()`,
 and it closes at the open, which is the call that decides what the
 filesystem actually reads.
+
+## An upstream defect was carried rather than fixed
+
+`hammer2_fixup_pfses()` walks the super-root with `hammer2_chain_lookup()`
+and `hammer2_chain_next()`, and its first statement inside the loop is
+
+    while (chain) {
+            if (chain->bref.type != HAMMER2_BREF_TYPE_INODE)
+                    continue;
+
+`continue` in a `while` returns to the condition with `chain` unchanged and
+still non-NULL, so reaching that branch hangs the mounting thread with
+`spmp->iroot` locked. DragonFly, and Kusumi's FreeBSD, NetBSD and OpenBSD
+ports all carry it identically.
+
+It is reachable, but only on a damaged image. `hammer2_chain_lookup()`
+without `HAMMER2_LOOKUP_MATCHIND`, which is what this call passes, makes an
+indirect block the new parent and loops on it rather than returning it, so
+the walk yields leaves only, and every leaf directly under the super-root
+of a well-formed filesystem is a PFS inode. A `DIRENT` or `DATA` bref there
+is corruption, which is the case mount-time recovery exists to meet.
+
+The code is carried unchanged anyway, because the rule that keeps the four
+trees readable side by side does not have an exception for defects, and
+because the refusals in `hammer2_get_tree()` and `hammer2_reconfigure()`
+mean nothing calls it. The fix is staged in `doc/upstream/` as two patches,
+one against DragonFly and one against the three ports, which is where work
+for James to file upstream goes. They are not applied here.
