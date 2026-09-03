@@ -579,3 +579,56 @@ because the refusals in `hammer2_get_tree()` and `hammer2_reconfigure()`
 mean nothing calls it. The fix is staged in `doc/upstream/` as two patches,
 one against DragonFly and one against the three ports, which is where work
 for James to file upstream goes. They are not applied here.
+
+## What the kernel floor buys, measured against 7.2 and 7.3
+
+The floor is 6.15 because `BLK_MAX_BLOCK_SIZE` is what lets a 64 KiB
+`HAMMER2_PBUFSIZE` reach the block layer at all. Raising it is a question
+about conditional compilation, and the tree answers it exactly: four
+version guards exist and each names the release that made it necessary.
+
+| guard | since | what it spans |
+|---|---|---|
+| `LINUX_BLK_MAX_BLOCK_SIZE` | 6.15 | the floor itself, an `#error` |
+| `LINUX_SHA256_CTX_RENAME` | 6.17 | `struct sha256_state` becoming `struct sha256_ctx` |
+| `LINUX_INODE_STATE_ACCESSORS` | 6.19 | `inode_state_read_once()` |
+| `LINUX_FS_BDEV_OPEN` | 7.3 | `fs_holder_ops` going static, and the open helpers that replaced it |
+
+A floor at 7.2 deletes the first three and leaves one. A floor at 7.3
+deletes all four, and the tree then has no conditional compilation in it
+at all. That is not a stylistic gain: `checkpatch.pl` draws
+`LINUX_VERSION_CODE should be avoided, code should be for the version to
+which it is merged` once per guard, four of the deviations the baseline
+carries, and they are the only ones in it that a submission cannot answer
+with "this is BSD style and the tree converts in one pass".
+
+Against that, a floor is a claim about who can build the tree, and 7.3 is
+unreleased. Its merge window closed on 2026-08-17 and the snapshot this
+tree has been built against, `7.3.0-0.rc0.260819gbd5f485f3f02`, is a
+merge-window build rather than a release candidate. A floor no released
+kernel satisfies cannot be built by anyone, the CI floor job included.
+
+Three things in the 7.3 merge window bear on this port directly, read
+from the pull requests rather than from release notes:
+
+- The superblock pull adds a global device-to-superblock table so one
+  block device can be shared by several superblocks, with freeze, thaw,
+  sync and removal reaching all of them. HAMMER2 puts many PFSes on one
+  device and is the shape that table was built for. This port cannot use
+  it yet, for the reason the deferral at the secondary-mount site records.
+- The iomap pull collapses `->iomap_begin()` and `->iomap_end()` into one
+  `->iomap_next()`, and adds a light direct-I/O path worth 4 to 10 per
+  cent on ext4 and XFS. This port's DIO layer is its own and does not go
+  through iomap, so the gain is not available without adopting iomap,
+  which is a larger decision than a floor.
+- The writeback pull adds `->sync_inode_metadata` and
+  `I_METADATA_WRITEBACK`, which is the operation the deferred `->sync_fs`
+  work will land beside.
+
+None of the three is a reason to raise the floor today, because none of
+them is code this tree currently runs. The reason to raise it is the
+guard count, and that argument is as good at 7.2 as the calendar allows.
+The decision recorded here: the floor moves to 7.2 when the kernel of
+record moves past it with room to spare, and to 7.3 when 7.3 is released
+and is the kernel of record. Neither move happens against an unreleased
+kernel.
