@@ -1577,8 +1577,13 @@ static const struct super_operations hammer2_sops = {
  *
  * XXX Linux: this is not FreeBSD's MNT_UPDATE branch of
  * hammer2_mount(), which is what a real ->reconfigure carries.  It is
- * the refusal alone, and it goes away when recovery lands and the real
- * one is written.
+ * the refusal alone, and it goes away when the real one is written.
+ * That one is upstream's hammer2_remount_impl(), which is not carried:
+ * it reopens each volume for writing and then runs hammer2_recovery()
+ * and hammer2_fixup_pfses() a second time, on the ro to rw transition,
+ * before clearing hmp->rdonly.  The mount path's call to those two is
+ * carried above; this one is not, and refusing the transition is why
+ * that has not mattered yet.
  */
 static int
 hammer2_reconfigure(struct fs_context *fc)
