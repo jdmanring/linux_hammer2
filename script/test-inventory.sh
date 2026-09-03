@@ -32,7 +32,18 @@ for f in "$STATUS" "$MK" "$SYN"; do
 	[ -f "$f" ] || { echo "inventory: COULD-NOT-RUN: no $f"; exit 2; }
 done
 
-srcs=$(ls "$DIR"/*.c 2>/dev/null | xargs -r -n1 basename)
+# BUILD ARTIFACTS ARE NOT SOURCE. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
+# modules.order and Module.symvers beside the sources it compiles, and this
+# gate had never seen a built tree until the first `make` on 2026-09-02.
+# Against one it read those files as though they were the port's own. The
+# patterns match .gitignore's, and .mod.c is listed separately because it
+# ends in .c and so enters a *.c glob.
+NOTSRC='\.mod\.c$'
+BUILT="--exclude=*.o --exclude=*.ko --exclude=*.mod --exclude=*.mod.c \
+--exclude=*.cmd --exclude=*.order --exclude=*.symvers \
+--exclude-dir=.tmp_versions"
+
+srcs=$(ls "$DIR"/*.c 2>/dev/null | command grep -v "$NOTSRC" | xargs -r -n1 basename)
 hdrs=$(ls "$DIR"/*.h 2>/dev/null | xargs -r -n1 basename)
 
 # Assert the population before checking anything. A glob that matches nothing
@@ -266,8 +277,9 @@ if [ "$nxrow" = 0 ]; then
 else
 	# The files needing a row, by the two rules above.
 	{
-		ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h
-		command grep -rlF XXX src/
+		ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h |
+			command grep -v "$NOTSRC"
+		command grep -rlF $BUILT XXX src/
 	} 2>/dev/null | LC_ALL=C sort -u > "$xtmp/files"
 	nxfile=$(command grep -c . "$xtmp/files" || true)
 	if [ "$nxfile" = 0 ]; then

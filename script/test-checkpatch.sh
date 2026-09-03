@@ -152,7 +152,14 @@ if [ -z "$cpver" ]; then
 	fi
 fi
 
-files=$(ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h)
+# BUILD ARTIFACTS ARE NOT SOURCE. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
+# modules.order and Module.symvers beside the sources it compiles, and this
+# gate had never seen a built tree until the first `make` on 2026-09-02.
+# Against one it read those files as though they were the port's own. The
+# patterns match .gitignore's, and .mod.c is listed separately because it
+# ends in .c and so enters a *.c glob.
+files=$(ls src/sys/fs/hammer2/*.c src/sys/fs/hammer2/*.h |
+	command grep -v '\.mod\.c$')
 got=$(perl "$CP" --no-tree --file --terse --no-summary $files 2>/dev/null |
 	sed 's/^.*: \(WARNING\|ERROR\): //' |
 	sed "s/'[^']*'/'X'/g" |

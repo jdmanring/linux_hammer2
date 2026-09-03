@@ -104,7 +104,12 @@ for d in $docs; do
 				if [ -n "$at" ]; then
 					echo "     it is on ${file}:${at}"
 				else
-					elsewhere=$(command grep -rlF -- "$sym" src doc script test 2>/dev/null |
+					elsewhere=$(command grep -rlF \
+						--exclude='*.o' --exclude='*.ko' \
+						--exclude='*.mod' --exclude='*.mod.c' \
+						--exclude='*.cmd' --exclude='*.order' \
+						--exclude='*.symvers' \
+						-- "$sym" src doc script test 2>/dev/null |
 						head -3 | tr '\n' ' ')
 					if [ -n "$elsewhere" ]; then
 						echo "     not in $file at all; found in: $elsewhere"
