@@ -809,9 +809,22 @@ hammer2_get_tree(struct fs_context *fc)
 			 * already has, so the device's filesystem callbacks
 			 * reach the superblock of the first mount and not
 			 * this one.  True of every kernel this builds
-			 * against; 7.3 makes it legible by registering
-			 * {device, superblock} pairs, where the fix is to
-			 * register each superblock rather than to reopen.
+			 * against, and the fix is to register each
+			 * superblock rather than to reopen the device.
+			 *
+			 * At 7.3 and above it is worse than a missed
+			 * callback and it blocks 0.4's multi-PFS case.
+			 * hammer2_open_devvp() records the superblock it
+			 * claimed for, and the device is closed only when
+			 * hmp->mount_count reaches zero, so with two PFSes
+			 * the recorded superblock is already freed by then.
+			 * fs_bdev_unregister() looks its table entry up by
+			 * comparing that pointer, which is not a
+			 * dereference, so the release does not fault: the
+			 * entry is simply never dropped, and the kernel's
+			 * own freeze and sync paths then walk a
+			 * {device, superblock} pair whose superblock is
+			 * gone.  A mount that can reach this must not ship.
 			 */
 			break;
 next_hmp:
