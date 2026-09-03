@@ -29,8 +29,12 @@ ccflags-y += -I$(src)/../..
 # which accepts only the `fallthrough` attribute. Upstream marks its switch
 # fallthroughs with a /* fall through */ comment, which level 5 does not read.
 # Five sites in hammer2_chain.c.
-# -Wno-unused-function: kbuild passes -Wunused. Two statics in hammer2_inode.c
-# are carried ahead of the write path that calls them.
+# -Wno-unused-function: kbuild passes -Wunused. hammer2_inode_lock_temp_release()
+# and _restore() have no caller here and are not expected to gain one: their
+# only caller in either upstream is hammer2_igetv(), which this port rewrote
+# on iget5_locked(), where the dance they perform has nothing to race against.
+# The reasoning is at that rewrite in hammer2_inode.c. They stay because
+# deleting two functions from a carried file is a core edit.
 #
 # DEFER(the tree is prepared for submission): both become edits to the carried
 # text rather than suppressions, in the single conversion that also settles

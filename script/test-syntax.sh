@@ -302,9 +302,13 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 #
 # -Wno-implicit-fallthrough and -Wno-unused-function are the two the first
 # build found. Upstream marks its fallthroughs with a /* fall through */
-# comment, which kbuild's -Wimplicit-fallthrough=5 does not read; and two
-# statics in hammer2_inode.c are carried ahead of the write path that calls
-# them. src/sys/fs/hammer2/Makefile suppresses the same two on the same
+# comment, which kbuild's -Wimplicit-fallthrough=5 does not read; and
+# hammer2_inode_lock_temp_release() and _restore() have no caller in this
+# port and are not expected to gain one, because their only caller in either
+# upstream is hammer2_igetv(), which this port rewrote on iget5_locked().
+# The reasoning is at that rewrite: the temp-release dance guards FreeBSD's
+# two racing hash operations, and iget5_locked() does the lookup, the
+# allocation and the insert in one call, so there is nothing to race. src/sys/fs/hammer2/Makefile suppresses the same two on the same
 # files, so the gate and the build agree about which text is DragonFly's.
 CARRIED="-Wno-address-of-packed-member -Wno-pointer-sign
 	-Wno-implicit-fallthrough -Wno-unused-function"

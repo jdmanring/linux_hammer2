@@ -127,8 +127,12 @@ that `hammer2.h` and `hammer2_io.c` type-check against the real kernel
 headers of a 7.2 tree with both clang 22 and gcc.
 
 It does not mean anything runs. `-fsyntax-only` compiles nothing and links
-nothing, and no module has been built or loaded. There is no VFS layer, no
-mount path and no fsck integration, so there is nothing to run yet.
+nothing, which is why the section above records what `make` does instead.
+The module does not link and has not been loaded, and there is no fsck
+integration, so there is nothing to run yet. The VFS layer and the mount
+path exist: `hammer2_get_tree()` probes the device, reads the super-root
+and builds a root dentry, and every mount then fails deliberately at the
+recovery step, which `DEFER(a mount can succeed)` names.
 
 ## The version floor, and how it was established
 
@@ -368,7 +372,7 @@ against the source is the same shape as an empty one.
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
 | `hammer2_vfsops.c`, in `hammer2_get_tree()` before `hammer2_update_pmps()` | `DEFER(a mount can succeed)` | upstream runs `hammer2_recovery()` and `hammer2_fixup_pfses()` on a read-write mount. Both write to the device, and every mount still fails a few lines later, so running them would repair a filesystem for a mount about to be torn down. Until it closes, a read-write mount does not replay an interrupted flush |
 | `hammer2_vfsops.c`, at `hammer2_context_ops` | `DEFER(a super_block exists to reconfigure)` | `->reconfigure`, where FreeBSD's `MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS refuses a remount, which is the right answer while there is nothing to remount |
-| `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees two statics in `hammer2_inode.c` that the write path will call. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
+| `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 
 The middle column is the marker as it is spelled in the source, because
