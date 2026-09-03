@@ -165,17 +165,32 @@ Every milestone from 0.3 on needs a machine this repository does not contain:
 | DragonFly or FreeBSD | 0.5, 0.6 | the F4 round trip, and calibrating the crash matrix |
 | FreeBSD, NetBSD, OpenBSD | any milestone | reading a port against the host it was written for |
 
-The Linux guest is 0.3's real dependency, and it is a kernel build rather
-than a distribution image, since no shipped kernel enables the debug options
-0.3 asks for. QEMU, libvirt and `virt-install` are enough to build the
-harness around it. The DragonFly guest already exists on the maintainer's
-machine, so the F2 set is a scheduling question; the Linux one does not, so
-0.3 is a blocking one.
+The Linux guest is 0.3's real dependency. Until 2026-09-03 this paragraph
+said it does not exist and that 0.3 is therefore blocked. That was a claim
+about the maintainer's machine that nothing in this repository rechecks, and
+it was wrong: `virsh list --all` on that machine returns sixty guests,
+`dragonflybsd642` among them, which is the F2 guest this paragraph correctly
+said already exists, and a dozen Linux ones including CachyOS, NixOS,
+Fedora, Debian and openSUSE. They are documented in a separate repository,
+`virtual-workbench`, which this one had never named.
 
-No instrument in this repository drives a guest: `doc/`, `script/` and
-`test/` mention neither `qemu` nor `virsh` nor `virt-install`. The gates are
+What remains open is narrower and is a question rather than a blockage. 0.3
+wants `CONFIG_PROVE_LOCKING`, and a distribution kernel usually ships
+without it: the maintainer's host is `CONFIG_DEBUG_KERNEL=y` with no
+`PROVE_LOCKING`. Whether that holds across the fleet is a count, and a
+count is measured rather than asserted, so it is measured by booting a guest
+and reading its config, starting with a distribution that ships a separate
+debug kernel. A kernel build in a guest is the fallback if none does, not
+the assumed starting point.
+
+No instrument in this repository drives a guest: nothing under `script/` or
+`test/` invokes `qemu`, `virsh` or `virt-install`. This paragraph used to
+offer a wider claim, that `doc/` does not mention them either, which was
+already false when written, the F5 row above and the crash-matrix section
+below both naming QEMU. Discussing a tool and running one are different
+claims and only the second is the one that matters here. The gates are
 compile-time and repository-time, which is why every runtime criterion from
-0.3 on is unverifiable here.
+0.3 on is unverifiable in this repository whatever machines exist elsewhere.
 
 ## Milestones
 
