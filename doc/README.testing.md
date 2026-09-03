@@ -34,6 +34,29 @@ plus a negative control: the header is broken on a copy and the compile
 must fail. Without that control a gate whose healthy signature is silence
 cannot be told from a gate that never opened the file.
 
+## The gates run against a built tree, and until 2026-09-02 none had
+
+`make` was first run on 2026-09-02. It put thirteen objects and their
+`.cmd` files beside the sources, and `test-provenance.sh` and
+`test-inventory.sh` went red on the spot: the first asked for an origin row
+for each of thirty files kbuild had just written, the second read `XXX` out
+of the strings inside `hammer2.o` and asked the status table for a row.
+Neither had a bug that could pass something wrong. Both enumerated `src/`
+and had never seen anything there that was not source.
+
+`test-checkpatch.sh` and `test-citations.sh` had the same shape without
+having tripped. The one that bites latest is the `*.c` glob: kbuild writes
+`hammer2.mod.c`, which no build has reached, because modpost stops first.
+
+All four now exclude kbuild's output, and the patterns match `.gitignore`'s.
+The permanent guard is not a new gate but an ordering: CI builds the module
+before it runs any gate, so every gate runs against the tree a developer
+actually has. That step also asserts the build is warning-clean and that
+the undefined set is exactly the four in `doc/README.status.md`, so a fifth
+reference appearing is a red run rather than a line in a log. Both of its
+failing directions were driven on 2026-09-02, by giving `hammer2_io.c` a
+call to an undefined function and then an unused static.
+
 `test-doc-prose.sh` runs vale over every `.md` under `doc/` with the
 styles in `styles/`, which are house YAML rather than a downloaded package
 so the gate needs no network and no `vale sync`. It arrived on 2026-08-29
