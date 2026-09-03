@@ -694,22 +694,24 @@ hammer2_get_tree(struct fs_context *fc)
 		return (-EINVAL);	/* Linux: the VFS half is negative */
 
 	/*
-	 * DEFER(flush recovery lands): refuse a read-write mount.
-	 * Upstream replays an interrupted flush at mount time and this
-	 * port does not carry that yet, so a read-write mount would take
-	 * a filesystem whose last flush was cut short and go on writing
-	 * to it.  A read-only mount is refused nothing, because the
-	 * recovery upstream runs is conditional on the mount being
-	 * read-write in the first place.
+	 * DEFER(recovery is exercised on a device): refuse a read-write
+	 * mount.  Upstream replays an interrupted flush at mount time,
+	 * and that code is carried, in hammer2_recovery() and
+	 * hammer2_fixup_pfses() below.  It has never been run: it writes,
+	 * and no module has been loaded, so a read-write mount would be
+	 * the first exercise of a write path on a filesystem whose last
+	 * flush was cut short.  A read-only mount is refused nothing,
+	 * because the recovery upstream runs is conditional on the mount
+	 * being read-write in the first place.
 	 *
-	 * This is the guard and not the fix, and it sits here rather than
-	 * at the recovery site because that site is reached only after
-	 * the device is open and the super-root is read.  Refusing before
-	 * either has happened refuses the operation; refusing there would
-	 * unwind one.  hammer2_reconfigure() covers the remount.
+	 * The refusal sits here rather than at the recovery site because
+	 * that site is reached only after the device is open and the
+	 * super-root is read.  Refusing before either has happened
+	 * refuses the operation; refusing there would unwind one.
+	 * hammer2_reconfigure() covers the remount.
 	 */
 	if (!rdonly) {
-		hprintf("read-write mount refused, flush recovery is not implemented, mount -o ro\n");
+		hprintf("read-write mount refused, flush recovery has never been exercised, mount -o ro\n");
 		return (-EROFS);	/* Linux: the VFS half is negative */
 	}
 
@@ -1564,7 +1566,7 @@ static const struct super_operations hammer2_sops = {
 };
 
 /*
- * DEFER(flush recovery lands): the read-write refusal in
+ * DEFER(recovery is exercised on a device): the read-write refusal in
  * hammer2_get_tree() covers the mount, and this covers the remount that
  * would otherwise walk around it.
  *
@@ -1592,7 +1594,7 @@ hammer2_reconfigure(struct fs_context *fc)
 
 	if ((fc->sb_flags_mask & SB_RDONLY) && !(fc->sb_flags & SB_RDONLY) &&
 	    sb_rdonly(sb)) {
-		hprintf("read-write remount refused, flush recovery is not implemented\n");
+		hprintf("read-write remount refused, flush recovery has never been exercised\n");
 		return (-EROFS);	/* Linux: the VFS half is negative */
 	}
 

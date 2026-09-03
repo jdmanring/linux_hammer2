@@ -221,8 +221,20 @@ if [ "$ndefer" = 0 ]; then
 	echo "  note src/ holds no DEFER markers, so the ledger check below"
 	echo "       compared nothing"
 else
+	# ONLY TABLE ROWS COUNT. This read the whole document and any
+	# mention satisfied it, so a marker whose row had been rewritten
+	# under a new trigger stayed green on a sentence of narrative prose
+	# elsewhere in the file that happened to name the old one. That is
+	# the condition this check exists to catch, passing because the
+	# population it compared against was the wrong one.
+	command grep '^|' "$LEDGER" > "$dtmp/rows" || :
+	if [ ! -s "$dtmp/rows" ]; then
+		echo "  FAIL $LEDGER: no table rows at all, so the ledger check"
+		echo "       below would compare against nothing"
+		fail=$((fail + 1))
+	fi
 	printf '%s\n' "$defers" | while IFS= read -r d; do
-		command grep -qF -- "$d" "$LEDGER" ||
+		command grep -qF -- "$d" "$dtmp/rows" ||
 			echo "  FAIL $LEDGER: no ledger row for $d"
 	done > "$dtmp/missing"
 	if [ -s "$dtmp/missing" ]; then
@@ -233,7 +245,7 @@ else
 	# The other direction. A marker deleted from the source leaves a row
 	# that reads as outstanding work forever, and nothing else here would
 	# notice: the check above only walks the population.
-	rows=$(command grep -oE 'DEFER\([^)]{3,}\)' "$LEDGER" | LC_ALL=C sort -u)
+	rows=$(command grep -oE 'DEFER\([^)]{3,}\)' "$dtmp/rows" | LC_ALL=C sort -u)
 	nrows=$(printf '%s' "$rows" | command grep -c . || true)
 	if [ "$nrows" = 0 ]; then
 		echo "  FAIL $LEDGER: the tree holds $ndefer DEFER marker(s) and the"

@@ -53,7 +53,7 @@ the only thing that has ever seen 7.2.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1619 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 1971 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 1973 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 132 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
@@ -136,9 +136,10 @@ nothing, which is why the section above records what `make` does instead.
 The module has not been loaded and there is no fsck integration, so
 nothing here has been observed running. The VFS layer and the mount path
 exist: `hammer2_get_tree()` probes the device, reads the super-root,
-builds a root dentry and returns success. It does so without running
-upstream's recovery, which `DEFER(flush recovery lands)` names, and it
-refuses a read-write mount because of that.
+builds a root dentry and returns success. It refuses a read-write mount,
+and refuses the read-write remount too: upstream's recovery is carried and
+called, but it writes and has never been run, which is what
+`DEFER(recovery is exercised on a device)` names.
 
 ## The version floor, and how it was established
 
