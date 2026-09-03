@@ -1,9 +1,37 @@
 Status
 ======
 
-Nothing mounts yet, and no module has been built or loaded. This file is
-the one to correct rather than to argue with: if a claim here is stale, it
-is a defect.
+Nothing mounts yet, and no module has been loaded. This file is the one to
+correct rather than to argue with: if a claim here is stale, it is a
+defect.
+
+## The build
+
+Every file compiles and the module does not link. That was first measured
+on 2026-09-02, against 7.1.9 with gcc 16.2.1, and it is the state to expect
+from `make` today: twelve objects, zero warnings, then four undefined
+symbols out of modpost.
+
+| referenced at | the reference | defined upstream in | what lands it |
+|---|---|---|---|
+| `hammer2_admin.c:64` | `strategy_read`, which `H2XOPDESCRIPTOR` turns into `hammer2_xop_strategy_read` | `hammer2_strategy.c` | the file is not carried |
+| `hammer2_admin.c:65` | `strategy_write`, which `H2XOPDESCRIPTOR` turns into `hammer2_xop_strategy_write` | `hammer2_strategy.c` | the file is not carried |
+| `hammer2_bulkfree.c:433` | `hammer2_dedup_clear` | `hammer2_strategy.c` | the file is not carried |
+| `hammer2_vfsops.c:448` | `hammer2_vfs_sync_pmp` | `hammer2_vfsops.c` | `->sync_fs` |
+
+Neither xop symbol is spelled out at the line the table names: the macro
+takes the label and builds the name, which is why the anchor is the label.
+
+Three of the four are one missing file. The fourth is deliberate and the
+reasoning sits at its call site: a declared and undefined symbol fails at
+link, where a stub returning success would be silent on the one path that
+decides whether an unmount lost data. The first build is what turned that
+from an argument into an observation.
+
+The build was run against the running kernel rather than the kernel of
+record, because an undefined symbol and a mistaken `hammer2-y` row do not
+depend on the version, and 7.2 is not installed here as a prepared build
+directory. A link against the kernel of record has not been performed.
 
 ## What is in the tree
 
