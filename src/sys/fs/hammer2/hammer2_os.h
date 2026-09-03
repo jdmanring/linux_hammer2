@@ -80,6 +80,29 @@
 #define inode_state_read_once(inode)	READ_ONCE((inode)->i_state) /* Linux */
 #endif
 
+/*
+ * kzalloc_obj() is the object-allocation spelling that arrived in 7.0,
+ * absent at v6.19 and present at v7.0, read at the tags. Below that,
+ * kzalloc() with sizeof is the same allocation. Only the no-gfp form is
+ * defined, because it is the only one this tree uses and a fuller
+ * imitation would be a second implementation of the kernel's macro
+ * rather than a floor for one call.
+ *
+ * The guard is #ifndef and not a version comparison, because stable
+ * series backport this: Arch's 6.18.46 has it where mainline v6.18 does
+ * not, and a version guard redefined it there with a warning that a
+ * -Werror build turns into a failure. Where the kernel spells a facility
+ * as a macro, asking whether the macro exists is the exact question. The
+ * guard above it cannot do the same, since inode_state_read_once() is an
+ * inline function, and a macro of that name would shadow it silently
+ * rather than collide; its version comparison is against mainline, which
+ * is what the floor means, and a stable backport of that one would
+ * defeat it.
+ */
+#ifndef kzalloc_obj
+#define kzalloc_obj(P)		kzalloc(sizeof(typeof(P)), GFP_KERNEL) /* Linux */
+#endif
+
 #define print_backtrace()	dump_stack()
 
 #ifdef HAMMER2_INVARIANTS

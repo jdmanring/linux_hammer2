@@ -63,7 +63,7 @@ warning-clean. Nothing has been loaded on any of them.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 717 | ours, the OS shim |
+| `hammer2_os.h` | 740 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -157,6 +157,7 @@ was dated by reading the header at the tag rather than from memory:
 | `folio_mark_dirty_lock` | v6.12 | v6.13 |
 | `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
 | `inode_state_read_once` | v6.18 | v6.19 |
+| `kzalloc_obj` | v6.19 | v7.0 |
 
 `inode_state_read_once()` is the one that moved the other way. It is used
 in `hammer2_igetv()` and is four releases above the floor, so the module
@@ -166,9 +167,26 @@ exists to say so. `hammer2_os.h` defines it as `READ_ONCE()` below 6.19,
 where `i_state` is a scalar rather than a struct behind accessors: `u32`
 at v6.15, v6.16 and v6.17, `enum inode_state_flags_t` at v6.18.
 
+`kzalloc_obj()` is the second of the same kind and was found the same way,
+by CI failing to build at 6.17. Both were then swept for at once rather
+than chased one CI round-trip at a time: every identifier called in
+`src/sys/fs/hammer2` that the tree does not define itself, sixty of them,
+was resolved against a mainline v6.15 `include/` tree. Two were missing,
+and both are the two above. The sweep sees a symbol that is absent; it
+does not see a signature that changed, so it bounds this class rather than
+closing it.
+
+`kzalloc_obj()`'s guard is `#ifndef` rather than a version comparison,
+because stable series backport it: Arch's 6.18.46 has it where mainline
+v6.18 does not, and the version guard redefined it there. Where the kernel
+spells a facility as a macro, asking whether the macro exists is the exact
+question.
+
 6.15 is the floor the code requires. It is no longer entirely unexercised:
-the module builds warning-clean at 6.18, which is the path the shim above
-takes, as well as at 7.1.9 and at the kernel of record.
+the module builds warning-clean at 6.18, at 7.1.9, and at the kernel of
+record under clang. **CI builds at 6.17, which is what makes it the only
+floor test that runs on every push.** A change that pins CI to a newer
+kernel would take that away without anything saying so.
 The kernel of record is a different claim: this tree compiles against the
 latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
 when a release ships.
