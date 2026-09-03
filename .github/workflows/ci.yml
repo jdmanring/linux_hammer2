@@ -256,7 +256,7 @@ jobs:
           # The version appears once. Bumping the floor means editing this
           # line and the #error in hammer2_os.h, and the build is what says
           # whether the two agree.
-          key: linux-floor-6.15-prepared-v2
+          key: linux-floor-6.15-built-v3
 
       - name: Fetch and prepare 6.15
         if: steps.floorcache.outputs.cache-hit != 'true'
@@ -267,16 +267,17 @@ jobs:
           mkdir -p "$HOME/linux-floor"
           tar -xf /tmp/linux.tar.xz -C "$HOME/linux-floor" --strip-components=1
           make -C "$HOME/linux-floor" defconfig
-          make -C "$HOME/linux-floor" -j"$(nproc)" modules_prepare
-          # vmlinux, not modules_prepare alone. modules_prepare builds the
-          # generated headers and the host tools and stops, leaving no
-          # Module.symvers, and an external module linked against a tree
-          # with no symbol table has every symbol undefined: the first run
-          # of this job reported memcpy and kfree undefined alongside the
-          # filesystem entry points. modpost writes Module.symvers during
-          # the vmlinux link, from the exports of the built-in objects,
-          # which is where all ten of those live.
-          make -C "$HOME/linux-floor" -j"$(nproc)" vmlinux
+          # A FULL BUILD, which is what Documentation/kbuild/modules.rst
+          # asks for in as many words: "modules_prepare will not build
+          # Module.symvers ... therefore, a full kernel build needs to be
+          # executed". Two cheaper targets were tried first and neither
+          # writes that file. modules_prepare leaves the tree with no
+          # symbol table at all, which does not refuse an external module
+          # build, it accepts every compile and then reports every symbol
+          # undefined at modpost, memcpy and kfree included. Building
+          # vmlinux alone is not enough either. This is the expensive step
+          # and the reason the tree is cached on the tag.
+          make -C "$HOME/linux-floor" -j"$(nproc)"
 
       # The tree is asserted to BE the floor before it is built against.
       # A cache restored from a bumped key, or a tarball that redirected,
