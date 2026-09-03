@@ -5,7 +5,7 @@
 2 Avoid unnecessary line continuations
 1 Block comments use * on subsequent lines
 1 Consider removing the code enclosed by this #if 0 and its #endif
-2 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
+4 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
 15 Misplaced SPDX-License-Identifier tag - use line 1 instead
 2 Missing a blank line after declarations

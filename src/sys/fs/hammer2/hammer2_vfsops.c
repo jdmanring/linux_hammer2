@@ -803,6 +803,16 @@ hammer2_get_tree(struct fs_context *fc)
 			}
 			hmp = hmp_tmp;
 			debug_hprintf("hmp matched\n");
+			/*
+			 * DEFER(a second PFS on one device is mounted): a
+			 * secondary mount reuses the open this device
+			 * already has, so the device's filesystem callbacks
+			 * reach the superblock of the first mount and not
+			 * this one.  True of every kernel this builds
+			 * against; 7.3 makes it legible by registering
+			 * {device, superblock} pairs, where the fix is to
+			 * register each superblock rather than to reopen.
+			 */
 			break;
 next_hmp:
 			continue;

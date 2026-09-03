@@ -57,8 +57,10 @@
  *     path gets a dev_t to match a second mount of the same device
  *     against before anything is opened.  The open has to come second on
  *     Linux because bdev_file_open_by_path() claims the device for a
- *     holder, and the holder fs_holder_ops requires is a live superblock
- *     (fs/super.c, bdev_super_lock(), read at the kernel of record).
+ *     holder, and the holder the device's filesystem callbacks require is
+ *     a live superblock (fs/super.c, read at the kernel of record; 7.3
+ *     keeps that requirement and reaches it through a registration table
+ *     instead, which the open helper below is the seam for).
  *   - hammer2_gaccess_devvp() and its two callers hammer2_getw_devvp() and
  *     hammer2_putw_devvp() are not carried.  They adjust a GEOM consumer's
  *     write count around a volume-header write; Linux states the access it
@@ -68,6 +70,49 @@
 #include <linux/blkdev.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
+
+/*
+ * XXX Linux: 7.3 made fs_holder_ops static and replaced "the holder is a
+ * superblock" with a {device, superblock} registration table, so an open
+ * that wants the device's freeze, thaw, sync and mark_dead callbacks now
+ * goes through fs_bdev_file_open_by_path() and its release has to run
+ * fs_bdev_file_release() to drop the table entry.  bdev_fput() still
+ * compiles at 7.3 and would leave the entry behind, so the release side is
+ * guarded with the open side rather than left alone.
+ *
+ * A version comparison and not an existence test: fs_bdev_file_open_by_path()
+ * is a function, so the preprocessor cannot ask for it, and the two calls
+ * take different arguments rather than the same ones under a new name.
+ * Measured: 7.2.3-300.fc45 declares fs_holder_ops at blkdev.h:1778 and
+ * neither wrapper; 7.3.0-0.rc0.260819gbd5f485f3f02 declares the wrappers at
+ * fs/super.h:243 and no fs_holder_ops anywhere under include/.  linux/fs.h
+ * includes the split header, so no include changes with the version.
+ *
+ * DEFER(7.3 ships a released -rc): the basis above is a merge-window
+ * snapshot, so these names can still move before 7.3 final.  Re-measure
+ * against the release and pin the comparison to what it shipped.
+ */
+#define LINUX_FS_BDEV_OPEN	KERNEL_VERSION(7, 3, 0)
+
+static struct file *	/* Linux */
+hammer2_bdev_open(const char *path, blk_mode_t mode, struct super_block *sb)
+{
+#if LINUX_VERSION_CODE < LINUX_FS_BDEV_OPEN
+	return (bdev_file_open_by_path(path, mode, sb, &fs_holder_ops));
+#else
+	return (fs_bdev_file_open_by_path(path, mode, sb, sb));
+#endif
+}
+
+static void	/* Linux */
+hammer2_bdev_release(struct file *bdev_file, struct super_block *sb)
+{
+#if LINUX_VERSION_CODE < LINUX_FS_BDEV_OPEN
+	bdev_fput(bdev_file);
+#else
+	fs_bdev_file_release(bdev_file, sb);
+#endif
+}
 
 int
 hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
@@ -82,13 +127,13 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 
 		/* XXX Linux: g_vfs_open() on a vnode namei() already
 		 * resolved.  The holder is the superblock and the holder
-		 * ops are the kernel's own fs_holder_ops, which is what
+		 * ops are the kernel's own filesystem holder ops, which is what
 		 * every in-tree filesystem passes and what makes the
 		 * device's freeze, sync and mark_dead callbacks reach a
 		 * mounted filesystem at all.
 		 */
-		bdev_file = bdev_file_open_by_path(e->path,
-		    sb_open_mode(sb->s_flags), sb, &fs_holder_ops);
+		bdev_file = hammer2_bdev_open(e->path,
+		    sb_open_mode(sb->s_flags), sb);	/* Linux */
 		if (IS_ERR(bdev_file)) {
 			error = -PTR_ERR(bdev_file);	/* Linux: positive */
 			hprintf("failed to open %s %d\n", e->path, error);
@@ -105,7 +150,7 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		    lblksize < sectorsize) {
 			hprintf("invalid sector size %d vs lblksize %d\n",
 			    sectorsize, lblksize);
-			bdev_fput(bdev_file);
+			hammer2_bdev_release(bdev_file, sb);	/* Linux */
 			return (EINVAL);
 		}
 
@@ -124,11 +169,12 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		if (error) {
 			hprintf("failed to set %s blocksize %d %d\n",
 			    e->path, (int)HAMMER2_PBUFSIZE, -error);
-			bdev_fput(bdev_file);
+			hammer2_bdev_release(bdev_file, sb);	/* Linux */
 			return (-error);		/* Linux: positive */
 		}
 
 		e->bdev_file = bdev_file;
+		e->sb = sb;	/* Linux: the release has to name the holder */
 		e->open = 1;
 		KKASSERT(e->open);
 	}
@@ -144,7 +190,8 @@ hammer2_close_devvp(const hammer2_devvp_list_t *devvpl)
 	TAILQ_FOREACH(e, devvpl, entry) {
 		if (e->open) {
 			KKASSERT(e->bdev_file);
-			bdev_fput(e->bdev_file);	/* XXX Linux: g_vfs_close */
+			hammer2_bdev_release(e->bdev_file, e->sb);
+							/* XXX Linux: g_vfs_close */
 			e->bdev_file = NULL;
 			e->open = 0;
 		}
@@ -266,7 +313,7 @@ hammer2_cleanup_devvp(hammer2_devvp_list_t *devvpl)
 			 */
 			debug_hprintf("%s still open at cleanup\n",
 			    e->path ? e->path : "(null)");
-			bdev_fput(e->bdev_file);
+			hammer2_bdev_release(e->bdev_file, e->sb);	/* Linux */
 			e->bdev_file = NULL;
 			e->open = 0;
 		}

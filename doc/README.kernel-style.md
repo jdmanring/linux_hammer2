@@ -218,6 +218,14 @@ written in that style adds to these counts by existing, which is the
 expected direction and the reason the baseline is a set rather than a
 ceiling.
 
+922 to 924 when `hammer2_ondisk.c` gained the guard that chooses between
+`bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and the
+`fs_bdev_file_open_by_path()` that replaced it. Two hits, both
+`LINUX_VERSION_CODE should be avoided, code should be for the version to
+which it is merged`, which is the same category and the same answer as
+the two moves above: the guard is what lets one tree build across the
+range it claims, and it goes on submission with the rest of them.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

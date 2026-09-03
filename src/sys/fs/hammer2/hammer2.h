@@ -774,6 +774,7 @@ struct hammer2_devvp {
 	struct file		*bdev_file;	/* Linux: was struct vnode *devvp */
 	char			*path;		/* device path */
 	dev_t			devno;		/* Linux: was devvp->v_rdev */
+	struct super_block	*sb;		/* Linux: holder the open claimed for */
 	int			open;		/* 1 if bdev_file open */
 };
 
