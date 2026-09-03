@@ -775,7 +775,35 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	i_uid_write(inode, hammer2_inode_to_uid(ip));	/* Linux */
 	i_gid_write(inode, hammer2_inode_to_gid(ip));	/* Linux */
 	i_size_write(inode, ip->meta.size);		/* Linux */
-	set_nlink(inode, ip->meta.nlinks);		/* Linux */
+	/*
+	 * A clamp, not a translation.  set_nlink(0) tells the VFS the
+	 * inode is unlinked and pending eviction, which is a different
+	 * statement from the one the media makes: HAMMER2 counts links
+	 * for directories and the field is documented in hammer2_disk.h
+	 * as typically only meaningful for them.  Reading a zero through
+	 * unchanged would have the VFS discard a live file.  The port's
+	 * rule for the OS half is a warning plus recovery plus a
+	 * survivable operation, so it warns once and reports one link.
+	 */
+	if (ip->meta.nlinks == 0) {	/* Linux */
+		WARN_ONCE(1, "hammer2: inum %016llx has zero links\n",
+		    (long long)ip->meta.inum);
+		set_nlink(inode, 1);
+	} else {
+		set_nlink(inode, ip->meta.nlinks);
+	}
+
+	/*
+	 * i_blocks is what generic_fillattr() copies into stat->blocks,
+	 * and nothing else fills it, so an unset one reports every file
+	 * as occupying nothing to stat and du.  The value is upstream's
+	 * va_bytes from hammer2_getattr(), in the 512-byte units Linux
+	 * counts in rather than the bytes BSD does.
+	 */
+	if (S_ISDIR(inode->i_mode))	/* Linux */
+		inode->i_blocks = HAMMER2_INODE_BYTES >> 9;
+	else
+		inode->i_blocks = hammer2_inode_data_count(ip) >> 9;
 
 	/*
 	 * Through the accessors, not the members.  i_atime, i_mtime and
@@ -805,10 +833,13 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	 * symlink and for a device node and is not reachable while
 	 * nothing can open one.
 	 */
-	if (S_ISDIR(inode->i_mode))
+	if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &hammer2_dir_iops;	/* Linux */
-	else
+		inode->i_fop = &hammer2_dir_fops;	/* Linux */
+	} else {
 		inode->i_op = &hammer2_file_iops;	/* Linux */
+		inode->i_fop = &hammer2_file_fops;	/* Linux */
+	}
 
 	/*
 	 * hammer2_evict_inode() in hammer2_vfsops.c performs the other

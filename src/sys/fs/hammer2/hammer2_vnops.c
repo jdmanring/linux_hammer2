@@ -56,9 +56,10 @@
  * carried unchanged in shape.
  *
  * DEFER(the read path lands, with ->read_folio): a regular file gets an
- * inode_operations with no methods and no file_operations at all, so it
- * can be looked up and stat'd and not opened.  ->iterate_shared is the
- * other half of a usable directory and is upstream's hammer2_readdir().
+ * inode_operations and a file_operations with no methods in either, so
+ * it can be looked up, stat'd and opened, and read fails EINVAL.
+ * ->iterate_shared is the other half of a usable directory and is
+ * upstream's hammer2_readdir().
  */
 
 #include "hammer2.h"
@@ -125,6 +126,31 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 
 const struct inode_operations hammer2_dir_iops = {
 	.lookup		= hammer2_vop_lookup,
+};
+
+/*
+ * THE FILE OPERATIONS ARE NOT OPTIONAL, WHICH IS NOT OBVIOUS FROM THE
+ * INODE OPERATIONS BEING THE HALF THAT MATTERS HERE.  do_dentry_open()
+ * in fs/open.c reads i_fop straight out of the inode and takes a NULL
+ * through WARN_ON before failing the open with ENODEV, at v6.15 as at
+ * v7.2.  So an inode handed to the VFS with no file_operations does not
+ * refuse an open quietly, it prints a kernel warning first, and the
+ * first `ls` on a mount point would produce one.  These two tables exist
+ * so that never happens; what is deferred is what is in them.
+ *
+ * DEFER(the read path lands, with ->read_folio): the directory table has
+ * no ->iterate_shared, which iterate_dir() in fs/readdir.c reports as
+ * ENOTDIR and nothing else, so a readdir fails cleanly.  Its content is
+ * upstream's hammer2_readdir().  The regular-file table is empty, which
+ * leaves FMODE_CAN_READ unset in do_dentry_open() and makes a read fail
+ * EINVAL, again with no warning: an open succeeds and reads do not.
+ */
+const struct file_operations hammer2_dir_fops = {
+	.llseek		= generic_file_llseek,
+	.read		= generic_read_dir,
+};
+
+const struct file_operations hammer2_file_fops = {
 };
 
 /*
