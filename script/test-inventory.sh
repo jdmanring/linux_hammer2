@@ -187,7 +187,7 @@ for d in $COUNT_DOCS; do
 	done
 done
 
-# EVERY `DEFER(` IN src/ IS A ROW IN doc/README.status.md's LEDGER, AND
+# EVERY `DEFER(` IN THE TREE IS A ROW IN doc/README.status.md's LEDGER, AND
 # EVERY ROW IS A MARKER THAT STILL EXISTS. A deferral is only pragmatism
 # while its trigger is written down, and the ledger is the only place the
 # four are collected; a marker deleted from the source leaves a row that
@@ -204,7 +204,18 @@ done
 LEDGER=doc/README.status.md
 dtmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$dtmp"' EXIT
-defers=$(command grep -rhoE 'DEFER\([^)]*\)' src/ | LC_ALL=C sort -u)
+# The population is src/, script/ and .github/, not src/ alone. A deferral
+# in a gate or a workflow is a deferral: CI grew one on 2026-09-02, where
+# the module build asserts a link failure and has to invert once the module
+# links. Scanning src/ only would have left that trigger written down
+# nowhere the ledger could see, which is the condition DEFER exists to
+# prevent. doc/ is excluded because the ledger itself lives there and would
+# match every row.
+# Three or more characters inside the parentheses, because this gate's own
+# summary line ends with "DEFER(s)" and a pattern that can match the command
+# that carries it reports itself. Every real trigger is a phrase.
+defers=$(command grep -rhoE $BUILT 'DEFER\([^)]{3,}\)' src/ script/ .github/ |
+	LC_ALL=C sort -u)
 ndefer=$(printf '%s' "$defers" | command grep -c . || true)
 if [ "$ndefer" = 0 ]; then
 	echo "  note src/ holds no DEFER markers, so the ledger check below"
@@ -221,18 +232,18 @@ else
 
 	# The other direction. A marker deleted from the source leaves a row
 	# that reads as outstanding work forever, and nothing else here would
-	# notice: the check above only walks src/.
-	rows=$(command grep -oE 'DEFER\([^)]*\)' "$LEDGER" | LC_ALL=C sort -u)
+	# notice: the check above only walks the population.
+	rows=$(command grep -oE 'DEFER\([^)]{3,}\)' "$LEDGER" | LC_ALL=C sort -u)
 	nrows=$(printf '%s' "$rows" | command grep -c . || true)
 	if [ "$nrows" = 0 ]; then
-		echo "  FAIL $LEDGER: src/ holds $ndefer DEFER marker(s) and the"
+		echo "  FAIL $LEDGER: the tree holds $ndefer DEFER marker(s) and the"
 		echo "       ledger table has no row at all, so the check above"
 		echo "       matched against nothing"
 		fail=$((fail + 1))
 	else
 		printf '%s\n' "$rows" | while IFS= read -r r; do
-			command grep -rqF -- "$r" src/ ||
-				echo "  FAIL $LEDGER: row for $r, which src/ no longer holds"
+			command grep -rqF $BUILT -- "$r" src/ script/ .github/ ||
+				echo "  FAIL $LEDGER: row for $r, which the tree no longer holds"
 		done > "$dtmp/stale"
 		if [ -s "$dtmp/stale" ]; then
 			cat "$dtmp/stale"
