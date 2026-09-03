@@ -83,10 +83,19 @@
 /*
  * kzalloc_obj() is the object-allocation spelling that arrived in 7.0,
  * absent at v6.19 and present at v7.0, read at the tags. Below that,
- * kzalloc() with sizeof is the same allocation. Only the no-gfp form is
- * defined, because it is the only one this tree uses and a fuller
- * imitation would be a second implementation of the kernel's macro
- * rather than a floor for one call.
+ * kzalloc() with sizeof is the same allocation.
+ *
+ * The kernel's takes (P, ...) and this takes (P). That is deliberate.
+ * The tail selects the gfp flags through default_gfp(), which arrived
+ * with it and is equally absent at the floor, so honouring the tail
+ * would mean writing a gfp-defaulting macro here: a second
+ * implementation of the kernel's, to serve calls this tree does not
+ * make. A call that does pass flags fails below 7.0, and gcc names this
+ * macro when it does, "macro kzalloc_obj passed 2 arguments, but takes
+ * just 1", which was measured rather than assumed. It fails only below
+ * 7.0, so it would build on a developer's machine and break at the
+ * floor; CI builds at 6.17 on every push, which is what turns that into
+ * the same push rather than a later one.
  *
  * The guard is #ifndef and not a version comparison, because stable
  * series backport this: Arch's 6.18.46 has it where mainline v6.18 does

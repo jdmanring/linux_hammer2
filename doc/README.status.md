@@ -63,7 +63,7 @@ warning-clean. Nothing has been loaded on any of them.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 740 | ours, the OS shim |
+| `hammer2_os.h` | 749 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -169,12 +169,17 @@ at v6.15, v6.16 and v6.17, `enum inode_state_flags_t` at v6.18.
 
 `kzalloc_obj()` is the second of the same kind and was found the same way,
 by CI failing to build at 6.17. Both were then swept for at once rather
-than chased one CI round-trip at a time: every identifier called in
-`src/sys/fs/hammer2` that the tree does not define itself, sixty of them,
-was resolved against a mainline v6.15 `include/` tree. Two were missing,
-and both are the two above. The sweep sees a symbol that is absent; it
-does not see a signature that changed, so it bounds this class rather than
-closing it.
+than chased one CI round-trip at a time, by `script/floor-symbols.py`: it
+resolves every identifier called in `src/sys/fs/hammer2` that the tree
+does not define itself, sixty-one of them, against a floor tree's
+`include/`. Two were missing, and both are the two above. It resolves a
+name, so a function whose signature changed while keeping its name is
+invisible to it, and it bounds this class rather than closing it. It is
+not a gate: it needs a 6.15 tree, which is a download rather than
+something a workstation has, so it is run when the floor moves or a file
+lands. The three names the vendored `queue.h` and `tree.h` call that the
+kernel does not provide, `atomic_load_ptr()`, `fprintf()` and `abort()`,
+sit in macros this tree never expands.
 
 `kzalloc_obj()`'s guard is `#ifndef` rather than a version comparison,
 because stable series backport it: Arch's 6.18.46 has it where mainline
