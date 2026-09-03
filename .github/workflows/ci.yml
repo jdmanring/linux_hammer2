@@ -117,6 +117,30 @@ jobs:
           }
           echo "origin clone at $commit"
 
+      # Vale, for the prose gate. Without it that gate reports COULD-NOT-RUN,
+      # which is what it did on every run from 2026-08-29, when doc/research
+      # arrived from ArtNix with its gate, until 2026-09-02. The whole point of
+      # moving the gate with the files was that the prose not sit ungoverned,
+      # and a gate that only runs on a maintainer's own machine governs nothing.
+      #
+      # Pinned by version and checksum rather than tracking latest: a different
+      # vale reports a different finding set on unchanged prose, the same reason
+      # checkpatch is pinned to the kernel of record. Failing to install is a
+      # real failure here, not a skip, because the gate would otherwise print
+      # could-not-run and the run would still be green.
+      - name: Prose checker, pinned
+        run: |
+          set -eu
+          v=3.18.0
+          sha=a6f71a75a12fe689345b754f2412b90367fe33648abb7d200fa19eaadc2dbf6d
+          curl -sfL -o /tmp/vale.tgz \
+            "https://github.com/errata-ai/vale/releases/download/v$v/vale_${v}_Linux_64-bit.tar.gz"
+          echo "$sha  /tmp/vale.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf /tmp/vale.tgz -C "$HOME/.local/bin" vale
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/vale" --version
+
       - name: Gates (every script/test-*.sh)
         run: |
           set +e

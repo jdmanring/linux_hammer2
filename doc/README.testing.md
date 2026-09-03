@@ -20,9 +20,13 @@ Repository gates, POSIX sh over grep, sed and git, no kernel and no
 network:
 
     $ bash script/test-inventory.sh   # the lists covering src/ and test/, and the DEFER ledger
-    $ bash script/test-citations.sh   # every file:line citation in doc/
+    $ bash script/test-citations.sh   # the file:line citations in doc/ tables
     $ bash script/test-history.sh     # every roadmap row's commit hash
     $ bash script/test-provenance.sh  # every file under src/ has an origin row
+
+Prose gate, needs vale and nothing else:
+
+    $ bash script/test-doc-prose.sh   # vale over doc/, any finding is a failure
 
 `test-shim.sh` compiles `hammer2_os.h` and `hammer2_compat.h` against the
 stubs in `test/stub`, in both positions of the `HAMMER2_INVARIANTS` knob,
@@ -30,11 +34,35 @@ plus a negative control: the header is broken on a copy and the compile
 must fail. Without that control a gate whose healthy signature is silence
 cannot be told from a gate that never opened the file.
 
+`test-doc-prose.sh` runs vale over every `.md` under `doc/` with the
+styles in `styles/`, which are house YAML rather than a downloaded package
+so the gate needs no network and no `vale sync`. It arrived on 2026-08-29
+with `doc/research/`, which had been governed in ArtNix since 2026-08-25
+and was moved here on the rule that a component owns its own development.
+
+Two things about it were wrong until 2026-09-02 and are worth recording,
+because both are the shape where a gate prints and still passes. Vale's own
+exit status is nonzero for errors only, and every rule in `styles/ArtNix`
+is a warning, so the gate printed twelve findings and exited 0 on every run
+it ever made. It now counts the findings itself and fails on any of them;
+the twelve, eleven British spellings and one wordy phrase, were fixed in
+the same change. And CI never installed vale, so the gate reported
+COULD-NOT-RUN on every push, which is the same defect the move was meant to
+close, one layer out. CI now installs vale pinned by version and sha256,
+for the reason checkpatch is pinned: a different checker reports a
+different finding set on unchanged prose. The version of record is 3.18.0.
+
+The gate asserts a non-empty population before it reads anything, so a
+`doc/` that has moved fails rather than passing on an empty sweep, and it
+carries no negative control of its own because the failing direction was
+driven by hand: a one-line document containing a British spelling turns
+the run red and its removal turns it green again.
+
 `test-provenance.sh` reads `doc/provenance.csv` and asks three things:
 that no file under `src/` lacks a row, that no row names a file that is
 gone, and that every row claiming a byte-for-byte carry still IS one.
 Only the third asks a question this repository cannot answer alone, and it
-is the reason the gate exists: an origin, commit and licence claim is the
+is the reason the gate exists: an origin, commit and license claim is the
 first thing an upstream reviewer checks and the last thing anyone can
 reconstruct afterwards. So it is re-run with `cmp` against the origin
 clone rather than read. Where no clone is on the machine, nothing was
@@ -58,7 +86,7 @@ fallback that has never fired is indistinguishable from one that works.
 That is not hypothetical here: `IO_MODEL.md` described the nix branch as
 the source of the kernel of record while the `/lib/modules` path was
 present on every run, so the document and the script agreed in wording and
-disagreed in behaviour, and nothing could notice. Point `KDIR` at a path that
+disagreed in behavior, and nothing could notice. Point `KDIR` at a path that
 does not exist to exercise the fallback: it then resolves nothing and returns
 COULD-NOT-RUN naming itself.
 
@@ -93,11 +121,18 @@ The repository gates check the documentation against the tree rather than
 the tree against a compiler. `test-inventory.sh` reads the three
 hand-maintained lists that claim to cover `src/sys/fs/hammer2/`, reports a
 file missing from any of them, and compares the origin table's line count
-against the file it names. `test-citations.sh` reads every
-`file:line` citation in `doc/` against the line it names, comparing
-against the source rather than a stored baseline, and grades each pass by
-how specific its anchor is, so a row anchored on a common token is
-reported as weak rather than counted with the strong ones.
+against the file it names. `test-citations.sh` reads the `file:line` citations that sit in a
+`doc/` table row against the line each names, comparing against the source
+rather than a stored baseline, and grades each pass by how specific its
+anchor is, so a row anchored on a common token is reported as weak rather
+than counted with the strong ones. It checks table rows only, and prints
+how many citation-shaped tokens it left alone: 33 on 2026-09-02, of which
+32 are in `doc/research/` and name line numbers in DragonFly's own tree,
+which this repository cannot resolve. That is why the exclusion exists,
+and the count is printed rather than assumed so a prose citation into
+`src/` cannot hide in it. The one that is such a citation,
+`hammer2_chain.c:2189` in `doc/README.porting.md`, was read by hand on the
+same day and lands on the `LOCKAGAIN` branch the sentence describes.
 `test-history.sh` checks that every roadmap row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
 `test-inventory.sh` also reads the `DEFER` ledger in
@@ -154,7 +189,7 @@ on behalf of a kernel that does not exist.
 
 Every gate that uses a toolchain names the one it used, and every gate
 that resolves a tree names how it resolved it. The reason is a shape worth
-recognising: where the DEFAULT invocation and a deliberate one answer
+recognizing: where the DEFAULT invocation and a deliberate one answer
 different questions, the unattended run and the careful run disagree and
 only the careful one is ever right, while both print the same summary. It
 was live on 2026-08-26 in the syntax gate, which needed `KDIR` typed to
@@ -190,7 +225,7 @@ half, which had been declining for want of an xxHash to link until
 `test-posix.sh` parses the gates declaring `#!/bin/sh` with dash and
 busybox ash. It exists because every gate here is normally run by bash, so
 a bash-only construct in such a script runs forever and breaks the day
-something honours the shebang - which happened on 2026-08-26, when both
+something honors the shebang - which happened on 2026-08-26, when both
 selftests re-invoked their gate with `sh "$0"` and failed on a runner
 whose `/bin/sh` is dash.
 
@@ -249,6 +284,7 @@ disagreeing. Read the table.
 | `test-shim.sh` | no compiler | `CC` naming one that does not exist |
 | `test-syntax.sh` | no kernel build dir | `KDIR` at a path that does not exist |
 | `test-posix.sh` | no shell realized | `H2_DASH` and `H2_BUSYBOX` at paths that do not exist |
+| `test-doc-prose.sh` | no vale | a `PATH` holding none, driven 2026-09-02 |
 
 All exit 2 and name what was missing. Two defects fell out of driving
 them: `test-shim.sh` was the only gate whose message omitted the
@@ -344,7 +380,7 @@ what was done rather than a dated sentence about everything.
 checks inside scripts. Counting invocations by grep is the
 hand-maintained-list defect one level up wearing a regex, and running
 every gate from inside another gate to read its printed count couples the
-gates for a claim that is documentation rather than behaviour. Written
+gates for a claim that is documentation rather than behavior. Written
 here rather than settled in conversation, because a decision not to build
 something is invisible to the next reader unless it is in the tree they
 grep. The specification repository reached the same answer about its own
