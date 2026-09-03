@@ -256,7 +256,7 @@ jobs:
           # The version appears once. Bumping the floor means editing this
           # line and the #error in hammer2_os.h, and the build is what says
           # whether the two agree.
-          key: linux-floor-6.15-prepared-v1
+          key: linux-floor-6.15-prepared-v2
 
       - name: Fetch and prepare 6.15
         if: steps.floorcache.outputs.cache-hit != 'true'
@@ -268,11 +268,20 @@ jobs:
           tar -xf /tmp/linux.tar.xz -C "$HOME/linux-floor" --strip-components=1
           make -C "$HOME/linux-floor" defconfig
           make -C "$HOME/linux-floor" -j"$(nproc)" modules_prepare
+          # vmlinux, not modules_prepare alone. modules_prepare builds the
+          # generated headers and the host tools and stops, leaving no
+          # Module.symvers, and an external module linked against a tree
+          # with no symbol table has every symbol undefined: the first run
+          # of this job reported memcpy and kfree undefined alongside the
+          # filesystem entry points. modpost writes Module.symvers during
+          # the vmlinux link, from the exports of the built-in objects,
+          # which is where all ten of those live.
+          make -C "$HOME/linux-floor" -j"$(nproc)" vmlinux
 
       # The tree is asserted to BE the floor before it is built against.
       # A cache restored from a bumped key, or a tarball that redirected,
       # would otherwise report a green floor build against some other kernel.
-      - name: The prepared tree is 6.15
+      - name: The prepared tree is 6.15 and carries a symbol table
         run: |
           set -eu
           v=$(make -s -C "$HOME/linux-floor" kernelversion)
@@ -281,6 +290,16 @@ jobs:
             6.15*) ;;
             *) echo "::error::the floor tree is $v, not 6.15"; exit 1 ;;
           esac
+          # Asserted rather than assumed, because a tree with no symbol
+          # table does not refuse the build: it accepts every compile and
+          # reports every symbol undefined at modpost, which reads as a
+          # defect in this module rather than a gap in the kernel tree.
+          # That is what the first run of this job did.
+          sym="$HOME/linux-floor/Module.symvers"
+          [ -s "$sym" ] || { echo "::error::no Module.symvers in the floor tree"; exit 1; }
+          n=$(wc -l < "$sym")
+          echo "Module.symvers carries $n symbol(s)"
+          [ "$n" -gt 1000 ] || { echo "::error::Module.symvers has only $n symbols"; exit 1; }
 
       - name: Module build at the floor
         run: |
