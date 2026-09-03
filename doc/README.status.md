@@ -33,9 +33,13 @@ only channel it has. What the undefined symbol bought was a build nobody
 could load; what the floor buys is a module that loads and says what it
 cannot do.
 
-The build was run against 7.1.9 with gcc 16.2.1, not against the kernel of
-record. A link against 7.2 has not been performed, and the syntax gate is
-the only thing that has ever seen 7.2.
+It has been linked against both the running kernel and the kernel of
+record: 7.1.9 with gcc 16.2.1, and 7.2.0 with clang 22.1.8, the latter
+through the store tree the syntax gate already finds and with `LLVM=1`,
+since that tree was built by clang and kbuild passes the compiler's own
+flags to whatever builds against it. It also builds at 6.18, which is what
+exercises the `inode_state_read_once` shim below. All three are
+warning-clean. Nothing has been loaded on any of them.
 
 ## What is in the tree
 
@@ -52,14 +56,14 @@ the only thing that has ever seen 7.2.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_inode.c` | 1622 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 1973 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 132 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 699 | ours, the OS shim |
+| `hammer2_os.h` | 717 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -152,8 +156,19 @@ was dated by reading the header at the tag rather than from memory:
 | three-argument `kvrealloc` | v6.11 | v6.12 |
 | `folio_mark_dirty_lock` | v6.12 | v6.13 |
 | `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
+| `inode_state_read_once` | v6.18 | v6.19 |
 
-6.15 is the floor the code requires, not a floor that has been exercised.
+`inode_state_read_once()` is the one that moved the other way. It is used
+in `hammer2_igetv()` and is four releases above the floor, so the module
+could not build on 6.15 through 6.18 at all, failing as an implicit
+declaration in the middle of a build rather than at the `#error` that
+exists to say so. `hammer2_os.h` defines it as `READ_ONCE()` below 6.19,
+where `i_state` is a scalar rather than a struct behind accessors: `u32`
+at v6.15, v6.16 and v6.17, `enum inode_state_flags_t` at v6.18.
+
+6.15 is the floor the code requires. It is no longer entirely unexercised:
+the module builds warning-clean at 6.18, which is the path the shim above
+takes, as well as at 7.1.9 and at the kernel of record.
 The kernel of record is a different claim: this tree compiles against the
 latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
 when a release ships.

@@ -723,9 +723,11 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	 * Already constructed by an earlier caller.  iget5_locked() took the
 	 * reference and there is nothing to fill in.
 	 *
-	 * XXX Linux: i_state became a struct in 7.2 and is read through
+	 * XXX Linux: i_state became a struct in 6.19 and is read through
 	 * inode_state_read_once(), which is the idiom fs/ext4/inode.c and
-	 * fs/isofs/inode.c use at that tag.  inode_state_read() is the other
+	 * fs/isofs/inode.c use at the kernel of record.  hammer2_os.h
+	 * defines it for the releases below that, where i_state is a
+	 * scalar.  inode_state_read() is the other
 	 * accessor and is wrong here: it asserts i_lock, which is not held
 	 * on return from iget5_locked().
 	 */

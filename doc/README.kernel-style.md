@@ -202,6 +202,14 @@ removed with the placeholder the carry replaced. Every category is one
 this file already records, and nothing in a carried function was
 reformatted to lower a count.
 
+919 to 920 when `hammer2_os.h` gained a second version guard, for
+`inode_state_read_once()`. The category is `LINUX_VERSION_CODE should be
+avoided, code should be for the version to which it is merged`, which the
+6.15 floor check already draws, and it is the same answer: a port carried
+across a range of releases cannot be code for one version, and the guard
+is what keeps the range honest. On submission, where the tree is code for
+the version it is merged to, both go.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

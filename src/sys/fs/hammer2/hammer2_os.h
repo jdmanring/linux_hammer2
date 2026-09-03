@@ -62,6 +62,24 @@
 #error "HAMMER2 requires Linux 6.15 or newer"
 #endif
 
+/*
+ * i_state is read through inode_state_read_once() from 6.19, where it
+ * became a struct behind accessors that let the kernel validate consumers.
+ * Before that it is a scalar and READ_ONCE() on it is the same read.
+ * Measured by reading include/linux/fs.h at each tag rather than from
+ * memory: u32 in v6.15, v6.16 and v6.17, enum inode_state_flags_t in
+ * v6.18, and a struct with the two accessors in v6.19.
+ *
+ * The floor is 6.15 and this call sits in hammer2_igetv(), so without this
+ * the module cannot build on four of the releases the #error above says it
+ * supports, and it fails as an implicit declaration in the middle of a
+ * build rather than at that #error. It did, on every push from 2026-09-02.
+ */
+#define LINUX_INODE_STATE_ACCESSORS	KERNEL_VERSION(6, 19, 0)
+#if LINUX_VERSION_CODE < LINUX_INODE_STATE_ACCESSORS
+#define inode_state_read_once(inode)	READ_ONCE((inode)->i_state) /* Linux */
+#endif
+
 #define print_backtrace()	dump_stack()
 
 #ifdef HAMMER2_INVARIANTS
