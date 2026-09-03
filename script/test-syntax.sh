@@ -380,6 +380,8 @@ check "hammer2_inode.c: invariants on"      pass src/sys/fs/hammer2/hammer2_inod
 check "hammer2_inode.c: invariants off"    pass src/sys/fs/hammer2/hammer2_inode.c $CARRIED
 check "hammer2_vfsops.c: invariants on"     pass src/sys/fs/hammer2/hammer2_vfsops.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_vfsops.c: invariants off"   pass src/sys/fs/hammer2/hammer2_vfsops.c $CARRIED
+check "hammer2_strategy.c: invariants on"   pass src/sys/fs/hammer2/hammer2_strategy.c -DHAMMER2_INVARIANTS
+check "hammer2_strategy.c: invariants off"  pass src/sys/fs/hammer2/hammer2_strategy.c
 # Negative control: a wrong kernel call must be refused by the same
 # headers, or a pass above proves only that the compiler ran. Both
 # controls are prefix headers applied after the kernel header they
@@ -421,14 +423,15 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_subr.c \
 		src/sys/fs/hammer2/hammer2_ondisk.c \
 		src/sys/fs/hammer2/hammer2_inode.c \
-		src/sys/fs/hammer2/hammer2_vfsops.c; do
+		src/sys/fs/hammer2/hammer2_vfsops.c \
+		src/sys/fs/hammer2/hammer2_strategy.c; do
 		ran=$((ran + 1))
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
 		# hammer2_io.c and the header TU are held to the full set,
 		# and the header TU is where the alignment is asserted.
 		case "$f" in
-		*/hammer2_io.c|test/*) carried= ;;
+		*/hammer2_io.c|*/hammer2_strategy.c|test/*) carried= ;;
 		*) carried=$CARRIED ;;
 		esac
 		"$CC2" "${CFLAGS2[@]}" $carried "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?

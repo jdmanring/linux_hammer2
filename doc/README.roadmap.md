@@ -56,13 +56,15 @@ in 0.2 can be prepared without it.
     and `d_make_root` for `sb->s_root`). What remains in `hammer2_vfsops.c`
     is `->reconfigure`, `->statfs`, `->sync_fs`, and unblocking read-write
     recovery. The next files are `hammer2_vnops.c` and `hammer2_strategy.c`.
-3. The first `make` ran on 2026-09-02, against 7.1.9 with gcc 16.2.1. All
-   twelve objects compile and the module does not link: four undefined
-   symbols, three of them `hammer2_strategy.c`'s and the fourth a
-   deliberate one. `doc/README.status.md` has the table. The build also
-   found seven warnings the syntax gate did not carry the flags for, and
-   two gates that read kbuild's output as source. What remains for 0.3 is
-   the link, then a Linux guest to load into.
+3. The module builds. The first `make` ran on 2026-09-02 against 7.1.9
+   with gcc 16.2.1 and reported four undefined symbols; `hammer2_strategy.c`
+   landed the same day with `hammer2_dedup_clear()` carried and both XOP
+   handlers as floors, and `hammer2_vfs_sync_pmp()` became a floor too. The
+   result is `hammer2.ko`, warning-clean, license `Dual BSD/GPL`, alias
+   `fs-hammer2`, no module dependencies. That is 0.3's first criterion.
+   Loading and unloading are the other two and need the guest below. The
+   build also found seven warnings the syntax gate did not carry the flags
+   for, and gates that read kbuild's output as source.
 4. Read-only mount of F1, then of the F2 root image: 0.4.
 
 ## Versioning
@@ -107,7 +109,7 @@ abbreviation. The stage is only ever written beside a version number.
 |---|---|---|---|
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
-| 0.3 | H1 | Module builds, loads and unloads | compiles clean, does not link; blocked on `hammer2_strategy.c` and then on the Linux guest |
+| 0.3 | H1 | Module builds, loads and unloads | builds, warning-clean; loading and unloading need the Linux guest |
 | 0.4 | H1 | Read-only mount of DragonFly-written media | needs 0.3 and a Linux guest |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |

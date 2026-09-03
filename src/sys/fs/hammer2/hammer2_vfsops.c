@@ -1490,6 +1490,35 @@ again:
  * by the time this is called, and evicting every inode and the root
  * dentry is exactly what vflush() was for.
  */
+/*
+ * XXX Linux: a floor, and the only definition this symbol has.
+ *
+ * Upstream walks the PFS's inodes, flushes each and flushes the volume
+ * header.  None of that can run yet: the flush needs a chain topology a
+ * successful mount would have built, and no mount succeeds.
+ *
+ * The trade this represents is recorded rather than silent.  Until
+ * 2026-09-02 the symbol was declared and never defined, so modpost
+ * refused the module and the absence could not be overlooked.  That also
+ * meant the module could not be loaded, which is 0.3, so the link-time
+ * tripwire is traded for a runtime one.  The replacement is not weaker in
+ * the direction that matters: both call sites discard the return value,
+ * so an errno was never going to reach anyone, and a WARN in dmesg is
+ * read by whoever runs the driver rather than by whoever builds it.
+ *
+ * DEFER(->sync_fs lands): the body is upstream's hammer2_vfs_sync_pmp(),
+ * and it is a hard prerequisite for the write path rather than a
+ * companion to it.  An unmount that does not sync loses nothing while
+ * nothing can be written; the day that stops being true, this floor is a
+ * data-loss bug and not a deferral.
+ */
+int
+hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor)
+{
+	WARN_ONCE(1, "hammer2: unmount did not sync, ->sync_fs is not written\n");
+	return (EOPNOTSUPP);		/* Linux: positive, negated at the VFS */
+}
+
 static void
 hammer2_unmount(struct super_block *sb)
 {
@@ -1507,11 +1536,13 @@ hammer2_unmount(struct super_block *sb)
 	 * flush the filesystem (freemap updates lag by one flush, and one
 	 * extra for safety).
 	 *
-	 * hammer2_vfs_sync_pmp() is declared and not yet defined, which is
-	 * deliberate and is the same choice hammer2_pfsfree_scan() makes:
-	 * a missing symbol is visible at link time, where a stub returning
-	 * success would be silent on the one path that decides whether an
-	 * unmount lost data.
+	 * hammer2_vfs_sync_pmp() is a floor, not the sync.  It was declared
+	 * and left undefined until 2026-09-02 so that the absence would be
+	 * visible at link time; what that bought is now bought instead by
+	 * doc/README.status.md's table and by the CI build step, and what it
+	 * cost was a module that could not be loaded at all.  Both call sites
+	 * here discard the return value, so the loud channel is the WARN in
+	 * the floor rather than an errno either way.
 	 */
 	if (pmp->iroot) {
 		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);

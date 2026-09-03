@@ -141,27 +141,24 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/vale" --version
 
-      # THE BUILD, AND IT IS EXPECTED TO FAIL. Every object compiles and the
-      # module does not link: hammer2_strategy.c is not carried, and
-      # hammer2_vfs_sync_pmp() is declared and left undefined on purpose so
-      # that the sync path cannot be silently stubbed. The four are tabled in
-      # doc/README.status.md.
+      # THE BUILD. It must succeed, and it must be warning-clean.
       #
-      # Asserting the exact set is what makes this a test rather than a note.
-      # A fifth name means a reference appeared that nobody decided on, which
-      # is the failure this catches; four names in a different spelling means
-      # the table is stale.
+      # It asserted a FAILURE from 2026-09-02 until hammer2_strategy.c landed
+      # the same day: modpost reported four undefined symbols, three of them
+      # that file's and the fourth hammer2_vfs_sync_pmp(), which had been
+      # left undefined on purpose. The three are floors now and the fourth is
+      # one too, so the module links and 0.3's first criterion is met.
       #
-      # It runs BEFORE the gates deliberately. Until 2026-09-02 no gate had
-      # ever seen a built tree, and the first one turned two of them red by
-      # putting .o and .cmd files where they enumerate source. Building here
-      # means every later step runs against the tree a developer actually
-      # has, so that class cannot come back unnoticed.
+      # It runs BEFORE the gates deliberately. Until the first build no gate
+      # had ever seen a built tree, and that first one turned two of them red
+      # by putting .o and .cmd files where they enumerate source. Building
+      # here means every later step runs against the tree a developer has, so
+      # that class cannot come back unnoticed.
       #
-      # DEFER(the module links): this step asserts a failure. When
-      # hammer2_strategy.c lands and modpost is quiet, the expectation
-      # inverts and 0.3's first criterion is met.
-      - name: Module build, expected to fail at modpost
+      # Warning-clean is the half most likely to rot: kbuild's flag set is
+      # wider than the syntax gate's was, and the difference was seven
+      # warnings nobody had seen.
+      - name: Module build
         run: |
           set -u
           if [ ! -f "/lib/modules/$(uname -r)/build/Makefile" ]; then
@@ -172,29 +169,20 @@ jobs:
           make > /tmp/h2build.log 2>&1
           rc=$?
           set -e
-          sed -n 's/^ERROR: modpost: "\([a-z0-9_]*\)".*/\1/p' /tmp/h2build.log \
-            | LC_ALL=C sort > /tmp/h2undef
-          printf '%s\n' hammer2_dedup_clear hammer2_vfs_sync_pmp \
-            hammer2_xop_strategy_read hammer2_xop_strategy_write \
-            > /tmp/h2want
-          echo "--- warnings ---"
-          grep -c "warning:" /tmp/h2build.log || true
-          echo "--- undefined ---"
-          cat /tmp/h2undef
-          if [ "$rc" = 0 ]; then
-            echo "::error::the module linked; this step and 0.3 both need updating"
+          if [ "$rc" != 0 ]; then
+            echo "::error::the module did not build"
+            grep -E "^ERROR|error:" /tmp/h2build.log | head -20
             exit 1
           fi
-          diff -u /tmp/h2want /tmp/h2undef || {
-            echo "::error::the undefined set is not the four in doc/README.status.md"
-            exit 1
-          }
           if [ "$(grep -c 'warning:' /tmp/h2build.log)" != 0 ]; then
             echo "::error::the build is not warning-clean"
             grep "warning:" /tmp/h2build.log | head -20
             exit 1
           fi
-          echo "compiles clean, does not link, exactly the four expected"
+          ko=src/sys/fs/hammer2/hammer2.ko
+          [ -f "$ko" ] || { echo "::error::no $ko"; exit 1; }
+          modinfo "$ko" | grep -E "^(license|alias|depends):"
+          echo "links, warning-clean"
 
       - name: Gates (every script/test-*.sh)
         run: |

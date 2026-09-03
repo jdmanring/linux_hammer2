@@ -17,11 +17,12 @@ hammer2-y += hammer2_subr.o
 hammer2-y += hammer2_ondisk.o
 hammer2-y += hammer2_inode.o
 hammer2-y += hammer2_vfsops.o
+hammer2-y += hammer2_strategy.o
 
 # ../.. is src/sys, which holds the vendored <sys/tree.h> and <sys/queue.h>.
 ccflags-y += -I$(src)/../..
 
-# Carried files only, never hammer2_io.c, which is ours. This is the same
+# Carried files only, never hammer2_io.c or hammer2_strategy.c, which are ours. This is the same
 # split script/test-syntax.sh makes and for the same reason: a warning about
 # DragonFly's own text is not a defect this port may fix in place.
 #
@@ -41,7 +42,7 @@ ccflags-y += -I$(src)/../..
 # BSD style. Converting either one early splits the core into two dialects,
 # which is the outcome doc/README.kernel-style.md exists to prevent.
 CARRIED_CFLAGS := -Wno-implicit-fallthrough -Wno-unused-function
-$(foreach o,$(filter-out hammer2_io.o,$(hammer2-y)),\
+$(foreach o,$(filter-out hammer2_io.o hammer2_strategy.o,$(hammer2-y)),\
 	$(eval CFLAGS_$(o) += $(CARRIED_CFLAGS)))
 
 ifdef HAMMER2_INVARIANTS

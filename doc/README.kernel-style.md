@@ -183,6 +183,14 @@ a line break in a comment upstream wrote, so no one-line `grep` reaches
 it and no edit to it would be this port's to make. No category is new
 and nothing was fixed rather than baselined.
 
+911 to 913 when `hammer2_strategy.c` landed and the module first linked:
+131 lines for 2 hits, both on one line. `hammer2_vfs_sync_pmp()`'s floor
+returns `EOPNOTSUPP`, which draws the BSD `return (x);` finding and the
+positive-errno finding at once. Both are the port conventions this file
+records rather than defects, and the new file drew nothing else: it is
+this port's, so it was written to the house style from the start, and the
+only carried thing in it is a nine-line loop.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

@@ -7,31 +7,32 @@ defect.
 
 ## The build
 
-Every file compiles and the module does not link. That was first measured
-on 2026-09-02, against 7.1.9 with gcc 16.2.1, and it is the state to expect
-from `make` today: twelve objects, zero warnings, then four undefined
-symbols out of modpost.
+The module builds, warning-clean, and has never been loaded. `make`
+produces `src/sys/fs/hammer2/hammer2.ko`: thirteen objects, license
+`Dual BSD/GPL`, alias `fs-hammer2`, no module dependencies. That is 0.3's
+first criterion. Loading and unloading are the other two and need the
+Linux guest `README.roadmap.md` describes.
 
-| referenced at | the reference | defined upstream in | what lands it |
-|---|---|---|---|
-| `hammer2_admin.c:64` | `strategy_read`, which `H2XOPDESCRIPTOR` turns into `hammer2_xop_strategy_read` | `hammer2_strategy.c` | the file is not carried |
-| `hammer2_admin.c:65` | `strategy_write`, which `H2XOPDESCRIPTOR` turns into `hammer2_xop_strategy_write` | `hammer2_strategy.c` | the file is not carried |
-| `hammer2_bulkfree.c:433` | `hammer2_dedup_clear` | `hammer2_strategy.c` | the file is not carried |
-| `hammer2_vfsops.c:448` | `hammer2_vfs_sync_pmp` | `hammer2_vfsops.c` | `->sync_fs` |
+It reached that state on 2026-09-02, in one day and two steps. The first
+`make` ever run reported four undefined symbols out of modpost:
+`hammer2_xop_strategy_read`, `hammer2_xop_strategy_write` and
+`hammer2_dedup_clear`, which upstream defines in `hammer2_strategy.c`, and
+`hammer2_vfs_sync_pmp`, which this port had declared and deliberately left
+undefined. `hammer2_strategy.c` now exists with the dedup function carried
+and both handlers as floors, and the sync is a floor too.
 
-Neither xop symbol is spelled out at the line the table names: the macro
-takes the label and builds the name, which is why the anchor is the label.
+**Four of the module's entry points are floors, and none of them is
+reachable today.** Each warns once and fails; the `DEFER` ledger below
+carries a row for each. A floor here is not a stub returning success:
+`hammer2_vfs_sync_pmp()` is the one whose replacement was argued about,
+because its two call sites discard the return value, so the warning is the
+only channel it has. What the undefined symbol bought was a build nobody
+could load; what the floor buys is a module that loads and says what it
+cannot do.
 
-Three of the four are one missing file. The fourth is deliberate and the
-reasoning sits at its call site: a declared and undefined symbol fails at
-link, where a stub returning success would be silent on the one path that
-decides whether an unmount lost data. The first build is what turned that
-from an argument into an observation.
-
-The build was run against the running kernel rather than the kernel of
-record, because an undefined symbol and a mistaken `hammer2-y` row do not
-depend on the version, and 7.2 is not installed here as a prepared build
-directory. A link against the kernel of record has not been performed.
+The build was run against 7.1.9 with gcc 16.2.1, not against the kernel of
+record. A link against 7.2 has not been performed, and the syntax gate is
+the only thing that has ever seen 7.2.
 
 ## What is in the tree
 
@@ -49,7 +50,8 @@ directory. A link against the kernel of record has not been performed.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1619 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 1632 | FreeBSD port; the PFS half carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 1663 | FreeBSD port; the PFS half carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_strategy.c` | 131 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -373,7 +375,9 @@ against the source is the same shape as an empty one.
 | `hammer2_vfsops.c`, in `hammer2_get_tree()` before `hammer2_update_pmps()` | `DEFER(a mount can succeed)` | upstream runs `hammer2_recovery()` and `hammer2_fixup_pfses()` on a read-write mount. Both write to the device, and every mount still fails a few lines later, so running them would repair a filesystem for a mount about to be torn down. Until it closes, a read-write mount does not replay an interrupted flush |
 | `hammer2_vfsops.c`, at `hammer2_context_ops` | `DEFER(a super_block exists to reconfigure)` | `->reconfigure`, where FreeBSD's `MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS refuses a remount, which is the right answer while there is nothing to remount |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
-| `.github/workflows/ci.yml`, at the module build | `DEFER(the module links)` | the step asserts a build failure: warning-clean, and undefined on exactly the four symbols tabled above. When `hammer2_strategy.c` lands and modpost is quiet, the expectation inverts and 0.3's first criterion is met |
+| `hammer2_vfsops.c`, at `hammer2_vfs_sync_pmp()` | `DEFER(->sync_fs lands)` | the floor warns once and returns `EOPNOTSUPP`, and both call sites discard the value. It replaced a symbol deliberately left undefined, which made the absence visible at link time and also made the module unloadable. An unmount that does not sync loses nothing while nothing can be written; on the day the write path lands this is a data-loss bug rather than a deferral |
+| `hammer2_strategy.c`, at `hammer2_xop_strategy_read()` | `DEFER(the read path lands, with ->read_folio)` | the body is upstream's handler down to `hammer2_xop_collect()`, then a completion copying into `xop->folio`: the embedded-inode case, the three `HAMMER2_DEC_COMP()` cases on the kernel's own LZ4 and zlib, and `hammer2_dedup_record()` for the on-media case |
+| `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 
@@ -413,7 +417,8 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 19 | 1 | 18 |
 | `hammer2_inode.c` | 23 | 6 | 17 |
-| `hammer2_vfsops.c` | 20 | 6 | 14 |
+| `hammer2_vfsops.c` | 21 | 6 | 15 |
+| `hammer2_strategy.c` | 1 | 0 | 1 |
 | `hammer2.h` | 7 | 3 | 4 |
 | `hammer2_disk.h` | 1 | 1 | 0 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
@@ -424,21 +429,24 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Seventy-four are this port's, the right-hand column summed, and they
-fall in eight files: eighteen in `hammer2_ondisk.c`, seventeen in
-`hammer2_inode.c`, fourteen in `hammer2_vfsops.c`, seven in
+Seventy-six are this port's, the right-hand column summed, and they
+fall in nine files: eighteen in `hammer2_ondisk.c`, seventeen in
+`hammer2_inode.c`, fifteen in `hammer2_vfsops.c`, seven in
 `hammer2_subr.c`, seven in `hammer2_os.h`, five in `hammer2_flush.c`,
-four in `hammer2.h` and two in `hammer2_io.c`. That is the whole of
-them, and it is the only place in this file that adds up to the column.
+four in `hammer2.h`, two in `hammer2_io.c` and one in
+`hammer2_strategy.c`. That is the whole of them, and it is the only place
+in this file that adds up to the column.
 
-Three of those eight files are then walked mark by mark below:
+Four of those nine files are then walked mark by mark below:
 `hammer2_ondisk.c`, `hammer2_vfsops.c`, and the two files this port wrote
-from nothing taken together. Forty-one of the seventy-four are in those
-paragraphs. The other thirty-three are not enumerated anywhere and do not
+from nothing taken together. Forty-two of the seventy-six are in those
+paragraphs. The other thirty-four are not enumerated anywhere and do not
 need to be: `hammer2_inode.c`'s seventeen, `hammer2_subr.c`'s seven,
 `hammer2_flush.c`'s five and `hammer2.h`'s four are one-line
 substitutions in carried files, which is what the `XXX` mark is for and
-what a reviewer reads at the mark rather than here. **Do not read the
+what a reviewer reads at the mark rather than here, and
+`hammer2_strategy.c`'s one is the block at its two floors, which the
+`DEFER` ledger already carries a row for. **Do not read the
 paragraphs below as a decomposition of the count.** They were read that
 way once, and the sentence that invited it said "the three largest sets"
 while skipping the second largest.
