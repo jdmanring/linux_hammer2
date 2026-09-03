@@ -37,7 +37,7 @@ directory. A link against the kernel of record has not been performed.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1347 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1354 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -414,7 +414,7 @@ against the FreeBSD port at
 | `hammer2_ondisk.c` | 19 | 1 | 18 |
 | `hammer2_inode.c` | 23 | 6 | 17 |
 | `hammer2_vfsops.c` | 20 | 6 | 14 |
-| `hammer2.h` | 6 | 3 | 3 |
+| `hammer2.h` | 7 | 3 | 4 |
 | `hammer2_disk.h` | 1 | 1 | 0 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
@@ -424,19 +424,19 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Seventy-three are this port's, the right-hand column summed, and they
+Seventy-four are this port's, the right-hand column summed, and they
 fall in eight files: eighteen in `hammer2_ondisk.c`, seventeen in
 `hammer2_inode.c`, fourteen in `hammer2_vfsops.c`, seven in
 `hammer2_subr.c`, seven in `hammer2_os.h`, five in `hammer2_flush.c`,
-three in `hammer2.h` and two in `hammer2_io.c`. That is the whole of
+four in `hammer2.h` and two in `hammer2_io.c`. That is the whole of
 them, and it is the only place in this file that adds up to the column.
 
 Three of those eight files are then walked mark by mark below:
 `hammer2_ondisk.c`, `hammer2_vfsops.c`, and the two files this port wrote
-from nothing taken together. Forty-one of the seventy-three are in those
-paragraphs. The other thirty-two are not enumerated anywhere and do not
+from nothing taken together. Forty-one of the seventy-four are in those
+paragraphs. The other thirty-three are not enumerated anywhere and do not
 need to be: `hammer2_inode.c`'s seventeen, `hammer2_subr.c`'s seven,
-`hammer2_flush.c`'s five and `hammer2.h`'s three are one-line
+`hammer2_flush.c`'s five and `hammer2.h`'s four are one-line
 substitutions in carried files, which is what the `XXX` mark is for and
 what a reviewer reads at the mark rather than here. **Do not read the
 paragraphs below as a decomposition of the count.** They were read that

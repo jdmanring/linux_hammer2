@@ -209,6 +209,18 @@ points negate at the boundary, and `hammer2_io.c` negates what the page
 cache returns. `hammer2_error_to_errno()` therefore returns a positive
 value and its callers negate.
 
+`hammer2_xop_strategy` carries a `struct folio *` where the BSD ports carry
+a `struct buf *`. The initial import wrote `struct bio *` there, taken from
+the H0 API map's row pairing BSD's `struct bio` with Linux's, which is a
+mapping by name. The field is the destination of a logical file read, and
+no caller that can produce this xop has a bio to put in it: `->read_folio`
+is handed a folio and `->writepages` iterates them. A `bio` is the block
+layer's request object, which is the layer beneath `hammer2_io.c`, not the
+one above it. Nothing had used the field, so this cost nothing to correct;
+it is recorded because the same reasoning applies to every remaining row of
+that map, which was written before the DIO layer existed and pairs types by
+name rather than by role.
+
 `hammer2_inode` keeps the FreeBSD port's *pointer* to the VFS object,
 reached the other way through `i_private`, rather than embedding `struct
 inode`. Embedding is the Linux idiom and saves an allocation, but it would

@@ -688,7 +688,14 @@ struct hammer2_xop_flush {
 struct hammer2_xop_strategy {
 	hammer2_xop_head_t	head;
 	hammer2_key_t		lbase;
-	struct bio		*bio;		/* Linux: was struct buf *bp */
+	/*
+	 * XXX Linux: the destination of a logical file read, which the BSD
+	 * ports carry as struct buf *bp.  A struct bio is the block layer's
+	 * request object and is not what any caller here holds: ->read_folio
+	 * is handed a folio, and ->writepages iterates folios.  See
+	 * README.porting.md.
+	 */
+	struct folio		*folio;		/* Linux: was struct buf *bp */
 };
 
 struct hammer2_xop_bmap {
