@@ -188,18 +188,22 @@ v6.18 does not, and the version guard redefined it there. Where the kernel
 spells a facility as a macro, asking whether the macro exists is the exact
 question.
 
-6.15 is the floor the code requires, and nothing has ever compiled against
-it. The builds that exist are 6.17 on CI, and 6.18, 7.1.9 and the kernel of
-record under clang on the workstation, so the lowest kernel this tree has
-been through a compiler on is two releases above the floor it declares. The
-only thing that has read 6.15 is `script/floor-symbols.py`, which resolves
-names against that tree's `include/` and does not compile, so it cannot see
-a signature that changed or a macro that stopped expanding.
+6.15 is the floor the code requires, and since 2026-09-03 CI builds it: a
+second job fetches the 6.15 tarball, builds the kernel once and caches the
+tree on the tag, then links this module against it. The module links
+warning-clean there, against a `Module.symvers` carrying 12591 symbols, on
+a tree that reports 6.15.0. Both numbers are printed by the job on every
+run rather than recorded here alone.
 
-**CI builds at 6.17, which is the lowest continuous build there is.** A
-change that pins it to a newer kernel would take that away without anything
-saying so, and would leave the gap between the floor and the build wider
-than the two releases that already fit in it.
+Until that job existed nothing had ever compiled against the floor. The
+lowest build in the world was 6.17, two releases above the kernel the
+`#error` in `hammer2_os.h` names, and the floor was an assertion. Its first
+run found what an assertion hides: `SHA256_CTX` was typedef'd to `struct
+sha256_ctx`, which the kernel called `struct sha256_state` until 6.17. The
+function names and their argument order are identical across that rename,
+so `script/floor-symbols.py` resolved all three and reported nothing. Name
+resolution cannot see a type, which is the gap between what that sweep
+bounds and what this job closes.
 The kernel of record is a different claim: this tree compiles against the
 latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
 when a release ships.
