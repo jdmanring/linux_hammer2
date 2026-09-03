@@ -268,6 +268,27 @@ distribution's by recipe. "Against the kernel of record (7.2)" is what the
 gate says and is true; "against mainline 7.2" would not be, and the two are
 one word apart.
 
+**The kernel of record moved to 7.3 on 2026-09-03**, `KERNEL_REF` in
+`script/test-syntax.sh`, and this time it is mainline: a `v7.3-rc1` tree
+from `git.kernel.org`, built here rather than substituted. The gate's own
+line, quoted rather than summarized:
+
+    syntax: 46 check(s), 0 failed against the kernel of record (7.3)
+
+The pin names a release series and the gate compares `VERSION` and
+`PATCHLEVEL`, so 7.3-rc1 and 7.3 final both satisfy it. The tree measured
+is the release candidate, which is what a reader of that line has to be
+told, since the two are not the same kernel and the gate cannot tell them
+apart.
+
+That tree's first build refused, and correctly. A plain `defconfig` sets
+no `CONFIG_TRANSPARENT_HUGEPAGE`, `BLK_MAX_BLOCK_SIZE` is then `PAGE_SIZE`,
+and the `static_assert` in `hammer2_io.c` failed the build naming the
+option. It is the first time that assert has fired against a real kernel
+rather than a constructed one, and it is the refusal 0.3's third criterion
+asks to see exercised. Enabling the option and rebuilding gives the line
+above.
+
 Two properties of a nixpkgs kernel `dev` output that any later measurement
 has to know. Its `source/` directory is pruned hard: the recipe rsyncs the
 tree, deletes `drivers` wholesale, deletes unused arches, then deletes every

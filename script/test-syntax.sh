@@ -121,7 +121,7 @@ treever() { # dir -> "X.Y" or empty
 	[ -n "$v" ] && [ -n "$pl" ] && printf '%s.%s' "$v" "$pl"
 }
 
-KERNEL_REF=7.2
+KERNEL_REF=7.3
 want=${H2_KERNEL_REF:-$KERNEL_REF}
 
 # The default has to find the kernel of record, not the one the host happens
