@@ -116,7 +116,7 @@ abbreviation. The stage is only ever written beside a version number.
 |---|---|---|---|
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
-| 0.3 | H1 | Module builds, loads and unloads | builds, warning-clean; loading and unloading need the Linux guest |
+| 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3 and at a 7.3 merge-window snapshot; the kmemleak and lockdep halves of criterion 2 are unmeasured, no stock kernel carrying either |
 | 0.4 | H1 | Read-only mount of DragonFly-written media | needs 0.3 and a Linux guest |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
@@ -162,7 +162,8 @@ Every milestone from 0.3 on needs a machine this repository does not contain:
 
 | guest | needed by | for |
 |---|---|---|
-| Linux in the supported range | 0.3, 0.4 | loading the module, and every mount |
+| Linux in the supported range | 0.4 | every mount |
+| the same, `CONFIG_DEBUG_KMEMLEAK` on | 0.3 | the allocation half of criterion 2 |
 | the same, `CONFIG_PROVE_LOCKING` on | 0.3, 0.4 | the lock order this port's shim imposes on a carried core |
 | DragonFly 6.4.2 | 0.4 | writing the F2 reference media |
 | DragonFly or FreeBSD | 0.5, 0.6 | the F4 round trip, and calibrating the crash matrix |
@@ -183,6 +184,17 @@ as a condition of loading the module. It is not. Loading and unloading are
 worth more, and its absence makes the test weaker rather than impossible.
 Coupling the two is what has had 0.3 recorded as blocked while kernels in the
 supported range sat on the same disk.
+
+Criterion 2 was exercised on 2026-09-03, on the `fedora44` guest carrying two
+kernels installed for the purpose. At 7.2.3-300.fc45 and again at
+7.3.0-0.rc0.260819gbd5f485f3f02: `insmod` returns 0, `/proc/filesystems`
+lists `hammer2`, the module's reference count reads 0, `rmmod` returns 0 and
+`/sys/module/hammer2` is gone afterwards. The kernel log carries the two
+taint lines an unsigned out-of-tree module always produces and nothing else.
+What the criterion asks for beyond that, no leaked allocation under kmemleak
+and no lockdep report, is unmeasured: neither `CONFIG_DEBUG_KMEMLEAK` nor
+`CONFIG_PROVE_LOCKING` is set in any kernel measured so far, the Fedora
+7.3 build included.
 
 `PROVE_LOCKING` is genuinely absent from stock kernels, which is now measured
 rather than supposed. Five configs read straight out of the guest images with
