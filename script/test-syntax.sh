@@ -266,7 +266,15 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 	-DCC_USING_FENTRY
 	-mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -fno-PIE -fno-strict-aliasing
 	-Wall -Werror=implicit-function-declaration -Werror=implicit-int
-	-Werror=incompatible-pointer-types -Wno-unused-function
+	-Werror=incompatible-pointer-types
+	# -Wimplicit-fallthrough and -Wunused are both in the real build's flag
+	# set, read from .hammer2_chain.o.cmd after the first `make` on
+	# 2026-09-02, and neither was here. That made this gate WEAKER than the
+	# build it stands in for, which is the opposite of the asymmetry the
+	# -Wno-pointer-sign note below describes: seven warnings came out of
+	# that build and none of them had ever appeared here. Both are
+	# suppressed on the carried files and fatal on ours.
+	-Wimplicit-fallthrough
 	# W=1 class. The kernel's own W=1 is a kbuild target we cannot reach
 	# without building, so this is the subset that works under
 	# -fsyntax-only. It is what found the two macro redefinitions.
@@ -291,7 +299,15 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 # than the real build on the half of the tree we write. What it hides
 # upstream: hammer2_chain_base_and_count() takes `int *count` and two
 # callers in hammer2_chain.c pass `unsigned int *`.
-CARRIED="-Wno-address-of-packed-member -Wno-pointer-sign"
+#
+# -Wno-implicit-fallthrough and -Wno-unused-function are the two the first
+# build found. Upstream marks its fallthroughs with a /* fall through */
+# comment, which kbuild's -Wimplicit-fallthrough=5 does not read; and two
+# statics in hammer2_inode.c are carried ahead of the write path that calls
+# them. src/sys/fs/hammer2/Makefile suppresses the same two on the same
+# files, so the gate and the build agree about which text is DragonFly's.
+CARRIED="-Wno-address-of-packed-member -Wno-pointer-sign
+	-Wno-implicit-fallthrough -Wno-unused-function"
 
 fail=0 ran=0
 # A warning in our own files is a failure, and it is counted rather than made
@@ -385,6 +401,11 @@ if [ -n "$CC2" ]; then
 			*) CFLAGS2+=("$a") ;;
 		esac
 	done
+	# gcc's -Wimplicit-fallthrough defaults to level 3, which accepts a
+	# comment; kbuild asks for 5, which accepts only the attribute. clang
+	# has no levels and rejects the =5 spelling, so it is added here rather
+	# than to the shared set.
+	CFLAGS2+=(-Wimplicit-fallthrough=5)
 	for f in test/hammer2-header.c src/sys/fs/hammer2/hammer2_io.c \
 		src/sys/fs/hammer2/hammer2_admin.c \
 		src/sys/fs/hammer2/hammer2_freemap.c \
