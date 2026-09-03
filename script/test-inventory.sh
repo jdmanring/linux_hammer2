@@ -221,16 +221,26 @@ if [ "$ndefer" = 0 ]; then
 	echo "  note src/ holds no DEFER markers, so the ledger check below"
 	echo "       compared nothing"
 else
-	# ONLY TABLE ROWS COUNT. This read the whole document and any
+	# ONLY LEDGER ROWS COUNT. This read the whole document and any
 	# mention satisfied it, so a marker whose row had been rewritten
 	# under a new trigger stayed green on a sentence of narrative prose
 	# elsewhere in the file that happened to name the old one. That is
 	# the condition this check exists to catch, passing because the
 	# population it compared against was the wrong one.
-	command grep '^|' "$LEDGER" > "$dtmp/rows" || :
+	#
+	# The anchor is the ledger's own column shape, a trigger in the
+	# SECOND column, the way test-citations.sh anchors on a citation in
+	# the first. Every table in this file starts its rows with a `|`,
+	# and the origin table's third column is free prose that may name a
+	# trigger while explaining what a file defers, so "any table row"
+	# is a population that admits the same failure through a different
+	# sentence.
+	command grep -E '^\|[^|]*\| *`DEFER\([^)]{3,}\)` *\|' "$LEDGER" \
+		> "$dtmp/rows" || :
 	if [ ! -s "$dtmp/rows" ]; then
-		echo "  FAIL $LEDGER: no table rows at all, so the ledger check"
-		echo "       below would compare against nothing"
+		echo "  FAIL $LEDGER: no ledger rows matched the table's own"
+		echo "       column shape, so the checks below would compare"
+		echo "       against nothing"
 		fail=$((fail + 1))
 	fi
 	printf '%s\n' "$defers" | while IFS= read -r d; do

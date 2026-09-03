@@ -54,9 +54,13 @@ in 0.2 can be prepared without it.
     looks up the PFS label under `spmp->iroot`, allocates the `pmp`, and
     runs the Linux fill-super (`super_setup_bdi`, `sb->s_op` pointing to
     `hammer2_sops` with `->evict_inode`, `hammer2_igetv` on `pmp->iroot`,
-    and `d_make_root` for `sb->s_root`). What remains in `hammer2_vfsops.c`
-    is `->reconfigure`, `->statfs`, `->sync_fs`, and unblocking read-write
-    recovery. The next files are `hammer2_vnops.c` and `hammer2_strategy.c`.
+    and `d_make_root` for `sb->s_root`). Upstream's mount-time flush recovery
+    is carried and called, but it writes and has never been run, so a
+    read-write mount and a read-write remount are both refused. What
+    remains in `hammer2_vfsops.c` is `->statfs`, `->sync_fs`, the real
+    `->reconfigure` where only the refusal stands, and lifting those two
+    refusals once the recovery has been exercised on a device. The next
+    files are `hammer2_vnops.c` and `hammer2_strategy.c`.
 3. The module builds. The first `make` ran on 2026-09-02 against 7.1.9
    with gcc 16.2.1 and reported four undefined symbols; `hammer2_strategy.c`
    landed the same day with `hammer2_dedup_clear()` carried and both XOP
