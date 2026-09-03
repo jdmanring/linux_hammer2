@@ -23,10 +23,22 @@ network:
     $ bash script/test-citations.sh   # the file:line citations in doc/ tables
     $ bash script/test-history.sh     # every roadmap row's commit hash
     $ bash script/test-provenance.sh  # every file under src/ has an origin row
+    $ bash script/test-absence.sh     # every "X() is not carried" claim resolves
 
 Prose gate, needs vale and nothing else:
 
     $ bash script/test-doc-prose.sh   # vale over doc/, any finding is a failure
+
+`test-absence.sh` resolves a claim rather than a citation. Where a document
+says a named function is not carried, it asks `src/` whether that function
+is defined and fails when it is. The vocabulary is the origin table's:
+carried means imported substantially unchanged, and a function this port
+rewrote is rewritten, so a symbol that is present here has not been "not
+carried" whatever else is true of it. Its first run found one, in
+`hammer2_inode.c`, where `hammer2_igetv()` was called uncarried after this
+port rewrote it on `iget5_locked()`. It reads only the claims that name a
+symbol, which is a fraction of the class it belongs to, and it says so on
+every run rather than leaving the rest to inherit its credibility.
 
 `test-shim.sh` compiles `hammer2_os.h` and `hammer2_compat.h` against the
 stubs in `test/stub`, in both positions of the `HAMMER2_INVARIANTS` knob,
@@ -299,6 +311,9 @@ disagreeing. Read the table.
 | `test-history.sh` | not a repository | `.git` moved aside |
 | `test-history.sh` | no roadmap | the file moved aside |
 | `test-inventory.sh` | no `src/sys/fs/hammer2` | moved aside |
+| `test-absence.sh` | the population is empty | `doc/` and `src/` moved aside |
+| `test-absence.sh` | no claim matched, so the pattern has stopped | the phrase it matches renamed in a scratch copy of the gate |
+| `test-absence.sh` | a claim naming a symbol that IS defined | `hammer2_chain_lookup()` and `hammer2_chain_scan()` appended to `README.porting.md`, the second wrapped across two lines |
 | `test-inventory.sh` | no `test/` | moved aside |
 | `test-checkpatch.sh` | no baseline | moved aside |
 | `test-checkpatch.sh` | no `checkpatch.pl` | `CHECKPATCH` at a path that does not exist |

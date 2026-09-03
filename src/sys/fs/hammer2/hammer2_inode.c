@@ -37,7 +37,8 @@
 
 #include "hammer2.h"
 /* XXX Linux: <sys/priv.h> is FreeBSD's priv_check(9); the one call that
- * needed it is in hammer2_igetv(), which is not carried.
+ * needed it is in hammer2_igetv(), which this port rewrote on
+ * iget5_locked() and which does not make it.
  */
 
 static void hammer2_inode_repoint(hammer2_inode_t *, hammer2_cluster_t *);

@@ -52,7 +52,7 @@ the only thing that has ever seen 7.2.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1619 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_inode.c` | 1620 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 1973 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 132 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_ondisk.c` | 881 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -67,7 +67,7 @@ the only thing that has ever seen 7.2.
 
 ## What has been verified
 
-All ten gates pass, and since 2026-08-26 they pass with no environment
+All eleven gates pass, and since 2026-08-26 they pass with no environment
 variables set on a machine that has the kernel of record installed: the
 syntax gate finds that tree, and the style gate finds its `checkpatch.pl`.
 What that unattended style run can say is narrower than it looks, and the

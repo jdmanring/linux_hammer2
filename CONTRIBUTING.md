@@ -41,9 +41,10 @@ anything, and its own green run is not evidence: three fixtures across
 these repositories passed on 2026-08-26 while testing nothing, each caught
 by running it against the defect rather than by reading it.
 
-**Every change comes with the gate that would have caught it.** All ten
-gates are cheap. `test-shim.sh` and `test-syntax.sh` carry built-in controls
-that must fail on every run; the others buy the same assurance
+**Every change comes with the gate that would have caught it.** All eleven
+gates are cheap, and `test-absence.sh` exists because that rule was kept for
+code and not for prose. `test-shim.sh`, `test-syntax.sh` and
+`test-absence.sh` carry built-in controls that must fail on every run; the others buy the same assurance
 differently, and `doc/README.testing.md` says how for each. A patch that
 changes behavior with no way to observe the change is hard to review and
 harder to keep.
@@ -54,6 +55,7 @@ harder to keep.
     $ bash script/test-citations.sh
     $ bash script/test-history.sh
     $ bash script/test-provenance.sh
+    $ bash script/test-absence.sh
     $ bash script/test-shim.sh
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh

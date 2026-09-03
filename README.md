@@ -110,9 +110,10 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-citations.sh   # every file:line citation in doc/
         $ bash script/test-history.sh     # every roadmap row's commit hash
         $ bash script/test-provenance.sh  # every file under src/ has an origin row
+        $ bash script/test-absence.sh     # every "X() is not carried" resolves against src/
         $ bash script/test-doc-prose.sh   # vale over doc/, ArtNix's styles
 
-`test-provenance.sh` is the one of those four that asks a question this
+`test-provenance.sh` is the one of those five that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
 re-run with `cmp` against the origin clone, and where that clone is not on
 the machine it reports COULD-NOT-RUN rather than passing on a table that
