@@ -599,8 +599,10 @@ deletes all four, and the tree then has no conditional compilation in it
 at all. That is not a stylistic gain: `checkpatch.pl` draws
 `LINUX_VERSION_CODE should be avoided, code should be for the version to
 which it is merged` once per guard, four of the deviations the baseline
-carries, and they are the only ones in it that a submission cannot answer
-with "this is BSD style and the tree converts in one pass".
+carries, and they are the only four a floor move deletes outright rather
+than argues about. The baseline holds other categories a submission still
+has to answer, the unnamed macro arguments and the SPDX placement among
+them, and no floor touches any of those.
 
 Against that, a floor is a claim about who can build the tree, and 7.3 is
 unreleased. Its merge window closed on 2026-08-17 and the snapshot this
