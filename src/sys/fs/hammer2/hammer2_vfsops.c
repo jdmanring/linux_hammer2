@@ -268,6 +268,7 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		hammer2_lkc_init(&pmp->trans_cv, "h2mp_tx_cv");
 		TAILQ_INIT(&pmp->syncq);
 		TAILQ_INIT(&pmp->depq);
+		TAILQ_INIT(&pmp->sbdev_list);	/* Linux */
 		hammer2_inum_hash_init(pmp);
 
 		/* XXX Linux: hashinit(9), see hammer2_ipdep_init(). */
@@ -805,27 +806,12 @@ hammer2_get_tree(struct fs_context *fc)
 			hmp = hmp_tmp;
 			debug_hprintf("hmp matched\n");
 			/*
-			 * DEFER(a second PFS on one device is mounted): a
-			 * secondary mount reuses the open this device
-			 * already has, so the device's filesystem callbacks
-			 * reach the superblock of the first mount and not
-			 * this one.  True of every kernel this builds
-			 * against, and the fix is to register each
-			 * superblock rather than to reopen the device.
-			 *
-			 * At 7.3 and above it is worse than a missed
-			 * callback and it blocks 0.4's multi-PFS case.
-			 * hammer2_open_devvp() records the superblock it
-			 * claimed for, and the device is closed only when
-			 * hmp->mount_count reaches zero, so with two PFSes
-			 * the recorded superblock is already freed by then.
-			 * fs_bdev_unregister() looks its table entry up by
-			 * comparing that pointer, which is not a
-			 * dereference, so the release does not fault: the
-			 * entry is simply never dropped, and the kernel's
-			 * own freeze and sync paths then walk a
-			 * {device, superblock} pair whose superblock is
-			 * gone.  A mount that can reach this must not ship.
+			 * Linux: a secondary mount reuses the open this
+			 * device already has, and registers its own
+			 * superblock against it in hammer2_register_sb(),
+			 * so the device's callbacks reach every mount on
+			 * it at 7.3 and above.  Below 7.3 the holder is a
+			 * superblock and only the first mount's is reached.
 			 */
 			break;
 next_hmp:
@@ -1214,6 +1200,15 @@ next_hmp:
 
 	/* Connect up mount pointers. */
 	hammer2_mount_helper(sb, pmp);
+
+	/* Linux: this superblock's own claim on every device it spans. */
+	error = hammer2_register_sb(sb, pmp);
+	if (error) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		deactivate_locked_super(sb);	/* ->kill_sb unmounts */
+		return (-error);
+	}
 
 	/* Update readonly hmp if !rdonly. */
 	pmp->rdonly = rdonly;
@@ -1761,6 +1756,7 @@ hammer2_unmount_helper(struct super_block *sb, hammer2_pfs_t *pmp,
 	if (pmp) {
 		KKASSERT(hmp == NULL);
 		KKASSERT(MPTOPMP(sb) == pmp);
+		hammer2_unregister_sb(pmp);	/* Linux: before mp is cleared */
 		pmp->mp = NULL;
 		sb->s_fs_info = NULL;
 
@@ -1993,7 +1989,7 @@ hammer2_kill_sb(struct super_block *sb)
 	hammer2_unmount(sb);
 }
 
-static struct file_system_type hammer2_fs_type = {
+struct file_system_type hammer2_fs_type = {
 	.owner			= THIS_MODULE,
 	.name			= "hammer2",
 	.init_fs_context	= hammer2_init_fs_context,

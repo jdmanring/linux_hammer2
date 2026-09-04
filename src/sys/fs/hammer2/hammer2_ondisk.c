@@ -57,10 +57,10 @@
  *     path gets a dev_t to match a second mount of the same device
  *     against before anything is opened.  The open has to come second on
  *     Linux because bdev_file_open_by_path() claims the device for a
- *     holder, and the holder the device's filesystem callbacks require is
- *     a live superblock (fs/super.c, read at the kernel of record; 7.3
- *     keeps that requirement and reaches it through a registration table
- *     instead, which the open helper below is the seam for).
+ *     holder, and the device's filesystem callbacks reach a superblock
+ *     only if it is the holder (below 7.3) or registered against the
+ *     device (7.3, through a table the open helper below is the seam
+ *     for, and each mount adds its own entry to at mount time).
  *   - hammer2_gaccess_devvp() and its two callers hammer2_getw_devvp() and
  *     hammer2_putw_devvp() are not carried.  They adjust a GEOM consumer's
  *     write count around a volume-header write; Linux states the access it
@@ -75,10 +75,24 @@
  * XXX Linux: 7.3 made fs_holder_ops static and replaced "the holder is a
  * superblock" with a {device, superblock} registration table, so an open
  * that wants the device's freeze, thaw, sync and mark_dead callbacks now
- * goes through fs_bdev_file_open_by_path() and its release has to run
- * fs_bdev_file_release() to drop the table entry.  bdev_fput() still
- * compiles at 7.3 and would leave the entry behind, so the release side is
- * guarded with the open side rather than left alone.
+ * goes through fs_bdev_file_open_by_path(), which opens and registers in
+ * one call.  fs/super.c documents the holder as "a superblock, or the
+ * file_system_type when the device may be shared by several superblocks
+ * of that type", and bd_may_claim() lets the same holder claim again,
+ * which is how several superblocks come to share one device: each one
+ * opens it again under the shared holder to register itself, and
+ * releases its own claim at unmount.  That is what a HAMMER2 device with
+ * more than one PFS mounted is, so the holder here is hammer2_fs_type.
+ *
+ * The open a hammer2_dev keeps for the life of the device therefore
+ * registers no superblock at all: it is opened for the mounting one and
+ * unregistered at once with fs_bdev_unregister(), which fs/super.c
+ * documents as the pairing for a caller that wants the device open and
+ * no table entry.  The entries belong to the mounts, see
+ * hammer2_register_sb() below.  A registration pins its superblock
+ * passively (super_dev_insert() takes s_passive), so an entry that
+ * outlived its mount would not point at freed memory, it would keep the
+ * memory alive and the callbacks would skip it as inactive.
  *
  * A version comparison and not an existence test: fs_bdev_file_open_by_path()
  * is a function, so the preprocessor cannot ask for it, and the two calls
@@ -100,17 +114,74 @@ hammer2_bdev_open(const char *path, blk_mode_t mode, struct super_block *sb)
 #if LINUX_VERSION_CODE < LINUX_FS_BDEV_OPEN
 	return (bdev_file_open_by_path(path, mode, sb, &fs_holder_ops));
 #else
-	return (fs_bdev_file_open_by_path(path, mode, sb, sb));
+	struct file *bdev_file;
+
+	bdev_file = fs_bdev_file_open_by_path(path, mode, &hammer2_fs_type, sb);
+	if (!IS_ERR(bdev_file))
+		fs_bdev_unregister(bdev_file, sb);
+	return (bdev_file);
 #endif
 }
 
 static void	/* Linux */
-hammer2_bdev_release(struct file *bdev_file, struct super_block *sb)
+hammer2_bdev_release(struct file *bdev_file)
 {
-#if LINUX_VERSION_CODE < LINUX_FS_BDEV_OPEN
 	bdev_fput(bdev_file);
-#else
-	fs_bdev_file_release(bdev_file, sb);
+}
+
+/*
+ * Linux: claim every device a PFS spans on behalf of its superblock, so
+ * the device's freeze, thaw, sync and mark_dead callbacks reach this
+ * mount and not only the first one on the device.  Below 7.3 the holder
+ * is the superblock of the first mount and no second claim is possible,
+ * so a secondary mount keeps the reach it always had there: none.
+ */
+int
+hammer2_register_sb(struct super_block *sb, hammer2_pfs_t *pmp)
+{
+#if LINUX_VERSION_CODE >= LINUX_FS_BDEV_OPEN
+	hammer2_cluster_t *cluster = &pmp->iroot->cluster;
+	hammer2_chain_t *rchain;
+	hammer2_devvp_t *e, *n;
+	struct file *bdev_file;
+	int i;
+
+	for (i = 0; i < cluster->nchains; ++i) {
+		rchain = cluster->array[i].chain;
+		if (rchain == NULL)
+			continue;
+		TAILQ_FOREACH(e, &rchain->hmp->devvp_list, entry) {
+			bdev_file = fs_bdev_file_open_by_dev(e->devno,
+			    sb_open_mode(sb->s_flags), &hammer2_fs_type, sb);
+			if (IS_ERR(bdev_file)) {
+				hprintf("failed to claim %s for this mount %d\n",
+				    e->path, (int)-PTR_ERR(bdev_file));
+				hammer2_unregister_sb(pmp);
+				return (-PTR_ERR(bdev_file));	/* positive */
+			}
+			n = hmalloc(sizeof(*n), M_HAMMER2, M_WAITOK | M_ZERO);
+			n->bdev_file = bdev_file;
+			n->devno = e->devno;
+			n->open = 1;
+			TAILQ_INSERT_TAIL(&pmp->sbdev_list, n, entry);
+		}
+	}
+#endif
+	return (0);
+}
+
+void
+hammer2_unregister_sb(hammer2_pfs_t *pmp)
+{
+#if LINUX_VERSION_CODE >= LINUX_FS_BDEV_OPEN
+	hammer2_devvp_t *e;
+
+	while (!TAILQ_EMPTY(&pmp->sbdev_list)) {
+		e = TAILQ_FIRST(&pmp->sbdev_list);
+		TAILQ_REMOVE(&pmp->sbdev_list, e, entry);
+		fs_bdev_file_release(e->bdev_file, pmp->mp);
+		hfree(e, M_HAMMER2, sizeof(*e));
+	}
 #endif
 }
 
@@ -150,7 +221,7 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		    lblksize < sectorsize) {
 			hprintf("invalid sector size %d vs lblksize %d\n",
 			    sectorsize, lblksize);
-			hammer2_bdev_release(bdev_file, sb);	/* Linux */
+			hammer2_bdev_release(bdev_file);	/* Linux */
 			return (EINVAL);
 		}
 
@@ -169,12 +240,11 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		if (error) {
 			hprintf("failed to set %s blocksize %d %d\n",
 			    e->path, (int)HAMMER2_PBUFSIZE, -error);
-			hammer2_bdev_release(bdev_file, sb);	/* Linux */
+			hammer2_bdev_release(bdev_file);	/* Linux */
 			return (-error);		/* Linux: positive */
 		}
 
 		e->bdev_file = bdev_file;
-		e->sb = sb;	/* Linux: the release has to name the holder */
 		e->open = 1;
 		KKASSERT(e->open);
 	}
@@ -190,7 +260,7 @@ hammer2_close_devvp(const hammer2_devvp_list_t *devvpl)
 	TAILQ_FOREACH(e, devvpl, entry) {
 		if (e->open) {
 			KKASSERT(e->bdev_file);
-			hammer2_bdev_release(e->bdev_file, e->sb);
+			hammer2_bdev_release(e->bdev_file);
 							/* XXX Linux: g_vfs_close */
 			e->bdev_file = NULL;
 			e->open = 0;
@@ -313,7 +383,7 @@ hammer2_cleanup_devvp(hammer2_devvp_list_t *devvpl)
 			 */
 			debug_hprintf("%s still open at cleanup\n",
 			    e->path ? e->path : "(null)");
-			hammer2_bdev_release(e->bdev_file, e->sb);	/* Linux */
+			hammer2_bdev_release(e->bdev_file);	/* Linux */
 			e->bdev_file = NULL;
 			e->open = 0;
 		}

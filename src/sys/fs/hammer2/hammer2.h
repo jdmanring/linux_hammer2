@@ -774,7 +774,6 @@ struct hammer2_devvp {
 	struct file		*bdev_file;	/* Linux: was struct vnode *devvp */
 	char			*path;		/* device path */
 	dev_t			devno;		/* Linux: was devvp->v_rdev */
-	struct super_block	*sb;		/* Linux: holder the open claimed for */
 	int			open;		/* 1 if bdev_file open */
 };
 
@@ -881,6 +880,7 @@ struct hammer2_pfs {
 	hammer2_lk_t		trans_lock;	/* XXX temporary */
 	hammer2_lkc_t		trans_cv;
 	struct super_block	*mp;		/* Linux: was struct mount * */
+	hammer2_devvp_list_t	sbdev_list;	/* Linux: this mount's claims on its devices */
 	struct uuid		pfs_clid;
 	hammer2_trans_t		trans;
 	hammer2_inode_t		*iroot;		/* PFS root inode */
@@ -1134,6 +1134,9 @@ int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
 /* hammer2_ondisk.c */
 int hammer2_open_devvp(struct super_block *, const hammer2_devvp_list_t *);
 int hammer2_close_devvp(const hammer2_devvp_list_t *);
+int hammer2_register_sb(struct super_block *, hammer2_pfs_t *);	/* Linux */
+void hammer2_unregister_sb(hammer2_pfs_t *);	/* Linux */
+extern struct file_system_type hammer2_fs_type;	/* Linux: the device holder */
 /*
  * Linux: hammer2_close_devvp() must be called before
  * hammer2_cleanup_devvp(), which frees the list.  FreeBSD's cleanup

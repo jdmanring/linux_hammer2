@@ -342,6 +342,30 @@ volume-header zones, spaced 2 GiB apart, and is not a fault. A read-only
 mount here leaves media DragonFly's checker accepts, which is the verdict
 0.4 asked for.
 
+The multi-PFS case is `f7`: one device on which DragonFly created a
+second PFS with `pfs-create`, so `ROOT` and `DATA` are two superblocks on
+one block device. Both mount here at once, every file in each verifies
+against DragonFly's checksums, they unmount in either order, and after a
+module reload the device mounts again, so no claim on it survived. At 7.3
+the kernel registers `{device, superblock}` pairs, and its own comment
+names the holder for "a device shared by several superblocks of that
+type" as the `file_system_type`, which is what this port now passes; each
+mounted PFS then claims every device it spans for its own superblock and
+releases the claim at unmount, so the device's freeze, thaw, sync and
+mark_dead callbacks reach every mount on it rather than the first. That
+reach is read from `fs/super.c`, not measured: nothing in userspace
+freezes a block device under a read-only mount. What is measured is the
+mount, the compare, both unmount orders, the remount, an empty kmemleak
+scan and a `dmesg` holding only the two recorded floors.
+
+The deferral this closes had over-claimed. It said that at 7.3 the first
+mount's superblock was freed while its table entry lived on. Reading
+`super_dev_insert()` shows a registration takes a passive reference on
+its superblock, so the entry kept the memory alive and the callbacks
+skipped it as inactive. The defect was the one the deferral had first
+named, callbacks reaching one mount and not the other, and not a
+use-after-free.
+
 `dmesg` carries one finding, the recursive-locking report in
 `hammer2_chain_lock()`, which is the single lockdep class recorded below.
 kmemleak reports nothing. Both guests were shut down afterwards; only one
@@ -351,7 +375,7 @@ ran at a time, each holding 4 GiB.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1364 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1367 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -363,10 +387,10 @@ ran at a time, each holding 4 GiB.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1707 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2082 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2078 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 499 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 928 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 998 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
@@ -789,7 +813,6 @@ against the source is the same shape as an empty one.
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 | `hammer2_os.h`, at `hammer2_mtx_init()` | `DEFER(chain locks carry nesting notation)` | every chain lock takes its lockdep class from that one `init_rwsem()` call site, so locking a parent chain and then its child is indistinguishable from taking one lock twice. The first mount under `CONFIG_PROVE_LOCKING` reports `possible recursive locking` and names the cause: `May be due to missing lock nesting notation`. Lockdep then sets `debug_locks` to 0 and validates nothing further that boot, so this warning costs the instrument rather than only printing. A `_nested` acquire needs a subclass, and what to key it on is measured: a chain carries no level or depth field, and `bref.type` has ten values of which eight can hold a lock, exactly `MAX_LOCKDEP_SUBCLASSES`, but `hammer2_chain.c` walks parents with a `while` loop over `INDIRECT` and `FREEMAP_NODE`, so those two nest within themselves and a type-keyed subclass returns the same report. The notation needs a depth the chain does not carry, which makes it a core edit |
 | `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |
-| `hammer2_vfsops.c`, where a secondary mount matches an open device | `DEFER(a second PFS on one device is mounted)` | the second mount reuses the open the first made, so the device's freeze, thaw, sync and mark_dead callbacks reach the first mount's superblock and not the second's. True of every kernel this builds against, and 7.3 makes it legible by registering `{device, superblock}` pairs rather than treating the holder as the superblock. The fix is to register each superblock, not to open the device twice. At 7.3 and above this blocks 0.4's multi-PFS case rather than merely weakening it: the device is closed when `hmp->mount_count` reaches zero, by which point the superblock the open was registered for has been freed, so `fs_bdev_unregister()` fails its pointer comparison, the table entry is never dropped, and the kernel's own freeze and sync paths are left walking a pair whose superblock is gone |
 
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a

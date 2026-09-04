@@ -563,10 +563,13 @@ an artifact of the setup and not a finding about the code.
     KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
-Measured on 2026-09-04: six images, 28 files, 1 symlink, 0 failures, the
-six being `makefs` output, `makefs` at LZ4 and at ZLIB, the boundary tree,
-media DragonFly wrote at its LZ4 default, and media DragonFly wrote after
-`hammer2 setcomp zlib` on the mount root. For `f6` the block counts in the
+Measured on 2026-09-04: seven images, 30 files, 1 symlink, 0 failures,
+the seven being `makefs` output, `makefs` at LZ4 and at ZLIB, the boundary
+tree, media DragonFly wrote at its LZ4 default, media DragonFly wrote
+after `hammer2 setcomp zlib` on the mount root, and a device carrying two
+PFSes, of which the gate mounts `ROOT`; mounting both at once is a
+measurement recorded in `README.status.md`, since a manifest names one
+label. For `f6` the block counts in the
 manifest are DragonFly's own `stat` output, so that image compares this
 reader against the writer rather than against itself.
 
