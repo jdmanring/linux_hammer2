@@ -476,6 +476,29 @@ Compare with `md5sum` against the tree the image was made from rather than
 by reading the files, and read at an unaligned offset inside the largest
 with `dd skip=`, which no whole-file compare exercises.
 
+`f3.img` and `f4.img` are the same tree written with
+`CompressionType=lz4` and `CompressionType=zlib`. That option is why the
+compressed floors stopped being unmeasurable: they had been recorded as
+needing a fixture that did not exist, when the fixture was one flag away.
+Before writing either decoder, run the floors against these images. The
+compressible file must fail with `EIO` and name its method in `dmesg`
+while the incompressible one reads, which proves in one run both that the
+floor refuses rather than corrupts and that the image holds what its name
+claims. A decoder written first would have had neither guarantee.
+
+`tree3` is chosen so that one file compresses and one cannot, since a
+compressor that falls back on incompressible data writes a raw block
+inside a compressed volume, and that mixed case is the one a single
+compressible file would miss.
+
+    makefs -t hammer2 -o Label=TEST3,MountLabel=TEST3,CompressionType=lz4 \
+        f3.img tree3
+
+Check these two with the page cache dropped as well as cold, and scan
+kmemleak twice: both decompression paths allocate per folio and the ZLIB
+one also allocates an inflate workspace, so a leak here is per read rather
+than per mount.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a
