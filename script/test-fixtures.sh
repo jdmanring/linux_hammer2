@@ -106,8 +106,17 @@ fi
 KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "fixtures: FAIL: $KO was not produced"; exit 1; }
 
+# STARTING A GUEST IS A SIDE EFFECT, NOT A PREREQUISITE THIS GATE MAY TAKE
+# ON ITS OWN. script/pre-push-check.sh runs every gate on every push, so a
+# gate that boots a 4 GiB domain when it finds one stopped spends that on
+# every push, on a machine whose memory somebody else is using. It is opt in.
 started=no
 if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" != "running" ]; then
+	if [ "${H2_FIXTURE_START:-0}" != "1" ]; then
+		echo "fixtures: COULD-NOT-RUN: $GUEST is not running, and this" >&2
+		echo "          gate does not start one unless H2_FIXTURE_START=1" >&2
+		exit 2
+	fi
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || {
 		echo "fixtures: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
 	started=yes
@@ -139,10 +148,30 @@ if [ "$i" -ge 60 ]; then
 	exit 2
 fi
 
+# A MODULE BUILT FOR ANOTHER KERNEL IS A CONFIGURATION MISMATCH AND NOT A
+# DEFECT IN THIS TREE. The first run of this gate under pre-push built
+# against the host's KDIR, since that is the default, and reported the
+# refusal to load on a guest running something else as a failure. insmod
+# rejects it on vermagic, so the answer is knowable before the attempt and
+# reads as COULD-NOT-RUN naming both kernels.
+guest_rel=$(ssh "$GUEST_SSH" 'uname -r' 2>/dev/null)
+ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')
+if [ -z "$guest_rel" ] || [ -z "$ko_rel" ]; then
+	echo "fixtures: COULD-NOT-RUN: could not read the guest release or the" >&2
+	echo "          module's vermagic, so a load could not be attributed" >&2
+	exit 2
+fi
+if [ "$guest_rel" != "$ko_rel" ]; then
+	echo "fixtures: COULD-NOT-RUN: the module is built for $ko_rel and" >&2
+	echo "          $GUEST runs $guest_rel, so insmod would refuse it on" >&2
+	echo "          vermagic. Point KDIR at the guest's kernel." >&2
+	exit 2
+fi
+
 scp -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: could not copy the module" >&2; exit 2; }
 ssh "$GUEST_SSH" 'rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko' 2>/dev/null || {
-	echo "fixtures: FAIL: the module did not load on $GUEST"; exit 1; }
+	echo "fixtures: FAIL: the module built for this guest did not load"; exit 1; }
 
 fail=0
 images=0

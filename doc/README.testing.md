@@ -520,13 +520,28 @@ compared again, which must fail. Without that, an empty sums file, a
 silent `md5sum` and a mount that landed somewhere else all read as a pass.
 
 It leaves the machine as it found it: what it attached is detached, and
-the guest is shut down only if the gate started it. Exit 2 is
-COULD-NOT-RUN and is reported for a missing guest, missing images, no
-`KDIR` and a guest that does not answer ssh, because most machines have
-none of these and CI has none of them at all. A gate that passed there
-would make the whole read path look covered by CI when nothing ran.
+the guest is shut down only if the gate started it. It will not start one
+unless `H2_FIXTURE_START=1` says so, because `script/pre-push-check.sh`
+runs every gate on every push and a gate that boots a 4 GiB domain when it
+finds one stopped spends that on every push, on a machine whose memory
+somebody else is using.
 
-    KDIR=~/kernels/linux-7.3-rc1 bash script/test-fixtures.sh
+Exit 2 is COULD-NOT-RUN and is reported for a missing guest, a stopped one
+without that variable, missing images, no `KDIR` and a guest that does not
+answer ssh, because most machines have none of these and CI has none at
+all. A gate that passed there would make the whole read path look covered
+by CI when nothing ran.
+
+One of those is worth its own line. `KDIR` defaults to the host's own
+build tree, so the first pre-push run of this gate built for the host and
+reported the guest refusing to load it as a failure. `insmod` rejects a
+module on vermagic, which is knowable before the attempt, so the gate now
+compares the module's vermagic with the guest's release and reports
+COULD-NOT-RUN naming both. A verdict reached against the wrong kernel is
+an artifact of the setup and not a finding about the code.
+
+    KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
+        bash script/test-fixtures.sh
 
 Measured on 2026-09-04: five images, 21 files, 0 failures, the five being
 `makefs` output, `makefs` at LZ4 and at ZLIB, the boundary tree, and media
@@ -722,6 +737,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | no image, no guest, no `KDIR` | each driven by pointing the variable at a path that does not exist |
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
+| `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
 
 All exit 2 and name what was missing. Two defects fell out of driving
 them: `test-shim.sh` was the only gate whose message omitted the
