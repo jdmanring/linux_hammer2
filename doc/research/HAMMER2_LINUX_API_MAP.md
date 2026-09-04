@@ -1,6 +1,6 @@
 # HAMMER2 to Linux API map (H0 deliverable)
 
-Part of the archaeology work package (`proposals/artnix_filesystem/`, document
+Part of the archaeology work package (`proposals/saxum_filesystem/`, document
 07 section 5). Measured 2026-08-25 by the specification session from the
 DragonFly core and the FreeBSD port on this disk; every count is from a
 command, every mapping is tied to a file and function. The proposal's matrix

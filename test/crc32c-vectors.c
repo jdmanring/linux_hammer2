@@ -9,7 +9,7 @@
  *
  * NO GATE IN THIS TREE RUNS IT, AND A GATE IN ANOTHER ONE DOES.
  * iscsi_crc32() arrives with the check algorithms in 0.2 and there is
- * nothing local to link against before then. ArtNix's
+ * nothing local to link against before then. Saxum's
  * scripts/test-hammer2-checkalg.sh compiles this file against the FreeBSD
  * port's icrc32.c and greps the output for "Castagnoli ... MATCH", so the
  * exit status AND that line's wording are an interface.

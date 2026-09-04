@@ -1,7 +1,7 @@
 #!/bin/sh
-# Vale over doc/, with the same styles ArtNix uses.
+# Vale over doc/, with the same styles Saxum uses.
 #
-# WHY THIS EXISTS. doc/research/ arrived on 2026-08-29 from ArtNix, where it
+# WHY THIS EXISTS. doc/research/ arrived on 2026-08-29 from Saxum, where it
 # had been governed by that repo's prose gates since 2026-08-25. It was added
 # there because those documents had been structure-checked and never read by
 # vale, and twelve British spellings were sitting in them when the corpus

@@ -1,7 +1,7 @@
 # HAMMER2 test fixture plan (H0 deliverable)
 
 Part of the archaeology work package the storage proposal requires before any
-Linux write path (`proposals/artnix_filesystem/04_AGENTIC_CODING_HANDOFF.md`,
+Linux write path (`proposals/saxum_filesystem/04_AGENTIC_CODING_HANDOFF.md`,
 H0; `03_TEST_SECURITY_RESOURCE_SPEC.md` section 9). Written 2026-08-25 by the
 specification session from what is on this disk; every instrument named here
 was checked to exist, and none was run that starts a guest.
@@ -55,7 +55,7 @@ else.
    the test spec names (kill, panic, power-off, torn metadata), first from
    the FreeBSD port as the calibration (what a working port leaves behind),
    then from the Linux port.
-6. **F6 Nix-scale** (H6): a `makefs` image of an actual ArtNix closure tree
+6. **F6 Nix-scale** (H6): a `makefs` image of an actual Saxum closure tree
    (hundreds of thousands of paths), the workload class the storage program
    exists for; read performance and metadata behavior are measured on it
    before any claim about the flagship.

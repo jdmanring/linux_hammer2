@@ -5,7 +5,7 @@ the flagship root filesystem the specification names, integrated into the
 storage model (specification section 27) rather than beside it. Written
 2026-08-25 by the specification session on the five H0 deliverables in this
 directory and on the storage proposal's stages (documents 02, 04, 07, 09 in
-the specification repository's `proposals/artnix_filesystem/`). It is a plan
+the specification repository's `proposals/saxum_filesystem/`). It is a plan
 with exit criteria, not a schedule; every stage says what it produces in this
 tree, what gate proves it, what it depends on, and who does it.
 

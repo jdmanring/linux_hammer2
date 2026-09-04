@@ -41,7 +41,7 @@ Every column is measured from the trees at the revision the CSV records:
                       audit's method (changed lines both sides over the sum
                       of both lengths), so this column can be checked against
                       that document's table by eye. Empty for port files
-  ArtNix_candidate_use
+  Saxum_candidate_use
       drop            dropped by every port (the clustering layer, H7)
       stock-kernel    xxhash/ and zlib/: H0 proved the kernel's own copies
                       are the same code (H0_VENDORED_LIBRARIES.md), and
@@ -110,7 +110,7 @@ DOCS = {"CHANGES", "DESIGN", "FREEMAP", "TODO", "Makefile", "Makefile.inc"}
 COLUMNS = [
     "original_path", "current_project", "commit_or_tag", "copyright_holder",
     "derived_from", "license_expression", "SPDX_identifier", "port_status",
-    "modified_by_port", "ArtNix_candidate_use",
+    "modified_by_port", "Saxum_candidate_use",
 ]
 
 # Anchored at the start of the stripped line and requiring a year, so the
@@ -289,7 +289,7 @@ def generate(trees=TREES) -> list[dict]:
                 "SPDX_identifier": (SPDX.search(text) or [None, ""])[1],
                 "port_status": status,
                 "modified_by_port": r,
-                "ArtNix_candidate_use": port_candidate(k, p.name, rel, status, r),
+                "Saxum_candidate_use": port_candidate(k, p.name, rel, status, r),
             })
     return rows
 
@@ -370,23 +370,23 @@ def selftest() -> int:
             ("NEGATIVE CONTROL: text beats tag", rows["m.c@dragonfly"]["license_expression"] == "BSD-3-Clause"
              and rows["m.c@dragonfly"]["SPDX_identifier"] == "BSD-2-Clause"),
             ("dropped detected", rows["gone.c@dragonfly"]["port_status"] == "dropped"
-             and rows["gone.c@dragonfly"]["ArtNix_candidate_use"] == "drop"),
+             and rows["gone.c@dragonfly"]["Saxum_candidate_use"] == "drop"),
             ("carrier set", rows["a.c@dragonfly"]["port_status"] == "freebsd"),
             ("identical ratio 0", rows["a.c@dragonfly"]["modified_by_port"] == "0.000"),
             ("ratio is audit's method", rows["b.c@dragonfly"]["modified_by_port"] == f"{2/(6+8):.3f}"),
-            ("stock-kernel for zlib/", rows["z.c@dragonfly"]["ArtNix_candidate_use"] == "stock-kernel"),
+            ("stock-kernel for zlib/", rows["z.c@dragonfly"]["Saxum_candidate_use"] == "stock-kernel"),
             ("port-only detected", rows["only.c@freebsd"]["port_status"] == "port-only"),
-            ("port file is reference", rows["a.c@freebsd"]["ArtNix_candidate_use"] == "reference"),
+            ("port file is reference", rows["a.c@freebsd"]["Saxum_candidate_use"] == "reference"),
             ("port-only file named in CARRY_PORT_ONLY is carry",
              rows["hammer2_rb.h@freebsd"]["port_status"] == "port-only"
-             and rows["hammer2_rb.h@freebsd"]["ArtNix_candidate_use"] == "carry"),
+             and rows["hammer2_rb.h@freebsd"]["Saxum_candidate_use"] == "carry"),
             ("vendored file is carry", rows["tree.h@freebsd-src"]["port_status"] == "vendored"
-             and rows["tree.h@freebsd-src"]["ArtNix_candidate_use"] == "carry"),
+             and rows["tree.h@freebsd-src"]["Saxum_candidate_use"] == "carry"),
             ("holder on the line after the years (Berkeley form)",
              rows["queue.h@freebsd-src"]["copyright_holder"] == "The Regents of the University of California"),
             ("port-only carry is FreeBSD's copy only",
-             rows["hammer2_rb.h@freebsd"]["ArtNix_candidate_use"] == "carry"
-             and all(rows.get(f"hammer2_rb.h@{q}", {}).get("ArtNix_candidate_use", "reference") == "reference"
+             rows["hammer2_rb.h@freebsd"]["Saxum_candidate_use"] == "carry"
+             and all(rows.get(f"hammer2_rb.h@{q}", {}).get("Saxum_candidate_use", "reference") == "reference"
                      for q in ("netbsd", "openbsd"))),
             ("NEGATIVE CONTROL: unlisted file in a vendored tree gets no row",
              "other.h@freebsd-src" not in rows),
@@ -411,7 +411,7 @@ def main() -> int:
     text = render(rows)
     uses = {}
     for r in rows:
-        uses[r["ArtNix_candidate_use"]] = uses.get(r["ArtNix_candidate_use"], 0) + 1
+        uses[r["Saxum_candidate_use"]] = uses.get(r["Saxum_candidate_use"], 0) + 1
     print(f"hammer2-provenance: {len(rows)} file(s) over {len(TREES)} tree(s); "
           + ", ".join(f"{k}={v}" for k, v in sorted(uses.items())))
     disagree = [r for r in rows if r["SPDX_identifier"]

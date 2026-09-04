@@ -9,7 +9,7 @@
  *
  * NO GATE IN THIS TREE RUNS IT, AND A GATE IN ANOTHER ONE DOES. There is
  * no xxhash.h here until the check algorithms arrive in 0.2, so nothing
- * local can compile it. ArtNix's scripts/test-hammer2-checkalg.sh does:
+ * local can compile it. Saxum's scripts/test-hammer2-checkalg.sh does:
  * it compiles this file against the FreeBSD port's vendored xxhash and
  * requires both the pass and the negative control. So the exit status,
  * the printed shape and the constants below are an INTERFACE, not this
@@ -36,7 +36,7 @@
 /*
  * FALSIFICATION HOOK, AND THE HEX CASE IS AN INTERFACE. A consumer's
  * negative control has to corrupt an expected value and require the
- * failure, and the one in ArtNix's scripts/test-hammer2-checkalg.sh did it
+ * failure, and the one in Saxum's scripts/test-hammer2-checkalg.sh did it
  * by sed-ing the literal below out of this file's text. Rewriting the
  * vectors on 2026-08-26 lowercased that literal, the sed stopped matching,
  * the control compared a file to itself and the gate reported that it was

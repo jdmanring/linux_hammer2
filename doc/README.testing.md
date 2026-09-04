@@ -144,12 +144,12 @@ it. The job is what closes what the sweep can only bound.
 `test-doc-prose.sh` runs vale over every `.md` under `doc/` with the
 styles in `styles/`, which are house YAML rather than a downloaded package
 so the gate needs no network and no `vale sync`. It arrived on 2026-08-29
-with `doc/research/`, which had been governed in ArtNix since 2026-08-25
+with `doc/research/`, which had been governed in Saxum since 2026-08-25
 and was moved here on the rule that a component owns its own development.
 
 Two things about it were wrong until 2026-09-02 and are worth recording,
 because both are the shape where a gate prints and still passes. Vale's own
-exit status is nonzero for errors only, and every rule in `styles/ArtNix`
+exit status is nonzero for errors only, and every rule in `styles/Saxum`
 is a warning, so the gate printed twelve findings and exited 0 on every run
 it ever made. It now counts the findings itself and fails on any of them;
 the twelve, eleven British spellings and one wordy phrase, were fixed in
@@ -601,7 +601,7 @@ run began really compiling.
 A test file nothing runs reads exactly like a test file that passes, so
 these two were written up on 2026-08-26 as staged and unrun. That was
 wrong within the hour, and wrongly reassuring in the direction that costs
-most: no gate HERE runs them, and ArtNix's
+most: no gate HERE runs them, and Saxum's
 `scripts/test-hammer2-checkalg.sh` compiles both, against the FreeBSD
 port's vendored `xxhash` and its `icrc32.c`, reaching this tree through
 `LINUX_HAMMER2`. The sweep that concluded "run by nothing" searched this
@@ -612,7 +612,7 @@ directory over answers a question no local grep can.
 cannot be seen from here: the exit status of each file, the wording of the
 `Castagnoli ... MATCH` line, the `XXH64` prefix and `want` that the consumer
 counts its vectors by, and the uppercase hex of the xxh64 constants. The
-rewrite that fixed their logic lowercased one constant, ArtNix's negative
+rewrite that fixed their logic lowercased one constant, Saxum's negative
 control seds on that literal, and its gate spent an hour reporting
 correctly that it was comparing nothing. `-DXXH_VECTORS_CONTROL` exists so
 that control never has to depend on this file's text again.
@@ -629,7 +629,7 @@ gate names nor this table lists.
 | `test/xxh64-vectors.c` | an `xxhash.h` in this tree, same import | two of three cases asserted nothing, and the seeded case used xxHash's golden-ratio prime where HAMMER2 seeds with `0x4d617474446c6c6e`. Four vectors now, all four measured against xxhsum 0.8.3 and libxxhash 0.8.3, and compiled and run green against the system xxHash on 2026-08-26 |
 
 Neither is wired into a gate HERE, because there is nothing in this tree
-to link either against; ArtNix links them against the BSD tree instead.
+to link either against; Saxum links them against the BSD tree instead.
 They get a local gate the day 0.2 imports the algorithms, and the
 inventory gate is what remembers to ask. Until then, changing either
 file's output shape or exit status breaks a gate in a repository this one

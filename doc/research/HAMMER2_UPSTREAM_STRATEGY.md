@@ -1,6 +1,6 @@
 # HAMMER2 upstream strategy (H0 deliverable)
 
-Part of the archaeology work package (`proposals/artnix_filesystem/`, documents
+Part of the archaeology work package (`proposals/saxum_filesystem/`, documents
 02 section 3 and 9, 07 section 7). Written 2026-08-25 by the specification
 session. Filing anything with anyone is James's; this document says what to
 file, to whom, in what order, and what must be true first.

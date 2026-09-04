@@ -78,7 +78,7 @@ fail=0 ran=0
 #   2. a plain POSIX script must be accepted, or the instrument refuses
 #      everything and a clean result is unreachable rather than earned.
 #
-# The design is taken from the equivalent gate in the ArtNix tree.
+# The design is taken from the equivalent gate in the Saxum tree.
 tmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$tmp"' EXIT
 probe() { printf '%s\n' "$2" > "$tmp/probe-$1.sh"; probes="${probes:-} $1"; }

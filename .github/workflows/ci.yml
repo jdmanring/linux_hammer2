@@ -76,7 +76,7 @@ jobs:
       # existed for hours with CI not running it, and a document DISCLOSED
       # that instead of fixing it, which is the could-have-didn't shape. A
       # hand-maintained list of the things that check this tree is the same
-      # defect those checks exist to catch, and ArtNix's delegator - which
+      # defect those checks exist to catch, and Saxum's delegator - which
       # runs these same gates from another repository - derived its
       # population from `ls` a day earlier for exactly this reason.
       #
@@ -119,7 +119,7 @@ jobs:
 
       # Vale, for the prose gate. Without it that gate reports COULD-NOT-RUN,
       # which is what it did on every run from 2026-08-29, when doc/research
-      # arrived from ArtNix with its gate, until 2026-09-02. The whole point of
+      # arrived from Saxum with its gate, until 2026-09-02. The whole point of
       # moving the gate with the files was that the prose not sit ungoverned,
       # and a gate that only runs on a maintainer's own machine governs nothing.
       #

@@ -1,6 +1,6 @@
 # HAMMER2 portability audit (H0 deliverable)
 
-Part of the archaeology work package (`proposals/artnix_filesystem/`, document
+Part of the archaeology work package (`proposals/saxum_filesystem/`, document
 07 section 4). Measured 2026-08-25 by the specification session over the
 four trees on this disk; every number is from a command run against them, and
 the method is stated so the table can be re-run.

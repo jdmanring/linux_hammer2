@@ -90,7 +90,7 @@ the baseline's, so an unchanged set is reportable and a moved set is not.
 The gate exits 2 rather than charge a move to the code, which means the
 one run that matters, the run after a carried file lands, needs
 `CHECKPATCH` pointed at the checker the baseline names. That happened
-twice on 2026-08-26. ArtNix's delegator, which runs these same gates from another
+twice on 2026-08-26. Saxum's delegator, which runs these same gates from another
 repository, enumerates `script/test-*.sh` instead of naming them, so a gate
 added here is picked up there without an edit. Each gate prints its own
 count, and the gates are the authority; the dated figures below are snapshots
@@ -129,7 +129,7 @@ not a pass.
   `test/` is a second population, added 2026-08-26 after two vector files
   were found tracked and named in no document here. Every file there is now
   either named by a gate or listed in `README.testing.md`. Both vector files
-  turned out to be compiled by a gate in ArtNix, which no search of this
+  turned out to be compiled by a gate in Saxum, which no search of this
   repository could have said, so that table records a contract with a
   consumer this tree does not reference.
 
@@ -253,7 +253,7 @@ rather than summarized:
 
 measured at `ca4c07a`. The revision matters because this tree is a live
 checkout another repository reads while work is being committed to it:
-ArtNix's delegator once saw 6 gates where it expected 7, having walked the
+Saxum's delegator once saw 6 gates where it expected 7, having walked the
 tree mid-commit, which is indistinguishable from broken unless the revision
 is printed beside the count.
 

@@ -1,6 +1,6 @@
 # HAMMER2 license and provenance audit (H0 deliverable)
 
-Part of the archaeology work package (`proposals/artnix_filesystem/`, document
+Part of the archaeology work package (`proposals/saxum_filesystem/`, document
 02 sections 3 and 14, document 07 section 3). Measured 2026-08-25 by the
 specification session over the nine trees on this disk, per file, from the
 first hundred lines of each source file: SPDX identifier, copyright lines, the
@@ -120,7 +120,7 @@ never the exFAT code.
 
 The machine-readable table the proposal requires (`original_path`,
 `current_project`, `commit_or_tag`, `copyright_holder`, `license_expression`,
-`SPDX_identifier`, `port_status`, `modified_by_port`, `ArtNix_candidate_use`)
+`SPDX_identifier`, `port_status`, `modified_by_port`, `Saxum_candidate_use`)
 is derivable from the scan above plus `HAMMER2_PORTABILITY_AUDIT.md`, and is
 produced as `hammer2-provenance.csv` at H1's start by a script that re-runs
 the scan, so the table cannot drift from the trees. It is not hand-written
