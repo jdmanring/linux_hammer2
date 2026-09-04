@@ -123,7 +123,7 @@ abbreviation. The stage is only ever written beside a version number.
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
 | 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1. kmemleak reports no unreferenced object across a mount, unmount and unload. Lockdep cannot judge this port: every chain lock shares one class, so the first mount reports recursive locking and the instrument disables itself |
-| 0.4 | H1 | Read-only mount of DragonFly-written media | a makefs image mounts read-only, find walks the whole tree and every file reads back byte for byte; a compressed block is refused rather than decoded. The milestone's own claim needs media DragonFly wrote, which is the dragonflybsd642 guest and has not been done |
+| 0.4 | H1 | Read-only mount of DragonFly-written media | done for the read side. Media created by DragonFly 6.4-RELEASE's own newfs_hammer2 and written through its own HAMMER2 mounts read-only here and every file compares byte for byte with the checksums DragonFly reported, the embedded, LZ4, uncompressed and hole cases each reached on that one image. What is not done is the rest of the milestone's surface: no ZLIB block on DragonFly-written media, no fsck_hammer2 verdict recorded, and the fixture gate that would run this without a person driving it is unwritten |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | waits on the storage model |

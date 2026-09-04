@@ -499,6 +499,37 @@ kmemleak twice: both decompression paths allocate per folio and the ZLIB
 one also allocates an inflate workspace, so a leak here is per read rather
 than per mount.
 
+## Media DragonFly wrote
+
+Everything above is `makefs` output, which is a Linux tool. For the
+milestone's own claim the writer has to be DragonFly:
+
+    virsh start dragonflybsd642
+    virsh attach-disk dragonflybsd642 <image> vdb --targetbus virtio
+    virsh reboot dragonflybsd642        # no virtio-blk hotplug there
+    newfs_hammer2 -L DFLY /dev/vbd1
+    mount -t hammer2 /dev/vbd1@DFLY /mnt/h2w
+
+Two things about that guest cost time. Its root shell is csh, where
+`2>&1` is a syntax error rather than a redirect, so run anything with
+redirection through `sh -c` or copy a script over. And it does not hotplug
+virtio-blk, so a disk attached to the running domain needs a reboot to be
+enumerated; `virsh reboot` keeps the same QEMU process, so a live
+attachment survives it where a shutdown would lose it.
+
+Take the checksums on DragonFly before unmounting. They are the ground
+truth, and taking them afterwards on Linux would compare this module
+against itself.
+
+Run one guest at a time. Each holds 4 GiB, both together are most of what
+this machine has spare, and the two halves of the test never overlap:
+DragonFly writes, then is shut down, then Linux reads.
+
+Read `stat -c %b` on the result as well as the checksum. `i_blocks` is the
+on-media count, so it says which branch of the read completion each file
+took, and a set of matching checksums proves nothing about which paths
+ran.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a

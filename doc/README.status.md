@@ -285,6 +285,40 @@ eyeballed:
 `df` reports 320 KiB used on the second fixture for 270,655 bytes of
 file data, which is five 64 KiB blocks and the rounding that implies.
 
+## DragonFly-written media
+
+0.4's claim is media DragonFly wrote, not a Linux tool's output, and until
+now every measurement had been against `makefs`. `dragonflybsd642` was
+booted, a 2 GiB raw disk attached, and the filesystem created by
+DragonFly 6.4-RELEASE's own `newfs_hammer2` and written through
+DragonFly's own HAMMER2 while mounted read-write. The guest was then shut
+down, the same image attached to `artix-s6-kde`, and read by this module
+at 7.3.0-rc1 under lockdep and kmemleak.
+
+All six files compare byte for byte with the checksums DragonFly itself
+reported before unmounting, across three passes and again with the page
+cache dropped, and `find` returns all ten paths.
+
+What makes the run worth more than the compare is that `stat` says which
+branch each file took, `i_blocks` carrying the on-media count:
+
+| file | logical | on media | what that proves |
+|---|---|---|---|
+| `hello.txt` | 21 | 0 | embedded in the inode |
+| `compressible.txt` | 144000 | 3072 | 47 to 1, so DragonFly wrote LZ4 blocks and they decoded |
+| `random128k.bin` | 131072 | 131072 | incompressible, so the compressor fell back and the block is raw |
+| `sparse.bin` | 135168 | 4096 | the 128 KiB hole occupies nothing, so the `ENOENT` path ran |
+
+So the embedded case, the LZ4 case, the uncompressed case and the hole
+were each reached on one image, by a writer this project does not control,
+rather than on media built to reach them. ZLIB is not exercised here:
+DragonFly's default is LZ4, and `f4.img` is what covers the other.
+
+`dmesg` carries one finding, the recursive-locking report in
+`hammer2_chain_lock()`, which is the single lockdep class recorded below.
+kmemleak reports nothing. Both guests were shut down afterwards; only one
+ran at a time, each holding 4 GiB.
+
 ## What is in the tree
 
 | file | lines | origin |
