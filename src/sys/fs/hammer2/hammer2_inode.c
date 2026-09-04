@@ -826,9 +826,9 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	 * decides nothing.  Here the type decides the table.
 	 *
 	 * DEFER(the read path lands, with ->read_folio): a regular file
-	 * gets an inode_operations with no methods and no
-	 * file_operations, so it can be looked up and stat'd and not
-	 * opened, and a directory has no ->iterate_shared yet.  Every
+	 * gets an inode_operations and a file_operations with no methods
+	 * in either, so it can be looked up, stat'd and opened, and read
+	 * fails EINVAL.  A directory is listable.  Every
 	 * other type falls to the same file table, which is wrong for a
 	 * symlink and for a device node and is not reachable while
 	 * nothing can open one.

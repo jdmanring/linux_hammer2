@@ -55,11 +55,12 @@
  * the nresolve XOP, which is the part that reads the media, and it is
  * carried unchanged in shape.
  *
+ * ->iterate_shared is upstream's hammer2_readdir() with the cookie array
+ * and the artificial entries dropped, for the reasons written above it.
+ *
  * DEFER(the read path lands, with ->read_folio): a regular file gets an
  * inode_operations and a file_operations with no methods in either, so
  * it can be looked up, stat'd and opened, and read fails EINVAL.
- * ->iterate_shared is the other half of a usable directory and is
- * upstream's hammer2_readdir().
  */
 
 #include "hammer2.h"
@@ -141,6 +142,125 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 	return (d_splice_alias(inode, dentry));
 }
 
+/*
+ * Read one directory.
+ *
+ * This is upstream's hammer2_vop_readdir() with the cookie array and the
+ * artificial entries dropped.  The cookie array is a DragonFly NFS
+ * export interface that Linux does not have: nfsd reads ctx->pos, which
+ * this fills with the same values the array would have carried.  The
+ * artificial entries are dir_emit_dots(), which resolves "." and ".."
+ * from the dentry the same way the dcache resolves them for ->lookup, so
+ * the mount-point check upstream makes against pmp->iroot is the VFS's
+ * to make and not this module's.
+ *
+ * WHAT THE COOKIE IS.  A directory is hash-ordered, not sequential, so
+ * ctx->pos is a key and not an index.  hammer2_dirhash() sets bit 63 on
+ * every key it produces and bit 15 below it, which reserves 0x0000-0x7FFF
+ * for the artificial entries and leaves bit 63 free to be stripped, so
+ * that what reaches userspace is always a positive 64-bit quantity.  So a
+ * position is a key with bit 63 cleared, and resuming means putting it
+ * back.
+ *
+ * WHY ctx->pos TRAILS BY ONE ENTRY.  It is set to the key of the entry
+ * about to be emitted, not the one after it, because the key of the next
+ * entry is not known until the XOP feeds it.  A dir_emit() that returns
+ * false therefore leaves ctx->pos on the entry that did not fit and the
+ * next call re-reads it, which is what upstream's saveoff does on the
+ * same break.  Exhaustion is the one case that can advance past the last
+ * entry, and it sets HAMMER2_DIRHASH_USERMSK, whose lookup finds nothing
+ * on a subsequent call.
+ */
+static int
+hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
+{
+	hammer2_xop_readdir_t *xop;
+	hammer2_blockref_t bref;
+	hammer2_inode_t *ip = VTOI(file_inode(file));
+	hammer2_key_t lkey;
+	int dtype, error;
+
+	if (!dir_emit_dots(file, ctx))
+		return (0);	/* Linux: not an error, the buffer is full */
+
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+
+	lkey = ctx->pos | HAMMER2_DIRHASH_VISIBLE;
+	xop = hammer2_xop_alloc(ip, 0);
+	xop->lkey = lkey;
+	hammer2_xop_start(&xop->head, &hammer2_readdir_desc);
+
+	for (;;) {
+		const hammer2_inode_data_t *ripdata;
+		const char *dname;
+		uint16_t namlen;
+		bool ok;
+
+		error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head,
+		    0));
+		if (error)
+			break;
+		hammer2_cluster_bref(&xop->head.cluster, &bref);
+		ctx->pos = bref.key & HAMMER2_DIRHASH_USERMSK;
+
+		if (bref.type == HAMMER2_BREF_TYPE_INODE) {
+			ripdata = &hammer2_xop_gdata(&xop->head)->ipdata;
+			dtype = hammer2_get_dtype(ripdata->meta.type);
+			/*
+			 * The cast is the sign difference and nothing
+			 * else, as at the setname call in ->lookup:
+			 * filename is unsigned char[] on the media and
+			 * dir_emit() takes const char *.  clang reports
+			 * it under -Wpointer-sign and gcc does not.
+			 */
+			ok = dir_emit(ctx, (const char *)ripdata->filename,
+			    ripdata->meta.name_len,
+			    ripdata->meta.inum & HAMMER2_DIRHASH_USERMSK,
+			    dtype);
+			hammer2_xop_pdata(&xop->head);
+			if (!ok)
+				break;
+		} else if (bref.type == HAMMER2_BREF_TYPE_DIRENT) {
+			/*
+			 * A name that fits the blockref's check area is
+			 * stored there and the entry has no data block,
+			 * which is why the get is conditional and the put
+			 * has to match it.
+			 */
+			dtype = hammer2_get_dtype(bref.embed.dirent.type);
+			namlen = bref.embed.dirent.namlen;
+			if (namlen <= sizeof(bref.check.buf))
+				dname = bref.check.buf;
+			else
+				dname = hammer2_xop_gdata(&xop->head)->buf;
+			ok = dir_emit(ctx, dname, namlen,
+			    bref.embed.dirent.inum, dtype);
+			if (namlen > sizeof(bref.check.buf))
+				hammer2_xop_pdata(&xop->head);
+			if (!ok)
+				break;
+		} else {
+			/*
+			 * Upstream prints and continues.  A type that
+			 * cannot be named is media this module does not
+			 * understand, so it is reported once and the
+			 * listing goes on rather than truncating.
+			 */
+			WARN_ONCE(1, "hammer2: bad chain type %d in readdir\n",
+			    bref.type);	/* Linux */
+		}
+	}
+	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+
+	if (error == ENOENT) {
+		error = 0;
+		ctx->pos = HAMMER2_DIRHASH_USERMSK;
+	}
+	hammer2_inode_unlock(ip);
+
+	return (-error);	/* Linux: negative */
+}
+
 const struct inode_operations hammer2_dir_iops = {
 	.lookup		= hammer2_vop_lookup,
 };
@@ -155,16 +275,21 @@ const struct inode_operations hammer2_dir_iops = {
  * first `ls` on a mount point would produce one.  These two tables exist
  * so that never happens; what is deferred is what is in them.
  *
- * DEFER(the read path lands, with ->read_folio): the directory table has
- * no ->iterate_shared, which iterate_dir() in fs/readdir.c reports as
- * ENOTDIR and nothing else, so a readdir fails cleanly.  Its content is
- * upstream's hammer2_readdir().  The regular-file table is empty, which
- * leaves FMODE_CAN_READ unset in do_dentry_open() and makes a read fail
- * EINVAL, again with no warning: an open succeeds and reads do not.
+ * DEFER(the read path lands, with ->read_folio): the regular-file table
+ * is empty, which leaves FMODE_CAN_READ unset in do_dentry_open() and
+ * makes a read fail EINVAL with no warning: an open succeeds and reads
+ * do not.
+ *
+ * generic_file_llseek() permits a seek to a position that is not a valid
+ * directory key, which then starts the scan at the next key above it and
+ * skips entries.  DragonFly carries the same exposure, since a cookie is
+ * a hash and not an index in both, so this matches it rather than
+ * inventing a check the core does not make.
  */
 const struct file_operations hammer2_dir_fops = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
+	.iterate_shared	= hammer2_vop_readdir,
 };
 
 const struct file_operations hammer2_file_fops = {
