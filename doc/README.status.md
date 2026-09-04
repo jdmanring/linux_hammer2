@@ -1,17 +1,23 @@
 Status
 ======
 
-No module has been loaded, so nothing here has been observed running.
-This file is the one to correct rather than to argue with: if a claim here
-is stale, it is a defect.
+The module loads and unloads; nothing has been mounted, so no filesystem
+behavior here has been observed running. This file is the one to correct
+rather than to argue with: if a claim here is stale, it is a defect.
 
 ## The build
 
-The module builds, warning-clean, and has never been loaded. `make`
+The module builds, warning-clean, and loads. `make`
 produces `src/sys/fs/hammer2/hammer2.ko`: thirteen objects, license
 `Dual BSD/GPL`, alias `fs-hammer2`, no module dependencies. That is 0.3's
-first criterion. Loading and unloading are the other two and need the
-Linux guest `README.roadmap.md` describes.
+first criterion, and the second was exercised on 2026-09-03 on the
+`fedora44` guest, at 7.2.3-300.fc45 and again at
+7.3.0-0.rc0.260819gbd5f485f3f02: `insmod` returns 0, `/proc/filesystems`
+lists `hammer2`, the reference count reads 0, `rmmod` returns 0 and
+`/sys/module/hammer2` is gone afterwards. The log carries the two taint
+lines an unsigned out-of-tree module always produces and nothing else.
+What the criterion asks beyond that is unmeasured: no kernel measured so
+far sets `CONFIG_DEBUG_KMEMLEAK` or `CONFIG_PROVE_LOCKING`.
 
 It reached that state on 2026-09-02, in one day and two steps. The first
 `make` ever run reported four undefined symbols out of modpost:
@@ -40,7 +46,9 @@ trees come from the store the syntax gate already finds, and are built with
 `LLVM=1`, since they were built by clang and kbuild passes the compiler's
 own flags to whatever builds against it. It also builds at 6.18, which is
 what exercises the `inode_state_read_once` shim below. All are
-warning-clean. Nothing has been loaded on any of them.
+warning-clean. The loads above were of a module built for the guest's own
+kernels, and neither 7.3-rc1 tree has been loaded, since a module built
+against one kernel is refused by another before any of its code runs.
 
 ## What is in the tree
 

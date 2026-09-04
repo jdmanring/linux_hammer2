@@ -12,7 +12,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-No module has been loaded, so nothing here has been observed running. The
+No module has been mounted, so no filesystem behavior here has been observed running. The
 OS shim, the DIO layer and the whole carried core type-check against real
 kernel headers under two compilers, with controls that fail when they
 should, and `make` produces a warning-clean `hammer2.ko`. What exists of the
