@@ -738,6 +738,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
+| `test-fixtures.sh` | more images than there are target names | 26 manifests with an image beside each, which reports the ceiling rather than attaching over the last |
 
 All exit 2 and name what was missing. Two defects fell out of driving
 them: `test-shim.sh` was the only gate whose message omitted the

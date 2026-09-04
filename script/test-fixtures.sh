@@ -108,6 +108,17 @@ fi
 $VIRSH domstate "$GUEST" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 
+# The target names run vdb through vdz, so twenty-five is the ceiling and it
+# is checked rather than reached. The increment below saturates at z rather
+# than erroring, so without this the twenty-sixth image would be attached
+# over the twenty-fifth and the gate would report a failure it had caused.
+nman=$(printf '%s\n' $manifests | command grep -c .)
+if [ "$nman" -gt 25 ]; then
+	echo "fixtures: COULD-NOT-RUN: $nman images, and the target names run" >&2
+	echo "          vdb through vdz, so this gate mounts at most 25" >&2
+	exit 2
+fi
+
 # Build first. A gate that boots a guest before finding out the module does
 # not compile has spent four gigabytes to tell you what make would have.
 if ! make KDIR="$KDIR" >/dev/null 2>&1; then
