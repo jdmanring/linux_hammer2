@@ -352,11 +352,24 @@ names the holder for "a device shared by several superblocks of that
 type" as the `file_system_type`, which is what this port now passes; each
 mounted PFS then claims every device it spans for its own superblock and
 releases the claim at unmount, so the device's freeze, thaw, sync and
-mark_dead callbacks reach every mount on it rather than the first. That
-reach is read from `fs/super.c`, not measured: nothing in userspace
-freezes a block device under a read-only mount. What is measured is the
-mount, the compare, both unmount orders, the remount, an empty kmemleak
-scan and a `dmesg` holding only the two recorded floors.
+mark_dead callbacks reach every mount on it rather than the first.
+
+That reach is measured, with a control. Device-mapper's suspend calls
+`bdev_freeze()` on the device it wraps, which is the path that runs the
+holder's freeze callback, and `fsfreeze -u` on a mount exits 0 only if
+that superblock is frozen. With `f7` behind a linear `dm` target and
+both PFSes mounted read-only, `dmsetup suspend` followed by a thaw of
+each mount gives, on `artix-s6-kde` at 7.3.0-rc1:
+
+| module | thaw `ROOT` | thaw `DATA` |
+|---|---|---|
+| with the per-mount claim | 0 | 0 |
+| the commit before it | 0 | `EINVAL`, not frozen |
+
+So before the change the second mount never heard the device freeze,
+and after it both do. The same run measured the mount, the compare,
+both unmount orders, the remount after a reload, an empty kmemleak scan
+and a `dmesg` holding only the two recorded floors.
 
 The deferral this closes had over-claimed. It said that at 7.3 the first
 mount's superblock was freed while its table entry lived on. Reading

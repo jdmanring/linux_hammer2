@@ -584,6 +584,13 @@ milestone's own claim the writer has to be DragonFly:
     newfs_hammer2 -L DFLY /dev/vbd1
     mount -t hammer2 /dev/vbd1@DFLY /mnt/h2w
 
+To ask whether a device callback reaches every PFS mounted on it, wrap
+the device in a linear `dm` target on the Linux guest, mount two PFSes
+from `/dev/mapper/<name>@<label>`, `dmsetup suspend` it, and `fsfreeze -u`
+each mount: the thaw exits 0 on a frozen superblock and fails with
+`EINVAL` on one the freeze never reached. `README.status.md` records the
+result for `f7` with and without the per-mount claim.
+
 For `f6` the same, with the disk attached to the shut-off domain under
 `--config` so no reboot is needed, and `hammer2 setcomp zlib /mnt/h2w`
 run before the first file is written, since the setting is inherited by
