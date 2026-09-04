@@ -265,7 +265,10 @@ Three prototype-argument hits and one `return (x);` arrived with
 `hammer2_ondisk.c` and their declarations in `hammer2.h`, the code that
 gives each mounted PFS its own claim on the device. They are the two
 mechanical BSD-style rows below, written in the tree's own style so the
-file stays one dialect, and they convert with the rest.
+file stays one dialect, and they convert with the rest. One more
+`LINUX_VERSION_CODE` hit came with them, the guard that makes the
+registration a no-op below 7.3, and it has the same answer as the four
+before it.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
