@@ -224,6 +224,17 @@ gained or lost a single finding. The two checkers differ in size and hash,
 so the baseline had to be regenerated to record which one produced it, but
 nothing about this tree reads differently to the newer one.
 
+925 to 940 when the read path landed across `hammer2_strategy.c`,
+`hammer2_vnops.c` and `hammer2_inode.c`: 15 hits over about 200 new lines,
+one per 13 and the densest batch so far, which is what a file of small
+functions written in the tree's own style looks like when none of it is
+carried. Seven are `return is not a function`, four are the errno sign,
+two are unnamed prototype arguments and two are BSD continuation indent.
+No category is new. The four errno hits are the recorded port decision
+rather than a finding: errnos are positive inside the module by the core's
+convention and the VFS boundary negates, so `hammer2_read_folio()` returns
+`-error` while the completion beneath it returns `EIO`.
+
 924 to 925 when `hammer2_mtx_upgrade_try()` in `hammer2_os.h` became a
 real shared to exclusive transition rather than a predicate that could
 never succeed. One hit, `return is not a function, parentheses are not

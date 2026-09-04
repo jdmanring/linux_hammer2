@@ -25,9 +25,11 @@ marked in place, and an OS shim makes it compile. Same file
 names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 
-**It mounts read-only and lists, and it cannot read a file's contents
-yet.** A `makefs` image mounts, `find` walks the whole tree, and `cat`
-returns `EINVAL` because `->read_folio` is not written. See
+**It mounts a `makefs` image read-only, lists it and reads it.** `find`
+walks the whole tree and every file compares byte for byte against the
+tree it was made from, at 511 bytes, at 512, at one page, at one 64 KiB
+block and at 200 KB. Blocks written compressed are refused rather than
+decoded, and nothing can be written. See
 [doc/README.status.md](doc/README.status.md) for exactly what exists and
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of

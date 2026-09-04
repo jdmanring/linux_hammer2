@@ -81,6 +81,9 @@
 
 #include "hammer2.h"
 
+#include <linux/highmem.h>	/* Linux: memcpy_to_folio, folio_zero_range */
+#include <linux/pagemap.h>	/* Linux: folio_pos, folio_unlock */
+
 /*
  * Clear the live dedup heuristic.  Carried.
  */
@@ -111,19 +114,204 @@ hammer2_dedup_clear(hammer2_dev_t *hmp)
  */
 
 /*
- * DEFER(the read path lands, with ->read_folio): the body is upstream's
- * hammer2_xop_strategy_read() down to hammer2_xop_collect(), then a
- * completion that copies into xop->folio instead of a struct buf: the
- * embedded-inode case, the three HAMMER2_DEC_COMP() cases on the kernel's
- * own LZ4 and zlib, and hammer2_dedup_record() for the on-media case.
+ * Backend for a logical read: resolve the chain covering xop->lbase and
+ * feed it to the frontend.
+ *
+ * This is the first half of upstream's hammer2_xop_strategy_read() and
+ * none of the second.  Upstream's second half races the frontend to
+ * complete a bio, because a DragonFly XOP runs on a backend thread and
+ * either end may finish first.  hammer2_xop_start() in this port calls the
+ * storage function inline on the calling thread, so there is no race to
+ * win: the frontend collects after start returns, exactly as ->lookup and
+ * ->iterate_shared do.  That is why hammer2_xop_strategy carries no
+ * finished flag, no lock and no bio, which was decided when the struct was
+ * written.
  */
 void
-hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch, int clindex)
+hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch __maybe_unused,
+    int clindex)
 {
 	hammer2_xop_strategy_t *xop = &arg->xop_strategy;
+	hammer2_chain_t *parent, *chain;
+	hammer2_key_t key_dummy, lbase;
+	int error;
 
-	WARN_ONCE(1, "hammer2: strategy read reached with no read path\n");
-	hammer2_xop_feed(&xop->head, NULL, clindex, HAMMER2_ERROR_EIO);
+	lbase = xop->lbase;
+
+	parent = hammer2_inode_chain(xop->head.ip1, clindex,
+	    HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED);
+	if (parent) {
+		chain = hammer2_chain_lookup(&parent, &key_dummy, lbase, lbase,
+		    &error, HAMMER2_LOOKUP_ALWAYS | HAMMER2_LOOKUP_SHARED);
+		if (chain)
+			error = chain->error;
+	} else {
+		error = HAMMER2_ERROR_EIO;
+		chain = NULL;
+	}
+	hammer2_xop_feed(&xop->head, chain, clindex, error);
+	if (chain) {
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
+	}
+	if (parent) {
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+	}
+}
+
+/*
+ * Fill xop->folio from the collected chain.  Returns a positive errno by
+ * the core's convention; the VFS boundary negates.
+ *
+ * WHAT DIFFERS FROM UPSTREAM, AND WHY IT IS NOT A LIBERTY.  Upstream
+ * panics on an unknown compression type and on an unknown bref type, and
+ * on a failed LZ4 decompression it zeroes its buffer, sets b_resid to 0
+ * and reports success.  Neither is available here.  The port's rule for
+ * the OS half is a warning plus recovery plus an errno, and more than that:
+ * on Linux a folio marked uptodate is what every later reader of that file
+ * offset gets, without asking this module again.  Zero-filling a folio
+ * whose contents could not be decoded and calling it success is
+ * indistinguishable, from userspace, from a file that really holds zeroes.
+ * So every path that cannot produce the bytes returns an error and leaves
+ * the folio not uptodate.
+ *
+ * DEFER(a fixture holding compressed blocks is read): LZ4 and ZLIB are
+ * floors that fail loudly rather than translations.  The kernel exports
+ * LZ4_decompress_safe() under the name upstream already calls and
+ * zlib_inflate() beside it, so neither needs vendoring, but the zlib
+ * contract differs in shape rather than in name: there is no
+ * inflateInit(), and zlib_inflateInit2() requires the caller to supply
+ * strm.workspace sized by zlib_inflate_workspacesize().  Both also need a
+ * scratch buffer the size of the logical block, which hammer2_xop_start()
+ * allocates today only for the write descriptor.  Writing either against
+ * media that has never been read is how a decompressor returns plausible
+ * wrong bytes, so they land when there is a fixture that exercises them.
+ */
+static int
+hammer2_strategy_read_completion(hammer2_xop_strategy_t *xop,
+    hammer2_chain_t *focus, const char *data)
+{
+	struct folio *folio = xop->folio;
+	size_t fsize = folio_size(folio);
+	hammer2_off_t skip;
+	size_t len;
+
+	if (focus->bref.type == HAMMER2_BREF_TYPE_INODE) {
+		/*
+		 * The first HAMMER2_EMBEDDED_BYTES of a small file live in
+		 * the inode itself, so the block base is the file base.
+		 */
+		const hammer2_inode_data_t *ripdata;
+
+		ripdata = (const hammer2_inode_data_t *)data;
+		if (xop->lbase != 0) {
+			WARN_ONCE(1, "hammer2: embedded data at offset %lld\n",
+			    (long long)xop->lbase);
+			return (EIO);
+		}
+		len = fsize < HAMMER2_EMBEDDED_BYTES ?
+		    fsize : HAMMER2_EMBEDDED_BYTES;
+		memcpy_to_folio(folio, 0, ripdata->u.data, len);
+		if (len < fsize)
+			folio_zero_range(folio, len, fsize - len);
+		return (0);
+	}
+
+	if (focus->bref.type != HAMMER2_BREF_TYPE_DATA) {
+		WARN_ONCE(1, "hammer2: bad chain type %d in read\n",
+		    focus->bref.type);
+		return (EIO);
+	}
+
+	/*
+	 * The chain covers a key range that begins at or below this folio,
+	 * a logical block being up to HAMMER2_PBUFSIZE and a folio in a
+	 * file mapping being one page.  So the bytes wanted start at an
+	 * offset inside the block rather than at its base.  Upstream has no
+	 * such offset because a DragonFly logical buffer is the block.
+	 */
+	if (xop->lbase < focus->bref.key) {
+		WARN_ONCE(1, "hammer2: chain key %llx above read at %llx\n",
+		    (unsigned long long)focus->bref.key,
+		    (unsigned long long)xop->lbase);
+		return (EIO);
+	}
+	skip = xop->lbase - focus->bref.key;
+
+	switch (HAMMER2_DEC_COMP(focus->bref.methods)) {
+	case HAMMER2_COMP_NONE:
+	case HAMMER2_COMP_AUTOZERO:
+		/*
+		 * Stored uncompressed, so focus->bytes is the logical size
+		 * and the wanted bytes can be copied straight out of it.
+		 */
+		if (skip >= focus->bytes) {
+			folio_zero_range(folio, 0, fsize);
+			return (0);
+		}
+		len = focus->bytes - skip;
+		if (len > fsize)
+			len = fsize;
+		memcpy_to_folio(folio, 0, data + skip, len);
+		if (len < fsize)
+			folio_zero_range(folio, len, fsize - len);
+		return (0);
+	default:
+		WARN_ONCE(1, "hammer2: compression method %d is not read yet\n",
+		    HAMMER2_DEC_COMP(focus->bref.methods));
+		return (EIO);
+	}
+}
+
+/*
+ * Read one folio of a regular file.
+ *
+ * The folio arrives locked and must leave unlocked on every path,
+ * including every error: a folio released still locked leaves the next
+ * reader in folio_wait_locked() forever, which is a hang and writes no
+ * report.  folio_mark_uptodate() is what makes the contents authoritative
+ * for every later reader without asking this module again, so it is set
+ * only where the bytes are known to be right.
+ */
+int
+hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
+{
+	hammer2_xop_strategy_t *xop;
+	hammer2_inode_t *ip = VTOI(folio->mapping->host);
+	hammer2_chain_t *focus;
+	const char *data;
+	int error;
+
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	xop = hammer2_xop_alloc(ip, 0);
+	xop->lbase = folio_pos(folio);
+	xop->folio = folio;
+	hammer2_xop_start(&xop->head, &hammer2_strategy_read_desc);
+
+	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
+	if (error == 0) {
+		focus = xop->head.cluster.focus;
+		data = hammer2_xop_gdata(&xop->head)->buf;
+		error = hammer2_strategy_read_completion(xop, focus, data);
+		hammer2_xop_pdata(&xop->head);
+	} else if (error == ENOENT) {
+		/*
+		 * No chain covers this offset, which is a hole rather than
+		 * a failure.  Upstream zeroes the buffer and reports
+		 * success at the same place.
+		 */
+		folio_zero_range(folio, 0, folio_size(folio));
+		error = 0;
+	}
+	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	hammer2_inode_unlock(ip);
+
+	if (error == 0)
+		folio_mark_uptodate(folio);
+	folio_unlock(folio);
+
+	return (-error);	/* Linux: negative */
 }
 
 /*

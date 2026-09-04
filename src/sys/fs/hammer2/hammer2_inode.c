@@ -839,6 +839,7 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	} else {
 		inode->i_op = &hammer2_file_iops;	/* Linux */
 		inode->i_fop = &hammer2_file_fops;	/* Linux */
+		inode->i_mapping->a_ops = &hammer2_file_aops;	/* Linux */
 	}
 
 	/*

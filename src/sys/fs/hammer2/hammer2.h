@@ -940,6 +940,7 @@ extern const struct inode_operations hammer2_dir_iops;	/* Linux */
 extern const struct inode_operations hammer2_file_iops;	/* Linux */
 extern const struct file_operations hammer2_dir_fops;	/* Linux */
 extern const struct file_operations hammer2_file_fops;	/* Linux */
+extern const struct address_space_operations hammer2_file_aops;	/* Linux */
 
 extern hammer2_xop_desc_t hammer2_nresolve_desc;
 extern hammer2_xop_desc_t hammer2_unlink_desc;
@@ -1202,6 +1203,7 @@ int hammer2_vfs_enospace(hammer2_inode_t *, loff_t, const struct cred *);
 /* hammer2_xops.c */
 void hammer2_xop_ipcluster(hammer2_xop_t *, void *, int);
 void hammer2_xop_readdir(hammer2_xop_t *, void *, int);
+int hammer2_read_folio(struct file *, struct folio *);	/* Linux */
 void hammer2_xop_nresolve(hammer2_xop_t *, void *, int);
 void hammer2_xop_unlink(hammer2_xop_t *, void *, int);
 void hammer2_xop_nrename(hammer2_xop_t *, void *, int);

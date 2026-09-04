@@ -275,10 +275,8 @@ const struct inode_operations hammer2_dir_iops = {
  * first `ls` on a mount point would produce one.  These two tables exist
  * so that never happens; what is deferred is what is in them.
  *
- * DEFER(the read path lands, with ->read_folio): the regular-file table
- * is empty, which leaves FMODE_CAN_READ unset in do_dentry_open() and
- * makes a read fail EINVAL with no warning: an open succeeds and reads
- * do not.
+ * The regular-file table gained ->read_iter and the mapping gained
+ * ->read_folio when the read path landed, so a read reaches the media.
  *
  * generic_file_llseek() permits a seek to a position that is not a valid
  * directory key, which then starts the scan at the next key above it and
@@ -292,7 +290,23 @@ const struct file_operations hammer2_dir_fops = {
 	.iterate_shared	= hammer2_vop_readdir,
 };
 
+/*
+ * A regular file reads through the page cache.  ->read_iter is what sets
+ * FMODE_CAN_READ in do_dentry_open(): without it an open succeeds and
+ * every read fails EINVAL whatever the address space can do, which is the
+ * state this table recorded until the read path landed.
+ */
 const struct file_operations hammer2_file_fops = {
+	.llseek		= generic_file_llseek,
+	.read_iter	= generic_file_read_iter,
+};
+
+/*
+ * DEFER(the write path lands: 0.5): no ->writepages and no
+ * ->write_begin, so the mapping is read-only, which is what the mount is.
+ */
+const struct address_space_operations hammer2_file_aops = {
+	.read_folio	= hammer2_read_folio,
 };
 
 /*
