@@ -1,0 +1,5 @@
+# image f1
+# label TEST
+# writer makefs
+1b385affd7adb5a6283fef292b5df0f7  dir/deep/file.txt
+53a5ddaf4bc7985889604a4db028bd52  hello.txt

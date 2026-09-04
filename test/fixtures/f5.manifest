@@ -1,0 +1,9 @@
+# image f5
+# label DFLY
+# writer dragonfly 6.4-RELEASE newfs_hammer2
+21a5d574b5e734ea31fef6f17ab6f577  compressible.txt
+1b385affd7adb5a6283fef292b5df0f7  dir/deep/file.txt
+65d35b28ed845a91739ba736e4a6a6c1  hello.txt
+8d9f119284760c58bee968649f4d2aff  random128k.bin
+19e085f315d7ec327d32c4ae980176a5  sparse.bin
+900150983cd24fb0d6963f7d28e17f72  tiny.txt

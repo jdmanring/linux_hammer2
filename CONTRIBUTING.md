@@ -62,6 +62,7 @@ harder to keep.
     $ bash script/test-vectors-contract.sh
     $ bash script/test-posix.sh
     $ bash script/test-doc-prose.sh
+    $ bash script/test-fixtures.sh
     $ bash script/test-syntax.sh --selftest
     $ bash script/test-checkpatch.sh --selftest
     $ bash script/test-provenance.sh --selftest

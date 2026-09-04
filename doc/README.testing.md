@@ -28,6 +28,7 @@ network:
 Prose gate, needs vale and nothing else:
 
     $ bash script/test-doc-prose.sh   # vale over tracked .md, any finding is a failure
+    $ bash script/test-fixtures.sh    # every fixture mounted on a guest, files compared to manifests
 
 `test-absence.sh` resolves a claim rather than a citation. Where a document
 says a named function is not carried, it asks `src/` whether that function
@@ -499,6 +500,38 @@ kmemleak twice: both decompression paths allocate per folio and the ZLIB
 one also allocates an inflate workspace, so a leak here is per read rather
 than per mount.
 
+## The fixture gate
+
+`script/test-fixtures.sh` is every read-path measurement in this document
+run without a person typing them. It builds the module, starts the guest
+if it is not already running, attaches each image in `H2_FIXTURE_DIR`
+whose manifest is committed under `test/fixtures/`, mounts it read-only by
+the label the manifest names, and compares every file with `md5sum -c`.
+
+The manifests are here and the images are not, because an image is 2 to 8
+GiB and fully allocated while the manifest is the part that constitutes
+the claim. `f5.manifest` holds the checksums DragonFly itself reported
+before unmounting, which is the only form that measurement can be kept in:
+regenerating them on Linux would compare this module against itself.
+
+It carries a negative control per image rather than only in the selftest.
+After a manifest verifies, one hash in it is altered and the same mount is
+compared again, which must fail. Without that, an empty sums file, a
+silent `md5sum` and a mount that landed somewhere else all read as a pass.
+
+It leaves the machine as it found it: what it attached is detached, and
+the guest is shut down only if the gate started it. Exit 2 is
+COULD-NOT-RUN and is reported for a missing guest, missing images, no
+`KDIR` and a guest that does not answer ssh, because most machines have
+none of these and CI has none of them at all. A gate that passed there
+would make the whole read path look covered by CI when nothing ran.
+
+    KDIR=~/kernels/linux-7.3-rc1 bash script/test-fixtures.sh
+
+Measured on 2026-09-04: five images, 21 files, 0 failures, the five being
+`makefs` output, `makefs` at LZ4 and at ZLIB, the boundary tree, and media
+DragonFly wrote.
+
 ## Media DragonFly wrote
 
 Everything above is `makefs` output, which is a Linux tool. For the
@@ -686,6 +719,9 @@ disagreeing. Read the table.
 | `test-syntax.sh` | no kernel build dir | `KDIR` at a path that does not exist |
 | `test-posix.sh` | no shell realized | `H2_DASH` and `H2_BUSYBOX` at paths that do not exist |
 | `test-doc-prose.sh` | no vale | a `PATH` holding none, driven 2026-09-02 |
+| `test-fixtures.sh` | no image, no guest, no `KDIR` | each driven by pointing the variable at a path that does not exist |
+| `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
+| `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 
 All exit 2 and name what was missing. Two defects fell out of driving
 them: `test-shim.sh` was the only gate whose message omitted the

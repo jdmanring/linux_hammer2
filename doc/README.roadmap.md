@@ -320,9 +320,13 @@ The first milestone that proves anything about the format, and H1's exit.
 6. F1 against F2 for the same tree shapes: every difference between a
    `makefs`-written volume and a kernel-written one is listed.
 
-Gate: a read-only fixture gate, unwritten, that builds the module, boots a
-guest, mounts every F1 and F2 fixture, compares manifests, runs F3, and exits
-2 without a guest. Working name `test-hammer2-linux-ro.sh`.
+Gate: `script/test-fixtures.sh`, which builds the module, starts the guest,
+mounts every image whose manifest is committed, compares them and exits 2
+without a guest. It took the tree's own naming rather than the working name
+`test-hammer2-linux-ro.sh` recorded here, that name having been chosen while
+the gate was expected to live in Saxum. What it does not yet do is run F3 or
+read the on-media block counts that say which branch of the read completion
+each file took.
 
 Work: the read-side VFS entry. `lookup` and `iterate_shared` are written and
 a `makefs` tree lists correctly at every depth, which leaves F1 `empty` and

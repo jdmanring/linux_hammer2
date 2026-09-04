@@ -1,0 +1,8 @@
+# image f2
+# label TEST2
+# writer makefs
+30434310774d1828c79a5a6d527acba9  d200k.bin
+9be85965a74987f3821d7dce9dc982e7  d4k.bin
+14a6278973c241956a97aa0544328bfa  d512.bin
+3af3260b4c62449fb403aefdd391c517  d64k.bin
+dc1c50246bf0c9d112ae426500a49ccd  e511.bin

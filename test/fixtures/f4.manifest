@@ -1,0 +1,7 @@
+# image f4
+# label TEST4
+# writer makefs CompressionType=zlib
+b9916f7c285f4acaedb14c21254e7b6e  lz4_text.bin
+5768b6843404f5531a1a5c49bd254bff  random128k.bin
+015bb3d9a2eca5be2e47da3375279231  sparse.bin
+fcd6bcb56c1689fcef28b57c22475bad  zeros64k.bin
