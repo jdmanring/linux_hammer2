@@ -365,6 +365,34 @@ not the machine. Both were already in the nix store. Asking PATH about a
 machine whose software lives in a store is the same error as asking a
 package version about an artifact.
 
+## Run what CI runs, before pushing
+
+CI was being used as a compiler: one push per question, each answer
+arriving as a failure notification. Twenty-six such runs between
+2026-08-29 and 2026-09-03, and two more on 2026-09-04 when the checkpatch
+pin moved and the gate selftests were not run locally, which CI runs as a
+step of its own.
+
+`script/pre-push-check.sh` runs every `script/test-*.sh` and every gate
+selftest, the selftests enumerated by implementation rather than by name
+the way CI enumerates them. Install it:
+
+    $ ln -sf ../../script/pre-push-check.sh .git/hooks/pre-push
+
+It is not named `test-*.sh` and does not live among the gates as an equal:
+the eleven are run individually on purpose, and one exit status for eleven
+questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
+overrides it for a push that is deliberately ahead of a green tree.
+
+It fetches the checker the baseline records and caches it under
+`$XDG_CACHE_HOME/linux_hammer2`, keyed by the sha256 the baseline names.
+Without that the style gate finds whatever checker the machine has, cannot
+attribute a moved deviation set to this code, and reports COULD-NOT-RUN,
+which this check would report as a warning: a real style regression would
+then pass a push. Both directions were driven before it was committed. On
+a clean tree it exits 0; with one category count altered in the baseline
+it names the moved line and exits 1.
+
 ## Getting a kernel newer than the distribution ships
 
 The kernel of record moves faster than any guest in the fleet, so testing
