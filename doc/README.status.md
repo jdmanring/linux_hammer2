@@ -145,7 +145,7 @@ until `->read_folio` lands.
 
 Style baseline 924 to 925, the one hit `return is not a function`.
 
-## The second mount, and the use after free it found
+## Listing a mount, and the use after free it found
 
 Listing a subdirectory oopsed with a NULL dereference in
 `hammer2_xop_unset_ipdep()`, reached from `hammer2_xop_retire()` at the

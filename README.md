@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-does%20not%20mount%20yet-red.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-mounts%20and%20lists%2C%20read--only-yellow.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-6.15%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -25,7 +25,9 @@ marked in place, and an OS shim makes it compile. Same file
 names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 
-**It does not mount anything yet.** See
+**It mounts read-only and lists, and it cannot read a file's contents
+yet.** A `makefs` image mounts, `find` walks the whole tree, and `cat`
+returns `EINVAL` because `->read_folio` is not written. See
 [doc/README.status.md](doc/README.status.md) for exactly what exists and
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of

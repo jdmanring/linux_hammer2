@@ -440,9 +440,15 @@ modules, which trims `CONFIG_BLK_DEV_LOOP`, and a virtio disk exercises
 the 7.3 device-open shim as well:
 
     virsh attach-disk artix-s6-kde /mnt/storage/hammer2-fixtures/f1.img vdb \
-        --targetbus virtio --persistent
+        --targetbus virtio
     mount -t hammer2 -o ro /dev/vdb@TEST /mnt/h2
     find /mnt/h2
+
+The attachment is live and not persistent, which `virsh dumpxml
+artix-s6-kde --inactive` reports by not naming the image at all. It
+survives `virsh reset`, which is why a run of resets can pass without the
+disk ever being in the domain's stored configuration, and it is gone after
+a shutdown. Add `--persistent` to keep it, or expect to attach it again.
 
 A `find` is the check worth running rather than one `ls`, since it walks
 every directory and reaches each one through a lookup on its parent. At
