@@ -7,11 +7,14 @@
 # and two more on 2026-09-04 when a pin move was pushed without running
 # the gate selftests, which CI runs as a step of its own.
 #
-# It is deliberately NOT under script/, and deliberately not named
-# test-*.sh: the eleven gates are run individually on purpose and CI
-# enumerates them, so a runner living beside them would be picked up as a
-# twelfth gate and would also invite reading one exit status for eleven
-# questions. This is local hygiene, not a gate.
+# It sits under script/ so a clone gets it, since .git/hooks is never
+# versioned, and is deliberately not named test-*.sh: the eleven gates are
+# run individually on purpose and CI enumerates them by that glob, so a
+# runner named like one would be picked up as a twelfth gate and would
+# also invite reading one exit status for eleven questions. This is local
+# hygiene, not a gate. Install it with
+#
+#     ln -sf ../../script/pre-push-check.sh .git/hooks/pre-push
 #
 # H2_SKIP_PREPUSH=1 git push  skips it, for a push that is deliberately
 # ahead of a green tree. Exit 2 from a gate is COULD-NOT-RUN and is a
