@@ -151,15 +151,17 @@ hammer2_register_sb(struct super_block *sb, hammer2_pfs_t *pmp)
 		if (rchain == NULL)
 			continue;
 		TAILQ_FOREACH(e, &rchain->hmp->devvp_list, entry) {
+			/* The entry first, so a failed open leaks nothing. */
+			n = hmalloc(sizeof(*n), M_HAMMER2, M_WAITOK | M_ZERO);
 			bdev_file = fs_bdev_file_open_by_dev(e->devno,
 			    sb_open_mode(sb->s_flags), &hammer2_fs_type, sb);
 			if (IS_ERR(bdev_file)) {
+				hfree(n, M_HAMMER2, sizeof(*n));
 				hprintf("failed to claim %s for this mount %d\n",
 				    e->path, (int)-PTR_ERR(bdev_file));
 				hammer2_unregister_sb(pmp);
 				return (-PTR_ERR(bdev_file));	/* positive */
 			}
-			n = hmalloc(sizeof(*n), M_HAMMER2, M_WAITOK | M_ZERO);
 			n->bdev_file = bdev_file;
 			n->devno = e->devno;
 			n->open = 1;

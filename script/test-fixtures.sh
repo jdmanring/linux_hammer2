@@ -220,8 +220,10 @@ for m in $manifests; do
 	fi
 
 	vd=vdb
+	# --mode readonly: the fixture is the claim, so the guest is not given
+	# a way to write it, whatever the mount asks for.
 	$VIRSH attach-disk "$GUEST" "$img" "$vd" --targetbus virtio \
-	    >/dev/null 2>&1 || {
+	    --mode readonly >/dev/null 2>&1 || {
 		echo "  FAIL $base: could not attach $img as $vd"
 		fail=$((fail + 1)); continue; }
 	attached="$vd"
@@ -327,12 +329,15 @@ for m in $manifests; do
 	# whose data block was altered on media; the checksum on the block
 	# has to catch it and the read has to fail, never return the bytes.
 	for rel in $corrupt; do
+		err=$(ssh "$GUEST_SSH" "cd $mnt && cat '$rel' 2>&1 > /dev/null; \
+		    dmesg | grep hammer2 | tail -1" 2>/dev/null)
 		if ssh "$GUEST_SSH" "cd $mnt && cat '$rel' > /dev/null" \
 		    >/dev/null 2>&1; then
 			echo "  FAIL $base: $rel read back, its altered block unnoticed"
 			fail=$((fail + 1)); continue 2
 		fi
 		corrupts=$((corrupts + 1))
+		printf '%s\n' "$err" | sed 's/^\[[^]]*\] //; s/^/        /'
 	done
 
 	# THE SYMLINKS, WHICH md5sum FOLLOWS AND SO NEVER READS. A symlink's

@@ -4,8 +4,10 @@ Status
 The module mounts a HAMMER2 volume read-only, lists it and reads it. Every
 file in a `makefs` fixture compares byte for byte with the tree it was
 made from, across the sizes the code branches on, and so does every file
-on media DragonFly itself created and wrote. LZ4 and ZLIB blocks decode
-and symlinks resolve. Nothing can be written.
+on media DragonFly itself created and wrote, including the DragonFly
+guest's own installed root. LZ4 and ZLIB blocks decode, symlinks resolve,
+a block whose check code does not match is refused on read, and a volume
+header that fails its crc is not mounted. Nothing can be written.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
@@ -439,7 +441,7 @@ checker's verdict taken on DragonFly before any Linux read:
 
 | image | alteration | `fsck_hammer2` on DragonFly | this module |
 |---|---|---|---|
-| `f9` | one byte of `random128k.bin`'s data block, at byte 151126016 | one data blockref `Bad HAMMER2_CHECK_XXHASH64` at `0x9020010`, the rest clean | mounts, the other five files verify, reading that file fails |
+| `f9` | one byte of `random128k.bin`'s data block, at byte 151126016 | one data blockref `Bad HAMMER2_CHECK_XXHASH64` at `0x9020010`, the rest clean | mounts, the other five files verify, reading that file fails with `EIO` and `hammer2_chain_testcheck` names the same block, `0000000009020010`, in `dmesg` |
 | `f10` | one bit of the volume header at byte 64, inside sector 0's crc | `volume header crc mismatch sect0`, then `No valid volume headers found!` | mount refused: `failed to read /dev/vdb's volume header` |
 
 The gate reads both from their manifests: a `# corrupt relpath` row names
@@ -466,9 +468,9 @@ construction rather than re-hashed every run.
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1707 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2078 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 499 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_strategy.c` | 511 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1026 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 1028 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
