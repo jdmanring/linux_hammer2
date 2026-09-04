@@ -45,7 +45,18 @@ if [ "${1:-}" = "--selftest" ]; then
 	trap 'rm -rf "$t"' EXIT
 	cp "$cp0" "$t/cp.pl" || exit 2
 	printf '# selftest: content changed, behaviour identical\n' >> "$t/cp.pl"
-	out=$(CHECKPATCH="$t/cp.pl" CHECKPATCH_REF=v7.2 bash "$0" 2>&1)
+	# The ref comes from the baseline and is not written here. A literal
+	# rots the day the kernel of record moves, and it rotted exactly that
+	# way: with the baseline at v7.3-rc1 a hardcoded v7.2 made the version
+	# guard fire first and the sha256 branch this selftest exists for was
+	# never reached, so the check reported a failure about the wrong thing.
+	sref=$(sed -n '1s/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' \
+	    doc/checkpatch-baseline.txt)
+	if [ -z "$sref" ]; then
+		echo "selftest: COULD-NOT-RUN: no version in the baseline's first line"
+		exit 2
+	fi
+	out=$(CHECKPATCH="$t/cp.pl" CHECKPATCH_REF="$sref" bash "$0" 2>&1)
 	if printf '%s' "$out" | command grep -q 'sha256 does NOT match'; then
 		echo "  ok    a checker whose content differs is named as such"
 		echo "selftest: 1 check(s), 0 failed"
