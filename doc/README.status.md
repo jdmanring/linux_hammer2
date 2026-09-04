@@ -3,8 +3,9 @@ Status
 
 The module mounts a HAMMER2 volume read-only, lists it and reads it. Every
 file in a `makefs` fixture compares byte for byte with the tree it was
-made from, across the sizes the code branches on. A block written
-compressed is refused rather than decoded, and nothing can be written.
+made from, across the sizes the code branches on, and so does every file
+on media DragonFly itself created and wrote. LZ4 and ZLIB blocks decode.
+Nothing can be written.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
