@@ -137,7 +137,7 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 
 	if (error && error != ENOENT)
-		return (ERR_PTR(-error));	/* Linux: negative */
+		return (ERR_PTR(hammer2_vfs_errno(error)));	/* Linux */
 
 	return (d_splice_alias(inode, dentry));
 }
@@ -258,7 +258,7 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 	}
 	hammer2_inode_unlock(ip);
 
-	return (-error);	/* Linux: negative */
+	return (hammer2_vfs_errno(error));	/* Linux: negative, EDOM is EIO */
 }
 
 const struct inode_operations hammer2_dir_iops = {

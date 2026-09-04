@@ -270,7 +270,8 @@ file stays one dialect, and they convert with the rest. One more
 registration a no-op below 7.3, and it has the same answer as the four
 before it. The mount-time folio-size check in `hammer2_open_devvp()`
 added one positive `EOPNOTSUPP`, which is the errno row's disposition,
-and one `return (x);`.
+and one `return (x);`. `hammer2_vfs_errno()` and its four call sites
+added three more `return (x);`.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the

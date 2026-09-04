@@ -1221,7 +1221,7 @@ next_hmp:
 		hammer2_lk_unlock(&hammer2_mntlk);
 		hstrfree(devstr);
 		deactivate_locked_super(sb);
-		return (-error);
+		return (hammer2_vfs_errno(error));	/* Linux */
 	}
 
 	sb->s_root = d_make_root(root_inode);

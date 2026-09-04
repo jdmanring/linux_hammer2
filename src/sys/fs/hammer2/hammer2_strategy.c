@@ -476,23 +476,12 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
 
-	/*
-	 * Linux: hammer2_error_to_errno() is upstream's and maps a check
-	 * code mismatch, and anything it has no name for, to EDOM, which
-	 * DragonFly's read(2) does return.  Linux's does not: a block that
-	 * failed its checksum is an I/O error to every filesystem here,
-	 * and EDOM out of read(2) reads as a libm failure.  The core keeps
-	 * its mapping and the boundary translates.  The block is already
-	 * named in dmesg by hammer2_chain_testcheck().
-	 */
-	if (error == EDOM)
-		error = EIO;	/* Linux */
-
 	if (error == 0)
 		folio_mark_uptodate(folio);
 	folio_unlock(folio);
 
-	return (-error);	/* Linux: negative */
+	/* The block is already named in dmesg by hammer2_chain_testcheck(). */
+	return (hammer2_vfs_errno(error));	/* Linux: negative, EDOM is EIO */
 }
 
 /*

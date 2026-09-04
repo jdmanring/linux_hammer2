@@ -39,6 +39,7 @@
 #define _FS_HAMMER2_OS_H_
 
 #include <linux/version.h>
+#include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/rwsem.h>
@@ -794,6 +795,23 @@ static inline int
 hammer2_dev_cache_flush(struct file *bdev_file)
 {
 	return (-blkdev_issue_flush(file_bdev(bdev_file)));
+}
+
+/*
+ * The errno the VFS sees.  The core's hammer2_error_to_errno() is
+ * upstream's and maps a check code mismatch, and any error it has no
+ * name for, to EDOM, which DragonFly's system calls do return.  Linux's
+ * do not: a block that failed its checksum is EIO to every filesystem in
+ * the tree, and EDOM out of read(2) or stat(2) presents as a libm
+ * failure.  Every entry point the VFS calls returns through here, so the
+ * core keeps its mapping and the boundary owns what Linux sees, negated
+ * as the VFS expects.
+ */
+/* Linux */
+static inline int
+hammer2_vfs_errno(int error)
+{
+	return (error == EDOM ? -EIO : -error);
 }
 
 #endif /* !_FS_HAMMER2_OS_H_ */

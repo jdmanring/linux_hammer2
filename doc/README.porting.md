@@ -230,8 +230,11 @@ code mismatch, and any error it has no name for, to `EDOM`, and
 DragonFly's `read(2)` hands that to the caller. Linux's `read(2)` has no
 such value: a block that failed its checksum is `EIO` to every filesystem
 in the tree, and `EDOM` out of a read presents as a libm failure to
-anyone who sees it. `hammer2_read_folio()` translates `EDOM` to `EIO` at
-the boundary and the core keeps its own mapping, which is the pattern for
+anyone who sees it. `hammer2_vfs_errno()` in `hammer2_os.h` translates
+`EDOM` to `EIO` and negates, and every entry point the VFS calls returns
+through it, lookup, readdir, the folio read and the root inode at mount,
+so a corrupted directory block presents the same way a corrupted data
+block does. The core keeps its own mapping, which is the pattern for
 every such difference: the carried function stays upstream's and the
 Linux entry point owns what Linux sees. Measured on `f9`, the fixture
 with one data byte altered: before the translation `cat` reported
@@ -305,7 +308,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:74` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:75` | `KASSERTMSG`, which panics under the same knob |
-| `hammer2_os.h:147` | `hpanic`, `panic()` unconditionally |
+| `hammer2_os.h:148` | `hpanic`, `panic()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 

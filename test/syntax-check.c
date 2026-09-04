@@ -115,6 +115,7 @@ hammer2_syntax_check_all(void)
 	 */
 	(void)hammer2_dev_writeback(NULL);
 	(void)hammer2_dev_cache_flush(NULL);
+	(void)hammer2_vfs_errno(EDOM);
 
 	cpu_pause();
 	cpu_ccfence();
