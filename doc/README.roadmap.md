@@ -116,7 +116,7 @@ abbreviation. The stage is only ever written beside a version number.
 |---|---|---|---|
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
-| 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3 and at a 7.3 merge-window snapshot; the kmemleak and lockdep halves of criterion 2 are unmeasured, no stock kernel carrying either |
+| 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1. kmemleak reports no unreferenced object across a mount, unmount and unload. Lockdep cannot judge this port: every chain lock shares one class, so the first mount reports recursive locking and the instrument disables itself |
 | 0.4 | H1 | Read-only mount of DragonFly-written media | a makefs image mounts read-only at 7.2.3 and the root inode is real; readdir and statfs are not written and a read returns EINVAL. The milestone's own claim needs media DragonFly wrote, which is the dragonflybsd642 guest and has not been done |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
