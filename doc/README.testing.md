@@ -425,6 +425,44 @@ An image made by `makefs` is a Linux tool's output. The milestone's claim
 is about media DragonFly wrote, which is the `dragonflybsd642` guest in the
 fleet, and the two are different measurements.
 
+## Listing a fixture, and what a clean run does not say
+
+The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a
+file, a symlink, a directory, a directory inside it and a file inside
+that. It is deliberately deeper than one level, because the defect that
+`->iterate_shared` found was invisible at the root: the mount root holds a
+reference through `pmp->iroot` that a subdirectory does not, so an
+unbalanced reference count only shows below it.
+
+Attach the image as a disk rather than through a loop device. The Artix
+guest's kernel is configured by `localmodconfig` against its own loaded
+modules, which trims `CONFIG_BLK_DEV_LOOP`, and a virtio disk exercises
+the 7.3 device-open shim as well:
+
+    virsh attach-disk artix-s6-kde /mnt/storage/hammer2-fixtures/f1.img vdb \
+        --targetbus virtio --persistent
+    mount -t hammer2 -o ro /dev/vdb@TEST /mnt/h2
+    find /mnt/h2
+
+A `find` is the check worth running rather than one `ls`, since it walks
+every directory and reaches each one through a lookup on its parent. At
+`e76ad21` it returns all five paths and exits 0, `umount` and `rmmod` both
+return 0, and kmemleak reports nothing after a scan.
+
+Two results in that run are floors and not failures: reading a file
+returns `EINVAL`, `->read_folio` not being written, and `readlink` on the
+symlink returns `EINVAL`, `->get_link` not being written. `ls -l` on a
+directory holding a symlink therefore exits 1 while listing correctly,
+which is `readlink` failing and not `readdir`.
+
+A clean lockdep run on this says nothing about locking. Every chain lock
+takes its class from one `init_rwsem()` call site, so lockdep cannot
+distinguish a chain from its parent and clears `debug_locks` after its
+first complaint; the recursive-locking report in `hammer2_chain_lock()` is
+that blindness and not a finding. Read it as evidence about `readdir` and
+about memory, and not about lock order, until
+`DEFER(chain locks carry nesting notation)` lifts.
+
 ## Build against mainline, test against the kernel that ships
 
 The port claims to build against an unpatched Linux, and it runs on the

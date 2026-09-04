@@ -109,8 +109,8 @@ What the mount can do, measured one call at a time:
 | operation | result |
 |---|---|
 | `stat` the root | `directory`, inode 1, mode `drwxr-xr-x` |
-| `statfs` | `ENOSYS`, `->statfs` is not written |
-| `readdir` | `ENOTDIR`, `->iterate_shared` is not written |
+| `statfs` | `ENOSYS`, `->statfs` is not written, unchanged since |
+| `readdir` | `ENOTDIR`, `->iterate_shared` was not written at `1f025fe` |
 | open and read a file | `EINVAL`, the read path is not carried; livelocked before the lock fix below |
 
 The first three are floors behaving as recorded. The fourth is a defect.

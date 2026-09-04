@@ -49,6 +49,8 @@ in 0.2 can be prepared without it.
     this row: `hammer2_vfsops.c` owns `fs_context`, `super_operations` and
     `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
     `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
+    `lookup` and `iterate_shared` are written, so what is left of this row
+    is `statfs`, `read_folio` and the DIO read path beneath it.
     The PFS half of `hammer2_vfsops.c` and the mount path are written:
     `->get_tree` performs device and volume probing, reads the super-root,
     looks up the PFS label under `spmp->iroot`, allocates the `pmp`, and
@@ -318,8 +320,9 @@ Gate: a read-only fixture gate, unwritten, that builds the module, boots a
 guest, mounts every F1 and F2 fixture, compares manifests, runs F3, and exits
 2 without a guest. Working name `test-hammer2-linux-ro.sh`.
 
-Work: the read-side VFS entry, `lookup` and `iterate_shared` first, until F1
-`empty` and `flat` list correctly; `read_folio` and the DIO read path end to
+Work: the read-side VFS entry. `lookup` and `iterate_shared` are written and
+a `makefs` tree lists correctly at every depth, which leaves F1 `empty` and
+`flat` to be run against the manifests rather than to be made possible; `read_folio` and the DIO read path end to
 end, until F1 `sizes` matches at every boundary; the manifest's link-count,
 mode and owner columns, from the tree that holds the generator; F3, with
 `fsck_hammer2`'s verdicts recorded first; the remaining F2 images, which need
