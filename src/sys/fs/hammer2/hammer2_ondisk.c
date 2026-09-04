@@ -258,8 +258,7 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		fneed = HAMMER2_PBUFSIZE;
 #endif
 		if (fneed > fmax) {
-			hprintf("this kernel caches at most %zu bytes in one "
-			    "folio and HAMMER2 needs %zu: mount refused\n",
+			hprintf("this kernel caches at most %zu bytes in one folio and HAMMER2 needs %zu: mount refused\n",
 			    fmax, fneed);
 			hammer2_bdev_release(bdev_file);	/* Linux */
 			return (EOPNOTSUPP);		/* Linux: positive */
