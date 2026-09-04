@@ -45,6 +45,16 @@ while IFS= read -r line; do
 		echo "  FAIL $ver: $h does not resolve in this repository"
 		bad=$((bad+1)); rows=$((rows+1)); continue
 	fi
+	# Resolving is not enough. A commit discarded by a reset stays in the
+	# object store on the machine that wrote it and is absent everywhere
+	# else, so a row pinning one passes here and fails in CI on the same
+	# tree. That happened once, on a message rewritten to satisfy the
+	# push hook. Reachability from HEAD is the property a reader of the
+	# row actually needs, and it is what a fresh clone will see.
+	if ! git merge-base --is-ancestor "$h" HEAD 2>/dev/null; then
+		echo "  FAIL $ver: $h is not reachable from HEAD"
+		bad=$((bad+1)); rows=$((rows+1)); continue
+	fi
 	subj=$(git log --format=%s -1 "$h")
 	echo "  ok   $ver -> $h  $subj"
 	vers="${vers:-}$ver
