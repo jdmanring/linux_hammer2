@@ -570,7 +570,8 @@ claim:
 
 The kernel the port is to be tested on is the one Saxum ships, its own
 build of CachyOS 7.3-rc1 with `-march=znver4` and BBR3, reporting as
-`7.3.0-rc1-saxum`. That artifact does not exist yet. The patched tree
+`7.3.0-rc1-saxum`. That build exists in the Nix store with its `-dev`
+output and no guest has booted it, so nothing is measured on it. The patched tree
 measured so far is the store's stock build, which is a superseded
 measurement and not the shipping kernel:
 
