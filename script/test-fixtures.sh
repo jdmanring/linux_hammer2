@@ -32,7 +32,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	# the whole class of defect this gate exists to avoid.
 	printf 'content\n' > "$t/a"
 	( cd "$t" && md5sum a > good.manifest )
-	sed 's/^./0/' "$t/good.manifest" > "$t/bad.manifest"
+	sed '1{s/^0/1/;t;s/^./0/}' "$t/good.manifest" > "$t/bad.manifest"
 	if ! ( cd "$t" && md5sum -c --quiet good.manifest >/dev/null 2>&1 ); then
 		echo "  FAIL selftest: a correct manifest did not verify"
 		fail=$((fail + 1))
@@ -64,8 +64,19 @@ if [ "${1:-}" = "--selftest" ]; then
 	else
 		echo "  ok   selftest: $n manifest(s) parse and name a label and files"
 	fi
+	# The alteration itself, driven on a hash that already begins with 0,
+	# which is the input that made the old one a no-op.
+	for h in 0bc 1bc abc; do
+		g=$(printf '%s  x\n' "$h" | sed '1{s/^0/1/;t;s/^./0/}')
+		if [ "$g" = "$h  x" ]; then
+			echo "  FAIL selftest: altering '$h' changed nothing, so"
+			echo "       the per-image control would pass its own copy"
+			fail=$((fail + 1))
+		fi
+	done
 	[ "$fail" -eq 0 ] || exit 1
-	echo "fixtures: selftest: 3 direction(s), 0 failed"
+	echo "  ok   selftest: the alteration changes a hash whatever it starts with"
+	echo "fixtures: selftest: 4 direction(s), 0 failed"
 	exit 0
 fi
 
@@ -216,10 +227,22 @@ for m in $manifests; do
 	# with one hash altered must fail against the same mount that just
 	# passed. Without it a silent md5sum, an empty sums file or a mount
 	# that landed somewhere else all read as a pass.
-	ctl=$(ssh "$GUEST_SSH" "cd $mnt && \
-	    sed '1s/^./0/' /tmp/$base.sums > /tmp/$base.bad && \
-	    md5sum -c --quiet /tmp/$base.bad" 2>&1)
-	if [ $? -eq 0 ]; then
+	# The alteration flips the first character between 0 and 1 rather
+	# than setting it to 0. Setting it was a no-op one time in sixteen,
+	# whenever the hash already began with 0, and then the unaltered
+	# manifest verified and this gate reported that its own comparison
+	# proves nothing. All five manifests here happen not to begin with
+	# 0, which is luck and does not announce itself.
+	#
+	# A cmp of the two files does not belong in this chain. A chain that
+	# fails because the alteration changed nothing is indistinguishable,
+	# at the status, from one that failed because the altered manifest was
+	# correctly rejected, so it would turn a visible wrong answer into a
+	# silent right-looking one. The alteration is instead proved to change
+	# any hash by --selftest, on 0, on 1 and on a letter.
+	if ssh "$GUEST_SSH" "cd $mnt && \
+	    sed '1{s/^0/1/;t;s/^./0/}' /tmp/$base.sums > /tmp/$base.bad && \
+	    md5sum -c --quiet /tmp/$base.bad" >/dev/null 2>&1; then
 		echo "  FAIL $base: an altered manifest also verified, so the"
 		echo "        comparison above proves nothing"
 		fail=$((fail + 1))

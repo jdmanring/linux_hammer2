@@ -350,9 +350,13 @@ ran at a time, each holding 4 GiB.
 
 ## What has been verified
 
-All eleven gates pass, and since 2026-08-26 they pass with no environment
-variables set on a machine that has the kernel of record installed: the
-syntax gate finds that tree, and the style gate finds its `checkpatch.pl`.
+Eleven of the twelve gates pass with no environment variables set on a
+machine that has the kernel of record installed, as they have since
+2026-08-26: the syntax gate finds that tree, and the style gate finds its
+`checkpatch.pl`. The twelfth is `test-fixtures.sh`, which reports
+COULD-NOT-RUN there and on every machine without a guest, a set of fixture
+images and a `KDIR` matching the guest's kernel, which is most of them and
+all of CI.
 What that unattended style run can say is narrower than it looks, and the
 narrow half is the useful one: the found checker's `sha256` does not match
 the baseline's, so an unchanged set is reportable and a moved set is not.
