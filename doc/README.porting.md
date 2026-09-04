@@ -225,6 +225,19 @@ points negate at the boundary, and `hammer2_io.c` negates what the page
 cache returns. `hammer2_error_to_errno()` therefore returns a positive
 value and its callers negate.
 
+One value does not cross the boundary unchanged. Upstream maps a check
+code mismatch, and any error it has no name for, to `EDOM`, and
+DragonFly's `read(2)` hands that to the caller. Linux's `read(2)` has no
+such value: a block that failed its checksum is `EIO` to every filesystem
+in the tree, and `EDOM` out of a read presents as a libm failure to
+anyone who sees it. `hammer2_read_folio()` translates `EDOM` to `EIO` at
+the boundary and the core keeps its own mapping, which is the pattern for
+every such difference: the carried function stays upstream's and the
+Linux entry point owns what Linux sees. Measured on `f9`, the fixture
+with one data byte altered: before the translation `cat` reported
+"Numerical argument out of domain"; after it, "Input/output error", with
+`hammer2_chain_testcheck` naming the block in `dmesg` both times.
+
 `hammer2_xop_strategy` carries a `struct folio *` where the BSD ports carry
 a `struct buf *`. The initial import wrote `struct bio *` there, taken from
 the H0 API map's row pairing BSD's `struct bio` with Linux's, which is a
