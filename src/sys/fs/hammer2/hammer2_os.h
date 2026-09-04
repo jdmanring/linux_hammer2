@@ -275,11 +275,17 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
  * every lock this port takes afterwards goes unchecked.  A clean run that
  * follows this warning is not evidence of anything.
  *
- * DEFER(chain locks carry nesting notation): the fix is a subclass per
- * level of the chain hierarchy, passed through a _nested acquire, which
- * needs the depth bounded first: lockdep allows MAX_LOCKDEP_SUBCLASSES,
- * which is 8, and a HAMMER2 chain tree is deeper than that, so the mapping
- * has to be chosen rather than assumed.  Until it exists, this port cannot
+ * DEFER(chain locks carry nesting notation): a _nested acquire needs a
+ * subclass, and what to key it on has been measured rather than assumed.
+ * A chain carries no level or depth field, so there is nothing to key on
+ * today.  bref.type has ten values of which eight can hold a lock, which
+ * is exactly MAX_LOCKDEP_SUBCLASSES and looks like a fit, but indirect
+ * blocks nest inside indirect blocks and freemap nodes inside freemap
+ * nodes -- hammer2_chain.c walks parents with a while loop over exactly
+ * those two types -- so a type-keyed subclass puts a parent and its child
+ * in one class and the report returns unchanged.  The notation therefore
+ * needs a depth the chain does not know, which makes it an edit to the
+ * carried core and not to this file.  Until it exists, this port cannot
  * be validated by lockdep at all.
  */
 
