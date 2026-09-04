@@ -23,19 +23,19 @@
 396 function definition argument 'X' should also have an identifier name
 13 plain inline is preferred over __inline
 1 please, no space before tabs
-129 please, no spaces at the start of a line
+131 please, no spaces at the start of a line
 32 quoted string split across lines
-155 return is not a function, parentheses are not required
+163 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EACCES)
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 2 return of an errno should typically be negative (ie: return -EDOM)
 1 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINTR)
 31 return of an errno should typically be negative (ie: return -EINVAL)
-8 return of an errno should typically be negative (ie: return -EIO)
+13 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 1 return of an errno should typically be negative (ie: return -ENOENT)
-1 return of an errno should typically be negative (ie: return -ENOMEM)
+4 return of an errno should typically be negative (ie: return -ENOMEM)
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)

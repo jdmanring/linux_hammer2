@@ -221,11 +221,41 @@ case where the folio starts partway through a block. `dmesg` carries no
 finding from this module, kmemleak reports nothing after a scan, and both
 fixtures unmount and the module unloads with status 0.
 
-Neither fixture holds a compressed block, so the LZ4 and ZLIB floors have
-not been reached and are recorded as a `DEFER` rather than as measured.
-That is a statement about what `makefs` wrote and not about what HAMMER2
-writes: DragonFly compresses by default, so media from the
-`dragonflybsd642` guest is expected to reach them.
+## Compressed blocks, and the fixture that was said not to exist
+
+Both compression methods are written and measured. This paragraph
+previously said neither floor had been reached and recorded them as a
+`DEFER`, which described the two fixtures rather than the tool: `makefs`
+takes a `CompressionType` option, so media holding LZ4 or ZLIB blocks was
+one flag away the whole time. An unreachable floor and one nobody had
+tried to reach produce the same observation.
+
+`f3.img` is written with `CompressionType=lz4` and `f4.img` with `zlib`,
+over a tree chosen so that one file compresses and one cannot:
+
+| file | size | what it reaches |
+|---|---|---|
+| `lz4_text.bin` | 200000 | repeating text, so the block really is stored compressed |
+| `random128k.bin` | 131072 | incompressible, so the compressor falls back and the block is raw inside a compressed volume |
+| `zeros64k.bin` | 65536 | a run of zeroes |
+| `sparse.bin` | 135168 | a 128 KiB hole then 4 KiB of data, which is the `ENOENT` path |
+
+Before either decoder was written, the floors were run against these
+images and behaved as designed: `lz4_text.bin` failed with `EIO` and named
+the method in `dmesg`, while the other three read correctly, which is what
+proves the floor refuses rather than corrupts and that the image genuinely
+holds compressed blocks. After both landed, all four files on both images
+compare byte for byte with the tree they were made from, across five full
+passes and again with the page cache dropped. kmemleak reports nothing
+after two scans, which is the check that matters for these two paths since
+each allocates per folio and the ZLIB one also allocates an inflate
+workspace.
+
+The kernel's zlib is where the shape differs from upstream rather than the
+name: there is no `inflateInit()`, `zlib_inflateInit()` is a macro over
+`zlib_inflateInit2()`, and both require the caller to have placed a
+workspace of `zlib_inflate_workspacesize()` bytes in the stream, where
+upstream's allocates its own.
 
 ## What statfs reports, and how each number was checked
 
@@ -272,7 +302,7 @@ file data, which is five 64 KiB blocks and the rounding that implies.
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1706 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2082 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 330 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_strategy.c` | 499 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 320 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 928 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
@@ -688,7 +718,6 @@ against the source is the same shape as an empty one.
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_vfsops.c`, at `hammer2_vfs_sync_pmp()` | `DEFER(->sync_fs lands)` | the floor warns once and returns `EOPNOTSUPP`, and both call sites discard the value. It replaced a symbol deliberately left undefined, which made the absence visible at link time and also made the module unloadable. An unmount that does not sync loses nothing while nothing can be written; on the day the write path lands this is a data-loss bug rather than a deferral |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_read()` | `DEFER(the read path lands, with ->read_folio)` | the body is upstream's handler down to `hammer2_xop_collect()`, then a completion copying into `xop->folio`: the embedded-inode case, the three `HAMMER2_DEC_COMP()` cases on the kernel's own LZ4 and zlib, and `hammer2_dedup_record()` for the on-media case |
-| `hammer2_strategy.c`, at `hammer2_strategy_read_completion()` | `DEFER(a fixture holding compressed blocks is read)` | LZ4 and ZLIB fail loudly rather than decoding. The kernel exports `LZ4_decompress_safe()` under the name upstream already calls and `zlib_inflate()` beside it, so neither needs vendoring, but the zlib contract differs in shape and not in name: there is no `inflateInit()`, and `zlib_inflateInit2()` requires the caller to supply `strm.workspace` sized by `zlib_inflate_workspacesize()`. Both also want a scratch buffer the size of the logical block, which `hammer2_xop_start()` allocates today only for the write descriptor. The trigger is a fixture that actually holds a compressed block, because a decompressor written against media that has never been read is how one returns plausible wrong bytes; `makefs` wrote none in either fixture, so this floor has not been reached |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |

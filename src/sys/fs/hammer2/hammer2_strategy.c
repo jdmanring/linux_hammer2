@@ -81,7 +81,10 @@
 
 #include "hammer2.h"
 
-#include <linux/highmem.h>	/* Linux: memcpy_to_folio, folio_zero_range */
+#include <linux/highmem.h>
+#include <linux/lz4.h>	/* Linux: LZ4_decompress_safe */
+#include <linux/vmalloc.h>	/* Linux: the zlib workspace */
+#include <linux/zlib.h>	/* Linux: zlib_inflate */	/* Linux: memcpy_to_folio, folio_zero_range */
 #include <linux/pagemap.h>	/* Linux: folio_pos, folio_unlock */
 
 /*
@@ -161,6 +164,175 @@ hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch __maybe_unused,
 }
 
 /*
+ * Decompress one LZ4 block into the folio.
+ *
+ * The on-media block begins with the compressed length as a plain int,
+ * which upstream reads the same way, and the rest is the LZ4 stream.  The
+ * logical size is always HAMMER2_PBUFSIZE, hammer2_calc_logical() having
+ * no other answer, so the destination is a fixed 64 KiB.
+ *
+ * WHAT IS CHECKED THAT UPSTREAM ASSERTS.  Upstream reads the length and
+ * KKASSERTs that it fits, which compiles out unless invariants are on, and
+ * on a decompression failure it zeroes its buffer and reports success.
+ * Both are readings of media this module does not trust: a length is four
+ * bytes off a disk that may be corrupt or hostile, and LZ4_decompress_safe()
+ * is bounded by the length it is given, so a length past the end of the
+ * block is the one input that could make it read beyond the buffer.  It is
+ * a branch here rather than an assertion, and a failure returns an errno
+ * rather than a folio full of zeroes that every later reader would take as
+ * the file's contents.
+ *
+ * ponytail: a 4 KiB folio decompresses its whole 64 KiB block, so reading
+ * a compressed block through sixteen folios decompresses it sixteen times.
+ * Upstream does it once because a DragonFly logical buffer is the block.
+ * The fix is a mapping that carries 64 KiB folios, not a cache here.
+ */
+static int
+hammer2_decompress_lz4(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
+    const char *data, hammer2_off_t skip)
+{
+	struct folio *folio = xop->folio;
+	size_t fsize = folio_size(folio);
+	char *buf;
+	int csize, dsize;
+	size_t len;
+
+	if (focus->bytes <= sizeof(int)) {
+		WARN_ONCE(1, "hammer2: lz4 block of %u bytes\n", focus->bytes);
+		return (EIO);
+	}
+	csize = *(const int *)data;
+	if (csize <= 0 || (size_t)csize > focus->bytes - sizeof(int)) {
+		WARN_ONCE(1, "hammer2: lz4 length %d in a %u byte block\n",
+		    csize, focus->bytes);
+		return (EIO);
+	}
+
+	buf = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
+	if (buf == NULL)
+		return (ENOMEM);
+
+	dsize = LZ4_decompress_safe(data + sizeof(int), buf, csize,
+	    HAMMER2_PBUFSIZE);
+	if (dsize < 0) {
+		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+		WARN_ONCE(1, "hammer2: lz4 decompression failed at %lld\n",
+		    (long long)xop->lbase);
+		return (EIO);
+	}
+
+	if (skip >= (hammer2_off_t)dsize) {
+		folio_zero_range(folio, 0, fsize);
+	} else {
+		len = dsize - skip;
+		if (len > fsize)
+			len = fsize;
+		memcpy_to_folio(folio, 0, buf + skip, len);
+		if (len < fsize)
+			folio_zero_range(folio, len, fsize - len);
+	}
+	hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+
+	return (0);
+}
+
+/*
+ * Decompress one ZLIB block into the folio.
+ *
+ * The kernel's zlib differs from userland's in shape and not in name,
+ * which is the distinction this tree has been caught by before: a symbol
+ * that resolves says nothing about the contract behind it.  There is no
+ * inflateInit(); zlib_inflateInit() is a macro over zlib_inflateInit2()
+ * and, like it, requires the caller to have already placed a workspace of
+ * zlib_inflate_workspacesize() bytes in the stream.  Upstream's
+ * inflateInit() allocates its own.
+ *
+ * The workspace is vmalloc'd because it is tens of kilobytes and is not
+ * touched by any DMA, which is what the kernel's own callers of this
+ * interface do.  There is no compressed length prefix here as there is for
+ * LZ4: the block is the stream and avail_in is the whole of it, which is
+ * upstream's reading too.
+ *
+ * ponytail: allocates a workspace and a 64 KiB buffer per folio, so a
+ * compressed block read through sixteen folios does both sixteen times.
+ * Same ceiling as the LZ4 path above and the same fix, a mapping that
+ * carries 64 KiB folios.
+ */
+static int
+hammer2_decompress_zlib(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
+    const char *data, hammer2_off_t skip)
+{
+	struct folio *folio = xop->folio;
+	size_t fsize = folio_size(folio);
+	struct z_stream_s strm;
+	char *buf;
+	size_t len;
+	int dsize, ret;
+
+	memset(&strm, 0, sizeof(strm));
+	strm.workspace = vmalloc(zlib_inflate_workspacesize());	/* Linux */
+	if (strm.workspace == NULL)
+		return (ENOMEM);
+
+	buf = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
+	if (buf == NULL) {
+		vfree(strm.workspace);
+		return (ENOMEM);
+	}
+
+	ret = zlib_inflateInit(&strm);
+	if (ret != Z_OK) {
+		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+		vfree(strm.workspace);
+		WARN_ONCE(1, "hammer2: zlib init returned %d\n", ret);
+		return (EIO);
+	}
+
+	/*
+	 * Both casts are the sign difference and nothing else: zlib counts
+	 * in Byte, which is unsigned char, and the media pointer and the
+	 * scratch are both char *.  clang reports either under
+	 * -Wpointer-sign and gcc reports neither.
+	 */
+	strm.next_in = (unsigned char *)data;
+	strm.avail_in = focus->bytes;
+	strm.next_out = (unsigned char *)buf;
+	strm.avail_out = HAMMER2_PBUFSIZE;
+
+	ret = zlib_inflate(&strm, Z_FINISH);
+	dsize = HAMMER2_PBUFSIZE - strm.avail_out;
+	zlib_inflateEnd(&strm);
+	vfree(strm.workspace);
+
+	/*
+	 * Upstream zeroes its buffer here and reports success.  A stream
+	 * that did not end is a block this module could not decode, and
+	 * saying so is the only answer that cannot be mistaken for a file
+	 * of zeroes.
+	 */
+	if (ret != Z_STREAM_END) {
+		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+		WARN_ONCE(1, "hammer2: zlib inflate returned %d at %lld\n",
+		    ret, (long long)xop->lbase);
+		return (EIO);
+	}
+
+	if (skip >= (hammer2_off_t)dsize) {
+		folio_zero_range(folio, 0, fsize);
+	} else {
+		len = dsize - skip;
+		if (len > fsize)
+			len = fsize;
+		memcpy_to_folio(folio, 0, buf + skip, len);
+		if (len < fsize)
+			folio_zero_range(folio, len, fsize - len);
+	}
+	hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+
+	return (0);
+}
+
+/*
  * Fill xop->folio from the collected chain.  Returns a positive errno by
  * the core's convention; the VFS boundary negates.
  *
@@ -176,17 +348,10 @@ hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch __maybe_unused,
  * So every path that cannot produce the bytes returns an error and leaves
  * the folio not uptodate.
  *
- * DEFER(a fixture holding compressed blocks is read): LZ4 and ZLIB are
- * floors that fail loudly rather than translations.  The kernel exports
- * LZ4_decompress_safe() under the name upstream already calls and
- * zlib_inflate() beside it, so neither needs vendoring, but the zlib
- * contract differs in shape rather than in name: there is no
- * inflateInit(), and zlib_inflateInit2() requires the caller to supply
- * strm.workspace sized by zlib_inflate_workspacesize().  Both also need a
- * scratch buffer the size of the logical block, which hammer2_xop_start()
- * allocates today only for the write descriptor.  Writing either against
- * media that has never been read is how a decompressor returns plausible
- * wrong bytes, so they land when there is a fixture that exercises them.
+ * LZ4 and ZLIB are written and measured against media that actually holds
+ * each, `makefs` taking a CompressionType option.  Neither needed
+ * vendoring: the kernel exports LZ4_decompress_safe() under the name
+ * upstream already calls and zlib_inflate() beside it.
  */
 static int
 hammer2_strategy_read_completion(hammer2_xop_strategy_t *xop,
@@ -257,6 +422,10 @@ hammer2_strategy_read_completion(hammer2_xop_strategy_t *xop,
 		if (len < fsize)
 			folio_zero_range(folio, len, fsize - len);
 		return (0);
+	case HAMMER2_COMP_LZ4:
+		return (hammer2_decompress_lz4(xop, focus, data, skip));
+	case HAMMER2_COMP_ZLIB:
+		return (hammer2_decompress_zlib(xop, focus, data, skip));
 	default:
 		WARN_ONCE(1, "hammer2: compression method %d is not read yet\n",
 		    HAMMER2_DEC_COMP(focus->bref.methods));

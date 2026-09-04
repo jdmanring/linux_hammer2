@@ -224,6 +224,13 @@ gained or lost a single finding. The two checkers differ in size and hash,
 so the baseline had to be regenerated to record which one produced it, but
 nothing about this tree reads differently to the newer one.
 
+941 to 959 when LZ4 and ZLIB decompression landed: 18 hits over about 170
+new lines. Eight are `return is not a function`, eight are the errno sign
+and two are BSD continuation indent, and no category is new. The errno
+hits are the recorded port decision rather than a finding, these two
+functions being written to fail rather than to zero-fill, so they have
+more return paths than most.
+
 940 to 941 when `->statfs` landed: one hit, `return is not a function`,
 which is the tree's deliberate BSD style and the largest category in the
 baseline already.
