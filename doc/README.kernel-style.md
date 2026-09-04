@@ -26,7 +26,7 @@ script on the day it matters.
 
 ## The recorded deviations, and which are convertible
 
-Counts below are what `checkpatch.pl` from linux **v7.2** reports, which is
+Counts below are what `checkpatch.pl` from linux **v7.3-rc1** reports, which is
 the version `doc/checkpatch-baseline.txt` names in its first line and the
 version CI fetches. Its second line records that checker's `sha256`, which
 is the identity the file answers for itself: a version read off the tree a
@@ -63,7 +63,7 @@ is upstream's `#if 0` around the disabled assert in
 satisfy a checker, which is the trade this port does not make. The new
 baseline was produced by the checker the old one records, fetched and
 verified by `sha256` against that first line rather than by the copy on
-any workstation, because a differently-sourced v7.2 checker moves these
+any workstation, because a differently-sourced checker moves these
 numbers on unchanged code and that is the whole reason the hash is there.
 
 760 to 764 when `hammer2_cluster.c` was carried: 188 lines for 4 hits, one
@@ -217,6 +217,12 @@ style the whole tree converts in one pass or not at all. A new file
 written in that style adds to these counts by existing, which is the
 expected direction and the reason the baseline is a set rather than a
 ceiling.
+
+The checker moved from v7.2 to v7.3-rc1 with the kernel of record, and the
+deviation set did not move with it: 924 hits before and after, no category
+gained or lost a single finding. The two checkers differ in size and hash,
+so the baseline had to be regenerated to record which one produced it, but
+nothing about this tree reads differently to the newer one.
 
 922 to 924 when `hammer2_ondisk.c` gained the guard that chooses between
 `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and the
