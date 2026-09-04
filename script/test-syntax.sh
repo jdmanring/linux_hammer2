@@ -111,14 +111,45 @@ fi
 # Makefile from the source directory beside it. The stub NAMES that file,
 # so it is followed instead of a sibling being assumed. linux-api-headers has
 # no Makefile at all and so answers here with nothing, which keeps it out.
-treever() { # dir -> "X.Y" or empty
+treemk() { # dir -> the Makefile holding the version, or empty
 	mk=$1/Makefile
 	[ -f "$mk" ] || return 0
 	inc=$(sed -n 's/^include \(.*\/Makefile\)$/\1/p' "$mk" | head -1)
 	[ -n "$inc" ] && [ -f "$inc" ] && mk=$inc
+	printf '%s' "$mk"
+}
+
+treever() { # dir -> "X.Y" or empty
+	mk=$(treemk "$1")
+	[ -n "$mk" ] || return 0
 	v=$(sed -n 's/^VERSION *= *//p' "$mk" | head -1)
 	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$mk" | head -1)
 	[ -n "$v" ] && [ -n "$pl" ] && printf '%s.%s' "$v" "$pl"
+}
+
+# The full release string, which is what distinguishes two trees the pin
+# cannot tell apart. The pin compares VERSION and PATCHLEVEL, so a patched
+# 7.3 satisfies it exactly as mainline does, and for one release the header
+# line was the only place the difference appeared while the status file
+# claimed the other tree.
+treerel() { # dir -> "X.Y.Z<EXTRAVERSION>" or empty
+	mk=$(treemk "$1")
+	[ -n "$mk" ] || return 0
+	v=$(sed -n 's/^VERSION *= *//p' "$mk" | head -1)
+	pl=$(sed -n 's/^PATCHLEVEL *= *//p' "$mk" | head -1)
+	sl=$(sed -n 's/^SUBLEVEL *= *//p' "$mk" | head -1)
+	ev=$(sed -n 's/^EXTRAVERSION *= *//p' "$mk" | head -1)
+	[ -n "$v" ] && [ -n "$pl" ] && printf '%s.%s.%s%s' "$v" "$pl" "${sl:-0}" "$ev"
+}
+
+# Patch provenance, read from the tree rather than from a list of names.
+# EXTRAVERSION is empty on a mainline release and "-rcN" on a candidate;
+# anything left after stripping a leading -rcN was added by whoever built
+# it. A more optimized kernel built here later classifies by the same rule
+# without being named, since it will carry a suffix too.
+treepatched() { # dir -> "yes" or "no"
+	ev=$(treerel "$1" | sed 's/^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*//; s/^-rc[0-9][0-9]*//')
+	[ -n "$ev" ] && echo yes || echo no
 }
 
 KERNEL_REF=7.3
@@ -139,19 +170,35 @@ want=${H2_KERNEL_REF:-$KERNEL_REF}
 if [ -n "${KDIR:-}" ]; then
 	K=$KDIR; ksrc="KDIR"
 else
-	K=""; ksrc=""
+	# Trees built here are searched too. The port's own claim is against
+	# an unpatched kernel, and until this list included one, the only tree
+	# the search could reach at the wanted version was the store's patched
+	# build: the unpatched run existed but had to be asked for by name, and
+	# for one release nobody asked and the result was written down as if
+	# somebody had. H2_KERNEL_TREES adds directories, colon separated.
+	K=""; ksrc=""; alt=""; altsrc=""
 	for cand in "/lib/modules/$(uname -r)/build" \
+		$(IFS=:; for d in ${H2_KERNEL_TREES:-}; do echo "$d"; done) \
+		$(ls -d "$HOME"/kernels/*/ 2>/dev/null | sort -V -r) \
 		$(ls -d /nix/store/*-linux-*-dev/lib/modules/*/build 2>/dev/null | sort -V -r); do
+		cand=${cand%/}
 		[ -d "$cand" ] || continue
-		if [ "$(treever "$cand")" = "$want" ]; then
-			K=$cand
-			case "$cand" in
-			/nix/store/*) ksrc="the store, matching the kernel of record" ;;
-			*) ksrc="/lib/modules/\$(uname -r)/build" ;;
-			esac
-			break
+		[ "$(treever "$cand")" = "$want" ] || continue
+		case "$cand" in
+		/nix/store/*) src="the store, matching the kernel of record" ;;
+		"/lib/modules/$(uname -r)/build") src="/lib/modules/\$(uname -r)/build" ;;
+		*) src="a tree built here" ;;
+		esac
+		# An unpatched tree wins over a patched one at the same version,
+		# so the default measures what the port claims. The patched tree
+		# is still reached by pointing KDIR at it, which is the run the
+		# consuming distribution needs.
+		if [ "$(treepatched "$cand")" = no ]; then
+			K=$cand; ksrc=$src; break
 		fi
+		[ -n "$alt" ] || { alt=$cand; altsrc=$src; }
 	done
+	[ -n "$K" ] || { K=$alt; ksrc=$altsrc; }
 	# Nothing matched. Fall back to what is present so the refusal below
 	# can name the version it found instead of reporting an empty path.
 	if [ -z "$K" ]; then
@@ -354,7 +401,10 @@ elif [ "$kcc" = "$ccv" ]; then
 else
 	ccnote="NOT the tree's own, which is \"$kcc\""
 fi
-echo "hammer2 against $(basename "$(dirname "$K")") via $ksrc, dialect $dsrc, with $ccv, $ccnote:"
+krel=$(treerel "$K")
+[ -n "$krel" ] || krel=$(basename "$(dirname "$K")")
+[ "$(treepatched "$K")" = yes ] && kpatch="patched" || kpatch="mainline"
+echo "hammer2 against $krel ($kpatch) via $ksrc, dialect $dsrc, with $ccv, $ccnote:"
 check "hammer2.h: header TU expands (tree, queue, atomics)" pass test/hammer2-header.c
 check "hammer2_io.c: invariants on"  pass src/sys/fs/hammer2/hammer2_io.c -DHAMMER2_INVARIANTS
 check "hammer2_io.c: invariants off" pass src/sys/fs/hammer2/hammer2_io.c
@@ -464,6 +514,11 @@ if [ "$want" != "$KERNEL_REF" ]; then
 	echo "        this run is a reading about $want and not evidence about the"
 	echo "        kernel this tree targets."
 else
-	echo "syntax: $ran check(s), $fail failed against the kernel of record ($KERNEL_REF)"
+	# The release and its patch provenance go in the summary line and not
+	# only in the header, because this is the line that gets quoted into a
+	# document. Quoted without them it names a series that two different
+	# trees satisfy, and one such quotation attributed a store tree's run
+	# to a mainline one.
+	echo "syntax: $ran check(s), $fail failed against the kernel of record ($KERNEL_REF), $krel, $kpatch"
 fi
 [ "$fail" = 0 ]
