@@ -1609,6 +1609,18 @@ hammer2_evict_inode(struct inode *inode)
  * more than one PFS and each is a separate filesystem to the VFS. Folding
  * sixteen bytes to eight is uuid_to_fsid(), which is the kernel's own
  * helper for exactly this.
+ *
+ * WHY THERE IS NO NULL CHECK HERE WHEN hammer2_unmount() HAS ONE.  That
+ * one exists because a superblock reaches teardown when the mount failed
+ * before hammer2_mount_helper() ran, so its pmp really can be NULL.  This
+ * is reached only through a dentry, which requires sb->s_root, which
+ * hammer2_get_tree() sets after the root inode is resolved and returns an
+ * error without setting when that fails.  So pmp and pmp->iroot are both
+ * live whenever this runs, and a check for either would be a branch that
+ * cannot be taken.  Upstream makes the same assumption and says so about
+ * the cluster rather than the inode: iroot exists, but may not have
+ * validated its cluster yet, which is why the chain array is read
+ * defensively below and the inode pointer is not.
  */
 static int
 hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)

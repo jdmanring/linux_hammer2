@@ -111,7 +111,7 @@ What the mount can do, measured one call at a time:
 | `stat` the root | `directory`, inode 1, mode `drwxr-xr-x` |
 | `statfs` | `ENOSYS`, `->statfs` was not written at `1f025fe` |
 | `readdir` | `ENOTDIR`, `->iterate_shared` was not written at `1f025fe` |
-| open and read a file | `EINVAL`, the read path is not carried; livelocked before the lock fix below |
+| open and read a file | `EINVAL`, the read path was not carried at `1f025fe`; livelocked before the lock fix below |
 
 The first three are floors behaving as recorded. The fourth is a defect.
 `cat` sits in `D` state in `hammer2_chain_unlock()` printing
@@ -180,7 +180,7 @@ After the fix, on `artix-s6-kde` at 7.3.0-rc1 with lockdep and kmemleak:
 | `ls` two levels down | its one entry |
 | `find` over the whole mount | every one of the five paths, exit 0 |
 | `getdents64` with a 64-byte buffer | the root in 3 calls and the subdirectory in 2, each name once |
-| open and read a file | `EINVAL`, the read path is not carried |
+| open and read a file | `EINVAL`, the read path was not carried at `e76ad21` |
 | `readlink` a symlink | `EINVAL`, `->get_link` is not written |
 | `umount`, `rmmod` | 0 and 0 |
 
@@ -271,7 +271,7 @@ file data, which is five 64 KiB blocks and the rounding that implies.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1706 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2070 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2082 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 330 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 320 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 928 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
