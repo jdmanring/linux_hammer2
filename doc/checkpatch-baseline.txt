@@ -39,5 +39,5 @@
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
-2 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+3 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
 2 space required after that 'X' (ctx:VxB)
