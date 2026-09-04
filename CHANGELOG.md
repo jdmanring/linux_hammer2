@@ -9,7 +9,7 @@ Versions are milestones, not calendar releases. The first two numbers say
 how far along the ladder in `doc/README.roadmap.md` the driver is; the
 third is the point release and increments inside the current milestone.
 Until 1.0 the number says nothing about stability. Nothing here is
-released: no tag exists and the driver does not mount.
+released: no tag exists and the driver mounts read only.
 
 The numbers before 0.1.11 are assigned retroactively to the state at each
 commit. Two rewrites of this repository's history have happened since,
