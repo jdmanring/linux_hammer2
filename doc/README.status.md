@@ -332,6 +332,16 @@ zeros and a file that is one byte after 65535 of hole both occupy nothing.
 Every checksum and every block count matches what DragonFly reported, and
 for this image the counts are DragonFly's numbers, not this reader's.
 
+DragonFly's own `fsck_hammer2` was then run over both images on the
+DragonFly guest, after they had been mounted and read here. Both exit 0.
+`f5` reports 29 blockrefs, 12 inodes, 2 indirect, 6 data and 9 dirents;
+`f6` 28, with 5 data, the 64 KiB of zeros occupying no block. The one
+message either prints is `zone.1 exceeds volume size`, which is the
+checker finding that a 2 GiB volume holds only the first of the four
+volume-header zones, spaced 2 GiB apart, and is not a fault. A read-only
+mount here leaves media DragonFly's checker accepts, which is the verdict
+0.4 asked for.
+
 `dmesg` carries one finding, the recursive-locking report in
 `hammer2_chain_lock()`, which is the single lockdep class recorded below.
 kmemleak reports nothing. Both guests were shut down afterwards; only one
