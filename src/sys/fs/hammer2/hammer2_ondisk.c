@@ -190,6 +190,7 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 {
 	hammer2_devvp_t *e;
 	struct file *bdev_file;
+	size_t fmax, fneed;	/* Linux */
 	int lblksize, sectorsize, error;
 
 	TAILQ_FOREACH(e, devvpl, entry) {
@@ -236,6 +237,34 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		 * hammer2_io_folio_check() is the runtime backstop for this
 		 * having been done.
 		 */
+		/* Linux: ask the page cache before asking the device.
+		 * set_blocksize() fails EINVAL on a kernel whose page cache
+		 * cannot hold a HAMMER2_PBUFSIZE folio and says nothing
+		 * about why, so the question is put to
+		 * mapping_max_folio_size_supported() first, which pagemap.h
+		 * says is what a filesystem with a folio-size requirement
+		 * calls at mount, and the refusal names both numbers.  The
+		 * static_assert in hammer2_io.c stays as the build-time
+		 * guard, since a kernel without CONFIG_TRANSPARENT_HUGEPAGE
+		 * is better refused at the compile than at the first mount.
+		 * HAMMER2_FOLIO_CONTROL is the negative control: it asks for
+		 * twice what the kernel offers, so a module built with it
+		 * must refuse every mount through this branch.
+		 */
+		fmax = mapping_max_folio_size_supported();
+#ifdef HAMMER2_FOLIO_CONTROL
+		fneed = 2 * fmax;
+#else
+		fneed = HAMMER2_PBUFSIZE;
+#endif
+		if (fneed > fmax) {
+			hprintf("this kernel caches at most %zu bytes in one "
+			    "folio and HAMMER2 needs %zu: mount refused\n",
+			    fmax, fneed);
+			hammer2_bdev_release(bdev_file);	/* Linux */
+			return (EOPNOTSUPP);		/* Linux: positive */
+		}
+
 		error = set_blocksize(bdev_file, HAMMER2_PBUFSIZE);
 		if (error) {
 			hprintf("failed to set %s blocksize %d %d\n",

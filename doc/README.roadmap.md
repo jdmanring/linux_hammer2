@@ -116,9 +116,10 @@ vendored-library audit the xxHash header cites in place.
 path; in a comment carried from DragonFly it is the filesystem's own
 abbreviation. The stage is only ever written beside a version number.
 
-**Current version: 0.2.x.** It stays 0.2 while 0.3's third criterion is
-open, so every row since the module first loaded is a 0.2 point release
-by the rule `CHANGELOG.md` states. The rows in the table below say what
+**Current version: 0.3.x.** 0.3 was met in full when its third criterion
+closed, so the point releases move to 0.3 from there by the rule
+`CHANGELOG.md` states; the rows before that stay 0.2, being records. The
+rows in the table below say what
 is done inside each milestone; the numbered criteria under each heading
 are the contract, and a milestone is met when all of them are.
 
@@ -280,8 +281,10 @@ milestone.
    decided then, and the syntax gate's ceiling control moves or retires with
    it.
 
-Gate: a build-and-load script, unwritten, that runs in a disposable guest and
-exits 2 without one. Its first run is the compile authorization.
+Gate: `script/test-fixtures.sh`, which builds the module, starts the guest
+and loads it before mounting anything, and exits 2 without a guest. The
+folio control is a build flag driven by hand, recorded in
+`README.status.md`.
 
 Work: the first `make` (maintainer); the build-and-load gate, written by a
 contributor and run by the maintainer, printing each of criterion 2's

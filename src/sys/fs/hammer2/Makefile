@@ -55,6 +55,11 @@ endif
 ifdef HAMMER2_ATIME
 ccflags-y += -DHAMMER2_ATIME
 endif
+# The negative control for the mount-time folio-size check: a module built
+# with this must refuse every mount, naming the numbers.  Never install it.
+ifdef HAMMER2_FOLIO_CONTROL
+ccflags-y += -DHAMMER2_FOLIO_CONTROL
+endif
 
 .PHONY: all clean
 

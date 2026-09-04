@@ -414,7 +414,7 @@ ran at a time, each holding 4 GiB.
 | `hammer2_vfsops.c` | 2078 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 499 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 998 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 1027 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
@@ -694,6 +694,27 @@ gate was reading. It follows the `include` line the stub itself names now,
 which is derived from the artifact rather than assuming a sibling
 directory, and `linux-api-headers` still fails because it has no `Makefile`
 at all to follow.
+
+## The folio the page cache can hold, asked at mount
+
+The DIO layer hands the core one 64 KiB folio per buffer, so a kernel
+whose page cache cannot hold one cannot mount this filesystem.
+`hammer2_open_devvp()` asks `mapping_max_folio_size_supported()` before
+`set_blocksize()`, which is the call `pagemap.h` names for a filesystem
+with a folio-size requirement, and refuses with both numbers rather than
+the bare `EINVAL` `set_blocksize()` returns. The `static_assert` on
+`BLK_MAX_BLOCK_SIZE` in `hammer2_io.c` stays as the build-time guard for
+a kernel without `CONFIG_TRANSPARENT_HUGEPAGE`.
+
+The control is `make HAMMER2_FOLIO_CONTROL=1`, a module that asks for
+twice what the kernel offers and so must refuse every mount. On
+`artix-s6-kde` at 7.3.0-rc1 with THP `always`, the normal module mounts
+`f7` and reads it; the control fails the mount with `EOPNOTSUPP` and
+`dmesg` carries:
+
+    hammer2: hammer2_open_devvp: this kernel caches at most 2097152 bytes in one folio and HAMMER2 needs 4194304: mount refused
+
+That closes 0.3's third criterion, and with it the milestone.
 
 ## What is not here
 
