@@ -179,6 +179,7 @@ After the fix, on `artix-s6-kde` at 7.3.0-rc1 with lockdep and kmemleak:
 | `ls` a subdirectory | its one entry |
 | `ls` two levels down | its one entry |
 | `find` over the whole mount | every one of the five paths, exit 0 |
+| `getdents64` with a 64-byte buffer | the root in 3 calls and the subdirectory in 2, each name once |
 | open and read a file | `EINVAL`, the read path is not carried |
 | `readlink` a symlink | `EINVAL`, `->get_link` is not written |
 | `umount`, `rmmod` | 0 and 0 |

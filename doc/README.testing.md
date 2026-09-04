@@ -716,11 +716,14 @@ gate names nor this table lists.
 |---|---|---|
 | `test/crc32c-vectors.c` | `iscsi_crc32()`, which arrives with the check algorithms in 0.2 | the exit status accepted either CRC-32C or CRC-32 IEEE, so the one question it exists to ask went unanswered while it reported success. Now it accepts Castagnoli only, and names IEEE when it sees it |
 | `test/xxh64-vectors.c` | an `xxhash.h` in this tree, same import | two of three cases asserted nothing, and the seeded case used xxHash's golden-ratio prime where HAMMER2 seeds with `0x4d617474446c6c6e`. Four vectors now, all four measured against xxhsum 0.8.3 and libxxhash 0.8.3, and compiled and run green against the system xxHash on 2026-08-26 |
+| `test/getdents-resume.c` | a directory can be listed, which it can, on a guest with a mount | `->iterate_shared` resumes across calls, which one `ls` cannot exercise: a 32 KiB buffer takes a small directory in a single call, so the branch that stops mid-directory never runs. It reads with a 64-byte buffer, one or two entries at a time, and fails on a runaway rather than hanging. Against the five-path fixture on 2026-09-04: the root gives 5 entries over 3 calls and the subdirectory 3 over 2, each name exactly once |
 
-Neither is wired into a gate HERE, because there is nothing in this tree
-to link either against; Saxum links them against the BSD tree instead.
+The first two are not wired into a gate HERE, because there is nothing in
+this tree to link either against; Saxum links them against the BSD tree instead.
 They get a local gate the day 0.2 imports the algorithms, and the
-inventory gate is what remembers to ask. Until then, changing either
+inventory gate is what remembers to ask. The third needs a booted guest
+holding a mount, so it belongs to the read-only fixture gate the roadmap
+names and is run by hand until that exists. Until then, changing either
 file's output shape or exit status breaks a gate in a repository this one
 does not reference.
 
