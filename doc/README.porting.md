@@ -35,11 +35,22 @@ from `sx_xlocked()` for free.
 `hammer2_mtx_upgrade_try()` has no Linux primitive either, and the
 omission is deliberate upstream: `downgrade_write()` exists and no upgrade
 does, because upgrading a lock two readers hold can only succeed by
-deadlocking one of them. So it fails unless the caller already holds the
-lock exclusively. That is safe by the shape of the interface: every caller
-of a `_try` handles failure, and the core's failure path drops and
-re-acquires exclusively, revalidating what it read. OpenBSD unlocks and
-retries for the same reason.
+deadlocking one of them.
+
+This paragraph used to argue that a wrapper which fails unless the caller
+already holds the lock exclusively is safe by the shape of the interface,
+every caller of a `_try` handling failure and re-acquiring. The first
+mount disproved it. `hammer2_chain_unlock()` takes the shared path, asks
+for an upgrade and retries on refusal, so a wrapper that could never grant
+one made the first read of a file spin without end, unkillable, holding
+the mount until the guest was rebooted. A predicate is not an
+implementation, and the interface's shape was an argument for not writing
+one.
+
+It now releases the read side and takes the write side, restoring the
+caller's shared hold when it cannot, which is what the OpenBSD port does
+at the same place. The window between the two is real and is what the
+caller revalidates after.
 
 Recursion is decided, and the decision is NetBSD's. DragonFly and FreeBSD
 allow the inode and chain locks to recurse; a Linux `rw_semaphore`
