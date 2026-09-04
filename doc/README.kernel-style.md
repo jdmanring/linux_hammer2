@@ -260,6 +260,13 @@ which it is merged`, which is the same category and the same answer as
 the two moves above: the guard is what lets one tree build across the
 range it claims, and it goes on submission with the rest of them.
 
+Three prototype-argument hits and one `return (x);` arrived with
+`hammer2_register_sb()` and `hammer2_unregister_sb()` in
+`hammer2_ondisk.c` and their declarations in `hammer2.h`, the code that
+gives each mounted PFS its own claim on the device. They are the two
+mechanical BSD-style rows below, written in the tree's own style so the
+file stays one dialect, and they convert with the rest.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row
