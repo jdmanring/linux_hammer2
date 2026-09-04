@@ -116,14 +116,18 @@ vendored-library audit the xxHash header cites in place.
 path; in a comment carried from DragonFly it is the filesystem's own
 abbreviation. The stage is only ever written beside a version number.
 
-**Current version: 0.2.x.**
+**Current version: 0.2.x.** It stays 0.2 while 0.3's third criterion is
+open, so every row since the module first loaded is a 0.2 point release
+by the rule `CHANGELOG.md` states. The rows in the table below say what
+is done inside each milestone; the numbered criteria under each heading
+are the contract, and a milestone is met when all of them are.
 
 | version | stage | milestone | state |
 |---|---|---|---|
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
-| 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1. kmemleak reports no unreferenced object across a mount, unmount and unload. Lockdep cannot judge this port: every chain lock shares one class, so the first mount reports recursive locking and the instrument disables itself |
-| 0.4 | H1 | Read-only mount of DragonFly-written media | done for the read side. Media created by DragonFly 6.4-RELEASE's own newfs_hammer2 and written through its own HAMMER2 mounts read-only here and every file compares byte for byte with the checksums DragonFly reported, the embedded, LZ4, uncompressed and hole cases each reached on that one image and ZLIB on a second written after `hammer2 setcomp zlib`. The fixture gate reads all six images without a person driving it. fsck_hammer2 on DragonFly exits 0 on both DragonFly-written images after this module read them. Two PFSes on one device mount together, verify, and unmount in either order, each superblock holding its own claim on the device at 7.3 |
+| 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1. kmemleak reports no unreferenced object across a mount, unmount and unload. Lockdep cannot judge this port: every chain lock shares one class, so the first mount reports recursive locking and the instrument disables itself. Criterion 3 is open: the mount path has no `mapping_max_folio_size_supported()` check and no control for it; `hammer2_io_folio_check()` is a runtime backstop, not that check |
+| 0.4 | H1 | Read-only mount of DragonFly-written media | open. Met: criterion 3, PFS roots mountable by label, `f7` carrying two; criterion 5, clean unmount with kmemleak empty, lockdep blind for the recorded reason; and the substance of criterion 1 for hash, size, block count and symlink target on seven images, six of them DragonFly-written or compressed, with `fsck_hammer2` accepting the media afterwards and Kusumi's FreeBSD port agreeing on every file. Open: criterion 1's hard-link, `stat` and `statfs` columns; criterion 2, the F2 root image; criterion 4, the F3 corruption set; criterion 6, the F1 against F2 listing |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | waits on the storage model |
@@ -250,16 +254,9 @@ claiming a byte-for-byte carry. Without an origin clone on the machine it
 reports COULD-NOT-RUN rather than passing on a table that only agrees with
 itself.
 
-Remaining work, all for contributors, the maintainer merging:
-
-- `hammer2_inode.c`, the last non-entry file. Everything else here is in:
-  `hammer2_flush.c` on 2026-08-26 with the flush decision above,
-  `hammer2_cluster.c` unedited, `hammer2_subr.c` with seven `XXX` marks,
-  and `hammer2_ondisk.c` half carried and half rewritten. Whether `inode`
-  joins the carried set is what the CSV's carry column will say.
-- the check algorithms, using the kernel's own xxHash, LZ4 and zlib, which a
-  vendored-library audit found stock. xxHash is in as `hammer2_xxhash.h`; LZ4
-  and zlib wait on a compression path to call them.
+Nothing remains. `hammer2_inode.c` is carried, the CSV's carry column
+says so, and the check and compression algorithms use the kernel's own
+xxHash, LZ4 and zlib, called from the read path.
 
 Depends on nothing. This is desk work against the FreeBSD port's tree, whose
 shape `hammer2.h` already follows.

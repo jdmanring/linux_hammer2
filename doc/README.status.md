@@ -366,6 +366,17 @@ skipped it as inactive. The defect was the one the deferral had first
 named, callbacks reaching one mount and not the other, and not a
 use-after-free.
 
+A second reader has now read the same images. Kusumi's FreeBSD port at
+`3df307f7db9d`, the revision this tree was compared against, built on
+the `freebsd15` guest and mounted `f1` through `f7` and `f7`'s `DATA`
+PFS read-only. Its output is
+`/mnt/storage/hammer2-fixtures/freebsd-port-read.txt`. Every one of the
+30 manifest checksums, all 30 block counts, the symlink target and the
+three `DATA` files agree with what this module reads. Two readers
+agreeing is agreement and not correctness, which is why the DragonFly
+checksums stay the reference; what the agreement rules out is a defect
+shared with the writer that both readers would have to repeat.
+
 `dmesg` carries one finding, the recursive-locking report in
 `hammer2_chain_lock()`, which is the single lockdep class recorded below.
 kmemleak reports nothing. Both guests were shut down afterwards; only one
