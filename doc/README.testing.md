@@ -691,9 +691,20 @@ names the shipping kernel deliberately.
 The shipping kernel is Saxum's own build, `7.3.0-rc1-saxum`, compiled from
 CachyOS 7.3-rc1 with `-march=znver4` and BBR3. A stock distribution kernel
 from a binary cache is not a substitute for it: it measures a configuration
-nobody here runs. Until that artifact exists the only patched tree on this
-disk is the store's `7.3.0-rc1-cachyos`, and the figures recorded against
-it are a superseded measurement rather than a standing requirement.
+nobody here runs. That kernel's `-dev` output is in the store and the
+module builds against it:
+
+    make KDIR=/nix/store/<hash>-linux-x86_64-unknown-linux-gnu-7.3-rc1-dev/lib/modules/7.3.0-rc1-saxum/build
+
+It is built with clang 22 and thin LTO, so kbuild has to be told
+`LLVM=1` or gcc rejects four of the kernel's own flags; the module
+Makefile reads `CONFIG_CC_IS_CLANG` from the tree's config and adds it,
+so the line above is enough. The result carries vermagic
+`7.3.0-rc1-saxum` and loads on nothing else. No guest boots that kernel
+yet; the Saxum server edition, which will, was not built when this was
+written, so the fixture gate still runs on `artix-s6-kde` at plain
+`7.3.0-rc1`. The store's `7.3.0-rc1-cachyos` figures are a superseded
+measurement rather than a standing requirement.
 
 Both the header line and the summary line carry the release string and
 either `mainline` or `patched`, read from the tree's `EXTRAVERSION`:

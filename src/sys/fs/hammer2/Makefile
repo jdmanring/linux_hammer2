@@ -1,4 +1,9 @@
 KDIR ?= /lib/modules/$(shell uname -r)/build
+# A kernel built with clang, which the tailored 7.3.0-rc1-saxum is, with
+# thin LTO on top, refuses a module compiled by gcc: kbuild hands the
+# module the kernel's own flags and gcc rejects four of them.  Read the
+# answer from the tree's config rather than asking the caller to know it.
+H2_LLVM := $(if $(filter y,$(shell sed -n 's/^CONFIG_CC_IS_CLANG=//p' $(KDIR)/.config 2>/dev/null)),LLVM=1,)
 
 obj-m += hammer2.o
 
@@ -64,6 +69,6 @@ endif
 .PHONY: all clean
 
 all:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) $(H2_LLVM) modules
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
