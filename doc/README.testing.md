@@ -27,7 +27,7 @@ network:
 
 Prose gate, needs vale and nothing else:
 
-    $ bash script/test-doc-prose.sh   # vale over doc/, any finding is a failure
+    $ bash script/test-doc-prose.sh   # vale over tracked .md, any finding is a failure
 
 `test-absence.sh` resolves a claim rather than a citation. Where a document
 says a named function is not carried, it asks `src/` whether that function
@@ -160,7 +160,7 @@ floor tree's `include/`. It does not compile, so a signature that changed
 while keeping its name, or a macro that stopped expanding, is invisible to
 it. The job is what closes what the sweep can only bound.
 
-`test-doc-prose.sh` runs vale over every `.md` under `doc/` with the
+`test-doc-prose.sh` runs vale over every tracked `.md` file with the
 styles in `styles/`, which are house YAML rather than a downloaded package
 so the gate needs no network and no `vale sync`. It arrived on 2026-08-29
 with `doc/research/`, which had been governed in Saxum since 2026-08-25
@@ -174,7 +174,19 @@ it ever made. It now counts the findings itself and fails on any of them;
 the twelve, eleven British spellings and one wordy phrase, were fixed in
 the same change. And CI never installed vale, so the gate reported
 COULD-NOT-RUN on every push, which is the same defect the move was meant to
-close, one layer out. CI now installs vale pinned by version and sha256,
+close, one layer out. A third was wrong until 2026-09-04: the population
+was `find doc`, which is every document except the four a reader meets
+first, so `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and the pull
+request template were ungoverned. That is the same defect the gate's own
+header records about `doc/research/`, applied to the directory that
+prompted it rather than to the tree. The README's opening paragraph said
+this port does not mount anything for four days after it began mounting,
+and when the population widened those four files held seven British
+spellings. The population is now `git ls-files`, so a new document is
+governed the day it is committed, and the three root files are asserted
+by name rather than counted: a population that narrowed back to `doc/`
+would still be non-empty and would still pass, which is how this gate
+read past the README. CI now installs vale pinned by version and sha256,
 for the reason checkpatch is pinned: a different checker reports a
 different finding set on unchanged prose. The version of record is 3.18.0.
 
@@ -590,6 +602,8 @@ disagreeing. Read the table.
 | `test-absence.sh` | a claim naming a `->method` that IS wired | `--selftest`, on a fixture tree rather than on this repository |
 | `test-absence.sh` | no `->method` claim matched, so that pattern has stopped | `--selftest` |
 | `test-inventory.sh` | no `test/` | moved aside |
+| `test-doc-prose.sh` | a finding in a root document | a British spelling appended to `README.md` |
+| `test-doc-prose.sh` | the population narrowed back to `doc/` | the file list filtered in a scratch copy of the gate |
 | `test-checkpatch.sh` | no baseline | moved aside |
 | `test-checkpatch.sh` | no `checkpatch.pl` | `CHECKPATCH` at a path that does not exist |
 | `test-checkpatch.sh` | no perl | a `PATH` assembled from store paths holding none |

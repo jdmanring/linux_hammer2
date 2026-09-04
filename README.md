@@ -130,7 +130,7 @@ rather than there:
 
 And one parses the gates that declare `#!/bin/sh` with shells that are not
 bash, because every gate here is normally run by bash and a bash-only
-construct in such a script breaks only when something honours the shebang:
+construct in such a script breaks only when something honors the shebang:
 
         $ bash script/test-posix.sh
 
