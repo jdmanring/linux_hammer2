@@ -33,12 +33,13 @@ only channel it has. What the undefined symbol bought was a build nobody
 could load; what the floor buys is a module that loads and says what it
 cannot do.
 
-It has been linked against both the running kernel and the kernel of
-record: 7.1.9 with gcc 16.2.1, and 7.2.0 with clang 22.1.8, the latter
-through the store tree the syntax gate already finds and with `LLVM=1`,
-since that tree was built by clang and kbuild passes the compiler's own
-flags to whatever builds against it. It also builds at 6.18, which is what
-exercises the `inode_state_read_once` shim below. All three are
+It has been linked against the running kernel and against both trees of the
+kernel of record: 7.1.9 with gcc 16.2.1, 7.2.0 with clang 22.1.8, and
+7.3.0-rc1 in its mainline and its cachyos build. The 7.2.0 and cachyos
+trees come from the store the syntax gate already finds, and are built with
+`LLVM=1`, since they were built by clang and kbuild passes the compiler's
+own flags to whatever builds against it. It also builds at 6.18, which is
+what exercises the `inode_state_read_once` shim below. All are
 warning-clean. Nothing has been loaded on any of them.
 
 ## What is in the tree
@@ -269,25 +270,43 @@ gate says and is true; "against mainline 7.2" would not be, and the two are
 one word apart.
 
 **The kernel of record moved to 7.3 on 2026-09-03**, `KERNEL_REF` in
-`script/test-syntax.sh`, and this time it is mainline: a `v7.3-rc1` tree
-from `git.kernel.org`, built here rather than substituted. The gate's own
-line, quoted rather than summarized:
+`script/test-syntax.sh`. Two 7.3-rc1 trees are measured, and the pin cannot
+tell them apart, so each is named with the run that used it.
+
+The unoverridden run takes the store, and the tree it finds is patched:
+
+    hammer2 against 7.3.0-rc1-cachyos via the store, matching the kernel of
+    record, dialect -fms-extensions, with clang version 22.1.8
+    syntax: 46 check(s), 0 failed against the kernel of record (7.3)
+
+The mainline run has to be asked for by pointing `KDIR` at an unpatched
+tree, and reports the same figures:
 
     syntax: 46 check(s), 0 failed against the kernel of record (7.3)
 
-The pin names a release series and the gate compares `VERSION` and
-`PATCHLEVEL`, so 7.3-rc1 and 7.3 final both satisfy it. The tree measured
-is the release candidate, which is what a reader of that line has to be
-told, since the two are not the same kernel and the gate cannot tell them
-apart.
+`EXTRAVERSION` is `-rc1-cachyos` on the first and `-rc1` on the second.
+The pin compares `VERSION` and `PATCHLEVEL` only, so both trees satisfy it,
+as would 7.3 final and any later patched build. A green line names a
+release series and never a tree, and the gate's own tree line is the only
+place the distinction appears.
+
+The module links against both. `make KDIR=<mainline>` produces a
+`hammer2.ko` with `vermagic: 7.3.0-rc1`; the store tree yields
+`7.3.0-rc1-cachyos`, and the two are not interchangeable at load.
+
+The mainline tree is built here from the `v7.3-rc1` tarball, whose
+`sha256` is `8d36fbfc7c8906ccfa1ebacc30f84998406504c3f13733a040bb3a3fbe8ac270`
+and which is byte-identical to the one in the store. It did not come from a
+kernel.org mirror: release candidates are published as git tags and not as
+tarballs there, so a `mirror://` URL returns 404 for any -rc.
 
 That tree's first build refused, and correctly. A plain `defconfig` sets
 no `CONFIG_TRANSPARENT_HUGEPAGE`, `BLK_MAX_BLOCK_SIZE` is then `PAGE_SIZE`,
 and the `static_assert` in `hammer2_io.c` failed the build naming the
 option. It is the first time that assert has fired against a real kernel
 rather than a constructed one, and it is the refusal 0.3's third criterion
-asks to see exercised. Enabling the option and rebuilding gives the line
-above.
+asks to see exercised. Enabling the option and rebuilding gives the mainline
+figures above.
 
 Two properties of a nixpkgs kernel `dev` output that any later measurement
 has to know. Its `source/` directory is pruned hard: the recipe rsyncs the
