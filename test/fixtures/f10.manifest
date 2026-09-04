@@ -1,0 +1,4 @@
+# image f10
+# label DFLY
+# writer f5 with one bit of the volume header flipped at byte 64, inside the sector 0 crc
+# refuse

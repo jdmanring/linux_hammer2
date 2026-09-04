@@ -395,6 +395,60 @@ shared with the writer that both readers would have to repeat.
 kmemleak reports nothing. Both guests were shut down afterwards; only one
 ran at a time, each holding 4 GiB.
 
+## The installed root, read cold, and two readers beside this one
+
+0.4's second criterion is the F2 root image: a tree the DragonFly kernel
+wrote in ordinary use rather than a fixture made to be read. `f8.img` is
+the `dragonflybsd642` guest's own installed root, cut from its shut-off
+disk the way `doc/research/HAMMER2_TEST_FIXTURE_PLAN.md` describes: the
+Label64 slice at LBA 264192, the HAMMER2 magic at byte 673185792, 29 GiB
+apparent and about 780 MiB real. DragonFly's `fsck_hammer2` over it
+reports 83002 blockrefs, 28167 inodes and 28209 dirents with no error
+line.
+
+This module mounted it read-only on `artix-s6-kde` at 7.3.0-rc1 and
+Saxum's own manifest walker, `hammer2-f2-manifest.py`, ran over the mount
+as root: 28209 entries, 1140 directories, 20188 files hashed, 6878
+symlinks, 2 sockets, and one file over the walker's 256 MiB bound, the
+4 GiB swapfile, recorded as `nohash`. Kusumi's FreeBSD port read the same
+extraction on `freebsd15` with the same walker and every one of the 28209
+rows is identical, path, size, hash and symlink target. Against Saxum's
+manifest of the same root taken on 2026-08-25 through `hammer2-fuse` as an
+unprivileged user, 28123 rows are identical; the 58 rows that read
+`readfail` there are hashed here, since this walk ran as root, which is
+what criterion 2 asks for; 5 rows differ because they are logs and
+`utmpx` the guest has written to since; and 23 paths exist now that did
+not then, under `/root`, `/mnt`, `/var/games` and `/var/cron`, which the
+unprivileged walk could not enter or the guest has created since. Nothing
+differs that the date does not explain. The three manifests are beside the
+images in `/mnt/storage/hammer2-fixtures/`.
+
+Kusumi's NetBSD port at `64095c3947f2`, built on NetBSD 10.1 by the
+workbench session, agrees on the 17 files of `f1`, `f2`, `f3` and `f5` it
+read, and then panicked with a NULL `VOP_STRATEGY` on its first read of
+`f6`'s compressed file, reproducibly, before reading `f4`, `f7` or `f8`.
+That is recorded in `netbsd-port-failure.txt` beside the images as a
+reader that could not finish, and it says nothing about this tree.
+
+## Media altered on purpose, and what refuses it
+
+0.4's fourth criterion is F3: corrupt media detected and refused, or
+detected and reported, without modification, and the verdict agreeing
+with `fsck_hammer2`'s recorded one. Two images, both copies of `f5`, the
+checker's verdict taken on DragonFly before any Linux read:
+
+| image | alteration | `fsck_hammer2` on DragonFly | this module |
+|---|---|---|---|
+| `f9` | one byte of `random128k.bin`'s data block, at byte 151126016 | one data blockref `Bad HAMMER2_CHECK_XXHASH64` at `0x9020010`, the rest clean | mounts, the other five files verify, reading that file fails |
+| `f10` | one bit of the volume header at byte 64, inside sector 0's crc | `volume header crc mismatch sect0`, then `No valid volume headers found!` | mount refused: `failed to read /dev/vdb's volume header` |
+
+The gate reads both from their manifests: a `# corrupt relpath` row names
+a file whose read must fail, and `# refuse` names an image whose mount
+must fail, and the summary line counts the refusals so a zero is visible.
+Both attachments are read-only at the libvirt layer, and the images are
+2 GiB copies, so the unmodified-media half of the criterion is held by
+construction rather than re-hashed every run.
+
 ## What is in the tree
 
 | file | lines | origin |

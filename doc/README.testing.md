@@ -569,13 +569,24 @@ an artifact of the setup and not a finding about the code.
     KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
-Measured on 2026-09-04: seven images, 30 files, 1 symlink, 0 failures,
-the seven being `makefs` output, `makefs` at LZ4 and at ZLIB, the boundary
-tree, media DragonFly wrote at its LZ4 default, media DragonFly wrote
-after `hammer2 setcomp zlib` on the mount root, and a device carrying two
-PFSes, of which the gate mounts `ROOT`; mounting both at once is a
-measurement recorded in `README.status.md`, since a manifest names one
-label. For `f6` the block counts in the
+Measured on 2026-09-04: nine images, 35 files, 1 symlink, one corrupt
+file refused, one mount refused, 0 failures. The nine are `makefs`
+output, `makefs` at LZ4 and at ZLIB, the boundary tree, media DragonFly
+wrote at its LZ4 default, media DragonFly wrote after `hammer2 setcomp
+zlib` on the mount root, a device carrying two PFSes of which the gate
+mounts `ROOT`, and two copies of the LZ4 image altered on purpose: `f9`
+with one data byte flipped, whose manifest carries `# corrupt
+random128k.bin` and whose other files must still verify, and `f10` with
+one volume-header bit flipped, whose manifest is `# refuse` and no file
+rows. `f8`, the installed DragonFly root, has no manifest here: it is
+read by Saxum's walker as root and compared against two other readers,
+recorded in `README.status.md`. Mounting both of `f7`'s PFSes at once is
+a measurement recorded there too, since a manifest names one label.
+
+The gate attaches one image at a time, always as `vdb`, and releases it
+before the next. It used to hold every image attached and the guest ran
+out of virtio slots at the eighth, which the gate reported as an attach
+failure of its own making. For `f6` the block counts in the
 manifest are DragonFly's own `stat` output, so that image compares this
 reader against the writer rather than against itself.
 

@@ -53,7 +53,8 @@ if [ "${1:-}" = "--selftest" ]; then
 		n=$((n + 1))
 		c=$(command grep -c '^[0-9a-f]\{32\}  ' "$m")
 		lbl=$(sed -n 's/^# label //p' "$m" | head -1)
-		if [ "$c" -eq 0 ] || [ -z "$lbl" ]; then
+		command grep -q '^# refuse$' "$m" && c=refuse
+		if [ "$c" = 0 ] || [ -z "$lbl" ]; then
 			echo "  FAIL selftest: $m names $c file(s) and label '$lbl'"
 			fail=$((fail + 1))
 		fi
@@ -108,16 +109,11 @@ fi
 $VIRSH domstate "$GUEST" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 
-# The target names run vdb through vdz, so twenty-five is the ceiling and it
-# is checked rather than reached. The increment below saturates at z rather
-# than erroring, so without this the twenty-sixth image would be attached
-# over the twenty-fifth and the gate would report a failure it had caused.
+# ONE IMAGE ATTACHED AT A TIME, always as vdb, released before the next is
+# attached. Holding every image at once ran out of the guest's virtio slots
+# at the eighth, which the gate reported as an attach failure it had caused;
+# the twenty-five-target ceiling this used to check was never the limit.
 nman=$(printf '%s\n' $manifests | command grep -c .)
-if [ "$nman" -gt 25 ]; then
-	echo "fixtures: COULD-NOT-RUN: $nman images, and the target names run" >&2
-	echo "          vdb through vdz, so this gate mounts at most 25" >&2
-	exit 2
-fi
 
 # Build first. A gate that boots a guest before finding out the module does
 # not compile has spent four gigabytes to tell you what make would have.
@@ -201,27 +197,56 @@ images=0
 files=0
 blocks=0
 links=0
-dev=b
+corrupts=0
 tmpb=$(mktemp) || exit 2
+release_image() {
+	[ -n "$attached" ] || return 0
+	ssh "$GUEST_SSH" 'cd /; for m in /mnt/h2gate*; do umount "$m" 2>/dev/null; done' \
+	    >/dev/null 2>&1
+	$VIRSH detach-disk "$GUEST" "$attached" >/dev/null 2>&1
+	attached=""
+}
 for m in $manifests; do
+	release_image
 	base=$(basename "$m" .manifest)
 	img=$FIXDIR/$base.img
 	label=$(sed -n 's/^# label //p' "$m" | head -1)
 	want=$(command grep -c '^[0-9a-f]\{32\}  ' "$m")
-	if [ -z "$label" ] || [ "$want" -eq 0 ]; then
+	refuse=0; command grep -q '^# refuse$' "$m" && refuse=1
+	corrupt=$(sed -n 's/^# corrupt //p' "$m")
+	if [ -z "$label" ] || { [ "$want" -eq 0 ] && [ "$refuse" = 0 ]; }; then
 		echo "  FAIL $base: manifest names no label or no file"
 		fail=$((fail + 1)); continue
 	fi
 
-	vd=vd$dev
+	vd=vdb
 	$VIRSH attach-disk "$GUEST" "$img" "$vd" --targetbus virtio \
 	    >/dev/null 2>&1 || {
 		echo "  FAIL $base: could not attach $img as $vd"
 		fail=$((fail + 1)); continue; }
-	attached="$attached $vd"
-	dev=$(printf '%s' "$dev" | tr 'b-y' 'c-z')
+	attached="$vd"
 
 	mnt=/mnt/h2gate-$base
+
+	# F3, THE MEDIA THAT MUST BE REFUSED. `# refuse` says the mount has
+	# to fail; the image is not modified by the attempt, which the
+	# manifest's own md5 of the image would say but the gate does not
+	# take, a 2 GiB checksum per run being the wrong price for a
+	# read-only mount of a read-only attachment.
+	if [ "$refuse" = 1 ]; then
+		images=$((images + 1))
+		if ssh "$GUEST_SSH" "mkdir -p $mnt && \
+		    mount -t hammer2 -o ro /dev/$vd@$label $mnt" >/dev/null 2>&1; then
+			ssh "$GUEST_SSH" "umount $mnt" >/dev/null 2>&1
+			echo "  FAIL $base: corrupt media mounted, so nothing checked it"
+			fail=$((fail + 1)); continue
+		fi
+		why=$(ssh "$GUEST_SSH" "dmesg | grep hammer2 | tail -1" 2>/dev/null)
+		echo "  ok   $base: mount refused, $(sed -n 's/^# writer //p' "$m" | head -1)"
+		echo "        ${why#*] }"
+		continue
+	fi
+
 	scp -o ConnectTimeout=5 "$m" "$GUEST_SSH:/tmp/$base.manifest" \
 	    >/dev/null 2>&1
 	out=$(ssh "$GUEST_SSH" "mkdir -p $mnt && \
@@ -298,6 +323,18 @@ for m in $manifests; do
 	fi
 	blocks=$((blocks + nb))
 
+	# F3, THE FILE THAT MUST NOT READ. `# corrupt relpath` names a file
+	# whose data block was altered on media; the checksum on the block
+	# has to catch it and the read has to fail, never return the bytes.
+	for rel in $corrupt; do
+		if ssh "$GUEST_SSH" "cd $mnt && cat '$rel' > /dev/null" \
+		    >/dev/null 2>&1; then
+			echo "  FAIL $base: $rel read back, its altered block unnoticed"
+			fail=$((fail + 1)); continue 2
+		fi
+		corrupts=$((corrupts + 1))
+	done
+
 	# THE SYMLINKS, WHICH md5sum FOLLOWS AND SO NEVER READS. A symlink's
 	# target is file data, embedded in the inode for every link here, and
 	# ->get_link reads it through the same ->read_folio a file uses. The
@@ -330,7 +367,7 @@ if [ "$images" -eq 0 ]; then
 	exit 1
 fi
 
-echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $links symlink(s), $fail failure(s)"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $links symlink(s), $corrupts corrupt file(s) refused, $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
 echo "          being equal for LZ4 and ZLIB, and anything a second mount"
 echo "          of the same device would show"
