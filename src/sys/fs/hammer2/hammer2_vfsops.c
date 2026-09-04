@@ -43,6 +43,7 @@
 #include <linux/fs_parser.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/statfs.h>	/* Linux: uuid_to_fsid, struct kstatfs */
 
 static int hammer2_recovery(hammer2_dev_t *);
 static int hammer2_fixup_pfses(hammer2_dev_t *);
@@ -1584,8 +1585,81 @@ hammer2_evict_inode(struct inode *inode)
 	}
 }
 
+/*
+ * Report the filesystem's size and identity.
+ *
+ * This is upstream's hammer2_vfs_statfs() with its two loops collapsed and
+ * its credential check replaced by the field Linux already has for it.
+ *
+ * Upstream walks iroot's chains and overwrites every field on each pass,
+ * so the last non-NULL device wins and the earlier ones are computed and
+ * discarded; the first is taken here instead, which is the same answer for
+ * the single-device case and an honest one rather than an arbitrary one
+ * for a cluster this port cannot mount anyway.
+ *
+ * The credential check is the interesting half. Upstream subtracts the 5%
+ * reserve from all three block counts when the caller is not root, which
+ * is a question Linux answers with the fields themselves: f_bfree is what
+ * is free and f_bavail is what an unprivileged writer may have, so the
+ * reserve is subtracted from one and not the other, and no caller identity
+ * is consulted. df reads f_bavail, which is why a full disk still shows a
+ * few percent free to root.
+ *
+ * f_fsid is the PFS uuid rather than the device, because a device carries
+ * more than one PFS and each is a separate filesystem to the VFS. Folding
+ * sixteen bytes to eight is uuid_to_fsid(), which is the kernel's own
+ * helper for exactly this.
+ */
+static int
+hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)
+{
+	struct super_block *sb = dentry->d_sb;
+	hammer2_pfs_t *pmp = MPTOPMP(sb);
+	hammer2_dev_t *hmp = NULL;
+	hammer2_off_t avail;
+	int i;
+
+	for (i = 0; i < pmp->iroot->cluster.nchains; ++i) {
+		if (pmp->pfs_hmps[i]) {
+			hmp = pmp->pfs_hmps[i];
+			break;
+		}
+	}
+	if (hmp == NULL)
+		return (-EIO);		/* Linux: the VFS half is negative */
+
+	/*
+	 * HAMMER2_PBUFSIZE is what upstream reports as f_bsize and is the
+	 * unit its allocator counts in, so the division below is upstream's
+	 * and not a choice made here.
+	 */
+	buf->f_type = HAMMER2_SUPER_MAGIC;
+	buf->f_bsize = HAMMER2_PBUFSIZE;
+	buf->f_frsize = HAMMER2_PBUFSIZE;
+	buf->f_blocks = hmp->voldata.allocator_size / HAMMER2_PBUFSIZE;
+	buf->f_bfree = hmp->voldata.allocator_free / HAMMER2_PBUFSIZE;
+
+	avail = hmp->voldata.allocator_free;
+	avail -= avail < hmp->free_reserved ? avail : hmp->free_reserved;
+	buf->f_bavail = avail / HAMMER2_PBUFSIZE;
+
+	buf->f_files = hammer2_inode_inode_count(pmp->iroot);
+	buf->f_ffree = 0;	/* Linux: as upstream, inodes are not preallocated */
+
+	/*
+	 * Strictly less, which is the bound the core compares against at
+	 * both call sites in hammer2_inode.c, so the longest name that fits
+	 * is one below the array.
+	 */
+	buf->f_namelen = HAMMER2_INODE_MAXNAME - 1;
+	buf->f_fsid = uuid_to_fsid((__u8 *)&pmp->iroot->meta.pfs_fsid);
+
+	return (0);
+}
+
 static const struct super_operations hammer2_sops = {
 	.evict_inode	= hammer2_evict_inode,
+	.statfs		= hammer2_statfs,		/* Linux */
 };
 
 /*

@@ -109,7 +109,7 @@ What the mount can do, measured one call at a time:
 | operation | result |
 |---|---|
 | `stat` the root | `directory`, inode 1, mode `drwxr-xr-x` |
-| `statfs` | `ENOSYS`, `->statfs` is not written, unchanged since |
+| `statfs` | `ENOSYS`, `->statfs` was not written at `1f025fe` |
 | `readdir` | `ENOTDIR`, `->iterate_shared` was not written at `1f025fe` |
 | open and read a file | `EINVAL`, the read path is not carried; livelocked before the lock fix below |
 
@@ -227,12 +227,40 @@ That is a statement about what `makefs` wrote and not about what HAMMER2
 writes: DragonFly compresses by default, so media from the
 `dragonflybsd642` guest is expected to reach them.
 
+## What statfs reports, and how each number was checked
+
+`->statfs` is upstream's `hammer2_vfs_statfs()` with its two loops
+collapsed and its credential check replaced by the field Linux already
+has for it. Upstream subtracts a 5% reserve from all three block counts
+when the caller is not root; Linux answers that with the fields
+themselves, `f_bfree` being what is free and `f_bavail` what an
+unprivileged writer may have, so the reserve is subtracted from one and
+not the other and no caller identity is consulted. `f_fsid` is the PFS
+uuid rather than the device, since a device carries more than one PFS and
+each is a separate filesystem to the VFS.
+
+Against both fixtures at 7.3.0-rc1, every number resolved rather than
+eyeballed:
+
+| field | reported | checked against |
+|---|---|---|
+| `f_type` | `0x48414d32` | the high half of `HAMMER2_VOLUME_ID_HBO`, which spells HAM2 |
+| `f_bsize` | 65536 | `HAMMER2_PBUFSIZE`, which is what upstream reports and the unit its allocator counts in |
+| `f_blocks` | 125440 | `allocator_size` over that, 7.66 GiB of an 8 GiB image |
+| `f_bfree` minus `f_bavail` | 6272 | exactly 5% of `f_blocks`, which is the reserve upstream's comment names |
+| `f_files` | 5 | the five entries each fixture holds |
+| `f_namelen` | 255 | `HAMMER2_INODE_MAXNAME - 1`, the core comparing strictly less |
+| `f_fsid` | differs per mount | the two fixtures are separate PFSes, which is what this field has to distinguish |
+
+`df` reports 320 KiB used on the second fixture for 270,655 bytes of
+file data, which is five 64 KiB blocks and the rounding that implies.
+
 ## What is in the tree
 
 | file | lines | origin |
 |---|---|---|
 | `hammer2.h` | 1363 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
-| `hammer2_disk.h` | 1198 | DragonFly, carried; `struct uuid` defined locally |
+| `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
@@ -243,7 +271,7 @@ writes: DragonFly compresses by default, so media from the
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1706 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 1996 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2070 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 330 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 320 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 928 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -709,7 +737,7 @@ against the FreeBSD port at
 | `hammer2_strategy.c` | 1 | 0 | 1 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |
 | `hammer2.h` | 7 | 3 | 4 |
-| `hammer2_disk.h` | 1 | 1 | 0 |
+| `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
 | `hammer2_ioctl.h` | 0 | 0 | 0 |
@@ -763,10 +791,13 @@ directions of that population. It did not until 2026-08-26, and had
 drifted in the way an ungated count does: `hammer2_disk.h` and
 `src/sys/sys/tree.h` were missing while both carry a mark, and
 `hammer2_cluster.c` was listed at zero, which is what made a partial table
-read as an inventory. Neither omission moved the count, which was fifty-two when this was measured. Both marks are
-their authors': `hammer2_disk.h`'s is Dillon's note on the reserved area,
-present in the FreeBSD commit above, and `tree.h`'s is FreeBSD's own
-`XXXLAS`, which the vendoring left alone. The two remaining columns are a
+read as an inventory. Neither omission moved the count, which was fifty-two when this was measured. The two marks that prompted this
+are their authors': `hammer2_disk.h`'s first is Dillon's note on the
+reserved area, present in the FreeBSD commit above, and `tree.h`'s is
+FreeBSD's own `XXXLAS`, which the vendoring left alone. `hammer2_disk.h`
+gained a second, this port's, when `->statfs` landed and needed an
+`f_type`: `<uapi/linux/magic.h>` carries no entry for this filesystem, so
+the constant is the high half of the volume identifier, which spells HAM2. The two remaining columns are a
 subtraction against a tree that is not on most machines, so they are not
 gated and carry their measurement date instead.
 

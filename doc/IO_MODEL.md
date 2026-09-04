@@ -70,8 +70,8 @@ changes the filesystem, not the port.
 |---|---|
 | `hammer2_disk.h:111` | `HAMMER2_ALLOC_MAX` 65536 |
 | `hammer2_disk.h:128` | `HAMMER2_PBUFSIZE` 65536 |
-| `hammer2_disk.h:1155` | `HAMMER2_VOLUME_BYTES` 65536 |
-| `hammer2_disk.h:1163` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
+| `hammer2_disk.h:1162` | `HAMMER2_VOLUME_BYTES` 65536 |
+| `hammer2_disk.h:1170` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
 | `hammer2.h:528` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |

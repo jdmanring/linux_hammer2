@@ -224,6 +224,10 @@ gained or lost a single finding. The two checkers differ in size and hash,
 so the baseline had to be regenerated to record which one produced it, but
 nothing about this tree reads differently to the newer one.
 
+940 to 941 when `->statfs` landed: one hit, `return is not a function`,
+which is the tree's deliberate BSD style and the largest category in the
+baseline already.
+
 925 to 940 when the read path landed across `hammer2_strategy.c`,
 `hammer2_vnops.c` and `hammer2_inode.c`: 15 hits over about 200 new lines,
 one per 13 and the densest batch so far, which is what a file of small

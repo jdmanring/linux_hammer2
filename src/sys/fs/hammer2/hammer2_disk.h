@@ -1010,6 +1010,13 @@ typedef struct hammer2_inode_data hammer2_inode_data_t;
  *	 null-mount of the super-root using special path constructions
  *	 relative to your mounted root.
  */
+/*
+ * XXX Linux: statfs reports f_type and <uapi/linux/magic.h> carries no
+ * entry for this filesystem, so the high half of the volume identifier is
+ * used, which spells HAM2 and is what hexdump shows at the head of an
+ * image.
+ */
+#define HAMMER2_SUPER_MAGIC	0x48414d32	/* Linux */
 #define HAMMER2_VOLUME_ID_HBO	0x48414d3205172011LLU
 #define HAMMER2_VOLUME_ID_ABO	0x11201705324d4148LLU
 
