@@ -456,6 +456,26 @@ An image made by `makefs` is a Linux tool's output. The milestone's claim
 is about media DragonFly wrote, which is the `dragonflybsd642` guest in the
 fleet, and the two are different measurements.
 
+## The two fixtures
+
+`f1.img` holds five paths and its largest file is 16 bytes, which is under
+`HAMMER2_EMBEDDED_BYTES` and so lives in the inode. It proves the
+directory operations and nothing about the on-media read path, because
+every file in it takes the embedded branch.
+
+`f2.img` exists for that reason and is built on the boundaries the read
+completion branches on: 511 bytes, 512, 4096, 65536 and 200000. The pairs
+matter more than the sizes. 511 and 512 straddle the embedded limit, so
+one reaches the inode and the next reaches a data block, and 200000 is the
+only one where a folio can begin partway through a block, which is the
+arithmetic upstream has no counterpart for.
+
+    makefs -t hammer2 -o Label=TEST2,MountLabel=TEST2 f2.img tree2
+
+Compare with `md5sum` against the tree the image was made from rather than
+by reading the files, and read at an unaligned offset inside the largest
+with `dd skip=`, which no whole-file compare exercises.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a

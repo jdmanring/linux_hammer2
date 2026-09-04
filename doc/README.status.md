@@ -1,12 +1,12 @@
 Status
 ======
 
-The module mounts a HAMMER2 volume read-only and lists it: a `find` over
-the whole of a `makefs` fixture returns every path, and the mount, the
-unmount and the unload all complete. Reading a file's contents is the
-next milestone and still returns `EINVAL`. Getting here found and fixed
-two defects that no amount of compiling would have caught, one a livelock
-and one a use after free. This file is the one to correct rather than to argue
+The module mounts a HAMMER2 volume read-only, lists it and reads it. Every
+file in a `makefs` fixture compares byte for byte with the tree it was
+made from, across the sizes the code branches on. A block written
+compressed is refused rather than decoded, and nothing can be written.
+Getting here found and fixed two defects that no amount of compiling would
+have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
 
 ## The build
@@ -200,6 +200,32 @@ Also observed, and not a defect: mounting without a label fails with
 and the port defaults to `DATA` as upstream does. The failure path then
 runs the recorded `->sync_fs` floor, which is why a `WARN_ONCE` and a
 stack trace appear on a mount that merely named the wrong PFS.
+
+## Reading a file, and the sizes it was measured at
+
+A second `makefs` fixture was built on the boundaries the completion
+branches on rather than on a convenient tree, since the first fixture's
+largest file was 16 bytes and reached only the embedded case:
+
+| file | size | what it reaches |
+|---|---|---|
+| `e511.bin` | 511 | the last size that fits in the inode |
+| `d512.bin` | 512 | the first that does not, so the first on-media block |
+| `d4k.bin` | 4096 | exactly one folio |
+| `d64k.bin` | 65536 | one full logical block |
+| `d200k.bin` | 200000 | several blocks, so the offset inside a block is not zero |
+
+All five compare byte for byte with the tree the image was made from, as
+does a hundred byte read at offset 100000 inside the largest, which is the
+case where the folio starts partway through a block. `dmesg` carries no
+finding from this module, kmemleak reports nothing after a scan, and both
+fixtures unmount and the module unloads with status 0.
+
+Neither fixture holds a compressed block, so the LZ4 and ZLIB floors have
+not been reached and are recorded as a `DEFER` rather than as measured.
+That is a statement about what `makefs` wrote and not about what HAMMER2
+writes: DragonFly compresses by default, so media from the
+`dragonflybsd642` guest is expected to reach them.
 
 ## What is in the tree
 

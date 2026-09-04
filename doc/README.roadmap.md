@@ -49,13 +49,12 @@ in 0.2 can be prepared without it.
     this row: `hammer2_vfsops.c` owns `fs_context`, `super_operations` and
     `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
     `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
-    `lookup` and `iterate_shared` are written. `getattr` is not, and is
-    not owed: `vfs_getattr_nosec()` in `fs/stat.c` calls
+    `lookup`, `iterate_shared` and `read_folio` are written. `getattr` is
+    not, and is not owed: `vfs_getattr_nosec()` in `fs/stat.c` calls
     `generic_fillattr()` when `i_op->getattr` is NULL, read at v7.3-rc1,
     and `hammer2_igetv()` fills every field it copies. The BSDs need
     `VOP_GETATTR` because a BSD stat asks the filesystem; a Linux stat
-    asks the inode. So what is left of this row is `statfs`, `read_folio`
-    and the DIO read path beneath it.
+    asks the inode. So what is left of this row is `statfs`.
     The PFS half of `hammer2_vfsops.c` and the mount path are written:
     `->get_tree` performs device and volume probing, reads the super-root,
     looks up the PFS label under `spmp->iroot`, allocates the `pmp`, and
@@ -124,7 +123,7 @@ abbreviation. The stage is only ever written beside a version number.
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
 | 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1. kmemleak reports no unreferenced object across a mount, unmount and unload. Lockdep cannot judge this port: every chain lock shares one class, so the first mount reports recursive locking and the instrument disables itself |
-| 0.4 | H1 | Read-only mount of DragonFly-written media | a makefs image mounts read-only and find walks the whole tree; statfs is not written and a read returns EINVAL. The milestone's own claim needs media DragonFly wrote, which is the dragonflybsd642 guest and has not been done |
+| 0.4 | H1 | Read-only mount of DragonFly-written media | a makefs image mounts read-only, find walks the whole tree and every file reads back byte for byte; statfs is not written and a compressed block is refused rather than decoded. The milestone's own claim needs media DragonFly wrote, which is the dragonflybsd642 guest and has not been done |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | waits on the storage model |
