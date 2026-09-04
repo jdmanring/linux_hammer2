@@ -143,6 +143,51 @@ until `->read_folio` lands.
 
 Style baseline 924 to 925, the one hit `return is not a function`.
 
+## The second mount, and the use after free it found
+
+Listing a subdirectory oopsed with a NULL dereference in
+`hammer2_xop_unset_ipdep()`, reached from `hammer2_xop_retire()` at the
+end of `->iterate_shared`. Listing the mount root did not. A probe
+placed before the retire read `ip->pmp` as NULL and `ip->cluster.nchains`
+as zero on the subdirectory and correct on the root, which is the state
+`hammer2_inode_drop()` leaves behind on its last drop: it clears `pmp`,
+repoints the cluster at NULL and returns the structure to a zeroing
+allocator.
+
+The cause was in `->lookup` and not in the new operation. It called
+`hammer2_inode_unlock()` and then `hammer2_inode_drop()`, and
+`hammer2_inode_unlock()` already drops, in this port as in DragonFly. So
+every successful lookup released one reference more than it held. The
+comment above `hammer2_inode_get()` is carried from DragonFly and says
+the caller may dispose of both via `hammer2_inode_unlock()` plus
+`hammer2_inode_drop()`, where both is the lock and the reference rather
+than two references.
+
+The root directory survived it because `pmp->iroot` holds a reference of
+its own, so the count never reached zero. A subdirectory has the two the
+lookup itself created, which is why the defect needed an operation that
+uses a looked-up inode before it could be seen at all. Static gates
+cannot see a reference count, and no earlier operation used one.
+
+After the fix, on `artix-s6-kde` at 7.3.0-rc1 with lockdep and kmemleak:
+
+| operation | result |
+|---|---|
+| `ls` the root | three entries and the two dots |
+| `ls` a subdirectory | its one entry |
+| `ls` two levels down | its one entry |
+| `find` over the whole mount | every one of the five paths, exit 0 |
+| open and read a file | `EINVAL`, the read path is not carried |
+| `readlink` a symlink | `EINVAL`, `->get_link` is not written |
+| `umount`, `rmmod` | 0 and 0 |
+
+kmemleak reported nothing after a scan. `dmesg` carried the recorded
+`->sync_fs` `WARN_ONCE` on unmount and one recursive-locking report from
+lockdep in `hammer2_chain_lock()`, which is the single lockdep class
+recorded below and not a finding about this code: lockdep cannot
+distinguish a chain from its parent here, so a clean run would have meant
+nothing either.
+
 Nothing about the mount path itself failed. The device opened, the volume
 header was read, the PFS was matched by label and a root inode was built,
 all on code that had never executed.
@@ -171,7 +216,7 @@ stack trace appear on a mount that merely named the wrong PFS.
 | `hammer2_inode.c` | 1705 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 1996 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 142 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 174 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 181 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 928 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |

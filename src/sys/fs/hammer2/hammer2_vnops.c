@@ -118,8 +118,15 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 
 	if (ip) {
 		error = hammer2_igetv(ip, 0, &inode);
+		/*
+		 * hammer2_inode_unlock() drops the reference as well as
+		 * releasing the lock, in this port as in DragonFly.  The
+		 * comment above hammer2_inode_get() reads "dispose of both
+		 * via hammer2_inode_unlock() + hammer2_inode_drop()", where
+		 * both is the lock and the reference and not two
+		 * references, so there is no drop to make here.
+		 */
 		hammer2_inode_unlock(ip);
-		hammer2_inode_drop(ip);
 	}
 
 	/*
