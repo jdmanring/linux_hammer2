@@ -273,22 +273,21 @@ one word apart.
 `script/test-syntax.sh`. Two 7.3-rc1 trees are measured, and the pin cannot
 tell them apart, so each is named with the run that used it.
 
-The unoverridden run takes the store, and the tree it finds is patched:
+The unoverridden run takes the unpatched tree, which is the port's own
+claim:
 
-    hammer2 against 7.3.0-rc1-cachyos via the store, matching the kernel of
-    record, dialect -fms-extensions, with clang version 22.1.8
-    syntax: 46 check(s), 0 failed against the kernel of record (7.3)
+    syntax: 46 check(s), 0 failed against the kernel of record (7.3), 7.3.0-rc1, mainline
 
-The mainline run has to be asked for by pointing `KDIR` at an unpatched
-tree, and reports the same figures:
+The patched tree is the one the consuming distribution needs, and is asked
+for by pointing `KDIR` at it. It reports the same figures:
 
-    syntax: 46 check(s), 0 failed against the kernel of record (7.3)
+    syntax: 46 check(s), 0 failed against the kernel of record (7.3), 7.3.0-rc1-cachyos, patched
 
-`EXTRAVERSION` is `-rc1-cachyos` on the first and `-rc1` on the second.
-The pin compares `VERSION` and `PATCHLEVEL` only, so both trees satisfy it,
-as would 7.3 final and any later patched build. A green line names a
-release series and never a tree, and the gate's own tree line is the only
-place the distinction appears.
+`EXTRAVERSION` is `-rc1` on the first and `-rc1-cachyos` on the second, and
+that is the whole of the difference the pin cannot see: it compares
+`VERSION` and `PATCHLEVEL` only, so both trees satisfy it, as would 7.3
+final and any later optimized build. Both lines are required, and neither
+substitutes for the other.
 
 The module links against both. `make KDIR=<mainline>` produces a
 `hammer2.ko` with `vermagic: 7.3.0-rc1`; the store tree yields

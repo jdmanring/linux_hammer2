@@ -393,6 +393,38 @@ then pass a push. Both directions were driven before it was committed. On
 a clean tree it exits 0; with one category count altered in the baseline
 it names the moved line and exits 1.
 
+## Two trees at the kernel of record, both required
+
+The port claims to build against an unpatched Linux, and the distribution
+that consumes it ships a patched and optimized one. Those are two claims and
+the version pin cannot separate them, since it compares `VERSION` and
+`PATCHLEVEL` and a patched tree satisfies it exactly as mainline does. Run
+both and record both lines:
+
+    bash script/test-syntax.sh
+    KDIR=/nix/store/<hash>-linux-*-dev/lib/modules/*/build bash script/test-syntax.sh
+
+The first takes the unpatched tree, preferring it over a patched one at the
+same version, and searches `/lib/modules/$(uname -r)/build`, then anything
+in `H2_KERNEL_TREES`, then `$HOME/kernels/*`, then the store. The second
+names the patched tree deliberately.
+
+Both the header line and the summary line carry the release string and
+either `mainline` or `patched`, read from the tree's `EXTRAVERSION`:
+anything left after stripping a leading `-rcN` was added by whoever built
+the tree. A kernel built here with its own optimization carries a suffix
+too and so classifies without being named.
+
+The summary line is the one that gets quoted into a document, which is why
+it carries the tree rather than the release series alone. A quotation that
+named only the series was written into `README.status.md` describing a
+mainline tree while the run behind it had used the store's patched one.
+
+The same distinction applies to the module. `make KDIR=<tree>` against the
+two produces `vermagic: 7.3.0-rc1` and `vermagic: 7.3.0-rc1-cachyos`, which
+do not interchange: a module built against one is refused by the other
+before any of its code runs.
+
 ## Getting a kernel newer than the distribution ships
 
 The kernel of record moves faster than any guest in the fleet, so testing
