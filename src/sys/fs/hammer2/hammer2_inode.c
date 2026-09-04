@@ -825,17 +825,18 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	 * by getnewvnode() at allocation, from the mount, and the type
 	 * decides nothing.  Here the type decides the table.
 	 *
-	 * DEFER(the read path lands, with ->read_folio): a regular file
-	 * gets an inode_operations and a file_operations with no methods
-	 * in either, so it can be looked up, stat'd and opened, and read
-	 * fails EINVAL.  A directory is listable.  Every
-	 * other type falls to the same file table, which is wrong for a
-	 * symlink and for a device node and is not reachable while
-	 * nothing can open one.
+	 * A directory is listable, a regular file is readable, and a
+	 * symlink reads its target through the file mapping.  A device
+	 * node falls to the file table, which is wrong and not reachable:
+	 * nothing has made one on this media.
 	 */
 	if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &hammer2_dir_iops;	/* Linux */
 		inode->i_fop = &hammer2_dir_fops;	/* Linux */
+	} else if (S_ISLNK(inode->i_mode)) {
+		inode->i_op = &hammer2_symlink_iops;	/* Linux */
+		inode->i_mapping->a_ops = &hammer2_file_aops;	/* Linux */
+		inode_nohighmem(inode);	/* Linux */
 	} else {
 		inode->i_op = &hammer2_file_iops;	/* Linux */
 		inode->i_fop = &hammer2_file_fops;	/* Linux */

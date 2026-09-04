@@ -58,9 +58,9 @@
  * ->iterate_shared is upstream's hammer2_readdir() with the cookie array
  * and the artificial entries dropped, for the reasons written above it.
  *
- * DEFER(the read path lands, with ->read_folio): a regular file gets an
- * inode_operations and a file_operations with no methods in either, so
- * it can be looked up, stat'd and opened, and read fails EINVAL.
+ * A regular file reads through ->read_iter and ->read_folio, and a
+ * symlink reads its target through the same ->read_folio, the way
+ * hammer2_vop_readlink() reads it with hammer2_read_file().
  */
 
 #include "hammer2.h"
@@ -310,11 +310,23 @@ const struct address_space_operations hammer2_file_aops = {
 };
 
 /*
- * DEFER(the read path lands, with ->read_folio): a regular file has an
- * operations table so that i_op is never NULL on an inode this module
- * hands the VFS, and no methods in it.  The VFS reads size, mode, owner
- * and times out of the inode itself, which hammer2_igetv() fills, so
- * stat works and open does not.
+ * A regular file has an operations table so that i_op is never NULL on
+ * an inode this module hands the VFS, and no methods in it.  The VFS
+ * reads size, mode, owner and times out of the inode itself, which
+ * hammer2_igetv() fills, so stat needs nothing here.
  */
 const struct inode_operations hammer2_file_iops = {
+};
+
+/*
+ * A symlink's target is its file data, the first HAMMER2_EMBEDDED_BYTES
+ * of it in the inode and the rest in data blocks, and every port reads
+ * it that way: hammer2_vop_readlink() calls hammer2_read_file(), as the
+ * NetBSD port's hammer2_readlink() does.  On Linux that is page_get_link()
+ * over the same ->read_folio a regular file uses, so the symlink carries
+ * the file mapping and the inode is marked nohighmem, which
+ * page_get_link() asserts.
+ */
+const struct inode_operations hammer2_symlink_iops = {
+	.get_link	= page_get_link,
 };

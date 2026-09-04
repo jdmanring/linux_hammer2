@@ -938,6 +938,7 @@ extern hammer2_xop_desc_t hammer2_readdir_desc;
 /* hammer2_vnops.c */
 extern const struct inode_operations hammer2_dir_iops;	/* Linux */
 extern const struct inode_operations hammer2_file_iops;	/* Linux */
+extern const struct inode_operations hammer2_symlink_iops;	/* Linux */
 extern const struct file_operations hammer2_dir_fops;	/* Linux */
 extern const struct file_operations hammer2_file_fops;	/* Linux */
 extern const struct address_space_operations hammer2_file_aops;	/* Linux */

@@ -4,8 +4,8 @@ Status
 The module mounts a HAMMER2 volume read-only, lists it and reads it. Every
 file in a `makefs` fixture compares byte for byte with the tree it was
 made from, across the sizes the code branches on, and so does every file
-on media DragonFly itself created and wrote. LZ4 and ZLIB blocks decode.
-Nothing can be written.
+on media DragonFly itself created and wrote. LZ4 and ZLIB blocks decode
+and symlinks resolve. Nothing can be written.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
@@ -182,7 +182,7 @@ After the fix, on `artix-s6-kde` at 7.3.0-rc1 with lockdep and kmemleak:
 | `find` over the whole mount | every one of the five paths, exit 0 |
 | `getdents64` with a 64-byte buffer | the root in 3 calls and the subdirectory in 2, each name once |
 | open and read a file | `EINVAL`, the read path was not carried at `e76ad21` |
-| `readlink` a symlink | `EINVAL`, `->get_link` is not written |
+| `readlink` a symlink | `EINVAL` at `e76ad21`, `->get_link` not being written then; the fixture gate reads `f1`'s symlink back since it was |
 | `umount`, `rmmod` | 0 and 0 |
 
 kmemleak reported nothing after a scan. `dmesg` carried the recorded
@@ -332,7 +332,7 @@ ran at a time, each holding 4 GiB.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1363 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1364 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -343,10 +343,10 @@ ran at a time, each holding 4 GiB.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1706 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_inode.c` | 1707 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2082 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 499 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 320 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 928 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -764,7 +764,6 @@ against the source is the same shape as an empty one.
 | `hammer2_vfsops.c`, at three sites: the read-write refusal in `hammer2_get_tree()`, `hammer2_reconfigure()`, and the recovery call before `hammer2_update_pmps()` | `DEFER(recovery is exercised on a device)` | upstream's `hammer2_recovery()`, `hammer2_recovery_scan()` and `hammer2_fixup_pfses()` are carried and called where upstream calls them, so the code exists. What has not happened is running them: they WRITE, through `hammer2_freemap_adjust()` with `DORECOVER`, `hammer2_chain_modify()` and `hammer2_flush()`, and nothing has been loaded. Until they are exercised on a device carrying an interrupted flush, both refusals stay: `hammer2_get_tree()` returns `EROFS` before the device is opened, and `hammer2_reconfigure()` returns it for the remount that would otherwise arrive at the same state sideways, since `reconfigure_super()` applies `SB_RDONLY` whether or not the operation is present. All three sites lift together. The real `->reconfigure` is upstream's `hammer2_remount_impl()`, which is not carried and which runs these two a second time on the read-only to read-write transition |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_vfsops.c`, at `hammer2_vfs_sync_pmp()` | `DEFER(->sync_fs lands)` | the floor warns once and returns `EOPNOTSUPP`, and both call sites discard the value. It replaced a symbol deliberately left undefined, which made the absence visible at link time and also made the module unloadable. An unmount that does not sync loses nothing while nothing can be written; on the day the write path lands this is a data-loss bug rather than a deferral |
-| `hammer2_strategy.c`, at `hammer2_xop_strategy_read()` | `DEFER(the read path lands, with ->read_folio)` | the body is upstream's handler down to `hammer2_xop_collect()`, then a completion copying into `xop->folio`: the embedded-inode case, the three `HAMMER2_DEC_COMP()` cases on the kernel's own LZ4 and zlib, and `hammer2_dedup_record()` for the on-media case |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |

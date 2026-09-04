@@ -515,7 +515,9 @@ before unmounting, which is the only form that measurement can be kept in:
 regenerating them on Linux would compare this module against itself.
 
 Each manifest also records the on-media block count for every file, which
-`i_blocks` carries, and the gate compares those too. That is an assertion
+`i_blocks` carries, and the gate compares those too. A `# link target
+relpath` row records a symlink, which `md5sum` follows and so never reads;
+the gate compares `readlink` against it. That is an assertion
 about the fixture rather than about the code: a set of matching checksums
 cannot tell you that an image still holds compressed blocks, so an image
 regenerated without compression would pass every checksum while the
@@ -626,11 +628,15 @@ every directory and reaches each one through a lookup on its parent. At
 `e76ad21` it returns all five paths and exits 0, `umount` and `rmmod` both
 return 0, and kmemleak reports nothing after a scan.
 
-Two results in that run are floors and not failures: reading a file
-returns `EINVAL`, `->read_folio` not being written, and `readlink` on the
-symlink returns `EINVAL`, `->get_link` not being written. `ls -l` on a
-directory holding a symlink therefore exits 1 while listing correctly,
-which is `readlink` failing and not `readdir`.
+Two results in that run were floors and not failures: reading a file
+returned `EINVAL`, `->read_folio` not being written, and `readlink` on the
+symlink returned `EINVAL`, `->get_link` not being written, so `ls -l` on
+a directory holding a symlink exited 1 while listing correctly. Both are
+written since. A symlink's target is file data on this filesystem, so
+`->get_link` is `page_get_link()` over the same `->read_folio`, which is
+how the DragonFly and NetBSD ports read it too, through
+`hammer2_read_file()`. The fixture gate's `# link target relpath` rows
+are the check, `f1` carrying the one symlink the fixtures hold.
 
 A clean lockdep run on this says nothing about locking. Every chain lock
 takes its class from one `init_rwsem()` call site, so lockdep cannot

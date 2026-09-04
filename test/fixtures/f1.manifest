@@ -3,5 +3,6 @@
 # writer makefs
 # blocks 0 dir/deep/file.txt
 # blocks 0 hello.txt
+# link hello.txt link
 1b385affd7adb5a6283fef292b5df0f7  dir/deep/file.txt
 53a5ddaf4bc7985889604a4db028bd52  hello.txt

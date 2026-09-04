@@ -200,6 +200,7 @@ fail=0
 images=0
 files=0
 blocks=0
+links=0
 dev=b
 tmpb=$(mktemp) || exit 2
 for m in $manifests; do
@@ -296,7 +297,32 @@ for m in $manifests; do
 		continue
 	fi
 	blocks=$((blocks + nb))
-	echo "  ok   $base: $want file(s), $nb block count(s), $(sed -n 's/^# writer //p' "$m" | head -1)"
+
+	# THE SYMLINKS, WHICH md5sum FOLLOWS AND SO NEVER READS. A symlink's
+	# target is file data, embedded in the inode for every link here, and
+	# ->get_link reads it through the same ->read_folio a file uses. The
+	# rows are optional: an image with no symlink asserts none, and the
+	# summary line carries the total so a count of zero is visible.
+	lexp=$(sed -n 's/^# link //p' "$m")
+	nl=$(printf '%s\n' "$lexp" | command grep -c . || true)
+	if [ "$nl" -gt 0 ]; then
+		printf '%s\n' "$lexp" > "$tmpb"
+		scp -o ConnectTimeout=5 "$tmpb" "$GUEST_SSH:/tmp/$base.links" \
+		    >/dev/null 2>&1
+		lgot=$(ssh "$GUEST_SSH" "cd $mnt && while read -r target rel; do \
+		    printf '%s %s\\n' \"\$(readlink \"\$rel\")\" \"\$rel\"; \
+		    done < /tmp/$base.links" 2>/dev/null)
+		if [ "$lgot" != "$(cat "$tmpb")" ]; then
+			echo "  FAIL $base: a symlink did not read back as the manifest"
+			echo "        records it"
+			diff "$tmpb" - <<-EOD 2>/dev/null | sed 's/^/        /' | head -8
+			$lgot
+			EOD
+			fail=$((fail + 1)); continue
+		fi
+		links=$((links + nl))
+	fi
+	echo "  ok   $base: $want file(s), $nb block count(s), $nl symlink(s), $(sed -n 's/^# writer //p' "$m" | head -1)"
 done
 
 if [ "$images" -eq 0 ]; then
@@ -304,7 +330,7 @@ if [ "$images" -eq 0 ]; then
 	exit 1
 fi
 
-echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $fail failure(s)"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $links symlink(s), $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
 echo "          being equal for LZ4 and ZLIB, and anything a second mount"
 echo "          of the same device would show"
