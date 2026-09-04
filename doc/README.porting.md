@@ -445,10 +445,15 @@ once. Linux delivers them one at a time, before there is a
 `->get_tree` runs. That is `struct hammer2_fs_context`, freed by
 `->free`.
 
-`->reconfigure` is not written and carries a `DEFER`. It is where the
-`MNT_UPDATE` branch of `hammer2_mount()` goes. Without it the VFS
-refuses a remount, which is the right answer while there is nothing to
-remount.
+`->reconfigure` is written as a refusal and carries a `DEFER`. It is
+where the `MNT_UPDATE` branch of `hammer2_mount()` goes, and upstream's
+`hammer2_remount_impl()` is what eventually lands there. Today it returns
+`-EROFS` for a remount that would turn a read-only mount read-write, and
+0 for anything else, so a read-only remount succeeds. The refusal is
+present rather than absent on purpose: `reconfigure_super()` applies
+`SB_RDONLY` whether or not the operation exists, so a mount with no
+`->reconfigure` reaches the read-write state sideways and without a
+diagnostic. Being written is what lets it say why it refuses.
 
 ## The teardown path, and the two things kill_anon_super() already did
 

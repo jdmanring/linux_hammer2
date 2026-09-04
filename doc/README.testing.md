@@ -40,6 +40,25 @@ port rewrote it on `iget5_locked()`. It reads only the claims that name a
 symbol, which is a fraction of the class it belongs to, and it says so on
 every run rather than leaving the rest to inherit its credibility.
 
+It reads a second claim shape since 2026-09-04: `->method is not written`,
+resolved against the operations tables by asking whether that member is
+initialized at the start of a line under `src/`. That shape was added
+because the first one could not see the defect that kept recurring. Three
+documents described `->iterate_shared` as unwritten after it was, and the
+README's opening paragraph said the port does not mount anything for four
+days after it began mounting. Its first run found `->reconfigure`
+described as unwritten while it is wired into `hammer2_fs_context_ops`
+and deliberately returns `-EROFS`, which is a stronger statement than the
+prose was making.
+
+Only the arrow form is read, a bare method name not being distinguishable
+from ordinary prose, and only the present tense. A claim written in the
+past with the commit it was true at is a dated observation and cannot go
+stale, which is why `README.status.md` records the readdir floor as "was
+not written at `1f025fe`". The gate carries a `--selftest` driving six
+directions, including that one, on a fixture tree rather than on this
+repository's own prose.
+
 `test-shim.sh` compiles `hammer2_os.h` and `hammer2_compat.h` against the
 stubs in `test/stub`, in both positions of the `HAMMER2_INVARIANTS` knob,
 plus a negative control: the header is broken on a copy and the compile
@@ -568,6 +587,8 @@ disagreeing. Read the table.
 | `test-absence.sh` | the population is empty | `doc/` and `src/` moved aside |
 | `test-absence.sh` | no claim matched, so the pattern has stopped | the phrase it matches renamed in a scratch copy of the gate |
 | `test-absence.sh` | a claim naming a symbol that IS defined | `hammer2_chain_lookup()` and `hammer2_chain_scan()` appended to `README.porting.md`, the second wrapped across two lines |
+| `test-absence.sh` | a claim naming a `->method` that IS wired | `--selftest`, on a fixture tree rather than on this repository |
+| `test-absence.sh` | no `->method` claim matched, so that pattern has stopped | `--selftest` |
 | `test-inventory.sh` | no `test/` | moved aside |
 | `test-checkpatch.sh` | no baseline | moved aside |
 | `test-checkpatch.sh` | no `checkpatch.pl` | `CHECKPATCH` at a path that does not exist |
