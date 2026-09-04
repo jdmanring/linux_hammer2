@@ -393,21 +393,29 @@ then pass a push. Both directions were driven before it was committed. On
 a clean tree it exits 0; with one category count altered in the baseline
 it names the moved line and exits 1.
 
-## Two trees at the kernel of record, both required
+## Build against mainline, test against the kernel that ships
 
-The port claims to build against an unpatched Linux, and the distribution
-that consumes it ships a patched and optimized one. Those are two claims and
-the version pin cannot separate them, since it compares `VERSION` and
-`PATCHLEVEL` and a patched tree satisfies it exactly as mainline does. Run
-both and record both lines:
+The port claims to build against an unpatched Linux, and it runs on the
+kernel the consuming distribution actually ships, which is built with its
+own configuration and optimization. Those are two claims and the version
+pin cannot separate them, since it compares `VERSION` and `PATCHLEVEL` and
+a patched tree satisfies it exactly as mainline does. Run both and record
+both lines:
 
     bash script/test-syntax.sh
-    KDIR=/nix/store/<hash>-linux-*-dev/lib/modules/*/build bash script/test-syntax.sh
+    KDIR=<the shipping kernel's build tree> bash script/test-syntax.sh
 
 The first takes the unpatched tree, preferring it over a patched one at the
 same version, and searches `/lib/modules/$(uname -r)/build`, then anything
 in `H2_KERNEL_TREES`, then `$HOME/kernels/*`, then the store. The second
-names the patched tree deliberately.
+names the shipping kernel deliberately.
+
+The shipping kernel is Saxum's own build, `7.3.0-rc1-saxum`, compiled from
+CachyOS 7.3-rc1 with `-march=znver4` and BBR3. A stock distribution kernel
+from a binary cache is not a substitute for it: it measures a configuration
+nobody here runs. Until that artifact exists the only patched tree on this
+disk is the store's `7.3.0-rc1-cachyos`, and the figures recorded against
+it are a superseded measurement rather than a standing requirement.
 
 Both the header line and the summary line carry the release string and
 either `mainline` or `patched`, read from the tree's `EXTRAVERSION`:
@@ -420,10 +428,15 @@ it carries the tree rather than the release series alone. A quotation that
 named only the series was written into `README.status.md` describing a
 mainline tree while the run behind it had used the store's patched one.
 
-The same distinction applies to the module. `make KDIR=<tree>` against the
-two produces `vermagic: 7.3.0-rc1` and `vermagic: 7.3.0-rc1-cachyos`, which
-do not interchange: a module built against one is refused by the other
-before any of its code runs.
+The same distinction applies to the module. `make KDIR=<tree>` writes the
+tree's release into `vermagic`, and a module built against one kernel is
+refused by another before any of its code runs, so the runtime test needs a
+module built against the kernel it will be loaded on. The shipping kernel's
+module directory is its release string, `7.3.0-rc1-saxum`, and installing
+modules anywhere else leaves them where the running kernel does not search.
+
+Building against that kernel inherits its flags through kbuild, including
+`-march=znver4`, so the resulting module requires a Zen 4 host.
 
 ## Getting a kernel newer than the distribution ships
 

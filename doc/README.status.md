@@ -286,16 +286,20 @@ claim:
 
     syntax: 46 check(s), 0 failed against the kernel of record (7.3), 7.3.0-rc1, mainline
 
-The patched tree is the one the consuming distribution needs, and is asked
-for by pointing `KDIR` at it. It reports the same figures:
+The kernel the port is to be tested on is the one Saxum ships, its own
+build of CachyOS 7.3-rc1 with `-march=znver4` and BBR3, reporting as
+`7.3.0-rc1-saxum`. That artifact does not exist yet. The patched tree
+measured so far is the store's stock build, which is a superseded
+measurement and not the shipping kernel:
 
     syntax: 46 check(s), 0 failed against the kernel of record (7.3), 7.3.0-rc1-cachyos, patched
 
-`EXTRAVERSION` is `-rc1` on the first and `-rc1-cachyos` on the second, and
-that is the whole of the difference the pin cannot see: it compares
-`VERSION` and `PATCHLEVEL` only, so both trees satisfy it, as would 7.3
-final and any later optimized build. Both lines are required, and neither
-substitutes for the other.
+`EXTRAVERSION` is `-rc1` on the mainline tree and carries a suffix on any
+built kernel, and that is the whole of the difference the pin cannot see:
+it compares `VERSION` and `PATCHLEVEL` only, so every one of them satisfies
+it, as would 7.3 final. The build claim is made against mainline and the
+runtime claim against the shipping kernel; neither substitutes for the
+other, and a stock distribution kernel substitutes for neither.
 
 The module links against both. `make KDIR=<mainline>` produces a
 `hammer2.ko` with `vermagic: 7.3.0-rc1`; the store tree yields
