@@ -224,6 +224,12 @@ gained or lost a single finding. The two checkers differ in size and hash,
 so the baseline had to be regenerated to record which one produced it, but
 nothing about this tree reads differently to the newer one.
 
+924 to 925 when `hammer2_mtx_upgrade_try()` in `hammer2_os.h` became a
+real shared to exclusive transition rather than a predicate that could
+never succeed. One hit, `return is not a function, parentheses are not
+required`, which is the tree's deliberate BSD style and the largest
+category in the baseline already.
+
 922 to 924 when `hammer2_ondisk.c` gained the guard that chooses between
 `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and the
 `fs_bdev_file_open_by_path()` that replaced it. Two hits, both

@@ -1,9 +1,11 @@
 Status
 ======
 
-The module loads and unloads; nothing has been mounted, so no filesystem
-behavior here has been observed running. This file is the one to correct
-rather than to argue with: if a claim here is stale, it is a defect.
+The module mounts a HAMMER2 volume read-only, and the mount, an attempted
+read, the unmount and the unload all complete. Getting there found and
+fixed the first defect this port has caught by running rather than by
+compiling. This file is the one to correct rather than to argue
+with: if a claim here is stale, it is a defect.
 
 ## The build
 
@@ -50,6 +52,65 @@ warning-clean. The loads above were of a module built for the guest's own
 kernels, and neither 7.3-rc1 tree has been loaded, since a module built
 against one kernel is refused by another before any of its code runs.
 
+## The first mount, and the livelock it found
+
+A `makefs` image mounted read-only on the `fedora44` guest at
+7.2.3-300.fc45, the module built against that kernel in the guest:
+
+    mount -t hammer2 -o ro /dev/loop0@TEST /mnt/h2   ->  0, no log output
+    /dev/loop0@TEST on /mnt/h2 type hammer2 (ro,relatime)
+
+What the mount can do, measured one call at a time:
+
+| operation | result |
+|---|---|
+| `stat` the root | `directory`, inode 1, mode `drwxr-xr-x` |
+| `statfs` | `ENOSYS`, `->statfs` is not written |
+| `readdir` | `ENOTDIR`, `->iterate_shared` is not written |
+| open and read a file | `EINVAL`, the read path is not carried; livelocked before the lock fix below |
+
+The first three are floors behaving as recorded. The fourth is a defect.
+`cat` sits in `D` state in `hammer2_chain_unlock()` printing
+`hammer2_chain_unlock: h2race2` every two seconds without end. The task
+cannot be killed, `umount` reports the target busy, and the guest was
+rebooted to clear it.
+
+The cause was `hammer2_mtx_upgrade_try()` in `hammer2_os.h`, which was a
+predicate and not an upgrade:
+
+    return (hammer2_mtx_owned(p) ? 0 : 1);
+
+It reported success only when the lock was already held exclusively. The
+loop in `hammer2_chain_unlock()` takes the shared path, asks for an
+upgrade, is refused, and retries forever. DragonFly's `mtx` upgrades a
+shared hold to exclusive; a Linux `rw_semaphore` has no atomic upgrade,
+and the shim answered a missing primitive with a test rather than an
+implementation. The carried loop is upstream's and was not the defect.
+
+The comment above it asserted that every caller of a `_try` handles
+failure by dropping and re-acquiring, so a predicate was correct and
+merely slow. That caller does not, which is what the mount measured.
+
+It now releases the read side and takes the write side, restoring the
+caller's shared hold if it cannot, which is what the OpenBSD port does at
+the same place. Against the same reproducer on the same guest: the read
+returns `EINVAL` at once, `dmesg` carries no `h2race2` line at all, no
+task is left in `D` state, and `umount` and `rmmod` both return 0.
+`EINVAL` is the read path not being carried, and is the answer expected
+until `->read_folio` lands.
+
+Style baseline 924 to 925, the one hit `return is not a function`.
+
+Nothing about the mount path itself failed. The device opened, the volume
+header was read, the PFS was matched by label and a root inode was built,
+all on code that had never executed.
+
+Also observed, and not a defect: mounting without a label fails with
+`PFS label "DATA" not found`, since `makefs` writes the label it is given
+and the port defaults to `DATA` as upstream does. The failure path then
+runs the recorded `->sync_fs` floor, which is why a `WARN_ONCE` and a
+stack trace appear on a mount that merely named the wrong PFS.
+
 ## What is in the tree
 
 | file | lines | origin |
@@ -73,7 +134,7 @@ against one kernel is refused by another before any of its code runs.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 749 | ours, the OS shim |
+| `hammer2_os.h` | 771 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |

@@ -393,6 +393,38 @@ then pass a push. Both directions were driven before it was committed. On
 a clean tree it exits 0; with one category count altered in the baseline
 it names the moved line and exits 1.
 
+## Making a fixture to mount
+
+There is a Linux-native HAMMER2 writer on this machine and there has been
+since 2026-08-25: Kusumi's `makefs` port, packaged by the distribution and
+built in the store. `doc/research/HAMMER2_TEST_FIXTURE_PLAN.md` names it
+and every other writer in the fleet. Nothing in this repository has to be
+written to produce media, and a claim that media is unavailable is a claim
+about a search, not about the machine.
+
+    makefs -t hammer2 -o Label=TEST,MountLabel=TEST <image> <tree>
+
+Both options or it fails: `Label=` creates the PFS and `MountLabel=` picks
+where the tree lands, and with only the first the tool creates the PFS and
+then tries to mount the default `DATA`.
+
+Two costs measured rather than assumed. The image is fully allocated and
+not sparse, so it occupies its full size on the filesystem holding it, and
+the default size is 8 GiB. `-s 1g` is refused, and the tool reports
+`trying default image size 8.00GB`, which does not agree with the
+toolchain document's statement that images size in 1 GiB chunks and the
+packaged test takes one. Whichever is right, an 8 GiB write per fixture is
+what this machine does today, so fixtures belong on real storage and want
+caching rather than regenerating.
+
+The mount names the PFS, and a mount without one asks for `DATA`:
+
+    mount -t hammer2 -o ro /dev/loop0@TEST /mnt/h2
+
+An image made by `makefs` is a Linux tool's output. The milestone's claim
+is about media DragonFly wrote, which is the `dragonflybsd642` guest in the
+fleet, and the two are different measurements.
+
 ## Build against mainline, test against the kernel that ships
 
 The port claims to build against an unpatched Linux, and it runs on the

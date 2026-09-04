@@ -353,15 +353,37 @@ hammer2_mtx_sh_try(hammer2_mtx_t *p)
 }
 
 /*
- * XXX Linux has downgrade_write() and no upgrade, so this succeeds only
- * when the caller already holds it exclusively. Every caller of a _try
- * handles failure by dropping and re-acquiring, so this is correct and
- * slow. OpenBSD unlocks and retries here for the same reason.
+ * XXX Linux has downgrade_write() and no atomic upgrade, so the shared to
+ * exclusive transition is done by releasing and retaking, which is what
+ * the OpenBSD port does here for the same reason.
+ *
+ * This returned failure for every shared holder until a mount measured
+ * it: hammer2_chain_unlock() asks for the upgrade in a loop and treats
+ * refusal as a race to be retried, so a caller holding the chain shared
+ * spun in that loop without end, unkillable, holding the mount until the
+ * machine was rebooted. The comment this replaces asserted that every
+ * caller of a _try drops and re-acquires on failure. That caller does not,
+ * and a predicate that can never succeed is not a slow implementation of
+ * an upgrade.
+ *
+ * The window where neither side is held is the one the caller's loop
+ * already anticipates: it re-reads lockcnt on every iteration and commits
+ * with a compare-and-set, so an upgrade that fails leaves the caller
+ * holding exactly what it held before.
  */
 static inline int
 hammer2_mtx_upgrade_try(hammer2_mtx_t *p)
 {
-	return (hammer2_mtx_owned(p) ? 0 : 1);
+	if (hammer2_mtx_owned(p))
+		return (0);
+
+	up_read(&p->lock);
+	if (!down_write_trylock(&p->lock)) {
+		down_read(&p->lock);	/* Linux: restore the caller's hold */
+		return (1);
+	}
+	WRITE_ONCE(p->owner, current);
+	return (0);
 }
 
 /* Non-zero if the lock was held exclusively. */
