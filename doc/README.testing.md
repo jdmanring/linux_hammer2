@@ -514,6 +514,24 @@ the claim. `f5.manifest` holds the checksums DragonFly itself reported
 before unmounting, which is the only form that measurement can be kept in:
 regenerating them on Linux would compare this module against itself.
 
+Each manifest also records the on-media block count for every file, which
+`i_blocks` carries, and the gate compares those too. That is an assertion
+about the fixture rather than about the code: a set of matching checksums
+cannot tell you that an image still holds compressed blocks, so an image
+regenerated without compression would pass every checksum while the
+compressed path silently stopped being exercised. What the counts do not
+distinguish is one compressor from another, `f3` at LZ4 and `f4` at ZLIB
+reporting the same numbers because both compress below the smallest
+allocation; the floors run before either decoder existed are what
+established which image is which.
+
+The counts corrected a claim in `README.status.md` on their first run.
+`d512.bin` was described there as the first file on media, and it reports
+zero blocks: `hammer2_inode.c` compares `size > HAMMER2_EMBEDDED_BYTES`,
+so the bound is inclusive and 512 bytes is still embedded. Two fixture
+files were testing the same branch while the document said they straddled
+it.
+
 It carries a negative control per image rather than only in the selftest.
 After a manifest verifies, one hash in it is altered and the same mount is
 compared again, which must fail. Without that, an empty sums file, a

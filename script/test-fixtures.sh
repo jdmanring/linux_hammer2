@@ -156,6 +156,7 @@ cleanup() {
 		$VIRSH detach-disk "$GUEST" "$d" >/dev/null 2>&1
 	done
 	[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1
+	rm -f "${tmpb:-}"
 	return 0
 }
 trap 'cleanup' EXIT
@@ -198,7 +199,9 @@ ssh "$GUEST_SSH" 'rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko' 2>/dev/null
 fail=0
 images=0
 files=0
+blocks=0
 dev=b
+tmpb=$(mktemp) || exit 2
 for m in $manifests; do
 	base=$(basename "$m" .manifest)
 	img=$FIXDIR/$base.img
@@ -234,6 +237,39 @@ for m in $manifests; do
 	fi
 	files=$((files + want))
 
+	# THE BLOCK COUNTS, WHICH ARE ABOUT THE FIXTURE AND NOT THE CODE.
+	# i_blocks is the on-media count, so it says whether a file is
+	# embedded in its inode, stored compressed, stored raw or a hole. A
+	# set of matching checksums cannot say that: if an image were
+	# regenerated without compression every checksum would still match
+	# while the compressed path silently stopped being exercised. What
+	# it does not distinguish is one compressor from another, f3 at LZ4
+	# and f4 at ZLIB reporting the same counts because both compress
+	# below the smallest allocation.
+	bexp=$(sed -n 's/^# blocks //p' "$m" | sort -k2)
+	nb=$(printf '%s\n' "$bexp" | command grep -c .)
+	if [ "$nb" -eq 0 ]; then
+		echo "  FAIL $base: the manifest records no block count, so the"
+		echo "        branch each file takes is unasserted"
+		fail=$((fail + 1)); continue
+	fi
+	printf '%s\n' "$bexp" | while read -r n rel; do
+		printf '%s %s\n' "$n" "$rel"
+	done > "$tmpb"
+	scp -o ConnectTimeout=5 "$tmpb" "$GUEST_SSH:/tmp/$base.blocks" \
+	    >/dev/null 2>&1
+	bgot=$(ssh "$GUEST_SSH" "cd $mnt && while read -r n rel; do \
+	    printf '%s %s\\n' \"\$(stat -c %b \"\$rel\")\" \"\$rel\"; \
+	    done < /tmp/$base.blocks" 2>/dev/null)
+	if [ "$bgot" != "$(cat "$tmpb")" ]; then
+		echo "  FAIL $base: on-media block counts moved, so this image no"
+		echo "        longer exercises the branches it was built for"
+		diff "$tmpb" - <<-EOD 2>/dev/null | sed 's/^/        /' | head -8
+		$bgot
+		EOD
+		fail=$((fail + 1)); continue
+	fi
+
 	# THE NEGATIVE CONTROL, ON EVERY RUN AND ON THIS IMAGE. A manifest
 	# with one hash altered must fail against the same mount that just
 	# passed. Without it a silent md5sum, an empty sums file or a mount
@@ -259,7 +295,8 @@ for m in $manifests; do
 		fail=$((fail + 1))
 		continue
 	fi
-	echo "  ok   $base: $want file(s), $(sed -n 's/^# writer //p' "$m" | head -1)"
+	blocks=$((blocks + nb))
+	echo "  ok   $base: $want file(s), $nb block count(s), $(sed -n 's/^# writer //p' "$m" | head -1)"
 done
 
 if [ "$images" -eq 0 ]; then
@@ -267,9 +304,9 @@ if [ "$images" -eq 0 ]; then
 	exit 1
 fi
 
-echo "fixtures: $images image(s), $files file(s) verified, $fail failure(s)"
-echo "fixtures: not read here: the on-media block counts that say which"
-echo "          branch each file took, and anything a second mount of the"
-echo "          same device would show"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $fail failure(s)"
+echo "fixtures: not read here: which compressor an image used, the counts"
+echo "          being equal for LZ4 and ZLIB, and anything a second mount"
+echo "          of the same device would show"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -209,15 +209,23 @@ largest file was 16 bytes and reached only the embedded case:
 
 | file | size | what it reaches |
 |---|---|---|
-| `e511.bin` | 511 | the last size that fits in the inode |
-| `d512.bin` | 512 | the first that does not, so the first on-media block |
-| `d4k.bin` | 4096 | exactly one folio |
+| `e511.bin` | 511 | inside the embedded bound |
+| `d512.bin` | 512 | the last size that fits in the inode, the bound being inclusive |
+| `d4k.bin` | 4096 | exactly one folio, and the first file here on media |
 | `d64k.bin` | 65536 | one full logical block |
 | `d200k.bin` | 200000 | several blocks, so the offset inside a block is not zero |
 
 All five compare byte for byte with the tree the image was made from, as
 does a hundred byte read at offset 100000 inside the largest, which is the
-case where the folio starts partway through a block. `dmesg` carries no
+case where the folio starts partway through a block.
+
+This table said `d512.bin` was the first file on media, which the block
+counts added later disproved: it reports zero blocks, so 512 bytes is
+still embedded. `hammer2_inode.c:1507` compares
+`size > HAMMER2_EMBEDDED_BYTES`, strictly greater, so the bound is
+inclusive and the pair that straddles it is 512 and 4096 rather than 511
+and 512. The two small files test the same branch as each other, which is
+the kind of claim a checksum cannot correct and a block count can. `dmesg` carries no
 finding from this module, kmemleak reports nothing after a scan, and both
 fixtures unmount and the module unloads with status 0.
 

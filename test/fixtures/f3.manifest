@@ -1,6 +1,10 @@
 # image f3
 # label TEST3
 # writer makefs CompressionType=lz4
+# blocks 8 lz4_text.bin
+# blocks 256 random128k.bin
+# blocks 8 sparse.bin
+# blocks 0 zeros64k.bin
 b9916f7c285f4acaedb14c21254e7b6e  lz4_text.bin
 5768b6843404f5531a1a5c49bd254bff  random128k.bin
 015bb3d9a2eca5be2e47da3375279231  sparse.bin
