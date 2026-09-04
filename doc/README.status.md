@@ -52,6 +52,48 @@ warning-clean. The loads above were of a module built for the guest's own
 kernels, and neither 7.3-rc1 tree has been loaded, since a module built
 against one kernel is refused by another before any of its code runs.
 
+## Under lockdep and kmemleak at 7.3.0-rc1
+
+A mainline `v7.3-rc1` kernel built here with `CONFIG_PROVE_LOCKING`,
+`CONFIG_DEBUG_KMEMLEAK` and `CONFIG_TRANSPARENT_HUGEPAGE`, configured from
+the Artix guest's own `/proc/config.gz` and installed on it. Both
+instruments were confirmed live before the module was loaded, `/proc/lockdep`
+and `/sys/kernel/debug/kmemleak` both present, because an option that
+silently failed to enable produces a clean result that means nothing.
+
+This is the first run on which the 7.3 device-open shim executed. Every
+earlier mount was at 7.2.3, which takes `bdev_file_open_by_path()` with the
+kernel's `fs_holder_ops`; at 7.3 the guard selects
+`fs_bdev_file_open_by_path()`, and that branch had never run. The image was
+attached as a virtio disk rather than through a loop device, so the mount
+opened a real block device.
+
+    mount -t hammer2 -o ro /dev/vdb@TEST /mnt/h2   ->  0
+
+**Lockdep reported `possible recursive locking` on that mount.** Two
+different chain locks, at different addresses, are both class `&p->lock#4`,
+and the report names its own cause: `May be due to missing lock nesting
+notation`. The ledger row at `hammer2_mtx_init()` carries the detail. It is
+not a deadlock. It is lockdep being unable to tell a parent chain from its
+child, because every chain lock shares one class.
+
+**The instrument then switched itself off.** `debug_locks` reads 0
+afterwards, which is what lockdep does after its first complaint, so
+nothing this port locked for the rest of that boot was validated. The rest
+of this run was measured with lockdep already disabled, and no absence of
+findings below is evidence about locking.
+
+**kmemleak found nothing**, two scans with a gap after the unmount and two
+more after the unload, `0 unreferenced object`. That is a real reading and
+a narrow one: one mount of one image, whose readdir and read both failed
+early, so most of the allocation paths a working filesystem uses were never
+entered.
+
+The rest of the sequence behaves at 7.3.0-rc1 as it does at 7.2.3 after the
+lock fix: `stat` on the root gives a directory at inode 1, `readdir` gives
+`ENOTDIR`, a read gives `EINVAL`, `umount` and `rmmod` both return 0, no
+task is left in `D` state and `h2race2` is printed zero times.
+
 ## The first mount, and the livelock it found
 
 A `makefs` image mounted read-only on the `fedora44` guest at
@@ -134,7 +176,7 @@ stack trace appear on a mount that merely named the wrong PFS.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 771 | ours, the OS shim |
+| `hammer2_os.h` | 793 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -547,6 +589,7 @@ against the source is the same shape as an empty one.
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
+| `hammer2_os.h`, at `hammer2_mtx_init()` | `DEFER(chain locks carry nesting notation)` | every chain lock takes its lockdep class from that one `init_rwsem()` call site, so locking a parent chain and then its child is indistinguishable from taking one lock twice. The first mount under `CONFIG_PROVE_LOCKING` reports `possible recursive locking` and names the cause: `May be due to missing lock nesting notation`. Lockdep then sets `debug_locks` to 0 and validates nothing further that boot, so this warning costs the instrument rather than only printing. The fix is a subclass per level of the chain hierarchy through a `_nested` acquire, and the depth has to be bounded first, since `MAX_LOCKDEP_SUBCLASSES` is 8 and a chain tree is deeper |
 | `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |
 | `hammer2_vfsops.c`, where a secondary mount matches an open device | `DEFER(a second PFS on one device is mounted)` | the second mount reuses the open the first made, so the device's freeze, thaw, sync and mark_dead callbacks reach the first mount's superblock and not the second's. True of every kernel this builds against, and 7.3 makes it legible by registering `{device, superblock}` pairs rather than treating the holder as the superblock. The fix is to register each superblock, not to open the device twice. At 7.3 and above this blocks 0.4's multi-PFS case rather than merely weakening it: the device is closed when `hmp->mount_count` reaches zero, by which point the superblock the open was registered for has been freed, so `fs_bdev_unregister()` fails its pointer comparison, the table entry is never dropped, and the kernel's own freeze and sync paths are left walking a pair whose superblock is gone |
 
@@ -580,7 +623,7 @@ against the FreeBSD port at
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 1 | 1 | 0 |
 | `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 7 | 0 | 7 |
+| `hammer2_os.h` | 8 | 0 | 8 |
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
@@ -602,7 +645,7 @@ against the FreeBSD port at
 Seventy-eight are this port's, the right-hand column summed, and they
 fall in nine files: nineteen in `hammer2_ondisk.c`, seventeen in
 `hammer2_inode.c`, sixteen in `hammer2_vfsops.c`, seven in
-`hammer2_subr.c`, seven in `hammer2_os.h`, five in `hammer2_flush.c`,
+`hammer2_subr.c`, eight in `hammer2_os.h`, five in `hammer2_flush.c`,
 four in `hammer2.h`, two in `hammer2_io.c` and one in
 `hammer2_strategy.c`. That is the whole of them, and it is the only place
 in this file that adds up to the column.
@@ -622,7 +665,7 @@ way once, and the sentence that invited it said "the three largest sets"
 while skipping the second largest.
 
 Sixty-four sit in a file that holds upstream text. The other nine are
-the two files this port wrote from nothing: seven in `hammer2_os.h`, and
+the two files this port wrote from nothing: eight in `hammer2_os.h`, and
 two of `hammer2_io.c`'s four.
 
 `hammer2.h` has a row for the first time. It is a carried header this port

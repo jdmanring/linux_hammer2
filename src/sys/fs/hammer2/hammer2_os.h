@@ -262,6 +262,28 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
 }
 
 /*
+ * XXX Every lock initialized through the line above shares one lockdep
+ * class, because init_rwsem() takes its class from the call site and every
+ * chain in the tree is initialized from that one.  Locking a parent chain
+ * and then its child is ordinary for this filesystem and indistinguishable
+ * from a lock taken twice once the two share a class, so the first mount
+ * under CONFIG_PROVE_LOCKING reports "possible recursive locking" and names
+ * the cause itself: "May be due to missing lock nesting notation".
+ *
+ * The report is not the cost.  Lockdep sets debug_locks to 0 after its
+ * first complaint, so it validates nothing for the rest of that boot, and
+ * every lock this port takes afterwards goes unchecked.  A clean run that
+ * follows this warning is not evidence of anything.
+ *
+ * DEFER(chain locks carry nesting notation): the fix is a subclass per
+ * level of the chain hierarchy, passed through a _nested acquire, which
+ * needs the depth bounded first: lockdep allows MAX_LOCKDEP_SUBCLASSES,
+ * which is 8, and a HAMMER2 chain tree is deeper than that, so the mapping
+ * has to be chosen rather than assumed.  Until it exists, this port cannot
+ * be validated by lockdep at all.
+ */
+
+/*
  * The recursive variant, which DragonFly and FreeBSD provide and this
  * port does not.  A Linux rw_semaphore deadlocks against its own holder
  * exactly as a NetBSD krwlock does, so the mapping follows the NetBSD
