@@ -563,9 +563,12 @@ an artifact of the setup and not a finding about the code.
     KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
-Measured on 2026-09-04: five images, 21 files, 0 failures, the five being
-`makefs` output, `makefs` at LZ4 and at ZLIB, the boundary tree, and media
-DragonFly wrote.
+Measured on 2026-09-04: six images, 28 files, 1 symlink, 0 failures, the
+six being `makefs` output, `makefs` at LZ4 and at ZLIB, the boundary tree,
+media DragonFly wrote at its LZ4 default, and media DragonFly wrote after
+`hammer2 setcomp zlib` on the mount root. For `f6` the block counts in the
+manifest are DragonFly's own `stat` output, so that image compares this
+reader against the writer rather than against itself.
 
 ## Media DragonFly wrote
 
@@ -577,6 +580,12 @@ milestone's own claim the writer has to be DragonFly:
     virsh reboot dragonflybsd642        # no virtio-blk hotplug there
     newfs_hammer2 -L DFLY /dev/vbd1
     mount -t hammer2 /dev/vbd1@DFLY /mnt/h2w
+
+For `f6` the same, with the disk attached to the shut-off domain under
+`--config` so no reboot is needed, and `hammer2 setcomp zlib /mnt/h2w`
+run before the first file is written, since the setting is inherited by
+new inodes and does not rewrite existing ones. Root over ssh works with
+the key; the unprivileged user's `doas` asks for a password.
 
 Two things about that guest cost time. Its root shell is csh, where
 `2>&1` is a syntax error rather than a redirect, so run anything with

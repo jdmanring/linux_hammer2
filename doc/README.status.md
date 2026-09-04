@@ -320,8 +320,17 @@ branch each file took, `i_blocks` carrying the on-media count:
 
 So the embedded case, the LZ4 case, the uncompressed case and the hole
 were each reached on one image, by a writer this project does not control,
-rather than on media built to reach them. ZLIB is not exercised here:
-DragonFly's default is LZ4, and `f4.img` is what covers the other.
+rather than on media built to reach them. ZLIB was not exercised on that
+image, DragonFly's default being LZ4, so a second one was written the
+same way with `hammer2 setcomp zlib` on the mount root before any file
+existed, and it is `f6`. DragonFly's own `hammer2 stat` reports
+`zlib:default` on every file and `comp_algo=0x03` on the root, which is
+the only reading of the compressor this tree has, the block counts being
+the same for either. On it a 176000-byte text file occupies 3 KB and
+decodes here, so a ZLIB block DragonFly wrote is read; a 64 KiB file of
+zeros and a file that is one byte after 65535 of hole both occupy nothing.
+Every checksum and every block count matches what DragonFly reported, and
+for this image the counts are DragonFly's numbers, not this reader's.
 
 `dmesg` carries one finding, the recursive-locking report in
 `hammer2_chain_lock()`, which is the single lockdep class recorded below.

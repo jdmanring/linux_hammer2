@@ -1,0 +1,17 @@
+# image f6
+# label DFLY2
+# writer dragonfly 6.4-RELEASE newfs_hammer2, hammer2 setcomp zlib on the root
+# blocks 6 compressible.txt
+# blocks 0 dir/deep/file.txt
+# blocks 0 hello.txt
+# blocks 256 random128k.bin
+# blocks 0 sparse.bin
+# blocks 0 tiny.txt
+# blocks 0 zeros64k.bin
+829734ffe95c7e14537e55512f9b1c8c  compressible.txt
+1b385affd7adb5a6283fef292b5df0f7  dir/deep/file.txt
+5c61ecdfc49591177d7c2fb7e119a310  hello.txt
+cd9093b2441968bd80ae9fa3308c6b8b  random128k.bin
+fcd6bcb56c1689fcef28b57c22475bad  sparse.bin
+900150983cd24fb0d6963f7d28e17f72  tiny.txt
+fcd6bcb56c1689fcef28b57c22475bad  zeros64k.bin
