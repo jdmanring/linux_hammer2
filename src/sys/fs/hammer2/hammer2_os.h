@@ -83,6 +83,20 @@
 #endif
 
 /*
+ * ->write_begin and ->write_end took a struct file * until v6.16 and
+ * take a const struct kiocb * from v6.17, read at the two tags.  The
+ * bodies in hammer2_vnops.c use neither; the type is what has to agree
+ * with the operations table.  CI's floor build was the first thing to
+ * compile them at 6.15, and the mismatch was the first thing it found.
+ */
+#define LINUX_WRITE_BEGIN_KIOCB	KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE < LINUX_WRITE_BEGIN_KIOCB
+typedef struct file hammer2_write_ctx_t;	/* Linux */
+#else
+typedef const struct kiocb hammer2_write_ctx_t;	/* Linux */
+#endif
+
+/*
  * kzalloc_obj() is the object-allocation spelling that arrived in 7.0,
  * absent at v6.19 and present at v7.0, read at the tags. Below that,
  * kzalloc() with sizeof is the same allocation.

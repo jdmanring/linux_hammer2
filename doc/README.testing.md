@@ -421,7 +421,11 @@ tree built from `defconfig` on the runner, which is the only build at the
 floor anywhere. Its result has to be read on the forge after the push,
 and it was not: three pushes on 2026-09-04 were red there on one
 undefined symbol while every local gate was green, and each got its
-changelog row. `gh run list` after a push is part of the push.
+changelog row. `gh run list` after a push is part of the push. What can
+be run locally is the compile at the floor: `make KDIR=<a 6.15 tree>`
+compiles every object against 6.15's headers and stops only at modpost
+when that tree's kernel was built without the codecs, which is where
+the `->write_begin` signature guard was measured before its push.
 
 It fetches the checker the baseline records and caches it under
 `$XDG_CACHE_HOME/linux_hammer2`, keyed by the sha256 the baseline names.

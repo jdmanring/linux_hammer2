@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 954 | ours, the OS shim |
+| `hammer2_os.h` | 968 | ours, the OS shim |
 | `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |

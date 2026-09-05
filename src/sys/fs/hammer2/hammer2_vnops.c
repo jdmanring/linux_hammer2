@@ -351,7 +351,7 @@ const struct file_operations hammer2_file_fops = {
  * folio it will then hand back locked.
  */
 static int
-hammer2_write_begin(const struct kiocb *iocb __maybe_unused,
+hammer2_write_begin(hammer2_write_ctx_t *iocb __maybe_unused,
     struct address_space *mapping, loff_t pos, unsigned int len,
     struct folio **foliop, void **fsdata __maybe_unused)
 {
@@ -405,7 +405,7 @@ hammer2_write_begin(const struct kiocb *iocb __maybe_unused,
  * write iterator opened.
  */
 static int
-hammer2_write_end(const struct kiocb *iocb __maybe_unused,
+hammer2_write_end(hammer2_write_ctx_t *iocb __maybe_unused,
     struct address_space *mapping, loff_t pos, unsigned int len,
     unsigned int copied, struct folio *folio, void *fsdata __maybe_unused)
 {

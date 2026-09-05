@@ -285,7 +285,13 @@ as carried. The folio-order assert in `hammer2_io.c` added one split
 string and one continuation indent, in the shape of the assert beside it.
 The buffered write path in `hammer2_vnops.c` and the recursive exclusive
 lock in `hammer2_os.h` added five continuation indents and five
-`return (x);` between them, all in the two mechanical rows below.
+`return (x);` between them, all in the two mechanical rows below. The
+guard that gives `->write_begin` and `->write_end` their first argument's
+type, a `struct file` until v6.16 and a `const struct kiocb` from v6.17,
+added one more `LINUX_VERSION_CODE` hit, the sixth, and two typedefs,
+one per branch, which is the shape the floor demands: the operations
+table must match the header it is compiled against, and the floor is
+two releases below the change.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
