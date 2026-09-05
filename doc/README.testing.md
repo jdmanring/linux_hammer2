@@ -106,60 +106,31 @@ runs while the build was clean. The pattern is therefore checked against a
 line built to match before it is trusted on a log that should have none,
 since no warnings and a pattern that stopped matching print the same number.
 
-## The declared floor is built, since 2026-09-03
+## One kernel, one tree
 
-`hammer2_os.h` has carried an `#error` asserting 6.15 for as long as there
-has been a shim, and nothing had ever put a compiler on that kernel. The
-lowest build in existence was CI's, two releases above it. A floor nothing
-compiles is an assertion, and it failed as one twice in a day:
-`inode_state_read_once()` needs 6.19 and `kzalloc_obj()` needs 7.0, and each
-surfaced as an implicit declaration in the middle of a build against a newer
-kernel rather than at the `#error` written to report a kernel that is too
-old.
+The floor and the kernel of record are the same release, 7.3, so the
+syntax gate and `build-check.sh` against that tree are the only builds
+there are. From 2026-09-03 to 2026-09-05 a second CI job fetched a 6.15
+tarball, built the kernel and linked the module against it, because the
+floor was 6.15 and nothing had ever compiled there. It found two spellings
+the floor lacked, then a type rename, then a codec `defconfig` leaves out,
+then a config edit `olddefconfig` silently undid, then the `->write_begin`
+signature, and the floor moved to 7.3 with the job deleted;
+`README.porting.md` has the ruling. What that job taught survives it:
+`build-check.sh` takes a `KDIR`, so a build against any tree is one
+command, and a build that has never been run against the tree the
+`#error` names is an assertion and not a constraint.
 
-A second CI job fetches the 6.15 tarball, runs `modules_prepare` once and
-caches the prepared tree on the tag, then builds the module against it
-through the same `build-check.sh`. The tag is immutable, so the expensive
-half is paid once; a cache miss costs minutes and changes no verdict. The
-tree is asserted to report 6.15 before anything is built against it, because
-a cache restored under a bumped key would otherwise report a green floor
-build against some other kernel. COULD-NOT-RUN is a real failure in that job
-rather than a skip: the steps above it exist to provide the tree, so its
-absence means one of them silently did nothing.
-
-Run it before pushing, not after. Between 2026-08-29 and 2026-09-03 this
-repository sent twenty-six failed CI runs, counted by asking the API which
-step failed in each rather than by remembering: twenty-one at a module
-build, three at the repository gates, and two at the floor job's own
-assertion that its kernel tree carries a symbol table. The build failures
-were symbols undefined at modpost, then a 6.19 spelling against the 6.15
-floor, then a 7.0 one, then that job's own iterations. Two of the
-twenty-six were the gate's fault, a bare `warning:` matching kbuild's
-compiler banner; every other one was a real defect, in the tree or in the
-workflow being written at the time.
-
-So the gates were right and the volume was still a working habit rather
-than a defect rate. CI was being used as a compiler, one push per question,
-and each answer arrived as a failure notification to the maintainer.
-
-`build-check.sh` takes a `KDIR`, so the floor job reproduces on any machine
-with a built 6.15 tree:
-
-    $ cd ~/kernels && curl -sSLO https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.15.tar.xz
-    $ tar -xf linux-6.15.tar.xz && cd linux-6.15
-    $ make defconfig && make -j"$(nproc)"        # bc, bison, flex, libelf, openssl
-    $ cd /path/to/linux_hammer2
-    $ sh script/build-check.sh ~/kernels/linux-6.15
-
-The full build is what writes `Module.symvers`, per the kbuild note above,
-and it is the only slow part. Once it exists the check is seconds, and the
-question CI answers in four minutes is answerable before the commit.
-
-`script/floor-symbols.py` bounds the same class from the other side by
-resolving every identifier the tree calls and does not define against the
-floor tree's `include/`. It does not compile, so a signature that changed
-while keeping its name, or a macro that stopped expanding, is invisible to
-it. The job is what closes what the sweep can only bound.
+Between 2026-08-29 and 2026-09-03 this repository sent twenty-six failed
+CI runs, counted by asking the API which step failed in each rather than
+by remembering: twenty-one at a module build, three at the repository
+gates, and two at the floor job's own assertion that its kernel tree
+carries a symbol table. Two of the twenty-six were the gate's fault, a
+bare `warning:` matching kbuild's compiler banner; every other one was a
+real defect, in the tree or in the workflow being written at the time. So
+the gates were right and the volume was a working habit rather than a
+defect rate: CI was being used as a compiler, one push per question, and
+each answer arrived as a failure notification to the maintainer.
 
 `test-doc-prose.sh` runs vale over every tracked `.md` file with the
 styles in `styles/`, which are house YAML rather than a downloaded package
@@ -416,16 +387,10 @@ the eleven are run individually on purpose, and one exit status for eleven
 questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
 overrides it for a push that is deliberately ahead of a green tree.
 
-What it cannot run is CI's second job, the module build against a 6.15
-tree built from `defconfig` on the runner, which is the only build at the
-floor anywhere. Its result has to be read on the forge after the push,
-and it was not: three pushes on 2026-09-04 were red there on one
+It runs what CI runs, and CI's result still has to be read on the forge
+after the push: three pushes on 2026-09-04 were red there on one
 undefined symbol while every local gate was green, and each got its
-changelog row. `gh run list` after a push is part of the push. What can
-be run locally is the compile at the floor: `make KDIR=<a 6.15 tree>`
-compiles every object against 6.15's headers and stops only at modpost
-when that tree's kernel was built without the codecs, which is where
-the `->write_begin` signature guard was measured before its push.
+changelog row. `gh run list` after a push is part of the push.
 
 It fetches the checker the baseline records and caches it under
 `$XDG_CACHE_HOME/linux_hammer2`, keyed by the sha256 the baseline names.

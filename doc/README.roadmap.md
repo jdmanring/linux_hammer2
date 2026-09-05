@@ -278,9 +278,9 @@ Depends on 0.2 and on a guest with the kernel of record and the debug options.
 Risks: the module links but the load oopses in init, which blocks until fixed.
 The init path is the shim's, not the core's, so the fault is in fewer
 than a thousand lines and the guest console is the instrument. Separately, if
-the 6.15 floor is wrong in the exercised direction, the bump is made at
-`KERNEL_REF` in the syntax gate and the gate re-run before the floor is quoted
-again.
+the floor is wrong in the exercised direction, the bump is made at
+`KERNEL_REF` in the syntax gate and the `#error` together and the gate
+re-run before the floor is quoted again.
 
 ### 0.4 Read-only mount of DragonFly-written media
 
@@ -455,7 +455,8 @@ Each is the maintainer's, and each names what it blocks.
 - 32-bit or HIGHMEM kernels. `hammer2_io_data()` hands the core a pointer it
   holds across sleeps, so the folio must be permanently mapped, and a
   `static_assert` refuses that build rather than corrupting quietly.
-- Kernels older than 6.15, by `BLK_MAX_BLOCK_SIZE`.
+- Kernels older than the kernel of record. The floor is 7.3 and moves with
+  the pin; there is no conditional compilation on the version in the tree.
 - Replacing `hammer2-fuse`. It is an independent Rust reader of the same
   format over libhammer2, which is what makes it useful as a second reader: a
   disagreement between the two is a finding about one of them.

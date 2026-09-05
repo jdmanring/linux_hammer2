@@ -4,7 +4,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
 [![Status](https://img.shields.io/badge/status-mounts%20and%20lists%2C%20read--only-yellow.svg)](doc/README.status.md)
-[![Kernel](https://img.shields.io/badge/linux-6.15%2B-informational.svg)](doc/README.status.md)
+[![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
 
@@ -62,10 +62,11 @@ than about a shared bug.
 
 ## Requirements
 
-+ Linux 6.15 or newer. That is the floor the code requires, enforced by an
-  `#error`. The kernel it is DEVELOPED against is the latest release, and
-  `script/test-syntax.sh` refuses to report a pass against anything else;
-  the pin is `KERNEL_REF` in that script and moves when a release ships
++ Linux 7.3 or newer, enforced by an `#error`. The floor is the kernel
+  the port is developed and tested against, one tree: `script/test-syntax.sh`
+  refuses to report a pass against anything else, the pin is `KERNEL_REF`
+  in that script, and both move together when a release ships. There is
+  no conditional compilation on the kernel version in the tree
 
 + kernel headers for the running kernel
 

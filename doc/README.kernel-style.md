@@ -205,7 +205,7 @@ reformatted to lower a count.
 919 to 920 when `hammer2_os.h` gained a second version guard, for
 `inode_state_read_once()`. The category is `LINUX_VERSION_CODE should be
 avoided, code should be for the version to which it is merged`, which the
-6.15 floor check already draws, and it is the same answer: a port carried
+floor check already draws, and it is the same answer: a port carried
 across a range of releases cannot be code for one version, and the guard
 is what keeps the range honest. On submission, where the tree is code for
 the version it is merged to, both go.
@@ -289,9 +289,10 @@ lock in `hammer2_os.h` added five continuation indents and five
 guard that gives `->write_begin` and `->write_end` their first argument's
 type, a `struct file` until v6.16 and a `const struct kiocb` from v6.17,
 added one more `LINUX_VERSION_CODE` hit, the sixth, and two typedefs,
-one per branch, which is the shape the floor demands: the operations
-table must match the header it is compiled against, and the floor is
-two releases below the change.
+one per branch. The floor then moved to 7.3, the kernel of record, and
+every version guard went with it: five `LINUX_VERSION_CODE` hits and
+those two typedefs left the baseline, and the one hit that remains is
+the `#error` that states the floor.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the

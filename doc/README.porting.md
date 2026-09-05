@@ -126,8 +126,7 @@ architecture. The range is 6.16 through 7.3-rc1, measured by reading
 `include/linux/blkdev.h` at each tag: v6.15 defines `BLK_MAX_BLOCK_SIZE`
 as `SZ_64K` unconditionally, and v6.16 is the first to put it behind
 `#ifdef CONFIG_TRANSPARENT_HUGEPAGE` with `PAGE_SIZE` on the other side.
-So the floor release is the one release in the supported range that does
-not need the option. What must never happen is silently splitting one HAMMER2
+Every release the floor admits needs the option. What must never happen is silently splitting one HAMMER2
 physical buffer, which would change on-disk semantics.
 
 ## The device layer
@@ -304,7 +303,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:74` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:75` | `KASSERTMSG`, which panics under the same knob |
-| `hammer2_os.h:158` | `hpanic`, `panic()` unconditionally |
+| `hammer2_os.h:97` | `hpanic`, `panic()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 
@@ -625,69 +624,43 @@ mean nothing calls it. The fix is staged in `doc/upstream/` as two patches,
 one against DragonFly and one against the three ports, which is where work
 for James to file upstream goes. They are not applied here.
 
-## What the kernel floor buys, measured against 7.2 and 7.3
+## The kernel floor is the kernel of record
 
-The floor is 6.15 because `BLK_MAX_BLOCK_SIZE` is what lets a 64 KiB
-`HAMMER2_PBUFSIZE` reach the block layer at all. Raising it is a question
-about conditional compilation, and the tree answers it exactly: four
-version guards exist and each names the release that made it necessary.
+The floor is 7.3, the same kernel `KERNEL_REF` in `script/test-syntax.sh`
+pins as the kernel of record, and the two move together when a release
+ships. There is no conditional compilation on the kernel version in the
+tree: the `#error` in `hammer2_os.h` is the whole of it.
 
-| guard | since | what it spans |
-|---|---|---|
-| `LINUX_BLK_MAX_BLOCK_SIZE` | 6.15 | the floor itself, an `#error` |
-| `LINUX_SHA256_CTX_RENAME` | 6.17 | `struct sha256_state` becoming `struct sha256_ctx` |
-| `LINUX_INODE_STATE_ACCESSORS` | 6.19 | `inode_state_read_once()` |
-| `LINUX_FS_BDEV_OPEN` | 7.3 | `fs_holder_ops` going static, and the open helpers that replaced it |
+It was 6.15 from the first import, chosen because `BLK_MAX_BLOCK_SIZE`
+arrived there and is what lets a 64 KiB physical buffer reach the block
+layer, and four guards accumulated above it as the tree used what newer
+kernels offered: `struct sha256_ctx` at 6.17, `->write_begin` taking a
+`kiocb` at 6.17, `inode_state_read_once()` at 6.19, `kzalloc_obj()` at
+7.0, and the per-mount device claim at 7.3. Each was measured by reading
+the header at the tags and each drew a `LINUX_VERSION_CODE` hit from
+`checkpatch.pl`, which is right to draw it: a port carried across a
+range of releases is not code for the version it will be merged into.
 
-A floor at 7.2 deletes the first three and leaves one. A floor at 7.3
-deletes all four, and the tree then has no conditional compilation in it
-at all. That is not a stylistic gain: `checkpatch.pl` draws
-`LINUX_VERSION_CODE should be avoided, code should be for the version to
-which it is merged` once per guard, four of the deviations the baseline
-carries, and they are the only four a floor move deletes outright rather
-than argues about. The baseline holds other categories a submission still
-has to answer, the unnamed macro arguments and the SPDX placement among
-them, and no floor touches any of those.
+The earlier text here recorded the decision to move the floor to 7.3 on
+its release, on the expectation that 7.3 becomes a longterm series, and
+to keep 6.15 and the guards until then so that a released kernel could
+build the tree. That reasoning held until the floor was first compiled.
+CI's build at 6.15 went red on a codec a `defconfig` leaves out, then on
+a config edit `olddefconfig` silently undid, then on the `->write_begin`
+signature, and a day went to a kernel that nothing here runs, nothing in
+Saxum runs, and no fixture has ever been mounted on. The maintainer's
+ruling on 2026-09-05: a floor two releases below the features the code
+uses is not worth a second tree, so raise it when a newer facility is
+needed and stop carrying the range. 7.3 is at rc1 as this is written and
+is expected to be longterm; if kernel.org's release table says otherwise
+when it ships, that changes which release the pin names, not the rule.
 
-Against that, a floor is a claim about who can build the tree, and 7.3 is
-unreleased. Its merge window closed on 2026-08-17 and the snapshot this
-tree has been built against, `7.3.0-0.rc0.260819gbd5f485f3f02`, is a
-merge-window build rather than a release candidate. A floor no released
-kernel satisfies cannot be built by anyone, the CI floor job included.
+What the move deleted: the second CI job that fetched, configured and
+built a 6.15 tree on every cache miss, `script/floor-symbols.py`, which
+resolved every called name against a floor tree's headers and could not
+see a signature, and five `LINUX_VERSION_CODE` hits with two typedefs in
+the style baseline. What it did not change: the mount-time folio check,
+which is about the running kernel's page cache and not its version, and
+the `CONFIG_TRANSPARENT_HUGEPAGE` requirement, which every release above
+6.15 shares.
 
-Three things in the 7.3 merge window bear on this port directly, read
-from the pull requests rather than from release notes:
-
-- The superblock pull adds a global device-to-superblock table so one
-  block device can be shared by several superblocks, with freeze, thaw,
-  sync and removal reaching all of them. HAMMER2 puts many PFSes on one
-  device and is the shape that table was built for. This port cannot use
-  it yet, for the reason the deferral at the secondary-mount site records.
-- The iomap pull collapses `->iomap_begin()` and `->iomap_end()` into one
-  `->iomap_next()`, and adds a light direct-I/O path worth 4 to 10 per
-  cent on ext4 and XFS. This port's DIO layer is its own and does not go
-  through iomap, so the gain is not available without adopting iomap,
-  which is a larger decision than a floor.
-- The writeback pull adds `->sync_inode_metadata` and
-  `I_METADATA_WRITEBACK`, which is the operation the carried `->sync_fs`
-  sits beside.
-
-None of the three is a reason to raise the floor today, because none of
-them is code this tree currently runs. The reason to raise it is the
-guard count.
-
-The decision recorded here: the floor moves to 7.3, on the release, and
-skips 7.2 entirely. 7.2 is an ordinary stable series and goes end of life
-within weeks of 7.3 shipping, which is what 7.1 has already done, so a
-floor there would be a floor on a kernel nobody can run for long. 7.3 is
-expected to be a longterm release, which is the property that makes a
-floor worth pinning at all: it is what lets one tree claim a range that
-stays buildable. That expectation is not yet a designation, since
-kernel.org marks no 7.x longterm and cannot mark an unreleased kernel, so
-the move waits for the release and is re-checked against the release
-table then rather than assumed.
-
-Until then the floor stays at 6.15 and the guards stay. A floor no
-released kernel satisfies cannot be built by anyone, this repository's own
-CI included, so running on 7.3 and pinning the floor to 7.3 stay separate
-decisions, and only the first has been available.

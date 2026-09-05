@@ -85,7 +85,7 @@ strategy would meet the same format.
 | `hammer2_io.c:75` | the `BLK_MAX_BLOCK_SIZE` static assert |
 | `hammer2_io.c:92-100` | `hammer2_io_index()` assuming the mapping's folio order |
 | `hammer2_io.c:126` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
-| `hammer2_os.h:54-62` | the 6.15 version floor, which exists only for the above |
+| `hammer2_os.h:55-67` | the version floor, 7.3, the kernel of record |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
 `HAMMER2_LIMIT_DIRTY_INODES` in `hammer2.h` is 65536 and is neither: it

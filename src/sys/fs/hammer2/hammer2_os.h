@@ -53,79 +53,18 @@
 #include "hammer2_compat.h"
 
 /*
- * The floor is BLK_MAX_BLOCK_SIZE, which the DIO layer needs to assert the
- * 64KB physical buffer against. Measured by reading each header at the
- * tag: BLK_MAX_BLOCK_SIZE absent in v6.14 and present in v6.15,
- * folio_mark_dirty_lock absent in v6.12 and present in v6.13, kvrealloc
- * still four arguments in v6.11 and three in v6.12.
+ * The floor is the kernel of record, one tree: what this port is built,
+ * tested and measured against, pinned as KERNEL_REF in
+ * script/test-syntax.sh and moved when a release ships.  There is no
+ * conditional compilation on the kernel version anywhere in the tree.
+ * The floor was 6.15, the release BLK_MAX_BLOCK_SIZE arrived in, with
+ * four guards spanning the releases above it, until the first compile at
+ * 6.15 cost a day for a kernel nobody here runs; doc/README.porting.md
+ * records the move.
  */
-#define LINUX_BLK_MAX_BLOCK_SIZE	KERNEL_VERSION(6, 15, 0)
-#if LINUX_VERSION_CODE < LINUX_BLK_MAX_BLOCK_SIZE
-#error "HAMMER2 requires Linux 6.15 or newer"
-#endif
-
-/*
- * i_state is read through inode_state_read_once() from 6.19, where it
- * became a struct behind accessors that let the kernel validate consumers.
- * Before that it is a scalar and READ_ONCE() on it is the same read.
- * Measured by reading include/linux/fs.h at each tag rather than from
- * memory: u32 in v6.15, v6.16 and v6.17, enum inode_state_flags_t in
- * v6.18, and a struct with the two accessors in v6.19.
- *
- * The floor is 6.15 and this call sits in hammer2_igetv(), so without this
- * the module cannot build on four of the releases the #error above says it
- * supports, and it fails as an implicit declaration in the middle of a
- * build rather than at that #error. It did, on every push from 2026-09-02.
- */
-#define LINUX_INODE_STATE_ACCESSORS	KERNEL_VERSION(6, 19, 0)
-#if LINUX_VERSION_CODE < LINUX_INODE_STATE_ACCESSORS
-#define inode_state_read_once(inode)	READ_ONCE((inode)->i_state) /* Linux */
-#endif
-
-/*
- * ->write_begin and ->write_end took a struct file * until v6.16 and
- * take a const struct kiocb * from v6.17, read at the two tags.  The
- * bodies in hammer2_vnops.c use neither; the type is what has to agree
- * with the operations table.  CI's floor build was the first thing to
- * compile them at 6.15, and the mismatch was the first thing it found.
- */
-#define LINUX_WRITE_BEGIN_KIOCB	KERNEL_VERSION(6, 17, 0)
-#if LINUX_VERSION_CODE < LINUX_WRITE_BEGIN_KIOCB
-typedef struct file hammer2_write_ctx_t;	/* Linux */
-#else
-typedef const struct kiocb hammer2_write_ctx_t;	/* Linux */
-#endif
-
-/*
- * kzalloc_obj() is the object-allocation spelling that arrived in 7.0,
- * absent at v6.19 and present at v7.0, read at the tags. Below that,
- * kzalloc() with sizeof is the same allocation.
- *
- * The kernel's takes (P, ...) and this takes (P). That is deliberate.
- * The tail selects the gfp flags through default_gfp(), which arrived
- * with it and is equally absent at the floor, so honouring the tail
- * would mean writing a gfp-defaulting macro here: a second
- * implementation of the kernel's, to serve calls this tree does not
- * make. A call that does pass flags fails below 7.0, and gcc names this
- * macro when it does, "macro kzalloc_obj passed 2 arguments, but takes
- * just 1", which was measured rather than assumed. It fails only below
- * 7.0, so it would build on a developer's machine and break at the
- * floor; CI builds at 6.17 on every push, which is what turns that into
- * the same push rather than a later one.
- *
- * The guard is #ifndef and not a version comparison, because stable
- * series backport this: Arch's 6.18.46 has it where mainline v6.18 does
- * not, and a version guard redefined it there with a warning that a
- * -Werror build turns into a failure. Where the kernel spells a facility
- * as a macro, asking whether the macro exists is the exact question. The
- * guard above it cannot do the same, since inode_state_read_once() is an
- * inline function, and a macro of that name would shadow it silently
- * rather than collide; its version comparison is against mainline, which
- * is what the floor means, and a stable backport of that one would
- * defeat it.
- */
-#ifndef kzalloc_obj
-#define kzalloc_obj(P)		kzalloc(sizeof(typeof(P)), GFP_KERNEL) /* Linux */
+#define LINUX_HAMMER2_FLOOR	KERNEL_VERSION(7, 3, 0)
+#if LINUX_VERSION_CODE < LINUX_HAMMER2_FLOOR
+#error "HAMMER2 requires Linux 7.3 or newer"
 #endif
 
 #define print_backtrace()	dump_stack()

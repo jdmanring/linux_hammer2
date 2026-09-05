@@ -12,12 +12,10 @@
 # that has never run on a runner is not evidence, however well it behaves
 # locally, because the runner differs in what it has installed.
 #
-# The syntax gate needs kernel headers 6.15 or newer, which a runner may
-# not have. That floor is the module's own, enforced by an #error in
-# hammer2_os.h and measured rather than guessed: BLK_MAX_BLOCK_SIZE is
-# absent in v6.14 and present in v6.15. Below it the compile fails outright
-# rather than reporting could-not-run, so a runner with older headers is a
-# real failure and not a skip. The gate reports exit 2 for "could not run"
+# The syntax gate needs the kernel of record, 7.3, which is also the
+# module's floor, enforced by an #error in hammer2_os.h. Below it the
+# compile fails outright rather than reporting could-not-run, so a runner
+# with older headers is a real failure and not a skip. The gate reports exit 2 for "could not run"
 # when the headers are absent altogether, and this job records that as a
 # skip rather than a pass, because a gate that cannot run and a gate that
 # passed must not print the same thing.
@@ -66,7 +64,7 @@ jobs:
           # The baseline records this file's sha256, so the gate identifies
           # the checker by content rather than by what anyone says it is.
           # v7.3-rc1 because the checker should be the one shipping with the
-          # kernel this tree compiles against, not the module's 6.15 floor.
+          # kernel this tree compiles against, which is also its floor.
           curl -sSLo /tmp/checkpatch.pl \
             https://raw.githubusercontent.com/torvalds/linux/v7.3-rc1/scripts/checkpatch.pl
           echo "CHECKPATCH=/tmp/checkpatch.pl" >> "$GITHUB_ENV"
@@ -217,119 +215,3 @@ jobs:
             esac
           done
           exit "$rc"
-
-  # THE DECLARED FLOOR, BUILT.
-  #
-  # hammer2_os.h carries an #error asserting 6.15, README.status.md justifies
-  # it with BLK_MAX_BLOCK_SIZE, and until this job nothing had ever put a
-  # compiler on it. That gap cost twice on 2026-09-03: inode_state_read_once()
-  # needs 6.19 and kzalloc_obj() needs 7.0, and both surfaced as implicit
-  # declarations in the middle of a build against a NEWER kernel rather than
-  # at the #error that exists to say a kernel is too old. A floor nothing
-  # compiles is an assertion, not a constraint.
-  #
-  # script/floor-symbols.py bounds the same class by resolving names against
-  # the floor tree's include/. It does not compile, so a signature that
-  # changed while keeping its name, or a macro that stopped expanding, is
-  # invisible to it. This job is what closes it.
-  #
-  # The expensive half is modules_prepare, minutes on a hosted runner. It is
-  # cached on the TAG, which is immutable, so it is paid once and restored
-  # thereafter; a cache miss costs time and changes no verdict. The tarball
-  # comes from cdn.kernel.org rather than a git clone because the tag is all
-  # that is wanted and a clone of Linux is far larger than one release.
-  floor:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Toolchain for an out-of-tree module build
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bc bison flex libelf-dev libssl-dev
-
-      - name: Cache the prepared floor tree
-        id: floorcache
-        uses: actions/cache@v4
-        with:
-          path: ~/linux-floor
-          # The version appears once. Bumping the floor means editing this
-          # line and the #error in hammer2_os.h, and the build is what says
-          # whether the two agree.
-          key: linux-floor-6.15-built-v5
-
-      - name: Fetch and prepare 6.15
-        if: steps.floorcache.outputs.cache-hit != 'true'
-        run: |
-          set -eu
-          curl -sSLo /tmp/linux.tar.xz \
-            https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.15.tar.xz
-          mkdir -p "$HOME/linux-floor"
-          tar -xf /tmp/linux.tar.xz -C "$HOME/linux-floor" --strip-components=1
-          make -C "$HOME/linux-floor" defconfig
-          # defconfig leaves the LZ4 compressor out (LZ4_DECOMPRESS is in,
-          # LZ4_COMPRESS is not), and the module's write path links
-          # LZ4_compress_default(). Three pushes went red at modpost on
-          # exactly that symbol before this step set it, and a fourth
-          # went red after setting LZ4_COMPRESS itself: the lib options
-          # have no Kconfig prompt, so olddefconfig drops a bare enable
-          # of one. What survives is enabling something that selects
-          # them, and the crypto wrappers do. Measured on a fresh 6.15
-          # tree, both ways, before this line was written.
-          "$HOME/linux-floor/scripts/config" --file "$HOME/linux-floor/.config" \
-            --enable CRYPTO --enable CRYPTO_LZ4 --enable CRYPTO_DEFLATE \
-            --enable CRYPTO_XXHASH
-          make -C "$HOME/linux-floor" olddefconfig
-          # A FULL BUILD, which is what Documentation/kbuild/modules.rst
-          # asks for in as many words: "modules_prepare will not build
-          # Module.symvers ... therefore, a full kernel build needs to be
-          # executed". Two cheaper targets were tried first and neither
-          # writes that file. modules_prepare leaves the tree with no
-          # symbol table at all, which does not refuse an external module
-          # build, it accepts every compile and then reports every symbol
-          # undefined at modpost, memcpy and kfree included. Building
-          # vmlinux alone is not enough either. This is the expensive step
-          # and the reason the tree is cached on the tag.
-          make -C "$HOME/linux-floor" -j"$(nproc)"
-
-      # The tree is asserted to BE the floor before it is built against.
-      # A cache restored from a bumped key, or a tarball that redirected,
-      # would otherwise report a green floor build against some other kernel.
-      - name: The prepared tree is 6.15 and carries a symbol table
-        run: |
-          set -eu
-          v=$(make -s -C "$HOME/linux-floor" kernelversion)
-          echo "prepared tree reports $v"
-          case "$v" in
-            6.15*) ;;
-            *) echo "::error::the floor tree is $v, not 6.15"; exit 1 ;;
-          esac
-          # Asserted rather than assumed, because a tree with no symbol
-          # table does not refuse the build: it accepts every compile and
-          # reports every symbol undefined at modpost, which reads as a
-          # defect in this module rather than a gap in the kernel tree.
-          # That is what the first run of this job did.
-          sym="$HOME/linux-floor/Module.symvers"
-          [ -s "$sym" ] || { echo "::error::no Module.symvers in the floor tree"; exit 1; }
-          n=$(wc -l < "$sym")
-          echo "Module.symvers carries $n symbol(s)"
-          [ "$n" -gt 1000 ] || { echo "::error::Module.symvers has only $n symbols"; exit 1; }
-          # The five options the module links against, asserted on the
-          # tree that was built rather than trusted to the enable above,
-          # which olddefconfig once silently undid.
-          for c in LZ4_COMPRESS LZ4_DECOMPRESS ZLIB_DEFLATE ZLIB_INFLATE XXHASH; do
-            grep -qE "^CONFIG_$c=[ym]" "$HOME/linux-floor/.config" \
-              || { echo "::error::the floor tree was built without CONFIG_$c"; exit 1; }
-          done
-
-      - name: Module build at the floor
-        run: |
-          # set +e for the same reason as the other build step: under -e a
-          # nonzero exit would end the step before rc is read.
-          set +e
-          sh script/build-check.sh "$HOME/linux-floor"
-          rc=$?
-          # COULD-NOT-RUN is a real failure here. The steps above exist to
-          # provide the tree, so its absence means one of them silently did
-          # nothing, and a skip would report that as a pass.
-          [ "$rc" = 0 ] || { echo "::error::the module does not build at 6.15"; exit 1; }

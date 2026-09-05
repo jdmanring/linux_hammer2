@@ -106,21 +106,15 @@
  * snapshot, so these names can still move before 7.3 final.  Re-measure
  * against the release and pin the comparison to what it shipped.
  */
-#define LINUX_FS_BDEV_OPEN	KERNEL_VERSION(7, 3, 0)
-
 static struct file *	/* Linux */
 hammer2_bdev_open(const char *path, blk_mode_t mode, struct super_block *sb)
 {
-#if LINUX_VERSION_CODE < LINUX_FS_BDEV_OPEN
-	return (bdev_file_open_by_path(path, mode, sb, &fs_holder_ops));
-#else
 	struct file *bdev_file;
 
 	bdev_file = fs_bdev_file_open_by_path(path, mode, &hammer2_fs_type, sb);
 	if (!IS_ERR(bdev_file))
 		fs_bdev_unregister(bdev_file, sb);
 	return (bdev_file);
-#endif
 }
 
 static void	/* Linux */
@@ -139,7 +133,6 @@ hammer2_bdev_release(struct file *bdev_file)
 int
 hammer2_register_sb(struct super_block *sb, hammer2_pfs_t *pmp)
 {
-#if LINUX_VERSION_CODE >= LINUX_FS_BDEV_OPEN
 	hammer2_cluster_t *cluster = &pmp->iroot->cluster;
 	hammer2_chain_t *rchain;
 	hammer2_devvp_t *e, *n;
@@ -168,14 +161,12 @@ hammer2_register_sb(struct super_block *sb, hammer2_pfs_t *pmp)
 			TAILQ_INSERT_TAIL(&pmp->sbdev_list, n, entry);
 		}
 	}
-#endif
 	return (0);
 }
 
 void
 hammer2_unregister_sb(hammer2_pfs_t *pmp)
 {
-#if LINUX_VERSION_CODE >= LINUX_FS_BDEV_OPEN
 	hammer2_devvp_t *e;
 
 	while (!TAILQ_EMPTY(&pmp->sbdev_list)) {
@@ -184,7 +175,6 @@ hammer2_unregister_sb(hammer2_pfs_t *pmp)
 		fs_bdev_file_release(e->bdev_file, pmp->mp);
 		hfree(e, M_HAMMER2, sizeof(*e));
 	}
-#endif
 }
 
 int

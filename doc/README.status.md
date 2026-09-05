@@ -20,12 +20,11 @@ The module builds, warning-clean, and loads. `make`
 produces `src/sys/fs/hammer2/hammer2.ko`: thirteen objects, license
 `Dual BSD/GPL`, alias `fs-hammer2`, no module dependencies on a kernel
 that builds the LZ4 and ZLIB codecs and xxhash in, which the guest does
-and a 6.15 `defconfig` does not: it leaves `CONFIG_LZ4_COMPRESS` out,
-and the day the write XOP linked `LZ4_compress_default()` CI's floor
-build went red at modpost and stayed red for three pushes, 0.4.8 to
+and a `defconfig` does not: it leaves `CONFIG_LZ4_COMPRESS` out, and the
+day the write XOP linked `LZ4_compress_default()` CI's build at the old
+6.15 floor went red at modpost and stayed red for three pushes, 0.4.8 to
 0.4.10, each of which took a changelog row while it was. The Makefile
-now names the missing option in the kbuild pass and the floor job sets
-the five the module links against. That is 0.3's
+now names a missing option in the kbuild pass. That is 0.3's
 first criterion, and the second was exercised on 2026-09-03 on the
 `fedora44` guest, at 7.2.3-300.fc45 and again at
 7.3.0-0.rc0.260819gbd5f485f3f02: `insmod` returns 0, `/proc/filesystems`
@@ -555,11 +554,11 @@ construction rather than re-hashed every run.
 | `hammer2_vfsops.c` | 2578 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1322 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 512 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1028 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 1018 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 968 | ours, the OS shim |
+| `hammer2_os.h` | 907 | ours, the OS shim |
 | `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -645,65 +644,30 @@ and refuses the read-write remount too: upstream's recovery is carried and
 called, but it writes and has never been run, which is what
 `DEFER(recovery is exercised on a device)` names.
 
-## The version floor, and how it was established
+## The version floor is the kernel of record
 
-`BLK_MAX_BLOCK_SIZE` is the binding constraint, at **6.15**. Each symbol
-was dated by reading the header at the tag rather than from memory:
+The floor is 7.3, one tree with the kernel the port is developed and
+tested against, and there is no conditional compilation on the kernel
+version anywhere under `src/`. It was 6.15 from the first import, by
+`BLK_MAX_BLOCK_SIZE`, with four guards above it, each dated by reading
+the header at the tag:
 
 | symbol | absent at | present at |
 |---|---|---|
-| `bdev_file_open_by_path` | | v6.10 |
-| three-argument `kvrealloc` | v6.11 | v6.12 |
-| `folio_mark_dirty_lock` | v6.12 | v6.13 |
 | `BLK_MAX_BLOCK_SIZE` | v6.14 | v6.15 |
 | `struct sha256_ctx` | v6.16 | v6.17 |
+| `const struct kiocb *` in `->write_begin` | v6.16 | v6.17 |
 | `inode_state_read_once` | v6.18 | v6.19 |
 | `kzalloc_obj` | v6.19 | v7.0 |
+| `fs_bdev_file_open_by_path` and the per-mount claim | v7.2 | v7.3 |
 
-`inode_state_read_once()` is the one that moved the other way. It is used
-in `hammer2_igetv()` and is four releases above the floor, so the module
-could not build on 6.15 through 6.18 at all, failing as an implicit
-declaration in the middle of a build rather than at the `#error` that
-exists to say so. `hammer2_os.h` defines it as `READ_ONCE()` below 6.19,
-where `i_state` is a scalar rather than a struct behind accessors: `u32`
-at v6.15, v6.16 and v6.17, `enum inode_state_flags_t` at v6.18.
+The guards, the second CI job that built a 6.15 tree to compile them, and
+`script/floor-symbols.py` that swept called names against that tree's
+headers all left on 2026-09-05 with the floor's move, and
+`doc/README.porting.md` records the ruling and what the day at 6.15 cost.
+The table stays because it is the record of where each facility arrived,
+which a future move of the pin will want again.
 
-`kzalloc_obj()` is the second of the same kind and was found the same way,
-by CI failing to build at 6.17. Both were then swept for at once rather
-than chased one CI round-trip at a time, by `script/floor-symbols.py`: it
-resolves every identifier called in `src/sys/fs/hammer2` that the tree
-does not define itself, sixty-one of them, against a floor tree's
-`include/`. Two were missing, and both are the two above. It resolves a
-name, so a function whose signature changed while keeping its name is
-invisible to it, and it bounds this class rather than closing it. It is
-not a gate: it needs a 6.15 tree, which is a download rather than
-something a workstation has, so it is run when the floor moves or a file
-lands. The three names the vendored `queue.h` and `tree.h` call that the
-kernel does not provide, `atomic_load_ptr()`, `fprintf()` and `abort()`,
-sit in macros this tree never expands.
-
-`kzalloc_obj()`'s guard is `#ifndef` rather than a version comparison,
-because stable series backport it: Arch's 6.18.46 has it where mainline
-v6.18 does not, and the version guard redefined it there. Where the kernel
-spells a facility as a macro, asking whether the macro exists is the exact
-question.
-
-6.15 is the floor the code requires, and since 2026-09-03 CI builds it: a
-second job fetches the 6.15 tarball, builds the kernel once and caches the
-tree on the tag, then links this module against it. The module links
-warning-clean there, against a `Module.symvers` carrying 12591 symbols, on
-a tree that reports 6.15.0. Both numbers are printed by the job on every
-run rather than recorded here alone.
-
-Until that job existed nothing had ever compiled against the floor. The
-lowest build in the world was 6.17, two releases above the kernel the
-`#error` in `hammer2_os.h` names, and the floor was an assertion. Its first
-run found what an assertion hides: `SHA256_CTX` was typedef'd to `struct
-sha256_ctx`, which the kernel called `struct sha256_state` until 6.17. The
-function names and their argument order are identical across that rename,
-so `script/floor-symbols.py` resolved all three and reported nothing. Name
-resolution cannot see a type, which is the gap between what that sweep
-bounds and what this job closes.
 The kernel of record is a different claim: this tree compiles against the
 latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
 when a release ships.

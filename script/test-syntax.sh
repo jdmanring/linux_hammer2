@@ -214,8 +214,8 @@ S=$(dirname "$K")/source
 [ -d "$S" ] || S=$K
 
 # The kernel of record is the latest release, and nothing compared against it
-# until this pin existed. The 6.15 floor in hammer2_os.h is what the code
-# requires and is a different claim. This gate has always printed the kernel
+# until this pin existed. The floor in hammer2_os.h is the same kernel, so
+# the two move together. This gate has always printed the kernel
 # it used in its header line, and every document said the port is developed
 # against 7.2, and nothing put those two strings next to each other. The
 # newest tree on the development host was 7.1.9, with no 7.2 in /lib/modules,
