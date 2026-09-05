@@ -359,9 +359,9 @@ until then, because a license tag on a module that cannot be built is a
 claim nothing exercises.
 
 What decides the value is not sentiment about the code's origin. The file
-data path this port was heading for is iomap, a decision reopened in
-`README.roadmap.md` on 2026-09-04 with a recommendation to reverse; the
-license reasoning stands either way. `iomap_read_folio`,
+data path this port was heading for was iomap, reversed in
+`README.roadmap.md` on 2026-09-05 for classic address-space operations;
+the license reasoning stands either way. `iomap_read_folio`,
 `iomap_file_buffered_write` and `iomap_writepages` are all
 `EXPORT_SYMBOL_GPL`: a module that does not declare a GPL-compatible
 license cannot link them, and the failure is at load time rather than at
@@ -369,7 +369,9 @@ compile time. The carried code is DragonFly's under a BSD license, so the
 declaration that keeps both true is `MODULE_LICENSE("Dual BSD/GPL")` - the
 kernel treats it as GPL-compatible for symbol purposes and it does not
 relicense anything. Settled by reading xfs at v6.15, the one mainline
-filesystem above page size, which runs its data path on iomap.
+filesystem above page size, which runs its data path on iomap; the tag
+outlives the iomap ruling because a later need for any other GPL-only
+symbol would put the port back in the same position.
 
 ## The module entry, and the four things FreeBSD's vfs_init does that Linux does not
 
