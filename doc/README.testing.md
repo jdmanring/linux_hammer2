@@ -757,8 +757,15 @@ which runs the carried `hammer2_recovery()`, reads every file, writes
 one more and syncs; DragonFly mounts that result and then recovers the
 other copy itself. The header's two tids are printed at each stage, so
 a run that cut inside the window where `freemap_tid` lags is visible;
-none has yet, and the freemap replay is still unexercised for that
-reason, which the script's own header says.
+none has yet. So the script's fourth stage makes that state on purpose:
+DragonFly's recovered copy has its header's `freemap_tid` lowered by
+`H2_CUT_LAG` transactions, four by default, and the sector's two CRC32C
+checksums recomputed, and both recoveries run on it; the run fails
+unless this port's mount announces `freemap recovery` over those
+transactions and both checkers are clean afterwards. The checksum
+routine is checked against the stored values before the rewrite, so a
+wrong header layout stops the stage rather than making a corrupt image
+that would be refused for the wrong reason.
 
 ## Listing a fixture, and what a clean run does not say
 

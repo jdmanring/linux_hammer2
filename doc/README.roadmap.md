@@ -60,10 +60,11 @@ invokes the kernel's build system, so running `make` is that act.
 3. The interrupted-flush fixture ran: DragonFly writing, cut off by
    `virsh destroy` after 82 flushes, the image mounted here read-write
    in the experimental build, the tree compared to DragonFly's own
-   recovery of a copy; `doc/README.status.md` carries it. The cut did
+   recovery of a copy; `doc/README.status.md` carries it. The cut does
    not produce the lagging freemap the carried replay is for, so the
-   replay itself is still unexercised. Lifting the refusal in the
-   shipped module is the maintainer's decision.
+   script's fourth stage makes that header on purpose and the replay
+   has run on it. Lifting the refusal in the shipped module is the
+   maintainer's decision.
 4. The fuzzing corpus is `script/fuzz-mount.sh`, a generator over a
    small seed volume rather than the F3 images, whose 2 GiB hold a few
    hundred KiB of blocks; `doc/README.status.md` carries its runs.

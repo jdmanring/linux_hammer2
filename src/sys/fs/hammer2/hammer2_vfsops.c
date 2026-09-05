@@ -707,15 +707,18 @@ hammer2_get_tree(struct fs_context *fc)
 		return (-EINVAL);	/* Linux: the VFS half is negative */
 
 	/*
-	 * DEFER(recovery is exercised on a device): refuse a read-write
-	 * mount.  Upstream replays an interrupted flush at mount time,
-	 * and that code is carried, in hammer2_recovery() and
-	 * hammer2_fixup_pfses() below.  It has never been run: it writes,
-	 * and no module has been loaded, so a read-write mount would be
-	 * the first exercise of a write path on a filesystem whose last
-	 * flush was cut short.  A read-only mount is refused nothing,
-	 * because the recovery upstream runs is conditional on the mount
-	 * being read-write in the first place.
+	 * DEFER(the maintainer lifts the read-write refusal): refuse a
+	 * read-write mount in the shipped build.  Upstream replays an
+	 * interrupted flush at mount time, and that code is carried, in
+	 * hammer2_recovery() and hammer2_fixup_pfses() below.  It has run,
+	 * in the HAMMER2_RW_EXPERIMENT build: on an image DragonFly was
+	 * cut off writing, and on one whose header was rewritten so the
+	 * freemap lagged, where it announced the replay and both checkers
+	 * accepted the result (script/cut-flush.sh).  A read-only mount is
+	 * refused nothing, because the recovery upstream runs is
+	 * conditional on the mount being read-write in the first place.
+	 * Every write operation exists behind the same flag; offering a
+	 * writable mount to everyone is the maintainer's call.
 	 *
 	 * The refusal sits here rather than at the recovery site because
 	 * that site is reached only after the device is open and the
@@ -1072,17 +1075,16 @@ next_hmp:
 		/* Leave spmp->iroot with one ref. */
 
 		/*
-		 * DEFER(recovery is exercised on a device): upstream runs
-		 * this on a read-write mount to replay an interrupted
+		 * DEFER(the maintainer lifts the read-write refusal): upstream
+		 * runs this on a read-write mount to replay an interrupted
 		 * flush, and it is carried above.  It WRITES, so it is
-		 * reached only when the mount is read-write, and no mount
-		 * is: hammer2_get_tree() refuses that before the device is
-		 * opened and hammer2_reconfigure() refuses the remount
-		 * that would arrive at the same state sideways.  Carrying
-		 * the code and lifting those refusals are different
-		 * things, and the second one needs a loaded module and a
-		 * scratch device with an interrupted flush on it, which is
-		 * what this trigger names.
+		 * reached only when the mount is read-write, which the
+		 * shipped build refuses in hammer2_get_tree() before the
+		 * device is opened, and hammer2_reconfigure() refuses the
+		 * remount that would arrive at the same state sideways.  The
+		 * experimental build reaches it, and has: script/cut-flush.sh
+		 * records the replay running on a cut-off image and on a
+		 * header made to lag.
 		 *
 		 * The teardown a few lines below flushes vchain and fchain
 		 * when either carries a HAMMER2_CHAIN_FLUSH_MASK bit, and
@@ -1744,7 +1746,7 @@ static const struct super_operations hammer2_sops = {
 };
 
 /*
- * DEFER(recovery is exercised on a device): the read-write refusal in
+ * DEFER(the maintainer lifts the read-write refusal): the read-write refusal in
  * hammer2_get_tree() covers the mount, and this covers the remount that
  * would otherwise walk around it.
  *

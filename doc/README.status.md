@@ -552,7 +552,7 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2628 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2630 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1204 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1018 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -633,17 +633,15 @@ not a pass.
 
 That the gates pass means the shim is valid C in both knob positions, and
 that `hammer2.h` and `hammer2_io.c` type-check against the real kernel
-headers of a 7.2 tree with both clang 22 and gcc.
+headers of the kernel of record with both clang and gcc.
 
 It does not mean anything runs. `-fsyntax-only` compiles nothing and links
-nothing, which is why the section above records what `make` does instead.
-The module has not been loaded and there is no fsck integration, so
-nothing here has been observed running. The VFS layer and the mount path
-exist: `hammer2_get_tree()` probes the device, reads the super-root,
-builds a root dentry and returns success. It refuses a read-write mount,
-and refuses the read-write remount too: upstream's recovery is carried and
-called, but it writes and has never been run, which is what
-`DEFER(recovery is exercised on a device)` names.
+nothing, which is why the section above records what `make` does instead,
+and why everything observed running, from the first mount to the round
+trip, is in the sections that follow with the instrument that observed
+it. The shipped build refuses a read-write mount and the read-write
+remount; upstream's recovery is carried and called at both, and it has
+run in the experimental build, which the `DEFER` at that refusal records.
 
 ## The version floor is the kernel of record
 
@@ -1180,6 +1178,20 @@ itself. Producing the lagging case needs a cut between the freemap
 flush and the header write inside one `sync`, a window of milliseconds
 that `virsh destroy` from the host does not hit on purpose.
 
+So the script's fourth stage makes the case deliberately. DragonFly's
+recovered copy has its header's `freemap_tid` lowered by four
+transactions and the two checksums over that sector recomputed, a
+rewrite the host's `fsck_hammer2` accepts, and both recoveries run on
+it. In the recorded run the cut left the header at `0x6f`, `0x6f`; the
+rewrite made it `0x6f`, `0x6b`; this port's read-write mount printed
+`freemap recovery 6c-6f`, the four transactions it rescanned, read all
+18401 entries, wrote one more and left the header at `0x70`, `0x70`,
+with `debug_locks` 1 and no report; the host's `fsck_hammer2` and then
+DragonFly's, after DragonFly's own mount of the same image, were both
+clean. That is the replay running end to end on the case it exists
+for, and the deferral at the read-write refusal, which named exactly
+this, now names the decision that remains.
+
 Everything the write side has is now written, reached only in the
 `HAMMER2_RW_EXPERIMENT` build; the shipped module still refuses the
 read-write mount, and lifting that is a decision for the maintainer now
@@ -1333,7 +1345,7 @@ against the source is the same shape as an empty one.
 |---|---|---|
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
-| `hammer2_vfsops.c`, at three sites: the read-write refusal in `hammer2_get_tree()`, `hammer2_reconfigure()`, and the recovery call before `hammer2_update_pmps()` | `DEFER(recovery is exercised on a device)` | upstream's `hammer2_recovery()`, `hammer2_recovery_scan()` and `hammer2_fixup_pfses()` are carried and called where upstream calls them, so the code exists. What has not happened is running them: they WRITE, through `hammer2_freemap_adjust()` with `DORECOVER`, `hammer2_chain_modify()` and `hammer2_flush()`, and nothing has been loaded. Until they are exercised on a device carrying an interrupted flush, both refusals stay: `hammer2_get_tree()` returns `EROFS` before the device is opened, and `hammer2_reconfigure()` returns it for the remount that would otherwise arrive at the same state sideways, since `reconfigure_super()` applies `SB_RDONLY` whether or not the operation is present. All three sites lift together. The real `->reconfigure` is upstream's `hammer2_remount_impl()`, which is not carried and which runs these two a second time on the read-only to read-write transition. Narrowed 2026-09-04: a clean volume mounts read-write under `HAMMER2_RW_EXPERIMENT`, recovery finds `freemap_tid` at `mirror_tid` and replays nothing, sync and unmount write nothing, and the image is byte-identical afterwards; what the trigger still names is a volume whose flush was cut short, which needs a fixture DragonFly writes and is interrupted writing |
+| `hammer2_vfsops.c`, at three sites: the read-write refusal in `hammer2_get_tree()`, `hammer2_reconfigure()`, and the recovery call before `hammer2_update_pmps()` | `DEFER(the maintainer lifts the read-write refusal)` | upstream's `hammer2_recovery()`, `hammer2_recovery_scan()` and `hammer2_fixup_pfses()` are carried, called where upstream calls them, and have run in the `HAMMER2_RW_EXPERIMENT` build: on the image DragonFly was cut off writing, and on a copy whose header was rewritten so `freemap_tid` lagged `mirror_tid` by four, where the replay announced `freemap recovery` over those four transactions and both `fsck_hammer2` verdicts after it were clean (`script/cut-flush.sh`). Every write operation exists behind the same flag. The shipped build still returns `EROFS` before the device is opened and refuses the remount; lifting both is a decision about what to offer everyone, and the maintainer's |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(->writepages lands: 0.5)` | the write half of the strategy XOP is carried, upstream's body with the buffer replaced by a folio, and nothing starts it yet: the file mapping's folio order, `->write_begin`, `->write_end`, dirty tracking and `->writepages` are the write path's Linux half, and the folio must cover a whole logical block, which the handler refuses rather than pads |
 | `hammer2_vnops.c`, at `hammer2_file_aops` | `DEFER(the write path lands: 0.5)` | every operation the write side has, `->write_iter` through `->rename` and `->link`, reached only in the `HAMMER2_RW_EXPERIMENT` build until the interrupted-flush fixture and the write trace the roadmap asks for are in. There is no `->invalidate_folio` because no folio carries private data |

@@ -8,16 +8,20 @@
 # and syncs; DragonFly then mounts that result, and recovers the other copy
 # itself. Both trees and every fsck_hammer2 verdict are printed.
 #
-# What this shows is that the header written last keeps everything it
+# What the cut shows is that the header written last keeps everything it
 # references; it does not, on its own, drive the freemap replay, which needs
 # the header's freemap_tid to lag its mirror_tid, a window inside one sync
-# that a cut from the host does not hit on purpose. The tids are printed so
-# a run that did hit it is visible.
+# that a cut from the host does not hit on purpose. So a fourth stage makes
+# that state deliberately: DragonFly's recovered copy has its header's
+# freemap_tid lowered by H2_CUT_LAG transactions and its two checksums over
+# that sector recomputed, and both recoveries run on it. The replay then has
+# chains to scan, and its message and both fsck verdicts are printed.
 # EXIT 2 IS COULD-NOT-RUN AND IS NEVER A PASS, as in test-fixtures.sh.
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
 SECONDS_WRITING=${1:-25}
+LAG=${H2_CUT_LAG:-4}
 FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 BASE=${H2_CUT_BASE:-$FIXDIR/f5.img}
 LABEL=${H2_CUT_LABEL:-DFLY}
@@ -136,6 +140,52 @@ for img in "$IMG" "$IMG2"; do
 done
 echo "  dfly  $(tids "$IMG2")"
 
+# 4. The lagging header, made on purpose, and both recoveries on it.
+python3 - "$IMG2" "$LAG" <<'PY' || { echo "  FAIL  could not rewrite the header"; fail=$((fail + 1)); }
+import struct, sys
+p, lag = sys.argv[1], int(sys.argv[2])
+tbl = []
+for i in range(256):
+    c = i
+    for _ in range(8):
+        c = (c >> 1) ^ 0x82F63B78 if c & 1 else c >> 1
+    tbl.append(c)
+def crc32c(data):
+    c = 0xFFFFFFFF
+    for b in data:
+        c = tbl[(c ^ b) & 0xFF] ^ (c >> 8)
+    return c ^ 0xFFFFFFFF
+with open(p, 'r+b') as f:
+    hdr = bytearray(f.read(65536))
+    mirror, = struct.unpack_from('<Q', hdr, 0x78)
+    freemap, = struct.unpack_from('<Q', hdr, 0x90)
+    if struct.unpack_from('<I', hdr, 0x1FC)[0] != crc32c(hdr[0:508]):
+        sys.exit("sector 0 crc does not verify before the change; wrong layout")
+    struct.pack_into('<Q', hdr, 0x90, max(0, mirror - lag))
+    struct.pack_into('<I', hdr, 0x1FC, crc32c(hdr[0:508]))
+    struct.pack_into('<I', hdr, 0xFFFC, crc32c(hdr[0:65532]))
+    f.seek(0); f.write(hdr)
+print(f"  lag   header freemap_tid {freemap:#x} -> {max(0, mirror - lag):#x}, mirror_tid {mirror:#x}")
+PY
+"$FSCK" "$IMG2" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 accepts the rewritten header" || { echo "  FAIL  host fsck_hammer2 rejects the rewritten header"; fail=$((fail + 1)); }
+boot "$GUEST" "$GUEST_SSH" "$IMG2" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
+scp -q -o ConnectTimeout=5 "$KO" "$W/recover.sh" "$GUEST_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
+out=$(ssh "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
+printf '%s\n' "$out" | sed 's/^/  linux   /'
+printf '%s\n' "$out" | grep -q "freemap recovery" || { echo "  FAIL  the replay did not announce itself"; fail=$((fail + 1)); }
+printf '%s\n' "$out" | grep -q "^unreadable 0$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
+down "$GUEST" "$GUEST_SSH"
+echo "  linux $(tids "$IMG2")"
+"$FSCK" "$IMG2" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after the replay" || { echo "  FAIL  host fsck_hammer2 after the replay"; fail=$((fail + 1)); }
+boot "$DFLY" "$DFLY_SSH" "$IMG2" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
+scp -q -o ConnectTimeout=5 "$W/after.sh" "$DFLY_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
+out=$(ssh "$DFLY_SSH" 'sh /tmp/after.sh' 2>&1)
+printf '%s\n' "$out" | sed 's/^/  dfly lag /'
+printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || fail=$((fail + 1))
+down "$DFLY" "$DFLY_SSH"
+
 make -s clean >/dev/null 2>&1
-echo "cut: ${SECONDS_WRITING}s of writing, $fail failure(s)"
+echo "cut: ${SECONDS_WRITING}s of writing, lag $LAG, $fail failure(s)"
 [ $fail = 0 ]
