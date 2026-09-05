@@ -62,9 +62,11 @@ the tree as it stood. The rows for both milestones in
 
 What that buys you is a driver that can be tried, on media you can
 afford to lose. What it does not yet do: the snapshots have no backend
-adapter behind them, which keeps 0.7 open; it has not been run as a
-root filesystem; nothing is packaged, and no tag exists. Every write it
-has made was to a scratch image on a guest.
+adapter behind them, which keeps 0.7 open; nothing is packaged, and no
+tag exists. It has booted as a root filesystem once, with a static init
+and nothing else on the volume, which is a long way from a
+distribution. Every write it has made was to a scratch image on a
+guest.
 
 To try it, make an image, put it on a loop device and mount the PFS by
 label. `newfs_hammer2` is in hammer2-utils, and a mount that names no

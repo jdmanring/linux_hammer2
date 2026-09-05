@@ -1070,10 +1070,29 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 	return (error1);
 }
 
+/*
+ * Linux: without ->mmap_prepare a file on this filesystem cannot be
+ * mapped, and so cannot be executed: the ELF loader maps the segments it
+ * is given and the mapping is what fails, which surfaces as ENOEXEC on a
+ * binary whose bytes read back byte for byte correct.  Measured before
+ * this line existed: /bin/true copied onto a HAMMER2 volume compared
+ * identical with cmp and refused to run, while the same file copied off
+ * it onto tmpfs ran.  Shared libraries and every mapped file are the
+ * same defect.
+ *
+ * generic_file_mmap_prepare() wants ->read_folio, which the mapping has,
+ * and installs generic_file_vm_ops, whose write fault dirties a folio
+ * that filemap_fault() has already brought uptodate through that same
+ * ->read_folio and leaves ->writepages to write it.  ext4 reduces to the
+ * same two on a non-DAX file.  ->mmap_prepare rather than ->mmap because
+ * the kernel of record takes either and the in-tree filesystems have
+ * moved; fs.h warns when a table sets both.
+ */
 const struct file_operations hammer2_file_fops = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= hammer2_file_write_iter,	/* Linux */
+	.mmap_prepare	= generic_file_mmap_prepare,	/* Linux */
 	.fsync		= hammer2_vop_fsync,
 	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
 };

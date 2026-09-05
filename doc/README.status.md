@@ -15,7 +15,9 @@ port and the FreeBSD port recovered, and the refusal that stood on the
 read-write mount from 0.3 is gone, as is the refusal on the read-only to
 read-write remount, which now runs the same recovery the mount path runs
 and is refused only when the device itself is write-protected. HAMMER2's
-ioctls answer as Linux ioctls, so `hammer2-utils` drives the volume: a snapshot this port takes
+ioctls answer as Linux ioctls, so `hammer2-utils` drives the volume, and
+files on it can be mapped and executed, which is what lets a volume boot
+as a root filesystem: a snapshot this port takes
 mounts on DragonFly and reads back the tree as it stood.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
@@ -561,7 +563,7 @@ construction rather than re-hashed every run.
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2695 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1251 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1270 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -1379,6 +1381,43 @@ mounted again with `-o ro`, the file read back and the mount `ro`;
 unmount 0; `modprobe -r` 0; no kernel report; and the host's
 `fsck_hammer2` clean on the disk afterwards. The image is
 `readme.img` in the fixtures directory and is not kept.
+
+## Mapped files, and the volume as a root filesystem
+
+Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
+identical with `cmp`, its md5 matched the source hot and after
+`drop_caches`, and it would not run: the shell reported `cannot execute
+binary file`, exit 126, while the same file copied off the volume onto
+tmpfs ran. The bytes were right and the file could not be executed.
+
+The cause was that `hammer2_file_fops` had no mapping operation at all.
+The ELF loader maps the segments it is handed, that mapping is what
+failed, and the failure reaches userland as `ENOEXEC` on a binary whose
+contents are correct. Shared libraries and every other mapped file were
+the same defect; nothing in the tree had mapped a file, so nothing had
+found it. `.mmap_prepare` is `generic_file_mmap_prepare()`, which wants
+`->read_folio` and installs `generic_file_vm_ops`, which is what ext4
+reduces to on a file that is not DAX.
+
+With it in place the same binary runs from the volume. A 128 KiB file,
+two of this port's 64 KiB folios, was written entirely through a shared
+writable mapping and `msync`ed: after `drop_caches` the media holds `A`
+at the first byte and `B` at the last, the file is 131072 bytes, and the
+checksum is the same after a fresh read-only mount. `debug_locks` stayed
+1 and the log carried no report.
+
+The volume then booted as a root filesystem, under qemu at 7.3.0-rc1
+with a static init in an initramfs that loads the module, reads `root=`
+from the kernel command line, mounts `/dev/vda@ROOT`, moves the mount
+over `/` and executes `/sbin/init` from it. Every stage reported in
+turn: the mount, the switch, and then PID 1 running off HAMMER2, which
+wrote a file, `fsync`ed and `sync`ed it, read it back, and remounted the
+root read-only through the transition above before powering the machine
+off. The host's `fsck_hammer2` exited 0 on the image afterwards.
+
+That is one boot of a single-purpose root, not a distribution: nothing
+here has run a service manager, a package manager or a shared-library
+loader off the volume.
 
 ## The remount from read-only to read-write
 
