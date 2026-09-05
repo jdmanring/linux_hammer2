@@ -267,6 +267,8 @@ struct rw_semaphore_wrapper {
 	struct task_struct *owner;	/* exclusive holder, or NULL */
 	unsigned int subclass;		/* lockdep nesting level, see below */
 	atomic_t again;			/* shared re-locks owed no up_read */
+	int depth;			/* exclusive re-locks by the holder */
+	int recurse;			/* hammer2_mtx_init_recurse() */
 };
 
 typedef struct rw_semaphore_wrapper hammer2_mtx_t;
@@ -310,24 +312,24 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  */
 
 /*
- * The recursive variant, which DragonFly and FreeBSD provide and this
- * port does not.  A Linux rw_semaphore deadlocks against its own holder
- * exactly as a NetBSD krwlock does, so the mapping follows the NetBSD
- * port: there is no recursive lock, the two call sites
- * (hammer2_chain_init and hammer2_inode_get) get a plain lock, and the
- * ONE path that recursed is disabled for inodes this port creates.  That
- * path is hammer2_chain_lookup() reaching chain->lock again for an inode
- * in DIRECTDATA mode; NetBSD stops it by never setting
- * HAMMER2_OPFLAG_DIRECTDATA, which costs a data block for a tiny file
- * and costs no correctness.  This port sets it nowhere, because its only
- * setter is in hammer2_inode_create_normal(), which is not carried.
- * XXX The flag is ON DISK, so a filesystem written elsewhere still has
- * DIRECTDATA inodes and the lookup still reaches that branch.  Not
- * setting the flag does not close the READ path.  See
- * doc/README.porting.md; open for the read-only mount at 0.4.
- * XXX Not a recursive lock.  A caller that genuinely recurses will
- * deadlock rather than fail, so any new recursion must be resolved at
- * its call site the same way.
+ * The recursive variant.  DragonFly's mtx lets its exclusive holder lock
+ * again, counting the depth (kern_mutex.c, __mtx_lock_ex), and the
+ * FreeBSD port keeps that with SX_RECURSE on the two locks the core
+ * initializes this way, the chain lock and the inode lock.  A Linux
+ * rw_semaphore blocks its own holder, so the wrapper keeps the count:
+ * hammer2_mtx_ex() by the owner increments depth and touches nothing
+ * else, and hammer2_mtx_unlock() releases the rwsem only at depth zero.
+ * Lockdep is told nothing about the inner acquires, which is exact, since
+ * they are the one hold.  The path that needs it is hammer2_chain_lookup()
+ * returning the inode chain itself, locked again, for a DIRECTDATA inode,
+ * which the first buffered write to a small file reached under
+ * hammer2_assign_physical() and deadlocked on.  Reads through that branch
+ * arrive with LOCKAGAIN and are credited by hammer2_mtx_sh_again()
+ * instead; see there.  The shared side does not recurse under an
+ * exclusive hold, on DragonFly either.  A lock initialized with
+ * hammer2_mtx_init() that recurses is a defect, which sx without
+ * SX_RECURSE would panic on; here it warns once and is admitted, since
+ * the alternative is the hang above.
  */
 /*
  * Linux: the lockdep class and level of a chain lock and the level of an
@@ -345,6 +347,7 @@ __hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s,
     struct lock_class_key *k)
 {
 	__hammer2_mtx_init(p, s, k);
+	p->recurse = 1;
 }
 
 #define hammer2_mtx_init_recurse(p, s)					\
@@ -353,9 +356,29 @@ __hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s,
 		__hammer2_mtx_init_recurse((p), (s), &__key);		\
 	} while (0)
 
+static inline int
+hammer2_mtx_owned(hammer2_mtx_t *p)
+{
+	return (READ_ONCE(p->owner) == current);
+}
+
+/* Non-zero if the caller already holds the lock and now holds it deeper. */
+static inline int
+hammer2_mtx_ex_recurse(hammer2_mtx_t *p)
+{
+	if (!hammer2_mtx_owned(p))
+		return (0);
+	WARN_ON_ONCE(!p->recurse);
+	p->depth++;
+	p->refs++;
+	return (1);
+}
+
 static inline void
 hammer2_mtx_ex(hammer2_mtx_t *p)
 {
+	if (hammer2_mtx_ex_recurse(p))
+		return;
 	down_write_nested(&p->lock, p->subclass);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
@@ -389,12 +412,6 @@ hammer2_mtx_sh(hammer2_mtx_t *p)
 	atomic_add_int(&p->refs, 1);
 }
 
-static inline int
-hammer2_mtx_owned(hammer2_mtx_t *p)
-{
-	return (READ_ONCE(p->owner) == current);
-}
-
 /*
  * Linux: a shared lock taken again by a task that already holds it
  * shared, which is what HAMMER2_RESOLVE_LOCKAGAIN means and what
@@ -422,6 +439,10 @@ hammer2_mtx_unlock(hammer2_mtx_t *p)
 {
 	if (hammer2_mtx_owned(p)) {
 		p->refs--;
+		if (p->depth > 0) {
+			p->depth--;
+			return;
+		}
 		WRITE_ONCE(p->owner, NULL);
 		up_write(&p->lock);
 	} else {
@@ -447,6 +468,8 @@ hammer2_mtx_destroy(hammer2_mtx_t *p __always_unused)
 static inline int
 hammer2_mtx_ex_try(hammer2_mtx_t *p)
 {
+	if (hammer2_mtx_ex_recurse(p))
+		return (0);
 	if (!down_write_trylock(&p->lock))
 		return (1);
 	WRITE_ONCE(p->owner, current);

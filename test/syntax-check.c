@@ -43,6 +43,7 @@ hammer2_syntax_check_all(void)
 	hammer2_mtx_init(&mtx, "mtx");
 	hammer2_mtx_ex(&mtx);
 	(void)hammer2_mtx_owned(&mtx);
+	(void)hammer2_mtx_ex_recurse(&mtx);
 	(void)hammer2_mtx_refs(&mtx);
 	(void)hammer2_mtx_upgrade_try(&mtx);
 	x = hammer2_mtx_temp_release(&mtx);

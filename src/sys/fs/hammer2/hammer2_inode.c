@@ -1130,16 +1130,15 @@ done2:
  * calls it, and the va_type conversion is the same S_IFMT translation the
  * enum vtype DEFER in hammer2_compat.h is waiting on.
  *
- * This is also where HAMMER2_OPFLAG_DIRECTDATA is set, and not carrying
- * the function is why this port sets it nowhere.  The NetBSD port keeps
- * the function and wraps those three lines in #if 0 under an
- * "XXX chlock" comment; that is the edit to restore here, not the whole
- * block, and doc/README.porting.md records what the flag costs the lock
- * decision.
+ * This is also where HAMMER2_OPFLAG_DIRECTDATA is set.  The NetBSD port
+ * wraps those three lines in #if 0 under an "XXX chlock" comment because
+ * its krwlock cannot recurse; the shim's hammer2_mtx does, since the
+ * first buffered write to such an inode needed it (the note at
+ * hammer2_mtx_init_recurse() in hammer2_os.h), so the lines carry as
+ * DragonFly has them.
  *
  * DEFER(the write path is written, after hammer2_vnops.c): port the body
- * against struct iattr and struct cred, keeping NetBSD's #if 0 around the
- * DIRECTDATA assignment until a recursive lock exists.
+ * against struct iattr and struct cred.
  */
 
 /*
