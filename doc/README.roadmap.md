@@ -13,7 +13,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 ## Where we are
 
 H1 is met: 0.1 through 0.4 each closed on their criteria, and the driver
-is at 0.4.14 in `CHANGELOG.md`. The module mounts DragonFly-written media
+is at 0.4.15 in `CHANGELOG.md`. The module mounts DragonFly-written media
 read-only, lists it, reads every file in eleven fixtures and the
 DragonFly guest's installed root byte for byte against three other
 readers, refuses corrupt blocks and headers, and does all of that with
@@ -41,9 +41,9 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 1. The rest of the write path, each piece measured the same way as the
-   first. `->setattr` with truncate and `fsync` are in; next are
-   `->create`, `->mkdir`, `->unlink`, `->rename` and `->symlink`, which
-   carry `hammer2_inode_create_normal()` and the directory XOPs. Each lands with its DragonFly read-back and
+   first. `->setattr` with truncate, `fsync`, `->create`, `->mknod`,
+   `->mkdir`, `->symlink`, `->unlink` and `->rmdir` are in; next are
+   `->rename` over the carried nrename XOP and `->link`. Each lands with its DragonFly read-back and
    an `fsck_hammer2` on the result, in both directions once DragonFly
    can write to a volume this port created.
 2. The write trace the 0.5 criteria ask for: the order in which the
