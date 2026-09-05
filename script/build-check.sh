@@ -33,7 +33,10 @@ make KDIR="$KDIR" > "$log" 2>&1
 rc=$?
 if [ "$rc" != 0 ]; then
 	echo "build-check: FAIL: the module did not build against $KDIR"
-	command grep -E "^ERROR|error:" "$log" | head -20
+	# A compiler error, a modpost error, or make's own "*** ..." line,
+	# which is how the module Makefile names a kernel option it needs;
+	# the first version of this grep printed nothing for that one.
+	command grep -E "^ERROR|error:|\*\*\* " "$log" | head -20
 	exit 1
 fi
 

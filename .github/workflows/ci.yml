@@ -256,7 +256,7 @@ jobs:
           # The version appears once. Bumping the floor means editing this
           # line and the #error in hammer2_os.h, and the build is what says
           # whether the two agree.
-          key: linux-floor-6.15-built-v4
+          key: linux-floor-6.15-built-v5
 
       - name: Fetch and prepare 6.15
         if: steps.floorcache.outputs.cache-hit != 'true'
@@ -270,12 +270,15 @@ jobs:
           # defconfig leaves the LZ4 compressor out (LZ4_DECOMPRESS is in,
           # LZ4_COMPRESS is not), and the module's write path links
           # LZ4_compress_default(). Three pushes went red at modpost on
-          # exactly that symbol before this line existed. The Makefile
-          # names the options the module needs; this is where the floor
-          # tree is given them.
+          # exactly that symbol before this step set it, and a fourth
+          # went red after setting LZ4_COMPRESS itself: the lib options
+          # have no Kconfig prompt, so olddefconfig drops a bare enable
+          # of one. What survives is enabling something that selects
+          # them, and the crypto wrappers do. Measured on a fresh 6.15
+          # tree, both ways, before this line was written.
           "$HOME/linux-floor/scripts/config" --file "$HOME/linux-floor/.config" \
-            --enable LZ4_COMPRESS --enable LZ4_DECOMPRESS \
-            --enable ZLIB_DEFLATE --enable ZLIB_INFLATE --enable XXHASH
+            --enable CRYPTO --enable CRYPTO_LZ4 --enable CRYPTO_DEFLATE \
+            --enable CRYPTO_XXHASH
           make -C "$HOME/linux-floor" olddefconfig
           # A FULL BUILD, which is what Documentation/kbuild/modules.rst
           # asks for in as many words: "modules_prepare will not build
@@ -311,6 +314,13 @@ jobs:
           n=$(wc -l < "$sym")
           echo "Module.symvers carries $n symbol(s)"
           [ "$n" -gt 1000 ] || { echo "::error::Module.symvers has only $n symbols"; exit 1; }
+          # The five options the module links against, asserted on the
+          # tree that was built rather than trusted to the enable above,
+          # which olddefconfig once silently undid.
+          for c in LZ4_COMPRESS LZ4_DECOMPRESS ZLIB_DEFLATE ZLIB_INFLATE XXHASH; do
+            grep -qE "^CONFIG_$c=[ym]" "$HOME/linux-floor/.config" \
+              || { echo "::error::the floor tree was built without CONFIG_$c"; exit 1; }
+          done
 
       - name: Module build at the floor
         run: |
