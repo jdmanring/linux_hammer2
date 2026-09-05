@@ -135,6 +135,16 @@ if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" != "running" ]; then
 		echo "          gate does not start one unless H2_FIXTURE_START=1" >&2
 		exit 2
 	fi
+	# ONE GUEST AT A TIME ON THIS HOST. Each holds 4 GiB and the host is
+	# shared with other sessions' benches, so a second domain already
+	# running is a reason not to start this one, not a reason to race it.
+	other=$($VIRSH list --name 2>/dev/null | command grep -c . || true)
+	if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
+		echo "fixtures: COULD-NOT-RUN: $other other guest(s) running:" >&2
+		$VIRSH list --name 2>/dev/null | sed 's/^/          /' >&2
+		echo "          set H2_FIXTURE_SHARE=1 to start $GUEST beside them" >&2
+		exit 2
+	fi
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || {
 		echo "fixtures: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
 	started=yes

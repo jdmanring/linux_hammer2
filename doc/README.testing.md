@@ -589,8 +589,10 @@ read by Saxum's walker as root and compared against two other readers,
 recorded in `README.status.md`. Mounting both of `f7`'s PFSes at once is
 a measurement recorded there too, since a manifest names one label.
 
-The gate attaches one image at a time, always as `vdb`, and releases it
-before the next. It used to hold every image attached and the guest ran
+The gate starts its guest only when no other domain is running, since
+each holds 4 GiB and the host is shared with other sessions' benches;
+`H2_FIXTURE_SHARE=1` overrides that. It attaches one image at a time,
+always as `vdb`, and releases it before the next. It used to hold every image attached and the guest ran
 out of virtio slots at the eighth, which the gate reported as an attach
 failure of its own making. For `f6` the block counts in the
 manifest are DragonFly's own `stat` output, so that image compares this

@@ -163,4 +163,14 @@ enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 #define MNT_WAIT	1	/* Linux */
 #define MNT_NOWAIT	0	/* Linux */
 
+/*
+ * The ioflag bits the write side passes down, IO_SYNC to write now and
+ * wait, IO_ASYNC to issue now, neither to delay.  Nothing outside this
+ * module sees them.  MAXPHYS is FreeBSD's largest physical transfer,
+ * which the core asserts a logical block fits.
+ */
+#define IO_SYNC		0x0001	/* Linux */
+#define IO_ASYNC	0x0002	/* Linux */
+#define MAXPHYS		(128 * 1024)	/* Linux */
+
 #endif /* !_FS_HAMMER2_COMPAT_H_ */

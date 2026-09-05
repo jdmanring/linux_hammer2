@@ -355,7 +355,9 @@ until then, because a license tag on a module that cannot be built is a
 claim nothing exercises.
 
 What decides the value is not sentiment about the code's origin. The file
-data path this port is heading for is iomap, and `iomap_read_folio`,
+data path this port was heading for is iomap, a decision reopened in
+`README.roadmap.md` on 2026-09-04 with a recommendation to reverse; the
+license reasoning stands either way. `iomap_read_folio`,
 `iomap_file_buffered_write` and `iomap_writepages` are all
 `EXPORT_SYMBOL_GPL`: a module that does not declare a GPL-compatible
 license cannot link them, and the failure is at load time rather than at
