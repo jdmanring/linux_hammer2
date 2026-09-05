@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-0.6.0%2C%20unreleased-yellow.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-0.7.0%2C%20unreleased-yellow.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -43,23 +43,30 @@ what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of
 it.
 
-## Where it stands: 0.6.0
+## Where it stands: 0.7.0
 
 The version is a position on the roadmap, not a release. The first two
 numbers name the milestone reached, the third counts point releases
 inside it, and until 1.0 the number says nothing about stability.
-0.6 is crash recovery: a writer killed, the kernel panicked, the power
+0.6 was crash recovery: a writer killed, the kernel panicked, the power
 cut and a volume header torn, each twice, on media this port wrote and
 on media the FreeBSD port wrote, with both ports recovering every image
-to the same tree and `fsck_hammer2` clean afterwards. The row for it in
-[CHANGELOG.md](CHANGELOG.md) pins the commit and the run.
+to the same tree and `fsck_hammer2` clean afterwards.
+
+0.7 is HAMMER2's ioctl surface, reachable as Linux ioctls, which is what
+makes `hammer2-utils` work against this driver: snapshot create, PFS
+create, delete, list and lookup, inode and volume queries, growfs and
+bulkfree. A snapshot this port takes mounts on DragonFly and reads back
+the tree as it stood. The rows for both milestones in
+[CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
 
 What that buys you is a driver that can be tried, on media you can
 afford to lose. What it does not yet do: a read-only mount cannot be
 remounted read-write, which is refused rather than done without the
-recovery pass; there are no snapshots or ioctls, which are 0.7; it has
-not been run as a root filesystem; nothing is packaged, and no tag
-exists. Every write it has made was to a scratch image on a guest.
+recovery pass; the snapshots have no backend adapter behind them, which
+keeps 0.7 open; it has not been run as a root filesystem; nothing is
+packaged, and no tag exists. Every write it has made was to a scratch
+image on a guest.
 
 To try it, make an image, put it on a loop device and mount the PFS by
 label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
@@ -77,7 +84,20 @@ PFS asks for `DATA`:
 be modules on your kernel and only `modprobe` loads them first.
 
 Add `-o ro` to read without writing. A volume DragonFly made mounts the
-same way. The kernel log carries every refusal by name, and a report of
+same way.
+
+`hammer2-utils` drives the ioctls once a PFS is mounted:
+
+        $ sudo hammer2 -s /mnt pfs-list
+        $ sudo hammer2 -s /mnt snapshot /mnt before-upgrade
+        $ sudo hammer2 -s /mnt pfs-delete before-upgrade
+
+Give `-s <mount>` before the subcommand, which is not optional here even
+though it is on the BSDs. Without it the utility looks the mount up
+through `libfs`, whose Linux build reports no mounted filesystems at
+all, so anything that routes by mount reports the PFS as not found.
+That is a defect in the utility rather than in this driver, and
+`doc/upstream/libfs-linux-get_mnt_info.md` is the report against it. The kernel log carries every refusal by name, and a report of
 anything the driver does that DragonFly would not, with the image if you
 can share it, is the most useful thing a tester can send: the
 [issue tracker](https://github.com/jdmanring/linux_hammer2/issues) is
