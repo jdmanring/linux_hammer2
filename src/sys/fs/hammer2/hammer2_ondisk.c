@@ -1006,10 +1006,24 @@ hammer2_access_devvp(struct file *bdev_file, int rdonly)
 	 * That was true of the tree and false of the question: the file is
 	 * published at the tag the tree is pinned to.
 	 */
+	/*
+	 * XXX Linux: on the read-only to read-write remount the file was
+	 * opened without FMODE_WRITE and is not reopened, so f_mode is a
+	 * fact about the mount that already happened and answers nothing
+	 * about whether the device can take writes now.  No filesystem in
+	 * the tree reopens: sb_open_mode() appears in four of them and in
+	 * every case at mount.  It cannot be reopened either, the mode
+	 * always carrying BLK_OPEN_RESTRICT_WRITES, which leaves
+	 * bd_writers negative and makes bdev_may_open() refuse a second
+	 * open asking for BLK_OPEN_WRITE.  The filesystem writes through
+	 * its own bios, which do not consult f_mode; what stops them is
+	 * the device being write-protected, so that is the question, and
+	 * it is the one ext4 asks in the same place.
+	 */
 	KKASSERT(bdev_file);
 
-	if (!rdonly && !(bdev_file->f_mode & FMODE_WRITE))
-		return (EACCES);
+	if (!rdonly && bdev_read_only(file_bdev(bdev_file)))
+		return (EROFS);
 
 	return (0);
 }

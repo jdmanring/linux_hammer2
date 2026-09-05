@@ -715,8 +715,9 @@ hammer2_get_tree(struct fs_context *fc)
 	 * crash matrix on media both this port and the FreeBSD port wrote
 	 * (script/crash-matrix.sh).  A read-only mount runs none of it,
 	 * upstream making the recovery conditional on the mount being
-	 * writable, and hammer2_reconfigure() refuses the remount that
-	 * would reach the writable state without it.
+	 * writable, and hammer2_reconfigure() runs the same two on the
+	 * transition rather than letting a remount reach the writable
+	 * state with nothing replayed.
 	 */
 
 	/*
@@ -1054,9 +1055,10 @@ next_hmp:
 		/*
 		 * Upstream runs this on a read-write mount to replay an
 		 * interrupted flush, and it is carried above.  It WRITES, so
-		 * it is reached only when the mount is read-write;
-		 * hammer2_reconfigure() refuses the remount that would arrive
-		 * at the same state sideways without running it.
+		 * it is reached only when the mount is read-write, and
+		 * hammer2_reconfigure() runs it again on the read-only to
+		 * read-write transition, which is the only other way to
+		 * arrive at that state.
 		 * script/cut-flush.sh records the replay running on a cut-off
 		 * image and on a header made to lag, and script/crash-matrix.sh
 		 * the recovery across kill, panic, power loss and a torn header.
@@ -1721,38 +1723,105 @@ static const struct super_operations hammer2_sops = {
 };
 
 /*
- * DEFER(the remount path, hammer2_remount_impl, is carried): the
- * read-only to read-write remount is refused, because the transition
- * upstream makes there is not carried and a remount without it would
- * reach a writable superblock with the flush recovery never run.
+ * XXX Linux: upstream's read-only to read-write transition, without the
+ * two loops that take and drop a write reference on each device vnode.
+ * There is no such reference here: the block device file is opened once
+ * at mount and never reopened, which is what every filesystem in the
+ * tree does, and the writes go out as this module's own bios rather
+ * than through that file.  What hammer2_access_devvp() asks on Linux is
+ * whether the device is write-protected, which is the question those
+ * loops were standing in for.
+ *
+ * hmp->rdonly is device-wide and is cleared once; pmp->rdonly is
+ * per-mount.  Upstream cannot drop the write reference when the last
+ * read-write PFS on a device goes back to read-only and says so in an
+ * XXX; here there is nothing to drop, so the device simply stays
+ * writable for as long as it is mounted.
+ */
+static int
+hammer2_remount_impl(hammer2_dev_t *hmp)
+{
+	hammer2_volume_t *vol;
+	int i, error;
+
+	for (i = 0; i < hmp->nvolumes; ++i) {
+		vol = &hmp->volumes[i];
+		error = hammer2_access_devvp(vol->dev->bdev_file, 0);
+		if (error)
+			return (error);
+	}
+
+	for (i = 0; i < hmp->nvolumes; ++i) {
+		vol = &hmp->volumes[i];
+		if (vol->id == HAMMER2_ROOT_VOLUME) {
+			error = hammer2_recovery(hmp);
+			if (error == 0)
+				error |= hammer2_fixup_pfses(hmp);
+			if (error)
+				return (hammer2_error_to_errno(error));
+		}
+	}
+	hmp->rdonly = 0;
+	hmp->spmp->rdonly = 0;
+
+	return (0);
+}
+
+/*
+ * XXX Linux: FreeBSD's MNT_UPDATE branch of hammer2_mount(), which is
+ * hammer2_remount() there, reached through ->reconfigure rather than
+ * through a second call into the mount path.
  *
  * A NULL ->reconfigure does NOT make the VFS refuse a remount.
  * reconfigure_super() calls the operation only when it is present and
  * then applies fc->sb_flags under fc->sb_flags_mask either way, so
- * "mount -o remount,rw" on a superblock mounted read-only clears
+ * "mount -o remount,rw" on a superblock mounted read-only would clear
  * SB_RDONLY with nothing consulted.  Read at the kernel of record, in
  * fs/super.c.
  *
- * XXX Linux: this is not FreeBSD's MNT_UPDATE branch of
- * hammer2_mount(), which is what a real ->reconfigure carries.  It is
- * the refusal alone, and it goes away when the real one is written.
- * That one is upstream's hammer2_remount_impl(), which is not carried:
- * it reopens each volume for writing and then runs hammer2_recovery()
- * and hammer2_fixup_pfses() a second time, on the ro to rw transition,
- * before clearing hmp->rdonly.  The mount path's call to those two is
- * carried above; this one is not, and refusing the transition is why
- * that has not mattered yet.
+ * The recovery below runs with s_umount held by reconfigure_super().
+ * hammer2_recovery() and hammer2_fixup_pfses() walk chains and flush
+ * them; neither reaches sync_filesystem(), which would take that lock
+ * again.
  */
 static int
 hammer2_reconfigure(struct fs_context *fc)
 {
 	struct super_block *sb = fc->root->d_sb;
+	hammer2_pfs_t *pmp = MPTOPMP(sb);
+	hammer2_dev_t *hmp;
+	int rdonly, error;
 
-	if ((fc->sb_flags_mask & SB_RDONLY) && !(fc->sb_flags & SB_RDONLY) &&
-	    sb_rdonly(sb)) {
-		hprintf("read-write remount refused, remount with the volume unmounted\n");
-		return (-EROFS);	/* Linux: the VFS half is negative */
+	if (!(fc->sb_flags_mask & SB_RDONLY))
+		return (0);
+
+	rdonly = (fc->sb_flags & SB_RDONLY) != 0;
+	if (rdonly == pmp->rdonly)
+		return (0);
+
+	if (rdonly) {
+		/*
+		 * Read-write to read-only is per-mount: the device stays
+		 * open as it is, and a sibling PFS on it that is still
+		 * read-write is unaffected.
+		 */
+		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
+		pmp->rdonly = 1;
+		return (0);
 	}
+
+	hmp = pmp->pfs_hmps[0];
+	if (hmp == NULL)
+		return (-EINVAL);
+
+	if (hmp->rdonly) {
+		error = hammer2_remount_impl(hmp);
+		if (error) {
+			hprintf("read-write remount refused %d\n", error);
+			return (-error);	/* Linux: the VFS half */
+		}
+	}
+	pmp->rdonly = 0;
 
 	return (0);
 }

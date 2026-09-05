@@ -12,8 +12,10 @@ every write operation, from a byte written to a directory renamed, has
 been read back and checked by DragonFly; a writer killed, a kernel
 panicked, the power cut and a header torn each left a volume both this
 port and the FreeBSD port recovered, and the refusal that stood on the
-read-write mount from 0.3 is gone. HAMMER2's ioctls answer as Linux
-ioctls, so `hammer2-utils` drives the volume: a snapshot this port takes
+read-write mount from 0.3 is gone, as is the refusal on the read-only to
+read-write remount, which now runs the same recovery the mount path runs
+and is refused only when the device itself is write-protected. HAMMER2's
+ioctls answer as Linux ioctls, so `hammer2-utils` drives the volume: a snapshot this port takes
 mounts on DragonFly and reads back the tree as it stood.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
@@ -557,10 +559,10 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2626 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2695 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1251 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1015 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
@@ -644,9 +646,8 @@ It does not mean anything runs. `-fsyntax-only` compiles nothing and links
 nothing, which is why the section above records what `make` does instead,
 and why everything observed running, from the first mount to the round
 trip, is in the sections that follow with the instrument that observed
-it. The shipped build refuses a read-write mount and the read-write
-remount; upstream's recovery is carried and called at both, and it has
-run in the experimental build, which the `DEFER` at that refusal records.
+it. The shipped build mounts read-write and remounts read-write from
+read-only, and upstream's recovery is carried and runs on both paths.
 
 ## The version floor is the kernel of record
 
@@ -1379,6 +1380,51 @@ unmount 0; `modprobe -r` 0; no kernel report; and the host's
 `fsck_hammer2` clean on the disk afterwards. The image is
 `readme.img` in the fixtures directory and is not kept.
 
+## The remount from read-only to read-write
+
+Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
+`CONFIG_PROVE_LOCKING`, on the 8 GiB volume this port formatted.
+
+Mounted `-o ro`, a write is refused with `EROFS`. `mount -o remount,rw`
+exits 0, `/proc/mounts` reads `rw`, and a file written and synced reads
+back. `mount -o remount,ro` exits 0, the mount reads `ro` and a write is
+refused again. A second `remount,rw` appends to the same file. After
+`umount` and a fresh read-only mount the file holds both writes.
+`debug_locks` read 1, the log carried no report, and the host's
+`fsck_hammer2` exited 0 on the image afterwards.
+
+The negative control is the same image attached write-protected, where
+`/sys/block/vdb/ro` reads 1. There `mount -o remount,rw` fails, the
+mount stays `ro`, and the log names the refusal: `read-write remount
+refused 30`. That is the guard firing where the code executes rather
+than a mount that happened not to write.
+
+Upstream's `hammer2_remount_impl()` is carried without its two loops
+over the device vnodes. Those take and drop a write reference, and
+there is none here: the block device file is opened once at mount and
+never reopened. That is what every filesystem in the tree does,
+`sb_open_mode()` appearing in four of them and in each case at mount,
+and it is also the only thing possible, since that macro always sets
+`BLK_OPEN_RESTRICT_WRITES`, which leaves `bd_writers` negative and makes
+`bdev_may_open()` refuse a second open asking for `BLK_OPEN_WRITE`. The
+module's writes go out as its own bios, which do not consult the file's
+`f_mode`; what stops them is the device being write-protected. So
+`hammer2_access_devvp()`, which had been carried with no caller since
+the import, asks `bdev_read_only()` on Linux, which is the question
+ext4 asks in the same place, and the remount is its first caller.
+
+`hmp->rdonly` is device-wide and is cleared once, on the first PFS to go
+read-write; `pmp->rdonly` is per-mount. The read-write to read-only
+direction syncs the PFS and sets its own flag only, so a sibling PFS on
+the same device that is still read-write is unaffected. Upstream cannot
+release the device's write reference when the last read-write PFS goes
+back and carries an `XXX` saying so; there is nothing to release here,
+and the device stays writable while it is mounted.
+
+The recovery runs under `s_umount`, which `reconfigure_super()` holds.
+`hammer2_recovery()` and `hammer2_fixup_pfses()` walk and flush chains
+and reach nothing that takes that lock again.
+
 ## The ioctls, and a snapshot read back on DragonFly
 
 Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
@@ -1574,7 +1620,6 @@ against the source is the same shape as an empty one.
 |---|---|---|
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
-| `hammer2_vfsops.c`, at `hammer2_reconfigure()` | `DEFER(the remount path, hammer2_remount_impl, is carried)` | the read-only to read-write remount returns `EROFS`. Upstream's `hammer2_remount_impl()` reopens each volume for writing and runs the recovery and the PFS fixup again on that transition before clearing `rdonly`, and this port does not carry that remount path; the mount path's own call to `hammer2_recovery()` and `hammer2_fixup_pfses()` is carried, and has run across the interrupted flush and the crash matrix, so a mount made read-write from the start recovers and a remount that skipped it is refused rather than allowed to reach the same state with nothing replayed. The read-write mount refusal that stood here from 0.3 to 0.6, and the `HAMMER2_RW_EXPERIMENT` flag that lifted it for measurement, left when the matrix ran |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(->writepages lands: 0.5)` | the write half of the strategy XOP is carried, upstream's body with the buffer replaced by a folio, and nothing starts it yet: the file mapping's folio order, `->write_begin`, `->write_end`, dirty tracking and `->writepages` are the write path's Linux half, and the folio must cover a whole logical block, which the handler refuses rather than pads |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
@@ -1615,9 +1660,9 @@ against the FreeBSD port at
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
-| `hammer2_ondisk.c` | 20 | 1 | 19 |
+| `hammer2_ondisk.c` | 21 | 1 | 20 |
 | `hammer2_inode.c` | 28 | 6 | 22 |
-| `hammer2_vfsops.c` | 35 | 7 | 28 |
+| `hammer2_vfsops.c` | 37 | 7 | 30 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |
@@ -1631,10 +1676,10 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and forty-three are this port's, the right-hand column
-summed, and they fall in thirteen files: twenty-eight in
+One hundred and forty-six are this port's, the right-hand column
+summed, and they fall in thirteen files: thirty in
 `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, fifteen in
-`hammer2_ioctl.c`, nineteen each in `hammer2_ondisk.c` and
+`hammer2_ioctl.c`, twenty in `hammer2_ondisk.c`, nineteen in
 `hammer2_strategy.c`, twelve in `hammer2_chain.c`, seven in
 `hammer2_subr.c`, six in `hammer2.h`, five each in `hammer2_os.h` and
 `hammer2_flush.c`, two each in `hammer2_io.c` and `hammer2_xops.c`,
