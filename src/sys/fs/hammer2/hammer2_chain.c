@@ -199,8 +199,8 @@ hammer2_chain_init(hammer2_chain_t *chain)
 {
 	RB_INIT(&chain->core.rbtree);
 	hammer2_mtx_init_recurse(&chain->lock, "h2ch");
-	hammer2_chain_lockdep_class(&chain->lock);	/* XXX Linux */
 	hammer2_mtx_init(&chain->diolk, "h2ch_dio");
+	hammer2_chain_lockdep_class(&chain->lock);	/* XXX Linux */
 	hammer2_lk_init(&chain->inp_lock, "h2ch_inp");
 	hammer2_lkc_init(&chain->inp_cv, "h2ch_inp_cv");
 	hammer2_spin_init(&chain->core.spin, "h2ch_core");

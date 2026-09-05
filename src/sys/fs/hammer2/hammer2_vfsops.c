@@ -2328,6 +2328,7 @@ hammer2_kill_sb(struct super_block *sb)
 #ifdef CONFIG_LOCKDEP
 static struct lock_class_key hammer2_chain_keys[9][65];
 static struct lock_class_key hammer2_core_keys[9][65];
+static struct lock_class_key hammer2_diolk_keys[9][65];
 static const char *const hammer2_chain_key_names[9] = {
 	"h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
 	"h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf",
@@ -2337,6 +2338,11 @@ static const char *const hammer2_core_key_names[9] = {
 	"h2core_empty", "h2core_inode", "h2core_indirect", "h2core_data",
 	"h2core_dirent", "h2core_freemap_node", "h2core_freemap_leaf",
 	"h2core_freemap", "h2core_volume",
+};
+static const char *const hammer2_diolk_key_names[9] = {
+	"h2dio_empty", "h2dio_inode", "h2dio_indirect", "h2dio_data",
+	"h2dio_dirent", "h2dio_freemap_node", "h2dio_freemap_leaf",
+	"h2dio_freemap", "h2dio_volume",
 };
 
 /*
@@ -2368,6 +2374,16 @@ hammer2_chain_lockdep_class(hammer2_mtx_t *p)
 
 	lockdep_set_class_and_name(&p->lock, &hammer2_chain_keys[t][kb],
 	    hammer2_chain_key_names[t]);
+	/*
+	 * diolk, which hammer2_chain_modify() holds across the freemap
+	 * allocation that modifies a freemap chain under it, is classed
+	 * the same way; on one class per call site the first write read
+	 * as an inode's diolk taken twice.  Initialized in
+	 * hammer2_chain_init() before this is called, so it keeps the
+	 * class.
+	 */
+	lockdep_set_class_and_name(&chain->diolk.lock,
+	    &hammer2_diolk_keys[t][kb], hammer2_diolk_key_names[t]);
 	/* A root's core spinlock sits at the top of the bottom-up order. */
 	chain->core.spin.subclass = MAX_LOCKDEP_SUBCLASSES - 1;
 #endif
@@ -2397,6 +2413,7 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 		level++;
 	level = min(level, (unsigned int)MAX_LOCKDEP_SUBCLASSES - 1);
 	child->subclass = level;
+	container_of(child, hammer2_chain_t, lock)->diolk.subclass = level;
 #endif
 
 	/*
