@@ -736,6 +736,30 @@ module against `KDIR`, exits 2 without a guest, a seed or a kernel tree,
 and starts the guest only under `H2_FIXTURE_START=1`, as the fixture
 gate does.
 
+## The round trip both ways, from the tree
+
+`script/f4-roundtrip.sh` is F4 as a script: it formats a 2 GiB image on
+the host with hammer2-utils' `newfs_hammer2`, builds the experimental
+module, boots the Linux guest to write a tree and its manifest, boots
+the DragonFly guest to check that manifest and write a tree of its own,
+and boots the Linux guest again to check DragonFly's manifest and what
+is left of its own. Every checksum is the writer's, so neither reader
+is compared against itself. It refuses to run beside a running guest,
+exits 2 without both guests, the tools or a kernel tree, and shuts each
+guest down when its turn is over. `KDIR` names the kernel tree, and
+`H2_NEWFS` and `H2_FSCK` name the tools when they are not on `PATH`.
+
+`script/cut-flush.sh SECONDS` is the interrupted-flush fixture: DragonFly
+writes small files to a copy of `f5` with a `sync` every two hundred,
+the host destroys the domain after `SECONDS`, and the cut-off image is
+copied. This port mounts one copy read-write in the experimental build,
+which runs the carried `hammer2_recovery()`, reads every file, writes
+one more and syncs; DragonFly mounts that result and then recovers the
+other copy itself. The header's two tids are printed at each stage, so
+a run that cut inside the window where `freemap_tid` lags is visible;
+none has yet, and the freemap replay is still unexercised for that
+reason, which the script's own header says.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a

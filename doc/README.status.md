@@ -1116,7 +1116,7 @@ was refused. The log of each run carries every image's mutations as
 ## The round trip both ways, on a volume made here
 
 F4 is a tree written by this port, mounted and verified on DragonFly,
-then the reverse. Every earlier write landed on media DragonFly had
+then the reverse; `script/f4-roundtrip.sh` runs it. Every earlier write landed on media DragonFly had
 formatted; this one starts from a 2 GiB image formatted on the host by
 hammer2-utils' `newfs_hammer2 -L LINUX`, so nothing on it was written by
 DragonFly until DragonFly's turn. Linux, in the experimental build,
@@ -1145,7 +1145,8 @@ turn exits 0 each time.
 
 ## A flush cut off, and what each recovery made of it
 
-The deferral at the read-write refusal named this: DragonFly writing,
+The deferral at the read-write refusal named this, and
+`script/cut-flush.sh` runs it: DragonFly writing,
 cut off mid-flush, the image mounted here read-write so the carried
 `hammer2_recovery()` runs, and the result compared with DragonFly's own
 recovery of the same image. On a fresh copy of `f5` attached to the

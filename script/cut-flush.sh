@@ -1,0 +1,141 @@
+#!/bin/sh
+# A FLUSH CUT OFF, AND WHAT EACH RECOVERY MAKES OF IT.
+# DragonFly writes small files continuously to a copy of a fixture, syncing
+# every two hundred; after SECONDS the host destroys the domain, which is
+# the power going out as far as the guest is concerned. The cut-off image
+# is copied. This port mounts one copy read-write in the experimental build,
+# so the carried hammer2_recovery() runs, reads every file, writes one more
+# and syncs; DragonFly then mounts that result, and recovers the other copy
+# itself. Both trees and every fsck_hammer2 verdict are printed.
+#
+# What this shows is that the header written last keeps everything it
+# references; it does not, on its own, drive the freemap replay, which needs
+# the header's freemap_tid to lag its mirror_tid, a window inside one sync
+# that a cut from the host does not hit on purpose. The tids are printed so
+# a run that did hit it is visible.
+# EXIT 2 IS COULD-NOT-RUN AND IS NEVER A PASS, as in test-fixtures.sh.
+set -u
+cd "$(dirname "$0")/.." || exit 2
+
+SECONDS_WRITING=${1:-25}
+FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+BASE=${H2_CUT_BASE:-$FIXDIR/f5.img}
+LABEL=${H2_CUT_LABEL:-DFLY}
+IMG=$FIXDIR/cut-flush.img
+IMG2=$FIXDIR/cut-flush-dfly.img
+GUEST=${H2_GUEST:-artix-s6-kde}
+GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
+DFLY=${H2_DFLY_GUEST:-dragonflybsd642}
+DFLY_SSH=${H2_DFLY_SSH:-root@192.168.122.42}
+VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
+KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
+FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
+SHOW=${H2_SHOW:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
+W=$(mktemp -d) || exit 2
+trap 'rm -rf "$W"' EXIT
+
+command -v virsh >/dev/null 2>&1 || { echo "cut: COULD-NOT-RUN: no virsh" >&2; exit 2; }
+[ -f "$BASE" ] || { echo "cut: COULD-NOT-RUN: no base image $BASE" >&2; exit 2; }
+[ -x "$FSCK" ] && [ -x "$SHOW" ] || { echo "cut: COULD-NOT-RUN: no hammer2-utils (H2_FSCK, H2_SHOW)" >&2; exit 2; }
+[ -d "$KDIR" ] || { echo "cut: COULD-NOT-RUN: no kernel tree at $KDIR" >&2; exit 2; }
+for g in "$GUEST" "$DFLY"; do
+	$VIRSH domstate "$g" >/dev/null 2>&1 || { echo "cut: COULD-NOT-RUN: no guest $g" >&2; exit 2; }
+done
+[ -z "$($VIRSH list --name | tr -d ' \n')" ] || {
+	echo "cut: COULD-NOT-RUN: a guest is running: $($VIRSH list --name | tr '\n' ' ')" >&2; exit 2; }
+
+make -s clean >/dev/null 2>&1
+make -s KDIR="$KDIR" HAMMER2_RW_EXPERIMENT=1 >/dev/null 2>&1 || {
+	echo "cut: COULD-NOT-RUN: experimental module did not build against $KDIR" >&2; exit 2; }
+KO=src/sys/fs/hammer2/hammer2.ko
+
+rm -f "$IMG" "$IMG2"
+cp "$BASE" "$IMG" || { echo "cut: COULD-NOT-RUN: cannot copy $BASE" >&2; exit 2; }
+
+fail=0
+tids() {	# print header tids of an image
+	"$SHOW" show "$1" 2>/dev/null | grep -m1 'freemap_tid' | sed 's/.*mirror_tid=\([0-9a-f]*\) freemap_tid=\([0-9a-f]*\).*/mirror_tid \1 freemap_tid \2/'
+}
+boot() {
+	$VIRSH attach-disk "$1" "$3" vdb --targetbus virtio --config >/dev/null 2>&1
+	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  FAIL  $1 did not start"; return 1; }
+	n=0
+	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$2" true 2>/dev/null; do
+		sleep 5; n=$((n + 1)); [ $n -gt 60 ] && { echo "  FAIL  $1 did not answer ssh"; return 1; }
+	done
+	return 0	# not the status of the loop's last test
+}
+down() {
+	ssh -o ConnectTimeout=5 "$2" 'sync; poweroff' >/dev/null 2>&1
+	n=0
+	until [ "$($VIRSH domstate "$1")" = "shut off" ]; do
+		sleep 3; n=$((n + 1)); [ $n -gt 60 ] && { $VIRSH destroy "$1" >/dev/null 2>&1; break; }
+	done
+	$VIRSH detach-disk "$1" vdb --config >/dev/null 2>&1
+}
+
+# 1. DragonFly writes until the power goes.
+cat > "$W/write.sh" <<GUEST
+mkdir -p /mnt/c; mount_hammer2 /dev/vbd1@$LABEL /mnt/c || exit 1
+cd /mnt/c; mkdir -p crash; i=0
+while :; do
+  dd if=/dev/random of=crash/f\$i bs=4096 count=\$((1 + i % 20)) 2>/dev/null
+  echo \$i > crash/last
+  [ \$((i % 200)) -eq 199 ] && sync
+  i=\$((i+1))
+done
+GUEST
+boot "$DFLY" "$DFLY_SSH" "$IMG" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
+scp -q -o ConnectTimeout=5 "$W/write.sh" "$DFLY_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
+ssh -o ConnectTimeout=5 "$DFLY_SSH" 'sh /tmp/write.sh' >/dev/null 2>&1 &
+sleep "$SECONDS_WRITING"
+$VIRSH destroy "$DFLY" >/dev/null 2>&1 && echo "  ok    $DFLY destroyed after ${SECONDS_WRITING}s of writing"
+$VIRSH detach-disk "$DFLY" vdb --config >/dev/null 2>&1
+cp "$IMG" "$IMG2"
+echo "  cut   $(tids "$IMG")"
+"$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 on the cut-off image" || { echo "  FAIL  host fsck_hammer2 on the cut-off image"; fail=$((fail + 1)); }
+
+# 2. This port recovers one copy.
+cat > "$W/recover.sh" <<GUEST
+dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/c
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo 8 > /proc/sys/kernel/printk
+mount -t hammer2 \$dev@$LABEL /mnt/c || { echo "rw mount failed"; exit 1; }
+dmesg | grep -i 'recovery' | sed 's/^\[[^]]*\] //'
+n=\$(ls /mnt/c/crash | wc -l); echo "crash entries \$n last \$(cat /mnt/c/crash/last)"
+bad=0; for f in /mnt/c/crash/f*; do cat "\$f" > /dev/null 2>&1 || bad=\$((bad+1)); done; echo "unreadable \$bad"
+echo "after the cut, by linux" > /mnt/c/crash/linux-after; sync; echo "write after recovery exit \$?"
+umount /mnt/c
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+rmmod hammer2
+GUEST
+boot "$GUEST" "$GUEST_SSH" "$IMG" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
+scp -q -o ConnectTimeout=5 "$KO" "$W/recover.sh" "$GUEST_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
+out=$(ssh "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
+printf '%s\n' "$out" | sed 's/^/  linux   /'
+printf '%s\n' "$out" | grep -q "^unreadable 0$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "write after recovery exit 0" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
+down "$GUEST" "$GUEST_SSH"
+echo "  linux $(tids "$IMG")"
+"$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
+
+# 3. DragonFly reads that, then recovers its own copy.
+cat > "$W/after.sh" <<GUEST
+mkdir -p /mnt/c; mount_hammer2 /dev/vbd1@$LABEL /mnt/c || { echo "mount failed"; exit 1; }
+echo "crash entries \$(ls /mnt/c/crash | wc -l | tr -d ' ') last \$(cat /mnt/c/crash/last) linux-after: \$(cat /mnt/c/crash/linux-after 2>/dev/null || echo absent)"
+umount /mnt/c; fsck_hammer2 /dev/vbd1 >/dev/null 2>&1 && echo "dragonfly fsck clean"
+GUEST
+for img in "$IMG" "$IMG2"; do
+	boot "$DFLY" "$DFLY_SSH" "$img" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
+	scp -q -o ConnectTimeout=5 "$W/after.sh" "$DFLY_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
+	out=$(ssh "$DFLY_SSH" 'sh /tmp/after.sh' 2>&1)
+	printf '%s\n' "$out" | sed "s|^|  dfly $(basename "$img" .img) |"
+	printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || fail=$((fail + 1))
+	down "$DFLY" "$DFLY_SSH"
+done
+echo "  dfly  $(tids "$IMG2")"
+
+make -s clean >/dev/null 2>&1
+echo "cut: ${SECONDS_WRITING}s of writing, $fail failure(s)"
+[ $fail = 0 ]
