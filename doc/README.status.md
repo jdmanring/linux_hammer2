@@ -232,6 +232,17 @@ the kind of claim a checksum cannot correct and a block count can. `dmesg` carri
 finding from this module, kmemleak reports nothing after a scan, and both
 fixtures unmount and the module unloads with status 0.
 
+Since 0.4.9 a file's folios are whole logical blocks: `hammer2_igetv()`
+sets the mapping's minimum folio order to `HAMMER2_PBUFRADIX`, the
+mechanism the DIO layer already uses on the device mapping, and the
+mount already refuses a kernel whose page cache cannot hold one. Measured
+on the guest with the kernel's function tracer, reading `f6`'s
+176000-byte ZLIB file after dropping the caches: 43 `->read_folio` calls
+before, one per page and each decompressing the whole block, and 3
+after, one per block, with the same checksum, lockdep enabled and no
+warning. The carried write handler depends on the same contract, since it
+refuses a folio smaller than the block it would write.
+
 ## Compressed blocks, and the fixture that was said not to exist
 
 Both compression methods are written and measured. This paragraph
@@ -530,15 +541,15 @@ construction rather than re-hashed every run.
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1708 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_inode.c` | 1712 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2517 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1323 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_strategy.c` | 1322 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1028 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 912 | ours, the OS shim |
+| `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_os.h` | 931 | ours, the OS shim |
 | `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |

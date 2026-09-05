@@ -837,10 +837,14 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 		inode->i_op = &hammer2_symlink_iops;	/* Linux */
 		inode->i_mapping->a_ops = &hammer2_file_aops;	/* Linux */
 		inode_nohighmem(inode);	/* Linux */
+		hammer2_mapping_set_block_folios(inode->i_mapping,
+		    HAMMER2_PBUFRADIX);	/* Linux */
 	} else {
 		inode->i_op = &hammer2_file_iops;	/* Linux */
 		inode->i_fop = &hammer2_file_fops;	/* Linux */
 		inode->i_mapping->a_ops = &hammer2_file_aops;	/* Linux */
+		hammer2_mapping_set_block_folios(inode->i_mapping,
+		    HAMMER2_PBUFRADIX);	/* Linux */
 	}
 
 	/*

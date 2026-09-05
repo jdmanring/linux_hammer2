@@ -41,6 +41,7 @@
 #include <linux/version.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/pagemap.h>
 #include <linux/slab.h>
 #include <linux/rwsem.h>
 #include <linux/wait.h>
@@ -890,6 +891,24 @@ static inline int
 hammer2_dev_cache_flush(struct file *bdev_file)
 {
 	return (-blkdev_issue_flush(file_bdev(bdev_file)));
+}
+
+/*
+ * A file mapping whose folios are whole logical blocks.  A HAMMER2 logical
+ * block is HAMMER2_PBUFSIZE, and both halves of the strategy XOP want the
+ * folio they are handed to be one: the read half decompresses a block
+ * into the folio it has, so a page-sized folio decompressed the same
+ * block once per page, and the write half refuses a folio smaller than
+ * the block it would write.  Setting the mapping's minimum folio order to
+ * the block's is the same mechanism the DIO layer uses on the device
+ * mapping, and the mount already refuses a kernel whose page cache cannot
+ * hold a folio that large, so this cannot be asked for and not given.
+ */
+static inline void
+hammer2_mapping_set_block_folios(struct address_space *mapping,
+    unsigned int radix)
+{
+	mapping_set_folio_min_order(mapping, radix - PAGE_SHIFT);
 }
 
 /*

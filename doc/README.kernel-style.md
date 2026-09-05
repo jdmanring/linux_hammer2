@@ -281,7 +281,8 @@ write side of `hammer2_strategy.c`, seven hundred lines of upstream,
 brought nineteen continuation indents, one split string, one
 `return (x);` and one comma operator, `dtmp = ..., mask = ...;` in
 `hammer2_dedup_lookup()`, which is legal C that upstream wrote and stays
-as carried.
+as carried. The folio-order assert in `hammer2_io.c` added one split
+string and one continuation indent, in the shape of the assert beside it.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the

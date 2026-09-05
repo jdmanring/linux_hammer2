@@ -69,6 +69,9 @@
 #define HAMMER2_DOP_NEWNZ	3
 #define HAMMER2_DOP_READQ	4
 
+static_assert(HAMMER2_PBUFRADIX >= PAGE_SHIFT,
+	      "a HAMMER2 logical block is smaller than a page, so a file "
+	      "mapping cannot carry whole-block folios");
 static_assert(HAMMER2_PBUFSIZE <= BLK_MAX_BLOCK_SIZE,
 	      "HAMMER2_PBUFSIZE exceeds BLK_MAX_BLOCK_SIZE: this kernel lacks "
 	      "CONFIG_TRANSPARENT_HUGEPAGE and cannot mount HAMMER2; "

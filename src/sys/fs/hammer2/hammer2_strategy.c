@@ -183,10 +183,11 @@ hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch __maybe_unused,
  * rather than a folio full of zeroes that every later reader would take as
  * the file's contents.
  *
- * ponytail: a 4 KiB folio decompresses its whole 64 KiB block, so reading
- * a compressed block through sixteen folios decompresses it sixteen times.
- * Upstream does it once because a DragonFly logical buffer is the block.
- * The fix is a mapping that carries 64 KiB folios, not a cache here.
+ * The folio is the whole block: hammer2_igetv() sets the file mapping's
+ * minimum folio order to the block's, so one read_folio and one
+ * decompression serve a block, as one logical buffer does upstream.
+ * Before that a page-sized folio decompressed the same block once per
+ * page, forty-three reads of a 176000-byte file where there are now three.
  */
 static int
 hammer2_decompress_lz4(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
@@ -254,10 +255,8 @@ hammer2_decompress_lz4(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
  * LZ4: the block is the stream and avail_in is the whole of it, which is
  * upstream's reading too.
  *
- * ponytail: allocates a workspace and a 64 KiB buffer per folio, so a
- * compressed block read through sixteen folios does both sixteen times.
- * Same ceiling as the LZ4 path above and the same fix, a mapping that
- * carries 64 KiB folios.
+ * The workspace and the 64 KiB buffer are allocated once per block now
+ * that a folio is a block, as the LZ4 path above says.
  */
 static int
 hammer2_decompress_zlib(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
