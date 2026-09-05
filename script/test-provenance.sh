@@ -78,7 +78,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	# gate's own could-not-run defect in the instrument that exists to
 	# prove the gate works.
 	sfran=5
-	sed 's#^src/sys/fs/hammer2/hammer2_xops.c,#src/sys/fs/hammer2/hammer2_io.c,#' \
+	sed 's#^src/sys/fs/hammer2/hammer2_cluster.c,#src/sys/fs/hammer2/hammer2_io.c,#' \
 		doc/provenance.csv > "$t/swap.csv"
 	out=$(H2_PROVENANCE_CSV="$t/swap.csv" sh "$0" 2>&1)
 	if printf '%s\n' "$out" | command grep -q 'says identical but differs'; then
