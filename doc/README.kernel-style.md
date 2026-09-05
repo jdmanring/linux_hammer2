@@ -295,7 +295,8 @@ those two typedefs left the baseline, and the one hit that remains is
 the `#error` that states the floor. `->setattr` and `->fsync`, with
 the truncate and extend beneath them, added three continuation indents
 and three `return (x);`; the create path, seven of each and three
-unnamed prototype arguments.
+unnamed prototype arguments; rename and link, three and one, and the detached-chain annotation
+one unnamed argument.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the

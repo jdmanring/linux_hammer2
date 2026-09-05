@@ -467,6 +467,281 @@ hammer2_vop_rmdir(struct inode *dir, struct dentry *dentry)
 	return (hammer2_vop_nremove(dir, dentry, 1));
 }
 
+/*
+ * Rename, which is upstream's hammer2_rename() from the transaction on.
+ * Everything before it there is FreeBSD's vnode layer: the four vnodes
+ * arrive unlocked and are relocked in an order that can fail and
+ * restart, and the two names are resolved again in case they moved.
+ * Linux calls ->rename with both directories and the target locked by
+ * lock_rename(), and the dentries it passes are the resolution, so
+ * none of that has a counterpart here.  What remains is upstream's: the
+ * four inodes locked in address order, the target's collision space
+ * scanned for a free hash, the nrename XOP, the moved inode's name and
+ * parent updated, the replaced target's link dropped, and the two
+ * directories' times and link counts adjusted.  The Linux inodes'
+ * copies of the link counts and times move beside the meta.
+ *
+ * RENAME_NOREPLACE is what the VFS already checked; the other two flags
+ * name operations upstream has no XOP for.
+ */
+static int
+hammer2_vop_rename(struct mnt_idmap *idmap __maybe_unused,
+    struct inode *fdir, struct dentry *fdentry, struct inode *tdir,
+    struct dentry *tdentry, unsigned int flags)
+{
+	struct inode *finode = d_inode(fdentry);
+	struct inode *tinode = d_inode(tdentry);
+	hammer2_inode_t *fdip = VTOI(fdir); /* source directory */
+	hammer2_inode_t *fip = VTOI(finode); /* file being renamed */
+	hammer2_inode_t *tdip = VTOI(tdir); /* target directory */
+	hammer2_inode_t *tip = tinode ? VTOI(tinode) : NULL; /* replaced */
+	hammer2_inode_t *ip1, *ip2, *ip3, *ip4;
+	hammer2_xop_scanlhc_t *sxop;
+	hammer2_xop_nrename_t *xop4;
+	hammer2_key_t tlhc, lhcbase;
+	uint64_t mtime;
+	int error, update_fdip = 0, update_tdip = 0;
+
+	if (flags & ~RENAME_NOREPLACE)
+		return (-EINVAL);
+	if (fdip->pmp->rdonly || (fdip->pmp->flags & HAMMER2_PMPF_EMERG))
+		return (-EROFS);
+	if (tdentry->d_name.len > HAMMER2_INODE_MAXNAME)
+		return (-ENAMETOOLONG);
+
+	if (fip->meta.type == HAMMER2_OBJTYPE_DIRECTORY &&
+	    fdip->meta.inum != tdip->meta.inum) {
+		error = hammer2_checkpath(fip, tdip);
+		if (error)
+			return (hammer2_vfs_errno(error));
+		if (tdip->meta.nlinks >= U32_MAX)	/* Linux */
+			return (-EMLINK);
+	}
+
+	hammer2_trans_init(tdip->pmp, 0);
+	hammer2_inode_ref(fip); /* extra ref */
+	if (tip)
+		hammer2_inode_ref(tip); /* extra ref */
+
+	/*
+	 * For now try to avoid deadlocks with a simple pointer address
+	 * test.  (tip) can be NULL.
+	 */
+	ip1 = fdip;
+	ip2 = tdip;
+	ip3 = fip;
+	ip4 = tip; /* may be NULL */
+
+	if (fdip > tdip) {
+		ip1 = tdip;
+		ip2 = fdip;
+	}
+	if (tip && fip > tip) {
+		ip3 = tip;
+		ip4 = fip;
+	}
+	hammer2_inode_lock4(ip1, ip2, ip3, ip4);
+
+	/*
+	 * Resolve the collision space for (tdip, tname, tname_len).
+	 *
+	 * tdip must be held exclusively locked to prevent races since
+	 * multiple filenames can end up in the same collision space.
+	 */
+	tlhc = hammer2_dirhash((const char *)tdentry->d_name.name,
+	    tdentry->d_name.len);
+	lhcbase = tlhc;
+	sxop = hammer2_xop_alloc(tdip, HAMMER2_XOP_MODIFYING);
+	sxop->lhc = tlhc;
+	hammer2_xop_start(&sxop->head, &hammer2_scanlhc_desc);
+	while ((error = hammer2_xop_collect(&sxop->head, 0)) == 0) {
+		if (tlhc != sxop->head.cluster.focus->bref.key)
+			break;
+		++tlhc;
+	}
+	error = hammer2_error_to_errno(error);
+	hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
+	if (error) {
+		if (error != ENOENT)
+			goto done;
+		++tlhc;
+		error = 0;
+	}
+	if ((lhcbase ^ tlhc) & ~HAMMER2_DIRHASH_LOMASK) {
+		error = ENOSPC;
+		goto done;
+	}
+
+	/*
+	 * Ready to go, issue the rename to the backend.  Note that meta-data
+	 * updates to the related inodes occur separately from the rename
+	 * operation.  ip1|2|3|4 are fdip, fip, tdip, tip in this order.
+	 *
+	 * NOTE: While it is not necessary to update ip->meta.name*, doing
+	 *	 so aids catastrophic recovery and debugging.
+	 */
+	if (error == 0) {
+		xop4 = hammer2_xop_alloc(fdip, HAMMER2_XOP_MODIFYING);
+		xop4->lhc = tlhc;
+		xop4->ip_key = fip->meta.name_key;
+		hammer2_xop_setip2(&xop4->head, fip);
+		hammer2_xop_setip3(&xop4->head, tdip);
+		if (tip && tip->meta.type == HAMMER2_OBJTYPE_DIRECTORY)
+			hammer2_xop_setip4(&xop4->head, tip);
+		hammer2_xop_setname(&xop4->head,
+		    (const char *)fdentry->d_name.name, fdentry->d_name.len);
+		hammer2_xop_setname2(&xop4->head,
+		    (const char *)tdentry->d_name.name, tdentry->d_name.len);
+		hammer2_xop_start(&xop4->head, &hammer2_nrename_desc);
+		error = hammer2_xop_collect(&xop4->head, 0);
+		error = hammer2_error_to_errno(error);
+		hammer2_xop_retire(&xop4->head, HAMMER2_XOPMASK_VOP);
+		if (error == ENOENT)
+			error = 0;
+		/*
+		 * Update inode meta-data.
+		 *
+		 * WARNING!  The in-memory inode (ip) structure does not
+		 *	     maintain a copy of the inode's filename buffer.
+		 */
+		if (error == 0 &&
+		    (fip->meta.name_key & HAMMER2_DIRHASH_VISIBLE)) {
+			hammer2_inode_modify(fip);
+			fip->meta.name_len = tdentry->d_name.len;
+			fip->meta.name_key = tlhc;
+		}
+		if (error == 0) {
+			hammer2_inode_modify(fip);
+			fip->meta.iparent = tdip->meta.inum;
+		}
+		update_fdip = 1;
+		update_tdip = 1;
+	}
+done:
+	/*
+	 * If no error, the backend has replaced the target directory entry.
+	 * We must adjust nlinks on the original replace target if it exists.
+	 */
+	if (error == 0 && tip) {
+		hammer2_inode_unlink_finisher(tip, NULL);
+		if (tip->meta.type == HAMMER2_OBJTYPE_DIRECTORY)
+			clear_nlink(tinode);		/* Linux */
+		else
+			drop_nlink(tinode);		/* Linux */
+	}
+
+	/* Update directory mtimes to represent the something changed. */
+	if (update_fdip || update_tdip) {
+		hammer2_update_time(&mtime);
+		if (update_fdip) {
+			hammer2_inode_modify(fdip);
+			fdip->meta.mtime = mtime;
+			if (fip->meta.type == HAMMER2_OBJTYPE_DIRECTORY &&
+			    fdip->meta.nlinks != 1)
+				--fdip->meta.nlinks;
+		}
+		if (update_tdip) {
+			hammer2_inode_modify(tdip);
+			tdip->meta.mtime = mtime;
+			if (fip->meta.type == HAMMER2_OBJTYPE_DIRECTORY &&
+			    tdip->meta.nlinks != 1)
+				++tdip->meta.nlinks;
+		}
+	}
+	if (error == 0) {
+		/* Linux: the VFS inodes' copies of the above. */
+		inode_set_mtime_to_ts(fdir, inode_set_ctime_current(fdir));
+		inode_set_mtime_to_ts(tdir, inode_set_ctime_current(tdir));
+		inode_set_ctime_current(finode);
+		if (tinode)
+			inode_set_ctime_current(tinode);
+		if (S_ISDIR(finode->i_mode) && fdir != tdir) {
+			drop_nlink(fdir);
+			inc_nlink(tdir);
+		}
+	}
+	if (tip) {
+		hammer2_inode_unlock(tip);
+		hammer2_inode_drop(tip);
+	}
+	hammer2_inode_unlock(fip);
+	hammer2_inode_unlock(tdip);
+	hammer2_inode_unlock(fdip);
+	hammer2_inode_drop(fip);
+	hammer2_trans_done(tdip->pmp, HAMMER2_TRANS_SIDEQ);
+
+	return (hammer2_vfs_errno(error));
+}
+
+/*
+ * Hard link, which is upstream's hammer2_link(): a directory entry
+ * naming the inode, its link count bumped, the times updated.  The
+ * target must be an indexed inode, as every inode this port creates is
+ * and every inode DragonFly writes has been since the hardlink rewrite;
+ * upstream asserts it, and here it is an error, since the media is the
+ * source of the claim.  The Linux inode takes a reference for the new
+ * dentry, as every filesystem's ->link does.
+ */
+static int
+hammer2_vop_link(struct dentry *odentry, struct inode *dir,
+    struct dentry *dentry)
+{
+	struct inode *inode = d_inode(odentry);
+	hammer2_inode_t *tdip = VTOI(dir); /* target directory */
+	hammer2_inode_t *ip = VTOI(inode); /* inode we are hardlinking to */
+	uint64_t cmtime;
+	int error;
+
+	if (ip->meta.nlinks >= U32_MAX)	/* Linux */
+		return (-EMLINK);
+	if (tdip->pmp->rdonly || (tdip->pmp->flags & HAMMER2_PMPF_EMERG))
+		return (-EROFS);
+	if (dentry->d_name.len > HAMMER2_INODE_MAXNAME)
+		return (-ENAMETOOLONG);
+	if (ip->meta.name_key & HAMMER2_DIRHASH_VISIBLE) {
+		WARN_ONCE(1, "hammer2: link to an unindexed inode %016llx\n",
+		    (long long)ip->meta.inum);
+		return (-EOPNOTSUPP);
+	}
+
+	KKASSERT(ip->pmp);
+	hammer2_trans_init(ip->pmp, 0);
+
+	hammer2_inode_lock4(tdip, ip, NULL, NULL);
+	hammer2_update_time(&cmtime);
+
+	/*
+	 * Create the directory entry and bump nlinks.
+	 * Also update ip's ctime.
+	 */
+	error = hammer2_dirent_create(tdip, (const char *)dentry->d_name.name,
+	    dentry->d_name.len, ip->meta.inum, ip->meta.type);
+	hammer2_inode_modify(ip);
+	++ip->meta.nlinks;
+	ip->meta.ctime = cmtime;
+
+	if (error == 0) {
+		/* Update dip's [cm]time. */
+		hammer2_inode_modify(tdip);
+		tdip->meta.mtime = cmtime;
+		tdip->meta.ctime = cmtime;
+	}
+	hammer2_inode_unlock(ip);
+	hammer2_inode_unlock(tdip);
+
+	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+
+	if (error == 0) {
+		/* Linux */
+		inode_set_ctime_current(inode);
+		inode_set_mtime_to_ts(dir, inode_set_ctime_current(dir));
+		inc_nlink(inode);
+		ihold(inode);
+		d_instantiate(dentry, inode);
+	}
+	return (hammer2_vfs_errno(error));
+}
+
 const struct inode_operations hammer2_dir_iops = {
 	.lookup		= hammer2_vop_lookup,
 	.create		= hammer2_vop_create,
@@ -475,6 +750,8 @@ const struct inode_operations hammer2_dir_iops = {
 	.symlink	= hammer2_vop_symlink,
 	.unlink		= hammer2_vop_unlink,
 	.rmdir		= hammer2_vop_rmdir,
+	.rename		= hammer2_vop_rename,
+	.link		= hammer2_vop_link,
 	.setattr	= hammer2_vop_setattr,
 };
 
@@ -890,10 +1167,10 @@ hammer2_writepages(struct address_space *mapping,
 }
 
 /*
- * DEFER(the write path lands: 0.5): what is here writes a file in
- * place, extends it, truncates it and syncs it, and creates and removes
- * names; nothing here renames or links.  There is no ->invalidate_folio
- * because no folio carries private data.
+ * DEFER(the write path lands: 0.5): every operation is here, reached
+ * only in the HAMMER2_RW_EXPERIMENT build until the interrupted-flush
+ * fixture and the write trace the roadmap asks for are in.  There is no
+ * ->invalidate_folio because no folio carries private data.
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,

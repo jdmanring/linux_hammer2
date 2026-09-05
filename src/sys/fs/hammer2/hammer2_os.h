@@ -251,7 +251,13 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * hammer2_chain_lockdep_nest() where hammer2_chain_get() first knows the
  * parent: the parent's level, plus one when the parent is an inode.  The
  * level is the subclass every acquire below passes, the VFS's own
- * notation for i_rwsem.  The core spinlock in a chain is taken child
+ * notation for i_rwsem.  Levels stop one short of lockdep's last
+ * subclass, which is kept for a chain deleted from its parent and held
+ * across the acquisition of the parent it is about to be inserted
+ * under, the rename XOP's move of a directory entry; nothing else can
+ * reach a detached chain, so that order is safe, and
+ * hammer2_chain_lockdep_detached() tells lockdep so through
+ * lock_set_subclass() on the held lock.  The core spinlock in a chain is taken child
  * before parent, which upstream states as its rule, so its level runs
  * the other way.  An inode lock nests at its chain's level.  Every other
  * lock initializer in this file takes a static key per call site, as
@@ -295,6 +301,7 @@ void hammer2_chain_lockdep_class(hammer2_mtx_t *);
 void hammer2_chain_lockdep_nest(hammer2_mtx_t *, hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest(hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest_under(hammer2_mtx_t *, const hammer2_mtx_t *);
+void hammer2_chain_lockdep_detached(hammer2_mtx_t *);
 
 static inline void
 __hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s,
@@ -334,6 +341,26 @@ hammer2_mtx_ex(hammer2_mtx_t *p)
 	if (hammer2_mtx_ex_recurse(p))
 		return;
 	down_write_nested(&p->lock, p->subclass);
+	WRITE_ONCE(p->owner, current);
+	p->refs++;
+}
+
+/*
+ * Linux: an exclusive acquisition at a lockdep level the caller names,
+ * for hammer2_inode_lock4(), which takes up to four inode locks in
+ * address order.  Two of them can share a level, a file and the one it
+ * replaces, or two directories, which lockdep would read as one lock
+ * taken twice; the position in the set is the level instead, the way
+ * lock_rename() classes the i_rwsems it takes as parent, child and
+ * normal.  Positions run the same direction as levels, the first lock
+ * taken lowest, so they add no order the levels do not already have.
+ */
+static inline void
+hammer2_mtx_ex_nested(hammer2_mtx_t *p, unsigned int subclass)
+{
+	if (hammer2_mtx_ex_recurse(p))
+		return;
+	down_write_nested(&p->lock, subclass);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
 }

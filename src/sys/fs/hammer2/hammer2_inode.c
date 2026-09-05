@@ -316,7 +316,7 @@ hammer2_inode_lock4(hammer2_inode_t *ip1, hammer2_inode_t *ip2,
 restart:
 	/* Lock the inodes in order. */
 	for (i = 0; i < count; ++i)
-		hammer2_mtx_ex(&ips[i]->lock);
+		hammer2_mtx_ex_nested(&ips[i]->lock, i); /* XXX Linux: level */
 
 	/*
 	 * Associate dependencies, record the first inode found on SYNCQ

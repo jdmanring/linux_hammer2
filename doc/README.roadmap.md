@@ -40,10 +40,13 @@ invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
-1. The rest of the write path, each piece measured the same way as the
-   first. `->setattr` with truncate, `fsync`, `->create`, `->mknod`,
-   `->mkdir`, `->symlink`, `->unlink` and `->rmdir` are in; next are
-   `->rename` over the carried nrename XOP and `->link`. Each lands with its DragonFly read-back and
+1. The write path is written: `->setattr` with truncate, `fsync`,
+   `->create`, `->mknod`, `->mkdir`, `->symlink`, `->unlink`,
+   `->rmdir`, `->rename` and `->link`, each measured the same way as
+   the first write and read back by DragonFly. What it has not had is
+   DragonFly writing to a volume this port created, which waits on
+   `newfs_hammer2` here or a Linux-formatted image carried to the
+   guest. Each lands with its DragonFly read-back and
    an `fsck_hammer2` on the result, in both directions once DragonFly
    can write to a volume this port created.
 2. The write trace the 0.5 criteria ask for: the order in which the

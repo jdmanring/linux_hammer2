@@ -2462,7 +2462,7 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 
 	if (pchain->bref.type == HAMMER2_BREF_TYPE_INODE)
 		level++;
-	level = min(level, (unsigned int)MAX_LOCKDEP_SUBCLASSES - 1);
+	level = min(level, (unsigned int)MAX_LOCKDEP_SUBCLASSES - 2);
 	child->subclass = level;
 	container_of(child, hammer2_chain_t, lock)->diolk.subclass = level;
 #endif
@@ -2504,6 +2504,22 @@ hammer2_inode_lockdep_nest(hammer2_mtx_t *p)
 	hammer2_chain_t *chain = ip->cluster.focus;
 
 	p->subclass = chain ? chain->lock.subclass : 0;
+#endif
+}
+
+/*
+ * Linux: a chain deleted from its parent and still held, see the note
+ * at the nesting levels in hammer2_os.h.  The held acquisition moves to
+ * the last subclass, which no tree level uses; the next acquisition,
+ * after the chain is inserted under its new parent, is at the level
+ * hammer2_chain_lockdep_nest() gives it there.
+ */
+void
+hammer2_chain_lockdep_detached(hammer2_mtx_t *p __maybe_unused)
+{
+#ifdef CONFIG_LOCKDEP
+	lock_set_subclass(&p->lock.dep_map, MAX_LOCKDEP_SUBCLASSES - 1,
+	    _RET_IP_);
 #endif
 }
 

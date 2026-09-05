@@ -565,6 +565,7 @@ hammer2_xop_nrename(hammer2_xop_t *arg, void *scratch, int clindex)
 	}
 	if (error)
 		goto done;
+	hammer2_chain_lockdep_detached(&chain->lock);	/* XXX Linux */
 
 	/*
 	 * Adjust fields in the deleted chain appropriate for the rename
