@@ -68,6 +68,9 @@
 #include <linux/pagemap.h>	/* Linux: __filemap_get_folio, folio_* */
 #include <linux/writeback.h>	/* Linux: writeback_iter */
 
+static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
+    struct iattr *);
+
 /*
  * Resolve one name in a directory.
  *
@@ -266,6 +269,7 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 
 const struct inode_operations hammer2_dir_iops = {
 	.lookup		= hammer2_vop_lookup,
+	.setattr	= hammer2_vop_setattr,
 };
 
 /*
@@ -336,10 +340,213 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	return (ret);
 }
 
+/*
+ * Zero the cached tail of the block that holds byte off, from off to the
+ * end of the folio, and dirty it so the zeros reach the disk.  This is
+ * what nvtruncbuf() and nvextendbuf() do for upstream in the buffer
+ * cache: a block is stored whole, so the bytes past a shrunken end stay
+ * on the media until something overwrites them, and a later extend would
+ * read them back as file data.  Runs outside ip->lock, since the read it
+ * may take goes through ->read_folio, which takes that lock shared.
+ */
+static int
+hammer2_zero_tail(struct inode *inode, loff_t off)
+{
+	struct folio *folio;
+
+	if (off == 0 || (off & HAMMER2_PBUFMASK64) == 0)
+		return (0);
+	folio = read_mapping_folio(inode->i_mapping, off >> PAGE_SHIFT, NULL);
+	if (IS_ERR(folio))
+		return (PTR_ERR(folio));
+	folio_lock(folio);
+	if (off < folio_pos(folio) + folio_size(folio))
+		folio_zero_segment(folio, offset_in_folio(folio, off),
+		    folio_size(folio));
+	folio_mark_dirty(folio);
+	folio_unlock(folio);
+	folio_put(folio);
+	return (0);
+}
+
+/*
+ * Truncate the file to nsize, which is upstream's hammer2_truncate_file()
+ * with the buffer cache part taken out: the caller has already run
+ * truncate_setsize() and hammer2_zero_tail() before taking ip->lock,
+ * where upstream drops and retakes ip->lock around vtruncbuf() under
+ * truncate_lock.  That retake is the reverse of the order every other
+ * path takes the two locks in, and lockdep reported it as such on the
+ * first truncate here.  What remains records the old and new sizes under
+ * RESIZED so the chain sync that follows deletes the data chains past
+ * the new end.
+ */
+static void
+hammer2_truncate_file(hammer2_inode_t *ip, hammer2_key_t nsize)
+{
+	hammer2_mtx_assert_locked(&ip->lock);
+
+	KKASSERT((ip->flags & HAMMER2_INODE_RESIZED) == 0);
+	ip->osize = ip->meta.size;
+	ip->meta.size = nsize;
+	atomic_set_int(&ip->flags, HAMMER2_INODE_RESIZED);
+	hammer2_inode_modify(ip);
+}
+
+/*
+ * Extend the file to nsize without writing, which is upstream's
+ * hammer2_extend_file() with writing == 0, and with the page cache part
+ * taken out as above.  Crossing the embedded size takes the chain sync
+ * now, for the reason upstream gives: the flush code and the in-memory
+ * state must agree on DIRECTDATA.
+ */
+static void
+hammer2_extend_file(hammer2_inode_t *ip, hammer2_key_t nsize)
+{
+	hammer2_key_t osize;
+
+	hammer2_mtx_assert_locked(&ip->lock);
+
+	KKASSERT((ip->flags & HAMMER2_INODE_RESIZED) == 0);
+	osize = ip->meta.size;
+
+	hammer2_inode_modify(ip);
+	ip->osize = osize;
+	ip->meta.size = nsize;
+	if (osize <= HAMMER2_EMBEDDED_BYTES && nsize > HAMMER2_EMBEDDED_BYTES) {
+		atomic_set_int(&ip->flags, HAMMER2_INODE_RESIZED);
+		hammer2_inode_chain_sync(ip);
+	}
+}
+
+/*
+ * Set attributes, which is upstream's hammer2_setattr() with the
+ * permission checks handed to setattr_prepare() and the attribute copy
+ * to setattr_copy(), as every Linux filesystem does; what remains is
+ * the size change and copying the result into ip->meta so the flush
+ * writes it.  The uflags branch is not carried: Linux has no chflags
+ * through setattr.  A truncation takes the chain sync before the
+ * transaction closes, for the reason upstream gives at its done label.
+ */
+static int
+hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+    struct iattr *attr)
+{
+	struct inode *inode = d_inode(dentry);
+	hammer2_inode_t *ip = VTOI(inode);
+	struct timespec64 ts;
+	uint64_t ctime;
+	int error, resize;
+
+	if (ip->pmp->rdonly)
+		return (-EROFS);
+	error = setattr_prepare(idmap, dentry, attr);
+	if (error)
+		return (error);
+
+	/*
+	 * Linux: the page cache side of a size change, under the i_rwsem
+	 * the VFS holds for the call, before ip->lock.  The order of the
+	 * two locks is what keeps the tail zeroing off ip->lock.
+	 */
+	resize = (attr->ia_valid & ATTR_SIZE) &&
+	    attr->ia_size != i_size_read(inode);
+	if (resize) {
+		if (!S_ISREG(inode->i_mode))
+			return (-EINVAL);
+		if (attr->ia_size < i_size_read(inode)) {
+			truncate_setsize(inode, attr->ia_size);
+			error = hammer2_zero_tail(inode, attr->ia_size);
+		} else {
+			error = hammer2_zero_tail(inode, i_size_read(inode));
+			truncate_setsize(inode, attr->ia_size);
+		}
+		if (error)
+			return (error);
+	}
+
+	hammer2_trans_init(ip->pmp, 0);
+	hammer2_inode_lock(ip, 0);
+
+	if (resize) {
+		if (attr->ia_size < ip->meta.size) {
+			hammer2_mtx_ex(&ip->truncate_lock);
+			hammer2_truncate_file(ip, attr->ia_size);
+			hammer2_mtx_unlock(&ip->truncate_lock);
+		} else {
+			hammer2_extend_file(ip, attr->ia_size);
+		}
+		hammer2_update_time(&ctime);
+		hammer2_inode_modify(ip);
+		ip->meta.ctime = ctime;
+		ip->meta.mtime = ctime;
+	}
+
+	setattr_copy(idmap, inode, attr);
+	hammer2_inode_modify(ip);
+	if (attr->ia_valid & ATTR_MODE)
+		ip->meta.mode = inode->i_mode & 07777;
+	if (attr->ia_valid & ATTR_UID)
+		hammer2_guid_to_uuid(&ip->meta.uid, i_uid_read(inode));
+	if (attr->ia_valid & ATTR_GID)
+		hammer2_guid_to_uuid(&ip->meta.gid, i_gid_read(inode));
+	if (attr->ia_valid & ATTR_ATIME) {
+		ts = inode_get_atime(inode);
+		ip->meta.atime = hammer2_timespec_to_time(&ts);
+	}
+	if (attr->ia_valid & ATTR_MTIME) {
+		ts = inode_get_mtime(inode);
+		ip->meta.mtime = hammer2_timespec_to_time(&ts);
+	}
+	ts = inode_get_ctime(inode);
+	ip->meta.ctime = hammer2_timespec_to_time(&ts);
+
+	if (ip->flags & HAMMER2_INODE_RESIZED)
+		hammer2_inode_chain_sync(ip);
+	hammer2_inode_unlock(ip);
+	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+	return (error);
+}
+
+/*
+ * fsync, which is upstream's hammer2_fsync(): write the file's dirty
+ * data first, so the strategy XOPs have assigned its blocks, then sync
+ * the inode's meta-data if it changed and flush the chains under it.
+ * vop_stdfsync() is file_write_and_wait_range() here.  As upstream says,
+ * this is not a flush transaction; the inode stays on the sideq and the
+ * syncer carries it to the volume root.
+ */
+static int
+hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
+    int datasync __maybe_unused)
+{
+	struct inode *inode = file_inode(file);
+	hammer2_inode_t *ip = VTOI(inode);
+	int error1 = 0, error2;
+
+	if (ip->pmp->rdonly)
+		return (0);
+	hammer2_trans_init(ip->pmp, 0);
+
+	error1 = file_write_and_wait_range(file, start, end);	/* Linux */
+
+	hammer2_inode_lock(ip, 0);
+	if (ip->flags & (HAMMER2_INODE_RESIZED | HAMMER2_INODE_MODIFIED))
+		error1 = error1 ? error1 :
+		    hammer2_vfs_errno(hammer2_inode_chain_sync(ip));
+	error2 = hammer2_vfs_errno(hammer2_inode_chain_flush(ip,
+	    HAMMER2_XOP_INODE_STOP));
+	if (error2)
+		error1 = error2;
+	hammer2_inode_unlock(ip);
+	hammer2_trans_done(ip->pmp, 0);
+	return (error1);
+}
+
 const struct file_operations hammer2_file_fops = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= hammer2_file_write_iter,	/* Linux */
+	.fsync		= hammer2_vop_fsync,
 };
 
 /*
@@ -478,8 +685,9 @@ hammer2_writepages(struct address_space *mapping,
 
 /*
  * DEFER(the write path lands: 0.5): what is here writes an existing
- * file in place and extends it; truncate, and the invalidate that goes
- * with it, are not written, and neither is fsync.
+ * file in place, extends it, truncates it and syncs it; nothing here
+ * creates, removes or renames.  There is no ->invalidate_folio because
+ * no folio carries private data.
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,
@@ -490,12 +698,12 @@ const struct address_space_operations hammer2_file_aops = {
 };
 
 /*
- * A regular file has an operations table so that i_op is never NULL on
- * an inode this module hands the VFS, and no methods in it.  The VFS
- * reads size, mode, owner and times out of the inode itself, which
- * hammer2_igetv() fills, so stat needs nothing here.
+ * A regular file's inode operations.  The VFS reads size, mode, owner
+ * and times out of the inode itself, which hammer2_igetv() fills, so
+ * stat needs nothing here; setting them, and the size, is ->setattr.
  */
 const struct inode_operations hammer2_file_iops = {
+	.setattr	= hammer2_vop_setattr,
 };
 
 /*
@@ -509,4 +717,5 @@ const struct inode_operations hammer2_file_iops = {
  */
 const struct inode_operations hammer2_symlink_iops = {
 	.get_link	= page_get_link,
+	.setattr	= hammer2_vop_setattr,
 };

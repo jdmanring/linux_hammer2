@@ -8,8 +8,8 @@ on media DragonFly itself created and wrote, including the DragonFly
 guest's own installed root. LZ4 and ZLIB blocks decode, symlinks resolve,
 a block whose check code does not match is refused on read, and a volume
 header that fails its crc is not mounted. The shipped module writes
-nothing; behind a build flag, the first write to DragonFly-written
-media has been read back and checked by DragonFly.
+nothing; behind a build flag, writes, truncates and attribute changes
+to DragonFly-written media have been read back and checked by DragonFly.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
@@ -552,8 +552,8 @@ construction rather than re-hashed every run.
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1711 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2578 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1322 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 512 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_vnops.c` | 721 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1018 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -949,11 +949,40 @@ runs, two of them on fresh copies, read the same: `overwrite exit 0`,
 back after a read-only remount with `blocks 0` and the new mtime,
 `random128k.bin` at its manifest checksum, `debug_locks 1`, kmemleak 0,
 no `hammer2` line in the log beyond the module's own two, and 3002 bytes
-different from `f5` both times. Everything the write path still lacks is in the `DEFER` at
-`hammer2_file_aops` and in the roadmap's next moves: no truncate, no
-`fsync`, nothing that creates or removes a name, no data block
-allocation exercised, no write trace of the flush order, and the shipped
-module refuses the mount that would reach any of it.
+different from `f5` both times.
+
+## Truncate, extend, chmod, utimes and fsync
+
+`->setattr` and `->fsync` are upstream's `hammer2_setattr()` and
+`hammer2_fsync()` with the permission checks and the attribute copy
+handed to `setattr_prepare()` and `setattr_copy()`, over the carried
+`hammer2_inode_chain_sync()` and `hammer2_inode_chain_flush()`. The test
+is `random128k.bin` on a fresh copy of `f5`, a 128 KiB file DragonFly
+wrote in two 64 KiB blocks: shrink to 100000, grow to 200000, shrink to
+100, `chmod 640`, `touch` to a 2020 date, append four bytes, then
+`fsync` on `hello.txt` after an overwrite, `sync`, `umount`, a read-only
+remount. Three runs:
+
+| run | what the instrument said | the defect |
+|---|---|---|
+| 1 | after `echo 3 > drop_caches`, the region the grow added read 30951 non-zero bytes of 100000; in the page cache, before the drop, it had read zero. And lockdep, at the first `truncate`: `possible circular locking dependency`, `h2ip_tr` held and `h2ip/2` wanted in `hammer2_vop_setattr()`, against the order `h2ip/2` then `h2ip_tr` the same function had taken a moment earlier | two. A block is stored whole, so the bytes past a shrunken end stayed on the media and a grow read them back as data; DragonFly zeroes them in the buffer cache in `nvtruncbuf()` and `nvextendbuf()`, and this port now does the same in `hammer2_zero_tail()`, reading the block through `->read_folio` and dirtying it. And upstream's `hammer2_truncate_file()` drops and retakes `ip->lock` around `vtruncbuf()` while holding `truncate_lock`, which is the reverse of the order every other path takes them in; here the page cache truncation runs under the VFS's `i_rwsem` before `ip->lock` is taken at all, and the retake is gone |
+| 2 | the same, before the fix was complete; not counted | |
+| 3 | every step exit 0; the grown region 0 non-zero bytes before and after `drop_caches`, the same md5 both times; after remount size 104, mode 640, the first 100 bytes at the checksum they had before the shrink and `tail` after them; `debug_locks` 1, no `hammer2` line in the log beyond the module's own, kmemleak 0 | none |
+
+The mtime is the append's, not the `touch`'s, as it should be; the
+atime is the `touch`'s and `hammer2 show` on the host reads it as
+`01-Feb-2020 19:02:02`. On DragonFly the file reads size 104, mode 640,
+the same mtime, the same md5, the same first 100 bytes and the same
+tail; `fsck_hammer2` exits 0 there and on the host. The host's `hammer2
+show` diff against `f5` is the copy-on-write path as before, with the
+file's inode now carrying `size 104`, `data_count 1024` and one data
+chain where it had two, the block past the new end deleted by the chain
+sync.
+
+Everything the write path still lacks is in the `DEFER` at
+`hammer2_file_aops` and in the roadmap's next moves: nothing that
+creates or removes a name, no write trace of the flush order, and the
+shipped module refuses the mount that would reach any of it.
 
 ## The folio the page cache can hold, asked at mount
 
@@ -1107,7 +1136,7 @@ against the source is the same shape as an empty one.
 | `hammer2_vfsops.c`, at three sites: the read-write refusal in `hammer2_get_tree()`, `hammer2_reconfigure()`, and the recovery call before `hammer2_update_pmps()` | `DEFER(recovery is exercised on a device)` | upstream's `hammer2_recovery()`, `hammer2_recovery_scan()` and `hammer2_fixup_pfses()` are carried and called where upstream calls them, so the code exists. What has not happened is running them: they WRITE, through `hammer2_freemap_adjust()` with `DORECOVER`, `hammer2_chain_modify()` and `hammer2_flush()`, and nothing has been loaded. Until they are exercised on a device carrying an interrupted flush, both refusals stay: `hammer2_get_tree()` returns `EROFS` before the device is opened, and `hammer2_reconfigure()` returns it for the remount that would otherwise arrive at the same state sideways, since `reconfigure_super()` applies `SB_RDONLY` whether or not the operation is present. All three sites lift together. The real `->reconfigure` is upstream's `hammer2_remount_impl()`, which is not carried and which runs these two a second time on the read-only to read-write transition. Narrowed 2026-09-04: a clean volume mounts read-write under `HAMMER2_RW_EXPERIMENT`, recovery finds `freemap_tid` at `mirror_tid` and replays nothing, sync and unmount write nothing, and the image is byte-identical afterwards; what the trigger still names is a volume whose flush was cut short, which needs a fixture DragonFly writes and is interrupted writing |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(->writepages lands: 0.5)` | the write half of the strategy XOP is carried, upstream's body with the buffer replaced by a folio, and nothing starts it yet: the file mapping's folio order, `->write_begin`, `->write_end`, dirty tracking and `->writepages` are the write path's Linux half, and the folio must cover a whole logical block, which the handler refuses rather than pads |
-| `hammer2_vnops.c`, at `hammer2_file_aops` | `DEFER(the write path lands: 0.5)` | `->write_iter`, `->write_begin`, `->write_end` and `->writepages` write an existing file in place and extend it, reached only in the `HAMMER2_RW_EXPERIMENT` build; truncate, the invalidate that goes with it, `fsync`, and every operation that creates or removes a name are not written |
+| `hammer2_vnops.c`, at `hammer2_file_aops` | `DEFER(the write path lands: 0.5)` | `->write_iter`, `->write_begin`, `->write_end`, `->writepages`, `->setattr` and `->fsync` write an existing file in place, extend it, truncate it, set its mode, owner and times, and sync it, reached only in the `HAMMER2_RW_EXPERIMENT` build; every operation that creates or removes a name is not written. There is no `->invalidate_folio` because no folio carries private data |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 | `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |

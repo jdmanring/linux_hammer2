@@ -476,8 +476,20 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
 
-	if (error == 0)
+	/*
+	 * Linux: the block is copied whole and a file's last block can
+	 * carry bytes past its end, so zero from i_size to the end of the
+	 * folio.  That is what nvextendbuf() does for upstream when a file
+	 * grows, and what keeps a later extend from exposing them.
+	 */
+	if (error == 0) {
+		loff_t isize = i_size_read(folio->mapping->host);
+
+		if (isize < folio_pos(folio) + folio_size(folio))
+			folio_zero_segment(folio, isize > folio_pos(folio) ?
+			    isize - folio_pos(folio) : 0, folio_size(folio));
 		folio_mark_uptodate(folio);
+	}
 	folio_unlock(folio);
 
 	/* The block is already named in dmesg by hammer2_chain_testcheck(). */

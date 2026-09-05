@@ -41,10 +41,9 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 1. The rest of the write path, each piece measured the same way as the
-   first: `->setattr` with truncate and the `->invalidate_folio` that
-   goes with it, `fsync`, then `->create`, `->mkdir`, `->unlink`,
-   `->rename` and `->symlink`, which carry `hammer2_inode_create_normal()`
-   and the directory XOPs. Each lands with its DragonFly read-back and
+   first. `->setattr` with truncate and `fsync` are in; next are
+   `->create`, `->mkdir`, `->unlink`, `->rename` and `->symlink`, which
+   carry `hammer2_inode_create_normal()` and the directory XOPs. Each lands with its DragonFly read-back and
    an `fsck_hammer2` on the result, in both directions once DragonFly
    can write to a volume this port created.
 2. The write trace the 0.5 criteria ask for: the order in which the

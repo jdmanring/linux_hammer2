@@ -292,7 +292,9 @@ added one more `LINUX_VERSION_CODE` hit, the sixth, and two typedefs,
 one per branch. The floor then moved to 7.3, the kernel of record, and
 every version guard went with it: five `LINUX_VERSION_CODE` hits and
 those two typedefs left the baseline, and the one hit that remains is
-the `#error` that states the floor.
+the `#error` that states the floor. `->setattr` and `->fsync`, with
+the truncate and extend beneath them, added three continuation indents
+and three `return (x);`.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
