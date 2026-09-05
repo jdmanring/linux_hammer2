@@ -675,6 +675,32 @@ Three things about a write test that a read test never needed:
   was read. `virsh destroy` is then the only way out, and it costs a
   core like a shutdown does.
 
+## Tracing what the flush writes, and in what order
+
+The guest kernel carries `CONFIG_BLK_DEV_IO_TRACE` but no `blktrace`
+binary, and tracefs is not mounted at boot, so the trace is taken with
+the block tracepoints directly:
+
+    mount -t tracefs nodev /sys/kernel/tracing
+    T=/sys/kernel/tracing
+    echo > $T/trace
+    echo 1 > $T/events/block/block_rq_issue/enable
+    echo 1 > $T/events/block/block_rq_complete/enable
+    # ... the writes ...
+    echo "written, syncing" > $T/trace_marker; sync; echo synced > $T/trace_marker
+    echo 0 > $T/events/block/block_rq_issue/enable
+    echo 0 > $T/events/block/block_rq_complete/enable
+    dn=$(lsblk -nd -o MAJ:MIN /dev/vdb | tr -d ' ' | tr : ,)
+    grep -E "$dn |tracing_mark" $T/trace
+
+The tracepoints name a device by major and minor with a comma between,
+`254,16`, not by its name, and a filter written for `vdb` matches
+nothing: the first two runs of this reported no events and looked like
+an empty write. Print the per-device counts alongside, so an empty
+filter shows against the root disk's hundreds. `doc/README.status.md`
+carries the trace for one write and `sync`, in which the volume header
+at sector 0 is the last request and follows a completed flush.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a

@@ -1043,10 +1043,48 @@ names in the same directories, the same contents, the same three link
 counts, and DragonFly then renames a file inside it. `fsck_hammer2`
 exits 0 there and on the host.
 
+## The order the flush writes in, from the block layer
+
+0.5's criterion for the flush is that the volume header becomes durable
+only after everything it references, shown by a write trace rather than
+by reading the source. The trace is the kernel's own `block_rq_issue`
+and `block_rq_complete` tracepoints, enabled through tracefs on the
+guest (the guest kernel has `CONFIG_BLK_DEV_IO_TRACE` and no `blktrace`
+binary, and tracefs is not mounted there by default), around a 9-byte
+file and a 70000-byte file created on a fresh copy of `f5` and then
+`sync`. Every request to the scratch device, in order, with the sector
+and length in 512-byte units and the `sync` markers written from the
+test itself:
+
+| time | request | sector | who |
+|---|---|---|---|
+| 24.19 | `R` 65536, three of them | 286720, 768, 1408 | the write path's lookups |
+| 24.20 | marker | | `written, syncing` |
+| 24.20 | `W` 65536, two | 1408, 278528 | writeback of the DIO layer's dirty pages, from the sync's first pass |
+| 24.21 | `WS` 65536, `R` 65536, `WS` 65536 | 295296, 294912, 294912 | the file's two data blocks, one of them read first because the write covered part of it |
+| 24.22 | `WS` 65536, three | 1408, 278528, 286720 | `hammer2_dev_writeback()`, the freemap, inode and indirect blocks |
+| 24.223 | `FF` | | `hammer2_dev_cache_flush()`, a flush request with no data |
+| 24.227 | `FF` complete | | |
+| 24.227 | `WS` 65536 | 0 | the volume header, the last request |
+| 24.298 | marker | | `synced` |
+
+The header is the last write and is issued only after the flush
+request that precedes it completes, so on a device that honors flush
+every block it references is durable before it is. Thirteen requests
+reached the scratch device in the whole run and 380 the root disk; the
+counts are in the transcript so a filter that matched nothing would
+show. Two things the trace also says, recorded rather than argued: the
+header write carries `WS` and not FUA, and no flush follows it, which
+is what DragonFly and the FreeBSD port do as well, `bwrite()` after
+`BIO_FLUSH`; the copy-on-write design tolerates it, since the previous
+header stays valid until the new one is durable, and a flush before
+the next header write orders them. The whole sequence took 100 ms on
+the virtio disk.
+
 Everything the write side has is now written, reached only in the
 `HAMMER2_RW_EXPERIMENT` build; what stands between it and the shipped
-module is in the roadmap's next moves: the write trace of the flush
-order, the interrupted-flush fixture, and the fuzzing corpus.
+module is in the roadmap's next moves: the interrupted-flush fixture
+and the fuzzing corpus.
 
 ## The folio the page cache can hold, asked at mount
 

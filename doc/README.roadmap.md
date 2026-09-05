@@ -49,10 +49,9 @@ invokes the kernel's build system, so running `make` is that act.
    guest. Each lands with its DragonFly read-back and
    an `fsck_hammer2` on the result, in both directions once DragonFly
    can write to a volume this port created.
-2. The write trace the 0.5 criteria ask for: the order in which the
-   flush's writes reach the device, taken with blktrace on the guest,
-   read against the rule that the volume header becomes durable last.
-   Reading the source is not that measurement.
+2. The write trace the 0.5 criteria ask for is taken, from the block
+   tracepoints on the guest, and `doc/README.status.md` carries it: the
+   header is the last request and follows a completed flush.
 3. The interrupted-flush fixture: DragonFly writing, cut off by `virsh
    destroy` mid-flush, the image mounted here with the refusal lifted,
    the replay compared to DragonFly's own recovery of the same image.
