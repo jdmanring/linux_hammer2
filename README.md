@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-mounts%20read--write%2C%20unreleased-yellow.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-0.6.0%2C%20unreleased-yellow.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -42,6 +42,47 @@ copies on a guest. See
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of
 it.
+
+## Where it stands: 0.6.0
+
+The version is a position on the roadmap, not a release. The first two
+numbers name the milestone reached, the third counts point releases
+inside it, and until 1.0 the number says nothing about stability.
+0.6 is crash recovery: a writer killed, the kernel panicked, the power
+cut and a volume header torn, each twice, on media this port wrote and
+on media the FreeBSD port wrote, with both ports recovering every image
+to the same tree and `fsck_hammer2` clean afterwards. The row for it in
+[CHANGELOG.md](CHANGELOG.md) pins the commit and the run.
+
+What that buys you is a driver that can be tried, on media you can
+afford to lose. What it does not yet do: a read-only mount cannot be
+remounted read-write, which is refused rather than done without the
+recovery pass; there are no snapshots or ioctls, which are 0.7; it has
+not been run as a root filesystem; nothing is packaged, and no tag
+exists. Every write it has made was to a scratch image on a guest.
+
+To try it, make an image, put it on a loop device and mount the PFS by
+label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
+PFS asks for `DATA`:
+
+        $ make && sudo make install
+        $ sudo modprobe hammer2
+        $ truncate -s 8G scratch.img
+        $ newfs_hammer2 -L TEST scratch.img
+        $ sudo losetup -f --show scratch.img
+        $ sudo mount -t hammer2 /dev/loop0@TEST /mnt
+
+`losetup` prints the device it chose; `/dev/loop0` above is that device.
+`modprobe` rather than `insmod`, because the codecs and the digest may
+be modules on your kernel and only `modprobe` loads them first.
+
+Add `-o ro` to read without writing. A volume DragonFly made mounts the
+same way. The kernel log carries every refusal by name, and a report of
+anything the driver does that DragonFly would not, with the image if you
+can share it, is the most useful thing a tester can send: the
+[issue tracker](https://github.com/jdmanring/linux_hammer2/issues) is
+open, and `doc/README.status.md` says what has already been measured so
+you can see whether your case is new.
 
 If you have ported this filesystem before, or maintain one of the trees it
 comes from, the most useful thing you can do is tell us a port decision is
@@ -97,7 +138,7 @@ than about a shared bug.
 different tree when the running kernel is not the one you mean to build
 for, which is the usual case on a development machine:
 
-        $ make KDIR=/path/to/linux-7.2/build
+        $ make KDIR=/path/to/linux-7.3/build
 
 Three build knobs, the same three the FreeBSD and NetBSD ports carry:
 `HAMMER2_INVARIANTS` turns on `KKASSERT` and `KASSERTMSG`,
@@ -131,9 +172,8 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-provenance.sh  # every file under src/ has an origin row
         $ bash script/test-absence.sh     # every "X() is not carried" resolves against src/
         $ bash script/test-doc-prose.sh   # vale over doc/, Saxum's styles
-        $ bash script/test-fixtures.sh    # mounts every fixture on a guest and compares manifests
 
-`test-provenance.sh` is the one of those seven that asks a question this
+`test-provenance.sh` is the one of those six that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
 re-run with `cmp` against the origin clone, and where that clone is not on
 the machine it reports COULD-NOT-RUN rather than passing on a table that
@@ -151,6 +191,10 @@ bash, because every gate here is normally run by bash and a bash-only
 construct in such a script breaks only when something honors the shebang:
 
         $ bash script/test-posix.sh
+
+The twelfth needs a guest, and exits 2 without one:
+
+        $ bash script/test-fixtures.sh    # mounts every fixture on a guest and compares manifests
 
 No gate here is trusted on silence alone, because a check whose healthy
 signature is silence cannot otherwise be told from a check that never ran.
