@@ -1097,7 +1097,7 @@ them:
 | run | images | mounted, all 44 files read | mounted, one or two files `EIO` | mounted, the listing cut short | refused | kernel report |
 |---|---|---|---|---|---|---|
 | seed 2, by hand | 100 | 36 | 43 | 2 (3 files listed, and 2) | 19 | 0 |
-| seed 3, the script, with its two controls | 40 | 23 | 12 | 1 (0 files listed) | 5 | 0 |
+| seed 3, the script, with its two controls | 40 | 22 | 12 | 1 (0 files listed) | 5 | 0 |
 | seed 1, before the bias | 60 | 56 | 0 | 0 | 4 | 0 |
 
 A refusal is a volume header or super-root the mount could not check;
@@ -1127,7 +1127,7 @@ follows the symlink, and writes a tree of its own: a 300000-byte file
 from `/dev/random` in 1000-byte writes, 200 one-line files, a file
 moved out of Linux's tree and one removed, with its own manifest.
 Linux mounts last and checks DragonFly's manifest and what is left of
-its own. Three runs:
+its own. Four runs:
 
 | run | Linux writes, re-reads | DragonFly checks, writes | Linux re-reads DragonFly's | lockdep | the defect |
 |---|---|---|---|---|---|
