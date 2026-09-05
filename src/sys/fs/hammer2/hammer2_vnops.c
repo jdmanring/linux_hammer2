@@ -774,10 +774,59 @@ const struct inode_operations hammer2_dir_iops = {
  * a hash and not an index in both, so this matches it rather than
  * inventing a check the core does not make.
  */
+/*
+ * Linux: the ioctl entry.  FreeBSD's hammer2_ioctl() hands the command
+ * to hammer2_ioctl_impl() with the argument already copied in by the
+ * syscall layer; here the copy is this function's, sized by the command
+ * word, and the result copied back for a command that reads.  The
+ * privilege rule is DragonFly's: every command wants root except
+ * HAMMER2IOC_VERSION_GET and HAMMER2IOC_INODE_GET, which any user may
+ * issue, and HAMMER2IOC_BULKFREE_SCAN, which DragonFly leaves open too.
+ * The FreeBSD port checks nothing, and a snapshot or a PFS deletion is
+ * not an operation to hand to every user with a file open.
+ */
+static long
+hammer2_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	void *data;
+	unsigned int size = _IOC_SIZE(cmd);
+	int error;
+
+	if (_IOC_TYPE(cmd) != 'h')
+		return (-ENOTTY);
+	switch (cmd) {
+	case HAMMER2IOC_VERSION_GET:
+	case HAMMER2IOC_INODE_GET:
+	case HAMMER2IOC_BULKFREE_SCAN:
+		break;
+	default:
+		if (!capable(CAP_SYS_ADMIN))
+			return (-EPERM);
+	}
+	if (size == 0)	/* the command word bounds it at 16 KiB */
+		return (-EINVAL);
+	data = kzalloc(size, GFP_KERNEL);
+	if (data == NULL)
+		return (-ENOMEM);
+	if ((_IOC_DIR(cmd) & _IOC_WRITE) &&
+	    copy_from_user(data, (void __user *)arg, size)) {
+		kfree(data);
+		return (-EFAULT);
+	}
+	error = hammer2_ioctl_impl(file_inode(file), cmd, data, file->f_flags,
+	    file->f_cred);
+	if (error == 0 && (_IOC_DIR(cmd) & _IOC_READ) &&
+	    copy_to_user((void __user *)arg, data, size))
+		error = EFAULT;
+	kfree(data);
+	return (hammer2_vfs_errno(error));
+}
+
 const struct file_operations hammer2_dir_fops = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
 	.iterate_shared	= hammer2_vop_readdir,
+	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
 };
 
 /*
@@ -1026,6 +1075,7 @@ const struct file_operations hammer2_file_fops = {
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= hammer2_file_write_iter,	/* Linux */
 	.fsync		= hammer2_vop_fsync,
+	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
 };
 
 /*

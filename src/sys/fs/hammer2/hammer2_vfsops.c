@@ -2288,6 +2288,26 @@ hammer2_sync_fs(struct super_block *sb, int wait)
 	    wait ? MNT_WAIT : MNT_NOWAIT)));
 }
 
+/*
+ * Linux: the whole-filesystem sync the ioctls ask for before a snapshot
+ * and after an inode change.  FreeBSD's hammer2_sync() runs the PFS
+ * sync alone because its vnode walk flushes the buffers itself; here the
+ * dirty folios live in the page cache, so the kernel's own sync is what
+ * writes them back before ->sync_fs above walks the chains.  It wants
+ * s_umount held by the caller, as the sync(2) path holds it.
+ */
+int
+hammer2_sync(struct super_block *sb, int waitfor __maybe_unused)
+{
+	int error;
+
+	down_read(&sb->s_umount);
+	error = sync_filesystem(sb);
+	up_read(&sb->s_umount);
+
+	return (-error);
+}
+
 static void
 hammer2_unmount(struct super_block *sb)
 {

@@ -42,6 +42,7 @@
 #include <linux/string.h>
 #include <linux/jiffies.h>
 #include <linux/processor.h>
+#include <linux/uuid.h>	/* Linux: generate_random_uuid, for kern_uuidgen */
 
 /* Taken from sys/sys/cdefs.h in FreeBSD. */
 #define __DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
@@ -68,6 +69,24 @@
  * correct in both and cannot drift.
  */
 #define __diagused	__maybe_unused
+
+/*
+ * kern_uuidgen(9) fills DCE UUIDs.  The kernel's generator writes the
+ * sixteen bytes in wire order with the version and variant bits set,
+ * which is what newfs_hammer2 and DragonFly both store, so the struct
+ * uuid the core carries is filled through its bytes.
+ */
+struct uuid;
+static inline void
+kern_uuidgen(struct uuid *store, int count)
+{
+	unsigned char *p = (unsigned char *)store;	/* a UUID is 16 bytes */
+
+	while (count-- > 0) {
+		generate_random_uuid(p);
+		p += 16;
+	}
+}
 
 /* DragonFly KKASSERT is FreeBSD KASSERT equivalent. */
 #ifdef HAMMER2_INVARIANTS

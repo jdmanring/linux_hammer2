@@ -12,7 +12,9 @@ every write operation, from a byte written to a directory renamed, has
 been read back and checked by DragonFly; a writer killed, a kernel
 panicked, the power cut and a header torn each left a volume both this
 port and the FreeBSD port recovered, and the refusal that stood on the
-read-write mount from 0.3 is gone.
+read-write mount from 0.3 is gone. HAMMER2's ioctls answer as Linux
+ioctls, so `hammer2-utils` drives the volume: a snapshot this port takes
+mounts on DragonFly and reads back the tree as it stood.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
@@ -548,21 +550,22 @@ construction rather than re-hashed every run.
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
+| `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
 | `hammer2_chain.c` | 4950 | FreeBSD port, carried byte-for-byte but ten `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, and the new block's own first lock recording no order; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1332 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2606 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2626 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1201 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1251 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1015 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 954 | ours, the OS shim |
-| `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
+| `hammer2_compat.h` | 195 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
@@ -1376,6 +1379,53 @@ unmount 0; `modprobe -r` 0; no kernel report; and the host's
 `fsck_hammer2` clean on the disk afterwards. The image is
 `readme.img` in the fixtures directory and is not kept.
 
+## The ioctls, and a snapshot read back on DragonFly
+
+Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
+`CONFIG_PROVE_LOCKING`, against the shipped module and Kusumi's
+`hammer2` utility, on an 8 GiB volume this port formatted and wrote.
+
+`pfs-list` prints the super-root scan; `snapshot` created `SNAP1` and
+`pfs-create` created `NEWPFS`, both appearing in the next listing;
+`pfs-clid` returned the snapshot's cluster id; `stat` reported the
+inode's compression as `lz4:default` and its check as `xxhash64`;
+`volume-list` reported version 2 and one 8.00 GB volume. `SNAP1` then
+mounted read-only as a filesystem of its own and read `one` from the
+file. The live PFS was changed to `two` and synced, `SNAP1` mounted
+again, and it still read `one`, which is the property a snapshot is for.
+`pfs-delete` removed both `NEWPFS` and `SNAP1`. `debug_locks` read 1
+afterwards, the log carried no report, and `rmmod` returned 0.
+
+The refusals were measured the same way. An unprivileged caller under
+`setpriv --reuid=65534` was refused `pfs-list` and `snapshot` with
+`EPERM`, the three read-only commands the entry point allows being the
+exception. An unrecognized command number under HAMMER2's own type
+letter and a command belonging to another driver both returned `ENOTTY`.
+
+That second one is a port decision rather than a carry. HAMMER2's
+dispatch answers an unknown command with `EOPNOTSUPP`, which a BSD's
+ioctl layer turns into `ENOTTY` before userland sees it; nothing does
+that on Linux, so the driver reported "Operation not supported" where
+every other Linux driver reports "Inappropriate ioctl for device". The
+default arm returns `ENOTTY` here, marked `XXX Linux`, and the
+deliberate refusals above it stay `EOPNOTSUPP`. It was the ioctl
+exerciser in the fixture gate that found it, not the hand run above,
+which had read the number and not questioned it.
+
+The gate covers the read-only half on every fixture:
+`test/hammer2-ioctl-exercise.c` issues ten calls per image as root and
+under `setpriv`, a hundred over the set, and compares each result
+against a recorded value. The writing commands need a writable mount,
+which the fixtures are not, so snapshot creation, PFS create and delete,
+growfs and bulkfree are the hand run above and nothing else.
+
+One thing testers hit immediately: `hammer2 pfs-delete LABEL` without
+`-s <mount>` reports the PFS as not found however it exists. The utility
+routes by mount through `libfs`, whose Linux `get_mnt_info()` returns an
+empty list, so the lookup never runs.
+`doc/upstream/libfs-linux-get_mnt_info.md` is the report against it,
+drafted and unfiled.
+
 ## The folio the page cache can hold, asked at mount
 
 The DIO layer hands the core one 64 KiB folio per buffer, so a kernel
@@ -1568,6 +1618,7 @@ against the FreeBSD port at
 | `hammer2_ondisk.c` | 20 | 1 | 19 |
 | `hammer2_inode.c` | 28 | 6 | 22 |
 | `hammer2_vfsops.c` | 35 | 7 | 28 |
+| `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |
 | `hammer2.h` | 9 | 3 | 6 |
@@ -1580,9 +1631,10 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and twenty-eight are this port's, the right-hand column
-summed, and they fall in twelve files: twenty-eight in
-`hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, nineteen each in `hammer2_ondisk.c` and
+One hundred and forty-three are this port's, the right-hand column
+summed, and they fall in thirteen files: twenty-eight in
+`hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, fifteen in
+`hammer2_ioctl.c`, nineteen each in `hammer2_ondisk.c` and
 `hammer2_strategy.c`, twelve in `hammer2_chain.c`, seven in
 `hammer2_subr.c`, six in `hammer2.h`, five each in `hammer2_os.h` and
 `hammer2_flush.c`, two each in `hammer2_io.c` and `hammer2_xops.c`,

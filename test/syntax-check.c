@@ -133,6 +133,18 @@ hammer2_syntax_check_all(void)
 	hammer2_mtx_unlock(&mtx);
 	hammer2_mtx_unlock(&mtx);
 
+	/*
+	 * kern_uuidgen fills the PFS identifiers a snapshot and a
+	 * pfs-create write, so it has a caller only in the ioctl path.
+	 * Named here because an inline nothing references is an inline
+	 * this gate did not compile.
+	 */
+	{
+		struct uuid { unsigned char b[16]; } u[2];
+
+		kern_uuidgen((void *)u, 2);
+	}
+
 	cpu_pause();
 	cpu_ccfence();
 	(void)getticks();
