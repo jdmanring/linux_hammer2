@@ -518,6 +518,37 @@ so the bound is inclusive and 512 bytes is still embedded. Two fixture
 files were testing the same branch while the document said they straddled
 it.
 
+It also exercises the ioctl surface on every image that verifies, through
+`test/hammer2-ioctl-exercise.c`, which the gate compiles statically here
+and runs on the guest twice: once as root and once under `setpriv
+--reuid=65534`. The program includes the driver's own `hammer2_ioctl.h`
+rather than copying the command numbers, so a renumbered command breaks
+its build instead of passing against a stale constant, and it prints one
+`label value` line per call which the gate compares literally. Ten
+results per image, a hundred over the fixture set.
+
+It covers the read-only subset and says so in the summary line. The
+fixtures are attached read-only on purpose, so snapshot creation, PFS
+create and delete, growfs and bulkfree cannot be reached from it and
+stay hand-verified on a guest; "the ioctls are gated" would otherwise
+stand for commands nothing here runs. What it does cover is the version,
+PFS and inode queries, the super-root scan, the volume list, and three
+refusals: an unknown command under HAMMER2's own type letter, a command
+belonging to another driver, and a zero-size command, which is reachable
+only as root because the entry point checks the capability before the
+size.
+
+Two defects came out of its first two runs, one in the driver and one in
+the exerciser. An unrecognized command returned EOPNOTSUPP, which a BSD's
+ioctl layer maps to ENOTTY and Linux does not, so userland read
+"Operation not supported" where every other driver says "Inappropriate
+ioctl for device"; the dispatch's default arm now returns ENOTTY and the
+deliberate refusals above it stay EOPNOTSUPP. The exerciser then reported
+zero volumes from a call that had succeeded, because `nvolumes` is the
+caller's capacity going in and it had been zeroed. That second one is the
+reason the gate checks the two counts for being non-zero rather than only
+checking the status: a scan that copies nothing returns success.
+
 It carries a negative control per image rather than only in the selftest.
 After a manifest verifies, one hash in it is altered and the same mount is
 compared again, which must fail. Without that, an empty sums file, a
@@ -971,6 +1002,8 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
+| `test-fixtures.sh` | an ioctl that answers with the wrong errno | the recorded results, which caught EOPNOTSUPP where Linux wants ENOTTY on the first run |
+| `test-fixtures.sh` | a scan that returns success having read nothing | the PFS and volume counts, which must be non-zero, and which caught a zeroed capacity |
 | `test-fixtures.sh` | more images than there are target names | 26 manifests with an image beside each, which reports the ceiling rather than attaching over the last |
 
 All exit 2 and name what was missing. Two defects fell out of driving

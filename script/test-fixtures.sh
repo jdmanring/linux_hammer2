@@ -175,7 +175,7 @@ cleanup() {
 		$VIRSH detach-disk "$GUEST" "$d" >/dev/null 2>&1
 	done
 	[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1
-	rm -f "${tmpb:-}"
+	rm -f "${tmpb:-}" "${tmpx:-}" "${tmpi:-}"
 	return 0
 }
 trap 'cleanup' EXIT
@@ -225,6 +225,42 @@ scp -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 || {
 ssh "$GUEST_SSH" 'rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko' 2>/dev/null || {
 	echo "fixtures: FAIL: the module built for this guest did not load"; exit 1; }
 
+# THE IOCTL EXERCISER, WHICH IS PART OF THIS GATE AND NOT A PREREQUISITE OF
+# IT. test/hammer2-ioctl-exercise.c is built here rather than on the guest,
+# which has no toolchain, and statically, because a host binary linked
+# against this machine's glibc against another distribution's loader fails
+# in a way that reads as a filesystem defect. If either step fails the
+# exerciser is skipped by name and the summary line's count goes to zero,
+# which is why that count is printed.
+IOCTL_EX=
+tmpx=$(mktemp) || exit 2
+tmpi=$(mktemp) || exit 2
+if cc -static -O2 -Isrc/sys/fs/hammer2 -o "$tmpx" \
+    test/hammer2-ioctl-exercise.c >/dev/null 2>&1 &&
+    scp -o ConnectTimeout=5 "$tmpx" "$GUEST_SSH:/tmp/h2ioctl" >/dev/null 2>&1
+then
+	ssh "$GUEST_SSH" 'chmod 755 /tmp/h2ioctl' >/dev/null 2>&1 && IOCTL_EX=1
+fi
+[ -n "$IOCTL_EX" ] ||
+    echo "  note the ioctl exerciser did not build or copy, so no ioctl ran"
+
+# The recorded results, measured on the guest against the shipped module.
+# `unknown-h` is the dispatch's own default arm and `foreign-type` the
+# entry point's check on the command's type letter, which is why both
+# read ENOTTY from two different places. `zero-size` is reachable only as
+# root, the capability being checked before the size, which is the quiet
+# half of the argument guard and the reason it is exercised twice.
+IOCTL_ROOT_EXPECT='version 0
+pfs-get 0
+inode-get 0
+volume-list 0
+unknown-h -25
+foreign-type -25
+zero-size -22'
+IOCTL_UNPRIV_EXPECT='version 0
+unpriv-pfs-get -1
+unpriv-inode-set -1'
+
 fail=0
 images=0
 files=0
@@ -233,6 +269,7 @@ links=0
 corrupts=0
 stats=0
 statfss=0
+ioctls=0
 tmpb=$(mktemp) || exit 2
 release_image() {
 	[ -n "$attached" ] || return 0
@@ -297,6 +334,49 @@ for m in $manifests; do
 		printf '%s\n' "$out" | sed 's/^/        /' | head -6
 		fail=$((fail + 1))
 		continue
+	fi
+
+	# THE READ-ONLY IOCTLS, ON A MOUNT THAT HAS JUST VERIFIED. Only the
+	# read-only subset: the fixtures are attached read-only, so snapshot
+	# create, PFS create and delete, growfs and bulkfree cannot be
+	# reached from here and stay hand-verified on a guest.
+	#
+	# The fixed lines are compared literally and the two counts are
+	# checked for being non-zero, because they differ per image and a
+	# bound written here would be a second copy of the manifest. The
+	# unprivileged run is a separate invocation under setpriv, since
+	# `su nobody` cannot log in on this guest: the account is expired.
+	if [ -n "$IOCTL_EX" ]; then
+		iout=$(ssh "$GUEST_SSH" "/tmp/h2ioctl $mnt" 2>&1); irc=$?
+		uout=$(ssh "$GUEST_SSH" \
+		    "setpriv --reuid=65534 --regid=65534 --clear-groups \
+		     /tmp/h2ioctl -u $mnt" 2>&1); urc=$?
+		igot=$(printf '%s\n' "$iout" |
+		    command grep -v '^\(version-number\|pfs-count\|volume-count\) ')
+		npfs=$(printf '%s\n' "$iout" | sed -n 's/^pfs-count //p')
+		nvol=$(printf '%s\n' "$iout" | sed -n 's/^volume-count //p')
+		if [ "$irc" -ne 0 ] || [ "$urc" -ne 0 ]; then
+			echo "  FAIL $base: the ioctl exerciser did not run:"
+			printf '%s\n%s\n' "$iout" "$uout" |
+			    sed 's/^/        /' | head -6
+			fail=$((fail + 1)); continue
+		fi
+		if [ "$igot" != "$IOCTL_ROOT_EXPECT" ] ||
+		    [ "$uout" != "$IOCTL_UNPRIV_EXPECT" ]; then
+			echo "  FAIL $base: the ioctl results are not the recorded ones:"
+			printf '%s\n%s\n' "$IOCTL_ROOT_EXPECT" \
+			    "$IOCTL_UNPRIV_EXPECT" > "$tmpb"
+			printf '%s\n%s\n' "$igot" "$uout" > "$tmpi"
+			diff "$tmpb" "$tmpi" | sed 's/^/        /' | head -10
+			fail=$((fail + 1)); continue
+		fi
+		if [ "${npfs:-0}" -lt 1 ] || [ "${nvol:-0}" -lt 1 ]; then
+			echo "  FAIL $base: the scans returned $npfs PFS(s) and"
+			echo "        $nvol volume(s), so they read nothing"
+			fail=$((fail + 1)); continue
+		fi
+		ioctls=$((ioctls + $(printf '%s\n%s\n' "$igot" "$uout" |
+		    command grep -c .)))
 	fi
 	files=$((files + want))
 
@@ -465,9 +545,11 @@ else
 	echo "  note lockdep is not built into $guest_rel, so lock order was not validated"
 fi
 
-echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $fail failure(s)"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $ioctls ioctl result(s), $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
-echo "          being equal for LZ4 and ZLIB, and anything a second mount"
-echo "          of the same device would show"
+echo "          being equal for LZ4 and ZLIB, anything a second mount of the"
+echo "          same device would show, and the writing ioctls: snapshot,"
+echo "          PFS create and delete, growfs and bulkfree need a writable"
+echo "          mount and are verified by hand"
 [ "$fail" -eq 0 ] || exit 1
 exit 0
