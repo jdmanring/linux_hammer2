@@ -65,7 +65,7 @@
 
 #include "hammer2.h"
 
-#include <linux/pagemap.h>	/* Linux: __filemap_get_folio, folio_* */
+#include <linux/pagemap.h>	/* Linux: write_begin_get_folio, folio_* */
 #include <linux/writeback.h>	/* Linux: writeback_iter */
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
@@ -1037,7 +1037,7 @@ const struct file_operations hammer2_file_fops = {
  * folio it will then hand back locked.
  */
 static int
-hammer2_write_begin(const struct kiocb *iocb __maybe_unused,
+hammer2_write_begin(const struct kiocb *iocb,
     struct address_space *mapping, loff_t pos, unsigned int len,
     struct folio **foliop, void **fsdata __maybe_unused)
 {
@@ -1045,8 +1045,12 @@ hammer2_write_begin(const struct kiocb *iocb __maybe_unused,
 	struct folio *folio;
 	int error;
 
-	folio = __filemap_get_folio(mapping, pos >> PAGE_SHIFT,
-	    FGP_WRITEBEGIN, mapping_gfp_mask(mapping));
+	/*
+	 * The mapping's folio order is pinned to the block, so the order
+	 * the helper derives from len cannot exceed it; what the helper
+	 * adds is the uncached flag when the iocb carries it.
+	 */
+	folio = write_begin_get_folio(iocb, mapping, pos >> PAGE_SHIFT, len);
 	if (IS_ERR(folio))
 		return (PTR_ERR(folio));
 
