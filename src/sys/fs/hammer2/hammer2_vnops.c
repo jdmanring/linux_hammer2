@@ -267,8 +267,214 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 	return (hammer2_vfs_errno(error));	/* Linux: negative, EDOM is EIO */
 }
 
+/*
+ * Create a new inode under dir and give it the name, which is the body
+ * shared by upstream's hammer2_create(), hammer2_mknod(), hammer2_mkdir()
+ * and hammer2_symlink(), each of which repeats it.  The directory is
+ * locked before the new inode, as upstream says, to avoid deadlock;
+ * inode_depend() precedes igetv() because igetv() may release the inode
+ * lock.  The mtime update on the directory is upstream's, and its link
+ * count moves with a subdirectory as hammer2_mkdir() moves it.  The
+ * Linux inode's own copies of the directory's times and link count are
+ * kept beside the meta so stat is right without a flush.
+ *
+ * A symlink's target is written last, as hammer2_symlink() does with
+ * hammer2_write_file(), through page_symlink() over the same
+ * ->write_begin and ->write_end a regular file uses, with the new inode
+ * unlocked as upstream has it there.
+ */
+static int
+hammer2_vop_ncreate(struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode, dev_t rdev, const char *target)
+{
+	hammer2_inode_t *dip = VTOI(dir), *nip;
+	struct inode *inode = NULL;
+	hammer2_tid_t inum;
+	uint64_t mtime;
+	int error;
+
+	if (dip->pmp->rdonly || (dip->pmp->flags & HAMMER2_PMPF_EMERG))
+		return (-EROFS);
+	if (S_ISDIR(mode) && dip->meta.nlinks >= U32_MAX)	/* Linux */
+		return (-EMLINK);
+	if (dentry->d_name.len > HAMMER2_INODE_MAXNAME)
+		return (-ENAMETOOLONG);
+
+	hammer2_trans_init(dip->pmp, 0);
+	inum = hammer2_trans_newinum(dip->pmp);
+
+	hammer2_inode_lock(dip, 0);
+	nip = hammer2_inode_create_normal(dip, mode, rdev, idmap, inum, &error);
+	if (error)
+		error = hammer2_error_to_errno(error);
+	else
+		error = hammer2_dirent_create(dip,
+		    (const char *)dentry->d_name.name,	/* Linux: u8 */
+		    dentry->d_name.len, nip->meta.inum, nip->meta.type);
+	if (error) {
+		if (nip) {
+			hammer2_inode_unlink_finisher(nip, NULL);
+			hammer2_inode_unlock(nip);
+			nip = NULL;
+		}
+	} else {
+		hammer2_inode_depend(dip, nip); /* before igetv */
+		error = hammer2_igetv(nip, 0, &inode);
+		hammer2_inode_unlock(nip);
+	}
+
+	if (error == 0 && target != NULL) {
+		error = page_symlink(inode, target, strlen(target) + 1);
+		if (error) {
+			iput(inode);
+			inode = NULL;
+		}
+	}
+
+	if (error == 0) {
+		hammer2_update_time(&mtime);
+		hammer2_inode_modify(dip);
+		dip->meta.mtime = mtime;
+		dip->meta.ctime = mtime;
+		if (S_ISDIR(mode) && dip->meta.nlinks != 1)
+			++dip->meta.nlinks;
+		inode_set_mtime_to_ts(dir,
+		    inode_set_ctime_current(dir));	/* Linux */
+		if (S_ISDIR(mode))
+			inc_nlink(dir);			/* Linux */
+		d_instantiate(dentry, inode);		/* Linux */
+	}
+	hammer2_inode_unlock(dip);
+	hammer2_trans_done(dip->pmp, HAMMER2_TRANS_SIDEQ);
+
+	return (hammer2_vfs_errno(error));
+}
+
+static int
+hammer2_vop_create(struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode)
+{
+	return (hammer2_vop_ncreate(idmap, dir, dentry, mode | S_IFREG, 0,
+	    NULL));
+}
+
+static int
+hammer2_vop_mknod(struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode, dev_t rdev)
+{
+	return (hammer2_vop_ncreate(idmap, dir, dentry, mode, rdev, NULL));
+}
+
+static struct dentry *
+hammer2_vop_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode)
+{
+	int error;
+
+	error = hammer2_vop_ncreate(idmap, dir, dentry, mode | S_IFDIR, 0,
+	    NULL);
+	return (error ? ERR_PTR(error) : NULL);
+}
+
+static int
+hammer2_vop_symlink(struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, const char *target)
+{
+	return (hammer2_vop_ncreate(idmap, dir, dentry, S_IFLNK | 0777, 0,
+	    target));
+}
+
+/*
+ * Remove a name, which is upstream's hammer2_remove() and hammer2_rmdir()
+ * with isdir telling them apart, as the unlink XOP already does.  The
+ * XOP finds the entry by name and deletes it; hammer2_inode_get() on its
+ * result is the inode the name pointed to, which is the dentry's, and
+ * hammer2_inode_unlink_finisher() drops its link count and marks it
+ * ISUNLINKED at zero, which hammer2_evict_inode() acts on when the VFS
+ * lets go of it.  Linux has no chflags, so that check has no place
+ * here, as at ->setattr.
+ */
+static int
+hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
+{
+	struct inode *inode = d_inode(dentry);
+	hammer2_inode_t *dip = VTOI(dir);
+	hammer2_inode_t *ip;
+	hammer2_xop_unlink_t *xop;
+	uint64_t mtime;
+	int error;
+
+	if (dip->pmp->rdonly)
+		return (-EROFS);
+
+	hammer2_trans_init(dip->pmp, 0);
+	hammer2_inode_lock(dip, 0);
+
+	xop = hammer2_xop_alloc(dip, HAMMER2_XOP_MODIFYING);
+	hammer2_xop_setname(&xop->head,
+	    (const char *)dentry->d_name.name,	/* Linux: u8 */
+	    dentry->d_name.len);
+	xop->isdir = isdir;
+	xop->dopermanent = 0;
+	hammer2_xop_start(&xop->head, &hammer2_unlink_desc);
+	error = hammer2_xop_collect(&xop->head, 0);
+	error = hammer2_error_to_errno(error);
+	if (error == 0) {
+		ip = hammer2_inode_get(dip->pmp, &xop->head, -1, -1);
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		if (ip) {
+			KKASSERT(ip->vp == inode);
+			hammer2_inode_unlink_finisher(ip, NULL);
+			hammer2_inode_depend(dip, ip); /* after modified */
+			hammer2_inode_unlock(ip);
+		}
+	} else {
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	}
+
+	if (error == 0) {
+		hammer2_update_time(&mtime);
+		hammer2_inode_modify(dip);
+		dip->meta.mtime = mtime;
+		dip->meta.ctime = mtime;
+		if (isdir && dip->meta.nlinks != 1)
+			--dip->meta.nlinks;
+		inode_set_mtime_to_ts(dir,
+		    inode_set_ctime_current(dir));	/* Linux */
+		inode_set_ctime_current(inode);		/* Linux */
+		if (isdir) {
+			drop_nlink(dir);		/* Linux */
+			clear_nlink(inode);		/* Linux */
+		} else {
+			drop_nlink(inode);		/* Linux */
+		}
+	}
+	hammer2_inode_unlock(dip);
+	hammer2_trans_done(dip->pmp, HAMMER2_TRANS_SIDEQ);
+
+	return (hammer2_vfs_errno(error));
+}
+
+static int
+hammer2_vop_unlink(struct inode *dir, struct dentry *dentry)
+{
+	return (hammer2_vop_nremove(dir, dentry, 0));
+}
+
+static int
+hammer2_vop_rmdir(struct inode *dir, struct dentry *dentry)
+{
+	return (hammer2_vop_nremove(dir, dentry, 1));
+}
+
 const struct inode_operations hammer2_dir_iops = {
 	.lookup		= hammer2_vop_lookup,
+	.create		= hammer2_vop_create,
+	.mknod		= hammer2_vop_mknod,
+	.mkdir		= hammer2_vop_mkdir,
+	.symlink	= hammer2_vop_symlink,
+	.unlink		= hammer2_vop_unlink,
+	.rmdir		= hammer2_vop_rmdir,
 	.setattr	= hammer2_vop_setattr,
 };
 
@@ -684,10 +890,10 @@ hammer2_writepages(struct address_space *mapping,
 }
 
 /*
- * DEFER(the write path lands: 0.5): what is here writes an existing
- * file in place, extends it, truncates it and syncs it; nothing here
- * creates, removes or renames.  There is no ->invalidate_folio because
- * no folio carries private data.
+ * DEFER(the write path lands: 0.5): what is here writes a file in
+ * place, extends it, truncates it and syncs it, and creates and removes
+ * names; nothing here renames or links.  There is no ->invalidate_folio
+ * because no folio carries private data.
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,

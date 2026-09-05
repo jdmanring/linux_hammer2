@@ -1621,6 +1621,17 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
 	}
 }
 
+/*
+ * The VFS is done with an inode: upstream's hammer2_inactive() and
+ * hammer2_reclaim() in one call.  An inode whose last name was removed
+ * carries ISUNLINKED from hammer2_inode_unlink_finisher(); the media
+ * copy is deleted here, as hammer2_inactive() does, by marking DELETING
+ * and queueing the inode for the syncer, which is what upstream calls
+ * "dispose of the inode as much as possible right here".  The rest is
+ * hammer2_reclaim(): disconnect the vnode and drop its reference.  As
+ * upstream says there, the inode cannot be synchronized from inside
+ * this call.
+ */
 static void
 hammer2_evict_inode(struct inode *inode)
 {
@@ -1629,10 +1640,17 @@ hammer2_evict_inode(struct inode *inode)
 	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
 
-	if (ip) {
-		ip->vp = NULL;
-		hammer2_inode_drop(ip);
+	if (ip == NULL)
+		return;
+	hammer2_inode_lock(ip, 0);
+	if ((ip->flags & (HAMMER2_INODE_ISUNLINKED | HAMMER2_INODE_DELETING)) ==
+	    HAMMER2_INODE_ISUNLINKED) {
+		atomic_set_int(&ip->flags, HAMMER2_INODE_DELETING);
+		hammer2_inode_delayed_sideq(ip);
 	}
+	ip->vp = NULL;
+	hammer2_inode_unlock(ip);
+	hammer2_inode_drop(ip);
 }
 
 /*
@@ -2486,6 +2504,22 @@ hammer2_inode_lockdep_nest(hammer2_mtx_t *p)
 	hammer2_chain_t *chain = ip->cluster.focus;
 
 	p->subclass = chain ? chain->lock.subclass : 0;
+#endif
+}
+
+/*
+ * Linux: the level of an inode that has no chain yet, which is one under
+ * its parent's, the level hammer2_chain_lockdep_nest() will give its
+ * chain.  hammer2_inode_create_normal() sets it after hammer2_inode_get()
+ * has locked the fresh inode, which recorded no order, so every later
+ * acquire nests as the chain's would.
+ */
+void
+hammer2_inode_lockdep_nest_under(hammer2_mtx_t *p,
+    const hammer2_mtx_t *parent __maybe_unused)
+{
+#ifdef CONFIG_LOCKDEP
+	p->subclass = parent->subclass + 1;
 #endif
 }
 

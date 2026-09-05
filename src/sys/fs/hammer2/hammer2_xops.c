@@ -1064,6 +1064,9 @@ hammer2_xop_inode_create_det(hammer2_xop_t *arg, void *scratch, int clindex)
 	    HAMMER2_ENC_CHECK(pip->meta.check_algo), xop->lhc, 0,
 	    HAMMER2_BREF_TYPE_INODE, HAMMER2_INODE_BYTES,
 	    xop->head.mtid, 0, xop->flags);
+	/* XXX Linux: its lock level, that of a chain under parent. */
+	if (chain)
+		hammer2_chain_lockdep_nest(&chain->lock, &parent->lock);
 	if (error == 0) {
 		error = hammer2_chain_modify(chain, xop->head.mtid, 0, 0);
 		if (error == 0) {

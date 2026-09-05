@@ -147,8 +147,8 @@
  * The conversion to S_IFMT is hammer2_vtype_to_ifmt() in
  * hammer2_inode.c, beside hammer2_igetv(), which is the one place an
  * inode is constructed.  This was a DEFER naming that function as its
- * trigger until 2026-08-26.  The reverse direction has no caller yet: it
- * belongs to the create path, which is itself deferred.
+ * trigger until 2026-08-26.  The reverse direction is
+ * hammer2_ifmt_to_vtype() beside it, for the create path.
  */
 enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 

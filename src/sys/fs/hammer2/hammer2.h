@@ -1083,12 +1083,12 @@ hammer2_inode_t *hammer2_inode_get(hammer2_pfs_t *, hammer2_xop_head_t *,
 hammer2_inode_t *hammer2_inode_create_pfs(hammer2_pfs_t *, const char *,
     size_t, int *);
 /*
- * Linux: the BSD signature takes struct vattr and struct ucred.  The
- * create path is H2's (write side); the prototype names the Linux
- * types now so the H1 tree does not carry a BSD type it cannot define.
+ * Linux: the BSD signature takes struct vattr and struct ucred; what the
+ * body reads from them is the mode with its type, the device number and
+ * the caller's identity, so those are the arguments here.
  */
-hammer2_inode_t *hammer2_inode_create_normal(hammer2_inode_t *, struct iattr *,
-    const struct cred *, hammer2_key_t, int *);
+hammer2_inode_t *hammer2_inode_create_normal(hammer2_inode_t *, umode_t, dev_t,
+    struct mnt_idmap *, hammer2_key_t, int *);
 int hammer2_dirent_create(hammer2_inode_t *, const char *, size_t,
     hammer2_key_t, uint8_t);
 hammer2_key_t hammer2_inode_data_count(const hammer2_inode_t *);

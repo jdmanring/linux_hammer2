@@ -1114,32 +1114,184 @@ done2:
 }
 
 /*
- * XXX Linux: hammer2_inode_create_normal() and its vop_helper_create_uid()
- * helper are not carried.
- *
- * Both are the create path, which is the write side, and both are written
- * against BSD types with no mechanical Linux equivalent: struct vattr and
- * struct ucred, va_type through hammer2_get_obj_type(), va_rdev through
- * major()/minor(), VNOVAL as the not-supplied sentinel, groupmember() and
- * priv_check_cred(PRIV_VFS_RETAINSUGID) for the setgid trim, and
- * mp->mnt_flag for MNT_SUIDDIR.  Linux spells those i_mode and S_IFMT,
- * i_rdev, an iattr valid mask, in_group_p() and capable(CAP_FSETID), and
- * has no MNT_SUIDDIR at all.  The carried hammer2.h has already declared
- * this function with struct iattr * and const struct cred *, which is the
- * shape to write, but a body written now would be written blind: nothing
- * calls it, and the va_type conversion is the same S_IFMT translation the
- * enum vtype DEFER in hammer2_compat.h is waiting on.
- *
- * This is also where HAMMER2_OPFLAG_DIRECTDATA is set.  The NetBSD port
- * wraps those three lines in #if 0 under an "XXX chlock" comment because
- * its krwlock cannot recurse; the shim's hammer2_mtx does, since the
- * first buffered write to such an inode needed it (the note at
- * hammer2_mtx_init_recurse() in hammer2_os.h), so the lines carry as
- * DragonFly has them.
- *
- * DEFER(the write path is written, after hammer2_vnops.c): port the body
- * against struct iattr and struct cred.
+ * Linux: the S_IFMT half of i_mode as a vtype, the reverse of
+ * hammer2_vtype_to_ifmt() above and the one place it is needed, since
+ * the create path is the only one that starts from a Linux mode.
  */
+static int
+hammer2_ifmt_to_vtype(umode_t mode)	/* Linux */
+{
+	switch (mode & S_IFMT) {
+	case S_IFDIR:
+		return (VDIR);
+	case S_IFREG:
+		return (VREG);
+	case S_IFIFO:
+		return (VFIFO);
+	case S_IFSOCK:
+		return (VSOCK);
+	case S_IFCHR:
+		return (VCHR);
+	case S_IFBLK:
+		return (VBLK);
+	case S_IFLNK:
+		return (VLNK);
+	default:
+		return (VNON);
+	}
+}
+
+/*
+ * Create a new, normal inode.  This function will create the inode,
+ * the media chains, but will not insert the chains onto the media topology
+ * (doing so would require a flush transaction and cause long stalls).
+ *
+ * Normally the caller will create a directory entry pointing to the inode
+ * in the same transaction, and the inode's meta-data will be flushed
+ * to the media as part of the next flush.
+ *
+ * The returned inode will be locked and the caller may dispose of both
+ * via hammer2_inode_unlock() + hammer2_inode_drop().  However, if the
+ * caller needs to resolve a hard link, it may do so before disposing of
+ * the inode.
+ *
+ * XXX Linux: FreeBSD takes struct vattr and struct ucred; what the body
+ * reads from them is the type and mode, the device number, and the
+ * caller's identity for the owner and the setgid trim, which arrive as
+ * the mode, rdev and the idmap.  vop_helper_create_uid() is
+ * inode_init_owner()'s rule, written out here because the Linux inode
+ * does not exist yet: the owner is the caller, the group is the parent's
+ * under a setgid parent and the caller's otherwise, and the setgid bit
+ * is stripped by mode_strip_sgid() where the caller is not in that
+ * group, which is priv_check_cred(PRIV_VFS_RETAINSUGID) here.  The
+ * parent's Linux inode is pip->vp, which every caller holds a reference
+ * to through the dentry the VFS passed.
+ */
+hammer2_inode_t *
+hammer2_inode_create_normal(hammer2_inode_t *pip, umode_t mode, dev_t rdev,
+    struct mnt_idmap *idmap, hammer2_key_t inum, int *errorp)
+{
+	hammer2_xop_create_t *xop;
+	hammer2_inode_t *dip, *nip;
+	hammer2_tid_t pip_inum;
+	struct inode *dir = pip->vp;	/* Linux */
+	kuid_t kuid;			/* Linux */
+	kgid_t kgid;			/* Linux */
+	struct uuid pip_gid;
+	uint8_t pip_comp_algo, pip_check_algo;
+	int error;
+
+	dip = pip->pmp->iroot;
+	KKASSERT(dip != NULL);
+	KKASSERT(dir != NULL);
+
+	*errorp = 0;
+
+	pip_gid = pip->meta.gid;
+	pip_comp_algo = pip->meta.comp_algo;
+	pip_check_algo = pip->meta.check_algo;
+	pip_inum = (pip == pip->pmp->iroot) ? 1 : pip->meta.inum;
+
+	/* Create the in-memory inode structure for the specified inode. */
+	nip = hammer2_inode_get(dip->pmp, NULL, inum, -1);
+	hammer2_inode_lockdep_nest_under(&nip->lock, &pip->lock); /* XXX Linux */
+	nip->comp_heuristic = 0;
+	KKASSERT((nip->flags & HAMMER2_INODE_CREATING) == 0 &&
+	    nip->cluster.nchains == 0);
+	atomic_set_int(&nip->flags, HAMMER2_INODE_CREATING);
+
+	/* Setup the inode meta-data. */
+	nip->meta.type = hammer2_get_obj_type(hammer2_ifmt_to_vtype(mode));
+
+	switch (nip->meta.type) {
+	case HAMMER2_OBJTYPE_CDEV:
+	case HAMMER2_OBJTYPE_BDEV:
+		nip->meta.rmajor = MAJOR(rdev);	/* Linux */
+		nip->meta.rminor = MINOR(rdev);	/* Linux */
+		break;
+	default:
+		break;
+	}
+
+	KKASSERT(nip->meta.inum == inum);
+	nip->meta.iparent = pip_inum;
+
+	/* Inherit parent's inode compression mode. */
+	nip->meta.comp_algo = pip_comp_algo;
+	nip->meta.check_algo = pip_check_algo;
+	nip->meta.version = HAMMER2_INODE_VERSION_ONE;
+	hammer2_update_time(&nip->meta.ctime);
+	nip->meta.mtime = nip->meta.ctime;
+	nip->meta.atime = nip->meta.ctime;
+	nip->meta.btime = nip->meta.ctime;
+	nip->meta.nlinks = nip->meta.type == HAMMER2_OBJTYPE_DIRECTORY ? 2 : 1;
+
+	/* Linux: inode_init_owner()'s rule, see above. */
+	kuid = mapped_fsuid(idmap, i_user_ns(dir));
+	if (dir->i_mode & S_ISGID) {
+		kgid = dir->i_gid;
+		if (S_ISDIR(mode))
+			mode |= S_ISGID;
+	} else {
+		kgid = mapped_fsgid(idmap, i_user_ns(dir));
+	}
+	mode = mode_strip_sgid(idmap, dir, mode);
+	nip->meta.mode = mode & 07777;
+	hammer2_guid_to_uuid(&nip->meta.uid, from_kuid(&init_user_ns, kuid));
+	if (dir->i_mode & S_ISGID)
+		nip->meta.gid = pip_gid;
+	else
+		hammer2_guid_to_uuid(&nip->meta.gid,
+		    from_kgid(&init_user_ns, kgid));
+
+	/*
+	 * Regular files and softlinks allow a small amount of data to be
+	 * directly embedded in the inode.  This flag will be cleared if
+	 * the size is extended past the embedded limit.
+	 */
+	if (nip->meta.type == HAMMER2_OBJTYPE_REGFILE ||
+	    nip->meta.type == HAMMER2_OBJTYPE_SOFTLINK)
+		nip->meta.op_flags |= HAMMER2_OPFLAG_DIRECTDATA;
+
+	/*
+	 * Create the inode using (inum) as the key.  Pass pip for
+	 * method inheritance.
+	 */
+	xop = hammer2_xop_alloc(pip, HAMMER2_XOP_MODIFYING);
+	xop->lhc = inum;
+	xop->flags = 0;
+	xop->meta = nip->meta;
+	xop->meta.name_len = hammer2_xop_setname_inum(&xop->head, inum);
+	xop->meta.name_key = inum;
+	nip->meta.name_len = xop->meta.name_len;
+	nip->meta.name_key = xop->meta.name_key;
+	hammer2_inode_modify(nip);
+	/*
+	 * Create the inode media chains but leave them detached.  We are
+	 * not in a flush transaction so we can't mess with media topology
+	 * above normal inodes (i.e. the index of the inodes themselves).
+	 *
+	 * We've already set the INODE_CREATING flag.  The inode's media
+	 * chains will be inserted onto the media topology on the next
+	 * filesystem sync.
+	 */
+	hammer2_xop_start(&xop->head, &hammer2_inode_create_det_desc);
+	error = hammer2_xop_collect(&xop->head, 0);
+	if (error) {
+		*errorp = error;
+		goto done;
+	}
+
+	/*
+	 * Associate the media chains created by the backend with the
+	 * frontend inode.
+	 */
+	hammer2_inode_repoint(nip, &xop->head.cluster);
+done:
+	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+
+	return (nip);
+}
 
 /*
  * Create a directory entry under dip with the specified name, inode number,

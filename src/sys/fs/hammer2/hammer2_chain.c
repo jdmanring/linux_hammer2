@@ -2756,7 +2756,16 @@ hammer2_chain_create(hammer2_chain_t **parentp, hammer2_chain_t **chainp,
 		 * to 1 by chain_alloc() for us, but lockcnt is not).
 		 */
 		chain->lockcnt = 1;
-		hammer2_mtx_ex(&chain->lock);
+		/*
+		 * XXX Linux: the chain is unreachable until it is inserted,
+		 * so this lock records no order, and it takes its level
+		 * from the parent it is created under; a detached chain gets
+		 * its level from the caller, which knows the parent it will
+		 * be inserted under.
+		 */
+		if (parent)
+			hammer2_chain_lockdep_nest(&chain->lock, &parent->lock);
+		hammer2_mtx_ex_fresh(&chain->lock);
 		allocated = 1;
 
 		/*
@@ -3386,6 +3395,7 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 
 	ichain = hammer2_chain_alloc(hmp, parent->pmp, &dummy);
 	atomic_set_int(&ichain->flags, HAMMER2_CHAIN_INITIAL);
+	hammer2_chain_lockdep_nest(&ichain->lock, &parent->lock); /* XXX Linux */
 	hammer2_chain_lock(ichain, HAMMER2_RESOLVE_MAYBE);
 	/* ichain has one ref at this point */
 

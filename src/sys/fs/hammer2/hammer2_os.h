@@ -294,6 +294,7 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
 void hammer2_chain_lockdep_class(hammer2_mtx_t *);
 void hammer2_chain_lockdep_nest(hammer2_mtx_t *, hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest(hammer2_mtx_t *);
+void hammer2_inode_lockdep_nest_under(hammer2_mtx_t *, const hammer2_mtx_t *);
 
 static inline void
 __hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s,
