@@ -298,6 +298,18 @@ and three `return (x);`; the create path, seven of each and three
 unnamed prototype arguments; rename and link, three and one, and the detached-chain annotation
 one unnamed argument.
 
+The ioctl surface carried `hammer2_ioctl.c` in from the FreeBSD port,
+eleven hundred lines of it, and moved the set by sixty-one hits. Two are
+the SPDX pair every carried file adds. Twenty-three are `return (x);`,
+one is a continuation line indented with spaces and one a split string,
+all three the mechanical BSD rows below. The remaining thirty-four are
+the errno sign, nineteen of them `EINVAL`, and they are the recorded port
+decision rather than a finding: this file is the core's own dispatch, so
+its errnos are positive and the boundary in `hammer2_vnops.c` negates
+them. Two errno spellings are new to the baseline, `EBUSY` and `EROFS`,
+which is the same row reaching call sites the port had not had before.
+No other category is new and nothing was fixed rather than baselined.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

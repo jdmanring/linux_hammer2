@@ -7,9 +7,9 @@
 1 Consider removing the code enclosed by this #if 0 and its #endif
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
-15 Misplaced SPDX-License-Identifier tag - use line 1 instead
+16 Misplaced SPDX-License-Identifier tag - use line 1 instead
 2 Missing a blank line after declarations
-15 Missing or malformed SPDX-License-Identifier tag in line 1
+16 Missing or malformed SPDX-License-Identifier tag in line 1
 1 Possible comma where semicolon could be used
 3 Possible repeated word: 'X'
 1 Prefer 'X' to bare use of 'X'
@@ -24,21 +24,23 @@
 406 function definition argument 'X' should also have an identifier name
 13 plain inline is preferred over __inline
 1 please, no space before tabs
-170 please, no spaces at the start of a line
-34 quoted string split across lines
-186 return is not a function, parentheses are not required
+171 please, no spaces at the start of a line
+35 quoted string split across lines
+209 return is not a function, parentheses are not required
 1 return of an errno should typically be negative (ie: return -EACCES)
 3 return of an errno should typically be negative (ie: return -EAGAIN)
+1 return of an errno should typically be negative (ie: return -EBUSY)
 2 return of an errno should typically be negative (ie: return -EDOM)
-1 return of an errno should typically be negative (ie: return -EEXIST)
+2 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINTR)
-31 return of an errno should typically be negative (ie: return -EINVAL)
+50 return of an errno should typically be negative (ie: return -EINVAL)
 13 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
-1 return of an errno should typically be negative (ie: return -ENOENT)
+2 return of an errno should typically be negative (ie: return -ENOENT)
 4 return of an errno should typically be negative (ie: return -ENOMEM)
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
-2 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+6 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+8 return of an errno should typically be negative (ie: return -EROFS)
 2 space required after that 'X' (ctx:VxB)
