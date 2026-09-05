@@ -256,7 +256,7 @@ jobs:
           # The version appears once. Bumping the floor means editing this
           # line and the #error in hammer2_os.h, and the build is what says
           # whether the two agree.
-          key: linux-floor-6.15-built-v3
+          key: linux-floor-6.15-built-v4
 
       - name: Fetch and prepare 6.15
         if: steps.floorcache.outputs.cache-hit != 'true'
@@ -267,6 +267,16 @@ jobs:
           mkdir -p "$HOME/linux-floor"
           tar -xf /tmp/linux.tar.xz -C "$HOME/linux-floor" --strip-components=1
           make -C "$HOME/linux-floor" defconfig
+          # defconfig leaves the LZ4 compressor out (LZ4_DECOMPRESS is in,
+          # LZ4_COMPRESS is not), and the module's write path links
+          # LZ4_compress_default(). Three pushes went red at modpost on
+          # exactly that symbol before this line existed. The Makefile
+          # names the options the module needs; this is where the floor
+          # tree is given them.
+          "$HOME/linux-floor/scripts/config" --file "$HOME/linux-floor/.config" \
+            --enable LZ4_COMPRESS --enable LZ4_DECOMPRESS \
+            --enable ZLIB_DEFLATE --enable ZLIB_INFLATE --enable XXHASH
+          make -C "$HOME/linux-floor" olddefconfig
           # A FULL BUILD, which is what Documentation/kbuild/modules.rst
           # asks for in as many words: "modules_prepare will not build
           # Module.symvers ... therefore, a full kernel build needs to be

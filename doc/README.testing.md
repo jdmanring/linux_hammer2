@@ -416,6 +416,13 @@ the eleven are run individually on purpose, and one exit status for eleven
 questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
 overrides it for a push that is deliberately ahead of a green tree.
 
+What it cannot run is CI's second job, the module build against a 6.15
+tree built from `defconfig` on the runner, which is the only build at the
+floor anywhere. Its result has to be read on the forge after the push,
+and it was not: three pushes on 2026-09-04 were red there on one
+undefined symbol while every local gate was green, and each got its
+changelog row. `gh run list` after a push is part of the push.
+
 It fetches the checker the baseline records and caches it under
 `$XDG_CACHE_HOME/linux_hammer2`, keyed by the sha256 the baseline names.
 Without that the style gate finds whatever checker the machine has, cannot

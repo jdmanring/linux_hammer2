@@ -72,6 +72,12 @@ than about a shared bug.
 + `CONFIG_TRANSPARENT_HUGEPAGE`, without which the block layer caps the
   block size below HAMMER2's 64KB physical buffer
 
++ `CONFIG_LZ4_COMPRESS`, `CONFIG_LZ4_DECOMPRESS`, `CONFIG_ZLIB_DEFLATE`,
+  `CONFIG_ZLIB_INFLATE` and `CONFIG_XXHASH`, built in or as modules: the
+  codecs HAMMER2 compresses and decompresses with and the digest in every
+  blockref. Distribution kernels carry all five; a `defconfig` leaves the
+  LZ4 compressor out, and the build names the missing one
+
 + userland from [hammer2-utils](https://github.com/kusumi/hammer2-utils),
   which already supports Linux
 

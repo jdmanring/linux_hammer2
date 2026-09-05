@@ -7,6 +7,20 @@ H2_LLVM := $(if $(filter y,$(shell sed -n 's/^CONFIG_CC_IS_CLANG=//p' $(KDIR)/.c
 
 obj-m += hammer2.o
 
+# The kernel facilities the module links against, which a kernel is not
+# obliged to carry: the LZ4 and ZLIB codecs in both directions, since
+# HAMMER2 compresses on write and decompresses on read, and xxhash for
+# the per-blockref digest.  Checked here, in the kbuild pass where the
+# config is visible, so a kernel that lacks one names it at once rather
+# than as an undefined symbol at modpost, which is how a 6.15 defconfig
+# reported the missing compressor.  CONFIG_MODULES is the sentinel for
+# a loaded config: the clean pass reads this file with none.
+ifneq ($(CONFIG_MODULES),)	# the build pass; the clean pass loads no config
+$(foreach c,LZ4_COMPRESS LZ4_DECOMPRESS ZLIB_DEFLATE ZLIB_INFLATE XXHASH,\
+	$(if $(filter y m,$(CONFIG_$(c))),,\
+	$(error hammer2 needs CONFIG_$(c), which this kernel does not set)))
+endif
+
 # One object per line, not a continuation: script/test-inventory.sh reads
 # this file a line at a time, so a wrapped list hides every object after
 # the first from the check that each .c is compiled into the module.

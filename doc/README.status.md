@@ -18,7 +18,14 @@ with: if a claim here is stale, it is a defect.
 
 The module builds, warning-clean, and loads. `make`
 produces `src/sys/fs/hammer2/hammer2.ko`: thirteen objects, license
-`Dual BSD/GPL`, alias `fs-hammer2`, no module dependencies. That is 0.3's
+`Dual BSD/GPL`, alias `fs-hammer2`, no module dependencies on a kernel
+that builds the LZ4 and ZLIB codecs and xxhash in, which the guest does
+and a 6.15 `defconfig` does not: it leaves `CONFIG_LZ4_COMPRESS` out,
+and the day the write XOP linked `LZ4_compress_default()` CI's floor
+build went red at modpost and stayed red for three pushes, 0.4.8 to
+0.4.10, each of which took a changelog row while it was. The Makefile
+now names the missing option in the kbuild pass and the floor job sets
+the five the module links against. That is 0.3's
 first criterion, and the second was exercised on 2026-09-03 on the
 `fedora44` guest, at 7.2.3-300.fc45 and again at
 7.3.0-0.rc0.260819gbd5f485f3f02: `insmod` returns 0, `/proc/filesystems`
