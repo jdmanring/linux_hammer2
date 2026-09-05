@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-0.7.0%2C%20unreleased-yellow.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-0.7%2C%20unreleased-yellow.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -26,28 +26,34 @@ names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 
 It mounts a HAMMER2 volume read-write, lists it, reads it, follows its
-symlinks, writes to it, and refuses media whose checksums do not
-match. Every write operation has been run on scratch media and read
-back by DragonFly, in both directions of a round trip, and the crash
-matrix, a writer killed, a kernel panicked, the power cut and a volume
-header torn, leaves media that this port and the FreeBSD port both
-recover to the same tree. `find`
-walks the whole tree and every file compares byte for byte against the
-tree it was made from, at 511 bytes, at 512, at one page, at one 64 KiB
-block and at 200 KB, on images written with LZ4 and with ZLIB compression,
-and on media created and written by DragonFly itself. Nothing is
-released: no tag exists, and the media it has written to are scratch
-copies on a guest. See
+symlinks, writes to it, takes snapshots of it, and refuses media whose
+checksums do not match. Files on it can be mapped and executed, so a
+volume can be a root filesystem, and one has booted as one.
+
+Every write operation has been run on scratch media and read back by
+DragonFly, in both directions of a round trip, and the crash matrix, a
+writer killed, a kernel panicked, the power cut and a volume header
+torn, leaves media that this port and the FreeBSD port both recover to
+the same tree. `find` walks the whole tree and every file compares byte
+for byte against the tree it was made from, at 511 bytes, at 512, at one
+page, at one 64 KiB block and at 200 KB, on images written with LZ4 and
+with ZLIB compression, and on media created and written by DragonFly
+itself.
+
+Nothing is released: no tag exists, and the media it has written to are
+scratch copies on a guest. See
 [doc/README.status.md](doc/README.status.md) for exactly what exists and
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of
 it.
 
-## Where it stands: 0.7.0
+## Where it stands
 
 The version is a position on the roadmap, not a release. The first two
 numbers name the milestone reached, the third counts point releases
 inside it, and until 1.0 the number says nothing about stability.
+[CHANGELOG.md](CHANGELOG.md) carries the current number and pins every
+release to the commits that delivered it and the runs that verified it.
 0.6 was crash recovery: a writer killed, the kernel panicked, the power
 cut and a volume header torn, each twice, on media this port wrote and
 on media the FreeBSD port wrote, with both ports recovering every image
@@ -59,6 +65,15 @@ create, delete, list and lookup, inode and volume queries, growfs and
 bulkfree. A snapshot this port takes mounts on DragonFly and reads back
 the tree as it stood. The rows for both milestones in
 [CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
+
+One thing to know before trying it: **do not fill a HAMMER2 volume to
+capacity.** A volume with no space left reports the failure correctly,
+but the `sync` after it trips a lock cycle, and one run of three then
+hung the unmount badly enough that the module could not be unloaded. It
+is an open defect
+with a reproducer in `script/enospc.sh` and the report written up in
+[doc/README.status.md](doc/README.status.md). No corruption has been
+seen, and every checker has been clean afterwards.
 
 What that buys you is a driver that can be tried, on media you can
 afford to lose. What it does not yet do: the snapshots have no backend

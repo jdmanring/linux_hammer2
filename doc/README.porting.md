@@ -480,15 +480,27 @@ once. Linux delivers them one at a time, before there is a
 `->get_tree` runs. That is `struct hammer2_fs_context`, freed by
 `->free`.
 
-`->reconfigure` is written as a refusal and carries a `DEFER`. It is
-where the `MNT_UPDATE` branch of `hammer2_mount()` goes, and upstream's
-`hammer2_remount_impl()` is what eventually lands there. Today it returns
-`-EROFS` for a remount that would turn a read-only mount read-write, and
-0 for anything else, so a read-only remount succeeds. The refusal is
-present rather than absent on purpose: `reconfigure_super()` applies
-`SB_RDONLY` whether or not the operation exists, so a mount with no
+`->reconfigure` is where the `MNT_UPDATE` branch of `hammer2_mount()`
+goes, and upstream's `hammer2_remount_impl()` is what landed there at
+0.7.1. It was written as a refusal first, and being written rather than
+absent is what made that possible: `reconfigure_super()` applies
+`SB_RDONLY` whether or not the operation exists, so a filesystem with no
 `->reconfigure` reaches the read-write state sideways and without a
-diagnostic. Being written is what lets it say why it refuses.
+diagnostic.
+
+The carry drops upstream's two loops over the device vnodes, which take
+and drop a write reference. There is none to take here. The block device
+file is opened once at mount and never reopened, which is what the four
+filesystems calling `sb_open_mode()` all do, and reopening is not
+available either: that macro always sets `BLK_OPEN_RESTRICT_WRITES`,
+which leaves `bd_writers` negative and makes `bdev_may_open()` refuse a
+second open asking for `BLK_OPEN_WRITE`. The module's writes leave as its
+own bios and never consult the file's `f_mode`, so what stops a write is
+the device being write-protected, and that is what `hammer2_access_devvp()`
+asks through `bdev_read_only()`. It is the same question ext4 asks in the
+same place, and the remount is that function's first caller: it had been
+carried with no caller since the import, and its `f_mode` test would have
+refused every transition.
 
 ## The teardown path, and the two things kill_anon_super() already did
 

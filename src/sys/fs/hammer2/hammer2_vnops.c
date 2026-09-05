@@ -1077,16 +1077,33 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
  * binary whose bytes read back byte for byte correct.  Measured before
  * this line existed: /bin/true copied onto a HAMMER2 volume compared
  * identical with cmp and refused to run, while the same file copied off
- * it onto tmpfs ran.  Shared libraries and every mapped file are the
- * same defect.
+ * it onto tmpfs ran.  Shared libraries were the same defect and are
+ * measured too: the loader run out of a volume, given a library path
+ * into it, maps every library from HAMMER2 and exits 0.
  *
  * generic_file_mmap_prepare() wants ->read_folio, which the mapping has,
  * and installs generic_file_vm_ops, whose write fault dirties a folio
  * that filemap_fault() has already brought uptodate through that same
- * ->read_folio and leaves ->writepages to write it.  ext4 reduces to the
- * same two on a non-DAX file.  ->mmap_prepare rather than ->mmap because
- * the kernel of record takes either and the in-tree filesystems have
- * moved; fs.h warns when a table sets both.
+ * ->read_folio and leaves ->writepages to write it.  That is what ext2,
+ * fat, jfs and hpfs use unchanged.  ext4 and xfs do not: they wrap it to
+ * install a ->page_mkwrite of their own, which reserves space while the
+ * faulting thread can still be told the answer.  Here the allocation
+ * happens in the strategy XOP at writeback, so a mapping dirtied on a
+ * full volume fails where nothing is left to report it to, which is the
+ * DEFER below.  ->mmap_prepare rather than ->mmap because the kernel of
+ * record takes either and the in-tree filesystems have moved; fs.h warns
+ * when a table sets both.
+ */
+/*
+ * DEFER(the freemap can be asked for space before the fault returns):
+ * a shared writable mapping dirties a folio through
+ * filemap_page_mkwrite(), which reserves nothing, and the allocation
+ * happens later in the strategy XOP under ->writepages.  On a volume
+ * with no space left that allocation fails where the thread that
+ * faulted has already returned and cannot be told.  ext4 and xfs both
+ * wrap generic_file_mmap_prepare() with a ->page_mkwrite of their own
+ * for exactly this, and ext2 and fat accept the same gap this does.
+ * The trigger is a reservation the freemap can answer at fault time.
  */
 const struct file_operations hammer2_file_fops = {
 	.llseek		= generic_file_llseek,

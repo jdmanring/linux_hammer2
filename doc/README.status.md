@@ -563,7 +563,7 @@ construction rather than re-hashed every run.
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2695 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1270 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1287 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -1382,6 +1382,58 @@ unmount 0; `modprobe -r` 0; no kernel report; and the host's
 `fsck_hammer2` clean on the disk afterwards. The image is
 `readme.img` in the fixtures directory and is not kept.
 
+## A full volume, and the lock cycle the sync then reports
+
+**This is an open defect.** Every write measurement above was taken on a
+volume with room in it, and nothing in this tree had ever filled one.
+`script/enospc.sh` does, and it fails while the defect stands.
+
+Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
+`CONFIG_PROVE_LOCKING`, on a 2 GiB volume. 583 files of 4 MiB each were
+written before `dd` reported `No space left on device`, `df` read 100%
+and `statfs` reported zero available, which is the part that behaves.
+`debug_locks` was still 1 at that point, and the `sync(2)` that followed
+disabled it. Three runs have reached that state and all three reported
+the cycle, so the report is reproducible.
+
+What happens after it is not. On the first run the unmount never
+returned: `umount` had to be killed and `rmmod` reported the module
+still in use, which left the guest needing a hard reset. On the run from
+`script/enospc.sh` as it now stands, with the same 583 files and the
+same three cycle reports, both `umount` and `rmmod` returned 0. The
+script checks all three, so a run that hangs and a run that does not are
+both recorded rather than one being taken for the rule.
+
+The report is a circular dependency between two orders:
+
+    hammer2_write_end -> hammer2_inode_chain_sync
+        holds h2ip/2, takes h2ch_inode/2
+    hammer2_vfs_sync_pmp
+        holds h2ch_inode/2, takes h2ip/2
+
+The first is upstream's order and is not in question: FreeBSD's
+`hammer2_vop_fsync()` and its write path both lock the inode and then
+call `hammer2_inode_chain_sync()`. The second is the one that should not
+happen. `hammer2_vfs_sync_pmp()` locks no chain at any of its three
+inode-lock sites, so the chain lock lockdep found it holding was taken
+by something that did not release it, on the same thread. XOPs run
+synchronously in this port, so an XOP body that returns with a chain
+still locked leaves that chain locked on its caller, and the sync path
+is the caller here.
+
+What is not yet known is which one. `hammer2_xop_inode_create_ins()` was
+read first, because the run logs `hammer2_inode_chain_ins: backend
+unable to insert inum` immediately before, and it is balanced: every
+path reaches its `fail:` label and unlocks both chains. The ENOSPC error
+it returns is then dropped by the caller, under upstream's own
+`XXX return error somehow?` in `hammer2_inode.c`, which is a second
+thing to fix and may be related.
+
+Until this is understood, a HAMMER2 volume on Linux should not be filled
+to capacity. The failure is not silent, and no corruption has been
+observed, but the unmount does not complete and the module cannot be
+unloaded afterwards.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
@@ -1393,11 +1445,19 @@ tmpfs ran. The bytes were right and the file could not be executed.
 The cause was that `hammer2_file_fops` had no mapping operation at all.
 The ELF loader maps the segments it is handed, that mapping is what
 failed, and the failure reaches userland as `ENOEXEC` on a binary whose
-contents are correct. Shared libraries and every other mapped file were
-the same defect; nothing in the tree had mapped a file, so nothing had
-found it. `.mmap_prepare` is `generic_file_mmap_prepare()`, which wants
-`->read_folio` and installs `generic_file_vm_ops`, which is what ext4
-reduces to on a file that is not DAX.
+contents are correct. Nothing in the tree had mapped a file, so nothing
+had found it. `.mmap_prepare` is `generic_file_mmap_prepare()`, which
+wants `->read_folio` and installs `generic_file_vm_ops`. That is what
+`ext2`, `fat`, `jfs` and `hpfs` set unchanged. `ext4` and `xfs` do not:
+both wrap it to install a `->page_mkwrite` of their own, which reserves
+space while the faulting thread can still be told the answer, and the
+paragraph below on a full volume is what this port does instead.
+
+Shared libraries were the same defect, and are measured rather than
+inferred: with the hook in place, `ld-linux-x86-64.so.2` copied onto a
+volume, given `--library-path` into that volume and asked to run a
+dynamically linked `ls` from it, exits 0 with every library mapped off
+HAMMER2.
 
 With it in place the same binary runs from the volume. A 128 KiB file,
 two of this port's 64 KiB folios, was written entirely through a shared
@@ -1534,12 +1594,16 @@ That closes 0.3's third criterion, and with it the milestone.
 
 ## What is not here
 
-`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c`,
-`hammer2_vnops.c`. All four are the OS-facing ones and all four are
-rewrites. That is what makes them the remaining four; it is not a claim
-that nothing in them can be read off a BSD port. `hammer2_strategy.c` in
-particular has chain logic around its buffer handling, and how much of
-that carries is a question for the file, not for this list.
+`hammer2_strategy.c`, `hammer2_vfsops.c` and `hammer2_vnops.c`. All
+three are OS-facing and all three are rewrites. That is what makes them
+the remaining three; it is not a claim that nothing in them can be read
+off a BSD port. `hammer2_strategy.c` in particular has chain logic
+around its buffer handling, and how much of that carries is a question
+for the file, not for this list.
+
+`hammer2_ioctl.c` was in this list until 0.7.0 and is not a rewrite: it
+came from the FreeBSD port whole and carries fifteen `XXX`, which is
+where the OS shows through rather than a reimplementation.
 
 The carried set is eight files at 11,204 lines, measured against all three BSD
 ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
@@ -1549,8 +1613,6 @@ ports: `hammer2_chain.c`, `hammer2_flush.c`, `hammer2_freemap.c`,
 this port's, which is what `doc/provenance.csv` records as `derived`.
 Whether `hammer2_inode.c` joins the carried set is what that same carry
 column will say.
-`hammer2_strategy.c`, `hammer2_ioctl.c`, `hammer2_vfsops.c` and
-`hammer2_vnops.c` are the OS-facing ones and are rewrites.
 
 `hammer2_chain.c` landed on 2026-08-26 and the lock recursion it forced
 was decided twice. The first decision followed the NetBSD port: no
@@ -1657,6 +1719,7 @@ against the source is the same shape as an empty one.
 
 | where | marker, verbatim | what is deferred |
 |---|---|---|
+| `hammer2_vnops.c`, at `hammer2_file_fops` | `DEFER(the freemap can be asked for space before the fault returns)` | a shared writable mapping dirties a folio through `filemap_page_mkwrite()`, which reserves nothing, and the allocation happens later in the strategy XOP under `->writepages`. On a full volume it fails where the faulting thread has already returned and cannot be told. `ext4` and `xfs` wrap `generic_file_mmap_prepare()` with a `->page_mkwrite` of their own for this; `ext2` and `fat` accept the same gap this port does |
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |

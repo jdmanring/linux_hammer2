@@ -336,7 +336,7 @@ it - the check reads the file, not the intent.
 On a hosted runner `test-syntax.sh` is the only gate that declines, because
 the kernel of record is the latest release and `ubuntu-latest` ships
 headers years behind it. That is recorded as a skip and never as a pass.
-Everything else runs there, including the vectors contract's behavioural
+Everything else runs there, including the vectors contract's behavioral
 half, which had been declining for want of an xxHash to link until
 `libxxhash-dev` was added to the runner on 2026-08-26.
 
@@ -1002,6 +1002,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
+| `enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
 | `root-boot.sh` | a boot that never mounted the volume | a second boot against a label the volume does not carry, which stops at the mount and does not reach PID 1 |
 | `root-boot.sh` | a checksum comparison that cannot fail | its first run, where an unanchored `sed` made the two sides unequal by construction |
 | `test-fixtures.sh` | an ioctl that answers with the wrong errno | the recorded results, which caught EOPNOTSUPP where Linux wants ENOTTY on the first run |
@@ -1063,6 +1064,28 @@ files describe their own contract in comments, so a check for
 `Castagnoli.*MATCH` matched the comment quoting it and stayed green after
 the `printf` was deleted. That was found by running the control, not by
 reading the gate.
+
+## A full volume
+
+`script/enospc.sh` fills a 2 GiB volume until the first write fails,
+calls `sync(2)`, and reads `debug_locks` on both sides of each step.
+**It is expected to fail**, because it reproduces an open defect: the
+sync on a full volume trips a circular lock dependency, after which the
+unmount does not return and the module cannot be removed.
+`doc/README.status.md` carries the report.
+
+Every other write measurement in this tree was taken on a volume with
+room in it, which is why this went unfound through the whole write path,
+the crash matrix and the round trip. A filesystem's behavior when it
+runs out of space is its own surface.
+
+Its own first two runs failed on the script rather than on the driver,
+and the second is the interesting one. A guest left wedged by a previous
+run of this same script cannot load the module, and every check after
+that reported a failure describing a filesystem that had never been
+mounted. The setup steps now report themselves and the run exits 2, so
+the state this script leaves behind is told apart from the defect it
+exists to find.
 
 ## The volume as a root filesystem, from the tree
 
