@@ -649,6 +649,53 @@ on-media count, so it says which branch of the read completion each file
 took, and a set of matching checksums proves nothing about which paths
 ran.
 
+## Writing to a fixture, and reading the write back on DragonFly
+
+The write path runs only in a module built with
+`HAMMER2_RW_EXPERIMENT=1`, which lifts the read-write refusal and is never
+installed. It is exercised on `f13.img`, a byte copy of `f5` made with
+`cp` before every run, so the untouched `f5` is the baseline every
+comparison is against:
+
+    cp f5.img f13.img
+    virsh attach-disk artix-s6-kde f13.img vdb --targetbus virtio --config
+    virsh start artix-s6-kde
+
+On the guest, mount without `ro`, write, `sync`, `umount`, remount `ro`
+and read the file back; then power the guest off, detach the image, and
+attach it to `dragonflybsd642` the same way. DragonFly's `cat` and
+`stat`, then `fsck_hammer2 /dev/vbd1`, are the verdict, and the host's
+`hammer2 show` from hammer2-utils over `f5.img` and `f13.img`, diffed,
+says which chains the flush rewrote and with what transaction ids.
+`README.status.md` records the first such run.
+
+Three things about a write test that a read test never needed:
+
+- **Capture the serial console before the write.** A carried `hpanic`
+  is `panic()` here, and that guest sits in a panic with nothing written
+  to its disk, so the message exists only if it left the machine. The
+  guest's command line carries `console=ttyS0,115200`, and on the host
+
+      script -q -f -c "virsh --connect qemu:///system console artix-s6-kde" \
+          serial.log </dev/null
+
+  records the line into `serial.log` until it is stopped. The first
+  flush panicked, and without this the panic was an ssh connection
+  reset and a guest that came back with an empty log. A panic and a
+  hung-task report reach the line at the default console loglevel; the
+  module's own `hprintf` lines are `KERN_INFO` and do not, so write 8
+  to `/proc/sys/kernel/printk` first if the transcript is to carry
+  them. Two runs recorded only the shutdown for want of that.
+- **Detach the test from the ssh session.** Run it under `setsid` with
+  its output on the guest's root disk, then read the file after; a
+  guest that resets takes the session with it, and a session that ends
+  kills a test still running.
+- **A hung `sync` is not a hung guest.** The hung-task detector reports
+  it at `kernel.hung_task_timeout_secs`, lowered to 20 for these runs,
+  and names the lock and the holder, which is how the first deadlock
+  was read. `virsh destroy` is then the only way out, and it costs a
+  core like a shutdown does.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a

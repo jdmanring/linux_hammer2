@@ -52,42 +52,38 @@ caller's shared hold when it cannot, which is what the OpenBSD port does
 at the same place. The window between the two is real and is what the
 caller revalidates after.
 
-Recursion is decided, and the decision is NetBSD's. DragonFly and FreeBSD
-allow the inode and chain locks to recurse; a Linux `rw_semaphore`
-deadlocks against itself and lockdep says so, exactly as a NetBSD
-`krwlock` does. So there is no recursive lock here:
-`hammer2_mtx_init_recurse()` is a plain init, and the path that recursed
-is closed rather than accommodated.
+Recursion was decided twice. The first decision followed NetBSD: a Linux
+`rw_semaphore` deadlocks against its own holder as a NetBSD `krwlock`
+does, so `hammer2_mtx_init_recurse()` was a plain init and the one path
+that recursed was to be closed at its call site. That held for every
+read, because the reading side of that path arrives with
+`HAMMER2_RESOLVE_LOCKAGAIN` and is credited rather than re-acquired (the
+`hammer2_mtx_sh_again()` note in `hammer2_os.h`).
 
-There is one such path, not a class of them. `hammer2_chain_lookup()`,
-reached from the strategy read and write, takes `chain->lock` again for an
-inode in DIRECTDATA mode, where the inode's own block holds the file's
-data. NetBSD closes the creation half by never setting
-`HAMMER2_OPFLAG_DIRECTDATA`, so a small file this port creates always gets
-a data block. That costs one block per tiny file and no correctness, and
-it is reversible the day a recursive lock exists.
+The first buffered write reversed it. `hammer2_chain_lookup()`, under
+`hammer2_assign_physical()` in the write XOP, returns the inode chain
+itself, locked a second time and exclusively, for an inode in DIRECTDATA
+mode, where the inode's own block holds the file's data. The caller
+already holds that chain exclusively. Lockdep reported `possible
+recursive locking` on `h2ch_inode/2` at that line, the writeback worker
+sat in `rwsem_down_write_slowpath` against itself, and `sync` never
+returned. DragonFly's `mtx` counts a second exclusive acquire by its
+holder (`kern_mutex.c`, `__mtx_lock_ex`), and the FreeBSD port keeps that
+by initializing the chain lock and the inode lock with `SX_RECURSE`. The
+shim now does what the FreeBSD port does: the two locks initialized with
+`hammer2_mtx_init_recurse()` carry a depth, `hammer2_mtx_ex()` by the
+owner increments it without touching the rwsem, and `hammer2_mtx_unlock()`
+releases the rwsem at depth zero. Lockdep is told nothing about the inner
+acquires, which is exact, since they are one hold. A lock initialized with
+`hammer2_mtx_init()` that recurses warns once and is admitted, where sx
+without `SX_RECURSE` would panic; the alternative is the hang. The shared
+side does not recurse under an exclusive hold, on DragonFly either.
 
-**It closes the creation half and not the reading half, and the earlier
-wording here did not say so.** The flag lives in the on-disk inode. A
-filesystem written by DragonFly or by one of the BSD ports has DIRECTDATA
-inodes in it whoever is reading, and `hammer2_chain_lookup()` reads
-`parent->data->ipdata.meta.op_flags` off the media rather than off
-anything this port set. The branch it takes calls `hammer2_chain_lock()`
-with `HAMMER2_RESOLVE_LOCKAGAIN`, which is `down_read()` on an
-`rw_semaphore` this thread already holds for reading: legal until a writer
-queues between the two, which is what lockdep reports and what deadlocks.
-So reading a small file on a foreign HAMMER2 filesystem is an open
-question for the read-only mount at 0.4, not a closed one. Measured
-2026-08-26 by reading `hammer2_chain.c:2189` and the `LOCKAGAIN` branch of
-`hammer2_chain_lock()` it reaches; nothing has been run.
-
-The two call sites that ask for the recursive lock are
-`hammer2_chain_init()` and `hammer2_inode_get()`, and both are carried and
-take a plain lock. The flag's only setter was
-`hammer2_inode_create_normal()`, which this port does not carry at all, so
-the creation half is closed more completely than NetBSD's `#if 0` closes
-it. NetBSD's edit is recorded at the `DEFER` where that function would be,
-because it is the edit to restore when the write path lands.
+The DIRECTDATA flag itself is on disk, so a filesystem written by
+DragonFly or a BSD port has such inodes whoever mounts it, and the lookup
+reads the flag off the media. NetBSD's `#if 0` around the flag's setter
+in `hammer2_inode_create_normal()` is therefore not needed here and will
+not be carried with that function; the setter is what DragonFly does.
 
 ## The DIO layer
 
@@ -334,10 +330,19 @@ The decision, split by which half the code is in:
   instance is `hammer2_io_folio_check()` in `hammer2_io.c`, which replaced
   a `KKASSERT` on a length that a buffer overrun depends on.
 - **`hpanic` stays `panic()` until there is a mount to fail instead.**
-  Today it has two call sites, both reporting a corrupt block reference
-  with no mount to invalidate and no `super_block` to mark read-only.
-  When the VFS layer lands, `hpanic` becomes the place that marks the
-  mount in error, and the two sites become that.
+  It had two call sites when this was written, both reporting a corrupt
+  block reference with no mount to invalidate. The carried core brought
+  its own, fifty-four across seven files on 2026-09-04, forty of them in
+  `hammer2_chain.c`. When `hpanic` becomes the place that marks the
+  mount in error, every one of them becomes that at once, which is the
+  point of keeping them behind one name.
+
+  What one costs was measured on 2026-09-04: the first flush of a
+  written file reached the `hpanic` in `hammer2_io_alloc()`, the guest
+  printed the panic and sat in it with `kernel.panic` at 0, nothing
+  reached its disk, and the message existed only because the serial
+  console had been turned on for that run. `doc/README.testing.md`
+  records the capture.
 
 DEFER(the VFS layer lands, giving a super_block to mark): `hpanic` on
 Linux is a machine-wide event standing in for a per-mount one.

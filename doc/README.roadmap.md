@@ -12,73 +12,55 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-No module has been mounted, so no filesystem behavior here has been observed running. The
-OS shim, the DIO layer and the whole carried core type-check against real
-kernel headers under two compilers, with controls that fail when they
-should, and `make` produces a warning-clean `hammer2.ko`. What exists of the
-mount path and what has been verified is `README.status.md`; the vnode path has one
-operation, `->lookup`.
+H1 is met: 0.1 through 0.4 each closed on their criteria, and the driver
+is at 0.4.10 in `CHANGELOG.md`. The module mounts DragonFly-written media
+read-only, lists it, reads every file in eleven fixtures and the
+DragonFly guest's installed root byte for byte against three other
+readers, refuses corrupt blocks and headers, and does all of that with
+lockdep enabled end to end. `README.status.md` is the record of what was
+measured and how; this section says only where the work stands.
+
+0.5 has begun. The sync is carried and wired, the write XOP is carried,
+and `hammer2_vnops.c` has the four operations that write an existing
+file in place and extend it. The shipped module still refuses a
+read-write mount; the write path runs in the `HAMMER2_RW_EXPERIMENT`
+build on a scratch copy of DragonFly-written media. The first write
+through it, an overwrite and an append to a small file, found three
+defects in one evening before it reached the disk: the chain lock does
+not recurse on Linux and the write path needs it to, the chain's second
+lock shared one lockdep class across every chain, and the flush wrote
+volume header 0 through a layer that refuses offset zero. All three are
+fixed and recorded in `README.status.md`, and the written image reads
+back on DragonFly with `fsck_hammer2` clean, which is F4 in one
+direction.
 
 The first compile of a module against a kernel tree is the maintainer's
-authorization, not a contributor's. `src/sys/fs/hammer2/Makefile` already
-invokes the kernel's build system, so running `make` is that act. Everything
-in 0.2 can be prepared without it.
+authorization, not a contributor's. `src/sys/fs/hammer2/Makefile`
+invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
-1. Done on 2026-08-26. `hammer2_cluster.c` went in unedited,
-   `hammer2_subr.c` with seven `XXX` marks, `hammer2_ondisk.c` with its
-   device half rewritten on `bdev_file_open_by_path()`, and
-   `hammer2_inode.c` carried apart from `hammer2_igetv()` and the create
-   path. This list said `hammer2_inode.c` was deliberately not next,
-   because the VFS entry shapes its inode lifecycle. That reason still
-   holds and is why those two functions are `DEFER`red; what changed the
-   order is a dependency measurement, that `hammer2_pfsalloc()` in the
-   VFS entry calls four `hammer2_inode_*` functions, so reading the file
-   first is what lets the entry be written against something real.
-   Nothing else can be imported: the four files left are rewrites.
-2. In progress. The read-side VFS entry (`fs_context`,
-   `super_operations`, `lookup`, `getattr`, `iterate_shared`,
-   `read_folio`, `statfs`) against the F1 manifests. This is also what
-   resolves the inode and dentry lifecycle question. It is listed second
-   because it is the first thing here that cannot be written by reading
-   the BSD ports side by side, and the three files above are the ones it
-   calls.
-
-    Those seven entry points span three files, so no single file finishes
-    this row: `hammer2_vfsops.c` owns `fs_context`, `super_operations` and
-    `statfs`, `hammer2_vnops.c` owns `lookup`, `getattr` and
-    `iterate_shared`, and `read_folio` lands with `hammer2_strategy.c`.
-    `lookup`, `iterate_shared` and `read_folio` are written. `getattr` is
-    not, and is not owed: `vfs_getattr_nosec()` in `fs/stat.c` calls
-    `generic_fillattr()` when `i_op->getattr` is NULL, read at v7.3-rc1,
-    and `hammer2_igetv()` fills every field it copies. The BSDs need
-    `VOP_GETATTR` because a BSD stat asks the filesystem; a Linux stat
-    asks the inode. With `statfs` written this row is done.
-    The PFS half of `hammer2_vfsops.c` and the mount path are written:
-    `->get_tree` performs device and volume probing, reads the super-root,
-    looks up the PFS label under `spmp->iroot`, allocates the `pmp`, and
-    runs the Linux fill-super (`super_setup_bdi`, `sb->s_op` pointing to
-    `hammer2_sops` with `->evict_inode`, `hammer2_igetv` on `pmp->iroot`,
-    and `d_make_root` for `sb->s_root`). Upstream's mount-time flush recovery
-    is carried and called, but it writes and has never been run, so a
-    read-write mount and a read-write remount are both refused. What
-    remains in `hammer2_vfsops.c` is the real `->reconfigure` where only
-    the refusal stands, and lifting those two
-    refusals once the recovery has been exercised on a device. The next
-    files are `hammer2_vnops.c` and `hammer2_strategy.c`.
-3. The module builds. The first `make` ran on 2026-09-02 against 7.1.9
-   with gcc 16.2.1 and reported four undefined symbols; `hammer2_strategy.c`
-   landed the same day with `hammer2_dedup_clear()` carried and both XOP
-   handlers as floors, and `hammer2_vfs_sync_pmp()` became a floor too. The
-   result is `hammer2.ko`, warning-clean, license `Dual BSD/GPL`, alias
-   `fs-hammer2`, no module dependencies. That is 0.3's first criterion.
-   Loading and unloading are the other two and need a guest, which exists:
-   see the guest section below, where the version this was blocked on was a
-   misreading of what loading a module requires. The
-   build also found seven warnings the syntax gate did not carry the flags
-   for, and gates that read kbuild's output as source.
-4. Read-only mount of F1, then of the F2 root image: 0.4.
+1. The rest of the write path, each piece measured the same way as the
+   first: `->setattr` with truncate and the `->invalidate_folio` that
+   goes with it, `fsync`, then `->create`, `->mkdir`, `->unlink`,
+   `->rename` and `->symlink`, which carry `hammer2_inode_create_normal()`
+   and the directory XOPs. Each lands with its DragonFly read-back and
+   an `fsck_hammer2` on the result, in both directions once DragonFly
+   can write to a volume this port created.
+2. The write trace the 0.5 criteria ask for: the order in which the
+   flush's writes reach the device, taken with blktrace on the guest,
+   read against the rule that the volume header becomes durable last.
+   Reading the source is not that measurement.
+3. The interrupted-flush fixture: DragonFly writing, cut off by `virsh
+   destroy` mid-flush, the image mounted here with the refusal lifted,
+   the replay compared to DragonFly's own recovery of the same image.
+   That is the deferral named at the read-write refusal, and lifting the
+   refusal in the shipped module waits on it.
+4. The fuzzing corpus seeded from the F3 images, run against the mount
+   path with no crash, before any writable root is offered.
+5. The iomap decision, recorded under open decisions below, taken now
+   that the write path exists on classic address space operations with
+   block-sized folios.
 
 ## Versioning
 

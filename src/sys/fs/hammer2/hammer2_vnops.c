@@ -65,6 +65,9 @@
 
 #include "hammer2.h"
 
+#include <linux/pagemap.h>	/* Linux: __filemap_get_folio, folio_* */
+#include <linux/writeback.h>	/* Linux: writeback_iter */
+
 /*
  * Resolve one name in a directory.
  *
@@ -296,17 +299,194 @@ const struct file_operations hammer2_dir_fops = {
  * every read fails EINVAL whatever the address space can do, which is the
  * state this table recorded until the read path landed.
  */
+/*
+ * A buffered write, which is upstream's hammer2_write() and
+ * hammer2_write_file() with the copy loop handed to the page cache.
+ * Upstream wraps the write in a transaction so the size change and the
+ * inode modify inside it are ordered against a flush, and closes it with
+ * SIDEQ so the inode reaches the sync queue; the same here, around the
+ * generic writer, whose ->write_begin and ->write_end below do the per
+ * block work.  The mtime and the modify after a successful write are
+ * upstream's, from the end of hammer2_write_file().
+ *
+ * XXX Linux: the mount is refused read-write in the shipped module, so
+ * this is reached only under HAMMER2_RW_EXPERIMENT; the VFS refuses the
+ * open for writing on a read-only superblock before this is called.
+ */
+static ssize_t
+hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	struct inode *inode = file_inode(iocb->ki_filp);
+	hammer2_inode_t *ip = VTOI(inode);
+	uint64_t mtime;
+	ssize_t ret;
+
+	if (ip->pmp->rdonly)
+		return (-EROFS);
+	hammer2_trans_init(ip->pmp, 0);
+	ret = generic_file_write_iter(iocb, from);
+	if (ret > 0) {
+		hammer2_update_time(&mtime);
+		hammer2_mtx_ex(&ip->lock);
+		hammer2_inode_modify(ip);
+		ip->meta.mtime = mtime;
+		hammer2_mtx_unlock(&ip->lock);
+	}
+	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+	return (ret);
+}
+
 const struct file_operations hammer2_file_fops = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
+	.write_iter	= hammer2_file_write_iter,	/* Linux */
 };
 
 /*
- * DEFER(the write path lands: 0.5): no ->writepages and no
- * ->write_begin, so the mapping is read-only, which is what the mount is.
+ * Prepare one folio for a write.  The folio is a whole logical block, so
+ * this is upstream's per-block choice in hammer2_write_file(): a write
+ * that covers the block needs nothing read, a block past the end of the
+ * file is zero, and a partial overwrite reads the block first, which
+ * upstream does with bread() and this does with ->read_folio on the
+ * folio it will then hand back locked.
+ */
+static int
+hammer2_write_begin(const struct kiocb *iocb __maybe_unused,
+    struct address_space *mapping, loff_t pos, unsigned int len,
+    struct folio **foliop, void **fsdata __maybe_unused)
+{
+	struct inode *inode = mapping->host;
+	struct folio *folio;
+	int error;
+
+	folio = __filemap_get_folio(mapping, pos >> PAGE_SHIFT,
+	    FGP_WRITEBEGIN, mapping_gfp_mask(mapping));
+	if (IS_ERR(folio))
+		return (PTR_ERR(folio));
+
+	if (!folio_test_uptodate(folio)) {
+		if (pos == folio_pos(folio) && len >= folio_size(folio)) {
+			/* Covered entirely by the write; nothing to read. */
+		} else if (folio_pos(folio) >= i_size_read(inode)) {
+			folio_zero_range(folio, 0, folio_size(folio));
+			folio_mark_uptodate(folio);
+		} else {
+			error = mapping->a_ops->read_folio(NULL, folio);
+			if (error) {
+				folio_put(folio);
+				return (error);
+			}
+			folio_lock(folio);
+			if (folio->mapping != mapping ||
+			    !folio_test_uptodate(folio)) {
+				folio_unlock(folio);
+				folio_put(folio);
+				return (folio->mapping != mapping ?
+				    -EAGAIN : -EIO);
+			}
+		}
+	}
+	*foliop = folio;
+	return (0);
+}
+
+/*
+ * Finish one folio's write: mark it dirty, extend the file if the write
+ * reached past its end, the way hammer2_extend_file() does, and note
+ * that the inode has dirty data so the flush code waits for it.
+ *
+ * A folio that was not read because the write was to cover it stays not
+ * uptodate if the copy came up short, and the caller retries with the
+ * data faulted in; that is the generic writer's contract.
+ *
+ * The extend takes ip->lock under the folio lock, which is the order the
+ * read path already uses in hammer2_read_folio().  Crossing the embedded
+ * size is upstream's RESIZED plus chain sync, inside the transaction the
+ * write iterator opened.
+ */
+static int
+hammer2_write_end(const struct kiocb *iocb __maybe_unused,
+    struct address_space *mapping, loff_t pos, unsigned int len,
+    unsigned int copied, struct folio *folio, void *fsdata __maybe_unused)
+{
+	struct inode *inode = mapping->host;
+	hammer2_inode_t *ip = VTOI(inode);
+	loff_t end = pos + copied;
+
+	if (!folio_test_uptodate(folio)) {
+		if (copied < len)
+			copied = 0;
+		else
+			folio_mark_uptodate(folio);
+	}
+	if (copied) {
+		folio_mark_dirty(folio);
+		if (end > i_size_read(inode)) {
+			hammer2_mtx_ex(&ip->lock);
+			hammer2_inode_modify(ip);
+			ip->osize = ip->meta.size;
+			ip->meta.size = end;
+			if (ip->osize <= HAMMER2_EMBEDDED_BYTES &&
+			    end > HAMMER2_EMBEDDED_BYTES) {
+				atomic_set_int(&ip->flags, HAMMER2_INODE_RESIZED);
+				hammer2_inode_chain_sync(ip);
+			}
+			hammer2_mtx_unlock(&ip->lock);
+			i_size_write(inode, end);
+		}
+		atomic_set_int(&ip->flags, HAMMER2_INODE_DIRTYDATA);
+	}
+	folio_unlock(folio);
+	folio_put(folio);
+	return (copied);
+}
+
+/*
+ * Write back dirty folios, one strategy XOP per block, which is what the
+ * BSD ports' hammer2_strategy_write() does per buffer: mark the inode
+ * DIRTYDATA, open a BUFCACHE transaction, start a MODIFYING|STRATEGY xop
+ * with the folio and its position.  The xop ends the folio's writeback
+ * and closes the transaction, as upstream's does.  XOPs run synchronously
+ * in this port, so each folio's write is complete when the loop moves on.
+ */
+static int
+hammer2_writepages(struct address_space *mapping,
+    struct writeback_control *wbc)
+{
+	hammer2_inode_t *ip = VTOI(mapping->host);
+	hammer2_xop_strategy_t *xop;
+	struct folio *folio = NULL;
+	int error = 0;
+
+	while ((folio = writeback_iter(mapping, wbc, folio, &error)) != NULL) {
+		folio_start_writeback(folio);
+		folio_unlock(folio);
+
+		atomic_set_int(&ip->flags, HAMMER2_INODE_DIRTYDATA);
+		hammer2_trans_assert_strategy(ip->pmp);
+		hammer2_trans_init(ip->pmp, HAMMER2_TRANS_BUFCACHE);
+		xop = hammer2_xop_alloc(ip,
+		    HAMMER2_XOP_MODIFYING | HAMMER2_XOP_STRATEGY);
+		xop->folio = folio;
+		xop->lbase = folio_pos(folio);
+		hammer2_xop_start(&xop->head, &hammer2_strategy_write_desc);
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		error = 0;
+	}
+	return (error);
+}
+
+/*
+ * DEFER(the write path lands: 0.5): what is here writes an existing
+ * file in place and extends it; truncate, and the invalidate that goes
+ * with it, are not written, and neither is fsync.
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,
+	.dirty_folio	= filemap_dirty_folio,		/* Linux */
+	.write_begin	= hammer2_write_begin,		/* Linux */
+	.write_end	= hammer2_write_end,		/* Linux */
+	.writepages	= hammer2_writepages,		/* Linux */
 };
 
 /*

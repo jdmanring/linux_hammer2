@@ -283,6 +283,9 @@ brought nineteen continuation indents, one split string, one
 `hammer2_dedup_lookup()`, which is legal C that upstream wrote and stays
 as carried. The folio-order assert in `hammer2_io.c` added one split
 string and one continuation indent, in the shape of the assert beside it.
+The buffered write path in `hammer2_vnops.c` and the recursive exclusive
+lock in `hammer2_os.h` added five continuation indents and five
+`return (x);` between them, all in the two mechanical rows below.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
