@@ -294,7 +294,8 @@ every version guard went with it: five `LINUX_VERSION_CODE` hits and
 those two typedefs left the baseline, and the one hit that remains is
 the `#error` that states the floor. `->setattr` and `->fsync`, with
 the truncate and extend beneath them, added three continuation indents
-and three `return (x);`.
+and three `return (x);`; the create path, seven of each and three
+unnamed prototype arguments.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
