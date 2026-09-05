@@ -81,9 +81,9 @@ having tripped. The one that bites latest is the `*.c` glob: kbuild writes
 `hammer2.mod.c`, which no build has reached, because modpost stops first.
 
 All four now exclude kbuild's output, and the patterns match `.gitignore`'s.
-The permanent guard is not a new gate but an ordering: CI builds the module
-before it runs any gate, so every gate runs against the tree a developer
-actually has. Until 2026-09-03 this paragraph also said that step asserts
+The permanent guard is not a new gate but an ordering: the pre-push hook
+builds the module before it runs any gate, so every gate runs against the
+tree a developer actually has. Until 2026-09-03 this paragraph also said that step asserts
 the undefined set is exactly the four named in `doc/README.status.md`.
 Nothing asserted that. The step read `modinfo` and counted warnings, and a
 fifth undefined reference would have been a failed link with no list, which
@@ -108,9 +108,12 @@ since no warnings and a pattern that stopped matching print the same number.
 
 ## One kernel, one tree
 
-The floor and the kernel of record are the same release, 7.3, so the
-syntax gate and `build-check.sh` against that tree are the only builds
-there are. From 2026-09-03 to 2026-09-05 a second CI job fetched a 6.15
+The floor and the kernel of record are the same release, 7.3, built on
+the maintainer's machine, so the syntax gate and `build-check.sh` against
+that tree, both run by the pre-push hook on every push, are the only
+builds there are. Hosted CI builds nothing: the runner has neither that
+tree nor headers at the floor, and fetching and building a kernel there
+only repeated what the push had done. From 2026-09-03 to 2026-09-05 a second CI job fetched a 6.15
 tarball, built the kernel and linked the module against it, because the
 floor was 6.15 and nothing had ever compiled there. It found two spellings
 the floor lacked, then a type rename, then a codec `defconfig` leaves out,

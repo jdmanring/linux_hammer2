@@ -137,9 +137,12 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/vale" --version
 
-      # THE BUILD is its own job below, against the kernel of record. The
-      # runner's own headers are years behind it and below the floor, so a
-      # build here would only ever report that.
+      # THERE IS NO MODULE BUILD HERE. The kernel of record is built on the
+      # maintainer's machine and the pre-push hook builds the module against
+      # it on every push; a hosted runner has neither that tree nor the
+      # headers, and fetching and building a kernel to repeat what the push
+      # already did was dropped on 2026-09-05. What runs here is every gate
+      # that needs no kernel; the syntax gate reports could-not-run.
       - name: Gates (every script/test-*.sh)
         run: |
           set +e
@@ -183,78 +186,3 @@ jobs:
             esac
           done
           exit "$rc"
-
-  # THE MODULE, BUILT AGAINST THE KERNEL OF RECORD, which is also the
-  # floor. ubuntu-latest ships headers years behind it, so the tree is
-  # fetched at the tag, configured with the codecs the module links
-  # against, built once and cached on the tag, which is immutable. A full
-  # build is what writes Module.symvers; modules_prepare does not, and a
-  # tree without it accepts every compile and reports every symbol
-  # undefined at modpost. The same job built a 6.15 tree while that was
-  # the floor, and what it found is in doc/README.testing.md.
-  record:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Toolchain for an out-of-tree module build
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bc bison flex libelf-dev libssl-dev
-
-      - name: Cache the built kernel of record
-        id: kcache
-        uses: actions/cache@v4
-        with:
-          path: ~/linux-record
-          # The version appears once here, once in KERNEL_REF in
-          # script/test-syntax.sh and once in the #error in hammer2_os.h,
-          # and the build is what says whether they agree.
-          key: linux-record-7.3-rc1-built-v1
-
-      - name: Fetch and build 7.3-rc1
-        if: steps.kcache.outputs.cache-hit != 'true'
-        run: |
-          set -eu
-          curl -sSLo /tmp/linux.tar.gz \
-            https://git.kernel.org/torvalds/t/linux-7.3-rc1.tar.gz
-          mkdir -p "$HOME/linux-record"
-          tar -xzf /tmp/linux.tar.gz -C "$HOME/linux-record" --strip-components=1
-          make -C "$HOME/linux-record" defconfig
-          # The lib codec options have no Kconfig prompt, so a bare enable
-          # is dropped by olddefconfig; enabling the crypto wrappers that
-          # select them survives. Measured on a fresh tree, both ways.
-          "$HOME/linux-record/scripts/config" --file "$HOME/linux-record/.config" \
-            --enable CRYPTO --enable CRYPTO_LZ4 --enable CRYPTO_DEFLATE \
-            --enable CRYPTO_XXHASH
-          make -C "$HOME/linux-record" olddefconfig
-          make -C "$HOME/linux-record" -j"$(nproc)"
-
-      - name: The tree is 7.3 and carries the symbols and options
-        run: |
-          set -eu
-          v=$(make -s -C "$HOME/linux-record" kernelversion)
-          echo "tree reports $v"
-          case "$v" in
-            7.3*) ;;
-            *) echo "::error::the tree is $v, not 7.3"; exit 1 ;;
-          esac
-          sym="$HOME/linux-record/Module.symvers"
-          [ -s "$sym" ] || { echo "::error::no Module.symvers"; exit 1; }
-          n=$(wc -l < "$sym")
-          echo "Module.symvers carries $n symbol(s)"
-          [ "$n" -gt 1000 ] || { echo "::error::Module.symvers has only $n symbols"; exit 1; }
-          for c in LZ4_COMPRESS LZ4_DECOMPRESS ZLIB_DEFLATE ZLIB_INFLATE XXHASH; do
-            grep -qE "^CONFIG_$c=[ym]" "$HOME/linux-record/.config" \
-              || { echo "::error::the tree was built without CONFIG_$c"; exit 1; }
-          done
-
-      - name: Module build, warning-clean
-        run: |
-          set +e
-          sh script/build-check.sh "$HOME/linux-record"
-          rc=$?
-          # COULD-NOT-RUN is a real failure here: the steps above exist to
-          # provide the tree, so its absence means one of them did nothing.
-          [ "$rc" = 0 ] || { echo "::error::the module does not build against the kernel of record"; exit 1; }
-          modinfo src/sys/fs/hammer2/hammer2.ko | grep -E "^(license|alias|depends|vermagic):"
