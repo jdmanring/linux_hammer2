@@ -310,6 +310,12 @@ them. Two errno spellings are new to the baseline, `EBUSY` and `EROFS`,
 which is the same row reaching call sites the port had not had before.
 No other category is new and nothing was fixed rather than baselined.
 
+The remount path moved it by three, all `return (x);`, and swapped one
+errno row for another: `hammer2_access_devvp()` refused with `EACCES`,
+which asked whether the mount's own file was opened for writing, and
+refuses with `EROFS`, which asks whether the device is write-protected.
+That row is the recorded errno convention, not a finding.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row
