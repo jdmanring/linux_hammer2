@@ -556,8 +556,8 @@ construction rather than re-hashed every run.
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2606 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1197 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1018 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_vnops.c` | 1201 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_ondisk.c` | 1015 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
@@ -661,6 +661,7 @@ the header at the tag:
 | `inode_state_read_once` | v6.18 | v6.19 |
 | `kzalloc_obj` | v6.19 | v7.0 |
 | `fs_bdev_file_open_by_path` and the per-mount claim | v7.2 | v7.3 |
+| `->create` without the `excl` argument | v7.2 | v7.3 |
 
 The guards, the second CI job that built a 6.15 tree to compile them, and
 `script/floor-symbols.py` that swept called names against that tree's
@@ -668,6 +669,50 @@ headers all left on 2026-09-05 with the floor's move, and
 `doc/README.porting.md` records the ruling and what the day at 6.15 cost.
 The table stays because it is the record of where each facility arrived,
 which a future move of the pin will want again.
+
+The floor is a measurement and not only a pin. On 2026-09-05 the syntax
+gate was run against a mainline 7.2.0 tree, unpacked from the kernel.org
+tarball and prepared with the 7.3-rc1 configuration, under the
+deliberate override:
+
+    hammer2 against 7.2.0 (mainline) via KDIR, dialect -fms-extensions, with clang version 22.1.8, NOT the tree's own, which is "gcc (GCC) 16.2.1 20260810":
+    syntax: 46 check(s), 44 failed AGAINST LINUX 7.2, WHICH IS NOT THE KERNEL OF RECORD
+
+The `#error` in `hammer2_os.h` fires in every one of the fifteen files,
+and the compiler goes on past it, so the failures underneath it are
+the whole list of what 7.2 lacks: `fs_bdev_file_open_by_path()` and
+`fs_bdev_unregister()` implicitly declared at `hammer2_ondisk.c:114`
+and `:116`, and the `.create` initializer at `hammer2_vnops.c:747`
+rejected because 7.2's `->create` still takes the `excl` flag that the
+7.3 lookup pull removed. The two checks that pass are the negative
+controls. So the floor is 7.3 for exactly two reasons, both from the
+7.3 VFS pulls, and every name the port calls resolves in a 6.15 tree
+except those two, `inode_state_read_once()` from 6.19 and
+`kzalloc_obj()` from 7.0. A sweep of every call-shaped name in `src/`
+against the 6.15 and 7.3-rc1 headers, run by hand the same day, found
+nothing else; against 7.3-rc1 the only names it cannot attribute are
+compiler builtins and the tree's own.
+
+The rest of what 7.3 changed for a filesystem was read from the pull
+merges themselves and is either already in use or does not apply. The
+superblock pull's device-to-superblock table is the shared-device open
+above, which is why a device carrying several mounted PFSes works. The
+writeback pull's `.sync_inode_metadata` and `simple_fsync()` serve
+filesystems that track metadata in buffer heads; this port has none,
+and `fsync` runs the carried flush. The iomap pull's iterator rework
+does not reach a port on classic address-space operations. The block
+pull's `RWF_DONTCACHE` for block devices is the one facility with a
+foothold here: `->write_begin` now takes its folio from
+`write_begin_get_folio()`, which honors the uncached flag when an iocb
+carries it and otherwise does what the open-coded lookup did, the
+mapping's folio order being pinned to the block. With that build, eight
+files of 511 bytes to 1000000, one overwritten at the last byte of its
+first block and one appended across a block boundary, matched their
+checksums after a read-only remount on the guest, with no kernel report
+and the host's `fsck_hammer2` clean. The port does not yet
+set `FOP_DONTCACHE`, so no caller can pass the flag; that is a
+measurement to make, not a line to add. The slab and memory-management
+pulls change nothing this port calls.
 
 The kernel of record is a different claim: this tree compiles against the
 latest Linux, pinned in `script/test-syntax.sh` as `KERNEL_REF` and bumped
@@ -1484,7 +1529,6 @@ against the source is the same shape as an empty one.
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(->writepages lands: 0.5)` | the write half of the strategy XOP is carried, upstream's body with the buffer replaced by a folio, and nothing starts it yet: the file mapping's folio order, `->write_begin`, `->write_end`, dirty tracking and `->writepages` are the write path's Linux half, and the folio must cover a whole logical block, which the handler refuses rather than pads |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
-| `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |
 
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a

@@ -113,7 +113,11 @@ than about a shared bug.
   the port is developed and tested against, one tree: `script/test-syntax.sh`
   refuses to report a pass against anything else, the pin is `KERNEL_REF`
   in that script, and both move together when a release ships. There is
-  no conditional compilation on the kernel version in the tree
+  no conditional compilation on the kernel version in the tree. Two
+  things put it at 7.3, both from that release's VFS changes: the
+  shared block device open that lets several PFSes on one device be
+  mounted, and the `create` operation's signature. A build against 7.2
+  fails on exactly those, recorded in `doc/README.status.md`
 
 + kernel headers for the running kernel
 

@@ -122,7 +122,11 @@ signature, and the floor moved to 7.3 with the job deleted;
 `README.porting.md` has the ruling. What that job taught survives it:
 `build-check.sh` takes a `KDIR`, so a build against any tree is one
 command, and a build that has never been run against the tree the
-`#error` names is an assertion and not a constraint.
+`#error` names is an assertion and not a constraint. The constraint is
+measured from the other side too: `KDIR` pointed at a mainline 7.2
+tree with `H2_KERNEL_REF=7.2` fails 44 of 46 checks, and the errors
+under the `#error` are the two facilities the floor exists for;
+`README.status.md` quotes them.
 
 Between 2026-08-29 and 2026-09-03 this repository sent twenty-six failed
 CI runs, counted by asking the API which step failed in each rather than
