@@ -540,14 +540,14 @@ construction rather than re-hashed every run.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1367 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1368 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4942 | FreeBSD port, carried byte-for-byte but five `XXX` lines, the lockdep class set where a chain lock is initialized and the nesting level handed to the shim where a chain is first placed under its parent, or created under one; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 4947 | FreeBSD port, carried byte-for-byte but eight `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, and the level below for the children an indirect block takes over; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1332 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 935 | ours, the OS shim |
+| `hammer2_os.h` | 941 | ours, the OS shim |
 | `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -1299,7 +1299,7 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 25 | 18 | 7 |
+| `hammer2_chain.c` | 28 | 18 | 10 |
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
@@ -1313,7 +1313,7 @@ against the FreeBSD port at
 | `hammer2_vfsops.c` | 35 | 7 | 28 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 1 | 0 | 1 |
-| `hammer2.h` | 7 | 3 | 4 |
+| `hammer2.h` | 8 | 3 | 5 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
@@ -1323,12 +1323,12 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and twenty-two are this port's, the right-hand column
+One hundred and twenty-six are this port's, the right-hand column
 summed, and they fall in thirteen files: twenty-eight in
 `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, nineteen each in `hammer2_ondisk.c` and
-`hammer2_strategy.c`, seven each in `hammer2_subr.c` and
-`hammer2_chain.c`, five each in `hammer2_os.h` and `hammer2_flush.c`,
-four in `hammer2.h`, two each in `hammer2_io.c` and `hammer2_xops.c`,
+`hammer2_strategy.c`, ten in `hammer2_chain.c`, seven in
+`hammer2_subr.c`, five each in `hammer2_os.h` and `hammer2_flush.c`,
+five in `hammer2.h`, two each in `hammer2_io.c` and `hammer2_xops.c`,
 and one each in `hammer2_vnops.c` and `hammer2_disk.h`. That is the
 whole of them, and
 it is the only place in this file that adds up to the column. The count

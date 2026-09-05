@@ -357,6 +357,7 @@ struct hammer2_chain {
 
 #define HAMMER2_RESOLVE_SHARED		0x10	/* request shared lock */
 #define HAMMER2_RESOLVE_LOCKAGAIN	0x20	/* another shared lock */
+#define HAMMER2_RESOLVE_SIBLING	0x40	/* XXX Linux: lockdep level below */
 #define HAMMER2_RESOLVE_NONBLOCK	0x80	/* non-blocking */
 
 /*

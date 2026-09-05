@@ -257,7 +257,13 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * under, the rename XOP's move of a directory entry; nothing else can
  * reach a detached chain, so that order is safe, and
  * hammer2_chain_lockdep_detached() tells lockdep so through
- * lock_set_subclass() on the held lock.  The core spinlock in a chain is taken child
+ * lock_set_subclass() on the held lock.  One more acquisition sits
+ * outside the levels: hammer2_chain_create_indirect() locks the
+ * children it moves under the new block while a flush holds one of
+ * their siblings, same class and level, which lockdep reads as one
+ * lock taken twice.  The parent is held exclusively there, so no other
+ * holder of a sibling can be waiting on this one; the moved children
+ * are locked with HAMMER2_RESOLVE_SIBLING, one level below their own.  The core spinlock in a chain is taken child
  * before parent, which upstream states as its rule, so its level runs
  * the other way.  An inode lock nests at its chain's level.  Every other
  * lock initializer in this file takes a static key per call site, as

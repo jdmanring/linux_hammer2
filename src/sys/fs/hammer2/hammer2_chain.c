@@ -766,6 +766,9 @@ hammer2_chain_lock(hammer2_chain_t *chain, int how)
 			} else {
 				hammer2_mtx_sh(&chain->lock);
 			}
+		} else if (how & HAMMER2_RESOLVE_SIBLING) {	/* XXX Linux */
+			hammer2_mtx_ex_nested(&chain->lock,
+			    chain->lock.subclass + 1);
 		} else {
 			hammer2_mtx_ex(&chain->lock);
 		}
@@ -3476,7 +3479,8 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 			/* Use chain already present in the rbtree. */
 			hammer2_chain_ref(chain);
 			hammer2_spin_unex(&parent->core.spin);
-			hammer2_chain_lock(chain, HAMMER2_RESOLVE_NEVER);
+			hammer2_chain_lock(chain, HAMMER2_RESOLVE_NEVER |
+			    HAMMER2_RESOLVE_SIBLING);	/* XXX Linux */
 		} else {
 			/*
 			 * Get chain for blockref element.  _get returns NULL
@@ -3484,7 +3488,8 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 			 */
 			hammer2_spin_unex(&parent->core.spin);
 			chain = hammer2_chain_get(parent, generation, &bsave,
-			    HAMMER2_RESOLVE_NEVER);
+			    HAMMER2_RESOLVE_NEVER |
+			    HAMMER2_RESOLVE_SIBLING);	/* XXX Linux */
 			if (chain == NULL) {
 				reason = 1;
 				hammer2_spin_ex(&parent->core.spin);
