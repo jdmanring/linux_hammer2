@@ -84,6 +84,27 @@ NetBSD version. NetBSD 10.1 shipped in December 2024 and NetBSD 11.0 on
 written against and the one used here. The repository has issues
 disabled, so nothing is recorded there as known.
 
+## A second finding, from source: LOCKAGAIN recurses a read lock
+
+Separate from the panic and found by lockdep on the Linux port rather
+than on NetBSD. `hammer2_chain_lock()` under `HAMMER2_RESOLVE_LOCKAGAIN`
+takes the chain's shared lock a second time from a thread that already
+holds it shared, at both the blocking and the non-blocking sites in
+`src/sys/fs/hammer2/hammer2_chain.c`, on the assumption that a shared
+lock recurses. `hammer2_chain_lookup()` passes that flag for an inode in
+`DIRECTDATA` mode, so every read of a small file whose data lives in the
+inode reaches it. On DragonFly `mtx_lock_sh()` recurses and the assumption
+holds. On NetBSD the port's `hammer2_mtx_sh()` is `rw_enter(&p->lock,
+RW_READER)`, and `rwlock(9)` says of `RW_READER`: "Callers must not
+recursively acquire read locks." The hazard is a writer queued between
+the two acquires, which blocks the second and leaves the thread waiting
+on itself. The FreeBSD port is not exposed: `sx`'s `__sx_can_read()`
+admits a reader past a queued writer when the thread already holds a
+shared `sx` lock. The Linux port answered it by making the re-lock a
+credit that never touches the underlying lock; a NetBSD answer would be
+whatever the tree prefers, and this note claims only the contract
+violation, not that the wedge above is caused by it.
+
 ## What would help settle it
 
 A read of the same three DragonFly-written images on the NetBSD version

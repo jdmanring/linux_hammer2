@@ -845,8 +845,15 @@ unreachable, which the acquire now asserts. The shared re-lock was a
 latent deadlock: upstream's `LOCKAGAIN` assumes a shared lock recurses,
 DragonFly's does, and a Linux rwsem's does not once a writer has queued,
 so a task reading an embedded-data file could have blocked on its own
-lock. Both NetBSD's and FreeBSD's ports carry the same assumption on
-locks that do not recurse either.
+lock. The two BSD ports differ here, read from their kernels rather than
+assumed. FreeBSD's `sx` admits a shared acquire past a queued writer when
+the thread already holds a shared `sx` lock, `__sx_can_read()` in
+`kern_sx.c` testing `td_sx_slocks`, which is that deadlock avoided by
+design, so the FreeBSD port's `sx_slock()` under `LOCKAGAIN` is safe.
+NetBSD's `rwlock(9)` states that callers must not recursively acquire
+read locks, and the NetBSD port's `rw_enter(RW_READER)` under `LOCKAGAIN`
+does exactly that on every embedded-data read; it is staged for Kusumi
+beside the read panic in `doc/upstream/netbsd-10.1-read-panic.md`.
 
 The run that closed it: `debug_locks` reads 1 before the module loads,
 after the mount, after `find` over all 28210 paths, after `md5sum` over
