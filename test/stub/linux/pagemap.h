@@ -13,5 +13,6 @@
 
 struct address_space;
 void mapping_set_folio_min_order(struct address_space *mapping, unsigned int min);
+void mapping_set_folio_order_range(struct address_space *mapping, unsigned int min, unsigned int max);
 
 #endif

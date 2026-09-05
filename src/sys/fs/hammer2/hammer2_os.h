@@ -909,16 +909,23 @@ hammer2_dev_cache_flush(struct file *bdev_file)
  * folio they are handed to be one: the read half decompresses a block
  * into the folio it has, so a page-sized folio decompressed the same
  * block once per page, and the write half refuses a folio smaller than
- * the block it would write.  Setting the mapping's minimum folio order to
- * the block's is the same mechanism the DIO layer uses on the device
- * mapping, and the mount already refuses a kernel whose page cache cannot
- * hold a folio that large, so this cannot be asked for and not given.
+ * the block it would write.  The maximum order is the block's as well:
+ * with only the minimum set, readahead grows its folios past one block
+ * as a sequential read proceeds, and the read half, handed a folio of
+ * two blocks, filled it from the one chain at its start and zeroed the
+ * rest.  A 300000-byte file DragonFly wrote read back with its fourth
+ * block all zero on a whole-file read and correct on a read of that
+ * block alone, which is the signature: the same mechanism the DIO
+ * layer uses on the device mapping, one block per folio, and the mount
+ * already refuses a kernel whose page cache cannot hold a folio that
+ * large, so this cannot be asked for and not given.
  */
 static inline void
 hammer2_mapping_set_block_folios(struct address_space *mapping,
     unsigned int radix)
 {
-	mapping_set_folio_min_order(mapping, radix - PAGE_SHIFT);
+	mapping_set_folio_order_range(mapping, radix - PAGE_SHIFT,
+	    radix - PAGE_SHIFT);
 }
 
 /*
