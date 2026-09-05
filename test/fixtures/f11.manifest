@@ -1,0 +1,24 @@
+# image f11
+# label LINKS
+# writer dragonfly 6.4-RELEASE newfs_hammer2, hard links, a setuid bit, an owner and a 0750 directory
+# blocks 0 dir/shared-link2.txt
+# blocks 0 plain.txt
+# blocks 0 private.txt
+# blocks 0 shared-link.txt
+# blocks 0 shared.txt
+# blocks 0 suid.bin
+# stat 40755 1 0 0 1025 dir
+# stat 40750 1 1001 0 1028 dir/closed
+# stat 100644 3 0 0 1024 dir/shared-link2.txt
+# stat 100644 1 0 0 1029 plain.txt
+# stat 100600 1 1001 1001 1027 private.txt
+# stat 100644 3 0 0 1024 shared-link.txt
+# stat 100644 3 0 0 1024 shared.txt
+# stat 104755 1 0 0 1026 suid.bin
+# statfs 1957888 64 1957824 6
+885238ffe75f546043e7e61cc5f8bf2d  dir/shared-link2.txt
+5839145a19c13f3ffb0a3b9527e0a912  plain.txt
+adeeb367e84a4f6bf21d8635b15f2427  private.txt
+885238ffe75f546043e7e61cc5f8bf2d  shared-link.txt
+885238ffe75f546043e7e61cc5f8bf2d  shared.txt
+8a3eebc5d106d9f6fbb8f681a55be679  suid.bin

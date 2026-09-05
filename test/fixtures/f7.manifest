@@ -3,5 +3,9 @@
 # writer dragonfly 6.4-RELEASE newfs_hammer2, a second PFS DATA created with pfs-create
 # blocks 0 dir/a.txt
 # blocks 0 root.txt
+# stat 40755 1 0 0 1025 dir
+# stat 100644 1 0 0 1026 dir/a.txt
+# stat 100644 1 0 0 1024 root.txt
+# statfs 1957888 128 1957760 3
 36f13d3e1de33ff67983486888d2f325  dir/a.txt
 776e5c2b403e70d6ffabd284f5c8ca68  root.txt

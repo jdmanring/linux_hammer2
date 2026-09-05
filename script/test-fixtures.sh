@@ -198,6 +198,8 @@ files=0
 blocks=0
 links=0
 corrupts=0
+stats=0
+statfss=0
 tmpb=$(mktemp) || exit 2
 release_image() {
 	[ -n "$attached" ] || return 0
@@ -340,6 +342,49 @@ for m in $manifests; do
 		printf '%s\n' "$err" | sed 's/^\[[^]]*\] //; s/^/        /'
 	done
 
+	# THE STAT FIELDS, FROM THE WRITER'S OWN stat. A `# stat` row carries
+	# the octal mode with its type bits, the link count, owner, group and
+	# inode number DragonFly reported for a path, and the guest's stat is
+	# printed in the same shape: %f is the raw mode in hex, so it is
+	# re-printed in octal. Two names sharing an inode number and a link
+	# count of 3 is what hard-link identity looks like from outside.
+	sexp=$(sed -n 's/^# stat //p' "$m")
+	ns=$(printf '%s\n' "$sexp" | command grep -c . || true)
+	if [ "$ns" -gt 0 ]; then
+		printf '%s\n' "$sexp" > "$tmpb"
+		scp -o ConnectTimeout=5 "$tmpb" "$GUEST_SSH:/tmp/$base.stat" \
+		    >/dev/null 2>&1
+		sgot=$(ssh "$GUEST_SSH" "cd $mnt && while read -r mode nl u g ino rel; do \
+		    set -- \$(stat -c '%f %h %u %g %i' "\$rel"); \
+		    printf '%o %s %s %s %s %s\\n' 0x\$1 \$2 \$3 \$4 \$5 "\$rel"; \
+		    done < /tmp/$base.stat" 2>/dev/null)
+		if [ "$sgot" != "$(cat "$tmpb")" ]; then
+			echo "  FAIL $base: stat fields differ from what DragonFly reported"
+			diff "$tmpb" - <<-EOD 2>/dev/null | sed 's/^/        /' | head -8
+			$sgot
+			EOD
+			fail=$((fail + 1)); continue
+		fi
+		stats=$((stats + ns))
+	fi
+
+	# STATFS, AGAINST DragonFly's df AS ROOT: 1 KiB blocks in total, used
+	# and free, and inodes in use. The free figure is f_bfree, the root
+	# view, since the row was taken as root and the 5% reserve only moves
+	# f_bavail here. Blocks and bsize come from the guest's statfs and
+	# are folded to 1 KiB, the unit df prints on both sides.
+	fexp=$(sed -n 's/^# statfs //p' "$m" | head -1)
+	if [ -n "$fexp" ]; then
+		fgot=$(ssh "$GUEST_SSH" "set -- \$(stat -f -c '%S %b %f %c %d' $mnt); \
+		    echo \$((\$2 * \$1 / 1024)) \$(((\$2 - \$3) * \$1 / 1024)) \
+		    \$((\$3 * \$1 / 1024)) \$((\$4 - \$5))" 2>/dev/null)
+		if [ "$fgot" != "$fexp" ]; then
+			echo "  FAIL $base: statfs differs from DragonFly's df: got '$fgot', DragonFly said '$fexp'"
+			fail=$((fail + 1)); continue
+		fi
+		statfss=$((statfss + 1))
+	fi
+
 	# THE SYMLINKS, WHICH md5sum FOLLOWS AND SO NEVER READS. A symlink's
 	# target is file data, embedded in the inode for every link here, and
 	# ->get_link reads it through the same ->read_folio a file uses. The
@@ -372,7 +417,7 @@ if [ "$images" -eq 0 ]; then
 	exit 1
 fi
 
-echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $links symlink(s), $corrupts corrupt file(s) refused, $fail failure(s)"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
 echo "          being equal for LZ4 and ZLIB, and anything a second mount"
 echo "          of the same device would show"

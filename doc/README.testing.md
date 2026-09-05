@@ -569,8 +569,12 @@ an artifact of the setup and not a finding about the code.
     KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
-Measured on 2026-09-04: nine images, 35 files, 1 symlink, one corrupt
-file refused, one mount refused, 0 failures. The nine are `makefs`
+Measured on 2026-09-04: ten images, 41 files, 29 stat rows, 4 statfs
+rows, 1 symlink, one corrupt file refused, one mount refused, 0 failures.
+A `# stat mode nlink uid gid inode relpath` row and a `# statfs size used
+free inodes-used` row carry what DragonFly's own `stat` and `df` reported,
+and `f11` exists to hold hard links, a setuid bit, an owner and a 0750
+directory. The ten are `f11`, `makefs`
 output, `makefs` at LZ4 and at ZLIB, the boundary tree, media DragonFly
 wrote at its LZ4 default, media DragonFly wrote after `hammer2 setcomp
 zlib` on the mount root, a device carrying two PFSes of which the gate

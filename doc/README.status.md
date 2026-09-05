@@ -432,6 +432,32 @@ read, and then panicked with a NULL `VOP_STRATEGY` on its first read of
 That is recorded in `netbsd-port-failure.txt` beside the images as a
 reader that could not finish, and it says nothing about this tree.
 
+Kusumi's OpenBSD port at `a3747df9`, built into a custom kernel on
+OpenBSD 7.9 by the workbench session, read all seven fixtures and `f7`'s
+`DATA` PFS and agrees with the FreeBSD port on every one of its 35 rows,
+including the ZLIB file the NetBSD port wedges on. Three readers now
+agree on the fixtures; the NetBSD failure is that port's alone.
+
+## Ownership, modes, hard links and statfs, from DragonFly's own stat
+
+0.4's first criterion asked for hard-link identity, `stat` fields and
+`statfs` to be checked by hand until the manifest carried a column for
+each. It does now. A `# stat` row carries the octal mode with its type
+bits, the link count, owner, group and inode number as DragonFly's
+`stat` printed them for a path, and a `# statfs` row carries DragonFly's
+`df` as root: 1 KiB blocks in total, used and free, and inodes in use.
+The gate prints the guest's `stat` and `statfs` in the same shape and
+compares. `f11` was written for it: three names on one inode, a setuid
+file, a file owned by an unprivileged user with mode 0600, and a 0750
+directory owned by that user and group wheel.
+
+On the guest at 7.3.0-rc1 all 29 rows across `f5`, `f6`, `f7` and `f11`
+match, and so do the four `statfs` rows. The three hard-linked names
+report inode 1024 and a link count of 3 here as they do there, which is
+hard-link identity seen from outside the filesystem. Driven the other
+way, one mode altered and one used-blocks figure altered, the gate
+failed each image and printed the diff.
+
 ## Media altered on purpose, and what refuses it
 
 0.4's fourth criterion is F3: corrupt media detected and refused, or

@@ -8,6 +8,16 @@
 # blocks 0 sparse.bin
 # blocks 0 tiny.txt
 # blocks 0 zeros64k.bin
+# stat 100644 1 0 0 1029 compressible.txt
+# stat 40755 1 0 0 1024 dir
+# stat 40755 1 0 0 1025 dir/deep
+# stat 100644 1 0 0 1028 dir/deep/file.txt
+# stat 100644 1 0 0 1027 hello.txt
+# stat 100644 1 0 0 1030 random128k.bin
+# stat 100644 1 0 0 1031 sparse.bin
+# stat 100644 1 0 0 1026 tiny.txt
+# stat 100644 1 0 0 1032 zeros64k.bin
+# statfs 1957888 192 1957696 9
 829734ffe95c7e14537e55512f9b1c8c  compressible.txt
 1b385affd7adb5a6283fef292b5df0f7  dir/deep/file.txt
 5c61ecdfc49591177d7c2fb7e119a310  hello.txt
