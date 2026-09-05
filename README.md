@@ -61,12 +61,10 @@ the tree as it stood. The rows for both milestones in
 [CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
 
 What that buys you is a driver that can be tried, on media you can
-afford to lose. What it does not yet do: a read-only mount cannot be
-remounted read-write, which is refused rather than done without the
-recovery pass; the snapshots have no backend adapter behind them, which
-keeps 0.7 open; it has not been run as a root filesystem; nothing is
-packaged, and no tag exists. Every write it has made was to a scratch
-image on a guest.
+afford to lose. What it does not yet do: the snapshots have no backend
+adapter behind them, which keeps 0.7 open; it has not been run as a
+root filesystem; nothing is packaged, and no tag exists. Every write it
+has made was to a scratch image on a guest.
 
 To try it, make an image, put it on a loop device and mount the PFS by
 label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
@@ -83,8 +81,10 @@ PFS asks for `DATA`:
 `modprobe` rather than `insmod`, because the codecs and the digest may
 be modules on your kernel and only `modprobe` loads them first.
 
-Add `-o ro` to read without writing. A volume DragonFly made mounts the
-same way.
+Add `-o ro` to read without writing; `mount -o remount,rw` goes the
+other way and runs the flush recovery on the transition, refusing only
+when the device itself is write-protected. A volume DragonFly made
+mounts the same way.
 
 `hammer2-utils` drives the ioctls once a PFS is mounted:
 
