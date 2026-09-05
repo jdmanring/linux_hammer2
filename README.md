@@ -26,7 +26,9 @@ names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 
 **It mounts a `makefs` image read-only, lists it, reads it, follows its
-symlinks, and refuses media whose checksums do not match.** `find`
+symlinks, and refuses media whose checksums do not match.** Behind a
+build flag, it writes: every write operation has been run on scratch
+media and read back by DragonFly, in both directions of a round trip. `find`
 walks the whole tree and every file compares byte for byte against the
 tree it was made from, at 511 bytes, at 512, at one page, at one 64 KiB
 block and at 200 KB, on images written with LZ4 and with ZLIB compression,
