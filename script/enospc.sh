@@ -13,11 +13,13 @@
 #   hammer2_write_end -> hammer2_inode_chain_sync   holds h2ip, takes h2ch_inode
 #   hammer2_vfs_sync_pmp                            holds h2ch_inode, takes h2ip
 #
-# and hammer2_vfs_sync_pmp() locks no chain at any of its three inode-lock
-# sites, so the chain lock it is holding was taken by something that did
-# not release it on this thread. XOPs run synchronously here, so an XOP
-# body that returns with a chain still locked leaves it on the caller.
-# doc/README.status.md carries the report and what is known about it.
+# and the sync task's backtrace holds nothing of this module between
+# ksys_sync and the lock, so the chain lock was acquired in a call that
+# has already returned. Two explanations were tested and both were wrong:
+# every XOP the sync path drives is balanced, and a scratch build proved
+# hammer2_chain_unhold() does not leave the mutex held. Reading the report
+# needs `cat /dev/kmsg` streaming during the sync, because the ring wraps
+# before the run ends. doc/README.status.md carries all of it.
 #
 # THE FAILURE IS THE POINT OF THIS SCRIPT. It exits non-zero while the
 # defect stands, which is what a known defect's reproducer should do.

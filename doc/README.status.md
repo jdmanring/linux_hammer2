@@ -1396,13 +1396,12 @@ and `statfs` reported zero available, which is the part that behaves.
 disabled it. Three runs have reached that state and all three reported
 the cycle, so the report is reproducible.
 
-What happens after it is not. On the first run the unmount never
-returned: `umount` had to be killed and `rmmod` reported the module
-still in use, which left the guest needing a hard reset. On the run from
-`script/enospc.sh` as it now stands, with the same 583 files and the
-same three cycle reports, both `umount` and `rmmod` returned 0. The
-script checks all three, so a run that hangs and a run that does not are
-both recorded rather than one being taken for the rule.
+What happens after it is not. Five runs have reached that state, all
+five reported the cycle, and the unmount hung on three of them: `umount`
+had to be killed and `rmmod` reported the module still in use, which
+leaves the guest needing a hard reset. On the other two both returned 0.
+The script checks all three, so a run that hangs and a run that does not
+are both recorded rather than one being taken for the rule.
 
 The report is a circular dependency between two orders:
 
@@ -1414,20 +1413,45 @@ The report is a circular dependency between two orders:
 The first is upstream's order and is not in question: FreeBSD's
 `hammer2_vop_fsync()` and its write path both lock the inode and then
 call `hammer2_inode_chain_sync()`. The second is the one that should not
-happen. `hammer2_vfs_sync_pmp()` locks no chain at any of its three
-inode-lock sites, so the chain lock lockdep found it holding was taken
-by something that did not release it, on the same thread. XOPs run
-synchronously in this port, so an XOP body that returns with a chain
-still locked leaves that chain locked on its caller, and the sync path
-is the caller here.
+happen. The sync task's own backtrace at the inversion holds nothing of
+this module between `ksys_sync` and the lock:
 
-What is not yet known is which one. `hammer2_xop_inode_create_ins()` was
-read first, because the run logs `hammer2_inode_chain_ins: backend
-unable to insert inum` immediately before, and it is balanced: every
-path reaches its `fail:` label and unlocks both chains. The ENOSPC error
-it returns is then dropped by the caller, under upstream's own
-`XXX return error somehow?` in `hammer2_inode.c`, which is a second
-thing to fix and may be related.
+    down_write_nested
+    hammer2_vfs_sync_pmp+0x19a
+    __iterate_supers
+    ksys_sync
+
+so the chain lock it is holding was acquired in an earlier call that has
+already returned, and `hammer2_vfs_sync_pmp()` locks no chain at any of
+its three inode-lock sites.
+
+**Two explanations have been tested and both are wrong.** The first was
+that an XOP body returns with a chain still locked, XOPs running
+synchronously here so that would leave it on the caller. Every XOP the
+sync path drives was read: `hammer2_xop_inode_create_ins()`,
+`hammer2_xop_inode_chain_sync()` and `hammer2_xop_inode_destroy()` each
+reach a single cleanup label that unlocks and drops both chains on every
+path. So are the two `ENOSPC` returns in
+`hammer2_chain_create_indirect()`, which the run names immediately
+after the report, and its caller's handling of the `NULL` they produce.
+
+The second was that `hammer2_chain_unhold()` leaves the mutex held, its
+`lockcnt > 1` branch decrementing a count rather than releasing, which
+would make upstream's deadlock workaround in `hammer2_inode_get()` a
+no-op here. A scratch build put a `WARN_ONCE` on exactly that condition
+and ran the reproducer: zero hits.
+
+Getting the report at all took `cat /dev/kmsg` streaming to a file
+during the sync. The ring buffer wraps before the run ends, so two
+earlier captures held only the tail and neither showed the sync task's
+own stack, which is the line that eliminated the first explanation.
+
+The next instrument is the one that answers it directly: record the
+return address in the chain at lock time and print it at the inversion.
+That has not been built.
+
+The `ENOSPC` this all happens under is separately dropped on the floor,
+under upstream's own `XXX return error somehow?` in `hammer2_inode.c`.
 
 Until this is understood, a HAMMER2 volume on Linux should not be filled
 to capacity. The failure is not silent, and no corruption has been
