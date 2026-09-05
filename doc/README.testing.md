@@ -684,13 +684,12 @@ how the DragonFly and NetBSD ports read it too, through
 `hammer2_read_file()`. The fixture gate's `# link target relpath` rows
 are the check, `f1` carrying the one symlink the fixtures hold.
 
-A clean lockdep run on this says nothing about locking. Every chain lock
-takes its class from one `init_rwsem()` call site, so lockdep cannot
-distinguish a chain from its parent and clears `debug_locks` after its
-first complaint; the recursive-locking report in `hammer2_chain_lock()` is
-that blindness and not a finding. Read it as evidence about `readdir` and
-about memory, and not about lock order, until
-`DEFER(chain locks carry nesting notation)` lifts.
+A clean lockdep run on this meant nothing until 0.4.3: every chain lock
+took its class from one `init_rwsem()` call site, so lockdep reported
+recursion at the first mount and cleared `debug_locks`. Every lock now
+carries a class and a nesting level, `README.status.md` records the
+measurement, and the fixture gate reads `debug_locks` before its first
+mount and after its last unmount and fails if it dropped.
 
 ## Build against mainline, test against the kernel that ships
 

@@ -15,5 +15,6 @@ long schedule_timeout_uninterruptible(long timeout);
 int signal_pending(struct task_struct *p);
 typedef struct { int counter; } atomic_t;
 void atomic_inc(atomic_t *v);
+int atomic_dec_if_positive(atomic_t *v);
 void atomic_dec(atomic_t *v);
 #endif

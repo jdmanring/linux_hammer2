@@ -159,14 +159,27 @@
 #define debug_hprintf(X, ...)	do {} while (0)
 #endif
 
+/*
+ * Linux: EVERY LOCK INITIALIZER HERE IS A MACRO WITH A STATIC KEY, the way
+ * the kernel's own init_rwsem() and mutex_init() are.  Lockdep classes a
+ * lock by the key its initializer was compiled with, so an inline
+ * function initializing every hammer2_lk_t from one line put the mount
+ * list lock, each PFS's XOP locks and the device locks in one class, and
+ * an order between two of them read as one lock taken in two orders.
+ * Measured: the first report after the chain locks were classed was a
+ * false cycle between hammer2_mntlk and a pmp->xop_lock[].  With a key
+ * per call site each core initializer is its own class, named by the
+ * string the core already passes.
+ */
+
 /* hammer2_lk is lockmgr(9) in DragonFly. Every use in the core is exclusive. */
 typedef struct rw_semaphore hammer2_lk_t;
 
-static inline void
-hammer2_lk_init(hammer2_lk_t *p, const char *s __always_unused)
-{
-	init_rwsem(p);
-}
+#define hammer2_lk_init(p, s)						\
+	do {								\
+		static struct lock_class_key __key;			\
+		__init_rwsem((p), (s), &__key);				\
+	} while (0)
 
 static inline void
 hammer2_lk_ex(hammer2_lk_t *p)
@@ -251,49 +264,48 @@ struct rw_semaphore_wrapper {
 	struct rw_semaphore lock;
 	int refs;
 	struct task_struct *owner;	/* exclusive holder, or NULL */
+	unsigned int subclass;		/* lockdep nesting level, see below */
+	atomic_t again;			/* shared re-locks owed no up_read */
 };
 
 typedef struct rw_semaphore_wrapper hammer2_mtx_t;
 
 static inline void
-hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
+__hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
 {
 	memset(p, 0, sizeof(*p));
-	init_rwsem(&p->lock);
+	__init_rwsem(&p->lock, s, k);
 }
 
+#define hammer2_mtx_init(p, s)						\
+	do {								\
+		static struct lock_class_key __key;			\
+		__hammer2_mtx_init((p), (s), &__key);			\
+	} while (0)
+
 /*
- * XXX Every lock initialized through the line above shares one lockdep
- * class, because init_rwsem() takes its class from the call site and every
- * chain in the tree is initialized from that one.  Locking a parent chain
- * and then its child is ordinary for this filesystem and indistinguishable
- * from a lock taken twice once the two share a class, so the first mount
- * under CONFIG_PROVE_LOCKING reports "possible recursive locking" and names
- * the cause itself: "May be due to missing lock nesting notation".
+ * HOW THIS PORT'S LOCKS ARE DESCRIBED TO LOCKDEP.  A chain lock's class is
+ * its blockref's type and keybits, set by hammer2_chain_lockdep_class()
+ * when the core initializes it under the name "h2ch": keybits strictly
+ * decreases from parent to child, so that orders every indirect and
+ * freemap level, and the type separates volume, freemap, inode, dirent
+ * and data from each other.  What a class cannot carry is the depth of an
+ * inode chain under another inode chain, a directory above its entry, so
+ * each chain also carries a nesting level, set by
+ * hammer2_chain_lockdep_nest() where hammer2_chain_get() first knows the
+ * parent: the parent's level, plus one when the parent is an inode.  The
+ * level is the subclass every acquire below passes, the VFS's own
+ * notation for i_rwsem.  The core spinlock in a chain is taken child
+ * before parent, which upstream states as its rule, so its level runs
+ * the other way.  An inode lock nests at its chain's level.  Every other
+ * lock initializer in this file takes a static key per call site, as
+ * init_rwsem() and mutex_init() do, so no two of the core's locks share a
+ * class by accident.
  *
- * The report is not the cost.  Lockdep sets debug_locks to 0 after its
- * first complaint, so it validates nothing for the rest of that boot, and
- * every lock this port takes afterwards goes unchecked.  A clean run that
- * follows this warning is not evidence of anything.
- *
- * Two of the three things lockdep had to say are answered without a core
- * edit.  hammer2_mtx_init_recurse() below hands every chain lock a class
- * keyed on the blockref's type and keybits, which orders the volume,
- * freemap, indirect and data levels and every indirect level within
- * itself, since keybits strictly decreases from parent to child; and
- * hammer2_mtx_ex_fresh() records no order for the one lock taken on an
- * unpublished inode.  Measured on the installed DragonFly root: the
- * recursion report is gone and so is the inode-lock inversion.
- *
- * DEFER(chain locks carry nesting notation): what remains is an inode
- * chain locked under another inode chain, a directory above its entry,
- * both leaves of one class with keybits 0.  Directory depth is unbounded
- * and lockdep's subclasses stop at eight, so the notation is the VFS's
- * own for i_rwsem: the child nests one level under the parent, and only
- * a parent and a child are ever held together.  Telling child from parent
- * needs a depth the chain carries, set where it is inserted under its
- * parent in hammer2_chain.c, which is carried byte-for-byte.  Until that
- * line exists lockdep disables itself at the first lookup.
+ * Every step of that was measured on the installed DragonFly root, 28210
+ * paths, under CONFIG_PROVE_LOCKING, and doc/README.status.md records
+ * the report each step removed.  With all of them lockdep stays enabled
+ * through mount, the full walk, two thousand file reads and unmount.
  */
 
 /*
@@ -323,35 +335,47 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
  * "h2ch" is the name every chain lock and no other lock carries.
  */
 void hammer2_chain_lockdep_class(hammer2_mtx_t *);
+void hammer2_chain_lockdep_nest(hammer2_mtx_t *, hammer2_mtx_t *);
+void hammer2_inode_lockdep_nest(hammer2_mtx_t *);
 
 static inline void
-hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s)
+__hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s,
+    struct lock_class_key *k)
 {
-	hammer2_mtx_init(p, s);
+	__hammer2_mtx_init(p, s, k);
 #ifdef CONFIG_LOCKDEP
 	if (strcmp(s, "h2ch") == 0)
 		hammer2_chain_lockdep_class(p);
+	else if (strcmp(s, "h2ip") == 0)
+		hammer2_inode_lockdep_nest(p);
 #endif
 }
+
+#define hammer2_mtx_init_recurse(p, s)					\
+	do {								\
+		static struct lock_class_key __key;			\
+		__hammer2_mtx_init_recurse((p), (s), &__key);		\
+	} while (0)
 
 static inline void
 hammer2_mtx_ex(hammer2_mtx_t *p)
 {
-	down_write(&p->lock);
+	down_write_nested(&p->lock, p->subclass);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
 }
 
 /*
- * Linux: the first exclusive acquisition of a lock nothing else can see
- * yet.  hammer2_inode_get() locks a freshly allocated inode while the
- * caller still holds the chain locks its XOP collected, which is the
- * reverse of the order every later path uses, inode above chain.  It
- * cannot deadlock, the inode being unpublished, but lockdep records the
- * order all the same and reports the inversion at the next inode lock.
- * A trylock records no dependency, and on an unpublished lock it cannot
- * fail; if it ever does, the assumption behind this function is false,
- * which is worth a warning before falling back to the blocking acquire.
+ * Linux: an exclusive acquisition of a lock nothing else can reach.
+ * hammer2_inode_get() locks a freshly allocated inode, and
+ * hammer2_pfsalloc() the root inode of a PFS not yet mounted, while the
+ * caller holds the inode's chain lock, which is the reverse of the order
+ * every later path uses, inode above chain.  Neither can deadlock, the
+ * inode being unreachable, but lockdep records the order all the same and
+ * reports the inversion at the next ordinary acquire.  A trylock records
+ * no dependency, and on an unreachable lock it cannot fail; if it ever
+ * does, the assumption behind this function is false, which is worth a
+ * warning before falling back to the blocking acquire.
  */
 static inline void
 hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
@@ -365,7 +389,7 @@ hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
 static inline void
 hammer2_mtx_sh(hammer2_mtx_t *p)
 {
-	down_read(&p->lock);
+	down_read_nested(&p->lock, p->subclass);
 	atomic_add_int(&p->refs, 1);
 }
 
@@ -373,6 +397,28 @@ static inline int
 hammer2_mtx_owned(hammer2_mtx_t *p)
 {
 	return (READ_ONCE(p->owner) == current);
+}
+
+/*
+ * Linux: a shared lock taken again by a task that already holds it
+ * shared, which is what HAMMER2_RESOLVE_LOCKAGAIN means and what
+ * DragonFly's mtx_lock_sh() does natively.  A second down_read() is not
+ * that: a writer queued between the two blocks the second, and the task
+ * deadlocks on itself, which lockdep reported on the first embedded-data
+ * file read under it.  So the rwsem is not touched.  The re-lock is a
+ * credit, and the next shared unlock on this lock spends the credit
+ * instead of an up_read().  Any shared holder may spend it; the rwsem's
+ * reader count is the sum of down_reads less up_reads whoever made them,
+ * so the lock is released exactly when the last logical holder leaves,
+ * and no writer is admitted earlier than it would have been.  The one
+ * caller, hammer2_chain_lock() under LOCKAGAIN, never upgrades a lock it
+ * holds this way, and hammer2_mtx_upgrade_try() assumes as much.
+ */
+static inline void
+hammer2_mtx_sh_again(hammer2_mtx_t *p)
+{
+	atomic_inc(&p->again);
+	atomic_add_int(&p->refs, 1);
 }
 
 static inline void
@@ -384,6 +430,8 @@ hammer2_mtx_unlock(hammer2_mtx_t *p)
 		up_write(&p->lock);
 	} else {
 		atomic_add_int(&p->refs, -1);
+		if (atomic_dec_if_positive(&p->again) >= 0)
+			return;		/* a re-lock's credit, no up_read owed */
 		up_read(&p->lock);
 	}
 }
@@ -512,36 +560,50 @@ hammer2_mtx_sleep(hammer2_lkc_t *c, hammer2_mtx_t *p,
  * none is reachable from an I/O completion path, since the physical
  * buffers live in the block device page cache and complete there.
  */
-typedef struct rw_semaphore hammer2_spin_t;
+/*
+ * Linux: the wrapper carries a lockdep nesting level, as the mutex does.
+ * A chain's core spinlock is taken bottom-up, child before parent, which
+ * upstream's hammer2_chain_lastdrop() states as the rule for these locks
+ * and the reverse of the chain lock's own order, so the level a chain's
+ * core spinlock is given runs the other way: the deeper the chain, the
+ * lower the subclass.  Set beside the chain lock's level in
+ * hammer2_vfsops.c; every other spinlock stays at 0.
+ */
+struct hammer2_spin_wrapper {
+	struct rw_semaphore lock;
+	unsigned int subclass;
+};
 
-static inline void
-hammer2_spin_init(hammer2_spin_t *p, const char *s __always_unused)
-{
-	init_rwsem(p);
-}
+typedef struct hammer2_spin_wrapper hammer2_spin_t;
+
+#define hammer2_spin_init(p, s)						\
+	do {								\
+		static struct lock_class_key __key;			\
+		__init_rwsem(&(p)->lock, (s), &__key);			\
+	} while (0)
 
 static inline void
 hammer2_spin_ex(hammer2_spin_t *p)
 {
-	down_write(p);
+	down_write_nested(&p->lock, p->subclass);
 }
 
 static inline void
 hammer2_spin_sh(hammer2_spin_t *p)
 {
-	down_read(p);
+	down_read_nested(&p->lock, p->subclass);
 }
 
 static inline void
 hammer2_spin_unex(hammer2_spin_t *p)
 {
-	up_write(p);
+	up_write(&p->lock);
 }
 
 static inline void
 hammer2_spin_unsh(hammer2_spin_t *p)
 {
-	up_read(p);
+	up_read(&p->lock);
 }
 
 static inline void
@@ -550,8 +612,8 @@ hammer2_spin_destroy(hammer2_spin_t *p __always_unused)
 }
 
 #ifdef HAMMER2_INVARIANTS
-#define hammer2_spin_assert_locked(p)	BUG_ON(!rwsem_is_locked(p))
-#define hammer2_spin_assert_unlocked(p)	BUG_ON(rwsem_is_locked(p))
+#define hammer2_spin_assert_locked(p)	BUG_ON(!rwsem_is_locked(&(p)->lock))
+#define hammer2_spin_assert_unlocked(p)	BUG_ON(rwsem_is_locked(&(p)->lock))
 #define hammer2_spin_assert_ex(p)	hammer2_spin_assert_locked(p)
 #define hammer2_spin_assert_sh(p)	hammer2_spin_assert_locked(p)
 #else

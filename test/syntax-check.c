@@ -116,7 +116,17 @@ hammer2_syntax_check_all(void)
 	(void)hammer2_dev_writeback(NULL);
 	(void)hammer2_dev_cache_flush(NULL);
 	(void)hammer2_vfs_errno(EDOM);
+	{
+		static struct lock_class_key k;
+
+		__hammer2_mtx_init(&mtx, "x", &k);
+		__hammer2_mtx_init_recurse(&mtx, "x", &k);
+	}
 	hammer2_mtx_ex_fresh(&mtx);
+	hammer2_mtx_unlock(&mtx);
+	hammer2_mtx_sh(&mtx);
+	hammer2_mtx_sh_again(&mtx);
+	hammer2_mtx_unlock(&mtx);
 	hammer2_mtx_unlock(&mtx);
 
 	cpu_pause();

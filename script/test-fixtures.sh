@@ -187,6 +187,16 @@ if [ "$guest_rel" != "$ko_rel" ]; then
 	exit 2
 fi
 
+# LOCKDEP MUST STILL BE ALIVE WHEN THIS GATE ENDS. The instrument disables
+# itself after its first report and validates nothing from then on, so a
+# clean dmesg after that point is silence and not evidence. On a guest
+# with CONFIG_PROVE_LOCKING, debug_locks is read before the module loads
+# and again after the last unmount; a drop from 1 to 0 fails the gate and
+# prints the report that caused it. Without lockdep the file is absent and
+# the check is skipped by name.
+locks_before=$(ssh "$GUEST_SSH" 'sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats' 2>/dev/null)
+ssh "$GUEST_SSH" 'dmesg -C' >/dev/null 2>&1
+
 scp -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: could not copy the module" >&2; exit 2; }
 ssh "$GUEST_SSH" 'rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko' 2>/dev/null || {
@@ -415,6 +425,21 @@ done
 if [ "$images" -eq 0 ]; then
 	echo "fixtures: FAIL: no image was mounted, so this read nothing" >&2
 	exit 1
+fi
+
+release_image
+if [ "${locks_before:-}" = 1 ]; then
+	locks_after=$(ssh "$GUEST_SSH" 'sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats' 2>/dev/null)
+	if [ "$locks_after" != 1 ]; then
+		echo "  FAIL lockdep disabled itself during this run; its report:"
+		ssh "$GUEST_SSH" 'dmesg | grep -A12 "^\[[^]]*\] WARNING: possible\|^\[[^]]*\] WARNING: inconsistent" | head -14' 2>/dev/null |
+		    sed 's/^/        /'
+		fail=$((fail + 1))
+	else
+		echo "  ok   lockdep stayed enabled across every mount, read and unmount"
+	fi
+else
+	echo "  note lockdep is not built into $guest_rel, so lock order was not validated"
 fi
 
 echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $fail failure(s)"

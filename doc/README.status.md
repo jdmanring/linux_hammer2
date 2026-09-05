@@ -86,7 +86,9 @@ child, because every chain lock shares one class.
 afterwards, which is what lockdep does after its first complaint, so
 nothing this port locked for the rest of that boot was validated. The rest
 of this run was measured with lockdep already disabled, and no absence of
-findings below is evidence about locking.
+findings below is evidence about locking. Both are history: the section
+"Lockdep, end to end" below records how every lock came to carry a class
+and a level, and the run in which lockdep stayed enabled throughout.
 
 **kmemleak found nothing**, two scans with a gap after the unmount and two
 more after the unload, `0 unreferenced object`. That is a real reading and
@@ -189,10 +191,9 @@ After the fix, on `artix-s6-kde` at 7.3.0-rc1 with lockdep and kmemleak:
 
 kmemleak reported nothing after a scan. `dmesg` carried the recorded
 `->sync_fs` `WARN_ONCE` on unmount and one recursive-locking report from
-lockdep in `hammer2_chain_lock()`, which is the single lockdep class
-recorded below and not a finding about this code: lockdep cannot
-distinguish a chain from its parent here, so a clean run would have meant
-nothing either.
+lockdep in `hammer2_chain_lock()`, which was the single lockdep class
+every chain lock then shared and not a finding about this code. That
+class is gone; see "Lockdep, end to end" below.
 
 Nothing about the mount path itself failed. The device opened, the volume
 header was read, the PFS was matched by label and a root inode was built,
@@ -525,19 +526,19 @@ construction rather than re-hashed every run.
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
 | `hammer2_xops.c` | 1449 | FreeBSD port, carried byte-for-byte |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4929 | FreeBSD port, carried byte-for-byte; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 4931 | FreeBSD port, carried byte-for-byte but one `XXX` line, the lockdep nesting level handed to the shim where a chain is linked under its parent; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1315 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1707 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2118 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2213 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 500 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1028 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 855 | ours, the OS shim |
+| `hammer2_os.h` | 917 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -814,6 +815,46 @@ which is derived from the artifact rather than assuming a sibling
 directory, and `linux-api-headers` still fails because it has no `Makefile`
 at all to follow.
 
+## Lockdep, end to end
+
+Until 0.4.2 every chain lock took its lockdep class from the one
+`init_rwsem()` call site that initialized it, so the first mount reported
+`possible recursive locking` and lockdep disabled itself, and every
+lockdep claim in this file carried the caveat that the instrument was
+blind. It is not blind now. The notation was built one report at a time
+on the installed DragonFly root, `f8`, 28210 paths, each step measured
+under `CONFIG_PROVE_LOCKING` at 7.3.0-rc1 and each removing the report
+before it:
+
+| step | the report it removed | the next report |
+|---|---|---|
+| a class per blockref type and keybits, set by the shim when the core initializes a chain lock | `possible recursive locking`, every chain | an inversion between the inode lock and the inode chain |
+| the lock taken on an unpublished inode records no order | that inversion | an inode chain under an inode chain, a directory above its entry |
+| a nesting level per chain, the parent's plus one under an inode, set where `hammer2_chain_get()` first knows the parent | that, for chains | the same shape for inode locks |
+| an inode lock nests at its chain's level | that | a false cycle between the mount lock and a PFS XOP lock, one class by init site |
+| a static key per lock initializer, as `mutex_init()` has | that | the PFS root inode locked under its chain at mount |
+| that mount-time lock is the unpublished kind too | that | a core spinlock under a core spinlock, child then parent |
+| a level on the core spinlock, running the other way, since upstream takes them bottom-up | that | a dirent's and an indirect block's core spinlocks at one level |
+| the core spinlock classed by type and keybits as the chain lock is | that | the same inode chain locked shared twice by one task, reading an embedded-data file |
+| `LOCKAGAIN` becomes a credited re-lock that does not touch the rwsem | that | the volume root and the freemap root, one pseudo-type class, at unmount |
+| the two pseudo-types are two classes | that | none |
+
+Two of those were findings and not notation. The mount-time inversion is
+real in the core's order and harmless only because the inode is
+unreachable, which the acquire now asserts. The shared re-lock was a
+latent deadlock: upstream's `LOCKAGAIN` assumes a shared lock recurses,
+DragonFly's does, and a Linux rwsem's does not once a writer has queued,
+so a task reading an embedded-data file could have blocked on its own
+lock. Both NetBSD's and FreeBSD's ports carry the same assumption on
+locks that do not recurse either.
+
+The run that closed it: `debug_locks` reads 1 before the module loads,
+after the mount, after `find` over all 28210 paths, after `md5sum` over
+two thousand files, and after the unmount, with no lockdep report in
+`dmesg`. The fixture gate now reads `debug_locks` before its first mount
+and after its last unmount and fails if it dropped, so a run that
+silenced the instrument cannot pass.
+
 ## The folio the page cache can hold, asked at mount
 
 The DIO layer hands the core one 64 KiB folio per buffer, so a kernel
@@ -975,7 +1016,6 @@ against the source is the same shape as an empty one.
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
-| `hammer2_os.h`, at `hammer2_mtx_init()` | `DEFER(chain locks carry nesting notation)` | every chain lock now takes a lockdep class keyed on its blockref's type and keybits, set by the shim when the core initializes the lock under the name `h2ch`, and the one lock taken on an unpublished inode records no order. Measured on the installed root: the `possible recursive locking` report is gone and so is the inversion between the inode lock and the inode chain that appeared once real classes existed. What remains is an inode chain locked under another inode chain, a directory above its entry, both leaves of one class, and lockdep still disables itself there at the first lookup. Directory depth is unbounded, so the notation is the VFS's own for `i_rwsem`, child one level under parent, and telling them apart needs a depth the chain carries, set at insertion in `hammer2_chain.c`, which is carried byte-for-byte. The one-line core edit is the decision |
 | `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |
 
 The middle column is the marker as it is spelled in the source, because
@@ -1004,12 +1044,12 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 18 | 18 | 0 |
+| `hammer2_chain.c` | 22 | 18 | 4 |
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 1 | 1 | 0 |
 | `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 8 | 0 | 8 |
+| `hammer2_os.h` | 7 | 0 | 7 |
 | `hammer2_flush.c` | 13 | 8 | 5 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |

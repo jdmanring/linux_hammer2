@@ -266,6 +266,7 @@ hammer2_chain_insert(hammer2_chain_t *parent, hammer2_chain_t *chain, int flags,
 
 	atomic_set_int(&chain->flags, HAMMER2_CHAIN_ONRBTREE);
 	chain->parent = parent;
+	hammer2_chain_lockdep_nest(&chain->lock, &parent->lock); /* XXX Linux */
 	++parent->core.chain_count;
 	++parent->core.generation; /* XXX incs for _get() too */
 
@@ -732,7 +733,7 @@ hammer2_chain_lock(hammer2_chain_t *chain, int how)
 			if (how & HAMMER2_RESOLVE_LOCKAGAIN) {
 				hammer2_mtx_assert_locked(&chain->lock);
 				hammer2_mtx_assert_sh(&chain->lock);
-				hammer2_mtx_sh(&chain->lock);
+				hammer2_mtx_sh_again(&chain->lock); /* XXX Linux */
 				hammer2_mtx_assert_sh(&chain->lock);
 			} else {
 				if (hammer2_mtx_sh_try(&chain->lock) != 0) {
@@ -759,7 +760,7 @@ hammer2_chain_lock(hammer2_chain_t *chain, int how)
 			if (how & HAMMER2_RESOLVE_LOCKAGAIN) {
 				hammer2_mtx_assert_locked(&chain->lock);
 				hammer2_mtx_assert_sh(&chain->lock);
-				hammer2_mtx_sh(&chain->lock);
+				hammer2_mtx_sh_again(&chain->lock); /* XXX Linux */
 				hammer2_mtx_assert_sh(&chain->lock);
 			} else {
 				hammer2_mtx_sh(&chain->lock);
@@ -1784,6 +1785,7 @@ hammer2_chain_get(hammer2_chain_t *parent, int generation,
 	 * knows what to do with it.
 	 */
 	atomic_set_int(&chain->flags, HAMMER2_CHAIN_BLKMAPPED);
+	hammer2_chain_lockdep_nest(&chain->lock, &parent->lock); /* XXX Linux */
 
 	/* Chain must be locked to avoid unexpected ripouts. */
 	hammer2_chain_lock(chain, how);

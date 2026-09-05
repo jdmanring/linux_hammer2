@@ -13,7 +13,7 @@
 file,origin,origin_commit,license,carry,note
 src/sys/fs/hammer2/hammer2_admin.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,xop dispatch; the allocation zone is shimmed not edited
 src/sys/fs/hammer2/hammer2_bulkfree.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,printf and tsleep reach it through the shim
-src/sys/fs/hammer2/hammer2_chain.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,pause and __diagused shimmed; the recursive lock is NetBSD's non-recursive answer
+src/sys/fs/hammer2/hammer2_chain.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,derived,one XXX line, the lockdep nesting level handed to the shim where a chain is linked under its parent; otherwise byte-for-byte, pause and __diagused shimmed; the recursive lock is NetBSD's non-recursive answer
 src/sys/fs/hammer2/hammer2_freemap.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,needs INVARIANTS spelled FreeBSD's way to compile with assertions on
 src/sys/fs/hammer2/hammer2_xops.c,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,
 src/sys/fs/hammer2/hammer2_mount.h,freebsd-hammer2-upstream,3df307f7db9d5106b857afeb877613fd12a19101,BSD-3-Clause,identical,

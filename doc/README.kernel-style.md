@@ -271,7 +271,10 @@ registration a no-op below 7.3, and it has the same answer as the four
 before it. The mount-time folio-size check in `hammer2_open_devvp()`
 added one positive `EOPNOTSUPP`, which is the errno row's disposition,
 and one `return (x);`. `hammer2_vfs_errno()` and its four call sites
-added three more `return (x);`.
+added three more `return (x);`. The lockdep work added three prototype
+arguments without names and one continuation line indented with spaces,
+the BSD second-line indent the rest of the tree uses, and one more
+`return (x);` in the class index helper.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the

@@ -308,7 +308,16 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 	 * confused running code. XXX
 	 */
 	hammer2_inode_ref(iroot);
-	hammer2_mtx_ex(&iroot->lock);
+	/*
+	 * Linux: the root inode is locked here under its chain, which the
+	 * caller holds, the reverse of the order every path after mount
+	 * uses.  Nothing else can reach this inode yet, hammer2_mntlk being
+	 * held and the PFS not yet mounted, so the acquire is the
+	 * unpublished kind that records no order and warns if it ever has
+	 * to wait.  The level is the chain's, set before the lock is taken.
+	 */
+	iroot->lock.subclass = chain->lock.subclass;
+	hammer2_mtx_ex_fresh(&iroot->lock);
 	j = iroot->cluster.nchains;
 
 	if (j == HAMMER2_MAXCLUSTER) {
@@ -2006,11 +2015,37 @@ hammer2_kill_sb(struct super_block *sb)
  * call compiles to nothing and this function is never reached.
  */
 #ifdef CONFIG_LOCKDEP
-static struct lock_class_key hammer2_chain_keys[8][65];
-static const char *const hammer2_chain_key_names[8] = {
+static struct lock_class_key hammer2_chain_keys[9][65];
+static struct lock_class_key hammer2_core_keys[9][65];
+static const char *const hammer2_chain_key_names[9] = {
 	"h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
-	"h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf", "h2ch_root",
+	"h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf",
+	"h2ch_freemap", "h2ch_volume",
 };
+static const char *const hammer2_core_key_names[9] = {
+	"h2core_empty", "h2core_inode", "h2core_indirect", "h2core_data",
+	"h2core_dirent", "h2core_freemap_node", "h2core_freemap_leaf",
+	"h2core_freemap", "h2core_volume",
+};
+
+/*
+ * The two pseudo-types at the root, FREEMAP and VOLUME, are separate
+ * classes: unmount holds the volume root while locking the freemap root.
+ */
+static unsigned int
+hammer2_chain_key_index(const hammer2_chain_t *chain, unsigned int *kb)
+{
+	unsigned int t = chain->bref.type;
+
+	if (t == HAMMER2_BREF_TYPE_FREEMAP)
+		t = 7;
+	else if (t == HAMMER2_BREF_TYPE_VOLUME)
+		t = 8;
+	else if (t > HAMMER2_BREF_TYPE_FREEMAP_LEAF)
+		t = 0;
+	*kb = min_t(unsigned int, chain->bref.keybits, 64U);
+	return (t);
+}
 #endif
 
 void
@@ -2018,15 +2053,75 @@ hammer2_chain_lockdep_class(hammer2_mtx_t *p)
 {
 #ifdef CONFIG_LOCKDEP
 	hammer2_chain_t *chain = container_of(p, hammer2_chain_t, lock);
-	unsigned int t = chain->bref.type, kb = chain->bref.keybits;
+	unsigned int kb, t = hammer2_chain_key_index(chain, &kb);
 
-	if (t > HAMMER2_BREF_TYPE_FREEMAP_LEAF)
-		t = 7;	/* FREEMAP and VOLUME, the two pseudo-types at the root */
-	if (kb > 64)
-		kb = 64;
 	lockdep_set_class_and_name(&p->lock, &hammer2_chain_keys[t][kb],
 	    hammer2_chain_key_names[t]);
+	/* A root's core spinlock sits at the top of the bottom-up order. */
+	chain->core.spin.subclass = MAX_LOCKDEP_SUBCLASSES - 1;
 #endif
+}
+
+/*
+ * Linux: the nesting level, which is the one thing a class cannot carry.
+ * An inode chain sits under another inode chain wherever a directory
+ * holds an entry, both leaves of the inode class, and directory depth
+ * has no bound.  The notation is the VFS's own for i_rwsem: a child
+ * nests one level under its parent, so a chain's level is its parent's,
+ * plus one when the parent is an inode.  Set where the core links a
+ * chain under its parent, the one place the parent is known, and read
+ * by every acquire in hammer2_os.h.  Lockdep's subclasses stop at
+ * eight, so a directory nine deep is reported as a recursion here; the
+ * VFS holds only a parent and a child at once and so does the core's
+ * lookup, which is what keeps the level small in practice.
+ */
+void
+hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
+{
+	hammer2_chain_t *pchain = container_of(parent, hammer2_chain_t, lock);
+	unsigned int level = parent->subclass;
+
+	if (pchain->bref.type == HAMMER2_BREF_TYPE_INODE)
+		level++;
+	level = min(level, (unsigned int)MAX_LOCKDEP_SUBCLASSES - 1);
+	child->subclass = level;
+
+	/*
+	 * The core spinlock nests the other way, child before parent, and
+	 * it is classed by type and keybits as the chain lock is, since a
+	 * dirent and the indirect block above it share a level.  It is
+	 * classed here rather than at init because hammer2_chain_init()
+	 * initializes the spinlock after the lock, and only an initialized
+	 * lock keeps a class.
+	 */
+#ifdef CONFIG_LOCKDEP
+	{
+		hammer2_chain_t *cchain = container_of(child, hammer2_chain_t, lock);
+		unsigned int kb, t = hammer2_chain_key_index(cchain, &kb);
+
+		lockdep_set_class_and_name(&cchain->core.spin.lock,
+		    &hammer2_core_keys[t][kb], hammer2_core_key_names[t]);
+		cchain->core.spin.subclass = MAX_LOCKDEP_SUBCLASSES - 1 - level;
+	}
+#endif
+}
+
+/*
+ * Linux: an inode lock nests at the level of the inode's own chain, so
+ * a directory's inode lock sits one level above its entry's, the same
+ * shape as the chains beneath them.  Read from the cluster focus, which
+ * hammer2_inode_repoint() has set by the time hammer2_inode_get()
+ * initializes the lock; an inode created with no chain yet, the PFS
+ * root in hammer2_pfsalloc(), is given its level again once its chain
+ * is known.
+ */
+void
+hammer2_inode_lockdep_nest(hammer2_mtx_t *p)
+{
+	hammer2_inode_t *ip = container_of(p, hammer2_inode_t, lock);
+	hammer2_chain_t *chain = ip->cluster.focus;
+
+	p->subclass = chain ? chain->lock.subclass : 0;
 }
 
 struct file_system_type hammer2_fs_type = {
