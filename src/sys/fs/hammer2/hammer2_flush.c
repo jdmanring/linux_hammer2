@@ -1094,8 +1094,8 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 	hammer2_chain_t *chain;
 	hammer2_inode_t *ip;
 	hammer2_devvp_t *e;
-	hammer2_io_t *dio;			/* XXX Linux: was struct buf */
-	hammer2_off_t lbase;			/* XXX Linux: was daddr_t blkno */
+	struct folio *folio;			/* XXX Linux: was struct buf */
+	loff_t blkoff;				/* XXX Linux: was daddr_t blkno */
 	int flush_error = 0, fsync_error = 0, total_error = 0, vol_error = 0;
 	int j, xflags, ispfsroot = 0;
 
@@ -1282,22 +1282,39 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 		    j, (long long)hmp->volsync.volu_size);
 
 		/*
-		 * XXX Linux: the volume header goes through the DIO layer
-		 * rather than the buffer cache, since that layer is where
-		 * this port keeps the device's pages.  getblk() with no read
-		 * is an optimization the DIO layer does not export, so this
-		 * reads the header block before overwriting all of it; the
-		 * write is 64 KiB either way.
+		 * XXX Linux: the volume header is written through the block
+		 * device's page cache directly, the mapping the volume
+		 * headers were read from at mount, and not through the DIO
+		 * layer: hammer2_io_alloc() refuses a physical base of zero,
+		 * which is where header 0 lives, and header 0 is the one
+		 * written on every volume under two zones and on every
+		 * fourth flush above that.  The first flush on a 2 GiB
+		 * image panicked there.  bwrite() is synchronous, so this
+		 * waits for the write.  The folio covers the whole header
+		 * because the mapping's minimum folio order is the block's.
 		 */
-		lbase = ((hammer2_off_t)j * HAMMER2_ZONE_BYTES64) |
-		    HAMMER2_PBUFRADIX;
-		vol_error = hammer2_io_bread(hmp, HAMMER2_BREF_TYPE_VOLUME,
-		    lbase, HAMMER2_VOLUME_BYTES, &dio);
+		blkoff = (loff_t)j * HAMMER2_ZONE_BYTES64;
+		folio = read_mapping_folio(hmp->bdev_file->f_mapping,
+		    blkoff >> PAGE_SHIFT, hmp->bdev_file);
 		atomic_clear_int(&hmp->vchain.flags, HAMMER2_CHAIN_VOLUMESYNC);
-		if (vol_error == 0) {
-			bcopy(&hmp->volsync, hammer2_io_data(dio, lbase),
+		if (IS_ERR(folio)) {
+			vol_error = -PTR_ERR(folio);
+		} else if (folio_size(folio) < HAMMER2_VOLUME_BYTES) {
+			WARN_ONCE(1, "hammer2: volume header %d: folio %zu < %d\n",
+			    j, folio_size(folio), (int)HAMMER2_VOLUME_BYTES);
+			folio_put(folio);
+			vol_error = EIO;
+		} else {
+			folio_lock(folio);
+			memcpy(folio_address(folio) +
+			    offset_in_folio(folio, blkoff), &hmp->volsync,
 			    HAMMER2_VOLUME_BYTES);
-			vol_error = hammer2_io_bwrite(&dio);
+			folio_mark_dirty(folio);
+			folio_unlock(folio);
+			folio_put(folio);
+			vol_error = -filemap_write_and_wait_range(
+			    hmp->bdev_file->f_mapping, blkoff,
+			    blkoff + HAMMER2_VOLUME_BYTES - 1);
 		}
 		hmp->volhdrno = j;
 		if (vol_error)
