@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-mounts%20and%20lists%2C%20read--only-yellow.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-mounts%20read--write%2C%20unreleased-yellow.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -25,15 +25,19 @@ marked in place, and an OS shim makes it compile. Same file
 names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 
-**It mounts a `makefs` image read-only, lists it, reads it, follows its
-symlinks, and refuses media whose checksums do not match.** Behind a
-build flag, it writes: every write operation has been run on scratch
-media and read back by DragonFly, in both directions of a round trip. `find`
+**It mounts a HAMMER2 volume read-write, lists it, reads it, follows its
+symlinks, writes to it, and refuses media whose checksums do not
+match.** Every write operation has been run on scratch media and read
+back by DragonFly, in both directions of a round trip, and the crash
+matrix, a writer killed, a kernel panicked, the power cut and a volume
+header torn, leaves media that this port and the FreeBSD port both
+recover to the same tree. `find`
 walks the whole tree and every file compares byte for byte against the
 tree it was made from, at 511 bytes, at 512, at one page, at one 64 KiB
 block and at 200 KB, on images written with LZ4 and with ZLIB compression,
-and on media created and written by DragonFly itself. Nothing can be
-written. See
+and on media created and written by DragonFly itself. Nothing is
+released: no tag exists, and the media it has written to are scratch
+copies on a guest. See
 [doc/README.status.md](doc/README.status.md) for exactly what exists and
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of

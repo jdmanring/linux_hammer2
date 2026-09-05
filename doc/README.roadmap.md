@@ -36,8 +36,10 @@ DragonFly off after 82 flushes and both recoveries agree on the result.
 Along the way the write path found nine defects the read path could
 not have, seven of them lockdep's, and one read defect of its own:
 readahead handing the read path a folio of two blocks. All are fixed
-and recorded in `README.status.md`. The shipped module still refuses a
-read-write mount, and lifting that is the maintainer's decision.
+and recorded in `README.status.md`. The crash matrix ran, sixteen rows
+across kill, panic, power and a torn header on media both ports wrote,
+every one recovered on both sides, and the read-write refusal that
+stood since 0.3 is lifted on that evidence.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile`
@@ -63,8 +65,8 @@ invokes the kernel's build system, so running `make` is that act.
    recovery of a copy; `doc/README.status.md` carries it. The cut does
    not produce the lagging freemap the carried replay is for, so the
    script's fourth stage makes that header on purpose and the replay
-   has run on it. Lifting the refusal in the shipped module is the
-   maintainer's decision.
+   has run on it. The crash matrix followed, and the refusal in the
+   shipped module is lifted.
 4. The fuzzing corpus is `script/fuzz-mount.sh`, a generator over a
    small seed volume rather than the F3 images, whose 2 GiB hold a few
    hundred KiB of blocks; `doc/README.status.md` carries its runs.
@@ -122,8 +124,8 @@ are the contract, and a milestone is met when all of them are.
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
 | 0.3 | H1 | Module builds, loads and unloads | met. Builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1; kmemleak reports no unreferenced object across a mount, unmount and unload; the mount path asks the page cache for a 64 KiB folio and refuses by name, with `HAMMER2_FOLIO_CONTROL` driving the refusal; and lockdep, every lock carrying a class and a nesting level since 0.4.3, stays enabled across mount, a 28210-path walk, two thousand reads and unmount |
 | 0.4 | H1 | Read-only mount of DragonFly-written media | met. Criterion 1: hash, size, block count, symlink target, mode, link count, owner, group, inode number and statfs compared against what DragonFly reported, hard-link identity included. Criterion 2: the installed DragonFly root read cold, 28209 rows identical between this reader and Kusumi's FreeBSD port. Criterion 3: PFS roots mountable by label, `f7` carrying two. Criterion 4: a corrupted data block refused on read with `EIO` and a corrupted volume header refused at mount, each with `fsck_hammer2`'s verdict recorded first. Criterion 5: clean unmount with kmemleak empty, lockdep enabled throughout since 0.4.3. Criterion 6: `f1`'s tree written by the kernel as `f12`, the two volumes identical down to compression, check method and blockref topology, differing only in two inode numbers where allocation order shows |
-| 0.5 | H2 | Write path, verified on DragonFly | not started |
-| 0.6 | H3 | Crash recovery | not started |
+| 0.5 | H2 | Write path, verified on DragonFly | met. Every operation in the list is carried and read back by DragonFly; F4 ran both ways on a volume formatted here; the flush order is taken from the block tracepoints with the header last; 200 mutated images through the mount path with no report; the interrupted flush recovered on both sides, and the freemap replay driven on a header made to lag |
+| 0.6 | H3 | Crash recovery | met. Kill, panic, power and torn header, twice each, on media the FreeBSD port wrote and on media this port wrote: every image mounted and recovered on both ports, every file readable, `fsck_hammer2` clean after each recovery, and each cell's runs in agreement |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | waits on the storage model |
 | 0.8 | H5 | PFS as storage domains | not started |
 | 0.9 | H6 | Nix-scale hardening | not started |
@@ -146,8 +148,8 @@ the column first.
 | F1 | six trees of known shape: empty, flat, deep, sizes at each block-size boundary, links, names at the length limit | `makefs -t hammer2` | 0.4 | generator run, output verified through `hammer2-fuse` against the source-tree manifest |
 | F2 | the same trees from a DragonFly kernel, plus two PFS roots, a snapshot after modification, a tree after bulk-free, deleted files held by a snapshot | DragonFly 6.4.2 in a guest | 0.4, and the F1-against-F2 comparison | one image: a guest's installed root read cold, 28,171 inodes, `fsck_hammer2` clean. The rest needs the guest booted |
 | F3 | F2 images with metadata deliberately damaged, with `fsck_hammer2`'s verdict on each recorded first | a script over F2 | 0.4 and 0.6 | unwritten |
-| F4 | a tree written by this port, mounted and verified on DragonFly, then the reverse | this port and DragonFly | 0.5 | needs 0.5 |
-| F5 | images captured mid-write under the crash matrix, calibrated first against the FreeBSD port | a crash harness in QEMU | 0.6 | needs 0.5 |
+| F4 | a tree written by this port, mounted and verified on DragonFly, then the reverse | this port and DragonFly | 0.5 | `script/f4-roundtrip.sh`, run both ways on a volume formatted here |
+| F5 | images captured mid-write under the crash matrix, calibrated first against the FreeBSD port | a crash harness in QEMU | 0.6 | `script/crash-matrix.sh` makes them per run; sixteen recorded in `README.status.md`, none kept |
 | F6 | a `makefs` image of a real Nix closure | `makefs -t hammer2` | 0.9 | needs a build host's closure |
 
 Images are never committed, and cannot be. `makefs -t hammer2` writes 8 GiB
@@ -372,8 +374,12 @@ cannot be made to repeat is listed with its repeat count and never reported
 green; if the matrix cannot be made deterministic at all, the milestone is
 claimed only over the cells that do repeat.
 
-Gate: the crash matrix harness, unwritten. Depends on 0.5 and a FreeBSD guest
-for the calibration.
+Gate: `script/crash-matrix.sh`, which runs the four cells twice each, the
+FreeBSD port writing first, and reports a cell green only when its runs
+agree. It ran 2026-09-05 over sixteen rows with both recoveries clean on
+every one; `doc/README.status.md` carries the table, and the torn cell's
+verdict from `fsck_hammer2`, which reports a torn header rather than
+skipping it as the mounts do, is recorded there as the expected verdict.
 
 ### 0.7 Snapshots and checkpoints behind the storage model's adapter
 

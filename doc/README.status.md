@@ -7,10 +7,12 @@ made from, across the sizes the code branches on, and so does every file
 on media DragonFly itself created and wrote, including the DragonFly
 guest's own installed root. LZ4 and ZLIB blocks decode, symlinks resolve,
 a block whose check code does not match is refused on read, and a volume
-header that fails its crc is not mounted. The shipped module writes
-nothing; behind a build flag, every write operation, from a byte
-written to a directory renamed, has been read back and checked by
-DragonFly.
+header that fails its crc is not mounted. It mounts read-write and
+every write operation, from a byte written to a directory renamed, has
+been read back and checked by DragonFly; a writer killed, a kernel
+panicked, the power cut and a header torn each left a volume both this
+port and the FreeBSD port recovered, and the refusal that stood on the
+read-write mount from 0.3 is gone.
 Getting here found and fixed two defects that no amount of compiling would
 have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
 with: if a claim here is stale, it is a defect.
@@ -552,9 +554,9 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2630 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2606 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1204 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1197 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1018 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -1192,10 +1194,123 @@ clean. That is the replay running end to end on the case it exists
 for, and the deferral at the read-write refusal, which named exactly
 this, now names the decision that remains.
 
-Everything the write side has is now written, reached only in the
-`HAMMER2_RW_EXPERIMENT` build; the shipped module still refuses the
-read-write mount, and lifting that is a decision for the maintainer now
-that the fuzzing corpus, the write trace and this fixture exist.
+Everything the write side has was written by this point, reached only
+in the `HAMMER2_RW_EXPERIMENT` build, and the shipped module still
+refused the read-write mount. The crash matrix in the next section is
+what lifted it.
+
+## The crash matrix, calibrated against the FreeBSD port
+
+0.6 asks for four ways of interrupting a writer, each leaving a volume
+that mounts, recovers to a committed state and passes `fsck_hammer2`
+with the same verdict a working port gets, and `script/crash-matrix.sh`
+runs them. The writer is the same loop as the cut-flush fixture, files
+of 4 to 80 KiB and a `last` marker with a `sync` every two hundred, on
+an 8 GiB volume `newfs_hammer2` made on the host so that all four
+volume header zones exist. After twenty seconds the cell happens: the
+writing process is killed with `SIGKILL` and the volume unmounted
+(kill), the guest kernel is made to panic, through `sysrq` here and
+`debug.kdb.panic` on FreeBSD (panic), the host destroys the domain
+(power), or the host destroys the domain and then zeroes the second
+32 KiB of the newest valid header, which is what a 64 KiB header write
+that reached the media in part looks like (torn). The cut-off image is
+copied and each copy recovered separately: this port mounts one
+read-write, reads every file, writes one more and syncs; Kusumi's FreeBSD port, v1.2.13 on the `freebsd15` guest at
+FreeBSD 15.1, does the same to the other and runs its own
+`fsck_hammer2`; the host's `fsck_hammer2` from hammer2-utils judges the
+cut-off image and both results. The FreeBSD port wrote every cell first,
+so what a working port leaves behind and recovers was on record before
+this port was judged against it, and then this port wrote the same
+cells. Every cell ran twice, and a cell is green only when both runs
+gave the same verdicts.
+
+Twenty rows, recorded 2026-09-05, sixteen from the first full run and
+four from a second run of the torn cell alone, the header column being the
+`mirror_tid` of the newest valid header at the cut and the entry count
+what both recoveries listed under `crash/`, which agreed in every row:
+
+| writer | cell | run | header at cut | entries, `last` | host `fsck_hammer2` on the cut-off image | this port's recovery | FreeBSD's recovery |
+|---|---|---|---|---|---|---|---|
+| FreeBSD | kill | 1 | `0x35` | 7211, 7208 | clean | all readable, wrote, unmounted, `debug_locks` 1, no report | all readable, wrote, unmounted, fsck clean |
+| FreeBSD | kill | 2 | `0x3a` | 8259, 8256 | clean | same | same |
+| FreeBSD | panic | 1 | `0x31` | 6601, 6599 | clean | same | same |
+| FreeBSD | panic | 2 | `0x32` | 6801, 6799 | clean | same | same |
+| FreeBSD | power | 1 | `0x2f` | 6201, 6199 | clean | same | same |
+| FreeBSD | power | 2 | `0x32` | 6801, 6799 | clean | same | same |
+| FreeBSD | torn | 1 | `0x33` in zone 3 torn, `0x32` newest valid | 6801, 6799 | reports zone 3, see below | same | same |
+| FreeBSD | torn | 2 | `0x38` in zone 0 torn, `0x37` newest valid | 7801, 7799 | reports zone 0 | same | same |
+| FreeBSD | torn | 3 | `0x36` in zone 2 torn, `0x35` newest valid | 7401, 7399 | reports zone 2 | same | same |
+| FreeBSD | torn | 4 | `0x2f` in zone 3 torn, `0x2e` newest valid | 6001, 5999 | reports zone 3 | same | same |
+| this port | kill | 1 | `0x27` | 4560, empty | clean | same | same |
+| this port | kill | 2 | `0x26` | 4336, 4333 | clean | same | same |
+| this port | panic | 1 | `0x26` | 4401, 4399 | clean | same | same |
+| this port | panic | 2 | `0x24` | 4001, 3999 | clean | same | same |
+| this port | power | 1 | `0x25` | 4201, 4199 | clean | same | same |
+| this port | power | 2 | `0x26` | 4401, 4399 | clean | same | same |
+| this port | torn | 1 | `0x25` in zone 1 torn, `0x24` newest valid | 4001, 3999 | reports zone 1 | same | same |
+| this port | torn | 2 | `0x20` in zone 0 torn, `0x1f` newest valid | 3001, 2999 | reports zone 0 | same | same |
+| this port | torn | 3 | `0x25` in zone 1 torn, `0x24` newest valid | 4001, 3999 | reports zone 1 | same | same |
+| this port | torn | 4 | `0x25` in zone 1 torn, `0x24` newest valid | 4001, 3999 | reports zone 1 | same | same |
+
+The host's `fsck_hammer2` after each of the 40 recoveries was clean, and
+the summary found every cell's runs in agreement. Three things in
+the table are worth reading rather than counting.
+
+The entry counts of the panic, power and torn rows end in 01 with a
+`last` two below, because the writer syncs after every two hundredth
+file and those cuts land between one sync's header write and the next,
+so the volume holds what the last flush covered and nothing the panic
+or the power loss interrupted. The kill rows do not, because that cell
+kills the process and then unmounts, and an unmount flushes, so the
+volume holds everything written up to the signal: 7211 entries with
+`last` 7208 is a writer killed after its 7210th file and before the
+marker that follows it, and the first kill of this port's writer, 4560
+entries and an empty `last`, is one killed with the marker opened and
+truncated and not yet written. Both recoveries read the same names in
+every row, and the second run of that cell, killed at a different
+instant, has the shape of the other three.
+
+The torn cell is where the two checkers part company with the two
+mounts, and the harness had to learn the difference. Both kernel mounts
+skip a header whose CRC fails and take the newest that passes, so the
+recoveries above read the volume as of the previous flush with nothing
+lost that flush covered: 6801 entries under a torn `0x33`, which the
+valid `0x32` header references in full. `fsck_hammer2`, DragonFly's and
+the Rust port of it alike, chooses its zone by `mirror_tid` before it
+checks the CRC, reports `Bad volume header CRC` on that zone and stops,
+exit 1; run with `-f` it scans the three intact zones clean and exits 0
+with the report still printed. That is the checker doing its job, a
+torn header is damage, and the harness records the cell as green when
+the report names exactly the zone that was torn and both recoveries and
+the checker after them are clean. It was first written to expect a
+clean verdict on the cut-off image, and the first run's four torn rows
+carried `FAIL` in that column on a result that was correct; runs 3 and
+4 of each torn cell are the second run of that cell alone, with the
+expectation corrected, and the harness reported it with no failure.
+
+The headers rotate through the four zones, one per flush, so which zone
+the torn cell destroys depends on how many flushes the writer reached,
+and the eight torn rows above hit zones 3, 0, 2, 3, 1, 0, 1 and 1. A 2 GiB image
+has one zone and the cell would leave nothing to fall back to, which is
+why the volume is 8 GiB and why the harness prints every valid header's
+tid at the cut.
+
+The matrix is what the deferral at the read-write refusal was waiting
+for after the interrupted flush, and it finds nothing the recovery gets
+wrong on media either port wrote. So the refusal is gone: the shipped
+module mounts read-write, runs the carried recovery on the way, and the
+`HAMMER2_RW_EXPERIMENT` build flag that lifted the refusal for every
+measurement from the first read-write mount to this matrix is retired
+with it. What stays refused is the remount from read-only to
+read-write, which upstream makes by reopening the volumes and running
+the recovery a second time in `hammer2_remount_impl()`, a path this
+port has not carried; the ledger below names it. The first mount of
+the module built without the flag, on the image this port had
+recovered in the last torn row: mounted read-write with `rw` in
+`/proc/mounts`, a file written and synced, unmounted; mounted `ro`,
+`mount -o remount,rw` refused with `EROFS` and the mount still `ro`,
+the file read back, unmounted; `debug_locks` 1, no report, `rmmod` 0,
+and the host's `fsck_hammer2` clean afterwards.
 
 ## The folio the page cache can hold, asked at mount
 
@@ -1345,10 +1460,9 @@ against the source is the same shape as an empty one.
 |---|---|---|
 | `hammer2_os.h`, at `hpanic` | `DEFER(the VFS layer lands, giving a super_block to mark)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
-| `hammer2_vfsops.c`, at three sites: the read-write refusal in `hammer2_get_tree()`, `hammer2_reconfigure()`, and the recovery call before `hammer2_update_pmps()` | `DEFER(the maintainer lifts the read-write refusal)` | upstream's `hammer2_recovery()`, `hammer2_recovery_scan()` and `hammer2_fixup_pfses()` are carried, called where upstream calls them, and have run in the `HAMMER2_RW_EXPERIMENT` build: on the image DragonFly was cut off writing, and on a copy whose header was rewritten so `freemap_tid` lagged `mirror_tid` by four, where the replay announced `freemap recovery` over those four transactions and both `fsck_hammer2` verdicts after it were clean (`script/cut-flush.sh`). Every write operation exists behind the same flag. The shipped build still returns `EROFS` before the device is opened and refuses the remount; lifting both is a decision about what to offer everyone, and the maintainer's |
+| `hammer2_vfsops.c`, at `hammer2_reconfigure()` | `DEFER(the remount path, hammer2_remount_impl, is carried)` | the read-only to read-write remount returns `EROFS`. Upstream's `hammer2_remount_impl()` reopens each volume for writing and runs `hammer2_recovery()` and `hammer2_fixup_pfses()` again on that transition before clearing `rdonly`, and it is not carried; the mount path's own call to those two is, and has run across the interrupted flush and the crash matrix, so a mount made read-write from the start recovers and a remount that skipped it is refused rather than allowed to reach the same state with nothing replayed. The read-write mount refusal that stood here from 0.3 to 0.6, and the `HAMMER2_RW_EXPERIMENT` flag that lifted it for measurement, left when the matrix ran |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(->writepages lands: 0.5)` | the write half of the strategy XOP is carried, upstream's body with the buffer replaced by a folio, and nothing starts it yet: the file mapping's folio order, `->write_begin`, `->write_end`, dirty tracking and `->writepages` are the write path's Linux half, and the folio must cover a whole logical block, which the handler refuses rather than pads |
-| `hammer2_vnops.c`, at `hammer2_file_aops` | `DEFER(the write path lands: 0.5)` | every operation the write side has, `->write_iter` through `->rename` and `->link`, reached only in the `HAMMER2_RW_EXPERIMENT` build until the interrupted-flush fixture and the write trace the roadmap asks for are in. There is no `->invalidate_folio` because no folio carries private data |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
 | `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |
@@ -1392,7 +1506,7 @@ against the FreeBSD port at
 | `hammer2_inode.c` | 28 | 6 | 22 |
 | `hammer2_vfsops.c` | 35 | 7 | 28 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
-| `hammer2_vnops.c` | 1 | 0 | 1 |
+| `hammer2_vnops.c` | 0 | 0 | 0 |
 | `hammer2.h` | 9 | 3 | 6 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
@@ -1403,19 +1517,19 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and twenty-nine are this port's, the right-hand column
-summed, and they fall in thirteen files: twenty-eight in
+One hundred and twenty-eight are this port's, the right-hand column
+summed, and they fall in twelve files: twenty-eight in
 `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, nineteen each in `hammer2_ondisk.c` and
 `hammer2_strategy.c`, twelve in `hammer2_chain.c`, seven in
 `hammer2_subr.c`, six in `hammer2.h`, five each in `hammer2_os.h` and
 `hammer2_flush.c`, two each in `hammer2_io.c` and `hammer2_xops.c`,
-and one each in `hammer2_vnops.c` and `hammer2_disk.h`. That is the
-whole of them, and
+and one in `hammer2_disk.h`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the
 column summed to more, so the sum was recomputed from the table on
-2026-09-04 and again on 2026-09-05.
+2026-09-04 and twice on 2026-09-05, the second time when the mark in
+`hammer2_vnops.c` left with the read-write refusal it described.
 
 Four of those nine files are then walked mark by mark below:
 `hammer2_ondisk.c`, `hammer2_vfsops.c`, and the two files this port wrote

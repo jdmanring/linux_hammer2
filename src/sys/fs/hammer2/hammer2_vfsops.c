@@ -707,40 +707,17 @@ hammer2_get_tree(struct fs_context *fc)
 		return (-EINVAL);	/* Linux: the VFS half is negative */
 
 	/*
-	 * DEFER(the maintainer lifts the read-write refusal): refuse a
-	 * read-write mount in the shipped build.  Upstream replays an
-	 * interrupted flush at mount time, and that code is carried, in
-	 * hammer2_recovery() and hammer2_fixup_pfses() below.  It has run,
-	 * in the HAMMER2_RW_EXPERIMENT build: on an image DragonFly was
-	 * cut off writing, and on one whose header was rewritten so the
-	 * freemap lagged, where it announced the replay and both checkers
-	 * accepted the result (script/cut-flush.sh).  A read-only mount is
-	 * refused nothing, because the recovery upstream runs is
-	 * conditional on the mount being read-write in the first place.
-	 * Every write operation exists behind the same flag; offering a
-	 * writable mount to everyone is the maintainer's call.
-	 *
-	 * The refusal sits here rather than at the recovery site because
-	 * that site is reached only after the device is open and the
-	 * super-root is read.  Refusing before either has happened
-	 * refuses the operation; refusing there would unwind one.
-	 * hammer2_reconfigure() covers the remount.
+	 * A read-write mount runs upstream's flush recovery below, in
+	 * hammer2_recovery() and hammer2_fixup_pfses(), which the shipped
+	 * module refused from 0.3 until the recovery had been measured: on
+	 * an image DragonFly was cut off writing, on a header rewritten so
+	 * the freemap lagged (script/cut-flush.sh), and across the 0.6
+	 * crash matrix on media both this port and the FreeBSD port wrote
+	 * (script/crash-matrix.sh).  A read-only mount runs none of it,
+	 * upstream making the recovery conditional on the mount being
+	 * writable, and hammer2_reconfigure() refuses the remount that
+	 * would reach the writable state without it.
 	 */
-#ifndef HAMMER2_RW_EXPERIMENT
-	if (!rdonly) {
-		hprintf("read-write mount refused, flush recovery has never been exercised, mount -o ro\n");
-		return (-EROFS);	/* Linux: the VFS half is negative */
-	}
-#else
-	/*
-	 * Linux: the measurement build.  make HAMMER2_RW_EXPERIMENT=1 lifts
-	 * the refusal so a read-write mount of a scratch copy can be
-	 * measured, and the image compared byte for byte afterwards; the
-	 * module it produces is never installed, like the folio control.
-	 */
-	if (!rdonly)
-		hprintf("read-write mount allowed by HAMMER2_RW_EXPERIMENT, scratch media only\n");
-#endif
 
 	/*
 	 * XXX Linux: FreeBSD copies the device string into an MNAMELEN
@@ -1075,16 +1052,14 @@ next_hmp:
 		/* Leave spmp->iroot with one ref. */
 
 		/*
-		 * DEFER(the maintainer lifts the read-write refusal): upstream
-		 * runs this on a read-write mount to replay an interrupted
-		 * flush, and it is carried above.  It WRITES, so it is
-		 * reached only when the mount is read-write, which the
-		 * shipped build refuses in hammer2_get_tree() before the
-		 * device is opened, and hammer2_reconfigure() refuses the
-		 * remount that would arrive at the same state sideways.  The
-		 * experimental build reaches it, and has: script/cut-flush.sh
-		 * records the replay running on a cut-off image and on a
-		 * header made to lag.
+		 * Upstream runs this on a read-write mount to replay an
+		 * interrupted flush, and it is carried above.  It WRITES, so
+		 * it is reached only when the mount is read-write;
+		 * hammer2_reconfigure() refuses the remount that would arrive
+		 * at the same state sideways without running it.
+		 * script/cut-flush.sh records the replay running on a cut-off
+		 * image and on a header made to lag, and script/crash-matrix.sh
+		 * the recovery across kill, panic, power loss and a torn header.
 		 *
 		 * The teardown a few lines below flushes vchain and fchain
 		 * when either carries a HAMMER2_CHAIN_FLUSH_MASK bit, and
@@ -1746,9 +1721,10 @@ static const struct super_operations hammer2_sops = {
 };
 
 /*
- * DEFER(the maintainer lifts the read-write refusal): the read-write refusal in
- * hammer2_get_tree() covers the mount, and this covers the remount that
- * would otherwise walk around it.
+ * DEFER(the remount path, hammer2_remount_impl, is carried): the
+ * read-only to read-write remount is refused, because the transition
+ * upstream makes there is not carried and a remount without it would
+ * reach a writable superblock with the flush recovery never run.
  *
  * A NULL ->reconfigure does NOT make the VFS refuse a remount.
  * reconfigure_super() calls the operation only when it is present and
@@ -1774,7 +1750,7 @@ hammer2_reconfigure(struct fs_context *fc)
 
 	if ((fc->sb_flags_mask & SB_RDONLY) && !(fc->sb_flags & SB_RDONLY) &&
 	    sb_rdonly(sb)) {
-		hprintf("read-write remount refused, flush recovery has never been exercised\n");
+		hprintf("read-write remount refused, remount with the volume unmounted\n");
 		return (-EROFS);	/* Linux: the VFS half is negative */
 	}
 

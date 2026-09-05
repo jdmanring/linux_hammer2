@@ -9,8 +9,7 @@
 # both sides comes from the writer, so neither reader is compared against
 # itself.
 #
-# This needs the experimental build: the shipped module refuses a read-write
-# mount. It boots each guest in turn, one at a time, and shuts each down.
+# It boots each guest in turn, one at a time, and shuts each down.
 # EXIT 2 IS COULD-NOT-RUN AND IS NEVER A PASS, as in test-fixtures.sh.
 set -u
 cd "$(dirname "$0")/.." || exit 2
@@ -41,8 +40,8 @@ done
 	echo "f4: COULD-NOT-RUN: a guest is running: $($VIRSH list --name | tr '\n' ' ')" >&2; exit 2; }
 
 make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" HAMMER2_RW_EXPERIMENT=1 >/dev/null 2>&1 || {
-	echo "f4: COULD-NOT-RUN: experimental module did not build against $KDIR" >&2; exit 2; }
+make -s KDIR="$KDIR" >/dev/null 2>&1 || {
+	echo "f4: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 
 rm -f "$IMG"

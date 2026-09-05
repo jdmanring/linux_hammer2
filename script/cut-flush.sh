@@ -3,7 +3,7 @@
 # DragonFly writes small files continuously to a copy of a fixture, syncing
 # every two hundred; after SECONDS the host destroys the domain, which is
 # the power going out as far as the guest is concerned. The cut-off image
-# is copied. This port mounts one copy read-write in the experimental build,
+# is copied. This port mounts one copy read-write,
 # so the carried hammer2_recovery() runs, reads every file, writes one more
 # and syncs; DragonFly then mounts that result, and recovers the other copy
 # itself. Both trees and every fsck_hammer2 verdict are printed.
@@ -49,8 +49,8 @@ done
 	echo "cut: COULD-NOT-RUN: a guest is running: $($VIRSH list --name | tr '\n' ' ')" >&2; exit 2; }
 
 make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" HAMMER2_RW_EXPERIMENT=1 >/dev/null 2>&1 || {
-	echo "cut: COULD-NOT-RUN: experimental module did not build against $KDIR" >&2; exit 2; }
+make -s KDIR="$KDIR" >/dev/null 2>&1 || {
+	echo "cut: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 
 rm -f "$IMG" "$IMG2"

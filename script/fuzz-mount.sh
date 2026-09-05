@@ -11,8 +11,8 @@
 # without keeping the images.
 #
 # THE SEED IS NOT MADE HERE. It is a small volume formatted by newfs_hammer2
-# and populated through the write path, which needs the experimental build;
-# doc/README.testing.md has the procedure. The mutator samples until it hits
+# and populated through the write path; doc/README.testing.md has the
+# procedure. The mutator samples until it hits
 # a byte that is not zero, so a 64 MiB image that is mostly empty does not
 # absorb the hits.
 #

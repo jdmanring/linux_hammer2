@@ -531,14 +531,14 @@ answer ssh, because most machines have none of these and CI has none at
 all. A gate that passed there would make the whole read path look covered
 by CI when nothing ran.
 
-The module has two build-time controls of its own, neither ever
-installed. `make HAMMER2_FOLIO_CONTROL=1` produces a module whose
-mount-time folio-size check asks for twice what the kernel offers, so it
-must refuse every mount and name both numbers. `make
-HAMMER2_RW_EXPERIMENT=1` produces one with the read-write mount refusal
-lifted, for mounting a scratch copy read-write and comparing the image
-byte for byte afterwards; `README.status.md` records the first such run.
-Build, load on the guest, run, read `dmesg`.
+The module has one build-time control of its own, never installed.
+`make HAMMER2_FOLIO_CONTROL=1` produces a module whose mount-time
+folio-size check asks for twice what the kernel offers, so it must
+refuse every mount and name both numbers. Build, load on the guest,
+run, read `dmesg`. A second control, `HAMMER2_RW_EXPERIMENT`, lifted
+the read-write mount refusal for measurement from the first read-write
+mount to the crash matrix, and retired with the refusal; the runs
+`README.status.md` records under that name were made with it.
 
 One of those is worth its own line. `KDIR` defaults to the host's own
 build tree, so the first pre-push run of this gate built for the host and
@@ -630,9 +630,7 @@ ran.
 
 ## Writing to a fixture, and reading the write back on DragonFly
 
-The write path runs only in a module built with
-`HAMMER2_RW_EXPERIMENT=1`, which lifts the read-write refusal and is never
-installed. It is exercised on `f13.img`, a byte copy of `f5` made with
+The write path is exercised on `f13.img`, a byte copy of `f5` made with
 `cp` before every run, so the untouched `f5` is the baseline every
 comparison is against:
 
@@ -721,12 +719,12 @@ its counts mean nothing.
 The seed is a small volume, because the mutator samples until it hits a
 byte that is not zero and a 2 GiB fixture is almost entirely zero. It
 is made on the host by hammer2-utils and populated through the write
-path, which needs the experimental build:
+path:
 
     truncate -s 64M /mnt/storage/hammer2-fixtures/fz-seed.img
     newfs_hammer2 -L FUZZ /mnt/storage/hammer2-fixtures/fz-seed.img
-    # on the guest, with the HAMMER2_RW_EXPERIMENT build loaded and the
-    # image attached: mount, create a few directories, files at several
+    # on the guest, with the module loaded and the image attached:
+    # mount, create a few directories, files at several
     # sizes, a symlink and a hard link, sync, unmount
 
 The image is copied under `/var/tmp/hammer2-fuzz` for each mutation,
@@ -752,8 +750,8 @@ guest down when its turn is over. `KDIR` names the kernel tree, and
 `script/cut-flush.sh SECONDS` is the interrupted-flush fixture: DragonFly
 writes small files to a copy of `f5` with a `sync` every two hundred,
 the host destroys the domain after `SECONDS`, and the cut-off image is
-copied. This port mounts one copy read-write in the experimental build,
-which runs the carried `hammer2_recovery()`, reads every file, writes
+copied. This port mounts one copy read-write, which runs the carried
+`hammer2_recovery()`, reads every file, writes
 one more and syncs; DragonFly mounts that result and then recovers the
 other copy itself. The header's two tids are printed at each stage, so
 a run that cut inside the window where `freemap_tid` lags is visible;
@@ -766,6 +764,33 @@ transactions and both checkers are clean afterwards. The checksum
 routine is checked against the stored values before the rewrite, so a
 wrong header layout stops the stage rather than making a corrupt image
 that would be refused for the wrong reason.
+
+`script/crash-matrix.sh SECONDS` is the crash matrix, calibrated against
+Kusumi's FreeBSD port on the `freebsd15` guest. An 8 GiB volume is made
+on the host by `newfs_hammer2`, so all four volume header zones exist, and
+a copy of it is attached to a writer, which mounts it read-write and
+runs the same loop as the cut-flush fixture. After `SECONDS` one of four
+things happens: the writing process is killed and the volume unmounted
+(`kill`), the guest kernel is made to panic through `sysrq` here and
+`debug.kdb.panic` there (`panic`), the host destroys the domain
+(`power`), or it destroys the domain and then zeroes the second half of
+the newest valid header, which is a 64 KiB header write that reached
+the media only in part (`torn`). The cut-off image is judged three
+ways: the host's `fsck_hammer2`, this port mounting one copy
+read-write, reading every file, writing one more and syncing, and the
+FreeBSD port doing the same to the other copy and
+running its own `fsck_hammer2`; the host checks both results again.
+The FreeBSD port writes every cell first, so its recovery of its own
+crash is on record before this port is judged against it, and then
+this port writes the same cells. `H2_CRASH_REPS` runs each cell, two
+by default; the summary reports a cell green only when every run of it
+produced the same verdicts, and names one that did not. The FreeBSD
+guest is reached through the `freebsd` ssh alias as a wheel user with
+passwordless `doas`, and needs the port built from
+`freebsd-hammer2-upstream` and installed; `H2_CRASH_CELLS` and
+`H2_CRASH_WRITERS` narrow a run. The mirror_tid of every valid header
+is printed at the cut, so the torn cell shows which header it destroyed
+and which one the recoveries fell back to.
 
 ## Listing a fixture, and what a clean run does not say
 

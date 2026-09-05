@@ -79,12 +79,6 @@ endif
 ifdef HAMMER2_FOLIO_CONTROL
 ccflags-y += -DHAMMER2_FOLIO_CONTROL
 endif
-# The measurement build for the write path: lifts the read-write mount
-# refusal so a scratch image can be mounted read-write and compared
-# afterwards.  Never install it.
-ifdef HAMMER2_RW_EXPERIMENT
-ccflags-y += -DHAMMER2_RW_EXPERIMENT
-endif
 
 .PHONY: all clean
 

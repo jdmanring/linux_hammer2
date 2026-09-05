@@ -795,10 +795,6 @@ const struct file_operations hammer2_dir_fops = {
  * generic writer, whose ->write_begin and ->write_end below do the per
  * block work.  The mtime and the modify after a successful write are
  * upstream's, from the end of hammer2_write_file().
- *
- * XXX Linux: the mount is refused read-write in the shipped module, so
- * this is reached only under HAMMER2_RW_EXPERIMENT; the VFS refuses the
- * open for writing on a read-only superblock before this is called.
  */
 static ssize_t
 hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
@@ -1167,10 +1163,7 @@ hammer2_writepages(struct address_space *mapping,
 }
 
 /*
- * DEFER(the write path lands: 0.5): every operation is here, reached
- * only in the HAMMER2_RW_EXPERIMENT build until the interrupted-flush
- * fixture and the write trace the roadmap asks for are in.  There is no
- * ->invalidate_folio because no folio carries private data.
+ * There is no ->invalidate_folio because no folio carries private data.
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,
