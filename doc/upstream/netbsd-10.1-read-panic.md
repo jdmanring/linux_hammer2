@@ -76,6 +76,14 @@ lead and not a finding: a `makefs`-written LZ4 image also failed in run
 A while its byte-identical sibling read clean in two runs, and no codec
 theory explains that. The runs isolated the file, not the code path.
 
+## Versions
+
+The port's last commit is v1.2.13 on 2025-08-22, and its tree names no
+NetBSD version. NetBSD 10.1 shipped in December 2024 and NetBSD 11.0 on
+2026-07-30, so 10.1 is the newest release the port could have been
+written against and the one used here. The repository has issues
+disabled, so nothing is recorded there as known.
+
 ## What would help settle it
 
 A read of the same three DragonFly-written images on the NetBSD version

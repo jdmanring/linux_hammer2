@@ -459,6 +459,42 @@ hard-link identity seen from outside the filesystem. Driven the other
 way, one mode altered and one used-blocks figure altered, the gate
 failed each image and printed the diff.
 
+## The same tree written by makefs and by the kernel
+
+0.4's sixth criterion asks for every difference between a `makefs`-written
+volume and a kernel-written one for the same tree shapes. `f1` is the
+five-path tree as Kusumi's `makefs` wrote it; `f12` is the same tree
+copied into a fresh `newfs_hammer2` volume by DragonFly's own kernel,
+with `cp -Rp` from a read-only mount of `f1` on the DragonFly guest. Both
+were then described from DragonFly's side with the same commands, and
+the listing is short:
+
+| what | `f1`, makefs | `f12`, kernel |
+|---|---|---|
+| paths, checksums, modes, owners, link counts | identical | identical |
+| `hammer2 stat`: compression and check method per path | `lz4:default`, `xxhash64` on all five | the same |
+| blockrefs, from `fsck_hammer2` | 14: 8 inode, 1 indirect, 5 dirent, 12 KB | the same |
+| inode numbers | `hello.txt` 1027, `link` 1028 | `hello.txt` 1028, `link` 1027 |
+| volume size and header zones | 8 GiB, four headers, header 1 current | 2 GiB, one header |
+| statfs | 8028160 KiB, 64 used, 5 inodes | 1957888 KiB, 64 used, 5 inodes |
+
+Two inode numbers swap, because `makefs` numbers files in the order it
+walks the source tree and the kernel numbers them in the order `cp`
+creates them, and `link` is created after `hello.txt` by one and before
+it by the other. The size and header rows are the image sizes chosen
+here, not the writers. Nothing else differs, and this module reads both
+with every row of both manifests matching, `f12`'s rows being what
+DragonFly reported. That is the listing: for a tree of small files the
+two writers agree on the format down to the compression and check
+methods and the blockref topology, and disagree only where allocation
+order shows.
+
+One thing the run taught about the instrument. A disk attached to
+DragonFly with libvirt's `--mode readonly` fails a `mount -o ro` with
+`EINVAL`: DragonFly's HAMMER2 opens the device for writing whatever the
+mount asks, so a read-only attachment is refused before the label is
+read. The Linux gate attaches read-only; the DragonFly side cannot.
+
 ## Media altered on purpose, and what refuses it
 
 0.4's fourth criterion is F3: corrupt media detected and refused, or

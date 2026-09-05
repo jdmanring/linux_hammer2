@@ -569,8 +569,10 @@ an artifact of the setup and not a finding about the code.
     KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
-Measured on 2026-09-04: ten images, 41 files, 29 stat rows, 4 statfs
-rows, 1 symlink, one corrupt file refused, one mount refused, 0 failures.
+Measured on 2026-09-04: eleven images, 43 files, 34 stat rows, 5 statfs
+rows, 2 symlinks, one corrupt file refused, one mount refused, 0 failures.
+`f12` is `f1`'s tree written by DragonFly's kernel, for the listing in
+`README.status.md`.
 A `# stat mode nlink uid gid inode relpath` row and a `# statfs size used
 free inodes-used` row carry what DragonFly's own `stat` and `df` reported,
 and `f11` exists to hold hard links, a setuid bit, an owner and a 0750
@@ -611,6 +613,10 @@ from `/dev/mapper/<name>@<label>`, `dmsetup suspend` it, and `fsfreeze -u`
 each mount: the thaw exits 0 on a frozen superblock and fails with
 `EINVAL` on one the freeze never reached. `README.status.md` records the
 result for `f7` with and without the per-mount claim.
+
+Attach without `--mode readonly` on the DragonFly side: its HAMMER2 opens
+the device for writing whatever the mount asks, and a read-only
+attachment fails the mount with `EINVAL`.
 
 For `f6` the same, with the disk attached to the shut-off domain under
 `--config` so no reboot is needed, and `hammer2 setcomp zlib /mnt/h2w`

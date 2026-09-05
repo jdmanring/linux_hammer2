@@ -1,0 +1,14 @@
+# image f12
+# label TEST12
+# writer dragonfly 6.4-RELEASE newfs_hammer2, f1's tree copied in by DragonFly's own kernel
+# blocks 0 dir/deep/file.txt
+# blocks 0 hello.txt
+# link hello.txt link
+# stat 40755 1 1000 0 1024 dir
+# stat 40755 1 1000 0 1025 dir/deep
+# stat 100644 1 1000 0 1026 dir/deep/file.txt
+# stat 100644 1 1000 0 1028 hello.txt
+# stat 120777 1 1000 0 1027 link
+# statfs 1957888 64 1957824 5
+1b385affd7adb5a6283fef292b5df0f7  dir/deep/file.txt
+53a5ddaf4bc7985889604a4db028bd52  hello.txt

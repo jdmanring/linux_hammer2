@@ -116,9 +116,10 @@ vendored-library audit the xxHash header cites in place.
 path; in a comment carried from DragonFly it is the filesystem's own
 abbreviation. The stage is only ever written beside a version number.
 
-**Current version: 0.3.x.** 0.3 was met in full when its third criterion
-closed, so the point releases move to 0.3 from there by the rule
-`CHANGELOG.md` states; the rows before that stay 0.2, being records. The
+**Current version: 0.4.x.** 0.3 was met in full when its third criterion
+closed and 0.4 when its sixth did, so the point releases move with them
+by the rule `CHANGELOG.md` states; the rows before each stay where they
+were, being records. The
 rows in the table below say what
 is done inside each milestone; the numbered criteria under each heading
 are the contract, and a milestone is met when all of them are.
@@ -128,7 +129,7 @@ are the contract, and a milestone is met when all of them are.
 | 0.1 | H1, first slice | Shim and DIO layer type-check | met |
 | 0.2 | H1 | Whole core type-checks, ready to build | met |
 | 0.3 | H1 | Module builds, loads and unloads | builds, loads, registers and unloads at 7.2.3, at a 7.3 merge-window snapshot and at mainline 7.3.0-rc1. kmemleak reports no unreferenced object across a mount, unmount and unload. Lockdep cannot judge this port: every chain lock shares one class, so the first mount reports recursive locking and the instrument disables itself. Criterion 3 is open: the mount path has no `mapping_max_folio_size_supported()` check and no control for it; `hammer2_io_folio_check()` is a runtime backstop, not that check |
-| 0.4 | H1 | Read-only mount of DragonFly-written media | open on one criterion. Met: criterion 1, hash, size, block count, symlink target, mode, link count, owner, group, inode number and statfs all compared against what DragonFly reported, hard-link identity included; criterion 2, the installed DragonFly root read cold, 28209 rows identical between this reader and Kusumi's FreeBSD port; criterion 3, PFS roots mountable by label with `f7` carrying two; criterion 4, a corrupted data block refused on read with `EIO` and a corrupted volume header refused at mount, each with `fsck_hammer2`'s verdict recorded first; criterion 5, clean unmount with kmemleak empty, lockdep blind for the recorded reason. Open: criterion 6, the F1 against F2 listing |
+| 0.4 | H1 | Read-only mount of DragonFly-written media | met. Criterion 1: hash, size, block count, symlink target, mode, link count, owner, group, inode number and statfs compared against what DragonFly reported, hard-link identity included. Criterion 2: the installed DragonFly root read cold, 28209 rows identical between this reader and Kusumi's FreeBSD port. Criterion 3: PFS roots mountable by label, `f7` carrying two. Criterion 4: a corrupted data block refused on read with `EIO` and a corrupted volume header refused at mount, each with `fsck_hammer2`'s verdict recorded first. Criterion 5: clean unmount with kmemleak empty, lockdep blind for the recorded reason. Criterion 6: `f1`'s tree written by the kernel as `f12`, the two volumes identical down to compression, check method and blockref topology, differing only in two inode numbers where allocation order shows |
 | 0.5 | H2 | Write path, verified on DragonFly | not started |
 | 0.6 | H3 | Crash recovery | not started |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | waits on the storage model |
