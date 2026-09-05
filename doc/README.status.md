@@ -430,7 +430,8 @@ workbench session, agrees on the 17 files of `f1`, `f2`, `f3` and `f5` it
 read, and then panicked with a NULL `VOP_STRATEGY` on its first read of
 `f6`'s compressed file, reproducibly, before reading `f4`, `f7` or `f8`.
 That is recorded in `netbsd-port-failure.txt` beside the images as a
-reader that could not finish, and it says nothing about this tree.
+reader that could not finish, and it says nothing about this tree. The
+report for Kusumi is staged in `doc/upstream/netbsd-10.1-read-panic.md`.
 
 Kusumi's OpenBSD port at `a3747df9`, built into a custom kernel on
 OpenBSD 7.9 by the workbench session, read all seven fixtures and `f7`'s

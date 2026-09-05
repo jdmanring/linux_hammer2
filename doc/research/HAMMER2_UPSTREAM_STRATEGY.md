@@ -89,6 +89,13 @@ is made without a public reply.
 
 ## Findings staged for upstream, answered from source rather than asked
 
+A third finding is staged in `../upstream/netbsd-10.1-read-panic.md`: the
+NetBSD port at v1.2.13 panics through a NULL `VOP_STRATEGY` or wedges the
+machine on reading file data on NetBSD 10.1, with a minimal reproducer on
+media the FreeBSD and OpenBSD ports read clean. It was measured rather
+than read from source, and the draft says what it rules out and what it
+does not.
+
 Each is a draft James files, after the hostile audit every filing gets; none
 is a question, because the source answered it. Step 1 above is satisfied
 for both: H0 is complete.
