@@ -723,10 +723,21 @@ hammer2_get_tree(struct fs_context *fc)
 	 * refuses the operation; refusing there would unwind one.
 	 * hammer2_reconfigure() covers the remount.
 	 */
+#ifndef HAMMER2_RW_EXPERIMENT
 	if (!rdonly) {
 		hprintf("read-write mount refused, flush recovery has never been exercised, mount -o ro\n");
 		return (-EROFS);	/* Linux: the VFS half is negative */
 	}
+#else
+	/*
+	 * Linux: the measurement build.  make HAMMER2_RW_EXPERIMENT=1 lifts
+	 * the refusal so a read-write mount of a scratch copy can be
+	 * measured, and the image compared byte for byte afterwards; the
+	 * module it produces is never installed, like the folio control.
+	 */
+	if (!rdonly)
+		hprintf("read-write mount allowed by HAMMER2_RW_EXPERIMENT, scratch media only\n");
+#endif
 
 	/*
 	 * XXX Linux: FreeBSD copies the device string into an MNAMELEN

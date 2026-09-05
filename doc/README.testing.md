@@ -552,11 +552,14 @@ answer ssh, because most machines have none of these and CI has none at
 all. A gate that passed there would make the whole read path look covered
 by CI when nothing ran.
 
-The module has one build-time control of its own: `make
-HAMMER2_FOLIO_CONTROL=1` produces a module whose mount-time folio-size
-check asks for twice what the kernel offers, so it must refuse every
-mount and name both numbers. Build it, load it on the guest, mount any
-fixture, read `dmesg`, and never install it.
+The module has two build-time controls of its own, neither ever
+installed. `make HAMMER2_FOLIO_CONTROL=1` produces a module whose
+mount-time folio-size check asks for twice what the kernel offers, so it
+must refuse every mount and name both numbers. `make
+HAMMER2_RW_EXPERIMENT=1` produces one with the read-write mount refusal
+lifted, for mounting a scratch copy read-write and comparing the image
+byte for byte afterwards; `README.status.md` records the first such run.
+Build, load on the guest, run, read `dmesg`.
 
 One of those is worth its own line. `KDIR` defaults to the host's own
 build tree, so the first pre-push run of this gate built for the host and
