@@ -1939,6 +1939,14 @@ again:
 int
 hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor)
 {
+	/*
+	 * Linux: a read-only mount has nothing to sync, and saying so with
+	 * a WARN printed a stack trace on every unmount and would taint a
+	 * kernel nothing else had.  The floor warns only where it is a
+	 * floor: a mount that could have dirtied something.
+	 */
+	if (pmp->mp == NULL || sb_rdonly(pmp->mp))
+		return (0);
 	WARN_ONCE(1, "hammer2: unmount did not sync, ->sync_fs is not written\n");
 	return (EOPNOTSUPP);		/* Linux: positive, negated at the VFS */
 }
