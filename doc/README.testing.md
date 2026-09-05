@@ -1002,6 +1002,8 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
+| `root-boot.sh` | a boot that never mounted the volume | a second boot against a label the volume does not carry, which stops at the mount and does not reach PID 1 |
+| `root-boot.sh` | a checksum comparison that cannot fail | its first run, where an unanchored `sed` made the two sides unequal by construction |
 | `test-fixtures.sh` | an ioctl that answers with the wrong errno | the recorded results, which caught EOPNOTSUPP where Linux wants ENOTTY on the first run |
 | `test-fixtures.sh` | a scan that returns success having read nothing | the PFS and volume counts, which must be non-zero, and which caught a zeroed capacity |
 | `test-fixtures.sh` | more images than there are target names | 26 manifests with an image beside each, which reports the ceiling rather than attaching over the last |
@@ -1061,6 +1063,43 @@ files describe their own contract in comments, so a check for
 `Castagnoli.*MATCH` matched the comment quoting it and stayed green after
 the `printf` was deleted. That was found by running the control, not by
 reading the gate.
+
+## The volume as a root filesystem, from the tree
+
+`script/root-boot.sh` is the boot as a script. It formats a 4 GiB image
+with `newfs_hammer2`, builds the module, and uses the guest to put a
+static init on the volume and to run two checks the guest is needed for:
+a binary copied onto the volume and executed from it, and a 128 KiB
+file, two of this port's 64 KiB folios, written entirely through a
+shared writable mapping and `msync`ed, then compared on media after
+`drop_caches` and again after a fresh mount. It then boots
+`qemu-system-x86_64` directly, with an initramfs holding the module and
+that same init, which reads `root=` from the kernel command line,
+mounts the volume, moves the mount over `/` and executes `/sbin/init`
+from it. Six lines of the boot's own transcript are required, from the
+module load to PID 1 writing and reading back and remounting read-only.
+
+The control is a second boot against a label the volume does not carry,
+which must fail at the mount and must not reach PID 1. It is placed
+there because every claim the first boot makes rests on that mount, and
+because the boot narrates itself: a check that grepped only for the last
+line would pass against a kernel that mounted nothing.
+
+Its first run failed on a defect in the script rather than in the
+driver. `sed -n 's/^mapped sum //p'` also matches the `mapped sum after
+remount` line, so the first checksum came back as two lines and could
+never equal the second. Both patterns are anchored on the whole line
+now. This is the shape rule 24 names: a matcher that reads more than it
+means, in a comparison that can only fail.
+
+It exits 2 without `qemu-system-x86_64`, `/dev/kvm`, `cpio`,
+`newfs_hammer2`, a kernel image or the fixture directory, and it names
+which. `KDIR` supplies the kernel image by default, so it wants the
+kernel of record and not the host's headers; `H2_BZIMAGE` overrides.
+
+What it does not show is a distribution. Nothing on the volume but the
+init has ever run: no service manager, no package manager, no
+shared-library loader.
 
 ## What was falsified, and when
 
