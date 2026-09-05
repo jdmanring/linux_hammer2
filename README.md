@@ -25,9 +25,9 @@ marked in place, and an OS shim makes it compile. Same file
 names, same shim split, same section order, so a fix found here is legible
 to the other three and can travel.
 
-**It mounts a HAMMER2 volume read-write, lists it, reads it, follows its
+It mounts a HAMMER2 volume read-write, lists it, reads it, follows its
 symlinks, writes to it, and refuses media whose checksums do not
-match.** Every write operation has been run on scratch media and read
+match. Every write operation has been run on scratch media and read
 back by DragonFly, in both directions of a round trip, and the crash
 matrix, a writer killed, a kernel panicked, the power cut and a volume
 header torn, leaves media that this port and the FreeBSD port both

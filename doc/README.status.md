@@ -1312,6 +1312,25 @@ recovered in the last torn row: mounted read-write with `rw` in
 the file read back, unmounted; `debug_locks` 1, no report, `rmmod` 0,
 and the host's `fsck_hammer2` clean afterwards.
 
+## The README's recipe, run as written
+
+The six commands `README.md` gives a tester were run on the Artix guest
+on 2026-09-05, from a `git archive` of the tree, before the section that
+holds them was pushed. Two of them the guest cannot run: its kernel is
+a test build with no headers behind `/lib/modules/7.3.0-rc1/build`, so
+`make` stopped there, and it has no loop device support, so `losetup`
+found nothing to open. The module was built on the host against the
+same 7.3.0-rc1 tree and put where `make install` looks, and a virtio
+disk stood in for the loop device. From there every step did what the
+page says: `make install` 0, `modprobe hammer2` 0 with `lz4hc_compress`
+loaded beside it, which is why the page says `modprobe` and not
+`insmod`; `newfs_hammer2 -L TEST` 0; `mount -t hammer2 /dev/vdb@TEST`
+0 with `rw` in `/proc/mounts`; a file written and synced; unmount 0;
+mounted again with `-o ro`, the file read back and the mount `ro`;
+unmount 0; `modprobe -r` 0; no kernel report; and the host's
+`fsck_hammer2` clean on the disk afterwards. The image is
+`readme.img` in the fixtures directory and is not kept.
+
 ## The folio the page cache can hold, asked at mount
 
 The DIO layer hands the core one 64 KiB folio per buffer, so a kernel
