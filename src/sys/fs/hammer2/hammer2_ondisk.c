@@ -94,17 +94,14 @@
  * outlived its mount would not point at freed memory, it would keep the
  * memory alive and the callbacks would skip it as inactive.
  *
- * A version comparison and not an existence test: fs_bdev_file_open_by_path()
- * is a function, so the preprocessor cannot ask for it, and the two calls
- * take different arguments rather than the same ones under a new name.
- * Measured: 7.2.3-300.fc45 declares fs_holder_ops at blkdev.h:1778 and
- * neither wrapper; 7.3.0-0.rc0.260819gbd5f485f3f02 declares the wrappers at
- * fs/super.h:243 and no fs_holder_ops anywhere under include/.  linux/fs.h
- * includes the split header, so no include changes with the version.
- *
- * DEFER(7.3 ships a released -rc): the basis above is a merge-window
- * snapshot, so these names can still move before 7.3 final.  Re-measure
- * against the release and pin the comparison to what it shipped.
+ * This call is one of the two things that put the version floor at 7.3.
+ * Measured against the trees themselves: 7.2.0 declares fs_holder_ops in
+ * blkdev.h and neither helper, and a compile there fails here with an
+ * implicit declaration; 7.3.0-rc1 declares the helpers in fs/super.h,
+ * reached through linux/fs.h, and no fs_holder_ops under include/.  The
+ * earlier reading was of a merge-window snapshot; rc1 shipped the same
+ * names, and the floor's #error in hammer2_os.h is what a build on an
+ * older kernel meets first.
  */
 static struct file *	/* Linux */
 hammer2_bdev_open(const char *path, blk_mode_t mode, struct super_block *sb)
