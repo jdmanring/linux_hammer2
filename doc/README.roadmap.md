@@ -325,8 +325,13 @@ is the second defect the status file records finding at the first mount.
 
 ### 0.5 Write path, verified on DragonFly
 
-Create, write, truncate, `mkdir`, `unlink`, `rename`, `setattr`, xattrs,
-`fsync` and `sync`, then clean unmount, on a volume this port created. F4 is
+Create, write, truncate, `mkdir`, `unlink`, `rename`, `setattr`,
+`fsync` and `sync`, then clean unmount, on a volume this port created. Xattrs
+were in this list until 2026-09-05 and are not a HAMMER2 feature: DragonFly's
+own driver has no extended attribute operations, and neither BSD port adds
+any, NetBSD's `vfs_extattrctl` being the stub every filesystem there
+carries; a port cannot verify against DragonFly what DragonFly does not
+store. F4 is
 the round trip in both directions, and it is the only test that separates the
 format from a dialect of it: HAMMER2's default per-blockref check is XXH64, so
 a subtly wrong writer reads as corruption on DragonFly rather than as a bug.
