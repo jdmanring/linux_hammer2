@@ -239,13 +239,14 @@ against the file it names. `test-citations.sh` reads the `file:line` citations t
 rather than a stored baseline, and grades each pass by how specific its
 anchor is, so a row anchored on a common token is reported as weak rather
 than counted with the strong ones. It checks table rows only, and prints
-how many citation-shaped tokens it left alone: 33 on 2026-09-02, of which
-32 are in `doc/research/` and name line numbers in DragonFly's own tree,
+how many citation-shaped tokens it left alone: 33 on 2026-09-05, of which
+31 are in `doc/research/` and name line numbers in DragonFly's own tree,
 which this repository cannot resolve. That is why the exclusion exists,
 and the count is printed rather than assumed so a prose citation into
 `src/` cannot hide in it. The one that is such a citation,
-`hammer2_chain.c:2189` in `doc/README.porting.md`, was read by hand on the
-same day and lands on the `LOCKAGAIN` branch the sentence describes.
+`hammer2_inode.c:1664` in `doc/README.status.md`, was read by hand on the
+same day and lands on the size comparison the sentence describes. This
+paragraph's own example is the thirty-third.
 `test-history.sh` checks that every roadmap row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
 `test-inventory.sh` also reads the `DEFER` ledger in

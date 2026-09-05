@@ -236,7 +236,7 @@ case where the folio starts partway through a block.
 
 This table said `d512.bin` was the first file on media, which the block
 counts added later disproved: it reports zero blocks, so 512 bytes is
-still embedded. `hammer2_inode.c:1512` compares
+still embedded. `hammer2_inode.c:1664` compares
 `size > HAMMER2_EMBEDDED_BYTES`, strictly greater, so the bound is
 inclusive and the pair that straddles it is 512 and 4096 rather than 511
 and 512. The two small files test the same branch as each other, which is

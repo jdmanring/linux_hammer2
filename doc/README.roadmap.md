@@ -116,10 +116,9 @@ on both sides at 0.4.19, and 0.6 when the crash matrix ran, so the point
 releases move with them by the rule `CHANGELOG.md` states; the rows
 before each stay where they were, being records, and 0.5 has no rows of
 its own because its last criterion and 0.6's gate closed a session
-apart. The
-rows in the table below say what
-is done inside each milestone; the numbered criteria under each heading
-are the contract, and a milestone is met when all of them are.
+apart. The rows in the table below say what is done inside each
+milestone; the numbered criteria under each heading are the contract,
+and a milestone is met when all of them are.
 
 | version | stage | milestone | state |
 |---|---|---|---|
