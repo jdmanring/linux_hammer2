@@ -31,19 +31,15 @@ It reached that state on 2026-09-02, in one day and two steps. The first
 `hammer2_xop_strategy_read`, `hammer2_xop_strategy_write` and
 `hammer2_dedup_clear`, which upstream defines in `hammer2_strategy.c`, and
 `hammer2_vfs_sync_pmp`, which this port had declared and deliberately left
-undefined. `hammer2_strategy.c` now exists with the dedup function carried
-and both handlers as floors, and the sync is a floor too.
+undefined. `hammer2_strategy.c` now exists with the dedup function and
+the read handler carried and the write handler a floor, and the sync is
+carried since 0.4.7, see "Sync, carried" below.
 
-**Three of the module's entry points are floors**, and one of the three
-is reachable: `hammer2_vfs_sync_pmp()` is called three times by
-`hammer2_unmount()`, which `->kill_sb` reaches after a mount that
-succeeds. The two strategy handlers are not, because no vnode operation
-starts an XOP yet. Each floor warns once and fails; the `DEFER` ledger
-below carries a row for each. A floor here is not a stub returning success:
-`hammer2_vfs_sync_pmp()` is the one whose replacement was argued about,
-because its two call sites discard the return value, so the warning is the
-only channel it has. What the undefined symbol bought was a build nobody
-could load; what the floor buys is a module that loads and says what it
+**One of the module's entry points is a floor**, the write handler, and it
+is not reachable, because no vnode operation writes yet. It warns once and
+fails, and the `DEFER` ledger below carries its row. A floor here is not a
+stub returning success. What the undefined symbols bought was a build
+nobody could load; what a floor buys is a module that loads and says what it
 cannot do.
 
 It has been linked against the running kernel and against both trees of the
@@ -534,8 +530,8 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1708 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2225 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 500 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_vfsops.c` | 2517 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_strategy.c` | 509 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1028 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
@@ -865,6 +861,29 @@ two thousand files, and after the unmount, with no lockdep report in
 and after its last unmount and fails if it dropped, so a run that
 silenced the instrument cannot pass.
 
+## Sync, carried
+
+`->sync_fs` is upstream's `hammer2_vfs_sync_pmp()` as the FreeBSD port
+carries it, with four vnode calls translated and marked in place:
+`vget()` is `igrab()` with no lock, since the vnode lock it took is
+`i_rwsem` here and the write path will hold that above the inode lock;
+`vput()` is `iput()`; `vn_fsync_buf()` is `filemap_write_and_wait()` on
+the inode's mapping; and `wakeup(&ip->flags)` is the syncq condition
+variable, as elsewhere in `hammer2_inode.c`. `hammer2_bioq_sync()` is
+empty, as it is in the FreeBSD port. The unmount path's three calls and
+the VFS's `->sync_fs` both reach it.
+
+On a read-only mount the syncq is empty and no chain carries a flush
+flag, so the walk enters the transaction, flushes the PFS root, finds
+nothing modified and writes nothing: the volume header is written only
+when a flushed chain set `VOLUMESYNC`, read from `hammer2_flush.c`.
+Measured on the installed root at 7.3.0-rc1: `sync` and `sync -f` on the
+mount return 0, lockdep stays enabled through the transaction and the
+flush traversal, kmemleak is empty after two scans, and `dmesg` holds no
+warning. That is the sync's read-only half; its write half is 0.5's, and
+the first write is what will show whether the flush orders its writes as
+the roadmap requires.
+
 ## The folio the page cache can hold, asked at mount
 
 The DIO layer hands the core one 64 KiB folio per buffer, so a kernel
@@ -1022,7 +1041,6 @@ against the source is the same shape as an empty one.
 | `hammer2_inode.c`, where `hammer2_inode_create_normal()` would be | `DEFER(the write path is written, after hammer2_vnops.c)` | the create path, which is `struct vattr`, `struct ucred`, `VNOVAL`, `groupmember()` and `priv_check_cred()`, and which carries NetBSD's `#if 0` around the `DIRECTDATA` assignment when it lands |
 | `hammer2_vfsops.c`, at three sites: the read-write refusal in `hammer2_get_tree()`, `hammer2_reconfigure()`, and the recovery call before `hammer2_update_pmps()` | `DEFER(recovery is exercised on a device)` | upstream's `hammer2_recovery()`, `hammer2_recovery_scan()` and `hammer2_fixup_pfses()` are carried and called where upstream calls them, so the code exists. What has not happened is running them: they WRITE, through `hammer2_freemap_adjust()` with `DORECOVER`, `hammer2_chain_modify()` and `hammer2_flush()`, and nothing has been loaded. Until they are exercised on a device carrying an interrupted flush, both refusals stay: `hammer2_get_tree()` returns `EROFS` before the device is opened, and `hammer2_reconfigure()` returns it for the remount that would otherwise arrive at the same state sideways, since `reconfigure_super()` applies `SB_RDONLY` whether or not the operation is present. All three sites lift together. The real `->reconfigure` is upstream's `hammer2_remount_impl()`, which is not carried and which runs these two a second time on the read-only to read-write transition |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
-| `hammer2_vfsops.c`, at `hammer2_vfs_sync_pmp()` | `DEFER(->sync_fs lands)` | the floor returns 0 on a read-only mount, which has nothing to sync, and on any other warns once and returns `EOPNOTSUPP`; both call sites discard the value. It replaced a symbol deliberately left undefined, which made the absence visible at link time and also made the module unloadable. An unmount that does not sync loses nothing while nothing can be written; on the day the write path lands this is a data-loss bug rather than a deferral |
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
@@ -1065,7 +1083,7 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 20 | 1 | 19 |
 | `hammer2_inode.c` | 27 | 6 | 21 |
-| `hammer2_vfsops.c` | 23 | 7 | 16 |
+| `hammer2_vfsops.c` | 35 | 7 | 28 |
 | `hammer2_strategy.c` | 1 | 0 | 1 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |
 | `hammer2.h` | 7 | 3 | 4 |

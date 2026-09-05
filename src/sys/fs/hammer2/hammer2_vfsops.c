@@ -40,6 +40,7 @@
 #include "hammer2_mount.h"
 
 #include <linux/fs_context.h>
+#include <linux/pagemap.h>	/* Linux: filemap_write_and_wait */
 #include <linux/fs_parser.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -49,6 +50,7 @@ static int hammer2_recovery(hammer2_dev_t *);
 static int hammer2_fixup_pfses(hammer2_dev_t *);
 static void hammer2_update_pmps(hammer2_dev_t *);
 static void hammer2_mount_helper(struct super_block *, hammer2_pfs_t *);
+static int hammer2_sync_fs(struct super_block *, int);	/* Linux */
 static void hammer2_unmount_helper(struct super_block *, hammer2_pfs_t *,
     hammer2_dev_t *);
 static void hammer2_evict_inode(struct inode *);
@@ -1676,6 +1678,7 @@ hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)
 static const struct super_operations hammer2_sops = {
 	.evict_inode	= hammer2_evict_inode,
 	.statfs		= hammer2_statfs,		/* Linux */
+	.sync_fs	= hammer2_sync_fs,		/* Linux */
 };
 
 /*
@@ -1915,40 +1918,334 @@ again:
  * dentry is exactly what vflush() was for.
  */
 /*
- * XXX Linux: a floor, and the only definition this symbol has.
+ * Sync a PFS.  Upstream's hammer2_vfs_sync_pmp() as the FreeBSD port
+ * carries it, with the vnode calls translated and nothing else moved:
  *
- * Upstream walks the PFS's inodes, flushes each and flushes the volume
- * header.  None of that can run yet: the flush needs a chain topology a
- * successful mount would have built, and no mount succeeds.
- *
- * The trade this represents is recorded rather than silent.  Until
- * 2026-09-02 the symbol was declared and never defined, so modpost
- * refused the module and the absence could not be overlooked.  That also
- * meant the module could not be loaded, which is 0.3, so the link-time
- * tripwire is traded for a runtime one.  The replacement is not weaker in
- * the direction that matters: both call sites discard the return value,
- * so an errno was never going to reach anyone, and a WARN in dmesg is
- * read by whoever runs the driver rather than by whoever builds it.
- *
- * DEFER(->sync_fs lands): the body is upstream's hammer2_vfs_sync_pmp(),
- * and it is a hard prerequisite for the write path rather than a
- * companion to it.  An unmount that does not sync loses nothing while
- * nothing can be written; the day that stops being true, this floor is a
- * data-loss bug and not a deferral.
+ * XXX Linux: vget(vp, LK_EXCLUSIVE|LK_NOWAIT) becomes igrab(), a reference
+ * and no lock.  The vnode lock it took is i_rwsem here, and the write
+ * path will hold i_rwsem above ip->lock, so taking it below ip->lock in
+ * this walk would be the inversion every later path avoids.  What the
+ * lock bought upstream, keeping the frontend off the inode while it is
+ * flushed, ip->lock buys here, since every frontend path takes it.
+ * XXX Linux: vn_fsync_buf() becomes filemap_write_and_wait() on the
+ * inode's mapping, which is what the VFS's own sync has already done for
+ * every inode by the time ->sync_fs is called; it is kept because the
+ * unmount path and the write path call this directly.
+ * XXX Linux: wakeup(&ip->flags) is the syncq condition variable, as in
+ * hammer2_inode.c.
  */
 int
-hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor)
+hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __maybe_unused)
 {
+	hammer2_inode_t *ip;
+	hammer2_depend_t *depend, *depend_next;
+	struct inode *vp;	/* XXX Linux: was struct vnode * */
+	uint32_t pass2;
+	int error, dorestart;
+
 	/*
-	 * Linux: a read-only mount has nothing to sync, and saying so with
-	 * a WARN printed a stack trace on every unmount and would taint a
-	 * kernel nothing else had.  The floor warns only where it is a
-	 * floor: a mount that could have dirtied something.
+	 * Move all inodes on sideq to syncq.  This will clear sideq.
+	 * This should represent all flushable inodes.  These inodes
+	 * will already have refs due to being on syncq or sideq.  We
+	 * must do this all at once with the spinlock held to ensure that
+	 * all inode dependencies are part of the same flush.
+	 *
+	 * We should be able to do this asynchronously from frontend
+	 * operations because we will be locking the inodes later on
+	 * to actually flush them, and that will partition any frontend
+	 * op using the same inode.  Either it has already locked the
+	 * inode and we will block, or it has not yet locked the inode
+	 * and it will block until we are finished flushing that inode.
+	 *
+	 * When restarting, only move the inodes flagged as PASS2 from
+	 * SIDEQ to SYNCQ.  PASS2 propagation by inode_lock4() and
+	 * inode_depend() are atomic with the spin-lock.
 	 */
-	if (pmp->mp == NULL || sb_rdonly(pmp->mp))
-		return (0);
-	WARN_ONCE(1, "hammer2: unmount did not sync, ->sync_fs is not written\n");
-	return (EOPNOTSUPP);		/* Linux: positive, negated at the VFS */
+	hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
+	debug_hprintf("FILESYSTEM SYNC BOUNDARY\n");
+	dorestart = 0;
+
+	/*
+	 * Move inodes from depq to syncq, releasing the related
+	 * depend structures.
+	 */
+restart:
+	debug_hprintf("FILESYSTEM SYNC RESTART (%d)\n", dorestart);
+	hammer2_trans_setflags(pmp, 0);
+	hammer2_trans_clearflags(pmp, HAMMER2_TRANS_RESCAN);
+
+	/*
+	 * Move inodes from depq to syncq.  When restarting, only depq's
+	 * marked pass2 are moved.
+	 */
+	hammer2_spin_ex(&pmp->list_spin);
+	depend_next = TAILQ_FIRST(&pmp->depq);
+
+	while ((depend = depend_next) != NULL) {
+		depend_next = TAILQ_NEXT(depend, entry);
+		if (dorestart && depend->pass2 == 0)
+			continue;
+		TAILQ_FOREACH(ip, &depend->sideq, qentry) {
+			KKASSERT(ip->flags & HAMMER2_INODE_SIDEQ);
+			atomic_set_int(&ip->flags, HAMMER2_INODE_SYNCQ);
+			atomic_clear_int(&ip->flags, HAMMER2_INODE_SIDEQ);
+			ip->depend = NULL;
+		}
+
+		/* NOTE: pmp->sideq_count includes both sideq and syncq */
+		TAILQ_CONCAT(&pmp->syncq, &depend->sideq, qentry);
+
+		depend->count = 0;
+		depend->pass2 = 0;
+		TAILQ_REMOVE(&pmp->depq, depend, entry);
+	}
+
+	hammer2_spin_unex(&pmp->list_spin);
+	hammer2_trans_clearflags(pmp, HAMMER2_TRANS_WAITING);
+	dorestart = 0;
+
+	/*
+	 * Now run through all inodes on syncq.
+	 * Flush transactions only interlock with other flush transactions.
+	 * Any conflicting frontend operations will block on the inode, but
+	 * may hold a vnode lock while doing so.
+	 */
+	hammer2_spin_ex(&pmp->list_spin);
+	while ((ip = TAILQ_FIRST(&pmp->syncq)) != NULL) {
+		/*
+		 * Remove the inode from the SYNCQ, transfer the syncq ref
+		 * to us.  We must clear SYNCQ to allow any potential
+		 * front-end deadlock to proceed.  We must set PASS2 so
+		 * the dependency code knows what to do.
+		 */
+		pass2 = ip->flags;
+		cpu_ccfence();
+		if (atomic_cmpset_int(&ip->flags, pass2,
+		    (pass2 & ~(HAMMER2_INODE_SYNCQ | HAMMER2_INODE_SYNCQ_WAKEUP)) |
+		    HAMMER2_INODE_SYNCQ_PASS2) == 0)
+			continue;
+		TAILQ_REMOVE(&pmp->syncq, ip, qentry);
+		--pmp->sideq_count;
+		hammer2_spin_unex(&pmp->list_spin);
+
+		/*
+		 * Tickle anyone waiting on ip->flags or the hysteresis
+		 * on the dirty inode count.
+		 */
+		if (pass2 & HAMMER2_INODE_SYNCQ_WAKEUP)
+			hammer2_mtx_wakeup(&ip->syncq_cv); /* XXX Linux */
+
+		/*
+		 * We need the vp in order to vfsync() dirty buffers, so if
+		 * one isn't attached we can skip it.
+		 *
+		 * Ordering the inode lock and then the vnode lock has the
+		 * potential to deadlock.  If we had left SYNCQ set that could
+		 * also deadlock us against the frontend even if we don't hold
+		 * any locks, but the latter is not a problem now since we
+		 * cleared it.  igetv will temporarily release the inode lock
+		 * in a safe manner to work-around the deadlock.
+		 *
+		 * Unfortunately it is still possible to deadlock when the
+		 * frontend obtains multiple inode locks, because all the
+		 * related vnodes are already locked (nor can the vnode locks
+		 * be released and reacquired without messing up RECLAIM and
+		 * INACTIVE sequencing).
+		 *
+		 * The solution for now is to move the vp back onto SIDEQ
+		 * and set dorestart, which will restart the flush after we
+		 * exhaust the current SYNCQ.  Note that additional
+		 * dependencies may build up, so we definitely need to move
+		 * the whole SIDEQ back to SYNCQ when we restart.
+		 */
+		vp = ip->vp; /* NULL after vflush() */
+		if (vp) {
+			if (igrab(vp) == NULL) {	/* XXX Linux: was vget() */
+				/*
+				 * Failed to get the vnode, requeue the inode
+				 * (PASS2 is already set so it will be found
+				 * again on the restart).  Then unlock.
+				 */
+				vp = NULL;
+				dorestart |= 1;
+				debug_hprintf("inum %016llx vget failed\n",
+				    (long long)ip->meta.inum);
+				hammer2_mtx_ex(&ip->lock);
+				hammer2_inode_delayed_sideq(ip);
+				hammer2_mtx_unlock(&ip->lock);
+				hammer2_inode_drop(ip);
+
+				/*
+				 * If PASS2 was previously set we might
+				 * be looping too hard, ask for a delay
+				 * along with the restart.
+				 */
+				if (pass2 & HAMMER2_INODE_SYNCQ_PASS2)
+					dorestart |= 2;
+				hammer2_spin_ex(&pmp->list_spin);
+				continue;
+			}
+		}
+
+		/*
+		 * Relock the inode, and we inherit a ref from the above.
+		 * We will check for a race after we acquire the vnode.
+		 */
+		/* XXX2 DragonFly takes inode lock before vget */
+		hammer2_mtx_ex(&ip->lock);
+
+		/*
+		 * If the inode wound up on a SIDEQ again it will already be
+		 * prepped for another PASS2.  In this situation if we flush
+		 * it now we will just wind up flushing it again in the same
+		 * syncer run, so we might as well not flush it now.
+		 */
+		if (ip->flags & HAMMER2_INODE_SIDEQ) {
+			hammer2_mtx_unlock(&ip->lock);
+			hammer2_inode_drop(ip);
+			if (vp)
+				iput(vp);	/* XXX Linux: was vput() */
+			dorestart |= 1;
+			hammer2_spin_ex(&pmp->list_spin);
+			continue;
+		}
+
+		/*
+		 * Ok we have the inode exclusively locked and if vp is
+		 * not NULL that will also be exclusively locked.  Do the
+		 * meat of the flush.
+		 */
+		if (vp) {
+			/* XXX Linux: vn_fsync_buf() on the inode's mapping */
+			error = -filemap_write_and_wait(vp->i_mapping);
+			if (error) {
+				hprintf("inum %016llx vnode flush failed %d\n",
+				    (long long)ip->meta.inum, error);
+				error = 0; /* XXX */
+			}
+		}
+
+		/*
+		 * If the inode has not yet been inserted into the tree
+		 * we must do so.  Then sync and flush it.  The flush should
+		 * update the parent.
+		 */
+		if (ip->flags & HAMMER2_INODE_DELETING) {
+			debug_hprintf("inum %016llx destroy\n",
+			    (long long)ip->meta.inum);
+			hammer2_inode_chain_des(ip);
+		} else if (ip->flags & HAMMER2_INODE_CREATING) {
+			debug_hprintf("inum %016llx insert\n",
+			    (long long)ip->meta.inum);
+			hammer2_inode_chain_ins(ip);
+		}
+
+		/*
+		 * Because I kinda messed up the design and index the inodes
+		 * under the root inode, along side the directory entries,
+		 * we can't flush the inode index under the iroot until the
+		 * end.  If we do it now we might miss effects created by
+		 * other inodes on the SYNCQ.
+		 *
+		 * Do a normal (non-FSSYNC) flush instead, which allows the
+		 * vnode code to work the same.  We don't want to force iroot
+		 * back onto the SIDEQ, and we also don't want the flush code
+		 * to update pfs_iroot_blocksets until the final flush later.
+		 *
+		 * XXX at the moment this will likely result in a double-flush
+		 * of the iroot chain.
+		 */
+		debug_hprintf("inum %016llx pinum %016llx chain-sync\n",
+		    (long long)ip->meta.inum, (long long)ip->meta.iparent);
+		hammer2_inode_chain_sync(ip);
+
+		if (ip == pmp->iroot)
+			hammer2_inode_chain_flush(ip, HAMMER2_XOP_INODE_STOP);
+		else
+			hammer2_inode_chain_flush(ip,
+			    HAMMER2_XOP_INODE_STOP | HAMMER2_XOP_FSSYNC);
+		if (vp) {
+			if ((ip->flags & (HAMMER2_INODE_MODIFIED |
+			    HAMMER2_INODE_RESIZED |
+			    HAMMER2_INODE_DIRTYDATA)) == 0) {
+				/*
+				 * DragonFly uses DragonFly's vsyncscan specific
+				 * vclrisdirty() here.
+				 */
+			} else {
+				hammer2_inode_delayed_sideq(ip);
+			}
+			iput(vp);	/* XXX Linux: was vput() */
+			vp = NULL; /* safety */
+		}
+		atomic_clear_int(&ip->flags, HAMMER2_INODE_SYNCQ_PASS2);
+		hammer2_inode_unlock(ip); /* unlock+drop */
+		/* ip pointer invalid */
+
+		/*
+		 * If the inode got dirted after we dropped our locks,
+		 * it will have already been moved back to the SIDEQ.
+		 */
+		hammer2_spin_ex(&pmp->list_spin);
+	}
+	hammer2_spin_unex(&pmp->list_spin);
+
+	if (dorestart || (pmp->trans.flags & HAMMER2_TRANS_RESCAN)) {
+		/*
+		 * bit 2 is set if something above thinks we might be
+		 * looping too hard, try to unclog the frontend
+		 * dependency and wait a bit before restarting.
+		 *
+		 * NOTE: The frontend could be stuck in h2memw, though
+		 *	 it isn't supposed to be holding vnode locks
+		 *	 in that case.
+		 */
+		if (dorestart & 2)
+			tsleep(&dorestart, 0, "h2syndel", 2);
+		debug_hprintf("FILESYSTEM SYNC STAGE 1 RESTART\n");
+		dorestart = 1;
+		goto restart;
+	}
+	debug_hprintf("FILESYSTEM SYNC STAGE 2 BEGIN\n");
+
+	/*
+	 * We have to flush the PFS root last, even if it does not appear to
+	 * be dirty, because all the inodes in the PFS are indexed under it.
+	 * The normal flushing of iroot above would only occur if directory
+	 * entries under the root were changed.
+	 *
+	 * Specifying VOLHDR will cause an additionl flush of hmp->spmp
+	 * for the media making up the cluster.
+	 */
+	if ((ip = pmp->iroot) != NULL) {
+		hammer2_inode_ref(ip);
+		hammer2_mtx_ex(&ip->lock);
+		hammer2_inode_chain_sync(ip);
+		hammer2_inode_chain_flush(ip,
+		    HAMMER2_XOP_INODE_STOP | HAMMER2_XOP_FSSYNC |
+		    HAMMER2_XOP_VOLHDR);
+		hammer2_inode_unlock(ip); /* unlock+drop */
+	}
+	debug_hprintf("FILESYSTEM SYNC STAGE 2 DONE\n");
+
+	hammer2_bioq_sync(pmp);
+
+	error = 0; /* XXX */
+	hammer2_trans_done(pmp, HAMMER2_TRANS_ISFLUSH);
+
+	return (error);
+}
+
+/*
+ * Linux: ->sync_fs.  The VFS calls this after writing back every inode,
+ * so the syncq walk above is what remains: the chains, the PFS root and
+ * the volume header, in that order.
+ */
+static int
+hammer2_sync_fs(struct super_block *sb, int wait)
+{
+	return (hammer2_vfs_errno(hammer2_vfs_sync_pmp(MPTOPMP(sb),
+	    wait ? MNT_WAIT : MNT_NOWAIT)));
 }
 
 static void
@@ -1968,13 +2265,8 @@ hammer2_unmount(struct super_block *sb)
 	 * flush the filesystem (freemap updates lag by one flush, and one
 	 * extra for safety).
 	 *
-	 * hammer2_vfs_sync_pmp() is a floor, not the sync.  It was declared
-	 * and left undefined until 2026-09-02 so that the absence would be
-	 * visible at link time; what that bought is now bought instead by
-	 * doc/README.status.md's table and by the CI build step, and what it
-	 * cost was a module that could not be loaded at all.  Both call sites
-	 * here discard the return value, so the loud channel is the WARN in
-	 * the floor rather than an errno either way.
+	 * hammer2_vfs_sync_pmp() is upstream's sync, carried above.  Both
+	 * call sites here discard the return value, as upstream does.
 	 */
 	if (pmp->iroot) {
 		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);

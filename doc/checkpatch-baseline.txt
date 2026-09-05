@@ -18,7 +18,7 @@
 1 code indent should use tabs where possible
 74 do not add new typedefs
 1 do not initialise statics to 0
-13 do not use assignment in if condition
+14 do not use assignment in if condition
 3 else is not generally useful after a break or return
 402 function definition argument 'X' should also have an identifier name
 13 plain inline is preferred over __inline
@@ -39,5 +39,5 @@
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
-3 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+2 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
 2 space required after that 'X' (ctx:VxB)

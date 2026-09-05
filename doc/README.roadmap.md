@@ -63,8 +63,8 @@ in 0.2 can be prepared without it.
     and `d_make_root` for `sb->s_root`). Upstream's mount-time flush recovery
     is carried and called, but it writes and has never been run, so a
     read-write mount and a read-write remount are both refused. What
-    remains in `hammer2_vfsops.c` is `->statfs`, `->sync_fs`, the real
-    `->reconfigure` where only the refusal stands, and lifting those two
+    remains in `hammer2_vfsops.c` is the real `->reconfigure` where only
+    the refusal stands, and lifting those two
     refusals once the recovery has been exercised on a device. The next
     files are `hammer2_vnops.c` and `hammer2_strategy.c`.
 3. The module builds. The first `make` ran on 2026-09-02 against 7.1.9

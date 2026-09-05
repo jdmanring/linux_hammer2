@@ -497,8 +497,9 @@ value, because Linux's `->kill_sb` returns `void` and is called after
 the unmount has already been decided. `MNT_FORCE`, whose only use
 upstream is to add `FORCECLOSE` to that `vflush()` call, goes with it.
 
-The three `hammer2_vfs_sync_pmp()` calls stay. That symbol is declared
-in `hammer2.h` and defined nowhere, deliberately, and it is the same
+The three `hammer2_vfs_sync_pmp()` calls stay. Until 0.4.7 that symbol
+was declared in `hammer2.h` and defined nowhere, deliberately, and then
+a floor; it is upstream's sync now. The choice it recorded was the same
 choice `hammer2_pfsfree_scan()` already makes: nothing in this tree
 links yet, and a missing symbol is visible at link time where a stub
 returning success would be silent on the one path that decides whether
@@ -661,8 +662,8 @@ from the pull requests rather than from release notes:
   through iomap, so the gain is not available without adopting iomap,
   which is a larger decision than a floor.
 - The writeback pull adds `->sync_inode_metadata` and
-  `I_METADATA_WRITEBACK`, which is the operation the deferred `->sync_fs`
-  work will land beside.
+  `I_METADATA_WRITEBACK`, which is the operation the carried `->sync_fs`
+  sits beside.
 
 None of the three is a reason to raise the floor today, because none of
 them is code this tree currently runs. The reason to raise it is the

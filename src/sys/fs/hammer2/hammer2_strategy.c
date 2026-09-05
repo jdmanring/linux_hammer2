@@ -485,6 +485,15 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 }
 
 /*
+ * Wait for pending I/O to complete.  Empty in the FreeBSD port too: the
+ * DIO layer's writes complete synchronously.
+ */
+void
+hammer2_bioq_sync(hammer2_pfs_t *pmp __maybe_unused)
+{
+}
+
+/*
  * DEFER(the write path lands: 0.5): the body is upstream's
  * hammer2_xop_strategy_write() and the six static functions beneath it,
  * hammer2_assign_physical() through hammer2_write_bp(), plus

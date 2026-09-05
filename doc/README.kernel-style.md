@@ -274,7 +274,9 @@ and one `return (x);`. `hammer2_vfs_errno()` and its four call sites
 added three more `return (x);`. The lockdep work added three prototype
 arguments without names and one continuation line indented with spaces,
 the BSD second-line indent the rest of the tree uses, and one more
-`return (x);` in the class index helper.
+`return (x);` in the class index helper. The carried sync brought one
+`while ((depend = depend_next) != NULL)`, upstream's own loop, and took
+away one positive `EOPNOTSUPP` with the floor it replaced.
 
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
