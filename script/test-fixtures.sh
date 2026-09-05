@@ -92,6 +92,19 @@ command -v ssh >/dev/null || {
 [ -f "$KDIR/Makefile" ] || {
 	echo "fixtures: COULD-NOT-RUN: KDIR=$KDIR is not a kernel build tree" >&2
 	exit 2; }
+# A tree below the floor cannot build the module, and that is a fact about
+# the tree and not the module: the default KDIR is the host's kernel, and
+# the host is not the guest. The floor is read from where it is enforced.
+floor=$(sed -n 's/^#define LINUX_HAMMER2_FLOOR[[:space:]]*KERNEL_VERSION(\([0-9]*\), \([0-9]*\), .*/\1.\2/p' src/sys/fs/hammer2/hammer2_os.h)
+kver=$(make -s -C "$KDIR" kernelversion 2>/dev/null)
+[ -n "$floor" ] && [ -n "$kver" ] || {
+	echo "fixtures: COULD-NOT-RUN: could not read the floor or the KDIR release" >&2
+	exit 2; }
+if [ "$(printf '%s\n%s\n' "$floor" "$kver" | sort -V | head -1)" != "$floor" ]; then
+	echo "fixtures: COULD-NOT-RUN: KDIR=$KDIR is $kver, below the $floor floor;" >&2
+	echo "          point KDIR at the guest's kernel tree" >&2
+	exit 2
+fi
 
 manifests=""
 for m in test/fixtures/*.manifest; do
