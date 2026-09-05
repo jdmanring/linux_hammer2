@@ -769,6 +769,8 @@ hammer2_chain_lock(hammer2_chain_t *chain, int how)
 		} else if (how & HAMMER2_RESOLVE_SIBLING) {	/* XXX Linux */
 			hammer2_mtx_ex_nested(&chain->lock,
 			    chain->lock.subclass + 1);
+		} else if (how & HAMMER2_RESOLVE_FRESH) {	/* XXX Linux */
+			hammer2_mtx_ex_fresh(&chain->lock);
 		} else {
 			hammer2_mtx_ex(&chain->lock);
 		}
@@ -3399,7 +3401,8 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	ichain = hammer2_chain_alloc(hmp, parent->pmp, &dummy);
 	atomic_set_int(&ichain->flags, HAMMER2_CHAIN_INITIAL);
 	hammer2_chain_lockdep_nest(&ichain->lock, &parent->lock); /* XXX Linux */
-	hammer2_chain_lock(ichain, HAMMER2_RESOLVE_MAYBE);
+	hammer2_chain_lock(ichain, HAMMER2_RESOLVE_MAYBE |
+	    HAMMER2_RESOLVE_FRESH);	/* XXX Linux: unreachable until inserted */
 	/* ichain has one ref at this point */
 
 	/*

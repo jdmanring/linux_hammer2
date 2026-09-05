@@ -20,19 +20,24 @@ readers, refuses corrupt blocks and headers, and does all of that with
 lockdep enabled end to end. `README.status.md` is the record of what was
 measured and how; this section says only where the work stands.
 
-0.5 has begun. The sync is carried and wired, the write XOP is carried,
-and `hammer2_vnops.c` has the four operations that write an existing
-file in place and extend it. The shipped module still refuses a
-read-write mount; the write path runs in the `HAMMER2_RW_EXPERIMENT`
-build on a scratch copy of DragonFly-written media. The first write
-through it, an overwrite and an append to a small file, found three
-defects in one evening before it reached the disk: the chain lock does
-not recurse on Linux and the write path needs it to, the chain's second
-lock shared one lockdep class across every chain, and the flush wrote
-volume header 0 through a layer that refuses offset zero. All three are
-fixed and recorded in `README.status.md`, and the written image reads
-back on DragonFly with `fsck_hammer2` clean, which is F4 in one
-direction.
+0.5's work is done and its criteria are met in the experimental build,
+which is not the shipped one. Every write operation is written:
+buffered writes, truncate and extend, attribute changes, `fsync`,
+create, `mknod`, `mkdir`, `symlink`, `unlink`, `rmdir`, `rename` and
+`link`, each measured on a scratch copy of DragonFly-written media and
+read back by DragonFly. F4 ran in both directions on a volume
+formatted here by hammer2-utils: 306 files written by this port and
+checked on DragonFly, 204 written by DragonFly and checked here. The
+flush's write order is measured from the block tracepoints, with the
+volume header the last request after a completed flush. The fuzzing
+corpus, `script/fuzz-mount.sh`, has put 200 mutated images through the
+mount path with no kernel report. The interrupted-flush fixture cut
+DragonFly off after 82 flushes and both recoveries agree on the result.
+Along the way the write path found nine defects the read path could
+not have, seven of them lockdep's, and one read defect of its own:
+readahead handing the read path a folio of two blocks. All are fixed
+and recorded in `README.status.md`. The shipped module still refuses a
+read-write mount, and lifting that is the maintainer's decision.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile`

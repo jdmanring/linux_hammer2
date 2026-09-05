@@ -263,7 +263,13 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * their siblings, same class and level, which lockdep reads as one
  * lock taken twice.  The parent is held exclusively there, so no other
  * holder of a sibling can be waiting on this one; the moved children
- * are locked with HAMMER2_RESOLVE_SIBLING, one level below their own.  The core spinlock in a chain is taken child
+ * are locked with HAMMER2_RESOLVE_SIBLING, one level below their own.
+ * The new indirect block's own first lock there, and a chain's first
+ * lock in hammer2_chain_create(), record no order at all, through
+ * HAMMER2_RESOLVE_FRESH and hammer2_mtx_ex_fresh(): the chain is
+ * unreachable until it is inserted, and an inode chain the insert
+ * holds detached while the block is made would otherwise read as the
+ * reverse of the flush's parent-then-child.  The core spinlock in a chain is taken child
  * before parent, which upstream states as its rule, so its level runs
  * the other way.  An inode lock nests at its chain's level.  Every other
  * lock initializer in this file takes a static key per call site, as

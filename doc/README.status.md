@@ -540,14 +540,14 @@ construction rather than re-hashed every run.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1368 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1369 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4947 | FreeBSD port, carried byte-for-byte but eight `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, and the level below for the children an indirect block takes over; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 4950 | FreeBSD port, carried byte-for-byte but ten `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, and the new block's own first lock recording no order; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1332 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 948 | ours, the OS shim |
+| `hammer2_os.h` | 954 | ours, the OS shim |
 | `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -1113,6 +1113,36 @@ the unmodified seed read all 44 files, and one bit in the header crc
 was refused. The log of each run carries every image's mutations as
 `offset:old>new`, so any of the 200 reproduces from its seed and index.
 
+## The round trip both ways, on a volume made here
+
+F4 is a tree written by this port, mounted and verified on DragonFly,
+then the reverse. Every earlier write landed on media DragonFly had
+formatted; this one starts from a 2 GiB image formatted on the host by
+hammer2-utils' `newfs_hammer2 -L LINUX`, so nothing on it was written by
+DragonFly until DragonFly's turn. Linux, in the experimental build,
+writes two directories with 306 files across them, 300 of them
+one-line, one of 200000 random bytes, one of a million zeros, one
+compressible, a symlink and a hard link, records every file's checksum
+into the tree, syncs, unmounts, remounts read-only and checks its own
+manifest. DragonFly then mounts the image, checks the same manifest,
+follows the symlink, and writes a tree of its own: a 300000-byte file
+from `/dev/random` in 1000-byte writes, 200 one-line files, a file
+moved out of Linux's tree and one removed, with its own manifest.
+Linux mounts last and checks DragonFly's manifest and what is left of
+its own. Three runs:
+
+| run | Linux writes, re-reads | DragonFly checks, writes | Linux re-reads DragonFly's | lockdep | the defect |
+|---|---|---|---|---|---|
+| 1 | 306 files, all match | 0 mismatches of 305; 204 files written | 202 of 203 match: `back/rand300k` differs | `possible recursive locking`, `h2ch_inode/2` twice under `hammer2_chain_create_indirect()` in `sync` | two. The read: that file's fourth 64 KiB block read as zeros on a whole-file read and correctly when read alone, and the FUSE reader agreed with DragonFly, so the port's read was wrong; the file mapping set only a minimum folio order, so readahead grew a folio to two blocks and the read filled it from the one chain at its start and zeroed the rest. Both orders are the block's now. The lock: an indirect block created under the PFS root inode to hold 300 new inodes takes over the root's children, locking each sibling while the flush holds one, the same class and level; the parent is held exclusively there, so the moved children lock one level below with `HAMMER2_RESOLVE_SIBLING` |
+| 2 | 306, all match | 0 of 305; 204 written | all 203 match | `possible circular locking dependency`, `h2ch_indirect#5/2` then `h2ch_inode/2` in the flush against the reverse in `hammer2_xop_inode_create_ins()` | the inode chain being inserted is detached until that insert and held while its new parent indirect block is created and locked. First answer: annotate it as the rename's detached entry is annotated |
+| 3 | the same | the same | the same | the same report with `h2ch_inode/7`, the annotated subclass, and `lock_set_class()` in the chain | the annotation itself: `lock_set_class()` re-registers the held lock as an acquisition under the parent already held, so the edge it was meant to remove came back with a new number. The acquisition that has no order to record is the new indirect block's first lock in `hammer2_chain_create_indirect()`, a chain nothing else can reach, the case `hammer2_chain_create()` already treats as fresh; it takes `HAMMER2_RESOLVE_FRESH` now and the annotation is gone |
+| 4 | 306, all match | 0 of 305; 204 written | all 203 match | `debug_locks` 1 through both Linux phases, kmemleak 0 | none |
+
+Both DragonFly reads of the Linux-written tree and both `fsck_hammer2`
+runs there were clean in every run, 1056 blockrefs after DragonFly's
+own writes, and the host's `fsck_hammer2` on the image after Linux's
+turn exits 0 each time.
+
 ## A flush cut off, and what each recovery made of it
 
 The deferral at the read-write refusal named this: DragonFly writing,
@@ -1336,7 +1366,7 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 28 | 18 | 10 |
+| `hammer2_chain.c` | 30 | 18 | 12 |
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
@@ -1350,7 +1380,7 @@ against the FreeBSD port at
 | `hammer2_vfsops.c` | 35 | 7 | 28 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 1 | 0 | 1 |
-| `hammer2.h` | 8 | 3 | 5 |
+| `hammer2.h` | 9 | 3 | 6 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
@@ -1360,12 +1390,12 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and twenty-six are this port's, the right-hand column
+One hundred and twenty-nine are this port's, the right-hand column
 summed, and they fall in thirteen files: twenty-eight in
 `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, nineteen each in `hammer2_ondisk.c` and
-`hammer2_strategy.c`, ten in `hammer2_chain.c`, seven in
-`hammer2_subr.c`, five each in `hammer2_os.h` and `hammer2_flush.c`,
-five in `hammer2.h`, two each in `hammer2_io.c` and `hammer2_xops.c`,
+`hammer2_strategy.c`, twelve in `hammer2_chain.c`, seven in
+`hammer2_subr.c`, six in `hammer2.h`, five each in `hammer2_os.h` and
+`hammer2_flush.c`, two each in `hammer2_io.c` and `hammer2_xops.c`,
 and one each in `hammer2_vnops.c` and `hammer2_disk.h`. That is the
 whole of them, and
 it is the only place in this file that adds up to the column. The count
