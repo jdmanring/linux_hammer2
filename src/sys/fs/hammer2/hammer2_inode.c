@@ -960,6 +960,7 @@ again:
 	nip->refs = 1;
 	hammer2_lkc_init(&nip->syncq_cv, "h2ip_sq");	/* XXX Linux */
 	hammer2_mtx_init_recurse(&nip->lock, "h2ip");
+	hammer2_inode_lockdep_nest(&nip->lock);	/* XXX Linux: its level */
 	hammer2_mtx_init(&nip->truncate_lock, "h2ip_tr");
 	hammer2_mtx_ex_fresh(&nip->lock);	/* XXX Linux: no order recorded */
 	TAILQ_INIT(&nip->depend_static.sideq);

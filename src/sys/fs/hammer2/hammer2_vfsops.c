@@ -2086,6 +2086,7 @@ hammer2_chain_lockdep_class(hammer2_mtx_t *p)
 void
 hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 {
+#ifdef CONFIG_LOCKDEP
 	hammer2_chain_t *pchain = container_of(parent, hammer2_chain_t, lock);
 	unsigned int level = parent->subclass;
 
@@ -2093,6 +2094,7 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 		level++;
 	level = min(level, (unsigned int)MAX_LOCKDEP_SUBCLASSES - 1);
 	child->subclass = level;
+#endif
 
 	/*
 	 * The core spinlock nests the other way, child before parent, and
@@ -2126,10 +2128,12 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 void
 hammer2_inode_lockdep_nest(hammer2_mtx_t *p)
 {
+#ifdef CONFIG_LOCKDEP
 	hammer2_inode_t *ip = container_of(p, hammer2_inode_t, lock);
 	hammer2_chain_t *chain = ip->cluster.focus;
 
 	p->subclass = chain ? chain->lock.subclass : 0;
+#endif
 }
 
 struct file_system_type hammer2_fs_type = {

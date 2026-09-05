@@ -329,10 +329,11 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * its call site the same way.
  */
 /*
- * Linux: the chain lock's lockdep class.  Defined in hammer2_vfsops.c,
- * where hammer2_chain_t is complete; declared here because the only
- * thing the core hands this file at init is the lock and its name, and
- * "h2ch" is the name every chain lock and no other lock carries.
+ * Linux: the lockdep class and level of a chain lock and the level of an
+ * inode lock.  Defined in hammer2_vfsops.c, where the structs are
+ * complete, and called by the core where each lock is initialized or
+ * first placed under its parent, the marked lines in hammer2_chain.c and
+ * hammer2_inode.c.  All of them compile to nothing without CONFIG_LOCKDEP.
  */
 void hammer2_chain_lockdep_class(hammer2_mtx_t *);
 void hammer2_chain_lockdep_nest(hammer2_mtx_t *, hammer2_mtx_t *);
@@ -343,12 +344,6 @@ __hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s,
     struct lock_class_key *k)
 {
 	__hammer2_mtx_init(p, s, k);
-#ifdef CONFIG_LOCKDEP
-	if (strcmp(s, "h2ch") == 0)
-		hammer2_chain_lockdep_class(p);
-	else if (strcmp(s, "h2ip") == 0)
-		hammer2_inode_lockdep_nest(p);
-#endif
 }
 
 #define hammer2_mtx_init_recurse(p, s)					\
