@@ -13,7 +13,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 ## Where we are
 
 H1 is met: 0.1 through 0.4 each closed on their criteria, and the driver
-is at 0.4.11 in `CHANGELOG.md`. The module mounts DragonFly-written media
+is at 0.4.13 in `CHANGELOG.md`. The module mounts DragonFly-written media
 read-only, lists it, reads every file in eleven fixtures and the
 DragonFly guest's installed root byte for byte against three other
 readers, refuses corrupt blocks and headers, and does all of that with
