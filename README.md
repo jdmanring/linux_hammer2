@@ -109,7 +109,7 @@ Three build knobs, the same three the FreeBSD and NetBSD ports carry:
 
 ## Test
 
-Sight gates. The compile gates need a toolchain and a kernel tree:
+Twelve gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
@@ -126,7 +126,7 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-doc-prose.sh   # vale over doc/, Saxum's styles
         $ bash script/test-fixtures.sh    # mounts every fixture on a guest and compares manifests
 
-`test-provenance.sh` is the one of those five that asks a question this
+`test-provenance.sh` is the one of those seven that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
 re-run with `cmp` against the origin clone, and where that clone is not on
 the machine it reports COULD-NOT-RUN rather than passing on a table that

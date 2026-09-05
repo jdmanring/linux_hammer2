@@ -304,33 +304,22 @@ The first milestone that proves anything about the format, and H1's exit.
    `makefs`-written volume and a kernel-written one is listed.
 
 Gate: `script/test-fixtures.sh`, which builds the module, starts the guest,
-mounts every image whose manifest is committed, compares them and exits 2
-without a guest. It took the tree's own naming rather than the working name
-`test-hammer2-linux-ro.sh` recorded here, that name having been chosen while
-the gate was expected to live in Saxum. What it does not yet do is run F3 or
-read the on-media block counts that say which branch of the read completion
-each file took.
+attaches every image whose manifest is committed one at a time, mounts
+it, compares files, checksums, block counts, ownership and `statfs`
+against the manifest, expects the corrupt fixtures to be refused, asserts
+that lockdep is still enabled afterwards, and exits 2 without a guest. It
+took the tree's own naming rather than the working name
+`test-hammer2-linux-ro.sh` recorded here, that name having been chosen
+while the gate was expected to live in Saxum.
 
-Work: the read-side VFS entry. `lookup` and `iterate_shared` are written and
-a `makefs` tree lists correctly at every depth, which leaves F1 `empty` and
-`flat` to be run against the manifests rather than to be made possible; `read_folio` and the DIO read path end to
-end, until F1 `sizes` matches at every boundary; the manifest's link-count,
-mode and owner columns, from the tree that holds the generator; F3, with
-`fsck_hammer2`'s verdicts recorded first; the remaining F2 images, which need
-the maintainer to boot the guest; the gate itself.
-
-Depends on 0.3. Criterion 1 needs nothing but F1.
-
-Risks. If the guest never boots, F1 carries criterion 1 and the single F2 root
-carries criterion 2; criteria 3 and 6 are recorded as unrun rather than
-assumed, and the milestone is claimed with that qualifier stated. If the inode
-and dentry lifecycle does not fit the core's refcounting, the milestone blocks
-until it is designed; this is the one unknown the H1 estimate could not size by
-reading, which is why `lookup` is written against F1 before `read_folio`. A
-manifest mismatch on one fixture with the others clean is what the fixtures are
-for: `sizes` puts a file one byte under, on, and one byte over each block-size
-boundary, so an off-by-one shows at a boundary file and its two neighbors and
-nowhere else.
+Met at 0.4.1 by its criteria, on 2026-09-04, with the closing measurement
+for each in `README.status.md`: F1 and F2 on every fixture, the DragonFly
+guest's installed root walked at 28210 paths, DragonFly's own `stat` and
+`statfs` beside the module's, three other readers of the same media
+agreeing, and F3 refusing what it should. The one risk this section named
+that came true was the second: the inode and dentry lifecycle did not fit
+the core's refcounting as first written, and the use after free it caused
+is the second defect the status file records finding at the first mount.
 
 ### 0.5 Write path, verified on DragonFly
 

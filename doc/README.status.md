@@ -32,8 +32,9 @@ first criterion, and the second was exercised on 2026-09-03 on the
 lists `hammer2`, the reference count reads 0, `rmmod` returns 0 and
 `/sys/module/hammer2` is gone afterwards. The log carries the two taint
 lines an unsigned out-of-tree module always produces and nothing else.
-What the criterion asks beyond that is unmeasured: no kernel measured so
-far sets `CONFIG_DEBUG_KMEMLEAK` or `CONFIG_PROVE_LOCKING`.
+What the criterion asks beyond that was measured on 2026-09-04 on
+`artix-s6-kde` at 7.3.0-rc1 with `CONFIG_PROVE_LOCKING` and
+`CONFIG_DEBUG_KMEMLEAK`, and the section on lockdep below is the record.
 
 It reached that state on 2026-09-02, in one day and two steps. The first
 `make` ever run reported four undefined symbols out of modpost:
