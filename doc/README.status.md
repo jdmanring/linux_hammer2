@@ -1081,10 +1081,41 @@ header stays valid until the new one is durable, and a flush before
 the next header write orders them. The whole sequence took 100 ms on
 the virtio disk.
 
+## Mutated media against the mount path
+
+0.5's corpus is `script/fuzz-mount.sh`, described in
+`doc/README.testing.md`: copies of a 64 MiB seed volume, formatted by
+hammer2-utils' `newfs_hammer2` and populated through the write path with
+44 files across four directories, a symlink and a hard link, each copy
+with one to sixty-four bytes changed at recorded offsets, hot-plugged
+read-only into the guest and mounted, listed and read end to end under
+the shipped build. The first sixty images, mutated at uniformly random
+offsets, went 56 mounted and 4 refused with every mounted image reading
+all 44 files: a 64 MiB image is almost entirely zero and absorbed the
+hits, which is why the mutator now samples until it lands on a byte
+that is not zero. Three runs since, 200 images, and every verdict in
+them:
+
+| run | images | mounted, all 44 files read | mounted, one or two files `EIO` | mounted, the listing cut short | refused | kernel report |
+|---|---|---|---|---|---|---|
+| seed 2, by hand | 100 | 36 | 43 | 2 (3 files listed, and 2) | 19 | 0 |
+| seed 3, the script, with its two controls | 40 | 23 | 12 | 1 (0 files listed) | 5 | 0 |
+| seed 1, before the bias | 60 | 56 | 0 | 0 | 4 | 0 |
+
+A refusal is a volume header or super-root the mount could not check;
+an `EIO` is a data or dirent block whose XXH64 no longer matches, named
+in `dmesg` by `hammer2_chain_testcheck()` as the F3 images are; a
+listing cut short is a directory whose entries or whose inode failed
+its check, after which the walk has nothing under it. None of the 200
+produced a `WARNING`, `BUG`, oops, hung task or lockdep report, and the
+guest answered every time. The two controls of the scripted run held:
+the unmodified seed read all 44 files, and one bit in the header crc
+was refused. The log of each run carries every image's mutations as
+`offset:old>new`, so any of the 200 reproduces from its seed and index.
+
 Everything the write side has is now written, reached only in the
 `HAMMER2_RW_EXPERIMENT` build; what stands between it and the shipped
-module is in the roadmap's next moves: the interrupted-flush fixture
-and the fuzzing corpus.
+module is in the roadmap's next moves: the interrupted-flush fixture.
 
 ## The folio the page cache can hold, asked at mount
 

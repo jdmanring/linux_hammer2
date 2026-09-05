@@ -57,8 +57,9 @@ invokes the kernel's build system, so running `make` is that act.
    the replay compared to DragonFly's own recovery of the same image.
    That is the deferral named at the read-write refusal, and lifting the
    refusal in the shipped module waits on it.
-4. The fuzzing corpus seeded from the F3 images, run against the mount
-   path with no crash, before any writable root is offered.
+4. The fuzzing corpus is `script/fuzz-mount.sh`, a generator over a
+   small seed volume rather than the F3 images, whose 2 GiB hold a few
+   hundred KiB of blocks; `doc/README.status.md` carries its runs.
 5. The iomap decision, recorded under open decisions below, taken now
    that the write path exists on classic address space operations with
    block-sized folios.

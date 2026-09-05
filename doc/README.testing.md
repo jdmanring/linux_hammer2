@@ -701,6 +701,41 @@ filter shows against the root disk's hundreds. `doc/README.status.md`
 carries the trace for one write and `sync`, in which the volume header
 at sector 0 is the last request and follows a completed flush.
 
+## Mutated media against the mount path
+
+`script/fuzz-mount.sh N SEED` is the corpus 0.5 asks for: `N` copies of a
+seed image, each with a few bytes changed at recorded offsets, hot-plugged
+read-only into the running guest one after another, mounted, listed and
+read end to end under the shipped build. A mount may succeed or be
+refused and a file may read or fail with `EIO`; what fails the run is a
+`WARNING`, `BUG`, oops, hung task or lockdep report in the guest's log,
+or a guest that stops answering. The corpus is the generator and the
+seed number: every image's mutations are written to the log as
+`offset:old>new`, so a finding reproduces from its seed and index and no
+image is kept. Two controls run before the corpus, the seed itself which
+must mount with every file readable, and the seed with one bit of its
+volume header crc changed which must be refused; a run whose controls
+fail is a run whose reader or whose refusal detection is broken, and
+its counts mean nothing.
+
+The seed is a small volume, because the mutator samples until it hits a
+byte that is not zero and a 2 GiB fixture is almost entirely zero. It
+is made on the host by hammer2-utils and populated through the write
+path, which needs the experimental build:
+
+    truncate -s 64M /mnt/storage/hammer2-fixtures/fz-seed.img
+    newfs_hammer2 -L FUZZ /mnt/storage/hammer2-fixtures/fz-seed.img
+    # on the guest, with the HAMMER2_RW_EXPERIMENT build loaded and the
+    # image attached: mount, create a few directories, files at several
+    # sizes, a symlink and a hard link, sync, unmount
+
+The image is copied under `/var/tmp/hammer2-fuzz` for each mutation,
+because libvirt takes ownership of a file it attaches and the next copy
+over it in the fixtures directory is refused. The script builds the
+module against `KDIR`, exits 2 without a guest, a seed or a kernel tree,
+and starts the guest only under `H2_FIXTURE_START=1`, as the fixture
+gate does.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a
