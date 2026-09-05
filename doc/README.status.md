@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 941 | ours, the OS shim |
+| `hammer2_os.h` | 948 | ours, the OS shim |
 | `hammer2_compat.h` | 176 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -1113,9 +1113,46 @@ the unmodified seed read all 44 files, and one bit in the header crc
 was refused. The log of each run carries every image's mutations as
 `offset:old>new`, so any of the 200 reproduces from its seed and index.
 
+## A flush cut off, and what each recovery made of it
+
+The deferral at the read-write refusal named this: DragonFly writing,
+cut off mid-flush, the image mounted here read-write so the carried
+`hammer2_recovery()` runs, and the result compared with DragonFly's own
+recovery of the same image. On a fresh copy of `f5` attached to the
+DragonFly guest, a loop wrote files of 4 to 80 KiB from `/dev/random`
+and a `last` marker, with `sync` every 200 files; after 25 seconds the
+host ran `virsh destroy`, which is the power going out as far as the
+guest is concerned. The image was then copied, one copy for each
+recovery.
+
+| | the cut-off image | after this port | after DragonFly |
+|---|---|---|---|
+| header `mirror_tid`, `freemap_tid` | `0x64`, `0x64` | `0x65`, `0x65` | |
+| `fsck_hammer2` on the host | exit 0 | exit 0 | |
+| read-write mount here | `hammer2_recovery()` ran; `sync_tid >= mirror_tid`, so nothing to replay | | |
+| `crash/` entries | | 16401, `last` 16399, all readable | 16401, `last` 16399 |
+| a write after recovery, then `sync` | | exit 0, `crash/linux-after` | |
+| DragonFly mounting the result | | 16402 entries, the new file read back, `fsck_hammer2` exit 0, 52838 blockrefs | `fsck_hammer2` exit 0, 52836 blockrefs |
+| `debug_locks`, kmemleak | | 1, 0 | |
+
+What the fixture shows is the property the trace above predicts: the
+header is written last, after a flush, so a cut at any point leaves the
+previous header and everything it references intact, and the two tids
+in it agree. Eighty-two flushes had completed in the 25 seconds
+(`0x12` to `0x64`), and the files those flushes covered are all there,
+16400 of them plus the marker; what the cut lost is what no flush had
+reached. The carried recovery is the freemap rebuild for the case
+where the header's `freemap_tid` lags its `mirror_tid`, and this cut
+did not produce that case; the code ran and found nothing to do, which
+is the correct answer on this image and not a test of the replay
+itself. Producing the lagging case needs a cut between the freemap
+flush and the header write inside one `sync`, a window of milliseconds
+that `virsh destroy` from the host does not hit on purpose.
+
 Everything the write side has is now written, reached only in the
-`HAMMER2_RW_EXPERIMENT` build; what stands between it and the shipped
-module is in the roadmap's next moves: the interrupted-flush fixture.
+`HAMMER2_RW_EXPERIMENT` build; the shipped module still refuses the
+read-write mount, and lifting that is a decision for the maintainer now
+that the fuzzing corpus, the write trace and this fixture exist.
 
 ## The folio the page cache can hold, asked at mount
 

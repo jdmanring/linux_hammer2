@@ -52,11 +52,13 @@ invokes the kernel's build system, so running `make` is that act.
 2. The write trace the 0.5 criteria ask for is taken, from the block
    tracepoints on the guest, and `doc/README.status.md` carries it: the
    header is the last request and follows a completed flush.
-3. The interrupted-flush fixture: DragonFly writing, cut off by `virsh
-   destroy` mid-flush, the image mounted here with the refusal lifted,
-   the replay compared to DragonFly's own recovery of the same image.
-   That is the deferral named at the read-write refusal, and lifting the
-   refusal in the shipped module waits on it.
+3. The interrupted-flush fixture ran: DragonFly writing, cut off by
+   `virsh destroy` after 82 flushes, the image mounted here read-write
+   in the experimental build, the tree compared to DragonFly's own
+   recovery of a copy; `doc/README.status.md` carries it. The cut did
+   not produce the lagging freemap the carried replay is for, so the
+   replay itself is still unexercised. Lifting the refusal in the
+   shipped module is the maintainer's decision.
 4. The fuzzing corpus is `script/fuzz-mount.sh`, a generator over a
    small seed volume rather than the F3 images, whose 2 GiB hold a few
    hundred KiB of blocks; `doc/README.status.md` carries its runs.
