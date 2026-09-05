@@ -1235,8 +1235,41 @@ next_hmp:
 	/* Update readonly hmp if !rdonly. */
 	pmp->rdonly = rdonly;
 
+	/*
+	 * Seed the PFS's inode and transaction ids from its root inode,
+	 * which is upstream's hammer2_vfs_root() and the same block in the
+	 * FreeBSD port.  Without it both start at zero: the first write
+	 * left the file's modify_tid at 1 and the PFS root's pfs_inum at 0
+	 * on media, and the next created inode would take a number below
+	 * HAMMER2_INODE_START.  The ports loop on a failed collect because
+	 * two mounts can race to the root; this mount holds hammer2_mntlk,
+	 * so one attempt is the whole loop and a failure fails the mount.
+	 */
 	hammer2_inode_lock(pmp->iroot, 0);
-	error = hammer2_igetv(pmp->iroot, 0, &root_inode);
+	if (pmp->inode_tid == 0) {
+		hammer2_xop_ipcluster_t *ixop;
+		const hammer2_inode_meta_t *meta;
+
+		ixop = hammer2_xop_alloc(pmp->iroot, HAMMER2_XOP_MODIFYING);
+		hammer2_xop_start(&ixop->head, &hammer2_ipcluster_desc);
+		error = hammer2_xop_collect(&ixop->head, 0);
+		if (error == 0) {
+			meta = &hammer2_xop_gdata(&ixop->head)->ipdata.meta;
+			pmp->iroot->meta = *meta;
+			pmp->inode_tid = meta->pfs_inum + 1;
+			hammer2_xop_pdata(&ixop->head);
+			if (pmp->inode_tid < HAMMER2_INODE_START)
+				pmp->inode_tid = HAMMER2_INODE_START;
+			pmp->modify_tid =
+			    ixop->head.cluster.focus->bref.modify_tid + 1;
+			debug_hprintf("PFS nextino %016llx mod %016llx\n",
+			    (long long)pmp->inode_tid,
+			    (long long)pmp->modify_tid);
+		}
+		hammer2_xop_retire(&ixop->head, HAMMER2_XOPMASK_VOP);
+	}
+	if (error == 0)
+		error = hammer2_igetv(pmp->iroot, 0, &root_inode);
 	hammer2_inode_unlock(pmp->iroot);
 	if (error) {
 		hprintf("failed to get root inode: %d\n", error);
