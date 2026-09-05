@@ -276,18 +276,24 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
  * every lock this port takes afterwards goes unchecked.  A clean run that
  * follows this warning is not evidence of anything.
  *
- * DEFER(chain locks carry nesting notation): a _nested acquire needs a
- * subclass, and what to key it on has been measured rather than assumed.
- * A chain carries no level or depth field, so there is nothing to key on
- * today.  bref.type has ten values of which eight can hold a lock, which
- * is exactly MAX_LOCKDEP_SUBCLASSES and looks like a fit, but indirect
- * blocks nest inside indirect blocks and freemap nodes inside freemap
- * nodes -- hammer2_chain.c walks parents with a while loop over exactly
- * those two types -- so a type-keyed subclass puts a parent and its child
- * in one class and the report returns unchanged.  The notation therefore
- * needs a depth the chain does not know, which makes it an edit to the
- * carried core and not to this file.  Until it exists, this port cannot
- * be validated by lockdep at all.
+ * Two of the three things lockdep had to say are answered without a core
+ * edit.  hammer2_mtx_init_recurse() below hands every chain lock a class
+ * keyed on the blockref's type and keybits, which orders the volume,
+ * freemap, indirect and data levels and every indirect level within
+ * itself, since keybits strictly decreases from parent to child; and
+ * hammer2_mtx_ex_fresh() records no order for the one lock taken on an
+ * unpublished inode.  Measured on the installed DragonFly root: the
+ * recursion report is gone and so is the inode-lock inversion.
+ *
+ * DEFER(chain locks carry nesting notation): what remains is an inode
+ * chain locked under another inode chain, a directory above its entry,
+ * both leaves of one class with keybits 0.  Directory depth is unbounded
+ * and lockdep's subclasses stop at eight, so the notation is the VFS's
+ * own for i_rwsem: the child nests one level under the parent, and only
+ * a parent and a child are ever held together.  Telling child from parent
+ * needs a depth the chain carries, set where it is inserted under its
+ * parent in hammer2_chain.c, which is carried byte-for-byte.  Until that
+ * line exists lockdep disables itself at the first lookup.
  */
 
 /*
@@ -310,16 +316,48 @@ hammer2_mtx_init(hammer2_mtx_t *p, const char *s __always_unused)
  * deadlock rather than fail, so any new recursion must be resolved at
  * its call site the same way.
  */
+/*
+ * Linux: the chain lock's lockdep class.  Defined in hammer2_vfsops.c,
+ * where hammer2_chain_t is complete; declared here because the only
+ * thing the core hands this file at init is the lock and its name, and
+ * "h2ch" is the name every chain lock and no other lock carries.
+ */
+void hammer2_chain_lockdep_class(hammer2_mtx_t *);
+
 static inline void
 hammer2_mtx_init_recurse(hammer2_mtx_t *p, const char *s)
 {
 	hammer2_mtx_init(p, s);
+#ifdef CONFIG_LOCKDEP
+	if (strcmp(s, "h2ch") == 0)
+		hammer2_chain_lockdep_class(p);
+#endif
 }
 
 static inline void
 hammer2_mtx_ex(hammer2_mtx_t *p)
 {
 	down_write(&p->lock);
+	WRITE_ONCE(p->owner, current);
+	p->refs++;
+}
+
+/*
+ * Linux: the first exclusive acquisition of a lock nothing else can see
+ * yet.  hammer2_inode_get() locks a freshly allocated inode while the
+ * caller still holds the chain locks its XOP collected, which is the
+ * reverse of the order every later path uses, inode above chain.  It
+ * cannot deadlock, the inode being unpublished, but lockdep records the
+ * order all the same and reports the inversion at the next inode lock.
+ * A trylock records no dependency, and on an unpublished lock it cannot
+ * fail; if it ever does, the assumption behind this function is false,
+ * which is worth a warning before falling back to the blocking acquire.
+ */
+static inline void
+hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
+{
+	if (WARN_ON_ONCE(!down_write_trylock(&p->lock)))
+		down_write(&p->lock);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
 }

@@ -530,14 +530,14 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1707 | FreeBSD port; carried except the create path, which is `DEFER`red on the write path. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2078 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2118 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 500 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 332 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1028 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 944 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 817 | ours, the OS shim |
+| `hammer2_os.h` | 855 | ours, the OS shim |
 | `hammer2_compat.h` | 166 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -975,7 +975,7 @@ against the source is the same shape as an empty one.
 | `hammer2_strategy.c`, at `hammer2_xop_strategy_write()` | `DEFER(the write path lands: 0.5)` | the body is upstream's handler and the six statics beneath it, `hammer2_assign_physical()` through `hammer2_write_bp()`, plus `hammer2_dedup_record()` and `hammer2_dedup_lookup()`. Deferred because a read-only milestone that can write is not one |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
-| `hammer2_os.h`, at `hammer2_mtx_init()` | `DEFER(chain locks carry nesting notation)` | every chain lock takes its lockdep class from that one `init_rwsem()` call site, so locking a parent chain and then its child is indistinguishable from taking one lock twice. The first mount under `CONFIG_PROVE_LOCKING` reports `possible recursive locking` and names the cause: `May be due to missing lock nesting notation`. Lockdep then sets `debug_locks` to 0 and validates nothing further that boot, so this warning costs the instrument rather than only printing. A `_nested` acquire needs a subclass, and what to key it on is measured: a chain carries no level or depth field, and `bref.type` has ten values of which eight can hold a lock, exactly `MAX_LOCKDEP_SUBCLASSES`, but `hammer2_chain.c` walks parents with a `while` loop over `INDIRECT` and `FREEMAP_NODE`, so those two nest within themselves and a type-keyed subclass returns the same report. The notation needs a depth the chain does not carry, which makes it a core edit |
+| `hammer2_os.h`, at `hammer2_mtx_init()` | `DEFER(chain locks carry nesting notation)` | every chain lock now takes a lockdep class keyed on its blockref's type and keybits, set by the shim when the core initializes the lock under the name `h2ch`, and the one lock taken on an unpublished inode records no order. Measured on the installed root: the `possible recursive locking` report is gone and so is the inversion between the inode lock and the inode chain that appeared once real classes existed. What remains is an inode chain locked under another inode chain, a directory above its entry, both leaves of one class, and lockdep still disables itself there at the first lookup. Directory depth is unbounded, so the notation is the VFS's own for `i_rwsem`, child one level under parent, and telling them apart needs a depth the chain carries, set at insertion in `hammer2_chain.c`, which is carried byte-for-byte. The one-line core edit is the decision |
 | `hammer2_ondisk.c`, at `hammer2_bdev_open()` | `DEFER(7.3 ships a released -rc)` | the guard that chooses between `bdev_file_open_by_path()` with the kernel's `fs_holder_ops` and 7.3's `fs_bdev_file_open_by_path()` was measured against a merge-window snapshot, `7.3.0-0.rc0.260819gbd5f485f3f02`, and not a released candidate. Those names can still move before 7.3 final, so the comparison is re-measured against the release and pinned to what it shipped |
 
 The middle column is the marker as it is spelled in the source, because
@@ -1014,7 +1014,7 @@ against the FreeBSD port at
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 20 | 1 | 19 |
-| `hammer2_inode.c` | 25 | 6 | 19 |
+| `hammer2_inode.c` | 26 | 6 | 20 |
 | `hammer2_vfsops.c` | 23 | 7 | 16 |
 | `hammer2_strategy.c` | 1 | 0 | 1 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |

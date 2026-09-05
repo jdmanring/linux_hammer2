@@ -116,6 +116,8 @@ hammer2_syntax_check_all(void)
 	(void)hammer2_dev_writeback(NULL);
 	(void)hammer2_dev_cache_flush(NULL);
 	(void)hammer2_vfs_errno(EDOM);
+	hammer2_mtx_ex_fresh(&mtx);
+	hammer2_mtx_unlock(&mtx);
 
 	cpu_pause();
 	cpu_ccfence();

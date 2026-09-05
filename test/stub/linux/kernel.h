@@ -47,6 +47,7 @@ typedef unsigned int gfp_t;
 
 #define BUG_ON(cond)	do { if (cond) __builtin_trap(); } while (0)
 #define WARN_ON(cond)	(!!(cond))
+#define WARN_ON_ONCE(cond)	(!!(cond))
 #define BUILD_BUG_ON_MSG(cond, msg)	_Static_assert(!(cond), msg)
 
 /* kbuild passes -DKBUILD_MODNAME on every real build and there is no

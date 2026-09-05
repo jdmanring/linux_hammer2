@@ -1989,6 +1989,46 @@ hammer2_kill_sb(struct super_block *sb)
 	hammer2_unmount(sb);
 }
 
+/*
+ * Linux: one lockdep class per (blockref type, keybits).  init_rwsem()
+ * gives every chain lock the class of its one call site, so a parent
+ * chain locked above its child read as one lock taken twice and lockdep
+ * disabled itself at the first mount.  keybits is the number of key bits
+ * a blockref masks off, 0 at a leaf, so along any parent-to-child walk
+ * within one type it strictly decreases, and the type separates the
+ * volume, freemap, indirect, inode and data levels from each other.
+ * What it cannot separate is one inode chain under another, both leaves
+ * of type INODE: that pair is a directory above its entry and is
+ * measured rather than assumed, see doc/README.status.md.
+ *
+ * The keys are static so lockdep can register them; the names are the
+ * type names, static for the same reason.  Without CONFIG_LOCKDEP the
+ * call compiles to nothing and this function is never reached.
+ */
+#ifdef CONFIG_LOCKDEP
+static struct lock_class_key hammer2_chain_keys[8][65];
+static const char *const hammer2_chain_key_names[8] = {
+	"h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
+	"h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf", "h2ch_root",
+};
+#endif
+
+void
+hammer2_chain_lockdep_class(hammer2_mtx_t *p)
+{
+#ifdef CONFIG_LOCKDEP
+	hammer2_chain_t *chain = container_of(p, hammer2_chain_t, lock);
+	unsigned int t = chain->bref.type, kb = chain->bref.keybits;
+
+	if (t > HAMMER2_BREF_TYPE_FREEMAP_LEAF)
+		t = 7;	/* FREEMAP and VOLUME, the two pseudo-types at the root */
+	if (kb > 64)
+		kb = 64;
+	lockdep_set_class_and_name(&p->lock, &hammer2_chain_keys[t][kb],
+	    hammer2_chain_key_names[t]);
+#endif
+}
+
 struct file_system_type hammer2_fs_type = {
 	.owner			= THIS_MODULE,
 	.name			= "hammer2",
