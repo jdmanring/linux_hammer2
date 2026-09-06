@@ -149,7 +149,10 @@ as a page allocation failure of order 4. Both mappings now carry the
 retry flag, the file mapping's in its mask and the device mapping's on
 each grab since that mask is the block layer's; the flag keeps the
 allocator reclaiming and compacting and still fails rather than
-invoking the OOM killer.
+invoking the OOM killer. The same tree on the same guest with kmemleak
+disabled reached a million files with no refusal, the module unchanged,
+so the fragmentation is the debug guest's and the order is not a limit
+the IO model has to answer for at this scale.
 
 For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6

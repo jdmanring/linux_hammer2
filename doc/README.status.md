@@ -1885,6 +1885,7 @@ fails once the page cache has fragmented memory below 64 KiB:
 | with `__GFP_RETRY_MAYFAIL` | 720266 | 360 MiB |
 | the same, reclaim counters kept | 718666 | 352 MiB |
 | mapping mask with `__GFP_FS` | 699172 | 355 MiB |
+| the same, guest with kmemleak off | 1000000, no refusal | 237 MiB after the tree |
 
 Every one of those runs counted every accepted file after a cold
 remount and on DragonFly, with both checkers clean, DragonFly's in
@@ -1900,9 +1901,15 @@ number stands as this guest's: roughly seven hundred thousand
 one-line files from a cold boot before the first `ENOMEM`, with 1.3
 GiB of the volume used. What decides whether it is the environment's
 is a run with `kmemleak=off`, one at 8 GiB, and one on a kernel
-without the debug options, none of which has been made; the design
-alternative, file mappings that take smaller folios for blocks the
-strategy can still write whole, is `doc/IO_MODEL.md`'s question. The
+without the debug options. The first has been made, with the module
+unchanged and kmemleak disabled through its debugfs node before the
+module loaded: the writer reached a million files in 1007 s with no
+refusal, 3.0 GiB still available, direct reclaim at 1632 pages stolen
+of 93696 scanned and compaction stalled five times, and both sides
+counted a million with both checkers clean. The limit is the guest's,
+not the IO model's, and the design alternative, file mappings that
+take smaller folios for blocks the strategy can still write whole,
+stays `doc/IO_MODEL.md`'s question with nothing asking it. The
 lock reading is not available at this scale: lockdep hits a chain
 ceiling of the guest kernel's configuration near 300 s, which the
 script reports as a ceiling and counts neither way.
