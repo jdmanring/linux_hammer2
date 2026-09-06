@@ -1386,33 +1386,20 @@ unmount 0; `modprobe -r` 0; no kernel report; and the host's
 
 **This is an open defect.** Every write measurement above was taken on a
 volume with room in it, and nothing in this tree had ever filled one.
-`script/enospc.sh` does, and it fails while the defect stands.
+`script/enospc.sh` does, and it fails while the defect stands. Do not
+fill a HAMMER2 volume on Linux until it is fixed: the failure is not
+silent and no corruption has been seen, but the unmount does not
+complete and the module cannot be unloaded afterwards.
 
-Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
-`CONFIG_PROVE_LOCKING`, on a 2 GiB volume. 583 files of 4 MiB each were
-written before `dd` reported `No space left on device`, `df` read 100%
-and `statfs` reported zero available, which is the part that behaves.
-`debug_locks` was still 1 at that point, and the `sync(2)` that followed
-disabled it. Eight runs have reached that state and every one reported
-the cycle, so the report is reproducible.
-
-Each run produces ONE report. The count said three, and then five,
-because the harness counted lines matching `DEADLOCK\|circular` and a
-single lockdep report contains several of them. It now counts banner
-occurrences, and the run behind the capture in `doc/enospc-lockdep.txt`
-reports `cycles 1`. `debug_locks` reaching 0 is not by itself evidence
-of a cycle either, since an unlock imbalance, a held lock freed and
-three lockdep resource ceilings all read the same there, so the harness
-reports which banner named the shutdown and treats a shutdown it cannot
-attribute as COULD-NOT-RUN.
-
-What happens after the sync varies. The unmount hung on four of the eight:
-`umount` had to be killed and `rmmod` reported the module still in use,
-which leaves the guest needing a hard reset. On the other two both
-returned 0. The script checks all three, so a run that hangs and a run
-that does not are both recorded rather than one being taken for the
-rule. Only the last three runs counted reports correctly, and each of
-those reported one; the earlier counts are not recoverable.
+Measured on `artix-s6-kde` at 7.3.0-rc1 with `CONFIG_PROVE_LOCKING`, on
+a 2 GiB volume. 583 files of 4 MiB each are written before `dd` reports
+`No space left on device`, `df` reads 100% and `statfs` reports zero
+available, which is the part that behaves. `debug_locks` is 1 at that
+point and the `sync(2)` that follows disables it. Eight runs have
+reached that state and every one reported the cycle. The unmount hung on
+four of the eight, leaving the guest needing a hard reset; on the other
+four it returned 0. The script checks both outcomes rather than taking
+one for the rule.
 
 The report is a circular dependency between two orders:
 
@@ -1421,155 +1408,71 @@ The report is a circular dependency between two orders:
     hammer2_vfs_sync_pmp
         holds h2ch_inode/2, takes h2ip/2
 
-The first is upstream's order and is not in question: FreeBSD's
+The first is upstream's and is not in question: FreeBSD's
 `hammer2_vop_fsync()` and its write path both lock the inode and then
 call `hammer2_inode_chain_sync()`. The second is the one that should not
-happen. The whole report is in `doc/enospc-lockdep.txt`, streamed out of
-`/dev/kmsg` and written down before the unmount that loses it. Both
-sides of the cycle are named there with full frames, and the report also
-answers what the sync task was holding:
+happen. The whole report is `doc/enospc-lockdep.txt`, streamed out of
+`/dev/kmsg` and written down before the unmount that would lose it.
 
-    locks held by sync/1668: 2
-     #0: (&type->s_umount_key#43) at super_lock
-     #1: (h2ch_inode/2)          at hammer2_chain_lock+0x212
+### What is established
 
-The chain lock is held, and its own frames sit above `ksys_sync` with no
-module frame between them and `hammer2_vfs_sync_pmp+0x19a`. It is not a
-leak: `hammer2_flush_core()` is entered with its chain locked and
-returns with it locked, which is the contract in DragonFly too. It is
-the flush holding its chain across the inode-lock site, on one stack.
+The sync task holds one chain lock while it takes an inode lock. It is a
+single acquire and not a recursion the chain code has miscounted: the
+chain lock is recursive, `hammer2_chain_init()` calling
+`hammer2_mtx_init_recurse()`, and the measurement reads depth 0,
+`lockcnt` 1, owner the sync task, on a chain of type `INODE`. The same
+chain is held at every probe of a run, so it is one chain held
+throughout rather than an accumulation, which a leak per iteration would
+have grown to 583.
 
-That last part is the port-specific half. In DragonFly the flush runs on
-its own thread, so the chain the flush holds and the inode the sync loop
-locks are held by different tasks and never form an order. XOPs run
-synchronously here, so both land on the sync task, and the second order
-in the pair exists only because of that. The write side is upstream's
-and does not move; the sync loop is the side that must not hold a chain
-when it takes `ip->lock`.
+It is first left held inside `hammer2_inode_chain_sync()`. Counting the
+chain locks held after each call the sync loop makes between locking an
+inode and releasing it gives N, N, N-1, N-1 across the four probes in
+order, which is the signature of the leak arriving inside the third of
+them. On a later `sync_fs` pass of the same `sync(2)` the chain is
+already held at the function's entry, before `hammer2_trans_init()`.
 
-**Two explanations have been tested and both are wrong.** The first was
-that an XOP body returns with a chain still locked, XOPs running
-synchronously here so that would leave it on the caller. Every XOP the
-sync path drives was read: `hammer2_xop_inode_create_ins()`,
-`hammer2_xop_inode_chain_sync()` and `hammer2_xop_inode_destroy()` each
-reach a single cleanup label that unlocks and drops both chains on every
-path. So are the two `ENOSPC` returns in
-`hammer2_chain_create_indirect()`, which the run names immediately
-after the report, and its caller's handling of the `NULL` they produce.
+Why the two orders meet at all is the port-specific half. In DragonFly
+the flush runs on its own thread, so a chain the flush holds and an
+inode the sync loop locks belong to different tasks and never form an
+order. XOPs run synchronously here, so both land on the sync task. The
+write side is upstream's and does not move; the sync loop is the side
+that must not hold a chain when it takes `ip->lock`.
 
-The second was that `hammer2_chain_unhold()` leaves the mutex held, its
-`lockcnt > 1` branch decrementing a count rather than releasing, which
-would make upstream's deadlock workaround in `hammer2_inode_get()` a
-no-op here. A scratch build put a `WARN_ONCE` on exactly that condition
-and ran the reproducer: zero hits.
+### What has been ruled out
 
-Getting the report at all took `cat /dev/kmsg` streaming to a file
-during the sync. The ring buffer wraps before the run ends, so two
-earlier captures held only the tail and neither showed the sync task's
-own stack, which is the line that eliminated the first explanation.
+Each of these was tested rather than reasoned about, and is recorded so
+it is not tested again:
 
-The instrument that answers it directly was then built: a scratch field
-on the chain holding the return address of whatever locked it, and a
-walk of the sync task's held locks at each of the three inode-lock sites
-that resolves any held chain lock and prints where it came from. Its
-first run was emphatic. One chain, the same address every time, reported
-as held at all 583 iterations of the syncq loop and again in stage 2,
-locked from `hammer2_flush_core+0x23b`, which is the relock of the
-parent and the chain after the flush code drops them to take them in
-order.
+- An XOP body returning with a chain still locked.
+  `hammer2_xop_inode_create_ins()`, `hammer2_xop_inode_chain_sync()` and
+  `hammer2_xop_inode_destroy()` each reach one cleanup label that
+  unlocks and drops both chains on every path, including the error ones.
+- `hammer2_chain_unhold()` leaving the mutex held. A build with a
+  `WARN_ONCE` on exactly that condition scored zero hits.
+- lockdep subclass exhaustion. `hammer2_chain_lockdep_nest()` clamps to
+  `MAX_LOCKDEP_SUBCLASSES - 2`, and the one unclamped path,
+  `hammer2_inode_lockdep_nest_under()`, reaches at most 7, which is
+  legal.
+- `hammer2_flush_core()` replacing the chain it was given, so a caller
+  would unlock the one it started with. It never reassigns `chain`.
+- A lockdep shutdown from something other than a cycle. An unlock
+  imbalance, a held lock freed and three lockdep ceilings all read as
+  `debug_locks` 0, so the run reports which banner named the shutdown;
+  it names a circular dependency.
 
-That reading was held back as a lead, because a stricter build of the
-same instrument stopped seeing it: recording the address at every lock
-says where a chain was last locked, not that the lock is still held, so
-the field was cleared on unlock to make a non-NULL value provably live,
-and on that build the run reported no held chain while lockdep still
-disabled itself.
+### What is next
 
-The captured report settles which build was wrong. lockdep names one
-chain lock held by the sync task, so the first reading was right and the
-clearing build was the broken one: chain locks are counted, and
-`hammer2_chain_unlock()` runs with `lockcnt` still above zero for a
-chain that stays held, so clearing the field there erases it for a lock
-that is live. The instrument agreed with the kernel once the kernel was
-asked directly.
+`hammer2_inode_chain_sync()` locks nothing itself, and the XOP body it
+drives reaches a single cleanup label on every path, so the release is
+missed in the XOP machinery between them. The next measurement is
+`hammer2_dbg_held_chains()` around `hammer2_xop_start()`,
+`hammer2_xop_collect()` and `hammer2_xop_retire()`, which
+`H2_LOCKDEBUG=1 bash script/enospc.sh` builds and reports.
 
-The record-only instrument was then rebuilt and rerun against the same
-reproducer. 583 lines, one per iteration of the syncq loop, every one
-naming the same acquire and a chain of type `INODE`, which reproduces
-the first run rather than resembling it. The offset was resolved against
-that build's own module: `hammer2_flush_core+0x23b` is the relock of the
-chain in `hammer2_flush_core()`, the second of the pair the flush takes
-after dropping both to acquire them parent-first.
-
-The chain lock is recursive here, `hammer2_chain_init()` calling
-`hammer2_mtx_init_recurse()`, so "held" had two readings that need
-different fixes: an owner that took the lock again and skipped one of
-the paired releases, which never reaches depth zero and never releases
-the rwsem, or a single acquire that was never released at all. The
-instrument was extended to print the depth, the chain's `lockcnt` and
-whether the sync task is the owner, and the run answers plainly:
-
-    583 h2dbg: at syncq depth 0 lockcnt 1 refs 1 owner 1
-         from hammer2_flush_core+0x23b
-
-Depth zero and `lockcnt` one. It is a single acquire, owned by the sync
-task, taken at the relock in `hammer2_flush_core()` and never released,
-not a recursion imbalance.
-
-Naming the acquire turned out not to name the leak, and the instrument
-that recorded it could not have. `hammer2_flush_core()` unlocks and
-relocks every chain it flushes, so a chain whose last acquire is that
-relock is any chain that has been flushed. The reading was true and
-carried no information.
-
-What names the leak is bracketing. A counter of the chain locks the
-sync task holds, printed after each of the calls
-`hammer2_vfs_sync_pmp()` makes between locking an inode and releasing
-it, gives this:
-
-    582 at chain_sync    582 at chain_flush
-    581 at loop-top      581 at chain_ins
-      1 at trans_init      1 at entry
-
-Three things follow. The count is one at every probe and never grows,
-where a leak per iteration would reach 583, so it is a single chain
-rather than an accumulation. It is the same chain at every probe, type
-`INODE` and key `402`, so it is one chain held throughout and not one
-held at a time in turn, which is the other reading the count alone
-allows. And it is already held at `entry`, before
-`hammer2_trans_init()`, which is the second `sync_fs` pass of one
-`sync(2)` seeing what the first left behind.
-
-The first pass is where the transition happens, and the counts locate
-it. The probes run in the order `loop-top`, `chain_ins`, `chain_sync`,
-`chain_flush`, and each prints only when something is held. An
-iteration that acquires the leak inside `chain_sync` therefore prints
-its last two probes and none of its first two, and every later
-iteration prints all four, giving N, N, N-1, N-1. That is the pattern,
-with N of 582, so the chain is first left locked inside
-`hammer2_inode_chain_sync()`.
-
-`hammer2_inode_chain_sync()` itself locks nothing: it fills an XOP,
-starts it, collects and retires it, and drops the error under
-upstream's own `XXX return error somehow?`. The chain is locked and
-released inside the XOP body, which reaches one cleanup label that
-unlocks and drops both chains on every path. So the release that is
-missed is inside the XOP machinery on the error path rather than in
-either function's own code, and the next measurement is the same
-bracketing applied around `hammer2_xop_start()`,
-`hammer2_xop_collect()` and `hammer2_xop_retire()`.
-
-One thing the attempt did settle: `__builtin_return_address()` above
-frame zero is not safe in kernel context, and a build using frames one
-and two killed the mounting process outright.
-
-The `ENOSPC` this all happens under is separately dropped on the floor,
-under upstream's own `XXX return error somehow?` in `hammer2_inode.c`.
-
-Until this is understood, a HAMMER2 volume on Linux should not be filled
-to capacity. The failure is not silent, and no corruption has been
-observed, but the unmount does not complete and the module cannot be
-unloaded afterwards.
+The `ENOSPC` underneath all of this is separately dropped on the floor,
+under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
+so the volume is full, the log says so, and the caller is told nothing.
 
 ## Mapped files, and the volume as a root filesystem
 

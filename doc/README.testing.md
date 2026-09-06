@@ -1104,11 +1104,11 @@ away and the module carries no symbol for it, which is checked by
 building both ways. `H2_LOCKDEBUG=1 bash script/enospc.sh` builds with
 it and summarizes what it printed.
 
-It exists because the question was asked five times with a scratch
-build, and because two of those builds disagreed: one recorded the
-acquire on every lock, which names where a chain was last locked rather
-than where the live one came from, and the other cleared that record on
-unlock, which erases it for a counted lock that is still held. This one
+Two designs it deliberately is not, both of which were built and both of
+which read as evidence while carrying none: one recording the acquire on
+every lock, which names where a chain was last locked rather than where
+the live one came from, and one clearing that record on unlock, which
+erases it for a counted lock that is still held. This one
 reads `CONFIG_LOCKDEP`'s own held-lock records, so it cannot disagree
 with the report it is being used to explain, and it prints nothing when
 nothing is held: a quiet run is the absence of a finding rather than a
