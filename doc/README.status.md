@@ -1543,14 +1543,21 @@ errno, not the error. The Linux side of that completion is this port's
 own line, and it now hands the kernel the errno the core reports, as
 ext4 and iomap do, so both calls return `ENOSPC` on the same fill.
 
-The sync path's own returns are still dropped, and that is carried. The sync loop flushes each inode's mapping with
-`filemap_write_and_wait()` and then discards what it returns under an
-`XXX`, which is the line the `vnode flush failed 5` messages come from:
-the failure is printed and the loop carries on. That is the FreeBSD and
-NetBSD ports' `vn_fsync_buf()` line and its `error = 0; /* XXX */`
-carried as they wrote it, and DragonFly ignores what `vfsync()` returns
-at the same spot without a comment, so a fix belongs in all four trees
-and not in the shim. The return of
+The sync path's own returns are still dropped, and that is carried
+and, on Linux, without consequence. The sync loop flushes each inode's
+mapping with `filemap_write_and_wait()` and then discards what it
+returns under an `XXX`, which is the line the `vnode flush failed 5`
+messages come from: the failure is printed and the loop carries on.
+That is the FreeBSD and NetBSD ports' `vn_fsync_buf()` line and its
+`error = 0; /* XXX */` carried as they wrote it, and DragonFly ignores
+what `vfsync()` returns at the same spot without a comment. It was
+written up here as an upstream report to stage. It is not one: the two
+callers a user reaches do not read that return. `sync(2)` returns zero
+unconditionally in the kernel of record, and `syncfs(2)` reads the
+superblock's writeback error sequence, which the strategy write's
+completion sets through `mapping_set_error()` before the sync loop
+runs, and which the `ENOSPC` reading above came from. A report with no
+consequence to name is not filed. The return of
 `hammer2_inode_chain_ins()` is discarded at the same site, and that
 function clears `INODE_CREATING` before it attempts the insert, so an
 inode whose insert failed for want of space is marked as one that has
