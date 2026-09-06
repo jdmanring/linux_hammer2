@@ -93,7 +93,12 @@ instance is unreported. It is a record of what was looked at.
 
 ## State of the change here
 
-Measured in this port: four runs of the reproducer after the change with
-no fault, against five faults in the seven runs before it, and the
-fixture gate clean afterwards because the change touches the teardown of
-every unmount rather than only a full one. Four runs is not many.
+Measured in this port: four runs of a debug build after the change with
+no fault, against five faults in the seven runs before it, then ten runs
+of the shipping build with no debug knob set, all ten writing 583 files
+to `ENOSPC`, none faulting, and the module unloading on every one. The
+fixture gate ran clean afterwards because the change touches the
+teardown of every unmount rather than only a full one. A held lock
+freed report seen twice before this change has not recurred in the
+fourteen runs since and is not explained, so the reproducer is not yet a
+gate.
