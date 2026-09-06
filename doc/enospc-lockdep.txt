@@ -1,4 +1,13 @@
-The lockdep report a full volume produces, captured in full.
+The lockdep report a full volume USED TO produce, captured in full.
+
+THIS IS A RECORD OF A FIXED DEFECT, kept because it is the evidence the
+fix was made against and because the two orders in it are worth reading.
+The cause was hammer2_chain_create() clearing a caller's chain pointer on
+the ENOSPC path and so skipping that caller's release; twenty-five runs
+whose logs are kept have filled a volume since without reporting a cycle.
+A run today that produces anything resembling this is a regression, not
+a reproduction.
+
 
 Measured on artix-s6-kde at 7.3.0-rc1 with CONFIG_PROVE_LOCKING, on a 2 GiB
 volume, by script/enospc.sh. 583 files of 4 MiB were written before dd

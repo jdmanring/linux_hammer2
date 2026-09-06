@@ -1173,11 +1173,13 @@ the crash matrix and the round trip. A filesystem's behavior when it
 runs out of space is its own surface.
 
 Reading the report is the part the script had to be rebuilt for. It
-streams `/dev/kmsg` to a file for the whole run and prints the report
-before it attempts the unmount, because the ring wraps before a fill
-ends and the unmount hangs on most of these runs and takes the log with
-it. Five reproductions before that produced no readable report; the
-capture is `doc/enospc-lockdep.txt`.
+streams `/dev/kmsg` to a file for the whole run and prints what it
+derives from the log before it attempts the unmount, because the ring
+wraps before a fill ends and a bad unmount is where the evidence is
+lost. Five reproductions before that produced no readable report. The
+capture is `doc/enospc-lockdep.txt`, which records a defect since fixed
+and says so in its own first line, because a file holding a lockdep
+report reads as current behavior to anyone who opens it.
 
 Two things it now refuses to assume. Reports are counted by banner
 occurrences rather than by lines matching `DEADLOCK` or `circular`,
