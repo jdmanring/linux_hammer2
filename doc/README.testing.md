@@ -1118,18 +1118,26 @@ reading the gate.
 
 `script/enospc.sh` fills a 2 GiB volume until the first write fails,
 calls `sync(2)`, and reads `debug_locks` on both sides of each step. The
-circular lock dependency it was written to reproduce is fixed, and so
-is the fault that left the module unremovable after a fill; ten runs
-of the shipping build pass. It also records what `fsync(2)` on the last
-written file and `syncfs(2)` on the volume return after the fill, with
-the error text kept, because an exit status of 1 from a missing path
-and one from a failed sync read the same. `doc/README.status.md`
-carries the account.
+circular lock dependency it was written to reproduce is fixed, so is
+the fault that left the module unremovable after a fill, and so is the
+held lock freed during the fill that it captured whole once it kept its
+log. It records what `fsync(2)` on the last written file and
+`syncfs(2)` on the volume return after the fill, with the error text
+kept, because an exit status of 1 from a missing path and one from a
+failed sync read the same. It hashes every file as it writes it, off
+the volume, drops the page cache after the sync and checks every file
+from the media, printing the intact and damaged counts together so a
+check that read nothing cannot pass as one that found nothing wrong;
+that check is what found a fill losing nearly all of itself.
+`H2_ENOSPC_FILES=n` caps the fill short of full, which is the control:
+a volume with room must read back everything it accepted, or the check
+is what is broken. Free space is read after the sync, because the write
+path refuses a fill while statfs still shows the space its dirty pages
+will take. Every run prints the source hash it was built from, with a
+dirty mark. `doc/README.status.md` carries the account.
 
-It is not a gate yet because on two runs before the unmount fix lockdep
-reported a held lock freed during the fill, which is unexplained rather
-than fixed, and a test whose one remaining failure nobody can account
-for stays a script run by hand.
+It is not a gate yet only because it has not been run enough times on
+the build that passes it; the four runs that have are in the account.
 
 A debug build logs each PFS as it is freed and each one the teardown
 syncs, unhashed with `%px` so the addresses can be compared against the

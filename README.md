@@ -74,16 +74,20 @@ filled volume used to take a page fault in the flush, on a PFS the
 teardown had just released, which killed the unmount and left the module
 impossible to unload.
 
-Ten consecutive runs of the reproducer now fill a 2 GiB volume, sync it
-and unmount it with nothing reported. What is still open: the `ENOSPC`
-is dropped rather than returned to the caller, so a write that fails for
-want of space is logged and not reported, and lockdep reported a held
-lock freed during a fill on two runs before those fixes, which has not
-recurred in fourteen since and has not been explained.
+The reproducer then grew a check nothing had done: hash every file
+as written and compare the media afterwards. A volume allowed to fill
+to its last block had lost nearly the whole fill, two files of five
+hundred reading back whole with both checkers clean, because HAMMER2
+needs free space for the flush that commits a fill and every tree this
+port carries from keeps a reserve for it through a check this port had
+declared and never carried. The check is carried now, with the page
+cache's dirty pages counted against the reserve, and a fill is refused
+with every accepted file whole on the media. A held lock freed during a
+fill, seen twice and unexplained for a day, was captured whole once the
+log was kept and fixed the same hour.
 
-The reproducer is `script/enospc.sh` and the account is in
-[doc/README.status.md](doc/README.status.md). No corruption has been
-seen, and every checker has been clean afterwards.
+The reproducer is `script/enospc.sh` and the account, wrong turns
+included, is in [doc/README.status.md](doc/README.status.md).
 
 What that buys you is a driver that can be tried, on media you can
 afford to lose. What it does not yet do: the snapshots have no backend

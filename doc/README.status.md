@@ -1420,15 +1420,69 @@ chain lock stranded on the `ENOSPC` path, which made the `sync(2)` after
 a fill trip a circular lock dependency, and a chain outliving its PFS,
 which faulted the unmount of a filled volume.
 
-**What is still open on this path**, and why the reproducer is not yet a
-gate: on two runs before the unmount fix lockdep reported a held lock
-freed during the fill itself, unexplained and not seen since. The
-`ENOSPC` reaches the writer at `open(2)` and `write(2)`, and since
-0.7.11 it reaches `fsync(2)` and `syncfs(2)` as well, measured on the
-volume the reproducer fills: before the change both reported `EIO`,
-which is what every tree this port carries from sets on a failed
-strategy write, and after it both report `ENOSPC`. No corruption has been seen on any run and every checker has been clean
-afterwards.
+Two more followed once the reproducer kept its whole log and checked
+the media against what it wrote: the held lock freed during a fill,
+attributed and fixed, and a fill that lost nearly all of itself to a
+flush with no room left, fixed by carrying the free-space reserve every
+other tree has. The `ENOSPC` reaches the writer at `open(2)` and
+`write(2)`, and since 0.7.11 `fsync(2)` and `syncfs(2)` report it too
+rather than `EIO`. "No corruption has been seen" stood in this
+paragraph for a day on the strength of two clean checkers; the section
+below is what looking found.
+
+### What a fill kept, and the reserve that keeps it
+
+The reproducer hashes every file as it writes it, off the volume, and
+after the sync drops the page cache and reads every file back from the
+media. A fill capped at one hundred files on a volume with room reads
+back one hundred, which is the control: the check itself is sound.
+On a volume filled to its last block, both checkers clean afterwards:
+
+| build | files accepted | read back whole | lost |
+|---|---|---|---|
+| no reserve check | 533, 583 | 2, 2 | 531, 581 |
+| `hammer2_vfs_enospace()` carried | 511, 496 | 474, 286 | 37, 210 |
+| plus a data-sync write under twice the reserve | 487, 489 | 473, 474 | 14, 15 |
+| plus the root writeback's dirty pages counted | not measured: the guest's writer is in another cgroup, so that counter read near zero | | |
+| plus every writeback on the device counted | 463, 463 | 463, 463 | 0, 0 |
+
+HAMMER2 allocates at writeback, not at `write(2)`, and needs free space
+for the flush that commits what was written: indirect blocks, the
+freemap, the volume header. DragonFly and the three ports keep a
+reserve for that, a twentieth of the volume set at mount, and refuse a
+write, a create, a link, a rename, a remove and a size change once the
+free count is under it, through `hammer2_vfs_enospace()`. This port
+declared that function in `hammer2.h`, computed the reserve at mount,
+subtracted it in `statfs`, and never defined or called the check. So
+`write(2)` accepted data until the freemap was empty and the flush
+could not allocate its own blocks; the strategy writes that had
+succeeded were never committed, and the checkers saw a consistent
+volume because the metadata that did land was consistent.
+
+Carrying the check was a third of the fix. Its free count moves when a
+block is allocated, and the page cache holds what `write(2)` accepted
+until writeback allocates it, so the count was judged against space
+several hundred megabytes of accepted data had already spoken for.
+Upstream's second threshold exists for this: under twice the reserve a
+write becomes semi-synchronous, so its blocks are allocated before the
+next write is judged. The page cache's form of that is a data-sync
+write, `IOCB_DSYNC`, which goes through `->fsync` before it returns.
+The remainder is the data accepted before that threshold, and the
+write entry now counts the device's reclaimable dirty pages against the
+reserve as well as the write in hand, walking every writeback on the
+device under RCU as the kernel's own accounting does, because under
+cgroup writeback the superblock's own is the root cgroup's alone and
+the guest's writer sits in another.
+
+What is not carried, with the trigger for each. The source trees'
+syncer flushes every thirty seconds and this port flushes metadata on
+`sync` alone, so a fill's whole metadata reaches the media in one
+flush; with the reserve respected that flush completed on every run,
+and a periodic flush waits on a run where it does not. A shared
+writable mapping dirties folios through the fault path, which none of
+these checks see, and that is the deferral already recorded on the file
+operations. The thresholds differ for root and for a user, and every
+run here writes as root; the user branch is unmeasured.
 
 Both accounts below are kept, the wrong turns included, because the
 method is the transferable part: three of the readings this section once
@@ -1533,15 +1587,20 @@ it is not tested again:
 
 ### What is still open here
 
-Lockdep reported `WARNING: held lock freed!` on two runs, both of them
-after the chain lock fix and before the PFS one, and neither was
-attributed: at the time the run printed only the window following the
+Nothing on the lock side. Lockdep reported `WARNING: held lock freed!`
+on two runs, both after the chain lock fix and before the PFS one, and
+neither was attributed: the run printed only the window following the
 cycle banner, so a fault with a different banner left one line and no
-backtrace. Fourteen runs since the PFS fix have not reproduced it,
-including ten consecutive runs of the shipping build. That bounds its
-rate and does not explain it, and the two sightings were real. The
-window follows whichever banner fires now, so a recurrence will be
-captured whole rather than named and lost.
+backtrace, and no run recorded what it was built from. Once the log was
+kept whole and every run stamped with its build, the next sighting
+arrived whole: `dd` under `open(2)`, `hammer2_chain_create()` dropping
+the directory-entry chain it had just allocated, still locked, when it
+could not make room under the parent. Upstream's mutex tolerates a
+locked chain being freed; here the drop took the lock again by
+recursion and freed the chain with its rwsem held. The widened
+last-drop guard fired on the same run and named the same chain, which
+is what it was for. The chain is unlocked before the drop, marked as a
+Linux edit, and every run since has kept lockdep alive.
 
 `hammer2_chain_drop()` is a candidate for it and is guarded rather than
 assumed: at its last drop it takes the chain's own lock, and this port's
