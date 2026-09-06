@@ -55,3 +55,15 @@ The Linux kernel driver now answers the PFS ioctls, and the documented
 way to delete a PFS or a snapshot, `hammer2 pfs-delete LABEL`, cannot
 reach it without the selector. Until this lands the port's documentation
 tells testers to pass `-s`.
+
+## Standing at upstream
+
+Checked 2026-09-06 against `kusumi/libfs` at its head, `74266fe`
+(2026-06-01), the same commit the local checkout carries: `src/os/linux.rs`
+still returns the empty list, and the FreeBSD implementation beside it
+still pushes `(fstypename, mntonname, mntfromname)`, the order the change
+above keeps. The one consumer, `libhammer2::subs::get_hammer2_mounts()`,
+reads the first two fields and ignores the third. The repository has
+issues disabled, no pull requests and no forks, so nothing can be
+concluded from silence there and the report cannot be filed on the
+forge; it goes to the author directly or rides a hammer2-utils thread.

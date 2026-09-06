@@ -2122,7 +2122,8 @@ One thing testers hit immediately: `hammer2 pfs-delete LABEL` without
 routes by mount through `libfs`, whose Linux `get_mnt_info()` returns an
 empty list, so the lookup never runs.
 `doc/upstream/libfs-linux-get_mnt_info.md` is the report against it,
-drafted and unfiled.
+drafted and unfiled; its standing section records the stub still at
+upstream's head on 2026-09-06 and that the repository takes no issues.
 
 ## The folio the page cache can hold, asked at mount
 
