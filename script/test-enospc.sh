@@ -313,7 +313,7 @@ while [ "$i" -lt 60 ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
 	state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "enospc: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 	if [ "$state" != "running" ]; then
-		[ 1 = 1 ] || {
+		[ "${H2_FIXTURE_START:-0}" = 1 ] || {
 			echo "enospc: COULD-NOT-RUN: $GUEST is $state; set H2_FIXTURE_START=1 to start it" >&2; exit 2; }
 		$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "enospc: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
 		started=yes
