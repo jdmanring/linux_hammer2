@@ -556,7 +556,7 @@ construction rather than re-hashed every run.
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4950 | FreeBSD port, carried byte-for-byte but ten `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, and the new block's own first lock recording no order; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 4958 | FreeBSD port, carried byte-for-byte but eleven `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, and the caller's chain left alone when an indirect block cannot be created; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1332 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
@@ -1425,12 +1425,23 @@ chain is held at every probe of a run, so it is one chain held
 throughout rather than an accumulation, which a leak per iteration would
 have grown to 583.
 
-It is first left held inside `hammer2_inode_chain_sync()`. Counting the
-chain locks held after each call the sync loop makes between locking an
-inode and releasing it gives N, N, N-1, N-1 across the four probes in
-order, which is the signature of the leak arriving inside the third of
-them. On a later `sync_fs` pass of the same `sync(2)` the chain is
-already held at the function's entry, before `hammer2_trans_init()`.
+Where the chain is first left held is not established. An earlier
+reading recorded here placed it inside `hammer2_inode_chain_sync()`, on
+a count of N, N, N-1, N-1 across four probes. That arithmetic compared
+two different builds: the function runs its XOP only when
+`RESIZED|MODIFIED` is set, three times in a run rather than once per
+file, so the probes being subtracted had not fired on the same
+occasions. A build carrying every probe at once reports the chain
+already held at that function's entry, which places the leak before it
+and not within it.
+
+That build also reports the held chain as key `0x402` while the insert
+failing at the same moment names inode `0x403`, so the chain being held
+is not the one the current iteration is working on. Until an instrument
+prints both identities on one line, the site is open.
+
+On a later `sync_fs` pass of the same `sync(2)` the chain is already
+held at `hammer2_vfs_sync_pmp()` entry, before `hammer2_trans_init()`.
 
 Why the two orders meet at all is the port-specific half. In DragonFly
 the flush runs on its own thread, so a chain the flush holds and an
@@ -1463,12 +1474,16 @@ it is not tested again:
 
 ### What is next
 
-`hammer2_inode_chain_sync()` locks nothing itself, and the XOP body it
-drives reaches a single cleanup label on every path, so the release is
-missed in the XOP machinery between them. The next measurement is
-`hammer2_dbg_held_chains()` around `hammer2_xop_start()`,
-`hammer2_xop_collect()` and `hammer2_xop_retire()`, which
-`H2_LOCKDEBUG=1 bash script/enospc.sh` builds and reports.
+The next measurement prints the inode the sync loop is on alongside the
+chain `hammer2_dbg_held_chains()` finds held, so that one line settles
+whether the surviving lock belongs to the iteration that reports it.
+`H2_LOCKDEBUG=1 bash script/enospc.sh` builds and runs it.
+
+A separate defect found while reading that path is fixed and does not
+depend on this one: `hammer2_chain_create()` cleared the caller's chain
+pointer on the failure to create an indirect block, without unlocking or
+dropping the chain, for callers that had passed one in and still owned
+it.
 
 The `ENOSPC` underneath all of this is separately dropped on the floor,
 under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
@@ -1793,7 +1808,7 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 30 | 18 | 12 |
+| `hammer2_chain.c` | 31 | 18 | 13 |
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
