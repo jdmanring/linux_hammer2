@@ -2958,6 +2958,12 @@ hammer2_module_init(void)
 {
 	int error;
 
+	/* Linux: the upgrade in hammer2_os.h reads the rw_semaphore's word. */
+	if (hammer2_mtx_layout_check()) {
+		pr_err("rw_semaphore count layout is not the kernel of record's\n");
+		return (-EINVAL);
+	}
+
 	/*
 	 * XXX Linux: upstream asserts that uma_zcreate(9) never returns
 	 * NULL.  kmem_cache_create() can, so the assertion becomes an

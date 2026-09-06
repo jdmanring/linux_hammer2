@@ -575,36 +575,101 @@ hammer2_mtx_sh_try(hammer2_mtx_t *p)
 }
 
 /*
- * XXX Linux has downgrade_write() and no atomic upgrade, so the shared to
- * exclusive transition is done by releasing and retaking, which is what
- * the OpenBSD port does here for the same reason.
+ * XXX Linux has downgrade_write() and no upgrade.  DragonFly's
+ * mtx_upgrade_try() (kern_mutex.c, _mtx_upgrade_try) is one compare and
+ * swap on the lock word: the sole shared holder becomes the exclusive
+ * holder, ahead of any queued exclusive request, and a holder that is
+ * refused keeps what it held.  hammer2_chain_unlock() asks for that in a
+ * loop on the 1->0 transition, and the loop is only correct on a lock
+ * with that promise.
  *
- * This returned failure for every shared holder until a mount measured
- * it: hammer2_chain_unlock() asks for the upgrade in a loop and treats
- * refusal as a race to be retried, so a caller holding the chain shared
- * spun in that loop without end, unkillable, holding the mount until the
- * machine was rebooted. The comment this replaces asserted that every
- * caller of a _try drops and re-acquires on failure. That caller does not,
- * and a predicate that can never succeed is not a slow implementation of
- * an upgrade.
+ * This was first an up_read() and a down_write_trylock(), restoring with
+ * down_read() when the trylock failed, the shape the OpenBSD port uses.
+ * That releases the lock for a moment, and the moment is enough: the
+ * caller is hammer2_chain_lookup() unlocking a parent while it holds the
+ * child it just locked, a writer queued on the parent takes it in the
+ * gap and descends to the child, and the restoring down_read() queues
+ * behind that writer.  Parent and child held in opposite orders by two
+ * tasks, a cycle the core never makes and the shim did.  A million-file
+ * tree with a deletion running beside the sync worker reached it; the
+ * hung-task report named each task as the owner of what the other
+ * wanted.
  *
- * The window where neither side is held is the one the caller's loop
- * already anticipates: it re-reads lockcnt on every iteration and commits
- * with a compare-and-set, so an upgrade that fails leaves the caller
- * holding exactly what it held before.
+ * So the upgrade is done on the rw_semaphore's count the way DragonFly
+ * does it on mtx_lock: succeed only when the count reads exactly one
+ * reader and no writer, replacing the reader bias with the writer bit in
+ * one compare and swap.  The waiter and handoff bits are carried across
+ * untouched; the writer they belong to is woken by the up_write() that
+ * ends the caller's exclusive hold, which is what a queued writer sees
+ * when any other writer wins.  The count layout is kernel/locking/rwsem.c's
+ * and not a header's, so the five values are copied here against the
+ * kernel of record, and hammer2_mtx_layout_check() at module load reads
+ * them back from a fresh semaphore so a kernel that moves them refuses
+ * the module rather than corrupting a lock.  CONFIG_PREEMPT_RT keeps its
+ * rw_semaphore in a different word altogether.
+ *
+ * lockdep is told the read hold was released and an exclusive one
+ * acquired as a trylock, which records no dependency, as DragonFly's
+ * upgrade adds none.  The owner word is set so the DEBUG_RWSEMS check in
+ * up_write() sees the task that holds it.
  */
+#ifdef CONFIG_PREEMPT_RT
+#error "HAMMER2's shared to exclusive upgrade reads the non-RT rw_semaphore"
+#endif
+#define HAMMER2_RWSEM_WRITER_LOCKED	(1UL << 0)	/* Linux: rwsem.c */
+#define HAMMER2_RWSEM_FLAG_WAITERS	(1UL << 1)
+#define HAMMER2_RWSEM_FLAG_HANDOFF	(1UL << 2)
+#define HAMMER2_RWSEM_READER_BIAS	(1UL << 8)
+#define HAMMER2_RWSEM_READER_MASK	(~(HAMMER2_RWSEM_READER_BIAS - 1))
+
+/* Non-zero on failure, the caller's shared hold untouched either way. */
 static inline int
 hammer2_mtx_upgrade_try(hammer2_mtx_t *p)
 {
+	long c;
+
 	if (hammer2_mtx_owned(p))
 		return (0);
 
-	up_read(&p->lock);
-	if (!down_write_trylock(&p->lock)) {
-		down_read(&p->lock);	/* Linux: restore the caller's hold */
+	c = atomic_long_read(&p->lock.count);
+	if ((c & (HAMMER2_RWSEM_READER_MASK | HAMMER2_RWSEM_WRITER_LOCKED)) !=
+	    HAMMER2_RWSEM_READER_BIAS)
 		return (1);
-	}
+	if (!atomic_long_try_cmpxchg_acquire(&p->lock.count, &c,
+	    c - HAMMER2_RWSEM_READER_BIAS + HAMMER2_RWSEM_WRITER_LOCKED))
+		return (1);
+	atomic_long_set(&p->lock.owner, (long)current);
+	rwsem_release(&p->lock.dep_map, _RET_IP_);
+	rwsem_acquire(&p->lock.dep_map, p->subclass, 1, _RET_IP_);
 	WRITE_ONCE(p->owner, current);
+	return (0);
+}
+
+/*
+ * Linux: the count layout above read back from a live semaphore.  Called
+ * once at module load; a mismatch refuses the module.  The flag bits are
+ * checked where a waiter can be made to set them, which is nowhere in a
+ * single task, so those two are pinned by the kernel of record alone.
+ */
+static inline int
+hammer2_mtx_layout_check(void)
+{
+	struct rw_semaphore s;
+	long c;
+
+	init_rwsem(&s);
+	down_read(&s);
+	c = atomic_long_read(&s.count);
+	up_read(&s);
+	if (c != HAMMER2_RWSEM_READER_BIAS)
+		return (1);
+	down_write(&s);
+	c = atomic_long_read(&s.count);
+	up_write(&s);
+	if (c != HAMMER2_RWSEM_WRITER_LOCKED)
+		return (1);
+	if (atomic_long_read(&s.count) != 0)
+		return (1);
 	return (0);
 }
 

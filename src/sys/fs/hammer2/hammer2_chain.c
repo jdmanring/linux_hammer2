@@ -315,13 +315,14 @@ hammer2_chain_drop(hammer2_chain_t *chain)
 	 * it does not reference.  Named where every caller passes rather
 	 * than at any one call site.
 	 */
-	if (chain->refs == 1 && rwsem_is_locked(&chain->lock.lock))
+	if (rwsem_is_locked(&chain->lock.lock) && READ_ONCE(chain->refs) == 1)
 		WARN_ONCE(1, KBUILD_MODNAME ": last drop of %s chain "
-		    "%016llx while %s holds its lock\n",
+		    "%016llx while %s holds its lock, count %lx lockcnt %u\n",
 		    hammer2_breftype_to_str(chain->bref.type),
 		    (long long)chain->bref.key,
 		    hammer2_mtx_owned(&chain->lock) ? "this task" :
-		    "another task or nobody with a reference");
+		    "another task or nobody with a reference",
+		    atomic_long_read(&chain->lock.lock.count), chain->lockcnt);
 
 	while (chain) {
 		refs = chain->refs;
