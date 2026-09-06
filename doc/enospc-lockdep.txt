@@ -1,0 +1,71 @@
+The lockdep report a full volume produces, captured in full.
+
+Measured on artix-s6-kde at 7.3.0-rc1 with CONFIG_PROVE_LOCKING, on a 2 GiB
+volume, by script/enospc.sh. 583 files of 4 MiB were written before dd
+reported ENOSPC; debug_locks was 1 after the fill and 0 after the sync(2)
+that followed. One report, counted by banner occurrences.
+
+Streamed out of /dev/kmsg for the whole run and printed before the unmount:
+the ring wraps before a fill ends, and the unmount hangs on most of these
+runs and takes the log with it. The kmsg facility and sequence prefixes are
+stripped here and nothing else is edited. doc/README.status.md reads it.
+
+WARNING: possible circular locking dependency detected
+7.3.0-rc1 #4 Tainted: G        W  OE      
+------------------------------------------------------
+sync/1668 is trying to acquire lock:
+ffff8e47866759a8 (h2ip/2){+.+.}-{4:4}, at: hammer2_vfs_sync_pmp+0x19a/0x6a0 [hammer2]
+
+but task is already holding lock:
+ffff8e4792c70080 (h2ch_inode/2){+.+.}-{4:4}, at: hammer2_chain_lock+0x212/0x250 [hammer2]
+
+which lock already depends on the new lock.
+
+
+the existing dependency chain (in reverse order) is:
+
+-> #1 (h2ch_inode/2){+.+.}-{4:4}:
+       down_write_nested+0x38/0xc0
+       hammer2_chain_lock+0x212/0x250 [hammer2]
+       hammer2_inode_chain+0x6e/0xa0 [hammer2]
+       hammer2_xop_inode_chain_sync+0x4e/0x2d0 [hammer2]
+       hammer2_xop_start+0x12c/0x1a0 [hammer2]
+       hammer2_inode_chain_sync+0xd0/0x140 [hammer2]
+       hammer2_write_end+0x21c/0x240 [hammer2]
+       generic_perform_write+0x14c/0x2a0
+       generic_file_write_iter+0x62/0xf0
+       hammer2_file_write_iter+0x6c/0x1c0 [hammer2]
+       vfs_write+0x276/0x680
+       ksys_write+0x81/0x110
+       do_syscall_64+0xfe/0x690
+       entry_SYSCALL_64_after_hwframe+0x76/0x7e
+
+-> #0 (h2ip/2){+.+.}-{4:4}:
+       __lock_acquire+0xe38/0x2460
+       lock_acquire+0xda/0x2f0
+       down_write_nested+0x38/0xc0
+       hammer2_vfs_sync_pmp+0x19a/0x6a0 [hammer2]
+       __iterate_supers+0x193/0x230
+       ksys_sync+0x52/0xa0
+       __do_sys_sync+0xe/0x20
+       do_syscall_64+0xfe/0x690
+       entry_SYSCALL_64_after_hwframe+0x76/0x7e
+
+other info that might help us debug this:
+
+ Possible unsafe locking scenario:
+
+       CPU0                    CPU1
+       ----                    ----
+  lock(h2ch_inode/2);
+                               lock(h2ip/2);
+                               lock(h2ch_inode/2);
+  lock(h2ip/2);
+
+ *** DEADLOCK ***
+
+locks held by sync/1668: 2, last CPU#8:
+ #0: ffff8e4786c2f0e8 (&type->s_umount_key#43){.+.+}-{4:4}, at: super_lock+0x18d/0x1e0
+ #1: ffff8e4792c70080 (h2ch_inode/2){+.+.}-{4:4}, at: hammer2_chain_lock+0x212/0x250 [hammer2]
+
+stack backtrace:

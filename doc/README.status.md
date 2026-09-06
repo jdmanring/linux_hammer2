@@ -1393,15 +1393,25 @@ Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
 written before `dd` reported `No space left on device`, `df` read 100%
 and `statfs` reported zero available, which is the part that behaves.
 `debug_locks` was still 1 at that point, and the `sync(2)` that followed
-disabled it. Three runs have reached that state and all three reported
-the cycle, so the report is reproducible.
+disabled it. Six runs have reached that state and every one reported the
+cycle, so the report is reproducible.
 
-What happens after it is not. Five runs have reached that state, all
-five reported the cycle, and the unmount hung on three of them: `umount`
-had to be killed and `rmmod` reported the module still in use, which
-leaves the guest needing a hard reset. On the other two both returned 0.
-The script checks all three, so a run that hangs and a run that does not
-are both recorded rather than one being taken for the rule.
+Each run produces ONE report. The count said three, and then five,
+because the harness counted lines matching `DEADLOCK\|circular` and a
+single lockdep report contains several of them. It now counts banner
+occurrences, and the run behind the capture in `doc/enospc-lockdep.txt`
+reports `cycles 1`. `debug_locks` reaching 0 is not by itself evidence
+of a cycle either, since an unlock imbalance, a held lock freed and
+three lockdep resource ceilings all read the same there, so the harness
+reports which banner named the shutdown and treats a shutdown it cannot
+attribute as COULD-NOT-RUN.
+
+What happens after the sync varies. The unmount hung on four of the six:
+`umount` had to be killed and `rmmod` reported the module still in use,
+which leaves the guest needing a hard reset. On the other two both
+returned 0. The script checks all three, so a run that hangs and a run
+that does not are both recorded rather than one being taken for the
+rule.
 
 The report is a circular dependency between two orders:
 
@@ -1413,17 +1423,28 @@ The report is a circular dependency between two orders:
 The first is upstream's order and is not in question: FreeBSD's
 `hammer2_vop_fsync()` and its write path both lock the inode and then
 call `hammer2_inode_chain_sync()`. The second is the one that should not
-happen. The sync task's own backtrace at the inversion holds nothing of
-this module between `ksys_sync` and the lock:
+happen. The whole report is in `doc/enospc-lockdep.txt`, streamed out of
+`/dev/kmsg` and written down before the unmount that loses it. Both
+sides of the cycle are named there with full frames, and the report also
+answers what the sync task was holding:
 
-    down_write_nested
-    hammer2_vfs_sync_pmp+0x19a
-    __iterate_supers
-    ksys_sync
+    locks held by sync/1668: 2
+     #0: (&type->s_umount_key#43) at super_lock
+     #1: (h2ch_inode/2)          at hammer2_chain_lock+0x212
 
-so the chain lock it is holding was acquired in an earlier call that has
-already returned, and `hammer2_vfs_sync_pmp()` locks no chain at any of
-its three inode-lock sites.
+The chain lock is held, and its own frames sit above `ksys_sync` with no
+module frame between them and `hammer2_vfs_sync_pmp+0x19a`. It is not a
+leak: `hammer2_flush_core()` is entered with its chain locked and
+returns with it locked, which is the contract in DragonFly too. It is
+the flush holding its chain across the inode-lock site, on one stack.
+
+That last part is the port-specific half. In DragonFly the flush runs on
+its own thread, so the chain the flush holds and the inode the sync loop
+locks are held by different tasks and never form an order. XOPs run
+synchronously here, so both land on the sync task, and the second order
+in the pair exists only because of that. The write side is upstream's
+and does not move; the sync loop is the side that must not hold a chain
+when it takes `ip->lock`.
 
 **Two explanations have been tested and both are wrong.** The first was
 that an XOP body returns with a chain still locked, XOPs running
@@ -1456,14 +1477,20 @@ locked from `hammer2_flush_core+0x23b`, which is the relock of the
 parent and the chain after the flush code drops them to take them in
 order.
 
-That reading is a lead and not a finding, because the instrument was
-then made stricter and stopped seeing it. Recording the address at every
-lock says where a chain was last locked, not that the lock is still
-held, so the field was cleared on unlock to make a non-NULL value
-provably live. On that build the same run reported no held chain at all,
-while lockdep still disabled itself. Two runs of the same instrument
-disagree, so neither is evidence yet, and the difference between them is
-the next thing to understand rather than something to write up.
+That reading was held back as a lead, because a stricter build of the
+same instrument stopped seeing it: recording the address at every lock
+says where a chain was last locked, not that the lock is still held, so
+the field was cleared on unlock to make a non-NULL value provably live,
+and on that build the run reported no held chain while lockdep still
+disabled itself.
+
+The captured report settles which build was wrong. lockdep names one
+chain lock held by the sync task, so the first reading was right and the
+clearing build was the broken one: chain locks are counted, and
+`hammer2_chain_unlock()` runs with `lockcnt` still above zero for a
+chain that stays held, so clearing the field there erases it for a lock
+that is live. The instrument agreed with the kernel once the kernel was
+asked directly.
 
 One thing the attempt did settle: `__builtin_return_address()` above
 frame zero is not safe in kernel context, and a build using frames one

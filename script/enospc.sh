@@ -17,9 +17,10 @@
 # ksys_sync and the lock, so the chain lock was acquired in a call that
 # has already returned. Two explanations were tested and both were wrong:
 # every XOP the sync path drives is balanced, and a scratch build proved
-# hammer2_chain_unhold() does not leave the mutex held. Reading the report
-# needs `cat /dev/kmsg` streaming during the sync, because the ring wraps
-# before the run ends. doc/README.status.md carries all of it.
+# hammer2_chain_unhold() does not leave the mutex held. The report is read
+# by streaming /dev/kmsg for the whole run, because the ring wraps before
+# a fill ends, and it is printed before the unmount, because the unmount
+# hangs on most of these runs. doc/README.status.md carries all of it.
 #
 # THE FAILURE IS THE POINT OF THIS SCRIPT. It exits non-zero while the
 # defect stands, which is what a known defect's reproducer should do.
@@ -81,6 +82,14 @@ scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/h2.ko" >/dev/null 2>&1
 # machine that went away rather than as the failure it is.
 out=$(ssh "$GUEST_SSH" '
 	rmmod hammer2 2>/dev/null
+	# The ring wraps before a fill run ends, so the report is streamed
+	# out of /dev/kmsg from before the module is loaded rather than read
+	# back with dmesg afterwards. Everything derived from it is printed
+	# BEFORE the unmount, because the unmount hangs on the majority of
+	# these runs and takes the evidence with it when it does.
+	: > /tmp/kmsg.log
+	cat /dev/kmsg > /tmp/kmsg.log 2>/dev/null &
+	kpid=$!
 	insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
 	mkdir -p /mnt/h2enospc
 	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
@@ -94,10 +103,28 @@ out=$(ssh "$GUEST_SSH" '
 	done
 	echo "files written $i"
 	echo "locks after fill $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
-	dmesg -C
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
-	dmesg | grep -c "DEADLOCK\|circular" | sed "s/^/cycles /"
+	kill $kpid 2>/dev/null
+
+	# A count of REPORTS, one banner line each. Counting every line that
+	# says DEADLOCK or circular counts a single report three times over,
+	# which is how one report came to be recorded as three.
+	echo "cycles $(command grep -c "possible circular locking dependency" /tmp/kmsg.log)"
+
+	# lockdep disables itself for several reasons and only one of them is
+	# a cycle: an unlock imbalance, a held lock freed, and the three
+	# resource ceilings (MAX_LOCKDEP_KEYS, MAX_LOCKDEP_CHAINS,
+	# MAX_LOCK_DEPTH) all read as debug_locks 0 at the same site. The
+	# reason is what tells them apart, so it is reported rather than
+	# assumed.
+	echo "shutdown-reason $(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|WARNING: bad unlock balance\|BUG: held lock freed" /tmp/kmsg.log || echo none-found)"
+
+	echo "=== first report begins"
+	command sed -n "/possible circular locking dependency/,+220p" /tmp/kmsg.log |
+	    command sed "s/^[0-9,;]*;//"
+	echo "=== first report ends"
+
 	timeout 60 umount /mnt/h2enospc; echo "umount $?"
 	timeout 30 rmmod hammer2; echo "rmmod $?"
 ' 2>&1)
@@ -126,6 +153,18 @@ printf '%s\n' "$out" | grep -q '^locks after fill 1$' ||
 printf '%s\n' "$out" | grep -q '^locks after sync 1$' ||
 	{ echo "  FAIL  lockdep disabled itself during the sync on a full volume"
 	  fail=$((fail + 1)); }
+# debug_locks reads 0 for a cycle and for four other faults alike, so a
+# shutdown this script cannot attribute is not evidence of the cycle it
+# was written for. Nothing is counted against the defect until the banner
+# names it.
+if printf '%s\n' "$out" | command grep -q '^locks after sync 0$' &&
+   printf '%s\n' "$out" | command grep -q '^shutdown-reason none-found$'; then
+	echo "enospc: COULD-NOT-RUN: lockdep shut down during the sync and the" >&2
+	echo "          reason was not in the captured log, so the cycle is" >&2
+	echo "          neither confirmed nor ruled out for this run" >&2
+	exit 2
+fi
+
 printf '%s\n' "$out" | grep -q '^umount 0$' ||
 	{ echo "  FAIL  the unmount did not finish"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q '^rmmod 0$' ||

@@ -1002,6 +1002,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
+| `enospc.sh` | a lockdep shutdown that no captured banner attributes | nothing; the run counted every shutdown as the cycle it was written for, and now reports the banner and exits 2 when none names it |
 | `enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
 | `root-boot.sh` | a boot that never mounted the volume | a second boot against a label the volume does not carry, which stops at the mount and does not reach PID 1 |
 | `root-boot.sh` | a checksum comparison that cannot fail | its first run, where an unanchored `sed` made the two sides unequal by construction |
@@ -1078,6 +1079,21 @@ Every other write measurement in this tree was taken on a volume with
 room in it, which is why this went unfound through the whole write path,
 the crash matrix and the round trip. A filesystem's behavior when it
 runs out of space is its own surface.
+
+Reading the report is the part the script had to be rebuilt for. It
+streams `/dev/kmsg` to a file for the whole run and prints the report
+before it attempts the unmount, because the ring wraps before a fill
+ends and the unmount hangs on most of these runs and takes the log with
+it. Five reproductions before that produced no readable report; the
+capture is `doc/enospc-lockdep.txt`.
+
+Two things it now refuses to assume. Reports are counted by banner
+occurrences rather than by lines matching `DEADLOCK` or `circular`,
+which counted one report as three. And `debug_locks` reading 0 is not
+taken for the cycle on its own, since an unlock imbalance, a held lock
+freed and three lockdep resource ceilings read the same there: the run
+reports which banner named the shutdown, and a shutdown it cannot
+attribute is COULD-NOT-RUN rather than a confirmation.
 
 Its own first two runs failed on the script rather than on the driver,
 and the second is the interesting one. A guest left wedged by a previous
