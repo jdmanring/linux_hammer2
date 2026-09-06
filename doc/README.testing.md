@@ -862,6 +862,20 @@ seconds and 1800 by default, because a guest whose task hangs keeps
 sshd answering and the ssh open; the bound expiring is reported as the
 guest hanging, which is a failure and not a skip.
 
+`script/pfs-domains.sh` is the half of 0.8 that belongs to this side.
+The milestone maps the storage model's domains onto PFS roots and gates
+them by mounting each by label; the model and its installer are the
+consumer's, and what a volume written here has to satisfy is this:
+the host formats a 2 GiB image with one root PFS, the Linux guest
+creates three more through this port's own ioctl, `SYSTEM`, `STORE`
+and `CACHE` by default, mounts each by label as a filesystem of its
+own, writes a tree and a manifest in each and unmounts; DragonFly
+mounts each by label, checks every manifest with its own `md5`, lists
+the PFSes from a mounted one and runs its checker; the host's checker
+runs after each side with its negative control. `H2_PFS_DOMAINS`
+names the roots. f7 covered PFSes DragonFly made; this covers PFSes
+this port made, which nothing had mounted on DragonFly before.
+
 All three judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,
 on the image it judged rather than in a selftest: the same checker is

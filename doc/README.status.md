@@ -22,9 +22,13 @@ mounts on DragonFly and reads back the tree as it stood.
 Getting here found and fixed defects no amount of compiling would have
 caught: a livelock on the first mount, a use after free found by listing
 one, a stranded chain lock that made a full volume trip a circular lock
-dependency, and a second use after free that faulted the unmount of a
-full volume. `CHANGELOG.md` is the enumeration; this paragraph names
-kinds and does not carry the count. This file is the one to correct
+dependency, a second use after free that faulted the unmount of a
+full volume, a chain freed with its lock held on the same path, and a
+fill lost nearly whole to a flush with no room, because the free-space
+reserve every other tree keeps was declared here and never carried.
+A write near full is refused now, as the other trees refuse it.
+`CHANGELOG.md` is the enumeration; this paragraph names kinds and does
+not carry the count. This file is the one to correct
 rather than to argue with: if a claim here is stale, it is a defect.
 
 ## The build
