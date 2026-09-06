@@ -1156,6 +1156,7 @@ them:
 | seed 3, the script, with its two controls | 40 | 22 | 12 | 1 (0 files listed) | 5 | 0 |
 | seed 1, before the bias | 60 | 56 | 0 | 0 | 4 | 0 |
 | seed 4, after `hpanic` became `BUG()` | 100 | 36 | 52 (48 with one, 3 with two, 1 with three) | 1 (0 files listed) | 12 | 0 |
+| seed 5, the generator that redraws | 100 | 45 | 42 (one each) | 1 (3 files listed, one `EIO`) | 13 | 0 |
 
 The seed 4 row was the first run after `hpanic` stopped calling
 `panic()`, and its purpose was the kernel report column: a mutation
@@ -1174,10 +1175,12 @@ of whose mutations are of that kind is the unmodified seed, and it
 reads as "mounted, all 44 files read": four of seed 3's forty images and
 five of seed 4's hundred were that. The generator now redraws until the
 byte changes, which alters what every seed and index produce, so the
-four rows above reproduce only from the generator at `7957583`, and
-rows after it from the current one. The counts in the four rows stand
-as recorded; the images they exercised are fewer than they say by the
-figures here.
+first four rows reproduce only from the generator at `7957583`, and
+seed 5 onwards from the one that redraws. The counts in the four rows
+stand as recorded; the images they exercised are fewer than they say
+by the figures here. Seed 5 is the redraw's validation: 0 equal pairs
+in 1190 recorded mutations, the total printed beside the zero because
+a run that recorded nothing would read as zero too.
 
 A refusal is a volume header or super-root the mount could not check;
 an `EIO` is a data or dirent block whose XXH64 no longer matches, named
