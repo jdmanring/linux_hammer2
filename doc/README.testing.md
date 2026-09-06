@@ -877,7 +877,23 @@ runs after each side with its negative control. `H2_PFS_DOMAINS`
 names the roots. f7 covered PFSes DragonFly made; this covers PFSes
 this port made, which nothing had mounted on DragonFly before.
 
-All three judge their image by the host's `fsck_hammer2` exiting zero,
+`script/million-tree.sh` is the first of 0.9's criteria that needs
+only the fleet. The host formats an 8 GiB image; the Linux guest
+writes `H2_TREE_FILES` files, a million by default, under
+`H2_TREE_FANOUT` directories, each file holding its own path so the
+tree is data as well as inodes, with the shell's builtins so the rate
+is the driver's and not `fork`'s; then syncs, unmounts, remounts,
+drops the page cache and counts, spot-checks two hundred files by
+content, and prints the create rate, the sync and unmount times,
+`MemAvailable` at each step, the module's slab, the cold walk time,
+lockdep's state and the kernel warnings since the module loaded.
+DragonFly mounts the same volume, counts it, spot-checks the same two
+hundred files and runs its checker; the host's checker runs after each
+side with its negative control. Every reading is a number, which is
+what 0.9 asks of each of its rows, and the count on each side must be
+the count written.
+
+All four judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,
 on the image it judged rather than in a selftest: the same checker is
 run on a sparse copy with one volume header byte complemented, at an
