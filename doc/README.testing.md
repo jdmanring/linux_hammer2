@@ -872,7 +872,11 @@ the million-file deadlock. The QEMU guest agent does not, and
 shell in the guest and returns its output; `dmesg`, `w` and `t` into
 `/proc/sysrq-trigger`, `ps` with `wchan`, and `/proc/lockdep_stats`
 all came out of that guest in seconds while ssh had been silent for
-minutes. Anything that touches the mount hangs the probe too. Two
+minutes. `script/guest-dmesg.sh <domain>` is that capture, and
+`million-tree.sh` runs it where its run timeout expires, before
+destroying the guest, so the report a hang leaves is in the log whether
+or not anyone was watching. Anything that touches the mount hangs the
+probe too, so the script touches none. Two
 samples of `virsh domstats --cpu-total --block` a few seconds apart
 tell a hang from a slow guest first: no CPU time and no writes across
 the gap is a hang, and the boot-under-load story is the wrong one.

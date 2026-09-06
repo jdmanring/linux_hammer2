@@ -231,8 +231,16 @@ boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/linux.sh" "$GUEST_SSH:/tmp/" || { echo "tree: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
 out=$($RUN "$GUEST_SSH" 'sh /tmp/linux.sh' 2>&1); st=$?
 printf '%s\n' "$out" | sed 's/^/  linux   /'
+if [ $st = 124 ]; then
+	# The report a hang leaves is read before the guest is reset, through
+	# the agent since ssh is usually wedged with the mount, and the guest
+	# is destroyed rather than shut down, a shutdown needing the unmount
+	# that hung.
+	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1))
+	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
+	$VIRSH destroy "$GUEST" >/dev/null 2>&1
+fi
 down "$GUEST" "$GUEST_SSH"
-[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^created $N files" || { echo "  FAIL  the tree was not created whole"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^counted $N files after remount" || { echo "  FAIL  the remount did not count every file"; fail=$((fail + 1)); }
 if [ $CHURN = 1 ]; then
