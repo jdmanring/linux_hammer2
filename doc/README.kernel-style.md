@@ -321,6 +321,11 @@ recorded and the code says what it does with it. A category that appears
 because of how a macro is spelled is worth spelling differently rather
 than baselining.
 
+The guard naming a chain dropped by the task holding its lock moved the
+same row by one again, for the same reason: the message names a chain
+type and a key and does not fit on one line. Nothing else moved with
+it.
+
 The remount path moved it by three, all `return (x);`, and swapped one
 errno row for another: `hammer2_access_devvp()` refused with `EACCES`,
 which asked whether the mount's own file was opened for writing, and
