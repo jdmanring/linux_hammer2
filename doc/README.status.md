@@ -570,7 +570,7 @@ construction rather than re-hashed every run.
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2895 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1386 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1390 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -1492,6 +1492,26 @@ and three more with the write-fault check. The fuzzer ran last, on the
 build with the fault check: 300 images on seed 6, 232 mounted and 68
 refused, 0 with a kernel report, 0 equal pairs in 5037 recorded
 mutations, both controls passing first.
+
+The gate's first run under its own name turned up what every run before
+it had carried uncounted. Its kmsg capture held a warning from the
+compaction daemon, `hammer2_file_aops does not implement
+migrate_folio` from `mm/migrate.c`, printed once per boot when
+compaction first tries to move one of this port's folios; the fallback
+refuses every dirty folio and warns. The gate reported no report,
+because its readings name the faults it was written for, the lockdep
+banners and an oops, and a plain kernel warning was none of them: 39
+of the 62 kept run logs hold it, every one of them read as clean. The
+mapping now carries `filemap_migrate_folio`, the helper xfs uses for
+folios that carry no private data, which is the case here and the
+reason there is no `->invalidate_folio` either. The gate counts every
+`cut here` line as a kernel warning and fails on one, and its selftest
+holds that pattern against the line the kernel prints. Two runs on
+the build with the helper: no warning after the module loaded on
+either, 472 files accepted and read back whole on both. The count's
+first run fired on the guest kernel's own warning at boot, a DMA
+allocation in the USB host controller before the module loaded, so
+the count is scoped past the module's load line.
 
 What is not carried, with the trigger for each. The source trees'
 syncer flushes every thirty seconds and this port flushes metadata on

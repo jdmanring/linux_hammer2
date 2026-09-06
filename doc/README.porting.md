@@ -129,6 +129,16 @@ as `SZ_64K` unconditionally, and v6.16 is the first to put it behind
 Every release the floor admits needs the option. What must never happen is silently splitting one HAMMER2
 physical buffer, which would change on-disk semantics.
 
+The file mapping is the other mapping this port owns, and its folios
+carry no private data: the strategy layer reads and writes them through
+the DIO layer's own folios, so there is no `->invalidate_folio` and
+`->migrate_folio` is the kernel's `filemap_migrate_folio()`, the choice
+xfs makes for the same reason, where ext4 and ext2 carry buffer heads
+and need `buffer_migrate_folio()`. Without one the kernel refuses
+every dirty folio of the mapping to compaction and warns once per boot
+from `mm/migrate.c`; the full-volume gate carried that warning in 39
+of 62 kept logs before it counted plain warnings.
+
 ## The device layer
 
 `hammer2_ondisk.c` landed on 2026-08-26 and is the first file where the OS

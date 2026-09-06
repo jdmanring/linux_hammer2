@@ -1353,6 +1353,9 @@ hammer2_writepages(struct address_space *mapping,
 
 /*
  * There is no ->invalidate_folio because no folio carries private data.
+ * For the same reason ->migrate_folio is the kernel's own, as in xfs:
+ * without it every folio of a mapping with ->writepages is refused to
+ * compaction with a warning from mm/migrate.c, once per boot.
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,
@@ -1360,6 +1363,7 @@ const struct address_space_operations hammer2_file_aops = {
 	.write_begin	= hammer2_write_begin,		/* Linux */
 	.write_end	= hammer2_write_end,		/* Linux */
 	.writepages	= hammer2_writepages,		/* Linux */
+	.migrate_folio	= filemap_migrate_folio,	/* Linux */
 };
 
 /*
