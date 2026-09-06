@@ -45,6 +45,12 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
+# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# hung mount or a wedged unmount, keeps sshd answering and the ssh open,
+# and the script would wait on it forever; the fuzzer bounds each image
+# the same way. 124 from timeout is reported as the guest hanging, which
+# is a finding, not a pass and not a skip.
+RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
 # THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
@@ -242,7 +248,8 @@ verdict_linux() {	# image -> prints lines, returns failures
 	f=0
 	boot "$GUEST" "$GUEST_SSH" "$1" || { down "$GUEST" "$GUEST_SSH"; return 9; }
 	scp -q -o ConnectTimeout=5 "$KO" "$W/recover-linux.sh" "$GUEST_SSH:/tmp/" || { down "$GUEST" "$GUEST_SSH"; return 9; }
-	out=$(ssh "$GUEST_SSH" 'sh /tmp/recover-linux.sh' 2>&1)
+	out=$($RUN "$GUEST_SSH" 'sh /tmp/recover-linux.sh' 2>&1)
+	[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; f=$((f + 1)); }
 	printf '%s\n' "$out" | sed 's/^/  linux   /'
 	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))
@@ -255,7 +262,8 @@ verdict_fbsd() {
 	f=0
 	boot "$FBSD" "$FBSD_SSH" "$1" || { down "$FBSD" "$FBSD_SSH"; return 9; }
 	scp -q -o ConnectTimeout=5 "$W/recover-fbsd.sh" "$FBSD_SSH:/tmp/" || { down "$FBSD" "$FBSD_SSH"; return 9; }
-	out=$(ssh "$FBSD_SSH" 'doas sh /tmp/recover-fbsd.sh' 2>&1)
+	out=$($RUN "$FBSD_SSH" 'doas sh /tmp/recover-fbsd.sh' 2>&1)
+	[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; f=$((f + 1)); }
 	printf '%s\n' "$out" | sed 's/^/  fbsd    /'
 	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^freebsd fsck clean$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))

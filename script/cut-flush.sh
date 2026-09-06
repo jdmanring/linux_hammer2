@@ -36,6 +36,12 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 SHOW=${H2_SHOW:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 W=$(mktemp -d) || exit 2
+# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# hung mount or a wedged unmount, keeps sshd answering and the ssh open,
+# and the script would wait on it forever; the fuzzer bounds each image
+# the same way. 124 from timeout is reported as the guest hanging, which
+# is a finding, not a pass and not a skip.
+RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
 # THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
@@ -137,7 +143,8 @@ rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" "$IMG" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/recover.sh" "$GUEST_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
-out=$(ssh "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
+out=$($RUN "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 # "unreadable 0" over zero entries is what an empty or wrong directory
 # prints, so the entry count is asserted with it.
@@ -160,7 +167,8 @@ GUEST
 for img in "$IMG" "$IMG2"; do
 	boot "$DFLY" "$DFLY_SSH" "$img" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 	scp -q -o ConnectTimeout=5 "$W/after.sh" "$DFLY_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
-	out=$(ssh "$DFLY_SSH" 'sh /tmp/after.sh' 2>&1)
+	out=$($RUN "$DFLY_SSH" 'sh /tmp/after.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | sed "s|^|  dfly $(basename "$img" .img) |"
 	printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || fail=$((fail + 1))
 	down "$DFLY" "$DFLY_SSH"
@@ -197,7 +205,8 @@ PY
 "$FSCK" "$IMG2" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 accepts the rewritten header" || { echo "  FAIL  host fsck_hammer2 rejects the rewritten header"; fail=$((fail + 1)); }
 boot "$GUEST" "$GUEST_SSH" "$IMG2" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/recover.sh" "$GUEST_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
-out=$(ssh "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
+out=$($RUN "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 printf '%s\n' "$out" | grep -q "freemap recovery" || { echo "  FAIL  the replay did not announce itself"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^crash entries [1-9]" || fail=$((fail + 1))
@@ -210,7 +219,8 @@ echo "  linux $(tids "$IMG2")"
 "$FSCK" "$IMG2" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after the replay" || { echo "  FAIL  host fsck_hammer2 after the replay"; fail=$((fail + 1)); }
 boot "$DFLY" "$DFLY_SSH" "$IMG2" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/after.sh" "$DFLY_SSH:/tmp/" || { echo "cut: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
-out=$(ssh "$DFLY_SSH" 'sh /tmp/after.sh' 2>&1)
+out=$($RUN "$DFLY_SSH" 'sh /tmp/after.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  dfly lag /'
 printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || fail=$((fail + 1))
 down "$DFLY" "$DFLY_SSH"

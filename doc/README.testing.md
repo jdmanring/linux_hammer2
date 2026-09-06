@@ -845,6 +845,23 @@ passwordless `doas`, and needs the port built from
 is printed at the cut, so the torn cell shows which header it destroyed
 and which one the recoveries fell back to.
 
+Every script that drives a guest waits for it the same way: a guest
+that answers ssh is used whatever the domain says, one listed running
+that does not answer is waited on, bounded, because a booting guest
+answers within the wait and one shutting down turns to shut off inside
+it and is then started, and only one that stays listed running and
+silent for the whole wait is given up on. Reading the domain state
+alone was wrong both ways in one day: a guest the fixture gate was
+still shutting down read as usable and cost the fuzzer its whole wait,
+and a guest a batch reset had just started read as shutting down and
+cost the batch both its runs. A guest a script started is shut down
+from an exit trap, not from its last line, since a COULD-NOT-RUN after
+the start had left one running for the next script to refuse. The
+long guest runs are bounded from the host with `timeout`, `H2_RUN_TIMEOUT`
+seconds and 1800 by default, because a guest whose task hangs keeps
+sshd answering and the ssh open; the bound expiring is reported as the
+guest hanging, which is a failure and not a skip.
+
 All three judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,
 on the image it judged rather than in a selftest: the same checker is

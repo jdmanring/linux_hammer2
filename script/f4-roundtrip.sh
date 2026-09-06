@@ -26,6 +26,12 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
+# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# hung mount or a wedged unmount, keeps sshd answering and the ssh open,
+# and the script would wait on it forever; the fuzzer bounds each image
+# the same way. 124 from timeout is reported as the guest hanging, which
+# is a finding, not a pass and not a skip.
+RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
 # THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
@@ -109,7 +115,8 @@ rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/linux-write.sh" "$GUEST_SSH:/tmp/" || { echo "f4: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
-out=$(ssh "$GUEST_SSH" 'sh /tmp/linux-write.sh' 2>&1)
+out=$($RUN "$GUEST_SSH" 'sh /tmp/linux-write.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 printf '%s\n' "$out" | grep -q "linux re-read: all match" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
@@ -134,7 +141,8 @@ cd /; umount /mnt/f4; fsck_hammer2 /dev/vbd1 >/dev/null 2>&1 && echo "dragonfly 
 GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "f4: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
-out=$(ssh "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
+out=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
 # The count is asserted with the verdict: "checked 0 files, 0 mismatches"
 # is what an empty manifest or a mount that landed elsewhere prints.
@@ -158,7 +166,8 @@ rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/linux-read.sh" "$GUEST_SSH:/tmp/" || { echo "f4: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
-out=$(ssh "$GUEST_SSH" 'sh /tmp/linux-read.sh' 2>&1)
+out=$($RUN "$GUEST_SSH" 'sh /tmp/linux-read.sh' 2>&1)
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 printf '%s\n' "$out" | grep -q "files: all match" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "own tree still matches" || fail=$((fail + 1))
