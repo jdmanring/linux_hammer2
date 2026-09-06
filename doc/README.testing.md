@@ -864,6 +864,23 @@ seconds and 1800 by default, because a guest whose task hangs keeps
 sshd answering and the ssh open; the bound expiring is reported as the
 guest hanging, which is a failure and not a skip.
 
+A guest whose task has hung is read before it is reset, not after,
+because the reset destroys the only report. ssh is often gone by then:
+sshd's fork touches the wedged mount and hangs with it, as it did on
+the million-file deadlock. The QEMU guest agent does not, and
+`virsh qemu-agent-command` with `guest-exec` and `capture-output` runs a
+shell in the guest and returns its output; `dmesg`, `w` and `t` into
+`/proc/sysrq-trigger`, `ps` with `wchan`, and `/proc/lockdep_stats`
+all came out of that guest in seconds while ssh had been silent for
+minutes. Anything that touches the mount hangs the probe too. Two
+samples of `virsh domstats --cpu-total --block` a few seconds apart
+tell a hang from a slow guest first: no CPU time and no writes across
+the gap is a hang, and the boot-under-load story is the wrong one.
+The trace offsets resolve against the module the run built, which
+carries debug lines, with `addr2line -i`. After `virsh destroy` the
+fixture disk is still attached in the persistent configuration and
+wants a `detach-disk --config` of its own.
+
 `script/pfs-domains.sh` is the half of 0.8 that belongs to this side.
 The milestone maps the storage model's domains onto PFS roots and gates
 them by mounting each by label; the model and its installer are the
