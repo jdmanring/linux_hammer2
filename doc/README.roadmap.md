@@ -398,6 +398,20 @@ memory and near-capacity operation each pass with the number they produced; a
 run without a number is not a pass. Whether the XOP pool becomes
 workqueue-backed is decided here, on F6's numbers.
 
+Two services DragonFly's buffer cache gives HAMMER2 and the Linux
+address-space operations do not give it by default are decided here on
+the same numbers. `cluster_readx()` reads ahead by the sequential-access
+count; the port has `->read_folio` and no `->readahead`, so a sequential
+read fetches one logical block per call. `cluster_write()` writes behind
+in file order, and the core says it depends on that because it cannot
+preallocate at the logical level before it knows the compressed size;
+the port's `->writepages` is the counterpart and whether it hands the
+strategy XOP the blocks in the same order is unmeasured. Sequential read
+and write throughput against ext4 on the same guest, and the allocation
+order of a large file's blocks, are the readings; `->readahead` on the
+strategy XOP is added if the first says so, and the writeback order is
+changed if the second does.
+
 Gate: an F6 harness, unwritten. Depends on 0.8 and on a build host that
 supplies the closure and the hours.
 
@@ -463,6 +477,12 @@ Each is the maintainer's, and each names what it blocks.
   `static_assert` refuses that build rather than corrupting quietly.
 - Kernels older than the kernel of record. The floor is 7.3 and moves with
   the pin; there is no conditional compilation on the version in the tree.
+- Serving `O_DIRECT`. DragonFly's HAMMER2 has no direct path either: its
+  `IO_DIRECT` means semi-synchronous, set by the reserve check, and every
+  read and write goes through the buffer cache because each block is
+  checksummed and possibly compressed on the way. A direct open falls back
+  to buffered I/O, as it does there. Revisited only if a mission-profile
+  workload in 1.0 needs it.
 - Replacing `hammer2-fuse`. It is an independent Rust reader of the same
   format over libhammer2, which is what makes it useful as a second reader: a
   disagreement between the two is a finding about one of them.
