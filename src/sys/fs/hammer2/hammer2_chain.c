@@ -302,6 +302,21 @@ hammer2_chain_drop(hammer2_chain_t *chain)
 
 	KKASSERT(chain->refs > 0);
 
+	/*
+	 * XXX Linux: the last drop takes the chain's own lock before
+	 * freeing it, and this port's chain mutex is recursive, so a caller
+	 * that already holds the lock succeeds by recursion and frees a
+	 * chain whose rwsem it still holds.  lockdep reports that as
+	 * "held lock freed!".  A non-recursive try would fail here and spin
+	 * instead, which is why the shape is specific to this port.  Named
+	 * where every caller passes rather than at any one call site.
+	 */
+	if (chain->refs == 1 && hammer2_mtx_owned(&chain->lock))
+		WARN_ONCE(1, KBUILD_MODNAME ": last drop of %s chain "
+		    "%016llx by the task holding its lock\n",
+		    hammer2_breftype_to_str(chain->bref.type),
+		    (long long)chain->bref.key);
+
 	while (chain) {
 		refs = chain->refs;
 		cpu_ccfence();
