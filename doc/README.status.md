@@ -1492,6 +1492,23 @@ chain that stays held, so clearing the field there erases it for a lock
 that is live. The instrument agreed with the kernel once the kernel was
 asked directly.
 
+The record-only instrument was then rebuilt and rerun against the same
+reproducer. 583 lines, one per iteration of the syncq loop, every one
+naming the same acquire and a chain of type `INODE`, which reproduces
+the first run rather than resembling it. The offset was resolved against
+that build's own module: `hammer2_flush_core+0x23b` is the relock of the
+chain in `hammer2_flush_core()`, the second of the pair the flush takes
+after dropping both to acquire them parent-first.
+
+So the held lock is identified and its acquire is identified. What is
+not yet identified is the caller that fails to release it. Both
+`hammer2_flush_core()` and `hammer2_flush()` return with the chain
+locked by contract, as they do in DragonFly, and the reading of
+`hammer2_xop_inode_flush()` finds its `hammer2_chain_unlock()` on the
+path taken. One of those releases is being missed under `ENOSPC` and
+which one is the next thing to establish; nothing above should be read
+as naming it.
+
 One thing the attempt did settle: `__builtin_return_address()` above
 frame zero is not safe in kernel context, and a build using frames one
 and two killed the mounting process outright.
