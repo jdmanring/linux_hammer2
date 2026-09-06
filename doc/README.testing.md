@@ -1153,9 +1153,24 @@ in its `existing` mode, and 128 KiB through `write(2)` into another
 such file, and fails the run if `write(2)` is refused and the mapping
 is not; the refusal at the fault is a `SIGBUS`, 135 from the guest's
 shell. The fill ends in 64 KiB pieces so that less than either probe
-is left above the threshold. Every run prints the source hash it was
-built from, with a dirty mark. `doc/README.status.md` carries the
-account.
+is left above the threshold. The reserve refuses a user with twice
+the free space it refuses root at, so `H2_ENOSPC_USER=1` runs the fill
+and both probes as `nobody` under `setpriv`, and every run reads both
+thresholds after the sync with one 64 KiB write as the user and one
+as root: the user is refused in either mode, root is accepted after a
+user's fill and refused after its own, and a run where root reads the
+same either way has one threshold where the driver claims two. The
+readings sit after the sync because the refusal counts dirty pages,
+and writeback between two writes moves that count by more than the
+gap between the thresholds; after the sync the pages are allocated
+blocks and what is free is under the fill's threshold plus one step.
+They take fresh names: the first run reused the name the refused
+user write had left behind, and the guest's `fs.protected_regular`
+had the VFS refuse root that open, `EACCES` on a file another user
+owns in a sticky world-writable directory, which read as the reserve
+refusing root. Every run prints the source hash it was built from,
+with a dirty mark.
+`doc/README.status.md` carries the account.
 
 It is not a gate yet only because it has not been run enough times on
 the build that passes it; the four runs that have are in the account.

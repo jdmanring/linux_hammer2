@@ -200,6 +200,8 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(write of 128K on the full volume .*\)$/      \1/p;\
 		    s/^  \(mmap on the full volume .*\)$/      \1/p;\
+		    s/^  \(user write after the sync .*\)$/      \1/p;\
+		    s/^  \(root write after the sync .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(oops [0-9]*\)$/      \1/p;\
@@ -321,7 +323,7 @@ rm -f /tmp/h2mmaptest.$$
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
-ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap" 2>/dev/null
+ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap; rm -f /tmp/h2user${H2_ENOSPC_USER:+; touch /tmp/h2user}" 2>/dev/null
 out=$(ssh "$GUEST_SSH" '
 	rmmod hammer2 2>/dev/null
 	# The ring wraps before a fill run ends, so the report is streamed
@@ -360,6 +362,17 @@ out=$(ssh "$GUEST_SSH" '
 	# The file for the write(2) control beside it, made now for the same
 	# reason: after the fill, write(2) into it meets only the write path.
 	: > /mnt/h2enospc/written
+	# The reserve refuses a user at twice the free space it refuses root
+	# at. Under H2_ENOSPC_USER the fill and both probes run as nobody,
+	# and the reading that separates the two thresholds is taken in
+	# every mode below: one root write after the refusal.
+	as=
+	if [ -f /tmp/h2user ]; then
+		as="setpriv --reuid=65534 --regid=65534 --clear-groups"
+		chown 65534:65534 /mnt/h2enospc/mapped /mnt/h2enospc/written
+	fi
+	# World-writable in every mode, for the user write after the sync.
+	chmod 1777 /mnt/h2enospc
 	i=0
 	why=
 	# Every file the fill wrote is hashed as written, off the volume, so
@@ -374,7 +387,7 @@ out=$(ssh "$GUEST_SSH" '
 	# unreadable cap means the full fill, which is the default.
 	cap=$(cat /tmp/h2cap 2>/dev/null || echo 8000)
 	while [ $i -lt $cap ]; do
-		why=$(dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=1M \
+		why=$($as dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=1M \
 		    count=4 status=none 2>&1) || break
 		sha256sum /mnt/h2enospc/fill.$i >> /tmp/fill.sums
 		i=$((i + 1))
@@ -384,7 +397,7 @@ out=$(ssh "$GUEST_SSH" '
 	# in 64 KiB pieces, one folio each, so what is left is under the
 	# size of either probe below and both are asked the same question.
 	if [ $i -lt $cap ]; then
-		while dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=64K \
+		while $as dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=64K \
 		    count=1 status=none 2>/dev/null; do
 			sha256sum /mnt/h2enospc/fill.$i >> /tmp/fill.sums
 			i=$((i + 1))
@@ -414,10 +427,10 @@ out=$(ssh "$GUEST_SSH" '
 	# accepted, a failure at msync after all of them were.
 	# The control is write(2) of the same size at the same moment, into
 	# a file that exists, so the create path cannot be what answers.
-	msg=$(dd if=/dev/urandom of=/mnt/h2enospc/written bs=128K count=1 \
+	msg=$($as dd if=/dev/urandom of=/mnt/h2enospc/written bs=128K count=1 \
 	    conv=notrunc status=none 2>&1); st=$?
 	echo "write of 128K on the full volume exit $st : ${msg:-accepted}"
-	/tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1; st=$?
+	$as /tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1; st=$?
 	echo "mmap on the full volume exit $st : $(tail -1 /tmp/h2mmap.out)"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
@@ -425,13 +438,38 @@ out=$(ssh "$GUEST_SSH" '
 	# take; the refusal counts them, statfs does not. After the sync the
 	# accepted data is allocated and the reading means what it says.
 	echo "blocks available after sync $(stat -f -c %a /mnt/h2enospc)"
+	# The two thresholds, read after the sync because the refusal counts
+	# dirty pages and the sync turns them into allocated blocks: what is
+	# free now is under the threshold the fill stopped at plus one 64 KiB
+	# step, so the user, refused with the whole reserve still free, is
+	# refused again in either mode, and root, refused with half of it,
+	# is accepted after a user fill and refused after its own. Taken
+	# before the sync, writeback between two writes moves the dirty
+	# count by more than the gap between the thresholds. Fresh names
+	# rather than the one the refused write left: fs.protected_regular
+	# has the VFS refuse root the open of a file another user owns in
+	# a sticky world-writable directory, EACCES, read once as the
+	# reserve refusing root.
+	msg=$(setpriv --reuid=65534 --regid=65534 --clear-groups \
+	    dd if=/dev/urandom of=/mnt/h2enospc/user.after bs=64K count=1 \
+	    status=none 2>&1); st=$?
+	echo "user write after the sync exit $st : ${msg:-accepted}"
+	msg=$(dd if=/dev/urandom of=/mnt/h2enospc/root.after bs=64K count=1 \
+	    status=none 2>&1); st=$?
+	echo "root write after the sync exit $st : ${msg:-accepted}"
+	# An accepted file joins the content check, flushed first so the
+	# check reads it from the media like the rest.
+	for f in user.after root.after; do
+		[ -s /mnt/h2enospc/$f ] && sha256sum /mnt/h2enospc/$f >> /tmp/fill.sums
+	done
+	sync
 	# What the volume holds of what write(2) accepted: the page cache is
 	# dropped so every byte re-read comes from the media, then each file
 	# is checked against its hash. The counts are printed together, so a
 	# check that read nothing cannot pass as one that found nothing wrong.
 	echo 3 > /proc/sys/vm/drop_caches
 	cd / && sha256sum -c /tmp/fill.sums > /tmp/fill.check 2>/dev/null
-	echo "files intact $(grep -c ": OK$" /tmp/fill.check) of $i, damaged $(grep -c ": FAILED" /tmp/fill.check)"
+	echo "files intact $(grep -c ": OK$" /tmp/fill.check) of $(wc -l < /tmp/fill.sums), damaged $(grep -c ": FAILED" /tmp/fill.check)"
 	# The capture is NOT stopped here. Reading the log does not require
 	# stopping it, and stopping it closed the window before the unmount,
 	# so every message the unmount produces was invisible: the counters
@@ -664,10 +702,33 @@ else
 	printf '%s\n' "$out" | sed -n 's/^write of 128K on the full volume/        &/p'
 	fail=$((fail + 1))
 fi
+# The two thresholds, read after the sync. A user is refused in either
+# mode. Root is accepted after a user fill, which stopped with the
+# whole reserve free, and refused after its own, which stopped at half.
+# A run where root reads the same in both modes has one threshold.
+printf '%s\n' "$out" | command grep -q '^user write after the sync exit [1-9]' ||
+	{ echo "  FAIL  a user was accepted on the full volume after the sync:"
+	  printf '%s\n' "$out" | sed -n 's/^user write after the sync/        &/p'
+	  fail=$((fail + 1)); }
+if [ -n "${H2_ENOSPC_USER:-}" ]; then
+	printf '%s\n' "$out" | command grep -q '^root write after the sync exit 0 ' ||
+		{ echo "  FAIL  root was refused where a user was, so the two thresholds read the same:"
+		  printf '%s\n' "$out" | sed -n 's/^root write after the sync/        &/p'
+		  fail=$((fail + 1)); }
+else
+	printf '%s\n' "$out" | command grep -q '^root write after the sync exit [1-9]' ||
+		{ echo "  FAIL  root was accepted after its own fill and the sync:"
+		  printf '%s\n' "$out" | sed -n 's/^root write after the sync/        &/p'
+		  fail=$((fail + 1)); }
+fi
 # What write(2) accepted is on the media. The reserve the write path
 # keeps exists so the flush that commits a fill can complete; before it
 # was carried, two files of five hundred read back whole.
-printf '%s\n' "$out" | command grep -q "^files intact $n of $n, damaged 0$" ||
+# The total is the fill plus the root write after it where that was
+# accepted, so it is read from the line and must not be under the fill.
+t=$(printf '%s\n' "$out" | sed -n 's/^files intact [0-9]* of \([0-9]*\), damaged.*/\1/p')
+[ -n "$t" ] && [ "$t" -ge "$n" ] 2>/dev/null &&
+    printf '%s\n' "$out" | command grep -q "^files intact $t of $t, damaged 0$" ||
 	{ echo "  FAIL  the volume did not keep what it accepted:"
 	  printf '%s\n' "$out" | sed -n 's/^files intact /        /p'
 	  fail=$((fail + 1)); }

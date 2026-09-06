@@ -1497,9 +1497,24 @@ What is not carried, with the trigger for each. The source trees'
 syncer flushes every thirty seconds and this port flushes metadata on
 `sync` alone, so a fill's whole metadata reaches the media in one
 flush; with the reserve respected that flush completed on every run,
-and a periodic flush waits on a run where it does not. The thresholds
-differ for root and for a user, and every run here writes as root; the
-user branch is unmeasured.
+and a periodic flush waits on a run where it does not.
+
+The thresholds differ for root and for a user, root refused with half
+the reserve free and a user with all of it, and every run above wrote
+as root. `H2_ENOSPC_USER=1` fills as `nobody`, and both thresholds are
+read after the sync, where the dirty pages the refusal counted have
+become allocated blocks and what is free is under the fill's threshold
+plus one 64 KiB step: two user fills, 461 and 453 files, the user
+refused again after the sync and root accepted on both, 462 of 462
+and 454 of 454 intact; one root fill, 472 files, user and root both
+refused after the sync, 472 of 472 intact. The first form of that
+reading, a root write right after the user's refusal and before the
+sync, was discarded unrun: writeback between two writes moves the
+dirty count by more than the gap between the thresholds, so an
+acceptance there could not be attributed. The first run of it also
+met the guest's `fs.protected_regular`, which had the VFS refuse root
+the open of the file the user's refused write had left behind, so
+the probes take fresh names.
 
 A writer through a shared mapping never calls `write(2)`, so the check
 in the write entry never sees it. The reproducer asked what such a
