@@ -1489,6 +1489,23 @@ The `ENOSPC` underneath all of this is separately dropped on the floor,
 under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
 so the volume is full, the log says so, and the caller is told nothing.
 
+It is dropped in more than that one place, and one of them is this
+port's. The sync loop flushes each inode's mapping with
+`filemap_write_and_wait()` and then discards what it returns under an
+`XXX` of its own, which is the line the `vnode flush failed 5` messages
+come from: the failure is printed and the loop carries on. The return of
+`hammer2_inode_chain_ins()` is discarded at the same site, and that
+function clears `INODE_CREATING` before it attempts the insert, so an
+inode whose insert failed for want of space is marked as one that has
+been inserted. That is a candidate account of the references the module
+holds after the filesystem has unmounted, and it is a candidate rather
+than a finding until it is measured: the reference count has not yet
+been captured on a run that failed, only on runs that did not.
+
+Both remaining faults are intermittent, so they are being measured as
+rates rather than runs. `H2_REPEAT=n` in the reproducer tallies n runs
+and resets the guest between them.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
