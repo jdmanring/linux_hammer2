@@ -601,6 +601,13 @@ printf '%s\n' "$out" | command grep -qi 'fill stopped because.*no space left' ||
 printf '%s\n' "$out" | command grep -q '^blocks available 0$' ||
 	{ echo "  FAIL  the volume reports free space, so it never filled"
 	  fail=$((fail + 1)); }
+# What write(2) accepted is on the media. The reserve the write path
+# keeps exists so the flush that commits a fill can complete; before it
+# was carried, two files of five hundred read back whole.
+printf '%s\n' "$out" | command grep -q "^files intact $n of $n, damaged 0$" ||
+	{ echo "  FAIL  the volume did not keep what it accepted:"
+	  printf '%s\n' "$out" | sed -n 's/^files intact /        /p'
+	  fail=$((fail + 1)); }
 fi
 
 # lockdep has to be alive going into the sync or its silence afterwards
