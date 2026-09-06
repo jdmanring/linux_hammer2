@@ -509,6 +509,7 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 		if (chain->flags & HAMMER2_CHAIN_MODIFIED) {
 			atomic_clear_int(&chain->flags, HAMMER2_CHAIN_MODIFIED);
 			atomic_add_int(&hammer2_count_chain_modified, -1);
+			hammer2_pfs_memory_wakeup(chain->pmp, -1);  /* XXX Linux: upstream's */
 		}
 		/* spinlock still held */
 	}
@@ -1290,6 +1291,7 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 		/* Must set modified bit. */
 		atomic_add_int(&hammer2_count_chain_modified, 1);
 		atomic_set_int(&chain->flags, HAMMER2_CHAIN_MODIFIED);
+		hammer2_pfs_memory_inc(chain->pmp);  /* XXX Linux: upstream's, can be NULL */
 		setmodified = 1;
 
 		/*
@@ -1409,6 +1411,7 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 				    HAMMER2_CHAIN_MODIFIED);
 				atomic_add_int(&hammer2_count_chain_modified,
 				    -1);
+				hammer2_pfs_memory_wakeup(chain->pmp, -1);  /* XXX Linux: upstream's */
 				hammer2_freemap_adjust(hmp, &chain->bref,
 				    HAMMER2_FREEMAP_DORECOVER);
 				atomic_set_int(&chain->flags,

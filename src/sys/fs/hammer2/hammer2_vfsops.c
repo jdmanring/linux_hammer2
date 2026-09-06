@@ -51,6 +51,8 @@ static int hammer2_fixup_pfses(hammer2_dev_t *);
 static void hammer2_update_pmps(hammer2_dev_t *);
 static void hammer2_mount_helper(struct super_block *, hammer2_pfs_t *);
 static int hammer2_sync_fs(struct super_block *, int);	/* Linux */
+static void hammer2_sync_work(struct work_struct *);	/* Linux */
+#define HAMMER2_SYNC_INTERVAL	(30 * HZ)	/* Linux: DragonFly's syncer period */
 static void hammer2_unmount_helper(struct super_block *, hammer2_pfs_t *,
     hammer2_dev_t *);
 static void hammer2_evict_inode(struct inode *);
@@ -86,6 +88,17 @@ int hammer2_dio_limit = 256;
 int hammer2_bulkfree_tps = 5000;
 int hammer2_limit_scan_depth;
 int hammer2_limit_saved_chains;
+/*
+ * Linux: the NOFS scope every lock enters, on by default.  Read-only
+ * after load, since a scope entered under one setting and left under
+ * another would leave the task's flags wrong; off only for measuring
+ * what the scope costs reclaim, which is what found the lock inversion
+ * it exists for.
+ */
+int hammer2_nofs_scope = 1;
+module_param_named(nofs_scope, hammer2_nofs_scope, int, 0444);
+long hammer2_limit_dirty_chains;
+long hammer2_limit_dirty_inodes;
 int hammer2_always_compress;
 
 #ifdef HAMMER2_MALLOC
@@ -229,6 +242,7 @@ hammer2_voldata_modify(hammer2_dev_t *hmp)
 {
 	if ((hmp->vchain.flags & HAMMER2_CHAIN_MODIFIED) == 0) {
 		atomic_add_int(&hammer2_count_chain_modified, 1);
+		hammer2_pfs_memory_inc(hmp->vchain.pmp);  /* XXX Linux: upstream's, can be NULL */
 		atomic_set_int(&hmp->vchain.flags, HAMMER2_CHAIN_MODIFIED);
 		hmp->vchain.bref.mirror_tid = hmp->voldata.mirror_tid + 1;
 	}
@@ -276,6 +290,8 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		}
 		hammer2_lk_init(&pmp->trans_lock, "h2mp_tx");
 		hammer2_lkc_init(&pmp->trans_cv, "h2mp_tx_cv");
+		hammer2_lkc_init(&pmp->memory_cv, "h2memw");	/* Linux */
+		INIT_DELAYED_WORK(&pmp->sync_work, hammer2_sync_work);	/* Linux */
 		TAILQ_INIT(&pmp->syncq);
 		TAILQ_INIT(&pmp->depq);
 		TAILQ_INIT(&pmp->sbdev_list);	/* Linux */
@@ -477,6 +493,7 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 		}
 		hammer2_lk_destroy(&pmp->trans_lock);
 		hammer2_lkc_destroy(&pmp->trans_cv);
+		hammer2_lkc_destroy(&pmp->memory_cv);	/* Linux */
 		hammer2_inum_hash_destroy(pmp);
 		hammer2_ipdep_destroy(pmp); /* XXX Linux: hashdestroy(9) */
 		hammer2_dbg_pmp_died(pmp);
@@ -638,19 +655,29 @@ hammer2_assert_clean(void)
  * machine this module will run on the value is one tenth of the page
  * count, and the factor of five to saved_chains is upstream's.
  *
- * hammer2_limit_dirty_chains is a local upstream too, with a comment
- * saying it was a sysctl once.  Nothing in this tree reads it; only
- * hammer2_limit_saved_chains has callers, in hammer2_bulkfree.c.
+ * hammer2_limit_dirty_chains and hammer2_limit_dirty_inodes are
+ * upstream's sysctls, and the two limits hammer2_pfs_memory_wait()
+ * stalls a writer at; the BSD ports dropped the wait and kept only the
+ * first as a local, so nothing there reads either.  Carried here since
+ * 2026-09-06, when a tree of six hundred thousand files pinned 2.4 GiB
+ * of unreclaimable slab between one sync and the next.
  */
 static void
 hammer2_init_limits(void)
 {
 	unsigned long dirty_chains = totalram_pages() / 10;
+	unsigned long dirty_inodes = totalram_pages() / 25;
 
 	if (dirty_chains > HAMMER2_LIMIT_DIRTY_CHAINS)
 		dirty_chains = HAMMER2_LIMIT_DIRTY_CHAINS;
 	if (dirty_chains < 1000)
 		dirty_chains = 1000;
+	if (dirty_inodes > HAMMER2_LIMIT_DIRTY_INODES)
+		dirty_inodes = HAMMER2_LIMIT_DIRTY_INODES;
+	if (dirty_inodes < 100)
+		dirty_inodes = 100;
+	hammer2_limit_dirty_chains = (long)dirty_chains;
+	hammer2_limit_dirty_inodes = (long)dirty_inodes;
 	hammer2_limit_saved_chains = (int)(dirty_chains * 5);
 }
 
@@ -1663,6 +1690,8 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
 	if (hammer2_debug_hpanic)
 		hpanic("debug_hpanic is set, so this mount stops here");
 #endif
+	/* Linux: the syncer, from here until the unmount cancels it. */
+	schedule_delayed_work(&pmp->sync_work, HAMMER2_SYNC_INTERVAL);
 
 	/* After pmp->mp is set adjust hmp->mount_count. */
 	cluster = &pmp->iroot->cluster;
@@ -1764,6 +1793,113 @@ hammer2_vfs_enospace(hammer2_inode_t *ip, loff_t bytes, const struct cred *cred)
 		return (1);
 
 	return (0);
+}
+
+/*
+ * It is possible for an excessive number of dirty chains or dirty inodes
+ * to build up.  When this occurs we start an asynchronous filesystem sync.
+ * If the level continues to build up, we stall, waiting for it to drop,
+ * with some hysteresis.
+ *
+ * XXX Linux: upstream's, which the BSD ports dropped.  DragonFly's kernel
+ * calls hammer2_vfs_modifying() before every modifying VOP; here each
+ * modifying entry in hammer2_vnops.c calls this beside the reserve
+ * check.  trigger_syncer() is the delayed work below, run at once; the
+ * tsleep interlock is wait_event's re-test under the queue's lock.
+ */
+void
+hammer2_pfs_memory_wait(hammer2_pfs_t *pmp)
+{
+	uint32_t waiting;
+
+	if (pmp == NULL || pmp->mp == NULL)
+		return;
+
+	for (;;) {
+		waiting = pmp->inmem_dirty_chains & HAMMER2_DIRTYCHAIN_MASK;
+
+		/*
+		 * Start the syncer running at 1/2 the limit to try
+		 * to avoid sleeping.
+		 */
+		if (waiting > hammer2_limit_dirty_chains / 2 ||
+		    pmp->sideq_count > hammer2_limit_dirty_inodes / 2)
+			mod_delayed_work(system_long_wq, &pmp->sync_work, 0);
+
+		/*
+		 * Stall at the limit waiting for the counts to drop.
+		 * This code will typically be woken up once the count
+		 * drops below 3/4 the limit, or in one second.
+		 */
+		if (waiting < hammer2_limit_dirty_chains &&
+		    pmp->sideq_count < hammer2_limit_dirty_inodes)
+			break;
+
+		atomic_set_int(&pmp->inmem_dirty_chains,
+		    HAMMER2_DIRTYCHAIN_WAITING);
+		if (wait_event_interruptible_timeout(pmp->memory_cv,
+		    (pmp->inmem_dirty_chains & HAMMER2_DIRTYCHAIN_MASK) <
+		     hammer2_limit_dirty_chains &&
+		    pmp->sideq_count < hammer2_limit_dirty_inodes,
+		    HZ) == -ERESTARTSYS)
+			break;
+	}
+}
+
+/*
+ * Wake up any stalled frontend ops waiting, with hysteresis, using
+ * 2/3 of the limit.
+ */
+void
+hammer2_pfs_memory_wakeup(hammer2_pfs_t *pmp, int count)
+{
+	uint32_t waiting;
+
+	if (pmp) {
+		waiting = atomic_fetchadd_int(&pmp->inmem_dirty_chains, count);
+		/* don't need --waiting to test flag */
+
+		if ((waiting & HAMMER2_DIRTYCHAIN_WAITING) &&
+		    (pmp->inmem_dirty_chains & HAMMER2_DIRTYCHAIN_MASK) <=
+		    hammer2_limit_dirty_chains * 2 / 3 &&
+		    pmp->sideq_count <= hammer2_limit_dirty_inodes * 2 / 3) {
+			atomic_clear_int(&pmp->inmem_dirty_chains,
+			    HAMMER2_DIRTYCHAIN_WAITING);
+			hammer2_lkc_wakeup(&pmp->memory_cv);
+		}
+	}
+}
+
+void
+hammer2_pfs_memory_inc(hammer2_pfs_t *pmp)
+{
+	if (pmp)
+		atomic_add_int(&pmp->inmem_dirty_chains, 1);
+}
+
+/*
+ * Linux: the syncer.  DragonFly's runs every thirty seconds and on
+ * trigger_syncer(); this port flushed metadata on sync(2) alone until a
+ * tree of six hundred thousand files held every modified chain in
+ * memory between one sync and the next.  A whole-filesystem sync, so
+ * the page cache's dirty folios go first as they do for sync(2).  The
+ * superblock's lock is tried, not taken: an unmount holds it for write
+ * while it cancels this work, and a work waiting on it would run after
+ * the superblock was gone.
+ */
+static void
+hammer2_sync_work(struct work_struct *work)
+{
+	hammer2_pfs_t *pmp = container_of(to_delayed_work(work),
+	    hammer2_pfs_t, sync_work);
+	struct super_block *sb = pmp->mp;
+
+	if (sb && !pmp->rdonly && down_read_trylock(&sb->s_umount)) {
+		sync_filesystem(sb);
+		up_read(&sb->s_umount);
+	}
+	if (pmp->mp)
+		schedule_delayed_work(&pmp->sync_work, HAMMER2_SYNC_INTERVAL);
 }
 
 /*
@@ -2012,6 +2148,7 @@ hammer2_unmount_helper(struct super_block *sb, hammer2_pfs_t *pmp,
 		KKASSERT(hmp == NULL);
 		KKASSERT(MPTOPMP(sb) == pmp);
 		hammer2_unregister_sb(pmp);	/* Linux: before mp is cleared */
+		cancel_delayed_work_sync(&pmp->sync_work);	/* Linux */
 		pmp->mp = NULL;
 		sb->s_fs_info = NULL;
 

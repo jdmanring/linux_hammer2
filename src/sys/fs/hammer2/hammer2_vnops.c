@@ -295,6 +295,7 @@ hammer2_vop_ncreate(struct mnt_idmap *idmap, struct inode *dir,
 
 	if (dip->pmp->rdonly || (dip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
+	hammer2_pfs_memory_wait(dip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if (hammer2_vfs_enospace(dip, 0, current_cred()) > 1)
 		return (-ENOSPC);
 	if (S_ISDIR(mode) && dip->meta.nlinks >= U32_MAX)	/* Linux */
@@ -408,6 +409,7 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 
 	if (dip->pmp->rdonly)
 		return (-EROFS);
+	hammer2_pfs_memory_wait(dip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if (hammer2_vfs_enospace(dip, 0, current_cred()) > 1)
 		return (-ENOSPC);
 
@@ -510,6 +512,7 @@ hammer2_vop_rename(struct mnt_idmap *idmap __maybe_unused,
 		return (-EINVAL);
 	if (fdip->pmp->rdonly || (fdip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
+	hammer2_pfs_memory_wait(fdip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if (hammer2_vfs_enospace(fdip, 0, current_cred()) > 1)
 		return (-ENOSPC);
 	if (tdentry->d_name.len > HAMMER2_INODE_MAXNAME)
@@ -700,6 +703,7 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 
 	if (ip->meta.nlinks >= U32_MAX)	/* Linux */
 		return (-EMLINK);
+	hammer2_pfs_memory_wait(tdip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if (hammer2_vfs_enospace(tdip, 0, current_cred()) > 1)
 		return (-ENOSPC);
 	if (tdip->pmp->rdonly || (tdip->pmp->flags & HAMMER2_PMPF_EMERG))
@@ -904,6 +908,7 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * that, fifteen files of a fill were still lost to a flush that
 	 * found the reserve already eaten by data the count had not seen.
 	 */
+	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	switch (hammer2_vfs_enospace(ip, iov_iter_count(from) +
 	    hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi), current_cred())) {
 	case 2:
@@ -1031,6 +1036,7 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 	 * are in emergency mode (might be needed to chflags -R noschg
 	 * files prior to removal).
 	 */
+	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if ((ip->pmp->flags & HAMMER2_PMPF_EMERG) == 0 &&
 	    hammer2_vfs_enospace(ip, 0, current_cred()) > 1)
 		return (-ENOSPC);
@@ -1180,6 +1186,7 @@ hammer2_page_mkwrite(struct vm_fault *vmf)
 
 	if (ip->pmp->rdonly)
 		return (VM_FAULT_SIGBUS);
+	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if (hammer2_vfs_enospace(ip, folio_size(page_folio(vmf->page)) +
 	    hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi), current_cred()) > 1)
 		return (VM_FAULT_SIGBUS);

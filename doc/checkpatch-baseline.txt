@@ -21,7 +21,7 @@
 1 do not initialise statics to 0
 14 do not use assignment in if condition
 3 else is not generally useful after a break or return
-408 function definition argument 'X' should also have an identifier name
+412 function definition argument 'X' should also have an identifier name
 13 plain inline is preferred over __inline
 1 please, no space before tabs
 171 please, no spaces at the start of a line

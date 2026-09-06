@@ -612,6 +612,7 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 		    chain->parent == NULL);
 		atomic_clear_int(&chain->flags, HAMMER2_CHAIN_MODIFIED);
 		atomic_add_int(&hammer2_count_chain_modified, -1);
+		hammer2_pfs_memory_wakeup(chain->pmp, -1);  /* XXX Linux: upstream's */
 
 		/*
 		 * Issue the flush.  This is indirect via the DIO.

@@ -156,11 +156,35 @@ lock is the one shape that covers all three, so the site fixes came
 out again and the shim's allocations stay `GFP_NOFS` for the reason
 `vmalloc` documents, its own scope for that flag. The device
 mapping's page cache grabs in the DIO layer keep a scope of their own,
-since the volume header reads at mount take no lock, and each inode's
-own mapping has `__GFP_FS` cleared at setup as xfs clears it. ext4 and
-xfs need no lock scope because reclaim takes no lock of theirs that
-their operations hold; this port's eviction takes the inode lock, as
-the FreeBSD port's reclaim does, and pays for it here.
+since the volume header reads at mount take no lock. Each inode's own
+mapping keeps `__GFP_FS`: its grabs happen with no HAMMER2 lock held,
+the write path's included, and the scope covers the ones that do. It
+was cleared for a day, copied from xfs, and a million-file tree showed
+what that costs when every folio is an order-4 allocation: the
+writer's direct reclaim scanned dirty pages it could not write at
+seven percent efficiency and the grab failed with three gigabytes
+free. ext4 and xfs need no lock scope because reclaim takes no lock
+of theirs that their operations hold; this port's writeback takes the
+inode lock shared, as upstream's strategy does, so reclaim must never
+write it back under one of its locks, and the scope is what keeps
+that true.
+
+The dirty-chain throttle and the syncer are upstream's, carried after
+the BSD ports dropped them. DragonFly's kernel calls
+`hammer2_vfs_modifying()` before every modifying VOP, and that calls
+`hammer2_pfs_memory_wait()`, which kicks the syncer at half of a
+dirty-chain or dirty-inode limit and stalls at the limit, woken with
+hysteresis by the flush as chains go clean. Linux has no such hook, so
+each modifying entry in `hammer2_vnops.c` calls the wait beside the
+reserve check, the seven places a write can begin. `trigger_syncer()`
+is a delayed work on the PFS, run at once by the stall and every
+thirty seconds otherwise, DragonFly's period, doing what `sync(2)`
+does: the page cache's dirty folios first, then the chains. Its
+`tsleep` interlock is `wait_event`'s re-test under the queue's lock.
+The counters it reads are kept at the same five sites the port already
+counts modified chains, marked `XXX` where they sit in carried files.
+The limits derive from physical memory as the saved-chain limit does,
+since Linux has no `desiredvnodes`, with upstream's clamps.
 
 ## The device layer
 

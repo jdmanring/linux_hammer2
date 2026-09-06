@@ -55,6 +55,7 @@
 #include <linux/errno.h>
 #include <linux/time64.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>	/* Linux: the syncer */
 
 #include <sys/queue.h>
 #include <sys/tree.h>
@@ -903,9 +904,17 @@ struct hammer2_pfs {
 	hammer2_inoq_head_t	syncq;		/* SYNCQ flagged inodes */
 	hammer2_depq_head_t	depq;		/* SIDEQ flagged inodes */
 	long			sideq_count;	/* total inodes on depq */
+	uint32_t		inmem_dirty_chains;	/* XXX Linux: upstream's, dropped by the BSD ports */
+	hammer2_lkc_t		memory_cv;	/* Linux: the wakeup for hammer2_pfs_memory_wait() */
+	struct delayed_work	sync_work;	/* Linux: the syncer, trigger_syncer() upstream */
 	/* note: inumhash not applicable to spmp */
 	hammer2_inum_hash_t	inumhash[HAMMER2_INUMHASH_SIZE];
 };
+
+#define HAMMER2_DIRTYCHAIN_WAITING	0x80000000
+#define HAMMER2_DIRTYCHAIN_MASK		0x7FFFFFFF
+#define HAMMER2_LIMIT_DIRTY_CHAINS	(1024*1024)
+#define HAMMER2_LIMIT_DIRTY_INODES	(65536)
 
 #define HAMMER2_PMPF_SPMP	0x00000001
 #define HAMMER2_PMPF_EMERG	0x00000002
@@ -933,6 +942,8 @@ extern int hammer2_dio_limit;
 extern int hammer2_bulkfree_tps;
 extern int hammer2_limit_scan_depth;
 extern int hammer2_limit_saved_chains;
+extern long hammer2_limit_dirty_chains;
+extern long hammer2_limit_dirty_inodes;
 extern int hammer2_always_compress;
 
 extern hammer2_xop_desc_t hammer2_ipcluster_desc;
@@ -1205,6 +1216,9 @@ void hammer2_voldata_lock(hammer2_dev_t *);
 void hammer2_voldata_unlock(hammer2_dev_t *);
 void hammer2_voldata_modify(hammer2_dev_t *);
 int hammer2_vfs_enospace(hammer2_inode_t *, loff_t, const struct cred *);
+void hammer2_pfs_memory_wait(hammer2_pfs_t *);
+void hammer2_pfs_memory_inc(hammer2_pfs_t *);
+void hammer2_pfs_memory_wakeup(hammer2_pfs_t *, int);
 
 /* hammer2_xops.c */
 void hammer2_xop_ipcluster(hammer2_xop_t *, void *, int);

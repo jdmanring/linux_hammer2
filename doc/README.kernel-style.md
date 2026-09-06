@@ -331,6 +331,12 @@ The write-fault check on the full volume moved the same row by two,
 around `generic_file_mmap_prepare()` return in the style of the file
 they sit in, which is the tree's.
 
+The dirty-chain throttle carried from upstream on 2026-09-06 moved the
+`function definition argument` row by four, 408 to 412: its three
+prototypes and the syncer's are spelled as `hammer2.h` spells every
+prototype, unnamed, and a carried declaration is not restyled on its
+own.
+
 The guard naming a chain dropped by the task holding its lock moved the
 same row by one again, for the same reason: the message names a chain
 type and a key and does not fit on one line. Nothing else moved with
