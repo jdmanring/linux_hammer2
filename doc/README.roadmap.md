@@ -410,23 +410,23 @@ memory and near-capacity operation each pass with the number they produced; a
 run without a number is not a pass. Whether the XOP pool becomes
 workqueue-backed is decided here, on F6's numbers.
 
-Two services DragonFly's buffer cache gives HAMMER2 and the Linux
-address-space operations do not give it by default are decided here on
-the same numbers. `cluster_readx()` reads ahead by the sequential-access
-count; the port has `->read_folio` and no `->readahead`, so a sequential
-read fetches one logical block per call. `cluster_write()` writes behind
-in file order, and the core says it depends on that because it cannot
-preallocate at the logical level before it knows the compressed size;
-the port's `->writepages` is the counterpart and whether it hands the
-strategy XOP the blocks in the same order is unmeasured. Both readings were
-taken on 2026-09-06 with `script/throughput.sh`: the writeback order
-needed no change, the Linux-written file being contiguous at 8185 of
-8191 steps where DragonFly's own file on the same volume is scattered;
-and the read rate was held to 353 MiB/s by the DIO layer reading the
-device one folio at a time with no read-ahead, closed by asking the
-kernel's read-ahead on the device mapping for the BSD cluster hint,
-after which the port reads at 602 to 683 MiB/s, btrfs's rate and
-DragonFly's on the same guest. `README.status.md` has the table.
+Two services DragonFly's buffer cache gives HAMMER2 for free,
+`cluster_readx()`'s read-ahead and `cluster_write()`'s ordered
+write-behind, which the core's comment says its allocation depends on,
+were measured with `script/throughput.sh` rather than assumed. The
+write order needed nothing: the Linux-written file is contiguous at
+8185 of 8191 steps where DragonFly's own on the same volume is
+scattered. The read rate did: the DIO layer read the device one folio
+at a time with nothing ahead of it, 353 MiB/s, and asking the kernel's
+read-ahead on the device mapping for the BSD cluster hint took it to
+602 to 683, btrfs's rate and DragonFly's on the same guest.
+`README.status.md` has the table.
+
+The rows that need no closure, million-file trees, parallel writers,
+snapshots taken under churn and the deletion of a whole tree, are
+`script/million-tree.sh`'s and are recorded in `README.status.md` with
+their numbers. The F6 read against squashfs and erofs, and the XOP pool
+decision, wait on the closure.
 
 Gate: an F6 harness, unwritten. Depends on 0.8 and on a build host that
 supplies the closure and the hours.
@@ -479,7 +479,7 @@ Each is the maintainer's, and each names what it blocks.
 | iomap versus classic address-space operations for file data | 0.5's first commit would otherwise settle it by default | ruled 2026-09-05: classic address-space operations, reversing the iomap ruling of 2026-08-25. iomap exists for filesystems whose file extents map onto device ranges: given that mapping it does the folio handling, direct I/O, `SEEK_HOLE` and `FIEMAP` once, and xfs, the one mainline filesystem above page size, runs on it. Every one of those services assumes the kernel submits the bio to the device itself. HAMMER2 cannot allow that: each data block is checksummed, possibly compressed, possibly deduplicated, and read and written through the module's own DIO cache inside `hammer2_xop_strategy_write()` on one logical block, so `iomap_writepages` would either bypass that cache, splitting reads from writes across two caches, or be wrapped until nothing of it was used. The read path landed as `->read_folio` driving the strategy XOP, and the 0.5 write path landed on the same operations with the file mapping's folio order set to `HAMMER2_PBUFRADIX`, so every folio is a whole logical block, the BSD buffer-cache strategy model the core was written against and the mechanism the DIO layer already uses. `MODULE_LICENSE` stays `Dual BSD/GPL`: the tag exists because the kernel demands it for symbols the port may yet need, BSD is the license, and it must never hinder what can be done with the code or its distribution |
 | a second kernel tier below the kernel of record | testers on longterm distribution kernels cannot try the module | ruled 2026-09-05: the target stays 7.3, and if backward compatibility is ever provided it goes to 6.18 alone, revisited after 1.0.0. Measured that day: the hard floor is 6.15, where the block layer first holds a 64 KiB folio for a block device; 6.18 needs two compat conditionals, the `->create` signature and the inode state accessor, and the port acting as its own device holder; 6.12 is below the block layer's size limit and would need a second DIO layer. Of that range only 6.18 is maintained, to December 2028. `README.status.md` holds the 7.2 build that measured the floor from below |
 | a workqueue-backed XOP pool against synchronous XOPs | 0.9 | synchronous through 0.6, the FreeBSD port's choice; decided on F6's numbers |
-| where the fixture scripts and the provenance CSV live | every gate from 0.4 on | confirmed by the maintainer 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. Scripts, manifests and CSV only; images are build output. Not moved yet |
+| where the fixture scripts and the provenance CSV live | every gate from 0.4 on | confirmed by the maintainer 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. Scripts, manifests and CSV only; images are build output. Moved: the manifests are in `test/fixtures/`, the CSV in `doc/research/`, and the fixture scripts in `script/` |
 | the two upstream filings | 1.0 | drafted, unfiled |
 | in-tree submission | nothing before 1.0 | deferred past qualification |
 

@@ -1075,6 +1075,21 @@ shows the device as `255, 0xffff00ff`, which is DragonFly's own:
 `hammer2_vop_getattr()` in its tree sets `va_rmajor` to 0 for every
 inode, so no device node on a HAMMER2 volume reports its numbers there.
 
+A directory's link count is the media's, not the VFS's own tally.
+HAMMER2 stops counting links on a directory whose count reads 1, the
+value `newfs_hammer2` writes on a PFS root, and the core guards every
+change with `nlinks != 1`; `->mkdir` here raised the VFS count on the
+parent every time and `->rmdir` lowered it every time, so a root that
+held a thousand directories reported 1001 links until a remount
+reloaded it as 1, after which the second `rmdir` under it tripped the
+kernel's zero-link warning in `drop_nlink()`. Found on 2026-09-06 by
+the tree instrument's delete pass at twenty thousand files, on the
+first run to remove a directory after a remount. The three sites that
+change a directory's VFS count, `->mkdir`, `->rmdir` and the two
+directories of a cross-directory `->rename`, now copy the media's
+count after the core has changed it; the same twenty thousand files
+then deleted with no warning and both checkers clean.
+
 ## Rename and hard link
 
 `->rename` is upstream's `hammer2_rename()` from its transaction on.

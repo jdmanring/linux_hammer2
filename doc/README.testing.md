@@ -901,7 +901,20 @@ told the order-4 folio limit apart from the scope and the mask.
 `H2_TREE_GUESTPRE` is a command the guest runs before `insmod`, for a
 control that changes the guest rather than the module; the run records
 the guest's memory size and whether kmemleak is on, read by a write to
-its debugfs node that is refused once it is off.
+its debugfs node that is refused once it is off. `H2_TREE_WRITERS`
+is the number of shells writing at once, each taking the directories
+congruent to its number, so 1 is the serial tree and more is 0.9's
+parallel build; each reports its own count and its own first refusal.
+`H2_TREE_CHURN=1` adds three phases: a tenth of the tree deleted and
+written again with `hammer2 snapshot` taken through it, the snapshot
+mounted read-only after the remount, counted and spot-checked by
+content on both sides, since what it caught is whatever the churn had
+written and the reading is that every file in it holds its own path;
+and the whole tree deleted, timed, with the blocks the volume gave
+back, which is the store garbage collection reading. DragonFly then
+expects the live tree empty and the snapshot at the count this side
+found. The delete pass found the directory link-count defect on its
+first run.
 
 `script/throughput.sh` takes the two readings that decide whether the
 port adds `->readahead` and changes its writeback order, the services
