@@ -326,6 +326,11 @@ The free-space reserve check carried from the FreeBSD port on
 214: its four returns are carried in the BSD style the rest of the
 core uses, and a carried function is not restyled on its own.
 
+The write-fault check on the full volume moved the same row by two,
+214 to 216, on the same day: the fault handler and the mmap wrapper
+around `generic_file_mmap_prepare()` return in the style of the file
+they sit in, which is the tree's.
+
 The guard naming a chain dropped by the task holding its lock moved the
 same row by one again, for the same reason: the message names a chain
 type and a key and does not fit on one line. Nothing else moved with
