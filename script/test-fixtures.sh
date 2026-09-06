@@ -142,40 +142,6 @@ KO=src/sys/fs/hammer2/hammer2.ko
 # gate that boots a 4 GiB domain when it finds one stopped spends that on
 # every push, on a machine whose memory somebody else is using. It is opt in.
 started=no
-# A domain listed as running can be one another script is still shutting
-# down, which refuses ssh for as long as that takes; the fuzzer read that
-# state as usable once and spent its whole wait on it. The guest is usable
-# when it answers, so ask that first and the domain only when it does not.
-if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
-	:
-elif [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" = "running" ]; then
-	echo "fixtures: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2
-	exit 2
-else
-	if [ "${H2_FIXTURE_START:-0}" != "1" ]; then
-		echo "fixtures: COULD-NOT-RUN: $GUEST is not running, and this" >&2
-		echo "          gate does not start one unless H2_FIXTURE_START=1" >&2
-		exit 2
-	fi
-	# ONE GUEST AT A TIME ON THIS HOST. Each holds 4 GiB and the host is
-	# shared with other sessions' benches, so a second domain already
-	# running is a reason not to start this one, not a reason to race it.
-	# A virsh that fails must stop this, not count as no other guest:
-	# the fallback would supply the answer that lets a second domain start.
-	names=$($VIRSH list --name 2>/dev/null) || {
-		echo "fixtures: COULD-NOT-RUN: virsh list failed, so other guests cannot be counted" >&2; exit 2; }
-	other=$(printf '%s\n' "$names" | command grep -c . || true)
-	if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
-		echo "fixtures: COULD-NOT-RUN: $other other guest(s) running:" >&2
-		$VIRSH list --name 2>/dev/null | sed 's/^/          /' >&2
-		echo "          set H2_FIXTURE_SHARE=1 to start $GUEST beside them" >&2
-		exit 2
-	fi
-	$VIRSH start "$GUEST" >/dev/null 2>&1 || {
-		echo "fixtures: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
-	started=yes
-fi
-
 # Leave the machine as it was found: detach what this attached and shut the
 # guest down only if this started it. A gate that leaves 4 GiB held is one
 # nobody runs twice.
@@ -193,18 +159,46 @@ cleanup() {
 }
 trap 'cleanup' EXIT
 
-# A guest that is booting refuses the connection rather than dropping it,
-# and a refusal returns at once, so a bare retry loop spends its whole
-# budget in about a second and reports a machine that never answered. The
-# wait has to be in the loop, not in the connect timeout.
+# A guest that answers ssh is usable whatever the domain says. One that is
+# listed running and does not answer is either booting, which another
+# script leaves it doing, or shutting down; waiting tells them apart,
+# because the first answers within the wait and the second turns to shut
+# off inside it and can then be started. Only a guest that stays listed
+# running and silent for the whole wait is given up on. This gate starts
+# a guest only when H2_FIXTURE_START=1 says so, and then only alone.
 i=0
 while [ "$i" -lt 60 ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
+	state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "fixtures: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
+	if [ "$state" != "running" ]; then
+		if [ "${H2_FIXTURE_START:-0}" != "1" ]; then
+			echo "fixtures: COULD-NOT-RUN: $GUEST is $state, and this" >&2
+			echo "          gate does not start one unless H2_FIXTURE_START=1" >&2
+			exit 2
+		fi
+		# ONE GUEST AT A TIME ON THIS HOST. Each holds 4 GiB and the host
+		# is shared with other sessions' benches, so a second domain
+		# already running is a reason not to start this one, not a reason
+		# to race it. A virsh that fails must stop this, not count as no
+		# other guest: that fallback would supply the answer that lets a
+		# second domain start.
+		names=$($VIRSH list --name 2>/dev/null) || {
+			echo "fixtures: COULD-NOT-RUN: virsh list failed, so other guests cannot be counted" >&2; exit 2; }
+		other=$(printf '%s\n' "$names" | command grep -c . || true)
+		if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
+			echo "fixtures: COULD-NOT-RUN: $other other guest(s) running:" >&2
+			printf '%s\n' "$names" | sed 's/^/          /' >&2
+			echo "          set H2_FIXTURE_SHARE=1 to start $GUEST beside them" >&2
+			exit 2
+		fi
+		$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "fixtures: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
+		started=yes
+	fi
 	sleep 5
 	i=$((i + 1))
 done
 if [ "$i" -ge 60 ]; then
-	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2
+	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state" >&2
 	exit 2
 fi
 

@@ -57,7 +57,6 @@ KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "root-boot: FAIL: $KO was not produced"; exit 1; }
 
 W=$(mktemp -d) || exit 2
-trap 'rm -rf "$W"' EXIT
 fail=0
 
 cc -static -O2 -o "$W/init" test/rootfs/h2root-init.c 2>/dev/null || {
@@ -74,32 +73,31 @@ truncate -s "$SIZE" "$IMG" || exit 2
 
 # Stages 1 and 2 need a running guest, because this host's kernel is not
 # the kernel of record and cannot load the module.
+# A guest that answers ssh is usable whatever the domain says. One that is
+# listed running and does not answer is either booting, which a batch
+# reset or another script leaves it doing, or shutting down; waiting tells
+# them apart, because the first answers within the wait and the second
+# turns to shut off inside it and can then be started. Only a guest that
+# stays listed running and silent for the whole wait is given up on.
 started=no
-# A domain listed as running can be one another script is still shutting
-# down, which refuses ssh for as long as that takes; the fuzzer read that
-# state as usable once and spent its whole wait on it. The guest is usable
-# when it answers, so ask that first and the domain only when it does not.
-if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
-	:
-elif $VIRSH domstate "$GUEST" 2>/dev/null | grep -q running; then
-	echo "root-boot: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2
-	exit 2
-else
-	$VIRSH start "$GUEST" >/dev/null 2>&1 || {
-		echo "root-boot: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
-	started=yes
-fi
-# A guest that is booting refuses the connection rather than dropping it,
-# and a refusal returns at once, so a bare retry loop spends its whole
-# budget in about a second and reports a machine that never answered. The
-# wait has to be in the loop, not in the connect timeout.
+# A guest this script started is shut down on every exit, not only the last
+# line: a COULD-NOT-RUN after the start left it running for the next script
+# to refuse.
+trap '[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1; rm -rf "$W"' EXIT
 i=0
 while [ "$i" -lt 60 ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
+	state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "root-boot: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
+	if [ "$state" != "running" ]; then
+		[ 1 = 1 ] || {
+			echo "root-boot: COULD-NOT-RUN: $GUEST is $state; set H2_FIXTURE_START=1 to start it" >&2; exit 2; }
+		$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "root-boot: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
+		started=yes
+	fi
 	sleep 5
 	i=$((i + 1))
 done
-[ "$i" -lt 60 ] || { echo "root-boot: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2; exit 2; }
+[ "$i" -lt 60 ] || { echo "root-boot: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state" >&2; exit 2; }
 
 guest_rel=$(ssh "$GUEST_SSH" 'uname -r' 2>/dev/null)
 ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')

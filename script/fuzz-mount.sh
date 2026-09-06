@@ -51,27 +51,31 @@ KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "fuzz: COULD-NOT-RUN: no $KO after make" >&2; exit 2; }
 
 state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "fuzz: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
+# A guest that answers ssh is usable whatever the domain says. One that is
+# listed running and does not answer is either booting, which a batch
+# reset or another script leaves it doing, or shutting down; waiting tells
+# them apart, because the first answers within the wait and the second
+# turns to shut off inside it and can then be started. Only a guest that
+# stays listed running and silent for the whole wait is given up on.
 started=0
-# A domain listed as running can be one another script is still shutting
-# down, which refuses ssh for as long as that takes; that state was read
-# as usable once and the run spent its whole wait on it. The guest is
-# usable when it answers, so ask that first and the domain only when it
-# does not.
-if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
-	:
-elif [ "$state" = "running" ]; then
-	echo "fuzz: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2; exit 2
-else
-	[ "${H2_FIXTURE_START:-0}" = 1 ] || {
-		echo "fuzz: COULD-NOT-RUN: $GUEST is $state; set H2_FIXTURE_START=1 to start it" >&2; exit 2; }
-	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: $GUEST did not start" >&2; exit 2; }
-	started=1
-fi
-n=0
-until ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; do
-	sleep 5; n=$((n + 1))
-	[ $n -gt 60 ] && { echo "fuzz: COULD-NOT-RUN: $GUEST did not answer ssh" >&2; exit 2; }
+# A guest this script started is shut down on every exit, not only the last
+# line: a COULD-NOT-RUN after the start left it running for the next script
+# to refuse.
+trap '[ "$started" = 1 ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1' EXIT
+i=0
+while [ "$i" -lt 60 ]; do
+	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
+	state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "fuzz: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
+	if [ "$state" != "running" ]; then
+		[ "${H2_FIXTURE_START:-0}" = 1 ] || {
+			echo "fuzz: COULD-NOT-RUN: $GUEST is $state; set H2_FIXTURE_START=1 to start it" >&2; exit 2; }
+		$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
+		started=1
+	fi
+	sleep 5
+	i=$((i + 1))
 done
+[ "$i" -lt 60 ] || { echo "fuzz: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state" >&2; exit 2; }
 
 # The guest side: mount whatever the last virtio disk is, read everything,
 # report one line. Written here so the guest carries nothing between runs.
