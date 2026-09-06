@@ -118,6 +118,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	check "a kernel warning" \
 	    "cut here" \
 	    "6,969,39981586,-;------------[ cut here ]------------"
+	check "an allocation the kernel gave up on, which prints no cut-here line" \
+	    "page allocation failure" \
+	    "4,1213,1207040551,-;sh: page allocation failure: order:4, mode:0x141c4a(GFP_NOFS|__GFP_HIGHMEM|__GFP_MOVABLE|__GFP_WRITE|__GFP_COMP|__GFP_HARDWALL), nodemask=(null),cpuset=3,mems_allowed=0"
 	check "a kernel fault" \
 	    "Oops: " \
 	    "4,1073,1,-;Oops: Oops: 0000 [#1] SMP NOPTI"
@@ -627,7 +630,7 @@ out=$(ssh "$GUEST_SSH" '
 	# allocation in the USB host controller at boot, PID 1, untainted.
 	# Without the anchor the count says so and counts from the start.
 	anchor=$(command grep -n "hammer2: loading out-of-tree module" /tmp/kmsg.log | tail -1 | cut -d: -f1)
-	w=$(tail -n +"${anchor:-1}" /tmp/kmsg.log | command grep -c "cut here" || true)
+	w=$(tail -n +"${anchor:-1}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure" || true)
 	if [ -n "$anchor" ]; then
 		echo "kernel warnings $w after the module loaded $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*" | cut -c1-90)"
 	else

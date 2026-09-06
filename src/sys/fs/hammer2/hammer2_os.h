@@ -388,11 +388,15 @@ hammer2_mtx_owned(hammer2_mtx_t *p)
  * nothing else: the depth in the high bits, the flag to restore in the
  * low bit.
  */
+extern int hammer2_nofs_scope;	/* Linux: module parameter, the control */
+
 static inline void
 hammer2_nofs_enter(void)
 {
 	unsigned long v = (unsigned long)current->journal_info;
 
+	if (!hammer2_nofs_scope)
+		return;
 	if (v == 0)
 		v = 2 | (memalloc_nofs_save() ? 1 : 0);
 	else
@@ -405,6 +409,8 @@ hammer2_nofs_leave(void)
 {
 	unsigned long v = (unsigned long)current->journal_info;
 
+	if (!hammer2_nofs_scope)
+		return;
 	if (WARN_ON_ONCE(v < 2))
 		return;
 	v -= 2;

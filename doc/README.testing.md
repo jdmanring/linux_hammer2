@@ -891,7 +891,12 @@ DragonFly mounts the same volume, counts it, spot-checks the same two
 hundred files and runs its checker; the host's checker runs after each
 side with its negative control. Every reading is a number, which is
 what 0.9 asks of each of its rows, and the count on each side must be
-the count written.
+the count written. `H2_TREE_MODARGS` passes module parameters to the
+guest's `insmod`, which is how a control run loads with
+`nofs_scope=0`, the shim's lock scope off; on a write refusal the
+script keeps the reclaim and compaction counters, the buddy lists, the
+largest slabs and the inode cache size from that moment, which is what
+told the order-4 folio limit apart from the scope and the mask.
 
 All four judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,

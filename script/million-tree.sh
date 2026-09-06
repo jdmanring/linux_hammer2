@@ -25,6 +25,7 @@ FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 IMG=${H2_TREE_IMAGE:-$FIXDIR/million-tree.img}
 SIZE=${H2_TREE_SIZE:-8G}
 N=${H2_TREE_FILES:-1000000}
+MODARGS=${H2_TREE_MODARGS:-}	# module parameters for the guest's insmod, for a control
 FAN=${H2_TREE_FANOUT:-1000}
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
@@ -105,25 +106,36 @@ down() {	# down <guest> <ssh>
 per=$((N / FAN)); [ $per -gt 0 ] || per=1
 cat > "$W/linux.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/tree
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C
 mem() { awk '/MemAvailable/{print \$2}' /proc/meminfo; }
 mount -t hammer2 \$dev@ROOT /mnt/tree || { echo "mount failed"; exit 1; }
 echo "memavailable before \$(mem) kB"
 echo "slab before \$(awk '/^Slab:/{print \$2}' /proc/meminfo) kB, unreclaimable \$(awk '/^SUnreclaim:/{print \$2}' /proc/meminfo) kB"
 echo "debug_locks before \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
+vm() { awk '/^(pgscan_direct|pgsteal_direct|pgscan_kswapd|pgsteal_kswapd|allocstall_normal|allocstall_movable|compact_stall|compact_fail|compact_success|nr_slab_unreclaimable|nr_file_pages|nr_dirty|workingset_refault_file) /{printf "%s=%s ", \$1, \$2}' /proc/vmstat; echo; }
+echo "vmstat before \$(vm)"
 t0=\$(date +%s)
 d=0; n=0
 while [ \$d -lt $FAN ] && [ \$n -lt $N ]; do
 	mkdir /mnt/tree/d\$d || break
 	i=0
 	while [ \$i -lt $per ] && [ \$n -lt $N ]; do
-		echo "d\$d/f\$i" > /mnt/tree/d\$d/f\$i || break 2
+		err=\$(echo "d\$d/f\$i" 2>&1 > /mnt/tree/d\$d/f\$i) || {
+			echo "write refused at file \$n: \$err"
+			# What reclaim did, read at the moment it mattered.
+			echo "vmstat at refusal \$(vm)"
+			echo "buddyinfo at refusal: \$(cat /proc/buddyinfo | tr -s ' ' | tr '\n' ';')"
+			echo "top slabs at refusal: \$(awk 'NR>2{print \$1, \$3*\$4/1024}' /proc/slabinfo | sort -k2 -rn | head -6 | tr '\n' ';')"
+			echo "inodes cached at refusal: \$(cut -d' ' -f1-2 /proc/sys/fs/inode-nr)"
+			break 2; }
 		i=\$((i + 1)); n=\$((n + 1))
 	done
 	d=\$((d + 1))
 done
 t1=\$(date +%s)
 echo "created \$n files in \$d directories in \$((t1 - t0)) s"
+echo "vmstat after create \$(vm)"
+echo "nofs scope \$(cat /sys/module/hammer2/parameters/nofs_scope 2>/dev/null || echo unknown)"
 echo "memavailable after create \$(mem) kB"
 echo "slab after create \$(awk '/^Slab:/{print \$2}' /proc/meminfo) kB, unreclaimable \$(awk '/^SUnreclaim:/{print \$2}' /proc/meminfo) kB"
 sync; t2=\$(date +%s)
@@ -147,6 +159,10 @@ done
 echo "spot check 200 files, \$bad wrong"
 umount /mnt/tree; echo "second umount exit \$?"
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
+# A lockdep ceiling is the guest kernel's configuration running out, not
+# a report about the driver, and it reads as neither pass nor failure
+# for the lock question; the host tells them apart by this line.
+echo "lockdep ceiling \$(dmesg | grep -c 'BUG: MAX_LOCKDEP')"
 # What turned lockdep off, when it is off: a ceiling prints no cut-here
 # line and reads as nothing without this. The lockdep_stats counters
 # say how close the run came even when it stayed on.
@@ -157,8 +173,8 @@ echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
 dmesg | sed -n '/possible circular locking\|held lock freed\|MAX_LOCKDEP\|unlock balance\|possible recursive locking\|inconsistent lock state/,+160p' | head -170 | sed 's/^/lockdep: /'
 grep -E 'lock-classes|direct dependencies|dependency chains|stack-trace entries' /proc/lockdep_stats | sed 's/^ */lockdep_stats: /'
 echo "kmsg lines \$(dmesg | wc -l)"
-echo "kernel warnings \$(dmesg | grep -c 'cut here')"
-dmesg | grep -m1 -A30 'cut here' | head -32
+echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
+dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
 echo "  built from $built, $N files under $FAN directories on a $SIZE volume"
@@ -170,9 +186,17 @@ down "$GUEST" "$GUEST_SSH"
 [ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^created $N files" || { echo "  FAIL  the tree was not created whole"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^counted $N files after remount" || { echo "  FAIL  the remount did not count every file"; fail=$((fail + 1)); }
-for want in "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
+for want in "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
+if printf '%s\n' "$out" | grep -q "^debug_locks 0$"; then
+	if printf '%s\n' "$out" | grep -q "^lockdep ceiling [1-9]"; then
+		echo "  note  lockdep hit a ceiling of the guest kernel's configuration, so the"
+		echo "        lock reading for this run is NOT available; not counted either way"
+	else
+		echo "  FAIL  lockdep turned itself off during the run"; fail=$((fail + 1))
+	fi
+fi
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 

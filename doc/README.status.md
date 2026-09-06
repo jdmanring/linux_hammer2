@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1369 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1383 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -567,19 +567,19 @@ construction rather than re-hashed every run.
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4988 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
-| `hammer2_flush.c` | 1347 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
+| `hammer2_chain.c` | 4991 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_flush.c` | 1348 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1870 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2895 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_inode.c` | 1880 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_vfsops.c` | 3032 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1390 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1397 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 959 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 1103 | ours, the OS shim |
+| `hammer2_io.c` | 972 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_os.h` | 1109 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -1517,11 +1517,21 @@ first run fired on the guest kernel's own warning at boot, a DMA
 allocation in the USB host controller before the module loaded, so
 the count is scoped past the module's load line.
 
-What is not carried, with the trigger for each. The source trees'
-syncer flushes every thirty seconds and this port flushes metadata on
-`sync` alone, so a fill's whole metadata reaches the media in one
-flush; with the reserve respected that flush completed on every run,
-and a periodic flush waits on a run where it does not.
+The periodic flush is carried since 2026-09-06, on a different trigger
+than the one recorded for it. The source trees' syncer flushes every
+thirty seconds and this port flushed metadata on `sync` alone, which
+every fill survived; what did not was a tree of six hundred thousand
+files created without a sync between them, which held 2.4 GiB of
+unreclaimable slab in modified chains and dirty inodes until the write
+path failed. DragonFly bounds that with `hammer2_pfs_memory_wait()`,
+a stall at a dirty-chain and a dirty-inode limit that kicks the syncer
+at half of each and sleeps at the limit with hysteresis; the BSD ports
+dropped it and kept one of its limits as an unread local. It is
+carried here, with a delayed work as the syncer, kicked by the stall
+and otherwise every thirty seconds, running the same whole-filesystem
+sync as `sync(2)`, canceled by the unmount before the superblock goes
+and trying the superblock's lock rather than taking it so that an
+unmount holding it cannot leave it to run afterwards.
 
 The thresholds differ for root and for a user, root refused with half
 the reserve free and a user with all of it, and every run above wrote
@@ -1841,6 +1851,62 @@ Both remaining faults are intermittent, so they are measured as rates
 rather than runs. `H2_REPEAT=n` in the reproducer tallies n runs, keeps
 each run's log, and resets the guest between them.
 
+## A million files, and where the writer stopped
+
+0.9 asks for million-file trees with the number they produced.
+`script/million-tree.sh` writes a tree of one-line files through the
+write path, syncs, unmounts, remounts, drops the page cache and counts,
+and has DragonFly count and check the same volume; every reading is a
+number. The guest is the fleet's Linux guest, 4 GiB and twelve CPUs,
+on a debug kernel with lockdep and kmemleak, the last of which holds
+130 MiB of unmovable slab on its own. At a hundred thousand files the
+port reads clean:
+
+| files | create | sync | cold count here | DragonFly count | DragonFly fsck |
+|---|---|---|---|---|---|
+| 100000 | 24 s | 6 s | 100000 in 1 s | 100000 in 3 s | clean in 3 s |
+| 100000, with the reclaim scope | 38 s | 14 s | 100000 in 2 s | 100000 in 5 s | clean in 3 s |
+
+At a million it found two defects and one limit. The first run held
+2.4 GiB of unreclaimable slab in modified chains and dirty inodes by
+the six hundred thousandth file, because this port flushed metadata on
+`sync` alone and the BSD ports had dropped upstream's throttle; the
+throttle and a syncer are carried, and the same tree now holds 360
+MiB. The second was the lock inversion against reclaim recorded above,
+which the first hundred-thousand-file run reported three ways. The
+limit is that every folio of a file mapping is a whole logical block,
+an order-4 allocation, and on this guest the write path's grab for it
+fails once the page cache has fragmented memory below 64 KiB:
+
+| build | files before `ENOMEM` | unreclaimable slab at the refusal |
+|---|---|---|
+| no throttle | 598360 | 2.4 GiB |
+| throttle and syncer, mapping mask without `__GFP_FS` | 730951 | 359 MiB |
+| with `__GFP_RETRY_MAYFAIL` | 720266 | 360 MiB |
+| the same, reclaim counters kept | 718666 | 352 MiB |
+| mapping mask with `__GFP_FS` | 699172 | 355 MiB |
+
+Every one of those runs counted every accepted file after a cold
+remount and on DragonFly, with both checkers clean, DragonFly's in
+113 s at 730951 files. The refusal is the kernel's page allocation
+failure of order 4 in `hammer2_write_begin()`, with three gigabytes
+available: at the last one, direct reclaim had scanned 237120 pages to
+steal 10240, direct compaction had run five times with no success,
+and the Normal zone held free 64 KiB blocks below a watermark boosted
+by fragmentation. The retry flag, the mapping mask and the lock scope
+were each varied and none moved the number by more than the run to run
+spread, so the limit is the order and the environment together. The
+number stands as this guest's: roughly seven hundred thousand
+one-line files from a cold boot before the first `ENOMEM`, with 1.3
+GiB of the volume used. What decides whether it is the environment's
+is a run with `kmemleak=off`, one at 8 GiB, and one on a kernel
+without the debug options, none of which has been made; the design
+alternative, file mappings that take smaller folios for blocks the
+strategy can still write whole, is `doc/IO_MODEL.md`'s question. The
+lock reading is not available at this scale: lockdep hits a chain
+ceiling of the guest kernel's configuration near 300 s, which the
+script reports as a ceiling and counts neither way.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
@@ -2158,22 +2224,22 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 33 | 18 | 15 |
+| `hammer2_chain.c` | 36 | 18 | 18 |
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 4 | 2 | 2 |
 | `hammer2_os.h` | 5 | 0 | 5 |
-| `hammer2_flush.c` | 14 | 8 | 6 |
+| `hammer2_flush.c` | 15 | 8 | 7 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 21 | 1 | 20 |
 | `hammer2_inode.c` | 28 | 6 | 22 |
-| `hammer2_vfsops.c` | 44 | 7 | 36 |
+| `hammer2_vfsops.c` | 46 | 7 | 38 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 2 | 0 | 2 |
-| `hammer2.h` | 9 | 3 | 6 |
+| `hammer2.h` | 10 | 3 | 7 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
@@ -2183,8 +2249,8 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and fifty-eight are this port's, the right-hand column
-summed, and they fall in fourteen files: thirty-six in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, fifteen in `hammer2_ioctl.c`, fifteen in `hammer2_chain.c`, seven in `hammer2_subr.c`, six in `hammer2_flush.c`, six in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
+One hundred and sixty-five are this port's, the right-hand column
+summed, and they fall in fourteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the
