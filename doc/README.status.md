@@ -751,7 +751,7 @@ What has actually been compiled, measured rather than assumed, on
 
 | kernel tree | result |
 |---|---|
-| **7.2.0-cachyos**, the kernel of record | **7 checks, 0 failed, both compilers, no override** |
+| **7.2.0-cachyos**, the kernel of record at the time | **7 checks, 0 failed, both compilers, no override** |
 | 7.1.9-artix1-2 | 7 checks, 0 failed, both compilers, under the override |
 | 6.18.46-1-lts | 7 checks, 0 failed, both compilers, under the override |
 
