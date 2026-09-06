@@ -59,7 +59,10 @@ printf 'void f(void) { hprintf("r %%d\\n", 1); printf("(cont)\\n"); }\n' >> "$tm
 ran=$((ran + 1))
 if exp=$($CC -E -std=gnu11 -DKBUILD_MODNAME='"hammer2"' -I test/stub \
 	"$tmp_pfx/pfx.c" 2>/dev/null | command grep 'void f(void)'); then
-	if printf '%s\n' "$exp" | command grep -q 'pr_info("hammer2" ": "'; then
+	# The printk this expands to is the shim's choice and has changed
+	# once already, so the check is that the name reaches the format
+	# string, not which printk carries it.
+	if printf '%s\n' "$exp" | command grep -q 'pr_info[a-z_]*("hammer2" ": "'; then
 		echo "  ok    hprintf expansion carries the module name"
 	else
 		echo "  FAIL  hprintf expands without the module name, so every"

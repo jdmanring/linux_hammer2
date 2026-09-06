@@ -92,7 +92,21 @@
  * every file including the carried ones, there is one copy of it, and no
  * .c file has to remember anything.
  */
-#define hprintf(X, ...)	pr_info(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__)
+/*
+ * Linux: RATE LIMITED, because the carried core reports per-object and a
+ * full volume has as many objects as it has inodes.  Measured on a 2 GiB
+ * volume filled to ENOSPC: hammer2_chain_create_indirect() and
+ * hammer2_inode_chain_ins() report a line each per inode that cannot be
+ * inserted, and 120 of them landed inside a 220-line window of one run.
+ * Nothing bounds that but the inode count.  The limit is per call site,
+ * which is what printk's own ratelimit state gives, so a message printed
+ * once at mount is untouched and only a flood is suppressed; the
+ * suppression itself is reported by the printk layer, so a reader is
+ * told what was dropped rather than shown a quiet log.  58 files under
+ * fs/ in the kernel of record limit their printks the same way.
+ */
+#define hprintf(X, ...)	pr_info_ratelimited(KBUILD_MODNAME ": " HFMT X,	\
+			    HARGS, ## __VA_ARGS__)
 /*
  * hpanic carries the name for a different reason: panic() is not a pr_*
  * macro and takes its format verbatim, so it would not read a pr_fmt even

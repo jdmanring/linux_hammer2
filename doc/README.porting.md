@@ -289,6 +289,37 @@ __unused[4]`. The `__unused4` and `__unused5` fields in `struct stat` are not in
 macro named `__unused` does not collide with them, and counting them would
 overstate the exposure.
 
+## The log a full volume writes
+
+`hprintf` is this port's own macro and carries the module name for the
+reason above it in `hammer2_os.h`. It is rate limited, which the BSD
+ports have no equivalent of and which the carried core cannot ask for.
+
+The core reports per object. That reads as a handful of lines while a
+volume has room in it and as one line per inode when it does not:
+`hammer2_chain_create_indirect()` and `hammer2_inode_chain_ins()` each
+report on every inode that cannot be inserted, and a 2 GiB volume filled
+to `ENOSPC` put 120 of them inside a 220-line window of one run, bounded
+by nothing but the inode count. A filesystem that floods the kernel log
+when a disk fills is a defect in the eyes of anyone reading that log to
+find out why the disk filled.
+
+The limit is printk's, so its state is per call site: a line printed
+once at mount is untouched, only a flood is suppressed, and the printk
+layer reports its own suppression, so a reader is told what was dropped
+rather than shown a quiet log. 58 files under `fs/` in the kernel of
+record limit their printks the same way. The alternative, editing the
+call sites in the carried core, is the edit this tree exists to avoid,
+and the shim is where a Linux answer belongs.
+
+Two things this does not fix and does not hide. The messages go out at
+`pr_info`, which is the level the carried core's own wording implies and
+is below what an I/O error deserves; separating the error sites from the
+informational ones means classifying every call site in the core and is
+not done. And the `ENOSPC` behind these lines is dropped under upstream's
+own `XXX return error somehow?`, so the log knows the volume is full and
+the caller is not told.
+
 ## Crashing the kernel: KKASSERT, hpanic, and what Linux expects
 
 The mapping is the BSD ports' and the consequence is not. All three map
@@ -303,7 +334,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:94` | `KASSERTMSG`, which panics under the same knob |
-| `hammer2_os.h:97` | `hpanic`, `panic()` unconditionally |
+| `hammer2_os.h:116` | `hpanic`, `panic()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 

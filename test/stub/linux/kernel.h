@@ -59,6 +59,7 @@ typedef unsigned int gfp_t;
 #endif
 
 int pr_info(const char *fmt, ...);
+int pr_info_ratelimited(const char *fmt, ...);
 int pr_cont(const char *fmt, ...);
 void panic(const char *fmt, ...) __attribute__((noreturn));
 void cpu_relax(void);
