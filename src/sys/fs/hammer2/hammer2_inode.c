@@ -831,12 +831,22 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	 * nothing has made one on this media.
 	 */
 	/*
-	 * Linux: page cache allocations for this inode must not enter
-	 * filesystem reclaim, which takes inode locks to evict; xfs clears
-	 * the same bit at the same point.
+	 * Linux: every folio of this mapping is a whole logical block, an
+	 * order-4 allocation, which the allocator calls costly and gives up
+	 * on after one round of reclaim unless told to keep trying:
+	 * 730951 small files filled memory with cache fragmented below
+	 * 64 KiB and the next write got ENOMEM with three gigabytes free.
+	 * __GFP_RETRY_MAYFAIL is the kernel's name for that instruction,
+	 * and it still fails rather than invoking the OOM killer, which is
+	 * what a write path wants.  __GFP_FS stays: the grabs on this
+	 * mapping happen with no HAMMER2 lock held, and the ones that do
+	 * are in the NOFS scope the locks enter.  xfs clears the bit here
+	 * because its reclaim recurses into it; a run with it cleared
+	 * reclaimed at seven percent efficiency, scanning dirty pages it
+	 * could not write, and failed the same allocation.
 	 */
 	mapping_set_gfp_mask(inode->i_mapping,
-	    mapping_gfp_mask(inode->i_mapping) & ~__GFP_FS);	/* Linux */
+	    mapping_gfp_mask(inode->i_mapping) | __GFP_RETRY_MAYFAIL);	/* Linux */
 	if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &hammer2_dir_iops;	/* Linux */
 		inode->i_fop = &hammer2_dir_fops;	/* Linux */

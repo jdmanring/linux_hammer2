@@ -74,7 +74,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:1170` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
-| `hammer2.h:530` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
+| `hammer2.h:531` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.
@@ -137,6 +137,19 @@ knowing before writing the mount path:
   constrain this to what we can validate and test." A policy cap.
 - `mapping_max_folio_size_supported()` is the capability, and under THP with
   4 KiB pages it is larger than 64 KiB.
+
+Every folio of a file mapping and of the device mapping is a whole
+logical block, an order-4 allocation, which the allocator calls costly
+and abandons after one round of reclaim and compaction unless
+`__GFP_RETRY_MAYFAIL` is set. Measured 2026-09-06 on a guest with 4 GiB:
+a tree of small files filled memory with clean cache fragmented below
+64 KiB, and the write path's folio grab returned `ENOMEM` at 598360 and
+at 730951 files with three gigabytes available, reported by the kernel
+as a page allocation failure of order 4. Both mappings now carry the
+retry flag, the file mapping's in its mask and the device mapping's on
+each grab since that mask is the block layer's; the flag keeps the
+allocator reclaiming and compacting and still fails rather than
+invoking the OOM killer.
 
 For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6

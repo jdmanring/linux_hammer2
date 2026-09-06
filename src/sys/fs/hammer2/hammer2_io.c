@@ -256,6 +256,18 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
  * XXX Measure sequential-read throughput against DragonFly first:
  * page_cache_sync_ra() with the same hint, if the measurement wants it.
  */
+/*
+ * The device mapping's mask with the retry the file mapping carries:
+ * its folios are the same order-4 allocation, and its mask is the block
+ * layer's, so the instruction travels with each grab instead.
+ */
+static inline gfp_t
+hammer2_io_gfp(hammer2_io_t *dio)
+{
+	return (mapping_gfp_mask(hammer2_io_mapping(dio)) |
+	    __GFP_RETRY_MAYFAIL);
+}
+
 static int
 hammer2_bread(hammer2_dev_t *hmp, hammer2_io_t *dio)
 {
@@ -269,8 +281,8 @@ hammer2_bread(hammer2_dev_t *hmp, hammer2_io_t *dio)
 	 * runs in a NOFS scope; xfs does the same around its buffer cache.
 	 */
 	nofs = memalloc_nofs_save();
-	folio = read_mapping_folio(hammer2_io_mapping(dio),
-				   hammer2_io_index(dio), dio->bdev_file);
+	folio = mapping_read_folio_gfp(hammer2_io_mapping(dio),
+	    hammer2_io_index(dio), hammer2_io_gfp(dio));
 	memalloc_nofs_restore(nofs);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
@@ -300,8 +312,9 @@ hammer2_getblk_new(hammer2_io_t *dio, int zero)
 	int error;
 
 	nofs = memalloc_nofs_save();	/* as hammer2_bread() */
-	folio = filemap_grab_folio(hammer2_io_mapping(dio),
-				   hammer2_io_index(dio));
+	folio = __filemap_get_folio(hammer2_io_mapping(dio),
+	    hammer2_io_index(dio), FGP_LOCK | FGP_ACCESSED | FGP_CREAT,
+	    hammer2_io_gfp(dio));
 	memalloc_nofs_restore(nofs);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
