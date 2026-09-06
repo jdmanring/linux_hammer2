@@ -2922,8 +2922,17 @@ again:
 			 * the caller's, locked and referenced, and clearing
 			 * *chainp for it strands the lock: every caller
 			 * releases the chain under "if (chain)".
+			 *
+			 * XXX Linux: the chain this function allocated is
+			 * still locked, taken fresh above, and upstream drops
+			 * it locked, which its mutex tolerates.  Here the drop
+			 * takes the lock again by recursion and frees the
+			 * chain with the rwsem held: lockdep reports a held
+			 * lock freed, on the full volume, under open(2).
+			 * Unlock first.
 			 */
 			if (allocated) {
+				hammer2_chain_unlock(chain);
 				hammer2_chain_drop(chain);
 				chain = NULL;
 			}

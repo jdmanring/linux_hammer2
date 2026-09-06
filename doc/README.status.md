@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4979 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 4988 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1347 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
@@ -2024,7 +2024,7 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 32 | 18 | 14 |
+| `hammer2_chain.c` | 33 | 18 | 15 |
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
@@ -2049,8 +2049,8 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and fifty-four are this port's, the right-hand column
-summed, and they fall in thirteen files: thirty-five in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, fifteen in `hammer2_ioctl.c`, fourteen in `hammer2_chain.c`, seven in `hammer2_subr.c`, six in `hammer2_flush.c`, six in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, and one in `hammer2_disk.h`. That is the whole of them, and
+One hundred and fifty-five are this port's, the right-hand column
+summed, and they fall in thirteen files: thirty-five in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, fifteen in `hammer2_ioctl.c`, fifteen in `hammer2_chain.c`, seven in `hammer2_subr.c`, six in `hammer2_flush.c`, six in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, and one in `hammer2_disk.h`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the
@@ -2059,7 +2059,8 @@ column summed to more, so the sum was recomputed from the table on
 `hammer2_vnops.c` left with the read-write refusal it described and the
 third when the sentence was found reading one hundred and forty-six
 against a column summing to one hundred and fifty-three before the
-debug trigger for `hpanic` added one more.
+debug trigger for `hpanic` added one more, and again when the unlock
+before the drop in `hammer2_chain_create()` added another.
 
 Four of those nine files are then walked mark by mark below:
 `hammer2_ondisk.c`, `hammer2_vfsops.c`, and the two files this port wrote
