@@ -851,7 +851,8 @@ that answers ssh is used whatever the domain says, one listed running
 that does not answer is waited on, bounded, because a booting guest
 answers within the wait and one shutting down turns to shut off inside
 it and is then started, and only one that stays listed running and
-silent for the whole wait is given up on. Reading the domain state
+silent for the whole wait is given up on, reported as COULD-NOT-RUN
+with the host's load average beside it. Reading the domain state
 alone was wrong both ways in one day: a guest the fixture gate was
 still shutting down read as usable and cost the fuzzer its whole wait,
 and a guest a batch reset had just started read as shutting down and
