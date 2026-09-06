@@ -1083,15 +1083,18 @@ reading the gate.
 
 `script/enospc.sh` fills a 2 GiB volume until the first write fails,
 calls `sync(2)`, and reads `debug_locks` on both sides of each step. The
-circular lock dependency it was written to reproduce is fixed, and it
-still fails, on two things that are not that: the module cannot be
-removed after a fill, holding references although the filesystem has
-unmounted, and on some runs lockdep reports a held lock freed during the
-fill itself. `doc/README.status.md` carries the account.
+circular lock dependency it was written to reproduce is fixed, and so
+is the fault that left the module unremovable after a fill; ten runs
+of the shipping build pass. It also records what `fsync(2)` on the last
+written file and `syncfs(2)` on the volume return after the fill, with
+the error text kept, because an exit status of 1 from a missing path
+and one from a failed sync read the same. `doc/README.status.md`
+carries the account.
 
-It is not a gate for that reason. A test that fails on half its runs
-would be a flake in the suite rather than a check, so it stays a script
-run by hand until both are closed.
+It is not a gate yet because on two runs before the unmount fix lockdep
+reported a held lock freed during the fill, which is unexplained rather
+than fixed, and a test whose one remaining failure nobody can account
+for stays a script run by hand.
 
 A debug build logs each PFS as it is freed and each one the teardown
 syncs, unhashed with `%px` so the addresses can be compared against the

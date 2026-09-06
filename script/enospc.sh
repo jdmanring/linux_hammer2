@@ -193,6 +193,8 @@ if [ "$repeat" -gt 1 ]; then
 		# other, printed per run so the tally is not the only record.
 		command sed -n "s/^  \(locks after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(files written [0-9]*\)$/      \1/p;\
+		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
+		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(oops [0-9]*\)$/      \1/p;\
@@ -336,6 +338,20 @@ out=$(ssh "$GUEST_SSH" '
 	echo "fill stopped because ${why:-no error reported}"
 	echo "blocks available $(stat -f -c %a /mnt/h2enospc)"
 	echo "locks after fill $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
+	# What the callers of fsync(2) and syncfs(2) are told about a volume
+	# that has just refused a write. Measurements, not checks: the sync
+	# path discards its errors under XXX comments in every tree this
+	# port carries from, and this records what reaches userspace.
+	# The refused write may have failed at open, leaving no file, so
+	# the fsync goes to the last file that exists, and the error text
+	# is kept, because an exit status of 1 from a missing path and one
+	# from a failed fsync read the same.
+	last=/mnt/h2enospc/fill.$i
+	[ -e "$last" ] || last=/mnt/h2enospc/fill.$((i - 1))
+	msg=$(sync "$last" 2>&1)
+	echo "fsync of the last file returned $? ${msg:+: $msg}"
+	msg=$(sync -f /mnt/h2enospc 2>&1)
+	echo "syncfs returned $? ${msg:+: $msg}"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The capture is NOT stopped here. Reading the log does not require

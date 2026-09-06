@@ -1325,7 +1325,14 @@ done:
 	} else {
 		hprintf("error %08x at lbase %016llx\n",
 		    error, (long long)xop->lbase);
-		mapping_set_error(folio->mapping, -EIO);	/* XXX Linux: BIO_ERROR */
+		/*
+		 * XXX Linux: was BIO_ERROR with b_error = EIO.  The kernel
+		 * keeps ENOSPC distinct from EIO in writeback errors, and
+		 * fsync(2) on a volume that ran out of space during
+		 * writeback reports it as ext4 and iomap do.
+		 */
+		mapping_set_error(folio->mapping,
+		    hammer2_vfs_errno(hammer2_error_to_errno(error)));
 		folio_end_writeback(folio);
 	}
 

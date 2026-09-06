@@ -566,7 +566,7 @@ construction rather than re-hashed every run.
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2823 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_strategy.c` | 1341 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1287 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
@@ -1396,10 +1396,13 @@ a fill trip a circular lock dependency, and a chain outliving its PFS,
 which faulted the unmount of a filled volume.
 
 **What is still open on this path**, and why the reproducer is not yet a
-gate: on some runs lockdep reports a held lock freed during the fill
-itself, and the `ENOSPC` is dropped rather than returned, so a write
-that fails for want of space is logged and the caller is told nothing.
-No corruption has been seen on any run and every checker has been clean
+gate: on two runs before the unmount fix lockdep reported a held lock
+freed during the fill itself, unexplained and not seen since. The
+`ENOSPC` reaches the writer at `open(2)` and `write(2)`, and since
+0.7.11 it reaches `fsync(2)` and `syncfs(2)` as well, measured on the
+volume the reproducer fills: before the change both reported `EIO`,
+which is what every tree this port carries from sets on a failed
+strategy write, and after it both report `ENOSPC`. No corruption has been seen on any run and every checker has been clean
 afterwards.
 
 Both accounts below are kept, the wrong turns included, because the
@@ -1522,12 +1525,19 @@ by recursion and frees a chain whose rwsem it still holds. A warning
 names that where every caller passes. It has not fired on any run, which
 makes it a guard and not evidence in either direction.
 
-The `ENOSPC` underneath all of this is separately dropped on the floor,
-under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
-so the volume is full, the log says so, and the caller is told nothing.
+The `ENOSPC` underneath all of this was written up here as dropped on
+the floor, under upstream's own `XXX return error somehow?` in
+`hammer2_inode.c`, with the caller told nothing. Measured, that was
+wrong. The reproducer now records what `fsync(2)` on the last written
+file and `syncfs(2)` on the volume return after the fill, and both
+returned `EIO`: the strategy write's completion sets the mapping's
+writeback error, which every tree does with `EIO` for any failure, and
+the sync path reads it back from the mapping. What was lost was the
+errno, not the error. The Linux side of that completion is this port's
+own line, and it now hands the kernel the errno the core reports, as
+ext4 and iomap do, so both calls return `ENOSPC` on the same fill.
 
-It is dropped in more than that one place, and the second is carried
-too. The sync loop flushes each inode's mapping with
+The sync path's own returns are still dropped, and that is carried. The sync loop flushes each inode's mapping with
 `filemap_write_and_wait()` and then discards what it returns under an
 `XXX`, which is the line the `vnode flush failed 5` messages come from:
 the failure is printed and the loop carries on. That is the FreeBSD and
