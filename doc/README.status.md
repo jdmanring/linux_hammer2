@@ -1942,6 +1942,42 @@ lock reading is not available at this scale: lockdep hits a chain
 ceiling of the guest kernel's configuration near 300 s, which the
 script reports as a ceiling and counts neither way.
 
+The instrument then grew the rest of 0.9's tree rows: several writers
+at once, a tenth of the tree deleted and written again while a
+snapshot is taken through it, and the whole tree deleted. The first
+run at a million found a deadlock. Two tasks sat unkillable, the sync
+worker inserting an inode under the PFS root and an `rm` resolving a
+name under it, and the hung-task report named each as the owner of
+what the other waited on: the worker held the root's chain exclusive
+and wanted an indirect block beneath it, the `rm` held that block
+shared and wanted the root back. The core takes those two in one order
+everywhere. The shim did not: its shared to exclusive upgrade, which
+`hammer2_chain_unlock()` asks for on the last unlock of a chain and
+which `hammer2_chain_lookup()` reaches on a parent while holding the
+child it has just locked, was an `up_read()`, a write trylock and a
+`down_read()` to restore, so for a moment the parent was held by
+nobody, the queued writer took it and descended, and the restoring
+read queued behind it. Lockdep could not see it: it had turned itself
+off at 172 s on the chain table ceiling, and the cycle formed at about
+400 s. The upgrade is now one compare and swap on the semaphore's
+count, DragonFly's `mtx_upgrade_try()` on Linux's word, with the layout
+read back at module load; `README.porting.md` has the decision and the
+one that supersedes it at 1.0. The guest was read from outside through
+the QEMU guest agent, ssh having hung on the wedged mount, and reset;
+the media it left behind was consistent on both sides, which is the
+snapshot row's reading and the crash matrix's again at this scale:
+
+| after the forced power-off mid-churn | reading |
+|---|---|
+| `fsck_hammer2` on the host | clean |
+| DragonFly count of the tree | 999000 files, one directory absent, the churn's last flushed deletion |
+| DragonFly count of the snapshot taken under churn | 1000000 files, 200 spot checks, 0 wrong |
+| DragonFly `fsck` | clean in 317 s |
+
+Before the hang the same run had written the tree with four writers
+in 241 s where one writer took 1007 s, and the snapshot returned in
+under a second with the deletion running.
+
 ## One large file, and what the BSD buffer cache gave for free
 
 DragonFly's HAMMER2 reads ahead through `cluster_readx()` and writes

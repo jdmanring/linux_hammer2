@@ -47,10 +47,34 @@ the mount until the guest was rebooted. A predicate is not an
 implementation, and the interface's shape was an argument for not writing
 one.
 
-It now releases the read side and takes the write side, restoring the
-caller's shared hold when it cannot, which is what the OpenBSD port does
-at the same place. The window between the two is real and is what the
-caller revalidates after.
+The second shape released the read side and took the write side,
+restoring the caller's shared hold when it could not, which is what the
+OpenBSD port does at the same place, on the reading that the window
+between the two was one the caller's loop revalidates after. The caller
+revalidates its own count; it cannot revalidate what another task did
+with the lock in the window. `hammer2_chain_lookup()` unlocks a parent
+while holding the child it has just locked, a writer queued on the
+parent took it in the gap and went down to the child, and the restoring
+`down_read()` queued behind that writer. Two tasks holding parent and
+child in opposite orders, an order the core never produces. A
+million-file tree with a deletion running beside the sync worker reached
+it and the status document has the report.
+
+The third shape is DragonFly's: one compare and swap on the lock word,
+here the `rw_semaphore` count, that turns the sole reader into the
+writer ahead of any queued writer and leaves a refused caller holding
+what it held. FreeBSD's `sx_try_upgrade()` and NetBSD's
+`rw_tryupgrade()` give their ports the same two guarantees natively;
+Linux has `downgrade_write()` and nothing the other way, so the shim
+reads a layout `kernel/locking/rwsem.c` keeps private. That is pinned to
+the kernel of record like every other such reading here, and checked at
+module load by locking a fresh semaphore each way and reading the word
+back, so a kernel that moves it refuses the module. `PREEMPT_RT` keeps a
+different word and stops the build. A lock primitive of the shim's own,
+with DragonFly's word layout over a spinlock and wait queue, would
+remove this reading along with the recursion depth and the shared
+re-lock credit, each a patch on the same mismatch; that is a 1.0 shape
+and the roadmap carries it.
 
 Recursion was decided twice. The first decision followed NetBSD: a Linux
 `rw_semaphore` deadlocks against its own holder as a NetBSD `krwlock`
