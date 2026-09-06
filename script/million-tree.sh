@@ -28,6 +28,8 @@ N=${H2_TREE_FILES:-1000000}
 MODARGS=${H2_TREE_MODARGS:-}	# module parameters for the guest's insmod, for a control
 GUESTPRE=${H2_TREE_GUESTPRE:-:}	# run on the guest before insmod, for a control (echo off > /sys/kernel/debug/kmemleak)
 FAN=${H2_TREE_FANOUT:-1000}
+WRITERS=${H2_TREE_WRITERS:-1}	# shells writing at once, each its share of the directories
+CHURN=${H2_TREE_CHURN:-0}	# 1: delete and recreate a tenth of the tree with a snapshot taken through it, then delete the whole tree, timed
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 DFLY=${H2_DFLY_GUEST:-dragonflybsd642}
@@ -118,29 +120,57 @@ echo "debug_locks before \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)
 vm() { awk '/^(pgscan_direct|pgsteal_direct|pgscan_kswapd|pgsteal_kswapd|allocstall_normal|allocstall_movable|compact_stall|compact_fail|compact_success|nr_slab_unreclaimable|nr_file_pages|nr_dirty|workingset_refault_file) /{printf "%s=%s ", \$1, \$2}' /proc/vmstat; echo; }
 echo "vmstat before \$(vm)"
 t0=\$(date +%s)
-d=0; n=0
-while [ \$d -lt $FAN ] && [ \$n -lt $N ]; do
-	mkdir /mnt/tree/d\$d || break
-	i=0
-	while [ \$i -lt $per ] && [ \$n -lt $N ]; do
-		err=\$(echo "d\$d/f\$i" 2>&1 > /mnt/tree/d\$d/f\$i) || {
-			echo "write refused at file \$n: \$err"
-			# What reclaim did, read at the moment it mattered.
-			echo "vmstat at refusal \$(vm)"
-			echo "buddyinfo at refusal: \$(cat /proc/buddyinfo | tr -s ' ' | tr '\n' ';')"
-			echo "top slabs at refusal: \$(awk 'NR>2{print \$1, \$3*\$4/1024}' /proc/slabinfo | sort -k2 -rn | head -6 | tr '\n' ';')"
-			echo "inodes cached at refusal: \$(cut -d' ' -f1-2 /proc/sys/fs/inode-nr)"
-			break 2; }
-		i=\$((i + 1)); n=\$((n + 1))
+# One shell per writer, each taking the directories congruent to its
+# number, so W=1 is the serial tree and W>1 is the parallel build. Each
+# writer reports its own count and the first refusal it met.
+w=0
+while [ \$w -lt $WRITERS ]; do
+	( d=\$w; n=0
+	while [ \$d -lt $FAN ]; do
+		mkdir /mnt/tree/d\$d || break
+		i=0
+		while [ \$i -lt $per ]; do
+			err=\$(echo "d\$d/f\$i" 2>&1 > /mnt/tree/d\$d/f\$i) || {
+				echo "write refused at file \$n of writer \$w: \$err"
+				# What reclaim did, read at the moment it mattered.
+				echo "vmstat at refusal \$(vm)"
+				echo "buddyinfo at refusal: \$(cat /proc/buddyinfo | tr -s ' ' | tr '\n' ';')"
+				echo "top slabs at refusal: \$(awk 'NR>2{print \$1, \$3*\$4/1024}' /proc/slabinfo | sort -k2 -rn | head -6 | tr '\n' ';')"
+				echo "inodes cached at refusal: \$(cut -d' ' -f1-2 /proc/sys/fs/inode-nr)"
+				break 2; }
+			i=\$((i + 1)); n=\$((n + 1))
+		done
+		d=\$((d + $WRITERS))
 	done
-	d=\$((d + 1))
+	echo "\$n" > /tmp/writer\$w.count ) &
+	w=\$((w + 1))
 done
+wait
+n=0; w=0
+while [ \$w -lt $WRITERS ]; do n=\$((n + \$(cat /tmp/writer\$w.count))); w=\$((w + 1)); done
+d=\$(ls -d /mnt/tree/d* | wc -l)
 t1=\$(date +%s)
 echo "created \$n files in \$d directories in \$((t1 - t0)) s"
 echo "vmstat after create \$(vm)"
 echo "nofs scope \$(cat /sys/module/hammer2/parameters/nofs_scope 2>/dev/null || echo unknown)"
 echo "memavailable after create \$(mem) kB"
 echo "slab after create \$(awk '/^Slab:/{print \$2}' /proc/meminfo) kB, unreclaimable \$(awk '/^SUnreclaim:/{print \$2}' /proc/meminfo) kB"
+if [ $CHURN = 1 ]; then
+	# A tenth of the tree is deleted and written again while a snapshot
+	# is taken through it. What the snapshot holds is whatever it caught;
+	# the reading is that it mounts, counts, and every file in it holds
+	# its own path, on both sides.
+	tc=\$(date +%s)
+	( d=0; while [ \$d -lt $((FAN / 10)) ]; do
+		rm -rf /mnt/tree/d\$d; mkdir /mnt/tree/d\$d; i=0
+		while [ \$i -lt $per ]; do echo "d\$d/f\$i" > /mnt/tree/d\$d/f\$i; i=\$((i + 1)); done
+		d=\$((d + 1)); done ) &
+	sleep 3; ts=\$(date +%s)
+	hammer2 snapshot /mnt/tree SNAP1 >/dev/null 2>&1; echo "snapshot under churn exit \$? in \$((\$(date +%s) - ts)) s"
+	wait
+	echo "churn of $((FAN / 10)) directories, $((per * FAN / 10)) files deleted and written again, in \$((\$(date +%s) - tc)) s"
+	t1=\$(date +%s)
+fi
 sync; t2=\$(date +%s)
 echo "sync took \$((t2 - t1)) s"
 echo "memavailable after sync \$(mem) kB"
@@ -160,6 +190,22 @@ while [ \$k -lt 200 ]; do
 	k=\$((k + 1))
 done
 echo "spot check 200 files, \$bad wrong"
+if [ $CHURN = 1 ]; then
+	mkdir -p /mnt/snap
+	mount -t hammer2 -o ro \$dev@SNAP1 /mnt/snap || echo "snapshot mount failed"
+	sc=\$(find /mnt/snap -type f | wc -l)
+	sb=0; sk=0
+	for f in \$(find /mnt/snap -type f | awk 'NR % 5003 == 1' | head -200); do
+		[ "\$(cat \$f)" = "\${f#/mnt/snap/}" ] || sb=\$((sb + 1)); sk=\$((sk + 1))
+	done
+	echo "snapshot counted \$sc files, spot check \$sk files, \$sb wrong"
+	umount /mnt/snap; echo "snapshot umount exit \$?"
+	# The whole tree deleted, timed, and what the volume gave back: the
+	# store garbage collection reading.
+	td=\$(date +%s); rm -rf /mnt/tree/d*; sync
+	echo "deleted the tree in \$((\$(date +%s) - td)) s, blocks used \$(stat -f -c '%b %a' /mnt/tree), memavailable \$(mem) kB"
+	echo "left \$(find /mnt/tree -type f | wc -l) files"
+fi
 umount /mnt/tree; echo "second umount exit \$?"
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
 # A lockdep ceiling is the guest kernel's configuration running out, not
@@ -189,6 +235,13 @@ down "$GUEST" "$GUEST_SSH"
 [ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^created $N files" || { echo "  FAIL  the tree was not created whole"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^counted $N files after remount" || { echo "  FAIL  the remount did not count every file"; fail=$((fail + 1)); }
+if [ $CHURN = 1 ]; then
+	for want in "^snapshot under churn exit 0" "^snapshot counted [1-9]" "^snapshot umount exit 0" "^left 0 files$"; do
+		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
+	done
+	printf '%s\n' "$out" | grep -q "^snapshot counted [0-9]* files, spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  the snapshot read wrong content"; fail=$((fail + 1)); }
+	snapn=$(printf '%s\n' "$out" | sed -n 's/^snapshot counted \([0-9]*\) files.*/\1/p')
+fi
 for want in "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
@@ -207,16 +260,29 @@ fsck_control "$IMG" || fail=$((fail + 1))
 cat > "$W/dfly.sh" <<GUEST
 mkdir -p /mnt/tree
 mount_hammer2 /dev/vbd1@ROOT /mnt/tree || { echo "mount failed"; exit 1; }
+if [ $CHURN = 1 ]; then
+	echo "dragonfly counted \$(find /mnt/tree -type f | wc -l | tr -d ' ') files in the deleted tree"
+	umount /mnt/tree
+	mount_hammer2 /dev/vbd1@SNAP1 /mnt/tree || { echo "snapshot mount failed"; exit 1; }
+fi
 t0=\$(date +%s)
 c=\$(find /mnt/tree -type f | wc -l | tr -d ' '); t1=\$(date +%s)
 echo "dragonfly counted \$c files, walk \$((t1 - t0)) s"
 bad=0; k=0
-while [ \$k -lt 200 ]; do
-	dd=\$((k * 7919 % $FAN)); ff=\$((k * 104729 % $per))
-	[ "\$(cat /mnt/tree/d\$dd/f\$ff)" = "d\$dd/f\$ff" ] || bad=\$((bad + 1))
-	k=\$((k + 1))
-done
-echo "dragonfly spot check 200 files, \$bad wrong"
+if [ $CHURN = 1 ]; then
+	# The snapshot holds whatever the churn had written when it was
+	# taken, so the sample comes from what is there, not from the plan.
+	for f in \$(find /mnt/tree -type f | awk 'NR % 5003 == 1' | head -200); do
+		[ "\$(cat \$f)" = "\${f#/mnt/tree/}" ] || bad=\$((bad + 1)); k=\$((k + 1))
+	done
+else
+	while [ \$k -lt 200 ]; do
+		dd=\$((k * 7919 % $FAN)); ff=\$((k * 104729 % $per))
+		[ "\$(cat /mnt/tree/d\$dd/f\$ff)" = "d\$dd/f\$ff" ] || bad=\$((bad + 1))
+		k=\$((k + 1))
+	done
+fi
+echo "dragonfly spot check \$k files, \$bad wrong"
 umount /mnt/tree
 t2=\$(date +%s); fsck_hammer2 /dev/vbd1 >/dev/null 2>&1 && echo "dragonfly fsck clean in \$((\$(date +%s) - t2)) s"
 GUEST
@@ -226,8 +292,13 @@ out=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
 [ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
-printf '%s\n' "$out" | grep -q "^dragonfly counted $N files" || { echo "  FAIL  DragonFly did not count every file"; fail=$((fail + 1)); }
-printf '%s\n' "$out" | grep -q "^dragonfly spot check 200 files, 0 wrong" || { echo "  FAIL  DragonFly read wrong content"; fail=$((fail + 1)); }
+if [ $CHURN = 1 ]; then
+	printf '%s\n' "$out" | grep -q "^dragonfly counted 0 files in the deleted tree" || { echo "  FAIL  DragonFly found files in the deleted tree"; fail=$((fail + 1)); }
+	printf '%s\n' "$out" | grep -q "^dragonfly counted $snapn files" || { echo "  FAIL  DragonFly did not count the snapshot as this side did"; fail=$((fail + 1)); }
+else
+	printf '%s\n' "$out" | grep -q "^dragonfly counted $N files" || { echo "  FAIL  DragonFly did not count every file"; fail=$((fail + 1)); }
+fi
+printf '%s\n' "$out" | grep -q "^dragonfly spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  DragonFly read wrong content"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^dragonfly fsck clean" || { echo "  FAIL  DragonFly's checker"; fail=$((fail + 1)); }
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))

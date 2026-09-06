@@ -344,7 +344,7 @@ hammer2_vop_ncreate(struct mnt_idmap *idmap, struct inode *dir,
 		inode_set_mtime_to_ts(dir,
 		    inode_set_ctime_current(dir));	/* Linux */
 		if (S_ISDIR(mode))
-			inc_nlink(dir);			/* Linux */
+			set_nlink(dir, dip->meta.nlinks);	/* Linux */
 		d_instantiate(dentry, inode);		/* Linux */
 	}
 	hammer2_inode_unlock(dip);
@@ -449,7 +449,7 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 		    inode_set_ctime_current(dir));	/* Linux */
 		inode_set_ctime_current(inode);		/* Linux */
 		if (isdir) {
-			drop_nlink(dir);		/* Linux */
+			set_nlink(dir, dip->meta.nlinks);	/* Linux */
 			clear_nlink(inode);		/* Linux */
 		} else {
 			drop_nlink(inode);		/* Linux */
@@ -665,8 +665,8 @@ done:
 		if (tinode)
 			inode_set_ctime_current(tinode);
 		if (S_ISDIR(finode->i_mode) && fdir != tdir) {
-			drop_nlink(fdir);
-			inc_nlink(tdir);
+			set_nlink(fdir, fdip->meta.nlinks);
+			set_nlink(tdir, tdip->meta.nlinks);
 		}
 	}
 	if (tip) {
