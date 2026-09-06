@@ -12,34 +12,31 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-H1 is met: 0.1 through 0.4 each closed on their criteria, and the driver
-is at 0.4.19 in `CHANGELOG.md`. The module mounts DragonFly-written media
-read-only, lists it, reads every file in eleven fixtures and the
-DragonFly guest's installed root byte for byte against three other
-readers, refuses corrupt blocks and headers, and does all of that with
-lockdep enabled end to end. `README.status.md` is the record of what was
-measured and how; this section says only where the work stands.
+0.5 and 0.6 are met and 0.7 is open on the adapter alone, with the
+driver at 0.7.34 in `CHANGELOG.md`. The shipped module mounts
+DragonFly-written media read-write: every write operation is carried
+and read back by DragonFly, the crash matrix recovered every cell on
+both ports, and the read-write refusal that stood since 0.3 is lifted
+on that evidence. HAMMER2's ioctls answer as Linux ioctls, a snapshot
+taken here mounts on DragonFly, files on a volume map and execute, and
+a kernel has booted with a HAMMER2 root. The half of 0.8 that belongs
+to this side is measured: PFS roots made here mount by label on both
+sides and DragonFly checks what was written in each. `README.status.md`
+is the record of what was measured and how; this section says only
+where the work stands.
 
-0.5's work is done and its criteria are met in the experimental build,
-which is not the shipped one. Every write operation is written:
-buffered writes, truncate and extend, attribute changes, `fsync`,
-create, `mknod`, `mkdir`, `symlink`, `unlink`, `rmdir`, `rename` and
-`link`, each measured on a scratch copy of DragonFly-written media and
-read back by DragonFly. F4 ran in both directions on a volume
-formatted here by hammer2-utils: 306 files written by this port and
-checked on DragonFly, 204 written by DragonFly and checked here. The
-flush's write order is measured from the block tracepoints, with the
-volume header the last request after a completed flush. The fuzzing
-corpus, `script/fuzz-mount.sh`, has put 200 mutated images through the
-mount path with no kernel report. The interrupted-flush fixture cut
-DragonFly off after 82 flushes and both recoveries agree on the result.
-Along the way the write path found nine defects the read path could
-not have, seven of them lockdep's, and one read defect of its own:
-readahead handing the read path a folio of two blocks. All are fixed
-and recorded in `README.status.md`. The crash matrix ran, sixteen rows
-across kill, panic, power and a torn header on media both ports wrote,
-every one recovered on both sides, and the read-write refusal that
-stood since 0.3 is lifted on that evidence.
+The newest surface is the full volume. A volume filled to its last
+block found six defects the write path on a volume with room never
+reached, all fixed: a stranded chain lock that made the following
+`sync(2)` trip a circular lock dependency, a chain outliving its PFS
+that faulted the unmount, a chain freed with its lock held, a fill
+lost nearly whole to a flush with no room because the free-space
+reserve every other tree keeps was declared here and never carried, a
+mapped write accepted where `write(2)` was refused, and a file mapping
+that refused every dirty folio to compaction. The reproducer is a gate
+now, `script/test-enospc.sh`, thirteenth of thirteen, and it found the
+last of those on its first run under that name by counting a class of
+kernel warning its readings had not named.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile`
@@ -47,30 +44,15 @@ invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
-1. The write path is written: `->setattr` with truncate, `fsync`,
-   `->create`, `->mknod`, `->mkdir`, `->symlink`, `->unlink`,
-   `->rmdir`, `->rename` and `->link`, each measured the same way as
-   the first write and read back by DragonFly. What it has not had is
-   DragonFly writing to a volume this port created, which waits on
-   `newfs_hammer2` here or a Linux-formatted image carried to the
-   guest. Each lands with its DragonFly read-back and
-   an `fsck_hammer2` on the result, in both directions once DragonFly
-   can write to a volume this port created.
-2. The write trace the 0.5 criteria ask for is taken, from the block
-   tracepoints on the guest, and `doc/README.status.md` carries it: the
-   header is the last request and follows a completed flush.
-3. The interrupted-flush fixture ran: DragonFly writing, cut off by
-   `virsh destroy` after 82 flushes, the image mounted here read-write
-   in the experimental build, the tree compared to DragonFly's own
-   recovery of a copy; `doc/README.status.md` carries it. The cut does
-   not produce the lagging freemap the carried replay is for, so the
-   script's fourth stage makes that header on purpose and the replay
-   has run on it. The crash matrix followed, and the refusal in the
-   shipped module is lifted.
-4. The fuzzing corpus is `script/fuzz-mount.sh`, a generator over a
-   small seed volume rather than the F3 images, whose 2 GiB hold a few
-   hundred KiB of blocks; `doc/README.status.md` carries its runs.
-5. The iomap decision is taken: classic address space operations with
+1. The adapter, when a storage model exists to write it against; the
+   ioctls it will sit on are delivered and gated.
+2. A periodic metadata flush, carried when a run shows the single
+   flush at `sync` failing; with the reserve respected it has
+   completed on every run.
+3. The fuzzer on each build that moves the mount or write path; its
+   last run is on the build with the reserve and the write-fault
+   check, 300 images with no report.
+4. The iomap decision stands: classic address space operations with
    block-sized folios, recorded under open decisions below with the
    reason.
 
@@ -129,7 +111,7 @@ and a milestone is met when all of them are.
 | 0.5 | H2 | Write path, verified on DragonFly | met. Every operation in the list is carried and read back by DragonFly; F4 ran both ways on a volume formatted here; the flush order is taken from the block tracepoints with the header last; 200 mutated images through the mount path with no report; the interrupted flush recovered on both sides, and the freemap replay driven on a header made to lag |
 | 0.6 | H3 | Crash recovery | met. Kill, panic, power and torn header, twice each, on media the FreeBSD port wrote and on media this port wrote: every image mounted and recovered on both ports, every file readable, `fsck_hammer2` clean after each recovery, and each cell's runs in agreement |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | open. The ioctl surface is delivered and gated: snapshot create, PFS create, delete, list and lookup, the inode and volume queries, growfs and bulkfree, with the read-only half exercised on every fixture and the writing half hand-verified, a snapshot taken here mounting on DragonFly. The adapter waits on the storage model, which does not exist yet, so this milestone ships the ioctls alone as its first point release and stays open on the adapter, which is what the criteria said would happen |
-| 0.8 | H5 | PFS as storage domains | not started |
+| 0.8 | H5 | PFS as storage domains | open. The half that belongs to this side is measured: `script/pfs-domains.sh` creates SYSTEM, STORE and CACHE through the port's own ioctl, mounts each by label here and on DragonFly, and DragonFly checks what was written in each, 21 files per root with 0 mismatches on two runs. The installer and the mapping wait on the storage model, as 0.7's adapter does |
 | 0.9 | H6 | Nix-scale hardening | not started |
 | 1.0 | qualification | Flagship qualification | not started |
 

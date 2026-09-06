@@ -25,7 +25,11 @@ one, a stranded chain lock that made a full volume trip a circular lock
 dependency, a second use after free that faulted the unmount of a
 full volume, a chain freed with its lock held on the same path, and a
 fill lost nearly whole to a flush with no room, because the free-space
-reserve every other tree keeps was declared here and never carried.
+reserve every other tree keeps was declared here and never carried, a
+mapped write accepted on a full volume where `write(2)` was refused,
+and a file mapping that refused every dirty folio to compaction with a
+warning that sat uncounted in 39 of 62 kept logs of the gate that now
+counts it.
 A write near full is refused now, as the other trees refuse it.
 `CHANGELOG.md` is the enumeration; this paragraph names kinds and does
 not carry the count. This file is the one to correct
@@ -583,13 +587,13 @@ construction rather than re-hashed every run.
 
 ## What has been verified
 
-Eleven of the twelve gates pass with no environment variables set on a
+Eleven of the thirteen gates pass with no environment variables set on a
 machine that has the kernel of record installed, as they have since
 2026-08-26: the syntax gate finds that tree, and the style gate finds its
-`checkpatch.pl`. The twelfth is `test-fixtures.sh`, which reports
-COULD-NOT-RUN there and on every machine without a guest, a set of fixture
-images and a `KDIR` matching the guest's kernel, which is most of them and
-all of CI.
+`checkpatch.pl`. The other two, `test-fixtures.sh` and `test-enospc.sh`,
+report COULD-NOT-RUN there and on every machine without a guest, a set of
+fixture images and a `KDIR` matching the guest's kernel, which is most of
+them and all of CI.
 What that unattended style run can say is narrower than it looks, and the
 narrow half is the useful one: the found checker's `sha256` does not match
 the baseline's, so an unchanged set is reportable and a moved set is not.
@@ -1487,8 +1491,8 @@ checked by DragonFly with 0 mismatches and 203 of DragonFly's read back
 here, 0 failures; the interrupted flush, 14401 entries recovered here
 and one written after, 14402 read by DragonFly, the lagging-header
 replay announced and both checkers clean, 0 failures; and the
-reproducer itself, four consecutive runs keeping every accepted file,
-and three more with the write-fault check. The fuzzer ran last, on the
+reproducer itself, a gate since 2026-09-06, fifteen runs across its
+shapes since the reserve, every one keeping every accepted file. The fuzzer ran last, on the
 build with the fault check: 300 images on seed 6, 232 mounted and 68
 refused, 0 with a kernel report, 0 equal pairs in 5037 recorded
 mutations, both controls passing first.

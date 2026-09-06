@@ -140,8 +140,11 @@ knowing before writing the mount path:
 
 For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6
-asks for should consult the capability helper as its comment instructs, and
-say the name; that refusal is not written yet.
+asks for is written, in `hammer2_ondisk.c` where the device is opened: it
+asks `mapping_max_folio_size_supported()` before `set_blocksize()` and
+refuses by name with both numbers, and `HAMMER2_FOLIO_CONTROL` is its
+negative control, asking for twice what the kernel offers so that a
+module built with it refuses every mount through that branch.
 
 `hammer2_open_devvp()` calls `set_blocksize(bdev_file, HAMMER2_PBUFSIZE)`
 on each device as it opens it, and fails the open on a non-zero return.
