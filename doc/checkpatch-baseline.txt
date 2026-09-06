@@ -1,5 +1,4 @@
 # checkpatch.pl from linux v7.3-rc1
-# sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -14,6 +13,7 @@
 3 Possible repeated word: 'X'
 1 Prefer 'X' to bare use of 'X'
 1 Statements terminations use 1 semicolon
+2 Using vsprintf specifier 'X' potentially exposes the kernel memory layout, if you don'X'%p'.
 1 braces {} are not necessary for single statement blocks
 1 break is not useful after a return
 1 code indent should use tabs where possible
@@ -42,4 +42,5 @@
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
 6 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
 9 return of an errno should typically be negative (ie: return -EROFS)
+# sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 2 space required after that 'X' (ctx:VxB)

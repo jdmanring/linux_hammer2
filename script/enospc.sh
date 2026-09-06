@@ -460,7 +460,19 @@ out=$(ssh "$GUEST_SSH" '
 	# the module will not unload because the superblock survives
 	# because the unmount died. Name the fault itself.
 	echo "oops $(command grep -c "Oops: " /tmp/kmsg.log || true)"
-	echo "faulted in $(command grep -m1 -o "RIP: [0-9]*:[a-zA-Z0-9_]*+0x[0-9a-f]*" /tmp/kmsg.log || echo nowhere)"
+	# Scoped to the oops. Taking the first match in the whole log reads
+	# a RIP and an RCX out of whatever unrelated warning came first,
+	# and it did: a healthy run reported a faulting address belonging
+	# to a page-allocator warning it had printed hours of writing
+	# earlier.
+	command sed -n "/Oops: /,\$p" /tmp/kmsg.log > /tmp/oops.log
+	echo "faulted in $(command grep -m1 -o "RIP: [0-9]*:[a-zA-Z0-9_]*+0x[0-9a-f]*" /tmp/oops.log || echo nowhere)"
+	echo "faulted on $(command grep -m1 -o "page fault for address: [0-9a-f]*" /tmp/kmsg.log || echo nothing)"
+	# Debug builds only: which PFS the teardown released, and which the
+	# oops faulted on, in the same units so they can be compared.
+	echo "faulting rcx $(command grep -m1 -o "RCX: [0-9a-f]*" /tmp/oops.log || echo none)"
+	command grep -o "freeing pmp [0-9a-fx]*\|pfsfree_scan which [0-9] syncing pmp [0-9a-fx]*" \
+	    /tmp/kmsg.log | tail -12
 	echo "still mounted $(command grep -c h2enospc /proc/mounts || true)"
 	echo "module refs $(cat /sys/module/hammer2/refcnt 2>/dev/null || echo unreadable)"
 	# What the module still holds, printed by the driver at unmount

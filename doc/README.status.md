@@ -561,7 +561,7 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2761 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2776 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1287 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -1537,11 +1537,39 @@ The backtrace says which teardown step is running:
                 hammer2_flush_core
 
 so a chain reached by the recursive flush still points at a PFS the free
-in progress has already released. That call shape is upstream's:
-FreeBSD's `hammer2_pfsfree_scan()` calls `hammer2_vfs_sync_pmp()` the
-same way, and a volume with room in it unmounts through the same path
-every fixture run without faulting. What differs is the state a filled
-volume leaves behind, which is not yet established. It follows a run of `hammer2_flush_core: inode parent
+in progress has already released.
+
+That is now matched by address rather than inferred. A debug build logs
+each PFS as `hammer2_pfsfree()` releases it, and the run reads:
+
+    pfsfree_scan which 0 syncing pmp ffffd10a84400000
+    freeing pmp ffffd10a84400000
+    pfsfree_scan which 0 syncing pmp ffffd10a84c00000
+    freeing pmp ffffd10a84c00000
+    pfsfree_scan which 1 syncing pmp ffffd10a83c00000
+    BUG: unable to handle page fault for address: ffffd10a84c01e28
+    RCX: ffffd10a84c00000
+
+The address the flush dereferences is the PFS freed two lines earlier in
+the same scan, which frees a PFS and then `goto again` to sync the next
+one. It is a use after free.
+
+`hammer2_pfsfree()` carries upstream's guard against exactly this: it
+counts leftover chains and refuses to free, printing `PFS still in use`,
+when it finds any. The guard did not fire on any run. Its population is
+`iroot->cluster.array[i].chain` with a non-empty rbtree, which is the
+chains hanging directly under the PFS root inode's cluster and nothing
+else, so a chain elsewhere in the topology that still carries `->pmp`
+is invisible to it. Upstream also fixes up `hmp->vchain.pmp` and
+`hmp->fchain.pmp` by hand when the super-root PFS goes, which is the
+same hazard handled one case at a time.
+
+The call shape is upstream's: FreeBSD's `hammer2_pfsfree_scan()` calls
+`hammer2_vfs_sync_pmp()` the same way. A volume with room in it unmounts
+through this path in every fixture run without faulting, so what differs
+is the state a filled volume leaves behind. The port's own swallowed
+`ENOSPC`, recorded above, is a candidate for putting it there and is not
+yet shown to. It follows a run of `hammer2_flush_core: inode parent
 0000000000000000/0 error 00000020` lines, the ENOSPC the flush is being
 handed and not told what to do with, so the two are being read together
 rather than separately.
@@ -1886,7 +1914,7 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 21 | 1 | 20 |
 | `hammer2_inode.c` | 28 | 6 | 22 |
-| `hammer2_vfsops.c` | 39 | 7 | 31 |
+| `hammer2_vfsops.c` | 40 | 7 | 32 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |

@@ -327,6 +327,16 @@ type and a key and does not fit on one line. Nothing else moved with
 it, and the unmount report of the four allocation counters moved it once
 more, for the same reason and with the same result.
 
+One new category is baselined rather than spelled away, which the rule
+above otherwise argues against: two uses of `%px`, the unhashed pointer.
+`%p` hashes, and the whole point of the two prints carrying it is to be
+compared against the addresses an oops reports, which are raw; hashing
+them would leave the reading unable to answer the question it exists for,
+and it did answer it, matching a faulting address to the PFS freed two
+lines earlier. Both sit behind `HAMMER2_LOCKDEBUG`, so a normal build
+carries neither the print nor the pointer, and checkpatch cannot see
+that. The category leaves the baseline with the knob.
+
 The remount path moved it by three, all `return (x);`, and swapped one
 errno row for another: `hammer2_access_devvp()` refused with `EACCES`,
 which asked whether the mount's own file was opened for writing, and

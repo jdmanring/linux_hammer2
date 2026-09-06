@@ -1093,6 +1093,20 @@ It is not a gate for that reason. A test that fails on half its runs
 would be a flake in the suite rather than a check, so it stays a script
 run by hand until both are closed.
 
+A debug build logs each PFS as it is freed and each one the teardown
+syncs, unhashed with `%px` so the addresses can be compared against the
+one an oops prints. That is what turned "a chain points at a freed PFS"
+from a reading of the code into a matched address. It is behind
+`HAMMER2_LOCKDEBUG`, so a normal build carries neither the print nor the
+raw pointer.
+
+Two readings around that fault were wrong in the same way and are worth
+naming, because the shape recurs: they took the first match in the whole
+log rather than the one belonging to the oops, so a healthy run reported
+a faulting instruction and a faulting register out of a page-allocator
+warning printed long before, and did it while reporting no oops at all.
+They are scoped to the oops now.
+
 The reproducer carries its own control now, which every gate in this
 tree had and it did not. `sh script/enospc.sh --selftest` checks each
 reading in three directions against a line the kernel really prints: the

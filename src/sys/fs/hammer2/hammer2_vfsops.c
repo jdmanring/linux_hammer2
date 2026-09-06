@@ -395,6 +395,17 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 
 	KKASSERT(!(pmp->flags & HAMMER2_PMPF_WAITING));
 
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * XXX Linux: unhashed on purpose.  The unmount of a filled volume
+	 * faults reading chain->pmp->mp, and the question is whether the
+	 * PFS it faults on is one this teardown has already released, which
+	 * can only be answered by comparing this address against the one
+	 * the oops prints.  Debug builds only.
+	 */
+	hprintf("freeing pmp %px\n", pmp);
+#endif
+
 	/* Cleanup our reference on iroot. */
 	if (pmp->flags & HAMMER2_PMPF_SPMP)
 		TAILQ_REMOVE(&hammer2_spmplist, pmp, mntentry);
@@ -460,6 +471,10 @@ again:
 		if (i == HAMMER2_MAXCLUSTER)
 			continue;
 
+#if defined(HAMMER2_LOCKDEBUG)
+		hprintf("pfsfree_scan which %d syncing pmp %px\n",
+		    which, pmp);
+#endif
 		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
 
 		/*
