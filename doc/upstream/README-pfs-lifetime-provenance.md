@@ -42,6 +42,35 @@ code already expects and tests for at every read. A reclaim list is the
 more conservative shape and is what upstream chose the last time, and
 whoever files this should expect that preference.
 
+## What a maintainer will ask first, answered
+
+**Does clearing the pointer create a NULL dereference somewhere else?**
+No. Every read through a chain's `pmp` in the tree tests it first:
+`hammer2_flush.c:769` sits inside `if (chain->pmp)`, both reads at
+`hammer2_chain.c:1306` and `:1311` carry `chain->pmp &&` in their own
+condition, and the three `chain->pmp && chain->pmp->mp` guards in the
+flush are the site in question. A NULL `pmp` is also not a novel state:
+`hammer2_chain_alloc()` sets it for every chain of the super-root
+topology.
+
+**What changes for a chain whose `pmp` is now NULL?** The guard it fails
+is the one that decides whether the flush recurses through a PFS root,
+and upstream's own comment there says what NULL means: "If the PFS has
+not been mounted there may not be anything monitoring its chains and its
+up to us to flush it". During a teardown that is true rather than a
+convenient reading. The PFS is going away, nothing else is monitoring
+its chains, and the flush that finds it is the one responsible for it.
+The same function puts `hmp->vchain` and `hmp->fchain` into exactly that
+state a few lines later.
+
+**What is not claimed.** That this is the shape upstream would choose.
+`1dc6036f` above solved the sibling by extending lifetime, and a
+reviewer may prefer a reclaim list here for consistency with it. The
+argument for this shape is that it is local, that it matches what the
+same function already does, and that it needs no new structure; the
+argument against is that it makes a chain's PFS unreachable at a point
+where a future reader might want it.
+
 ## What could not be checked
 
 Kusumi's three port repositories have issues disabled and carry no pull
