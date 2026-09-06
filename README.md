@@ -68,7 +68,7 @@ the tree as it stood. The rows for both milestones in
 
 One thing to know before trying it: **do not fill a HAMMER2 volume to
 capacity.** A volume with no space left reports the failure correctly,
-but the `sync` after it trips a lock cycle, and one run of three then
+but the `sync` after it trips a lock cycle, and four runs of eight then
 hung the unmount badly enough that the module could not be unloaded. It
 is an open defect
 with a reproducer in `script/enospc.sh` and the report written up in

@@ -1393,8 +1393,8 @@ Measured 2026-09-05 on `artix-s6-kde` at 7.3.0-rc1 with
 written before `dd` reported `No space left on device`, `df` read 100%
 and `statfs` reported zero available, which is the part that behaves.
 `debug_locks` was still 1 at that point, and the `sync(2)` that followed
-disabled it. Six runs have reached that state and every one reported the
-cycle, so the report is reproducible.
+disabled it. Eight runs have reached that state and every one reported
+the cycle, so the report is reproducible.
 
 Each run produces ONE report. The count said three, and then five,
 because the harness counted lines matching `DEADLOCK\|circular` and a
@@ -1406,12 +1406,13 @@ three lockdep resource ceilings all read the same there, so the harness
 reports which banner named the shutdown and treats a shutdown it cannot
 attribute as COULD-NOT-RUN.
 
-What happens after the sync varies. The unmount hung on four of the six:
+What happens after the sync varies. The unmount hung on four of the eight:
 `umount` had to be killed and `rmmod` reported the module still in use,
 which leaves the guest needing a hard reset. On the other two both
 returned 0. The script checks all three, so a run that hangs and a run
 that does not are both recorded rather than one being taken for the
-rule.
+rule. Only the last three runs counted reports correctly, and each of
+those reported one; the earlier counts are not recoverable.
 
 The report is a circular dependency between two orders:
 
@@ -1500,14 +1501,36 @@ that build's own module: `hammer2_flush_core+0x23b` is the relock of the
 chain in `hammer2_flush_core()`, the second of the pair the flush takes
 after dropping both to acquire them parent-first.
 
-So the held lock is identified and its acquire is identified. What is
-not yet identified is the caller that fails to release it. Both
+The chain lock is recursive here, `hammer2_chain_init()` calling
+`hammer2_mtx_init_recurse()`, so "held" had two readings that need
+different fixes: an owner that took the lock again and skipped one of
+the paired releases, which never reaches depth zero and never releases
+the rwsem, or a single acquire that was never released at all. The
+instrument was extended to print the depth, the chain's `lockcnt` and
+whether the sync task is the owner, and the run answers plainly:
+
+    583 h2dbg: at syncq depth 0 lockcnt 1 refs 1 owner 1
+         from hammer2_flush_core+0x23b
+
+Depth zero and `lockcnt` one. It is a single acquire, owned by the sync
+task, taken at the relock in `hammer2_flush_core()` and never released,
+not a recursion imbalance.
+
+What is still not identified is the release that is missed. Both
 `hammer2_flush_core()` and `hammer2_flush()` return with the chain
-locked by contract, as they do in DragonFly, and the reading of
-`hammer2_xop_inode_flush()` finds its `hammer2_chain_unlock()` on the
-path taken. One of those releases is being missed under `ENOSPC` and
-which one is the next thing to establish; nothing above should be read
-as naming it.
+locked by contract, as they do in DragonFly, and the eight call sites
+of `hammer2_flush()` were read: four are mount-time recovery and fixup
+rather than the sync path, three take `vchain` and `fchain`, whose types
+are not the `INODE` the instrument reports, and the one that remains,
+in `hammer2_xop_inode_flush()`, unlocks on the path it takes. The
+candidate that reading suggests and no measurement has yet tested is
+that `hammer2_flush_core()` replaces the chain it was given, which
+`hammer2_flush()` takes by value and cannot pass back, so the caller's
+unlock would release the chain it started with while the replacement
+stays locked. Two of the volume-root call sites carry a `KKASSERT` that
+the chain was not replaced, which is what suggests it. That is a lead
+and not a finding, and the next measurement is to compare the held
+chain against the one the caller unlocks.
 
 One thing the attempt did settle: `__builtin_return_address()` above
 frame zero is not safe in kernel context, and a build using frames one
