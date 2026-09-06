@@ -43,8 +43,20 @@ NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects
 [ -d "$FIXDIR" ] || { echo "enospc: COULD-NOT-RUN: no $FIXDIR" >&2; exit 2; }
 command -v ssh >/dev/null 2>&1 || { echo "enospc: COULD-NOT-RUN: no ssh" >&2; exit 2; }
 
-make KDIR="$KDIR" >/dev/null 2>&1 || {
-	echo "enospc: FAIL: the module does not build against $KDIR"; exit 1; }
+# H2_LOCKDEBUG=1 builds the module with hammer2_dbg_held_chains() live and
+# summarizes what it printed. It exists so a run can ask which chain locks
+# the sync task holds without a hand-edited copy of this script, which is
+# how the question was asked five times while chasing this defect and how
+# one of those runs ended up executing in the wrong directory.
+lockdebug=${H2_LOCKDEBUG:-0}
+if [ "$lockdebug" = 1 ]; then
+	make -s clean >/dev/null 2>&1
+	HAMMER2_LOCKDEBUG=1 make KDIR="$KDIR" >/dev/null 2>&1 || {
+		echo "enospc: FAIL: no build with HAMMER2_LOCKDEBUG"; exit 1; }
+else
+	make KDIR="$KDIR" >/dev/null 2>&1 || {
+		echo "enospc: FAIL: the module does not build against $KDIR"; exit 1; }
+fi
 KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "enospc: FAIL: $KO was not produced"; exit 1; }
 
@@ -100,13 +112,21 @@ out=$(ssh "$GUEST_SSH" '
 	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
 	    { echo "SETUP mount failed"; exit 0; }
 	echo "locks after mount $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
+	# THE POPULATION THIS SCRIPT CLAIMS IS "THE VOLUME FILLED", and a
+	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
+	# a read-only remount or an I/O error. Every check below would then
+	# describe a volume that never filled. Keep the reason dd gave and
+	# read the free space afterwards, and let the host assert both.
 	i=0
+	why=
 	while [ $i -lt 8000 ]; do
-		dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=1M count=4 \
-		    status=none 2>/dev/null || break
+		why=$(dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=1M \
+		    count=4 status=none 2>&1) || break
 		i=$((i + 1))
 	done
 	echo "files written $i"
+	echo "fill stopped because ${why:-no error reported}"
+	echo "blocks available $(stat -f -c %a /mnt/h2enospc)"
 	echo "locks after fill $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
@@ -124,6 +144,16 @@ out=$(ssh "$GUEST_SSH" '
 	# reason is what tells them apart, so it is reported rather than
 	# assumed.
 	echo "shutdown-reason $(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|WARNING: bad unlock balance\|BUG: held lock freed" /tmp/kmsg.log || echo none-found)"
+
+	# The instrument prints through hprintf, so its lines carry the
+	# module name; summarize them by site rather than repeating each.
+	if command grep -q "sync_pmp entry" /tmp/kmsg.log; then
+		echo "lockdebug lines $(command grep -c "sync_pmp entry" /tmp/kmsg.log)"
+		command grep -o "sync_pmp entry: chain type [0-9]* key [0-9a-f]* .*" \
+		    /tmp/kmsg.log | sort | uniq -c | sort -rn | head -4
+	else
+		echo "lockdebug lines 0"
+	fi
 
 	echo "=== first report begins"
 	command sed -n "/possible circular locking dependency/,+220p" /tmp/kmsg.log |
@@ -153,6 +183,20 @@ fail=0
 n=$(printf '%s\n' "$out" | sed -n 's/^files written //p')
 [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || {
 	echo "  FAIL  nothing was written, so the volume never filled"; fail=$((fail + 1)); }
+# The volume must actually be full. Without this a run that stopped
+# writing for any other reason reads exactly like the one this script
+# exists to produce.
+printf '%s\n' "$out" | command grep -qi 'fill stopped because.*no space left' ||
+	{ echo "  FAIL  the fill did not stop on ENOSPC:"
+	  printf '%s\n' "$out" | sed -n 's/^fill stopped because /        /p'
+	  fail=$((fail + 1)); }
+printf '%s\n' "$out" | command grep -q '^blocks available 0$' ||
+	{ echo "  FAIL  the volume reports free space, so it never filled"
+	  fail=$((fail + 1)); }
+
+# lockdep has to be alive going into the sync or its silence afterwards
+# would mean nothing. This is the control for the instrument, not a
+# property of the driver.
 printf '%s\n' "$out" | grep -q '^locks after fill 1$' ||
 	{ echo "  FAIL  lockdep was already off after the fill"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q '^locks after sync 1$' ||
