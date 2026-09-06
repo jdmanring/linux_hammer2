@@ -1526,11 +1526,15 @@ The `ENOSPC` underneath all of this is separately dropped on the floor,
 under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
 so the volume is full, the log says so, and the caller is told nothing.
 
-It is dropped in more than that one place, and one of them is this
-port's. The sync loop flushes each inode's mapping with
+It is dropped in more than that one place, and the second is carried
+too. The sync loop flushes each inode's mapping with
 `filemap_write_and_wait()` and then discards what it returns under an
-`XXX` of its own, which is the line the `vnode flush failed 5` messages
-come from: the failure is printed and the loop carries on. The return of
+`XXX`, which is the line the `vnode flush failed 5` messages come from:
+the failure is printed and the loop carries on. That is the FreeBSD and
+NetBSD ports' `vn_fsync_buf()` line and its `error = 0; /* XXX */`
+carried as they wrote it, and DragonFly ignores what `vfsync()` returns
+at the same spot without a comment, so a fix belongs in all four trees
+and not in the shim. The return of
 `hammer2_inode_chain_ins()` is discarded at the same site, and that
 function clears `INODE_CREATING` before it attempts the insert, so an
 inode whose insert failed for want of space is marked as one that has
