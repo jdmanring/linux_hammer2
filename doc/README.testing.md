@@ -897,6 +897,10 @@ guest's `insmod`, which is how a control run loads with
 script keeps the reclaim and compaction counters, the buddy lists, the
 largest slabs and the inode cache size from that moment, which is what
 told the order-4 folio limit apart from the scope and the mask.
+`H2_TREE_GUESTPRE` is a command the guest runs before `insmod`, for a
+control that changes the guest rather than the module; the run records
+the guest's memory size and whether kmemleak is on, read by a write to
+its debugfs node that is refused once it is off.
 
 All four judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,

@@ -26,6 +26,7 @@ IMG=${H2_TREE_IMAGE:-$FIXDIR/million-tree.img}
 SIZE=${H2_TREE_SIZE:-8G}
 N=${H2_TREE_FILES:-1000000}
 MODARGS=${H2_TREE_MODARGS:-}	# module parameters for the guest's insmod, for a control
+GUESTPRE=${H2_TREE_GUESTPRE:-:}	# run on the guest before insmod, for a control (echo off > /sys/kernel/debug/kmemleak)
 FAN=${H2_TREE_FANOUT:-1000}
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
@@ -106,9 +107,11 @@ down() {	# down <guest> <ssh>
 per=$((N / FAN)); [ $per -gt 0 ] || per=1
 cat > "$W/linux.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/tree
+$GUESTPRE
 rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C
 mem() { awk '/MemAvailable/{print \$2}' /proc/meminfo; }
 mount -t hammer2 \$dev@ROOT /mnt/tree || { echo "mount failed"; exit 1; }
+echo "memtotal \$(awk '/MemTotal/{print \$2}' /proc/meminfo) kB, kmemleak \$(echo stack=on > /sys/kernel/debug/kmemleak 2>/dev/null && echo on || echo off)"
 echo "memavailable before \$(mem) kB"
 echo "slab before \$(awk '/^Slab:/{print \$2}' /proc/meminfo) kB, unreclaimable \$(awk '/^SUnreclaim:/{print \$2}' /proc/meminfo) kB"
 echo "debug_locks before \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
