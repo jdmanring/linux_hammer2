@@ -1974,9 +1974,27 @@ snapshot row's reading and the crash matrix's again at this scale:
 | DragonFly count of the snapshot taken under churn | 1000000 files, 200 spot checks, 0 wrong |
 | DragonFly `fsck` | clean in 317 s |
 
-Before the hang the same run had written the tree with four writers
-in 241 s where one writer took 1007 s, and the snapshot returned in
-under a second with the deletion running.
+The same configuration on the fixed module, kmemleak off, one run:
+
+| phase | reading |
+|---|---|
+| create, four writers | 1000000 files in 248 s; one writer took 1007 s |
+| churn, a tenth deleted and written again | 10 s, snapshot taken through it in under a second |
+| sync and unmount | under a second each |
+| cold count after remount | 1000000 in 6 s, 200 spot checks, 0 wrong |
+| the snapshot, mounted by label | 999338 files, the churn's state at the moment it was taken, 200 spot checks, 0 wrong |
+| whole tree deleted | 41 s, 0 files left |
+| free blocks, before and after the delete | 90806 and 70097 of 125440 |
+| kernel warnings | 0 |
+| DragonFly, deleted tree | 0 files |
+| DragonFly, snapshot | 999338 files in 20 s, 200 spot checks, 0 wrong |
+| DragonFly `fsck` | clean in 151 s |
+
+The delete frees nothing while the snapshot pins every block the tree
+held, and its own metadata is new, so the volume is fuller after it.
+The lock reading is still not available at this scale, lockdep having
+hit the same ceiling at the same second; the roadmap's decision on the
+guest's chain table is what would give it.
 
 ## One large file, and what the BSD buffer cache gave for free
 

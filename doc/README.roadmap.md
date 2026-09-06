@@ -13,7 +13,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 ## Where we are
 
 0.5 and 0.6 are met and 0.7 is open on the adapter alone, with the
-driver at 0.7.43 in `CHANGELOG.md`. The shipped module mounts
+driver at 0.7.44 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted
@@ -422,11 +422,17 @@ read-ahead on the device mapping for the BSD cluster hint took it to
 602 to 683, btrfs's rate and DragonFly's on the same guest.
 `README.status.md` has the table.
 
-The rows that need no closure, million-file trees, parallel writers,
-snapshots taken under churn and the deletion of a whole tree, are
-`script/million-tree.sh`'s and are recorded in `README.status.md` with
-their numbers. The F6 read against squashfs and erofs, and the XOP pool
-decision, wait on the closure.
+The rows that need no closure are measured: a million files written
+by four writers in 248 s, a tenth of them deleted and rewritten with a
+snapshot taken through it, the whole tree deleted, and every state
+counted on both sides with both checkers clean. The first run of that
+configuration deadlocked in the shim's shared to exclusive upgrade,
+which is fixed and recorded in `README.status.md` with the run that
+passed after it. What that run could not read is the lock order past
+172 s, where the guest kernel's lockdep chain table fills; the open
+decision below on that table is what would give it. The F6 read
+against squashfs and erofs, and the XOP pool decision, wait on the
+closure.
 
 Gate: an F6 harness, unwritten. Depends on 0.8 and on a build host that
 supplies the closure and the hours.
