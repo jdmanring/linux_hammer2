@@ -270,7 +270,16 @@ truncate -s "$SIZE" "$IMG" || exit 2
 	echo "enospc: COULD-NOT-RUN: newfs_hammer2 failed" >&2; exit 2; }
 
 started=no
-if ! $VIRSH domstate "$GUEST" 2>/dev/null | grep -q running; then
+# A domain listed as running can be one another script is still shutting
+# down, which refuses ssh for as long as that takes; the fuzzer read that
+# state as usable once and spent its whole wait on it. The guest is usable
+# when it answers, so ask that first and the domain only when it does not.
+if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
+	:
+elif $VIRSH domstate "$GUEST" 2>/dev/null | grep -q running; then
+	echo "enospc: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2
+	exit 2
+else
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || {
 		echo "enospc: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
 	started=yes

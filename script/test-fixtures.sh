@@ -142,7 +142,16 @@ KO=src/sys/fs/hammer2/hammer2.ko
 # gate that boots a 4 GiB domain when it finds one stopped spends that on
 # every push, on a machine whose memory somebody else is using. It is opt in.
 started=no
-if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" != "running" ]; then
+# A domain listed as running can be one another script is still shutting
+# down, which refuses ssh for as long as that takes; the fuzzer read that
+# state as usable once and spent its whole wait on it. The guest is usable
+# when it answers, so ask that first and the domain only when it does not.
+if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
+	:
+elif [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" = "running" ]; then
+	echo "fixtures: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2
+	exit 2
+else
 	if [ "${H2_FIXTURE_START:-0}" != "1" ]; then
 		echo "fixtures: COULD-NOT-RUN: $GUEST is not running, and this" >&2
 		echo "          gate does not start one unless H2_FIXTURE_START=1" >&2
@@ -151,7 +160,11 @@ if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" != "running" ]; then
 	# ONE GUEST AT A TIME ON THIS HOST. Each holds 4 GiB and the host is
 	# shared with other sessions' benches, so a second domain already
 	# running is a reason not to start this one, not a reason to race it.
-	other=$($VIRSH list --name 2>/dev/null | command grep -c . || true)
+	# A virsh that fails must stop this, not count as no other guest:
+	# the fallback would supply the answer that lets a second domain start.
+	names=$($VIRSH list --name 2>/dev/null) || {
+		echo "fixtures: COULD-NOT-RUN: virsh list failed, so other guests cannot be counted" >&2; exit 2; }
+	other=$(printf '%s\n' "$names" | command grep -c . || true)
 	if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
 		echo "fixtures: COULD-NOT-RUN: $other other guest(s) running:" >&2
 		$VIRSH list --name 2>/dev/null | sed 's/^/          /' >&2

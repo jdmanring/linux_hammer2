@@ -104,7 +104,7 @@ echo "written \$(find tree -type f | wc -l) files"
 cd /; sync; umount /mnt/f4 || exit 1
 mount -t hammer2 -o ro \$dev@$LABEL /mnt/f4 || exit 1
 cd /mnt/f4 && md5sum -c --quiet tree/linux.md5 && echo "linux re-read: all match"; cd /; umount /mnt/f4
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -113,6 +113,7 @@ out=$(ssh "$GUEST_SSH" 'sh /tmp/linux-write.sh' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 printf '%s\n' "$out" | grep -q "linux re-read: all match" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
 down "$GUEST" "$GUEST_SSH"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
@@ -152,7 +153,7 @@ md5sum -c --quiet back/dfly.md5 && echo "linux read dragonfly's \$(wc -l < back/
 sed '/sub\/f0\$/d;/sub\/f1\$/d' tree/linux.md5 | md5sum -c --quiet && echo "linux's own tree still matches"
 [ -e tree/sub/f1 ] || echo "removed file is gone"
 cd /; umount /mnt/f4
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -162,6 +163,7 @@ printf '%s\n' "$out" | sed 's/^/  linux   /'
 printf '%s\n' "$out" | grep -q "files: all match" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "own tree still matches" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
 down "$GUEST" "$GUEST_SSH"
 

@@ -198,7 +198,7 @@ echo "entries \$(ls /mnt/c/crash 2>/dev/null | wc -l) last \$(cat /mnt/c/crash/l
 bad=0; for f in /mnt/c/crash/f*; do cat "\$f" > /dev/null 2>&1 || bad=\$((bad+1)); done; echo "unreadable \$bad"
 echo "after the cut, by linux" > /mnt/c/crash/linux-after; sync; echo "write after recovery exit \$?"
 umount /mnt/c; echo "umount exit \$?"
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 cat > "$W/recover-fbsd.sh" <<GUEST
@@ -244,7 +244,7 @@ verdict_linux() {	# image -> prints lines, returns failures
 	scp -q -o ConnectTimeout=5 "$KO" "$W/recover-linux.sh" "$GUEST_SSH:/tmp/" || { down "$GUEST" "$GUEST_SSH"; return 9; }
 	out=$(ssh "$GUEST_SSH" 'sh /tmp/recover-linux.sh' 2>&1)
 	printf '%s\n' "$out" | sed 's/^/  linux   /'
-	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^reports 0$"; do
+	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))
 	done
 	down "$GUEST" "$GUEST_SSH"

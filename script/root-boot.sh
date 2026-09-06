@@ -75,7 +75,16 @@ truncate -s "$SIZE" "$IMG" || exit 2
 # Stages 1 and 2 need a running guest, because this host's kernel is not
 # the kernel of record and cannot load the module.
 started=no
-if ! $VIRSH domstate "$GUEST" 2>/dev/null | grep -q running; then
+# A domain listed as running can be one another script is still shutting
+# down, which refuses ssh for as long as that takes; the fuzzer read that
+# state as usable once and spent its whole wait on it. The guest is usable
+# when it answers, so ask that first and the domain only when it does not.
+if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
+	:
+elif $VIRSH domstate "$GUEST" 2>/dev/null | grep -q running; then
+	echo "root-boot: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2
+	exit 2
+else
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || {
 		echo "root-boot: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
 	started=yes

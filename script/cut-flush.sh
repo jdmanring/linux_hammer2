@@ -132,7 +132,7 @@ n=\$(ls /mnt/c/crash | wc -l); echo "crash entries \$n last \$(cat /mnt/c/crash/
 bad=0; for f in /mnt/c/crash/f*; do cat "\$f" > /dev/null 2>&1 || bad=\$((bad+1)); done; echo "unreadable \$bad"
 echo "after the cut, by linux" > /mnt/c/crash/linux-after; sync; echo "write after recovery exit \$?"
 umount /mnt/c
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" "$IMG" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -145,6 +145,7 @@ printf '%s\n' "$out" | grep -q "^crash entries [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^unreadable 0$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "write after recovery exit 0" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
 down "$GUEST" "$GUEST_SSH"
 echo "  linux $(tids "$IMG")"
@@ -199,8 +200,10 @@ scp -q -o ConnectTimeout=5 "$KO" "$W/recover.sh" "$GUEST_SSH:/tmp/" || { echo "c
 out=$(ssh "$GUEST_SSH" 'echo 20 > /proc/sys/kernel/hung_task_timeout_secs; sh /tmp/recover.sh' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 printf '%s\n' "$out" | grep -q "freemap recovery" || { echo "  FAIL  the replay did not announce itself"; fail=$((fail + 1)); }
+printf '%s\n' "$out" | grep -q "^crash entries [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^unreadable 0$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
 down "$GUEST" "$GUEST_SSH"
 echo "  linux $(tids "$IMG2")"
