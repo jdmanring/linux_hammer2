@@ -48,6 +48,11 @@ case "$N" in ''|*[!0-9]*|0) echo "fuzz: COULD-NOT-RUN: count must be a positive 
 make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
+# What the module was built from, printed with the summary, as
+# enospc.sh prints it: a run that cannot be tied to a source state
+# cannot be dated against a fix.
+built=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+[ -z "$(git status --porcelain -- src 2>/dev/null)" ] || built="$built-dirty"
 [ -f "$KO" ] || { echo "fuzz: COULD-NOT-RUN: no $KO after make" >&2; exit 2; }
 
 state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "fuzz: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
@@ -199,5 +204,5 @@ fi
 rm -f "$WORK/fz.img"
 
 [ "$ran" = "$N" ] || { echo "  FAIL  ran $ran of $N images"; fail=$((fail + 1)); }
-echo "fuzz: seed $SEED, $ran image(s): $mounted mounted, $refused refused, $warned with a kernel report, $hung hung; log $LOG"
+echo "fuzz: seed $SEED, $ran image(s): $mounted mounted, $refused refused, $warned with a kernel report, $hung hung; built from $built; log $LOG"
 [ $fail = 0 ]

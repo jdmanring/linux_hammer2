@@ -1151,7 +1151,7 @@ the shipped build. The first sixty images, mutated at uniformly random
 offsets, went 56 mounted and 4 refused with every mounted image reading
 all 44 files: a 64 MiB image is almost entirely zero and absorbed the
 hits, which is why the mutator now samples until it lands on a byte
-that is not zero. Three runs since, 200 images, and every verdict in
+that is not zero. Five runs since, 640 images, and every verdict in
 them:
 
 | run | images | mounted, all 44 files read | mounted, one or two files `EIO` | mounted, the listing cut short | refused | kernel report |
@@ -1161,6 +1161,7 @@ them:
 | seed 1, before the bias | 60 | 56 | 0 | 0 | 4 | 0 |
 | seed 4, after `hpanic` became `BUG()` | 100 | 36 | 52 (48 with one, 3 with two, 1 with three) | 1 (0 files listed) | 12 | 0 |
 | seed 5, the generator that redraws | 100 | 45 | 42 (one each) | 1 (3 files listed, one `EIO`) | 13 | 0 |
+| seed 6, the build with the reserve | 300 | 120 | 110 (107 with one, 3 with two) | 2 (0 files listed) | 68 | 0 |
 
 The seed 4 row was the first run after `hpanic` stopped calling
 `panic()`, and its purpose was the kernel report column: a mutation
@@ -1486,8 +1487,11 @@ checked by DragonFly with 0 mismatches and 203 of DragonFly's read back
 here, 0 failures; the interrupted flush, 14401 entries recovered here
 and one written after, 14402 read by DragonFly, the lagging-header
 replay announced and both checkers clean, 0 failures; and the
-reproducer itself, four consecutive runs keeping every accepted file.
-The fuzzer's last run predates the reserve and is not claimed for it.
+reproducer itself, four consecutive runs keeping every accepted file,
+and three more with the write-fault check. The fuzzer ran last, on the
+build with the fault check: 300 images on seed 6, 232 mounted and 68
+refused, 0 with a kernel report, 0 equal pairs in 5037 recorded
+mutations, both controls passing first.
 
 What is not carried, with the trigger for each. The source trees'
 syncer flushes every thirty seconds and this port flushes metadata on
