@@ -1095,6 +1095,25 @@ freed and three lockdep resource ceilings read the same there: the run
 reports which banner named the shutdown, and a shutdown it cannot
 attribute is COULD-NOT-RUN rather than a confirmation.
 
+The instrument the defect needed is in the tree rather than rebuilt each
+time. `HAMMER2_LOCKDEBUG=1` on the make line compiles
+`hammer2_dbg_held_chains()` live, which walks the calling task's held
+locks, resolves each chain lock back to its chain and prints the type,
+key, class, recursion depth and `lockcnt`. Unset, every call compiles
+away and the module carries no symbol for it, which is checked by
+building both ways. `H2_LOCKDEBUG=1 bash script/enospc.sh` builds with
+it and summarizes what it printed.
+
+It exists because the question was asked five times with a scratch
+build, and because two of those builds disagreed: one recorded the
+acquire on every lock, which names where a chain was last locked rather
+than where the live one came from, and the other cleared that record on
+unlock, which erases it for a counted lock that is still held. This one
+reads `CONFIG_LOCKDEP`'s own held-lock records, so it cannot disagree
+with the report it is being used to explain, and it prints nothing when
+nothing is held: a quiet run is the absence of a finding rather than a
+passing one.
+
 Its own first two runs failed on the script rather than on the driver,
 and the second is the interesting one. A guest left wedged by a previous
 run of this same script cannot load the module, and every check after

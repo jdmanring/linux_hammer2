@@ -310,6 +310,17 @@ them. Two errno spellings are new to the baseline, `EBUSY` and `EROFS`,
 which is the same row reaching call sites the port had not had before.
 No other category is new and nothing was fixed rather than baselined.
 
+Rate limiting `hprintf` moved it by one, a quoted string split across
+lines, which is the mechanical BSD row below reaching one more site: the
+replacement printk is longer than the one it replaces and the macro
+cannot stay inside eighty columns on one line. The lock-debug facility
+added beside it moved nothing. Its no-op form was written `(0)` first,
+which produced seventeen hits of an unused function-like macro argument,
+and it discards the argument explicitly instead, so the deviation is not
+recorded and the code says what it does with it. A category that appears
+because of how a macro is spelled is worth spelling differently rather
+than baselining.
+
 The remount path moved it by three, all `return (x);`, and swapped one
 errno row for another: `hammer2_access_devvp()` refused with `EACCES`,
 which asked whether the mount's own file was opened for writing, and

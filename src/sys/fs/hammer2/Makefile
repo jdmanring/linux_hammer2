@@ -75,6 +75,12 @@ endif
 ifdef HAMMER2_ATIME
 ccflags-y += -DHAMMER2_ATIME
 endif
+# hammer2_dbg_held_chains(), which names the chain locks the calling task
+# holds.  Needs CONFIG_LOCKDEP in the kernel it is built against; without
+# it the calls compile away and print nothing.
+ifdef HAMMER2_LOCKDEBUG
+ccflags-y += -DHAMMER2_LOCKDEBUG
+endif
 # The negative control for the mount-time folio-size check: a module built
 # with this must refuse every mount, naming the numbers.  Never install it.
 ifdef HAMMER2_FOLIO_CONTROL

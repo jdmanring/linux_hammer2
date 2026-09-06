@@ -965,4 +965,35 @@ hammer2_vfs_errno(int error)
 	return (error == EDOM ? -EIO : -error);
 }
 
+/*
+ * Linux: THE HELD CHAIN LOCKS OF THE CALLING TASK, NAMED.
+ *
+ * A lock-order defect in the chain code is reported by lockdep against
+ * two classes, and the class does not say which chain or which call left
+ * one held.  Answering that meant a scratch build each time: a field on
+ * the chain, a walk of the task's held locks, a container_of back from
+ * the lockdep_map, and a printer.  Five of those were written and thrown
+ * away chasing one defect, and the fourth of them recorded the address
+ * at every acquire, which names the last lock rather than the live one
+ * and reads as evidence while carrying none.
+ *
+ * So it lives here, behind HAMMER2_LOCKDEBUG, which the Makefile carries
+ * beside HAMMER2_INVARIANTS.  Unset, every call is compiled away and the
+ * driver is byte-identical.  It reads CONFIG_LOCKDEP's own held-lock
+ * records rather than a count of its own, so it cannot disagree with the
+ * report it is being used to explain, and it prints nothing when nothing
+ * is held: a quiet run is the absence of a finding, not a passing one.
+ *
+ * Call it at a point where the caller believes no chain is held.  The
+ * depth and lockcnt tell a leaked acquire from a recursion the chain
+ * code has miscounted, which need different fixes and read alike from
+ * outside.
+ */
+#if defined(HAMMER2_LOCKDEBUG) && defined(CONFIG_LOCKDEP)
+#define hammer2_dbg_held_chains(where)	__hammer2_dbg_held_chains(where)
+int __hammer2_dbg_held_chains(const char *);
+#else
+#define hammer2_dbg_held_chains(where)	((void)(where), 0)
+#endif
+
 #endif /* !_FS_HAMMER2_OS_H_ */

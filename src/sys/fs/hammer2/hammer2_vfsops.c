@@ -2070,6 +2070,13 @@ hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __maybe_unused)
 	 * SIDEQ to SYNCQ.  PASS2 propagation by inode_lock4() and
 	 * inode_depend() are atomic with the spin-lock.
 	 */
+	/*
+	 * XXX Linux: no chain should be held here.  One is, on a volume
+	 * that has filled, and it is the other half of the lock cycle
+	 * doc/README.status.md records.  Compiled away without
+	 * HAMMER2_LOCKDEBUG.
+	 */
+	(void)hammer2_dbg_held_chains("sync_pmp entry");
 	hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
 	debug_hprintf("FILESYSTEM SYNC BOUNDARY\n");
 	dorestart = 0;
@@ -2553,6 +2560,40 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 	}
 #endif
 }
+
+/*
+ * Linux: the chain locks this task holds, printed.  Declared in
+ * hammer2_os.h, where the reasoning is; sits with the other lockdep
+ * helpers because it reads the same records they write.  Returns the
+ * count so a caller can assert on it as well as read the log.
+ */
+#if defined(HAMMER2_LOCKDEBUG) && defined(CONFIG_LOCKDEP)
+int
+__hammer2_dbg_held_chains(const char *where)
+{
+	hammer2_chain_t *chain;
+	struct lockdep_map *map;
+	struct rw_semaphore *rw;
+	hammer2_mtx_t *mtx;
+	int i, n = 0;
+
+	for (i = 0; i < current->lockdep_depth; i++) {
+		map = current->held_locks[i].instance;
+		if (map == NULL || map->name == NULL ||
+		    strncmp(map->name, "h2ch_", 5) != 0)
+			continue;
+		rw = container_of(map, struct rw_semaphore, dep_map);
+		mtx = container_of(rw, hammer2_mtx_t, lock);
+		chain = container_of(mtx, hammer2_chain_t, lock);
+		hprintf("%s: chain type %d key %016llx class %s "
+		    "depth %d lockcnt %u\n", where, chain->bref.type,
+		    (long long)chain->bref.key, map->name, mtx->depth,
+		    chain->lockcnt);
+		n++;
+	}
+	return (n);
+}
+#endif
 
 /*
  * Linux: an inode lock nests at the level of the inode's own chain, so
