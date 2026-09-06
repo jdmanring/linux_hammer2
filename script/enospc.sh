@@ -195,6 +195,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(files written [0-9]*\)$/      \1/p;\
 		    s/^  \(built from .*\)$/      \1/p;\
 		    s/^  \(files intact .*\)$/      \1/p;\
+		    s/^  \(blocks available after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
@@ -382,6 +383,10 @@ out=$(ssh "$GUEST_SSH" '
 	echo "syncfs returned $? ${msg:+: $msg}"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
+	# The free space read before the sync includes what dirty pages will
+	# take; the refusal counts them, statfs does not. After the sync the
+	# accepted data is allocated and the reading means what it says.
+	echo "blocks available after sync $(stat -f -c %a /mnt/h2enospc)"
 	# What the volume holds of what write(2) accepted: the page cache is
 	# dropped so every byte re-read comes from the media, then each file
 	# is checked against its hash. The counts are printed together, so a
@@ -598,8 +603,13 @@ printf '%s\n' "$out" | command grep -qi 'fill stopped because.*no space left' ||
 	{ echo "  FAIL  the fill did not stop on ENOSPC:"
 	  printf '%s\n' "$out" | sed -n 's/^fill stopped because /        /p'
 	  fail=$((fail + 1)); }
-printf '%s\n' "$out" | command grep -q '^blocks available 0$' ||
-	{ echo "  FAIL  the volume reports free space, so it never filled"
+# statfs subtracts the whole reserve from what it reports free, and the
+# write path refuses root under half of it, so a refused fill reports
+# nothing free once what it accepted has been allocated by the sync. The
+# reading before the sync still shows the space the dirty pages take.
+printf '%s\n' "$out" | command grep -q '^blocks available after sync 0$' ||
+	{ echo "  FAIL  the volume reports free space after the sync, so the refusal came early:"
+	  printf '%s\n' "$out" | sed -n 's/^blocks available/        blocks available/p'
 	  fail=$((fail + 1)); }
 # What write(2) accepted is on the media. The reserve the write path
 # keeps exists so the flush that commits a fill can complete; before it
