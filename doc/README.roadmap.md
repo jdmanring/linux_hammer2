@@ -57,12 +57,13 @@ invokes the kernel's build system, so running `make` is that act.
 
 1. The adapter, when a storage model exists to write it against; the
    ioctls it will sit on are delivered and gated.
-2. A periodic metadata flush, carried when a run shows the single
-   flush at `sync` failing; with the reserve respected it has
-   completed on every run.
+2. The syncer is carried: DragonFly's thirty-second period and its
+   dirty-count trigger, added when the million-file tree showed the
+   dirty set growing without bound between `sync` calls. What remains
+   for 0.9 waits on a build host for the Nix closure.
 3. The fuzzer on each build that moves the mount or write path; its
-   last run is on the build with the reserve and the write-fault
-   check, 300 images with no report.
+   last run is on the build with the device read-ahead, 100 images
+   with no report, beside the other three fleet instruments.
 4. The iomap decision stands: classic address space operations with
    block-sized folios, recorded under open decisions below with the
    reason.
