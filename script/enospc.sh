@@ -115,6 +115,12 @@ if [ "${1:-}" = --selftest ]; then
 	check "what the module still holds" \
 	    "after unmount: .*" \
 	    "6,905,1,-;hammer2: hammer2_kill_sb: after unmount: 0 inode, 4 chain, 0 modified, 0 dio still allocated"
+	check "a kernel fault" \
+	    "Oops: " \
+	    "4,1073,1,-;Oops: Oops: 0000 [#1] SMP NOPTI"
+	check "where it faulted" \
+	    "RIP: [0-9]*:[a-zA-Z0-9_]*+0x[0-9a-f]*" \
+	    "4,1077,1,-;RIP: 0010:hammer2_flush_core+0x206/0x910 [hammer2]"
 	check "a busy inode" \
 	    "Busy inodes after unmount" \
 	    "4,906,1,-;VFS: Busy inodes after unmount of vdb (hammer2)"
@@ -186,6 +192,8 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(files written [0-9]*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
+		    s/^  \(oops [0-9]*\)$/      \1/p;\
+		    s/^  \(faulted in .*\)$/      \1/p;\
 		    s/^  \(still mounted [0-9]*\)$/      \1/p;\
 		    s/^  \(umount [0-9]*\)$/      \1/p;\
 		    s/^  \(umount left at .*\)$/      \1/p;\
@@ -448,6 +456,11 @@ out=$(ssh "$GUEST_SSH" '
 	echo "oom kills after umount $(command grep -c "Out of memory: Killed\|oom-kill:\|Killed process" /tmp/kmsg.log || true)"
 	# Whether the unmount was signalled and whether the filesystem went
 	# away are different questions, and rmmod failing answers neither.
+	# The failures downstream of an oops all describe the wreckage:
+	# the module will not unload because the superblock survives
+	# because the unmount died. Name the fault itself.
+	echo "oops $(command grep -c "Oops: " /tmp/kmsg.log || true)"
+	echo "faulted in $(command grep -m1 -o "RIP: [0-9]*:[a-zA-Z0-9_]*+0x[0-9a-f]*" /tmp/kmsg.log || echo nowhere)"
 	echo "still mounted $(command grep -c h2enospc /proc/mounts || true)"
 	echo "module refs $(cat /sys/module/hammer2/refcnt 2>/dev/null || echo unreadable)"
 	# What the module still holds, printed by the driver at unmount
@@ -529,6 +542,12 @@ fi
 # process is then killed by something outside this script, which read as
 # an unmount that never finished for as long as the status was the only
 # thing being asked.
+# An oops is the finding; everything below it is what the oops caused.
+printf '%s\n' "$out" | command grep -q '^oops 0$' ||
+	{ echo "  FAIL  the kernel faulted during this run:"
+	  printf '%s\n' "$out" | sed -n 's/^oops /        oops count /p'
+	  printf '%s\n' "$out" | sed -n 's/^faulted in /        at /p'
+	  fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q '^still mounted 0$' ||
 	{ echo "  FAIL  the filesystem is still mounted after the unmount"
 	  fail=$((fail + 1)); }

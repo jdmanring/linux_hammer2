@@ -69,9 +69,10 @@ the tree as it stood. The rows for both milestones in
 One thing to know before trying it: **do not fill a HAMMER2 volume to
 capacity.** A volume with no space left reports the failure correctly,
 and the lock cycle the `sync` after it used to trip is fixed. What is
-still wrong is that the module cannot be unloaded afterwards: the
-filesystem unmounts, and the module goes on holding references. On some
-runs lockdep also reports a held lock freed during the fill itself.
+still wrong is worse than it first looked: unmounting a filled volume
+takes a page fault in the flush, which kills the unmount, leaves the
+superblock alive and the module impossible to unload. On some runs
+lockdep also reports a held lock freed during the fill itself.
 The reproducer is `script/enospc.sh` and the account is in
 [doc/README.status.md](doc/README.status.md). No corruption has been
 seen, and every checker has been clean afterwards.

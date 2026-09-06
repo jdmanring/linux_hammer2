@@ -1502,9 +1502,35 @@ holds after the filesystem has unmounted, and it is a candidate rather
 than a finding until it is measured: the reference count has not yet
 been captured on a run that failed, only on runs that did not.
 
-Both remaining faults are intermittent, so they are being measured as
-rates rather than runs. `H2_REPEAT=n` in the reproducer tallies n runs
-and resets the guest between them.
+That account is now superseded by the fault underneath it. The module
+holding a reference after the filesystem unmounts is not a leak: the
+unmount dies. `hammer2_flush_core()` takes a page fault during the
+unmount of a filled volume, which kills the `umount` process, so
+`deactivate_locked_super()` never finishes, the superblock is never
+destroyed, `->kill_sb` never runs and the module keeps the reference
+that `rmmod` then refuses to release. Every failure recorded here as a
+module that would not unload is that oops, three layers down:
+
+    BUG: unable to handle page fault for address: ffffd3f284c01e28
+    Oops: 0000 [#1] SMP NOPTI
+    RIP: 0010:hammer2_flush_core+0x206/0x910 [hammer2]
+    note: umount[2294] exited with irqs disabled
+
+The faulting instruction reads 0x1e28 off a pointer the flush is
+carrying. It follows a run of `hammer2_flush_core: inode parent
+0000000000000000/0 error 00000020` lines, the ENOSPC the flush is being
+handed and not told what to do with, so the two are being read together
+rather than separately.
+
+The port's spin locks are ruled out as the source of the disabled
+interrupts by reading: `hammer2_spin_ex()` and its family map onto
+`rw_semaphore` in the shim and never touch the interrupt flag, so the
+three regions `script/hammer2-spin-audit.py` reports as candidates
+cannot produce this.
+
+Both remaining faults are intermittent, so they are measured as rates
+rather than runs. `H2_REPEAT=n` in the reproducer tallies n runs, keeps
+each run's log, and resets the guest between them.
 
 ## Mapped files, and the volume as a root filesystem
 
