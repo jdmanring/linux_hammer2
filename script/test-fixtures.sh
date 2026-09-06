@@ -198,7 +198,7 @@ while [ "$i" -lt 60 ]; do
 	i=$((i + 1))
 done
 if [ "$i" -ge 60 ]; then
-	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state" >&2
+	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2
 	exit 2
 fi
 

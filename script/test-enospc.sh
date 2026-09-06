@@ -324,7 +324,7 @@ while [ "$i" -lt 60 ]; do
 	sleep 5
 	i=$((i + 1))
 done
-[ "$i" -lt 60 ] || { echo "enospc: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state" >&2; exit 2; }
+[ "$i" -lt 60 ] || { echo "enospc: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2; exit 2; }
 
 guest_rel=$(ssh "$GUEST_SSH" 'uname -r' 2>/dev/null)
 ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')

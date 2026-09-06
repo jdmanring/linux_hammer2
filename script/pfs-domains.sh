@@ -75,10 +75,10 @@ fail=0
 ndom=$(printf '%s\n' $DOMAINS | grep -c .)
 boot() {	# boot <guest> <ssh>; the image is attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
-	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  FAIL  $1 did not start"; return 1; }
+	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  COULD-NOT-RUN  $1 did not start"; return 1; }
 	n=0
 	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$2" true 2>/dev/null; do
-		sleep 5; n=$((n + 1)); [ $n -gt 60 ] && { echo "  FAIL  $1 did not answer ssh"; return 1; }
+		sleep 5; n=$((n + 1)); [ $n -gt 60 ] && { echo "  COULD-NOT-RUN  $1 did not answer ssh in 5 minutes, host load $(cut -d" " -f1-3 /proc/loadavg)"; return 1; }
 	done
 	return 0	# not the status of the loop's last test
 }
