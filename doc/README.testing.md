@@ -902,6 +902,35 @@ control that changes the guest rather than the module; the run records
 the guest's memory size and whether kmemleak is on, read by a write to
 its debugfs node that is refused once it is off.
 
+`script/throughput.sh` takes the two readings that decide whether the
+port adds `->readahead` and changes its writeback order, the services
+DragonFly's buffer cache gives HAMMER2 through `cluster_readx()` and
+`cluster_write()`. The Linux guest writes one random file, 512 MiB by
+default (`H2_TP_MIB`), from memory to a HAMMER2 volume, to ext4 and
+to btrfs on two more disks, btrfs being the checksummed copy-on-write
+filesystem a fair comparison needs, times each write with `fsync` and
+two reads at 1 MiB and 64 KiB requests after a remount and a dropped
+cache, and checks the HAMMER2 copy by hash. Each file is read once
+unmeasured first: the images are files on the host, and the first read
+after a write goes to the host's disk while the next hits the host's
+cache, a difference of ten times that was read as the driver's before
+the priming read was added. Every timed read is therefore cold in the
+guest and warm on the host. DragonFly then writes a file of the same
+size to the same volume and reads both files cold the same way, which
+is the reference for the read rate. The host reads both layouts from
+the image with `hammer2 show`, which prints every data blockref in key
+order with its media offset, and reports the count of steps that are
+contiguous, forward or backward, DragonFly's file being the reference
+the core's allocation comment was written against. A name longer than
+the inode's inline field lives in a directory entry, so the parser
+resolves the name to the inode number first. Throughput is printed and
+never judged; the run fails on a hash mismatch, a kernel warning, a
+checker verdict, a wrong block count or a missing reading. The parser
+was checked against a fixture file whose five blocks the tool lists as
+four contiguous steps, and its first two runs found the tool called
+without its subcommand and the name looked up in the wrong block, each
+reading zero blocks for both files and failing on the count.
+
 All four judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,
 on the image it judged rather than in a selftest: the same checker is

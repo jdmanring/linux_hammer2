@@ -74,7 +74,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:1170` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
-| `hammer2.h:531` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
+| `hammer2.h:532` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.
@@ -153,6 +153,14 @@ invoking the OOM killer. The same tree on the same guest with kmemleak
 disabled reached a million files with no refusal, the module unchanged,
 so the fragmentation is the debug guest's and the order is not a limit
 the IO model has to answer for at this scale.
+
+The device mapping carries no read-ahead of its own: a folio absent
+from it is one synchronous read of one block, which held a sequential
+read of a large file to 353 MiB/s on a guest where btrfs read at 507.
+On a miss `hammer2_bread()` now asks the kernel's read-ahead for the
+BSD cluster hint's worth of pages first, with a `file_ra_state` per
+device, and reads at 602 to 683 MiB/s on the same guest, DragonFly's
+own rate for the same files. `doc/README.status.md` has the table.
 
 For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6

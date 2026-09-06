@@ -112,7 +112,7 @@ and a milestone is met when all of them are.
 | 0.6 | H3 | Crash recovery | met. Kill, panic, power and torn header, twice each, on media the FreeBSD port wrote and on media this port wrote: every image mounted and recovered on both ports, every file readable, `fsck_hammer2` clean after each recovery, and each cell's runs in agreement |
 | 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | open. The ioctl surface is delivered and gated: snapshot create, PFS create, delete, list and lookup, the inode and volume queries, growfs and bulkfree, with the read-only half exercised on every fixture and the writing half hand-verified, a snapshot taken here mounting on DragonFly. The adapter waits on the storage model, which does not exist yet, so this milestone ships the ioctls alone as its first point release and stays open on the adapter, which is what the criteria said would happen |
 | 0.8 | H5 | PFS as storage domains | open. The half that belongs to this side is measured: `script/pfs-domains.sh` creates SYSTEM, STORE and CACHE through the port's own ioctl, mounts each by label here and on DragonFly, and DragonFly checks what was written in each, 21 files per root with 0 mismatches on two runs. The installer and the mapping wait on the storage model, as 0.7's adapter does |
-| 0.9 | H6 | Nix-scale hardening | open. The million-file row has its instrument and its first numbers: a hundred thousand files clean on both sides, and at a million two defects found and fixed, the unbounded dirty set and the reclaim inversion, and one limit measured and attributed: roughly seven hundred thousand one-line files on the 4 GiB debug guest before the write path's order-4 folio grab fails, and a million with no refusal on the same guest with kmemleak off, so the limit is the debug guest's and not the IO model's; `README.status.md` has the table. The rest of the row waits on F6 and a build host |
+| 0.9 | H6 | Nix-scale hardening | open. The million-file row has its instrument and its first numbers: a hundred thousand files clean on both sides, and at a million two defects found and fixed, the unbounded dirty set and the reclaim inversion, and one limit measured and attributed: roughly seven hundred thousand one-line files on the 4 GiB debug guest before the write path's order-4 folio grab fails, and a million with no refusal on the same guest with kmemleak off, so the limit is the debug guest's and not the IO model's; and the large-file row: sequential read held to 353 MiB/s by a device mapping with no read-ahead, now 602 to 683 with the kernel's read-ahead asked for the BSD cluster hint, at btrfs's rate and DragonFly's own on the same guest, with the Linux-written file contiguous on the media where DragonFly's is scattered; `README.status.md` has both tables. The rest of the row waits on F6 and a build host |
 | 1.0 | qualification | Flagship qualification | not started |
 
 ## Fixtures
@@ -406,11 +406,15 @@ read fetches one logical block per call. `cluster_write()` writes behind
 in file order, and the core says it depends on that because it cannot
 preallocate at the logical level before it knows the compressed size;
 the port's `->writepages` is the counterpart and whether it hands the
-strategy XOP the blocks in the same order is unmeasured. Sequential read
-and write throughput against ext4 on the same guest, and the allocation
-order of a large file's blocks, are the readings; `->readahead` on the
-strategy XOP is added if the first says so, and the writeback order is
-changed if the second does.
+strategy XOP the blocks in the same order is unmeasured. Both readings were
+taken on 2026-09-06 with `script/throughput.sh`: the writeback order
+needed no change, the Linux-written file being contiguous at 8185 of
+8191 steps where DragonFly's own file on the same volume is scattered;
+and the read rate was held to 353 MiB/s by the DIO layer reading the
+device one folio at a time with no read-ahead, closed by asking the
+kernel's read-ahead on the device mapping for the BSD cluster hint,
+after which the port reads at 602 to 683 MiB/s, btrfs's rate and
+DragonFly's on the same guest. `README.status.md` has the table.
 
 Gate: an F6 harness, unwritten. Depends on 0.8 and on a build host that
 supplies the closure and the hours.

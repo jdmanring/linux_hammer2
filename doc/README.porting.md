@@ -93,10 +93,29 @@ decides when it is written and released. Here `hammer2_open_devvp()` calls
 which reaches
 `mapping_set_folio_min_order()` on the block device's mapping, so every
 folio in that mapping is a 64KB folio and one `hammer2_io` holds exactly
-one. Caching, writeback, readahead and reclaim belong to the page cache;
-this file holds a folio reference for the life of `DIO_GOOD`, dirties it
-on a dirty last drop, and kicks writeback on `DIO_FLUSH`. The DIO hash
+one. Caching, writeback and reclaim belong to the page cache; this file
+holds a folio reference for the life of `DIO_GOOD`, dirties it on a
+dirty last drop, and kicks writeback on `DIO_FLUSH`. The DIO hash
 therefore caches metadata and no longer owns memory.
+
+Read-ahead does not come with the mapping. `read_cache_folio()` and
+`mapping_read_folio_gfp()` read the one folio asked for and nothing
+ahead of it, so until 2026-09-06 every block of a sequential read was
+one synchronous device read, and a comment beside the call said the
+opposite. The BSDs hand `cluster_read()` a hint in blocks,
+`hammer2_cluster_data_read` for data and `hammer2_cluster_meta_read`
+for metadata, both carried as module parameters. On Linux the
+counterpart is the kernel's own read-ahead on the device mapping: on a
+miss `hammer2_bread()` calls `page_cache_sync_ra()` for the hint's
+worth of pages with a `file_ra_state` kept per device in
+`hammer2_devvp`, initialized by `file_ra_state_init()` where the
+device is opened, and the read that follows finds its folio in flight.
+The window ramps within the device's `read_ahead_kb` as it does for
+any file, and one state per device means two interleaved sequential
+readers of one volume share it, which the kernel's algorithm tolerates
+as it does for two readers of one file. Both entry points are
+`EXPORT_SYMBOL_GPL`, which is what the module's license tag exists
+for. `doc/README.status.md` has the numbers.
 
 `hammer2_io_data()` hands the core a pointer it keeps across sleeps, so
 the folio must be permanently mapped: `folio_address()`, not

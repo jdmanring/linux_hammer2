@@ -262,6 +262,7 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 		}
 
 		e->bdev_file = bdev_file;
+		file_ra_state_init(&e->ra, bdev_file->f_mapping);	/* Linux */
 		e->open = 1;
 		KKASSERT(e->open);
 	}

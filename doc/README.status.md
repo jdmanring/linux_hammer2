@@ -559,7 +559,7 @@ construction rather than re-hashed every run.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1383 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1385 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
@@ -575,10 +575,10 @@ construction rather than re-hashed every run.
 | `hammer2_vfsops.c` | 3032 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1397 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 972 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 1003 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 1109 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
@@ -1914,6 +1914,66 @@ lock reading is not available at this scale: lockdep hits a chain
 ceiling of the guest kernel's configuration near 300 s, which the
 script reports as a ceiling and counts neither way.
 
+## One large file, and what the BSD buffer cache gave for free
+
+DragonFly's HAMMER2 reads ahead through `cluster_readx()` and writes
+behind in file order through `cluster_write()`, both services of its
+buffer cache, and the core's own comment says its allocation pattern
+depends on the second. The port carried neither and no throughput
+number existed, so `script/throughput.sh` was written to take the two
+readings that decide them: a 512 MiB random file written from memory
+to HAMMER2, ext4 and btrfs on the same 4 GiB debug guest, timed writes
+with `fsync`, reads cold in the guest and warm on the host at 1 MiB
+and 64 KiB requests, the HAMMER2 copy checked by hash after a remount,
+DragonFly writing and reading the same on the same volume, and both
+files' block placement read from the image with `hammer2 show`.
+
+The allocation order needed no change. In key order the Linux-written
+file's blocks are contiguous on the media at 8185 of 8191 steps, with
+four forward and two backward jumps; DragonFly's own file on the same
+volume, written by the same core under its buffer cache, is contiguous
+at 2002 steps with 3182 forward and 3007 backward jumps. The
+writeback path hands the strategy the blocks in file order.
+
+The read rate was the finding. Profiled with the kernel's function
+profiler, every one of the file's 8192 data blocks was a synchronous
+device read: the DIO layer's `mapping_read_folio_gfp()` reads the one
+folio asked for, and a comment beside it said the block device mapping
+had the kernel's read-ahead behind it, which it does not. The port now
+asks `page_cache_sync_ra()` on a miss for the BSD cluster hint's worth
+of pages, `hammer2_cluster_data_read` blocks for data and
+`hammer2_cluster_meta_read` for metadata, with a read-ahead state per
+device. Measured 2026-09-06, MiB/s, one run each on the same guest and
+images:
+
+| filesystem | write | read, 1 MiB requests | read, 64 KiB requests |
+|---|---|---|---|
+| HAMMER2 before the change | 275 | 353 | 371 |
+| HAMMER2 with device read-ahead | 289 | 602 | 683 |
+| ext4 | 207 | 948 | 6400 |
+| btrfs | 272 | 507 | 640 |
+| DragonFly's HAMMER2, the Linux-written file | | 832 | |
+| DragonFly's HAMMER2, its own file | | 671 | |
+
+ext4's numbers are memcpy from the host's cache and no checksummed
+copy-on-write filesystem reaches them; btrfs on the same guest is the
+comparison, and the port now reads at its rate and at DragonFly's own.
+The run reads the file back with the source hash, zero kernel
+warnings, both checkers clean with their negative controls. The
+instrument's first two runs failed on their own readings before any
+number was kept: the layout tool was called without its subcommand
+and a long file name was looked up in the wrong block, each reading
+zero blocks for both files, and the first read of each file after a
+write went to the host's disk while the second hit the host's cache,
+which read as a difference of ten times until a priming read was
+added.
+
+`O_DIRECT` stays unserved. DragonFly's `IO_DIRECT` means
+semi-synchronous, set by the reserve check, and every read and write
+there goes through the buffer cache because each block is checksummed
+and possibly compressed on the way; a direct open falls back to
+buffered I/O here as it does there.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
@@ -2235,7 +2295,7 @@ against the FreeBSD port at
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
-| `hammer2_io.c` | 4 | 2 | 2 |
+| `hammer2_io.c` | 3 | 2 | 1 |
 | `hammer2_os.h` | 5 | 0 | 5 |
 | `hammer2_flush.c` | 15 | 8 | 7 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
@@ -2256,8 +2316,8 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and sixty-five are this port's, the right-hand column
-summed, and they fall in fourteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
+One hundred and sixty-four are this port's, the right-hand column
+summed, and they fall in fourteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, one in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the

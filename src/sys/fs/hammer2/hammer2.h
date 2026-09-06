@@ -135,6 +135,7 @@ struct hammer2_io {
 	hammer2_mtx_t		lock;
 	hammer2_dev_t		*hmp;
 	struct file		*bdev_file;	/* Linux: was struct vnode *devvp */
+	struct file_ra_state	*ra;		/* Linux: the device's read-ahead state */
 	struct folio		*folio;		/* Linux: was struct buf *bp */
 	uint64_t		refs;
 	hammer2_off_t		dbase;		/* offset of device within volumes */
@@ -778,6 +779,7 @@ struct hammer2_devvp {
 	char			*path;		/* device path */
 	dev_t			devno;		/* Linux: was devvp->v_rdev */
 	int			open;		/* 1 if bdev_file open */
+	struct file_ra_state	ra;		/* Linux: for the DIO layer's read-ahead */
 };
 
 typedef struct hammer2_devvp hammer2_devvp_t;
