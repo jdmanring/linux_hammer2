@@ -147,5 +147,49 @@ done
 	exit 1
 }
 
-echo "posix: $n sh-declared script(s), $ran check(s), $fail failed"
+# The remote blocks these scripts hand to ssh are shell too, and no gate read
+# them until one shipped broken. A block is passed as a single-quoted string,
+# so a single quote anywhere inside it ENDS the string: the rest of the block
+# is then expanded by the workstation instead of the guest, and under `set -u`
+# an awk field like $3 aborts the run before the filesystem is ever touched.
+# That is invisible to a parse, because the text left behind is still valid
+# shell. So two things are checked here: the block must contain no single
+# quote at all, which is the property the quoting depends on, and it must
+# parse, which no gate did for remote code before.
+nb=0
+for f in script/*.sh; do
+	command grep -q "ssh .*'$" "$f" || continue
+	nb=$((nb + 1))
+	b="$tmp/remote-$(basename "$f")"
+	command sed -n "/ssh .*'\$/,/^'/p" "$f" | command sed "1d;\$d" > "$b"
+	q=$(tr -cd "'" < "$b" | wc -c)
+	ran=$((ran + 1))
+	if [ "$q" -eq 0 ]; then
+		echo "  ok    $(basename "$f"): its remote block holds no single quote"
+	else
+		echo "  FAIL  $(basename "$f"): its remote block holds $q single quote(s),"
+		echo "        each of which ends the string early and hands the rest"
+		echo "        of the block to this machine instead of the guest"
+		command grep -n "'" "$b" | head -3 | sed "s/^/        /"
+		fail=$((fail + 1))
+	fi
+	for sh in $shells; do
+		ran=$((ran + 1))
+		out=$(parse "$sh" "$b") || {
+			echo "  FAIL  $sh: $(basename "$f") remote block"
+			printf '%s\n' "$out" | head -3 | sed "s/^/        /"
+			fail=$((fail + 1))
+			continue
+		}
+		echo "  ok    $sh: $(basename "$f") remote block"
+	done
+done
+# The blocks are a population like the scripts are. A pattern that stopped
+# matching would check nothing and still print a clean count.
+[ "$nb" -gt 0 ] || {
+	echo "posix: FAIL: no remote ssh block found in script/ at all" >&2
+	exit 1
+}
+
+echo "posix: $n sh-declared script(s), $nb remote block(s), $ran check(s), $fail failed"
 [ "$fail" = 0 ] || exit 1

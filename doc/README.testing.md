@@ -363,6 +363,19 @@ clean result is unreachable rather than earned. Falsified both ways -
 making every probe inert, and making the plain script unparseable, each
 fail naming which property broke. With no shell realized the gate exits 2.
 
+Since 2026-09-05 it also reads the remote blocks the fleet scripts hand to
+ssh, which are shell that no gate had ever parsed. Those blocks are passed
+as one single-quoted string, so a single quote anywhere inside a block ENDS
+that string: everything after it is expanded by the workstation instead of
+the guest. A shell parse cannot see that, because the text left behind is
+still valid shell, so the gate checks the property the quoting actually
+rests on and counts the single quotes in each block, which must be zero. It
+parses the blocks as well, and asserts the population, since a pattern that
+stopped matching would check nothing and still print a clean count. The
+check was written after an `awk '{print $3}'` added to `enospc.sh` aborted
+a run on the workstation with `$3: unbound variable` before the guest was
+reached, and it reads 2 against that block and 0 against the repaired one.
+
 Observed on 2026-08-26: dash rejects process substitution, arrays, the
 `function` keyword and here-strings; busybox ash rejects arrays and
 here-strings; both accept `[[ ]]`, `declare`, `local`, `+=`, arithmetic,
