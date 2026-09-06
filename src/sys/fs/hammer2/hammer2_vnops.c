@@ -838,6 +838,30 @@ const struct file_operations hammer2_dir_fops = {
 };
 
 /*
+ * Linux: dirty pages on a device, across every writeback it carries.
+ * Under cgroup writeback the superblock's own writeback is the root
+ * cgroup's alone, and a writer in any other cgroup dirties pages the
+ * root's counter never sees; the walk is the one the kernel's own
+ * accounting makes.
+ */
+static loff_t
+hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi)
+{
+	struct bdi_writeback *wb;
+	s64 pages = 0;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(wb, &bdi->wb_list, bdi_node) {
+		if (!wb_tryget(wb))
+			continue;
+		pages += wb_stat(wb, WB_RECLAIMABLE);
+		wb_put(wb);
+	}
+	rcu_read_unlock();
+	return ((loff_t)pages << PAGE_SHIFT);
+}
+
+/*
  * A regular file reads through the page cache.  ->read_iter is what sets
  * FMODE_CAN_READ in do_dentry_open(): without it an open succeeds and
  * every read fails EINVAL whatever the address space can do, which is the
@@ -881,8 +905,7 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * found the reserve already eaten by data the count had not seen.
 	 */
 	switch (hammer2_vfs_enospace(ip, iov_iter_count(from) +
-	    ((loff_t)wb_stat(&inode->i_sb->s_bdi->wb, WB_RECLAIMABLE) <<
-	    PAGE_SHIFT), current_cred())) {
+	    hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi), current_cred())) {
 	case 2:
 		return (-ENOSPC);
 	case 1:
