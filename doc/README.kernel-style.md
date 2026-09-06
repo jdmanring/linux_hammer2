@@ -321,6 +321,11 @@ recorded and the code says what it does with it. A category that appears
 because of how a macro is spelled is worth spelling differently rather
 than baselining.
 
+The free-space reserve check carried from the FreeBSD port on
+2026-09-06 moved the `return is not a function` row by one, 213 to
+214: its four returns are carried in the BSD style the rest of the
+core uses, and a carried function is not restyled on its own.
+
 The guard naming a chain dropped by the task holding its lock moved the
 same row by one again, for the same reason: the message names a chain
 type and a key and does not fit on one line. Nothing else moved with
