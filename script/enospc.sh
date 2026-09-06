@@ -514,12 +514,13 @@ $VIRSH detach-disk "$GUEST" vdb >/dev/null 2>&1
 # A guest left wedged by a previous run of this very script cannot load
 # the module, and that is COULD-NOT-RUN rather than five failures
 # describing a filesystem that was never mounted. The defect this script
-# reproduces hangs the unmount, so the wedged guest is the expected state
-# after a failing run and has to be told apart from the defect itself.
+# reproduced killed the unmount, so a guest left holding the module is a
+# plausible state after a failing run and has to be told apart from the
+# defect itself.
 if printf '%s\n' "$out" | command grep -q '^SETUP '; then
 	printf '%s\n' "$out" | sed -n 's/^SETUP /enospc: COULD-NOT-RUN: /p' >&2
 	echo "          $GUEST may still hold the module from an earlier run;" >&2
-	echo "          it needs a hard reset, since the defect hangs the unmount" >&2
+	echo "          it needs a hard reset; a run that faults leaves it so" >&2
 	exit 2
 fi
 

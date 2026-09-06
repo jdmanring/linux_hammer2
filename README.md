@@ -74,10 +74,14 @@ filled volume used to take a page fault in the flush, on a PFS the
 teardown had just released, which killed the unmount and left the module
 impossible to unload.
 
-What is still open: on some runs lockdep reports a held lock freed
-during the fill itself, and the `ENOSPC` is dropped rather than returned
-to the caller, so a write that fails for want of space is logged and not
-reported. The reproducer is `script/enospc.sh` and the account is in
+Ten consecutive runs of the reproducer now fill a 2 GiB volume, sync it
+and unmount it with nothing reported. What is still open: the `ENOSPC`
+is dropped rather than returned to the caller, so a write that fails for
+want of space is logged and not reported, and lockdep reported a held
+lock freed during a fill on two runs before those fixes, which has not
+recurred in fourteen since and has not been explained.
+
+The reproducer is `script/enospc.sh` and the account is in
 [doc/README.status.md](doc/README.status.md). No corruption has been
 seen, and every checker has been clean afterwards.
 

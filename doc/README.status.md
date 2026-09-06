@@ -1505,15 +1505,22 @@ it is not tested again:
 
 ### What is still open here
 
-Lockdep has reported `WARNING: held lock freed!` during the fill itself,
-rather than during the sync or the unmount, on a minority of runs. It
-has not been attributed. `hammer2_chain_drop()` is a candidate and is
-guarded rather than assumed: at its last drop it takes the chain's own
-lock, and this port's chain mutex is recursive, so a caller already
-holding that lock succeeds by recursion and frees a chain whose rwsem it
-still holds. A warning names that where every caller passes. It has not
-fired on any run to date, so it is a guard and not yet evidence in
-either direction.
+Lockdep reported `WARNING: held lock freed!` on two runs, both of them
+after the chain lock fix and before the PFS one, and neither was
+attributed: at the time the run printed only the window following the
+cycle banner, so a fault with a different banner left one line and no
+backtrace. Fourteen runs since the PFS fix have not reproduced it,
+including ten consecutive runs of the shipping build. That bounds its
+rate and does not explain it, and the two sightings were real. The
+window follows whichever banner fires now, so a recurrence will be
+captured whole rather than named and lost.
+
+`hammer2_chain_drop()` is a candidate for it and is guarded rather than
+assumed: at its last drop it takes the chain's own lock, and this port's
+chain mutex is recursive, so a caller already holding that lock succeeds
+by recursion and frees a chain whose rwsem it still holds. A warning
+names that where every caller passes. It has not fired on any run, which
+makes it a guard and not evidence in either direction.
 
 The `ENOSPC` underneath all of this is separately dropped on the floor,
 under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
@@ -1616,13 +1623,18 @@ it first, including the one that faults. It is also what this same
 function already does by hand for `hmp->vchain.pmp` and
 `hmp->fchain.pmp` when the PFS being freed is the super-root's.
 
-Measured: four runs after the change, no fault on any, the module
-unloading every time, against five faults in the seven runs before it.
+Measured: fourteen runs after the change faulted on none, against five
+faults in the seven runs before it. Ten of those fourteen are one batch
+of the shipping build, with no debug knob set, and they are uniform:
+each wrote 583 files to `ENOSPC`, each left `debug_locks` at 1 through
+the sync, none reported a cycle, an oops or a held lock freed, and every
+one unloaded the module. A batch of ten that never filled the volume
+would read clean too, which is why the fill population is asserted per
+run and printed above.
+
 The fixture gate ran afterwards because this changes the teardown of
-every unmount, not only a full one, and reported 11 images, 43 files,
-100 ioctl results and 0 failures with lockdep enabled throughout. Four
-runs is not many, and more are wanted before the reproducer becomes a
-gate.
+every unmount and not only a full one, and reported 11 images, 43 files,
+100 ioctl results and 0 failures with lockdep enabled throughout.
 
 The call shape and the site are upstream's: DragonFly and all three of
 Kusumi's ports carry the same drop, and the patches are staged in
