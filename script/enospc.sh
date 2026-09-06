@@ -35,6 +35,58 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# H2_REPEAT=n runs the whole thing n times and tallies the outcomes.
+# BOTH DEFECTS LEFT ON THIS REPRODUCER ARE INTERMITTENT: the module has
+# held references after unmount on five runs of seven and lockdep has
+# reported a held lock freed on two of nine, so a single run is the
+# wrong instrument for either and answers only about itself. A wedged
+# guest also costs the NEXT run, which is COULD-NOT-RUN rather than a
+# result, so each iteration resets the guest rather than inheriting
+# whatever the last one left. Nothing is summed that was not counted:
+# the tally asserts it saw as many outcomes as it ran.
+repeat=${H2_REPEAT:-1}
+case $repeat in
+''|*[!0-9]*) echo "enospc: COULD-NOT-RUN: H2_REPEAT is not a number" >&2; exit 2 ;;
+esac
+if [ "$repeat" -gt 1 ]; then
+	GUEST=${H2_GUEST:-artix-s6-kde}
+	VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
+	pass=0; failed=0; cnr=0; seen=0; i=1
+	log=$(mktemp) || exit 2
+	trap 'rm -f "$log"' EXIT
+	while [ "$i" -le "$repeat" ]; do
+		$VIRSH destroy "$GUEST" >/dev/null 2>&1
+		sleep 6
+		$VIRSH start "$GUEST" >/dev/null 2>&1
+		H2_REPEAT=1 sh "$0" > "$log" 2>&1
+		st=$?
+		seen=$((seen + 1))
+		case $st in
+		0) pass=$((pass + 1)); verdict=pass ;;
+		2) cnr=$((cnr + 1)); verdict=could-not-run ;;
+		*) failed=$((failed + 1)); verdict=fail ;;
+		esac
+		echo "run $i: $verdict"
+		# The readings that separate the two open defects from each
+		# other, printed per run so the tally is not the only record.
+		command sed -n "s/^  \(locks after sync [0-9]*\)$/      \1/p;\
+		    s/^  \(files written [0-9]*\)$/      \1/p;\
+		    s/^  \(cycles [0-9]*\)$/      \1/p;\
+		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
+		    s/^  \(still mounted [0-9]*\)$/      \1/p;\
+		    s/^  \(module refs .*\)$/      \1/p;\
+		    s/^  \(rmmod [0-9]*\)$/      \1/p;\
+		    s/^  \(shutdown-reason .*\)$/      \1/p" "$log"
+		command grep "^  FAIL" "$log" | command sed "s/^  /      /"
+		i=$((i + 1))
+	done
+	echo "enospc: $seen run(s), $pass pass, $failed fail, $cnr could-not-run"
+	[ "$seen" -eq "$repeat" ] || {
+		echo "enospc: FAIL: ran $repeat but tallied $seen" >&2; exit 1; }
+	[ "$failed" -eq 0 ] && [ "$cnr" -eq 0 ]
+	exit $?
+fi
+
 FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 IMG=$FIXDIR/enospc.img
 SIZE=${H2_ENOSPC_SIZE:-2G}

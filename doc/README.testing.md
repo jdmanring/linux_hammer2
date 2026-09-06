@@ -1093,6 +1093,16 @@ It is not a gate for that reason. A test that fails on half its runs
 would be a flake in the suite rather than a check, so it stays a script
 run by hand until both are closed.
 
+Both of those are intermittent, which makes a single run the wrong
+instrument: it answers about itself and nothing else. `H2_REPEAT=n`
+runs the whole thing n times and tallies pass, fail and could-not-run,
+printing per run the readings that tell the two apart, so an intermittent
+fault is a rate rather than an anecdote. Each iteration resets the guest
+first, because a guest left wedged by one run costs the next one as well:
+three runs were spent that way before this existed. The tally asserts it
+counted as many outcomes as it ran, so a loop that lost one cannot report
+a clean rate.
+
 One reading it no longer takes on trust is the unmount. For several runs
 the script judged the unmount by the exit status of the `umount` process,
 which is killed on these runs by something outside the script, and read
