@@ -337,6 +337,10 @@ lines earlier. Both sit behind `HAMMER2_LOCKDEBUG`, so a normal build
 carries neither the print nor the pointer, and checkpatch cannot see
 that. The category leaves the baseline with the knob.
 
+The two prototypes the same facility adds moved the unnamed-argument row
+by two and the parenthesized-return row by one, both of which are the
+BSD style this tree keeps deliberately, reaching two more declarations.
+
 The remount path moved it by three, all `return (x);`, and swapped one
 errno row for another: `hammer2_access_devvp()` refused with `EACCES`,
 which asked whether the mount's own file was opened for writing, and
