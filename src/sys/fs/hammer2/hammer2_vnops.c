@@ -408,6 +408,8 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 
 	if (dip->pmp->rdonly)
 		return (-EROFS);
+	if (hammer2_vfs_enospace(dip, 0, current_cred()) > 1)
+		return (-ENOSPC);
 
 	hammer2_trans_init(dip->pmp, 0);
 	hammer2_inode_lock(dip, 0);
@@ -863,11 +865,22 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		return (-EROFS);
 	/*
 	 * XXX Linux: upstream's case 1, under twice the reserve, makes the
-	 * write semi-synchronous with IO_DIRECT; the page cache has no
-	 * equivalent and only the refusal is carried.
+	 * write semi-synchronous with IO_DIRECT.  A data-sync write is the
+	 * page cache's form of it: the write goes through ->fsync before
+	 * it returns, so the strategy allocates the blocks now and the
+	 * free count the refusal reads stays current.  Without it the page
+	 * cache accepted 511 files of a fill the free count saw nothing of
+	 * until the flush, and 37 of them were lost.
 	 */
-	if (hammer2_vfs_enospace(ip, iov_iter_count(from), current_cred()) > 1)
+	switch (hammer2_vfs_enospace(ip, iov_iter_count(from), current_cred())) {
+	case 2:
 		return (-ENOSPC);
+	case 1:
+		iocb->ki_flags |= IOCB_DSYNC;
+		break;
+	default:
+		break;
+	}
 	hammer2_trans_init(ip->pmp, 0);
 	ret = generic_file_write_iter(iocb, from);
 	if (ret > 0) {
