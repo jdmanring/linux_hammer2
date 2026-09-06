@@ -570,7 +570,7 @@ construction rather than re-hashed every run.
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 2895 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1354 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1386 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -2065,7 +2065,6 @@ against the source is the same shape as an empty one.
 
 | where | marker, verbatim | what is deferred |
 |---|---|---|
-| `hammer2_vnops.c`, at `hammer2_file_fops` | `DEFER(the freemap can be asked for space before the fault returns)` | a shared writable mapping dirties a folio through `filemap_page_mkwrite()`, which reserves nothing, and the allocation happens later in the strategy XOP under `->writepages`. On a full volume it fails where the faulting thread has already returned and cannot be told. `ext4` and `xfs` wrap `generic_file_mmap_prepare()` with a `->page_mkwrite` of their own for this; `ext2` and `fat` accept the same gap this port does |
 | `hammer2_os.h`, at `hpanic` | `DEFER(every hpanic site has an error its caller propagates)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. The super_block to mark has existed since 0.4; the fifty-four sites in seven files are written as not returning, and each needs a return path before the macro can stop panicking. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |

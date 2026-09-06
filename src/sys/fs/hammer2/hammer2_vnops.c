@@ -1156,27 +1156,59 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
  * install a ->page_mkwrite of their own, which reserves space while the
  * faulting thread can still be told the answer.  Here the allocation
  * happens in the strategy XOP at writeback, so a mapping dirtied on a
- * full volume fails where nothing is left to report it to, which is the
- * DEFER below.  ->mmap_prepare rather than ->mmap because the kernel of
+ * full volume failed where nothing was left to report it to, until the
+ * write fault below learned to refuse.  ->mmap_prepare rather than ->mmap because the kernel of
  * record takes either and the in-tree filesystems have moved; fs.h warns
  * when a table sets both.
  */
 /*
- * DEFER(the freemap can be asked for space before the fault returns):
- * a shared writable mapping dirties a folio through
- * filemap_page_mkwrite(), which reserves nothing, and the allocation
- * happens later in the strategy XOP under ->writepages.  On a volume
- * with no space left that allocation fails where the thread that
- * faulted has already returned and cannot be told.  ext4 and xfs both
- * wrap generic_file_mmap_prepare() with a ->page_mkwrite of their own
- * for exactly this, and ext2 and fat accept the same gap this does.
- * The trigger is a reservation the freemap can answer at fault time.
+ * Linux: the write fault asks the reserve check the write entry asks,
+ * with the folio it is about to dirty as the size, and answers a
+ * refusal with SIGBUS as ext4 does when it cannot allocate at the
+ * fault.  The freemap cannot reserve at fault time; what it can do is
+ * refuse, and a mapped write on a full volume was accepted, synced and
+ * read back with nothing asked while write(2) beside it was refused,
+ * so a mapping could take the whole reserve the flush needs.  Any
+ * other cgroup's dirty pages are counted as the write entry counts
+ * them.
  */
+static vm_fault_t
+hammer2_page_mkwrite(struct vm_fault *vmf)
+{
+	struct inode *inode = file_inode(vmf->vma->vm_file);
+	hammer2_inode_t *ip = VTOI(inode);
+
+	if (ip->pmp->rdonly)
+		return (VM_FAULT_SIGBUS);
+	if (hammer2_vfs_enospace(ip, folio_size(page_folio(vmf->page)) +
+	    hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi), current_cred()) > 1)
+		return (VM_FAULT_SIGBUS);
+	return (filemap_page_mkwrite(vmf));
+}
+
+static const struct vm_operations_struct hammer2_file_vm_ops = {
+	.fault		= filemap_fault,
+	.map_pages	= filemap_map_pages,
+	.page_mkwrite	= hammer2_page_mkwrite,
+};
+
+static int
+hammer2_file_mmap_prepare(struct vm_area_desc *desc)
+{
+	int error;
+
+	error = generic_file_mmap_prepare(desc);
+	if (error)
+		return (error);
+	desc->vm_ops = &hammer2_file_vm_ops;
+	return (0);
+}
+
 const struct file_operations hammer2_file_fops = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= hammer2_file_write_iter,	/* Linux */
-	.mmap_prepare	= generic_file_mmap_prepare,	/* Linux */
+	.mmap_prepare	= hammer2_file_mmap_prepare,	/* Linux */
 	.fsync		= hammer2_vop_fsync,
 	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
 };
