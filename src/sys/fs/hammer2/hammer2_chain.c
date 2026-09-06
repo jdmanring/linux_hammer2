@@ -308,14 +308,20 @@ hammer2_chain_drop(hammer2_chain_t *chain)
 	 * that already holds the lock succeeds by recursion and frees a
 	 * chain whose rwsem it still holds.  lockdep reports that as
 	 * "held lock freed!".  A non-recursive try would fail here and spin
-	 * instead, which is why the shape is specific to this port.  Named
-	 * where every caller passes rather than at any one call site.
+	 * instead, which is why the shape is specific to this port.  A lock
+	 * left held by a task that has since dropped its reference reaches
+	 * the same banner by another route, and no task can hold the lock
+	 * of a chain with one reference, since the core never locks a chain
+	 * it does not reference.  Named where every caller passes rather
+	 * than at any one call site.
 	 */
-	if (chain->refs == 1 && hammer2_mtx_owned(&chain->lock))
+	if (chain->refs == 1 && rwsem_is_locked(&chain->lock.lock))
 		WARN_ONCE(1, KBUILD_MODNAME ": last drop of %s chain "
-		    "%016llx by the task holding its lock\n",
+		    "%016llx while %s holds its lock\n",
 		    hammer2_breftype_to_str(chain->bref.type),
-		    (long long)chain->bref.key);
+		    (long long)chain->bref.key,
+		    hammer2_mtx_owned(&chain->lock) ? "this task" :
+		    "another task or nobody with a reference");
 
 	while (chain) {
 		refs = chain->refs;

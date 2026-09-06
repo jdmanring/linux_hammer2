@@ -560,7 +560,7 @@ construction rather than re-hashed every run.
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4973 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 4979 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1347 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
@@ -1521,9 +1521,16 @@ captured whole rather than named and lost.
 `hammer2_chain_drop()` is a candidate for it and is guarded rather than
 assumed: at its last drop it takes the chain's own lock, and this port's
 chain mutex is recursive, so a caller already holding that lock succeeds
-by recursion and frees a chain whose rwsem it still holds. A warning
-names that where every caller passes. It has not fired on any run, which
-makes it a guard and not evidence in either direction.
+by recursion and frees a chain whose rwsem it still holds. A lock left
+held by a task that has since dropped its reference reaches the same
+banner by another route, and no task can hold the lock of a chain with
+one reference, since the core never locks a chain it does not
+reference. A warning names both where every caller passes, and says
+which. It has not fired on any run, which makes it a guard and not
+evidence in either direction. The one capture of the banner holds the
+banner alone, from a run before the log was kept whole, and that run
+cannot be tied to a build either side of the stranded-lock fix, because
+no run recorded what it was built from until they all did.
 
 The `ENOSPC` underneath all of this was written up here as dropped on
 the floor, under upstream's own `XXX return error somehow?` in

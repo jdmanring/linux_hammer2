@@ -21,10 +21,10 @@
 # the ring wraps before a fill ends, and it is printed before the
 # unmount, because the unmount is where a bad run loses the log.
 #
-# WHAT IS STILL OPEN, and why this is not a gate: the module cannot be
-# removed after a fill, holding references although the filesystem has
-# unmounted, and on some runs lockdep reports a held lock freed during
-# the fill itself. Both fail this script.
+# WHAT IS STILL OPEN, and why this is not a gate: lockdep reported a
+# held lock freed during the fill on two runs before the unmount fix,
+# neither captured past the banner nor tied to a build. A recurrence
+# fails this script, is captured whole, and names its build.
 #
 # NOTHING HERE IS JUDGED BY A PROCESS'S EXIT STATUS ALONE. The unmount
 # is judged by whether the filesystem went away, because the unmount
@@ -110,8 +110,8 @@ if [ "${1:-}" = --selftest ]; then
 	    "Out of memory: Killed" \
 	    "3,903,1,-;Out of memory: Killed process 2300 (umount)"
 	check "the chain dropped under its own lock" \
-	    "by the task holding its lock" \
-	    "4,904,1,-;hammer2: last drop of inode chain 0000000000000402 by the task holding its lock"
+	    "holds its lock" \
+	    "4,904,1,-;hammer2: last drop of inode chain 0000000000000402 while this task holds its lock"
 	check "what the module still holds" \
 	    "after unmount: .*" \
 	    "6,905,1,-;hammer2: hammer2_kill_sb: after unmount: 0 inode, 4 chain, 0 modified, 0 dio still allocated"
@@ -193,6 +193,7 @@ if [ "$repeat" -gt 1 ]; then
 		# other, printed per run so the tally is not the only record.
 		command sed -n "s/^  \(locks after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(files written [0-9]*\)$/      \1/p;\
+		    s/^  \(built from .*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
@@ -256,6 +257,11 @@ else
 		echo "enospc: FAIL: the module does not build against $KDIR"; exit 1; }
 fi
 KO=src/sys/fs/hammer2/hammer2.ko
+# What the module was built from, printed with the readings: a sighting
+# on a run that cannot be tied to a source state cannot be dated against
+# a fix, and one was not.
+built=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+[ -z "$(git status --porcelain -- src 2>/dev/null)" ] || built="$built-dirty"
 [ -f "$KO" ] || { echo "enospc: FAIL: $KO was not produced"; exit 1; }
 
 rm -f "$IMG"
@@ -383,7 +389,7 @@ out=$(ssh "$GUEST_SSH" '
 	# from under this script reads as a driver failure otherwise, so it is
 	# counted whether or not anything else went wrong.
 	echo "oom kills $(command grep -c "Out of memory: Killed\|oom-kill:" /tmp/kmsg.log || true)"
-	echo "drop-with-lock warns $(command grep -c "by the task holding its lock" /tmp/kmsg.log || true)"
+	echo "drop-with-lock warns $(command grep -c "holds its lock" /tmp/kmsg.log || true)"
 	if [ "$(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)" = 0 ] &&
 	   ! command grep -q "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log; then
 		echo "=== unattributed begins"
@@ -523,6 +529,7 @@ out=$(ssh "$GUEST_SSH" '
 	timeout 30 rmmod hammer2; echo "rmmod $?"
 	kill $kpid 2>/dev/null
 ' 2>&1)
+echo "  built from $built"
 printf '%s\n' "$out" | sed 's/^/  /'
 $VIRSH detach-disk "$GUEST" vdb >/dev/null 2>&1
 [ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1
