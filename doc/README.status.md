@@ -1478,6 +1478,17 @@ device under RCU as the kernel's own accounting does, because under
 cgroup writeback the superblock's own is the root cgroup's alone and
 the guest's writer sits in another.
 
+Verified on the build that carries all of this, `9c6d30f` and after,
+because the reserve check runs on every write, create, link, rename,
+remove and size change: the fixture gate, 11 images, 43 files, 100
+ioctl results, 0 failures; the round trip, both directions, 305 files
+checked by DragonFly with 0 mismatches and 203 of DragonFly's read back
+here, 0 failures; the interrupted flush, 14401 entries recovered here
+and one written after, 14402 read by DragonFly, the lagging-header
+replay announced and both checkers clean, 0 failures; and the
+reproducer itself, four consecutive runs keeping every accepted file.
+The fuzzer's last run predates the reserve and is not claimed for it.
+
 What is not carried, with the trigger for each. The source trees'
 syncer flushes every thirty seconds and this port flushes metadata on
 `sync` alone, so a fill's whole metadata reaches the media in one
