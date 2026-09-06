@@ -112,8 +112,21 @@
  * macro and takes its format verbatim, so it would not read a pr_fmt even
  * where one exists.  One token of divergence from the three BSD ports.
  */
-/* Linux */
-#define hpanic(X, ...)	panic(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__)
+/*
+ * Linux: the three BSD ports call panic() here.  On Linux that takes the
+ * machine down for one filesystem's corruption, which no in-tree
+ * filesystem does by default: ext4, xfs and btrfs shut the filesystem
+ * down and leave the machine up.  BUG() keeps hpanic's contract of not
+ * returning, which every carried call site depends on, kills the task
+ * that found the corruption and leaves the mount wedged with its locks
+ * held, and lets the message reach the disk and the console; panic()
+ * measured here left a guest dead with an empty log.  Reversal is this
+ * one line.
+ */
+#define hpanic(X, ...)	do {						\
+	pr_emerg(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__);	\
+	BUG();								\
+} while (0)
 /*
  * DEFER(every hpanic site has an error its caller propagates): panic() is
  * what the three BSD ports do, and on Linux it is a machine-wide event

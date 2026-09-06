@@ -333,10 +333,11 @@ verbatim. This port follows both.
 | site | what it is |
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
-| `hammer2_compat.h:94` | `KASSERTMSG`, which panics under the same knob |
-| `hammer2_os.h:116` | `hpanic`, `panic()` unconditionally |
+| `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
+| `hammer2_os.h:126` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
+On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.
 
 What differs is the host. A BSD `panic` drops to the debugger or reboots,
 and the operator of a machine running an assertion kernel expects that.
@@ -359,7 +360,19 @@ The decision, split by which half the code is in:
   fails the operation with an errno instead of asserting. The first
   instance is `hammer2_io_folio_check()` in `hammer2_io.c`, which replaced
   a `KKASSERT` on a length that a buffer overrun depends on.
-- **`hpanic` stays `panic()` until there is a mount to fail instead.**
+- **`hpanic` is `BUG()` after the message, and stays non-returning until every site has a return path.**
+  It was `panic()` until 2026-09-05, which took the machine down for
+  one filesystem's corruption where every in-tree filesystem shuts the
+  filesystem down and leaves the machine up; `BUG()` keeps the
+  non-returning contract the sites below depend on, kills the task,
+  and lets the message reach the disk. Measured on 2026-09-05 with the
+  debug build's `debug_hpanic` parameter, which fires it at mount: the
+  mount process died with `SIGSEGV`, the kernel printed the message
+  and `kernel BUG at hammer2_vfsops.c:1664!` with the site, the guest
+  answered ssh afterwards, and the module stayed pinned with one
+  reference, so `rmmod` refused and the guest needed a hard stop to
+  shed it. That is the trade: a wedged module and a reboot to clear it,
+  against a machine that is down at once with nothing in its log.
   It had two call sites when this was written, both reporting a corrupt
   block reference with no mount to invalidate. The carried core brought
   its own, fifty-four across seven files on 2026-09-04, forty of them in

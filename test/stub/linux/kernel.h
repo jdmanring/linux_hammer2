@@ -45,9 +45,12 @@ typedef unsigned int gfp_t;
 #define WRITE_ONCE(x, v)	(*(volatile typeof(x) *)&(x) = (v))
 #define barrier()		__asm__ __volatile__("" ::: "memory")
 
-#define BUG_ON(cond)	do { if (cond) __builtin_trap(); } while (0)
-#define WARN_ON(cond)	(!!(cond))
-#define WARN_ON_ONCE(cond)	(!!(cond))
+#define BUG()		__builtin_trap()
+#define BUG_ON(cond)	do { if (cond) BUG(); } while (0)
+/* Statement expressions, so a bare WARN_ON_ONCE(x); as a statement does
+ * not warn for an unused value, the way the kernel's own does not. */
+#define WARN_ON(cond)	({ int __w = !!(cond); __w; })
+#define WARN_ON_ONCE(cond)	({ int __w = !!(cond); __w; })
 #define BUILD_BUG_ON_MSG(cond, msg)	_Static_assert(!(cond), msg)
 
 /* kbuild passes -DKBUILD_MODNAME on every real build and there is no
@@ -58,6 +61,7 @@ typedef unsigned int gfp_t;
 #define KBUILD_MODNAME	"hammer2"
 #endif
 
+int pr_emerg(const char *fmt, ...);
 int pr_info(const char *fmt, ...);
 int pr_info_ratelimited(const char *fmt, ...);
 int pr_cont(const char *fmt, ...);

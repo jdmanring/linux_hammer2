@@ -91,10 +91,13 @@ kern_uuidgen(struct uuid *store, int count)
 /* DragonFly KKASSERT is FreeBSD KASSERT equivalent. */
 #ifdef HAMMER2_INVARIANTS
 #define KKASSERT(exp)		BUG_ON(!(exp))
+/* Linux: BUG() rather than panic(), for the reason hpanic gives. */
 #define KASSERTMSG(exp, msg, ...)					\
 	do {								\
-		if (unlikely(!(exp)))					\
-			panic("%s: " msg, __func__, ## __VA_ARGS__);	\
+		if (unlikely(!(exp))) {					\
+			pr_emerg("%s: " msg, __func__, ## __VA_ARGS__);	\
+			BUG();						\
+		}							\
 	} while (0)
 #else
 #define KKASSERT(exp)		do {} while (0)

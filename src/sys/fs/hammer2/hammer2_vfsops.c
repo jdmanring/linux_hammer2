@@ -132,6 +132,14 @@ module_param_named(bulkfree_tps, hammer2_bulkfree_tps, int, 0644);
 module_param_named(limit_scan_depth, hammer2_limit_scan_depth, int, 0644);
 module_param_named(limit_saved_chains, hammer2_limit_saved_chains, int, 0644);
 module_param_named(always_compress, hammer2_always_compress, int, 0644);
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * XXX Linux: fires hpanic() on the next mount, so what hpanic does to
+ * the machine is measured rather than argued.  Debug build only.
+ */
+int hammer2_debug_hpanic;
+module_param_named(debug_hpanic, hammer2_debug_hpanic, int, 0644);
+#endif
 
 /*
  * XXX Linux: this file is a rewrite with a carried body, and that is a
@@ -1651,6 +1659,10 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
 
 	sb->s_fs_info = pmp;
 	pmp->mp = sb;
+#if defined(HAMMER2_LOCKDEBUG)
+	if (hammer2_debug_hpanic)
+		hpanic("debug_hpanic is set, so this mount stops here");
+#endif
 
 	/* After pmp->mp is set adjust hmp->mount_count. */
 	cluster = &pmp->iroot->cluster;
