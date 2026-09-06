@@ -42,6 +42,7 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/pagemap.h>
+#include <linux/backing-dev.h>	/* wb_stat, for the write reserve */
 #include <linux/slab.h>
 #include <linux/rwsem.h>
 #include <linux/wait.h>

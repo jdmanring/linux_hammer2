@@ -872,7 +872,17 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * cache accepted 511 files of a fill the free count saw nothing of
 	 * until the flush, and 37 of them were lost.
 	 */
-	switch (hammer2_vfs_enospace(ip, iov_iter_count(from), current_cred())) {
+	/*
+	 * XXX Linux: the free count moves when a block is allocated, and
+	 * the page cache holds what write(2) accepted until writeback
+	 * allocates it, so a write is judged with everything dirty on this
+	 * device counted against the reserve as well as itself.  Without
+	 * that, fifteen files of a fill were still lost to a flush that
+	 * found the reserve already eaten by data the count had not seen.
+	 */
+	switch (hammer2_vfs_enospace(ip, iov_iter_count(from) +
+	    ((loff_t)wb_stat(&inode->i_sb->s_bdi->wb, WB_RECLAIMABLE) <<
+	    PAGE_SHIFT), current_cred())) {
 	case 2:
 		return (-ENOSPC);
 	case 1:

@@ -334,7 +334,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:126` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
+| `hammer2_os.h:127` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.
