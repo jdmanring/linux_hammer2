@@ -1,0 +1,10 @@
+--- a/src/sys/fs/hammer2/hammer2_vfsops.c
++++ b/src/sys/fs/hammer2/hammer2_vfsops.c
+@@ -502,6 +502,7 @@
+ 				pmp->pfs_names[i] = NULL;
+ 			}
+ 			if (rchain) {
++				rchain->pmp = NULL;
+ 				hammer2_chain_drop(rchain);
+ 				/* focus hint */
+ 				if (iroot->cluster.focus == rchain)

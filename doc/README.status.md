@@ -557,18 +557,18 @@ construction rather than re-hashed every run.
 | `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
 | `hammer2_chain.c` | 4973 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
-| `hammer2_flush.c` | 1332 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
+| `hammer2_flush.c` | 1347 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2776 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2823 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1334 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1287 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 947 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 999 | ours, the OS shim |
+| `hammer2_os.h` | 1020 | ours, the OS shim |
 | `hammer2_compat.h` | 195 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -1564,12 +1564,39 @@ is invisible to it. Upstream also fixes up `hmp->vchain.pmp` and
 `hmp->fchain.pmp` by hand when the super-root PFS goes, which is the
 same hazard handled one case at a time.
 
-The call shape is upstream's: FreeBSD's `hammer2_pfsfree_scan()` calls
-`hammer2_vfs_sync_pmp()` the same way. A volume with room in it unmounts
-through this path in every fixture run without faulting, so what differs
-is the state a filled volume leaves behind. The port's own swallowed
-`ENOSPC`, recorded above, is a candidate for putting it there and is not
-yet shown to. It follows a run of `hammer2_flush_core: inode parent
+The chain carrying the dead pointer is named by the same build. It is
+`inode chain ed481bfef6b68000/0`, flags `004c6142`, which decodes as
+`ALLOCATED | UPDATE | TESTEDGOOD | COUNTEDBREFS | ONRBTREE | BLKMAPPED |
+BLKMAPUPD | PFSBOUNDARY`: a PFS root chain, still in the topology,
+carrying an update the full volume never let complete. It is the same
+key the fill reports over and over as
+`hammer2_chain_create_indirect: inode chain ed481bfef6b68000/0 modify
+error 00000020`, so the chain that outlives its PFS is the one the
+`ENOSPC` was refused on.
+
+`hammer2_pfsfree_scan()` takes that chain out of the PFS root inode's
+cluster and drops it, and the drop does not free it because a reference
+remains. It stays in the topology with `->pmp` pointing at storage the
+next few lines release.
+
+Clearing that pointer before the drop fixes it. A NULL `pmp` is a state
+the chain code already expects: `hammer2_chain_alloc()` sets it for any
+chain of the super-root topology, and every read of `chain->pmp` tests
+it first, including the one that faults. It is also what this same
+function already does by hand for `hmp->vchain.pmp` and
+`hmp->fchain.pmp` when the PFS being freed is the super-root's.
+
+Measured: four runs after the change, no fault on any, the module
+unloading every time, against five faults in the seven runs before it.
+The fixture gate ran afterwards because this changes the teardown of
+every unmount, not only a full one, and reported 11 images, 43 files,
+100 ioctl results and 0 failures with lockdep enabled throughout. Four
+runs is not many, and more are wanted before the reproducer becomes a
+gate.
+
+The call shape and the site are upstream's: DragonFly and all three of
+Kusumi's ports carry the same drop, and the patches are staged in
+`doc/upstream/`, applying at zero fuzz against each of the four trees. It follows a run of `hammer2_flush_core: inode parent
 0000000000000000/0 error 00000020` lines, the ENOSPC the flush is being
 handed and not told what to do with, so the two are being read together
 rather than separately.
@@ -1909,12 +1936,12 @@ against the FreeBSD port at
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 4 | 2 | 2 |
 | `hammer2_os.h` | 5 | 0 | 5 |
-| `hammer2_flush.c` | 13 | 8 | 5 |
+| `hammer2_flush.c` | 14 | 8 | 6 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 21 | 1 | 20 |
 | `hammer2_inode.c` | 28 | 6 | 22 |
-| `hammer2_vfsops.c` | 40 | 7 | 32 |
+| `hammer2_vfsops.c` | 42 | 7 | 34 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 0 | 0 | 0 |

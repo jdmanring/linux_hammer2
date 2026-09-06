@@ -996,4 +996,25 @@ int __hammer2_dbg_held_chains(const char *);
 #define hammer2_dbg_held_chains(where)	((void)(where), 0)
 #endif
 
+/*
+ * Linux: the addresses of the last few PFSes hammer2_pfsfree() released.
+ * Unmounting a filled volume faults in the flush reading chain->pmp->mp
+ * on a PFS the same teardown pass has already freed, and the pointer is
+ * not NULL, so the guard there cannot tell. This says which chain is
+ * carrying the dead pointer, which the fault itself does not: it reports
+ * the address and the instruction and nothing about the chain.
+ *
+ * A ring of addresses, not a liveness check: a freed pointer cannot be
+ * asked anything, so what is kept is what was freed.
+ */
+#if defined(HAMMER2_LOCKDEBUG)
+#define hammer2_dbg_pmp_dead(pmp)	__hammer2_dbg_pmp_dead(pmp)
+#define hammer2_dbg_pmp_died(pmp)	__hammer2_dbg_pmp_died(pmp)
+int __hammer2_dbg_pmp_dead(const void *);
+void __hammer2_dbg_pmp_died(const void *);
+#else
+#define hammer2_dbg_pmp_dead(pmp)	((void)(pmp), 0)
+#define hammer2_dbg_pmp_died(pmp)	((void)(pmp))
+#endif
+
 #endif /* !_FS_HAMMER2_OS_H_ */

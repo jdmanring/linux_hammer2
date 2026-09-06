@@ -428,6 +428,21 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 	 * boundaries due to the way hammer2_vfs_sync() sequences the flush.
 	 * Be sure to issue an appropriate chain_setflush()
 	 */
+	/*
+	 * XXX Linux: the read of chain->pmp->mp below faults when a filled
+	 * volume is unmounted, on a PFS this teardown has already freed.
+	 * The pointer is not NULL, so the test cannot tell. Name the chain
+	 * carrying it, which the oops does not: it reports the address and
+	 * the instruction and nothing about what held them. Compiled away
+	 * without HAMMER2_LOCKDEBUG, and it does not change what happens
+	 * next, so the fault it describes still occurs.
+	 */
+	if (chain->pmp && hammer2_dbg_pmp_dead(chain->pmp))
+		hprintf("%s chain %016llx/%d holds freed pmp, flags %08x\n",
+		    hammer2_breftype_to_str(chain->bref.type),
+		    (long long)chain->bref.key, chain->bref.keybits,
+		    chain->flags);
+
 	if ((chain->flags & HAMMER2_CHAIN_PFSBOUNDARY) &&
 	    (flags & HAMMER2_FLUSH_ALL) == 0 &&
 	    (flags & HAMMER2_FLUSH_TOP) == 0 &&

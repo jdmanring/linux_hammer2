@@ -121,6 +121,9 @@ if [ "${1:-}" = --selftest ]; then
 	check "where it faulted" \
 	    "RIP: [0-9]*:[a-zA-Z0-9_]*+0x[0-9a-f]*" \
 	    "4,1077,1,-;RIP: 0010:hammer2_flush_core+0x206/0x910 [hammer2]"
+	check "a chain on a freed PFS" \
+	    "holds freed pmp" \
+	    "6,910,1,-;hammer2: hammer2_flush_core: inode chain 0000000000000402/0 holds freed pmp, flags 00144002"
 	check "a busy inode" \
 	    "Busy inodes after unmount" \
 	    "4,906,1,-;VFS: Busy inodes after unmount of vdb (hammer2)"
@@ -473,6 +476,11 @@ out=$(ssh "$GUEST_SSH" '
 	echo "faulting rcx $(command grep -m1 -o "RCX: [0-9a-f]*" /tmp/oops.log || echo none)"
 	command grep -o "freeing pmp [0-9a-fx]*\|pfsfree_scan which [0-9] syncing pmp [0-9a-fx]*" \
 	    /tmp/kmsg.log | tail -12
+	# Which chain carries the dead pointer. The oops reports the
+	# address and the instruction and nothing about the chain.
+	echo "chains on a freed pmp $(command grep -c "holds freed pmp" /tmp/kmsg.log || true)"
+	command grep -o "[a-z]* chain [0-9a-f]*/[0-9]* holds freed pmp, flags [0-9a-f]*" \
+	    /tmp/kmsg.log | sort | uniq -c | head -6
 	echo "still mounted $(command grep -c h2enospc /proc/mounts || true)"
 	echo "module refs $(cat /sys/module/hammer2/refcnt 2>/dev/null || echo unreadable)"
 	# What the module still holds, printed by the driver at unmount

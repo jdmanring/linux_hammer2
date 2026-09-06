@@ -386,6 +386,35 @@ hammer2_pfsdealloc(hammer2_pfs_t *pmp, int clindex,
 	}
 }
 
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * XXX Linux: see hammer2_os.h. Sixteen is more PFSes than a teardown of
+ * one device frees, and the ring wrapping loses the oldest rather than
+ * reporting a chain as clean, which is the safe direction for a probe.
+ */
+#define HAMMER2_DEAD_PMPS	16
+static const void *hammer2_dead_pmp[HAMMER2_DEAD_PMPS];
+static unsigned int hammer2_dead_pmp_next;
+
+void
+__hammer2_dbg_pmp_died(const void *pmp)
+{
+	hammer2_dead_pmp[hammer2_dead_pmp_next % HAMMER2_DEAD_PMPS] = pmp;
+	hammer2_dead_pmp_next++;
+}
+
+int
+__hammer2_dbg_pmp_dead(const void *pmp)
+{
+	int i;
+
+	for (i = 0; i < HAMMER2_DEAD_PMPS; i++)
+		if (hammer2_dead_pmp[i] == pmp)
+			return (1);
+	return (0);
+}
+#endif
+
 void
 hammer2_pfsfree(hammer2_pfs_t *pmp)
 {
@@ -442,6 +471,7 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 		hammer2_lkc_destroy(&pmp->trans_cv);
 		hammer2_inum_hash_destroy(pmp);
 		hammer2_ipdep_destroy(pmp); /* XXX Linux: hashdestroy(9) */
+		hammer2_dbg_pmp_died(pmp);
 		hfree(pmp, M_HAMMER2, sizeof(*pmp));
 	}
 }
@@ -498,6 +528,23 @@ again:
 				pmp->pfs_names[i] = NULL;
 			}
 			if (rchain) {
+				/*
+				 * XXX A chain that outlives this drop keeps
+				 * a pointer to a PFS about to be freed, and
+				 * the flush this teardown runs next reads
+				 * chain->pmp->mp through it.  Measured on a
+				 * volume filled to ENOSPC: the PFS root
+				 * chain is still ONRBTREE with an UPDATE the
+				 * full volume never let complete, the drop
+				 * does not free it, and the read faults.
+				 * Clearing it is what this function already
+				 * does for vchain and fchain below when the
+				 * same PFS is the super-root's, and a NULL
+				 * pmp is a state the chain code expects: it
+				 * is what a super-root chain carries, and
+				 * every read of chain->pmp tests it first.
+				 */
+				rchain->pmp = NULL;
 				hammer2_chain_drop(rchain);
 				/* focus hint */
 				if (iroot->cluster.focus == rchain)

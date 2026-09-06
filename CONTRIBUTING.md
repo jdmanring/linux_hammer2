@@ -99,3 +99,34 @@ HAMMER2 is Matthew Dillon's, and the three existing ports are Tomohiro
 Kusumi's. This port exists to be handed over. If it ends up living in one
 of their trees instead of this one, that is the intended outcome and not a
 loss.
+
+Nothing here is filed upstream by anyone but the author, and fixes to
+carried code are staged as patches under `doc/upstream/` rather than
+sent.
+
+**A staged patch is not finished until it says where it stands against
+upstream.** Every file under `doc/upstream/` has to be named by a
+document beside it, and `script/test-inventory.sh` fails if one is not.
+That note carries three things: whether the code is still that way at
+upstream's current head and how that was checked, what was searched for
+and where, and what could not be searched.
+
+The reason is the failure it was written after. Patches sat here
+describing a fix with no word about whether upstream had already made it,
+already refused it, or already been told, and the first time anyone
+looked, upstream had fixed a sibling of one of them years earlier and
+chosen a different shape of fix. Seven of the eight staged patches had no
+such note that day.
+
+Three things about the trees that are easy to get wrong. Kusumi's three
+port repositories have issues disabled and carry no pull requests, so
+there is no tracker there and silence from it means nothing. DragonFly's
+tracker refuses automated fetches behind a proof of work, so searching it
+is a manual step and has to be recorded as done or not done rather than
+assumed. And a local clone answers what the code is, never what is known
+about it: the clone of DragonFly here is shallow, so its history cannot
+be searched at all and the forge has to be asked instead.
+
+The rule that makes this worth the trouble: absence of a report and
+absence of a problem produce the same silence. Only a record of what was
+looked at tells them apart.

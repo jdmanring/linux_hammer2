@@ -345,5 +345,34 @@ else
 	fi
 fi
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $fail finding(s)"
+# EVERY STAGED PATCH MUST SAY WHERE IT STANDS AGAINST UPSTREAM. Patches
+# sat in doc/upstream/ describing a fix with nothing recorded about
+# whether upstream had already made it, already rejected it, or already
+# been told, and a patch with no such record invites the reader to assume
+# somebody looked. Seven of eight had none the day this check was
+# written. The gate cannot read whether a note is any good; it can insist
+# one exists and is not the patch talking about itself.
+npatch=0
+for f in doc/upstream/*.patch; do
+	[ -e "$f" ] || continue
+	npatch=$((npatch + 1))
+	b=$(basename "$f")
+	if command grep -rlF "$b" --include="*.md" doc/ 2>/dev/null |
+	    command grep -qv "^doc/upstream/$b\$"; then
+		:
+	else
+		echo "  FAIL doc/upstream/$b is staged with no document saying"
+		echo "       whether upstream already has it, has refused it, or"
+		echo "       has been told; see doc/upstream/README-provenance.md"
+		fail=$((fail + 1))
+	fi
+done
+# The patches are a population like the rest. A glob that matched nothing
+# would check nothing and still print a clean count.
+[ "$npatch" -gt 0 ] || {
+	echo "  FAIL doc/upstream/ holds no patch at all, so the provenance"
+	echo "       check above read nothing"
+	fail=$((fail + 1)); }
+
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged patch(es), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
