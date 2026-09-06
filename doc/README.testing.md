@@ -1176,7 +1176,21 @@ with a dirty mark.
 It became a gate after ten clean runs on the build that passes it,
 across three shapes of the instrument, all in the account. It exits 2
 without a guest, like `test-fixtures.sh`, so a push from a machine
-without the fleet reports it as not run rather than as passed.
+without the fleet reports it as not run rather than as passed. Its
+first run as a gate found that its readings named only the faults it
+was written for, so the warning from the compaction daemon that the
+file mapping did not implement folio migration sat in 39 of 62 kept
+logs and every one read as clean. It now counts every `cut here` line
+in the capture as a kernel warning, prints the first, and fails on
+one; the selftest holds the pattern against the line the kernel
+prints. Every WARN prints that line, whichever subsystem it is from,
+so a warning the readings do not name is still counted. The count is
+scoped to the capture after the module loaded, because the capture is
+the ring from boot and the first run of the count found the guest
+kernel warning for itself there, a DMA allocation in the USB host
+controller during boot, untainted and before the module. When the
+count is not zero the first warning's trace is kept in the log, which
+the run that found that one had not done.
 
 A debug build logs each PFS as it is freed and each one the teardown
 syncs, unhashed with `%px` so the addresses can be compared against the

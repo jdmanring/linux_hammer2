@@ -115,6 +115,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	check "what the module still holds" \
 	    "after unmount: .*" \
 	    "6,905,1,-;hammer2: hammer2_kill_sb: after unmount: 0 inode, 4 chain, 0 modified, 0 dio still allocated"
+	check "a kernel warning" \
+	    "cut here" \
+	    "6,969,39981586,-;------------[ cut here ]------------"
 	check "a kernel fault" \
 	    "Oops: " \
 	    "4,1073,1,-;Oops: Oops: 0000 [#1] SMP NOPTI"
@@ -205,6 +208,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(oops [0-9]*\)$/      \1/p;\
+		    s/^  \(kernel warnings [0-9]*.*\)$/      \1/p;\
 		    s/^  \(faulted in .*\)$/      \1/p;\
 		    s/^  \(still mounted [0-9]*\)$/      \1/p;\
 		    s/^  \(umount [0-9]*\)$/      \1/p;\
@@ -613,6 +617,27 @@ out=$(ssh "$GUEST_SSH" '
 	# the module will not unload because the superblock survives
 	# because the unmount died. Name the fault itself.
 	echo "oops $(command grep -c "Oops: " /tmp/kmsg.log || true)"
+	# Every WARN prints a cut-here line, whatever printed it. The
+	# readings above name the faults this script was written for, and
+	# the warning from the compaction daemon that the file mapping does not
+	# implement folio migration sat in 39 of 62 kept logs, counted by
+	# none of them. One count for the class, with the first line.
+	# Scoped to after the module loaded: the capture holds the ring
+	# from boot, and the guest kernel warns for itself there, a DMA
+	# allocation in the USB host controller at boot, PID 1, untainted.
+	# Without the anchor the count says so and counts from the start.
+	anchor=$(command grep -n "hammer2: loading out-of-tree module" /tmp/kmsg.log | tail -1 | cut -d: -f1)
+	w=$(tail -n +"${anchor:-1}" /tmp/kmsg.log | command grep -c "cut here" || true)
+	if [ -n "$anchor" ]; then
+		echo "kernel warnings $w after the module loaded $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*" | cut -c1-90)"
+	else
+		echo "kernel warnings $w with no module-load line in the capture, counted from the start $(command grep -m1 -o "WARNING: .*" /tmp/kmsg.log | cut -c1-90)"
+	fi
+	if [ "$w" -gt 0 ]; then
+		echo "=== first warning begins"
+		tail -n +"${anchor:-1}" /tmp/kmsg.log | command sed -n "/cut here/,+60p" | command sed "s/^[0-9,;]*;//" | command grep -v "^ SUBSYSTEM=\|^ DEVICE=\|Modules linked in" | head -60
+		echo "=== first warning ends"
+	fi
 	# Scoped to the oops. Taking the first match in the whole log reads
 	# a RIP and an RCX out of whatever unrelated warning came first,
 	# and it did: a healthy run reported a faulting address belonging
@@ -778,6 +803,10 @@ fi
 # an unmount that never finished for as long as the status was the only
 # thing being asked.
 # An oops is the finding; everything below it is what the oops caused.
+printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||
+	{ echo "  FAIL  the kernel warned during the run:"
+	  printf '%s\n' "$out" | sed -n 's/^kernel warnings/        &/p'
+	  fail=$((fail + 1)); }
 printf '%s\n' "$out" | command grep -q '^oops 0$' ||
 	{ echo "  FAIL  the kernel faulted during this run:"
 	  printf '%s\n' "$out" | sed -n 's/^oops /        oops count /p'
