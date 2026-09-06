@@ -1516,21 +1516,48 @@ Depth zero and `lockcnt` one. It is a single acquire, owned by the sync
 task, taken at the relock in `hammer2_flush_core()` and never released,
 not a recursion imbalance.
 
-What is still not identified is the release that is missed. Both
-`hammer2_flush_core()` and `hammer2_flush()` return with the chain
-locked by contract, as they do in DragonFly, and the eight call sites
-of `hammer2_flush()` were read: four are mount-time recovery and fixup
-rather than the sync path, three take `vchain` and `fchain`, whose types
-are not the `INODE` the instrument reports, and the one that remains,
-in `hammer2_xop_inode_flush()`, unlocks on the path it takes. The
-candidate that reading suggests and no measurement has yet tested is
-that `hammer2_flush_core()` replaces the chain it was given, which
-`hammer2_flush()` takes by value and cannot pass back, so the caller's
-unlock would release the chain it started with while the replacement
-stays locked. Two of the volume-root call sites carry a `KKASSERT` that
-the chain was not replaced, which is what suggests it. That is a lead
-and not a finding, and the next measurement is to compare the held
-chain against the one the caller unlocks.
+Naming the acquire turned out not to name the leak, and the instrument
+that recorded it could not have. `hammer2_flush_core()` unlocks and
+relocks every chain it flushes, so a chain whose last acquire is that
+relock is any chain that has been flushed. The reading was true and
+carried no information.
+
+What names the leak is bracketing. A counter of the chain locks the
+sync task holds, printed after each of the calls
+`hammer2_vfs_sync_pmp()` makes between locking an inode and releasing
+it, gives this:
+
+    582 at chain_sync    582 at chain_flush
+    581 at loop-top      581 at chain_ins
+      1 at trans_init      1 at entry
+
+Three things follow. The count is one at every probe and never grows,
+where a leak per iteration would reach 583, so it is a single chain
+rather than an accumulation. It is the same chain at every probe, type
+`INODE` and key `402`, so it is one chain held throughout and not one
+held at a time in turn, which is the other reading the count alone
+allows. And it is already held at `entry`, before
+`hammer2_trans_init()`, which is the second `sync_fs` pass of one
+`sync(2)` seeing what the first left behind.
+
+The first pass is where the transition happens, and the counts locate
+it. The probes run in the order `loop-top`, `chain_ins`, `chain_sync`,
+`chain_flush`, and each prints only when something is held. An
+iteration that acquires the leak inside `chain_sync` therefore prints
+its last two probes and none of its first two, and every later
+iteration prints all four, giving N, N, N-1, N-1. That is the pattern,
+with N of 582, so the chain is first left locked inside
+`hammer2_inode_chain_sync()`.
+
+`hammer2_inode_chain_sync()` itself locks nothing: it fills an XOP,
+starts it, collects and retires it, and drops the error under
+upstream's own `XXX return error somehow?`. The chain is locked and
+released inside the XOP body, which reaches one cleanup label that
+unlocks and drops both chains on every path. So the release that is
+missed is inside the XOP machinery on the error path rather than in
+either function's own code, and the next measurement is the same
+bracketing applied around `hammer2_xop_start()`,
+`hammer2_xop_collect()` and `hammer2_xop_retire()`.
 
 One thing the attempt did settle: `__builtin_return_address()` above
 frame zero is not safe in kernel context, and a build using frames one
