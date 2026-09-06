@@ -194,6 +194,7 @@ if [ "$repeat" -gt 1 ]; then
 		command sed -n "s/^  \(locks after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(files written [0-9]*\)$/      \1/p;\
 		    s/^  \(built from .*\)$/      \1/p;\
+		    s/^  \(files intact .*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
@@ -344,9 +345,16 @@ out=$(ssh "$GUEST_SSH" '
 	# read the free space afterwards, and let the host assert both.
 	i=0
 	why=
+	# Every file the fill wrote is hashed as written, off the volume, so
+	# that what the volume holds afterwards can be compared with what
+	# write(2) accepted. DragonFly re-dirties a buffer whose write failed
+	# and keeps it for another attempt; whether this port keeps or drops
+	# such data is a reading, taken below after the page cache is dropped.
+	: > /tmp/fill.sums
 	while [ $i -lt 8000 ]; do
 		why=$(dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=1M \
 		    count=4 status=none 2>&1) || break
+		sha256sum /mnt/h2enospc/fill.$i >> /tmp/fill.sums
 		i=$((i + 1))
 	done
 	echo "files written $i"
@@ -369,6 +377,13 @@ out=$(ssh "$GUEST_SSH" '
 	echo "syncfs returned $? ${msg:+: $msg}"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
+	# What the volume holds of what write(2) accepted: the page cache is
+	# dropped so every byte re-read comes from the media, then each file
+	# is checked against its hash. The counts are printed together, so a
+	# check that read nothing cannot pass as one that found nothing wrong.
+	echo 3 > /proc/sys/vm/drop_caches
+	cd / && sha256sum -c /tmp/fill.sums > /tmp/fill.check 2>/dev/null
+	echo "files intact $(grep -c ": OK$" /tmp/fill.check) of $i, damaged $(grep -c ": FAILED" /tmp/fill.check)"
 	# The capture is NOT stopped here. Reading the log does not require
 	# stopping it, and stopping it closed the window before the unmount,
 	# so every message the unmount produces was invisible: the counters
