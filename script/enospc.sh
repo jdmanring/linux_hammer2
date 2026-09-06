@@ -353,6 +353,9 @@ out=$(ssh "$GUEST_SSH" '
 	# a read-only remount or an I/O error. Every check below would then
 	# describe a volume that never filled. Keep the reason dd gave and
 	# read the free space afterwards, and let the host assert both.
+	# The file for the mapped-write probe, made and sized while there is room,
+	# so that after the fill the write fault is the first thing asked.
+	truncate -s 128K /mnt/h2enospc/mapped
 	i=0
 	why=
 	# Every file the fill wrote is hashed as written, off the volume, so
@@ -394,8 +397,8 @@ out=$(ssh "$GUEST_SSH" '
 	# check in the write entry never sees it. What it is told, and when,
 	# is the reading: a refusal at the fault arrives before any byte is
 	# accepted, a failure at msync after all of them were.
-	msg=$(/tmp/h2mmaptest /mnt/h2enospc/mapped 2>&1 | tail -1)
-	echo "mmap on the full volume exit $? : ${msg:-no output}"
+	/tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1; st=$?
+	echo "mmap on the full volume exit $st : $(tail -1 /tmp/h2mmap.out)"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The free space read before the sync includes what dirty pages will
