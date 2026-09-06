@@ -52,12 +52,18 @@ if [ "$repeat" -gt 1 ]; then
 	GUEST=${H2_GUEST:-artix-s6-kde}
 	VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 	pass=0; failed=0; cnr=0; seen=0; i=1
-	log=$(mktemp) || exit 2
-	trap 'rm -f "$log"' EXIT
+	# Each run's whole output is kept. The first version reused one
+	# temporary file, so every question the tally did not already answer
+	# cost another batch to ask: the logs that would have said whether
+	# the failing runs were the ones whose unmount was killed had been
+	# overwritten by the runs that followed them.
+	logdir=${H2_LOGDIR:-$(mktemp -d)} || exit 2
+	mkdir -p "$logdir" || exit 2
 	while [ "$i" -le "$repeat" ]; do
 		$VIRSH destroy "$GUEST" >/dev/null 2>&1
 		sleep 6
 		$VIRSH start "$GUEST" >/dev/null 2>&1
+		log=$logdir/run-$i.log
 		H2_REPEAT=1 sh "$0" > "$log" 2>&1
 		st=$?
 		seen=$((seen + 1))
@@ -74,6 +80,8 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(still mounted [0-9]*\)$/      \1/p;\
+		    s/^  \(umount [0-9]*\)$/      \1/p;\
+		    s/^  \(umount left at .*\)$/      \1/p;\
 		    s/^  \(module refs .*\)$/      \1/p;\
 		    s/^  \(outstanding .*\)$/      \1/p;\
 		    s/^  \(busy inodes [0-9]*\)$/      \1/p;\
@@ -83,6 +91,7 @@ if [ "$repeat" -gt 1 ]; then
 		i=$((i + 1))
 	done
 	echo "enospc: $seen run(s), $pass pass, $failed fail, $cnr could-not-run"
+	echo "enospc: the runs are kept in $logdir"
 	[ "$seen" -eq "$repeat" ] || {
 		echo "enospc: FAIL: ran $repeat but tallied $seen" >&2; exit 1; }
 	[ "$failed" -eq 0 ] && [ "$cnr" -eq 0 ]
