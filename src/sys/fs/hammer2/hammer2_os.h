@@ -48,6 +48,7 @@
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
+#include <linux/sched/mm.h>	/* memalloc_nofs_save, for the lock scope */
 #include <linux/string.h>
 #include <linux/blkdev.h>
 
@@ -366,6 +367,54 @@ hammer2_mtx_owned(hammer2_mtx_t *p)
 	return (READ_ONCE(p->owner) == current);
 }
 
+/*
+ * Linux: a task holding any HAMMER2 lock is in a NOFS scope. Reclaim
+ * evicts inodes under the inode lock class, so an allocation that may
+ * enter filesystem reclaim while an inode or chain lock is held is an
+ * inversion, and a real one: the flush holds the evicted inode's lock
+ * and wants the holder's. lockdep reported it three ways on a
+ * hundred-thousand-file tree, an XOP allocated under the directory's
+ * lock, the VFS allocating an inode under it, and readdir faulting a
+ * user page under it, and the last is not an allocation this module
+ * makes. GFP_NOFS at the sites cannot reach that one; the scope can.
+ * ext4 and xfs need none of this because reclaim takes no lock of
+ * theirs that their operations hold.
+ *
+ * The scope is entered on every acquire and left on every release,
+ * counted per task so the release order does not matter, which the
+ * memalloc_nofs_save() and restore() pair alone requires. The count
+ * and the saved flag live in current->journal_info, which the kernel
+ * reserves for the filesystem a task is in and this module uses for
+ * nothing else: the depth in the high bits, the flag to restore in the
+ * low bit.
+ */
+static inline void
+hammer2_nofs_enter(void)
+{
+	unsigned long v = (unsigned long)current->journal_info;
+
+	if (v == 0)
+		v = 2 | (memalloc_nofs_save() ? 1 : 0);
+	else
+		v += 2;
+	current->journal_info = (void *)v;
+}
+
+static inline void
+hammer2_nofs_leave(void)
+{
+	unsigned long v = (unsigned long)current->journal_info;
+
+	if (WARN_ON_ONCE(v < 2))
+		return;
+	v -= 2;
+	if (v < 2) {
+		memalloc_nofs_restore((v & 1) ? PF_MEMALLOC_NOFS : 0);
+		v = 0;
+	}
+	current->journal_info = (void *)v;
+}
+
 /* Non-zero if the caller already holds the lock and now holds it deeper. */
 static inline int
 hammer2_mtx_ex_recurse(hammer2_mtx_t *p)
@@ -386,6 +435,7 @@ hammer2_mtx_ex(hammer2_mtx_t *p)
 	down_write_nested(&p->lock, p->subclass);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
+	hammer2_nofs_enter();
 }
 
 /*
@@ -406,6 +456,7 @@ hammer2_mtx_ex_nested(hammer2_mtx_t *p, unsigned int subclass)
 	down_write_nested(&p->lock, subclass);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
+	hammer2_nofs_enter();
 }
 
 /*
@@ -427,6 +478,7 @@ hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
 		down_write(&p->lock);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
+	hammer2_nofs_enter();
 }
 
 static inline void
@@ -434,6 +486,7 @@ hammer2_mtx_sh(hammer2_mtx_t *p)
 {
 	down_read_nested(&p->lock, p->subclass);
 	atomic_add_int(&p->refs, 1);
+	hammer2_nofs_enter();
 }
 
 /*
@@ -456,6 +509,7 @@ hammer2_mtx_sh_again(hammer2_mtx_t *p)
 {
 	atomic_inc(&p->again);
 	atomic_add_int(&p->refs, 1);
+	hammer2_nofs_enter();	/* its unlock leaves, so its re-lock enters */
 }
 
 static inline void
@@ -468,9 +522,11 @@ hammer2_mtx_unlock(hammer2_mtx_t *p)
 			return;
 		}
 		WRITE_ONCE(p->owner, NULL);
+		hammer2_nofs_leave();
 		up_write(&p->lock);
 	} else {
 		atomic_add_int(&p->refs, -1);
+		hammer2_nofs_leave();
 		if (atomic_dec_if_positive(&p->again) >= 0)
 			return;		/* a re-lock's credit, no up_read owed */
 		up_read(&p->lock);
@@ -498,6 +554,7 @@ hammer2_mtx_ex_try(hammer2_mtx_t *p)
 		return (1);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
+	hammer2_nofs_enter();
 	return (0);
 }
 
@@ -507,6 +564,7 @@ hammer2_mtx_sh_try(hammer2_mtx_t *p)
 	if (!down_read_trylock(&p->lock))
 		return (1);
 	atomic_add_int(&p->refs, 1);
+	hammer2_nofs_enter();
 	return (0);
 }
 
@@ -698,6 +756,14 @@ hammer2_spin_destroy(hammer2_spin_t *p __always_unused)
  * caller is left in place for that, and no size in this module is within
  * three orders of magnitude of it.
  *
+ * GFP_NOFS and not GFP_KERNEL, since 2026-09-06: every blocking
+ * allocation the core makes is made under one of its own locks, and an
+ * allocation that may enter filesystem reclaim under an inode lock is
+ * the inversion lockdep reported on a hundred-thousand-file tree, the
+ * lookup allocating an XOP under the directory's lock against kswapd
+ * evicting an inode under fs_reclaim.  ext4 and xfs allocate NOFS in the
+ * same positions; vmalloc handles the flag with its own NOFS scope.
+ *
  * M_NOWAIT keeps GFP_NOWAIT and may still fail, which is also malloc(9)'s
  * contract and what the carried code expects when it passes it.
  */
@@ -709,7 +775,7 @@ hammer2_gfp(int flags)
 	if (flags & M_NOWAIT)
 		gfp = GFP_NOWAIT;
 	else
-		gfp = GFP_KERNEL | __GFP_NOFAIL;	/* Linux */
+		gfp = GFP_NOFS | __GFP_NOFAIL;	/* Linux */
 
 	if (flags & M_ZERO)
 		gfp |= __GFP_ZERO;

@@ -4,7 +4,7 @@
 #include <linux/kernel.h>
 #define TASK_INTERRUPTIBLE 0x0001
 #define MAX_SCHEDULE_TIMEOUT ((long)(~0UL >> 1))
-struct task_struct { char comm[16]; long opaque; };
+struct task_struct { char comm[16]; long opaque; void *journal_info; };
 int task_pid_nr(struct task_struct *p);
 extern struct task_struct *current;
 long schedule_timeout(long timeout);

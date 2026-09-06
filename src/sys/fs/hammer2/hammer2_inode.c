@@ -830,6 +830,13 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	 * node falls to the file table, which is wrong and not reachable:
 	 * nothing has made one on this media.
 	 */
+	/*
+	 * Linux: page cache allocations for this inode must not enter
+	 * filesystem reclaim, which takes inode locks to evict; xfs clears
+	 * the same bit at the same point.
+	 */
+	mapping_set_gfp_mask(inode->i_mapping,
+	    mapping_gfp_mask(inode->i_mapping) & ~__GFP_FS);	/* Linux */
 	if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &hammer2_dir_iops;	/* Linux */
 		inode->i_fop = &hammer2_dir_fops;	/* Linux */

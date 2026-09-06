@@ -82,9 +82,9 @@ strategy would meet the same format.
 | site | what |
 |---|---|
 | `hammer2_io.c:43-47` | one folio per `hammer2_io`, via a 64 KiB block size |
-| `hammer2_io.c:75` | the `BLK_MAX_BLOCK_SIZE` static assert |
-| `hammer2_io.c:92-100` | `hammer2_io_index()` assuming the mapping's folio order |
-| `hammer2_io.c:126` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
+| `hammer2_io.c:76` | the `BLK_MAX_BLOCK_SIZE` static assert |
+| `hammer2_io.c:93-101` | `hammer2_io_index()` assuming the mapping's folio order |
+| `hammer2_io.c:127` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
 | `hammer2_os.h:55-67` | the version floor, 7.3, the kernel of record |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 

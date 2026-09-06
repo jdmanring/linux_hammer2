@@ -130,6 +130,8 @@ hammer2_syntax_check_all(void)
 	hammer2_mtx_unlock(&mtx);
 	hammer2_mtx_sh(&mtx);
 	hammer2_mtx_sh_again(&mtx);
+	hammer2_nofs_enter();
+	hammer2_nofs_leave();
 	hammer2_mtx_unlock(&mtx);
 	hammer2_mtx_unlock(&mtx);
 

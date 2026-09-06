@@ -58,6 +58,7 @@
 #include <linux/highmem.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
+#include <linux/sched/mm.h>
 
 /*
  * Operations for hammer2_io_getblk().  FreeBSD keeps these private to
@@ -259,10 +260,18 @@ static int
 hammer2_bread(hammer2_dev_t *hmp, hammer2_io_t *dio)
 {
 	struct folio *folio;
+	unsigned int nofs;
 	int error;
 
+	/*
+	 * The device mapping's own gfp mask permits filesystem reclaim,
+	 * and this is called under chain and inode locks, so the grab
+	 * runs in a NOFS scope; xfs does the same around its buffer cache.
+	 */
+	nofs = memalloc_nofs_save();
 	folio = read_mapping_folio(hammer2_io_mapping(dio),
 				   hammer2_io_index(dio), dio->bdev_file);
+	memalloc_nofs_restore(nofs);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
 	error = hammer2_io_folio_check(dio, folio);
@@ -287,10 +296,13 @@ static int
 hammer2_getblk_new(hammer2_io_t *dio, int zero)
 {
 	struct folio *folio;
+	unsigned int nofs;
 	int error;
 
+	nofs = memalloc_nofs_save();	/* as hammer2_bread() */
 	folio = filemap_grab_folio(hammer2_io_mapping(dio),
 				   hammer2_io_index(dio));
+	memalloc_nofs_restore(nofs);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
 	error = hammer2_io_folio_check(dio, folio);

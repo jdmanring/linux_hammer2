@@ -139,6 +139,29 @@ every dirty folio of the mapping to compaction and warns once per boot
 from `mm/migrate.c`; the full-volume gate carried that warning in 39
 of 62 kept logs before it counted plain warnings.
 
+A task holding any HAMMER2 lock is in a NOFS scope, entered and left
+by the shim's lock primitives and counted per task in
+`current->journal_info` so the release order does not matter. Reclaim
+evicts inodes under the inode lock class, so an allocation that may
+enter filesystem reclaim while an inode or chain lock is held is an
+inversion, and a real one: the flush holds the evicted inode's lock and
+wants the holder's. A hundred-thousand-file tree had lockdep report it
+three ways in three runs, each fix moving it to the next site: an XOP
+allocated under the directory's lock, answered by `GFP_NOFS` on every
+blocking allocation in the shim; the VFS allocating an inode under it,
+answered by a scope around the `iget`; and `readdir` faulting a user
+page under it while filling the caller's buffer, which is not an
+allocation this module makes and no mask can reach. The scope at the
+lock is the one shape that covers all three, so the site fixes came
+out again and the shim's allocations stay `GFP_NOFS` for the reason
+`vmalloc` documents, its own scope for that flag. The device
+mapping's page cache grabs in the DIO layer keep a scope of their own,
+since the volume header reads at mount take no lock, and each inode's
+own mapping has `__GFP_FS` cleared at setup as xfs clears it. ext4 and
+xfs need no lock scope because reclaim takes no lock of theirs that
+their operations hold; this port's eviction takes the inode lock, as
+the FreeBSD port's reclaim does, and pays for it here.
+
 ## The device layer
 
 `hammer2_ondisk.c` landed on 2026-08-26 and is the first file where the OS
@@ -344,7 +367,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:127` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
+| `hammer2_os.h:128` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.
