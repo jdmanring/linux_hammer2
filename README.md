@@ -66,15 +66,18 @@ bulkfree. A snapshot this port takes mounts on DragonFly and reads back
 the tree as it stood. The rows for both milestones in
 [CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
 
-One thing to know before trying it: **do not fill a HAMMER2 volume to
-capacity.** A volume with no space left reports the failure correctly,
-and the lock cycle the `sync` after it used to trip is fixed. What is
-was wrong is now fixed as well: unmounting a filled volume took a page
-fault in the flush, on a PFS the teardown had just freed, which killed
-the unmount and left the module impossible to unload. On some runs
-lockdep still reports a held lock freed during the fill itself, so the
-advice stands until that is understood too.
-The reproducer is `script/enospc.sh` and the account is in
+One thing to know before trying it: **be careful about filling a HAMMER2
+volume to capacity.** A volume with no space left reports the failure
+correctly, and two defects behind that have been fixed. The `sync` that
+follows a fill used to trip a circular lock dependency, and unmounting a
+filled volume used to take a page fault in the flush, on a PFS the
+teardown had just released, which killed the unmount and left the module
+impossible to unload.
+
+What is still open: on some runs lockdep reports a held lock freed
+during the fill itself, and the `ENOSPC` is dropped rather than returned
+to the caller, so a write that fails for want of space is logged and not
+reported. The reproducer is `script/enospc.sh` and the account is in
 [doc/README.status.md](doc/README.status.md). No corruption has been
 seen, and every checker has been clean afterwards.
 

@@ -19,9 +19,13 @@ ioctls answer as Linux ioctls, so `hammer2-utils` drives the volume, and
 files on it can be mapped and executed, which is what lets a volume boot
 as a root filesystem: a snapshot this port takes
 mounts on DragonFly and reads back the tree as it stood.
-Getting here found and fixed two defects that no amount of compiling would
-have caught, one a livelock and one a use after free. This file is the one to correct rather than to argue
-with: if a claim here is stale, it is a defect.
+Getting here found and fixed defects no amount of compiling would have
+caught: a livelock on the first mount, a use after free found by listing
+one, a stranded chain lock that made a full volume trip a circular lock
+dependency, and a second use after free that faulted the unmount of a
+full volume. `CHANGELOG.md` is the enumeration; this paragraph names
+kinds and does not carry the count. This file is the one to correct
+rather than to argue with: if a claim here is stale, it is a defect.
 
 ## The build
 
@@ -1382,24 +1386,36 @@ unmount 0; `modprobe -r` 0; no kernel report; and the host's
 `fsck_hammer2` clean on the disk afterwards. The image is
 `readme.img` in the fixtures directory and is not kept.
 
-## A full volume, and the lock cycle the sync then reports
+## A full volume, and the two defects it found
 
-**This is an open defect.** Every write measurement above was taken on a
-volume with room in it, and nothing in this tree had ever filled one.
-`script/enospc.sh` does, and it fails while the defect stands. Do not
-fill a HAMMER2 volume on Linux until it is fixed: the failure is not
-silent and no corruption has been seen, but the unmount does not
-complete and the module cannot be unloaded afterwards.
+Every write measurement above was taken on a volume with room in it, and
+nothing in this tree had ever filled one. `script/enospc.sh` does, and
+asking that question once produced two defects, both since fixed: a
+chain lock stranded on the `ENOSPC` path, which made the `sync(2)` after
+a fill trip a circular lock dependency, and a chain outliving its PFS,
+which faulted the unmount of a filled volume.
+
+**What is still open on this path**, and why the reproducer is not yet a
+gate: on some runs lockdep reports a held lock freed during the fill
+itself, and the `ENOSPC` is dropped rather than returned, so a write
+that fails for want of space is logged and the caller is told nothing.
+No corruption has been seen on any run and every checker has been clean
+afterwards.
+
+Both accounts below are kept, the wrong turns included, because the
+method is the transferable part: three of the readings this section once
+carried as findings were artifacts of the instrument rather than of the
+driver.
 
 Measured on `artix-s6-kde` at 7.3.0-rc1 with `CONFIG_PROVE_LOCKING`, on
 a 2 GiB volume. 583 files of 4 MiB each are written before `dd` reports
 `No space left on device`, `df` reads 100% and `statfs` reports zero
-available, which is the part that behaves. `debug_locks` is 1 at that
-point and the `sync(2)` that follows disables it. Eight runs have
-reached that state and every one reported the cycle. The unmount hung on
-four of the eight, leaving the guest needing a hard reset; on the other
-four it returned 0. The script checks both outcomes rather than taking
-one for the rule.
+available, which is the part that behaves. `debug_locks` was 1 at that
+point and the `sync(2)` that followed disabled it, on eight runs of
+eight. The unmount failed on four of those eight; that was recorded here
+as the unmount hanging, and it was not. The unmount completes, and the
+process running it is killed by the fault the second half of this
+section is about.
 
 The report is a circular dependency between two orders:
 
@@ -1412,35 +1428,45 @@ The first is upstream's and is not in question: FreeBSD's
 `hammer2_vop_fsync()` and its write path both lock the inode and then
 call `hammer2_inode_chain_sync()`. The second is the one that should not
 happen. The whole report is `doc/enospc-lockdep.txt`, streamed out of
-`/dev/kmsg` and written down before the unmount that would lose it.
+`/dev/kmsg` and written down before the unmount that would lose it. It
+is the capture from before the fix and is kept as that.
 
-### What is established
+### What was established, and how
 
-The sync task holds one chain lock while it takes an inode lock. It is a
-single acquire and not a recursion the chain code has miscounted: the
+The sync task held one chain lock while it took an inode lock. It was a
+single acquire and not a recursion the chain code had miscounted: the
 chain lock is recursive, `hammer2_chain_init()` calling
-`hammer2_mtx_init_recurse()`, and the measurement reads depth 0,
+`hammer2_mtx_init_recurse()`, and the measurement read depth 0,
 `lockcnt` 1, owner the sync task, on a chain of type `INODE`. The same
-chain is held at every probe of a run, so it is one chain held
+chain was held at every probe of a run, so it was one chain held
 throughout rather than an accumulation, which a leak per iteration would
 have grown to 583.
 
-Where the chain is first left held is not established. An earlier
-reading recorded here placed it inside `hammer2_inode_chain_sync()`, on
-a count of N, N, N-1, N-1 across four probes. That arithmetic compared
-two different builds: the function runs its XOP only when
-`RESIZED|MODIFIED` is set, three times in a run rather than once per
-file, so the probes being subtracted had not fired on the same
-occasions. A build carrying every probe at once reports the chain
-already held at that function's entry, which places the leak before it
-and not within it.
+The cause is `hammer2_chain_create()` clearing the caller's chain
+pointer when it cannot create an indirect block, which on a full volume
+is the first thing `hammer2_chain_modify()` refuses. Two of its callers
+release the chain they passed in under `if (chain)`, and a cleared
+pointer skips that release. Twenty-five runs whose logs are kept have
+reached the fill state since the change and none has reported a cycle,
+against eight of eight before it.
 
-That build also reports the held chain as key `0x402` while the insert
-failing at the same moment names inode `0x403`, so the chain being held
-is not the one the current iteration is working on. Until an instrument
-prints both identities on one line, the site is open.
+Two readings recorded here as findings were artifacts, and are kept
+because they are the reason the method changed. The first placed the
+missed release inside `hammer2_inode_chain_sync()` on a count of N, N,
+N-1, N-1 across four probes; that arithmetic compared two different
+builds, since the function runs its backend only when `RESIZED|MODIFIED`
+is set, three times in a run rather than once per file, so the probes
+being subtracted had not fired on the same occasions. Every probe went
+into one build after that.
 
-On a later `sync_fs` pass of the same `sync(2)` the chain is already
+The second was the held chain reading key `0x402` while the insert
+failing beside it named inode `0x403`, which was recorded as an open
+question about identity. It is what the cause predicts: the chain
+stranded by an earlier failed insert is still held while later inserts
+fail in their turn, so the two are not expected to match. That is an
+explanation offered after the fact and not an independent measurement.
+
+On a later `sync_fs` pass of the same `sync(2)` the chain was already
 held at `hammer2_vfs_sync_pmp()` entry, before `hammer2_trans_init()`.
 
 Why the two orders meet at all is the port-specific half. In DragonFly
@@ -1469,21 +1495,25 @@ it is not tested again:
   would unlock the one it started with. It never reassigns `chain`.
 - A lockdep shutdown from something other than a cycle. An unlock
   imbalance, a held lock freed and three lockdep ceilings all read as
-  `debug_locks` 0, so the run reports which banner named the shutdown;
-  it names a circular dependency.
+  `debug_locks` 0, so the run reports which banner named the shutdown,
+  and on every run of the cycle it named a circular dependency. The
+  reproducer looked for the wrong text for one of the others: the kernel
+  prints `WARNING: held lock freed!` where it looked for `BUG: held lock
+  freed`, so a run whose log carried that fault reported none found. The
+  patterns come from `kernel/locking/lockdep.c` now and the reproducer
+  checks each of them against a line the kernel really prints.
 
-### What is next
+### What is still open here
 
-The next measurement prints the inode the sync loop is on alongside the
-chain `hammer2_dbg_held_chains()` finds held, so that one line settles
-whether the surviving lock belongs to the iteration that reports it.
-`H2_LOCKDEBUG=1 bash script/enospc.sh` builds and runs it.
-
-A separate defect found while reading that path is fixed and does not
-depend on this one: `hammer2_chain_create()` cleared the caller's chain
-pointer on the failure to create an indirect block, without unlocking or
-dropping the chain, for callers that had passed one in and still owned
-it.
+Lockdep has reported `WARNING: held lock freed!` during the fill itself,
+rather than during the sync or the unmount, on a minority of runs. It
+has not been attributed. `hammer2_chain_drop()` is a candidate and is
+guarded rather than assumed: at its last drop it takes the chain's own
+lock, and this port's chain mutex is recursive, so a caller already
+holding that lock succeeds by recursion and frees a chain whose rwsem it
+still holds. A warning names that where every caller passes. It has not
+fired on any run to date, so it is a guard and not yet evidence in
+either direction.
 
 The `ENOSPC` underneath all of this is separately dropped on the floor,
 under upstream's own `XXX return error somehow?` in `hammer2_inode.c`,
