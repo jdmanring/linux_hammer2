@@ -1,0 +1,15 @@
+--- a/src/sys/fs/hammer2/hammer2_chain.c
++++ b/src/sys/fs/hammer2/hammer2_chain.c
+@@ -2878,9 +2878,10 @@
+ 		nparent = hammer2_chain_create_indirect(parent, key, keybits,
+ 		    mtid, type, &error);
+ 		if (nparent == NULL) {
+-			if (allocated)
++			if (allocated) {
+ 				hammer2_chain_drop(chain);
+-			chain = NULL;
++				chain = NULL;
++			}
+ 			goto done;
+ 		}
+ 		if (parent != nparent) {
