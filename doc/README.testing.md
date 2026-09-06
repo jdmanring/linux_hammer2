@@ -1119,7 +1119,7 @@ stream immediately after the `sync(2)`, which is several steps before the
 unmount: every message the unmount produced was therefore invisible, and
 readings taken after it were reading a log that had already ended. The
 first batch to ask what the module still held reported, on four runs
-whose `rmmod` had succeeded, that the superblock was never destroyed,
+whose `rmmod` had succeeded, that `->kill_sb` never ran,
 which cannot be true and is what exposed it. Reading the log never
 required stopping it, so the capture now runs on until the unmount is
 over, and it runs unbuffered, because `cat` block-buffers to a file and a

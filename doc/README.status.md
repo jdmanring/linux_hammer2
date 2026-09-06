@@ -1507,8 +1507,9 @@ holding a reference after the filesystem unmounts is not a leak: the
 unmount dies. `hammer2_flush_core()` takes a page fault during the
 unmount of a filled volume, which kills the `umount` process, so
 `deactivate_locked_super()` never finishes, the superblock is never
-destroyed, `->kill_sb` never runs and the module keeps the reference
-that `rmmod` then refuses to release. Every failure recorded here as a
+torn down and the module keeps the reference that `rmmod` then refuses
+to release. `->kill_sb` is entered and dies partway: the fault is inside
+it. Every failure recorded here as a
 module that would not unload is that oops, three layers down:
 
     BUG: unable to handle page fault for address: ffffd3f284c01e28
@@ -1516,8 +1517,31 @@ module that would not unload is that oops, three layers down:
     RIP: 0010:hammer2_flush_core+0x206/0x910 [hammer2]
     note: umount[2294] exited with irqs disabled
 
-The faulting instruction reads 0x1e28 off a pointer the flush is
-carrying. It follows a run of `hammer2_flush_core: inode parent
+The faulting instruction is `cmpq $0x0,0x1e28(%rcx)` at
+`hammer2_flush_core+0x206`, and both offsets resolve against the module's
+own debug information: `chain+0x398` is `chain->pmp` and `pmp+0x1e28` is
+`pmp->mp`. The source is the `chain->pmp && chain->pmp->mp` guard in
+`hammer2_flush.c`. The guard passes because the pointer is not NULL; it
+is freed. `hammer2_pfs` is 5255000 bytes, so it is vmalloc backed and
+freeing it unmaps the pages, which is why the read faults rather than
+returning rubbish.
+
+The backtrace says which teardown step is running:
+
+    hammer2_kill_sb
+      hammer2_unmount_helper
+        hammer2_pfsfree_scan
+          hammer2_vfs_sync_pmp
+            hammer2_inode_chain_flush -> hammer2_flush -> hammer2_flush_core
+              hammer2_chain_tree_RB_SCAN -> hammer2_flush_recurse
+                hammer2_flush_core
+
+so a chain reached by the recursive flush still points at a PFS the free
+in progress has already released. That call shape is upstream's:
+FreeBSD's `hammer2_pfsfree_scan()` calls `hammer2_vfs_sync_pmp()` the
+same way, and a volume with room in it unmounts through the same path
+every fixture run without faulting. What differs is the state a filled
+volume leaves behind, which is not yet established. It follows a run of `hammer2_flush_core: inode parent
 0000000000000000/0 error 00000020` lines, the ENOSPC the flush is being
 handed and not told what to do with, so the two are being read together
 rather than separately.

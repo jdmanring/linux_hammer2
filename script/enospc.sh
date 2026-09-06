@@ -466,15 +466,16 @@ out=$(ssh "$GUEST_SSH" '
 	# What the module still holds, printed by the driver at unmount
 	# because the check that reads these counters runs at unload and an
 	# unload that is refused never reaches it.
-	# The driver prints this from ->kill_sb, which runs only when the
-	# superblock is actually destroyed, so no line here on a run whose
-	# module will not unload says the superblock is pinned rather than
-	# that nothing was outstanding.
+	# The driver prints this at the END of ->kill_sb. No line on a run
+	# whose module will not unload therefore says that function did not
+	# get that far, which is what a fault inside it looks like; it does
+	# not say the counters were clean, and it does not say the
+	# superblock was never touched. The backtrace below says which.
 	o=$(command grep -o "after unmount: .*" /tmp/kmsg.log | tail -1)
 	if [ -n "$o" ]; then
 		echo "outstanding $o"
 	else
-		echo "outstanding no line, so the superblock was not destroyed"
+		echo "outstanding no line, so kill_sb did not reach its end"
 	fi
 	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
 	echo "=== log tail begins"
