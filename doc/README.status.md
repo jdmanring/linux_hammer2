@@ -1419,7 +1419,7 @@ unmount 0; `modprobe -r` 0; no kernel report; and the host's
 ## A full volume, and the two defects it found
 
 Every write measurement above was taken on a volume with room in it, and
-nothing in this tree had ever filled one. `script/enospc.sh` does, and
+nothing in this tree had ever filled one. `script/test-enospc.sh` does, and
 asking that question once produced two defects, both since fixed: a
 chain lock stranded on the `ENOSPC` path, which made the `sync(2)` after
 a fill trip a circular lock dependency, and a chain outliving its PFS,

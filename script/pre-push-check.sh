@@ -8,10 +8,10 @@
 # the gate selftests, which CI runs as a step of its own.
 #
 # It sits under script/ so a clone gets it, since .git/hooks is never
-# versioned, and is deliberately not named test-*.sh: the eleven gates are
+# versioned, and is deliberately not named test-*.sh: the gates are
 # run individually on purpose and CI enumerates them by that glob, so a
-# runner named like one would be picked up as a twelfth gate and would
-# also invite reading one exit status for eleven questions. This is local
+# runner named like one would be picked up as a gate itself and would
+# also invite reading one exit status for many questions. This is local
 # hygiene, not a gate. Install it with
 #
 #     ln -sf ../../script/pre-push-check.sh .git/hooks/pre-push

@@ -86,7 +86,7 @@ with every accepted file whole on the media. A held lock freed during a
 fill, seen twice and unexplained for a day, was captured whole once the
 log was kept and fixed the same hour.
 
-The reproducer is `script/enospc.sh` and the account, wrong turns
+The reproducer is `script/test-enospc.sh`, a gate since it passed ten runs, and the account, wrong turns
 included, is in [doc/README.status.md](doc/README.status.md).
 
 What that buys you is a driver that can be tried, on media you can
@@ -212,7 +212,7 @@ Three build knobs, the same three the FreeBSD and NetBSD ports carry:
 
 ## Test
 
-Twelve gates. The compile gates need a toolchain and a kernel tree:
+Thirteen gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
@@ -247,9 +247,10 @@ construct in such a script breaks only when something honors the shebang:
 
         $ bash script/test-posix.sh
 
-The twelfth needs a guest, and exits 2 without one:
+Two need a guest, and exit 2 without one:
 
         $ bash script/test-fixtures.sh    # mounts every fixture on a guest and compares manifests
+        $ bash script/test-enospc.sh      # fills a volume, checks what it kept and what each writer was told
 
 No gate here is trusted on silence alone, because a check whose healthy
 signature is silence cannot otherwise be told from a check that never ran.

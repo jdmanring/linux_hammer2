@@ -50,13 +50,13 @@ cd "$(dirname "$0")/.." || exit 2
 # the remote block is one quoted string and cannot share a variable with
 # the host half, so these are copies and copies drift. A pattern edited
 # there and not here fails this check rather than going quiet.
-if [ "${1:-}" = --selftest ]; then
+if [ "${1:-}" = "--selftest" ]; then
 	t=$(mktemp -d) || exit 2
 	trap 'rm -rf "$t"' EXIT
 	sfail=0 nread=0
 	# This file without the selftest, so a pattern is looked for where
 	# the run uses it and not where this block names it.
-	command sed '/^if \[ "${1:-}" = --selftest \]; then$/,/^fi$/d' "$0" \
+	command sed '/^if \[ "${1:-}" = "--selftest" \]; then$/,/^fi$/d' "$0" \
 	    > "$t/rest"
 	[ -s "$t/rest" ] || {
 		echo "enospc: FAIL: the selftest could not separate itself" >&2
@@ -231,7 +231,7 @@ fi
 sh "$0" --selftest > /dev/null 2>&1 || {
 	echo "enospc: COULD-NOT-RUN: a reading no longer matches the line" >&2
 	echo "          it reads, so this run could report clean by not" >&2
-	echo "          seeing. Run: sh script/enospc.sh --selftest" >&2
+	echo "          seeing. Run: sh script/test-enospc.sh --selftest" >&2
 	exit 2; }
 
 FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
@@ -242,6 +242,24 @@ GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
+# A tree below the floor cannot build the module, which is a fact about
+# the tree: the default KDIR is the host's kernel and the host is not
+# the guest. Read from where the floor is enforced, as test-fixtures.sh
+# reads it, so that a push from such a host reports this gate as not
+# run rather than as failed.
+[ -f "$KDIR/Makefile" ] || {
+	echo "enospc: COULD-NOT-RUN: KDIR=$KDIR is not a kernel build tree" >&2
+	exit 2; }
+floor=$(sed -n 's/^#define LINUX_HAMMER2_FLOOR[[:space:]]*KERNEL_VERSION(\([0-9]*\), \([0-9]*\), .*/\1.\2/p' src/sys/fs/hammer2/hammer2_os.h)
+kver=$(make -s -C "$KDIR" kernelversion 2>/dev/null)
+[ -n "$floor" ] && [ -n "$kver" ] || {
+	echo "enospc: COULD-NOT-RUN: could not read the floor or the KDIR release" >&2
+	exit 2; }
+if [ "$(printf '%s\n%s\n' "$floor" "$kver" | sort -V | head -1)" != "$floor" ]; then
+	echo "enospc: COULD-NOT-RUN: KDIR=$KDIR is $kver, below the $floor floor;" >&2
+	echo "        point KDIR at the guest's kernel tree" >&2
+	exit 2
+fi
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 
 [ -x "$NEWFS" ] || { echo "enospc: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }

@@ -29,6 +29,7 @@ Prose gate, needs vale and nothing else:
 
     $ bash script/test-doc-prose.sh   # vale over tracked .md, any finding is a failure
     $ bash script/test-fixtures.sh    # every fixture mounted on a guest, files compared to manifests
+    $ bash script/test-enospc.sh      # a volume filled, what it kept and what each writer was told
 
 `test-absence.sh` resolves a claim rather than a citation. Where a document
 says a named function is not carried, it asks `src/` whether that function
@@ -372,7 +373,7 @@ still valid shell, so the gate checks the property the quoting actually
 rests on and counts the single quotes in each block, which must be zero. It
 parses the blocks as well, and asserts the population, since a pattern that
 stopped matching would check nothing and still print a clean count. The
-check was written after an `awk '{print $3}'` added to `enospc.sh` aborted
+check was written after an `awk '{print $3}'` added to `test-enospc.sh` aborted
 a run on the workstation with `$3: unbound variable` before the guest was
 reached, and it reads 2 against that block and 0 against the repaired one.
 
@@ -1064,8 +1065,8 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
-| `enospc.sh` | a lockdep shutdown that no captured banner attributes | nothing; the run counted every shutdown as the cycle it was written for, and now reports the banner and exits 2 when none names it |
-| `enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
+| `test-enospc.sh` | a lockdep shutdown that no captured banner attributes | nothing; the run counted every shutdown as the cycle it was written for, and now reports the banner and exits 2 when none names it |
+| `test-enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
 | `root-boot.sh` | a boot that never mounted the volume | a second boot against a label the volume does not carry, which stops at the mount and does not reach PID 1 |
 | `root-boot.sh` | a checksum comparison that cannot fail | its first run, where an unanchored `sed` made the two sides unequal by construction |
 | `test-fixtures.sh` | an ioctl that answers with the wrong errno | the recorded results, which caught EOPNOTSUPP where Linux wants ENOTTY on the first run |
@@ -1130,7 +1131,7 @@ reading the gate.
 
 ## A full volume
 
-`script/enospc.sh` fills a 2 GiB volume until the first write fails,
+`script/test-enospc.sh` fills a 2 GiB volume until the first write fails,
 calls `sync(2)`, and reads `debug_locks` on both sides of each step. The
 circular lock dependency it was written to reproduce is fixed, so is
 the fault that left the module unremovable after a fill, and so is the
@@ -1172,8 +1173,10 @@ refusing root. Every run prints the source hash it was built from,
 with a dirty mark.
 `doc/README.status.md` carries the account.
 
-It is not a gate yet only because it has not been run enough times on
-the build that passes it; the four runs that have are in the account.
+It became a gate after ten clean runs on the build that passes it,
+across three shapes of the instrument, all in the account. It exits 2
+without a guest, like `test-fixtures.sh`, so a push from a machine
+without the fleet reports it as not run rather than as passed.
 
 A debug build logs each PFS as it is freed and each one the teardown
 syncs, unhashed with `%px` so the addresses can be compared against the
@@ -1190,7 +1193,7 @@ warning printed long before, and did it while reporting no oops at all.
 They are scoped to the oops now.
 
 The reproducer carries its own control now, which every gate in this
-tree had and it did not. `sh script/enospc.sh --selftest` checks each
+tree had and it did not. `sh script/test-enospc.sh --selftest` checks each
 reading in three directions against a line the kernel really prints: the
 pattern must match that line, must not fire on a healthy run's log, and
 must appear in the half of the file the run actually uses. That last one
@@ -1277,7 +1280,7 @@ time. `HAMMER2_LOCKDEBUG=1` on the make line compiles
 locks, resolves each chain lock back to its chain and prints the type,
 key, class, recursion depth and `lockcnt`. Unset, every call compiles
 away and the module carries no symbol for it, which is checked by
-building both ways. `H2_LOCKDEBUG=1 bash script/enospc.sh` builds with
+building both ways. `H2_LOCKDEBUG=1 bash script/test-enospc.sh` builds with
 it and summarizes what it printed.
 
 Two designs it deliberately is not, both of which were built and both of

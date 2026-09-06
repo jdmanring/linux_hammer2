@@ -52,7 +52,7 @@ Still present at DragonFly head: the `if (allocated)` block at
 `hammer2_chain.c:3295` is unchanged.
 
 Found here by measurement, not by reading: eight runs of
-`script/enospc.sh` reported a lockdep cycle and none has since the
+`script/test-enospc.sh` reported a lockdep cycle and none has since the
 change. The stranded lock is what made it visible, and that half is
 specific to this port, where XOPs run synchronously and put both lock
 orders on one task. The missed release is not specific to anything.

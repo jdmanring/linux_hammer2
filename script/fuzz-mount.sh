@@ -49,7 +49,7 @@ make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 # What the module was built from, printed with the summary, as
-# enospc.sh prints it: a run that cannot be tied to a source state
+# test-enospc.sh prints it: a run that cannot be tied to a source state
 # cannot be dated against a fix.
 built=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 [ -z "$(git status --porcelain -- src 2>/dev/null)" ] || built="$built-dirty"
