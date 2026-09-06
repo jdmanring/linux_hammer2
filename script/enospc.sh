@@ -310,6 +310,7 @@ scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/h2.ko" >/dev/null 2>&1
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
+ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap" 2>/dev/null
 out=$(ssh "$GUEST_SSH" '
 	rmmod hammer2 2>/dev/null
 	# The ring wraps before a fill run ends, so the report is streamed
@@ -350,7 +351,12 @@ out=$(ssh "$GUEST_SSH" '
 	# and keeps it for another attempt; whether this port keeps or drops
 	# such data is a reading, taken below after the page cache is dropped.
 	: > /tmp/fill.sums
-	while [ $i -lt 8000 ]; do
+	# The cap is the control for the content check below: a fill stopped
+	# well short of full must read back whole, or the check is what is
+	# broken. The host writes it to /tmp/h2cap before this block runs; an
+	# unreadable cap means the full fill, which is the default.
+	cap=$(cat /tmp/h2cap 2>/dev/null || echo 8000)
+	while [ $i -lt $cap ]; do
 		why=$(dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=1M \
 		    count=4 status=none 2>&1) || break
 		sha256sum /mnt/h2enospc/fill.$i >> /tmp/fill.sums
@@ -576,7 +582,18 @@ n=$(printf '%s\n' "$out" | sed -n 's/^files written //p')
 	echo "  FAIL  nothing was written, so the volume never filled"; fail=$((fail + 1)); }
 # The volume must actually be full. Without this a run that stopped
 # writing for any other reason reads exactly like the one this script
-# exists to produce.
+# exists to produce. Under H2_ENOSPC_FILES the fill stops short on
+# purpose, as the control for the content check: every file written to
+# a volume with room in it must read back whole from the media, or the
+# check itself is what is broken, and nothing it says about a full
+# volume means anything.
+if [ "$n" = "${H2_ENOSPC_FILES:-8000}" ]; then
+	echo "  control: the fill was capped at $n files, the volume is not full"
+	printf '%s\n' "$out" | command grep -q "^files intact $n of $n, damaged 0$" ||
+		{ echo "  FAIL  a volume with room in it did not read back what it accepted:"
+		  printf '%s\n' "$out" | sed -n 's/^files intact /        /p'
+		  fail=$((fail + 1)); }
+else
 printf '%s\n' "$out" | command grep -qi 'fill stopped because.*no space left' ||
 	{ echo "  FAIL  the fill did not stop on ENOSPC:"
 	  printf '%s\n' "$out" | sed -n 's/^fill stopped because /        /p'
@@ -584,6 +601,7 @@ printf '%s\n' "$out" | command grep -qi 'fill stopped because.*no space left' ||
 printf '%s\n' "$out" | command grep -q '^blocks available 0$' ||
 	{ echo "  FAIL  the volume reports free space, so it never filled"
 	  fail=$((fail + 1)); }
+fi
 
 # lockdep has to be alive going into the sync or its silence afterwards
 # would mean nothing. This is the control for the instrument, not a
