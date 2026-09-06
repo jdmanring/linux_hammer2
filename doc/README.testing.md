@@ -1093,6 +1093,26 @@ It is not a gate for that reason. A test that fails on half its runs
 would be a flake in the suite rather than a check, so it stays a script
 run by hand until both are closed.
 
+The reproducer carries its own control now, which every gate in this
+tree had and it did not. `sh script/enospc.sh --selftest` checks each
+reading in three directions against a line the kernel really prints: the
+pattern must match that line, must not fire on a healthy run's log, and
+must appear in the half of the file the run actually uses. That last one
+matters because the remote block is one quoted string and cannot share a
+variable with the host half, so the patterns are copies and copies drift.
+The check searches the file with its own block stripped out, since a
+search whose pattern sits in its own command line finds itself: the first
+version did exactly that and would have passed for ever. The control runs
+at the start of every real run rather than when someone remembers it,
+because a reading that has quietly stopped matching is the failure this
+script has actually had, three times.
+
+A batch also refuses to continue if the script changed underneath it.
+Every iteration re-reads the file, so an edit made while a batch is
+running silently changes the runs after it, and a half-written file gives
+them a syntax error that the tally scores as a driver failure. Two runs
+of a six-run batch were lost that way before the checksum existed.
+
 The capture window used to close before the thing being measured. The
 run streams `/dev/kmsg` from before the module loads, and it stopped that
 stream immediately after the `sync(2)`, which is several steps before the

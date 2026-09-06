@@ -35,6 +35,100 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# --selftest: THE CONTROL THIS SCRIPT DID NOT HAVE. Every gate in this
+# tree carries one; the reproducer did not, and its readings are exactly
+# the kind that fail silently. Several have never been observed to take a
+# value other than their default, so any of them could have stopped
+# matching and every run would still have read clean. Three did stop
+# matching: a banner spelled from memory rather than from
+# kernel/locking/lockdep.c, a fallback bound to a command that cannot
+# fail, and a count taken before the event it counted.
+#
+# Each reading is checked in BOTH directions against a line the kernel
+# really prints: the pattern must match that line, and must not match an
+# empty log. The pattern is then required to appear in this file, because
+# the remote block is one quoted string and cannot share a variable with
+# the host half, so these are copies and copies drift. A pattern edited
+# there and not here fails this check rather than going quiet.
+if [ "${1:-}" = --selftest ]; then
+	t=$(mktemp -d) || exit 2
+	trap 'rm -rf "$t"' EXIT
+	sfail=0 nread=0
+	# This file without the selftest, so a pattern is looked for where
+	# the run uses it and not where this block names it.
+	command sed '/^if \[ "${1:-}" = --selftest \]; then$/,/^fi$/d' "$0" \
+	    > "$t/rest"
+	[ -s "$t/rest" ] || {
+		echo "enospc: FAIL: the selftest could not separate itself" >&2
+		exit 1; }
+	check() { # label pattern sample-line
+		nread=$((nread + 1))
+		printf '%s\n' "$3" > "$t/pos"
+		# A log of ordinary lines, not an empty one. Almost any
+		# pattern fails to match nothing, so an empty file tests
+		# nothing; what matters is that a pattern does not fire on
+		# a healthy run's log, which is what this is.
+		printf '%s\n' \
+		    "6,100,1,-;hammer2: hammer2_vfs_mount: mounted vdb" \
+		    "6,101,1,-;hammer2: hammer2_vfs_statfs: 0 blocks free" \
+		    "4,102,1,-;EXT4-fs (vda1): mounted filesystem" \
+		    "6,103,1,-;systemd: Reached target Local File Systems" \
+		    > "$t/neg"
+		command grep -q "$2" "$t/pos" || {
+			echo "  FAIL  $1: the pattern does not match the line"
+			echo "        it is there to read"
+			sfail=$((sfail + 1)); }
+		if command grep -q "$2" "$t/neg"; then
+			echo "  FAIL  $1: the pattern fires on a healthy"
+			echo "        run's log, so it cannot report absence"
+			sfail=$((sfail + 1))
+		fi
+		# Searched in the run's half of this file only. A search
+		# whose pattern sits in its own command line finds itself,
+		# and both the argument below and the sample beside it
+		# contain the pattern, so neither a match nor a count of
+		# them says anything about the code that runs.
+		command grep -qF "$2" "$t/rest" || {
+			echo "  FAIL  $1: this pattern is not the one the run"
+			echo "        uses; they have drifted apart"
+			sfail=$((sfail + 1)); }
+		[ "$sfail" -eq 0 ] && echo "  ok    $1"
+	}
+	check "the cycle count" \
+	    "possible circular locking dependency" \
+	    "4,1043,34351285,-;WARNING: possible circular locking dependency detected"
+	check "a held lock freed" \
+	    "held lock freed" \
+	    "4,900,1,-;WARNING: held lock freed!"
+	check "a lockdep ceiling" \
+	    "BUG: MAX_[A-Z_]* too low!" \
+	    "4,901,1,-;BUG: MAX_LOCKDEP_KEYS too low!"
+	check "an unlock imbalance" \
+	    "bad unlock balance" \
+	    "4,902,1,-;WARNING: bad unlock balance detected!"
+	check "an out of memory kill" \
+	    "Out of memory: Killed" \
+	    "3,903,1,-;Out of memory: Killed process 2300 (umount)"
+	check "the chain dropped under its own lock" \
+	    "by the task holding its lock" \
+	    "4,904,1,-;hammer2: last drop of inode chain 0000000000000402 by the task holding its lock"
+	check "what the module still holds" \
+	    "after unmount: .*" \
+	    "6,905,1,-;hammer2: hammer2_kill_sb: after unmount: 0 inode, 4 chain, 0 modified, 0 dio still allocated"
+	check "a busy inode" \
+	    "Busy inodes after unmount" \
+	    "4,906,1,-;VFS: Busy inodes after unmount of vdb (hammer2)"
+	check "a held chain" \
+	    "sync_pmp entry" \
+	    "6,907,1,-;hammer2: __hammer2_dbg_held_chains: sync_pmp entry: chain type 1 key 0000000000000402"
+	[ "$nread" -gt 0 ] || {
+		echo "enospc: FAIL: the selftest checked no reading at all" >&2
+		exit 1; }
+	echo "enospc: selftest, $nread reading(s), $sfail failure(s)"
+	[ "$sfail" -eq 0 ]
+	exit $?
+fi
+
 # H2_REPEAT=n runs the whole thing n times and tallies the outcomes.
 # BOTH DEFECTS LEFT ON THIS REPRODUCER ARE INTERMITTENT: the module has
 # held references after unmount on five runs of seven and lockdep has
@@ -59,10 +153,23 @@ if [ "$repeat" -gt 1 ]; then
 	# overwritten by the runs that followed them.
 	logdir=${H2_LOGDIR:-$(mktemp -d)} || exit 2
 	mkdir -p "$logdir" || exit 2
+	# Each iteration re-reads this file, so an edit made while a batch
+	# is running changes the runs after it, and a half-written file
+	# gives them a syntax error scored as a driver failure. That
+	# happened: two runs of a six-run batch were lost to it. The
+	# checksum is taken once and re-checked every iteration, so the
+	# batch refuses rather than reporting on code nobody chose to run.
+	sum0=$(sha256sum < "$0") || exit 2
 	while [ "$i" -le "$repeat" ]; do
 		$VIRSH destroy "$GUEST" >/dev/null 2>&1
 		sleep 6
 		$VIRSH start "$GUEST" >/dev/null 2>&1
+		sumn=$(sha256sum < "$0")
+		[ "$sumn" = "$sum0" ] || {
+			echo "enospc: COULD-NOT-RUN: this script changed while the" >&2
+			echo "          batch was running, so the runs after the" >&2
+			echo "          change would not be the run that started" >&2
+			exit 2; }
 		log=$logdir/run-$i.log
 		H2_REPEAT=1 sh "$0" > "$log" 2>&1
 		st=$?
@@ -97,6 +204,15 @@ if [ "$repeat" -gt 1 ]; then
 	[ "$failed" -eq 0 ] && [ "$cnr" -eq 0 ]
 	exit $?
 fi
+
+# The control runs on every run, not when someone remembers it. It costs
+# a fraction of a second, and a reading that has silently stopped
+# matching is the failure mode this whole script has actually had.
+sh "$0" --selftest > /dev/null 2>&1 || {
+	echo "enospc: COULD-NOT-RUN: a reading no longer matches the line" >&2
+	echo "          it reads, so this run could report clean by not" >&2
+	echo "          seeing. Run: sh script/enospc.sh --selftest" >&2
+	exit 2; }
 
 FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 IMG=$FIXDIR/enospc.img
@@ -349,7 +465,10 @@ out=$(ssh "$GUEST_SSH" '
 	fi
 	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
 	echo "=== log tail begins"
-	tail -25 /tmp/kmsg.log | command sed "s/^[0-9,;]*;//"
+	# Wide enough for a whole backtrace. At 25 lines this window cut
+	# the head off the one oops that explains the failure and left the
+	# register dump with nothing above it, on a guest since reset.
+	tail -150 /tmp/kmsg.log | command sed "s/^[0-9,;]*;//"
 	echo "=== log tail ends"
 	timeout 30 rmmod hammer2; echo "rmmod $?"
 	kill $kpid 2>/dev/null
