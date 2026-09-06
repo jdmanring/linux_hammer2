@@ -162,11 +162,23 @@ out=$(ssh "$GUEST_SSH" '
 	# The ring wraps before a fill run ends, so the report is streamed
 	# out of /dev/kmsg from before the module is loaded rather than read
 	# back with dmesg afterwards. Everything derived from it is printed
-	# BEFORE the unmount, because the unmount hangs on the majority of
-	# these runs and takes the evidence with it when it does.
+	# BEFORE the unmount, because a bad unmount is where the evidence is
+	# lost. The capture itself runs on across the unmount.
 	: > /tmp/kmsg.log
-	cat /dev/kmsg > /tmp/kmsg.log 2>/dev/null &
-	kpid=$!
+	# Unbuffered, because cat block-buffers to a file: a line the kernel
+	# prints during the unmount can still be sitting in the buffer when
+	# this script greps for it, which reads as a line that was never
+	# printed. Which form ran is reported, so a run says whether its
+	# late lines can be trusted rather than leaving that to be assumed.
+	if command -v stdbuf >/dev/null 2>&1; then
+		stdbuf -o0 cat /dev/kmsg > /tmp/kmsg.log 2>/dev/null &
+		kpid=$!
+		echo "kmsg capture unbuffered"
+	else
+		cat /dev/kmsg > /tmp/kmsg.log 2>/dev/null &
+		kpid=$!
+		echo "kmsg capture buffered, late lines may be missing"
+	fi
 	insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
 	mkdir -p /mnt/h2enospc
 	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
@@ -190,7 +202,14 @@ out=$(ssh "$GUEST_SSH" '
 	echo "locks after fill $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
-	kill $kpid 2>/dev/null
+	# The capture is NOT stopped here. Reading the log does not require
+	# stopping it, and stopping it closed the window before the unmount,
+	# so every message the unmount produces was invisible: the counters
+	# the driver prints from ->kill_sb, a busy-inode warning, an
+	# out-of-memory kill, a lockdep report during teardown. Everything
+	# derived from the log below is still printed BEFORE the unmount,
+	# which is the reason this ordering exists; the capture simply runs
+	# on until the unmount is over.
 
 	# A count of REPORTS, one banner line each. Counting every line that
 	# says DEADLOCK or circular counts a single report three times over,
@@ -324,6 +343,7 @@ out=$(ssh "$GUEST_SSH" '
 	tail -25 /tmp/kmsg.log | command sed "s/^[0-9,;]*;//"
 	echo "=== log tail ends"
 	timeout 30 rmmod hammer2; echo "rmmod $?"
+	kill $kpid 2>/dev/null
 ' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  /'
 $VIRSH detach-disk "$GUEST" vdb >/dev/null 2>&1

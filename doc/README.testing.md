@@ -1093,6 +1093,19 @@ It is not a gate for that reason. A test that fails on half its runs
 would be a flake in the suite rather than a check, so it stays a script
 run by hand until both are closed.
 
+The capture window used to close before the thing being measured. The
+run streams `/dev/kmsg` from before the module loads, and it stopped that
+stream immediately after the `sync(2)`, which is several steps before the
+unmount: every message the unmount produced was therefore invisible, and
+readings taken after it were reading a log that had already ended. The
+first batch to ask what the module still held reported, on four runs
+whose `rmmod` had succeeded, that the superblock was never destroyed,
+which cannot be true and is what exposed it. Reading the log never
+required stopping it, so the capture now runs on until the unmount is
+over, and it runs unbuffered, because `cat` block-buffers to a file and a
+line printed during the unmount can sit in that buffer while a grep for
+it reads as a line never printed. Which form ran is reported per run.
+
 What the module still holds is now printed by the driver rather than
 inferred. `hammer2_assert_clean()` reads the four allocation counters on
 the unload path, which a module that will not unload never reaches, so
