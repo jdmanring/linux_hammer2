@@ -1707,6 +1707,66 @@ hammer2_evict_inode(struct inode *inode)
 }
 
 /*
+ * Returns 0 if the filesystem has tons of free space.
+ * Returns 1 if the filesystem has less than 10% remaining.
+ * Returns 2 if the filesystem has less than 2%/5% (user/root) remaining.
+ *
+ * Carried from the FreeBSD port.  This is what keeps the flush's own
+ * space: a volume allowed to fill to its last block cannot complete the
+ * flush that would commit what was written, and everything since the
+ * previous flush is lost.  Measured here before this was carried: two
+ * files of five hundred and thirty-three read back whole.
+ *
+ * XXX Linux: the credential is the Linux one, and root is the root user
+ * id rather than a uid of zero in a ucred.
+ */
+int
+hammer2_vfs_enospace(hammer2_inode_t *ip, loff_t bytes, const struct cred *cred)
+{
+	hammer2_dev_t *hmp;
+	hammer2_pfs_t *pmp = ip->pmp;
+	hammer2_off_t free_reserved, free_nominal;
+	int i;
+
+	if (pmp->free_ticks == 0 || pmp->free_ticks != getticks()) {
+		free_reserved = HAMMER2_SEGSIZE;
+		free_nominal = 0x7FFFFFFFFFFFFFFFLLU;
+		for (i = 0; i < pmp->iroot->cluster.nchains; ++i) {
+			hmp = pmp->pfs_hmps[i];
+			if (hmp == NULL)
+				continue;
+			if (pmp->pfs_types[i] != HAMMER2_PFSTYPE_MASTER &&
+			    pmp->pfs_types[i] != HAMMER2_PFSTYPE_SOFT_MASTER)
+				continue;
+			if (free_nominal > hmp->voldata.allocator_free)
+				free_nominal = hmp->voldata.allocator_free;
+			if (free_reserved < hmp->free_reserved)
+				free_reserved = hmp->free_reserved;
+		}
+		/* SMP races ok */
+		pmp->free_reserved = free_reserved;
+		pmp->free_nominal = free_nominal;
+		pmp->free_ticks = getticks();
+	} else {
+		free_reserved = pmp->free_reserved;
+		free_nominal = pmp->free_nominal;
+	}
+
+	if (cred && !uid_eq(cred->fsuid, GLOBAL_ROOT_UID)) {	/* Linux */
+		if ((int64_t)(free_nominal - bytes) < (int64_t)free_reserved)
+			return (2);
+	} else {
+		if ((int64_t)(free_nominal - bytes) < (int64_t)free_reserved / 2)
+			return (2);
+	}
+
+	if ((int64_t)(free_nominal - bytes) < (int64_t)free_reserved * 2)
+		return (1);
+
+	return (0);
+}
+
+/*
  * Report the filesystem's size and identity.
  *
  * This is upstream's hammer2_vfs_statfs() with its two loops collapsed and

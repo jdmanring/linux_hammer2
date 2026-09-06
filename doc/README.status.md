@@ -564,9 +564,9 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1863 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 2835 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 2895 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1287 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1308 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1029 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -2035,10 +2035,10 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 21 | 1 | 20 |
 | `hammer2_inode.c` | 28 | 6 | 22 |
-| `hammer2_vfsops.c` | 43 | 7 | 35 |
+| `hammer2_vfsops.c` | 44 | 7 | 36 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
-| `hammer2_vnops.c` | 0 | 0 | 0 |
+| `hammer2_vnops.c` | 1 | 0 | 1 |
 | `hammer2.h` | 9 | 3 | 6 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 0 | 0 | 0 |
@@ -2049,8 +2049,8 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and fifty-five are this port's, the right-hand column
-summed, and they fall in thirteen files: thirty-five in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, fifteen in `hammer2_ioctl.c`, fifteen in `hammer2_chain.c`, seven in `hammer2_subr.c`, six in `hammer2_flush.c`, six in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, and one in `hammer2_disk.h`. That is the whole of them, and
+One hundred and fifty-seven are this port's, the right-hand column
+summed, and they fall in fourteen files: thirty-six in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, fifteen in `hammer2_ioctl.c`, fifteen in `hammer2_chain.c`, seven in `hammer2_subr.c`, six in `hammer2_flush.c`, six in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_io.c`, one in `hammer2_disk.h`, and one in `hammer2_vnops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the
@@ -2060,7 +2060,8 @@ column summed to more, so the sum was recomputed from the table on
 third when the sentence was found reading one hundred and forty-six
 against a column summing to one hundred and fifty-three before the
 debug trigger for `hpanic` added one more, and again when the unlock
-before the drop in `hammer2_chain_create()` added another.
+before the drop in `hammer2_chain_create()` added another, and the
+reserve check carried into the write path two more.
 
 Four of those nine files are then walked mark by mark below:
 `hammer2_ondisk.c`, `hammer2_vfsops.c`, and the two files this port wrote

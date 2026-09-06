@@ -295,6 +295,8 @@ hammer2_vop_ncreate(struct mnt_idmap *idmap, struct inode *dir,
 
 	if (dip->pmp->rdonly || (dip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
+	if (hammer2_vfs_enospace(dip, 0, current_cred()) > 1)
+		return (-ENOSPC);
 	if (S_ISDIR(mode) && dip->meta.nlinks >= U32_MAX)	/* Linux */
 		return (-EMLINK);
 	if (dentry->d_name.len > HAMMER2_INODE_MAXNAME)
@@ -506,6 +508,8 @@ hammer2_vop_rename(struct mnt_idmap *idmap __maybe_unused,
 		return (-EINVAL);
 	if (fdip->pmp->rdonly || (fdip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
+	if (hammer2_vfs_enospace(fdip, 0, current_cred()) > 1)
+		return (-ENOSPC);
 	if (tdentry->d_name.len > HAMMER2_INODE_MAXNAME)
 		return (-ENAMETOOLONG);
 
@@ -694,6 +698,8 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 
 	if (ip->meta.nlinks >= U32_MAX)	/* Linux */
 		return (-EMLINK);
+	if (hammer2_vfs_enospace(tdip, 0, current_cred()) > 1)
+		return (-ENOSPC);
 	if (tdip->pmp->rdonly || (tdip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
 	if (dentry->d_name.len > HAMMER2_INODE_MAXNAME)
@@ -855,6 +861,13 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	if (ip->pmp->rdonly)
 		return (-EROFS);
+	/*
+	 * XXX Linux: upstream's case 1, under twice the reserve, makes the
+	 * write semi-synchronous with IO_DIRECT; the page cache has no
+	 * equivalent and only the refusal is carried.
+	 */
+	if (hammer2_vfs_enospace(ip, iov_iter_count(from), current_cred()) > 1)
+		return (-ENOSPC);
 	hammer2_trans_init(ip->pmp, 0);
 	ret = generic_file_write_iter(iocb, from);
 	if (ret > 0) {
@@ -967,6 +980,14 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 
 	if (ip->pmp->rdonly)
 		return (-EROFS);
+	/*
+	 * Normally disallow setattr if there is no space, unless we
+	 * are in emergency mode (might be needed to chflags -R noschg
+	 * files prior to removal).
+	 */
+	if ((ip->pmp->flags & HAMMER2_PMPF_EMERG) == 0 &&
+	    hammer2_vfs_enospace(ip, 0, current_cred()) > 1)
+		return (-ENOSPC);
 	error = setattr_prepare(idmap, dentry, attr);
 	if (error)
 		return (error);
