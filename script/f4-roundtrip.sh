@@ -26,6 +26,28 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
+
+# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
+# same image with one volume header byte complemented must fail the same
+# fsck_hammer2, naming the header CRC. Without it a checker that accepts
+# anything, a wrong binary on the path, or a copy that landed elsewhere
+# all read as a pass. The byte is complemented rather than set, so the
+# alteration cannot be a no-op for a value it already had; offset 256 is
+# inside the first CRC section and clear of the magic and the CRC itself.
+fsck_control() {	# image
+	c=$FIXDIR/control.img
+	cp --sparse=always "$1" "$c" || { echo "  FAIL  could not copy $1 for the fsck control"; return 1; }
+	b=$(dd if="$c" bs=1 skip=256 count=1 status=none | od -An -tu1 | tr -d ' ')
+	printf "\\$(printf %o $((b ^ 255)))" | dd of="$c" bs=1 seek=256 conv=notrunc status=none
+	o=$("$FSCK" "$c" 2>&1); s=$?
+	rm -f "$c"
+	if [ "$s" != 0 ] && printf '%s\n' "$o" | grep -q "volume header crc mismatch"; then
+		echo "  ok    host fsck_hammer2 refuses the same image with one header byte changed"
+		return 0
+	fi
+	echo "  FAIL  host fsck_hammer2 accepted the image with one header byte changed, so its pass proves nothing"
+	return 1
+}
 trap 'rm -rf "$W"' EXIT
 
 command -v virsh >/dev/null 2>&1 || { echo "f4: COULD-NOT-RUN: no virsh" >&2; exit 2; }
@@ -94,6 +116,7 @@ printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
 down "$GUEST" "$GUEST_SSH"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
+fsck_control "$IMG" || fail=$((fail + 1))
 
 # 2. DragonFly checks and writes.
 cat > "$W/dfly.sh" <<GUEST
@@ -112,7 +135,9 @@ boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "f4: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
 out=$(ssh "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
-printf '%s\n' "$out" | grep -q "files, 0 mismatches" || fail=$((fail + 1))
+# The count is asserted with the verdict: "checked 0 files, 0 mismatches"
+# is what an empty manifest or a mount that landed elsewhere prints.
+printf '%s\n' "$out" | grep -q "checked [1-9][0-9]* files, 0 mismatches" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "symlink followed" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || fail=$((fail + 1))
 down "$DFLY" "$DFLY_SSH"

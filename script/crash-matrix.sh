@@ -45,6 +45,28 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
+
+# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
+# same image with one volume header byte complemented must fail the same
+# fsck_hammer2, naming the header CRC. Without it a checker that accepts
+# anything, a wrong binary on the path, or a copy that landed elsewhere
+# all read as a pass. The byte is complemented rather than set, so the
+# alteration cannot be a no-op for a value it already had; offset 256 is
+# inside the first CRC section and clear of the magic and the CRC itself.
+fsck_control() {	# image
+	c=$FIXDIR/control.img
+	cp --sparse=always "$1" "$c" || { echo "  FAIL  could not copy $1 for the fsck control"; return 1; }
+	b=$(dd if="$c" bs=1 skip=256 count=1 status=none | od -An -tu1 | tr -d ' ')
+	printf "\\$(printf %o $((b ^ 255)))" | dd of="$c" bs=1 seek=256 conv=notrunc status=none
+	o=$("$FSCK" "$c" 2>&1); s=$?
+	rm -f "$c"
+	if [ "$s" != 0 ] && printf '%s\n' "$o" | grep -q "volume header crc mismatch"; then
+		echo "  ok    host fsck_hammer2 refuses the same image with one header byte changed"
+		return 0
+	fi
+	echo "  FAIL  host fsck_hammer2 accepted the image with one header byte changed, so its pass proves nothing"
+	return 1
+}
 trap 'rm -rf "$W"' EXIT
 
 command -v virsh >/dev/null 2>&1 || { echo "crash: COULD-NOT-RUN: no virsh" >&2; exit 2; }
@@ -222,7 +244,7 @@ verdict_linux() {	# image -> prints lines, returns failures
 	scp -q -o ConnectTimeout=5 "$KO" "$W/recover-linux.sh" "$GUEST_SSH:/tmp/" || { down "$GUEST" "$GUEST_SSH"; return 9; }
 	out=$(ssh "$GUEST_SSH" 'sh /tmp/recover-linux.sh' 2>&1)
 	printf '%s\n' "$out" | sed 's/^/  linux   /'
-	for want in "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^reports 0$"; do
+	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^reports 0$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))
 	done
 	down "$GUEST" "$GUEST_SSH"
@@ -235,7 +257,7 @@ verdict_fbsd() {
 	scp -q -o ConnectTimeout=5 "$W/recover-fbsd.sh" "$FBSD_SSH:/tmp/" || { down "$FBSD" "$FBSD_SSH"; return 9; }
 	out=$(ssh "$FBSD_SSH" 'doas sh /tmp/recover-fbsd.sh' 2>&1)
 	printf '%s\n' "$out" | sed 's/^/  fbsd    /'
-	for want in "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^freebsd fsck clean$"; do
+	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^freebsd fsck clean$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))
 	done
 	down "$FBSD" "$FBSD_SSH"
@@ -267,6 +289,9 @@ for writer in $WRITERS; do
 			else
 				hf=ok; "$FSCK" "$IMG" >/dev/null 2>&1 || hf=FAIL
 				echo "  $hf    host fsck_hammer2 on the cut-off image"
+				# The torn cell is this control's live form: a header
+				# fsck must refuse, and does. The other cells get it here.
+				fsck_control "$IMG" || hf=FAIL
 			fi
 			cp --sparse=always "$IMG" "$IMGL"; cp --sparse=always "$IMG" "$IMGF"
 			verdict_linux "$IMGL"; lf=$?
