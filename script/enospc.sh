@@ -198,6 +198,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(blocks available after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
+		    s/^  \(mmap on the full volume .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(oops [0-9]*\)$/      \1/p;\
@@ -306,7 +307,15 @@ fi
 
 $VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio >/dev/null 2>&1 || {
 	echo "enospc: COULD-NOT-RUN: could not attach $IMG" >&2; exit 2; }
+# The mapped-write probe: a shared writable mapping written and synced
+# on the full volume, from test/hammer2-mmap-exercise.c, so what a
+# writer that never calls write(2) is told is a reading. Static, since
+# the guest's libc is not this machine's.
+cc -static -O2 -o /tmp/h2mmaptest.$$ test/hammer2-mmap-exercise.c 2>/dev/null || {
+	echo "enospc: COULD-NOT-RUN: the mmap exerciser did not compile" >&2; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/h2.ko" >/dev/null 2>&1
+scp -q -o ConnectTimeout=5 /tmp/h2mmaptest.$$ "$GUEST_SSH:/tmp/h2mmaptest" >/dev/null 2>&1
+rm -f /tmp/h2mmaptest.$$
 
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
@@ -381,6 +390,12 @@ out=$(ssh "$GUEST_SSH" '
 	echo "fsync of the last file returned $? ${msg:+: $msg}"
 	msg=$(sync -f /mnt/h2enospc 2>&1)
 	echo "syncfs returned $? ${msg:+: $msg}"
+	# A writer through a mapping never calls write(2), so the reserve
+	# check in the write entry never sees it. What it is told, and when,
+	# is the reading: a refusal at the fault arrives before any byte is
+	# accepted, a failure at msync after all of them were.
+	msg=$(/tmp/h2mmaptest /mnt/h2enospc/mapped 2>&1 | tail -1)
+	echo "mmap on the full volume exit $? : ${msg:-no output}"
 	sync
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The free space read before the sync includes what dirty pages will
