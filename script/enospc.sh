@@ -75,6 +75,8 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(still mounted [0-9]*\)$/      \1/p;\
 		    s/^  \(module refs .*\)$/      \1/p;\
+		    s/^  \(outstanding .*\)$/      \1/p;\
+		    s/^  \(busy inodes [0-9]*\)$/      \1/p;\
 		    s/^  \(rmmod [0-9]*\)$/      \1/p;\
 		    s/^  \(shutdown-reason .*\)$/      \1/p" "$log"
 		command grep "^  FAIL" "$log" | command sed "s/^  /      /"
@@ -304,6 +306,20 @@ out=$(ssh "$GUEST_SSH" '
 	# away are different questions, and rmmod failing answers neither.
 	echo "still mounted $(command grep -c h2enospc /proc/mounts || true)"
 	echo "module refs $(cat /sys/module/hammer2/refcnt 2>/dev/null || echo unreadable)"
+	# What the module still holds, printed by the driver at unmount
+	# because the check that reads these counters runs at unload and an
+	# unload that is refused never reaches it.
+	# The driver prints this from ->kill_sb, which runs only when the
+	# superblock is actually destroyed, so no line here on a run whose
+	# module will not unload says the superblock is pinned rather than
+	# that nothing was outstanding.
+	o=$(command grep -o "after unmount: .*" /tmp/kmsg.log | tail -1)
+	if [ -n "$o" ]; then
+		echo "outstanding $o"
+	else
+		echo "outstanding no line, so the superblock was not destroyed"
+	fi
+	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
 	echo "=== log tail begins"
 	tail -25 /tmp/kmsg.log | command sed "s/^[0-9,;]*;//"
 	echo "=== log tail ends"

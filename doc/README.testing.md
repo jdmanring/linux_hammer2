@@ -1093,6 +1093,16 @@ It is not a gate for that reason. A test that fails on half its runs
 would be a flake in the suite rather than a check, so it stays a script
 run by hand until both are closed.
 
+What the module still holds is now printed by the driver rather than
+inferred. `hammer2_assert_clean()` reads the four allocation counters on
+the unload path, which a module that will not unload never reaches, so
+the one failure they would explain is the one they could not report.
+`->kill_sb` prints them too, unconditionally: that function runs only
+when the superblock is actually destroyed, so a failing run with no such
+line says the superblock is pinned rather than that the counters were
+clean. Printing only a nonzero count would have made those two cases
+produce the same silence, which is what the first version of it did.
+
 Both of those are intermittent, which makes a single run the wrong
 instrument: it answers about itself and nothing else. `H2_REPEAT=n`
 runs the whole thing n times and tallies pass, fail and could-not-run,

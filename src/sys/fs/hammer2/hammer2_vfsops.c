@@ -2432,6 +2432,31 @@ hammer2_kill_sb(struct super_block *sb)
 {
 	kill_anon_super(sb);
 	hammer2_unmount(sb);
+
+	/*
+	 * XXX Linux: hammer2_assert_clean() reads these same counters, but
+	 * on the unload path, which a module that will not unload never
+	 * reaches.  The one failure they would explain is therefore the one
+	 * they cannot report, and a full volume produces it: the filesystem
+	 * unmounts and the module goes on holding a reference.  Say what is
+	 * outstanding where an unmount can be seen whether or not an unload
+	 * follows.  The counters are module wide, so a second mount's
+	 * objects are counted here too; this says what the module holds,
+	 * not what this superblock leaked.
+	 *
+	 * Printed unconditionally, and that is the point.  This function
+	 * runs only if the superblock is actually destroyed, so a run whose
+	 * module will not unload and whose log has no line from here says
+	 * the superblock itself is pinned rather than that the counters
+	 * were clean.  Printing only a nonzero count would make those two
+	 * cases produce the same silence.
+	 */
+	hprintf("after unmount: %d inode, %d chain, %d modified, "
+	    "%d dio still allocated\n",
+	    hammer2_count_inode_allocated,
+	    hammer2_count_chain_allocated,
+	    hammer2_count_chain_modified,
+	    hammer2_count_dio_allocated);
 }
 
 /*
