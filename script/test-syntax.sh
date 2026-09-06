@@ -25,21 +25,38 @@ cd "$(dirname "$0")/.." || exit 2
 if [ "${1:-}" = "--selftest" ]; then
 	k=${KDIR:-/lib/modules/$(uname -r)/build}
 	[ -f "$k/Makefile" ] || { echo "selftest: COULD-NOT-RUN: no kernel tree"; exit 2; }
-	lv=$(sed -n 's/^VERSION *= *//p' "$k/Makefile" | head -1)
-	lp=$(sed -n 's/^PATCHLEVEL *= *//p' "$k/Makefile" | head -1)
+	ref=$(sed -n 's/^KERNEL_REF=//p' "$0")
+	# The override direction needs a tree that is NOT the kernel of
+	# record: overriding to the record's own version prints no warning,
+	# so with KDIR at the record this read as a failure of the gate.
+	# The host's tree is tried after KDIR; where neither differs the
+	# direction is named as not exercised, like the other one below.
+	ov=
+	for t in "$k" "/lib/modules/$(uname -r)/build"; do
+		[ -f "$t/Makefile" ] || continue
+		tv=$(sed -n 's/^VERSION *= *//p' "$t/Makefile" | head -1).$(sed -n 's/^PATCHLEVEL *= *//p' "$t/Makefile" | head -1)
+		[ "$tv" != "$ref" ] && { ov=$t; break; }
+	done
+	if [ -z "$ov" ]; then
+		echo "  note  every tree here is the kernel of record ($ref), so the"
+		echo "        override direction was NOT exercised"
+	else
+	lv=$(sed -n 's/^VERSION *= *//p' "$ov/Makefile" | head -1)
+	lp=$(sed -n 's/^PATCHLEVEL *= *//p' "$ov/Makefile" | head -1)
 	# Normalize first, because the warning wraps: "WHICH IS NOT" ends one
 	# line and "THE KERNEL OF RECORD" starts the next, so a line-at-a-time
 	# matcher reports it missing while it is plainly there. This fixture
 	# failed that way on its first run, the same defect the inventory
 	# gate's document reader was fixed for hours earlier.
 	flat() { printf '%s' "$1" | tr '\n' ' ' | tr -s ' '; }
-	out=$(H2_KERNEL_REF="$lv.$lp" bash "$0" 2>&1)
+	out=$(KDIR=$ov H2_KERNEL_REF="$lv.$lp" bash "$0" 2>&1)
 	if flat "$out" | command grep -q 'NOT THE KERNEL OF RECORD'; then
 		echo "  ok    an overridden run says so in its summary"
 	else
 		echo "  FAIL  an overridden run printed no override warning:"
 		printf '%s\n' "$out" | tail -2 | sed 's/^/        /'
 		exit 1
+	fi
 	fi
 	# The other direction, meaningful only since the kernel of record
 	# arrived in the store on 2026-08-26. Before that an unoverridden run
