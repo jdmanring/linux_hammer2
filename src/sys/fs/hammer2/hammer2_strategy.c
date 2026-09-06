@@ -1280,11 +1280,8 @@ hammer2_dedup_lookup(hammer2_dev_t *hmp, char **datap, int pblksize)
  * file mapping carrying folios of at least HAMMER2_PBUFRADIX order, the
  * same contract the DIO layer sets on the device mapping.  A smaller
  * folio would have this write zeros over the rest of the block, so it is
- * refused rather than padded.
- *
- * DEFER(->writepages lands: 0.5): nothing starts this xop yet.  The
- * file mapping's folio order, ->write_begin and ->write_end, dirty
- * tracking and ->writepages are the write path's Linux half.
+ * refused rather than padded.  hammer2_writepages() starts it, one
+ * folio per XOP, and reads back what it fed the mapping's error.
  */
 void
 hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)

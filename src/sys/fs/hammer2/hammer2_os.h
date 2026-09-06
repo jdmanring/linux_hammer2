@@ -115,10 +115,13 @@
 /* Linux */
 #define hpanic(X, ...)	panic(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__)
 /*
- * DEFER(the VFS layer lands, giving a super_block to mark): panic() is
+ * DEFER(every hpanic site has an error its caller propagates): panic() is
  * what the three BSD ports do, and on Linux it is a machine-wide event
- * standing in for a per-mount one. A Linux filesystem fails the operation
- * and takes the mount read-only. See doc/README.porting.md.
+ * standing in for a per-mount one.  A Linux filesystem fails the
+ * operation and takes the mount read-only.  The super_block to mark has
+ * existed since the mount path landed; what has not is a way out of the
+ * fifty-four call sites, every one written as not returning, which is
+ * an edit to carried core in all four trees.  See doc/README.porting.md.
  */
 
 #ifdef HAMMER2_INVARIANTS

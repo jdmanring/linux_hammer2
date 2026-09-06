@@ -374,8 +374,12 @@ The decision, split by which half the code is in:
   console had been turned on for that run. `doc/README.testing.md`
   records the capture.
 
-DEFER(the VFS layer lands, giving a super_block to mark): `hpanic` on
-Linux is a machine-wide event standing in for a per-mount one.
+DEFER(every hpanic site has an error its caller propagates): `hpanic` on
+Linux is a machine-wide event standing in for a per-mount one. The
+super_block to mark has existed since 0.4, so that is no longer what
+lifts this. The fifty-four sites are written as not returning, and each
+needs an error its caller carries out before `hpanic` can stop calling
+`panic()`, which is an edit to carried core in every tree.
 
 A reviewer who has not read this file will raise this, and should: the source
 shows `BUG_ON` and `panic` with nothing beside them saying the objection was
