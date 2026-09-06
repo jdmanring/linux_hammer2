@@ -80,12 +80,17 @@ if ! $VIRSH domstate "$GUEST" 2>/dev/null | grep -q running; then
 		echo "root-boot: COULD-NOT-RUN: $GUEST would not start" >&2; exit 2; }
 	started=yes
 fi
+# A guest that is booting refuses the connection rather than dropping it,
+# and a refusal returns at once, so a bare retry loop spends its whole
+# budget in about a second and reports a machine that never answered. The
+# wait has to be in the loop, not in the connect timeout.
 i=0
 while [ "$i" -lt 60 ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
+	sleep 5
 	i=$((i + 1))
 done
-[ "$i" -lt 60 ] || { echo "root-boot: COULD-NOT-RUN: $GUEST did not answer ssh" >&2; exit 2; }
+[ "$i" -lt 60 ] || { echo "root-boot: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2; exit 2; }
 
 guest_rel=$(ssh "$GUEST_SSH" 'uname -r' 2>/dev/null)
 ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')

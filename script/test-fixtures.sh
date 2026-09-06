@@ -180,13 +180,18 @@ cleanup() {
 }
 trap 'cleanup' EXIT
 
+# A guest that is booting refuses the connection rather than dropping it,
+# and a refusal returns at once, so a bare retry loop spends its whole
+# budget in about a second and reports a machine that never answered. The
+# wait has to be in the loop, not in the connect timeout.
 i=0
 while [ "$i" -lt 60 ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
+	sleep 5
 	i=$((i + 1))
 done
 if [ "$i" -ge 60 ]; then
-	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh" >&2
+	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2
 	exit 2
 fi
 

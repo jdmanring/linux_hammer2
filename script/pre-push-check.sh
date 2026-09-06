@@ -64,8 +64,19 @@ for g in script/test-*.sh; do
 	case "$s" in
 	0) ;;
 	2)
+		# The gate says why it could not run and the reason was being
+		# dropped, so a harness defect that stopped a gate from running
+		# read exactly like a machine that was not available. Print the
+		# gate's own reason, or say plainly that it gave none.
 		warned=$((warned + 1))
 		printf 'pre-push: COULD-NOT-RUN %s\n' "$g" >&2
+		why=$(printf '%s\n' "$out" | command grep -i 'COULD-NOT-RUN' |
+		    command sed 's/^[^:]*: *COULD-NOT-RUN: *//' | head -3)
+		if [ -n "$why" ]; then
+			printf '%s\n' "$why" | command sed 's/^/          /' >&2
+		else
+			echo "          the gate gave no reason" >&2
+		fi
 		;;
 	*)
 		rc=1
