@@ -198,6 +198,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(blocks available after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
+		    s/^  \(write of 128K on the full volume .*\)$/      \1/p;\
 		    s/^  \(mmap on the full volume .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
@@ -356,6 +357,9 @@ out=$(ssh "$GUEST_SSH" '
 	# The file for the mapped-write probe, made and sized while there is room,
 	# so that after the fill the write fault is the first thing asked.
 	truncate -s 128K /mnt/h2enospc/mapped
+	# The file for the write(2) control beside it, made now for the same
+	# reason: after the fill, write(2) into it meets only the write path.
+	: > /mnt/h2enospc/written
 	i=0
 	why=
 	# Every file the fill wrote is hashed as written, off the volume, so
@@ -375,6 +379,17 @@ out=$(ssh "$GUEST_SSH" '
 		sha256sum /mnt/h2enospc/fill.$i >> /tmp/fill.sums
 		i=$((i + 1))
 	done
+	# A fill in 4 MiB pieces stops with up to 4 MiB above the threshold,
+	# room for a 128 KiB probe on some runs and not on others. Finish it
+	# in 64 KiB pieces, one folio each, so what is left is under the
+	# size of either probe below and both are asked the same question.
+	if [ $i -lt $cap ]; then
+		while dd if=/dev/urandom of=/mnt/h2enospc/fill.$i bs=64K \
+		    count=1 status=none 2>/dev/null; do
+			sha256sum /mnt/h2enospc/fill.$i >> /tmp/fill.sums
+			i=$((i + 1))
+		done
+	fi
 	echo "files written $i"
 	echo "fill stopped because ${why:-no error reported}"
 	echo "blocks available $(stat -f -c %a /mnt/h2enospc)"
@@ -397,6 +412,11 @@ out=$(ssh "$GUEST_SSH" '
 	# check in the write entry never sees it. What it is told, and when,
 	# is the reading: a refusal at the fault arrives before any byte is
 	# accepted, a failure at msync after all of them were.
+	# The control is write(2) of the same size at the same moment, into
+	# a file that exists, so the create path cannot be what answers.
+	msg=$(dd if=/dev/urandom of=/mnt/h2enospc/written bs=128K count=1 \
+	    conv=notrunc status=none 2>&1); st=$?
+	echo "write of 128K on the full volume exit $st : ${msg:-accepted}"
 	/tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1; st=$?
 	echo "mmap on the full volume exit $st : $(tail -1 /tmp/h2mmap.out)"
 	sync
@@ -629,6 +649,21 @@ printf '%s\n' "$out" | command grep -q '^blocks available after sync 0$' ||
 	{ echo "  FAIL  the volume reports free space after the sync, so the refusal came early:"
 	  printf '%s\n' "$out" | sed -n 's/^blocks available/        blocks available/p'
 	  fail=$((fail + 1)); }
+# A writer through a mapping is told what write(2) is told. The fault
+# handler refuses under the same reserve the write entry does, and the
+# exerciser dies of the SIGBUS the refusal becomes, 135 from the shell.
+# Before the check was carried the mapping accepted every byte on a
+# volume where write(2) was refused.
+if printf '%s\n' "$out" | command grep -q '^write of 128K on the full volume exit [1-9]'; then
+	printf '%s\n' "$out" | command grep -q '^mmap on the full volume exit 135 ' ||
+		{ echo "  FAIL  write(2) was refused and the mapped write was not:"
+		  printf '%s\n' "$out" | sed -n 's/^\(write of 128K\|mmap\) on the full volume/        &/p'
+		  fail=$((fail + 1)); }
+else
+	echo "  FAIL  write(2) of 128K was accepted after the fill, so the volume was not full:"
+	printf '%s\n' "$out" | sed -n 's/^write of 128K on the full volume/        &/p'
+	fail=$((fail + 1))
+fi
 # What write(2) accepted is on the media. The reserve the write path
 # keeps exists so the flush that commits a fill can complete; before it
 # was carried, two files of five hundred read back whole.

@@ -1147,8 +1147,15 @@ that check is what found a fill losing nearly all of itself.
 a volume with room must read back everything it accepted, or the check
 is what is broken. Free space is read after the sync, because the write
 path refuses a fill while statfs still shows the space its dirty pages
-will take. Every run prints the source hash it was built from, with a
-dirty mark. `doc/README.status.md` carries the account.
+will take. After the fill it writes 128 KiB through a shared mapping of
+a file sized while there was room, with `test/hammer2-mmap-exercise.c`
+in its `existing` mode, and 128 KiB through `write(2)` into another
+such file, and fails the run if `write(2)` is refused and the mapping
+is not; the refusal at the fault is a `SIGBUS`, 135 from the guest's
+shell. The fill ends in 64 KiB pieces so that less than either probe
+is left above the threshold. Every run prints the source hash it was
+built from, with a dirty mark. `doc/README.status.md` carries the
+account.
 
 It is not a gate yet only because it has not been run enough times on
 the build that passes it; the four runs that have are in the account.

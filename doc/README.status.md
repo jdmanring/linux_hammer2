@@ -1493,11 +1493,29 @@ What is not carried, with the trigger for each. The source trees'
 syncer flushes every thirty seconds and this port flushes metadata on
 `sync` alone, so a fill's whole metadata reaches the media in one
 flush; with the reserve respected that flush completed on every run,
-and a periodic flush waits on a run where it does not. A shared
-writable mapping dirties folios through the fault path, which none of
-these checks see, and that is the deferral already recorded on the file
-operations. The thresholds differ for root and for a user, and every
-run here writes as root; the user branch is unmeasured.
+and a periodic flush waits on a run where it does not. The thresholds
+differ for root and for a user, and every run here writes as root; the
+user branch is unmeasured.
+
+A writer through a shared mapping never calls `write(2)`, so the check
+in the write entry never sees it. The reproducer asked what such a
+writer is told on the full volume, on a file made and sized while there
+was room so that neither the create path nor the size change could be
+what answered, and the answer was nothing: the mapping accepted every
+byte where `write(2)` was refused, and the allocation failed later in
+the strategy XOP with the faulting thread long gone. The port now
+carries a `->page_mkwrite` of its own, as `ext4` and `xfs` do, which
+asks the same reserve the write entry asks with the folio's size plus
+what the page cache already holds dirty, and refuses with `SIGBUS`,
+the convention the page-fault path has for it. The reproducer runs a
+`write(2)` of the same size at the same moment as its control and
+fails a run where one is refused and the other is not. The fill ends
+in 64 KiB pieces for that comparison to mean anything: a fill in
+4 MiB pieces stops with up to 4 MiB above the threshold, and on the
+first two runs of the check a 128 KiB probe fit on one and not the
+other. With the tail fill, three runs of three: `write(2)` refused
+and the mapped write killed by `SIGBUS` on each, 465, 466 and 467
+files accepted and every one read back whole from the media.
 
 Both accounts below are kept, the wrong turns included, because the
 method is the transferable part: three of the readings this section once
