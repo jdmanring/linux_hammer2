@@ -1446,9 +1446,28 @@ during the sync. The ring buffer wraps before the run ends, so two
 earlier captures held only the tail and neither showed the sync task's
 own stack, which is the line that eliminated the first explanation.
 
-The next instrument is the one that answers it directly: record the
-return address in the chain at lock time and print it at the inversion.
-That has not been built.
+The instrument that answers it directly was then built: a scratch field
+on the chain holding the return address of whatever locked it, and a
+walk of the sync task's held locks at each of the three inode-lock sites
+that resolves any held chain lock and prints where it came from. Its
+first run was emphatic. One chain, the same address every time, reported
+as held at all 583 iterations of the syncq loop and again in stage 2,
+locked from `hammer2_flush_core+0x23b`, which is the relock of the
+parent and the chain after the flush code drops them to take them in
+order.
+
+That reading is a lead and not a finding, because the instrument was
+then made stricter and stopped seeing it. Recording the address at every
+lock says where a chain was last locked, not that the lock is still
+held, so the field was cleared on unlock to make a non-NULL value
+provably live. On that build the same run reported no held chain at all,
+while lockdep still disabled itself. Two runs of the same instrument
+disagree, so neither is evidence yet, and the difference between them is
+the next thing to understand rather than something to write up.
+
+One thing the attempt did settle: `__builtin_return_address()` above
+frame zero is not safe in kernel context, and a build using frames one
+and two killed the mounting process outright.
 
 The `ENOSPC` this all happens under is separately dropped on the floor,
 under upstream's own `XXX return error somehow?` in `hammer2_inode.c`.
