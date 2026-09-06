@@ -13,7 +13,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 ## Where we are
 
 0.5 and 0.6 are met and 0.7 is open on the adapter alone, with the
-driver at 0.7.34 in `CHANGELOG.md`. The shipped module mounts
+driver at 0.7.42 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted
@@ -37,6 +37,17 @@ that refused every dirty folio to compaction. The reproducer is a gate
 now, `script/test-enospc.sh`, thirteenth of thirteen, and it found the
 last of those on its first run under that name by counting a class of
 kernel warning its readings had not named.
+
+Since then the readings 0.9 asks for have started, on the 4 GiB debug
+guest with the module unchanged between them. A million one-line files
+went in and were counted on both sides, after a lock inversion against
+reclaim and an unbounded dirty set were fixed and a folio refusal near
+seven hundred thousand was attributed to the guest's kmemleak rather
+than the IO model. A 512 MiB file read back at btrfs's rate and
+DragonFly's own once the device mapping was asked for read-ahead, and
+its blocks lie contiguous on the media. The rest of 0.9 waits on F6 and
+a build host; 0.7's adapter and 0.8's installer wait on the storage
+model.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile`

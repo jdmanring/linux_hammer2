@@ -6,11 +6,11 @@ for handoff section 37 items 3 and 4. Nothing here is designed: it is a
 reading of the current tree and of the kernel headers the gate compiles
 against, with the version of record stated so it can be re-measured.
 
-Kernel of record: 7.2, pinned as `KERNEL_REF` in `script/test-syntax.sh`,
+Kernel of record: 7.3, pinned as `KERNEL_REF` in `script/test-syntax.sh`,
 which refuses any other tree rather than reporting a pass against it. The
 kernel expressions quoted below were read at 7.1.9 on 2026-08-26 and are
 cited by expression rather than by line for that reason: the expressions do
-not move between those two versions and the line numbers do.
+not move between those versions and the line numbers do.
 
 ## The object
 
@@ -99,8 +99,8 @@ document, never by line. They cannot be checked by
 in one is precision no instrument backs, and a sibling repository's
 `blkdev.h` citation carried a line matching neither the tag it named nor the
 one before it. Read against the 7.1.9 headers on 2026-08-26, every kernel
-expression named here resolves. At 7.2 the lines will differ and the
-expressions will not.
+expression named here resolves. At 7.3 the lines differ and the
+expressions do not.
 
 ## Why the bootstrap choice needs THP
 

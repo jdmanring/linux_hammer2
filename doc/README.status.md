@@ -31,6 +31,9 @@ and a file mapping that refused every dirty folio to compaction with a
 warning that sat uncounted in 39 of 62 kept logs of the gate that now
 counts it.
 A write near full is refused now, as the other trees refuse it.
+A million files went in and were counted on both sides, and a large
+file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
+the same guest, both readings taken for 0.9 and recorded below.
 `CHANGELOG.md` is the enumeration; this paragraph names kinds and does
 not carry the count. This file is the one to correct
 rather than to argue with: if a claim here is stale, it is a defect.
