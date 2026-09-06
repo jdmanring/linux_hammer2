@@ -2895,9 +2895,17 @@ again:
 		nparent = hammer2_chain_create_indirect(parent, key, keybits,
 		    mtid, type, &error);
 		if (nparent == NULL) {
-			if (allocated)
+			/*
+			 * XXX Only a chain this function allocated may be
+			 * released here.  One the caller passed in is still
+			 * the caller's, locked and referenced, and clearing
+			 * *chainp for it strands the lock: every caller
+			 * releases the chain under "if (chain)".
+			 */
+			if (allocated) {
 				hammer2_chain_drop(chain);
-			chain = NULL;
+				chain = NULL;
+			}
 			goto done;
 		}
 		if (parent != nparent) {
