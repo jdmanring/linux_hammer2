@@ -1155,6 +1155,29 @@ them:
 | seed 2, by hand | 100 | 36 | 43 | 2 (3 files listed, and 2) | 19 | 0 |
 | seed 3, the script, with its two controls | 40 | 22 | 12 | 1 (0 files listed) | 5 | 0 |
 | seed 1, before the bias | 60 | 56 | 0 | 0 | 4 | 0 |
+| seed 4, after `hpanic` became `BUG()` | 100 | 36 | 52 (48 with one, 3 with two, 1 with three) | 1 (0 files listed) | 12 | 0 |
+
+The seed 4 row was the first run after `hpanic` stopped calling
+`panic()`, and its purpose was the kernel report column: a mutation
+reaching one of the fifty-four `hpanic` sites had been a dead guest with
+an empty log and is now an oops that column counts. None did, in one
+hundred images, which is the same reading the three earlier rows gave
+under the old mapping and says nothing about whether a mutation can
+reach one.
+
+Reading that run's log found a defect in the generator that every row
+above shares. A mutation is recorded as `offset:old>new`, and in one
+recorded mutation of five the two bytes are equal: 99 of 508 on seed 3
+and 356 of 1704 on seed 4, from zero written over a zero the sampling
+never escaped, `ff` over `ff`, and a random draw that hit. An image all
+of whose mutations are of that kind is the unmodified seed, and it
+reads as "mounted, all 44 files read": four of seed 3's forty images and
+five of seed 4's hundred were that. The generator now redraws until the
+byte changes, which alters what every seed and index produce, so the
+four rows above reproduce only from the generator at `7957583`, and
+rows after it from the current one. The counts in the four rows stand
+as recorded; the images they exercised are fewer than they say by the
+figures here.
 
 A refusal is a volume header or super-root the mount could not check;
 an `EIO` is a data or dirent block whose XXH64 no longer matches, named

@@ -766,8 +766,12 @@ fail is a run whose reader or whose refusal detection is broken, and
 its counts mean nothing.
 
 The seed is a small volume, because the mutator samples until it hits a
-byte that is not zero and a 2 GiB fixture is almost entirely zero. It
-is made on the host by hammer2-utils and populated through the write
+byte that is not zero and a 2 GiB fixture is almost entirely zero. The
+mutator also redraws until the new byte differs from the old, because a
+byte replaced by its own value is no mutation and one recorded mutation
+in five was, over two seeds, before that check; `doc/README.status.md`
+carries the figures and which generator each recorded seed reproduces
+from. It is made on the host by hammer2-utils and populated through the write
 path:
 
     truncate -s 64M /mnt/storage/hammer2-fixtures/fz-seed.img

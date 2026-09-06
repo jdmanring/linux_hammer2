@@ -52,7 +52,16 @@ KO=src/sys/fs/hammer2/hammer2.ko
 
 state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "fuzz: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 started=0
-if [ "$state" != "running" ]; then
+# A domain listed as running can be one another script is still shutting
+# down, which refuses ssh for as long as that takes; that state was read
+# as usable once and the run spent its whole wait on it. The guest is
+# usable when it answers, so ask that first and the domain only when it
+# does not.
+if ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; then
+	:
+elif [ "$state" = "running" ]; then
+	echo "fuzz: COULD-NOT-RUN: $GUEST is listed running but does not answer ssh; it may be shutting down" >&2; exit 2
+else
 	[ "${H2_FIXTURE_START:-0}" = 1 ] || {
 		echo "fuzz: COULD-NOT-RUN: $GUEST is $state; set H2_FIXTURE_START=1 to start it" >&2; exit 2; }
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: $GUEST did not start" >&2; exit 2; }
@@ -145,8 +154,15 @@ with open(p, 'r+b') as f:
             f.seek(off); old = f.read(1)[0]
             if old:
                 break
-        mode = r.choice(['flip', 'zero', 'ff', 'rand'])
-        new = {'flip': old ^ (1 << r.randrange(8)), 'zero': 0, 'ff': 0xff, 'rand': r.randrange(256)}[mode]
+        # A byte replaced by its own value is no mutation, and one in
+        # five recorded ones was, over two seeds: zero written over a
+        # zero the sampling never escaped, ff over ff, a random draw
+        # that hit. Redraw until the byte changes.
+        while True:
+            mode = r.choice(['flip', 'zero', 'ff', 'rand'])
+            new = {'flip': old ^ (1 << r.randrange(8)), 'zero': 0, 'ff': 0xff, 'rand': r.randrange(256)}[mode]
+            if new != old:
+                break
         f.seek(off); f.write(bytes([new]))
         out.append(f"{off:#x}:{old:02x}>{new:02x}")
 print(f"k={k} " + ",".join(out))
