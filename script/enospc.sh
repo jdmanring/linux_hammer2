@@ -5,25 +5,31 @@
 # in it. This one fills a volume until the first write fails, then calls
 # sync(2), and reads lockdep on both sides of each step.
 #
-# Its first run, 2026-09-05, found a circular lock dependency: lockdep
-# stayed enabled through 583 files and 2 GiB of writing and disabled
-# itself during the sync that followed, after which the unmount hung and
-# the module could not be removed. The report names two orders,
+# Its first runs found a circular lock dependency: lockdep stayed
+# enabled through 583 files and 2 GiB of writing and disabled itself
+# during the sync that followed. The report named two orders,
 #
 #   hammer2_write_end -> hammer2_inode_chain_sync   holds h2ip, takes h2ch_inode
 #   hammer2_vfs_sync_pmp                            holds h2ch_inode, takes h2ip
 #
-# and the sync task's backtrace holds nothing of this module between
-# ksys_sync and the lock, so the chain lock was acquired in a call that
-# has already returned. Two explanations were tested and both were wrong:
-# every XOP the sync path drives is balanced, and a scratch build proved
-# hammer2_chain_unhold() does not leave the mutex held. The report is read
-# by streaming /dev/kmsg for the whole run, because the ring wraps before
-# a fill ends, and it is printed before the unmount, because the unmount
-# hangs on most of these runs. doc/README.status.md carries all of it.
+# and the cause was hammer2_chain_create() clearing a caller's chain
+# pointer on the ENOSPC path, which skipped the caller's own release and
+# left the chain locked. Eight runs reported the cycle before that fix
+# and none has since. doc/README.status.md carries the whole account.
 #
-# THE FAILURE IS THE POINT OF THIS SCRIPT. It exits non-zero while the
-# defect stands, which is what a known defect's reproducer should do.
+# The report is read by streaming /dev/kmsg for the whole run, because
+# the ring wraps before a fill ends, and it is printed before the
+# unmount, because the unmount is where a bad run loses the log.
+#
+# WHAT IS STILL OPEN, and why this is not a gate: the module cannot be
+# removed after a fill, holding references although the filesystem has
+# unmounted, and on some runs lockdep reports a held lock freed during
+# the fill itself. Both fail this script.
+#
+# NOTHING HERE IS JUDGED BY A PROCESS'S EXIT STATUS ALONE. The unmount
+# is judged by whether the filesystem went away, because the unmount
+# process is killed on these runs by something outside this script and
+# the status alone read for several runs as an unmount that hung.
 #
 # EXIT 2 IS COULD-NOT-RUN AND IS NEVER A PASS, as in test-fixtures.sh.
 set -u
@@ -143,7 +149,29 @@ out=$(ssh "$GUEST_SSH" '
 	# MAX_LOCK_DEPTH) all read as debug_locks 0 at the same site. The
 	# reason is what tells them apart, so it is reported rather than
 	# assumed.
-	echo "shutdown-reason $(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|WARNING: bad unlock balance\|BUG: held lock freed" /tmp/kmsg.log || echo none-found)"
+	echo "shutdown-reason $(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log || echo none-found)"
+	# A run that cannot name what shut lockdep down is refused rather than
+	# scored, and a refusal that cannot say why costs a full fill and
+	# teaches nothing. Print what the log holds whenever the four banners
+	# above did not match, so the next reader starts from the evidence
+	# instead of another reproduction. The kernel killing a process out
+	# from under this script reads as a driver failure otherwise, so it is
+	# counted whether or not anything else went wrong.
+	echo "oom kills $(command grep -c "Out of memory: Killed\|oom-kill:" /tmp/kmsg.log || true)"
+	echo "drop-with-lock warns $(command grep -c "by the task holding its lock" /tmp/kmsg.log || true)"
+	if [ "$(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)" = 0 ] &&
+	   ! command grep -q "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log; then
+		echo "=== unattributed begins"
+		# head succeeds on empty input, so the emptiness is tested rather
+		# than left to a || that could never fire.
+		u=$(command grep -o "WARNING:.*\|BUG:.*\|INFO: task.*\|Out of memory:.*\|oom-kill:.*\|turning off the locking correctness validator.*" /tmp/kmsg.log | head -20)
+		if [ -n "$u" ]; then
+			printf "%s\n" "$u"
+		else
+			echo "the log holds no kernel fault line at all"
+		fi
+		echo "=== unattributed ends"
+	fi
 
 	# The instrument prints through hprintf, so its lines carry the
 	# module name; summarize them by site rather than repeating each.
@@ -156,11 +184,77 @@ out=$(ssh "$GUEST_SSH" '
 	fi
 
 	echo "=== first report begins"
-	command sed -n "/possible circular locking dependency/,+220p" /tmp/kmsg.log |
+	# Follow whichever banner fired, not the cycle alone: a run whose
+	# fault is a different one printed an empty section and read as a run
+	# with nothing to show.
+	command sed -n "/$(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log || echo possible circular locking dependency)/,+220p" /tmp/kmsg.log |
 	    command sed "s/^[0-9,;]*;//"
 	echo "=== first report ends"
 
-	timeout 60 umount /mnt/h2enospc; echo "umount $?"
+	# An unmount that does not finish writes no report of its own, and a
+	# deadlock and a loop making no progress leave the same exit status
+	# behind. Sample the unmount twice: cumulative CPU that moves between
+	# the samples is a loop, and cumulative CPU that stands still in D
+	# state is a lock nobody will release. sysrq-w asks the kernel for the
+	# stack of every blocked task, which lands in the kmsg stream this
+	# script already captures. Nothing below may report by staying silent:
+	# a stack that cannot be read and a dump that never arrived each say
+	# so. Note there is not a single quote anywhere in this block, which
+	# is itself one quoted string.
+	# This script streams /dev/kmsg into /tmp, which is tmpfs and so is
+	# RAM, while filling a 2 GiB volume. Report what is left and what the
+	# capture cost, because a guest killed for memory by its own harness
+	# reads as a driver that hung the unmount.
+	echo "mem available $(sed -n "s/^MemAvailable: *//p" /proc/meminfo)"
+	echo "kmsg capture $(wc -c < /tmp/kmsg.log) bytes"
+	ustart=$(cut -d. -f1 /proc/uptime)
+	umount /mnt/h2enospc & upid=$!
+	for at in 15 30; do
+		sleep 15
+		if [ ! -d /proc/$upid ]; then
+			echo "umount left at or before ${at}s"
+			break
+		fi
+		set -- $(cat /proc/$upid/stat)
+		echo "umount at ${at}s state ${3} cpu $((${14} + ${15}))"
+		if [ -r /proc/$upid/stack ]; then
+			command sed "s/^/  umount stack /" /proc/$upid/stack
+		else
+			echo "  umount stack is not readable"
+		fi
+	done
+	if [ -d /proc/$upid ]; then
+		echo w > /proc/sysrq-trigger 2>/dev/null
+		sleep 5
+		if command grep -q "Show Blocked State" /tmp/kmsg.log; then
+			echo "=== blocked tasks begin"
+			command sed -n "/Show Blocked State/,$p" /tmp/kmsg.log |
+			    command sed "s/^[0-9,;]*;//" | head -80
+			echo "=== blocked tasks end"
+		else
+			echo "blocked-task dump did not appear, so sysrq-w is off"
+		fi
+		kill -9 $upid 2>/dev/null
+		echo "umount 137"
+	else
+		wait $upid; echo "umount $?"
+	fi
+	# Printed on every run, so a run that does not hang still reports how
+	# close it came rather than nothing at all.
+	echo "umount took $(( $(cut -d. -f1 /proc/uptime) - ustart ))s"
+	# The oom count above is read before the unmount and so cannot see a
+	# kill during it, which is where the unmount has been dying. Read it
+	# again here, and show the end of the log whenever the unmount did not
+	# return cleanly, since a process killed by something this script does
+	# not name reads as a driver that hung.
+	echo "oom kills after umount $(command grep -c "Out of memory: Killed\|oom-kill:\|Killed process" /tmp/kmsg.log || true)"
+	# Whether the unmount was signalled and whether the filesystem went
+	# away are different questions, and rmmod failing answers neither.
+	echo "still mounted $(command grep -c h2enospc /proc/mounts || true)"
+	echo "module refs $(cat /sys/module/hammer2/refcnt 2>/dev/null || echo unreadable)"
+	echo "=== log tail begins"
+	tail -25 /tmp/kmsg.log | command sed "s/^[0-9,;]*;//"
+	echo "=== log tail ends"
 	timeout 30 rmmod hammer2; echo "rmmod $?"
 ' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  /'
@@ -214,10 +308,23 @@ if printf '%s\n' "$out" | command grep -q '^locks after sync 0$' &&
 	exit 2
 fi
 
+# The unmount is judged by whether the filesystem went away, not by the
+# exit status of a process: on these runs the unmount completes and the
+# process is then killed by something outside this script, which read as
+# an unmount that never finished for as long as the status was the only
+# thing being asked.
+printf '%s\n' "$out" | grep -q '^still mounted 0$' ||
+	{ echo "  FAIL  the filesystem is still mounted after the unmount"
+	  fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q '^umount 0$' ||
-	{ echo "  FAIL  the unmount did not finish"; fail=$((fail + 1)); }
+	{ echo "  note  the unmount process did not exit 0:"
+	  printf '%s\n' "$out" | sed -n 's/^umount \([0-9]*\)$/        status \1/p'
+	  printf '%s\n' "$out" | sed -n 's/^still mounted /        still mounted /p'; }
 printf '%s\n' "$out" | grep -q '^rmmod 0$' ||
-	{ echo "  FAIL  the module could not be removed"; fail=$((fail + 1)); }
+	{ echo "  FAIL  the module could not be removed, so it still holds"
+	  echo "        references after the filesystem unmounted:"
+	  printf '%s\n' "$out" | sed -n 's/^module refs /        refcnt /p'
+	  fail=$((fail + 1)); }
 
 make -s clean >/dev/null 2>&1
 echo "enospc: filled $SIZE, $fail failure(s)"

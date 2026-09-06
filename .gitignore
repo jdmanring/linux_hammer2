@@ -10,6 +10,10 @@
 # Serena's symbol index, a local tool cache and not part of the port.
 .serena/
 
+# The code graph and its ignore list, the same: a local tool cache.
+graphify-out/
+.graphifyignore
+
 # Agent instructions and local tool caches. Not part of the port.
 CLAUDE.md
 .claude/

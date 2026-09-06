@@ -1082,11 +1082,23 @@ reading the gate.
 ## A full volume
 
 `script/enospc.sh` fills a 2 GiB volume until the first write fails,
-calls `sync(2)`, and reads `debug_locks` on both sides of each step.
-**It is expected to fail**, because it reproduces an open defect: the
-sync on a full volume trips a circular lock dependency, after which the
-unmount does not return and the module cannot be removed.
-`doc/README.status.md` carries the report.
+calls `sync(2)`, and reads `debug_locks` on both sides of each step. The
+circular lock dependency it was written to reproduce is fixed, and it
+still fails, on two things that are not that: the module cannot be
+removed after a fill, holding references although the filesystem has
+unmounted, and on some runs lockdep reports a held lock freed during the
+fill itself. `doc/README.status.md` carries the account.
+
+It is not a gate for that reason. A test that fails on half its runs
+would be a flake in the suite rather than a check, so it stays a script
+run by hand until both are closed.
+
+One reading it no longer takes on trust is the unmount. For several runs
+the script judged the unmount by the exit status of the `umount` process,
+which is killed on these runs by something outside the script, and read
+that as an unmount that never finished. It asks whether the filesystem
+went away instead, and on the runs where it has asked, the filesystem
+went away every time.
 
 Every other write measurement in this tree was taken on a volume with
 room in it, which is why this went unfound through the whole write path,

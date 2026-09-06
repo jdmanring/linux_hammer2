@@ -68,10 +68,11 @@ the tree as it stood. The rows for both milestones in
 
 One thing to know before trying it: **do not fill a HAMMER2 volume to
 capacity.** A volume with no space left reports the failure correctly,
-but the `sync` after it trips a lock cycle, and four runs of eight then
-hung the unmount badly enough that the module could not be unloaded. It
-is an open defect
-with a reproducer in `script/enospc.sh` and the report written up in
+and the lock cycle the `sync` after it used to trip is fixed. What is
+still wrong is that the module cannot be unloaded afterwards: the
+filesystem unmounts, and the module goes on holding references. On some
+runs lockdep also reports a held lock freed during the fill itself.
+The reproducer is `script/enospc.sh` and the account is in
 [doc/README.status.md](doc/README.status.md). No corruption has been
 seen, and every checker has been clean afterwards.
 
