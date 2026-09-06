@@ -1497,6 +1497,16 @@ build with the fault check: 300 images on seed 6, 232 mounted and 68
 refused, 0 with a kernel report, 0 equal pairs in 5037 recorded
 mutations, both controls passing first.
 
+Verified again on `3d364be`, the build with the reclaim scope, the
+throttle and syncer, and the device read-ahead, on 2026-09-06: the
+round trip, 305 files checked by DragonFly with 0 mismatches and 203
+of DragonFly's read back here, 0 failures; the interrupted flush at 25
+seconds, 15601 entries recovered here and one written after, 15602
+read by DragonFly, the lagging header replayed, 0 failures; the PFS
+domains, three roots made here and 21 files checked by DragonFly in
+each, 0 mismatches; and the fuzzer, 100 images on seed 7, 76 mounted
+and 24 refused, 0 with a kernel report, 0 hung.
+
 The gate's first run under its own name turned up what every run before
 it had carried uncounted. Its kmsg capture held a warning from the
 compaction daemon, `hammer2_file_aops does not implement
