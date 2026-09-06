@@ -363,9 +363,24 @@ The decision, split by which half the code is in:
   It had two call sites when this was written, both reporting a corrupt
   block reference with no mount to invalidate. The carried core brought
   its own, fifty-four across seven files on 2026-09-04, forty of them in
-  `hammer2_chain.c`. When `hpanic` becomes the place that marks the
-  mount in error, every one of them becomes that at once, which is the
-  point of keeping them behind one name.
+  `hammer2_chain.c`. It was written here that when `hpanic` becomes
+  the place that marks the mount in error, every one of them becomes
+  that at once. Measured on 2026-09-05, that is false: not one of the
+  fifty-four is followed by a `return` or a `goto`. Twenty-seven sit in
+  a `switch` default arm followed by `break`, so the code after the
+  switch runs on; twenty-three run straight into code that reads the
+  thing the panic said was wrong; four close a block. Every site is
+  written on the assumption that `hpanic` does not return, so a
+  returning `hpanic` is fifty-four core edits in all four trees, and
+  the one name buys nothing until each has a return path. What one
+  name does still buy is the choice of what a non-returning `hpanic`
+  does: `panic()` takes the machine, and the Linux-shaped alternative
+  that keeps the contract is to mark the superblock in error and kill
+  the task with `BUG()`, which leaves the mount wedged with its locks
+  held rather than the machine down. That is a policy choice about
+  what an operator would rather have, `errors=panic` against
+  `errors=remount-ro` in ext4's terms, and it is recorded here as open
+  rather than taken.
 
   What one costs was measured on 2026-09-04: the first flush of a
   written file reached the `hpanic` in `hammer2_io_alloc()`, the guest
