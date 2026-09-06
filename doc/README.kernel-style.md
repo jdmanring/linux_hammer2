@@ -324,7 +324,8 @@ than baselining.
 The guard naming a chain dropped by the task holding its lock moved the
 same row by one again, for the same reason: the message names a chain
 type and a key and does not fit on one line. Nothing else moved with
-it.
+it, and the unmount report of the four allocation counters moved it once
+more, for the same reason and with the same result.
 
 The remount path moved it by three, all `return (x);`, and swapped one
 errno row for another: `hammer2_access_devvp()` refused with `EACCES`,
