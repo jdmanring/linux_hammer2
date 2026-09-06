@@ -841,6 +841,20 @@ passwordless `doas`, and needs the port built from
 is printed at the cut, so the torn cell shows which header it destroyed
 and which one the recoveries fell back to.
 
+All three judge their image by the host's `fsck_hammer2` exiting zero,
+and each of those verdicts now carries its negative control beside it,
+on the image it judged rather than in a selftest: the same checker is
+run on a sparse copy with one volume header byte complemented, at an
+offset inside the first CRC section and clear of the magic and the CRC,
+and must fail naming the header CRC. A checker that accepts anything, a
+wrong binary on the path or a copy that landed elsewhere all read as a
+pass without it. The byte is complemented rather than set, for the
+reason the fixture gate's manifest control flips rather than sets. The
+matrix's torn cell is the same control in live form and keeps it. Three
+pass strings were also found to match over an empty population, zero
+files checked with zero mismatches and zero unreadable entries out of
+zero, and the counts are now asserted with the verdicts.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a
