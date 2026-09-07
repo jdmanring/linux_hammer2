@@ -2423,6 +2423,29 @@ images:
 ext4's numbers are memcpy from the host's cache and no checksummed
 copy-on-write filesystem reaches them; btrfs on the same guest is the
 comparison, and the port now reads at its rate and at DragonFly's own.
+
+Re-read on 2026-09-07 after the folio change of 0.9.1 and the shim's
+own lock of 0.9.6, on the same guest and images, MiB/s, one run each
+unless noted:
+
+| build | write | read, 1 MiB | read, 64 KiB | `read_folio` calls, 8192 blocks |
+|---|---|---|---|---|
+| 154137d, folio change in, morning, two runs | 272, 265 | 557, 545 | 602, 595 | |
+| 251cba9, before the folio change, same hour | 243 | 617 | 674 | |
+| 2fe755c, the shim's own lock, three runs | 212, 209, 196 | 483, 528, 507 | 545, 595, 551 | 8228 |
+| 154137d again, after those | 178 | 420 | 497 | 8228 |
+
+The folio change is not the read cost it looked like: a cold read
+builds 8228 folios for 8192 blocks on either build, 36 more than one
+per block, so the smaller folios the page cache may now use cost 36
+decodes, not a tenth of the read. The guest slowed across the session
+instead, the semaphore build reading 272 in the morning and 178 at
+the end on the same image, and every comparison here is only as good
+as its control in the same hour; the reading of record above stands
+as not reproduced today rather than as regressed, and the shim's own
+lock is charged with nothing on it. An owner spin before the sleep,
+the rw_semaphore's own shape, was tried against the drop, moved
+nothing and was not kept.
 The run reads the file back with the source hash, zero kernel
 warnings, both checkers clean with their negative controls. The
 instrument's first two runs failed on their own readings before any
