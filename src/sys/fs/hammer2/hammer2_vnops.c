@@ -850,11 +850,18 @@ const struct file_operations hammer2_dir_fops = {
 };
 
 /*
- * Linux: dirty pages on a device, across every writeback it carries.
- * Under cgroup writeback the superblock's own writeback is the root
- * cgroup's alone, and a writer in any other cgroup dirties pages the
- * root's counter never sees; the walk is the one the kernel's own
- * accounting makes.
+ * Linux: pages on a device that still need a block, across every
+ * writeback it carries.  Under cgroup writeback the superblock's own
+ * writeback is the root cgroup's alone, and a writer in any other
+ * cgroup dirties pages the root's counter never sees; the walk is the
+ * one the kernel's own accounting makes.  A page leaves the dirty count
+ * when writeback starts on it and its block is allocated only when the
+ * strategy runs, so the pages under writeback are counted too: without
+ * them a writer arriving in that window was admitted into space the
+ * writeback still needed, and four 4 MiB files of a fill were accepted
+ * and lost, about one fill in eight.  A page whose block is already
+ * allocated is counted twice for the rest of its writeback, which
+ * refuses a little early and loses nothing.
  */
 static loff_t
 hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi)
@@ -867,6 +874,7 @@ hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi)
 		if (!wb_tryget(wb))
 			continue;
 		pages += wb_stat(wb, WB_RECLAIMABLE);
+		pages += wb_stat(wb, WB_WRITEBACK);
 		wb_put(wb);
 	}
 	rcu_read_unlock();
