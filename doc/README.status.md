@@ -1994,7 +1994,11 @@ The delete frees nothing while the snapshot pins every block the tree
 held, and its own metadata is new, so the volume is fuller after it.
 The lock reading is still not available at this scale, lockdep having
 hit the same ceiling at the same second; the roadmap's decision on the
-guest's chain table is what would give it.
+guest's chain table is what would give it. A lock cycle is a race, so
+the fix was also read as a rate where lockdep stays on: the same
+churn at twenty thousand files under a hundred directories, four
+writers, run five times through `H2_REPEAT=5`, passed five of five
+with lockdep alive to the end of each and zero kernel warnings.
 
 ## One large file, and what the BSD buffer cache gave for free
 

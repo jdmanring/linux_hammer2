@@ -71,6 +71,54 @@ done
 [ -z "$($VIRSH list --name | tr -d ' \n')" ] || {
 	echo "tree: COULD-NOT-RUN: a guest is running: $($VIRSH list --name | tr '\n' ' ')" >&2; exit 2; }
 
+# H2_REPEAT=n runs the whole thing n times and tallies the outcomes, as
+# test-enospc.sh does. A lock cycle is a race, so one clean run after a
+# lock change is a run and not a rate; the tally is the rate. Each run is
+# a child of this copy with its own log, and a hung guest costs only its
+# own run: the hang branch destroys it and the next run boots it afresh.
+# Nothing is summed that was not counted: the tally asserts it saw as
+# many outcomes as it ran.
+repeat=${H2_REPEAT:-1}
+case $repeat in
+''|*[!0-9]*) echo "tree: COULD-NOT-RUN: H2_REPEAT is not a number" >&2; exit 2 ;;
+esac
+if [ "$repeat" -gt 1 ]; then
+	pass=0; failed=0; cnr=0; seen=0; i=1
+	logdir=${H2_LOGDIR:-$(mktemp -d)} || exit 2
+	mkdir -p "$logdir" || exit 2
+	while [ "$i" -le "$repeat" ]; do
+		log=$logdir/run-$i.log
+		H2_REPEAT=1 H2_TREE_COPY= sh "$H2_TREE_COPY" > "$log" 2>&1
+		st=$?
+		seen=$((seen + 1))
+		case $st in
+		0) pass=$((pass + 1)); verdict=pass ;;
+		2) cnr=$((cnr + 1)); verdict=could-not-run ;;
+		*) failed=$((failed + 1)); verdict=fail ;;
+		esac
+		echo "run $i: $verdict"
+		# The readings that tell one run from another, kept per run so
+		# the tally is not the only record.
+		command sed -n "s/^  \(linux   created .*\)$/      \1/p;\
+		    s/^  \(linux   churn .*\)$/      \1/p;\
+		    s/^  \(linux   counted .*\)$/      \1/p;\
+		    s/^  \(linux   deleted .*\)$/      \1/p;\
+		    s/^  \(linux   debug_locks [0-9]*\)$/      \1/p;\
+		    s/^  \(linux   kernel warnings .*\)$/      \1/p;\
+		    s/^  \(dfly    dragonfly counted .*\)$/      \1/p;\
+		    s/^  \(FAIL .*\)$/      \1/p;\
+		    s/^  \(COULD-NOT-RUN .*\)$/      \1/p;\
+		    s/^\(tree: COULD-NOT-RUN.*\)$/      \1/p" "$log"
+		i=$((i + 1))
+	done
+	echo "tree: $seen run(s), $pass pass, $failed fail, $cnr could-not-run"
+	echo "tree: the runs are kept in $logdir"
+	[ "$seen" -eq "$repeat" ] || {
+		echo "tree: FAIL: ran $repeat but tallied $seen" >&2; exit 1; }
+	[ "$failed" -eq 0 ] && [ "$cnr" -eq 0 ]
+	exit $?
+fi
+
 make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || {
 	echo "tree: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }

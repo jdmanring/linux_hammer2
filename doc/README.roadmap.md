@@ -428,7 +428,8 @@ snapshot taken through it, the whole tree deleted, and every state
 counted on both sides with both checkers clean. The first run of that
 configuration deadlocked in the shim's shared to exclusive upgrade,
 which is fixed and recorded in `README.status.md` with the run that
-passed after it. What that run could not read is the lock order past
+passed after it and the five of five at twenty thousand files with
+lockdep alive. What the million run could not read is the lock order past
 172 s, where the guest kernel's lockdep chain table fills; the open
 decision below on that table is what would give it. The F6 read
 against squashfs and erofs, and the XOP pool decision, wait on the

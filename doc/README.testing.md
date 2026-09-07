@@ -935,7 +935,11 @@ and the whole tree deleted, timed, with the blocks the volume gave
 back, which is the store garbage collection reading. DragonFly then
 expects the live tree empty and the snapshot at the count this side
 found. The delete pass found the directory link-count defect on its
-first run.
+first run. `H2_REPEAT=n` runs the whole script n times and tallies
+the outcomes as `test-enospc.sh` does, keeping each run's log under
+`H2_LOGDIR`; a lock cycle is a race, so one clean run after a change
+to the shim's locking is a run and the tally is the rate. The tally
+refuses to report if it saw fewer outcomes than it ran.
 
 `script/throughput.sh` takes the two readings that decide whether the
 port adds `->readahead` and changes its writeback order, the services
