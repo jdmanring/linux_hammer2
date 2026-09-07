@@ -2893,10 +2893,10 @@ hammer2_chain_lockdep_set(hammer2_chain_t *chain, unsigned int level)
 
 	c = hammer2_lockdep_lookup(H2LD_CHAIN, t, kb, level);
 	if (c)
-		lockdep_set_class_and_name(&chain->lock.lock, &c->key, c->name);
+		lockdep_set_class_and_name(&chain->lock, &c->key, c->name);
 	c = hammer2_lockdep_lookup(H2LD_DIOLK, t, kb, level);
 	if (c)
-		lockdep_set_class_and_name(&chain->diolk.lock, &c->key,
+		lockdep_set_class_and_name(&chain->diolk, &c->key,
 		    c->name);
 }
 #else
@@ -2965,7 +2965,6 @@ __hammer2_dbg_held_chains(const char *where)
 {
 	hammer2_chain_t *chain;
 	struct lockdep_map *map;
-	struct rw_semaphore *rw;
 	hammer2_mtx_t *mtx;
 	int i, n = 0;
 
@@ -2974,12 +2973,11 @@ __hammer2_dbg_held_chains(const char *where)
 		if (map == NULL || map->name == NULL ||
 		    strncmp(map->name, "h2ch_", 5) != 0)
 			continue;
-		rw = container_of(map, struct rw_semaphore, dep_map);
-		mtx = container_of(rw, hammer2_mtx_t, lock);
+		mtx = container_of(map, hammer2_mtx_t, dep_map);
 		chain = container_of(mtx, hammer2_chain_t, lock);
 		hprintf("%s: chain type %d key %016llx class %s "
 		    "depth %d lockcnt %u\n", where, chain->bref.type,
-		    (long long)chain->bref.key, map->name, mtx->depth,
+		    (long long)chain->bref.key, map->name, hammer2_mtx_refs(mtx),
 		    chain->lockcnt);
 		n++;
 	}
@@ -3005,7 +3003,7 @@ hammer2_inode_lockdep_level(hammer2_mtx_t *p, const hammer2_mtx_t *chain)
 	p->level = chain ? chain->level : 0;
 	c = hammer2_lockdep_lookup(H2LD_INODE, 0, 0, p->level);
 	if (c)
-		lockdep_set_class_and_name(&p->lock, &c->key, c->name);
+		lockdep_set_class_and_name(p, &c->key, c->name);
 #endif
 }
 
@@ -3031,7 +3029,7 @@ void
 hammer2_chain_lockdep_detached(hammer2_mtx_t *p __maybe_unused)
 {
 #ifdef CONFIG_LOCKDEP
-	lock_set_subclass(&p->lock.dep_map, MAX_LOCKDEP_SUBCLASSES - 1,
+	lock_set_subclass(&p->dep_map, MAX_LOCKDEP_SUBCLASSES - 1,
 	    _RET_IP_);
 #endif
 }
@@ -3054,7 +3052,7 @@ hammer2_inode_lockdep_nest_under(hammer2_mtx_t *p,
 	p->level = parent->level + 1;
 	c = hammer2_lockdep_lookup(H2LD_INODE, 0, 0, p->level);
 	if (c)
-		lock_set_class(&p->lock.dep_map, c->name, &c->key, 0, _RET_IP_);
+		lock_set_class(&p->dep_map, c->name, &c->key, 0, _RET_IP_);
 #endif
 }
 
@@ -3072,12 +3070,6 @@ static int __init
 hammer2_module_init(void)
 {
 	int error;
-
-	/* Linux: the upgrade in hammer2_os.h reads the rw_semaphore's word. */
-	if (hammer2_mtx_layout_check()) {
-		pr_err("rw_semaphore count layout is not the kernel of record's\n");
-		return (-EINVAL);
-	}
 
 	/*
 	 * XXX Linux: upstream asserts that uma_zcreate(9) never returns

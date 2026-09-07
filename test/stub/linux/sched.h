@@ -13,8 +13,5 @@ long schedule_timeout_interruptible(long timeout);
 /* Transcribed from include/linux/sched.h:335 at 7.2.0-cachyos. */
 long schedule_timeout_uninterruptible(long timeout);
 int signal_pending(struct task_struct *p);
-typedef struct { int counter; } atomic_t;
-void atomic_inc(atomic_t *v);
-int atomic_dec_if_positive(atomic_t *v);
-void atomic_dec(atomic_t *v);
+#include <linux/atomic.h>
 #endif

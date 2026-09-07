@@ -27,27 +27,36 @@ takes no spin lock at all and `hammer2_io.c`'s are on the submission side
 of the DIO hash. If a future change puts one under `bi_end_io`, the
 typedef is the thing that has to move.
 
-`hammer2_mtx_owned()` has no Linux primitive. `rwsem_is_locked()` says
-whether a lock is held and never by whom, and the core asks the second
-question, so the wrapper tracks the owning task itself. FreeBSD gets this
-from `sx_xlocked()` for free.
+`hammer2_mtx`, the chain lock and the inode lock, is DragonFly's `mtx`
+carried as a primitive of the shim's own: the lock word in DragonFly's
+layout (`sys/mutex.h`, `kern_mutex.c`), the exclusive bit over a count
+that is the shared holders or the exclusive holder's depth, an owner,
+and one wait queue where DragonFly keeps its link lists, annotated for
+lockdep as a sleeping lock. It was a `rw_semaphore` inside a wrapper
+until 0.9, and the history of that wrapper is why it is not one now.
+The core asks three things of this lock that a `rw_semaphore` does not
+promise, and each was patched onto the semaphore separately as a mount
+or a tree found it.
 
-`hammer2_mtx_upgrade_try()` has no Linux primitive either, and the
-omission is deliberate upstream: `downgrade_write()` exists and no upgrade
-does, because upgrading a lock two readers hold can only succeed by
-deadlocking one of them.
+The first is ownership. `rwsem_is_locked()` says whether a lock is held
+and never by whom, and the core asks the second question, so the
+wrapper tracked the owning task itself. FreeBSD gets this from
+`sx_xlocked()` for free.
 
-This paragraph used to argue that a wrapper which fails unless the caller
-already holds the lock exclusively is safe by the shape of the interface,
-every caller of a `_try` handling failure and re-acquiring. The first
-mount disproved it. `hammer2_chain_unlock()` takes the shared path, asks
-for an upgrade and retries on refusal, so a wrapper that could never grant
-one made the first read of a file spin without end, unkillable, holding
-the mount until the guest was rebooted. A predicate is not an
-implementation, and the interface's shape was an argument for not writing
-one.
+The second is the upgrade. `hammer2_mtx_upgrade_try()` has no Linux
+primitive, and the omission is deliberate upstream: `downgrade_write()`
+exists and no upgrade does, because upgrading a lock two readers hold
+can only succeed by deadlocking one of them. The shim's first answer
+was a predicate that succeeded only when the caller already held the
+lock exclusively, on the argument that every caller of a `_try` handles
+failure by dropping and re-acquiring. The first mount disproved it.
+`hammer2_chain_unlock()` takes the shared path, asks for an upgrade and
+retries on refusal, so a wrapper that could never grant one made the
+first read of a file spin without end, unkillable, holding the mount
+until the guest was rebooted. A predicate is not an implementation, and
+the interface's shape was an argument for not writing one.
 
-The second shape released the read side and took the write side,
+The second answer released the read side and took the write side,
 restoring the caller's shared hold when it could not, which is what the
 OpenBSD port does at the same place, on the reading that the window
 between the two was one the caller's loop revalidates after. The caller
@@ -60,29 +69,27 @@ child in opposite orders, an order the core never produces. A
 million-file tree with a deletion running beside the sync worker reached
 it and the status document has the report.
 
-The third shape is DragonFly's: one compare and swap on the lock word,
-here the `rw_semaphore` count, that turns the sole reader into the
-writer ahead of any queued writer and leaves a refused caller holding
-what it held. FreeBSD's `sx_try_upgrade()` and NetBSD's
-`rw_tryupgrade()` give their ports the same two guarantees natively;
-Linux has `downgrade_write()` and nothing the other way, so the shim
-reads a layout `kernel/locking/rwsem.c` keeps private. That is pinned to
-the kernel of record like every other such reading here, and checked at
-module load by locking a fresh semaphore each way and reading the word
-back, so a kernel that moves it refuses the module. `PREEMPT_RT` keeps a
-different word and stops the build. A lock primitive of the shim's own,
-with DragonFly's word layout over a spinlock and wait queue, would
-remove this reading along with the recursion depth and the shared
-re-lock credit, each a patch on the same mismatch; that is a 1.0 shape
-and the roadmap carries it.
+The third answer was DragonFly's: one compare and swap on the lock word,
+turning the sole reader into the writer ahead of any queued writer and
+leaving a refused caller holding what it held. FreeBSD's
+`sx_try_upgrade()` and NetBSD's `rw_tryupgrade()` give their ports the
+same two guarantees natively; on a `rw_semaphore` it meant reading a
+count layout `kernel/locking/rwsem.c` keeps private, pinned to the
+kernel of record and checked at module load by locking a fresh
+semaphore each way and reading the word back, with `PREEMPT_RT`, which
+keeps a different word, stopping the build. That is a reading of another
+subsystem's private state, which no reviewer of the kernel's locking
+code accepts, and it is the reason the semaphore had to go.
 
-Recursion was decided twice. The first decision followed NetBSD: a Linux
-`rw_semaphore` deadlocks against its own holder as a NetBSD `krwlock`
-does, so `hammer2_mtx_init_recurse()` was a plain init and the one path
-that recursed was to be closed at its call site. That held for every
-read, because the reading side of that path arrives with
-`HAMMER2_RESOLVE_LOCKAGAIN` and is credited rather than re-acquired (the
-`hammer2_mtx_sh_again()` note in `hammer2_os.h`).
+The third is recursion, decided twice. The first decision followed
+NetBSD: a Linux `rw_semaphore` deadlocks against its own holder as a
+NetBSD `krwlock` does, so `hammer2_mtx_init_recurse()` was a plain init
+and the one path that recursed was to be closed at its call site. That
+held for every read, because the reading side of that path arrives with
+`HAMMER2_RESOLVE_LOCKAGAIN`, and a shared re-lock by a task already
+holding the lock shared was credited rather than re-acquired, since a
+second `down_read()` behind a queued writer deadlocks the task on
+itself.
 
 The first buffered write reversed it. `hammer2_chain_lookup()`, under
 `hammer2_assign_physical()` in the write XOP, returns the inode chain
@@ -94,14 +101,22 @@ sat in `rwsem_down_write_slowpath` against itself, and `sync` never
 returned. DragonFly's `mtx` counts a second exclusive acquire by its
 holder (`kern_mutex.c`, `__mtx_lock_ex`), and the FreeBSD port keeps that
 by initializing the chain lock and the inode lock with `SX_RECURSE`. The
-shim now does what the FreeBSD port does: the two locks initialized with
-`hammer2_mtx_init_recurse()` carry a depth, `hammer2_mtx_ex()` by the
-owner increments it without touching the rwsem, and `hammer2_mtx_unlock()`
-releases the rwsem at depth zero. Lockdep is told nothing about the inner
-acquires, which is exact, since they are one hold. A lock initialized with
-`hammer2_mtx_init()` that recurses warns once and is admitted, where sx
-without `SX_RECURSE` would panic; the alternative is the hang. The shared
-side does not recurse under an exclusive hold, on DragonFly either.
+wrapper did what the FreeBSD port does, a depth beside the semaphore
+that its owner incremented without touching it.
+
+With the lock word the shim's own, all three are what DragonFly does on
+its own word and nothing is beside it: the exclusive holder's re-lock
+adds one to the count (`__mtx_lock_ex`), a shared holder's re-lock adds
+one past any queued exclusive request (`mtx_lock_sh_again`), and the
+upgrade is the compare and swap of `_mtx_upgrade_try`. Exclusive
+requests have priority over shared ones, as there. A lock initialized
+with `hammer2_mtx_init()` that recurses warns once and is admitted,
+where `sx` without `SX_RECURSE` would panic; the alternative is the
+hang. The shared side does not recurse under an exclusive hold, on
+DragonFly either. The reading the primitive was judged on is the one
+the roadmap named for it, the churn of the tree instrument under
+lockdep, and the full-volume gate ran on it first; `README.status.md`
+has both.
 
 The DIRECTDATA flag itself is on disk, so a filesystem written by
 DragonFly or a BSD port has such inodes whoever mounts it, and the lookup
@@ -440,7 +455,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:128` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
+| `hammer2_os.h:130` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.

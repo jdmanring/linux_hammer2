@@ -592,14 +592,14 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1904 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3160 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 3152 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1417 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1423 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 1163 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 1183 | ours, the OS shim |
+| `hammer2_os.h` | 1225 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -2020,10 +2020,10 @@ child it has just locked, was an `up_read()`, a write trylock and a
 nobody, the queued writer took it and descended, and the restoring
 read queued behind it. Lockdep could not see it: it had turned itself
 off at 172 s on the chain table ceiling, and the cycle formed at about
-400 s. The upgrade is now one compare and swap on the semaphore's
-count, DragonFly's `mtx_upgrade_try()` on Linux's word, with the layout
-read back at module load; `README.porting.md` has the decision and the
-one that supersedes it at 1.0. The guest was read from outside through
+400 s. The upgrade was then one compare and swap on the semaphore's
+count, DragonFly's `mtx_upgrade_try()` on Linux's word with the layout
+read back at module load, and is now the same compare and swap on a
+lock word of the shim's own; `README.porting.md` has both decisions. The guest was read from outside through
 the QEMU guest agent, ssh having hung on the wedged mount, and reset;
 the media it left behind was consistent on both sides, which is the
 snapshot row's reading and the crash matrix's again at this scale:
@@ -2070,6 +2070,15 @@ three times through `H2_REPEAT=3`, passed three of three: the create
 took 244, 275 and 250 s, the churn 10 to 11 s, the delete 42 to 45 s,
 and DragonFly counted the deleted tree empty and the snapshot at this
 side's count every time.
+
+The same churn is the reading the roadmap named for the shim's own lock
+primitive, the chain and inode locks moved from a wrapped
+`rw_semaphore` to DragonFly's `mtx` on a lock word of the shim's own,
+which `README.porting.md` records. Five of five passed on it with
+lockdep alive to the end of each and zero kernel warnings, the create
+in 12 to 13 s, the churn in 3 to 4 s and the delete in 6 to 7 s, both
+checkers clean after each side every time; the full-volume gate ran on
+it first, 472 files intact and nothing outstanding at the unmount.
 
 ## A real closure, and the seven defects it found
 
@@ -2746,7 +2755,7 @@ against the FreeBSD port at
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 5 | 0 | 5 |
+| `hammer2_os.h` | 3 | 0 | 3 |
 | `hammer2_flush.c` | 15 | 8 | 7 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |

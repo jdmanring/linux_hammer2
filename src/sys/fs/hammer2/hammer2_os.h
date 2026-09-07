@@ -45,6 +45,8 @@
 #include <linux/backing-dev.h>	/* wb_stat, for the write reserve */
 #include <linux/slab.h>
 #include <linux/rwsem.h>
+#include <linux/lockdep.h>
+#include <linux/atomic.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
@@ -239,30 +241,78 @@ hammer2_lkc_sleep(hammer2_lkc_t *c, hammer2_lk_t *p,
 }
 
 /*
- * hammer2_mtx is a shared/exclusive lock with a reference count and an
- * ownership test. rw_semaphore has the first; the wrapper keeps the rest.
+ * hammer2_mtx is DragonFly's mtx (sys/mutex.h, kern_mutex.c), carried as
+ * a primitive of the shim's own rather than mapped onto a rw_semaphore:
+ * a lock word in DragonFly's layout, the exclusive bit over a count that
+ * is the shared holders or the exclusive holder's depth, an owner, and
+ * one wait queue where DragonFly keeps its link lists.  The core asks
+ * three things of this lock that a rw_semaphore does not promise, and
+ * each was once patched onto the semaphore separately: the exclusive
+ * holder may lock again and the count carries the depth (__mtx_lock_ex);
+ * a shared holder may lock shared again whatever is queued, one add on
+ * the word (mtx_lock_sh_again); and the sole shared holder may become
+ * the exclusive holder ahead of any queued exclusive request in one
+ * compare and swap, a refusal leaving the hold as it was
+ * (_mtx_upgrade_try), which hammer2_chain_unlock() loops on and the
+ * parent-then-child order of hammer2_chain_lookup() depends on.
+ * Exclusive requests have priority over shared ones, as there: a shared
+ * acquire waits while an exclusive request is queued.  FreeBSD's sx and
+ * NetBSD's rwlock give their ports the same promises natively.
  *
- * owner exists because rwsem_is_locked() says whether a lock is held and
- * never by whom, and the core asks the second question. FreeBSD gets that
- * from sx_xlocked() for free.
+ * Waiters of both kinds sleep on the one queue and are all woken at the
+ * last release of either kind, each re-testing the word; the queue is
+ * touched only when it is active, behind the barrier waitqueue_active()
+ * asks for against the waiter's own.  The acquiring compare and swap is
+ * an acquire and the releasing store a release, as in the kernel's own
+ * locks.  ponytail: one queue and wake_up_all, a queue per kind if this
+ * lock ever shows in a profile.
+ *
+ * Lockdep sees a sleeping lock with the class its initializer's static
+ * key gives it, reclassed per chain level in hammer2_vfsops.c; the
+ * holder's exclusive re-acquire is one hold and is not reported, a
+ * shared re-acquire is reported as a recursive read.
  */
-struct rw_semaphore_wrapper {
-	struct rw_semaphore lock;
-	int refs;
+#define HAMMER2_MTX_EXCLUSIVE	0x80000000u	/* DragonFly: MTX_EXCLUSIVE */
+#define HAMMER2_MTX_MASK	0x0FFFFFFFu	/* DragonFly: MTX_MASK */
+
+struct hammer2_mtx {
+	atomic_t lock;			/* DragonFly's mtx_lock */
+	atomic_t exwait;		/* queued exclusive requests, MTX_EXWANTED */
 	struct task_struct *owner;	/* exclusive holder, or NULL */
+	wait_queue_head_t wq;
 	unsigned int level;		/* lockdep nesting level, see below */
-	atomic_t again;			/* shared re-locks owed no up_read */
-	int depth;			/* exclusive re-locks by the holder */
 	int recurse;			/* hammer2_mtx_init_recurse() */
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	struct lockdep_map dep_map;
+#endif
 };
 
-typedef struct rw_semaphore_wrapper hammer2_mtx_t;
+typedef struct hammer2_mtx hammer2_mtx_t;
+
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+#define hammer2_mtx_dep_init(p, s, k)					\
+	lockdep_init_map_wait(&(p)->dep_map, (s), (k), 0, LD_WAIT_SLEEP)
+#define hammer2_mtx_acquire(p, sub, try)				\
+	lock_acquire_exclusive(&(p)->dep_map, (sub), (try), NULL, _RET_IP_)
+#define hammer2_mtx_acquire_read(p, try)				\
+	lock_acquire_shared(&(p)->dep_map, 0, (try), NULL, _RET_IP_)
+#define hammer2_mtx_acquire_read_again(p)				\
+	lock_acquire_shared_recursive(&(p)->dep_map, 0, 0, NULL, _RET_IP_)
+#define hammer2_mtx_release(p)	lock_release(&(p)->dep_map, _RET_IP_)
+#else
+#define hammer2_mtx_dep_init(p, s, k)		do { (void)(k); } while (0)
+#define hammer2_mtx_acquire(p, sub, try)	do {} while (0)
+#define hammer2_mtx_acquire_read(p, try)	do {} while (0)
+#define hammer2_mtx_acquire_read_again(p)	do {} while (0)
+#define hammer2_mtx_release(p)			do {} while (0)
+#endif
 
 static inline void
 __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
 {
 	memset(p, 0, sizeof(*p));
-	__init_rwsem(&p->lock, s, k);
+	init_waitqueue_head(&p->wq);
+	hammer2_mtx_dep_init(p, s, k);
 }
 
 #define hammer2_mtx_init(p, s)						\
@@ -425,6 +475,74 @@ hammer2_nofs_leave(void)
 	current->journal_info = (void *)v;
 }
 
+/* The word as DragonFly's mtx_lockrefs() reads it. */
+static inline int
+hammer2_mtx_refs(hammer2_mtx_t *p)
+{
+	return (atomic_read(&p->lock) & HAMMER2_MTX_MASK);
+}
+
+static inline int
+hammer2_mtx_islocked(hammer2_mtx_t *p)
+{
+	return (atomic_read(&p->lock) != 0);
+}
+
+/*
+ * The one queue, woken at the last release of either kind.  The full
+ * barrier orders the releasing store before the queue read, against
+ * prepare_to_wait()'s own on the waiter's side, which is the pairing
+ * waitqueue_active() documents.
+ */
+static inline void
+hammer2_mtx_wake(hammer2_mtx_t *p)
+{
+	smp_mb();
+	if (waitqueue_active(&p->wq))
+		wake_up_all(&p->wq);
+}
+
+/* 0 -> EXCLUSIVE | 1, the only way in for an exclusive request. */
+static inline int
+hammer2_mtx_ex_grab(hammer2_mtx_t *p)
+{
+	int c = 0;
+
+	return (atomic_try_cmpxchg_acquire(&p->lock, &c,
+	    HAMMER2_MTX_EXCLUSIVE | 1));
+}
+
+/*
+ * A shared request adds one to the count while nothing exclusive holds
+ * the lock and, unless quick, nothing exclusive is queued for it.  The
+ * loop is against other shared requests racing on the word; a request
+ * that returns 0 has seen a holder or a queued request, both of which
+ * wake the queue when they are done with it.
+ */
+static inline int
+hammer2_mtx_sh_grab(hammer2_mtx_t *p, int quick)
+{
+	int c = atomic_read(&p->lock);
+
+	for (;;) {
+		if (c & HAMMER2_MTX_EXCLUSIVE)
+			return (0);
+		if (!quick && atomic_read(&p->exwait))
+			return (0);
+		if (atomic_try_cmpxchg_acquire(&p->lock, &c, c + 1))
+			return (1);
+	}
+}
+
+static inline void
+__hammer2_mtx_ex_wait(hammer2_mtx_t *p)
+{
+	might_sleep();
+	atomic_inc(&p->exwait);
+	wait_event(p->wq, hammer2_mtx_ex_grab(p));
+	atomic_dec(&p->exwait);
+}
+
 /* Non-zero if the caller already holds the lock and now holds it deeper. */
 static inline int
 hammer2_mtx_ex_recurse(hammer2_mtx_t *p)
@@ -432,20 +550,9 @@ hammer2_mtx_ex_recurse(hammer2_mtx_t *p)
 	if (!hammer2_mtx_owned(p))
 		return (0);
 	WARN_ON_ONCE(!p->recurse);
-	p->depth++;
-	p->refs++;
+	WARN_ON_ONCE(hammer2_mtx_refs(p) == HAMMER2_MTX_MASK);
+	atomic_inc(&p->lock);
 	return (1);
-}
-
-static inline void
-hammer2_mtx_ex(hammer2_mtx_t *p)
-{
-	if (hammer2_mtx_ex_recurse(p))
-		return;
-	down_write(&p->lock);
-	WRITE_ONCE(p->owner, current);
-	p->refs++;
-	hammer2_nofs_enter();
 }
 
 /*
@@ -465,10 +572,17 @@ hammer2_mtx_ex_nested(hammer2_mtx_t *p, unsigned int subclass)
 {
 	if (hammer2_mtx_ex_recurse(p))
 		return;
-	down_write_nested(&p->lock, subclass);
+	hammer2_mtx_acquire(p, subclass, 0);
+	if (!hammer2_mtx_ex_grab(p))
+		__hammer2_mtx_ex_wait(p);
 	WRITE_ONCE(p->owner, current);
-	p->refs++;
 	hammer2_nofs_enter();
+}
+
+static inline void
+hammer2_mtx_ex(hammer2_mtx_t *p)
+{
+	hammer2_mtx_ex_nested(p, 0);
 }
 
 /*
@@ -486,74 +600,69 @@ hammer2_mtx_ex_nested(hammer2_mtx_t *p, unsigned int subclass)
 static inline void
 hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
 {
-	if (WARN_ON_ONCE(!down_write_trylock(&p->lock)))
-		down_write(&p->lock);
+	hammer2_mtx_acquire(p, 0, 1);
+	if (WARN_ON_ONCE(!hammer2_mtx_ex_grab(p)))
+		__hammer2_mtx_ex_wait(p);
 	WRITE_ONCE(p->owner, current);
-	p->refs++;
 	hammer2_nofs_enter();
 }
 
 static inline void
 hammer2_mtx_sh(hammer2_mtx_t *p)
 {
-	down_read(&p->lock);
-	atomic_add_int(&p->refs, 1);
+	hammer2_mtx_acquire_read(p, 0);
+	if (!hammer2_mtx_sh_grab(p, 0)) {
+		might_sleep();
+		wait_event(p->wq, hammer2_mtx_sh_grab(p, 0));
+	}
 	hammer2_nofs_enter();
 }
 
 /*
- * Linux: a shared lock taken again by a task that already holds it
- * shared, which is what HAMMER2_RESOLVE_LOCKAGAIN means and what
- * DragonFly's mtx_lock_sh() does natively.  A second down_read() is not
- * that: a writer queued between the two blocks the second, and the task
- * deadlocks on itself, which lockdep reported on the first embedded-data
- * file read under it.  So the rwsem is not touched.  The re-lock is a
- * credit, and the next shared unlock on this lock spends the credit
- * instead of an up_read().  Any shared holder may spend it; the rwsem's
- * reader count is the sum of down_reads less up_reads whoever made them,
- * so the lock is released exactly when the last logical holder leaves,
- * and no writer is admitted earlier than it would have been.  The one
- * caller, hammer2_chain_lock() under LOCKAGAIN, never upgrades a lock it
- * holds this way, and hammer2_mtx_upgrade_try() assumes as much.
+ * A shared lock taken again by a task that already holds it shared,
+ * which is what HAMMER2_RESOLVE_LOCKAGAIN means: DragonFly's
+ * mtx_lock_sh_again(), one add on the word past any queued exclusive
+ * request, which a second ordinary shared acquire would wait behind
+ * while holding what it waits for.
  */
 static inline void
 hammer2_mtx_sh_again(hammer2_mtx_t *p)
 {
-	atomic_inc(&p->again);
-	atomic_add_int(&p->refs, 1);
-	hammer2_nofs_enter();	/* its unlock leaves, so its re-lock enters */
+	WARN_ON_ONCE(atomic_read(&p->lock) & HAMMER2_MTX_EXCLUSIVE);
+	hammer2_mtx_acquire_read_again(p);
+	atomic_inc(&p->lock);
+	hammer2_nofs_enter();
 }
 
 static inline void
 hammer2_mtx_unlock(hammer2_mtx_t *p)
 {
 	if (hammer2_mtx_owned(p)) {
-		p->refs--;
-		if (p->depth > 0) {
-			p->depth--;
+		if (hammer2_mtx_refs(p) > 1) {
+			atomic_dec(&p->lock);	/* the holder's own re-lock */
 			return;
 		}
+		/*
+		 * Nothing else can change the word while the exclusive bit
+		 * is set, so the last release is a plain store.
+		 */
 		WRITE_ONCE(p->owner, NULL);
 		hammer2_nofs_leave();
-		up_write(&p->lock);
+		hammer2_mtx_release(p);
+		atomic_set_release(&p->lock, 0);
 	} else {
-		atomic_add_int(&p->refs, -1);
 		hammer2_nofs_leave();
-		if (atomic_dec_if_positive(&p->again) >= 0)
-			return;		/* a re-lock's credit, no up_read owed */
-		up_read(&p->lock);
+		hammer2_mtx_release(p);
+		if (atomic_dec_return_release(&p->lock) != 0)
+			return;
 	}
-}
-
-static inline int
-hammer2_mtx_refs(hammer2_mtx_t *p)
-{
-	return (READ_ONCE(p->refs));
+	hammer2_mtx_wake(p);
 }
 
 static inline void
-hammer2_mtx_destroy(hammer2_mtx_t *p __always_unused)
+hammer2_mtx_destroy(hammer2_mtx_t *p)
 {
+	WARN_ON_ONCE(atomic_read(&p->lock) != 0);
 }
 
 /* Non-zero on failure. */
@@ -562,120 +671,52 @@ hammer2_mtx_ex_try(hammer2_mtx_t *p)
 {
 	if (hammer2_mtx_ex_recurse(p))
 		return (0);
-	if (!down_write_trylock(&p->lock))
+	if (!hammer2_mtx_ex_grab(p))
 		return (1);
+	hammer2_mtx_acquire(p, 0, 1);
 	WRITE_ONCE(p->owner, current);
-	p->refs++;
 	hammer2_nofs_enter();
 	return (0);
 }
 
+/* DragonFly's _mtx_lock_sh_try() refuses only a held exclusive lock. */
 static inline int
 hammer2_mtx_sh_try(hammer2_mtx_t *p)
 {
-	if (!down_read_trylock(&p->lock))
+	if (!hammer2_mtx_sh_grab(p, 1))
 		return (1);
-	atomic_add_int(&p->refs, 1);
+	hammer2_mtx_acquire_read(p, 1);
 	hammer2_nofs_enter();
 	return (0);
 }
 
 /*
- * XXX Linux has downgrade_write() and no upgrade.  DragonFly's
- * mtx_upgrade_try() (kern_mutex.c, _mtx_upgrade_try) is one compare and
- * swap on the lock word: the sole shared holder becomes the exclusive
- * holder, ahead of any queued exclusive request, and a holder that is
- * refused keeps what it held.  hammer2_chain_unlock() asks for that in a
- * loop on the 1->0 transition, and the loop is only correct on a lock
- * with that promise.
+ * DragonFly's _mtx_upgrade_try(): the sole shared holder becomes the
+ * exclusive holder in one compare and swap, ahead of any queued
+ * exclusive request, and a holder that is refused keeps what it held.
+ * hammer2_chain_unlock() asks for that in a loop on the 1->0
+ * transition, and the loop is only correct on a lock with that promise;
+ * an upgrade that let the lock go for a moment was measured to hand a
+ * parent to a queued writer that then descended into the child the
+ * caller held, a cycle the core never makes.  Lockdep is told the
+ * shared hold ended and an exclusive one was acquired as a trylock,
+ * which records no dependency, as DragonFly's upgrade adds none.
  *
- * This was first an up_read() and a down_write_trylock(), restoring with
- * down_read() when the trylock failed, the shape the OpenBSD port uses.
- * That releases the lock for a moment, and the moment is enough: the
- * caller is hammer2_chain_lookup() unlocking a parent while it holds the
- * child it just locked, a writer queued on the parent takes it in the
- * gap and descends to the child, and the restoring down_read() queues
- * behind that writer.  Parent and child held in opposite orders by two
- * tasks, a cycle the core never makes and the shim did.  A million-file
- * tree with a deletion running beside the sync worker reached it; the
- * hung-task report named each task as the owner of what the other
- * wanted.
- *
- * So the upgrade is done on the rw_semaphore's count the way DragonFly
- * does it on mtx_lock: succeed only when the count reads exactly one
- * reader and no writer, replacing the reader bias with the writer bit in
- * one compare and swap.  The waiter and handoff bits are carried across
- * untouched; the writer they belong to is woken by the up_write() that
- * ends the caller's exclusive hold, which is what a queued writer sees
- * when any other writer wins.  The count layout is kernel/locking/rwsem.c's
- * and not a header's, so the five values are copied here against the
- * kernel of record, and hammer2_mtx_layout_check() at module load reads
- * them back from a fresh semaphore so a kernel that moves them refuses
- * the module rather than corrupting a lock.  CONFIG_PREEMPT_RT keeps its
- * rw_semaphore in a different word altogether.
- *
- * lockdep is told the read hold was released and an exclusive one
- * acquired as a trylock, which records no dependency, as DragonFly's
- * upgrade adds none.  The owner word is set so the DEBUG_RWSEMS check in
- * up_write() sees the task that holds it.
+ * Non-zero on failure, the caller's shared hold untouched either way.
  */
-#ifdef CONFIG_PREEMPT_RT
-#error "HAMMER2's shared to exclusive upgrade reads the non-RT rw_semaphore"
-#endif
-#define HAMMER2_RWSEM_WRITER_LOCKED	(1UL << 0)	/* Linux: rwsem.c */
-#define HAMMER2_RWSEM_FLAG_WAITERS	(1UL << 1)
-#define HAMMER2_RWSEM_FLAG_HANDOFF	(1UL << 2)
-#define HAMMER2_RWSEM_READER_BIAS	(1UL << 8)
-#define HAMMER2_RWSEM_READER_MASK	(~(HAMMER2_RWSEM_READER_BIAS - 1))
-
-/* Non-zero on failure, the caller's shared hold untouched either way. */
 static inline int
 hammer2_mtx_upgrade_try(hammer2_mtx_t *p)
 {
-	long c;
+	int c = 1;
 
 	if (hammer2_mtx_owned(p))
 		return (0);
-
-	c = atomic_long_read(&p->lock.count);
-	if ((c & (HAMMER2_RWSEM_READER_MASK | HAMMER2_RWSEM_WRITER_LOCKED)) !=
-	    HAMMER2_RWSEM_READER_BIAS)
+	if (!atomic_try_cmpxchg_acquire(&p->lock, &c,
+	    HAMMER2_MTX_EXCLUSIVE | 1))
 		return (1);
-	if (!atomic_long_try_cmpxchg_acquire(&p->lock.count, &c,
-	    c - HAMMER2_RWSEM_READER_BIAS + HAMMER2_RWSEM_WRITER_LOCKED))
-		return (1);
-	atomic_long_set(&p->lock.owner, (long)current);
-	rwsem_release(&p->lock.dep_map, _RET_IP_);
-	rwsem_acquire(&p->lock.dep_map, 0, 1, _RET_IP_);
 	WRITE_ONCE(p->owner, current);
-	return (0);
-}
-
-/*
- * Linux: the count layout above read back from a live semaphore.  Called
- * once at module load; a mismatch refuses the module.  The flag bits are
- * checked where a waiter can be made to set them, which is nowhere in a
- * single task, so those two are pinned by the kernel of record alone.
- */
-static inline int
-hammer2_mtx_layout_check(void)
-{
-	struct rw_semaphore s;
-	long c;
-
-	init_rwsem(&s);
-	down_read(&s);
-	c = atomic_long_read(&s.count);
-	up_read(&s);
-	if (c != HAMMER2_RWSEM_READER_BIAS)
-		return (1);
-	down_write(&s);
-	c = atomic_long_read(&s.count);
-	up_write(&s);
-	if (c != HAMMER2_RWSEM_WRITER_LOCKED)
-		return (1);
-	if (atomic_long_read(&s.count) != 0)
-		return (1);
+	hammer2_mtx_release(p);
+	hammer2_mtx_acquire(p, 0, 1);
 	return (0);
 }
 
@@ -721,10 +762,11 @@ hammer2_mtx_sleep(hammer2_lkc_t *c, hammer2_mtx_t *p,
 
 #ifdef HAMMER2_INVARIANTS
 #define hammer2_mtx_assert_ex(p)	BUG_ON(!hammer2_mtx_owned(p))
-#define hammer2_mtx_assert_locked(p)	BUG_ON(!rwsem_is_locked(&(p)->lock))
-#define hammer2_mtx_assert_unlocked(p)	BUG_ON(rwsem_is_locked(&(p)->lock))
-/* XXX rwsem_is_locked() cannot tell shared from exclusive. */
-#define hammer2_mtx_assert_sh(p)	hammer2_mtx_assert_locked(p)
+#define hammer2_mtx_assert_locked(p)	BUG_ON(!hammer2_mtx_islocked(p))
+#define hammer2_mtx_assert_unlocked(p)	BUG_ON(hammer2_mtx_islocked(p))
+#define hammer2_mtx_assert_sh(p)					\
+	BUG_ON((atomic_read(&(p)->lock) & ~HAMMER2_MTX_EXCLUSIVE) == 0 ||	\
+	    (atomic_read(&(p)->lock) & HAMMER2_MTX_EXCLUSIVE))
 #else
 #define hammer2_mtx_assert_ex(p)	do {} while (0)
 #define hammer2_mtx_assert_sh(p)	do {} while (0)

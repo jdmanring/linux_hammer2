@@ -48,7 +48,11 @@ hammer2_syntax_check_all(void)
 	hammer2_mtx_unlock(&mtx);
 	(void)hammer2_mtx_refs(&mtx);
 	(void)hammer2_mtx_upgrade_try(&mtx);
-	(void)hammer2_mtx_layout_check();
+	(void)hammer2_mtx_islocked(&mtx);
+	(void)hammer2_mtx_ex_grab(&mtx);
+	(void)hammer2_mtx_sh_grab(&mtx, 1);
+	__hammer2_mtx_ex_wait(&mtx);
+	hammer2_mtx_wake(&mtx);
 	x = hammer2_mtx_temp_release(&mtx);
 	hammer2_mtx_temp_restore(&mtx, x);
 	hammer2_mtx_unlock(&mtx);
