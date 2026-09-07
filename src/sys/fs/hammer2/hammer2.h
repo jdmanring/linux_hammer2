@@ -202,6 +202,9 @@ typedef struct hammer2_chain_core hammer2_chain_core_t;
  */
 struct hammer2_chain {
 	RB_ENTRY(hammer2_chain) rbnode;		/* live chain(s) */
+#if defined(HAMMER2_LOCKDEBUG)
+	TAILQ_ENTRY(hammer2_chain) dbg_entry;	/* Linux: every chain */
+#endif
 	hammer2_mtx_t		lock;
 	hammer2_mtx_t		diolk;		/* xop focus interlock */
 	hammer2_lk_t		inp_lock;
@@ -941,6 +944,11 @@ extern int hammer2_dedup_enable;
 extern int hammer2_count_inode_allocated;
 extern int hammer2_count_chain_allocated;
 extern int hammer2_count_chain_modified;
+#if defined(HAMMER2_LOCKDEBUG)
+extern int hammer2_fail_alloc_after;	/* Linux */
+extern int hammer2_alloc_count;		/* Linux */
+void hammer2_chain_dump_live(void);	/* Linux */
+#endif
 extern int hammer2_count_dio_allocated;
 extern int hammer2_dio_limit;
 extern int hammer2_bulkfree_tps;

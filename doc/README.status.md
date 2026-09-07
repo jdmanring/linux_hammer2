@@ -28,7 +28,8 @@ fill lost nearly whole to a flush with no room, because the free-space
 reserve every other tree keeps was declared here and never carried, a
 mapped write accepted on a full volume where `write(2)` was refused,
 a page under writeback dropped from the reserve count before its block
-was allocated, which lost four files of one fill in eight, and a file
+was allocated, which lost four files of one fill in eight, chains a
+failed flush had parked left allocated by the unmount, and a file
 mapping that refused every dirty folio to compaction with a
 warning that sat uncounted in 39 of 62 kept logs of the gate that now
 counts it.
@@ -581,20 +582,20 @@ construction rather than re-hashed every run.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1387 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1395 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 634 | FreeBSD port, carried with two `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; the xop allocation zone is shimmed |
-| `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
+| `hammer2_freemap.c` | 1013 | FreeBSD port, carried with one `XXX`: the allocation refusal the debug build takes from `fail_alloc_after` |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1164 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 4991 | FreeBSD port, carried byte-for-byte but twelve `XXX` lines, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 5028 | FreeBSD port, carried byte-for-byte but fourteen `XXX` lines, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1348 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1914 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3179 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 3240 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1417 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1431 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -1478,7 +1479,12 @@ about eight losing four files with the reserve in place: a page leaves
 the dirty count when writeback starts on it and is given its block only
 when the strategy runs, and a writer in that window was admitted into
 space the writeback still needed. The pages under writeback are counted
-now. "No corruption has been seen" stood in this
+now. A sixth was reached on demand rather than by rate: a chain whose
+flush fails keeps its `UPDATE` flag and is parked at zero references
+until a flush clears it, and the unmount, which is the last flush,
+dropped the volume root and left every such chain allocated. The
+unmount scraps them now, children first, naming each. "No corruption
+has been seen" stood in this
 paragraph for a day on the strength of two clean checkers; the section
 below is what looking found.
 
@@ -1991,11 +1997,41 @@ parent's modify fails, by upstream's design, so the two references are
 somewhere downstream of that and not yet named. The reserve now keeps
 every run from reaching the path, so the reproduction has to be made
 on demand: the kernel of record's guest is built without
-`CONFIG_FAULT_INJECTION`, so a module parameter that makes the
-freemap allocator refuse after a set number of allocations is the
-instrument, and the count at the unmount is the reading. That is the
-next item on the full-volume side, and the two chains are open until
-it runs.
+`CONFIG_FAULT_INJECTION`, so the instrument is a module parameter,
+`fail_alloc_after`, under `HAMMER2_LOCKDEBUG` only, which counts
+`hammer2_freemap_alloc()` calls and refuses every one past the number
+with `ENOSPC`, the way a full freemap would; the freemap's own chains
+take the reservation path above it and are not refused. It reaches
+the guest through `H2_ENOSPC_MODARGS`, and the count at the unmount
+is the reading.
+
+Run with the allocator refusing from its 20,000th call, a third of the
+way into the fill, the reading was four chains outstanding, the same
+shape as the run of record and reproduced on the first attempt. The
+debug build now keeps a list of every chain and prints what is left at
+the unload, and the four were inode chains with zero references each,
+in one line of descent: the super-root's inode, the PFS root inode
+below it, and inodes `0x400` and `0x401` below that, three of them
+flagged `UPDATE` and the top one `ONFLUSH`. That names the cause.
+`hammer2_chain_lastdrop()` parks a chain that has a parent and `UPDATE`
+or `MODIFIED` set at zero references on the parent's tree, by design,
+because a later flush needs it; the flush clears the flag when the
+parent's block table takes the child, and re-sets it when the parent's
+modify fails with `ENOSPC`. The unmount's final sync is the last flush
+there will be, and when it fails the same way the drop of the embedded
+volume root leaves the parked subtree allocated, which DragonFly's
+unmount and the three ports' do as well, read at their heads on
+2026-09-07; only the unload check here counts it. `hammer2_unmount_helper()`
+now walks the tree under the volume and freemap roots after that sync,
+children first, takes the reference a parked chain does not hold,
+clears the two flags and drops it, printing each as unflushed, since
+nothing in it reached the disk and the writer was told so at the time.
+The same run again read zero chains outstanding with the four named as
+they went; a normal fill on the same build read 466 files whole and
+zero outstanding with nothing scrapped, which is the control that the
+walk is idle when the flush succeeds. Staged for upstream as
+`doc/upstream/dragonfly-hammer2_vfsops-unmount-scrap-parked-chains.patch`
+and the ports' pair.
 
 ## A million files, and where the writer stopped
 
@@ -2877,8 +2913,8 @@ against the FreeBSD port at
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 36 | 18 | 18 |
-| `hammer2_freemap.c` | 6 | 6 | 0 |
+| `hammer2_chain.c` | 38 | 18 | 20 |
+| `hammer2_freemap.c` | 7 | 6 | 1 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 4 | 2 | 2 |
@@ -2888,7 +2924,7 @@ against the FreeBSD port at
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 21 | 1 | 20 |
 | `hammer2_inode.c` | 29 | 6 | 23 |
-| `hammer2_vfsops.c` | 46 | 7 | 38 |
+| `hammer2_vfsops.c` | 48 | 7 | 40 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
 | `hammer2_vnops.c` | 2 | 0 | 2 |
@@ -2902,8 +2938,8 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and sixty-nine are this port's, the right-hand column
-summed, and they fall in sixteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_xops.c`, two in `hammer2_admin.c`, one in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
+One hundred and seventy-four are this port's, the right-hand column
+summed, and they fall in seventeen files: forty in `hammer2_vfsops.c`, twenty-three in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, twenty in `hammer2_chain.c`, nineteen in `hammer2_strategy.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, three in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_xops.c`, two in `hammer2_admin.c`, two in `hammer2_io.c`, one in `hammer2_disk.h`, one in `hammer2_freemap.c`, and two in `hammer2_vnops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the
@@ -2939,7 +2975,7 @@ two of `hammer2_io.c`'s four.
 edits in place rather than a file it wrote, so its two marks are counted
 where the other carried files' are.
 
-`hammer2_admin.c`, `hammer2_freemap.c`,
+`hammer2_admin.c`,
 `hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c`,
 `hammer2_cluster.c` and `hammer2_mount.h` are still byte-identical to that
 upstream commit under `cmp`, so most of the carried core has no port edit
@@ -3003,7 +3039,7 @@ The `hammer2_os.h` count read six until 2026-08-26, written before the
 two shim edits `hammer2_inode.c` needed, and seven for the few hours
 before `M_WAITOK` was fixed.
 
-`hammer2_vfsops.c`'s sixteen are the largest set in the tree after
+`hammer2_vfsops.c`'s sixteen, as the file stood on 2026-08-26, were the largest set in the tree after
 `hammer2_ondisk.c`'s, and the file is the fastest-moving in it, so they
 are listed by site rather than counted: the file's opening comment; the
 `sysctl(9)` block that became module parameters; the two `hashinit(9)`

@@ -202,6 +202,19 @@ hammer2_freemap_alloc(hammer2_chain_t *chain, size_t bytes)
 		return (hammer2_freemap_reserve(chain, radix));
 	}
 
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * XXX Linux: a refusal on demand, debug build only.  The reserve
+	 * keeps a fill from ever reaching an allocation failure, so the
+	 * paths behind one are run by counting allocations and refusing
+	 * every one past the module parameter, as a full freemap would.
+	 */
+	if (hammer2_fail_alloc_after &&
+	    __atomic_fetch_add(&hammer2_alloc_count, 1, __ATOMIC_RELAXED) >=
+	    hammer2_fail_alloc_after)
+		return (HAMMER2_ERROR_ENOSPC);
+#endif
+
 	KKASSERT(bytes >= HAMMER2_ALLOC_MIN && bytes <= HAMMER2_ALLOC_MAX);
 
 	/*

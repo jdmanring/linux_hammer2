@@ -224,6 +224,11 @@ gained or lost a single finding. The two checkers differ in size and hash,
 so the baseline had to be regenerated to record which one produced it, but
 nothing about this tree reads differently to the newer one.
 
+1118 to 1120 when the debug build gained its list of every chain and
+the print of what is left at the unload: one BSD continuation indent on
+the list head's initializer and one quoted string split across lines,
+a print of seven fields that does not fit one. No category is new.
+
 1120 to 1118 when the chain and inode locks became the shim's own
 primitive: the two `return (x);` of the rw_semaphore layout check went
 with the check. Three hits were fixed rather than baselined, a memory

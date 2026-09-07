@@ -134,6 +134,32 @@ hammer2_chain_setflush(hammer2_chain_t *chain)
  *
  * Returns a referenced but unlocked (because there is no core) chain.
  */
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * XXX Linux: every allocated chain, so that a nonzero count at the
+ * unload can say which chains are left and what still holds them.
+ */
+static TAILQ_HEAD(, hammer2_chain) hammer2_dbg_chain_list =
+    TAILQ_HEAD_INITIALIZER(hammer2_dbg_chain_list);
+static DEFINE_SPINLOCK(hammer2_dbg_chain_lock);	/* Linux */
+
+void
+hammer2_chain_dump_live(void)
+{
+	hammer2_chain_t *chain;
+
+	spin_lock(&hammer2_dbg_chain_lock);
+	TAILQ_FOREACH(chain, &hammer2_dbg_chain_list, dbg_entry) {
+		hprintf("left chain %p type %d key %016llx refs %u flags %08x "
+		    "error %08x parent %p pmp %p\n",
+		    chain, chain->bref.type, (unsigned long long)chain->bref.key,
+		    chain->refs, chain->flags, chain->error, chain->parent,
+		    chain->pmp);
+	}
+	spin_unlock(&hammer2_dbg_chain_lock);
+}
+#endif
+
 static hammer2_chain_t *
 hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
     hammer2_blockref_t *bref)
@@ -161,6 +187,12 @@ hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
 	case HAMMER2_BREF_TYPE_VOLUME:
 		chain = hmalloc(sizeof(*chain), M_HAMMER2, M_WAITOK | M_ZERO);
 		atomic_add_int(&hammer2_count_chain_allocated, 1);
+#if defined(HAMMER2_LOCKDEBUG)
+		/* XXX Linux: the unload names what the count only counts. */
+		spin_lock(&hammer2_dbg_chain_lock);
+		TAILQ_INSERT_TAIL(&hammer2_dbg_chain_list, chain, dbg_entry);
+		spin_unlock(&hammer2_dbg_chain_lock);
+#endif
 		break;
 	case HAMMER2_BREF_TYPE_EMPTY:
 	default:
@@ -650,6 +682,11 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 		hammer2_lkc_destroy(&chain->inp_cv);
 		hammer2_spin_destroy(&chain->core.spin);
 		chain->hmp = NULL;
+#if defined(HAMMER2_LOCKDEBUG)
+		spin_lock(&hammer2_dbg_chain_lock);
+		TAILQ_REMOVE(&hammer2_dbg_chain_list, chain, dbg_entry);
+		spin_unlock(&hammer2_dbg_chain_lock);
+#endif
 		hfree(chain, M_HAMMER2, sizeof(*chain));
 		atomic_add_int(&hammer2_count_chain_allocated, -1);
 	}

@@ -150,3 +150,39 @@ single-commit snapshots with no history to search, and the three
 repositories have issues disabled and no pull requests, so nothing can
 be concluded from silence there.
 
+
+## hammer2_vfsops-unmount-scrap-parked-chains
+
+`dragonfly-hammer2_vfsops-unmount-scrap-parked-chains.patch` and
+`ports-hammer2_vfsops-unmount-scrap-parked-chains.patch`, the second
+applying to all three ports, whose unmount tails are the same text.
+`hammer2_chain_lastdrop()` parks a chain that has a parent and `UPDATE`
+or `MODIFIED` set at zero references on the parent's tree, because a
+later flush needs it, and `hammer2_flush_core()` re-sets `UPDATE` on
+the child when the parent's modify fails with `ENOSPC`. The unmount's
+final sync is the last flush there will be. When it fails the same way,
+`hammer2_unmount_helper()` clears the two flags on the embedded volume
+and freemap roots only, drops them, and leaves every parked chain below
+allocated. The patch walks the two trees after that sync, children
+first, takes the reference a parked chain does not hold, clears the
+flags and drops it, printing each as unflushed.
+
+Seen on Linux on 2026-09-07 with the debug build's allocator refusing
+from its 20,000th call: four inode chains in one line of descent from
+the super-root, each at zero references, counted by the unload check
+and named by the same build's list of every chain;
+`doc/README.status.md` has the record. The DragonFly patch does not
+call `hammer2_pfs_memory_wakeup()` for a scrapped `MODIFIED` chain,
+where the root clears above it do, because the PFS a parked chain
+points at was freed by `hammer2_pfsfree_scan()` earlier in the same
+function; the surviving-chain `pmp` patch above is the same hazard.
+
+Still that way at DragonFly's head `250a8b49` and the three ports'
+`v1.2.13`, read on 2026-09-07 through the forge API and the local
+clones. DragonFly's `hammer2_vfsops.c` history was read through the
+forge for the file's last five commits: the newest, `40e5c562` of
+2026-09-02, disables the two chain dumps at unmount and names a memory
+leak fixed in `bfcedfb4`, which is a queued dmsg message in
+`kdmsg_iocom_uninit()` and not this. Nothing was searched for by this
+defect's own terms on DragonFly's tracker, so it is not claimed to be
+unreported there; the ports have no tracker.

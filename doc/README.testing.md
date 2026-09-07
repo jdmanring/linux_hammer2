@@ -1345,7 +1345,12 @@ is left above the threshold. The reserve refuses a user with twice
 the free space it refuses root at, so `H2_ENOSPC_USER=1` runs the fill
 and both probes as `nobody` under `setpriv`, `H2_ENOSPC_MODARGS` is
 handed to the guest's `insmod` so `io_buf_only=1` puts the whole fill
-through the DIO layer's block buffer and its bio writes, and every run reads both
+through the DIO layer's block buffer and its bio writes, and, with
+`H2_LOCKDEBUG=1`, `fail_alloc_after=N` has the freemap allocator refuse
+every allocation past the Nth, which is how the paths behind an
+allocation failure are run now that the reserve keeps a fill from
+reaching one, and that build prints every chain still allocated at the
+unload, with its type, key, references, flags and parent; and every run reads both
 thresholds after the sync with one 64 KiB write as the user and one
 as root: the user is refused in either mode, root is accepted after a
 user's fill and refused after its own, and a run where root reads the

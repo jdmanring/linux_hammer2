@@ -164,6 +164,14 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
  */
 int hammer2_debug_hpanic;
 module_param_named(debug_hpanic, hammer2_debug_hpanic, int, 0644);
+/*
+ * XXX Linux: the freemap allocator refuses every allocation past this
+ * many, so what a full volume does once in many fills runs on demand.
+ * Debug build only; zero, the default, allocates as always.
+ */
+int hammer2_fail_alloc_after;
+int hammer2_alloc_count;
+module_param_named(fail_alloc_after, hammer2_fail_alloc_after, int, 0644);
 #endif
 
 /*
@@ -617,6 +625,44 @@ again:
 }
 
 /*
+ * Drop every chain parked under parent with UPDATE or MODIFIED set after
+ * the final sync of an unmount, children first.  The parked chain holds
+ * no ref, so the ref taken here is the one the last drop releases, and
+ * with the flags cleared and no children left the drop frees it and
+ * removes it from parent's tree.  A chain still referenced by someone is
+ * left alone rather than looped on.
+ */
+static void
+hammer2_unmount_scrap(hammer2_chain_t *parent)
+{
+	hammer2_chain_t *chain, *next;
+
+	hammer2_spin_ex(&parent->core.spin);
+	RB_FOREACH_SAFE(chain, hammer2_chain_tree, &parent->core.rbtree,
+	    next) {
+		if (chain->refs != 0)
+			continue;
+		hammer2_chain_ref(chain);
+		hammer2_spin_unex(&parent->core.spin);
+
+		hammer2_unmount_scrap(chain);
+		hprintf("scrapping unflushed %s %016llx/%d flags %08x\n",
+		    hammer2_breftype_to_str(chain->bref.type),
+		    (long long)chain->bref.key, chain->bref.keybits,
+		    chain->flags);
+		if (chain->flags & HAMMER2_CHAIN_MODIFIED) {
+			atomic_clear_int(&chain->flags, HAMMER2_CHAIN_MODIFIED);
+			atomic_add_int(&hammer2_count_chain_modified, -1);
+		}
+		atomic_clear_int(&chain->flags, HAMMER2_CHAIN_UPDATE);
+		hammer2_chain_drop(chain);
+
+		hammer2_spin_ex(&parent->core.spin);
+	}
+	hammer2_spin_unex(&parent->core.spin);
+}
+
+/*
  * Upstream calls this from its vfs_init, where on Linux it can only read
  * globals the module loader has just zeroed.  It is moved to the unload
  * path, which is where the counters can be anything but zero and so the
@@ -637,6 +683,9 @@ hammer2_assert_clean(void)
 
 	if (hammer2_count_chain_allocated > 0) {
 		hprintf("%d chain left\n", hammer2_count_chain_allocated);
+#if defined(HAMMER2_LOCKDEBUG)
+		hammer2_chain_dump_live();	/* Linux */
+#endif
 		error = EINVAL;
 	}
 	KKASSERT(hammer2_count_chain_allocated == 0);
@@ -2252,6 +2301,18 @@ again:
 	}
 	if (hmp->fchain.flags & HAMMER2_CHAIN_UPDATE)
 		atomic_clear_int(&hmp->fchain.flags, HAMMER2_CHAIN_UPDATE);
+
+	/*
+	 * XXX Linux: a chain whose flush failed keeps UPDATE, and
+	 * hammer2_chain_lastdrop() parks it at zero refs on its parent's
+	 * tree until a flush clears the flag.  No flush follows the final
+	 * sync above, so the drops below would leave every such subtree
+	 * allocated, which the unload's leak check counts.  Scrap them
+	 * bottom-up here and say what is lost: nothing in them reached
+	 * the disk, and the fill's writers were told so at the time.
+	 */
+	hammer2_unmount_scrap(&hmp->vchain);
+	hammer2_unmount_scrap(&hmp->fchain);
 
 #ifdef HAMMER2_INVARIANTS
 	hammer2_dump_chain(&hmp->vchain, 0, 0, -1, 'v');
