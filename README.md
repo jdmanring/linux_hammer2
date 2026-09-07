@@ -28,7 +28,19 @@ to the other three and can travel.
 It mounts a HAMMER2 volume read-write, lists it, reads it, follows its
 symlinks, writes to it, takes snapshots of it, and refuses media whose
 checksums do not match. Files on it can be mapped and executed, so a
-volume can be a root filesystem, and one has booted as one.
+volume can be a root filesystem, and one has booted as one: a static
+init on an otherwise empty volume, once, on a guest.
+
+At a glance, on a kernel of 7.3 or newer:
+
++ works: mount read-write by PFS label, read, write, mmap and exec,
+  snapshots, PFS create, delete and list through `hammer2-utils`,
+  LZ4 and ZLIB media, crash recovery to the same tree as the FreeBSD port
++ works with a caution: a volume filled to capacity refuses the fill and
+  keeps every accepted file whole, after four defects in that path were
+  found and fixed; read the paragraph on it below before trying it
++ not yet: a package, a tag, a kernel below 7.3, a backend adapter behind
+  the snapshots, and any write to media that is not a scratch image
 
 Every write operation has been run on scratch media and read back by
 DragonFly, in both directions of a round trip, and the crash matrix, a
@@ -41,7 +53,10 @@ with ZLIB compression, and on media created and written by DragonFly
 itself.
 
 Nothing is released: no tag exists, and the media it has written to are
-scratch copies on a guest. See
+scratch copies on a guest. To try a point that has been through the
+fleet, take the newest row of [CHANGELOG.md](CHANGELOG.md): every row
+pins the commits that delivered it and names the runs that verified
+them, which is what a tag would say. See
 [doc/README.status.md](doc/README.status.md) for exactly what exists and
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of
@@ -168,7 +183,12 @@ than about a shared bug.
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
   mounted, and the `create` operation's signature. A build against 7.2
-  fails on exactly those, recorded in `doc/README.status.md`
+  fails on exactly those, recorded in `doc/README.status.md`. Older
+  kernels are not blocked by anything deeper: measured from below, 6.18
+  would need two compatibility conditionals and 6.15 is where the block
+  layer first holds a 64 KiB folio. The decision is to stay on the kernel
+  of record until 1.0 and then consider 6.18 alone, the one longterm
+  kernel in that range; `doc/README.roadmap.md` records it
 
 + kernel headers for the running kernel
 
@@ -282,7 +302,10 @@ including what each gate cannot catch.
 
 [CONTRIBUTING.md](CONTRIBUTING.md). Questions, corrections and review of
 the port decisions are as welcome as patches, and more useful at this
-stage.
+stage. The most useful test right now is the one above on a
+distribution kernel at 7.3 or newer, with the kernel log from the
+mount and from any refusal, since every run so far has been on one
+maintainer's guests.
 
 ## Credit
 
