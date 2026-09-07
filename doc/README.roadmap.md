@@ -502,7 +502,9 @@ record's tree named: ten gates ran and passed, and three reported
 could-not-run for the reasons a tarball has, the history gate wanting
 a repository and the two fleet gates a guest; the prose gate had failed
 there, its population being the tracked set, and reads the tree where
-there is no repository since. A filing that
+there is no repository since. Reproducibility read the same day: the
+module built twice from `make clean` against the kernel of record's
+tree, `b892064`, compares byte for byte, the same sha256 both times. A filing that
 is refused or unanswered still meets its criterion: the finding stays applied
 here with its provenance note and the refusal recorded beside it.
 
