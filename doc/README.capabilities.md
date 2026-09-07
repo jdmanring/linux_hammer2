@@ -17,7 +17,7 @@ cost; limited, available only under stated constraints; unavailable;
 and unsafe, possible but not acceptable for transactional use.
 
 Measured on `artix-s6-kde` at 7.3.0-rc1 against the build the
-0.7.49 row of `CHANGELOG.md` pins, unless a row says otherwise. The
+0.7.50 row of `CHANGELOG.md` pins, unless a row says otherwise. The
 writing ioctls are a hand run on 2026-09-05 and not a gate, since the
 fixture gate's images are read-only; the fill, the round trip, the
 closure and the PFS roots are fleet runs named in `README.testing.md`.
