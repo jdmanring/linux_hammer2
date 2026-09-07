@@ -197,6 +197,17 @@ this; xfs pins the minimum order instead, which is what this port does.
 That is the shape and the hazard of 0.9's low-memory row, and it is a
 design change to this document, not a patch.
 
+The surface, counted on 2026-09-06 from the caller set rather than
+guessed: `hammer2_write_file_core()` has one caller, the write XOP, so
+the block assembly has one place to live. The write XOP reads the
+folio's size at two lines, the refusal and the copy out; the file
+mapping's `->write_begin`, `->write_end` and `->writepages` in
+`hammer2_vnops.c` read a folio's size or position at seven; the two
+order pins are in `hammer2_igetv()`; and the read side's sixteen
+folio sites in `hammer2_strategy.c` already take a folio smaller than
+the block. Everything else in the module handles blocks through the
+DIO layer's own mapping, whose order stays pinned.
+
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential
 read of a large file to 353 MiB/s on a guest where btrfs read at 507.
