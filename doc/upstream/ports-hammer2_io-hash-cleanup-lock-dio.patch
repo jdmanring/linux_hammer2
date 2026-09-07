@@ -1,0 +1,25 @@
+--- a/src/sys/fs/hammer2/hammer2_io.c
++++ b/src/sys/fs/hammer2/hammer2_io.c
+@@ -587,7 +587,9 @@
+ 		//hammer2_spin_ex(&hash->spin);
+ 		diop = &hash->base;
+ 		while ((dio = *diop) != NULL) {
++			hammer2_mtx_ex(&dio->lock);
+ 			if ((dio->refs & HAMMER2_DIO_MASK) != 0) {
++				hammer2_mtx_unlock(&dio->lock);
+ 				diop = &dio->next;
+ 				continue;
+ 			}
+@@ -596,10 +598,12 @@
+ 				dio->act = (act < 0) ? 0 : act;
+ 			}
+ 			if (dio->act) {
++				hammer2_mtx_unlock(&dio->lock);
+ 				diop = &dio->next;
+ 				continue;
+ 			}
+ 			KKASSERT(dio->bp == NULL);
++			hammer2_mtx_unlock(&dio->lock);
+ 			*diop = dio->next;
+ 			dio->next = NULL;
+ 			*cleanapp = dio;

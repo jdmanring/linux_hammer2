@@ -172,8 +172,9 @@ so it tries longer than xfs would before the same answer. Whether the
 answer stands is 0.9's low-memory row. Lowering the dirty limit to
 128 MB so writeback ran ahead of the grab changed nothing; giving the
 guest 8 GiB and changing nothing else took the copy through in 82 s
-with no refusal, so the limit is the guest's memory against the folio
-and not the port's writeback.
+with no refusal once and with one refusal the next time, so the limit
+is the guest's memory against the folio and not the port's writeback,
+and it is a rate that falls with memory rather than a line.
 
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential

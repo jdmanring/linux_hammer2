@@ -701,8 +701,8 @@ hammer2_io_bkvasync(hammer2_io_t *dio)
 }
 
 /*
- * ---- Carried from FreeBSD unchanged below this line: the hash and
- * ---- the dedup masks.  Neither touches the buffer.
+ * ---- Carried from FreeBSD below this line: the hash and the dedup
+ * ---- masks.  Neither touches the buffer; the one port mark is in the cleanup.
  */
 
 static __inline hammer2_io_hash_t *
@@ -807,7 +807,20 @@ hammer2_io_hash_cleanup(hammer2_dev_t *hmp, int dio_limit)
 		hash = &hmp->iohash[i & HAMMER2_IOHASH_MASK];
 		diop = &hash->base;
 		while ((dio = *diop) != NULL) {
+			/*
+			 * XXX Linux: hammer2_io_putblk() drops the last ref
+			 * and then disposes of the buffer, still under
+			 * dio->lock.  The FreeBSD port reads refs here under
+			 * the hash lock alone, so a dio inside that window
+			 * reads as free, is unhashed, and is freed under its
+			 * holder, whose unlock then lands on freed memory.
+			 * DragonFly keeps DIO_INPROG set across the window;
+			 * the port takes the lock the holder is under, in
+			 * the order hammer2_io_hash_lookup() already uses.
+			 */
+			hammer2_mtx_ex(&dio->lock);
 			if ((dio->refs & HAMMER2_DIO_MASK) != 0) {
+				hammer2_mtx_unlock(&dio->lock);
 				diop = &dio->next;
 				continue;
 			}
@@ -816,10 +829,12 @@ hammer2_io_hash_cleanup(hammer2_dev_t *hmp, int dio_limit)
 				dio->act = (act < 0) ? 0 : act;
 			}
 			if (dio->act) {
+				hammer2_mtx_unlock(&dio->lock);
 				diop = &dio->next;
 				continue;
 			}
 			KKASSERT(dio->folio == NULL);
+			hammer2_mtx_unlock(&dio->lock);
 			*diop = dio->next;
 			dio->next = NULL;
 			*cleanapp = dio;

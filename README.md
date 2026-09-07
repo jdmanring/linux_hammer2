@@ -40,9 +40,9 @@ At a glance, on a kernel of 7.3 or newer:
   keeps every accepted file whole, after four defects in that path were
   found and fixed; read the paragraph on it below before trying it. A
   real Nix closure of two hundred thousand files copies in and reads
-  back identical beside squashfs and erofs on an 8 GiB guest; at 4 GiB
-  a handful of writes are refused for want of a 64 KiB folio, and
-  `doc/IO_MODEL.md` has why
+  back beside squashfs and erofs, identical on an 8 GiB guest one run
+  in three and short by a handful of writes on a 4 GiB one, each
+  refused for want of a 64 KiB folio; `doc/IO_MODEL.md` has why
 + not yet: a package, a tag, a kernel below 7.3, a backend adapter behind
   the snapshots, and any write to media that is not a scratch image
 

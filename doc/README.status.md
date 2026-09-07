@@ -34,10 +34,10 @@ A write near full is refused now, as the other trees refuse it.
 A million files went in and were counted on both sides, a large
 file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
 the same guest, and a real Nix closure of two hundred thousand files
-copied in through the write path found five defects a million
-one-line files could not reach and reads back identical beside
-squashfs and erofs on an 8 GiB guest; the three readings are 0.9's
-and recorded below.
+copied in through the write path found six defects a million
+one-line files could not reach and reads back beside squashfs and
+erofs, identical on one 8 GiB run of three and short by a refused
+write on the other; the three readings are 0.9's and recorded below.
 `CHANGELOG.md` is the enumeration; this paragraph names kinds and does
 not carry the count. This file is the one to correct
 rather than to argue with: if a claim here is stale, it is a defect.
@@ -585,7 +585,7 @@ construction rather than re-hashed every run.
 | `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 1003 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 1018 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 1174 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
@@ -2019,7 +2019,7 @@ took 244, 275 and 250 s, the churn 10 to 11 s, the delete 42 to 45 s,
 and DragonFly counted the deleted tree empty and the snapshot at this
 side's count every time.
 
-## A real closure, and the five defects it found
+## A real closure, and the six defects it found
 
 F6 asks for a real Nix closure of hundreds of thousands of paths read
 at a measured cost beside the same read on squashfs or erofs.
@@ -2038,7 +2038,7 @@ volume 48 GiB.
 The first run's copy stopped in its first minutes, a worker asleep
 in a link. The second run's copy
 completed, and by the seventh the copy read back identical to its
-source; the harness found five defects on the way, none of which a
+source; the harness found six defects on the way, none of which a
 million one-line files in a hundred directories could have reached:
 
 1. **A lost XOP wakeup.** `hammer2_xop_testset_ipdep()` waits for its
@@ -2086,6 +2086,20 @@ million one-line files in a hundred directories could have reached:
    evicting inode cleared it under the lock before the hash let a new
    one in.
 
+6. **A buffer freed under its holder.** `hammer2_io_putblk()` drops
+   the last reference and then disposes of the buffer, still under the
+   dio's lock. `hammer2_io_hash_cleanup()`, carried from the FreeBSD
+   port, read the reference count under the hash lock alone, so a dio
+   inside that window read as free, was unhashed and freed, and the
+   holder's unlock landed on freed memory: the writeback worker
+   released a reader it had never taken, `DEBUG_RWSEMS` reporting a
+   count of zero and no owner. DragonFly keeps `DIO_INPROG` set across
+   the window; the port takes the dio's lock before reading the count,
+   in the order the hash lookup already uses. Four writers at once
+   reached it at 76 s; one writer had not in nine runs. The three
+   BSD ports carry the same cleanup, staged as
+   `doc/upstream/ports-hammer2_io-hash-cleanup-lock-dio.patch`.
+
 The fourth run, every fix in, on the guest as it is; the fifth with
 kmemleak turned off before the module loaded (`H2_NC_GUESTPRE`); and
 the seventh with the guest given 8 GiB, whose squashfs and erofs
@@ -2128,12 +2142,59 @@ as the FreeBSD port leaves one when its target write fails. The
 seventh run gave the guest 8 GiB and changed nothing else, and the
 copy completed in 82 s with no refusal and no warning, every hash,
 symlink and hard link at the source's; DragonFly counted and checked
-it clean. So the refusal is the guest's memory against the 64 KiB
-folio, and the design stands at 8 GiB for a 12 GB stream. What the
-port owes below that is 0.9's low-memory row: a write that cannot
-find a 64 KiB folio is refused rather than retried into the OOM
-killer, which is what the kernel's own large-block filesystems do,
-and the number a 4 GiB guest can hold is the one above.
+it clean. The eighth, the same guest with an ext4 reference copy
+beside it, refused one write at 120 s. So the refusal is the guest's
+memory against the 64 KiB folio, and 8 GiB is where it becomes rare
+for a 12 GB stream rather than where it stops: one run of three
+clean, the ninth refusing one write as the eighth had.
+What the port owes is 0.9's low-memory row: a write that cannot find
+a 64 KiB folio is refused rather than retried into the OOM killer,
+which is what the kernel's own large-block filesystems do, and the
+rate at a given memory is the reading, not a pass.
+
+The eighth run also took the reading the XOP pool decision waited on,
+the same `cp -a` into ext4 on a fifth disk of the same guest:
+
+| 8 GiB guest | HAMMER2 | ext4 |
+|---|---|---|
+| copy in, `cp -a` | 85 s | 79 s |
+| cold walk | 8 s | 7 s |
+| cold read | 17 s | 12 s |
+| cold hashed read | 38 s | 47 s |
+
+Synchronous XOPs, the FreeBSD port's choice, cost six seconds in
+eighty-five against a filesystem with no XOP at all, and the port
+reads back faster than ext4 on the same source. The pool stays
+synchronous; the workqueue-backed pool is not built.
+
+The tenth and eleventh runs dealt the store paths round four `cp`
+processes (`H2_NC_JOBS=4`), 0.9's parallel-build row, on the 8 GiB
+guest with kmemleak off, the eleventh on the build with the sixth fix
+in; the ext4 column is the one-writer reference copy of the same run:
+
+| 8 GiB guest | run 10, four writers | ext4 beside it | run 11, four writers | ext4 beside it |
+|---|---|---|---|---|
+| copy in, `cp -a` | 64 s | 78 s | 80 s | 96 s |
+| writes refused `ENOMEM` | 3 | 0 | 1 | 0 |
+| cold walk | 9 s | 6 s | 10 s | 6 s |
+| cold read | 17 s | 16 s | 22 s | 14 s |
+| cold hashed read | 44 s | 40 s | 44 s | 45 s |
+
+Four writers put the closure in ahead of ext4's single writer on the
+same guest both times, and ahead of the port's own single writer's 85
+once; the refusals, three in one run and one in the other, are the
+same 64 KiB folio, and each run's hash and symlink lists differ from
+the source by exactly its refused writes.
+A hard link across two writers' shares arrives as two files, which is
+`cp`'s and not the port's, so the harness reports that count under
+more than one writer and does not judge it. The same run found the
+sixth defect, the buffer freed under its holder, at 76 s in the
+writeback worker, and the eleventh, with the fix in, ran the same
+four writers with no warning but the ceiling recursion the `DEFER`
+records, which every run since the seventh has and the harness
+counts. The collection that followed each run removed 989 of the 1978
+store paths in 14 s beside a reader, and DragonFly counted the 103693
+files and 76012 symlinks that stayed, its checker clean in 57 s.
 
 DragonFly counted the fourth run's volume at the source's numbers,
 205871 files and 150219 symlinks in 13 s, since a refused write leaves
@@ -2523,7 +2584,7 @@ against the FreeBSD port at
 | `hammer2_freemap.c` | 6 | 6 | 0 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
-| `hammer2_io.c` | 3 | 2 | 1 |
+| `hammer2_io.c` | 4 | 2 | 2 |
 | `hammer2_os.h` | 5 | 0 | 5 |
 | `hammer2_flush.c` | 15 | 8 | 7 |
 | `hammer2_subr.c` | 7 | 0 | 7 |

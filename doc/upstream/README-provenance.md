@@ -119,3 +119,34 @@ at the remote head, `hammer2_admin.c:257` and `:279` in FreeBSD's; the
 clones are single-commit snapshots with no history to search, and the
 three repositories have issues disabled and no pull requests, so nothing
 can be concluded from silence there.
+
+## hammer2_io-hash-cleanup-lock-dio
+
+`ports-hammer2_io-hash-cleanup-lock-dio.patch`, for the three ports
+only. DragonFly's `hammer2_io_putblk()` keeps `HAMMER2_DIO_INPROG` set
+in `dio->refs` from the last drop until the buffer is disposed of, and
+its `hammer2_io_hash_cleanup()` skips a dio with that bit; the ports
+replaced the bit with `dio->lock`, held across the same window, and
+their cleanup reads `dio->refs` under the hash lock alone.
+
+So a dio whose last reference has been dropped, whose buffer is still
+being written back under `dio->lock`, and whose `act` has aged to zero
+reads as free to a cleanup running on another thread: it is unhashed,
+put on the clean list and freed, and the holder's `hammer2_mtx_unlock()`
+lands on freed memory. The patch takes `dio->lock` before reading the
+count, the order `hammer2_io_hash_lookup()` already takes it in under
+the hash lock, so the cleanup waits for the disposal to finish.
+
+Seen on Linux on 2026-09-06 with four `cp` processes writing a Nix
+closure at once, as the writeback worker releasing a reader it had
+never taken, the rwsem's count zero and its owner clear;
+`doc/README.status.md` has the record. One writer had not reached it
+in nine runs. The ports write back on the calling thread, which
+narrows the window and does not close it.
+
+Still present at `v1.2.13` in all three ports, read in the local clones
+at the remote head, `hammer2_io_hash_cleanup()` in each; the clones are
+single-commit snapshots with no history to search, and the three
+repositories have issues disabled and no pull requests, so nothing can
+be concluded from silence there.
+
