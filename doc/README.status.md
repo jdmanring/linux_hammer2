@@ -1921,6 +1921,25 @@ Both remaining faults are intermittent, so they are measured as rates
 rather than runs. `H2_REPEAT=n` in the reproducer tallies n runs, keeps
 each run's log, and resets the guest between them.
 
+The gate is what the pre-push hook runs, and on the tree that carries
+the closure's seventh fix it refused one push: 466 of 467 files intact,
+one damaged, 34 chains left at the unmount. The hook kept twelve lines
+of that run and lost the rest, so which file was damaged and what the
+guest's log said are not on record; the hook now writes a failed gate's
+whole output to a file under `.git` and says where, and the gate names
+each damaged file with its size, so the next such run says whether the
+loss was the last file the fill accepted or one long since flushed. The
+same tree then ran the gate thirteen times with every log kept, three
+and then ten through `H2_REPEAT`: twelve passed with every file intact
+and zero inodes, chains, modified chains and dios outstanding at the
+unmount, and one could not run because the guest did not answer ssh
+within five minutes of its reset, the boot stall the fleet notes
+already record, which the batch counts as neither pass nor fail. One
+unrecorded failure in fourteen runs is the rate the tree carries until
+the loss is seen again with its log, and it is not attributed: the
+tree's last passing push was two write-path fixes and two lock fixes
+ago, and no control at the earlier commit has been run at this rate.
+
 ## A million files, and where the writer stopped
 
 0.9 asks for million-file trees with the number they produced.
