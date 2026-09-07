@@ -36,8 +36,9 @@ file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
 the same guest, and a real Nix closure of two hundred thousand files
 copied in through the write path found seven defects a million
 one-line files could not reach and reads back beside squashfs and
-erofs, identical on one 8 GiB run of three and short by a refused
-write on the other; the three readings are 0.9's and recorded below.
+erofs, identical on both sides with nothing refused and lockdep on
+from the first mount to the unload; the readings are 0.9's, recorded
+below, and 0.9 is met on them.
 `CHANGELOG.md` is the enumeration; this paragraph names kinds and does
 not carry the count. This file is the one to correct
 rather than to argue with: if a claim here is stale, it is a defect.
@@ -2094,7 +2095,8 @@ reached:
    first time one is seen, in an xarray, and unregisters them at
    module exit, so depth has no bound and every acquire is at subclass
    0; the detached, sibling and `lock4` positions keep theirs. The
-   run below whose lockdep is on at the end is its reading.
+   fifteenth run below is its reading: lockdep on from the first
+   mount to the unload, 409 keys registered by the twelfth minute.
 3. **`symlink(2)` returned a positive number.** The vnop stored
    `page_symlink()`'s negative errno and negated it on return, so a
    symlink whose target write failed went back to userspace as a
@@ -2155,7 +2157,9 @@ reached:
    the list kept under the core spinlock every scan and removal
    already holds. Seen once, on the first run whose lockdep stayed on
    past the second minute; the reading of the mechanism is from the
-   two headers, and the run after the fix is its control.
+   two headers, and the fifteenth run is its control: the same
+   copy under the same four writers, the flush worker alive to the
+   unload.
 
 The fourth run, every fix in, on the guest as it is; the fifth with
 kmemleak turned off before the module loaded (`H2_NC_GUESTPRE`); and
@@ -2280,8 +2284,26 @@ collection removed 989 store paths in 12 s beside a reader that
 exited 0 and its survivors hashed as theirs, and the harness exited
 0; `IO_MODEL.md` has the reads beside the three references. Lockdep
 was off at the end and the ring buffer, filled by the 1871 debug
-lines that count the fallbacks, no longer said why; the fourteenth
-run, without the debug prints, is the lock reading.
+lines that count the fallbacks, no longer said why. The fourteenth
+run, without the debug prints, kept lockdep on past the second
+minute for the first time and found the seventh defect above at
+113 s.
+
+The fifteenth run, the same day, with the lockdep classes and the
+scan bookkeeping in, at 4 GiB with four writers, kmemleak off and no
+debug prints: the copy went in at 97 s to ext4's 113 with no write
+refused, both unmounts and the unload exited 0, and lockdep was on at
+the end, `debug_locks` 1, the ceiling never reached, no kernel warning
+in the saved log. Every file and every symlink hashed as its source
+on all four filesystems, the cold read 61 s and the hash 96 to
+squashfs's 23 and 71, erofs's 10 and 39 and ext4's 16 and 42, the
+first read of the closure taken with lockdep on throughout where the
+earlier readings had it off by then; the collection removed 989 store
+paths in 37 s beside a reader that exited 0, its survivors hashed as
+theirs, DragonFly counted the 103693 files and 76012 symlinks that
+stayed and its checker was clean in 48 s, and the harness exited 0.
+It is the first run of the closure in which nothing was refused and
+lockdep read the whole run.
 
 DragonFly counted the fourth run's volume at the source's numbers,
 205871 files and 150219 symlinks in 13 s, since a refused write leaves

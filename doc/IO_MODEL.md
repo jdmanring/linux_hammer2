@@ -267,7 +267,11 @@ fallbacks answer is fragmentation, which the smaller guest has more
 of only at the margin. The one thing the run could not read is
 lockdep, which was off at the end for a cause the guest's ring
 buffer no longer held, the debug prints that count the fallbacks
-having filled it; the run without them is the lock reading.
+having filled it. The run without them, at 4 GiB with the lockdep
+classes and the scan bookkeeping in, kept lockdep on from the first
+mount to the unload, refused nothing, went in at 97 s to ext4's 113
+and read back hashed at 96 s to squashfs's 71, erofs's 39 and ext4's
+42; the earlier read timings were taken with lockdep already off.
 
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential
