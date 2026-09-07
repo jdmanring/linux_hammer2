@@ -428,12 +428,11 @@ snapshot taken through it, the whole tree deleted, and every state
 counted on both sides with both checkers clean. The first run of that
 configuration deadlocked in the shim's shared to exclusive upgrade,
 which is fixed and recorded in `README.status.md` with the run that
-passed after it and the five of five at twenty thousand files with
-lockdep alive. What the million run could not read is the lock order past
-172 s, where the guest kernel's lockdep chain table fills; the open
-decision below on that table is what would give it. The F6 read
-against squashfs and erofs, and the XOP pool decision, wait on the
-closure.
+passed after it, three of three in that configuration, and five of
+five at twenty thousand files with lockdep alive. The lock order of
+the whole million-file churn was read once the guest kernel's chain
+table was raised, and was clean. The F6 read against squashfs and
+erofs, and the XOP pool decision, wait on the closure run.
 
 Gate: an F6 harness, unwritten. Depends on 0.8 and on a build host that
 supplies the closure and the hours.
@@ -488,7 +487,7 @@ Each is the maintainer's, and each names what it blocks.
 | a workqueue-backed XOP pool against synchronous XOPs | 0.9 | synchronous through 0.6, the FreeBSD port's choice; decided on F6's numbers |
 | where the fixture scripts and the provenance CSV live | every gate from 0.4 on | confirmed by the maintainer 2026-08-25: this tree, `test/fixtures/`, so the port carries its own evidence when it changes hands. Scripts, manifests and CSV only; images are build output. Moved: the manifests are in `test/fixtures/`, the CSV in `doc/research/`, and the fixture scripts in `script/` |
 | a lock primitive of the shim's own against the `rw_semaphore` | 1.0 | open: the chain and inode locks are DragonFly's `mtx` over a Linux `rw_semaphore`, and three of its promises have each been patched on separately, the recursive exclusive hold as a depth count, the shared re-lock as a credit, and the shared to exclusive upgrade as a compare and swap on a count layout `rwsem.c` keeps private. `README.porting.md` has each. A primitive with DragonFly's lock word over a spinlock and wait queue, annotated for lockdep, removes all three at once; it is the same lock upstream wrote against and the reading it is judged on is the million-file tree with churn under lockdep |
-| the debug guest's lockdep chain table | the lock reading of every tree run past about 300 s | open: `CONFIG_LOCKDEP_CHAINS_BITS=16` gives 327680 held-lock slots and the million-file run fills them at 172 s, after which nothing lockdep would have reported is reported. The port makes many distinct chains by design, a class per chain type and key size at up to eight levels, and `hammer2_io_getblk()` releases the hash lock under a buffer lock taken beneath it, which lockdep re-validates on every fetch. Raising the option to 19 or 20 on the guest kernel is the maintainer's rebuild; the number to size it by is `/proc/lockdep_stats` at the end of a hundred-thousand-file run |
+| the debug guest's lockdep chain table | the lock reading of every tree run past about 300 s | taken: `CONFIG_LOCKDEP_CHAINS_BITS` raised from 16 to 20 on the guest kernel, sixteen times the chain and held-lock slots. The default table filled at 172 s of a million-file run, after which nothing lockdep would have reported was reported; the port makes many distinct chains by design, a class per chain type and key size at up to eight levels, and `hammer2_io_getblk()` releases the hash lock under a buffer lock taken beneath it, which lockdep re-validates on every fetch. The million-file churn then used 78922 chains of 1048576 with lockdep on to the end; `README.testing.md` records the guest kernel's configuration |
 | the two upstream filings | 1.0 | drafted, unfiled |
 | in-tree submission | nothing before 1.0 | deferred past qualification |
 

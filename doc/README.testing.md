@@ -673,6 +673,21 @@ Run one guest at a time. Each holds 4 GiB, both together are most of what
 this machine has spare, and the two halves of the test never overlap:
 DragonFly writes, then is shut down, then Linux reads.
 
+The Linux guest's kernel is plain 7.3.0-rc1 built on the host from
+`~/kernels/linux-7.3-rc1`, the tree `KDIR` names, and copied into the
+guest by hand; every reading in `README.status.md` taken on that guest
+was taken on it. Its configuration is the tarball's default plus the
+debug and instrument options the port's readings depend on:
+`PROVE_LOCKING` with `DEBUG_RWSEMS`, `PROVE_RCU`, `DEBUG_KMEMLEAK`,
+`BLK_DEV_IO_TRACE`, DWARF 5 debug information so `addr2line` resolves
+module offsets, `PREEMPT` under `PREEMPT_DYNAMIC`, `LOCKDEP_CHAINS_BITS`
+at 20 since the million-file runs filled the default table of 16 bits
+at 172 s and switched the validator off, and `SQUASHFS` and `EROFS_FS`
+as modules for the closure reference reads. A change to that
+configuration changes the guest every reading after it is taken on, so
+it is recorded here and the build number `uname -v` prints is recorded
+beside the readings it first appears in.
+
 Read `stat -c %b` on the result as well as the checksum. `i_blocks` is the
 on-media count, so it says which branch of the read completion each file
 took, and a set of matching checksums proves nothing about which paths
@@ -940,6 +955,27 @@ the outcomes as `test-enospc.sh` does, keeping each run's log under
 `H2_LOGDIR`; a lock cycle is a race, so one clean run after a change
 to the shim's locking is a run and the tally is the rate. The tally
 refuses to report if it saw fewer outcomes than it ran.
+
+`script/nix-closure.sh` is F6's harness, the first of 0.9's criteria:
+a real Nix closure read at a measured cost beside the same read on
+squashfs and erofs. The closure is one the host's store already holds,
+named by its top-level path in `H2_CLOSURE`; the host writes its paths
+into a squashfs image and, where `mkfs.erofs` is found, an erofs
+image, each cached by the store hash since a closure never changes.
+The Linux guest mounts both beside an empty HAMMER2 volume, copies
+the closure in with `cp -a` so hard links, symlinks and modes travel
+through the write path, syncs, unmounts and remounts, and takes three
+cold readings on each filesystem with the page cache dropped between:
+a metadata walk, a full read, and a hashed read that is also the
+content check, every file's SHA-256 in path order compared between
+the copy and its source, with the symlink targets and the hard-linked
+file count compared the same way. DragonFly mounts the volume, counts
+it and runs its checker; the host's checker runs after each side with
+its negative control. Rates are printed and never judged; a run fails
+on a count or hash that differs, a kernel warning, a checker verdict
+or a missing reading, and a guest whose run times out is read through
+`guest-dmesg.sh` before it is reset. The guest kernel needs squashfs
+and erofs as modules, which the debug guest's did not until F6 asked.
 
 `script/throughput.sh` takes the two readings that decide whether the
 port adds `->readahead` and changes its writeback order, the services

@@ -1992,13 +1992,23 @@ The same configuration on the fixed module, kmemleak off, one run:
 
 The delete frees nothing while the snapshot pins every block the tree
 held, and its own metadata is new, so the volume is fuller after it.
-The lock reading is still not available at this scale, lockdep having
-hit the same ceiling at the same second; the roadmap's decision on the
-guest's chain table is what would give it. A lock cycle is a race, so
+The lock reading at this scale came with the guest kernel's chain
+table raised from 16 to 20 bits, build #6 of the guest kernel: the same
+configuration run once more kept lockdep on to the end, 78922 chains
+used of 1048576 where the old table held 65536, with no report, zero
+kernel warnings, the create in 327 s, the churn in 27 s, the delete in
+110 s and both sides counting the snapshot at 999482, so the lock order
+of the whole million-file churn has now been read once and was clean.
+A lock cycle is a race, so
 the fix was also read as a rate where lockdep stays on: the same
 churn at twenty thousand files under a hundred directories, four
 writers, run five times through `H2_REPEAT=5`, passed five of five
-with lockdep alive to the end of each and zero kernel warnings.
+with lockdep alive to the end of each and zero kernel warnings, and
+the million-file configuration itself, kmemleak off as above, run
+three times through `H2_REPEAT=3`, passed three of three: the create
+took 244, 275 and 250 s, the churn 10 to 11 s, the delete 42 to 45 s,
+and DragonFly counted the deleted tree empty and the snapshot at this
+side's count every time.
 
 ## One large file, and what the BSD buffer cache gave for free
 
