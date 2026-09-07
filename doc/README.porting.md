@@ -523,12 +523,87 @@ The decision, split by which half the code is in:
   console had been turned on for that run. `doc/README.testing.md`
   records the capture.
 
+### The design behind the DEFER
+
+Measured 2026-09-07 on the tree at 906684d: 56 `hpanic` sites, one of
+them the debug hook that fires at mount. By the enclosing function's
+return type:
+
+| return type | sites | way out today |
+|---|---|---|
+| `int`, the core's error code | 26 | return `HAMMER2_ERROR_CHECK` or `EIO`, as a failed check already does |
+| a chain, dio or blockref pointer | 15 | set `chain->error`, return NULL; every caller tests NULL |
+| `void` | 13 | none; see below |
+| the debug hook | 1 | not a site |
+
+The 13 void sites: `hammer2_base_insert` (3) and `hammer2_base_delete`
+(1) on the block table, `hammer2_chain_setcheck` (1),
+`hammer2_chain_load_data` (1), `hammer2_chain_assert_no_data` (1),
+`hammer2_compress_and_write` (3) and `hammer2_write_bp` (1) in the
+strategy write path, `hammer2_io_dedup_delete` (1), and the mount
+helper's debug hook. Two classes by what can reach them:
+
+- **From disk.** The block table content (insert overlapping, delete
+  not found), the check method byte, the blockref type in load_data,
+  and the dedup data offset are all read from media, so a corrupt
+  image reaches them. `fuzz-mount.sh` mutates images and mounts them
+  but never writes to one, so none of these has been fuzzed.
+- **From memory only.** "no room" after a scan that found room, the
+  insert validation, a compressed size outside the radix table, an
+  inode in the data write path, an unexpected type in the strategy
+  switch: each is an invariant on state the code just computed, and a
+  `KKASSERT` in shape.
+
+### What Linux expects
+
+`ext4_forced_shutdown()` in `fs/ext4/ext4.h` at the kernel of
+record and XFS's shutdown bit answer the same question: after an
+unrecoverable fault, every operation returns `EIO`, nothing dirty
+reaches the media again, and the machine stays up. `checkpatch.pl`
+names `BUG()` in one message, AVOID_BUG, for the same reason.
+
+### The mechanism, in three parts
+
+1. **A device in error.** One bit on `hammer2_dev` set by `hpanic`
+   after its message, read at the one place a block becomes dirty:
+   `hammer2_io.c` sets `HAMMER2_DIO_DIRTY` at three places in the
+   buffer path and through `hammer2_io_setflags()` for the three write
+   entry points. A device in error refuses the dirty mark, so a chain
+   modified after the fault is never written, whatever the site did
+   with in-memory state afterwards. The superblock records the error
+   in `s_wb_err` (already done for sync errors) and the mount is left
+   read-only. This is Linux-half work: the bit and the read are in the
+   port's own io layer, marked `/* Linux */`.
+2. **`hpanic` returns.** With part 1 in place, `hpanic` becomes
+   `pr_emerg`, `WARN_ONCE` for the stack, set the bit, return. The 41
+   returning sites are then each a two-line core edit (set the error,
+   return), staged upstream as one series by file; the ports carry
+   `hpanic` as `panic()` and can take or leave each hunk.
+3. **The void sites.** With the device in error, running on past a
+   void site corrupts memory the flush will never write. Each of the
+   13 still gets a `return` after `hpanic` where the function has
+   nothing further it must do (nine of them), and the four inside
+   loops get a `break` out to the function's end. The memory-only
+   class keeps its `KKASSERT` shape under `HAMMER2_INVARIANTS`, where
+   a developer wants the oops.
+
+### What proves it
+
+The existing `debug_hpanic` knob fires at mount. The acceptance test
+adds a second value that fires from `hammer2_base_insert` on the
+first insert after mount, and the reading is: the writer gets `EIO`,
+the mount reads read-only, `umount` returns, `rmmod` returns, no
+`BUG` and no oops in the log, and the image is byte-identical to the
+one before the fault. That reading is the DEFER's trigger. A
+write-side fuzz (mount a mutated image, write into it) is the
+instrument for the from-disk class and is the fuzz harness's next
+mode.
+
 DEFER(every hpanic site has an error its caller propagates): `hpanic` on
-Linux is a machine-wide event standing in for a per-mount one. The
-super_block to mark has existed since 0.4, so that is no longer what
-lifts this. The fifty-four sites are written as not returning, and each
-needs an error its caller carries out before `hpanic` can stop calling
-`panic()`, which is an edit to carried core in every tree.
+Linux is a machine-wide event standing in for a per-mount one. The three
+parts above are the work; the reading at the end is what lifts it, and
+until then `hpanic` stays non-returning, since a returning `hpanic` with
+nothing refusing the dirty mark writes the fault to disk.
 
 A reviewer who has not read this file will raise this, and should: the source
 shows `BUG_ON` and `panic` with nothing beside them saying the objection was
