@@ -300,6 +300,7 @@ including what each gate cannot catch.
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
 | [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
+| [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares to the storage model, each row on a measurement |
 | [doc/README.kernel-style.md](doc/README.kernel-style.md) | licensing, and the path to mainline |
 
 ## Contributing
