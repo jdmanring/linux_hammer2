@@ -24,8 +24,14 @@ command -v vale >/dev/null || { echo "doc-prose: COULD-NOT-RUN: no vale"; exit 2
 # Tracked rather than found, so a file the repository does not carry cannot
 # fail the gate and a file it does carry cannot escape it. git ls-files is the
 # authority on what this repository ships.
-command -v git >/dev/null || { echo "doc-prose: COULD-NOT-RUN: no git"; exit 2; }
-files=$(git ls-files '*.md' 2>/dev/null)
+# A release tarball is not a repository, and everything in it is what
+# the release ships, so there the population is the tree itself; the
+# root assertion below holds either way.
+if command -v git >/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	files=$(git ls-files '*.md' 2>/dev/null)
+else
+	files=$(find . -name '*.md' -not -path './.git/*' | sed 's|^\./||' | LC_ALL=C sort)
+fi
 n=$(printf '%s\n' "$files" | grep -c '\.md$')
 [ "$n" -gt 0 ] || { echo "doc-prose: FAIL: no documents found, an empty sweep cannot pass"; exit 1; }
 # The root is asserted by name, not counted. A population that silently

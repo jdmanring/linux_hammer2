@@ -496,7 +496,13 @@ CSV covering every file with origin, copyright and license, the carried files
 keeping their upstream notices unchanged; the two findings staged for upstream
 filed by the maintainer and their state recorded here; and an out-of-tree
 release a distribution can package, meaning a tagged version, a
-`../CHANGELOG.md` entry, and the gates runnable from the tarball. A filing that
+`../CHANGELOG.md` entry, and the gates runnable from the tarball. Read
+on 2026-09-07 from a `git archive` of `b06fe74` with the kernel of
+record's tree named: ten gates ran and passed, and three reported
+could-not-run for the reasons a tarball has, the history gate wanting
+a repository and the two fleet gates a guest; the prose gate had failed
+there, its population being the tracked set, and reads the tree where
+there is no repository since. A filing that
 is refused or unanswered still meets its criterion: the finding stays applied
 here with its provenance note and the refusal recorded beside it.
 
