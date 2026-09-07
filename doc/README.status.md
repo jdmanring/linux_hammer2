@@ -2435,16 +2435,22 @@ unless noted:
 | 251cba9, before the folio change, same hour | 243 | 617 | 674 | |
 | 2fe755c, the shim's own lock, three runs | 212, 209, 196 | 483, 528, 507 | 545, 595, 551 | 8228 |
 | 154137d again, after those | 178 | 420 | 497 | 8228 |
+| 574b82b, host load 2.7, a 17 GiB link running | 288 | 195 | 165 | 8228 |
 
 The folio change is not the read cost it looked like: a cold read
 builds 8228 folios for 8192 blocks on either build, 36 more than one
 per block, so the smaller folios the page cache may now use cost 36
-decodes, not a tenth of the read. The guest slowed across the session
-instead, the semaphore build reading 272 in the morning and 178 at
-the end on the same image, and every comparison here is only as good
-as its control in the same hour; the reading of record above stands
-as not reproduced today rather than as regressed, and the shim's own
-lock is charged with nothing on it. An owner spin before the sleep,
+decodes, not a tenth of the read. The host slowed the guest across
+the session instead, the semaphore build reading 272 in the morning
+and 178 at the end on the same image, and the last row names the
+cause: a 17 GiB link on the host had taken the page cache, the ext4
+read in that run fell from 7314 MiB/s to 240, so every read there was
+the host's disk and not the driver's cost, while the write, which
+does not go through the host's cache, was the day's highest. Every
+comparison here is only as good as its host control, which the
+instrument now prints and names when it is cold; the reading of
+record above stands as not reproduced today rather than as regressed,
+and the shim's own lock is charged with nothing on it. An owner spin before the sleep,
 the rw_semaphore's own shape, was tried against the drop, moved
 nothing and was not kept.
 The run reads the file back with the source hash, zero kernel
