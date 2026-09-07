@@ -1309,9 +1309,12 @@ hammer2_write_begin(const struct kiocb *iocb,
 			folio = NULL;
 		}
 	}
-	if (folio == NULL)
+	if (folio == NULL) {
+		pr_debug("hammer2: no block folio at %llx, asking the cache\n",
+		    (unsigned long long)bindex << PAGE_SHIFT);
 		folio = write_begin_get_folio(iocb, mapping, bindex,
 		    HAMMER2_PBUFSIZE);
+	}
 	if (!IS_ERR(folio) && folio_next_index(folio) <= index) {
 		folio_unlock(folio);
 		folio_put(folio);
