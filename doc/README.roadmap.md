@@ -14,7 +14,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 0.5 to 0.9 are met, 0.9 on the fifteenth run of the real closure,
 nothing refused and lockdep on from the first mount to the unload,
-with the driver at 0.9.8 in `CHANGELOG.md`. The shipped module mounts
+with the driver at 0.9.9 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted

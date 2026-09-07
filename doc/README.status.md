@@ -27,7 +27,9 @@ full volume, a chain freed with its lock held on the same path, and a
 fill lost nearly whole to a flush with no room, because the free-space
 reserve every other tree keeps was declared here and never carried, a
 mapped write accepted on a full volume where `write(2)` was refused,
-and a file mapping that refused every dirty folio to compaction with a
+a page under writeback dropped from the reserve count before its block
+was allocated, which lost four files of one fill in eight, and a file
+mapping that refused every dirty folio to compaction with a
 warning that sat uncounted in 39 of 62 kept logs of the gate that now
 counts it.
 A write near full is refused now, as the other trees refuse it.
@@ -1471,7 +1473,12 @@ attributed and fixed, and a fill that lost nearly all of itself to a
 flush with no room left, fixed by carrying the free-space reserve every
 other tree has. The `ENOSPC` reaches the writer at `open(2)` and
 `write(2)`, and since 0.7.11 `fsync(2)` and `syncfs(2)` report it too
-rather than `EIO`. "No corruption has been seen" stood in this
+rather than `EIO`. A fifth arrived as the gate's rate, one fill in
+about eight losing four files with the reserve in place: a page leaves
+the dirty count when writeback starts on it and is given its block only
+when the strategy runs, and a writer in that window was admitted into
+space the writeback still needed. The pages under writeback are counted
+now. "No corruption has been seen" stood in this
 paragraph for a day on the strength of two clean checkers; the section
 below is what looking found.
 
@@ -1490,6 +1497,7 @@ On a volume filled to its last block, both checkers clean afterwards:
 | plus a data-sync write under twice the reserve | 487, 489 | 473, 474 | 14, 15 |
 | plus the root writeback's dirty pages counted | not measured: the guest's writer is in another cgroup, so that counter read near zero | | |
 | plus every writeback on the device counted | 463, 463 | 463, 463 | 0, 0 |
+| plus the pages under writeback counted | 461 to 475, twenty runs | all | 0 in all twenty |
 
 HAMMER2 allocates at writeback, not at `write(2)`, and needs free space
 for the flush that commits what was written: indirect blocks, the
@@ -1946,6 +1954,48 @@ unrecorded failure in fourteen runs is the rate the tree carries until
 the loss is seen again with its log, and it is not attributed: the
 tree's last passing push was two write-path fixes and two lock fixes
 ago, and no control at the earlier commit has been run at this rate.
+
+The loss was seen again with its log on the next refused push, and
+attributed. The hook's kept output has the whole shape: the fill
+stopped at file 463 with 4067 blocks available, `syncfs(2)` returned
+`ENOSPC`, the guest's log shows `hammer2_strategy_write` refused at a
+block's offset for want of space, `vnode flush failed 28` for four
+inodes and fourteen `hammer2_flush_core: inode parent ... error
+00000020` lines, and four consecutive 4 MiB files, `fill.425` to
+`fill.428`, read back damaged while `fill.463` and everything after
+read back whole. Four files accepted forty files before the volume
+was declared full is a writer admitted, not a flush that ran out: the
+reserve count added the device's reclaimable dirty pages to the write
+in hand, and a page leaves that count the moment writeback starts on
+it, while the strategy allocates its block only when it runs. A
+writer arriving in that window was judged against space the writeback
+still needed. `hammer2_bdi_dirty_bytes()` counts `WB_WRITEBACK` as
+well as `WB_RECLAIMABLE` now (`53aacb3`), which counts a page whose
+block is already allocated twice for the rest of its writeback, an
+early refusal that loses nothing. Both paths that admit data, the
+write entry and the mapped-write fault, go through that one function;
+the six metadata-only sites pass zero bytes, as upstream's do. Twenty
+consecutive runs on the change, every log kept: 461 to 475 files
+accepted, every one read back whole, zero inodes, chains, modified
+chains and dios outstanding at every unmount, none could-not-run.
+Against about one failure in eight before it, twenty clean is a rate
+the change moved, not proof the window is closed, and the gate keeps
+counting on every push.
+
+What that run also showed and the change does not answer: two chains
+outstanding at the unmount, with zero modified, after the strategy's
+`ENOSPC`. The strategy's own callers of `hammer2_assign_physical()`
+unlock and drop the chain on every error path, as DragonFly's do, and
+the flush keeps the child's `UPDATE` flag and continues when the
+parent's modify fails, by upstream's design, so the two references are
+somewhere downstream of that and not yet named. The reserve now keeps
+every run from reaching the path, so the reproduction has to be made
+on demand: the kernel of record's guest is built without
+`CONFIG_FAULT_INJECTION`, so a module parameter that makes the
+freemap allocator refuse after a set number of allocations is the
+instrument, and the count at the unmount is the reading. That is the
+next item on the full-volume side, and the two chains are open until
+it runs.
 
 ## A million files, and where the writer stopped
 

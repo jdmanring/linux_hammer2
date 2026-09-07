@@ -442,7 +442,12 @@ explicit shadow, and `-Wmaybe-uninitialized` on `child` in
 on every path that reads it. sparse 0.6.5 over the same build reported
 one line, the ioctl's copy-out of the volume list to a user pointer
 carried in a header the four trees share, and the port's own line
-names the address space now; the second run reports nothing.
+names the address space now; the second run reports nothing. The
+syntax gate runs that pass on every source file when sparse is present,
+with kbuild's flags including `-O2`: without it the kernel's `string.h`
+takes the out-of-line `memset()` and sparse sizes the bulkfree scan's
+6 MiB heap bitmap clear against its stack heuristic, a finding the
+kbuild pass never shows.
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module
