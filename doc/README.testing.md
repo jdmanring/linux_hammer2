@@ -978,7 +978,17 @@ or a missing reading, and a guest whose run times out is read through
 beside the log (`H2_CLOSURE_DMESG`), because the second warning of a
 run is the one that says why lockdep went off, and `H2_NC_GUESTPRE`
 runs a command on the guest before the module loads, for the control
-that turns kmemleak off. The guest kernel needs squashfs
+that turns kmemleak off. The same `cp -a` goes into ext4 on a fifth
+disk and ext4 is read cold with the others (`H2_NC_EXT4=0` skips
+it); the two copy times side by side are the reading the XOP pool
+decision turns on. `H2_NC_JOBS=n` deals the store paths round n
+writers that copy at once, for the parallel-build row (a hard link
+across two writers' shares arrives as two files, so that count is
+reported under more than one writer and not judged), and
+`H2_NC_GC=0` skips the collection that otherwise follows the reads:
+every other store path removed while a reader walks the ones that
+stay, what stays hashed against its source, and the count DragonFly
+must then see. The guest kernel needs squashfs
 and erofs as modules, which the debug guest's did not until F6 asked.
 
 `script/throughput.sh` takes the two readings that decide whether the

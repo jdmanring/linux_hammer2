@@ -22,6 +22,13 @@
 #
 #   H2_CLOSURE      the top-level store path, required; its closure is the tree
 #   H2_MKEROFS      mkfs.erofs; without it the erofs reference is skipped, said so
+#   H2_NC_EXT4      0 skips the ext4 reference copy, the same cp -a into ext4 on
+#                   a fifth disk, which is what decides the XOP pool question
+#   H2_NC_JOBS      writers copying the closure in at once, default 1; the store
+#                   paths are dealt round the writers, 0.9's parallel-build row
+#   H2_NC_GC        0 skips the collection: every other store path removed while
+#                   a reader walks the rest, what remains hashed and counted on
+#                   both sides, 0.9's garbage collection row
 #   H2_NC_MODARGS   module parameters for the guest's insmod
 #   H2_NC_GUESTPRE  run on the guest before insmod, for a control
 #                   (echo off > /sys/kernel/debug/kmemleak)
@@ -51,6 +58,9 @@ NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$UTILS/newfs_h
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$UTILS/fsck_hammer2")}
 MKEROFS=${H2_MKEROFS:-$(command -v mkfs.erofs 2>/dev/null || true)}
 GUESTPRE=${H2_NC_GUESTPRE:-:}
+ext4=${H2_NC_EXT4:-1}; command -v mkfs.ext4 >/dev/null 2>&1 || ext4=0
+gc=${H2_NC_GC:-1}
+jobs=${H2_NC_JOBS:-1}
 W=$(mktemp -d) || exit 2
 # Twelve gigabytes through a debug kernel on a 4 GiB guest is hours of
 # work, not minutes, so the bound is two of them.
@@ -112,12 +122,19 @@ fi
 rm -f "$IMG"
 truncate -s "$SIZE" "$IMG" && "$NEWFS" -L ROOT "$IMG" >/dev/null 2>&1 || {
 	echo "closure: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
+EXT4=$FIXDIR/closure-ext4.img
+if [ $ext4 = 1 ]; then
+	rm -f "$EXT4"
+	truncate -s "$SIZE" "$EXT4" && mkfs.ext4 -q -F "$EXT4" >/dev/null 2>&1 || {
+		echo "closure: COULD-NOT-RUN: mkfs.ext4 failed on $EXT4" >&2; exit 2; }
+fi
 
 fail=0
-boot() {	# boot <guest> <ssh> [squashfs] [erofs]; the images are attached first
+boot() {	# boot <guest> <ssh> [squashfs] [erofs] [ext4]; the images are attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
 	[ -n "${3:-}" ] && $VIRSH attach-disk "$1" "$3" vdc --targetbus virtio --config >/dev/null 2>&1
 	[ -n "${4:-}" ] && $VIRSH attach-disk "$1" "$4" vdd --targetbus virtio --config >/dev/null 2>&1
+	[ -n "${5:-}" ] && $VIRSH attach-disk "$1" "$5" vde --targetbus virtio --config >/dev/null 2>&1
 	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  COULD-NOT-RUN  $1 did not start"; return 1; }
 	n=0
 	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$2" true 2>/dev/null; do
@@ -134,6 +151,7 @@ down() {	# down <guest> <ssh>
 	$VIRSH detach-disk "$1" vdb --config >/dev/null 2>&1
 	$VIRSH detach-disk "$1" vdc --config >/dev/null 2>&1
 	$VIRSH detach-disk "$1" vdd --config >/dev/null 2>&1
+	$VIRSH detach-disk "$1" vde --config >/dev/null 2>&1
 }
 fsck_control() {	# image; the negative control every host fsck verdict carries
 	c=$FIXDIR/control.img
@@ -152,7 +170,7 @@ fsck_control() {	# image; the negative control every host fsck verdict carries
 
 # 1. Linux copies the closure in and reads all three cold.
 # Times are whole seconds from date; the sizes are gigabytes.
-fslist="h2 sq"; [ $erofs = 1 ] && fslist="h2 sq er"
+fslist="h2 sq"; [ $erofs = 1 ] && fslist="h2 sq er"; [ $ext4 = 1 ] && fslist="$fslist ex"
 cat > "$W/linux.sh" <<GUEST
 set -u
 $GUESTPRE
@@ -171,7 +189,19 @@ echo "memavailable before \$(mem) kB"
 echo "debug_locks before \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
 echo "source \$(find /mnt/sq -type f | wc -l) files, \$(find /mnt/sq -type l | wc -l) symlinks, \$(find /mnt/sq -type d | wc -l) directories, \$(du -sb /mnt/sq | cut -f1) bytes"
 sync; echo 3 > /proc/sys/vm/drop_caches
-t0=\$(date +%s); cp -a /mnt/sq/. /mnt/h2/; cpst=\$?; t1=\$(date +%s)
+if [ $jobs = 1 ]; then
+	t0=\$(date +%s); cp -a /mnt/sq/. /mnt/h2/; cpst=\$?; t1=\$(date +%s)
+else
+	# The store paths dealt round the writers, each cp -a its own set, so
+	# every writer creates under the one root directory at once.
+	ls /mnt/sq > /tmp/paths; t0=\$(date +%s); cpst=0
+	j=0; pids=""; while [ \$j -lt $jobs ]; do
+		(cd /mnt/sq && awk -v j=\$j -v n=$jobs 'NR % n == j' /tmp/paths | xargs cp -a -t /mnt/h2/) &
+		pids="\$pids \$!"; j=\$((j + 1))
+	done
+	for pid in \$pids; do wait \$pid || cpst=1; done
+	t1=\$(date +%s)
+fi
 echo "cp -a exit \$cpst in \$((t1 - t0)) s"
 sync; t2=\$(date +%s); echo "sync took \$((t2 - t1)) s"
 echo "memavailable after copy \$(mem) kB"
@@ -179,6 +209,16 @@ echo "slab after copy \$(awk '/^Slab:/{print \$2}' /proc/meminfo) kB"
 umount /mnt/h2; echo "umount exit \$? in \$((\$(date +%s) - t2)) s"
 mount -t hammer2 /dev/vdb@ROOT /mnt/h2 || { echo "hammer2 remount failed"; exit 1; }
 echo "blocks \$(df -k /mnt/h2 | awk 'NR==2{print \$2, \$3}')"
+if [ $ext4 = 1 ]; then
+	mkdir -p /mnt/ex
+	mount -t ext4 /dev/vde /mnt/ex || { echo "ext4 mount failed"; exit 1; }
+	sync; echo 3 > /proc/sys/vm/drop_caches
+	t0=\$(date +%s); cp -a /mnt/sq/. /mnt/ex/; exst=\$?; t1=\$(date +%s)
+	echo "ext4 cp -a exit \$exst in \$((t1 - t0)) s"
+	sync; t2=\$(date +%s); echo "ext4 sync took \$((t2 - t1)) s"
+	umount /mnt/ex; echo "ext4 umount exit \$? in \$((\$(date +%s) - t2)) s"
+	mount -t ext4 /dev/vde /mnt/ex || { echo "ext4 remount failed"; exit 1; }
+fi
 for fs in $fslist; do
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	t0=\$(date +%s); n=\$(find /mnt/\$fs | wc -l); t1=\$(date +%s)
@@ -199,6 +239,24 @@ done
 diff /tmp/sum.sq /tmp/sum.h2 | grep '^[<>]' | head -20 | sed 's/^/hash differs /'
 diff /tmp/links.sq /tmp/links.h2 | grep '^[<>]' | head -20 | sed 's/^/symlink differs /'
 echo "memavailable after reads \$(mem) kB"
+if [ $gc = 1 ]; then
+	# Store garbage collection: every other store path goes while a
+	# reader walks the ones that stay, then what stays is hashed against
+	# its source and counted, and the count is what DragonFly must see.
+	ls /mnt/h2 | awk 'NR % 2 == 0' > /tmp/gc.go; ls /mnt/h2 | awk 'NR % 2 == 1' > /tmp/gc.stay
+	ntop=\$(ls /mnt/h2 | wc -l)
+	(cd /mnt/h2 && tar -cf /dev/null \$(cat /tmp/gc.stay) 2>/dev/null; echo "gc reader exit \$?") &
+	t0=\$(date +%s); (cd /mnt/h2 && xargs rm -rf < /tmp/gc.go); rmst=\$?; t1=\$(date +%s)
+	wait
+	echo "gc removed \$(wc -l < /tmp/gc.go) of \$ntop store paths in \$((t1 - t0)) s, rm exit \$rmst"
+	sync; echo "gc sync took \$((\$(date +%s) - t1)) s"
+	(cd /mnt/h2 && find . -type f -print0 | sort -z | xargs -0 sha256sum) > /tmp/sum.gc
+	# A store path is a directory or one file; the first component after
+	# ./ names it either way.
+	awk 'NR == FNR { stay[\$0] = 1; next } { p = \$0; sub(/^[^ ]*  \.\//, "", p); sub(/\/.*/, "", p); if (p in stay) print }' /tmp/gc.stay /tmp/sum.sq > /tmp/sum.sq.stay
+	echo "gc left \$(wc -l < /tmp/sum.gc) files, \$(find /mnt/h2 -type l | wc -l) symlinks, list \$(sha256sum < /tmp/sum.gc | cut -c1-16), source's \$(sha256sum < /tmp/sum.sq.stay | cut -c1-16)"
+	diff /tmp/sum.sq.stay /tmp/sum.gc | grep '^[<>]' | head -20 | sed 's/^/gc differs /'
+fi
 umount /mnt/h2; echo "second umount exit \$?"
 umount /mnt/sq; [ $erofs = 1 ] && umount /mnt/er
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
@@ -209,9 +267,10 @@ dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
 dmesg > /tmp/closure-dmesg.txt
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
-echo "  built from $built, $npaths store paths from $(basename "$CLOSURE") on a $SIZE volume, erofs $erofs"
+echo "  built from $built, $npaths store paths from $(basename "$CLOSURE") on a $SIZE volume, erofs $erofs, ext4 $ext4, writers $jobs"
 er_arg=""; [ $erofs = 1 ] && er_arg=$ER
-boot "$GUEST" "$GUEST_SSH" "$SQ" "$er_arg" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
+ex_arg=""; [ $ext4 = 1 ] && ex_arg=$EXT4
+boot "$GUEST" "$GUEST_SSH" "$SQ" "$er_arg" "$ex_arg" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/linux.sh" "$GUEST_SSH:/tmp/" || { echo "closure: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
 out=$($RUN "$GUEST_SSH" 'sh /tmp/linux.sh' 2>&1); st=$?
 printf '%s\n' "$out" | sed 's/^/  linux   /'
@@ -238,8 +297,13 @@ sql=$(printf '%s\n' "$out" | sed -n 's/^sq symlinks .* list //p')
 [ -n "$h2l" ] && [ "$h2l" = "$sql" ] && echo "  ok    every symlink in the copy has its source's target" || {
 	echo "  FAIL  the symlink lists differ"; fail=$((fail + 1)); }
 h2h=$(printf '%s\n' "$out" | sed -n 's/^h2 hardlinked //p'); sqh=$(printf '%s\n' "$out" | sed -n 's/^sq hardlinked //p')
-[ -n "$h2h" ] && [ "$h2h" = "$sqh" ] && echo "  ok    $h2h hard-linked files on both" || {
-	echo "  FAIL  hard-linked files: copy $h2h, source $sqh"; fail=$((fail + 1)); }
+if [ $jobs != 1 ]; then
+	echo "  note  $h2h hard-linked files against the source's $sqh: a link across two writers' shares is two files, not counted"
+elif [ -n "$h2h" ] && [ "$h2h" = "$sqh" ]; then
+	echo "  ok    $h2h hard-linked files on both"
+else
+	echo "  FAIL  hard-linked files: copy $h2h, source $sqh"; fail=$((fail + 1))
+fi
 nfiles=$(printf '%s\n' "$out" | sed -n 's/^source \([0-9]*\) files.*/\1/p')
 for want in "^cp -a exit 0 in [0-9]* s" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^h2 walk [1-9][0-9]* entries" "^sq walk [1-9][0-9]* entries" "^h2 read in [0-9]* s" "^sq read in [0-9]* s"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
@@ -250,6 +314,25 @@ if [ $erofs = 1 ]; then
 	done
 else
 	echo "  note  no erofs reference: mkfs.erofs was not found (H2_MKEROFS)"
+fi
+if [ $ext4 = 1 ]; then
+	for want in "^ext4 cp -a exit 0 in [0-9]* s" "^ext4 umount exit 0 " "^ex walk [1-9][0-9]* entries" "^ex read in [0-9]* s"; do
+		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
+	done
+else
+	echo "  note  no ext4 reference copy (H2_NC_EXT4)"
+fi
+if [ $gc = 1 ]; then
+	gcl=$(printf '%s\n' "$out" | sed -n 's/^gc left .* list \([0-9a-f]*\), source.s \([0-9a-f]*\)$/\1 \2/p')
+	if [ -n "$gcl" ] && [ "${gcl%% *}" = "${gcl##* }" ]; then
+		echo "  ok    what the collection kept hashes as its source"
+	else
+		echo "  FAIL  the collection's survivors do not hash as their source: '$gcl'"; fail=$((fail + 1))
+	fi
+	printf '%s\n' "$out" | grep -q "^gc removed [1-9][0-9]* of [0-9]* store paths in [0-9]* s, rm exit 0$" || { echo "  FAIL  wanted a clean gc removal line"; fail=$((fail + 1)); }
+	printf '%s\n' "$out" | grep -q "^gc reader exit 0$" || { echo "  FAIL  the reader beside the collection did not exit 0"; fail=$((fail + 1)); }
+	nfiles=$(printf '%s\n' "$out" | sed -n 's/^gc left \([0-9]*\) files.*/\1/p')
+	[ -n "$nfiles" ] || { echo "  FAIL  no gc count"; fail=$((fail + 1)); nfiles=-1; }
 fi
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || echo "  note  lockdep was off at the end of the run, so its silence is not a reading"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
@@ -277,5 +360,5 @@ printf '%s\n' "$dout" | grep -q "^dragonfly fsck clean" || { echo "  FAIL  Drago
 fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
-echo "closure: $npaths store paths, $nfiles files, copied in and read cold on both sides, $fail failure(s)"
+echo "closure: $npaths store paths, copied in and read cold on both sides, $nfiles files after the collection, $fail failure(s)"
 [ $fail = 0 ]
