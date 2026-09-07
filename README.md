@@ -304,6 +304,7 @@ including what each gate cannot catch.
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
 | [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares it provides, each row on a measurement |
 | [doc/README.kernel-style.md](doc/README.kernel-style.md) | licensing, and the path to mainline |
+| [doc/README.maintenance.md](doc/README.maintenance.md) | how the carried core is kept current, and how a defect goes back |
 
 ## Contributing
 

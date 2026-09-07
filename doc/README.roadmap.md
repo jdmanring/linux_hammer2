@@ -493,8 +493,9 @@ distribution's criterion, never this tree's. No relaxed standard.
 On top of that: every milestone from 0.4 through 0.9 claimed with its gate
 green on a clean tree and no milestone carrying a qualifier; the provenance
 CSV covering every file with origin, copyright and license, the carried files
-keeping their upstream notices unchanged; the two findings staged for upstream
-filed by the maintainer and their state recorded here; and an out-of-tree
+keeping their upstream notices unchanged; the findings staged in
+`doc/upstream/` filed by the maintainer and their state recorded beside
+each; the maintenance plan in `doc/README.maintenance.md`; and an out-of-tree
 release a distribution can package, meaning a tagged version, a
 `../CHANGELOG.md` entry, and the gates runnable from the tarball. Read
 on 2026-09-07 from a `git archive` of `b06fe74` with the kernel of
@@ -521,8 +522,9 @@ filesystem driver is refused and remembered. The style conversion in
 `README.kernel-style.md` happens at that moment, whole tree at once, or not at
 all.
 
-The carried files exist to be replaceable by the next sync from DragonFly. A
-sync cadence is decided when there is a driver to sync into.
+The carried files exist to be replaceable by the next sync from the FreeBSD
+port, and `doc/README.maintenance.md` says how one is made and at what
+cadence.
 
 ## Open decisions
 
