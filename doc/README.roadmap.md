@@ -65,17 +65,24 @@ invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
-1. 0.9's low-memory row: the order-4 folio refusal is attributed with
-   its controls, and `IO_MODEL.md` sizes what removing it takes, a
-   block assembled from every folio the cache holds before its write.
-   That is the one design change left on this side before 1.0.
+1. 0.9's low-memory row is measured: the write path assembles a block
+   around a folio smaller than the block and the DIO layer holds a
+   buffer of its own when the device mapping cannot give one, both in
+   and read at 2 GiB with nothing refused, with the controls that
+   attribute the refusals in `IO_MODEL.md`. The one window left on
+   this side is the full volume's: one fill in thirty-three since the
+   reserve counted pages under writeback lost four files to a flush
+   that found the map short of what the count said. The allocator now
+   prints what it saw when it refuses, and the gate keeps the image of
+   a failed run, so the next loss names which of the two ran out first.
 2. The syncer is carried: DragonFly's thirty-second period and its
    dirty-count trigger, added when the million-file tree showed the
    dirty set growing without bound between `sync` calls. The first
    real closure through the write path is in `README.status.md`.
 3. The fuzzer on each build that moves the mount or write path; its
-   last run is on the build with the device read-ahead, 100 images
-   with no report, beside the other three fleet instruments.
+   last run is on the build where `hpanic` returns, fifty images
+   through the mount path and the same fifty through the write path,
+   no report and nothing stuck, beside the other fleet instruments.
 4. The iomap decision stands: classic address space operations with
    block-sized folios, recorded under open decisions below with the
    reason.
