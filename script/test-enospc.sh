@@ -324,7 +324,27 @@ while [ "$i" -lt 60 ]; do
 	sleep 5
 	i=$((i + 1))
 done
-[ "$i" -lt 60 ] || { echo "enospc: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2; exit 2; }
+[ "$i" -lt 60 ] || {
+	echo "enospc: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2
+	# What the silent guest is doing, read from outside before the trap
+	# shuts it down: the instruction pointer of every vCPU, its disk I/O
+	# over three seconds, and whether the guest agent still answers.
+	# Twice a guest listed running never answered, and both times the
+	# only reading left was the host's load.
+	if [ "$state" = running ]; then
+		$VIRSH qemu-monitor-command "$GUEST" --hmp 'info registers -a' 2>/dev/null |
+		    command grep -o 'RIP=[0-9a-f]*' | tr '\n' ' ' | sed 's/^/          vcpu /' >&2; echo >&2
+		b0=$($VIRSH domblkstat "$GUEST" vda 2>/dev/null | awk '/rd_req|wr_req/{s+=$3} END{print s+0}')
+		sleep 3
+		b1=$($VIRSH domblkstat "$GUEST" vda 2>/dev/null | awk '/rd_req|wr_req/{s+=$3} END{print s+0}')
+		echo "          vda requests in 3 s: $((b1 - b0))" >&2
+		if $VIRSH qemu-agent-command "$GUEST" '{"execute":"guest-ping"}' >/dev/null 2>&1; then
+			echo "          guest agent answers" >&2
+		else
+			echo "          guest agent silent" >&2
+		fi
+	fi
+	exit 2; }
 
 guest_rel=$(ssh "$GUEST_SSH" 'uname -r' 2>/dev/null)
 ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')

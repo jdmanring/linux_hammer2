@@ -1254,6 +1254,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
 | `test-enospc.sh` | a lockdep shutdown that no captured banner attributes | nothing; the run counted every shutdown as the cycle it was written for, and now reports the banner and exits 2 when none names it |
 | `test-enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
+| `test-enospc.sh` | a guest listed running that never answered ssh | the host load average, twice, with nothing about the guest; the refusal now prints every vCPU's instruction pointer, the disk requests over three seconds and whether the guest agent answers, read from outside before the exit trap shuts the guest down |
 | `root-boot.sh` | a boot that never mounted the volume | a second boot against a label the volume does not carry, which stops at the mount and does not reach PID 1 |
 | `root-boot.sh` | a checksum comparison that cannot fail | its first run, where an unanchored `sed` made the two sides unequal by construction |
 | `test-fixtures.sh` | an ioctl that answers with the wrong errno | the recorded results, which caught EOPNOTSUPP where Linux wants ENOTTY on the first run |
