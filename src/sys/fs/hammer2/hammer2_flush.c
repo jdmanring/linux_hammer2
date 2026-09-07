@@ -491,6 +491,8 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 	} else if (info->depth == HAMMER2_FLUSH_DEPTH_LIMIT) {
 		/* Recursion depth reached. */
 		hpanic("flush depth limit");
+		info->error |= HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
+		goto done;
 	} else if (chain->flags &
 	    (HAMMER2_CHAIN_ONFLUSH | HAMMER2_CHAIN_DESTROY)) {
 		/*
@@ -775,6 +777,7 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 			break;
 		default:
 			hpanic("bad blockref type %d", chain->bref.type);
+			info->error |= HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
 			break;
 		}
 
@@ -936,6 +939,8 @@ hammer2_flush_core(hammer2_flush_info_t *info, hammer2_chain_t *chain,
 			break;
 		default:
 			hpanic("bad blockref type %d", parent->bref.type);
+			info->error |= HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
+			base = NULL;
 			break;
 		}
 
@@ -1271,6 +1276,7 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 	 * XXX synchronize the flag & data with only this flush
 	 */
 	if (fsync_error == 0 && flush_error == 0 &&
+	    !READ_ONCE(hammer2_device_error) &&	/* XXX Linux */
 	    (hmp->vchain.flags & HAMMER2_CHAIN_VOLUMESYNC)) {
 		/*
 		 * Synchronize the disk before flushing the volume header.

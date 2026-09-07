@@ -293,6 +293,8 @@ hammer2_vop_ncreate(struct mnt_idmap *idmap, struct inode *dir,
 	uint64_t mtime;
 	int error;
 
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (dip->pmp->rdonly || (dip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
 	hammer2_pfs_memory_wait(dip->pmp);	/* Linux: hammer2_vfs_modifying() */
@@ -415,6 +417,8 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 	uint64_t mtime;
 	int error;
 
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (dip->pmp->rdonly)
 		return (-EROFS);
 	hammer2_pfs_memory_wait(dip->pmp);	/* Linux: hammer2_vfs_modifying() */
@@ -518,6 +522,8 @@ hammer2_vop_rename(struct mnt_idmap *idmap __maybe_unused,
 
 	if (flags & ~RENAME_NOREPLACE)
 		return (-EINVAL);
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (fdip->pmp->rdonly || (fdip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
 	hammer2_pfs_memory_wait(fdip->pmp);	/* Linux: hammer2_vfs_modifying() */
@@ -714,6 +720,8 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 	hammer2_pfs_memory_wait(tdip->pmp);	/* Linux: hammer2_vfs_modifying() */
 	if (hammer2_vfs_enospace(tdip, 0, current_cred()) > 1)
 		return (-ENOSPC);
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (tdip->pmp->rdonly || (tdip->pmp->flags & HAMMER2_PMPF_EMERG))
 		return (-EROFS);
 	if (dentry->d_name.len > HAMMER2_INODE_MAXNAME)
@@ -905,6 +913,8 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	uint64_t mtime;
 	ssize_t ret;
 
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (ip->pmp->rdonly)
 		return (-EROFS);
 	/*
@@ -1045,6 +1055,8 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 	uint64_t ctime;
 	int error, resize;
 
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (ip->pmp->rdonly)
 		return (-EROFS);
 	/*
@@ -1140,6 +1152,8 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 	hammer2_inode_t *ip = VTOI(inode);
 	int error1 = 0, error2;
 
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
 	if (ip->pmp->rdonly)
 		return (0);
 	hammer2_trans_init(ip->pmp, 0);
@@ -1200,6 +1214,8 @@ hammer2_page_mkwrite(struct vm_fault *vmf)
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	hammer2_inode_t *ip = VTOI(inode);
 
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (VM_FAULT_SIGBUS);
 	if (ip->pmp->rdonly)
 		return (VM_FAULT_SIGBUS);
 	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */

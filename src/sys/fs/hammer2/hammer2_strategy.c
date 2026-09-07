@@ -577,12 +577,15 @@ hammer2_assign_physical(hammer2_inode_t *ip, hammer2_chain_t **parentp,
 	 * the lookup to return a deleted inode.
 	 */
 	if (chain && (chain->flags & HAMMER2_CHAIN_DELETED) &&
-	    chain->bref.type != HAMMER2_BREF_TYPE_INODE)
+	    chain->bref.type != HAMMER2_BREF_TYPE_INODE) {
 		hpanic("assign physical deleted %s chain %016llx/%d inum "
 		    "%016llx lbase %016llx",
 		    hammer2_breftype_to_str(chain->bref.type),
 		    (long long)chain->bref.key, chain->bref.keybits,
 		    (long long)ip->meta.inum, (long long)lbase);
+		*errorp = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		goto failed;
+	}
 
 	if (chain == NULL) {
 		/*
@@ -630,6 +633,7 @@ hammer2_assign_physical(hammer2_inode_t *ip, hammer2_chain_t **parentp,
 			break;
 		default:
 			hpanic("bad blockref type %d", chain->bref.type);
+			*errorp |= HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
 			break;
 		}
 	} else {
@@ -755,6 +759,7 @@ hammer2_compress_and_write(char *data, hammer2_inode_t *ip,
 	 */
 	comp_size = 0;
 	comp_buffer = NULL;
+	chain = NULL;	/* XXX Linux: the hpanic below leaves before assign */
 
 	if (ip->comp_heuristic < 8 || (ip->comp_heuristic & 7) == 0 ||
 	    hammer2_always_compress) {
@@ -839,7 +844,8 @@ hammer2_compress_and_write(char *data, hammer2_inode_t *ip,
 			comp_block_size = 32768;
 		} else {
 			hpanic("weird comp_size value");
-			/* NOT REACHED */
+			*errorp = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
+			goto done;
 		}
 		/*
 		 * Must zero the remainder or dedup (which operates on a
@@ -888,6 +894,7 @@ hammer2_compress_and_write(char *data, hammer2_inode_t *ip,
 		switch (chain->bref.type) {
 		case HAMMER2_BREF_TYPE_INODE:
 			hpanic("unexpected inode");
+			*errorp = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
 			break;
 		case HAMMER2_BREF_TYPE_DATA:
 			/* Optimize out the read-before-write if possible. */
@@ -938,6 +945,7 @@ hammer2_compress_and_write(char *data, hammer2_inode_t *ip,
 			break;
 		default:
 			hpanic("bad blockref type %d", chain->bref.type);
+			*errorp = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
 			break;
 		}
 	}
@@ -1109,6 +1117,7 @@ hammer2_write_bp(hammer2_chain_t *chain, char *data, int ioflag, int pblksize,
 		break;
 	default:
 		hpanic("bad blockref type %d", chain->bref.type);
+		error = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
 		break;
 	}
 	*errorp = error;

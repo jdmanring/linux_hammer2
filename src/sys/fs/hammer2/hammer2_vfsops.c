@@ -2280,6 +2280,7 @@ again:
 	KKASSERT(hmp->spmp == NULL);
 
 	/* Finish up with the device vnode. */
+	hammer2_io_discard(hmp);	/* Linux: before the close writes it back */
 	if (!TAILQ_EMPTY(&hmp->devvp_list)) {
 		hammer2_close_devvp(&hmp->devvp_list);
 		hammer2_cleanup_devvp(&hmp->devvp_list);
@@ -2733,6 +2734,8 @@ restart:
 static int
 hammer2_sync_fs(struct super_block *sb, int wait)
 {
+	int error = 0;
+
 #if defined(HAMMER2_LOCKDEBUG)
 	/*
 	 * 2 fires on the second call after it is set.  sync(2) calls here
@@ -2743,12 +2746,17 @@ hammer2_sync_fs(struct super_block *sb, int wait)
 		hpanic("debug_hpanic is 2, so this second sync stops here");
 #endif
 	/* A device in error writes nothing more, and says so here. */
+	if (!READ_ONCE(hammer2_device_error))
+		error = hammer2_vfs_sync_pmp(MPTOPMP(sb),
+		    wait ? MNT_WAIT : MNT_NOWAIT);
 	if (READ_ONCE(hammer2_device_error)) {
+		if (MPTOPMP(sb)->pfs_hmps[0])
+			hammer2_io_discard(MPTOPMP(sb)->pfs_hmps[0]);
 		errseq_set(&sb->s_wb_err, -EIO);
+		sb->s_flags |= SB_RDONLY;
 		return (-EIO);
 	}
-	return (hammer2_vfs_errno(hammer2_vfs_sync_pmp(MPTOPMP(sb),
-	    wait ? MNT_WAIT : MNT_NOWAIT)));
+	return (hammer2_vfs_errno(error));
 }
 
 /*

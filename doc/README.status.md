@@ -582,27 +582,27 @@ construction rather than re-hashed every run.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1395 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1397 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 634 | FreeBSD port, carried with two `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; the xop allocation zone is shimmed |
-| `hammer2_freemap.c` | 1013 | FreeBSD port, carried with one `XXX`: the allocation refusal the debug build takes from `fail_alloc_after` |
+| `hammer2_freemap.c` | 1013 | FreeBSD port, carried with two `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, and the return after `hpanic` |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1164 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 5028 | FreeBSD port, carried byte-for-byte but fourteen `XXX` lines, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, and the last drop of a chain naming the caller that still holds its lock; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
-| `hammer2_flush.c` | 1348 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
-| `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
+| `hammer2_chain.c` | 5157 | FreeBSD port, carried byte-for-byte but the `XXX` lines below, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, the last drop of a chain naming the caller that still holds its lock, and the way out after each of its `hpanic` sites; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_flush.c` | 1354 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place, the header write reads the device-in-error bit, and the three `hpanic` sites record their error |
+| `hammer2_cluster.c` | 189 | FreeBSD port, carried byte-for-byte but the one `XXX` after its `hpanic`; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1914 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3256 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1417 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1431 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_vfsops.c` | 3264 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_strategy.c` | 1426 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_vnops.c` | 1447 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_ondisk.c` | 1032 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 1173 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 1236 | ours, the OS shim |
+| `hammer2_io.c` | 1224 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_os.h` | 1235 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -2881,7 +2881,6 @@ against the source is the same shape as an empty one.
 
 | where | marker, verbatim | what is deferred |
 |---|---|---|
-| `hammer2_os.h`, at `hpanic` | `DEFER(every hpanic site has an error its caller propagates)` | `hpanic()` prints and calls `BUG()` where Linux would mark the filesystem dead and refuse further I/O. The fifty-five sites in eight files are written as not returning; 41 sit in functions that already return an error or a pointer, 13 in void functions, and the design that gives each a way out, with the reading that lifts this, is written. Its first part is in: `hpanic` marks the device in error, a dirty block after that is dropped unwritten and `sync_fs` returns `EIO`, read with `debug_hpanic=2` as twenty files synced before the fault on the media and twenty written after it not, against forty without the knob. Reasoning in `README.porting.md` |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
@@ -2890,6 +2889,14 @@ against the source is the same shape as an empty one.
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a
 failure rather than a drift.
+
+Lifted 2026-09-07: `DEFER(every hpanic site has an error its caller
+propagates)`, at `hpanic` in `hammer2_os.h`. Its trigger was the
+reading `README.porting.md` names, a fault fired from
+`hammer2_base_insert` with the writer told `EIO`, the mount read-only,
+`umount` and `rmmod` returning and the device byte-identical to the
+last good sync, and `script/hpanic-contain.sh` with `H2_KNOB=3` read
+it that day against its control.
 
 Five of the seven lift with the read-side VFS entry, which is the next
 move on the roadmap and is now partly made: `->lookup` and
@@ -2909,24 +2916,26 @@ mark for a mapping that is not mechanical, so the number says how many places
 a reader should distrust. Counting raw occurrences answers the wrong
 question, the carried files arriving with upstream's own. Measured 2026-08-26
 against the FreeBSD port at
-`3df307f` (v1.2.13), by file, ours minus upstream's:
+`3df307f` (v1.2.13), by file, ours minus upstream's; the first column
+re-read 2026-09-07 after every `hpanic` site got its way out and
+`hpanic` returned, seventy lines in eight files, each a mark:
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 38 | 18 | 20 |
-| `hammer2_freemap.c` | 7 | 6 | 1 |
+| `hammer2_chain.c` | 85 | 18 | 67 |
+| `hammer2_freemap.c` | 8 | 6 | 2 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
-| `hammer2_io.c` | 4 | 2 | 2 |
-| `hammer2_os.h` | 3 | 0 | 3 |
-| `hammer2_flush.c` | 15 | 8 | 7 |
+| `hammer2_io.c` | 12 | 2 | 10 |
+| `hammer2_os.h` | 4 | 0 | 4 |
+| `hammer2_flush.c` | 19 | 8 | 11 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
-| `hammer2_cluster.c` | 0 | 0 | 0 |
-| `hammer2_ondisk.c` | 21 | 1 | 20 |
+| `hammer2_cluster.c` | 1 | 0 | 1 |
+| `hammer2_ondisk.c` | 22 | 1 | 21 |
 | `hammer2_inode.c` | 29 | 6 | 23 |
 | `hammer2_vfsops.c` | 48 | 7 | 40 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
-| `hammer2_strategy.c` | 19 | 0 | 19 |
+| `hammer2_strategy.c` | 26 | 0 | 26 |
 | `hammer2_vnops.c` | 2 | 0 | 2 |
 | `hammer2.h` | 10 | 3 | 7 |
 | `hammer2_disk.h` | 2 | 1 | 1 |

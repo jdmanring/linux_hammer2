@@ -120,37 +120,36 @@
  * Linux: the three BSD ports call panic() here.  On Linux that takes the
  * machine down for one filesystem's corruption, which no in-tree
  * filesystem does by default: ext4, xfs and btrfs shut the filesystem
- * down and leave the machine up.  BUG() keeps hpanic's contract of not
- * returning, which every carried call site depends on, kills the task
- * that found the corruption and leaves the mount wedged with its locks
- * held, and lets the message reach the disk and the console; panic()
- * measured here left a guest dead with an empty log.  Reversal is this
- * one line.
+ * down and leave the machine up.  Here hpanic prints, marks the device
+ * in error and returns, and every call site in the carried core has a
+ * way out after it, marked XXX in place: a function that returns an
+ * error or a pointer sets the error and returns, a void one returns or
+ * breaks out to its end.  Under HAMMER2_INVARIANTS it is BUG() after
+ * the message, the KKASSERT shape a developer wants for an invariant
+ * on state the code just computed.
  *
- * Before the task dies the device is marked in error: hammer2_io_putblk()
- * refuses the dirty mark from then on, so a chain modified after the
- * fault, by this task on its way down or by any other, never reaches
- * the media, and ->sync_fs reports EIO.  A write after the fault still
- * lands in the page cache and is refused at the sync; refusing it at
- * write(2) is the mount flag's job, with the returning sites.  The mark
- * is module-wide because the macro has no device in scope; every mount
- * on the machine stops writing, where the BSD ports take the machine.
+ * Once the device is in error hammer2_io_putblk() refuses the dirty
+ * mark, so a chain modified after the fault, by this task on its way
+ * out or by any other, never reaches the media; ->sync_fs reports EIO;
+ * and the write entries refuse with EIO as ip->pmp->rdonly refuses with
+ * EROFS.  The mark is module-wide because the macro has no device in
+ * scope; every mount on the machine stops writing, where the BSD ports
+ * take the machine.  Measured: script/hpanic-contain.sh.
  */
 extern int hammer2_device_error;	/* Linux */
+#ifdef HAMMER2_INVARIANTS
 #define hpanic(X, ...)	do {						\
 	pr_emerg(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__);	\
 	WRITE_ONCE(hammer2_device_error, 1);				\
 	BUG();								\
 } while (0)
-/*
- * DEFER(every hpanic site has an error its caller propagates): panic() is
- * what the three BSD ports do, and on Linux it is a machine-wide event
- * standing in for a per-mount one.  A Linux filesystem fails the
- * operation and takes the mount read-only.  The super_block to mark has
- * existed since the mount path landed; what has not is a way out of the
- * fifty-four call sites, every one written as not returning, which is
- * an edit to carried core in all four trees.  See doc/README.porting.md.
- */
+#else
+#define hpanic(X, ...)	do {						\
+	pr_emerg(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__);	\
+	WRITE_ONCE(hammer2_device_error, 1);				\
+	WARN_ONCE(1, KBUILD_MODNAME ": device in error, see the message above\n"); \
+} while (0)
+#endif
 
 #ifdef HAMMER2_INVARIANTS
 #define debug_hprintf	hprintf

@@ -229,6 +229,12 @@ the print of what is left at the unload: one BSD continuation indent on
 the list head's initializer and one quoted string split across lines,
 a print of seven fields that does not fit one. No category is new.
 
+1120 to 1135 when `hpanic` returned and every site got a way out:
+fourteen of the fifteen hits are `return is not a function`, the tree's
+BSD style on a new `return (x);`, and one is the unnamed argument of
+the second definition of the macro, the one that returns. No category
+is new.
+
 1120 to 1118 when the chain and inode locks became the shim's own
 primitive: the two `return (x);` of the rw_semaphore layout check went
 with the check. Three hits were fixed rather than baselined, a memory

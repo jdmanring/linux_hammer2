@@ -946,6 +946,7 @@ extern int hammer2_count_chain_allocated;
 extern int hammer2_count_chain_modified;
 #if defined(HAMMER2_LOCKDEBUG)
 extern int hammer2_fail_alloc_after;	/* Linux */
+extern int hammer2_debug_hpanic;	/* Linux */
 extern int hammer2_alloc_count;		/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
 #endif
@@ -1132,6 +1133,7 @@ void hammer2_io_hash_destroy(hammer2_dev_t *);
 hammer2_io_t *hammer2_io_getblk(hammer2_dev_t *, int, hammer2_off_t, int, int);
 void hammer2_io_putblk(hammer2_io_t **);
 void hammer2_io_hash_cleanup_all(hammer2_dev_t *);
+void hammer2_io_discard(hammer2_dev_t *);	/* Linux */
 char *hammer2_io_data(hammer2_io_t *, hammer2_off_t);
 int hammer2_io_new(hammer2_dev_t *, int, hammer2_off_t, int, hammer2_io_t **);
 int hammer2_io_newnz(hammer2_dev_t *, int, hammer2_off_t, int, hammer2_io_t **);

@@ -52,6 +52,7 @@ typedef unsigned int gfp_t;
  * not warn for an unused value, the way the kernel's own does not. */
 #define WARN_ON(cond)	({ int __w = !!(cond); __w; })
 #define WARN_ON_ONCE(cond)	({ int __w = !!(cond); __w; })
+#define WARN_ONCE(cond, ...)	({ int __w = !!(cond); __w; })
 #define BUILD_BUG_ON_MSG(cond, msg)	_Static_assert(!(cond), msg)
 
 /* kbuild passes -DKBUILD_MODNAME on every real build and there is no

@@ -144,7 +144,7 @@ hammer2_freemap_reserve(hammer2_chain_t *chain, int radix)
 		break;
 	default:
 		hpanic("bad radix %d", bref->keybits);
-		break;
+		return (HAMMER2_ERROR_EIO);	/* XXX Linux: hpanic returns */
 	}
 	bref->data_off = off | radix;
 

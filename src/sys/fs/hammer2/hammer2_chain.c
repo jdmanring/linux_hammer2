@@ -197,7 +197,7 @@ hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
 	case HAMMER2_BREF_TYPE_EMPTY:
 	default:
 		hpanic("bad blockref type %d", bref->type);
-		break;
+		return (NULL);	/* XXX Linux: hpanic returns */
 	}
 
 	/*
@@ -712,11 +712,13 @@ hammer2_chain_drop_data(hammer2_chain_t *chain)
 		case HAMMER2_BREF_TYPE_FREEMAP:
 			break;
 		default:
-			if (chain->data != NULL)
+			if (chain->data != NULL) {
 				hpanic("%s chain %016llx/%d data not NULL",
 				    hammer2_breftype_to_str(chain->bref.type),
 				    (long long)chain->bref.key,
 				    chain->bref.keybits);
+				return (NULL);	/* XXX Linux: hpanic returns */
+			}
 			KKASSERT(chain->data == NULL);
 			break;
 		}
@@ -975,7 +977,10 @@ again:
 	case HAMMER2_BREF_TYPE_VOLUME:
 	case HAMMER2_BREF_TYPE_FREEMAP:
 		hpanic("unresolved volume header");
-		break;
+		/* XXX Linux: hpanic returns; as the I/O error above */
+		chain->error = HAMMER2_ERROR_EIO;
+		hammer2_io_bqrelse(&chain->dio);
+		goto done;
 	case HAMMER2_BREF_TYPE_DIRENT:
 		KKASSERT(chain->bytes != 0);
 		/* fall through */
@@ -1093,7 +1098,8 @@ hammer2_chain_base_and_count(hammer2_chain_t *parent, int *countp)
 			break;
 		default:
 			hpanic("bad blockref type %d", parent->bref.type);
-			break;
+			*countp = 0;	/* XXX Linux: hpanic returns */
+			return (NULL);
 		}
 	} else {
 		switch (parent->bref.type) {
@@ -1116,7 +1122,8 @@ hammer2_chain_base_and_count(hammer2_chain_t *parent, int *countp)
 			break;
 		default:
 			hpanic("bad blockref type %d", parent->bref.type);
-			break;
+			*countp = 0;	/* XXX Linux: hpanic returns */
+			return (NULL);
 		}
 	}
 	*countp = count;
@@ -1637,6 +1644,12 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 			hpanic("no CoW data for %s chain %016llx/%d",
 			    hammer2_breftype_to_str(chain->bref.type),
 			    (long long)chain->bref.key, chain->bref.keybits);
+			/* XXX Linux: hpanic returns; as the I/O error above */
+			chain->error = HAMMER2_ERROR_EIO;
+			hammer2_io_brelse(&dio);
+			hammer2_io_brelse(&chain->dio);
+			chain->data = NULL;
+			break;
 		}
 
 		/*
@@ -1664,6 +1677,7 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 		break;
 	default:
 		hpanic("bad blockref type %d", chain->bref.type);
+		chain->error = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
 		break;
 	}
 skip:
@@ -1845,6 +1859,8 @@ hammer2_chain_get(hammer2_chain_t *parent, int generation,
 		chain = hammer2_chain_alloc(hmp, NULL, bref);
 	else
 		chain = hammer2_chain_alloc(hmp, parent->pmp, bref);
+	if (chain == NULL)	/* XXX Linux: hpanic returns */
+		return (NULL);
 	/* Ref'd chain returned. */
 
 	/*
@@ -1932,8 +1948,10 @@ hammer2_chain_getparent(hammer2_chain_t *chain, int flags)
 	 * is locked below to avoid a deadlock.  Try it trivially first.
 	 */
 	parent = chain->parent;
-	if (parent == NULL)
+	if (parent == NULL) {
 		hpanic("no parent");
+		return (NULL);	/* XXX Linux: hpanic returns */
+	}
 
 	hammer2_chain_ref(parent);
 	if (hammer2_chain_lock(parent, flags|HAMMER2_RESOLVE_NONBLOCK) == 0)
@@ -1954,8 +1972,10 @@ hammer2_chain_getparent(hammer2_chain_t *chain, int flags)
 		hammer2_chain_drop(parent);
 		cpu_ccfence();
 		parent = chain->parent;
-		if (parent == NULL)
+		if (parent == NULL) {
 			hpanic("no parent");
+			return (NULL);	/* XXX Linux: hpanic returns */
+		}
 		hammer2_chain_ref(parent);
 	}
 	return (parent);
@@ -2191,8 +2211,11 @@ hammer2_chain_lookup(hammer2_chain_t **parentp, hammer2_key_t *key_nextp,
 		parent = hammer2_chain_repparent(parentp, how_maybe);
 	}
 again:
-	if (--maxloops == 0)
+	if (--maxloops == 0) {
 		hpanic("maxloops");
+		*errorp = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		return (NULL);
+	}
 
 	/*
 	 * MATCHIND case that does not require parent->data (do prior to
@@ -2288,7 +2311,8 @@ again:
 		break;
 	default:
 		hpanic("bad blockref type %d", parent->bref.type);
-		break;
+		*errorp = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		return (NULL);
 	}
 
 	/*
@@ -2574,8 +2598,11 @@ again:
 		error = parent->error;
 		goto done;
 	}
-	if (--maxloops == 0)
+	if (--maxloops == 0) {
 		hpanic("maxloops");
+		error = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		goto done;
+	}
 
 	/*
 	 * Locate the blockref array.  Currently we do a fully associative
@@ -2606,8 +2633,11 @@ again:
 		if (parent->flags & HAMMER2_CHAIN_INITIAL) {
 			base = NULL;
 		} else {
-			if (parent->data == NULL)
+			if (parent->data == NULL) {
 				hpanic("parent->data is NULL");
+				error = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
+				goto done;
+			}
 			base = &parent->data->npdata[0];
 		}
 		count = parent->bytes / sizeof(hammer2_blockref_t);
@@ -2622,7 +2652,8 @@ again:
 		break;
 	default:
 		hpanic("bad blockref type %d", parent->bref.type);
-		break;
+		error = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		goto done;
 	}
 
 	/*
@@ -2815,6 +2846,10 @@ hammer2_chain_create(hammer2_chain_t **parentp, hammer2_chain_t **chainp,
 			dummy.methods |=
 			    HAMMER2_ENC_CHECK(HAMMER2_CHECK_DEFAULT);
 		chain = hammer2_chain_alloc(hmp, pmp, &dummy);
+		if (chain == NULL) {	/* XXX Linux: hpanic returns */
+			error = HAMMER2_ERROR_EIO;
+			goto done;
+		}
 
 		/*
 		 * Lock the chain manually, chain_lock will load the chain
@@ -2842,13 +2877,28 @@ hammer2_chain_create(hammer2_chain_t **parentp, hammer2_chain_t **chainp,
 		case HAMMER2_BREF_TYPE_VOLUME:
 		case HAMMER2_BREF_TYPE_FREEMAP:
 			hpanic("called with volume type");
-			break;
+			/* XXX Linux: hpanic returns; release as below */
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+			chain = NULL;
+			error = HAMMER2_ERROR_EINVAL;
+			goto done;
 		case HAMMER2_BREF_TYPE_INDIRECT:
 			hpanic("cannot be used to create indirect block");
-			break;
+			/* XXX Linux: hpanic returns; release as below */
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+			chain = NULL;
+			error = HAMMER2_ERROR_EINVAL;
+			goto done;
 		case HAMMER2_BREF_TYPE_FREEMAP_NODE:
 			hpanic("cannot be used to create freemap root or node");
-			break;
+			/* XXX Linux: hpanic returns; release as below */
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+			chain = NULL;
+			error = HAMMER2_ERROR_EINVAL;
+			goto done;
 		case HAMMER2_BREF_TYPE_FREEMAP_LEAF:
 			KKASSERT(bytes == sizeof(chain->data->bmdata));
 			/* fall through */
@@ -2893,8 +2943,11 @@ hammer2_chain_create(hammer2_chain_t **parentp, hammer2_chain_t **chainp,
 	 * the parent.
 	 */
 again:
-	if (--maxloops == 0)
+	if (--maxloops == 0) {
 		hpanic("maxloops");
+		error = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		goto failed;
+	}
 
 	switch (parent->bref.type) {
 	case HAMMER2_BREF_TYPE_INODE:
@@ -2930,7 +2983,8 @@ again:
 		break;
 	default:
 		hpanic("bad blockref type %d", parent->bref.type);
-		break;
+		error = HAMMER2_ERROR_EIO;	/* XXX Linux: hpanic returns */
+		goto failed;
 	}
 
 	/* Make sure we've counted the brefs. */
@@ -2955,7 +3009,15 @@ again:
 		KKASSERT((flags & HAMMER2_INSERT_SAMEPARENT) == 0);
 		nparent = hammer2_chain_create_indirect(parent, key, keybits,
 		    mtid, type, &error);
+		if (nparent != NULL && error) {	/* XXX Linux: hpanic returns */
+			if (nparent != parent) {
+				hammer2_chain_unlock(nparent);
+				hammer2_chain_drop(nparent);
+			}
+			nparent = NULL;
+		}
 		if (nparent == NULL) {
+failed:			/* XXX Linux: hpanic returns */
 			/*
 			 * XXX Only a chain this function allocated may be
 			 * released here.  One the caller passed in is still
@@ -2994,8 +3056,11 @@ skip:
 		    (long long)chain->bref.key, chain->bref.keybits);
 
 	/* Link the chain into its parent. */
-	if (chain->parent != NULL)
+	if (chain->parent != NULL) {
 		hpanic("chain already connected");
+		error = HAMMER2_ERROR_EINVAL;	/* XXX Linux: hpanic returns */
+		goto failed;
+	}
 	KKASSERT(chain->parent == NULL);
 	if (parent) {
 		KKASSERT(parent->core.live_count < count);
@@ -3033,6 +3098,7 @@ skip:
 			 * handled by create_indirect().
 			 */
 			hpanic("bad blockref type %d", chain->bref.type);
+			error = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
 			break;
 		}
 	} else {
@@ -3254,6 +3320,8 @@ _hammer2_chain_delete_helper(hammer2_chain_t *parent, hammer2_chain_t *chain,
 			break;
 		default:
 			hpanic("bad blockref type %d", parent->bref.type);
+			base = NULL;	/* XXX Linux: hpanic returns */
+			error = HAMMER2_ERROR_EIO;
 			break;
 		}
 
@@ -3453,7 +3521,12 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		break;
 	default:
 		hpanic("illegal indirect block for blockref type %d", for_type);
+		keybits = -1;	/* XXX Linux: hpanic returns */
 		break;
+	}
+	if (keybits < 0) {	/* XXX Linux: an indkey helper hit hpanic */
+		*errorp = HAMMER2_ERROR_EIO;
+		return (NULL);
 	}
 
 	/*
@@ -3477,6 +3550,10 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	    HAMMER2_ENC_COMP(HAMMER2_COMP_NONE);
 
 	ichain = hammer2_chain_alloc(hmp, parent->pmp, &dummy);
+	if (ichain == NULL) {	/* XXX Linux: hpanic returns */
+		*errorp = HAMMER2_ERROR_EIO;
+		return (NULL);
+	}
 	atomic_set_int(&ichain->flags, HAMMER2_CHAIN_INITIAL);
 	hammer2_chain_lockdep_nest(&ichain->lock, &parent->lock); /* XXX Linux */
 	hammer2_chain_lock(ichain, HAMMER2_RESOLVE_MAYBE |
@@ -3522,10 +3599,13 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		 */
 		base = hammer2_chain_base_and_count(parent, &count);
 
-		if (++loops > 100000)
+		if (++loops > 100000) {
 			hpanic("excessive loops reason %d count %d "
 			    "key_next %016llx",
 			    reason, count, (long long)key_next);
+			*errorp = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
+			break;
+		}
 
 		/*
 		 * NOTE: spinlock stays intact, returned chain (if not NULL)
@@ -3615,8 +3695,15 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		 */
 		error = hammer2_chain_delete_obref(parent, chain, mtid, 0,
 		    &bsave);
-		if (error)
+		if (error) {
 			hpanic("error %08x", error);
+			/* XXX Linux: hpanic returns; the shift stops here */
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+			hammer2_spin_ex(&parent->core.spin);
+			*errorp = HAMMER2_ERROR_EIO;
+			break;
+		}
 		hammer2_chain_rename_obref(&ichain, chain, mtid, 0, &bsave);
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
@@ -3625,8 +3712,11 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		base = NULL; /* safety */
 		hammer2_spin_ex(&parent->core.spin);
 next_key_spinlocked:
-		if (--maxloops == 0)
+		if (--maxloops == 0) {
 			hpanic("maxloops");
+			*errorp = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
+			break;
+		}
 		reason = 4;
 		if (key_next == 0 || key_next > key_end)
 			break;
@@ -3634,6 +3724,12 @@ next_key_spinlocked:
 		/* loop */
 	}
 	hammer2_spin_unex(&parent->core.spin);
+	/*
+	 * XXX Linux: a loop above that hit hpanic set *errorp and broke
+	 * out.  The device is in error, so nothing moved to ichain is
+	 * written; ichain is inserted anyway so the tree unwinds through
+	 * it at unmount, and the caller reads *errorp.
+	 */
 
 	/*
 	 * Insert the new indirect block into the parent now that we've
@@ -3872,8 +3968,11 @@ hammer2_chain_indkey_freemap(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	hammer2_spin_ex(&parent->core.spin);
 
 	for (;;) {
-		if (--maxloops == 0)
+		if (--maxloops == 0) {
 			hpanic("maxloops");
+			hammer2_spin_unex(&parent->core.spin);
+			return (-1);	/* XXX Linux: hpanic returns */
+		}
 		chain = hammer2_combined_find(parent, base, count, &key_next,
 		    key_beg, key_end, &bref);
 
@@ -3931,10 +4030,10 @@ hammer2_chain_indkey_freemap(hammer2_chain_t *parent, hammer2_key_t *keyp,
 		break;
 	case HAMMER2_FREEMAP_LEVEL5_RADIX:
 		hpanic("level too high");
-		break;
+		return (-1);	/* XXX Linux: hpanic returns */
 	default:
 		hpanic("bad radix %d", keybits);
-		break;
+		return (-1);	/* XXX Linux: hpanic returns */
 	}
 	*keyp = key;
 
@@ -3976,8 +4075,11 @@ hammer2_chain_indkey_file(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	hammer2_spin_ex(&parent->core.spin);
 
 	for (;;) {
-		if (--maxloops == 0)
+		if (--maxloops == 0) {
 			hpanic("maxloops");
+			hammer2_spin_unex(&parent->core.spin);
+			return (-1);	/* XXX Linux: hpanic returns */
+		}
 		chain = hammer2_combined_find(parent, base, count, &key_next,
 		    key_beg, key_end, &bref);
 
@@ -4031,7 +4133,7 @@ hammer2_chain_indkey_file(hammer2_chain_t *parent, hammer2_key_t *keyp,
 		break;
 	default:
 		hpanic("bad ncount %d", ncount);
-		break;
+		return (-1);	/* XXX Linux: hpanic returns */
 	}
 
 	/*
@@ -4085,8 +4187,11 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	hammer2_spin_ex(&parent->core.spin);
 
 	for (;;) {
-		if (--maxloops == 0)
+		if (--maxloops == 0) {
 			hpanic("maxloops");
+			hammer2_spin_unex(&parent->core.spin);
+			return (-1);	/* XXX Linux: hpanic returns */
+		}
 		chain = hammer2_combined_find(parent, base, count, &key_next,
 		    key_beg, key_end, &bref);
 
@@ -4117,10 +4222,13 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 		 */
 		nkeybits = keybits;
 		if (nkeybits < bref->keybits) {
-			if (bref->keybits > 64)
+			if (bref->keybits > 64) {
 				hpanic("bad %s blockref %016llx/%d",
 				    hammer2_breftype_to_str(bref->type),
 				    (long long)bref->key, bref->keybits);
+				hammer2_spin_unex(&parent->core.spin);
+				return (-1);	/* XXX Linux: hpanic returns */
+			}
 			nkeybits = bref->keybits;
 		}
 		while (nkeybits < 64 &&
@@ -4487,13 +4595,15 @@ hammer2_base_delete(hammer2_chain_t *parent, hammer2_blockref_t *base,
 	if (i == count || scan->type == HAMMER2_BREF_TYPE_EMPTY ||
 	    scan->key != elm->key ||
 	    ((chain->flags & HAMMER2_CHAIN_BLKMAPUPD) == 0 &&
-	    scan->keybits != elm->keybits))
+	    scan->keybits != elm->keybits)) {
 		hpanic("delete %s elm %016llx/%d from %s base %016llx/%d "
 		    "not found at %d/%d",
 		    hammer2_breftype_to_str(elm->type),
 		    (long long)elm->key, elm->keybits,
 		    hammer2_breftype_to_str(base->type),
 		    (long long)base->key, base->keybits, i, count);
+		return;	/* XXX Linux: hpanic returns */
+	}
 
 	/*
 	 * Update stats and zero the entry.
@@ -4578,6 +4688,17 @@ hammer2_base_insert(hammer2_chain_t *parent, hammer2_blockref_t *base,
 	hammer2_key_t key_next, xkey;
 	int i, j, k, l, u = 1;
 
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * XXX Linux: debug_hpanic=3 fires here, once, on the next insert
+	 * into a block table; the reading is script/hpanic-contain.sh.
+	 */
+	if (hammer2_debug_hpanic == 3) {
+		hammer2_debug_hpanic = 0;
+		hpanic("debug_hpanic is 3, so this insert stops here");
+		return;
+	}
+#endif
 	/*
 	 * Insert new element.  Expect the element to not already exist
 	 * unless we are replacing it.
@@ -4642,13 +4763,15 @@ hammer2_base_insert(hammer2_chain_t *parent, hammer2_blockref_t *base,
 	}
 
 	xkey = elm->key + ((hammer2_key_t)1 << elm->keybits) - 1;
-	if (i != count && (base[i].key < elm->key || xkey >= base[i].key))
+	if (i != count && (base[i].key < elm->key || xkey >= base[i].key)) {
 		hpanic("insert %s elm %016llx/%d to %s base %016llx/%d "
 		    "overlapping at %d/%d",
 		    hammer2_breftype_to_str(elm->type),
 		    (long long)elm->key, elm->keybits,
 		    hammer2_breftype_to_str(base->type),
 		    (long long)base->key, base->keybits, i, count);
+		return;	/* XXX Linux: hpanic returns */
+	}
 
 	/* Try to find an empty slot before or after. */
 	j = i;
@@ -4682,6 +4805,7 @@ hammer2_base_insert(hammer2_chain_t *parent, hammer2_blockref_t *base,
 		}
 	}
 	hpanic("no room");
+	return;	/* XXX Linux: hpanic returns */
 
 	/* Debugging */
 validate:
@@ -4695,9 +4819,11 @@ validate:
 	}
 	while (++l < count) {
 		if (base[l].type != HAMMER2_BREF_TYPE_EMPTY) {
-			if (base[l].key <= key_next)
+			if (base[l].key <= key_next) {
 				hpanic("insert %d %d,%d,%d fail %d",
 				    u, i, j, k, l);
+				return;	/* XXX Linux: hpanic returns */
+			}
 			key_next = base[l].key +
 			    ((hammer2_key_t)1 << base[l].keybits) - 1;
 		}
@@ -4800,6 +4926,7 @@ hammer2_chain_testcheck(const hammer2_chain_t *chain, void *bdata)
 		break;
 	default:
 		hpanic("bad check type %02x", chain->bref.methods);
+		r = 0;	/* XXX Linux: hpanic returns */
 		break;
 	}
 
@@ -4937,6 +5064,8 @@ hammer2_chain_bulksnap(hammer2_dev_t *hmp)
 	hammer2_chain_t *copy;
 
 	copy = hammer2_chain_alloc(hmp, hmp->spmp, &hmp->vchain.bref);
+	if (copy == NULL)	/* XXX Linux: hpanic returns */
+		return (NULL);
 	copy->data = hmalloc(sizeof(copy->data->voldata), M_HAMMER2,
 	    M_WAITOK | M_ZERO);
 	hammer2_voldata_lock(hmp);

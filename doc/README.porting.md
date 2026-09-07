@@ -455,7 +455,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:140` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
+| `hammer2_os.h:147` | `hpanic`, `pr_emerg`, the device-in-error mark and a `WARN_ONCE`, then a return; `hammer2_os.h:141` is the `HAMMER2_INVARIANTS` form, which is `BUG()` after the mark |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.
@@ -481,8 +481,10 @@ The decision, split by which half the code is in:
   fails the operation with an errno instead of asserting. The first
   instance is `hammer2_io_folio_check()` in `hammer2_io.c`, which replaced
   a `KKASSERT` on a length that a buffer overrun depends on.
-- **`hpanic` is `BUG()` after the message, and stays non-returning until every site has a return path.**
-  It was `panic()` until 2026-09-05, which took the machine down for
+- **`hpanic` marks the device in error and returns, and every site has a way out.**
+  The three parts below are all in since 2026-09-07, and the reading at
+  the end of this section lifted the deferral that stood here. What
+  follows is the history of the decision. It was `panic()` until 2026-09-05, which took the machine down for
   one filesystem's corruption where every in-tree filesystem shuts the
   filesystem down and leaves the machine up; `BUG()` keeps the
   non-returning contract the sites below depend on, kills the task,
@@ -513,7 +515,8 @@ The decision, split by which half the code is in:
   thing the panic said was wrong; four close a block. Every site is
   written on the assumption that `hpanic` does not return, so a
   returning `hpanic` is fifty-four core edits in all four trees, and
-  the one name buys nothing until each has a return path. What one
+  the one name buys nothing until each has a return path; those edits
+  are in, marked `XXX` in place. What one
   name does still buy is the choice of what a non-returning `hpanic`
   does: `panic()` takes the machine, and the Linux-shaped alternative
   that keeps the contract is to mark the superblock in error and kill
@@ -600,20 +603,40 @@ names `BUG()` in one message, AVOID_BUG, for the same reason.
 build, fires from `sync_fs` on the second call after the knob is set,
 which is the first `sync(2)` after a sync that has reached the media,
 and is what read part 1 above. The acceptance test for the whole
-design fires from `hammer2_base_insert` on the first insert after
-mount, and the reading is: the writer gets `EIO`,
-the mount reads read-only, `umount` returns, `rmmod` returns, no
-`BUG` and no oops in the log, and the image is byte-identical to the
-one before the fault. That reading is the DEFER's trigger. A
-write-side fuzz (mount a mutated image, write into it) is the
-instrument for the from-disk class and is the fuzz harness's next
-mode.
+design is `debug_hpanic=3`, which fires once from
+`hammer2_base_insert` on the next block-table insert, inside the
+flush of the first file written after the knob is set, and
+`script/hpanic-contain.sh` with `H2_KNOB=3` is the reading. Read on
+2026-09-07 on the debug build at the kernel of record: the writer's
+`sync` got `EIO`, the next create was refused, the mount read `ro`,
+`umount` and `rmmod` returned, the log held no `BUG` and no oops, one
+`WARNING` for the stack, and the device read back through `O_DIRECT`
+byte-identical to what the sync before the fault left, `fsck_hammer2`
+clean on the host. The control, the same sequence without the fault
+(`H2_ACCEPT_CONTROL=1 H2_KNOB=0`), had the sync and the create
+succeed, the mount `rw`, and five 64 KiB blocks changed on the
+device, so the identical reading is not one the instrument gives for
+free.
 
-DEFER(every hpanic site has an error its caller propagates): `hpanic` on
-Linux is a machine-wide event standing in for a per-mount one. The three
-parts above are the work; the reading at the end is what lifts it, and
-until then `hpanic` stays non-returning, since a returning `hpanic` with
-nothing refusing the dirty mark writes the fault to disk.
+The instrument found two things the first two parts had not. A folio
+dirtied before the fault belongs to the block device's page cache, and
+the kernel writes it back at the next periodic writeback or when the
+device closes at unmount, so refusing the io layer's own dirty mark
+kept nothing off the media that was already dirty: `hammer2_io_discard()`
+empties the device mapping without writing it, from `sync_fs` and
+before the device closes, and the last drop cancels a folio's dirty
+bit. And the volume header write in `hammer2_flush.c` was gated on
+the flush's error, which a fault in a void site cannot set, so the
+unmount's own syncs wrote a header pointing at a freemap leaf whose
+content had been refused, and `fsck_hammer2` reported the check; the
+header write now reads the device bit too. Both are read in the
+runs recorded in `README.testing.md`.
+
+The deferral this section carried, `DEFER(every hpanic site has an
+error its caller propagates)`, was lifted by that reading on
+2026-09-07. What remains open from it is the write-side fuzz (mount
+a mutated image, write into it), the instrument for the from-disk
+class of void sites, which is the fuzz harness's next mode.
 
 A reviewer who has not read this file will raise this, and should: the source
 shows `BUG_ON` and `panic` with nothing beside them saying the objection was

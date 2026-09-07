@@ -1362,7 +1362,22 @@ not: `script/hpanic-contain.sh` is that reading, twenty files synced,
 the knob set, twenty more written, a hard stop, `fsck_hammer2` on the
 host and the two counts at a remount, run once with the knob and once
 with `H2_KNOB=0` as the control, and on 2026-09-07 it read 20 and 0
-with the knob and 20 and 20 without; and every run reads both
+with the knob and 20 and 20 without; `debug_hpanic=3` fires once from
+`hammer2_base_insert` on the next block-table insert, and the same
+script with `H2_KNOB=3` is the acceptance reading for the returning
+`hpanic`: the guest pauses after its first sync so the host can copy
+the image, then the knob, one file, a `sync` that must fail with
+`EIO`, a create that must be refused, the mount options, `umount` and
+`rmmod`, the device hashed through `O_DIRECT` before and after, the
+log counted for `BUG`, oops and `WARNING`, and the host names each
+64 KiB block that differs from its copy; `H2_ACCEPT_CONTROL=1
+H2_KNOB=0` runs that sequence without the fault. On 2026-09-07 the
+reading was `EIO`, refused, `ro`, 0, 0, identical, `fsck_hammer2`
+clean and no block changed, against the control's 0, 0, `rw`, five
+blocks changed; the two runs before it, which read the device
+changed and the freemap leaf's check bad, are what found the block
+device's own writeback and the header write, recorded in
+`README.porting.md`; and every run reads both
 thresholds after the sync with one 64 KiB write as the user and one
 as root: the user is refused in either mode, root is accepted after a
 user's fill and refused after its own, and a run where root reads the

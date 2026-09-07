@@ -160,6 +160,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 			break;
 		default:
 			hpanic("invalid PFS type %d", pmp->pfs_types[i]);
+			cluster->error = HAMMER2_ERROR_EIO; /* XXX Linux: hpanic returns */
 			break;
 		}
 	}

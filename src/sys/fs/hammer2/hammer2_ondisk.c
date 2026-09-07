@@ -970,8 +970,10 @@ hammer2_get_volume(hammer2_dev_t *hmp, hammer2_off_t offset)
 	}
 	//hammer2_voldata_unlock(hmp);
 
-	if (!ret)
+	if (!ret) {
 		hpanic("no volume for offset %016llx", (long long)offset);
+		return (NULL);	/* XXX Linux: hpanic returns */
+	}
 
 	KKASSERT(ret);
 	KKASSERT(ret->dev);

@@ -204,10 +204,12 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
 	lbase = data_off & ~HAMMER2_OFF_MASK_RADIX;
 	pbase = lbase & pmask;
 
-	if (pbase == 0 || ((lbase + lsize - 1) & pmask) != pbase)
+	if (pbase == 0 || ((lbase + lsize - 1) & pmask) != pbase) {
 		hpanic("illegal base: %016llx %016llx+%08x / %016llx",
 		    (long long)pbase, (long long)lbase, lsize,
 		    (long long)pmask);
+		return (NULL);	/* XXX Linux: hpanic returns */
+	}
 
 	/* Access or allocate dio, bump dio->refs to prevent destruction. */
 	dio = hammer2_io_hash_lookup(hmp, pbase, NULL);
@@ -215,6 +217,8 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
 		/* NOP */
 	} else if (createit) {
 		vol = hammer2_get_volume(hmp, pbase);
+		if (vol == NULL)	/* XXX Linux: hpanic returns */
+			return (NULL);
 		dio = hmalloc(sizeof(*dio), M_HAMMER2, M_WAITOK | M_ZERO);
 		dio->hmp = hmp;
 		dio->bdev_file = vol->dev->bdev_file;
@@ -520,6 +524,10 @@ hammer2_io_getblk(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
 		op = HAMMER2_DOP_READ;
 	} else {
 		dio = hammer2_io_alloc(hmp, lbase, btype, 1);
+		if (dio == NULL) {	/* XXX Linux: hpanic returns */
+			hammer2_mtx_unlock(&hmp->iohash_lock);
+			return (NULL);
+		}
 	}
 	KKASSERT(dio);
 	hammer2_assert_io_refs(dio); /* dio locked + refs > 0 */
@@ -645,6 +653,12 @@ hammer2_io_putblk(hammer2_io_t **diop)
 		orefs &= ~HAMMER2_DIO_DIRTY;
 	}
 	folio = dio->folio;
+	if (folio && READ_ONCE(hammer2_device_error)) {
+		/* A folio dirtied by an earlier drop is taken back too. */
+		folio_lock(folio);
+		folio_cancel_dirty(folio);
+		folio_unlock(folio);
+	}
 	dio->folio = NULL;
 	buf = dio->buf;
 	dio->buf = NULL;
@@ -738,6 +752,8 @@ hammer2_io_new(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
     hammer2_io_t **diop)
 {
 	*diop = hammer2_io_getblk(hmp, btype, lbase, lsize, HAMMER2_DOP_NEW);
+	if (*diop == NULL)	/* XXX Linux: hpanic returns */
+		return (HAMMER2_ERROR_EIO);
 	return ((*diop)->error);
 }
 
@@ -746,6 +762,8 @@ hammer2_io_newnz(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
     hammer2_io_t **diop)
 {
 	*diop = hammer2_io_getblk(hmp, btype, lbase, lsize, HAMMER2_DOP_NEWNZ);
+	if (*diop == NULL)	/* XXX Linux: hpanic returns */
+		return (HAMMER2_ERROR_EIO);
 	return ((*diop)->error);
 }
 
@@ -754,6 +772,8 @@ hammer2_io_bread(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
     hammer2_io_t **diop)
 {
 	*diop = hammer2_io_getblk(hmp, btype, lbase, lsize, HAMMER2_DOP_READ);
+	if (*diop == NULL)	/* XXX Linux: hpanic returns */
+		return (HAMMER2_ERROR_EIO);
 	return ((*diop)->error);
 }
 
@@ -1017,6 +1037,29 @@ hammer2_io_hash_cleanup(hammer2_dev_t *hmp, int dio_limit)
 }
 
 /*
+ * Linux: a device in error writes nothing more.  The io layer's own
+ * dirty marks are refused at the last drop above, but a folio dirtied
+ * before the fault is the block device's to write back, at the next
+ * periodic writeback or when the device is closed at unmount, so the
+ * device mapping is emptied without writing it, as a removed device's
+ * is.  A dio still holding a folio keeps the memory; a later read
+ * comes from the media, which is the state the last good sync left.
+ * Called from ->sync_fs and before the device closes.
+ */
+void
+hammer2_io_discard(hammer2_dev_t *hmp)
+{
+	int i;
+
+	if (!READ_ONCE(hammer2_device_error))
+		return;
+	for (i = 0; i < hmp->nvolumes; ++i)
+		if (hmp->volumes[i].dev && hmp->volumes[i].dev->bdev_file)
+			truncate_inode_pages(
+			    hmp->volumes[i].dev->bdev_file->f_mapping, 0);
+}
+
+/*
  * Destroy all DIOs associated with the media.
  */
 void
@@ -1083,6 +1126,10 @@ hammer2_io_dedup_set(hammer2_dev_t *hmp, hammer2_blockref_t *bref)
 
 	hammer2_mtx_ex(&hmp->iohash_lock);
 	dio = hammer2_io_alloc(hmp, bref->data_off, bref->type, 1);
+	if (dio == NULL) {	/* XXX Linux: hpanic returns */
+		hammer2_mtx_unlock(&hmp->iohash_lock);
+		return;
+	}
 	KKASSERT(dio);
 	hammer2_assert_io_refs(dio); /* dio locked + refs > 0 */
 	hammer2_mtx_unlock(&hmp->iohash_lock);
@@ -1127,9 +1174,13 @@ hammer2_io_dedup_delete(hammer2_dev_t *hmp, uint8_t btype,
 		if (data_off < (hammer2_off_t)dio->pbase ||
 		    (data_off & ~HAMMER2_OFF_MASK_RADIX) +
 		    (hammer2_off_t)bytes >
-		    (hammer2_off_t)dio->pbase + dio->psize)
+		    (hammer2_off_t)dio->pbase + dio->psize) {
 			hpanic("bad data_off %016llx/%d %016llx",
 			    (long long)data_off, bytes, (long long)dio->pbase);
+			hammer2_mtx_unlock(&dio->lock); /* XXX Linux: hpanic returns */
+			hammer2_io_putblk(&dio);
+			return;
+		}
 
 		mask = hammer2_dedup_mask(dio, data_off, bytes);
 		dio->dedup_alloc &= ~mask;
