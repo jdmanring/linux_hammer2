@@ -790,8 +790,7 @@ hammer2_chain_lock(hammer2_chain_t *chain, int how)
 				hammer2_mtx_sh(&chain->lock);
 			}
 		} else if (how & HAMMER2_RESOLVE_SIBLING) {	/* XXX Linux */
-			hammer2_mtx_ex_nested(&chain->lock,
-			    chain->lock.subclass + 1);
+			hammer2_mtx_ex_nested(&chain->lock, 1);
 		} else if (how & HAMMER2_RESOLVE_FRESH) {	/* XXX Linux */
 			hammer2_mtx_ex_fresh(&chain->lock);
 		} else {

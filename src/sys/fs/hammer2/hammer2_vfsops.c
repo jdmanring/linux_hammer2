@@ -354,7 +354,7 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 	 * unpublished kind that records no order and warns if it ever has
 	 * to wait.  The level is the chain's, set before the lock is taken.
 	 */
-	iroot->lock.subclass = chain->lock.subclass;
+	hammer2_inode_lockdep_level(&iroot->lock, &chain->lock);
 	hammer2_mtx_ex_fresh(&iroot->lock);
 	j = iroot->cluster.nchains;
 
@@ -2743,39 +2743,57 @@ hammer2_kill_sb(struct super_block *sb)
 }
 
 /*
- * Linux: one lockdep class per (blockref type, keybits).  init_rwsem()
- * gives every chain lock the class of its one call site, so a parent
- * chain locked above its child read as one lock taken twice and lockdep
- * disabled itself at the first mount.  keybits is the number of key bits
- * a blockref masks off, 0 at a leaf, so along any parent-to-child walk
- * within one type it strictly decreases, and the type separates the
- * volume, freemap, indirect, inode and data levels from each other.
- * What it cannot separate is one inode chain under another, both leaves
- * of type INODE: that pair is a directory above its entry and is
- * measured rather than assumed, see doc/README.status.md.
+ * Linux: one lockdep class per (lock, blockref type, keybits, level).
+ * init_rwsem() gives every chain lock the class of its one call site, so
+ * a parent chain locked above its child read as one lock taken twice and
+ * lockdep disabled itself at the first mount.  keybits is the number of
+ * key bits a blockref masks off, 0 at a leaf, so along any parent-to-child
+ * walk within one type it strictly decreases, and the type separates the
+ * volume, freemap, indirect, inode and data levels from each other.  What
+ * neither separates is one inode chain under another, both leaves of type
+ * INODE, a directory above its entry, and directory depth has no bound;
+ * that is the level, see hammer2_chain_lockdep_nest().  Lockdep's
+ * subclasses carry a level up to eight, and a real Nix closure is deeper
+ * than that in its second minute, so the level is part of the class
+ * instead, and the classes are made as the tree is walked: the first time
+ * a (lock, type, keybits, level) is seen a key is allocated, registered
+ * with lockdep and kept in an xarray under the composite index, and every
+ * key is unregistered at module exit.  The name carries the level, so a
+ * report reads "h2ch_inode/3"; the held-chain printer below matches on
+ * the prefix.
  *
- * The keys are static so lockdep can register them; the names are the
- * type names, static for the same reason.  Without CONFIG_LOCKDEP the
- * call compiles to nothing and this function is never reached.
+ * hammer2_chain_lockdep_nest() runs under the parent's core spinlock, so
+ * the registry cannot sleep: an entry is allocated GFP_ATOMIC under the
+ * xarray's own lock, which lockdep_register_key() accepts since it takes
+ * no lock a spinlock holder may not, and is published only once it is
+ * registered.  An allocation that fails leaves the lock in the class it
+ * has, its initializer's, with one warning; lockdep then sees that site's
+ * class in the tree's order and may report it, which is the failure a
+ * debug kernel should show rather than hide.  Without CONFIG_LOCKDEP the
+ * calls compile to nothing and none of this is reached.
  */
 #ifdef CONFIG_LOCKDEP
-static struct lock_class_key hammer2_chain_keys[9][65];
-static struct lock_class_key hammer2_core_keys[9][65];
-static struct lock_class_key hammer2_diolk_keys[9][65];
-static const char *const hammer2_chain_key_names[9] = {
-	"h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
-	"h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf",
-	"h2ch_freemap", "h2ch_volume",
+enum { H2LD_CHAIN, H2LD_CORE, H2LD_DIOLK, H2LD_INODE };
+
+struct hammer2_lockdep_class {
+	struct lock_class_key key;
+	int ready;			/* registered, see the lookup */
+	char name[32];
 };
-static const char *const hammer2_core_key_names[9] = {
-	"h2core_empty", "h2core_inode", "h2core_indirect", "h2core_data",
-	"h2core_dirent", "h2core_freemap_node", "h2core_freemap_leaf",
-	"h2core_freemap", "h2core_volume",
-};
-static const char *const hammer2_diolk_key_names[9] = {
-	"h2dio_empty", "h2dio_inode", "h2dio_indirect", "h2dio_data",
-	"h2dio_dirent", "h2dio_freemap_node", "h2dio_freemap_leaf",
-	"h2dio_freemap", "h2dio_volume",
+
+static DEFINE_XARRAY(hammer2_lockdep_classes);
+
+static const char *const hammer2_lockdep_names[4][9] = {
+	{ "h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
+	  "h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf",
+	  "h2ch_freemap", "h2ch_volume" },
+	{ "h2core_empty", "h2core_inode", "h2core_indirect", "h2core_data",
+	  "h2core_dirent", "h2core_freemap_node", "h2core_freemap_leaf",
+	  "h2core_freemap", "h2core_volume" },
+	{ "h2dio_empty", "h2dio_inode", "h2dio_indirect", "h2dio_data",
+	  "h2dio_dirent", "h2dio_freemap_node", "h2dio_freemap_leaf",
+	  "h2dio_freemap", "h2dio_volume" },
+	{ "h2ip" },
 };
 
 /*
@@ -2796,76 +2814,142 @@ hammer2_chain_key_index(const hammer2_chain_t *chain, unsigned int *kb)
 	*kb = min_t(unsigned int, chain->bref.keybits, 64U);
 	return (t);
 }
+
+/*
+ * The class for a (lock, type, keybits, level), made on first sight.  A
+ * lockless load answers every lookup after the first; the lock is taken
+ * only to make an entry, and an entry is stored before it is registered
+ * so a reader that finds one not yet ready takes the lock too and waits
+ * for the maker to finish.  NULL only when memory for the entry could not
+ * be had.
+ */
+static struct hammer2_lockdep_class *
+hammer2_lockdep_lookup(unsigned int fam, unsigned int t, unsigned int kb,
+    unsigned int level)
+{
+	unsigned long idx = ((unsigned long)level << 16) | (fam << 12) |
+	    (t << 8) | kb;
+	struct hammer2_lockdep_class *c;
+	unsigned long flags;
+
+	c = xa_load(&hammer2_lockdep_classes, idx);
+	if (c && smp_load_acquire(&c->ready))	/* pairs with the release */
+		return (c);
+
+	xa_lock_irqsave(&hammer2_lockdep_classes, flags);
+	c = xa_load(&hammer2_lockdep_classes, idx);
+	if (c == NULL) {
+		c = kzalloc_obj(*c, GFP_ATOMIC);
+		if (c && __xa_insert(&hammer2_lockdep_classes, idx, c,
+		    GFP_ATOMIC)) {
+			kfree(c);
+			c = NULL;
+		}
+		if (c) {
+			snprintf(c->name, sizeof(c->name), "%s/%u",
+			    hammer2_lockdep_names[fam][t], level);
+			lockdep_register_key(&c->key);
+			/* published to lockless readers only once registered */
+			smp_store_release(&c->ready, 1);
+		}
+	}
+	xa_unlock_irqrestore(&hammer2_lockdep_classes, flags);
+	WARN_ONCE(c == NULL, "hammer2: no memory for a lockdep class\n");
+	return (c);
+}
+
+/* Called once at module exit, when no lock of any class is left. */
+static void
+hammer2_lockdep_unregister(void)
+{
+	struct hammer2_lockdep_class *c;
+	unsigned long idx;
+
+	xa_for_each(&hammer2_lockdep_classes, idx, c) {
+		xa_erase(&hammer2_lockdep_classes, idx);
+		lockdep_unregister_key(&c->key);
+		kfree(c);
+	}
+	xa_destroy(&hammer2_lockdep_classes);
+}
+
+/*
+ * The chain lock and diolk of a chain at a level.  diolk, which
+ * hammer2_chain_modify() holds across the freemap allocation that
+ * modifies a freemap chain under it, is classed the same way; on one
+ * class per call site the first write read as an inode's diolk taken
+ * twice.  Both are set through the map rather than the held lock, since
+ * a chain re-inserted under a new parent, the rename XOP's move of a
+ * directory entry, is held while it is classed and holds its old
+ * acquisition detached at the last subclass, see
+ * hammer2_chain_lockdep_detached(); the new class takes at the next
+ * acquire.
+ */
+static void
+hammer2_chain_lockdep_set(hammer2_chain_t *chain, unsigned int level)
+{
+	unsigned int kb, t = hammer2_chain_key_index(chain, &kb);
+	struct hammer2_lockdep_class *c;
+
+	c = hammer2_lockdep_lookup(H2LD_CHAIN, t, kb, level);
+	if (c)
+		lockdep_set_class_and_name(&chain->lock.lock, &c->key, c->name);
+	c = hammer2_lockdep_lookup(H2LD_DIOLK, t, kb, level);
+	if (c)
+		lockdep_set_class_and_name(&chain->diolk.lock, &c->key,
+		    c->name);
+}
+#else
+static void hammer2_lockdep_unregister(void) {}
 #endif
 
+/*
+ * Linux: the class a chain's lock has before its parent is known, level
+ * 0, which is the level of the two roots that never have one.
+ * hammer2_chain_init() initializes the core spinlock after this is
+ * called, so a root's core spinlock keeps its call site's class, which no
+ * other lock shares; every other chain's is classed at its nest.
+ */
 void
 hammer2_chain_lockdep_class(hammer2_mtx_t *p)
 {
 #ifdef CONFIG_LOCKDEP
-	hammer2_chain_t *chain = container_of(p, hammer2_chain_t, lock);
-	unsigned int kb, t = hammer2_chain_key_index(chain, &kb);
-
-	lockdep_set_class_and_name(&p->lock, &hammer2_chain_keys[t][kb],
-	    hammer2_chain_key_names[t]);
-	/*
-	 * diolk, which hammer2_chain_modify() holds across the freemap
-	 * allocation that modifies a freemap chain under it, is classed
-	 * the same way; on one class per call site the first write read
-	 * as an inode's diolk taken twice.  Initialized in
-	 * hammer2_chain_init() before this is called, so it keeps the
-	 * class.
-	 */
-	lockdep_set_class_and_name(&chain->diolk.lock,
-	    &hammer2_diolk_keys[t][kb], hammer2_diolk_key_names[t]);
-	/* A root's core spinlock sits at the top of the bottom-up order. */
-	chain->core.spin.subclass = MAX_LOCKDEP_SUBCLASSES - 1;
+	hammer2_chain_lockdep_set(container_of(p, hammer2_chain_t, lock), 0);
 #endif
 }
 
 /*
- * Linux: the nesting level, which is the one thing a class cannot carry.
- * An inode chain sits under another inode chain wherever a directory
- * holds an entry, both leaves of the inode class, and directory depth
- * has no bound.  The notation is the VFS's own for i_rwsem: a child
- * nests one level under its parent, so a chain's level is its parent's,
- * plus one when the parent is an inode.  Set where the core links a
- * chain under its parent, the one place the parent is known, and read
- * by every acquire in hammer2_os.h.  Lockdep's subclasses stop at
- * eight, so a directory nine deep is reported as a recursion here; the
- * VFS holds only a parent and a child at once and so does the core's
- * lookup, which is what keeps the level small in practice.
+ * Linux: the nesting level, the one thing type and keybits cannot carry.
+ * The notation is the VFS's own for i_rwsem: a child nests one level
+ * under its parent, so a chain's level is its parent's, plus one when
+ * the parent is an inode.  Set where the core links a chain under its
+ * parent, the one place the parent is known, and kept in the wrapper so
+ * a child's level, and the level of the inode above the chain, can be
+ * read from it.  The core spinlock nests the other way, child before
+ * parent, and its class carries the same level; the classes being
+ * distinct per level, no subclass is needed in either direction.  It is
+ * classed here rather than at init because hammer2_chain_init()
+ * initializes the spinlock after the lock, and only an initialized lock
+ * keeps a class.
  */
 void
 hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 {
 #ifdef CONFIG_LOCKDEP
 	hammer2_chain_t *pchain = container_of(parent, hammer2_chain_t, lock);
-	unsigned int level = parent->subclass;
+	hammer2_chain_t *cchain = container_of(child, hammer2_chain_t, lock);
+	struct hammer2_lockdep_class *c;
+	unsigned int kb, t = hammer2_chain_key_index(cchain, &kb);
+	unsigned int level = parent->level;
 
 	if (pchain->bref.type == HAMMER2_BREF_TYPE_INODE)
 		level++;
-	level = min(level, (unsigned int)MAX_LOCKDEP_SUBCLASSES - 2);
-	child->subclass = level;
-	container_of(child, hammer2_chain_t, lock)->diolk.subclass = level;
-#endif
-
-	/*
-	 * The core spinlock nests the other way, child before parent, and
-	 * it is classed by type and keybits as the chain lock is, since a
-	 * dirent and the indirect block above it share a level.  It is
-	 * classed here rather than at init because hammer2_chain_init()
-	 * initializes the spinlock after the lock, and only an initialized
-	 * lock keeps a class.
-	 */
-#ifdef CONFIG_LOCKDEP
-	{
-		hammer2_chain_t *cchain = container_of(child, hammer2_chain_t, lock);
-		unsigned int kb, t = hammer2_chain_key_index(cchain, &kb);
-
-		lockdep_set_class_and_name(&cchain->core.spin.lock,
-		    &hammer2_core_keys[t][kb], hammer2_core_key_names[t]);
-		cchain->core.spin.subclass = MAX_LOCKDEP_SUBCLASSES - 1 - level;
-	}
+	child->level = level;
+	hammer2_chain_lockdep_set(cchain, level);
+	c = hammer2_lockdep_lookup(H2LD_CORE, t, kb, level);
+	if (c)
+		lockdep_set_class_and_name(&cchain->core.spin.lock, &c->key,
+		    c->name);
 #endif
 }
 
@@ -2904,14 +2988,27 @@ __hammer2_dbg_held_chains(const char *where)
 #endif
 
 /*
- * Linux: an inode lock nests at the level of the inode's own chain, so
- * a directory's inode lock sits one level above its entry's, the same
- * shape as the chains beneath them.  Read from the cluster focus, which
- * hammer2_inode_repoint() has set by the time hammer2_inode_get()
- * initializes the lock; an inode created with no chain yet, the PFS
- * root in hammer2_pfsalloc(), is given its level again once its chain
- * is known.
+ * Linux: an inode lock nests at the level of the inode's own chain, so a
+ * directory's inode lock sits one level above its entry's, the same
+ * shape as the chains beneath them.  The class is the level's; the lock
+ * is not yet held at either caller.  hammer2_inode_lockdep_nest() reads
+ * the cluster focus, which hammer2_inode_repoint() has set by the time
+ * hammer2_inode_get() initializes the lock; hammer2_pfsalloc() names the
+ * chain of a PFS root it creates the inode for.
  */
+void
+hammer2_inode_lockdep_level(hammer2_mtx_t *p, const hammer2_mtx_t *chain)
+{
+#ifdef CONFIG_LOCKDEP
+	struct hammer2_lockdep_class *c;
+
+	p->level = chain ? chain->level : 0;
+	c = hammer2_lockdep_lookup(H2LD_INODE, 0, 0, p->level);
+	if (c)
+		lockdep_set_class_and_name(&p->lock, &c->key, c->name);
+#endif
+}
+
 void
 hammer2_inode_lockdep_nest(hammer2_mtx_t *p)
 {
@@ -2919,15 +3016,15 @@ hammer2_inode_lockdep_nest(hammer2_mtx_t *p)
 	hammer2_inode_t *ip = container_of(p, hammer2_inode_t, lock);
 	hammer2_chain_t *chain = ip->cluster.focus;
 
-	p->subclass = chain ? chain->lock.subclass : 0;
+	hammer2_inode_lockdep_level(p, chain ? &chain->lock : NULL);
 #endif
 }
 
 /*
  * Linux: a chain deleted from its parent and still held, see the note
  * at the nesting levels in hammer2_os.h.  The held acquisition moves to
- * the last subclass, which no tree level uses; the next acquisition,
- * after the chain is inserted under its new parent, is at the level
+ * the last subclass, which nothing else uses; the next acquisition,
+ * after the chain is inserted under its new parent, is in the class
  * hammer2_chain_lockdep_nest() gives it there.
  */
 void
@@ -2940,26 +3037,24 @@ hammer2_chain_lockdep_detached(hammer2_mtx_t *p __maybe_unused)
 }
 
 /*
- * Linux: the level of an inode that has no chain yet, which is one under
- * its parent's, the level hammer2_chain_lockdep_nest() will give its
- * chain.  hammer2_inode_create_normal() sets it after hammer2_inode_get()
- * has locked the fresh inode, which recorded no order, so every later
- * acquire nests as the chain's would.
- *
- * DEFER(a lock reading is wanted on a tree deeper than eight): the
- * clamp puts a parent and its child at one level once the tree is
- * eight deep, and lockdep reports the pair as a recursion and turns
- * itself off; a real Nix closure is that deep within its second
- * minute.  Lockdep's other notation, a nest lock held across the
- * whole descent, is what would replace the levels.
+ * Linux: the level of an inode that has no chain yet, one under its
+ * parent's, the level hammer2_chain_lockdep_nest() will give its chain.
+ * hammer2_inode_create_normal() calls this after hammer2_inode_get() has
+ * locked the fresh inode, which recorded no order, so the held
+ * acquisition itself is moved to the class and every later acquire
+ * nests as the chain's will.
  */
 void
 hammer2_inode_lockdep_nest_under(hammer2_mtx_t *p,
     const hammer2_mtx_t *parent __maybe_unused)
 {
 #ifdef CONFIG_LOCKDEP
-	p->subclass = min(parent->subclass + 1,
-	    (unsigned int)MAX_LOCKDEP_SUBCLASSES - 2);
+	struct hammer2_lockdep_class *c;
+
+	p->level = parent->level + 1;
+	c = hammer2_lockdep_lookup(H2LD_INODE, 0, 0, p->level);
+	if (c)
+		lock_set_class(&p->lock.dep_map, c->name, &c->key, 0, _RET_IP_);
 #endif
 }
 
@@ -3042,6 +3137,13 @@ hammer2_module_exit(void)
 	hammer2_zone_xops = NULL;
 	uma_zdestroy(hammer2_zone_inode);
 	hammer2_zone_inode = NULL;
+
+	/*
+	 * Linux: after the zones, so no lock of a class is left; each key
+	 * is an expedited RCU wait in lockdep, so a lockdep kernel's rmmod
+	 * takes a moment per class the run created.
+	 */
+	hammer2_lockdep_unregister();
 }
 
 module_init(hammer2_module_init);

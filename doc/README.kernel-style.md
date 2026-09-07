@@ -351,6 +351,13 @@ than filling a folio took three errno-sign returns away, two `EIO` and
 one `ENOMEM`. Nothing was fixed rather than baselined and no category
 is new.
 
+The lockdep class registry that put the nesting level in the class
+moved three rows by one: its lookup and the two helpers around it have
+BSD continuations and unnamed prototype arguments, and return in the
+style of the file, `hammer2_vfsops.c`. `kzalloc_obj()` is used where
+checkpatch asks for it, and the two barriers around the registered key
+carry the comment the checker wants on a barrier.
+
 The block buffer the DIO layer holds when the page cache cannot give
 it a folio moved the total to 1,115: five returns in the style of the
 file, four `return (x);` and one errno sign, in the two functions that

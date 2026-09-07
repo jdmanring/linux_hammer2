@@ -250,7 +250,7 @@ struct rw_semaphore_wrapper {
 	struct rw_semaphore lock;
 	int refs;
 	struct task_struct *owner;	/* exclusive holder, or NULL */
-	unsigned int subclass;		/* lockdep nesting level, see below */
+	unsigned int level;		/* lockdep nesting level, see below */
 	atomic_t again;			/* shared re-locks owed no up_read */
 	int depth;			/* exclusive re-locks by the holder */
 	int recurse;			/* hammer2_mtx_init_recurse() */
@@ -273,45 +273,48 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
 
 /*
  * HOW THIS PORT'S LOCKS ARE DESCRIBED TO LOCKDEP.  A chain lock's class is
- * its blockref's type and keybits, set by hammer2_chain_lockdep_class()
- * when the core initializes it under the name "h2ch": keybits strictly
+ * its blockref's type and keybits and its nesting level, set by
+ * hammer2_chain_lockdep_class() when the core initializes it under the
+ * name "h2ch" and again by hammer2_chain_lockdep_nest() where
+ * hammer2_chain_get() first knows the parent.  keybits strictly
  * decreases from parent to child, so that orders every indirect and
  * freemap level, and the type separates volume, freemap, inode, dirent
- * and data from each other.  What a class cannot carry is the depth of an
+ * and data from each other.  What neither carries is the depth of an
  * inode chain under another inode chain, a directory above its entry, so
- * each chain also carries a nesting level, set by
- * hammer2_chain_lockdep_nest() where hammer2_chain_get() first knows the
- * parent: the parent's level, plus one when the parent is an inode.  The
- * level is the subclass every acquire below passes, the VFS's own
- * notation for i_rwsem.  Levels stop one short of lockdep's last
- * subclass, which is kept for a chain deleted from its parent and held
- * across the acquisition of the parent it is about to be inserted
- * under, the rename XOP's move of a directory entry; nothing else can
- * reach a detached chain, so that order is safe, and
- * hammer2_chain_lockdep_detached() tells lockdep so through
- * lock_set_subclass() on the held lock.  One more acquisition sits
- * outside the levels: hammer2_chain_create_indirect() locks the
- * children it moves under the new block while a flush holds one of
- * their siblings, same class and level, which lockdep reads as one
- * lock taken twice.  The parent is held exclusively there, so no other
- * holder of a sibling can be waiting on this one; the moved children
- * are locked with HAMMER2_RESOLVE_SIBLING, one level below their own.
- * The new indirect block's own first lock there, and a chain's first
- * lock in hammer2_chain_create(), record no order at all, through
+ * each chain also carries a level, the parent's plus one when the parent
+ * is an inode, in the VFS's own notation for i_rwsem.  Lockdep's
+ * subclasses would hold a level up to eight and a directory tree is
+ * deeper than that, so the level is part of the class, one registered
+ * key per (type, keybits, level) made as the tree is walked, and every
+ * ordinary acquire is at subclass 0.  Three acquisitions sit outside
+ * that.  A chain deleted from its parent and held across the acquisition
+ * of the parent it is about to be inserted under, the rename XOP's move
+ * of a directory entry, has its held acquisition moved to the last
+ * subclass by hammer2_chain_lockdep_detached(); nothing else can reach a
+ * detached chain, so that order is safe.  hammer2_chain_create_indirect()
+ * locks the children it moves under the new block while a flush holds
+ * one of their siblings, same class, which lockdep reads as one lock
+ * taken twice; the parent is held exclusively there, so no other holder
+ * of a sibling can be waiting on this one, and the moved children are
+ * locked with HAMMER2_RESOLVE_SIBLING at subclass 1.  The new indirect
+ * block's own first lock there, and a chain's first lock in
+ * hammer2_chain_create(), record no order at all, through
  * HAMMER2_RESOLVE_FRESH and hammer2_mtx_ex_fresh(): the chain is
- * unreachable until it is inserted, and an inode chain the insert
- * holds detached while the block is made would otherwise read as the
- * reverse of the flush's parent-then-child.  The core spinlock in a chain is taken child
- * before parent, which upstream states as its rule, so its level runs
- * the other way.  An inode lock nests at its chain's level.  Every other
- * lock initializer in this file takes a static key per call site, as
- * init_rwsem() and mutex_init() do, so no two of the core's locks share a
- * class by accident.
+ * unreachable until it is inserted, and an inode chain the insert holds
+ * detached while the block is made would otherwise read as the reverse
+ * of the flush's parent-then-child.  The core spinlock in a chain is
+ * taken child before parent, which upstream states as its rule, and its
+ * class carries the same level.  An inode lock is classed at its
+ * chain's level.  Every other lock initializer in this file takes a
+ * static key per call site, as init_rwsem() and mutex_init() do, so no
+ * two of the core's locks share a class by accident.
  *
  * Every step of that was measured on the installed DragonFly root, 28210
  * paths, under CONFIG_PROVE_LOCKING, and doc/README.status.md records
  * the report each step removed.  With all of them lockdep stays enabled
- * through mount, the full walk, two thousand file reads and unmount.
+ * through mount, the full walk, two thousand file reads and unmount;
+ * the level in the class was measured on a Nix closure, where the
+ * subclass ceiling had turned lockdep off in the second minute.
  */
 
 /*
@@ -343,6 +346,7 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  */
 void hammer2_chain_lockdep_class(hammer2_mtx_t *);
 void hammer2_chain_lockdep_nest(hammer2_mtx_t *, hammer2_mtx_t *);
+void hammer2_inode_lockdep_level(hammer2_mtx_t *, const hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest(hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest_under(hammer2_mtx_t *, const hammer2_mtx_t *);
 void hammer2_chain_lockdep_detached(hammer2_mtx_t *);
@@ -438,21 +442,23 @@ hammer2_mtx_ex(hammer2_mtx_t *p)
 {
 	if (hammer2_mtx_ex_recurse(p))
 		return;
-	down_write_nested(&p->lock, p->subclass);
+	down_write(&p->lock);
 	WRITE_ONCE(p->owner, current);
 	p->refs++;
 	hammer2_nofs_enter();
 }
 
 /*
- * Linux: an exclusive acquisition at a lockdep level the caller names,
- * for hammer2_inode_lock4(), which takes up to four inode locks in
- * address order.  Two of them can share a level, a file and the one it
- * replaces, or two directories, which lockdep would read as one lock
- * taken twice; the position in the set is the level instead, the way
- * lock_rename() classes the i_rwsems it takes as parent, child and
- * normal.  Positions run the same direction as levels, the first lock
- * taken lowest, so they add no order the levels do not already have.
+ * Linux: an exclusive acquisition at a lockdep subclass the caller
+ * names, for hammer2_inode_lock4(), which takes up to four inode locks
+ * in address order.  Two of them can share a class, a file and the one
+ * it replaces, or two directories at one level, which lockdep would read
+ * as one lock taken twice; the position in the set is the subclass
+ * instead, the way lock_rename() classes the i_rwsems it takes as
+ * parent, child and normal.  Positions run the same direction as levels,
+ * the first lock taken lowest, so they add no order the levels do not
+ * already have.  The sibling acquire in hammer2_chain_lock() is the
+ * other caller, at subclass 1.
  */
 static inline void
 hammer2_mtx_ex_nested(hammer2_mtx_t *p, unsigned int subclass)
@@ -490,7 +496,7 @@ hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
 static inline void
 hammer2_mtx_sh(hammer2_mtx_t *p)
 {
-	down_read_nested(&p->lock, p->subclass);
+	down_read(&p->lock);
 	atomic_add_int(&p->refs, 1);
 	hammer2_nofs_enter();
 }
@@ -640,7 +646,7 @@ hammer2_mtx_upgrade_try(hammer2_mtx_t *p)
 		return (1);
 	atomic_long_set(&p->lock.owner, (long)current);
 	rwsem_release(&p->lock.dep_map, _RET_IP_);
-	rwsem_acquire(&p->lock.dep_map, p->subclass, 1, _RET_IP_);
+	rwsem_acquire(&p->lock.dep_map, 0, 1, _RET_IP_);
 	WRITE_ONCE(p->owner, current);
 	return (0);
 }
@@ -733,17 +739,15 @@ hammer2_mtx_sleep(hammer2_lkc_t *c, hammer2_mtx_t *p,
  * buffers live in the block device page cache and complete there.
  */
 /*
- * Linux: the wrapper carries a lockdep nesting level, as the mutex does.
- * A chain's core spinlock is taken bottom-up, child before parent, which
- * upstream's hammer2_chain_lastdrop() states as the rule for these locks
- * and the reverse of the chain lock's own order, so the level a chain's
- * core spinlock is given runs the other way: the deeper the chain, the
- * lower the subclass.  Set beside the chain lock's level in
- * hammer2_vfsops.c; every other spinlock stays at 0.
+ * Linux: a chain's core spinlock is taken bottom-up, child before parent,
+ * which upstream's hammer2_chain_lastdrop() states as the rule for these
+ * locks and the reverse of the chain lock's own order.  Its lockdep class
+ * carries the chain's level, set beside the chain lock's in
+ * hammer2_vfsops.c, so the order is between classes and no subclass is
+ * needed; every other spinlock keeps its call site's class.
  */
 struct hammer2_spin_wrapper {
 	struct rw_semaphore lock;
-	unsigned int subclass;
 };
 
 typedef struct hammer2_spin_wrapper hammer2_spin_t;
@@ -757,13 +761,13 @@ typedef struct hammer2_spin_wrapper hammer2_spin_t;
 static inline void
 hammer2_spin_ex(hammer2_spin_t *p)
 {
-	down_write_nested(&p->lock, p->subclass);
+	down_write(&p->lock);
 }
 
 static inline void
 hammer2_spin_sh(hammer2_spin_t *p)
 {
-	down_read_nested(&p->lock, p->subclass);
+	down_read(&p->lock);
 }
 
 static inline void
