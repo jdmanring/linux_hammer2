@@ -2933,13 +2933,21 @@ hammer2_chain_lockdep_detached(hammer2_mtx_t *p __maybe_unused)
  * chain.  hammer2_inode_create_normal() sets it after hammer2_inode_get()
  * has locked the fresh inode, which recorded no order, so every later
  * acquire nests as the chain's would.
+ *
+ * DEFER(a lock reading is wanted on a tree deeper than eight): the
+ * clamp puts a parent and its child at one level once the tree is
+ * eight deep, and lockdep reports the pair as a recursion and turns
+ * itself off; a real Nix closure is that deep within its second
+ * minute.  Lockdep's other notation, a nest lock held across the
+ * whole descent, is what would replace the levels.
  */
 void
 hammer2_inode_lockdep_nest_under(hammer2_mtx_t *p,
     const hammer2_mtx_t *parent __maybe_unused)
 {
 #ifdef CONFIG_LOCKDEP
-	p->subclass = parent->subclass + 1;
+	p->subclass = min(parent->subclass + 1,
+	    (unsigned int)MAX_LOCKDEP_SUBCLASSES - 2);
 #endif
 }
 

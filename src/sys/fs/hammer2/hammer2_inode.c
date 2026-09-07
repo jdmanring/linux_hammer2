@@ -704,7 +704,7 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	struct inode *inode;
 	struct timespec64 ts;	/* Linux */
 	umode_t ifmt;
-	int vtype;
+	int vtype, ostate;
 
 	KKASSERT(ip);
 	KKASSERT(ip->pmp);
@@ -715,8 +715,20 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	hammer2_assert_inode_meta(ip);
 
 	*vpp = NULL;
+	/*
+	 * Linux: the inode lock is released around the hash lookup, as
+	 * the FreeBSD port releases it around vfs_hash_get().  The lookup
+	 * waits for an inode of the same number that is being evicted,
+	 * and hammer2_evict_inode() takes this lock to disconnect it, so
+	 * a lookup holding the lock and kswapd evicting waited on each
+	 * other for good.  hammer2_iget_set() stores ip->vp with the lock
+	 * released, which is safe because the evicting inode cleared it
+	 * under the lock before the hash let a new one be inserted.
+	 */
+	ostate = hammer2_inode_lock_temp_release(ip);
 	inode = iget5_locked(sb, ip->meta.inum & HAMMER2_DIRHASH_USERMSK,
 	    hammer2_iget_test, hammer2_iget_set, ip);
+	hammer2_inode_lock_temp_restore(ip, ostate);
 	if (inode == NULL)
 		return (ENOMEM);	/* Linux: positive, the VFS negates */
 
@@ -853,7 +865,15 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	} else if (S_ISLNK(inode->i_mode)) {
 		inode->i_op = &hammer2_symlink_iops;	/* Linux */
 		inode->i_mapping->a_ops = &hammer2_file_aops;	/* Linux */
-		inode_nohighmem(inode);	/* Linux */
+		/*
+		 * Linux: inode_nohighmem() is what a symlink's mapping gets
+		 * on every filesystem, and it replaces the mask with GFP_USER,
+		 * which drops __GFP_MOVABLE and the retry bit set above, so
+		 * every symlink target sat in an unmovable 64 KiB folio.
+		 * Clear the one bit the helper exists to clear.
+		 */
+		mapping_set_gfp_mask(inode->i_mapping,
+		    mapping_gfp_mask(inode->i_mapping) & ~__GFP_HIGHMEM);
 		hammer2_mapping_set_block_folios(inode->i_mapping,
 		    HAMMER2_PBUFRADIX);	/* Linux */
 	} else {

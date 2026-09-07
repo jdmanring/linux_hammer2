@@ -1,0 +1,22 @@
+--- a/src/sys/fs/hammer2/hammer2_admin.c
++++ b/src/sys/fs/hammer2/hammer2_admin.c
+@@ -257,7 +257,6 @@
+ 	hammer2_lk_ex(mtx);
+ again:
+ 	if (xop_testset_ipdep(ip, ip->ipdep_idx)) {
+-		pmp->flags |= HAMMER2_PMPF_WAITING;
+ 		hammer2_lkc_sleep(cv, mtx, "h2pmp_xop", 0);
+ 		goto again;
+ 	}
+@@ -276,10 +275,7 @@
+ 
+ 	hammer2_lk_ex(mtx);
+ 	xop_unset_ipdep(ip, ip->ipdep_idx);
+-	if (pmp->flags & HAMMER2_PMPF_WAITING) {
+-		pmp->flags &= ~HAMMER2_PMPF_WAITING;
+-		hammer2_lkc_wakeup(cv);
+-	}
++	hammer2_lkc_wakeup(cv);
+ 	hammer2_lk_unlock(mtx);
+ }
+ 

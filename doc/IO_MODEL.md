@@ -151,8 +151,29 @@ each grab since that mask is the block layer's; the flag keeps the
 allocator reclaiming and compacting and still fails rather than
 invoking the OOM killer. The same tree on the same guest with kmemleak
 disabled reached a million files with no refusal, the module unchanged,
-so the fragmentation is the debug guest's and the order is not a limit
-the IO model has to answer for at this scale.
+so at that scale the fragmentation was the debug guest's.
+
+A real Nix closure, 11.8 GB in 205871 files copied in with `cp -a`,
+is past that scale, and there the attribution does not hold: with
+kmemleak off the guest refused two order-4 grabs in the copy's third
+minute, as it had with kmemleak on. The allocator's own report at
+the refusal says why: the Normal zone was at its low watermark with
+65 MB free and nothing in it at 64 KiB or above in any migrate type,
+three gigabytes of file cache on the inactive list, 250 MB of it dirty
+and under a megabyte of it in writeback, and compaction failing four
+stalls in ten over a run. That is a 4 GiB guest holding a 12 GB write
+stream beside its source's read stream, and it is the same refusal the
+kernel's own large-block filesystems meet: xfs with a 64 KiB block
+pins the same minimum order on its mapping, `__filemap_get_folio()`
+steps the order down only as far as that minimum, and at the minimum
+a costly order without `__GFP_RETRY_MAYFAIL` leaves the slow path
+after one reclaim and compaction pass. The port keeps the retry bit,
+so it tries longer than xfs would before the same answer. Whether the
+answer stands is 0.9's low-memory row. Lowering the dirty limit to
+128 MB so writeback ran ahead of the grab changed nothing; giving the
+guest 8 GiB and changing nothing else took the copy through in 82 s
+with no refusal, so the limit is the guest's memory against the folio
+and not the port's writeback.
 
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential

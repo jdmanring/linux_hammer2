@@ -85,3 +85,37 @@ recurses into indirect blocks rather than returning them, so only a
 damaged image reaches the branch. That is mount time recovery, which is
 exactly when a damaged image turns up, but nothing here has produced one
 that does.
+
+## hammer2_admin-xop-ipdep-wakeup
+
+`ports-hammer2_admin-xop-ipdep-wakeup.patch`, for the three ports only.
+DragonFly has no `ipdep` mechanism: its XOPs run on their own threads,
+and the per-inode dependency wait in `hammer2_admin.c` is the ports'
+own, part of the synchronous XOP design, so there is no DragonFly
+counterpart to patch.
+
+`hammer2_xop_testset_ipdep()` sets `HAMMER2_PMPF_WAITING`, one bit on
+the PFS, before sleeping on a condition variable that is one of several,
+one per dependency index, under that index's lock.
+`hammer2_xop_unset_ipdep()` on any index clears the bit and wakes its
+own condition variable. A retire on index j while a task sleeps on
+index i clears the bit and wakes nobody on i; the retire on i that
+follows finds the bit clear and does not wake either, and the sleeper
+has no timeout. The bit is also written from under different locks, so
+the read-modify-write on `pmp->flags` is itself a race. The patch drops
+the bit and wakes unconditionally, a wakeup on an empty queue costing
+one uncontended lock.
+
+Seen on Linux on 2026-09-06 as a writeback worker asleep in that wait
+with the inode it waited on held by no XOP, while the syncer waited on
+the worker's folios and a `link(2)` retried the four-inode lock behind
+the syncer; `doc/README.status.md` has the record. Linux reaches it
+because writeback runs XOPs on a kernel thread beside the caller's;
+the ports run XOPs on the calling thread, so the three tasks it needs
+are rarer there but nothing rules them out.
+
+Still present at `v1.2.13` in all three ports, read in the local clones
+at the remote head, `hammer2_admin.c:257` and `:279` in FreeBSD's; the
+clones are single-commit snapshots with no history to search, and the
+three repositories have issues disabled and no pull requests, so nothing
+can be concluded from silence there.

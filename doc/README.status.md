@@ -31,9 +31,13 @@ and a file mapping that refused every dirty folio to compaction with a
 warning that sat uncounted in 39 of 62 kept logs of the gate that now
 counts it.
 A write near full is refused now, as the other trees refuse it.
-A million files went in and were counted on both sides, and a large
+A million files went in and were counted on both sides, a large
 file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
-the same guest, both readings taken for 0.9 and recorded below.
+the same guest, and a real Nix closure of two hundred thousand files
+copied in through the write path found five defects a million
+one-line files could not reach and reads back identical beside
+squashfs and erofs on an 8 GiB guest; the three readings are 0.9's
+and recorded below.
 `CHANGELOG.md` is the enumeration; this paragraph names kinds and does
 not carry the count. This file is the one to correct
 rather than to argue with: if a claim here is stale, it is a defect.
@@ -565,7 +569,7 @@ construction rather than re-hashed every run.
 | `hammer2.h` | 1385 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
-| `hammer2_admin.c` | 629 | FreeBSD port, carried byte-for-byte; the xop allocation zone is shimmed |
+| `hammer2_admin.c` | 634 | FreeBSD port, carried with two `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1000 | FreeBSD port, carried byte-for-byte |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1159 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
@@ -574,10 +578,10 @@ construction rather than re-hashed every run.
 | `hammer2_flush.c` | 1348 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1880 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3038 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_inode.c` | 1900 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_vfsops.c` | 3046 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1397 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vnops.c` | 1405 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -1684,9 +1688,14 @@ it is not tested again:
 - `hammer2_chain_unhold()` leaving the mutex held. A build with a
   `WARN_ONCE` on exactly that condition scored zero hits.
 - lockdep subclass exhaustion. `hammer2_chain_lockdep_nest()` clamps to
-  `MAX_LOCKDEP_SUBCLASSES - 2`, and the one unclamped path,
-  `hammer2_inode_lockdep_nest_under()`, reaches at most 7, which is
-  legal.
+  `MAX_LOCKDEP_SUBCLASSES - 2`. The one unclamped path,
+  `hammer2_inode_lockdep_nest_under()`, was read here as reaching at
+  most 7, which was wrong: it adds one to a parent inode's level, and a
+  parent created through the same path carries its own parent's level
+  plus one, so a directory nine deep on the media reached 8 and the
+  Nix closure copy tripped `DEBUG_LOCKS_WARN_ON(subclass >=
+  MAX_LOCKDEP_SUBCLASSES)` on a `setattr` at 99 s. It clamps as the
+  chain path does now.
 - `hammer2_flush_core()` replacing the chain it was given, so a caller
   would unlock the one it started with. It never reassigns `chain`.
 - A lockdep shutdown from something other than a cycle. An unlock
@@ -2009,6 +2018,127 @@ three times through `H2_REPEAT=3`, passed three of three: the create
 took 244, 275 and 250 s, the churn 10 to 11 s, the delete 42 to 45 s,
 and DragonFly counted the deleted tree empty and the snapshot at this
 side's count every time.
+
+## A real closure, and the five defects it found
+
+F6 asks for a real Nix closure of hundreds of thousands of paths read
+at a measured cost beside the same read on squashfs or erofs.
+`script/nix-closure.sh` takes the closure of a store path the host
+already holds, writes it into a squashfs image and an erofs image,
+and has the Linux guest copy it from the squashfs into an empty
+HAMMER2 volume with `cp -a`, sync, unmount, remount, and read all
+three cold with the page cache dropped between readings: a metadata
+walk, a full read, and a hashed read that is also the content check.
+DragonFly then counts the volume and runs its checker. The closure is
+a KDE desktop system, 1978 store paths, 205871 files, 150219 symlinks
+and 65985 directories, 11.8 GB. The guest is the fleet's Linux guest
+at 7.3.0-rc1 with lockdep and kmemleak, 4 GiB and twelve CPUs, the
+volume 48 GiB.
+
+The first run's copy stopped in its first minutes, a worker asleep
+in a link. The second run's copy
+completed, and by the seventh the copy read back identical to its
+source; the harness found five defects on the way, none of which a
+million one-line files in a hundred directories could have reached:
+
+1. **A lost XOP wakeup.** `hammer2_xop_testset_ipdep()` waits for its
+   inode's slot in the per-PFS dependency table on a condition variable
+   per index, but the flag that decides whether a retire wakes anyone,
+   `HAMMER2_PMPF_WAITING`, is one bit for the whole PFS. A retire on
+   one index cleared the bit for a sleeper on another and woke nobody,
+   and a writeback worker slept for good with the copy behind it. The
+   retire now wakes unconditionally; the fix is staged for upstream at
+   `doc/upstream/ports-hammer2_admin-xop-ipdep-wakeup.patch`. Found in
+   the first run; the second run's copy completing is its control.
+2. **Lockdep's depth.** The inode lock's lockdep class is a subclass
+   per directory level, and lockdep has eight. A store path is nine
+   deep. The subclass is now clamped, which puts a parent and its
+   child at one level past that depth, and lockdep reports the pair as
+   a recursion at 78 s and turns itself off. Recorded as a `DEFER` in
+   the ledger below: the replacement is lockdep's nest-lock notation,
+   not more levels, and every lockdep reading past the second minute
+   of a closure run is nothing until it is written.
+3. **`symlink(2)` returned a positive number.** The vnop stored
+   `page_symlink()`'s negative errno and negated it on return, so a
+   symlink whose target write failed went back to userspace as a
+   success code no caller reads as an error. `cp` reported it with
+   whatever errno the last failed call had left, which is why the
+   second run printed `Cannot allocate memory` against files a symlink
+   allocates nothing for. Negated at the call now; the other two sites in the vnops
+   that take a Linux return hand it back unnegated and were right.
+4. **Every symlink target sat in an unmovable folio.**
+   `inode_nohighmem()`, which every filesystem calls on a symlink
+   inode, replaces the mapping's whole allocation mask with
+   `GFP_USER`, which drops `__GFP_MOVABLE` and the retry bit the port
+   sets. 150219 symlinks were 150219 unmovable 64 KiB folios the
+   allocator could not compact around. The port now clears the one
+   bit the helper exists to clear.
+5. **A lookup and an eviction waited on each other.**
+   `hammer2_igetv()` held the inode lock across `iget5_locked()`, which
+   waits for an older VFS inode of the same number to finish being
+   freed, and `hammer2_evict_inode()` freeing it under kswapd wanted
+   the same lock to disconnect it. `find` sat in
+   `__wait_on_freeing_inode` and kswapd in `down_write`, the hung-task
+   report naming each as the other's owner. The lock is released
+   around the lookup and restored after it, which is what the FreeBSD
+   port does around `vfs_hash_get()`; the field the lookup's set
+   callback writes is safe with the lock released because the
+   evicting inode cleared it under the lock before the hash let a new
+   one in.
+
+The fourth run, every fix in, on the guest as it is; the fifth with
+kmemleak turned off before the module loaded (`H2_NC_GUESTPRE`); and
+the seventh with the guest given 8 GiB, whose squashfs and erofs
+columns are shown (at 4 GiB they read 58 and 40 s hashed):
+
+| | HAMMER2, 4 GiB, kmemleak on | HAMMER2, 4 GiB, kmemleak off | HAMMER2, 8 GiB | squashfs, 8 GiB | erofs, 8 GiB |
+|---|---|---|---|---|---|
+| copy in, `cp -a` | 147 s | 113 s | 82 s | | |
+| writes refused `ENOMEM` | 7 | 3 | 0 | | |
+| cold walk, 422075 entries | 13 s | 9 s | 6 s | 3 s | 3 s |
+| cold read, 11.8 GB | 37 s | 22 s | 15 s | 11 s | 6 s |
+| cold hashed read, 205871 files | 64 s | 43 s | 39 s | 44 s | 27 s |
+| hash list | differs by 7 | differs by 3 | `708a8df3` | `708a8df3` | `708a8df3` |
+| symlinks, list hash | 150219, `4c2f5e2e` | 150219, `4c2f5e2e` | 150219, `4c2f5e2e` | 150219, `4c2f5e2e` | 150219, `4c2f5e2e` |
+| hard-linked files | 83634 | 83636 | 83636 | 83636 | 83636 |
+
+The symlink list is identical on every side. At 4 GiB each copy is
+short by the writes `cp` was refused, and its hash list differs by
+those files alone: each an order-4 folio the allocator could not find
+with `__GFP_RETRY_MAYFAIL` set, between 118 and 166 s, now reported
+under the right errno.
+That is the refusal the million-file tree met at seven hundred
+thousand files and attributed to the debug guest's kmemleak, and the
+same control here does not clear it: the fifth run, kmemleak off
+before the module loaded and the slab a third smaller for it, refused
+the same order at 128 and 160 s. The allocator's report at the refusal
+is in `IO_MODEL.md`: the Normal zone at its low watermark with nothing
+free at 64 KiB or above in any migrate type, three gigabytes of file
+cache on the inactive list with a quarter gigabyte dirty and under a
+megabyte in writeback, compaction failing four stalls in ten. A 4 GiB
+guest holding a 12 GB write stream beside its source's read stream is
+where the kernel's own 64 KiB-block xfs meets the same refusal, and
+the port retries longer than xfs before giving the same answer. The
+reading that decides whether the answer stands is 0.9's low-memory
+row. The sixth run lowered the dirty limit to 128 MB so writeback
+would run ahead of the grab, and was refused twice more in a faster
+copy of 99 s, once on a symlink's target, which `cp` now reports as
+the failed link it is and which leaves a dirent with an empty target,
+as the FreeBSD port leaves one when its target write fails. The
+seventh run gave the guest 8 GiB and changed nothing else, and the
+copy completed in 82 s with no refusal and no warning, every hash,
+symlink and hard link at the source's; DragonFly counted and checked
+it clean. So the refusal is the guest's memory against the 64 KiB
+folio, and the design stands at 8 GiB for a 12 GB stream. What the
+port owes below that is 0.9's low-memory row: a write that cannot
+find a 64 KiB folio is refused rather than retried into the OOM
+killer, which is what the kernel's own large-block filesystems do,
+and the number a 4 GiB guest can hold is the one above.
+
+DragonFly counted the fourth run's volume at the source's numbers,
+205871 files and 150219 symlinks in 13 s, since a refused write leaves
+its file, and its checker was clean in 87 s; the host's checker was
+clean after each side and refused the header-byte control.
 
 ## One large file, and what the BSD buffer cache gave for free
 
@@ -2357,6 +2487,7 @@ against the source is the same shape as an empty one.
 | where | marker, verbatim | what is deferred |
 |---|---|---|
 | `hammer2_os.h`, at `hpanic` | `DEFER(every hpanic site has an error its caller propagates)` | `hpanic()` calls `panic()` where Linux would mark the filesystem dead and refuse further I/O. The super_block to mark has existed since 0.4; the fifty-four sites in seven files are written as not returning, and each needs a return path before the macro can stop panicking. Reasoning in `README.porting.md` |
+| `hammer2_vfsops.c`, at `hammer2_inode_lockdep_nest_under` | `DEFER(a lock reading is wanted on a tree deeper than eight)` | lockdep has eight subclasses and the tree's levels are its directory depth. Past that, parent and child share a level and are reported as a recursion, after which lockdep is off for the rest of the run; a real Nix closure reaches it in its second minute. A nest lock held across the descent is lockdep's notation for an unbounded chain and is the replacement |
 | `hammer2_os.h`, at the print macros | `DEFER(a message is seen interleaved in a real mount)` | `pr_cont` is not the right mapping at both kinds of site; the table above measures the trade. The fix is a line buffer, which is a core edit |
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
@@ -2405,7 +2536,7 @@ against the FreeBSD port at
 | `hammer2_vnops.c` | 2 | 0 | 2 |
 | `hammer2.h` | 10 | 3 | 7 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
-| `hammer2_admin.c` | 0 | 0 | 0 |
+| `hammer2_admin.c` | 2 | 0 | 2 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
 | `hammer2_ioctl.h` | 0 | 0 | 0 |
 | `hammer2_mount.h` | 0 | 0 | 0 |
@@ -2413,8 +2544,8 @@ against the FreeBSD port at
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and sixty-four are this port's, the right-hand column
-summed, and they fall in fourteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, one in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
+One hundred and sixty-six are this port's, the right-hand column
+summed, and they fall in fifteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_admin.c`, one in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the

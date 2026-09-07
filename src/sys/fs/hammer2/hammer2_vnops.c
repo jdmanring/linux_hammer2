@@ -327,7 +327,15 @@ hammer2_vop_ncreate(struct mnt_idmap *idmap, struct inode *dir,
 	}
 
 	if (error == 0 && target != NULL) {
-		error = page_symlink(inode, target, strlen(target) + 1);
+		/*
+		 * Linux: page_symlink() returns the negative errno the VFS
+		 * uses and the return below negates a positive one, so its
+		 * failure went back to symlink(2) as a positive number, which
+		 * no caller reads as an error.  cp reported it with whatever
+		 * errno the last failed call had left.  The dirent stays, as
+		 * it does on FreeBSD when hammer2_write_file() fails there.
+		 */
+		error = -page_symlink(inode, target, strlen(target) + 1);
 		if (error) {
 			iput(inode);
 			inode = NULL;

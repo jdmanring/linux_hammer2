@@ -257,7 +257,15 @@ hammer2_xop_testset_ipdep(hammer2_inode_t *ip)
 	hammer2_lk_ex(mtx);
 again:
 	if (xop_testset_ipdep(ip, ip->ipdep_idx)) {
-		pmp->flags |= HAMMER2_PMPF_WAITING;
+		/*
+		 * XXX Linux: HAMMER2_PMPF_WAITING is not set here.  The flag
+		 * is one bit for the whole PFS and the condition variable is
+		 * one per index, so a retire on another index cleared it on
+		 * behalf of a sleeper it did not wake, and the sleeper's own
+		 * retire then found it clear and woke nobody.  Seen once on
+		 * a writeback worker, asleep for good with the inode it
+		 * waited on held by no XOP.  The retire wakes unconditionally.
+		 */
 		hammer2_lkc_sleep(cv, mtx, "h2pmp_xop", 0);
 		goto again;
 	}
@@ -276,10 +284,7 @@ hammer2_xop_unset_ipdep(hammer2_inode_t *ip)
 
 	hammer2_lk_ex(mtx);
 	xop_unset_ipdep(ip, ip->ipdep_idx);
-	if (pmp->flags & HAMMER2_PMPF_WAITING) {
-		pmp->flags &= ~HAMMER2_PMPF_WAITING;
-		hammer2_lkc_wakeup(cv);
-	}
+	hammer2_lkc_wakeup(cv); /* XXX Linux: unconditional, see testset */
 	hammer2_lk_unlock(mtx);
 }
 
