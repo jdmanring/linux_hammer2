@@ -439,8 +439,10 @@ and `W=2` prints three, none in this tree's code: `-Wshadow` on
 `wait_event_interruptible_timeout()`, which the kernel marks as an
 explicit shadow, and `-Wmaybe-uninitialized` on `child` in
 `RB_INSERT_COLOR` of the vendored FreeBSD `tree.h`, which sets `child`
-on every path that reads it. sparse has not been run; the machine does
-not carry it.
+on every path that reads it. sparse 0.6.5 over the same build reported
+one line, the ioctl's copy-out of the volume list to a user pointer
+carried in a header the four trees share, and the port's own line
+names the address space now; the second run reports nothing.
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module

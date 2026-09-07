@@ -1038,8 +1038,13 @@ hammer2_ioctl_volume_list(hammer2_inode_t *ip, void *data)
 		bcopy(vol->dev->path, entry.path, sizeof(entry.path));
 		entry.offset = vol->offset;
 		entry.size = vol->size;
-		error = copy_to_user(&vollist->volumes[cnt], &entry,
-		    sizeof(entry)) ? EFAULT : 0;	/* XXX Linux: was copyout */
+		/*
+		 * XXX Linux: was copyout.  volumes is a user pointer carried
+		 * in a header the four trees share, so the address space is
+		 * named here rather than there.
+		 */
+		error = copy_to_user((void __user *)&vollist->volumes[cnt],
+		    &entry, sizeof(entry)) ? EFAULT : 0;
 		if (error)
 			return (error);
 		cnt++;
