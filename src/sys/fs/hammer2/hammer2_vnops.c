@@ -1270,7 +1270,7 @@ hammer2_write_begin(const struct kiocb *iocb,
 {
 	struct inode *inode = mapping->host;
 	struct folio *folio;
-	pgoff_t index = pos >> PAGE_SHIFT;
+	pgoff_t index = pos >> PAGE_SHIFT, bindex;
 	int error;
 
 	/*
@@ -1285,9 +1285,33 @@ hammer2_write_begin(const struct kiocb *iocb,
 	 * block around it.  What the helper adds to the flags is the
 	 * uncached one when the iocb carries it.
 	 */
-	folio = write_begin_get_folio(iocb, mapping,
-	    index & ~(pgoff_t)((HAMMER2_PBUFSIZE >> PAGE_SHIFT) - 1),
-	    HAMMER2_PBUFSIZE);
+	/*
+	 * The page cache asks for any order above the mapping's minimum
+	 * with __GFP_NORETRY, so under fragmentation the block folio fails
+	 * at once and the write takes pages.  The write XOP turns each page
+	 * into a whole block, and each after the first into a fresh one by
+	 * the core's dedup rule: sixteen blocks of media for one block of
+	 * data, none of it counted by the reserve, which is what lost four
+	 * files of a fill.  So the block folio is allocated here with the
+	 * mapping's own mask, which retries reclaim and compaction before
+	 * failing, and the page cache is asked only when that fails or a
+	 * folio already sits in the block.
+	 */
+	bindex = index & ~(pgoff_t)((HAMMER2_PBUFSIZE >> PAGE_SHIFT) - 1);
+	folio = filemap_alloc_folio(mapping_gfp_mask(mapping),
+	    HAMMER2_PBUFRADIX - PAGE_SHIFT, NULL);
+	if (folio) {
+		if (iocb && (iocb->ki_flags & IOCB_DONTCACHE))
+			__folio_set_dropbehind(folio);
+		if (filemap_add_folio(mapping, folio, bindex,
+		    mapping_gfp_mask(mapping)) != 0) {
+			folio_put(folio);
+			folio = NULL;
+		}
+	}
+	if (folio == NULL)
+		folio = write_begin_get_folio(iocb, mapping, bindex,
+		    HAMMER2_PBUFSIZE);
 	if (!IS_ERR(folio) && folio_next_index(folio) <= index) {
 		folio_unlock(folio);
 		folio_put(folio);

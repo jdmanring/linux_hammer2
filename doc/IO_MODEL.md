@@ -218,6 +218,29 @@ keeps the change to the write XOP, the two decompressors, one order
 pin and one grab. `pr_debug` names each assembled block, so the count
 is read with the module's `dyndbg=+p` parameter.
 
+What the smaller folio costs, read 2026-09-07 from the full-volume
+gate once the freemap counted what it handed out: the page cache asks
+for any order above a mapping's minimum with `__GFP_NORETRY`, so the
+mapping's retry flag never reached the block-sized request, and under
+the fragmentation a 2 GiB fill leaves in a 4 GiB guest the write took
+pages, one folio of 4 KiB after another, for whole blocks of some
+files. Each page's writeback wrote the whole block, and each after the
+first took fresh media, since the core registers a data block for
+dedup as its bytes go out and will not overwrite a registered block:
+sixteen blocks of media for one block of data, the earlier fifteen
+garbage until bulkfree. The reserve counts dirty bytes, so none of it
+was counted, and the one fill in thirty-three that lost four files was
+a final sync with enough such blocks to eat the root slack: on eight
+instrumented fills the sync allocated 15 to 360 data blocks it had
+not counted, one for every rewritten block the debug log named, all
+at offsets written back a page at a time while the file grew.
+Overwriting the block in place is not open to the port, since another
+chain can have deduplicated to it in the meantime. `hammer2_write_begin()`
+now allocates the block folio itself with the mapping's mask, which
+retries reclaim and compaction before it fails, and asks the page
+cache only after that or when a folio already sits in the block; the
+assembled block stays as the fallback for those.
+
 Measured 2026-09-07 with `script/nix-closure.sh` on the 4 GiB guest
 with kmemleak off and four writers, the configuration that refused
 writes before: the closure went in at 66 s to ext4's 70 beside it,

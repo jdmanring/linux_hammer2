@@ -1362,15 +1362,19 @@ out:
  * here, as upstream closes it.
  *
  * XXX Linux: the core writes a whole logical block, and the folio is
- * usually one, the file mapping asking for HAMMER2_PBUFRADIX order first.
- * Under memory pressure the page cache hands out a smaller folio rather
- * than none, and then the block is assembled around it: the block's
- * current bytes decoded out of the chain, under the parent lock this
- * write holds, and the folio laid over them.  A sibling folio of the
- * same block, dirty in the cache, is written by its own XOP after this
- * one and reads this one's bytes back out of the chain, since XOPs run
- * in order on the calling thread.  hammer2_writepages() starts it, one
- * folio per XOP, and reads back what it fed the mapping's error.
+ * usually one, the write entry allocating it at HAMMER2_PBUFRADIX order
+ * with the mapping's retrying mask before the page cache is asked.
+ * When that fails, or a read left a smaller folio in the block, the
+ * block is assembled around the folio: the block's current bytes
+ * decoded out of the chain, under the parent lock this write holds,
+ * and the folio laid over them.  A sibling folio of the same block,
+ * dirty in the cache, is written by its own XOP after this one and
+ * reads this one's bytes back out of the chain, since XOPs run in
+ * order on the calling thread; it takes fresh media, since the block
+ * was registered for dedup as its bytes went out, which is why the
+ * write entry tries for the whole block first.  hammer2_writepages()
+ * starts it, one folio per XOP, and reads back what it fed the
+ * mapping's error.
  */
 void
 hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
