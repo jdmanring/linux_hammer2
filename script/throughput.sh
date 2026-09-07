@@ -155,11 +155,22 @@ mount -t ext4 /dev/vdc /mnt/e4; mount -t btrfs /dev/vdd /mnt/bt
 # in the guest and warm on the host, which is the driver's own cost.
 for fs in h2 e4 bt; do dd if=/mnt/\$fs/big of=/dev/null bs=1M status=none; done
 sync; echo 3 > /proc/sys/vm/drop_caches
+# The port's ->read_folio decodes a whole block for whatever folio it is
+# handed, so the number of calls a cold read makes is the number of
+# folios the page cache built for it: one per block is the floor, and
+# more says smaller folios each cost a block's decode.  Counted with the
+# function profiler, which the kernel of record carries, and printed as
+# unavailable where the guest kernel does not.
+T=/sys/kernel/tracing
+prof_start() { [ -d \$T ] || return 0; echo hammer2_read_folio > \$T/set_ftrace_filter; echo 0 > \$T/function_profile_enabled; echo 1 > \$T/function_profile_enabled; }
+prof_count() { [ -d \$T ] || { echo unavailable; return 0; }; echo 0 > \$T/function_profile_enabled; awk '/hammer2_read_folio/ {n+=\$2} END{print n+0}' \$T/trace_stat/function*; }
 for fs in h2 e4 bt; do
 	for bs in 1M 64k; do
 		echo 3 > /proc/sys/vm/drop_caches
+		[ \$fs = h2 ] && prof_start
 		t0=\$(now); dd if=/mnt/\$fs/big of=/dev/null bs=\$bs status=none; t1=\$(now)
 		echo "\$fs read \$bs \$(rate $MIB \$t0 \$t1) MiB/s"
+		[ \$fs = h2 ] && echo "h2 read \$bs read_folio calls \$(prof_count)"
 	done
 done
 echo "hammer2 md5 \$(md5sum < /mnt/h2/big | cut -c1-32)"
