@@ -186,3 +186,16 @@ leak fixed in `bfcedfb4`, which is a queued dmsg message in
 `kdmsg_iocom_uninit()` and not this. Nothing was searched for by this
 defect's own terms on DragonFly's tracker, so it is not claimed to be
 unreported there; the ports have no tracker.
+
+Tried on DragonFly 6.4-RELEASE on 2026-09-07, on a 2 GiB volume with
+four writers reading `/dev/random` until refused: 119 files kept, the
+volume 98% used, unmount clean, remount with the same 119 files,
+`fsck_hammer2` clean, and nothing in the kernel log. That is not a
+reproduction and is not evidence either way. The defect needs the
+unmount's final sync to fail for want of a block, and a real fill
+leaves the reserve the sync needs; the Linux reproduction had to make
+the allocator refuse on a call count to reach it. The release kernel
+there is also built without `INVARIANTS`, so a chain left allocated at
+unmount would not be reported. A DragonFly kernel with `INVARIANTS`
+and an allocator that can be told to refuse is what the reproduction
+takes, and neither exists on the fleet.
