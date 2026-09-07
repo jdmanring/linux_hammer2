@@ -247,7 +247,10 @@ of the failed grabs, printed before the buffer took over and rate
 limited from the 179, which the grab now carries `__GFP_NOWARN`
 against, as the page cache's own step-down loop does for the orders it
 falls through. Before the buffer the same run lost 24 files to `EIO`
-in the collection's reader. What the row still lacks is a run of the
+in the collection's reader. The run after that, on the committed
+build with the warning silenced, ended with the harness's exit 0: 285
+buffers, 1579 assembled blocks, no kernel warning, the copy in at 74 s
+to ext4's 84 under a host load near twenty. What the row still lacks is a run of the
 same thing on a guest smaller than 4 GiB, which is where the two
 fallbacks would be exercised in earnest rather than a few hundred
 times in a twelve gigabyte stream.
