@@ -16,6 +16,7 @@ FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 IMG=${H2_PFS_IMAGE:-$FIXDIR/pfs-domains.img}
 ROOT=${H2_PFS_ROOT:-ROOT}
 DOMAINS=${H2_PFS_DOMAINS:-"SYSTEM STORE CACHE"}
+SNAP=${H2_PFS_SNAP:-SNAP1}	# taken of the first domain, written into here, read on both sides
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 DFLY=${H2_DFLY_GUEST:-dragonflybsd642}
@@ -114,6 +115,20 @@ for d in $DOMAINS; do
 	cd /
 done
 echo "mounted by label \$mounted"
+# A snapshot is a PFS root and mounts read-write by format. It is written
+# into here, and the PFS it was taken of must not see the write.
+first=${DOMAINS%% *}; hammer2 snapshot /mnt/\$first $SNAP >/dev/null 2>&1; echo "snapshot exit \$?"
+mkdir -p /mnt/$SNAP
+if mount -t hammer2 \$dev@$SNAP /mnt/$SNAP; then
+	cd /mnt/$SNAP
+	echo "written in the snapshot" > tree/f0; echo "new in the snapshot" > tree/new
+	find tree -type f | sort | xargs md5sum > manifest.md5
+	echo "wrote $SNAP \$(wc -l < manifest.md5) files"
+	cd /; umount /mnt/$SNAP; echo "snapshot umount exit \$?"
+	grep -q "^\$first 0\$" /mnt/\$first/tree/f0 && echo "live f0 unchanged after the snapshot write"
+else
+	echo "snapshot mount failed"
+fi
 sync
 for d in $DOMAINS; do umount /mnt/\$d 2>/dev/null; done
 umount /mnt/root; echo "umount exit \$?"
@@ -133,7 +148,7 @@ for d in $DOMAINS; do
 	printf '%s\n' "$out" | grep -q "^pfs-list on linux: .*\b$d\b" || { echo "  FAIL  $d missing from pfs-list here"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | grep -q "^wrote $d [1-9][0-9]* files" || { echo "  FAIL  nothing written in $d"; fail=$((fail + 1)); }
 done
-for want in "^umount exit 0$" "^rmmod exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
+for want in "^snapshot exit 0$" "^wrote $SNAP 2[0-9] files$" "^snapshot umount exit 0$" "^live f0 unchanged" "^umount exit 0$" "^rmmod exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
@@ -142,7 +157,7 @@ fsck_control "$IMG" || fail=$((fail + 1))
 # 2. DragonFly mounts each by label and checks this side's manifests.
 cat > "$W/dfly.sh" <<GUEST
 listed=
-for d in $DOMAINS; do
+for d in $DOMAINS $SNAP; do
 	mkdir -p /mnt/\$d
 	mount_hammer2 /dev/vbd1@\$d /mnt/\$d || { echo "mount by label \$d failed"; continue; }
 	# pfs-list wants a mount to route through, so it runs on the first.
@@ -152,6 +167,11 @@ for d in $DOMAINS; do
 	echo "dragonfly checked \$d \$n files, \$bad mismatches"
 	cd /; umount /mnt/\$d
 done
+first=${DOMAINS%% *}
+mount_hammer2 /dev/vbd1@\$first /mnt/\$first && mount_hammer2 /dev/vbd1@$SNAP /mnt/$SNAP && {
+	cmp -s /mnt/\$first/tree/f0 /mnt/$SNAP/tree/f0 || echo "dragonfly reads the snapshot's f0 apart from the live one"
+	[ -e /mnt/\$first/tree/new ] || echo "dragonfly finds no new file in the live pfs"
+	umount /mnt/$SNAP; umount /mnt/\$first; }
 fsck_hammer2 /dev/vbd1 >/dev/null 2>&1 && echo "dragonfly fsck clean"
 GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
@@ -160,14 +180,17 @@ out=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
 [ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
-for d in $DOMAINS; do
+for d in $DOMAINS $SNAP; do
 	printf '%s\n' "$out" | grep -q "^pfs-list on dragonfly: .*\b$d\b" || { echo "  FAIL  $d missing from pfs-list on DragonFly"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | grep -q "^dragonfly checked $d [1-9][0-9]* files, 0 mismatches" || { echo "  FAIL  $d did not verify on DragonFly"; fail=$((fail + 1)); }
+done
+for want in "reads the snapshot's f0 apart" "finds no new file in the live"; do
+	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  DragonFly did not report: $want"; fail=$((fail + 1)); }
 done
 printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || { echo "  FAIL  DragonFly's checker"; fail=$((fail + 1)); }
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
-echo "pfs: $ndom PFS roots made here, mounted by label on both sides, $fail failure(s)"
+echo "pfs: $ndom PFS roots made here and a snapshot written into, mounted by label on both sides, $fail failure(s)"
 [ $fail = 0 ]

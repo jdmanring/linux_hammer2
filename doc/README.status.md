@@ -1529,6 +1529,15 @@ domains, three roots made here and 21 files checked by DragonFly in
 each, 0 mismatches; and the fuzzer, 100 images on seed 7, 76 mounted
 and 24 refused, 0 with a kernel report, 0 hung.
 
+The PFS domains run gained a written snapshot on `fde07ba`, the same
+day: a snapshot of `SYSTEM` taken here, mounted read-write by label,
+one file changed in it and one added, 22 files in its manifest, the
+live root's file unchanged after; DragonFly checked all four
+manifests with 0 mismatches, read the changed file apart from the
+live root's and found the added file absent from the live root, its
+checker clean, 0 failures, lockdep intact and no kernel report. That
+run is what the capability declaration's snapshot rows stand on.
+
 The gate's first run under its own name turned up what every run before
 it had carried uncounted. Its kmsg capture held a warning from the
 compaction daemon, `hammer2_file_aops does not implement

@@ -911,8 +911,16 @@ own, writes a tree and a manifest in each and unmounts; DragonFly
 mounts each by label, checks every manifest with its own `md5`, lists
 the PFSes from a mounted one and runs its checker; the host's checker
 runs after each side with its negative control. `H2_PFS_DOMAINS`
-names the roots. f7 covered PFSes DragonFly made; this covers PFSes
-this port made, which nothing had mounted on DragonFly before.
+names the roots. Between the writes and the unmount the Linux guest
+takes a snapshot of the first root, mounts the snapshot read-write by
+its label, changes one file in it and adds another, and reads the
+live root's file back unchanged; DragonFly then checks the snapshot's
+manifest as it checks the others, and with the live root and the
+snapshot mounted side by side reports the changed file reading apart
+and the added file absent from the live root. `H2_PFS_SNAP` names the
+snapshot. f7 covered PFSes DragonFly made; this covers PFSes this port
+made, which nothing had mounted on DragonFly before, and a snapshot
+written into, which the capability declaration's snapshot rows stand on.
 
 `script/million-tree.sh` is the first of 0.9's criteria that needs
 only the fleet. The host formats an 8 GiB image; the Linux guest
