@@ -176,6 +176,27 @@ with no refusal once and with one refusal the next time, so the limit
 is the guest's memory against the folio and not the port's writeback,
 and it is a rate that falls with memory rather than a line.
 
+What removing the refusal costs, read from the two strategy XOPs on
+2026-09-06. The read side already takes a folio smaller than the block:
+`hammer2_xop_strategy_read()` copies from an offset inside the chain's
+block and every decompressor takes that offset, since a file folio was
+one page before the order was pinned. The write side does not:
+`hammer2_xop_strategy_write()` copies one whole logical block out of
+the folio and refuses a smaller one with `EIO`, because the core's
+`hammer2_write_file_core()` writes a block and a smaller folio would
+have it write zeros over the rest. Letting the file mapping's order
+range down to a page therefore means assembling the block before the
+write: every folio the cache holds for that block's range copied in,
+dirty or clean, and only the parts the cache does not hold read from
+the media, since reading the media for a range another dirty folio
+covers would write that folio's older contents over its newer ones.
+Each block's writeback then ends writeback on every dirty folio in it,
+and truncate, holes and the compressed paths each meet a block that is
+part cache and part media. No mainline filesystem above page size does
+this; xfs pins the minimum order instead, which is what this port does.
+That is the shape and the hazard of 0.9's low-memory row, and it is a
+design change to this document, not a patch.
+
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential
 read of a large file to 353 MiB/s on a guest where btrfs read at 507.
