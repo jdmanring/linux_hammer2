@@ -182,12 +182,19 @@ dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
 echo "  built from $built, a $MIB MiB file on a ${vol} MiB volume, ext4 beside it"
+# The timed reads are cold in the guest and warm on the host, so the host
+# is part of the reading: its load and its free memory are printed with
+# the numbers, and the ext4 read below is the control, memcpy from the
+# host's cache when the cache is warm and the host's disk when it is not.
+echo "  host    load $(cut -d' ' -f1-3 /proc/loadavg), MemAvailable $(awk '/MemAvailable/ {printf "%d", $2/1048576}' /proc/meminfo) GiB"
 boot "$GUEST" "$GUEST_SSH" "$EXT4" "$BTRFS" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$W/linux.sh" "$GUEST_SSH:/tmp/" || { echo "throughput: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
 out=$($RUN "$GUEST_SSH" 'sh /tmp/linux.sh' 2>&1); st=$?
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 down "$GUEST" "$GUEST_SSH"
 [ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
+e4=$(printf '%s\n' "$out" | sed -n 's/^e4 read 1M \([0-9]*\) MiB.*/\1/p')
+[ -n "$e4" ] && [ "$e4" -lt 2000 ] && echo "  note  ext4 read $e4 MiB/s: the host's cache was cold, so every read above is the host's disk and compares only with a run that says the same"
 src=$(printf '%s\n' "$out" | sed -n 's/^source .* md5 //p')
 got=$(printf '%s\n' "$out" | sed -n 's/^hammer2 md5 //p')
 if [ -n "$src" ] && [ "$src" = "$got" ]; then
