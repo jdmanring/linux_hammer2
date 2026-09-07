@@ -300,11 +300,11 @@ typedef struct hammer2_mtx hammer2_mtx_t;
 	lock_acquire_shared_recursive(&(p)->dep_map, 0, 0, NULL, _RET_IP_)
 #define hammer2_mtx_release(p)	lock_release(&(p)->dep_map, _RET_IP_)
 #else
-#define hammer2_mtx_dep_init(p, s, k)		do { (void)(k); } while (0)
-#define hammer2_mtx_acquire(p, sub, try)	do {} while (0)
-#define hammer2_mtx_acquire_read(p, try)	do {} while (0)
-#define hammer2_mtx_acquire_read_again(p)	do {} while (0)
-#define hammer2_mtx_release(p)			do {} while (0)
+#define hammer2_mtx_dep_init(p, s, k)		((void)(p), (void)(s), (void)(k))
+#define hammer2_mtx_acquire(p, sub, try)	((void)(p), (void)(sub), (void)(try))
+#define hammer2_mtx_acquire_read(p, try)	((void)(p), (void)(try))
+#define hammer2_mtx_acquire_read_again(p)	((void)(p))
+#define hammer2_mtx_release(p)			((void)(p))
 #endif
 
 static inline void
@@ -497,8 +497,8 @@ hammer2_mtx_islocked(hammer2_mtx_t *p)
 static inline void
 hammer2_mtx_wake(hammer2_mtx_t *p)
 {
-	smp_mb();
-	if (waitqueue_active(&p->wq))
+	smp_mb();	/* the releasing store before the queue read */
+	if (waitqueue_active(&p->wq))	/* paired with prepare_to_wait() */
 		wake_up_all(&p->wq);
 }
 
