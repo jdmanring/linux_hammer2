@@ -343,6 +343,14 @@ type and a key and does not fit on one line. Nothing else moved with
 it, and the unmount report of the four allocation counters moved it once
 more, for the same reason and with the same result.
 
+The write path assembling a block around a folio smaller than it moved
+three rows and the total by one, 1,111 to 1,110: the two decompressors
+and the block decoder they now share put four BSD continuation lines
+where there were two, and the decompressors returning a length rather
+than filling a folio took three errno-sign returns away, two `EIO` and
+one `ENOMEM`. Nothing was fixed rather than baselined and no category
+is new.
+
 One new category is baselined rather than spelled away, which the rule
 above otherwise argues against: two uses of `%px`, the unhashed pointer.
 `%p` hashes, and the whole point of the two prints carrying it is to be

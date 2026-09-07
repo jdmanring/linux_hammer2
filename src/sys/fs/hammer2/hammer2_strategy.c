@@ -183,21 +183,22 @@ hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch __maybe_unused,
  * rather than a folio full of zeroes that every later reader would take as
  * the file's contents.
  *
- * The folio is the whole block: hammer2_igetv() sets the file mapping's
- * minimum folio order to the block's, so one read_folio and one
- * decompression serve a block, as one logical buffer does upstream.
- * Before that a page-sized folio decompressed the same block once per
- * page, forty-three reads of a 176000-byte file where there are now three.
+ * A folio is usually the whole block: hammer2_igetv() sets the file
+ * mapping's largest folio order to the block's and asks for it first, so
+ * one read_folio and one decompression serve a block, as one logical
+ * buffer does upstream.  Under memory pressure a folio can be one page,
+ * and then the block is decompressed once per folio, which is the cost
+ * of writing at all rather than refusing: forty-three reads of a
+ * 176000-byte file where a block folio needs three.
+ *
+ * The block is decoded into buf, HAMMER2_PBUFSIZE bytes the caller owns,
+ * and its logical length returned through dsizep.
  */
 static int
-hammer2_decompress_lz4(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
-    const char *data, hammer2_off_t skip)
+hammer2_decompress_lz4(hammer2_chain_t *focus, const char *data, char *buf,
+    size_t *dsizep)
 {
-	struct folio *folio = xop->folio;
-	size_t fsize = folio_size(folio);
-	char *buf;
 	int csize, dsize;
-	size_t len;
 
 	if (focus->bytes <= sizeof(int)) {
 		WARN_ONCE(1, "hammer2: lz4 block of %u bytes\n", focus->bytes);
@@ -210,30 +211,14 @@ hammer2_decompress_lz4(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
 		return (EIO);
 	}
 
-	buf = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
-	if (buf == NULL)
-		return (ENOMEM);
-
 	dsize = LZ4_decompress_safe(data + sizeof(int), buf, csize,
 	    HAMMER2_PBUFSIZE);
 	if (dsize < 0) {
-		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
-		WARN_ONCE(1, "hammer2: lz4 decompression failed at %lld\n",
-		    (long long)xop->lbase);
+		WARN_ONCE(1, "hammer2: lz4 decompression failed at %llx\n",
+		    (unsigned long long)focus->bref.key);
 		return (EIO);
 	}
-
-	if (skip >= (hammer2_off_t)dsize) {
-		folio_zero_range(folio, 0, fsize);
-	} else {
-		len = dsize - skip;
-		if (len > fsize)
-			len = fsize;
-		memcpy_to_folio(folio, 0, buf + skip, len);
-		if (len < fsize)
-			folio_zero_range(folio, len, fsize - len);
-	}
-	hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+	*dsizep = dsize;
 
 	return (0);
 }
@@ -255,34 +240,23 @@ hammer2_decompress_lz4(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
  * LZ4: the block is the stream and avail_in is the whole of it, which is
  * upstream's reading too.
  *
- * The workspace and the 64 KiB buffer are allocated once per block now
- * that a folio is a block, as the LZ4 path above says.
+ * The workspace is allocated once per folio, as the LZ4 path above says;
+ * the block buffer is the caller's.
  */
 static int
-hammer2_decompress_zlib(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
-    const char *data, hammer2_off_t skip)
+hammer2_decompress_zlib(hammer2_chain_t *focus, const char *data, char *buf,
+    size_t *dsizep)
 {
-	struct folio *folio = xop->folio;
-	size_t fsize = folio_size(folio);
 	struct z_stream_s strm;
-	char *buf;
-	size_t len;
-	int dsize, ret;
+	int ret;
 
 	memset(&strm, 0, sizeof(strm));
 	strm.workspace = vmalloc(zlib_inflate_workspacesize());	/* Linux */
 	if (strm.workspace == NULL)
 		return (ENOMEM);
 
-	buf = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
-	if (buf == NULL) {
-		vfree(strm.workspace);
-		return (ENOMEM);
-	}
-
 	ret = zlib_inflateInit(&strm);
 	if (ret != Z_OK) {
-		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
 		vfree(strm.workspace);
 		WARN_ONCE(1, "hammer2: zlib init returned %d\n", ret);
 		return (EIO);
@@ -300,7 +274,7 @@ hammer2_decompress_zlib(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
 	strm.avail_out = HAMMER2_PBUFSIZE;
 
 	ret = zlib_inflate(&strm, Z_FINISH);
-	dsize = HAMMER2_PBUFSIZE - strm.avail_out;
+	*dsizep = HAMMER2_PBUFSIZE - strm.avail_out;
 	zlib_inflateEnd(&strm);
 	vfree(strm.workspace);
 
@@ -311,25 +285,84 @@ hammer2_decompress_zlib(hammer2_xop_strategy_t *xop, hammer2_chain_t *focus,
 	 * of zeroes.
 	 */
 	if (ret != Z_STREAM_END) {
-		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
-		WARN_ONCE(1, "hammer2: zlib inflate returned %d at %lld\n",
-		    ret, (long long)xop->lbase);
+		WARN_ONCE(1, "hammer2: zlib inflate returned %d at %llx\n",
+		    ret, (unsigned long long)focus->bref.key);
 		return (EIO);
 	}
 
-	if (skip >= (hammer2_off_t)dsize) {
-		folio_zero_range(folio, 0, fsize);
-	} else {
-		len = dsize - skip;
-		if (len > fsize)
-			len = fsize;
-		memcpy_to_folio(folio, 0, buf + skip, len);
-		if (len < fsize)
-			folio_zero_range(folio, len, fsize - len);
-	}
-	hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
-
 	return (0);
+}
+
+/*
+ * Decode one chain to the logical bytes of the block it holds.  On
+ * return *srcp and *dsizep are the bytes and their count, and *basep the
+ * file offset they begin at: the media itself for a block stored
+ * uncompressed, the inode's own data for a file small enough to live
+ * there, or *bufp, a block-sized scratch this allocates and the caller
+ * frees, for a compressed block.  Both halves of the strategy XOP decode
+ * through here: the read half copies the part its folio covers out, and
+ * the write half, handed a folio smaller than the block, lays the folio
+ * over the block before writing it.  Positive errno.
+ */
+static int
+hammer2_strategy_decode(hammer2_chain_t *focus, const char *data,
+    hammer2_key_t *basep, const char **srcp, size_t *dsizep, char **bufp)
+{
+	int error;
+
+	*bufp = NULL;
+	if (focus->bref.type == HAMMER2_BREF_TYPE_INODE) {
+		/*
+		 * The first HAMMER2_EMBEDDED_BYTES of a small file live in
+		 * the inode itself, so the block base is the file base.
+		 */
+		const hammer2_inode_data_t *ripdata;
+
+		ripdata = (const hammer2_inode_data_t *)data;
+		*basep = 0;
+		*srcp = ripdata->u.data;
+		*dsizep = HAMMER2_EMBEDDED_BYTES;
+		return (0);
+	}
+
+	if (focus->bref.type != HAMMER2_BREF_TYPE_DATA) {
+		WARN_ONCE(1, "hammer2: bad chain type %d in read\n",
+		    focus->bref.type);
+		return (EIO);
+	}
+	*basep = focus->bref.key;
+
+	switch (HAMMER2_DEC_COMP(focus->bref.methods)) {
+	case HAMMER2_COMP_NONE:
+	case HAMMER2_COMP_AUTOZERO:
+		/*
+		 * Stored uncompressed, so focus->bytes is the logical size
+		 * and the wanted bytes can be copied straight out of it.
+		 */
+		*srcp = data;
+		*dsizep = focus->bytes;
+		return (0);
+	case HAMMER2_COMP_LZ4:
+	case HAMMER2_COMP_ZLIB:
+		*bufp = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
+		if (*bufp == NULL)
+			return (ENOMEM);
+		if (HAMMER2_DEC_COMP(focus->bref.methods) == HAMMER2_COMP_LZ4)
+			error = hammer2_decompress_lz4(focus, data, *bufp, dsizep);
+		else
+			error = hammer2_decompress_zlib(focus, data, *bufp, dsizep);
+		if (error) {
+			hfree(*bufp, M_HAMMER2, HAMMER2_PBUFSIZE);
+			*bufp = NULL;
+			return (error);
+		}
+		*srcp = *bufp;
+		return (0);
+	default:
+		WARN_ONCE(1, "hammer2: compression method %d is not read yet\n",
+		    HAMMER2_DEC_COMP(focus->bref.methods));
+		return (EIO);
+	}
 }
 
 /*
@@ -359,78 +392,49 @@ hammer2_strategy_read_completion(hammer2_xop_strategy_t *xop,
 {
 	struct folio *folio = xop->folio;
 	size_t fsize = folio_size(folio);
+	hammer2_key_t base;
 	hammer2_off_t skip;
-	size_t len;
+	const char *src;
+	char *buf;
+	size_t dsize, len;
+	int error;
 
-	if (focus->bref.type == HAMMER2_BREF_TYPE_INODE) {
-		/*
-		 * The first HAMMER2_EMBEDDED_BYTES of a small file live in
-		 * the inode itself, so the block base is the file base.
-		 */
-		const hammer2_inode_data_t *ripdata;
-
-		ripdata = (const hammer2_inode_data_t *)data;
-		if (xop->lbase != 0) {
-			WARN_ONCE(1, "hammer2: embedded data at offset %lld\n",
-			    (long long)xop->lbase);
-			return (EIO);
-		}
-		len = fsize < HAMMER2_EMBEDDED_BYTES ?
-		    fsize : HAMMER2_EMBEDDED_BYTES;
-		memcpy_to_folio(folio, 0, ripdata->u.data, len);
-		if (len < fsize)
-			folio_zero_range(folio, len, fsize - len);
-		return (0);
-	}
-
-	if (focus->bref.type != HAMMER2_BREF_TYPE_DATA) {
-		WARN_ONCE(1, "hammer2: bad chain type %d in read\n",
-		    focus->bref.type);
-		return (EIO);
-	}
+	error = hammer2_strategy_decode(focus, data, &base, &src, &dsize, &buf);
+	if (error)
+		return (error);
 
 	/*
 	 * The chain covers a key range that begins at or below this folio,
 	 * a logical block being up to HAMMER2_PBUFSIZE and a folio in a
-	 * file mapping being one page.  So the bytes wanted start at an
-	 * offset inside the block rather than at its base.  Upstream has no
-	 * such offset because a DragonFly logical buffer is the block.
+	 * file mapping being one page under memory pressure.  So the bytes
+	 * wanted start at an offset inside the block rather than at its
+	 * base.  Upstream has no such offset because a DragonFly logical
+	 * buffer is the block.  A file small enough to live in its inode
+	 * has one block, at the file base.
 	 */
-	if (xop->lbase < focus->bref.key) {
+	if (xop->lbase < base ||
+	    (focus->bref.type == HAMMER2_BREF_TYPE_INODE && xop->lbase != 0)) {
 		WARN_ONCE(1, "hammer2: chain key %llx above read at %llx\n",
-		    (unsigned long long)focus->bref.key,
-		    (unsigned long long)xop->lbase);
-		return (EIO);
+		    (unsigned long long)base, (unsigned long long)xop->lbase);
+		error = EIO;
+		goto out;
 	}
-	skip = xop->lbase - focus->bref.key;
+	skip = xop->lbase - base;
 
-	switch (HAMMER2_DEC_COMP(focus->bref.methods)) {
-	case HAMMER2_COMP_NONE:
-	case HAMMER2_COMP_AUTOZERO:
-		/*
-		 * Stored uncompressed, so focus->bytes is the logical size
-		 * and the wanted bytes can be copied straight out of it.
-		 */
-		if (skip >= focus->bytes) {
-			folio_zero_range(folio, 0, fsize);
-			return (0);
-		}
-		len = focus->bytes - skip;
+	if (skip >= (hammer2_off_t)dsize) {
+		folio_zero_range(folio, 0, fsize);
+	} else {
+		len = dsize - skip;
 		if (len > fsize)
 			len = fsize;
-		memcpy_to_folio(folio, 0, data + skip, len);
+		memcpy_to_folio(folio, 0, src + skip, len);
 		if (len < fsize)
 			folio_zero_range(folio, len, fsize - len);
-		return (0);
-	case HAMMER2_COMP_LZ4:
-		return (hammer2_decompress_lz4(xop, focus, data, skip));
-	case HAMMER2_COMP_ZLIB:
-		return (hammer2_decompress_zlib(xop, focus, data, skip));
-	default:
-		WARN_ONCE(1, "hammer2: compression method %d is not read yet\n",
-		    HAMMER2_DEC_COMP(focus->bref.methods));
-		return (EIO);
 	}
+out:
+	if (buf)
+		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+	return (error);
 }
 
 /*
@@ -1269,6 +1273,63 @@ hammer2_dedup_lookup(hammer2_dev_t *hmp, char **datap, int pblksize)
 }
 
 /*
+ * Linux: the current bytes of the block at lbase, decoded into bio_data
+ * for a write that has only part of the block in its folio.  A hole is
+ * zeros, and so is whatever lies past the end of the file, which the
+ * chain can still hold after a truncate.  The lookup runs under the
+ * parent lock the write holds, so it sees every earlier write to the
+ * block, including one this same writeback made through a sibling
+ * folio.  Returns a HAMMER2_ERROR_ code, as the lookup does.
+ */
+static int
+hammer2_strategy_assemble(struct inode *inode, hammer2_chain_t **parentp,
+    hammer2_key_t lbase, int lblksize, char *bio_data)
+{
+	hammer2_chain_t *chain;
+	hammer2_key_t key_dummy, base;
+	loff_t isize;
+	const char *src;
+	char *buf = NULL;
+	size_t dsize, len;
+	int error = 0;
+
+	if (*parentp == NULL)
+		return (HAMMER2_ERROR_EIO);
+	chain = hammer2_chain_lookup(parentp, &key_dummy, lbase, lbase,
+	    &error, HAMMER2_LOOKUP_ALWAYS);
+	if (chain == NULL) {
+		if (error)
+			return (error);
+		memset(bio_data, 0, lblksize);
+		return (0);
+	}
+	if (chain->error) {
+		error = chain->error;
+		goto out;
+	}
+	if (hammer2_strategy_decode(chain, (const char *)chain->data, &base,
+	    &src, &dsize, &buf) != 0 || base != lbase) {
+		error = HAMMER2_ERROR_EIO;
+		goto out;
+	}
+	len = dsize < (size_t)lblksize ? dsize : (size_t)lblksize;
+	memcpy(bio_data, src, len);
+	if (len < (size_t)lblksize)
+		memset(bio_data + len, 0, lblksize - len);
+	isize = i_size_read(inode);
+	if (isize < (loff_t)lbase + lblksize) {
+		len = isize > (loff_t)lbase ? isize - lbase : 0;
+		memset(bio_data + len, 0, lblksize - len);
+	}
+out:
+	if (buf)
+		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
+	hammer2_chain_unlock(chain);
+	hammer2_chain_drop(chain);
+	return (error);
+}
+
+/*
  * The write half of the strategy XOP, upstream's body with the buffer
  * replaced by a folio the way the read half was.  The caller is what the
  * BSD ports' hammer2_strategy_write() is: it marks the inode DIRTYDATA,
@@ -1276,11 +1337,15 @@ hammer2_dedup_lookup(hammer2_dev_t *hmp, char **datap, int pblksize)
  * the folio and its position, and starts this; the transaction is closed
  * here, as upstream closes it.
  *
- * XXX Linux: the folio must cover the whole logical block, which is the
- * file mapping carrying folios of at least HAMMER2_PBUFRADIX order, the
- * same contract the DIO layer sets on the device mapping.  A smaller
- * folio would have this write zeros over the rest of the block, so it is
- * refused rather than padded.  hammer2_writepages() starts it, one
+ * XXX Linux: the core writes a whole logical block, and the folio is
+ * usually one, the file mapping asking for HAMMER2_PBUFRADIX order first.
+ * Under memory pressure the page cache hands out a smaller folio rather
+ * than none, and then the block is assembled around it: the block's
+ * current bytes decoded out of the chain, under the parent lock this
+ * write holds, and the folio laid over them.  A sibling folio of the
+ * same block, dirty in the cache, is written by its own XOP after this
+ * one and reads this one's bytes back out of the chain, since XOPs run
+ * in order on the calling thread.  hammer2_writepages() starts it, one
  * folio per XOP, and reads back what it fed the mapping's error.
  */
 void
@@ -1297,14 +1362,28 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	lblksize = hammer2_calc_logical(ip, lbase, &lbase, NULL);
 	pblksize = hammer2_calc_physical(ip, lbase);
 	KKASSERT(lblksize <= MAXPHYS);
-	if (WARN_ON_ONCE(folio_size(folio) < (size_t)lblksize)) { /* Linux */
-		hammer2_xop_feed(&xop->head, NULL, clindex, HAMMER2_ERROR_EIO);
-		goto done;
+	parent = hammer2_inode_chain(ip, clindex, HAMMER2_RESOLVE_ALWAYS);
+	if (folio_size(folio) < (size_t)lblksize) {	/* Linux */
+		pr_debug("hammer2: block %llx assembled around %zu bytes at %llx\n",
+		    (unsigned long long)lbase, folio_size(folio),
+		    (unsigned long long)xop->lbase);
+		error = hammer2_strategy_assemble(folio->mapping->host, &parent,
+		    lbase, lblksize, bio_data);
+		if (error) {
+			if (parent) {
+				hammer2_chain_unlock(parent);
+				hammer2_chain_drop(parent);
+			}
+			hammer2_xop_feed(&xop->head, NULL, clindex, error);
+			goto done;
+		}
+		memcpy_from_folio(bio_data + (xop->lbase - lbase), folio, 0,
+		    folio_size(folio));
+	} else {
+		memcpy_from_folio(bio_data, folio, 0, lblksize); /* XXX Linux: bcopy(bp->b_data) */
 	}
-	memcpy_from_folio(bio_data, folio, 0, lblksize); /* XXX Linux: bcopy(bp->b_data) */
 	folio = NULL; /* safety, illegal to access after unlock */
 
-	parent = hammer2_inode_chain(ip, clindex, HAMMER2_RESOLVE_ALWAYS);
 	hammer2_write_file_core(bio_data, ip, &parent, lbase, IO_ASYNC,
 	    pblksize, xop->head.mtid, &error);
 	if (parent) {

@@ -12,8 +12,9 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.8 are met and 0.9 is open on its low-memory row, with the
-driver at 0.9.0 in `CHANGELOG.md`. The shipped module mounts
+0.5 to 0.8 are met and 0.9 is open on its low-memory row, now the
+device side alone since the write path took folios smaller than the
+block, with the driver at 0.9.1 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted
@@ -435,7 +436,7 @@ Row by row, with the instrument that produced the number:
 | parallel builds | `script/nix-closure.sh`, `H2_NC_JOBS` | four writers in at 64 and 80 s on two runs, ahead of ext4's single writer beside them each time; the first run found the sixth defect, a buffer freed under its holder, and the second ran clean of it with the fix in |
 | store garbage collection | `script/nix-closure.sh`, the collection phase | 989 of 1978 store paths removed in 13 s beside a reader walking the rest; DragonFly counted the 103693 files that stayed and its checker was clean in 44 s |
 | snapshots retained under churn | `script/million-tree.sh` | a tenth deleted and rewritten under a snapshot, the snapshot at this side's count on DragonFly, three of three |
-| low memory | `script/nix-closure.sh` at 4 and 8 GiB | a 12 GB stream refused three to seven writes at 4 GiB and none or one at 8; `IO_MODEL.md` has the controls |
+| low memory | `script/nix-closure.sh` at 4 and 8 GiB | a 12 GB stream refused three to seven writes at 4 GiB until the write path took folios smaller than the block, then none, with 1427 blocks assembled; three device-block reads still failed for want of a folio, and `IO_MODEL.md` names the buffer that answers them |
 | near-capacity operation | `script/test-enospc.sh` | ten clean fills as root and as a user, a gate since 0.7.10 |
 | the XOP pool | `script/nix-closure.sh`, the ext4 reference | synchronous stays, 85 s to ext4's 79 |
 

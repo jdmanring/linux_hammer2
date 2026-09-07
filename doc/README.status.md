@@ -276,8 +276,11 @@ on the guest with the kernel's function tracer, reading `f6`'s
 176000-byte ZLIB file after dropping the caches: 43 `->read_folio` calls
 before, one per page and each decompressing the whole block, and 3
 after, one per block, with the same checksum, lockdep enabled and no
-warning. The carried write handler depends on the same contract, since it
-refuses a folio smaller than the block it would write.
+warning. Since 2026-09-07 the minimum order is a page and the block is
+what the mapping asks for first, so a write under memory pressure gets
+a smaller folio rather than `ENOMEM`, and the carried write handler
+assembles the block around it; `IO_MODEL.md` has the design and the
+closure run that measured it.
 
 ## Compressed blocks, and the fixture that was said not to exist
 
@@ -578,15 +581,15 @@ construction rather than re-hashed every run.
 | `hammer2_flush.c` | 1348 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1900 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_inode.c` | 1904 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 3046 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1338 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1405 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_strategy.c` | 1417 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
+| `hammer2_vnops.c` | 1423 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 1018 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 1174 | ours, the OS shim |
+| `hammer2_os.h` | 1179 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
@@ -2214,6 +2217,24 @@ records, which every run since the seventh has and the harness
 counts. The collection that followed each run removed 989 of the 1978
 store paths in 14 s beside a reader, and DragonFly counted the 103693
 files and 76012 symlinks that stayed, its checker clean in 57 s.
+
+The twelfth run, on 2026-09-07, was the first on the write path that
+assembles a block around a folio smaller than it, and it ran the
+configuration that had refused writes: the 4 GiB guest, kmemleak off,
+four writers. The copy went in at 66 s to ext4's 70 beside it, 1427
+blocks were assembled around a smaller folio, counted from the
+module's debug print, and no write was refused: the hash list matched
+the source's and the squashfs, erofs and ext4 copies' on all 205871
+files, and the volume was walked in 8 s, read in 15 and hashed in 44
+to squashfs's 2, 11 and 49, erofs's 5, 9 and 29 and ext4's 6, 10 and
+41. The failure moved to the read side: three order-4 grabs failed in
+`hammer2_bread()`, on the device mapping, one at 251 s during the
+hashed read, whose list still matched, and two during the collection's
+reader, which exited 2 with 24 files unread; this side counted 103669
+files after the collection where DragonFly counted 103693, and both
+checkers were clean, DragonFly's in 55 s. The device mapping's minimum
+order is still the block, and `IO_MODEL.md` names the buffer it needs
+when the page cache cannot give one.
 
 DragonFly counted the fourth run's volume at the source's numbers,
 205871 files and 150219 symlinks in 13 s, since a refused write leaves

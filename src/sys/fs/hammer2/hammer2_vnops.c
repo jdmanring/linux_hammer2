@@ -1229,12 +1229,15 @@ const struct file_operations hammer2_file_fops = {
 };
 
 /*
- * Prepare one folio for a write.  The folio is a whole logical block, so
- * this is upstream's per-block choice in hammer2_write_file(): a write
- * that covers the block needs nothing read, a block past the end of the
- * file is zero, and a partial overwrite reads the block first, which
- * upstream does with bread() and this does with ->read_folio on the
- * folio it will then hand back locked.
+ * Prepare one folio for a write.  The folio is a whole logical block
+ * unless memory could not give one, so this is upstream's per-block
+ * choice in hammer2_write_file(): a write that covers the folio needs
+ * nothing read, a folio past the end of the file is zero, and a partial
+ * overwrite reads the folio first, which upstream does with bread() and
+ * this does with ->read_folio on the folio it will then hand back
+ * locked.  A folio smaller than the block is the same choice made over
+ * the part of the block it covers, and the rest of the block is the
+ * write XOP's to assemble.
  */
 static int
 hammer2_write_begin(const struct kiocb *iocb,
@@ -1243,14 +1246,29 @@ hammer2_write_begin(const struct kiocb *iocb,
 {
 	struct inode *inode = mapping->host;
 	struct folio *folio;
+	pgoff_t index = pos >> PAGE_SHIFT;
 	int error;
 
 	/*
-	 * The mapping's folio order is pinned to the block, so the order
-	 * the helper derives from len cannot exceed it; what the helper
-	 * adds is the uncached flag when the iocb carries it.
+	 * Ask for the block, at the block's own index.  The page cache
+	 * sizes a new folio by the alignment of the index it is asked at
+	 * as well as by the order asked for, so asked at the write's own
+	 * page, a write inside a block would get a page whatever memory
+	 * held.  Asked at the block's index it gets the block when the
+	 * allocation succeeds; when it does not, or when a smaller folio
+	 * already sits at that index and stops short of pos, the write
+	 * takes the folio at its own page and the write XOP assembles the
+	 * block around it.  What the helper adds to the flags is the
+	 * uncached one when the iocb carries it.
 	 */
-	folio = write_begin_get_folio(iocb, mapping, pos >> PAGE_SHIFT, len);
+	folio = write_begin_get_folio(iocb, mapping,
+	    index & ~(pgoff_t)((HAMMER2_PBUFSIZE >> PAGE_SHIFT) - 1),
+	    HAMMER2_PBUFSIZE);
+	if (!IS_ERR(folio) && folio_next_index(folio) <= index) {
+		folio_unlock(folio);
+		folio_put(folio);
+		folio = write_begin_get_folio(iocb, mapping, index, len);
+	}
 	if (IS_ERR(folio))
 		return (PTR_ERR(folio));
 

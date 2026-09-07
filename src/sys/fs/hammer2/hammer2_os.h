@@ -1078,28 +1078,33 @@ hammer2_dev_cache_flush(struct file *bdev_file)
 }
 
 /*
- * A file mapping whose folios are whole logical blocks.  A HAMMER2 logical
- * block is HAMMER2_PBUFSIZE, and both halves of the strategy XOP want the
- * folio they are handed to be one: the read half decompresses a block
- * into the folio it has, so a page-sized folio decompressed the same
- * block once per page, and the write half refuses a folio smaller than
- * the block it would write.  The maximum order is the block's as well:
- * with only the minimum set, readahead grows its folios past one block
+ * A file mapping whose folios are at most one logical block and by
+ * preference exactly one.  A HAMMER2 logical block is HAMMER2_PBUFSIZE,
+ * and both halves of the strategy XOP work best on a folio that is one:
+ * the read half decompresses a block into the folio it has, so a
+ * page-sized folio decompresses the same block once per page, and the
+ * write half assembles the block around a folio smaller than it, a
+ * decode and a copy the block folio does not need.  The maximum order is
+ * the block's: with it unset, readahead grows its folios past one block
  * as a sequential read proceeds, and the read half, handed a folio of
  * two blocks, filled it from the one chain at its start and zeroed the
  * rest.  A 300000-byte file DragonFly wrote read back with its fourth
  * block all zero on a whole-file read and correct on a read of that
- * block alone, which is the signature: the same mechanism the DIO
- * layer uses on the device mapping, one block per folio, and the mount
- * already refuses a kernel whose page cache cannot hold a folio that
- * large, so this cannot be asked for and not given.
+ * block alone, which is the signature.  The minimum order is a page,
+ * not the block's: with the block as the minimum the page cache has no
+ * smaller folio to fall back to, and a write whose 64 KiB grab failed on
+ * a fragmented free list got ENOMEM with gigabytes free.  The order
+ * asked for is the block's, in hammer2_write_begin() and by readahead as
+ * it grows, and __filemap_get_folio() steps down from it only when the
+ * larger allocation fails.  The DIO layer keeps the block as both ends
+ * of the device mapping's range, since a device block is read and
+ * written whole.
  */
 static inline void
 hammer2_mapping_set_block_folios(struct address_space *mapping,
     unsigned int radix)
 {
-	mapping_set_folio_order_range(mapping, radix - PAGE_SHIFT,
-	    radix - PAGE_SHIFT);
+	mapping_set_folio_order_range(mapping, 0, radix - PAGE_SHIFT);
 }
 
 /*

@@ -176,37 +176,48 @@ with no refusal once and with one refusal the next time, so the limit
 is the guest's memory against the folio and not the port's writeback,
 and it is a rate that falls with memory rather than a line.
 
-What removing the refusal costs, read from the two strategy XOPs on
-2026-09-06. The read side already takes a folio smaller than the block:
+The refusal is gone from the write path since 2026-09-07. The read
+side always took a folio smaller than the block:
 `hammer2_xop_strategy_read()` copies from an offset inside the chain's
-block and every decompressor takes that offset, since a file folio was
-one page before the order was pinned. The write side does not:
-`hammer2_xop_strategy_write()` copies one whole logical block out of
-the folio and refuses a smaller one with `EIO`, because the core's
-`hammer2_write_file_core()` writes a block and a smaller folio would
-have it write zeros over the rest. Letting the file mapping's order
-range down to a page therefore means assembling the block before the
-write: every folio the cache holds for that block's range copied in,
-dirty or clean, and only the parts the cache does not hold read from
-the media, since reading the media for a range another dirty folio
-covers would write that folio's older contents over its newer ones.
-Each block's writeback then ends writeback on every dirty folio in it,
-and truncate, holes and the compressed paths each meet a block that is
-part cache and part media. No mainline filesystem above page size does
-this; xfs pins the minimum order instead, which is what this port does.
-That is the shape and the hazard of 0.9's low-memory row, and it is a
-design change to this document, not a patch.
+block, since a file folio was one page before the order was pinned.
+The write side now does too. The file mapping's minimum folio order
+is a page and its maximum the block, so `__filemap_get_folio()` steps
+down from the block only when the block allocation fails, and
+`hammer2_write_begin()` asks for the block at the block's own index,
+because the page cache also sizes a new folio by the alignment of the
+index it is asked at and a write inside a block asked at its own page
+would get a page with memory to spare. Handed a folio smaller than
+the block, `hammer2_xop_strategy_write()` assembles the block: the
+chain at the block's base is looked up under the parent lock the write
+holds and decoded through the same decoder the read side uses, a hole
+is zeros and so is anything past the end of the file, and the folio is
+laid over the result before the core's `hammer2_write_file_core()`
+writes the block whole. A sibling folio of the same block, dirty in
+the cache, is written by its own XOP after this one and reads this
+one's bytes back out of the chain, since XOPs run in order on the
+calling thread; nothing is assembled from other folios, which is what
+keeps the change to the write XOP, the two decompressors, one order
+pin and one grab. `pr_debug` names each assembled block, so the count
+is read with the module's `dyndbg=+p` parameter.
 
-The surface, counted on 2026-09-06 from the caller set rather than
-guessed: `hammer2_write_file_core()` has one caller, the write XOP, so
-the block assembly has one place to live. The write XOP reads the
-folio's size at two lines, the refusal and the copy out; the file
-mapping's `->write_begin`, `->write_end` and `->writepages` in
-`hammer2_vnops.c` read a folio's size or position at seven; the two
-order pins are in `hammer2_igetv()`; and the read side's sixteen
-folio sites in `hammer2_strategy.c` already take a folio smaller than
-the block. Everything else in the module handles blocks through the
-DIO layer's own mapping, whose order stays pinned.
+Measured 2026-09-07 with `script/nix-closure.sh` on the 4 GiB guest
+with kmemleak off and four writers, the configuration that refused
+writes before: the closure went in at 66 s to ext4's 70 beside it,
+1427 blocks were assembled around a smaller folio, no write was
+refused, and the copy's hash list matched its source's and the
+squashfs, erofs and ext4 copies' on every one of 205871 files. The
+page allocation failure moved rather than vanished: three order-4
+grabs failed in `hammer2_bread()`, on the device mapping, whose
+minimum order is still the block because a device block is read and
+written whole through `hammer2_io_data()`'s pointer. One failed at
+251 s in the hashed read of the whole copy, whose list still matched;
+two failed in the collection's reader at 485 and 495 s, and 24 files
+of the 103669 that stayed went unread and uncounted on this side while
+DragonFly counted all 103693. The device mapping has no smaller folio
+to step down to, so its answer is a block buffer of the port's own
+when the page cache cannot give one, which is what every BSD port has
+in its buffer cache; that is 0.9's low-memory row now, and this
+document's next design change.
 
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential

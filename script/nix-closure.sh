@@ -171,8 +171,12 @@ fsck_control() {	# image; the negative control every host fsck verdict carries
 # 1. Linux copies the closure in and reads all three cold.
 # Times are whole seconds from date; the sizes are gigabytes.
 fslist="h2 sq"; [ $erofs = 1 ] && fslist="h2 sq er"; [ $ext4 = 1 ] && fslist="$fslist ex"
+# The guest names its disks in attach order, so the ext4 image is the
+# fourth disk when no erofs image sits between it and the squashfs.
+exdev=/dev/vdd; [ $erofs = 1 ] && exdev=/dev/vde
 cat > "$W/linux.sh" <<GUEST
 set -u
+trap 'dmesg > /tmp/closure-dmesg.txt' EXIT
 $GUESTPRE
 rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C
 modprobe squashfs || { echo "no squashfs in the guest kernel"; exit 3; }
@@ -211,13 +215,13 @@ mount -t hammer2 /dev/vdb@ROOT /mnt/h2 || { echo "hammer2 remount failed"; exit 
 echo "blocks \$(df -k /mnt/h2 | awk 'NR==2{print \$2, \$3}')"
 if [ $ext4 = 1 ]; then
 	mkdir -p /mnt/ex
-	mount -t ext4 /dev/vde /mnt/ex || { echo "ext4 mount failed"; exit 1; }
+	mount -t ext4 $exdev /mnt/ex || { echo "ext4 mount failed"; exit 1; }
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	t0=\$(date +%s); cp -a /mnt/sq/. /mnt/ex/; exst=\$?; t1=\$(date +%s)
 	echo "ext4 cp -a exit \$exst in \$((t1 - t0)) s"
 	sync; t2=\$(date +%s); echo "ext4 sync took \$((t2 - t1)) s"
 	umount /mnt/ex; echo "ext4 umount exit \$? in \$((\$(date +%s) - t2)) s"
-	mount -t ext4 /dev/vde /mnt/ex || { echo "ext4 remount failed"; exit 1; }
+	mount -t ext4 $exdev /mnt/ex || { echo "ext4 remount failed"; exit 1; }
 fi
 for fs in $fslist; do
 	sync; echo 3 > /proc/sys/vm/drop_caches
