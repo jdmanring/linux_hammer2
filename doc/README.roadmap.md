@@ -12,9 +12,9 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.8 are met and 0.9 is open on its low-memory row, both sides
-of the page cache now falling back to smaller memory and the row
-waiting on a run below 4 GiB, with the driver at 0.9.2 in
+0.5 to 0.8 are met and 0.9's low-memory row is measured at 2 GiB,
+both sides of the page cache falling back to smaller memory with no
+write refused and no file lost, with the driver at 0.9.2 in
 `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
@@ -437,7 +437,7 @@ Row by row, with the instrument that produced the number:
 | parallel builds | `script/nix-closure.sh`, `H2_NC_JOBS` | four writers in at 64 and 80 s on two runs, ahead of ext4's single writer beside them each time; the first run found the sixth defect, a buffer freed under its holder, and the second ran clean of it with the fix in |
 | store garbage collection | `script/nix-closure.sh`, the collection phase | 989 of 1978 store paths removed in 13 s beside a reader walking the rest; DragonFly counted the 103693 files that stayed and its checker was clean in 44 s |
 | snapshots retained under churn | `script/million-tree.sh` | a tenth deleted and rewritten under a snapshot, the snapshot at this side's count on DragonFly, three of three |
-| low memory | `script/nix-closure.sh` at 4 and 8 GiB | a 12 GB stream refused three to seven writes at 4 GiB until the write path took folios smaller than the block, then none, with 1427 blocks assembled; three device-block reads then failed for want of a folio until the DIO layer took a buffer of its own, 179 of them on the next run with every file and the collection's survivors hashed as their source; open on a run below 4 GiB |
+| low memory | `script/nix-closure.sh` at 2, 4 and 8 GiB | a 12 GB stream refused three to seven writes at 4 GiB until the write path took folios smaller than the block, then none, with 1427 blocks assembled; three device-block reads then failed for want of a folio until the DIO layer took a buffer of its own, 179 of them on the next run with every file and the collection's survivors hashed as their source; at 2 GiB, 1727 assembled blocks and 144 buffers, nothing refused, nothing lost, exit 0 |
 | near-capacity operation | `script/test-enospc.sh` | ten clean fills as root and as a user, a gate since 0.7.10 |
 | the XOP pool | `script/nix-closure.sh`, the ext4 reference | synchronous stays, 85 s to ext4's 79 |
 

@@ -2245,6 +2245,19 @@ checkers were clean, DragonFly's in 55 s. The device mapping's minimum
 order is still the block, and `IO_MODEL.md` names the buffer it needs
 when the page cache cannot give one.
 
+The thirteenth run, the same day, took the guest down to 2 GiB with
+both fallbacks in, the DIO layer's buffer as well as the assembled
+block: the copy went in at 65 s to ext4's 77 with four writers, 1727
+blocks were assembled around a smaller folio and 144 held in the
+dio's own buffer, no write was refused and no grab warned, every file
+and every symlink hashed as its source on all four filesystems, the
+collection removed 989 store paths in 12 s beside a reader that
+exited 0 and its survivors hashed as theirs, and the harness exited
+0; `IO_MODEL.md` has the reads beside the three references. Lockdep
+was off at the end and the ring buffer, filled by the 1871 debug
+lines that count the fallbacks, no longer said why; the fourteenth
+run, without the debug prints, is the lock reading.
+
 DragonFly counted the fourth run's volume at the source's numbers,
 205871 files and 150219 symlinks in 13 s, since a refused write leaves
 its file, and its checker was clean in 87 s; the host's checker was

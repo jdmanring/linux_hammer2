@@ -112,8 +112,7 @@ The reproducer is `script/test-enospc.sh`, a gate since it passed ten runs, and 
 included, is in [doc/README.status.md](doc/README.status.md).
 
 What that buys you is a driver that can be tried, on media you can
-afford to lose. What it does not yet do: the low-memory row of 0.9 has
-been measured at 4 GiB and not below it, which keeps 0.9 open;
+afford to lose. What it does not yet do:
 nothing is packaged, and no tag exists. It has booted as a root filesystem once, with a static init
 and nothing else on the volume, which is a long way from a
 distribution. Every write it has made was to a scratch image on a

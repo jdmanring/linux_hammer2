@@ -250,10 +250,24 @@ falls through. Before the buffer the same run lost 24 files to `EIO`
 in the collection's reader. The run after that, on the committed
 build with the warning silenced, ended with the harness's exit 0: 285
 buffers, 1579 assembled blocks, no kernel warning, the copy in at 74 s
-to ext4's 84 under a host load near twenty. What the row still lacks is a run of the
-same thing on a guest smaller than 4 GiB, which is where the two
-fallbacks would be exercised in earnest rather than a few hundred
-times in a twelve gigabyte stream.
+to ext4's 84 under a host load near twenty.
+
+Measured 2026-09-07 on the same guest at 2 GiB, 1.8 GB of memory to
+the kernel and 1.3 GB available at the start, the same closure and
+four writers: the copy went in at 65 s to ext4's 77, 1727 blocks were
+assembled on the file side and 144 held in buffers on the device
+side, no write was refused, every one of 205871 files hashed as its
+source on all four filesystems, the collection's 103693 survivors
+hashed as theirs, and the run ended with no kernel warning and the
+harness's exit 0. The cold read of the copy took 16 s and the hash
+47, to squashfs's 11 and 48, erofs's 7 and 29 and ext4's 11 and 41.
+Half the memory doubled neither count: the twelve gigabyte stream
+runs through a page cache that reclaims in blocks, and what the
+fallbacks answer is fragmentation, which the smaller guest has more
+of only at the margin. The one thing the run could not read is
+lockdep, which was off at the end for a cause the guest's ring
+buffer no longer held, the debug prints that count the fallbacks
+having filled it; the run without them is the lock reading.
 
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential
