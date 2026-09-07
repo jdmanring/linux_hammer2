@@ -82,6 +82,9 @@ for g in script/test-*.sh; do
 		rc=1
 		printf 'pre-push: FAILED %s\n' "$g" >&2
 		printf '%s\n' "$out" | tail -12 >&2
+		keep=".git/pre-push-failed-$(basename "$g" .sh).log"
+		printf '%s\n' "$out" > "$keep"
+		printf 'pre-push: full output kept in %s\n' "$keep" >&2
 		;;
 	esac
 done
