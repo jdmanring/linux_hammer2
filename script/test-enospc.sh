@@ -496,6 +496,12 @@ out=$(ssh "$GUEST_SSH" '
 	echo 3 > /proc/sys/vm/drop_caches
 	cd / && sha256sum -c /tmp/fill.sums > /tmp/fill.check 2>/dev/null
 	echo "files intact $(grep -c ": OK$" /tmp/fill.check) of $(wc -l < /tmp/fill.sums), damaged $(grep -c ": FAILED" /tmp/fill.check)"
+	# A damaged file is named with its size and the order it was
+	# written in, so one failure of several hundred says whether it was
+	# the last file the fill accepted or one long since flushed.
+	sed -n "s/: FAILED\$//p" /tmp/fill.check | while read -r f; do
+		echo "damaged $f $(stat -c %s "$f" 2>/dev/null || echo missing)"
+	done
 	# The capture is NOT stopped here. Reading the log does not require
 	# stopping it, and stopping it closed the window before the unmount,
 	# so every message the unmount produces was invisible: the counters
