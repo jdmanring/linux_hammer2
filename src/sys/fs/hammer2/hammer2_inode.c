@@ -942,14 +942,24 @@ again:
 		 * We may have to unhold the cluster to avoid a deadlock
 		 * against vnlru (and possibly other XOPs).
 		 */
+		/*
+		 * XXX Linux: an inode fetched from the inode tree hangs from
+		 * the PFS root whatever directory names it, so its lock's
+		 * lockdep class cannot put a directory above its entry; the
+		 * callers that hold a directory here, lookup, remove and
+		 * rename, take the entry at subclass 1, as the VFS takes a
+		 * child's i_rwsem at I_MUTEX_CHILD under its parent's.  The
+		 * trylock records no order, which is why this was seen only
+		 * where it missed.
+		 */
 		if (xop) {
 			if (hammer2_mtx_ex_try(&nip->lock) != 0) {
 				hammer2_cluster_unhold(&xop->cluster);
-				hammer2_mtx_ex(&nip->lock);
+				hammer2_mtx_ex_nested(&nip->lock, 1);
 				hammer2_cluster_rehold(&xop->cluster);
 			}
 		} else {
-			hammer2_mtx_ex(&nip->lock);
+			hammer2_mtx_ex_nested(&nip->lock, 1);
 		}
 
 		/*

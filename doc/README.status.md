@@ -34,7 +34,7 @@ A write near full is refused now, as the other trees refuse it.
 A million files went in and were counted on both sides, a large
 file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
 the same guest, and a real Nix closure of two hundred thousand files
-copied in through the write path found seven defects a million
+copied in through the write path found eight defects a million
 one-line files could not reach and reads back beside squashfs and
 erofs, identical on both sides with nothing refused and lockdep on
 from the first mount to the unload; the readings are 0.9's, recorded
@@ -591,7 +591,7 @@ construction rather than re-hashed every run.
 | `hammer2_flush.c` | 1348 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place |
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
-| `hammer2_inode.c` | 1904 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
+| `hammer2_inode.c` | 1914 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 3152 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1417 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1423 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
@@ -2080,7 +2080,7 @@ in 12 to 13 s, the churn in 3 to 4 s and the delete in 6 to 7 s, both
 checkers clean after each side every time; the full-volume gate ran on
 it first, 472 files intact and nothing outstanding at the unmount.
 
-## A real closure, and the seven defects it found
+## A real closure, and the eight defects it found
 
 F6 asks for a real Nix closure of hundreds of thousands of paths read
 at a measured cost beside the same read on squashfs or erofs.
@@ -2099,7 +2099,7 @@ volume 48 GiB.
 The first run's copy stopped in its first minutes, a worker asleep
 in a link. The second run's copy
 completed, and by the seventh the copy read back identical to its
-source; the harness found seven defects in fourteen runs, none of
+source; the harness found eight defects in seventeen runs, none of
 which a million one-line files in a hundred directories could have
 reached:
 
@@ -2188,6 +2188,23 @@ reached:
    two headers, and the fifteenth run is its control: the same
    copy under the same four writers, the flush worker alive to the
    unload.
+8. **A directory's entry in the directory's own lockdep class.** An
+   inode lock is classed at its chain's level, and every inode fetched
+   from disk hangs from the PFS root's inode tree whatever directory
+   names it, so after a remount a directory and each of its entries
+   sit at one level and share a class. Lookup and remove lock the
+   directory and then the entry, the entry first as a trylock, which
+   records no order; where the trylock missed, the blocking acquire of
+   a same-class lock read to lockdep as one lock taken twice, and it
+   turned itself off in the collection of the sixteenth and
+   seventeenth runs below with nothing wrong in the locking. The
+   seventeenth run had first moved the chain level rule to count the
+   child's type and put both reports one level lower and still equal,
+   which is what showed the level could not carry this. The entry's
+   acquire in `hammer2_inode_get()` is now at subclass 1, as the VFS
+   takes a child's `i_rwsem` at `I_MUTEX_CHILD` under its parent's;
+   an annotation and not a lock, and the eighteenth run is its
+   reading.
 
 The fourth run, every fix in, on the guest as it is; the fifth with
 kmemleak turned off before the module loaded (`H2_NC_GUESTPRE`); and
@@ -2332,6 +2349,18 @@ theirs, DragonFly counted the 103693 files and 76012 symlinks that
 stayed and its checker was clean in 48 s, and the harness exited 0.
 It is the first run of the closure in which nothing was refused and
 lockdep read the whole run.
+
+The sixteenth and seventeenth runs, on the shim's own lock primitive
+(`README.porting.md`) with the same guest and writers, the seventeenth
+with the chain level rule counting the child: the copies in at 89 and
+95 s to ext4's 113 and 112, nothing refused, every file hashed as its
+source at 115 and 97 s to squashfs's 70, erofs's 38 and 40 and ext4's
+45 and 44, the collection removed 989 store paths in 39 and 38 s beside
+a reader that exited 0, DragonFly counted the 103693 files and 76012
+symlinks that stayed and its checker was clean in 62 and 57 s, and the
+harness exited 0 both times; lockdep was off at the end of each, turned
+off at 869 and 852 s by the eighth defect above, reported from `rm` in
+the collection, so its silence past that point is not a reading.
 
 DragonFly counted the fourth run's volume at the source's numbers,
 205871 files and 150219 symlinks in 13 s, since a refused write leaves
@@ -2760,7 +2789,7 @@ against the FreeBSD port at
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
 | `hammer2_ondisk.c` | 21 | 1 | 20 |
-| `hammer2_inode.c` | 28 | 6 | 22 |
+| `hammer2_inode.c` | 29 | 6 | 23 |
 | `hammer2_vfsops.c` | 46 | 7 | 38 |
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 19 | 0 | 19 |
