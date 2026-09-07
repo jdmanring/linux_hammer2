@@ -522,6 +522,68 @@ else
 	echo "  note  second compiler absent, one opinion only"
 fi
 
+# The third reader is sparse, the kernel's own checker, over the same
+# files with this gate's flags and the ones kbuild hands it (CHECKFLAGS
+# in the kernel of record's Makefile). What it sees that neither
+# compiler can is an address space or a bitwise type: a kernel pointer
+# handed to copy_to_user() compiles clean under both and is the class
+# it exists for. Absent, that reading is not taken and the summary says
+# so; present, its negative control must refuse exactly that pointer,
+# or a pass below proves only that sparse ran.
+if command -v sparse >/dev/null 2>&1; then
+	SPFLAGS=()
+	for a in "${CFLAGS[@]}"; do
+		case "$a" in
+			-fsyntax-only|--target=*|-Wno-gnu|-Wno-microsoft-anon-tag) ;;
+			-mcmodel=*|-mno-*|-fno-PIE|-Werror=*|-W*) ;;
+			*) SPFLAGS+=("$a") ;;
+		esac
+	done
+	# -O2 is what kbuild's own sparse line passes. Without it the
+	# kernel's string.h does not see __OPTIMIZE__, memset() is a call
+	# rather than the builtin, and sparse sizes every call against its
+	# 100000-byte stack heuristic: the 6 MiB heap bitmap bzero in
+	# hammer2_bulkfree.c is then a finding here and not under make C=2.
+	SPFLAGS+=(-O2 -D__CHECKER__ -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__
+		-Wbitwise -Wno-return-void -Wno-unknown-attribute
+		--arch=x86 -m64 -D__x86_64__)
+	sp() { sparse "${SPFLAGS[@]}" "$@" 2>&1 | command grep -E 'warning:|error:' || true; }
+	ran=$((ran + 1))
+	if sp test/contract/ctl-sparse-user.c | command grep -q 'different address spaces'; then
+		echo "  ok    negative control: sparse refuses a kernel pointer to copy_to_user (fail)"
+	else
+		echo "  FAIL  negative control: sparse did not refuse a kernel pointer to copy_to_user"
+		fail=$((fail + 1))
+	fi
+	for f in src/sys/fs/hammer2/hammer2_io.c \
+		src/sys/fs/hammer2/hammer2_admin.c \
+		src/sys/fs/hammer2/hammer2_freemap.c \
+		src/sys/fs/hammer2/hammer2_xops.c \
+		src/sys/fs/hammer2/hammer2_bulkfree.c \
+		src/sys/fs/hammer2/hammer2_chain.c \
+		src/sys/fs/hammer2/hammer2_flush.c \
+		src/sys/fs/hammer2/hammer2_cluster.c \
+		src/sys/fs/hammer2/hammer2_subr.c \
+		src/sys/fs/hammer2/hammer2_ondisk.c \
+		src/sys/fs/hammer2/hammer2_inode.c \
+		src/sys/fs/hammer2/hammer2_vfsops.c \
+		src/sys/fs/hammer2/hammer2_strategy.c \
+		src/sys/fs/hammer2/hammer2_vnops.c \
+		src/sys/fs/hammer2/hammer2_ioctl.c; do
+		ran=$((ran + 1))
+		out=$(sp "$f" | command grep '^src/' || true)
+		if [ -z "$out" ]; then
+			echo "  ok    sparse: $(basename "$f") (pass)"
+		else
+			echo "  FAIL  sparse: $(basename "$f")"
+			printf '%s\n' "$out" | sed 's/^/        /' | head -6
+			fail=$((fail + 1))
+		fi
+	done
+else
+	echo "  note  sparse absent, the address-space reading is not taken"
+fi
+
 # An overridden run must not print what a real one prints. Until 2026-08-26 it
 # did, byte for byte: "syntax: 7 check(s), 0 failed" whether the tree was the
 # kernel of record or a version somebody typed into H2_KERNEL_REF to get a
