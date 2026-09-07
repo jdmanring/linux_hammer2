@@ -14,7 +14,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 0.5 to 0.8 are met and 0.9's low-memory row is measured at 2 GiB,
 both sides of the page cache falling back to smaller memory with no
-write refused and no file lost, with the driver at 0.9.2 in
+write refused and no file lost, with the driver at 0.9.3 in
 `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
