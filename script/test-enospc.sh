@@ -202,6 +202,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(built from .*\)$/      \1/p;\
 		    s/^  \(files intact .*\)$/      \1/p;\
 		    s/^  \(blocks available after sync [0-9]*\)$/      \1/p;\
+		    s/^  \(blocks free after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(write of 128K on the full volume .*\)$/      \1/p;\
@@ -484,6 +485,11 @@ out=$(ssh "$GUEST_SSH" '
 	# take; the refusal counts them, statfs does not. After the sync the
 	# accepted data is allocated and the reading means what it says.
 	echo "blocks available after sync $(stat -f -c %a /mnt/h2enospc)"
+	# The count the reserve is subtracted from, for the run where the
+	# flush found the map short of what the count said: whether the
+	# count or the map ran out first is read from this line beside the
+	# print the allocator itself puts in the kernel log.
+	echo "blocks free after sync $(stat -f -c %f /mnt/h2enospc)"
 	# The two thresholds, read after the sync because the refusal counts
 	# dirty pages and the sync turns them into allocated blocks: what is
 	# free now is under the threshold the fill stopped at plus one 64 KiB
@@ -856,5 +862,8 @@ printf '%s\n' "$out" | grep -q '^rmmod 0$' ||
 	  fail=$((fail + 1)); }
 
 make -s clean >/dev/null 2>&1
+# The image of a failed run is kept beside the next run's, since the
+# freemap it holds is the reading a loss is diagnosed from on the host.
+[ "$fail" -eq 0 ] || cp "$IMG" "$IMG.failed"
 echo "enospc: filled $SIZE, $fail failure(s)"
 [ "$fail" -eq 0 ]

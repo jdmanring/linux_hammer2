@@ -586,7 +586,7 @@ construction rather than re-hashed every run.
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 634 | FreeBSD port, carried with two `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; the xop allocation zone is shimmed |
-| `hammer2_freemap.c` | 1013 | FreeBSD port, carried with two `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, and the return after `hpanic` |
+| `hammer2_freemap.c` | 1025 | FreeBSD port, carried with three `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, the print of what a refusal saw, and the return after `hpanic` |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1164 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
@@ -2947,7 +2947,7 @@ re-read 2026-09-07 after every `hpanic` site got its way out and
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
 | `hammer2_chain.c` | 85 | 18 | 67 |
-| `hammer2_freemap.c` | 8 | 6 | 2 |
+| `hammer2_freemap.c` | 9 | 6 | 3 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 12 | 2 | 10 |

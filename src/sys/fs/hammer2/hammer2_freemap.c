@@ -255,6 +255,18 @@ hammer2_freemap_alloc(hammer2_chain_t *chain, size_t bytes)
 	hammer2_chain_unlock(parent);
 	hammer2_chain_drop(parent);
 
+	/*
+	 * XXX Linux: what the refusal saw.  A block refused here in
+	 * writeback is data write(2) accepted, and the free count the
+	 * write entry judged it by is the reading that says whether the
+	 * count or the map ran out first.
+	 */
+	if (error == HAMMER2_ERROR_ENOSPC)
+		hprintf("no block of radix %d for type %d, %lld bytes counted "
+		    "free, relaxed %d loops %d\n", radix, bref->type,
+		    (long long)hmp->voldata.allocator_free, iter.relaxed,
+		    iter.loops);
+
 	return (error);
 }
 
