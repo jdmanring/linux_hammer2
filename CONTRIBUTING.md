@@ -77,10 +77,11 @@ resolves to the line it names, and that every roadmap row's commit hash
 resolves with a matching subject.
 
 The last three need a toolchain. `test-syntax.sh` wants the kernel of
-record, which is the latest release and is pinned as `KERNEL_REF` in that
+record, pinned as `KERNEL_REF` in that
 script; anything else is COULD-NOT-RUN rather than a pass, because a
-result from the wrong kernel is not a result about this code. 6.15 is the
-module's floor and a separate claim. Set `KDIR` to point at another tree,
+result from the wrong kernel is not a result about this code. The floor
+is the same version, stated by an `#error` in `hammer2_os.h`, and the two
+move together. Set `KDIR` to point at another tree,
 and `H2_KERNEL_REF` to check another version deliberately. `test-checkpatch.sh`
 needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
 
