@@ -162,8 +162,10 @@ sync; echo 3 > /proc/sys/vm/drop_caches
 # function profiler, which the kernel of record carries, and printed as
 # unavailable where the guest kernel does not.
 T=/sys/kernel/tracing
-prof_start() { [ -d \$T ] || return 0; echo hammer2_read_folio > \$T/set_ftrace_filter; echo 0 > \$T/function_profile_enabled; echo 1 > \$T/function_profile_enabled; }
-prof_count() { [ -d \$T ] || { echo unavailable; return 0; }; echo 0 > \$T/function_profile_enabled; awk '/hammer2_read_folio/ {n+=\$2} END{print n+0}' \$T/trace_stat/function*; }
+P=\$T/function_profile_enabled
+[ -e \$P ] || mount -t tracefs nodev \$T 2>/dev/null
+prof_start() { [ -e \$P ] || return 0; echo hammer2_read_folio > \$T/set_ftrace_filter; echo 0 > \$P; echo 1 > \$P; }
+prof_count() { [ -e \$P ] || { echo unavailable; return 0; }; echo 0 > \$P; cat \$T/trace_stat/function* 2>/dev/null | awk '/hammer2_read_folio/ {n+=\$2} END{print n+0}'; }
 for fs in h2 e4 bt; do
 	for bs in 1M 64k; do
 		echo 3 > /proc/sys/vm/drop_caches
