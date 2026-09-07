@@ -432,6 +432,16 @@ raises it will be reading the source, not the baseline. The decision
 itself is recorded in `doc/README.porting.md`; new OS-half code uses
 `WARN_ONCE` plus recovery, which is what the demoted message asks for.
 
+kbuild's warning levels were read on 2026-09-07 at `ac8690a` against
+the kernel of record's tree: `W=1` builds the module with no warning,
+and `W=2` prints three, none in this tree's code: `-Wshadow` on
+`cc_mask` in the kernel's own `text-patching.h` and on `__ret` inside
+`wait_event_interruptible_timeout()`, which the kernel marks as an
+explicit shadow, and `-Wmaybe-uninitialized` on `child` in
+`RB_INSERT_COLOR` of the vendored FreeBSD `tree.h`, which sets `child`
+on every path that reads it. sparse has not been run; the machine does
+not carry it.
+
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module
 means editing the carried core in hundreds of places, which is the
