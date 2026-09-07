@@ -36,6 +36,14 @@ GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 LOG=${H2_FUZZ_LOG:-$WORK/fuzz-$SEED.log}
+# H2_FUZZ_WRITE=1 mounts each image read-write and writes into it: a new
+# file, 256 KiB of random data, a directory, one unlink, then sync and
+# umount, which is what reaches the block-table and freemap sites a read
+# never does. hpanic marks the device in error and returns, so a fault
+# is counted as one, not as a kernel report, and the module is reloaded
+# after every image because the mark is module-wide; a BUG or oops is
+# still a report.
+WRITE=${H2_FUZZ_WRITE:-0}
 
 command -v virsh >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: no virsh" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "fuzz: COULD-NOT-RUN: no python3" >&2; exit 2; }
@@ -88,30 +96,48 @@ cat > "$WORK/one.sh" <<'GUEST'
 #!/bin/sh
 dev=$(ls /dev/vd? | tail -1); mkdir -p /mnt/fz; dmesg -C
 n=0; until [ -b "$dev" ]; do sleep 1; n=$((n + 1)); [ $n -gt 15 ] && { echo "no device"; exit 0; }; done
-if mount -t hammer2 -o ro "$dev@LABEL" /mnt/fz 2>/dev/null; then
+opt=ro; [ "@WRITE" = 1 ] && opt=rw
+if mount -t hammer2 -o $opt "$dev@LABEL" /mnt/fz 2>/dev/null; then
 	files=0; bad=0
 	for f in $(find /mnt/fz -type f 2>/dev/null); do
 		files=$((files + 1)); cat "$f" > /dev/null 2>&1 || bad=$((bad + 1))
 	done
 	ls -laR /mnt/fz > /dev/null 2>&1; find /mnt/fz -type l -exec readlink {} \; > /dev/null 2>&1
-	umount /mnt/fz 2>/dev/null; u=$?
-	v="mounted files=$files eio=$bad umount=$u"
+	wr=""
+	if [ "$opt" = rw ]; then
+		e=0
+		{ echo fuzz > /mnt/fz/fz-new; } 2>/dev/null || e=$((e + 1))
+		dd if=/dev/urandom of=/mnt/fz/fz-data bs=64k count=4 2>/dev/null || e=$((e + 1))
+		mkdir /mnt/fz/fz-dir 2>/dev/null || e=$((e + 1))
+		first=$(find /mnt/fz -type f ! -name "fz-*" 2>/dev/null | head -1)
+		[ -n "$first" ] && { rm -f "$first" 2>/dev/null || e=$((e + 1)); }
+		timeout 60 sync -f /mnt/fz 2>/dev/null; sy=$?
+		wr=" write_errors=$e sync=$sy"
+	fi
+	timeout 60 umount /mnt/fz 2>/dev/null; u=$?
+	v="mounted files=$files eio=$bad$wr umount=$u"
 else
 	v="refused"
 fi
-w=$(dmesg | grep -c -i "WARNING\|BUG\|Oops\|hung task\|panic\|lockdep\|circular")
-echo "$v warn=$w"
-[ "$w" -gt 0 ] && dmesg | grep -i -A12 "WARNING\|BUG\|Oops\|hung task\|panic\|circular" | head -40
+h=$(dmesg | grep -c "device in error, see")
+w=$(dmesg | grep -v "device in error" | grep -c -i "WARNING\|BUG\|Oops\|hung task\|panic\|lockdep\|circular")
+r=""
+if [ "$opt" = rw ]; then
+	timeout 60 rmmod hammer2 2>/dev/null; r=" rmmod=$?"; insmod /tmp/hammer2.ko 2>/dev/null
+fi
+echo "$v hpanic=$h$r warn=$w"
+[ "$w" -gt 0 ] && dmesg | grep -v "device in error" | grep -i -A12 "WARNING\|BUG\|Oops\|hung task\|panic\|circular" | head -40
 exit 0
 GUEST
-sed -i "s/@LABEL/@$LABEL/" "$WORK/one.sh"
+sed -i "s/@LABEL/@$LABEL/; s/@WRITE/$WRITE/" "$WORK/one.sh"
 scp -q -o ConnectTimeout=5 "$WORK/one.sh" "$KO" "$GUEST_SSH:/tmp/" || { echo "fuzz: COULD-NOT-RUN: scp to $GUEST failed" >&2; exit 2; }
 ssh "$GUEST_SSH" 'rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko' 2>/dev/null || {
 	echo "fuzz: COULD-NOT-RUN: module did not load on $GUEST" >&2; exit 2; }
 
 # Attach one image, run the guest side, detach. Prints the verdict line.
 one() {
-	$VIRSH attach-disk "$GUEST" "$1" vdz --targetbus virtio --mode readonly >/dev/null 2>&1 || {
+	mode="--mode readonly"; [ "$WRITE" = 1 ] && mode=""
+	$VIRSH attach-disk "$GUEST" "$1" vdz --targetbus virtio $mode >/dev/null 2>&1 || {
 		echo "attach failed"; return 0; }
 	v=$(timeout 120 ssh -o ConnectTimeout=5 "$GUEST_SSH" 'sh /tmp/one.sh' 2>&1); rc=$?
 	$VIRSH detach-disk "$GUEST" vdz >/dev/null 2>&1
@@ -140,12 +166,12 @@ rm -f "$WORK/fz.img"; cp "$SEEDIMG" "$WORK/fz.img"
 printf '\001' | dd of="$WORK/fz.img" bs=1 seek=64 conv=notrunc 2>/dev/null
 v=$(one "$WORK/fz.img")
 case "$v" in
-"refused warn=0") echo "  ok    control: a volume header crc change is refused";;
+refused*" warn=0") echo "  ok    control: a volume header crc change is refused";;
 *) echo "  FAIL  control: the damaged header was not refused: $v"; fail=$((fail + 1));;
 esac
 echo "control header :: $v" >> "$LOG"
 
-mounted=0; refused=0; warned=0; hung=0; ran=0
+mounted=0; refused=0; warned=0; hung=0; ran=0; faulted=0; stuck=0; wrefused=0
 i=1
 while [ $i -le "$N" ]; do
 	rm -f "$WORK/fz.img"; cp "$SEEDIMG" "$WORK/fz.img"
@@ -185,6 +211,18 @@ PY
 	*) warned=$((warned + 1)); echo "  FAIL  image $i ($mut): $v";;
 	esac
 	case "$v" in
+	*" hpanic=0 "*) ;;
+	*" hpanic="*) faulted=$((faulted + 1));;
+	esac
+	case "$v" in
+	*" write_errors=0 "*|refused*) ;;
+	*" write_errors="*) wrefused=$((wrefused + 1));;
+	esac
+	case "$v" in
+	*" rmmod=0 "*|*" umount=0 "*) ;;
+	*" rmmod="*|mounted*" umount="*) stuck=$((stuck + 1)); echo "  FAIL  image $i ($mut): umount or rmmod did not return 0: $v";;
+	esac
+	case "$v" in
 	mounted*) mounted=$((mounted + 1));;
 	refused*) refused=$((refused + 1));;
 	"guest hung"*) hung=$((hung + 1)); echo "  FAIL  image $i ($mut): the guest stopped answering"; break;;
@@ -192,7 +230,7 @@ PY
 	esac
 	i=$((i + 1))
 done
-fail=$((fail + warned + hung))
+fail=$((fail + warned + hung + stuck))
 
 if [ $started = 1 ]; then
 	ssh -o ConnectTimeout=5 "$GUEST_SSH" 'rmmod hammer2; poweroff' >/dev/null 2>&1
@@ -204,5 +242,5 @@ fi
 rm -f "$WORK/fz.img"
 
 [ "$ran" = "$N" ] || { echo "  FAIL  ran $ran of $N images"; fail=$((fail + 1)); }
-echo "fuzz: seed $SEED, $ran image(s): $mounted mounted, $refused refused, $warned with a kernel report, $hung hung; built from $built; log $LOG"
+echo "fuzz: seed $SEED, $ran image(s): $mounted mounted, $refused refused, $faulted faulted, $wrefused mounted but refused a write, $warned with a kernel report, $hung hung, $stuck stuck at umount or rmmod; write $WRITE; built from $built; log $LOG"
 [ $fail = 0 ]

@@ -1205,6 +1205,16 @@ them:
 | seed 5, the generator that redraws | 100 | 45 | 42 (one each) | 1 (3 files listed, one `EIO`) | 13 | 0 |
 | seed 6, the build with the reserve | 300 | 120 | 110 (107 with one, 3 with two) | 2 (0 files listed) | 68 | 0 |
 | seed 1 again, the shim's own lock | 50 | 22 | 18 (one each) | 0 | 10 | 0 |
+| seed 1, the write side, `hpanic` returning | 50 | 22 | 18 (one each) | 0 | 10 | 0 |
+
+The last row is the first run of `H2_FUZZ_WRITE=1`, at `ce59742`:
+the same fifty images mounted read-write and written into after the
+read. Of the forty that mounted, thirty refused every write with `EIO`
+and dirtied nothing, ten took a file, 256 KiB of random data, a
+directory and an unlink and synced them, none reached an `hpanic`
+site, and every `umount` and `rmmod` returned 0. The thirty are
+mutations in the freemap's reserved zone: a leaf whose check fails is
+refused at the allocation. `README.testing.md` has the mode.
 
 The seed 4 row was the first run after `hpanic` stopped calling
 `panic()`, and its purpose was the kernel report column: a mutation
@@ -1987,6 +1997,20 @@ chains and dios outstanding at every unmount, none could-not-run.
 Against about one failure in eight before it, twenty clean is a rate
 the change moved, not proof the window is closed, and the gate keeps
 counting on every push.
+
+It counted one more on 2026-09-07, in the hook of the push that carried
+the returning `hpanic` (`b74a018`): the fill stopped at file 457 with
+1268 blocks available, `syncfs(2)` returned `ENOSPC`, ten strategy
+writes were refused at consecutive offsets, four inode flushes failed
+with 28, and `fill.420` to `fill.423`, four consecutive 4 MiB files
+thirty-four before the stop, read back damaged, the shape above
+exactly. Five repeats on that tree and five on the tree before it, all
+logs kept, read every file whole with nothing outstanding, so the loss
+is not separated from the change by the control and is recorded as the
+rate, one in thirty-three runs since `53aacb3` against one in eight
+before it; the change it arrived with touches no reserve count. The
+window is open, and what closes it is a reservation the strategy can
+draw on rather than a count it is judged against.
 
 What that run also showed and the change does not answer: two chains
 outstanding at the unmount, with zero modified, after the strategy's

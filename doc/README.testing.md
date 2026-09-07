@@ -800,6 +800,25 @@ path:
     # mount, create a few directories, files at several
     # sizes, a symlink and a hard link, sync, unmount
 
+`H2_FUZZ_WRITE=1` is the write side of the same corpus: each image is
+attached read-write, mounted read-write, read as above, and then
+written into, a new file, 256 KiB of random data, a directory and one
+unlink, followed by `sync` and `umount`, which is what reaches the
+block-table, freemap and check-method sites a read never does. Since
+`hpanic` marks the device in error and returns, a fault is its own
+count in the verdict rather than a kernel report, the module is
+reloaded after every image because the mark is module-wide, and an
+`umount` or `rmmod` that does not return 0 fails the run; a `BUG`, an
+oops or a hung task is still a report. The seed control must take
+every write. Read on 2026-09-07 at `ce59742`, seed 1, fifty images:
+forty mounted and ten were refused, as the read side reads them;
+thirty of the forty refused all four writes with `EIO` and dirtied
+nothing, ten took all four and synced, none faulted, none reported,
+none stuck. A mutation in the first 4 MiB lands in the freemap's
+reserved zone, and a freemap leaf whose check no longer matches is
+refused at the allocation rather than allocated over, which is the
+refusal those thirty read.
+
 The image is copied under `/var/tmp/hammer2-fuzz` for each mutation,
 because libvirt takes ownership of a file it attaches and the next copy
 over it in the fixtures directory is refused. The script builds the

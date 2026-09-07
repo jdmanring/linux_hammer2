@@ -556,8 +556,11 @@ helper's debug hook. Two classes by what can reach them:
 - **From disk.** The block table content (insert overlapping, delete
   not found), the check method byte, the blockref type in load_data,
   and the dedup data offset are all read from media, so a corrupt
-  image reaches them. `fuzz-mount.sh` mutates images and mounts them
-  but never writes to one, so none of these has been fuzzed.
+  image reaches them. `fuzz-mount.sh` with `H2_FUZZ_WRITE=1` mounts
+  each mutated image read-write and writes into it; the first fifty,
+  read 2026-09-07 in `README.testing.md`, reached none of them, thirty
+  of the forty that mounted refusing every write at the freemap check
+  before any of these sites.
 - **From memory only.** "no room" after a scan that found room, the
   insert validation, a compressed size outside the radix table, an
   inode in the data write path, an unexpected type in the strategy
@@ -634,9 +637,8 @@ runs recorded in `README.testing.md`.
 
 The deferral this section carried, `DEFER(every hpanic site has an
 error its caller propagates)`, was lifted by that reading on
-2026-09-07. What remains open from it is the write-side fuzz (mount
-a mutated image, write into it), the instrument for the from-disk
-class of void sites, which is the fuzz harness's next mode.
+2026-09-07. The write-side fuzz, the instrument for the from-disk class of void
+sites, is the harness's `H2_FUZZ_WRITE=1` mode since the same day.
 
 A reviewer who has not read this file will raise this, and should: the source
 shows `BUG_ON` and `panic` with nothing beside them saying the objection was
