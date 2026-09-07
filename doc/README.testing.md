@@ -918,7 +918,13 @@ live root's file back unchanged; DragonFly then checks the snapshot's
 manifest as it checks the others, and with the live root and the
 snapshot mounted side by side reports the changed file reading apart
 and the added file absent from the live root. `H2_PFS_SNAP` names the
-snapshot. f7 covered PFSes DragonFly made; this covers PFSes this port
+snapshot. `H2_PFS_VOLUMES=2` formats the filesystem across two 1 GiB
+images instead of one 2 GiB image, attaches both to each guest, mounts
+by the colon-separated device pair on both sides, fills the first
+root with `H2_PFS_FILL` MB, 1200 by default, so the writes cross into
+the second volume, and reads the volume count from `volume-list` on
+each side; the host's checker and its control run over the pair. f7
+covered PFSes DragonFly made; this covers PFSes this port
 made, which nothing had mounted on DragonFly before, and a snapshot
 written into, which the capability declaration's snapshot rows stand on.
 

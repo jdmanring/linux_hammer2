@@ -1538,6 +1538,16 @@ live root's and found the added file absent from the live root, its
 checker clean, 0 failures, lockdep intact and no kernel report. That
 run is what the capability declaration's snapshot rows stand on.
 
+The same run on `e173432` with `H2_PFS_VOLUMES=2`, the filesystem
+formatted across two 1 GiB images: the port mounted the pair by its
+colon-separated device list and `volume-list` reported 2; the first
+root took a 1200 MB fill, 1231424 KiB used on the set, past what one
+volume holds; the three roots and the snapshot verified on DragonFly
+over the same pair, 87 files with 0 mismatches including the fill,
+DragonFly reporting 2 volumes and its checker clean; the host's
+checker over the pair clean after each side, with its control; 0
+failures, lockdep intact and no kernel report.
+
 The gate's first run under its own name turned up what every run before
 it had carried uncounted. Its kmsg capture held a warning from the
 compaction daemon, `hammer2_file_aops does not implement

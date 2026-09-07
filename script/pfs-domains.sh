@@ -17,6 +17,9 @@ IMG=${H2_PFS_IMAGE:-$FIXDIR/pfs-domains.img}
 ROOT=${H2_PFS_ROOT:-ROOT}
 DOMAINS=${H2_PFS_DOMAINS:-"SYSTEM STORE CACHE"}
 SNAP=${H2_PFS_SNAP:-SNAP1}	# taken of the first domain, written into here, read on both sides
+VOLUMES=${H2_PFS_VOLUMES:-1}	# 2: the filesystem spans two 1 GiB images, and the first domain is filled past the first
+FILL=${H2_PFS_FILL:-1200}	# MB written in the first domain when VOLUMES is 2, more than one volume holds
+IMG2=${IMG%.img}-2.img
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 DFLY=${H2_DFLY_GUEST:-dragonflybsd642}
@@ -42,7 +45,7 @@ fsck_control() {	# image
 	cp --sparse=always "$1" "$c" || { echo "  FAIL  could not copy $1 for the fsck control"; return 1; }
 	b=$(dd if="$c" bs=1 skip=256 count=1 status=none | od -An -tu1 | tr -d ' ')
 	printf "\\$(printf %o $((b ^ 255)))" | dd of="$c" bs=1 seek=256 conv=notrunc status=none
-	o=$("$FSCK" "$c" 2>&1); s=$?
+	o=$("$FSCK" "$c${SET#$IMG}" 2>&1); s=$?
 	rm -f "$c"
 	if [ "$s" != 0 ] && printf '%s\n' "$o" | grep -q "volume header crc mismatch"; then
 		echo "  ok    host fsck_hammer2 refuses the same image with one header byte changed"
@@ -68,14 +71,20 @@ make -s KDIR="$KDIR" >/dev/null 2>&1 || {
 	echo "pfs: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 
-rm -f "$IMG"
-truncate -s 2G "$IMG" && "$NEWFS" -L "$ROOT" "$IMG" >/dev/null 2>&1 || {
-	echo "pfs: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
+rm -f "$IMG" "$IMG2"
+if [ "$VOLUMES" = 2 ]; then
+	SET="$IMG:$IMG2"
+	truncate -s 1G "$IMG" "$IMG2" && "$NEWFS" -L "$ROOT" "$IMG" "$IMG2" >/dev/null 2>&1
+else
+	SET=$IMG
+	truncate -s 2G "$IMG" && "$NEWFS" -L "$ROOT" "$IMG" >/dev/null 2>&1
+fi || { echo "pfs: COULD-NOT-RUN: newfs_hammer2 failed on $SET" >&2; exit 2; }
 
 fail=0
 ndom=$(printf '%s\n' $DOMAINS | grep -c .)
 boot() {	# boot <guest> <ssh>; the image is attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
+	[ "$VOLUMES" = 2 ] && $VIRSH attach-disk "$1" "$IMG2" vdc --targetbus virtio --config >/dev/null 2>&1
 	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  COULD-NOT-RUN  $1 did not start"; return 1; }
 	n=0
 	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$2" true 2>/dev/null; do
@@ -90,17 +99,19 @@ down() {	# down <guest> <ssh>
 		sleep 3; n=$((n + 1)); [ $n -gt 60 ] && { $VIRSH destroy "$1" >/dev/null 2>&1; break; }
 	done
 	$VIRSH detach-disk "$1" vdb --config >/dev/null 2>&1
+	[ "$VOLUMES" = 2 ] && $VIRSH detach-disk "$1" vdc --config >/dev/null 2>&1
 }
 
 # 1. Linux creates the PFSes, mounts each by label, writes a tree in each.
 cat > "$W/linux.sh" <<GUEST
 command -v hammer2 >/dev/null 2>&1 || { echo "no hammer2 utility on the guest"; exit 3; }
-dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/root
+dev=\$(ls /dev/vd? | tail -$VOLUMES | paste -sd:); mkdir -p /mnt/root
 rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C
 mount -t hammer2 \$dev@$ROOT /mnt/root || { echo "root mount failed"; exit 1; }
 created=0
 for d in $DOMAINS; do hammer2 -s /mnt/root pfs-create \$d >/dev/null 2>&1 && created=\$((created+1)); done
 echo "created \$created"
+echo "volumes on linux: \$(hammer2 -s /mnt/root volume-list 2>/dev/null | grep -c '^volume')"
 echo "pfs-list on linux: \$(hammer2 -s /mnt/root pfs-list 2>/dev/null | awk 'NR>1{print \$NF}' | tr '\n' ' ')"
 mounted=0
 for d in $DOMAINS; do
@@ -109,6 +120,7 @@ for d in $DOMAINS; do
 	mounted=\$((mounted+1))
 	cd /mnt/\$d
 	mkdir -p tree; dd if=/dev/urandom of=tree/rand100k bs=1000 count=100 2>/dev/null
+	[ "$VOLUMES" = 2 ] && [ \$d = ${DOMAINS%% *} ] && { dd if=/dev/urandom of=tree/fill bs=1M count=$FILL 2>/dev/null; sync; echo "fill \$(stat -c %s tree/fill) bytes, \$(df -k /mnt/\$d | awk 'NR==2{print \$3}') KiB used on the set"; }
 	i=0; while [ \$i -lt 20 ]; do echo "\$d \$i" > tree/f\$i; i=\$((i+1)); done
 	find tree -type f | sort | xargs md5sum > manifest.md5
 	echo "wrote \$d \$(wc -l < manifest.md5) files"
@@ -144,6 +156,8 @@ down "$GUEST" "$GUEST_SSH"
 [ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^created $ndom$" || { echo "  FAIL  not every PFS was created"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^mounted by label $ndom$" || { echo "  FAIL  not every PFS mounted by label"; fail=$((fail + 1)); }
+printf '%s\n' "$out" | grep -q "^volumes on linux: $VOLUMES$" || { echo "  FAIL  volume-list here did not report $VOLUMES volume(s)"; fail=$((fail + 1)); }
+[ "$VOLUMES" = 2 ] && { printf '%s\n' "$out" | grep -q "^fill $((FILL * 1048576)) bytes, [0-9]* KiB" || { echo "  FAIL  the fill did not reach $FILL MB"; fail=$((fail + 1)); }; }
 for d in $DOMAINS; do
 	printf '%s\n' "$out" | grep -q "^pfs-list on linux: .*\b$d\b" || { echo "  FAIL  $d missing from pfs-list here"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | grep -q "^wrote $d [1-9][0-9]* files" || { echo "  FAIL  nothing written in $d"; fail=$((fail + 1)); }
@@ -151,28 +165,29 @@ done
 for want in "^snapshot exit 0$" "^wrote $SNAP 2[0-9] files$" "^snapshot umount exit 0$" "^live f0 unchanged" "^umount exit 0$" "^rmmod exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
-"$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
+"$FSCK" "$SET" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
 # 2. DragonFly mounts each by label and checks this side's manifests.
 cat > "$W/dfly.sh" <<GUEST
+dset=/dev/vbd1; [ "$VOLUMES" = 2 ] && dset=/dev/vbd1:/dev/vbd2
 listed=
 for d in $DOMAINS $SNAP; do
 	mkdir -p /mnt/\$d
-	mount_hammer2 /dev/vbd1@\$d /mnt/\$d || { echo "mount by label \$d failed"; continue; }
+	mount_hammer2 \$dset@\$d /mnt/\$d || { echo "mount by label \$d failed"; continue; }
 	# pfs-list wants a mount to route through, so it runs on the first.
-	[ -n "\$listed" ] || { listed=1; echo "pfs-list on dragonfly: \$(hammer2 -s /mnt/\$d pfs-list 2>/dev/null | awk 'NR>1{print \$NF}' | tr '\n' ' ')"; }
+	[ -n "\$listed" ] || { listed=1; echo "volumes on dragonfly: \$(hammer2 -s /mnt/\$d volume-list 2>/dev/null | grep -c '^volume')"; echo "pfs-list on dragonfly: \$(hammer2 -s /mnt/\$d pfs-list 2>/dev/null | awk 'NR>1{print \$NF}' | tr '\n' ' ')"; }
 	cd /mnt/\$d
 	bad=0; n=0; while read sum path; do n=\$((n+1)); [ "\$(md5 -q "\$path")" = "\$sum" ] || bad=\$((bad+1)); done < manifest.md5
 	echo "dragonfly checked \$d \$n files, \$bad mismatches"
 	cd /; umount /mnt/\$d
 done
 first=${DOMAINS%% *}
-mount_hammer2 /dev/vbd1@\$first /mnt/\$first && mount_hammer2 /dev/vbd1@$SNAP /mnt/$SNAP && {
+mount_hammer2 \$dset@\$first /mnt/\$first && mount_hammer2 \$dset@$SNAP /mnt/$SNAP && {
 	cmp -s /mnt/\$first/tree/f0 /mnt/$SNAP/tree/f0 || echo "dragonfly reads the snapshot's f0 apart from the live one"
 	[ -e /mnt/\$first/tree/new ] || echo "dragonfly finds no new file in the live pfs"
 	umount /mnt/$SNAP; umount /mnt/\$first; }
-fsck_hammer2 /dev/vbd1 >/dev/null 2>&1 && echo "dragonfly fsck clean"
+fsck_hammer2 \$dset >/dev/null 2>&1 && echo "dragonfly fsck clean"
 GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "pfs: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
@@ -184,13 +199,13 @@ for d in $DOMAINS $SNAP; do
 	printf '%s\n' "$out" | grep -q "^pfs-list on dragonfly: .*\b$d\b" || { echo "  FAIL  $d missing from pfs-list on DragonFly"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | grep -q "^dragonfly checked $d [1-9][0-9]* files, 0 mismatches" || { echo "  FAIL  $d did not verify on DragonFly"; fail=$((fail + 1)); }
 done
-for want in "reads the snapshot's f0 apart" "finds no new file in the live"; do
+for want in "reads the snapshot's f0 apart" "finds no new file in the live" "^volumes on dragonfly: $VOLUMES$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  DragonFly did not report: $want"; fail=$((fail + 1)); }
 done
 printf '%s\n' "$out" | grep -q "dragonfly fsck clean" || { echo "  FAIL  DragonFly's checker"; fail=$((fail + 1)); }
-"$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
+"$FSCK" "$SET" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
-echo "pfs: $ndom PFS roots made here and a snapshot written into, mounted by label on both sides, $fail failure(s)"
+echo "pfs: $ndom PFS roots made here and a snapshot written into, on $VOLUMES volume(s), mounted by label by both sides, $fail failure(s)"
 [ $fail = 0 ]
