@@ -21,7 +21,10 @@ on that evidence. HAMMER2's ioctls answer as Linux ioctls, a snapshot
 taken here mounts on DragonFly, files on a volume map and execute, and
 a kernel has booted with a HAMMER2 root. The half of 0.8 that belongs
 to this side is measured: PFS roots made here mount by label on both
-sides and DragonFly checks what was written in each. `README.status.md`
+sides and DragonFly checks what was written in each, a snapshot taken
+here is written into and read apart from its root there, and the same
+run holds on a filesystem across two volumes. The port's half of 0.7's
+adapter is `README.capabilities.md`, each row on a run. `README.status.md`
 is the record of what was measured and how; this section says only
 where the work stands.
 

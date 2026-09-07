@@ -34,7 +34,8 @@ init on an otherwise empty volume, once, on a guest.
 At a glance, on a kernel of 7.3 or newer:
 
 + works: mount read-write by PFS label, read, write, mmap and exec,
-  snapshots, PFS create, delete and list through `hammer2-utils`,
+  snapshots and writes into them, a filesystem across two volumes,
+  PFS create, delete and list through `hammer2-utils`,
   LZ4 and ZLIB media, crash recovery to the same tree as the FreeBSD port
 + works with a caution: a volume filled to capacity refuses the fill and
   keeps every accepted file whole, after four defects in that path were
