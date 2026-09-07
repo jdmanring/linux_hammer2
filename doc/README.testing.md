@@ -1355,7 +1355,18 @@ that check is what found a fill losing nearly all of itself.
 a volume with room must read back everything it accepted, or the check
 is what is broken. Free space is read after the sync, because the write
 path refuses a fill while statfs still shows the space its dirty pages
-will take. After the fill it writes 128 KiB through a shared mapping of
+will take; the free count is printed beside it, since statfs subtracts
+the whole reserve and reads zero for anything under a twentieth of the
+volume. Around that sync it reads the freemap's two allocation
+counters, the bytes handed out for data and for everything else,
+which the module exports as `alloc_data_bytes` and `alloc_meta_bytes`,
+and after it prints the last refusals the write entry put in the
+debug log, each with the free count and the dirty bytes it judged by,
+the module's debug prints being on for the run; what the sync took
+against what the count promised is read from those lines. The image
+of a failed run is kept beside the next run's as `enospc.img.failed`,
+since its freemap, read on the host with `hammer2 freemap`, is what a
+loss is diagnosed from. After the fill it writes 128 KiB through a shared mapping of
 a file sized while there was room, with `test/hammer2-mmap-exercise.c`
 in its `existing` mode, and 128 KiB through `write(2)` into another
 such file, and fails the run if `write(2)` is refused and the mapping
