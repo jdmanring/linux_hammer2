@@ -13,7 +13,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 ## Where we are
 
 0.5 to 0.8 are met and 0.9 is open on its low-memory row, with the
-driver at 0.7.50 in `CHANGELOG.md`. The shipped module mounts
+driver at 0.9.0 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted
