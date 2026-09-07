@@ -61,5 +61,5 @@ format's lazy accounting with a fixed reserve; and everything to do
 with copies, replication, quota and online repair is absent, in every
 port, and is declared absent rather than emulated.
 
-`README.roadmap.md`'s 0.7 milestone is the adapter over these rows, and
-this file is the half of it that belongs here.
+This file is the port's side of any adapter a consumer writes over
+these rows; `README.roadmap.md`'s 0.7 milestone closed on it.

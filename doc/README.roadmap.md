@@ -54,8 +54,9 @@ first real closure, 1978 store paths and 205871 files, which found
 six defects the million one-line files could not reach, five fixed
 and one deferred with its trigger; the copy now completes and reads
 back beside squashfs and erofs, clean on one 8 GiB run of three and
-short by a few refused writes at 4 GiB. 0.7's adapter and 0.8's installer wait on the storage
-model.
+short by a few refused writes at 4 GiB. 0.7 and 0.8 closed on the
+port's own criteria once the milestones stopped naming a consumer's
+adapter and installer as theirs.
 
 The first compile of a module against a kernel tree is the maintainer's
 authorization, not a contributor's. `src/sys/fs/hammer2/Makefile`

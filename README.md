@@ -44,8 +44,9 @@ At a glance, on a kernel of 7.3 or newer:
   back beside squashfs and erofs, identical on an 8 GiB guest one run
   in three and short by a handful of writes on a 4 GiB one, each
   refused for want of a 64 KiB folio; `doc/IO_MODEL.md` has why
-+ not yet: a package, a tag, a kernel below 7.3, a backend adapter behind
-  the snapshots, and any write to media that is not a scratch image
++ not yet: a package, a tag, a kernel below 7.3, a write path that
+  holds folios smaller than the block under memory pressure, and any
+  write to media that is not a scratch image
 
 Every write operation has been run on scratch media and read back by
 DragonFly, in both directions of a round trip, and the crash matrix, a
@@ -110,9 +111,9 @@ The reproducer is `script/test-enospc.sh`, a gate since it passed ten runs, and 
 included, is in [doc/README.status.md](doc/README.status.md).
 
 What that buys you is a driver that can be tried, on media you can
-afford to lose. What it does not yet do: the snapshots have no backend
-adapter behind them, which keeps 0.7 open; nothing is packaged, and no
-tag exists. It has booted as a root filesystem once, with a static init
+afford to lose. What it does not yet do: under memory pressure a write
+can be refused for want of a 64 KiB folio, which keeps 0.9 open;
+nothing is packaged, and no tag exists. It has booted as a root filesystem once, with a static init
 and nothing else on the volume, which is a long way from a
 distribution. Every write it has made was to a scratch image on a
 guest.
