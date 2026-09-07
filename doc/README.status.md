@@ -1190,7 +1190,7 @@ the shipped build. The first sixty images, mutated at uniformly random
 offsets, went 56 mounted and 4 refused with every mounted image reading
 all 44 files: a 64 MiB image is almost entirely zero and absorbed the
 hits, which is why the mutator now samples until it lands on a byte
-that is not zero. Five runs since, 640 images, and every verdict in
+that is not zero. Six runs since, 690 images, and every verdict in
 them:
 
 | run | images | mounted, all 44 files read | mounted, one or two files `EIO` | mounted, the listing cut short | refused | kernel report |
@@ -1201,6 +1201,7 @@ them:
 | seed 4, after `hpanic` became `BUG()` | 100 | 36 | 52 (48 with one, 3 with two, 1 with three) | 1 (0 files listed) | 12 | 0 |
 | seed 5, the generator that redraws | 100 | 45 | 42 (one each) | 1 (3 files listed, one `EIO`) | 13 | 0 |
 | seed 6, the build with the reserve | 300 | 120 | 110 (107 with one, 3 with two) | 2 (0 files listed) | 68 | 0 |
+| seed 1 again, the shim's own lock | 50 | 22 | 18 (one each) | 0 | 10 | 0 |
 
 The seed 4 row was the first run after `hpanic` stopped calling
 `panic()`, and its purpose was the kernel report column: a mutation
