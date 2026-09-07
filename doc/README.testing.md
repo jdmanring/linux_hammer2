@@ -974,7 +974,11 @@ it and runs its checker; the host's checker runs after each side with
 its negative control. Rates are printed and never judged; a run fails
 on a count or hash that differs, a kernel warning, a checker verdict
 or a missing reading, and a guest whose run times out is read through
-`guest-dmesg.sh` before it is reset. The guest kernel needs squashfs
+`guest-dmesg.sh` before it is reset. The guest's whole `dmesg` is saved
+beside the log (`H2_CLOSURE_DMESG`), because the second warning of a
+run is the one that says why lockdep went off, and `H2_NC_GUESTPRE`
+runs a command on the guest before the module loads, for the control
+that turns kmemleak off. The guest kernel needs squashfs
 and erofs as modules, which the debug guest's did not until F6 asked.
 
 `script/throughput.sh` takes the two readings that decide whether the
