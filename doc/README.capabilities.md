@@ -1,16 +1,18 @@
-# What HAMMER2 on Linux declares to the storage model
+# What HAMMER2 on Linux declares
 
-The storage model this port serves, section 27 of the Saxum reference,
-fixes six levels a backend may declare a capability at and one rule
-over them, that a backend is never reported as providing a guarantee
-it cannot provide. The list of capabilities is the implementation's,
-so it lives here, beside the record that backs each row. Every level
-below is read off a measurement in `README.status.md` on the build the
-row names, and a row moves only when a measurement moves it. Where a
-capability the model asks for is not here, the row says so and says
-what the model composes above it instead.
+This is the port's own statement of what it provides, for anyone who
+builds above it. Each capability is declared at one of six levels
+under one rule: the port is never reported as providing a guarantee
+it cannot provide. The levels and the list of capabilities are the
+vocabulary of one storage model, section 27 of the Saxum reference,
+used here because it is precise; nothing in this tree depends on that
+model or on any distribution, and a consumer maps from this table to
+its own. Every level below is read off a measurement in
+`README.status.md` on the build the row names, and a row moves only
+when a measurement moves it. Where a capability is not here, the row
+says so and says what a consumer could compose above it.
 
-The levels, in the model's words: native, provided directly with
+The levels: native, provided directly with
 documented semantics; composed, provided through an explicit lower
 layer; emulated, implemented above the backend at a stated weaker
 cost; limited, available only under stated constraints; unavailable;

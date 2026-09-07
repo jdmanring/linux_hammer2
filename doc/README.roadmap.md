@@ -12,7 +12,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 and 0.6 are met and 0.7 is open on the adapter alone, with the
+0.5 to 0.8 are met and 0.9 is open on its low-memory row, with the
 driver at 0.7.50 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
@@ -23,8 +23,9 @@ a kernel has booted with a HAMMER2 root. The half of 0.8 that belongs
 to this side is measured: PFS roots made here mount by label on both
 sides and DragonFly checks what was written in each, a snapshot taken
 here is written into and read apart from its root there, and the same
-run holds on a filesystem across two volumes. The port's half of 0.7's
-adapter is `README.capabilities.md`, each row on a run. `README.status.md`
+run holds on a filesystem across two volumes. `README.capabilities.md`
+declares what the port provides, each row on a run, and the port depends
+on no distribution's model for it. `README.status.md`
 is the record of what was measured and how; this section says only
 where the work stands.
 
@@ -62,9 +63,10 @@ invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
-1. The adapter's consumer half, written by the consumer against
-   `README.capabilities.md`; the ioctls it will sit on are delivered
-   and gated, and the declaration names what each row would take to move.
+1. 0.9's low-memory row: the order-4 folio refusal is attributed with
+   its controls, and `IO_MODEL.md` sizes what removing it takes, a
+   block assembled from every folio the cache holds before its write.
+   That is the one design change left on this side before 1.0.
 2. The syncer is carried: DragonFly's thirty-second period and its
    dirty-count trigger, added when the million-file tree showed the
    dirty set growing without bound between `sync` calls. The first
@@ -130,8 +132,8 @@ and a milestone is met when all of them are.
 | 0.4 | H1 | Read-only mount of DragonFly-written media | met. Criterion 1: hash, size, block count, symlink target, mode, link count, owner, group, inode number and statfs compared against what DragonFly reported, hard-link identity included. Criterion 2: the installed DragonFly root read cold, 28209 rows identical between this reader and Kusumi's FreeBSD port. Criterion 3: PFS roots mountable by label, `f7` carrying two. Criterion 4: a corrupted data block refused on read with `EIO` and a corrupted volume header refused at mount, each with `fsck_hammer2`'s verdict recorded first. Criterion 5: clean unmount with kmemleak empty, lockdep enabled throughout since 0.4.3. Criterion 6: `f1`'s tree written by the kernel as `f12`, the two volumes identical down to compression, check method and blockref topology, differing only in two inode numbers where allocation order shows. The read rate was not a criterion and was first measured under 0.9 on 2026-09-06, when the device mapping was found to read nothing ahead; `README.status.md` has the table |
 | 0.5 | H2 | Write path, verified on DragonFly | met. Every operation in the list is carried and read back by DragonFly; F4 ran both ways on a volume formatted here; the flush order is taken from the block tracepoints with the header last; 200 mutated images through the mount path with no report; the interrupted flush recovered on both sides, and the freemap replay driven on a header made to lag. The allocation order of a large file was not a criterion and was first read under 0.9 on 2026-09-06 from the image beside DragonFly's own file: contiguous at 8185 of 8191 steps where DragonFly's is scattered, so the writeback order needed nothing |
 | 0.6 | H3 | Crash recovery | met. Kill, panic, power and torn header, twice each, on media the FreeBSD port wrote and on media this port wrote: every image mounted and recovered on both ports, every file readable, `fsck_hammer2` clean after each recovery, and each cell's runs in agreement |
-| 0.7 | H4 | Snapshots and checkpoints behind the storage model's adapter | open. The ioctl surface is delivered and gated: snapshot create, PFS create, delete, list and lookup, the inode and volume queries, growfs and bulkfree, with the read-only half exercised on every fixture and the writing half hand-verified, a snapshot taken here mounting on DragonFly. The storage model exists in normative form, section 27 of the Saxum reference, and its 27.3 puts the capability declaration with the implementation: `README.capabilities.md` declares every capability at one of the model's six levels with the measurement behind it, and is the half of the adapter that belongs here. The other half, the backend that drives these ioctls and passes the model's conformance suite, is the consumer's, so the milestone stays open on it |
-| 0.8 | H5 | PFS as storage domains | open. The half that belongs to this side is measured: `script/pfs-domains.sh` creates SYSTEM, STORE and CACHE through the port's own ioctl, mounts each by label here and on DragonFly, and DragonFly checks what was written in each, 21 files per root with 0 mismatches on two runs, and a snapshot of one root written into here and read apart from its root on DragonFly, all of it again on a filesystem across two volumes. The installer and the mapping wait on the storage model, as 0.7's adapter does |
+| 0.7 | H4 | Snapshots and checkpoints | met at 0.7.49, on 2026-09-06. The ioctl surface is delivered and gated: snapshot create, PFS create, delete, list and lookup, the inode and volume queries, growfs and bulkfree. A snapshot taken here mounts by label on both sides, read-write; a write into it leaves its root unchanged and DragonFly reads the two apart. `README.capabilities.md` declares what the port provides, every row on a recorded run. The milestone was gated on one consumer's adapter until 2026-09-06; the port is independent of any distribution, so that adapter is the consumer's milestone |
+| 0.8 | H5 | PFS as storage domains | met at 0.7.50, on 2026-09-06. `script/pfs-domains.sh` creates SYSTEM, STORE and CACHE through the port's own ioctl, mounts each by label here and on DragonFly, and DragonFly checks what was written in each, 21 files per root with 0 mismatches on three runs, a snapshot of one root written into and read apart, and all of it again on a filesystem across two volumes. Which labels a consumer lays down and its installer are the consumer's |
 | 0.9 | H6 | Nix-scale hardening | open. The million-file row has its instrument and its first numbers: a hundred thousand files clean on both sides, and at a million two defects found and fixed, the unbounded dirty set and the reclaim inversion, and one limit measured and attributed: roughly seven hundred thousand one-line files on the 4 GiB debug guest before the write path's order-4 folio grab fails, and a million with no refusal on the same guest with kmemleak off, so the limit is the debug guest's and not the IO model's; and the large-file row: sequential read held to 353 MiB/s by a device mapping with no read-ahead, now 602 to 683 with the kernel's read-ahead asked for the BSD cluster hint, at btrfs's rate and DragonFly's own on the same guest, with the Linux-written file contiguous on the media where DragonFly's is scattered; `README.status.md` has both tables. F6's harness has run a real closure, a KDE desktop of 1978 store paths and 205871 files, and found six defects in ten runs: a lost XOP wakeup, lockdep's eight subclasses against a store path nine deep, a symlink failure returned as a positive number, unmovable symlink folios, a lookup deadlocked against kswapd's eviction, and a buffer freed by the cache cleanup under the writeback worker still holding it; five are fixed and the depth is a `DEFER` with its trigger. At 8 GiB the copy goes in at 82 s and reads back cold at 39 s hashed against squashfs's 44 and erofs's 27, every hash, symlink and hard link at the source's on one run of three, the others refusing one write each; at 4 GiB a few writes are refused each run for want of a 64 KiB folio, with the controls that attribute it in `IO_MODEL.md`. The XOP pool stays synchronous: the same copy into ext4 on the same guest took 79 s to the port's 85. Four writers put the same closure in at 64 and 80 s on two runs, ahead of ext4's single writer beside them, and the collection row is measured: 989 of 1978 store paths removed beside a reader, DragonFly counting what stayed |
 | 1.0 | qualification | Flagship qualification | not started |
 
@@ -385,29 +387,34 @@ every one; `doc/README.status.md` carries the table, and the torn cell's
 verdict from `fsck_hammer2`, which reports a torn header rather than
 skipping it as the mounts do, is recorded there as the expected verdict.
 
-### 0.7 Snapshots and checkpoints behind the storage model's adapter
+### 0.7 Snapshots and checkpoints
 
-The ioctl surface is redesigned as Linux ioctls, and snapshot creation,
-listing and deletion work through it. A backend adapter then implements
-`prepare_checkpoint`, `verify`, `make_durable`, `activate`, `rollback`,
-`release` and `list_recovery_points` on HAMMER2 snapshots, and passes the
-universal snapshot conformance suite of the storage model this port serves.
+The ioctl surface is redesigned as Linux ioctls, so `hammer2-utils`
+drives a mounted volume: snapshot creation, PFS creation, listing,
+lookup and deletion, the inode and volume queries, growfs and the
+bulkfree scan. A snapshot this port takes is a PFS of its own: it
+mounts by label on both sides, read-write, a write into it leaves the
+root it was taken of unchanged, and DragonFly reads the two apart.
+`README.capabilities.md` declares what the port provides, each row at
+one of six levels and each level read off a recorded run. Gated by
+the exerciser in the read-only gate for the ioctls and by
+`script/pfs-domains.sh` for the snapshot.
 
-The ioctls are gated by an exerciser added to the read-only gate. The adapter
-is gated by its consumer's conformance suite, which belongs with that
-consumer, not here. This milestone does not start before a storage model exists,
-because an adapter written against no model is a second model. If none exists
-when 0.6 closes, the ioctls ship alone as 0.7's first point release and the
-milestone stays open on the adapter.
+Until 2026-09-06 this milestone was also gated on an adapter and a
+conformance suite belonging to one consumer's storage model. The port
+is independent of any distribution: a consumer's adapter over these
+ioctls is that consumer's milestone, written against the declaration,
+and never a criterion of this tree. Met at 0.7.49.
 
 ### 0.8 PFS as storage domains
 
-The domains the storage model names, SYSTEM, STORE, PERSISTENT, BUILD, CACHE,
-RECOVERY and BOOT among them, map to PFS roots, with the mapping derived from
-measurement on the workload, not assumed. An installer lays them down
-through the adapter. Gated by the storage model's conformance suite over a
-volume the installer wrote, and by the read-only gate mounting each PFS by
-label. A domain added later is one more measurement, not a redesign.
+PFS roots are the port's storage domains: created here through its own
+ioctl, each mounting by label as a filesystem of its own on both
+sides, each holding what was written in it as DragonFly checks it, and
+the same on a filesystem across more than one volume. Which labels a
+consumer lays down, and the installer that lays them, are the
+consumer's. Gated by `script/pfs-domains.sh`, in both its one-volume
+and two-volume forms. Met at 0.7.50.
 
 ### 0.9 Nix-scale hardening
 

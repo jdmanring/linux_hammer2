@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-0.7%2C%20unreleased-yellow.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-0.9%2C%20unreleased-yellow.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -301,7 +301,7 @@ including what each gate cannot catch.
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
 | [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
-| [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares to the storage model, each row on a measurement |
+| [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares it provides, each row on a measurement |
 | [doc/README.kernel-style.md](doc/README.kernel-style.md) | licensing, and the path to mainline |
 
 ## Contributing

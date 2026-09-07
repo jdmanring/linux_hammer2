@@ -901,9 +901,10 @@ fixture disk is still attached in the persistent configuration and
 wants a `detach-disk --config` of its own.
 
 `script/pfs-domains.sh` is the half of 0.8 that belongs to this side.
-The milestone maps the storage model's domains onto PFS roots and gates
-them by mounting each by label; the model and its installer are the
-consumer's, and what a volume written here has to satisfy is this:
+PFS roots are the port's storage domains, and the milestone checks them
+by mounting each by label; which labels a consumer lays down and its
+installer are the consumer's, and what a volume written here has to
+satisfy is this:
 the host formats a 2 GiB image with one root PFS, the Linux guest
 creates three more through this port's own ioctl, `SYSTEM`, `STORE`
 and `CACHE` by default, mounts each by label as a filesystem of its
@@ -1050,8 +1051,8 @@ zero, and the counts are now asserted with the verdicts.
 
 ## Space a remove does not free, until the scan runs
 
-`script/bulkfree.sh` measures the one thing the storage model's
-collection row depends on that no other run had exercised: on
+`script/bulkfree.sh` measures the one thing a store's garbage
+collection depends on that no other run had exercised: on
 HAMMER2 a remove frees nothing. The freemap is rebuilt by a scan,
 `HAMMER2IOC_BULKFREE_SCAN`, which the port carried and answered and no
 run had asked for, and the scan is two passes by design: the first
