@@ -203,6 +203,8 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(files intact .*\)$/      \1/p;\
 		    s/^  \(blocks available after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(blocks free after sync [0-9]*\)$/      \1/p;\
+		    s/^  \(allocated .* sync .*\)$/      \1/p;\
+		    s/^  \(refusal .*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(write of 128K on the full volume .*\)$/      \1/p;\
@@ -369,7 +371,7 @@ rm -f /tmp/h2mmaptest.$$
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
-ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap; echo '${H2_ENOSPC_MODARGS:-}' > /tmp/h2modargs; rm -f /tmp/h2user${H2_ENOSPC_USER:+; touch /tmp/h2user}" 2>/dev/null
+ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap; echo 'dyndbg=+p ${H2_ENOSPC_MODARGS:-}' > /tmp/h2modargs; rm -f /tmp/h2user${H2_ENOSPC_USER:+; touch /tmp/h2user}" 2>/dev/null
 out=$(ssh "$GUEST_SSH" '
 	rmmod hammer2 2>/dev/null
 	# The ring wraps before a fill run ends, so the report is streamed
@@ -479,7 +481,14 @@ out=$(ssh "$GUEST_SSH" '
 	echo "write of 128K on the full volume exit $st : ${msg:-accepted}"
 	$as /tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1; st=$?
 	echo "mmap on the full volume exit $st : $(tail -1 /tmp/h2mmap.out)"
+	# What the freemap handed out, read around the sync that commits
+	# the fill, beside what the write entry saw when it refused: the
+	# difference between the two allocation readings is what the sync
+	# took, and the refusal line says what the count promised it.
+	echo "allocated before sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
 	sync
+	echo "allocated after sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
+	command grep "enospace refuses" /tmp/kmsg.log | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The free space read before the sync includes what dirty pages will
 	# take; the refusal counts them, statfs does not. After the sync the

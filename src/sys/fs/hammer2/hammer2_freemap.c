@@ -250,6 +250,12 @@ hammer2_freemap_alloc(hammer2_chain_t *chain, size_t bytes)
 	while (error == HAMMER2_ERROR_EAGAIN)
 		error = hammer2_freemap_try_alloc(&parent, bref, radix, &iter,
 		    mtid);
+	if (error == 0) {	/* Linux: counted under the freemap lock */
+		if (bref->type == HAMMER2_BREF_TYPE_DATA)
+			hammer2_alloc_data_bytes += bytes;
+		else
+			hammer2_alloc_meta_bytes += bytes;
+	}
 	hmp->freemap_relaxed |= iter.relaxed; /* heuristical, SMP race ok */
 	hmp->heur_freemap[hindex] = iter.bnext;
 	hammer2_chain_unlock(parent);
