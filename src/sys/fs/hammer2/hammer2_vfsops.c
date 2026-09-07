@@ -2326,6 +2326,30 @@ again:
  * XXX Linux: wakeup(&ip->flags) is the syncq condition variable, as in
  * hammer2_inode.c.
  */
+/*
+ * Linux: the sync loop below drops what the chain sync and flush return,
+ * as every tree does, and sync(2) returns zero unconditionally in the
+ * kernel of record; what syncfs(2) and fsync(2) read is the writeback
+ * error sequence, set by a data write's completion and by nothing on the
+ * metadata side.  A flush that cannot make room for a PFS root's update
+ * on a full volume fails there and nowhere a user reads, so the error is
+ * recorded where the kernel's own callers look for it: on the inode's
+ * mapping when it has one, on the superblock otherwise.
+ */
+static void
+hammer2_sync_error(hammer2_pfs_t *pmp, hammer2_inode_t *ip, int error)
+{
+	int err;
+
+	if (error == 0)
+		return;
+	err = hammer2_vfs_errno(hammer2_error_to_errno(error));
+	if (ip->vp)
+		mapping_set_error(ip->vp->i_mapping, err);
+	else if (pmp->mp)
+		errseq_set(&pmp->mp->s_wb_err, err);
+}
+
 int
 hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __maybe_unused)
 {
@@ -2556,13 +2580,15 @@ restart:
 		 */
 		debug_hprintf("inum %016llx pinum %016llx chain-sync\n",
 		    (long long)ip->meta.inum, (long long)ip->meta.iparent);
-		hammer2_inode_chain_sync(ip);
+		hammer2_sync_error(pmp, ip,
+		    hammer2_inode_chain_sync(ip));	/* Linux */
 
 		if (ip == pmp->iroot)
-			hammer2_inode_chain_flush(ip, HAMMER2_XOP_INODE_STOP);
+			hammer2_sync_error(pmp, ip, hammer2_inode_chain_flush(ip,
+			    HAMMER2_XOP_INODE_STOP));	/* Linux */
 		else
-			hammer2_inode_chain_flush(ip,
-			    HAMMER2_XOP_INODE_STOP | HAMMER2_XOP_FSSYNC);
+			hammer2_sync_error(pmp, ip, hammer2_inode_chain_flush(ip,
+			    HAMMER2_XOP_INODE_STOP | HAMMER2_XOP_FSSYNC));
 		if (vp) {
 			if ((ip->flags & (HAMMER2_INODE_MODIFIED |
 			    HAMMER2_INODE_RESIZED |
@@ -2619,10 +2645,11 @@ restart:
 	if ((ip = pmp->iroot) != NULL) {
 		hammer2_inode_ref(ip);
 		hammer2_mtx_ex(&ip->lock);
-		hammer2_inode_chain_sync(ip);
-		hammer2_inode_chain_flush(ip,
+		hammer2_sync_error(pmp, ip,
+		    hammer2_inode_chain_sync(ip));	/* Linux */
+		hammer2_sync_error(pmp, ip, hammer2_inode_chain_flush(ip,
 		    HAMMER2_XOP_INODE_STOP | HAMMER2_XOP_FSSYNC |
-		    HAMMER2_XOP_VOLHDR);
+		    HAMMER2_XOP_VOLHDR));	/* Linux */
 		hammer2_inode_unlock(ip); /* unlock+drop */
 	}
 	debug_hprintf("FILESYSTEM SYNC STAGE 2 DONE\n");

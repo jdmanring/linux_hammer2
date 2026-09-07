@@ -592,7 +592,7 @@ construction rather than re-hashed every run.
 | `hammer2_cluster.c` | 188 | FreeBSD port, carried byte-for-byte; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1914 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3152 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_vfsops.c` | 3179 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1417 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1423 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1030 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -1785,8 +1785,14 @@ errno, not the error. The Linux side of that completion is this port's
 own line, and it now hands the kernel the errno the core reports, as
 ext4 and iomap do, so both calls return `ENOSPC` on the same fill.
 
-The sync path's own returns are still dropped, and that is carried
-and, on Linux, without consequence. The sync loop flushes each inode's
+The sync path's own returns were dropped, and that is carried and,
+for a data write, without consequence on Linux; for the chain sync
+and flush of an inode it was not, since a flush that cannot make room
+for a PFS root's update on a full volume fails there and nowhere a
+user reads, so the sync loop now records what those two return on
+the inode's mapping, or on the superblock for an inode without one,
+which is where `syncfs(2)` and `fsync(2)` look. The rest of this
+paragraph is the reading that led there. The sync loop flushes each inode's
 mapping with `filemap_write_and_wait()` and then discards what it
 returns under an `XXX`, which is the line the `vnode flush failed 5`
 messages come from: the failure is printed and the loop carries on.
