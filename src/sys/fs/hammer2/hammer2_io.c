@@ -634,6 +634,16 @@ hammer2_io_putblk(hammer2_io_t **diop)
 
 	/* Lastdrop (1->0 transition) case. */
 	hmp = dio->hmp;
+	/*
+	 * Linux: after hpanic() marked the device in error, a dirty block
+	 * is disposed of as if the write had failed, so nothing written
+	 * after the fault reaches the media; see hpanic in hammer2_os.h.
+	 */
+	if ((orefs & HAMMER2_DIO_DIRTY) && READ_ONCE(hammer2_device_error)) {
+		pr_warn_once(KBUILD_MODNAME ": device in error, block %016llx dropped unwritten\n",
+		    (long long)dio->pbase);
+		orefs &= ~HAMMER2_DIO_DIRTY;
+	}
 	folio = dio->folio;
 	dio->folio = NULL;
 	buf = dio->buf;

@@ -1351,7 +1351,18 @@ through the DIO layer's block buffer and its bio writes, and, with
 every allocation past the Nth, which is how the paths behind an
 allocation failure are run now that the reserve keeps a fill from
 reaching one, and that build prints every chain still allocated at the
-unload, with its type, key, references, flags and parent; and every run reads both
+unload, with its type, key, references, flags and parent; `debug_hpanic=1`
+has the mount helper call `hpanic` so the fault path is exercised on
+demand, and `debug_hpanic=2`, on the same debug build and writable
+after loading under `/sys/module/hammer2/parameters/`, has `sync_fs`
+call it on the second call after the knob is set, which is the first
+`sync(2)` once the knob is set after an earlier sync, so what that
+earlier sync wrote is on the media and what comes after the fault is
+not: `script/hpanic-contain.sh` is that reading, twenty files synced,
+the knob set, twenty more written, a hard stop, `fsck_hammer2` on the
+host and the two counts at a remount, run once with the knob and once
+with `H2_KNOB=0` as the control, and on 2026-09-07 it read 20 and 0
+with the knob and 20 and 20 without; and every run reads both
 thresholds after the sync with one 64 KiB write as the user and one
 as root: the user is refused in either mode, root is accepted after a
 user's fill and refused after its own, and a run where root reads the

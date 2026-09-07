@@ -83,6 +83,7 @@ int hammer2_dedup_enable = 1;
 int hammer2_count_inode_allocated;
 int hammer2_count_chain_allocated;
 int hammer2_count_chain_modified;
+int hammer2_device_error;	/* Linux: set by hpanic, read where a block turns dirty */
 int hammer2_count_dio_allocated;
 int hammer2_dio_limit = 256;
 int hammer2_bulkfree_tps = 5000;
@@ -164,6 +165,7 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
  */
 int hammer2_debug_hpanic;
 module_param_named(debug_hpanic, hammer2_debug_hpanic, int, 0644);
+static int hammer2_debug_syncs;
 /*
  * XXX Linux: the freemap allocator refuses every allocation past this
  * many, so what a full volume does once in many fills runs on demand.
@@ -1748,8 +1750,8 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
 	sb->s_fs_info = pmp;
 	pmp->mp = sb;
 #if defined(HAMMER2_LOCKDEBUG)
-	if (hammer2_debug_hpanic)
-		hpanic("debug_hpanic is set, so this mount stops here");
+	if (hammer2_debug_hpanic == 1)
+		hpanic("debug_hpanic is 1, so this mount stops here");
 #endif
 	/* Linux: the syncer, from here until the unmount cancels it. */
 	schedule_delayed_work(&pmp->sync_work, HAMMER2_SYNC_INTERVAL);
@@ -2731,6 +2733,20 @@ restart:
 static int
 hammer2_sync_fs(struct super_block *sb, int wait)
 {
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * 2 fires on the second call after it is set.  sync(2) calls here
+	 * twice, without and with wait, so the first sync after the knob
+	 * is set stops, and what an earlier sync wrote is on the media.
+	 */
+	if (hammer2_debug_hpanic == 2 && ++hammer2_debug_syncs == 2)
+		hpanic("debug_hpanic is 2, so this second sync stops here");
+#endif
+	/* A device in error writes nothing more, and says so here. */
+	if (READ_ONCE(hammer2_device_error)) {
+		errseq_set(&sb->s_wb_err, -EIO);
+		return (-EIO);
+	}
 	return (hammer2_vfs_errno(hammer2_vfs_sync_pmp(MPTOPMP(sb),
 	    wait ? MNT_WAIT : MNT_NOWAIT)));
 }

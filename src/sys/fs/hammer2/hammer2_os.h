@@ -126,9 +126,20 @@
  * held, and lets the message reach the disk and the console; panic()
  * measured here left a guest dead with an empty log.  Reversal is this
  * one line.
+ *
+ * Before the task dies the device is marked in error: hammer2_io_putblk()
+ * refuses the dirty mark from then on, so a chain modified after the
+ * fault, by this task on its way down or by any other, never reaches
+ * the media, and ->sync_fs reports EIO.  A write after the fault still
+ * lands in the page cache and is refused at the sync; refusing it at
+ * write(2) is the mount flag's job, with the returning sites.  The mark
+ * is module-wide because the macro has no device in scope; every mount
+ * on the machine stops writing, where the BSD ports take the machine.
  */
+extern int hammer2_device_error;	/* Linux */
 #define hpanic(X, ...)	do {						\
 	pr_emerg(KBUILD_MODNAME ": " HFMT X, HARGS, ## __VA_ARGS__);	\
+	WRITE_ONCE(hammer2_device_error, 1);				\
 	BUG();								\
 } while (0)
 /*

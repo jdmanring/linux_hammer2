@@ -455,7 +455,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:130` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
+| `hammer2_os.h:140` | `hpanic`, `pr_emerg` and `BUG()` unconditionally |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.
@@ -494,6 +494,13 @@ The decision, split by which half the code is in:
   reference, so `rmmod` refused and the guest needed a hard stop to
   shed it. That is the trade: a wedged module and a reboot to clear it,
   against a machine that is down at once with nothing in its log.
+  Since 2026-09-07 the first part of the design below is in: `hpanic`
+  marks the device in error before `BUG()`, `hammer2_io_putblk()`
+  drops the dirty mark of any block after that, and `sync_fs` returns
+  `EIO`. Measured the same day with `debug_hpanic=2` on the debug
+  build: twenty files synced before the fault were on the media after
+  a hard stop, twenty written after it were not, `fsck_hammer2` was
+  clean, and the control without the knob put all forty there.
   It had two call sites when this was written, both reporting a corrupt
   block reference with no mount to invalidate. The carried core brought
   its own, fifty-four across seven files on 2026-09-04, forty of them in
@@ -589,9 +596,12 @@ names `BUG()` in one message, AVOID_BUG, for the same reason.
 
 ### What proves it
 
-The existing `debug_hpanic` knob fires at mount. The acceptance test
-adds a second value that fires from `hammer2_base_insert` on the
-first insert after mount, and the reading is: the writer gets `EIO`,
+`debug_hpanic=1` fires at mount; `debug_hpanic=2`, on the debug
+build, fires from `sync_fs` on the second call after the knob is set,
+which is the first `sync(2)` after a sync that has reached the media,
+and is what read part 1 above. The acceptance test for the whole
+design fires from `hammer2_base_insert` on the first insert after
+mount, and the reading is: the writer gets `EIO`,
 the mount reads read-only, `umount` returns, `rmmod` returns, no
 `BUG` and no oops in the log, and the image is byte-identical to the
 one before the fault. That reading is the DEFER's trigger. A
