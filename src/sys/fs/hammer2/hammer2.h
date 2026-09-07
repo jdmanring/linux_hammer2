@@ -137,6 +137,7 @@ struct hammer2_io {
 	struct file		*bdev_file;	/* Linux: was struct vnode *devvp */
 	struct file_ra_state	*ra;		/* Linux: the device's read-ahead state */
 	struct folio		*folio;		/* Linux: was struct buf *bp */
+	char			*buf;		/* Linux: the block when the page cache had no folio for it */
 	uint64_t		refs;
 	hammer2_off_t		dbase;		/* offset of device within volumes */
 	hammer2_off_t		pbase;
@@ -932,6 +933,7 @@ extern struct hammer2_pfslist hammer2_pfslist;
 
 extern hammer2_lk_t hammer2_mntlk;
 
+extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
 extern int hammer2_cluster_data_read;
 extern int hammer2_cluster_write;

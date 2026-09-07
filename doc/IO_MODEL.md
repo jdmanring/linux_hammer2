@@ -21,6 +21,7 @@ page cache, held by reference for the life of `DIO_GOOD`.
     struct hammer2_io {
         struct file   *bdev_file;   /* was struct vnode *devvp */
         struct folio  *folio;       /* was struct buf *bp      */
+        char          *buf;         /* the block when the page cache had no folio for it */
         uint64_t       refs;        /* DIO_ flags in the top bits */
         ...
     };
@@ -41,6 +42,23 @@ Lifetime, in the order it happens:
    `folio_address()` plus an offset.
 4. The last drop with `DIO_DIRTY` marks the folio dirty; with `DIO_FLUSH` it
    kicks writeback.
+
+When step 2's grab returns `ENOMEM`, memory holding no free run of
+sixteen pages and the mapping being pinned to that order, the dio takes
+the block in a buffer of its own instead: `vmalloc`, which wants pages
+and not a run of them, read through a bio of the block's pages, and
+`hammer2_io_data()` returns that buffer plus the offset. The page cache
+holds no folio for the block while the dio does, since the grab looked
+before it allocated and one dio covers one block, so the media is the
+truth for the read. On a dirty last drop the block is offered back to
+the page cache first, copied into a folio and dirtied as step 4 would
+have; only when the cache still cannot hold it is it written with a
+bio, and the range is invalidated afterwards, since a folio read ahead
+into the cache in the meantime would be stale. This is the one thing a
+BSD buffer cache has that a page cache pinned to one order does not,
+memory of its own, and the module parameter `io_buf_only=1` puts every
+block through it so the fixture and full-volume gates read the path
+rather than wait for it.
 
 ## The one assumption that shapes everything
 
@@ -74,7 +92,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:1170` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
-| `hammer2.h:532` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
+| `hammer2.h:533` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.
@@ -82,9 +100,9 @@ strategy would meet the same format.
 | site | what |
 |---|---|
 | `hammer2_io.c:43-47` | one folio per `hammer2_io`, via a 64 KiB block size |
-| `hammer2_io.c:76` | the `BLK_MAX_BLOCK_SIZE` static assert |
-| `hammer2_io.c:93-101` | `hammer2_io_index()` assuming the mapping's folio order |
-| `hammer2_io.c:127` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
+| `hammer2_io.c:82` | the `BLK_MAX_BLOCK_SIZE` static assert |
+| `hammer2_io.c:99-107` | `hammer2_io_index()` assuming the mapping's folio order |
+| `hammer2_io.c:133` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
 | `hammer2_os.h:55-67` | the version floor, 7.3, the kernel of record |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
@@ -214,10 +232,25 @@ written whole through `hammer2_io_data()`'s pointer. One failed at
 two failed in the collection's reader at 485 and 495 s, and 24 files
 of the 103669 that stayed went unread and uncounted on this side while
 DragonFly counted all 103693. The device mapping has no smaller folio
-to step down to, so its answer is a block buffer of the port's own
-when the page cache cannot give one, which is what every BSD port has
-in its buffer cache; that is 0.9's low-memory row now, and this
-document's next design change.
+to step down to, so its answer is the block buffer described under the
+object above, which is what every BSD port has in its buffer cache.
+
+Measured 2026-09-07 with the buffer in, the same guest and writers:
+the closure went in at 63 s to ext4's 74, 1157 blocks were assembled
+on the file side, and on the device side 179 blocks were held in
+buffers of the dio's own, 178 read and one new, counted from the
+debug print. Every one of 205871 files hashed as its source on all
+four filesystems, the collection's reader exited 0, its 103693
+survivors hashed as their source, and DragonFly counted the same
+103693; the run's one finding was the allocator's own report at four
+of the failed grabs, printed before the buffer took over and rate
+limited from the 179, which the grab now carries `__GFP_NOWARN`
+against, as the page cache's own step-down loop does for the orders it
+falls through. Before the buffer the same run lost 24 files to `EIO`
+in the collection's reader. What the row still lacks is a run of the
+same thing on a guest smaller than 4 GiB, which is where the two
+fallbacks would be exercised in earnest rather than a few hundred
+times in a twelve gigabyte stream.
 
 The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential

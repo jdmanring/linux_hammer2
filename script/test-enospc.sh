@@ -348,7 +348,7 @@ rm -f /tmp/h2mmaptest.$$
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
-ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap; rm -f /tmp/h2user${H2_ENOSPC_USER:+; touch /tmp/h2user}" 2>/dev/null
+ssh "$GUEST_SSH" "echo ${H2_ENOSPC_FILES:-8000} > /tmp/h2cap; echo '${H2_ENOSPC_MODARGS:-}' > /tmp/h2modargs; rm -f /tmp/h2user${H2_ENOSPC_USER:+; touch /tmp/h2user}" 2>/dev/null
 out=$(ssh "$GUEST_SSH" '
 	rmmod hammer2 2>/dev/null
 	# The ring wraps before a fill run ends, so the report is streamed
@@ -371,7 +371,8 @@ out=$(ssh "$GUEST_SSH" '
 		kpid=$!
 		echo "kmsg capture buffered, late lines may be missing"
 	fi
-	insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
+	insmod /tmp/h2.ko $(cat /tmp/h2modargs) || { echo "SETUP insmod failed"; exit 0; }
+	echo "module io_buf_only $(cat /sys/module/hammer2/parameters/io_buf_only)"
 	mkdir -p /mnt/h2enospc
 	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
 	    { echo "SETUP mount failed"; exit 0; }

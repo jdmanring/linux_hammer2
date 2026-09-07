@@ -44,7 +44,11 @@
  * called per device by hammer2_open_devvp(), makes every folio in that
  * mapping a 64KB folio, so one hammer2_io holds exactly one. Caching, writeback and reclaim belong to the page cache;
  * this file holds a folio reference for the life of DIO_GOOD, dirties it
- * on a dirty last drop, and kicks writeback on DIO_FLUSH.
+ * on a dirty last drop, and kicks writeback on DIO_FLUSH.  When the page
+ * cache cannot make a 64KB folio, memory being fragmented below that,
+ * the dio holds the block in a buffer of its own instead, read and
+ * written with a bio, which is the one thing a BSD buffer cache has that
+ * a page cache pinned to one order does not; see hammer2_io_buf_get().
  *
  * The format sits exactly on BLK_MAX_BLOCK_SIZE, which is 64KB only under
  * CONFIG_TRANSPARENT_HUGEPAGE. Without it the mount would fail EINVAL
@@ -54,11 +58,13 @@
 
 #include "hammer2.h"
 
+#include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/highmem.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/sched/mm.h>
+#include <linux/vmalloc.h>
 
 /*
  * Operations for hammer2_io_getblk().  FreeBSD keeps these private to
@@ -264,13 +270,121 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
 /*
  * The device mapping's mask with the retry the file mapping carries:
  * its folios are the same order-4 allocation, and its mask is the block
- * layer's, so the instruction travels with each grab instead.
+ * layer's, so the instruction travels with each grab instead.  No
+ * warning on failure, since a failure here is answered by the dio's own
+ * buffer and the page cache's own step-down loop is as quiet about the
+ * orders it falls through; the allocator's report on a closure run was
+ * the same four stacks into hammer2_bread() with the buffer already
+ * taking over beneath them, and the count is read from the debug print
+ * in hammer2_io_buf_get() instead.
  */
 static inline gfp_t
 hammer2_io_gfp(hammer2_io_t *dio)
 {
 	return (mapping_gfp_mask(hammer2_io_mapping(dio)) |
-	    __GFP_RETRY_MAYFAIL);
+	    __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
+}
+
+/*
+ * Linux: the block in a buffer of the dio's own, for a page cache that
+ * could not make the 64 KiB folio the device mapping is pinned to.  The
+ * file mapping steps down to a page in that case and the write XOP
+ * assembles the block; the device mapping cannot, because
+ * hammer2_io_data() hands the core one pointer to the whole block.  A
+ * BSD buffer cache never has this problem, its buffer being memory of
+ * its own, and this is that: vmalloc, which wants pages and not a
+ * contiguous run of them, read and written through a bio of the
+ * block's pages.  Measured before it existed: three order-4 grabs
+ * failed in hammer2_bread() reading a Nix closure on a 4 GiB guest,
+ * and the reader lost 24 files to EIO.
+ *
+ * The page cache holds no folio for the block while the dio holds it
+ * this way, since the grab that failed looked before it allocated and
+ * one dio covers one block, so the media is the truth for a read.  On
+ * a dirty last drop hammer2_io_buf_put() offers the block back to the
+ * page cache first, and only writes it with a bio when the cache still
+ * cannot hold it; a folio read ahead into the cache in the meantime
+ * would then be stale, so the range is invalidated after the write.
+ */
+static int
+hammer2_io_buf_io(hammer2_io_t *dio, char *buf, blk_opf_t opf)
+{
+	struct bio *bio;
+	unsigned int i, npages = dio->psize >> PAGE_SHIFT;
+	int error;
+
+	bio = bio_alloc(file_bdev(dio->bdev_file), npages, opf, GFP_NOFS);
+	bio->bi_iter.bi_sector = (dio->pbase - dio->dbase) >> SECTOR_SHIFT;
+	for (i = 0; i < npages; i++)
+		__bio_add_page(bio, vmalloc_to_page(buf + i * PAGE_SIZE),
+		    PAGE_SIZE, 0);
+	error = submit_bio_wait(bio);
+	bio_put(bio);
+
+	return (-error);	/* the core's errnos are positive */
+}
+
+static int
+hammer2_io_buf_get(hammer2_io_t *dio, int read, int zero)
+{
+	int error;
+
+	dio->buf = vmalloc(dio->psize);
+	if (dio->buf == NULL)
+		return (ENOMEM);
+	if (read) {
+		error = hammer2_io_buf_io(dio, dio->buf, REQ_OP_READ);
+		if (error) {
+			vfree(dio->buf);
+			dio->buf = NULL;
+			return (error);
+		}
+	} else if (zero) {
+		memset(dio->buf, 0, dio->psize);
+	}
+	pr_debug("hammer2: block %llx held in a buffer of the port's own, %s\n",
+	    (unsigned long long)dio->pbase, read ? "read" : "new");
+
+	return (0);
+}
+
+static void
+hammer2_io_buf_put(hammer2_io_t *dio, char *buf)
+{
+	struct address_space *mapping = hammer2_io_mapping(dio);
+	pgoff_t index = hammer2_io_index(dio);
+	struct folio *folio;
+	unsigned int nofs;
+	int error;
+
+	nofs = memalloc_nofs_save();
+	folio = hammer2_io_buf_only ? ERR_PTR(-ENOMEM) :
+	    __filemap_get_folio(mapping, index,
+	    FGP_LOCK | FGP_ACCESSED | FGP_CREAT, hammer2_io_gfp(dio));
+	memalloc_nofs_restore(nofs);
+	if (!IS_ERR(folio) && hammer2_io_folio_check(dio, folio) == 0) {
+		memcpy(folio_address(folio), buf, dio->psize);
+		folio_mark_uptodate(folio);
+		folio_unlock(folio);
+		folio_mark_dirty_lock(folio);
+		if (dio->refs & HAMMER2_DIO_FLUSH) {
+			loff_t start = (loff_t)(dio->pbase - dio->dbase);
+
+			filemap_fdatawrite_range(mapping, start,
+			    start + dio->psize - 1);
+		}
+		folio_put(folio);
+		return;
+	}
+	if (!IS_ERR(folio)) {
+		folio_unlock(folio);
+		folio_put(folio);
+	}
+	error = hammer2_io_buf_io(dio, buf, REQ_OP_WRITE | REQ_SYNC);
+	if (error)
+		mapping_set_error(mapping, -error);
+	invalidate_inode_pages2_range(mapping, index,
+	    index + (dio->psize >> PAGE_SHIFT) - 1);
 }
 
 static void
@@ -311,10 +425,19 @@ hammer2_bread(hammer2_dev_t *hmp, hammer2_io_t *dio)
 	 * runs in a NOFS scope; xfs does the same around its buffer cache.
 	 */
 	nofs = memalloc_nofs_save();
+	if (hammer2_io_buf_only) {	/* Linux */
+		error = hammer2_io_buf_get(dio, 1, 0);
+		memalloc_nofs_restore(nofs);
+		return (error);
+	}
 	hammer2_io_readahead(dio);
 	folio = mapping_read_folio_gfp(hammer2_io_mapping(dio),
 	    hammer2_io_index(dio), hammer2_io_gfp(dio));
+	if (IS_ERR(folio) && PTR_ERR(folio) == -ENOMEM)	/* Linux */
+		error = hammer2_io_buf_get(dio, 1, 0);
 	memalloc_nofs_restore(nofs);
+	if (IS_ERR(folio) && PTR_ERR(folio) == -ENOMEM)
+		return (error);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
 	error = hammer2_io_folio_check(dio, folio);
@@ -343,10 +466,19 @@ hammer2_getblk_new(hammer2_io_t *dio, int zero)
 	int error;
 
 	nofs = memalloc_nofs_save();	/* as hammer2_bread() */
+	if (hammer2_io_buf_only) {	/* Linux */
+		error = hammer2_io_buf_get(dio, 0, zero);
+		memalloc_nofs_restore(nofs);
+		return (error);
+	}
 	folio = __filemap_get_folio(hammer2_io_mapping(dio),
 	    hammer2_io_index(dio), FGP_LOCK | FGP_ACCESSED | FGP_CREAT,
 	    hammer2_io_gfp(dio));
+	if (IS_ERR(folio) && PTR_ERR(folio) == -ENOMEM)	/* Linux */
+		error = hammer2_io_buf_get(dio, 0, zero);
 	memalloc_nofs_restore(nofs);
+	if (IS_ERR(folio) && PTR_ERR(folio) == -ENOMEM)
+		return (error);
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
 	error = hammer2_io_folio_check(dio, folio);
@@ -410,7 +542,7 @@ hammer2_io_getblk(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
 	}
 
 	/* GOOD is not set. */
-	KKASSERT(dio->folio == NULL);
+	KKASSERT(dio->folio == NULL && dio->buf == NULL);
 
 	error = 0;
 	if (dio->pbase == (lbase & ~HAMMER2_OFF_MASK_RADIX) &&
@@ -430,7 +562,7 @@ hammer2_io_getblk(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
 	} else {
 		/* A logical buffer inside it: the rest must come from disk. */
 		error = hammer2_bread(hmp, dio);
-		if (dio->folio) {
+		if (dio->folio || dio->buf) {
 			KKASSERT(error == 0);
 			switch (op) {
 			case HAMMER2_DOP_NEW:
@@ -444,7 +576,7 @@ hammer2_io_getblk(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
 			}
 		}
 	}
-	KKASSERT(error == 0 || dio->folio == NULL);
+	KKASSERT(error == 0 || (dio->folio == NULL && dio->buf == NULL));
 
 	dio->error = error;
 	if (error == 0)
@@ -471,6 +603,7 @@ hammer2_io_putblk(hammer2_io_t **diop)
 	hammer2_dev_t *hmp;
 	hammer2_io_t *dio;
 	struct folio *folio;
+	char *buf;
 	uint64_t orefs;
 	int dio_limit;
 
@@ -503,6 +636,8 @@ hammer2_io_putblk(hammer2_io_t **diop)
 	hmp = dio->hmp;
 	folio = dio->folio;
 	dio->folio = NULL;
+	buf = dio->buf;
+	dio->buf = NULL;
 
 	/*
 	 * Dispose of the folio reference.  The BSD version chooses among
@@ -537,6 +672,14 @@ hammer2_io_putblk(hammer2_io_t **diop)
 		/* Errored disposal of buffer. */
 		folio_put(folio);
 	}
+	if (buf) {	/* Linux: the block the page cache could not hold */
+		if ((orefs & HAMMER2_DIO_GOOD) && (orefs & HAMMER2_DIO_DIRTY)) {
+			hammer2_io_buf_put(dio, buf);
+			hammer2_inc_iostat(&hmp->iostat_write, dio->btype,
+			    dio->psize);
+		}
+		vfree(buf);
+	}
 
 	/* Update iofree_count before disposing of the dio. */
 	atomic_add_int(&hmp->iofree_count, 1);
@@ -567,7 +710,7 @@ hammer2_io_data(hammer2_io_t *dio, hammer2_off_t lbase)
 	int off;
 
 	folio = dio->folio;
-	KASSERTMSG(folio != NULL, "NULL dio folio");
+	KASSERTMSG(folio != NULL || dio->buf != NULL, "NULL dio folio");
 
 	off = (int)((lbase & ~HAMMER2_OFF_MASK_RADIX) - dio->pbase);
 
@@ -575,6 +718,8 @@ hammer2_io_data(hammer2_io_t *dio, hammer2_off_t lbase)
 	KASSERTMSG(off < dio->psize, "bad offset not 0x%x < 0x%x",
 	    off, dio->psize);
 
+	if (dio->buf)	/* Linux: the block the page cache could not hold */
+		return (dio->buf + off);
 	return ((char *)folio_address(folio) + off);
 }
 
@@ -697,7 +842,7 @@ hammer2_io_inval(hammer2_io_t *dio __always_unused,
 void
 hammer2_io_bkvasync(hammer2_io_t *dio)
 {
-	KKASSERT(dio->folio != NULL);
+	KKASSERT(dio->folio != NULL || dio->buf != NULL);
 }
 
 /*

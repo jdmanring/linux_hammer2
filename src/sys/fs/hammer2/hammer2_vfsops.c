@@ -97,6 +97,18 @@ int hammer2_limit_saved_chains;
  */
 int hammer2_nofs_scope = 1;
 module_param_named(nofs_scope, hammer2_nofs_scope, int, 0444);
+/*
+ * Linux: every device block held in a buffer of the port's own and
+ * read and written with a bio, the path hammer2_bread() takes by itself
+ * only when the page cache cannot make a 64 KiB folio.  Set at load to
+ * put every fixture and every fill through that path under the gates,
+ * rather than waiting for memory to fragment; read-only after load for
+ * the same reason as the scope above, a block read one way and written
+ * the other would leave the page cache holding what the media no
+ * longer does.
+ */
+int hammer2_io_buf_only;
+module_param_named(io_buf_only, hammer2_io_buf_only, int, 0444);
 long hammer2_limit_dirty_chains;
 long hammer2_limit_dirty_inodes;
 int hammer2_always_compress;

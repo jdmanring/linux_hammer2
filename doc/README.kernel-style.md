@@ -351,6 +351,12 @@ than filling a folio took three errno-sign returns away, two `EIO` and
 one `ENOMEM`. Nothing was fixed rather than baselined and no category
 is new.
 
+The block buffer the DIO layer holds when the page cache cannot give
+it a folio moved the total to 1,115: five returns in the style of the
+file, four `return (x);` and one errno sign, in the two functions that
+read and write the buffer through a bio and the two early returns the
+`io_buf_only` parameter takes.
+
 One new category is baselined rather than spelled away, which the rule
 above otherwise argues against: two uses of `%px`, the unhashed pointer.
 `%p` hashes, and the whole point of the two prints carrying it is to be

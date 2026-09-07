@@ -573,7 +573,11 @@ the guest is shut down only if the gate started it. It will not start one
 unless `H2_FIXTURE_START=1` says so, because `script/pre-push-check.sh`
 runs every gate on every push and a gate that boots a 4 GiB domain when it
 finds one stopped spends that on every push, on a machine whose memory
-somebody else is using.
+somebody else is using. `H2_FIXTURE_MODARGS` is handed to the guest's
+`insmod`; `H2_FIXTURE_MODARGS=io_buf_only=1` reads every fixture
+through the block buffer the DIO layer otherwise takes only when the
+page cache cannot make a 64 KiB folio, so that path is read by the same
+manifests as the page cache path rather than waited for.
 
 Exit 2 is COULD-NOT-RUN and is reported for a missing guest, a stopped one
 without that variable, missing images, no `KDIR` and a guest that does not
@@ -1339,7 +1343,9 @@ is not; the refusal at the fault is a `SIGBUS`, 135 from the guest's
 shell. The fill ends in 64 KiB pieces so that less than either probe
 is left above the threshold. The reserve refuses a user with twice
 the free space it refuses root at, so `H2_ENOSPC_USER=1` runs the fill
-and both probes as `nobody` under `setpriv`, and every run reads both
+and both probes as `nobody` under `setpriv`, `H2_ENOSPC_MODARGS` is
+handed to the guest's `insmod` so `io_buf_only=1` puts the whole fill
+through the DIO layer's block buffer and its bio writes, and every run reads both
 thresholds after the sync with one 64 KiB write as the user and one
 as root: the user is refused in either mode, root is accepted after a
 user's fill and refused after its own, and a run where root reads the

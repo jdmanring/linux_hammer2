@@ -234,8 +234,11 @@ ssh "$GUEST_SSH" 'dmesg -C' >/dev/null 2>&1
 
 scp -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: could not copy the module" >&2; exit 2; }
-ssh "$GUEST_SSH" 'rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko' 2>/dev/null || {
+ssh "$GUEST_SSH" "rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko ${H2_FIXTURE_MODARGS:-}" 2>/dev/null || {
 	echo "fixtures: FAIL: the module built for this guest did not load"; exit 1; }
+# The parameter is read back from the module rather than assumed from the
+# argument, since an insmod that ignored it would pass the same manifests.
+echo "  note module io_buf_only $(ssh "$GUEST_SSH" 'cat /sys/module/hammer2/parameters/io_buf_only' 2>/dev/null)"
 
 # THE IOCTL EXERCISER, WHICH IS PART OF THIS GATE AND NOT A PREREQUISITE OF
 # IT. test/hammer2-ioctl-exercise.c is built here rather than on the guest,

@@ -42,12 +42,12 @@ At a glance, on a kernel of 7.3 or newer:
   found and fixed; read the paragraph on it below before trying it. A
   real Nix closure of two hundred thousand files copies in and reads
   back beside squashfs, erofs and ext4, identical on a 4 GiB guest with
-  four writers since the write path learned to take a folio smaller
-  than its block; three reads in that run failed for want of a 64 KiB
-  folio on the device side, and `doc/IO_MODEL.md` has why
-+ not yet: a package, a tag, a kernel below 7.3, a device block buffer
-  of the port's own for when the page cache cannot give a 64 KiB folio,
-  and any write to media that is not a scratch image
+  four writers, the write path taking a folio smaller than its block
+  and the device side a buffer of its own when the page cache cannot
+  give a 64 KiB folio; `doc/IO_MODEL.md` has both and the run
++ not yet: a package, a tag, a kernel below 7.3, a run of that closure
+  on a guest smaller than 4 GiB, and any write to media that is not a
+  scratch image
 
 Every write operation has been run on scratch media and read back by
 DragonFly, in both directions of a round trip, and the crash matrix, a
@@ -112,9 +112,8 @@ The reproducer is `script/test-enospc.sh`, a gate since it passed ten runs, and 
 included, is in [doc/README.status.md](doc/README.status.md).
 
 What that buys you is a driver that can be tried, on media you can
-afford to lose. What it does not yet do: under memory pressure a read
-of a device block can fail for want of a 64 KiB folio, which keeps 0.9
-open;
+afford to lose. What it does not yet do: the low-memory row of 0.9 has
+been measured at 4 GiB and not below it, which keeps 0.9 open;
 nothing is packaged, and no tag exists. It has booted as a root filesystem once, with a static init
 and nothing else on the volume, which is a long way from a
 distribution. Every write it has made was to a scratch image on a
