@@ -363,7 +363,13 @@ defined in `hammer2_disk.h` and checked by size assertions.
 from freebsd-src. Linux's `rbtree.h` is a different interface and the core
 has twelve `RB_` sites in `hammer2_chain.c` alone; converting them turns a
 carry into a rewrite for no gain. The `makefs` port vendors the same two
-files for the same reason.
+files for the same reason. One thing FreeBSD's `tree.h` lacks that the
+core relies on is DragonFly's scan bookkeeping, a list of the scans in
+progress on the tree head that `RB_REMOVE` moves past the node it
+removes, so a callback may release the tree's lock and a sibling may go
+in the meantime; `hammer2_rb.h` carries that over the vendored tree
+rather than editing it, after a flush walked into a freed chain
+(`README.status.md`, the closure's seventh defect).
 
 Two names in those vendored files collide with the kernel's own macros and
 are spelled `BSD_LIST_HEAD` and `BSD_RB_ROOT` here, with the two core use

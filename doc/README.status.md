@@ -34,7 +34,7 @@ A write near full is refused now, as the other trees refuse it.
 A million files went in and were counted on both sides, a large
 file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
 the same guest, and a real Nix closure of two hundred thousand files
-copied in through the write path found six defects a million
+copied in through the write path found seven defects a million
 one-line files could not reach and reads back beside squashfs and
 erofs, identical on one 8 GiB run of three and short by a refused
 write on the other; the three readings are 0.9's and recorded below.
@@ -600,7 +600,7 @@ construction rather than re-hashed every run.
 | `hammer2_io.c` | 1163 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 1183 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
-| `hammer2_rb.h` | 146 | FreeBSD port's `RB_SCAN`, carried |
+| `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
 
@@ -2051,7 +2051,7 @@ took 244, 275 and 250 s, the churn 10 to 11 s, the delete 42 to 45 s,
 and DragonFly counted the deleted tree empty and the snapshot at this
 side's count every time.
 
-## A real closure, and the six defects it found
+## A real closure, and the seven defects it found
 
 F6 asks for a real Nix closure of hundreds of thousands of paths read
 at a measured cost beside the same read on squashfs or erofs.
@@ -2070,8 +2070,9 @@ volume 48 GiB.
 The first run's copy stopped in its first minutes, a worker asleep
 in a link. The second run's copy
 completed, and by the seventh the copy read back identical to its
-source; the harness found six defects on the way, none of which a
-million one-line files in a hundred directories could have reached:
+source; the harness found seven defects in fourteen runs, none of
+which a million one-line files in a hundred directories could have
+reached:
 
 1. **A lost XOP wakeup.** `hammer2_xop_testset_ipdep()` waits for its
    inode's slot in the per-PFS dependency table on a condition variable
@@ -2135,6 +2136,26 @@ million one-line files in a hundred directories could have reached:
    reached it at 76 s; one writer had not in nine runs. The three
    BSD ports carry the same cleanup, staged as
    `doc/upstream/ports-hammer2_io-hash-cleanup-lock-dio.patch`.
+7. **A flush walked into a freed chain.** `RB_SCAN` reads the node it
+   will visit next before each callback, and the flush's callback,
+   `hammer2_flush_recurse()`, releases the parent's core spinlock to
+   lock the child. A sibling removed and freed in that window, by a
+   last drop or a delete under the same spinlock, was the next node,
+   and the scan resumed on it: the fourteenth run's flush worker took
+   a page fault in `hammer2_io_getblk()` at 113 s, the freed chain's
+   `hmp` cleared, and died with interrupts off, after which every
+   writer waited on the syncer it had killed. DragonFly's `tree.h`
+   keeps the scans in progress on the tree head and its `RB_REMOVE`
+   moves a scanner past the node it removes, which is what the core's
+   "any item may be deleted while the scan is in progress" relies on;
+   FreeBSD's `tree.h`, vendored here, has no such list, and the
+   FreeBSD port's `RB_SCAN`, carried in `hammer2_rb.h`, never needed
+   one because that port does not write. `hammer2_rb.h` now carries
+   DragonFly's head, initializers and removal over the vendored tree,
+   the list kept under the core spinlock every scan and removal
+   already holds. Seen once, on the first run whose lockdep stayed on
+   past the second minute; the reading of the mechanism is from the
+   two headers, and the run after the fix is its control.
 
 The fourth run, every fix in, on the guest as it is; the fifth with
 kmemleak turned off before the module loaded (`H2_NC_GUESTPRE`); and
@@ -2700,12 +2721,12 @@ against the FreeBSD port at
 | `hammer2_compat.h` | 0 | 0 | 0 |
 | `hammer2_ioctl.h` | 0 | 0 | 0 |
 | `hammer2_mount.h` | 0 | 0 | 0 |
-| `hammer2_rb.h` | 0 | 0 | 0 |
+| `hammer2_rb.h` | 3 | 0 | 3 |
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-One hundred and sixty-six are this port's, the right-hand column
-summed, and they fall in fifteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, two in `hammer2_xops.c`, two in `hammer2_admin.c`, one in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
+One hundred and sixty-nine are this port's, the right-hand column
+summed, and they fall in sixteen files: thirty-eight in `hammer2_vfsops.c`, twenty-two in `hammer2_inode.c`, twenty in `hammer2_ondisk.c`, nineteen in `hammer2_strategy.c`, eighteen in `hammer2_chain.c`, fifteen in `hammer2_ioctl.c`, seven in `hammer2_subr.c`, seven in `hammer2_flush.c`, seven in `hammer2.h`, five in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_xops.c`, two in `hammer2_admin.c`, one in `hammer2_io.c`, one in `hammer2_disk.h`, and two in `hammer2_vnops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only; the
 sentence before this one said seventy-eight in nine files while the

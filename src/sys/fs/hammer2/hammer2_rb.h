@@ -37,8 +37,23 @@
 
 /*
  * The RB_SCAN family, which DragonFly's tree.h has natively. Taken from
- * the FreeBSD port, unchanged but for `__unused` (3 sites). See
- * sys/cdefs.h.
+ * the FreeBSD port, unchanged but for `__unused` (3 sites) and the scan
+ * bookkeeping below. See sys/cdefs.h.
+ *
+ * XXX Linux: a scan holds the node it will visit next across each
+ * callback, and the flush's callback releases the parent's core
+ * spinlock while it locks the child, so another task can remove and
+ * free that next node in the meantime.  DragonFly's tree.h keeps the
+ * scans in progress on the tree head and its RB_REMOVE moves any scan
+ * whose next node is the one being removed, which is what the core's
+ * "any item may be deleted while the scan is in progress" relies on.
+ * FreeBSD's tree.h, vendored here, has no such list, and the FreeBSD
+ * port never needed one because it does not write.  The head, RB_INIT
+ * and RB_REMOVE are DragonFly's here, over the vendored tree, and the
+ * static initializer, unused in this tree, stays FreeBSD's: the list is kept under the lock its owner holds around every
+ * scan and removal, the core spinlock, as DragonFly keeps it.  Found
+ * by a flush walking into a freed chain on a Nix closure copy,
+ * doc/README.status.md has the trace.
  */
 
 #ifndef _FS_HAMMER2_RB_H_
@@ -51,6 +66,38 @@ struct name##_scan_info {						\
 	struct type	*node;						\
 }
 
+#undef RB_HEAD
+#define RB_HEAD(name, type)						\
+RB_SCAN_INFO(name, type);						\
+struct name {								\
+	struct type *rbh_root;						\
+	struct name##_scan_info *rbh_inprog;	/* scans in progress */	\
+}
+
+#undef RB_INIT
+#define RB_INIT(root) do {						\
+	(root)->rbh_root = NULL;					\
+	(root)->rbh_inprog = NULL;					\
+} while (0)
+
+#define RB_INPROG(head)		((head)->rbh_inprog)
+
+/*
+ * The removal DragonFly's tree.h generates, over the vendored one: a
+ * scan about to visit the node being removed is moved past it first.
+ */
+#undef RB_REMOVE
+#define RB_REMOVE(name, head, elm) do {					\
+	struct name##_scan_info *__inprog;				\
+									\
+	for (__inprog = RB_INPROG(head); __inprog;			\
+	    __inprog = __inprog->link) {				\
+		if (__inprog->node == (elm))				\
+			__inprog->node = RB_NEXT(name, head, elm);	\
+	}								\
+	name##_RB_REMOVE(head, elm);					\
+} while (0)
+
 #define RB_PROTOTYPE_SCAN(name, type, field)				\
 	_RB_PROTOTYPE_SCAN(name, type, field,)
 
@@ -59,8 +106,7 @@ struct name##_scan_info {						\
 
 #define _RB_PROTOTYPE_SCAN(name, type, field, STORQUAL)			\
 STORQUAL int name##_RB_SCAN(struct name *, int (*)(struct type *, void *),\
-			int (*)(struct type *, void *), void *);	\
-RB_SCAN_INFO(name, type)
+			int (*)(struct type *, void *), void *)
 
 /* generate */
 #define RB_GENERATE_SCAN(name, type, field)				\
@@ -80,6 +126,18 @@ static int								\
 name##_SCANCMP_ALL(struct type *type __always_unused, void *data __always_unused)	\
 {									\
 	return (0);							\
+}									\
+									\
+/* XXX Linux: DragonFly's, the scan taken off the head's list. */	\
+static __inline void							\
+name##_scan_info_done(struct name##_scan_info *scan, struct name *head)	\
+{									\
+	struct name##_scan_info **infopp;				\
+									\
+	infopp = &RB_INPROG(head);					\
+	while (*infopp != scan)						\
+		infopp = &(*infopp)->link;				\
+	*infopp = scan->link;						\
 }									\
 									\
 static __inline int							\
@@ -118,6 +176,8 @@ _##name##_RB_SCAN(struct name *head,					\
 	count = 0;							\
 	if (best) {							\
 		info.node = RB_NEXT(name, head, best);			\
+		info.link = RB_INPROG(head);	/* XXX Linux: see above */\
+		RB_INPROG(head) = &info;					\
 		while ((comp = callback(best, data)) >= 0) {		\
 			count += comp;					\
 			best = info.node;				\
@@ -125,6 +185,7 @@ _##name##_RB_SCAN(struct name *head,					\
 				break;					\
 			info.node = RB_NEXT(name, head, best);		\
 		}							\
+		name##_scan_info_done(&info, head);			\
 		if (comp < 0)	/* error or termination */		\
 			count = comp;					\
 	}								\

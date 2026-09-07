@@ -358,6 +358,11 @@ style of the file, `hammer2_vfsops.c`. `kzalloc_obj()` is used where
 checkpatch asks for it, and the two barriers around the registered key
 carry the comment the checker wants on a barrier.
 
+The scan bookkeeping carried from DragonFly's `tree.h` into
+`hammer2_rb.h` moved the `__inline` row by one, 13 to 14: the helper
+that takes a finished scan off the head is spelled as the two
+`__inline` functions beside it are, and the header is carried.
+
 The block buffer the DIO layer holds when the page cache cannot give
 it a folio moved the total to 1,115: five returns in the style of the
 file, four `return (x);` and one errno sign, in the two functions that
