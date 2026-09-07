@@ -1034,6 +1034,31 @@ pass strings were also found to match over an empty population, zero
 files checked with zero mismatches and zero unreadable entries out of
 zero, and the counts are now asserted with the verdicts.
 
+## Space a remove does not free, until the scan runs
+
+`script/bulkfree.sh` measures the one thing the storage model's
+collection row depends on that no other run had exercised: on
+HAMMER2 a remove frees nothing. The freemap is rebuilt by a scan,
+`HAMMER2IOC_BULKFREE_SCAN`, which the port carried and answered and no
+run had asked for, and the scan is two passes by design: the first
+moves a block nothing references from allocated to staged, the next
+frees what stayed staged, which is what lets a pass run beside
+writers without a transaction. The Linux guest mounts a fresh 2G
+volume, writes `H2_BF_MB` one-megabyte random files, removes them,
+reads the free count after each step, runs `hammer2 bulkfree` twice
+with a sync between and captures the pass statistics the kernel
+prints for each, then writes the set a second time and removes it.
+The remove leaving the count where it was is the run's own control:
+if the count had moved at the remove, the scan would not be what is
+measured. DragonFly mounts the result and runs one pass, which stages
+the second set and should free nothing if this side's two passes
+were complete; its checker and the host's run after each side with
+the usual negative control. The first run asked for one pass, read
+nothing freed, and watched DragonFly's pass free the set, which is
+the second pass doing its job and the harness's misreading, so the
+script says two passes where it says scan. `README.status.md` has
+the readings.
+
 ## Listing a fixture, and what a clean run does not say
 
 The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a

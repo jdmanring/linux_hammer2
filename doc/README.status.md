@@ -2399,6 +2399,40 @@ empty list, so the lookup never runs.
 drafted and unfiled; its standing section records the stub still at
 upstream's head on 2026-09-06 and that the repository takes no issues.
 
+## Space a remove does not free, and the two passes that do
+
+Writing the capability declaration (`README.capabilities.md`) found
+one row with no measurement behind it: on HAMMER2 a remove frees
+nothing, the freemap being rebuilt by the bulkfree scan the ioctl
+runs, and no run on Linux had ever asked for that scan. The ioctl was
+carried from the FreeBSD port with the rest of `hammer2_ioctl.c` and
+answered; whether the pass behind it did anything here was unknown.
+`script/bulkfree.sh` asks. Measured 2026-09-06 on `artix-s6-kde` at
+7.3.0-rc1 with lockdep, on a 2G volume this port formatted, 800
+one-megabyte random files written, synced, removed and synced; the
+free count is `statfs`'s in 64 KiB blocks, the transitions are the
+kernel's own pass statistics in the freemap's 16 KiB units:
+
+| step | blocks free | the pass said |
+|---|---|---|
+| at mount | 30592 | |
+| after the set was written | 17574 | |
+| after the set was removed | 17558 | |
+| after the first pass | 17558 | 52134 allocated to staged, 0 freed |
+| after the second pass | 30591 | 52134 staged to free, 0 staged |
+| after the set was written again | 17574 | |
+
+Both passes ran in under a second over 100% of the volume. One pass
+alone reads as nothing freed, which is what the script's first run
+reported before DragonFly's single pass over the same volume freed the
+800 MB: that pass was the second, and the manual says in one line that
+it takes two. The two-pass design is
+what lets a pass run beside writers without a transaction, a block
+freed in error by one pass being caught staged rather than reused.
+The remove leaving the count where it was is the run's control: had
+the count moved at the remove, the pass would not have been what was
+measured. Both checkers were clean after each side.
+
 ## The folio the page cache can hold, asked at mount
 
 The DIO layer hands the core one 64 KiB folio per buffer, so a kernel
