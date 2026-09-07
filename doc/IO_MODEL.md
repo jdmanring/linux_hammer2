@@ -238,8 +238,15 @@ Overwriting the block in place is not open to the port, since another
 chain can have deduplicated to it in the meantime. `hammer2_write_begin()`
 now allocates the block folio itself with the mapping's mask, which
 retries reclaim and compaction before it fails, and asks the page
-cache only after that or when a folio already sits in the block; the
-assembled block stays as the fallback for those.
+cache only after that or when a folio already sits in the block. Read
+on two fills with that alone: the retrying request still failed 22
+and 37 times a fill, in the last seconds, and each failure still cost
+fifteen blocks, 465 and 504 rewritten blocks against a slack of 766.
+So `hammer2_writepages()` gathers a split block's other dirty folios
+under writeback beside the first and the write XOP lays them all into
+the one block write, and a block goes out once however it was split;
+a sibling locked or already under writeback at the gather is left to
+its own XOP and costs what it did before.
 
 Measured 2026-09-07 with `script/nix-closure.sh` on the 4 GiB guest
 with kmemleak off and four writers, the configuration that refused

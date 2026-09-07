@@ -87,6 +87,7 @@
 #include <linux/vmalloc.h>	/* Linux: the zlib workspace */
 #include <linux/zlib.h>	/* Linux: zlib_inflate */	/* Linux: memcpy_to_folio, folio_zero_range */
 #include <linux/pagemap.h>	/* Linux: folio_pos, folio_unlock */
+#include <linux/folio_batch.h>	/* Linux: the siblings of a split block */
 
 /*
  * Clear the live dedup heuristic.  Carried.
@@ -1367,12 +1368,13 @@ out:
  * When that fails, or a read left a smaller folio in the block, the
  * block is assembled around the folio: the block's current bytes
  * decoded out of the chain, under the parent lock this write holds,
- * and the folio laid over them.  A sibling folio of the same block,
- * dirty in the cache, is written by its own XOP after this one and
- * reads this one's bytes back out of the chain, since XOPs run in
- * order on the calling thread; it takes fresh media, since the block
- * was registered for dedup as its bytes went out, which is why the
- * write entry tries for the whole block first.  hammer2_writepages()
+ * and the folio laid over them, with the block's other dirty folios,
+ * which hammer2_writepages() gathered under writeback beside it, laid
+ * over them too, so the block goes out once.  A sibling left to its
+ * own XOP, one that was locked or under writeback at the gather, reads
+ * this one's bytes back out of the chain, since XOPs run in order on
+ * the calling thread, and takes fresh media, since the block was
+ * registered for dedup as its bytes went out.  hammer2_writepages()
  * starts it, one folio per XOP, and reads back what it fed the
  * mapping's error.
  */
@@ -1385,6 +1387,7 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	hammer2_key_t lbase = xop->lbase;
 	struct folio *folio = xop->folio;	/* XXX Linux: was struct buf *bp */
 	char *bio_data = scratch;
+	unsigned int i;	/* Linux */
 	int error, lblksize, pblksize;
 
 	lblksize = hammer2_calc_logical(ip, lbase, &lbase, NULL);
@@ -1392,9 +1395,10 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	KKASSERT(lblksize <= MAXPHYS);
 	parent = hammer2_inode_chain(ip, clindex, HAMMER2_RESOLVE_ALWAYS);
 	if (folio_size(folio) < (size_t)lblksize) {	/* Linux */
-		pr_debug("hammer2: block %llx assembled around %zu bytes at %llx\n",
+		pr_debug("hammer2: block %llx assembled around %zu bytes at %llx with %u siblings\n",
 		    (unsigned long long)lbase, folio_size(folio),
-		    (unsigned long long)xop->lbase);
+		    (unsigned long long)xop->lbase,
+		    xop->siblings ? folio_batch_count(xop->siblings) : 0);
 		error = hammer2_strategy_assemble(folio->mapping->host, &parent,
 		    lbase, lblksize, bio_data);
 		if (error) {
@@ -1407,6 +1411,13 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 		}
 		memcpy_from_folio(bio_data + (xop->lbase - lbase), folio, 0,
 		    folio_size(folio));
+		for (i = 0; xop->siblings &&
+		    i < folio_batch_count(xop->siblings); i++) {
+			struct folio *sf = xop->siblings->folios[i];
+
+			memcpy_from_folio(bio_data + (folio_pos(sf) - lbase),
+			    sf, 0, folio_size(sf));
+		}
 	} else {
 		memcpy_from_folio(bio_data, folio, 0, lblksize); /* XXX Linux: bcopy(bp->b_data) */
 	}
@@ -1439,6 +1450,8 @@ done:
 		    hammer2_vfs_errno(hammer2_error_to_errno(error)));
 		folio_end_writeback(folio);
 	}
+	for (i = 0; xop->siblings && i < folio_batch_count(xop->siblings); i++)
+		folio_end_writeback(xop->siblings->folios[i]);	/* Linux */
 
 	hammer2_trans_assert_strategy(ip->pmp);
 	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_BUFCACHE);

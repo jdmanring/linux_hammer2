@@ -67,6 +67,7 @@
 
 #include <linux/pagemap.h>	/* Linux: write_begin_get_folio, folio_* */
 #include <linux/writeback.h>	/* Linux: writeback_iter */
+#include <linux/folio_batch.h>	/* Linux: the siblings of a split block */
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
@@ -1408,6 +1409,49 @@ hammer2_write_end(const struct kiocb *iocb __maybe_unused,
  * and closes the transaction, as upstream's does.  XOPs run synchronously
  * in this port, so each folio's write is complete when the loop moves on.
  */
+/*
+ * The other dirty folios of the block a folio smaller than the block
+ * belongs to, taken out of the dirty set and put under writeback here so
+ * the write XOP lays them all into the one block write.  Written one
+ * folio per XOP, a split block took fresh media for every folio after
+ * the first, since the core registers a data block for dedup as its
+ * bytes go out and will not overwrite a registered block: sixteen
+ * blocks of media for one block of data, none of it counted by the
+ * write entry's reserve, which is what lost four files of a fill.  A
+ * sibling that is locked or already under writeback is left to its own
+ * XOP.  Each folio added carries a reference the caller releases once
+ * the XOP has ended its writeback.
+ */
+static void
+hammer2_gather_block(struct address_space *mapping, struct folio *folio,
+    struct folio_batch *siblings)
+{
+	struct folio_batch found;
+	struct folio *f;
+	pgoff_t start, end;
+	unsigned int i;
+
+	start = folio->index & ~(pgoff_t)((HAMMER2_PBUFSIZE >> PAGE_SHIFT) - 1);
+	end = start + (HAMMER2_PBUFSIZE >> PAGE_SHIFT) - 1;
+	folio_batch_init(&found);
+	if (filemap_get_folios_tag(mapping, &start, end, PAGECACHE_TAG_DIRTY,
+	    &found) == 0)
+		return;
+	for (i = 0; i < folio_batch_count(&found); i++) {
+		f = found.folios[i];
+		if (f == folio || !folio_trylock(f))
+			continue;
+		if (f->mapping == mapping && !folio_test_writeback(f) &&
+		    folio_clear_dirty_for_io(f)) {
+			folio_start_writeback(f);
+			folio_get(f);
+			folio_batch_add(siblings, f);
+		}
+		folio_unlock(f);
+	}
+	folio_batch_release(&found);
+}
+
 static int
 hammer2_writepages(struct address_space *mapping,
     struct writeback_control *wbc)
@@ -1415,11 +1459,15 @@ hammer2_writepages(struct address_space *mapping,
 	hammer2_inode_t *ip = VTOI(mapping->host);
 	hammer2_xop_strategy_t *xop;
 	struct folio *folio = NULL;
+	struct folio_batch siblings;
 	int error = 0;
 
 	while ((folio = writeback_iter(mapping, wbc, folio, &error)) != NULL) {
 		folio_start_writeback(folio);
 		folio_unlock(folio);
+		folio_batch_init(&siblings);
+		if (folio_size(folio) < HAMMER2_PBUFSIZE)
+			hammer2_gather_block(mapping, folio, &siblings);
 
 		atomic_set_int(&ip->flags, HAMMER2_INODE_DIRTYDATA);
 		hammer2_trans_assert_strategy(ip->pmp);
@@ -1427,9 +1475,11 @@ hammer2_writepages(struct address_space *mapping,
 		xop = hammer2_xop_alloc(ip,
 		    HAMMER2_XOP_MODIFYING | HAMMER2_XOP_STRATEGY);
 		xop->folio = folio;
+		xop->siblings = &siblings;
 		xop->lbase = folio_pos(folio);
 		hammer2_xop_start(&xop->head, &hammer2_strategy_write_desc);
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		folio_batch_release(&siblings);
 		error = 0;
 	}
 	return (error);

@@ -693,6 +693,7 @@ struct hammer2_xop_flush {
 	hammer2_xop_head_t	head;
 };
 
+struct folio_batch;	/* Linux */
 struct hammer2_xop_strategy {
 	hammer2_xop_head_t	head;
 	hammer2_key_t		lbase;
@@ -704,6 +705,7 @@ struct hammer2_xop_strategy {
 	 * README.porting.md.
 	 */
 	struct folio		*folio;		/* Linux: was struct buf *bp */
+	struct folio_batch	*siblings;	/* Linux: the block's other dirty folios */
 };
 
 struct hammer2_xop_bmap {
