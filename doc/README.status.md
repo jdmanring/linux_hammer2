@@ -2099,7 +2099,8 @@ volume 48 GiB.
 The first run's copy stopped in its first minutes, a worker asleep
 in a link. The second run's copy
 completed, and by the seventh the copy read back identical to its
-source; the harness found eight defects in seventeen runs, none of
+source; the harness found eight defects in seventeen runs and an
+eighteenth clean, none of
 which a million one-line files in a hundred directories could have
 reached:
 
@@ -2361,6 +2362,17 @@ symlinks that stayed and its checker was clean in 62 and 57 s, and the
 harness exited 0 both times; lockdep was off at the end of each, turned
 off at 869 and 852 s by the eighth defect above, reported from `rm` in
 the collection, so its silence past that point is not a reading.
+
+The eighteenth run, with the entry's acquire at its subclass: the copy
+in at 95 s to ext4's 113, nothing refused, every file hashed as its
+source at 101 s to squashfs's 72, erofs's 37 and ext4's 46, the
+collection removed 989 store paths in 42 s beside a reader that exited
+0, `debug_locks` 1 after it and at the unload, no kernel warning,
+DragonFly counted the 103693 files and 76012 symlinks that stayed and
+its checker was clean in 52 s, the host's clean after each side with
+its control, and the harness exited 0: the shim's own lock primitive
+read by lockdep through the whole closure, copy, cold read and
+collection.
 
 DragonFly counted the fourth run's volume at the source's numbers,
 205871 files and 150219 symlinks in 13 s, since a refused write leaves
