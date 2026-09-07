@@ -557,7 +557,7 @@ hammer2_assign_physical(hammer2_inode_t *ip, hammer2_chain_t **parentp,
 {
 	hammer2_chain_t *chain;
 	hammer2_key_t key_dummy;
-	hammer2_off_t dedup_off;
+	hammer2_off_t dedup_off, old_off;	/* Linux: old_off */
 	int pradix;
 
 	KKASSERT(pblksize >= HAMMER2_ALLOC_MIN);
@@ -613,6 +613,7 @@ hammer2_assign_physical(hammer2_inode_t *ip, hammer2_chain_t **parentp,
 			*errorp |= hammer2_chain_modify_ip(ip, chain, mtid, 0);
 			break;
 		case HAMMER2_BREF_TYPE_DATA:
+			old_off = chain->bref.data_off;	/* Linux */
 			dedup_off = hammer2_dedup_lookup(chain->hmp, datap,
 			    pblksize);
 			if (chain->bytes != (unsigned int)pblksize) {
@@ -630,6 +631,20 @@ hammer2_assign_physical(hammer2_inode_t *ip, hammer2_chain_t **parentp,
 			 */
 			*errorp |= hammer2_chain_modify(chain, mtid, dedup_off,
 			    HAMMER2_MODIFY_OPTDATA);
+			/*
+			 * Linux: a block that already had media and was
+			 * given new media is a rewrite, and on a full
+			 * volume each one is space the write entry's count
+			 * of dirty pages never saw.
+			 */
+			if ((old_off & ~HAMMER2_OFF_MASK_RADIX) != 0 &&
+			    (old_off & ~HAMMER2_OFF_MASK_RADIX) !=
+			    (chain->bref.data_off & ~HAMMER2_OFF_MASK_RADIX)) {
+				__atomic_fetch_add(&hammer2_data_rewrites, 1,
+				    __ATOMIC_RELAXED);
+				pr_debug("hammer2: block %llx rewritten, %d bytes\n",
+				    (unsigned long long)lbase, pblksize);
+			}
 			break;
 		default:
 			hpanic("bad blockref type %d", chain->bref.type);

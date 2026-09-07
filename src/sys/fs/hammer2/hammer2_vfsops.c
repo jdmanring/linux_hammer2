@@ -86,6 +86,7 @@ int hammer2_count_chain_modified;
 int hammer2_device_error;	/* Linux: set by hpanic, read where a block turns dirty */
 unsigned long hammer2_alloc_data_bytes;	/* Linux: what the freemap handed out */
 unsigned long hammer2_alloc_meta_bytes;	/* Linux */
+unsigned long hammer2_data_rewrites;	/* Linux: data blocks given new media */
 int hammer2_count_dio_allocated;
 int hammer2_dio_limit = 256;
 int hammer2_bulkfree_tps = 5000;
@@ -162,6 +163,7 @@ module_param_named(limit_saved_chains, hammer2_limit_saved_chains, int, 0644);
 module_param_named(always_compress, hammer2_always_compress, int, 0644);
 module_param_named(alloc_data_bytes, hammer2_alloc_data_bytes, ulong, 0444);
 module_param_named(alloc_meta_bytes, hammer2_alloc_meta_bytes, ulong, 0444);
+module_param_named(data_rewrites, hammer2_data_rewrites, ulong, 0444);
 #if defined(HAMMER2_LOCKDEBUG)
 /*
  * XXX Linux: fires hpanic() on the next mount, so what hpanic does to

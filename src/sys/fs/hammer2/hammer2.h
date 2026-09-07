@@ -946,6 +946,7 @@ extern int hammer2_count_chain_allocated;
 extern int hammer2_count_chain_modified;
 extern unsigned long hammer2_alloc_data_bytes;	/* Linux */
 extern unsigned long hammer2_alloc_meta_bytes;	/* Linux */
+extern unsigned long hammer2_data_rewrites;	/* Linux */
 #if defined(HAMMER2_LOCKDEBUG)
 extern int hammer2_fail_alloc_after;	/* Linux */
 extern int hammer2_debug_hpanic;	/* Linux */

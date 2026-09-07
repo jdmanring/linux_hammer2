@@ -205,6 +205,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(blocks free after sync [0-9]*\)$/      \1/p;\
 		    s/^  \(allocated .* sync .*\)$/      \1/p;\
 		    s/^  \(refusal .*\)$/      \1/p;\
+		    s/^  \(data blocks rewritten .*\)$/      \1/p;\
 		    s/^  \(fsync of the last file returned .*\)$/      \1/p;\
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(write of 128K on the full volume .*\)$/      \1/p;\
@@ -488,6 +489,7 @@ out=$(ssh "$GUEST_SSH" '
 	echo "allocated before sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
 	sync
 	echo "allocated after sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
+	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), assembled $(command grep -c "assembled around" /tmp/kmsg.log)"
 	command grep "enospace refuses" /tmp/kmsg.log | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The free space read before the sync includes what dirty pages will
