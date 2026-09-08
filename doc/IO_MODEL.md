@@ -75,9 +75,8 @@ The second is why `folio_address()` is correct rather than
 
 ## Inventory: format versus bootstrap
 
-Handoff section 37 item 3 asks which 64 KiB and THP assumptions are
-permanent and which are bootstrap. A prior review put the count at two
-sites. It is not two, and the split does not fall where a grep for
+The question is which 64 KiB and THP assumptions are permanent and
+which are bootstrap. An earlier review put the count at two sites. It is not two, and the split does not fall where a grep for
 `TRANSPARENT_HUGEPAGE` suggests: most of the 64 KiB in this tree is the
 on-disk format and has nothing to do with folios.
 
@@ -139,8 +138,8 @@ So THP is a hard requirement of the CURRENT design and not of HAMMER2.
 
 ## The survey: what mainline offers
 
-Handoff section 37 item 4 asks for the narrowest compatible design. Read at
-the kernel of record:
+The narrowest design compatible with mainline, read at the kernel of
+record:
 
 `mapping_max_folio_size_supported()` in `include/linux/pagemap.h` returns
 `1U << (PAGE_SHIFT + MAX_PAGECACHE_ORDER)` under THP and `PAGE_SIZE`
