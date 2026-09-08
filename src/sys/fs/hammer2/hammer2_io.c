@@ -269,7 +269,11 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
  * on a miss the kernel's own read-ahead is asked for the hint's worth
  * of pages first, with the device's ra state, and the read that follows
  * finds its folio in flight.  page_cache_sync_ra() ramps the window
- * within the device's read_ahead_kb as it does for any file.
+ * within the device's read_ahead_kb as it does for any file.  That
+ * figure and the ext4 one are the debug kernel's; on the release build
+ * of the same kernel the read runs at 2.7 GiB/s with the window
+ * hammer2_open_devvp() sets, and the ceiling from there is one
+ * reader's checksum and copy, not the device.
  */
 /*
  * The device mapping's mask with the retry the file mapping carries:

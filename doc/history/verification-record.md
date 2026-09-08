@@ -2493,6 +2493,66 @@ write went to the host's disk while the second hit the host's cache,
 which read as a difference of ten times until a priming read was
 added.
 
+### The kernel every reading above was taken on
+
+Every row above was taken on the guest's debug kernel, `PROVE_LOCKING`
+with kmemleak, KFENCE and init-on-alloc, the configuration the defect
+runs need. A `perf` profile of the 1 MiB read on that kernel, taken
+2026-09-07 to answer why the port read at a twelfth of ext4, put 13%
+of the reader's samples in `__lock_acquire`, 8% in
+`lock_is_held_type`, 6% in `lock_release`, 7% in zeroing pages on
+allocation, the rest of the top twenty in kmemleak's object tracking
+and stack unwinding, and 3% in the module itself; the dd process spent
+1.04 s of its 1.15 s wall in the kernel. ext4 and btrfs pay the same
+tax per lock and per allocation and take far fewer of each per byte.
+No release build of the kernel of record existed on the machine, so
+one was built from the same source with the debug options off,
+`7.3.0-rc1-release`, installed in the guest beside the debug kernel,
+and the instrument was run on it, same host, same images, ext4
+reading from the host's cache at 12800 MiB/s as the control, host
+load 3.4, MiB/s:
+
+| filesystem, release kernel | write | read, 1 MiB | read, 64 KiB |
+|---|---|---|---|
+| HAMMER2, this port at 69be912 | 582 | 2438 | 3012 |
+| ext4 | 296 | 12800 | 12800 |
+| btrfs | 277 | 10240 | 8533 |
+| DragonFly's HAMMER2, the Linux-written file | | 877 | |
+| DragonFly's HAMMER2, its own file | | 863 | |
+
+The port writes at twice the rate of ext4 and btrfs and reads the
+format at three times the rate of DragonFly's own kernel on the same
+volume. On the release kernel the reader spends 0.12 s of CPU over a
+0.19 s read and its profile is a third `xxh64`, a sixth the block copy
+from the device mapping to the file's folio, a tenth the copy to user
+space, and no lock bookkeeping; the rest of the wall is waiting on the
+device. The wait was the read-ahead window: the DIO layer's read-ahead
+state copies the device's `read_ahead_kb` at mount, 128 KiB, two
+blocks. Measured on the release kernel with the device setting changed
+before each mount and `cluster_data_read` at 4, 16 and 64, two reads
+each at 1 MiB:
+
+| device window | hint 4 | hint 16 | hint 64 |
+|---|---|---|---|
+| 128 KiB | 1720, 2141 | 2461, 2613 | 2738, 2770 |
+| 512 KiB | 2456, 2417 | 2567, 2582 | 2763, 2746 |
+| 2 MiB | 2743, 2713 | 2676, 2697 | 2738, 2756 |
+| 4 MiB | 2936, 2908 | 2802, 2802 | 2778, 2773 |
+| 16 MiB | 2914, 2966 | 3137, 3022 | 2989, 3007 |
+
+The window is worth 40% at the shipped hint and nothing past 4 MiB,
+so `hammer2_open_devvp()` raises the port's own read-ahead state to
+at least 4 MiB at mount, which is what btrfs does to its backing
+device, and leaves the device's sysfs value alone; the hint stays at
+DragonFly's 4. With the change and the device at its default the read
+measured 2686 and 2804 in two runs. What remains between the port and
+btrfs is that btrfs verifies its checksums in bio completion on every
+CPU while this port verifies and copies each block in the reader, one
+block at a time; the profile says that ceiling is near 3 GiB/s on
+this guest, and lifting it means an asynchronous `->readahead` that
+hands each block's verify and copy to a worker, which is a strategy
+layer change and not a mount-time constant.
+
 `O_DIRECT` stays unserved. DragonFly's `IO_DIRECT` means
 semi-synchronous, set by the reserve check, and every read and write
 there goes through the buffer cache because each block is checksummed

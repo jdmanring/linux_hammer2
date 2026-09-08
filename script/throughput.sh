@@ -141,6 +141,10 @@ rate() { awk -v b="\$1" -v t0="\$2" -v t1="\$3" 'BEGIN{d=t1-t0; if (d<=0) d=0.01
 head -c $((MIB * 1024 * 1024)) /dev/urandom > /dev/shm/src || { echo "no source"; exit 1; }
 src=\$(md5sum < /dev/shm/src | cut -c1-32)
 echo "source $MIB MiB md5 \$src"
+# The kernel timed on is part of the reading: a lockdep kernel charges
+# every lock the port takes per block, which is what put a third of a
+# read's samples in lock bookkeeping and the port at 3% of its own profile.
+echo "kernel \$(uname -r) lockdep \$(zcat /proc/config.gz 2>/dev/null | grep -c '^CONFIG_PROVE_LOCKING=y')"
 for fs in h2 e4 bt; do
 	t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=fsync status=none; t1=\$(now)
 	echo "\$fs write \$(rate $MIB \$t0 \$t1) MiB/s"
@@ -194,6 +198,7 @@ printf '%s\n' "$out" | sed 's/^/  linux   /'
 down "$GUEST" "$GUEST_SSH"
 [ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
 e4=$(printf '%s\n' "$out" | sed -n 's/^e4 read 1M \([0-9]*\) MiB.*/\1/p')
+printf '%s\n' "$out" | grep -q "^kernel .* lockdep 1$" && echo "  note  the guest kernel carries CONFIG_PROVE_LOCKING: every number above is the debug kernel's, and a read on the release build of the same kernel measured four times faster"
 [ -n "$e4" ] && [ "$e4" -lt 2000 ] && echo "  note  ext4 read $e4 MiB/s: the host's cache was cold, so every read above is the host's disk and compares only with a run that says the same"
 src=$(printf '%s\n' "$out" | sed -n 's/^source .* md5 //p')
 got=$(printf '%s\n' "$out" | sed -n 's/^hammer2 md5 //p')
@@ -202,7 +207,7 @@ if [ -n "$src" ] && [ "$src" = "$got" ]; then
 else
 	echo "  FAIL  hammer2 hash '$got' is not the source hash '$src'"; fail=$((fail + 1))
 fi
-for want in "^h2 write [0-9]* MiB/s" "^e4 write [0-9]* MiB/s" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$"; do
+for want in "^h2 write [0-9]* MiB/s" "^e4 write [0-9]* MiB/s" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }

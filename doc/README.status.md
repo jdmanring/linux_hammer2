@@ -18,7 +18,7 @@ filings staged under `doc/upstream/`; the throughput reading is taken.
 | mmap and exec | files map and execute; a kernel has booted with a HAMMER2 root | `root-boot.sh` |
 | a full volume | the fill is refused as the other trees refuse it, and the volume unmounts clean; the defects the fill found are in the record | `test-enospc.sh` |
 | a million files, and a Nix closure of two hundred thousand | written through the write path, counted on both sides, identical on both, lockdep on throughout | `million-tree.sh`, `nix-closure.sh` |
-| one large file | reads back at the rate btrfs and DragonFly's own HAMMER2 reach on the same guest | `throughput.sh` |
+| one large file | on the release build of the kernel of record, writes at twice the rate of ext4 and btrfs and reads at three times the rate of DragonFly's own kernel on the same volume, and at a third of btrfs, which is one reader's checksum and copy; every reading before 2026-09-07 was the debug kernel's | `throughput.sh` |
 | space a remove does not free | the bulkfree scan frees it | `bulkfree.sh` |
 | a device in error | `hpanic` marks the device and returns; the writer is told `EIO`, the mount goes read-only, the media stays at the last good sync | `hpanic-contain.sh` |
 
@@ -49,10 +49,10 @@ a defect.
 | `hammer2_vfsops.c` | 3276 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
 | `hammer2_strategy.c` | 1458 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
 | `hammer2_vnops.c` | 1526 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
-| `hammer2_ondisk.c` | 1032 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
+| `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 1224 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 1228 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 1235 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |

@@ -709,6 +709,22 @@ configuration changes the guest every reading after it is taken on, so
 it is recorded here and the build number `uname -v` prints is recorded
 beside the readings it first appears in.
 
+A second build of the same source sits beside it in the guest since
+2026-09-07, `7.3.0-rc1-release`: the same configuration with every
+debug option off, built from `~/kernels/linux-7.3-rc1-release`, and
+chosen at boot by the grub default, which `setkernel.sh` on the guest
+rewrites. It exists because a throughput number is a claim about the
+port and a lockdep kernel charges the port for every lock it takes per
+block: a profile of the 512 MiB read on the debug kernel put a third of
+the reader's samples in lock bookkeeping, more in kmemleak's object
+tracking and page zeroing on allocation, and 3% in the module, and the
+same read on the release build ran four times faster. `throughput.sh`
+prints the guest kernel and whether it carries `PROVE_LOCKING` beside
+its numbers, and refuses to be read as a rate without that line. A
+defect run stays on the debug kernel; a rate is taken on the release
+one and says so. The release build has no function tracer, so the
+`read_folio` count that gate prints reads as unavailable there.
+
 Read `stat -c %b` on the result as well as the checksum. `i_blocks` is the
 on-media count, so it says which branch of the read completion each file
 took, and a set of matching checksums proves nothing about which paths
