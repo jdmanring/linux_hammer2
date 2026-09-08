@@ -29,10 +29,12 @@ reserve every other tree keeps was declared here and never carried, a
 mapped write accepted on a full volume where `write(2)` was refused,
 a page under writeback dropped from the reserve count before its block
 was allocated, which lost four files of one fill in eight, chains a
-failed flush had parked left allocated by the unmount, and a file
+failed flush had parked left allocated by the unmount, a file
 mapping that refused every dirty folio to compaction with a
 warning that sat uncounted in 39 of 62 kept logs of the gate that now
-counts it.
+counts it, and a block held in page-sized folios written back once
+per folio onto fresh media each time, which the reserve never counted
+and which lost four files of one fill in thirty-three.
 A write near full is refused now, as the other trees refuse it.
 A million files went in and were counted on both sides, a large
 file reads back at the rate btrfs and DragonFly's own HAMMER2 reach on
@@ -1493,7 +1495,15 @@ now. A sixth was reached on demand rather than by rate: a chain whose
 flush fails keeps its `UPDATE` flag and is parked at zero references
 until a flush clears it, and the unmount, which is the last flush,
 dropped the volume root and left every such chain allocated. The
-unmount scraps them now, children first, naming each. "No corruption
+unmount scraps them now, children first, naming each. A seventh was
+the rate that remained, one fill in thirty-three, attributed when the
+gate read what the final sync allocated against what the count
+promised: a block held in page-sized folios was written back once per
+folio onto fresh media each time, and the sync that commits the fill
+ate the slack with media the reserve had not counted. The block folio
+is allocated with a request that retries, and writeback gathers a
+split block's dirty folios and writes it once; the section on the
+reserve below has the readings. "No corruption
 has been seen" stood in this
 paragraph for a day on the strength of two clean checkers; the section
 below is what looking found.

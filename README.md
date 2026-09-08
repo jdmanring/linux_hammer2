@@ -38,7 +38,7 @@ At a glance, on a kernel of 7.3 or newer:
   PFS create, delete and list through `hammer2-utils`,
   LZ4 and ZLIB media, crash recovery to the same tree as the FreeBSD port
 + works with a caution: a volume filled to capacity refuses the fill and
-  keeps every accepted file whole, after six defects in that path were
+  keeps every accepted file whole, after seven defects in that path were
   found and fixed; read the paragraph on it below before trying it. A
   real Nix closure of two hundred thousand files copies in and reads
   back beside squashfs, erofs and ext4, identical on a 4 GiB guest with

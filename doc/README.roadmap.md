@@ -31,17 +31,20 @@ is the record of what was measured and how; this section says only
 where the work stands.
 
 The newest surface is the full volume. A volume filled to its last
-block found six defects the write path on a volume with room never
+block found seven defects the write path on a volume with room never
 reached, all fixed: a stranded chain lock that made the following
 `sync(2)` trip a circular lock dependency, a chain outliving its PFS
 that faulted the unmount, a chain freed with its lock held, a fill
 lost nearly whole to a flush with no room because the free-space
 reserve every other tree keeps was declared here and never carried, a
-mapped write accepted where `write(2)` was refused, and a file mapping
-that refused every dirty folio to compaction. The reproducer is a gate
-now, `script/test-enospc.sh`, thirteenth of thirteen, and it found the
-last of those on its first run under that name by counting a class of
-kernel warning its readings had not named.
+mapped write accepted where `write(2)` was refused, a file mapping
+that refused every dirty folio to compaction, and a block held in
+page-sized folios written back once per folio, each write after the
+first taking fresh media the reserve had not counted. The reproducer
+is a gate now, `script/test-enospc.sh`, thirteenth of thirteen; it
+found the sixth on its first run under that name by counting a class
+of kernel warning its readings had not named, and the seventh once it
+read what a sync allocated against what the count promised.
 
 Since then the readings 0.9 asks for have started, on the 4 GiB debug
 guest with the module unchanged between them. A million one-line files
