@@ -69,12 +69,14 @@ invokes the kernel's build system, so running `make` is that act.
    around a folio smaller than the block and the DIO layer holds a
    buffer of its own when the device mapping cannot give one, both in
    and read at 2 GiB with nothing refused, with the controls that
-   attribute the refusals in `IO_MODEL.md`. The one window left on
-   this side is the full volume's: one fill in thirty-three since the
-   reserve counted pages under writeback lost four files to a flush
-   that found the map short of what the count said. The allocator now
-   prints what it saw when it refuses, and the gate keeps the image of
-   a failed run, so the next loss names which of the two ran out first.
+   attribute the refusals in `IO_MODEL.md`. The full volume's window,
+   one fill in thirty-three losing four files to a flush that needed
+   more than the count promised, is attributed and closed: a block held
+   in page-sized folios went out once per folio and took fresh media
+   each time, and now the write entry asks for the block folio with
+   the retrying mask and writeback writes a split block once with its
+   dirty siblings. `README.status.md` has the eight fills that named
+   it and the four that read the change.
 2. The syncer is carried: DragonFly's thirty-second period and its
    dirty-count trigger, added when the million-file tree showed the
    dirty set growing without bound between `sync` calls. The first

@@ -1363,7 +1363,10 @@ which the module exports as `alloc_data_bytes` and `alloc_meta_bytes`,
 and after it prints the last refusals the write entry put in the
 debug log, each with the free count and the dirty bytes it judged by,
 the module's debug prints being on for the run; what the sync took
-against what the count promised is read from those lines. The image
+against what the count promised is read from those lines, beside the
+count of data blocks given new media, the blocks assembled around a
+folio smaller than the block, the block folios the write entry could
+not allocate, and the guest's free pages by order. The image
 of a failed run is kept beside the next run's as `enospc.img.failed`,
 since its freemap, read on the host with `hammer2 freemap`, is what a
 loss is diagnosed from. After the fill it writes 128 KiB through a shared mapping of

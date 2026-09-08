@@ -2008,9 +2008,45 @@ exactly. Five repeats on that tree and five on the tree before it, all
 logs kept, read every file whole with nothing outstanding, so the loss
 is not separated from the change by the control and is recorded as the
 rate, one in thirty-three runs since `53aacb3` against one in eight
-before it; the change it arrived with touches no reserve count. The
-window is open, and what closes it is a reservation the strategy can
-draw on rather than a count it is judged against.
+before it; the change it arrived with touches no reserve count.
+
+Attributed the same day, once the gate could read what the sync took
+against what the count promised. The freemap counts the bytes it
+hands out for data and for metadata, the write entry's refusal names
+the free count and the dirty bytes it judged by, and
+`hammer2_assign_physical()` counts a data block that had media and
+was given other media, all read by the gate around the sync that
+commits the fill. Eight fills said: when the sync has nothing left to
+write the count is exact, the leftover being the root slack of 766
+blocks less about ten of metadata; and when it has, the leftover is
+short by the number of blocks rewritten in that sync, 15 to 360 of
+them a fill. Every rewritten block the debug log named was a block
+held in 4 KiB folios, written back one folio at a time after the
+whole block had been copied in, and each write after the first took
+fresh media, since the core registers a data block for dedup as its
+bytes go out and will not overwrite a registered block: sixteen
+blocks of media for one block of data, none of it dirty bytes. The
+folios were pages because the page cache asks for any order above a
+mapping's minimum with `__GFP_NORETRY`, so the retry flag the mapping
+carries never reached the block-sized request and it failed at once
+under the fragmentation a fill leaves in a 4 GiB guest. The lost run
+was a final sync with enough such blocks to eat the slack.
+
+Two changes close it. `hammer2_write_begin()` allocates the block
+folio itself with the mapping's mask, which retries reclaim and
+compaction before failing, and asks the page cache only after that
+fails or a folio already sits in the block; alone it still failed 37
+and 22 times a fill in the last seconds before the refusal, and the
+two fills rewrote 504 and 465 blocks, leftovers 345 and 295 of 766.
+So `hammer2_writepages()` also takes a split block's other dirty
+folios out of the dirty set and under writeback beside the first, and
+the write XOP lays them all into the one block write. Two fills on
+that: 0 rewritten blocks each, 67 and 42 block writes assembled around
+a smaller folio, the block request refused 0 and 41 times, leftovers
+756 and 753 of 766, every file intact. Overwriting a registered block
+in place was not open to the port, since another chain can have
+deduplicated to it in the meantime; the dedup lookup compares content
+and nothing counts references.
 
 What that run also showed and the change does not answer: two chains
 outstanding at the unmount, with zero modified, after the strategy's
