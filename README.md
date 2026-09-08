@@ -333,6 +333,10 @@ three trees, that precedent was followed and
 
 The work here is the Linux OS layer and the gates around it.
 
+AI tools assisted with this port. Every line was reviewed, every claim
+in the documentation traces to a recorded run, and the judgment calls
+are the maintainer's.
+
 ## License
 
 BSD-3-Clause, matching DragonFly and the BSD ports, and listed in the
