@@ -15,7 +15,11 @@ mapping is not mechanical it is marked `XXX` in place, as they do.
 `hammer2.h` follows the FreeBSD port rather than DragonFly directly,
 because that port already performs the surgery every port repeats: the
 dmsg/iocom/ccms cluster layer deleted, the XOP thread pool replaced by
-synchronous XOPs, the vnode-lifecycle gates.
+synchronous XOPs, the vnode-lifecycle gates. One thing is DragonFly's
+rather than the FreeBSD port's: strategy XOPs run concurrently on one
+inode, as DragonFly's worker groups run them, where the synchronous
+ports gate every XOP on the inode dependency. It is what lets the
+readahead workers verify one file's blocks on every CPU.
 
 ## Locks
 

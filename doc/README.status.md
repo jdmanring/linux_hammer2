@@ -18,7 +18,7 @@ filings staged under `doc/upstream/`; the throughput reading is taken.
 | mmap and exec | files map and execute; a kernel has booted with a HAMMER2 root | `root-boot.sh` |
 | a full volume | the fill is refused as the other trees refuse it, and the volume unmounts clean; the defects the fill found are in the record | `test-enospc.sh` |
 | a million files, and a Nix closure of two hundred thousand | written through the write path, counted on both sides, identical on both, lockdep on throughout | `million-tree.sh`, `nix-closure.sh` |
-| one large file | on the release build of the kernel of record, writes at twice the rate of ext4 and btrfs and reads at three times the rate of DragonFly's own kernel on the same volume, and at a third of btrfs, which is one reader's checksum and copy; every reading before 2026-09-07 was the debug kernel's | `throughput.sh` |
+| one large file | on the release build of the kernel of record, writes at twice the rate of ext4 and btrfs and reads at six times the rate of DragonFly's own kernel on the same volume, every block verified on its own CPU; every reading before 2026-09-07 was the debug kernel's | `throughput.sh` |
 | space a remove does not free | the bulkfree scan frees it | `bulkfree.sh` |
 | a device in error | `hpanic` marks the device and returns; the writer is told `EIO`, the mount goes read-only, the media stays at the last good sync | `hpanic-contain.sh` |
 
@@ -33,22 +33,22 @@ a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1402 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1404 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
-| `hammer2_admin.c` | 634 | FreeBSD port, carried with two `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; the xop allocation zone is shimmed |
+| `hammer2_admin.c` | 647 | FreeBSD port, carried with four `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; strategy XOPs are exempt from that dependency at start and retire, as they are in DragonFly, so the readahead workers read one file on every CPU; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1030 | FreeBSD port, carried with three `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, the print of what a refusal saw, and the return after `hpanic` |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1164 | FreeBSD port, carried with fifteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, and the snapshot's lock order corrected under lockdep |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 5157 | FreeBSD port, carried byte-for-byte but the `XXX` lines below, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, the last drop of a chain naming the caller that still holds its lock, and the way out after each of its `hpanic` sites; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 5196 | FreeBSD port, carried byte-for-byte but the `XXX` lines below, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, the last drop of a chain naming the caller that still holds its lock and, in its spin, a lock stranded by a task that let go, a new chain's data resolved after its insert rather than before so a lost insert race costs no read, and the way out after each of its `hpanic` sites; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1354 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place, the header write reads the device-in-error bit, and the three `hpanic` sites record their error |
 | `hammer2_cluster.c` | 189 | FreeBSD port, carried byte-for-byte but the one `XXX` after its `hpanic`; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1914 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3276 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1458 | this port's; `hammer2_dedup_clear()` carried, both XOP handlers are floors |
-| `hammer2_vnops.c` | 1526 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
+| `hammer2_vfsops.c` | 3301 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
+| `hammer2_strategy.c` | 1511 | this port's; `hammer2_dedup_clear()` carried, `->readahead` hands each folio of the window to a worker |
+| `hammer2_vnops.c` | 1527 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -262,7 +262,7 @@ re-read 2026-09-07 after every `hpanic` site got its way out and
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 85 | 18 | 67 |
+| `hammer2_chain.c` | 91 | 18 | 73 |
 | `hammer2_freemap.c` | 9 | 6 | 3 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
@@ -279,7 +279,7 @@ re-read 2026-09-07 after every `hpanic` site got its way out and
 | `hammer2_vnops.c` | 2 | 0 | 2 |
 | `hammer2.h` | 10 | 3 | 7 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
-| `hammer2_admin.c` | 2 | 0 | 2 |
+| `hammer2_admin.c` | 4 | 0 | 4 |
 | `hammer2_compat.h` | 0 | 0 | 0 |
 | `hammer2_ioctl.h` | 0 | 0 | 0 |
 | `hammer2_mount.h` | 0 | 0 | 0 |

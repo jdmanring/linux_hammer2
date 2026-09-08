@@ -272,8 +272,8 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
  * within the device's read_ahead_kb as it does for any file.  That
  * figure and the ext4 one are the debug kernel's; on the release build
  * of the same kernel the read runs at 2.7 GiB/s with the window
- * hammer2_open_devvp() sets, and the ceiling from there is one
- * reader's checksum and copy, not the device.
+ * hammer2_open_devvp() sets, and 5.3 with hammer2_readahead()
+ * verifying blocks on every CPU.
  */
 /*
  * The device mapping's mask with the retry the file mapping carries:

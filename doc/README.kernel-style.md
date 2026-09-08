@@ -229,6 +229,13 @@ the print of what is left at the unload: one BSD continuation indent on
 the list head's initializer and one quoted string split across lines,
 a print of seven fields that does not fit one. No category is new.
 
+1137 to 1140 when readahead workers landed: one unnamed argument, the
+`->readahead` prototype in the tree's BSD style, and two quoted strings
+split across lines, the warning the last drop prints when it has spun
+a second on a stranded lock, whose text does not fit one. The work
+item's allocation took `kmalloc_obj()` when the checker asked, since
+that is a line this port wrote. No category is new.
+
 1135 to 1137 when writeback learned to write a split block once: one
 `return is not a function`, the tree's BSD style on the refusal's one
 `return (2);`, and one `no spaces at the start of a line`, the tree's

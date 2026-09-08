@@ -331,6 +331,7 @@ void
 hammer2_chain_drop(hammer2_chain_t *chain)
 {
 	unsigned int refs;
+	unsigned long spun = 0;	/* XXX Linux */
 
 	KKASSERT(chain->refs > 0);
 
@@ -347,13 +348,23 @@ hammer2_chain_drop(hammer2_chain_t *chain)
 	 * it does not reference.  Named where every caller passes rather
 	 * than at any one call site.
 	 */
-	if (hammer2_mtx_islocked(&chain->lock) && READ_ONCE(chain->refs) == 1)
+	/*
+	 * XXX Linux: only the lock this task owns is a fact at entry.
+	 * Read from another task the two words are not one observation:
+	 * a lookup that finds this chain on its parent's tree takes its
+	 * reference and then its lock, and a drop reading refs before
+	 * that reference and the lock word after it saw one reference
+	 * and a held lock on a chain nothing was wrong with, once per run
+	 * with readahead workers, printing an unlocked word.  A lock
+	 * stranded by a task that let go of its reference is caught in
+	 * the loop below instead, where it is the only thing that can
+	 * keep the try failing with one reference for a whole second.
+	 */
+	if (hammer2_mtx_owned(&chain->lock) && READ_ONCE(chain->refs) == 1)
 		WARN_ONCE(1, KBUILD_MODNAME ": last drop of %s chain "
-		    "%016llx while %s holds its lock, word %x lockcnt %u\n",
+		    "%016llx while this task holds its lock, word %x lockcnt %u\n",
 		    hammer2_breftype_to_str(chain->bref.type),
 		    (long long)chain->bref.key,
-		    hammer2_mtx_owned(&chain->lock) ? "this task" :
-		    "another task or nobody with a reference",
 		    atomic_read(&chain->lock.lock), chain->lockcnt);
 
 	while (chain) {
@@ -362,8 +373,20 @@ hammer2_chain_drop(hammer2_chain_t *chain)
 
 		KKASSERT(refs > 0);
 		if (refs == 1) {
-			if (hammer2_mtx_ex_try(&chain->lock) == 0)
+			if (hammer2_mtx_ex_try(&chain->lock) == 0) {
 				chain = hammer2_chain_lastdrop(chain, 0);
+				spun = 0;
+			} else if (spun == 0) {		/* XXX Linux */
+				spun = jiffies | 1;
+			} else if (time_after(jiffies, spun + HZ)) {
+				WARN_ONCE(1, KBUILD_MODNAME ": last drop of %s "
+				    "chain %016llx spun a second on a lock held "
+				    "by a task with no reference, word %x lockcnt %u\n",
+				    hammer2_breftype_to_str(chain->bref.type),
+				    (long long)chain->bref.key,
+				    atomic_read(&chain->lock.lock), chain->lockcnt);
+				spun = jiffies | 1;
+			}
 			/* Retry the same chain, or chain from lastdrop. */
 		} else {
 			if (atomic_cmpset_int(&chain->refs, refs, refs - 1))
@@ -1870,8 +1893,22 @@ hammer2_chain_get(hammer2_chain_t *parent, int generation,
 	atomic_set_int(&chain->flags, HAMMER2_CHAIN_BLKMAPPED);
 	hammer2_chain_lockdep_nest(&chain->lock, &parent->lock); /* XXX Linux */
 
-	/* Chain must be locked to avoid unexpected ripouts. */
-	hammer2_chain_lock(chain, how);
+	/*
+	 * Chain must be locked to avoid unexpected ripouts.
+	 *
+	 * XXX Linux: locked without resolving its data.  Upstream locks
+	 * with (how) here, which reads and verifies the block before the
+	 * insert below, and every insert into the parent advances the
+	 * generation the insert is checked against, so with readahead
+	 * workers filling one parent a chain that lost the race had read
+	 * and verified a block for nothing; counted on a 512 MiB read as
+	 * seven allocations and verifications per block, one of which
+	 * was kept.  Upstream's comment on the insert names the race.
+	 * The data is resolved once the chain is on the tree, where the
+	 * held lock and the parent's shared lock keep it from a ripout.
+	 */
+	hammer2_chain_lock(chain,
+	    HAMMER2_RESOLVE_NEVER | (how & HAMMER2_RESOLVE_SHARED));
 
 	/*
 	 * Link the chain into its parent.  A spinlock is required to safely
@@ -1889,6 +1926,8 @@ hammer2_chain_get(hammer2_chain_t *parent, int generation,
 		chain = NULL;
 	} else {
 		KKASSERT(chain->flags & HAMMER2_CHAIN_ONRBTREE);
+		hammer2_chain_unlock(chain);		/* XXX Linux */
+		hammer2_chain_lock(chain, how);		/* XXX Linux */
 	}
 
 	/*

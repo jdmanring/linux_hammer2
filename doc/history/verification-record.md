@@ -2572,10 +2572,45 @@ chain cache in `hammer2_xop_retire()` assumes one XOP per inode at a
 time, which the dependency guaranteed; concurrent retires replace and
 drop each other's entries, the parent block is re-verified per data
 block, and the drop race is the same assumption from the other side.
-The branch keeps the shape and its commit message says what it
-measured; main keeps the synchronous read, which is the tree every
-gate has run against, and the ceiling stands at one reader until that
-cache is made safe under concurrent strategy XOPs.
+That reading of the cache was wrong, and the count that corrected it
+was cheap: the retire code is DragonFly's line for line and runs under
+the cluster spinlock. The debug kernel's function profiler, run on the
+branch module, counted per 512 MiB read 8864 `read_folio` calls, one
+per block, and 33588 chain allocations with 33587 checksum
+verifications, four per block, against 8259 and 8258 on the
+synchronous path. A kprobe on `hammer2_chain_alloc()` with a stack
+trace put every one of them under `hammer2_chain_get()` from the
+lookup in the strategy read: the chain is locked with its data, read
+and verified, before the insert under its parent, and the insert is
+checked against the parent's generation, which every sibling's insert
+advances. DragonFly's own comment on that insert says get races occur
+quite often when asynchronous read-aheads are spread across threads.
+The chain is now locked without its data for the insert and resolved
+once it is on the tree, which brought the verifications to 8292 per
+read and the device reads from 39326 to 14793. The last-drop warning
+turned out to be the guard's reading, not a defect: it read the
+reference count and the lock word as two observations, and a lookup
+that finds a chain on the tree takes its reference and then its lock
+between them, so the guard printed an unlocked word beside a held
+verdict. It now fires on the lock this task owns, which is exact, and
+on a last drop that has spun a second on a lock nobody with a
+reference holds, which is the stranded lock 39dc581 added it for. Two
+runs on the debug kernel then read clean, one verification per block,
+and four runs on the release kernel, MiB/s:
+
+| run | read, 1 MiB | read, 64 KiB |
+|---|---|---|
+| 1 | 3747 | 5143 |
+| 2 | 5368 | 5287 |
+| 3 | 5267 | 4957 |
+| 4 | 5194 | 5267 |
+
+Zero kernel warnings, the reader at 0.035 s of CPU for the file, and
+the profile a fifth `xxh64`, a seventh the copy, and a spinlock and an
+rwsem at a tenth and a fourteenth, which is the next ceiling and is
+named rather than measured. The change is on main; the branch is the
+record of the shape that measured level with one reader before the
+insert race was counted.
 
 `O_DIRECT` stays unserved. DragonFly's `IO_DIRECT` means
 semi-synchronous, set by the reserve check, and every read and write

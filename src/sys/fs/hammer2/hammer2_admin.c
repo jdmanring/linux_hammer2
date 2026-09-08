@@ -338,7 +338,18 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 		}
 
 		if (hammer2_xop_active(xop)) {
-			hammer2_xop_testset_ipdep(ip);
+			/*
+			 * XXX Linux: DragonFly serializes only non-strategy
+			 * XOPs on an inode and spreads strategy XOPs across
+			 * its worker groups by block; the synchronous ports
+			 * gate every XOP, which serialized the reads of one
+			 * file across every CPU and left the readahead
+			 * workers spinning for the dependency lock.  The
+			 * strategy XOP holds the inode shared and its chains
+			 * shared, and those are the guards it runs under.
+			 */
+			if (!(xop->flags & HAMMER2_XOP_STRATEGY))
+				hammer2_xop_testset_ipdep(ip);
 			if (xop->ip2)
 				hammer2_xop_testset_ipdep(xop->ip2);
 			if (xop->ip3 && xop->ip3 != xop->ip1) /* rename */
@@ -446,7 +457,9 @@ hammer2_xop_retire(hammer2_xop_head_t *xop, uint32_t mask)
 
 	/* The inode is only held at this point, simply drop it. */
 	if (xop->ip1) {
-		hammer2_xop_unset_ipdep(xop->ip1);
+		/* XXX Linux: strategy XOPs never took it, see hammer2_xop_start() */
+		if (!(xop->flags & HAMMER2_XOP_STRATEGY))
+			hammer2_xop_unset_ipdep(xop->ip1);
 		hammer2_inode_drop(xop->ip1);
 		xop->ip1 = NULL;
 	}

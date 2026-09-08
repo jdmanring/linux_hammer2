@@ -315,6 +315,21 @@ BSD cluster hint's worth of pages first, with a `file_ra_state` per
 device, and reads at 602 to 683 MiB/s on the same guest, DragonFly's
 own rate for the same files. `doc/history/verification-record.md` has the table.
 
+The file mapping has `->readahead` as well: each folio of the window,
+4 MiB by the superblock's bdi as in btrfs, goes to an unbound
+workqueue of at most one worker per CPU, and `hammer2_read_folio()`
+runs there, so the checksum and the copy of one block no longer wait
+for the block before it. Two carried behaviors had to move for that.
+The XOP start gated every XOP on the inode dependency, one per inode
+at a time, which the synchronous ports do and DragonFly does only for
+non-strategy XOPs; strategy XOPs are exempt here as there. And
+`hammer2_chain_get()` read and verified a block before inserting its
+chain under the parent, whose generation every sibling's insert
+advances, so with workers filling one parent a lost insert had
+verified a block for nothing, seven times per block when counted; the
+chain is locked without its data for the insert and resolved after.
+On the release kernel the read went from 2.8 to 5.3 GiB/s.
+
 For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6
 asks for is written, in `hammer2_ondisk.c` where the device is opened: it
