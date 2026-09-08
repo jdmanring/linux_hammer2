@@ -1364,6 +1364,12 @@ next_hmp:
 		deactivate_locked_super(sb);
 		return error;
 	}
+	/*
+	 * Linux: the window ->readahead is handed, and so the number of
+	 * blocks verifying at once; btrfs sets its bdi to the same 4 MiB.
+	 */
+	sb->s_bdi->ra_pages = max_t(unsigned long, sb->s_bdi->ra_pages,
+	    SZ_4M >> PAGE_SHIFT);
 
 	/* Connect up mount pointers. */
 	hammer2_mount_helper(sb, pmp);
@@ -3217,12 +3223,28 @@ hammer2_module_init(void)
 	TAILQ_INIT(&hammer2_spmplist);
 	hammer2_init_limits();
 
+	/*
+	 * Linux: the readahead workers, unbound so a read spans the CPUs
+	 * and no more of them than CPUs.  With the default of 256 the
+	 * first run made several hundred, every one spinning for the
+	 * lock the one ahead of it held.
+	 */
+	hammer2_ra_wq = alloc_workqueue("hammer2_ra", WQ_UNBOUND,
+	    num_online_cpus());
+	if (hammer2_ra_wq == NULL) {
+		error = -ENOMEM;
+		goto fail_register;
+	}
+
 	error = register_filesystem(&hammer2_fs_type);
 	if (error)
-		goto fail_register;
+		goto fail_wq;
 
 	return (0);
 
+fail_wq:
+	destroy_workqueue(hammer2_ra_wq);
+	hammer2_ra_wq = NULL;
 fail_register:
 	hammer2_lk_destroy(&hammer2_mntlk);
 	uma_zdestroy(hammer2_zone_xops);
@@ -3238,6 +3260,9 @@ static void __exit
 hammer2_module_exit(void)
 {
 	unregister_filesystem(&hammer2_fs_type);
+	/* Linux: every inode is evicted with the last mount, so this is idle. */
+	destroy_workqueue(hammer2_ra_wq);
+	hammer2_ra_wq = NULL;
 	hammer2_lk_destroy(&hammer2_mntlk);
 
 	/*

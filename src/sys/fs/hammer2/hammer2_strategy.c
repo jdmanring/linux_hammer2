@@ -44,9 +44,9 @@
  * loaded from, and 0.3 asks for a module that loads and unloads.
  *
  * hammer2_dedup_clear() is carried.  Both XOP handlers are floors: they
- * feed an error through the XOP protocol and warn once.  Neither is
- * reachable today, because an XOP is started from a vnode operation and
- * this port has no ->read_folio and no ->writepages to start one.  That
+ * feed an error through the XOP protocol and warn once.  Neither was
+ * reachable then, because an XOP is started from a vnode operation and
+ * the port had no ->read_folio and no ->writepages to start one.  That
  * is the whole of the reason: the mount path returns success now, so
  * nothing upstream of the vnode operations holds these back.  The floors
  * are what makes that unreachability visible at link time rather than
@@ -458,7 +458,7 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 	int error;
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
-	xop = hammer2_xop_alloc(ip, 0);
+	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_STRATEGY);
 	xop->lbase = folio_pos(folio);
 	xop->folio = folio;
 	hammer2_xop_start(&xop->head, &hammer2_strategy_read_desc);
@@ -499,6 +499,59 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 
 	/* The block is already named in dmesg by hammer2_chain_testcheck(). */
 	return (hammer2_vfs_errno(error));	/* Linux: negative, EDOM is EIO */
+}
+
+/*
+ * Linux: read the folios of a readahead window, each on a worker.
+ *
+ * hammer2_read_folio() verifies the block's checksum and copies it in
+ * the caller's context, one block at a time, and on a release kernel
+ * that one reader is the ceiling of a sequential read: a third of its
+ * profile is xxh64, a sixth the copy, and the device is idle while it
+ * runs.  btrfs verifies in bio completion on every CPU.  This hands
+ * each folio of the window to an unbound workqueue and returns, so the
+ * verify and the copy run on as many CPUs as there are blocks in
+ * flight; the window is the superblock's bdi, 4 MiB, sixty-four
+ * blocks.  readahead_folio() hands each folio locked with the page
+ * cache's reference and no other, and hammer2_read_folio() unlocks it
+ * on every path, which is the whole contract: a locked folio cannot be
+ * truncated or evicted from under the worker, so the inode outlives
+ * the work.  Where the work item cannot be allocated the folio is read
+ * in place, which is what happened for every folio before this.
+ */
+struct hammer2_ra_work {
+	struct work_struct work;
+	struct folio *folio;
+};
+
+struct workqueue_struct *hammer2_ra_wq;	/* Linux */
+
+static void
+hammer2_ra_work_fn(struct work_struct *work)
+{
+	struct hammer2_ra_work *w =
+	    container_of(work, struct hammer2_ra_work, work);
+
+	hammer2_read_folio(NULL, w->folio);
+	kfree(w);
+}
+
+void
+hammer2_readahead(struct readahead_control *rac)
+{
+	struct hammer2_ra_work *w;
+	struct folio *folio;
+
+	while ((folio = readahead_folio(rac)) != NULL) {
+		w = kmalloc(sizeof(*w), GFP_NOFS);
+		if (w == NULL) {
+			hammer2_read_folio(NULL, folio);
+			continue;
+		}
+		INIT_WORK(&w->work, hammer2_ra_work_fn);
+		w->folio = folio;
+		queue_work(hammer2_ra_wq, &w->work);
+	}
 }
 
 /*

@@ -1243,6 +1243,8 @@ void hammer2_pfs_memory_wakeup(hammer2_pfs_t *, int);
 void hammer2_xop_ipcluster(hammer2_xop_t *, void *, int);
 void hammer2_xop_readdir(hammer2_xop_t *, void *, int);
 int hammer2_read_folio(struct file *, struct folio *);	/* Linux */
+void hammer2_readahead(struct readahead_control *);	/* Linux */
+extern struct workqueue_struct *hammer2_ra_wq;	/* Linux */
 void hammer2_xop_nresolve(hammer2_xop_t *, void *, int);
 void hammer2_xop_unlink(hammer2_xop_t *, void *, int);
 void hammer2_xop_nrename(hammer2_xop_t *, void *, int);

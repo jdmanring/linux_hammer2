@@ -1495,6 +1495,7 @@ hammer2_writepages(struct address_space *mapping,
  */
 const struct address_space_operations hammer2_file_aops = {
 	.read_folio	= hammer2_read_folio,
+	.readahead	= hammer2_readahead,		/* Linux */
 	.dirty_folio	= filemap_dirty_folio,		/* Linux */
 	.write_begin	= hammer2_write_begin,		/* Linux */
 	.write_end	= hammer2_write_end,		/* Linux */
