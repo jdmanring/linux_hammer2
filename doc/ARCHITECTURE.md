@@ -1,8 +1,7 @@
 # Architecture
 
 How the DragonFly source is carried on Linux: what is vendored unchanged,
-what is shimmed, and where the boundary is. Written for handoff section 37
-item 2. `doc/IO_MODEL.md` covers the I/O layer specifically; this is the
+what is shimmed, and where the boundary is. `doc/IO_MODEL.md` covers the I/O layer specifically; this is the
 shape around it.
 
 ## The rule the whole port turns on

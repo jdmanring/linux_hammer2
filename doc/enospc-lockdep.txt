@@ -1,6 +1,6 @@
-The lockdep report a full volume USED TO produce, captured in full.
+The lockdep report a full volume once produced, captured in full.
 
-THIS IS A RECORD OF A FIXED DEFECT, kept because it is the evidence the
+This is the record of a fixed defect, kept because it is the evidence the
 fix was made against and because the two orders in it are worth reading.
 The cause was hammer2_chain_create() clearing a caller's chain pointer on
 the ENOSPC path and so skipping that caller's release; twenty-five runs

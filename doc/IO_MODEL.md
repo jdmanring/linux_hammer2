@@ -1,8 +1,8 @@
 # The Linux I/O model
 
 What the DIO layer does on Linux, which assumptions are the on-disk format
-and which are this port's choice, and what mainline offers instead. Written
-for handoff section 37 items 3 and 4. Nothing here is designed: it is a
+and which are this port's choice, and what mainline offers instead.
+Nothing here is designed: it is a
 reading of the current tree and of the kernel headers the gate compiles
 against, with the version of record stated so it can be re-measured.
 
@@ -385,8 +385,8 @@ the current one:
 - Change the core to scatter-gather: correct, and it is a change to shared
   DragonFly code that Kusumi's other ports would have to carry.
 
-None is licensed by anything measured yet, and the handoff's section 33
-warning stands: mainline has not moved off the THP gate at the kernel of
+None is licensed by anything measured yet, and one caution stands:
+mainline has not moved off the THP gate at the kernel of
 record, so nothing here is urgent. Recorded so the next person does not
 re-derive it, and so that if THP ever stops being available the cost is
 already priced.
