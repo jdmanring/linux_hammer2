@@ -109,7 +109,7 @@ one uncontended lock.
 Seen on Linux on 2026-09-06 as a writeback worker asleep in that wait
 with the inode it waited on held by no XOP, while the syncer waited on
 the worker's folios and a `link(2)` retried the four-inode lock behind
-the syncer; `doc/README.status.md` has the record. Linux reaches it
+the syncer; `doc/history/verification-record.md` has the record. Linux reaches it
 because writeback runs XOPs on a kernel thread beside the caller's;
 the ports run XOPs on the calling thread, so the three tasks it needs
 are rarer there but nothing rules them out.
@@ -140,7 +140,7 @@ the hash lock, so the cleanup waits for the disposal to finish.
 Seen on Linux on 2026-09-06 with four `cp` processes writing a Nix
 closure at once, as the writeback worker releasing a reader it had
 never taken, the rwsem's count zero and its owner clear;
-`doc/README.status.md` has the record. One writer had not reached it
+`doc/history/verification-record.md` has the record. One writer had not reached it
 in nine runs. The ports write back on the calling thread, which
 narrows the window and does not close it.
 
@@ -171,7 +171,7 @@ Seen on Linux on 2026-09-07 with the debug build's allocator refusing
 from its 20,000th call: four inode chains in one line of descent from
 the super-root, each at zero references, counted by the unload check
 and named by the same build's list of every chain;
-`doc/README.status.md` has the record. The DragonFly patch does not
+`doc/history/verification-record.md` has the record. The DragonFly patch does not
 call `hammer2_pfs_memory_wakeup()` for a scrapped `MODIFIED` chain,
 where the root clears above it do, because the PFS a parked chain
 points at was freed by `hammer2_pfsfree_scan()` earlier in the same

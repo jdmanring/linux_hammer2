@@ -24,7 +24,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
-docs=$(ls doc/*.md 2>/dev/null) || true
+docs=$(ls doc/*.md doc/history/*.md 2>/dev/null) || true
 [ -n "$docs" ] || { echo "citations: COULD-NOT-RUN: no doc/*.md" >&2; exit 2; }
 
 fail=0

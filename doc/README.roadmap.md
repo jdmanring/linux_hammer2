@@ -148,7 +148,7 @@ and a milestone is met when all of them are.
 | 0.6 | H3 | Crash recovery | met. Kill, panic, power and torn header, twice each, on media the FreeBSD port wrote and on media this port wrote: every image mounted and recovered on both ports, every file readable, `fsck_hammer2` clean after each recovery, and each cell's runs in agreement |
 | 0.7 | H4 | Snapshots and checkpoints | met at 0.7.49, on 2026-09-06. The ioctl surface is delivered and gated: snapshot create, PFS create, delete, list and lookup, the inode and volume queries, growfs and bulkfree. A snapshot taken here mounts by label on both sides, read-write; a write into it leaves its root unchanged and DragonFly reads the two apart. `README.capabilities.md` declares what the port provides, every row on a recorded run. The milestone was gated on one consumer's adapter until 2026-09-06; the port is independent of any distribution, so that adapter is the consumer's milestone |
 | 0.8 | H5 | PFS as storage domains | met at 0.7.50, on 2026-09-06. `script/pfs-domains.sh` creates SYSTEM, STORE and CACHE through the port's own ioctl, mounts each by label here and on DragonFly, and DragonFly checks what was written in each, 21 files per root with 0 mismatches on three runs, a snapshot of one root written into and read apart, and all of it again on a filesystem across two volumes. Which labels a consumer lays down and its installer are the consumer's |
-| 0.9 | H6 | Nix-scale hardening | met at 0.9.5, on 2026-09-07. The million-file row has its instrument and its first numbers: a hundred thousand files clean on both sides, and at a million two defects found and fixed, the unbounded dirty set and the reclaim inversion, and one limit measured and attributed: roughly seven hundred thousand one-line files on the 4 GiB debug guest before the write path's order-4 folio grab fails, and a million with no refusal on the same guest with kmemleak off, so the limit is the debug guest's and not the IO model's; and the large-file row: sequential read held to 353 MiB/s by a device mapping with no read-ahead, now 602 to 683 with the kernel's read-ahead asked for the BSD cluster hint, at btrfs's rate and DragonFly's own on the same guest, with the Linux-written file contiguous on the media where DragonFly's is scattered; `README.status.md` has both tables. F6's harness has run a real closure, a KDE desktop of 1978 store paths and 205871 files, and found eight defects in seventeen runs, the fifteenth and eighteenth clean: a lost XOP wakeup, lockdep's eight subclasses against a store path nine deep, a symlink failure returned as a positive number, unmovable symlink folios, a lookup deadlocked against kswapd's eviction, a buffer freed by the cache cleanup under the writeback worker still holding it, and a flush scan resumed on a sibling freed while the callback had the spinlock released, and a directory's entry in the directory's own lockdep class after a remount, an annotation and not a lock; all eight fixed, the depth by a lockdep class per level registered as the tree is walked and the scan by DragonFly's own bookkeeping carried over the vendored tree. The fifteenth run at 4 GiB, lockdep on from the first mount to the unload, put the copy in at 97 s with nothing refused and read it back hashed at 96 s against squashfs's 71 and erofs's 39, every hash and symlink at the source's and DragonFly's checker clean after the collection; the low-memory row is measured at 2 GiB with both page-cache fallbacks in, 1727 blocks assembled and 144 buffered, nothing refused and nothing lost, with the controls that attribute the refusals in `IO_MODEL.md`. The XOP pool stays synchronous: the same copy into ext4 on the same guest took 79 s to the port's 85. Four writers put the same closure in at 64 and 80 s on two runs, ahead of ext4's single writer beside them, and the collection row is measured: 989 of 1978 store paths removed beside a reader, DragonFly counting what stayed. Every row has its number |
+| 0.9 | H6 | Nix-scale hardening | met at 0.9.5, on 2026-09-07. The million-file row has its instrument and its first numbers: a hundred thousand files clean on both sides, and at a million two defects found and fixed, the unbounded dirty set and the reclaim inversion, and one limit measured and attributed: roughly seven hundred thousand one-line files on the 4 GiB debug guest before the write path's order-4 folio grab fails, and a million with no refusal on the same guest with kmemleak off, so the limit is the debug guest's and not the IO model's; and the large-file row: sequential read held to 353 MiB/s by a device mapping with no read-ahead, now 602 to 683 with the kernel's read-ahead asked for the BSD cluster hint, at btrfs's rate and DragonFly's own on the same guest, with the Linux-written file contiguous on the media where DragonFly's is scattered; `doc/history/verification-record.md` has both tables. F6's harness has run a real closure, a KDE desktop of 1978 store paths and 205871 files, and found eight defects in seventeen runs, the fifteenth and eighteenth clean: a lost XOP wakeup, lockdep's eight subclasses against a store path nine deep, a symlink failure returned as a positive number, unmovable symlink folios, a lookup deadlocked against kswapd's eviction, a buffer freed by the cache cleanup under the writeback worker still holding it, and a flush scan resumed on a sibling freed while the callback had the spinlock released, and a directory's entry in the directory's own lockdep class after a remount, an annotation and not a lock; all eight fixed, the depth by a lockdep class per level registered as the tree is walked and the scan by DragonFly's own bookkeeping carried over the vendored tree. The fifteenth run at 4 GiB, lockdep on from the first mount to the unload, put the copy in at 97 s with nothing refused and read it back hashed at 96 s against squashfs's 71 and erofs's 39, every hash and symlink at the source's and DragonFly's checker clean after the collection; the low-memory row is measured at 2 GiB with both page-cache fallbacks in, 1727 blocks assembled and 144 buffered, nothing refused and nothing lost, with the controls that attribute the refusals in `IO_MODEL.md`. The XOP pool stays synchronous: the same copy into ext4 on the same guest took 79 s to the port's 85. Four writers put the same closure in at 64 and 80 s on two runs, ahead of ext4's single writer beside them, and the collection row is measured: 989 of 1978 store paths removed beside a reader, DragonFly counting what stayed. Every row has its number |
 | 1.0 | qualification | Flagship qualification | not started |
 
 ## Fixtures
@@ -170,7 +170,7 @@ the column first.
 | F3 | F2 images with metadata deliberately damaged, with `fsck_hammer2`'s verdict on each recorded first | a script over F2 | 0.4 and 0.6 | unwritten |
 | F4 | a tree written by this port, mounted and verified on DragonFly, then the reverse | this port and DragonFly | 0.5 | `script/f4-roundtrip.sh`, run both ways on a volume formatted here |
 | F5 | images captured mid-write under the crash matrix, calibrated first against the FreeBSD port | a crash harness in QEMU | 0.6 | `script/crash-matrix.sh` makes them per run; sixteen recorded in `README.status.md`, none kept |
-| F6 | a real Nix closure copied in through the write path | `script/nix-closure.sh` | 0.9 | run; clean at 4 GiB with lockdep on to the unload, `README.status.md` has the readings |
+| F6 | a real Nix closure copied in through the write path | `script/nix-closure.sh` | 0.9 | run; clean at 4 GiB with lockdep on to the unload, `doc/history/verification-record.md` has the readings |
 
 Images are never committed, and cannot be. `makefs -t hammer2` writes 8 GiB
 and exposes no way to shrink it: `-s` sets a maximum, so it conflicts with the
@@ -397,7 +397,7 @@ claimed only over the cells that do repeat.
 Gate: `script/crash-matrix.sh`, which runs the four cells twice each, the
 FreeBSD port writing first, and reports a cell green only when its runs
 agree. It ran 2026-09-05 over sixteen rows with both recoveries clean on
-every one; `doc/README.status.md` carries the table, and the torn cell's
+every one; `doc/history/verification-record.md` carries the table, and the torn cell's
 verdict from `fsck_hammer2`, which reports a torn header rather than
 skipping it as the mounts do, is recorded there as the expected verdict.
 
@@ -462,14 +462,14 @@ scattered. The read rate did: the DIO layer read the device one folio
 at a time with nothing ahead of it, 353 MiB/s, and asking the kernel's
 read-ahead on the device mapping for the BSD cluster hint took it to
 602 to 683, btrfs's rate and DragonFly's on the same guest.
-`README.status.md` has the table.
+`doc/history/verification-record.md` has the table.
 
 The rows that need no closure are measured: a million files written
 by four writers in 248 s, a tenth of them deleted and rewritten with a
 snapshot taken through it, the whole tree deleted, and every state
 counted on both sides with both checkers clean. The first run of that
 configuration deadlocked in the shim's shared to exclusive upgrade,
-which is fixed and recorded in `README.status.md` with the run that
+which is fixed and recorded in `doc/history/verification-record.md` with the run that
 passed after it, three of three in that configuration, and five of
 five at twenty thousand files with lockdep alive. The lock order of
 the whole million-file churn was read once the guest kernel's chain
@@ -482,7 +482,7 @@ files and 150219 symlinks, found eight defects in seventeen runs,
 none of them reachable by a million one-line files, and the fifteenth
 run at 4 GiB reads it back clean with lockdep on to the unload, a
 hashed 96 s against squashfs's 71 and erofs's 39.
-`README.status.md` has the defects and the table. The XOP pool
+`doc/history/verification-record.md` has the defects and the table. The XOP pool
 decision is taken: the same copy into ext4 on the same guest took
 79 s to the port's 85, and the port read back faster, so the pool
 stays synchronous and the workqueue-backed pool is not built.

@@ -314,7 +314,7 @@ read of a large file to 353 MiB/s on a guest where btrfs read at 507.
 On a miss `hammer2_bread()` now asks the kernel's read-ahead for the
 BSD cluster hint's worth of pages first, with a `file_ra_state` per
 device, and reads at 602 to 683 MiB/s on the same guest, DragonFly's
-own rate for the same files. `doc/README.status.md` has the table.
+own rate for the same files. `doc/history/verification-record.md` has the table.
 
 For `set_blocksize` the policy cap is the binding one, so the existing
 static assert names the right constant. The runtime refusal that section 6

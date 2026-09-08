@@ -1,7 +1,7 @@
 Testing
 =======
 
-Sight gates run today, all cheap. Most fall into two groups, and the split
+Every gate is cheap to run. Most fall into two groups, and the split
 matters when you are deciding which to run: the compile gates need a
 toolchain and a kernel tree, the repository gates need neither. Two belong
 to neither group and are described below, `test-vectors-contract.sh` and
@@ -56,7 +56,7 @@ prose was making.
 Only the arrow form is read, a bare method name not being distinguishable
 from ordinary prose, and only the present tense. A claim written in the
 past with the commit it was true at is a dated observation and cannot go
-stale, which is why `README.status.md` records the readdir floor as "was
+stale, which is why `doc/history/verification-record.md` records the readdir floor as "was
 not written at `1f025fe`". The gate carries a `--selftest` driving six
 directions, including that one, on a fixture tree rather than on this
 repository's own prose.
@@ -592,7 +592,7 @@ refuse every mount and name both numbers. Build, load on the guest,
 run, read `dmesg`. A second control, `HAMMER2_RW_EXPERIMENT`, lifted
 the read-write mount refusal for measurement from the first read-write
 mount to the crash matrix, and retired with the refusal; the runs
-`README.status.md` records under that name were made with it.
+`doc/history/verification-record.md` records under that name were made with it.
 
 One of those is worth its own line. `KDIR` defaults to the host's own
 build tree, so the first pre-push run of this gate built for the host and
@@ -622,7 +622,7 @@ random128k.bin` and whose other files must still verify, and `f10` with
 one volume-header bit flipped, whose manifest is `# refuse` and no file
 rows. `f8`, the installed DragonFly root, has no manifest here: it is
 read by Saxum's walker as root and compared against two other readers,
-recorded in `README.status.md`. Mounting both of `f7`'s PFSes at once is
+recorded in `doc/history/verification-record.md`. Mounting both of `f7`'s PFSes at once is
 a measurement recorded there too, since a manifest names one label.
 
 The gate starts its guest only when no other domain is running, since
@@ -649,7 +649,7 @@ To ask whether a device callback reaches every PFS mounted on it, wrap
 the device in a linear `dm` target on the Linux guest, mount two PFSes
 from `/dev/mapper/<name>@<label>`, `dmsetup suspend` it, and `fsfreeze -u`
 each mount: the thaw exits 0 on a frozen superblock and fails with
-`EINVAL` on one the freeze never reached. `README.status.md` records the
+`EINVAL` on one the freeze never reached. `doc/history/verification-record.md` records the
 result for `f7` with and without the per-mount claim.
 
 Attach without `--mode readonly` on the DragonFly side: its HAMMER2 opens
@@ -679,7 +679,7 @@ DragonFly writes, then is shut down, then Linux reads.
 
 The Linux guest's kernel is plain 7.3.0-rc1 built on the host from
 `~/kernels/linux-7.3-rc1`, the tree `KDIR` names, and copied into the
-guest by hand; every reading in `README.status.md` taken on that guest
+guest by hand; every reading in `doc/history/verification-record.md` taken on that guest
 was taken on it. Its configuration is the tarball's default plus the
 debug and instrument options the port's readings depend on:
 `PROVE_LOCKING` with `DEBUG_RWSEMS`, `PROVE_RCU`, `DEBUG_KMEMLEAK`,
@@ -713,7 +713,7 @@ attach it to `dragonflybsd642` the same way. DragonFly's `cat` and
 `stat`, then `fsck_hammer2 /dev/vbd1`, are the verdict, and the host's
 `hammer2 show` from hammer2-utils over `f5.img` and `f13.img`, diffed,
 says which chains the flush rewrote and with what transaction ids.
-`README.status.md` records the first such run.
+`doc/history/verification-record.md` records the first such run.
 
 Three things about a write test that a read test never needed:
 
@@ -1140,7 +1140,7 @@ are the check, `f1` carrying the one symlink the fixtures hold.
 A clean lockdep run on this meant nothing until 0.4.3: every chain lock
 took its class from one `init_rwsem()` call site, so lockdep reported
 recursion at the first mount and cleared `debug_locks`. Every lock now
-carries a class and a nesting level, `README.status.md` records the
+carries a class and a nesting level, `doc/history/verification-record.md` records the
 measurement, and the fixture gate reads `debug_locks` before its first
 mount and after its last unmount and fails if it dropped.
 
@@ -1424,7 +1424,7 @@ had the VFS refuse root that open, `EACCES` on a file another user
 owns in a sticky world-writable directory, which read as the reserve
 refusing root. Every run prints the source hash it was built from,
 with a dirty mark.
-`doc/README.status.md` carries the account.
+`doc/history/verification-record.md` carries the account.
 
 It became a gate after ten clean runs on the build that passes it,
 across three shapes of the instrument, all in the account. It exits 2

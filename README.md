@@ -189,7 +189,7 @@ than about a shared bug.
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
   mounted, and the `create` operation's signature. A build against 7.2
-  fails on exactly those, recorded in `doc/README.status.md`. Older
+  fails on exactly those, recorded in `doc/history/verification-record.md`. Older
   kernels are not blocked by anything deeper: measured from below, 6.18
   would need two compatibility conditionals and 6.15 is where the block
   layer first holds a 64 KiB folio. The decision is to stay on the kernel
