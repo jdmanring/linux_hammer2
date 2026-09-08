@@ -1864,9 +1864,8 @@ hammer2_vfs_enospace(hammer2_inode_t *ip, loff_t bytes, const struct cred *cred)
 	return (0);
 refuse:
 	/* Linux: what the refusal judged by, for the debug log */
-	pr_debug("hammer2: enospace refuses %lld bytes with %lld free, "
-	    "reserve %lld, %lu data and %lu meta allocated\n", (long long)bytes,
-	    (long long)free_nominal, (long long)free_reserved,
+	pr_debug("hammer2: enospace refuses %lld bytes with %lld free, reserve %lld, %lu data and %lu meta allocated\n",
+	    (long long)bytes, (long long)free_nominal, (long long)free_reserved,
 	    hammer2_alloc_data_bytes, hammer2_alloc_meta_bytes);
 	return (2);
 }

@@ -229,6 +229,12 @@ the print of what is left at the unload: one BSD continuation indent on
 the list head's initializer and one quoted string split across lines,
 a print of seven fields that does not fit one. No category is new.
 
+1135 to 1137 when writeback learned to write a split block once: one
+`return is not a function`, the tree's BSD style on the refusal's one
+`return (2);`, and one `no spaces at the start of a line`, the tree's
+BSD continuation of the gather function's prototype. No category is
+new.
+
 1120 to 1135 when `hpanic` returned and every site got a way out:
 fourteen of the fifteen hits are `return is not a function`, the tree's
 BSD style on a new `return (x);`, and one is the unnamed argument of

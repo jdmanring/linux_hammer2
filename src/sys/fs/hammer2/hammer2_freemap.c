@@ -268,10 +268,9 @@ hammer2_freemap_alloc(hammer2_chain_t *chain, size_t bytes)
 	 * count or the map ran out first.
 	 */
 	if (error == HAMMER2_ERROR_ENOSPC)
-		hprintf("no block of radix %d for type %d, %lld bytes counted "
-		    "free, relaxed %d loops %d\n", radix, bref->type,
-		    (long long)hmp->voldata.allocator_free, iter.relaxed,
-		    iter.loops);
+		hprintf("no block of radix %d for type %d, %lld bytes counted free, relaxed %d loops %d\n",
+		    radix, bref->type, (long long)hmp->voldata.allocator_free,
+		    iter.relaxed, iter.loops);
 
 	return (error);
 }
