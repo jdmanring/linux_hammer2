@@ -1,48 +1,22 @@
 # Every gate, on every push and pull request.
 #
-# This workflow is live. The repository is public and Actions is enabled,
-# so a push runs it and the README badge reports a real result. That was
-# not true when this file was written, and the comment saying so outlived
-# its subject by long enough to mislead: a claim about what is currently
-# switched off has a shelf life measured in days, and nothing here
-# rechecks one. Read the badge or the Actions tab for the state; this
-# comment describes the mechanism only.
-#
-# What IS unexercised is any step added since the last green run. A step
-# that has never run on a runner is not evidence, however well it behaves
-# locally, because the runner differs in what it has installed.
-#
-# The syntax gate needs the kernel of record, 7.3, which is also the
-# module's floor, enforced by an #error in hammer2_os.h. Below it the
-# compile fails outright rather than reporting could-not-run, so a runner
-# with older headers is a real failure and not a skip. The gate reports exit 2 for "could not run"
-# when the headers are absent altogether, and this job records that as a
-# skip rather than a pass, because a gate that cannot run and a gate that
-# passed must not print the same thing.
-#
-# The repository gates run first and unconditionally. They are POSIX sh
-# over grep, sed and git, so a runner cannot fail to provide what they
-# need, and they are what a documentation-only patch breaks.
+# The syntax gate needs the kernel of record, 7.3, which is the module's
+# floor. A hosted runner has no such headers, so that gate reports exit 2,
+# could-not-run, and this job records it as a skip and never as a pass.
+# The repository gates are POSIX sh over grep, sed and git and run on any
+# runner; they are what a documentation-only patch breaks.
 name: CI
 
 on:
   push:
   pull_request:
-  # On demand as well. A push is the normal trigger, but on 2026-08-26 a
-  # push updated main and no run appeared for ten minutes while a rerun of
-  # an older run queued immediately, so the runner was working and the
-  # event was not. Without this the only way to ask for a verdict on a
-  # given commit is an empty commit, which puts a lie in the history to
-  # work around an outage.
+  # On demand, so a verdict on a commit never needs an empty commit.
   workflow_dispatch:
 
 jobs:
   gates:
     runs-on: ubuntu-latest
     steps:
-      # v7.0.1 is current; v4 targeted Node 20 and the runner was forcing
-      # it onto Node 24 with a deprecation notice. The pin rule applies to
-      # the actions as much as to the kernel and the style checker.
       - uses: actions/checkout@v7
         with:
           # test-history.sh resolves every roadmap row's commit hash, so a
@@ -67,32 +41,10 @@ jobs:
             https://raw.githubusercontent.com/torvalds/linux/v7.3-rc1/scripts/checkpatch.pl
           echo "CHECKPATCH=/tmp/checkpatch.pl" >> "$GITHUB_ENV"
 
-      # THE GATE LIST IS DERIVED, NOT TYPED. It was typed until 2026-08-26
-      # and had already fallen behind: script/test-vectors-contract.sh
-      # existed for hours with CI not running it, and a document DISCLOSED
-      # that instead of fixing it, which is the could-have-didn't shape. A
-      # hand-maintained list of the things that check this tree is the same
-      # defect those checks exist to catch, and Saxum's delegator - which
-      # runs these same gates from another repository - derived its
-      # population from `ls` a day earlier for exactly this reason.
-      #
-      # Exit 2 is COULD-NOT-RUN and is recorded as a skip, never as a pass.
-      # A failure outranks it: rc is kept per gate rather than folded, so a
-      # gate exiting 1 cannot be reported as "could not run" merely because
-      # something else declined. The syntax gate takes that path on every
-      # hosted runner, since the kernel of record is the latest release and
-      # ubuntu-latest ships headers years behind it.
-      # THE ORIGIN CLONE, so the provenance gate's one check with teeth is
-      # not confined to the machine the imports were made on. Without it
-      # that gate can only establish the table agrees with itself, and it
-      # says so and exits 2; with it, every "identical" row is re-run
-      # through cmp on every push.
-      #
-      # The commit is read out of the CSV rather than written here. Pinned
-      # in two places it would drift, and the copy that drifted would be
-      # the one nothing reads. A clone that fails leaves the gate exactly
-      # where it was - COULD-NOT-RUN, reported as a skip - so this step
-      # can add verification and cannot take any away.
+      # The provenance gate re-runs every "identical" row through cmp when
+      # the origin clone is present; without it the gate exits 2. The
+      # commit comes from the CSV so it is pinned in one place, and a
+      # failed clone leaves the gate could-not-run rather than failing.
       - name: Origin clone for the provenance gate
         continue-on-error: true
         run: |
@@ -113,17 +65,10 @@ jobs:
           }
           echo "origin clone at $commit"
 
-      # Vale, for the prose gate. Without it that gate reports COULD-NOT-RUN,
-      # which is what it did on every run from 2026-08-29, when doc/research
-      # arrived from Saxum with its gate, until 2026-09-02. The whole point of
-      # moving the gate with the files was that the prose not sit ungoverned,
-      # and a gate that only runs on a maintainer's own machine governs nothing.
-      #
-      # Pinned by version and checksum rather than tracking latest: a different
-      # vale reports a different finding set on unchanged prose, the same reason
-      # checkpatch is pinned to the kernel of record. Failing to install is a
-      # real failure here, not a skip, because the gate would otherwise print
-      # could-not-run and the run would still be green.
+      # Vale for the prose gate, pinned by version and checksum: a different
+      # vale reports a different finding set on unchanged prose. A failed
+      # install is a failure, since the gate would otherwise report
+      # could-not-run and the run would stay green.
       - name: Prose checker, pinned
         run: |
           set -eu
@@ -137,12 +82,10 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/vale" --version
 
-      # THERE IS NO MODULE BUILD HERE. The kernel of record is built on the
-      # maintainer's machine and the pre-push hook builds the module against
-      # it on every push; a hosted runner has neither that tree nor the
-      # headers, and fetching and building a kernel to repeat what the push
-      # already did was dropped on 2026-09-05. What runs here is every gate
-      # that needs no kernel; the syntax gate reports could-not-run.
+      # No module build here: the pre-push hook builds against the kernel
+      # of record on the maintainer's machine, which a hosted runner lacks.
+      # The gate list is derived from script/, never typed. Exit 2 is a
+      # skip; a failure outranks it, with rc kept per gate.
       - name: Gates (every script/test-*.sh)
         run: |
           set +e
@@ -162,20 +105,13 @@ jobs:
           [ "$rc" = 0 ] || exit 1
           [ "$ran" -gt 0 ] || { echo "::error::every gate declined"; exit 1; }
 
-      # THE SELFTESTS, and this list is derived too. A print with no test is
-      # a claim about output nobody checks, and these prints are what keeps
-      # a loosened run from reading like a real one.
+      # The selftests check the provenance prints a loosened run depends on.
       - name: Gate selftests (the provenance prints)
         run: |
           set +e
           rc=0
-          # ANCHORED ON THE IMPLEMENTATION, NOT THE NAME. Matching the
-          # bare flag picked up script/test-posix.sh, which only MENTIONS
-          # --selftest in a comment describing the defect it exists for, so
-          # CI ran that gate a second time with an argument it ignores. Same
-          # lesson as the vectors gate, whose pattern matched the comment
-          # quoting its own contract: in a file that documents itself, a
-          # token check finds the prose.
+          # Matched on the implementing test, not the flag name, which a
+          # comment elsewhere also carries.
           for g in $(command grep -l '"${1:-}" = "--selftest"' script/test-*.sh); do
             bash "$g" --selftest
             s=$?
