@@ -14,7 +14,7 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 0.5 to 0.9 are met, 0.9 on the fifteenth run of the real closure,
 nothing refused and lockdep on from the first mount to the unload,
-with the driver at 0.9.14 in `CHANGELOG.md`. The shipped module mounts
+with the driver at 0.9.16 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted
@@ -26,9 +26,9 @@ sides and DragonFly checks what was written in each, a snapshot taken
 here is written into and read apart from its root there, and the same
 run holds on a filesystem across two volumes. `README.capabilities.md`
 declares what the port provides, each row on a run, and the port depends
-on no distribution's model for it. `README.status.md`
-is the record of what was measured and how; this section says only
-where the work stands.
+on no distribution's model for it. `README.status.md` is the state,
+`doc/history/verification-record.md` the measurements behind it; this
+section says only where the work stands.
 
 The newest surface is the full volume. A volume filled to its last
 block found seven defects the write path on a volume with room never
