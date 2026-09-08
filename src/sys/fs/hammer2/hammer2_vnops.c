@@ -1296,10 +1296,12 @@ hammer2_write_begin(const struct kiocb *iocb,
 	 * files of a fill.  So the block folio is allocated here with the
 	 * mapping's own mask, which retries reclaim and compaction before
 	 * failing, and the page cache is asked only when that fails or a
-	 * folio already sits in the block.
+	 * folio already sits in the block.  A failure is expected and has
+	 * its fallback, so it is not reported as the page cache's own
+	 * order request does not report it.
 	 */
 	bindex = index & ~(pgoff_t)((HAMMER2_PBUFSIZE >> PAGE_SHIFT) - 1);
-	folio = filemap_alloc_folio(mapping_gfp_mask(mapping),
+	folio = filemap_alloc_folio(mapping_gfp_mask(mapping) | __GFP_NOWARN,
 	    HAMMER2_PBUFRADIX - PAGE_SHIFT, NULL);
 	if (folio) {
 		if (iocb && (iocb->ki_flags & IOCB_DONTCACHE))

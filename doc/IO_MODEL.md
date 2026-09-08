@@ -238,7 +238,12 @@ Overwriting the block in place is not open to the port, since another
 chain can have deduplicated to it in the meantime. `hammer2_write_begin()`
 now allocates the block folio itself with the mapping's mask, which
 retries reclaim and compaction before it fails, and asks the page
-cache only after that or when a folio already sits in the block. Read
+cache only after that or when a folio already sits in the block. The
+request carries `__GFP_NOWARN` as the page cache's own does: the
+closure run after the change failed it once in two hundred thousand
+files and the kernel printed the allocation failure, which the
+closure counts as a warning; the fallback held and the copy read
+back whole. Read
 on two fills with that alone: the retrying request still failed 22
 and 37 times a fill, in the last seconds, and each failure still cost
 fifteen blocks, 465 and 504 rewritten blocks against a slack of 766.
