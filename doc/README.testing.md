@@ -148,7 +148,7 @@ and was moved here on the rule that a component owns its own development.
 
 Two things about it were wrong until 2026-09-02 and are worth recording,
 because both are the shape where a gate prints and still passes. Vale's own
-exit status is nonzero for errors only, and every rule in `styles/Saxum`
+exit status is nonzero for errors only, and every rule in `styles/Hammer2`
 is a warning, so the gate printed twelve findings and exited 0 on every run
 it ever made. It now counts the findings itself and fails on any of them;
 the twelve, eleven British spellings and one wordy phrase, were fixed in

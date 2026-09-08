@@ -1,23 +1,10 @@
 #!/bin/sh
-# Vale over every tracked markdown file, with the same styles Saxum uses.
+# Vale over every tracked markdown file, with the house rules in styles/.
 #
-# WHY THIS EXISTS. doc/research/ arrived on 2026-08-29 from Saxum, where it
-# had been governed by that repo's prose gates since 2026-08-25. It was added
-# there because those documents had been structure-checked and never read by
-# vale, and twelve British spellings were sitting in them when the corpus
-# finally widened. Moving prose out of a governed tree and leaving it
-# ungoverned recreates that defect exactly, so the gate moved with the files.
-#
-# AND THEN THIS GATE DID IT AGAIN. Until 2026-09-04 the population was
-# `find doc`, which is every document except the four a reader meets first:
-# README.md, CONTRIBUTING.md, CHANGELOG.md and the pull request template. The
-# README's opening paragraph said this port does not mount anything for four
-# days after it began mounting, and when the population finally widened those
-# four files carried seven British spellings between them. The lesson the
-# paragraph above records was applied to the directory that prompted it and
-# not to the tree. The population is now the tracked set, so a new markdown
-# file is governed the day it is committed rather than the day someone
-# remembers to add it.
+# The population is the tracked set, not doc/: the four files a reader meets
+# first (README.md, CONTRIBUTING.md, CHANGELOG.md, the pull request template)
+# went unread for six days while the sweep was `find doc`, and carried seven
+# misspellings between them when it widened.
 set -u
 cd "$(dirname "$0")/.." || exit 2
 command -v vale >/dev/null || { echo "doc-prose: COULD-NOT-RUN: no vale"; exit 2; }

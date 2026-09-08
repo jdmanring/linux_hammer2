@@ -3,11 +3,11 @@
 This is the port's own statement of what it provides, for anyone who
 builds above it. Each capability is declared at one of six levels
 under one rule: the port is never reported as providing a guarantee
-it cannot provide. The levels and the list of capabilities are the
-vocabulary of one storage model, section 27 of the Saxum reference,
-used here because it is precise; nothing in this tree depends on that
-model or on any distribution, and a consumer maps from this table to
-its own. Every level below is read off a measurement in
+it cannot provide. The six levels and the capability names are the
+vocabulary of the storage model of the first distribution built on
+this port, used here because it is precise; nothing in this tree
+depends on that model, and a consumer maps from this table to its
+own. Every level below is read off a measurement in
 `README.status.md` on the build the row names, and a row moves only
 when a measurement moves it. Where a capability is not here, the row
 says so and says what a consumer could compose above it.
