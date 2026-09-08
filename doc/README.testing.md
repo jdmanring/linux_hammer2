@@ -351,10 +351,10 @@ whose `/bin/sh` is dash.
 It MEASURES its own reach on every run and prints it as observed, rather
 than asserting a table. A gate stating its own coverage is a claim nothing
 checks, sitting in the one place a reader uses to decide whether a clean
-run means anything - and this one was wrong twice while being written,
-first at one construct, then at three, where there are four. An UNDER-claim
-is still a false claim and it is the one nobody re-checks, because a modest
-statement about your own instrument reads as rigour.
+run means anything. The first two versions of this gate carried such a
+table, and both were wrong: one named a single construct, the next three,
+where there are four. An under-claim is as false as an over-claim and is
+re-checked less often.
 
 What it asserts instead are two properties of a working checker, which hold
 whatever the reach turns out to be: each shell must reject at least one
@@ -384,11 +384,11 @@ ANSI-C quoting and brace expansion as ordinary words. So a clean run means
 "no bash SYNTAX" and never "no bashisms". The hosted runner reproduced
 those figures exactly, on a different distribution.
 
-Finding the shells was itself the lesson. This repository recorded that no
-POSIX shell existed here, from `command -v`, which reads PATH - and PATH is
-not the machine. Both were already in the nix store. Asking PATH about a
-machine whose software lives in a store is the same error as asking a
-package version about an artifact.
+The shells are found in the nix store, not on PATH. An earlier version of
+this section said no POSIX shell existed on the development machine, on
+the strength of `command -v`, while both were already installed under
+`/nix/store`. On a machine whose software lives in a store, PATH answers
+for the current session and not for the machine.
 
 ## Run what CI runs, before pushing
 
@@ -1297,16 +1297,15 @@ completed. `test-checkpatch.sh` exits 2 with `no perl` under a `PATH`
 assembled from store paths for coreutils, sed, grep, diff, awk and bash,
 which contains no perl.
 
-That fourth one was recorded here as UNVERIFIED for an hour, on the
-grounds that emptying `PATH` breaks the shell and perl cannot be hidden by
-directory because it shares one with everything else the gate needs. Both
-facts are true and the conclusion was wrong: a nix machine keeps each tool
-in its own store path, so a `PATH` without perl is assembled rather than
-subtracted. **"I cannot check this" is itself a claim about an
-instrument** and decays like any other. The honest form is UNVERIFIED BY
-THIS ROUTE with the route named, because naming the index is what lets the
-next reader see the wrong one was asked - "perl cannot be hidden" carries
-no trace of "by directory, on a PATH-shaped machine".
+That fourth one was first recorded as UNVERIFIED, on the grounds that
+emptying `PATH` breaks the shell and perl cannot be hidden by directory
+because it shares one with everything else the gate needs. Both facts are
+true and the conclusion was wrong: a nix machine keeps each tool in its
+own store path, so a `PATH` without perl is assembled rather than
+subtracted. A record that something cannot be checked is a claim about
+an instrument and decays like any other. The form that survives is
+UNVERIFIED BY THIS ROUTE with the route named, so that the next reader
+can see which route was asked and whether another exists.
 
 Exit 2 from any gate here means the instrument could not run: no
 compiler, no kernel headers, no `checkpatch.pl`, or a population that came

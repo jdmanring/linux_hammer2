@@ -165,10 +165,10 @@ and all four are upstream's own text rather than this port's. One is a
 `typedef` upstream wrote, `hammer2_mntlist_t`. One is a repeated word,
 `to to` in `hammer2_unmount_helper()`'s comment, which is upstream's
 typo and stays because editing a carried comment to satisfy a checker is
-the trade this port does not make. It is also a small lesson about
-instruments: a one-line `grep` for `to to` finds nothing, because the
-two words sit either side of a line break, and only the checker's own
-report located it. The other two are the BSD start-of-line indent and a
+the trade this port does not make. A one-line `grep` for `to to` does
+not find it, because the two words sit either side of a line break;
+the checker's own report is what locates it. The other two are the BSD
+start-of-line indent and a
 split quoted string.
 
 906 to 911 when the device half of the mount path landed: 476 lines

@@ -1,6 +1,6 @@
 # NetBSD port: reading a file's data panics or wedges NetBSD 10.1
 
-A draft for Kusumi's NetBSD tree, staged here for James to file. Every
+A draft for Kusumi's NetBSD tree, staged here until it is filed. Every
 claim below is one this repository can show; the measurements are in
 `/mnt/storage/hammer2-fixtures/netbsd-port-failure.txt` and
 `netbsd-port-read.txt` on the workstation that took them.

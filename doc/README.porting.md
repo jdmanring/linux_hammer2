@@ -929,8 +929,8 @@ The code is carried unchanged anyway, because the rule that keeps the four
 trees readable side by side does not have an exception for defects, and
 because the refusals in `hammer2_get_tree()` and `hammer2_reconfigure()`
 mean nothing calls it. The fix is staged in `doc/upstream/` as two patches,
-one against DragonFly and one against the three ports, which is where work
-for James to file upstream goes. They are not applied here.
+one against DragonFly and one against the three ports, which is where
+work waiting to be filed upstream goes. They are not applied here.
 
 ## The kernel floor is the kernel of record
 
