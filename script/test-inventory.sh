@@ -153,8 +153,8 @@ done
 # line-at-a-time matcher sees no phrase at all.
 #
 # The count and the list are separate claims. A document can say "eight gates"
-# correctly and enumerate seven, which is what the agent instructions file did
-# on 2026-08-26 before it was untracked: the count passed while the list a
+# correctly and enumerate seven, which one instruction file did before it was
+# untracked: the count passed while the list a
 # reader actually runs was missing the newest gate. The documents below print
 # runnable command lists, so every gate must appear in each. Documents that
 # only mention a gate in passing are not in this set.
