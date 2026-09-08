@@ -1906,9 +1906,11 @@ hammer2_chain_get(hammer2_chain_t *parent, int generation,
 	 * was kept.  Upstream's comment on the insert names the race.
 	 * The data is resolved once the chain is on the tree, where the
 	 * held lock and the parent's shared lock keep it from a ripout.
+	 * The sibling notation travels with the lock: a chain
+	 * hammer2_chain_create_indirect() moves is of the caller's class.
 	 */
-	hammer2_chain_lock(chain,
-	    HAMMER2_RESOLVE_NEVER | (how & HAMMER2_RESOLVE_SHARED));
+	hammer2_chain_lock(chain, HAMMER2_RESOLVE_NEVER |
+	    (how & (HAMMER2_RESOLVE_SHARED | HAMMER2_RESOLVE_SIBLING)));
 
 	/*
 	 * Link the chain into its parent.  A spinlock is required to safely
