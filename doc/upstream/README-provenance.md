@@ -194,8 +194,77 @@ volume 98% used, unmount clean, remount with the same 119 files,
 reproduction and is not evidence either way. The defect needs the
 unmount's final sync to fail for want of a block, and a real fill
 leaves the reserve the sync needs; the Linux reproduction had to make
-the allocator refuse on a call count to reach it. The release kernel
-there is also built without `INVARIANTS`, so a chain left allocated at
-unmount would not be reported. A DragonFly kernel with `INVARIANTS`
-and an allocator that can be told to refuse is what the reproduction
-takes, and neither exists on the fleet.
+the allocator refuse on a call count to reach it.
+
+The release kernel carries `INVARIANTS` (`X86_64_GENERIC` line 56 in
+the 6.4.2 source; the kernel binary holds the assertion strings), so
+a chain left allocated at unmount is reported there, by the chain dump
+`hammer2_unmount_helper()` prints after the final sync and by the
+allocator teardown in `kmalloc_destroy_obj()`. What the release kernel
+lacks is a way to make the allocator refuse. A kernel built from the
+6.4.2 source with that added was the second try, on the same day: two
+sysctls, `vfs.hammer2.fail_alloc_after` and `vfs.hammer2.alloc_count`,
+and a refusal at the top of `hammer2_freemap_alloc()`, before its size
+assertion, returning `HAMMER2_ERROR_ENOSPC` once the count passes the
+threshold, the shape the Linux knob has.
+
+With the threshold at 20000 and left in place, the kernel reports the
+refusal where the Linux port did, in `hammer2_chain_create_indirect()`
+and `xop_strategy_write()`, and the unmount is never reached: a
+strategy write that fails is completed with `B_ERROR` and `EIO`
+(`hammer2_strategy.c`, the write XOP's completion), the buffer cache
+redirties it, and `sync(8)` looped on the same buffers for the rest of
+a 30 minute run at one kernel line per retry, with shutdown looping
+the same way until the guest was destroyed. A refusal that never
+lifts is a hung sync on DragonFly, the buffer cache's own retry
+policy and not this defect.
+
+With the threshold at 20000 during the fill and lifted before the
+sync, the run reproduces the defect. The writers kept 83 files, the
+sync and the unmount returned, and the unmount printed a chain dump
+of eighteen chains still under the volume root, every one at zero
+refs: ten leaves with `UPDATE` set and nothing on the media, eight
+directory entries and two blocks, and above them the eight
+on-media chains (five inodes, three indirect blocks) that stay on
+their parents' trees only because a parked child hangs under each,
+which is the shape the staged scrap walks. The allocator teardown then
+reported 8064 bytes of `HAMMER2-chains` still allocated across seven
+slabs. The remount counted 75 files and `fsck_hammer2` read clean:
+the eight files whose data never reached the media were the ones
+the refused strategy writes belonged to, and their `dd` was told
+nothing, since DragonFly reports the error at the strategy layer
+and not to `write(2)`. The leak is the reading the staged patch
+addresses; the silent loss is `hammer2_strategy.c`'s and is a
+separate matter.
+
+The patch as first staged was built into that kernel, hunk 2 placed
+by hand because 6.4.2 keeps the chain dump unconditional where head
+has it under `#if 0`. The fill on that run wedged in the same way as
+the permanent refusal, four writers in disk wait at 84 files with the
+syncer retrying, and the threshold was lifted by hand at that point;
+the writers then ran to a real full volume at 119 files. The scrap
+printed thirteen lines, the ten `UPDATE` leaves and the three chains
+above them, and freed nothing: the dump that followed showed the same
+thirteen chains with `UPDATE` clear and `ONLRU` set, the teardown
+reported 5824 bytes across five slabs, and the remount counted 109
+files. 6.4.2's `hammer2_chain_lastdrop()` does not free a zero-ref
+chain that has a PFS unless `DESTROY` or `RELEASE` is set on it; it
+parks the chain on the PFS's LRU list as a cache entry, and the PFS
+holding that list had already been freed by `hammer2_pfsfree()`.
+Head removed the LRU list, so the patch was right against the tree
+it was written for and wrong against the release, and the fix is one
+line both trees honor: `RELEASE` set before the drop, which is what
+`hammer2_pfsfree()`'s own LRU drain and the recovery scan do. That is
+the version staged here.
+
+With that line in, on a third kernel from the same source and with the
+threshold lifted on a timer 120 s into the fill so the fill cannot
+wedge, the unmount scrapped twenty-three chains, the twenty `UPDATE`
+leaves and the three chains above them, the dump that followed showed
+nothing under the volume root or the freemap root, and the allocator
+teardown printed no line, which is what it prints when nothing is
+left. The remount counted 263 of 283 files and `fsck_hammer2` read
+clean. That is the reading the staged patch is filed with: the leak
+is closed on 6.4.2 and, by the same code, on head; the twenty files
+the refused strategy writes belonged to are still lost without a
+word to their writers, and that remains `hammer2_strategy.c`'s.

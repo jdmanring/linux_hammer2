@@ -1,6 +1,6 @@
 --- a/sys/vfs/hammer2/hammer2_vfsops.c
 +++ b/sys/vfs/hammer2/hammer2_vfsops.c
-@@ -1722,6 +1722,44 @@
+@@ -1722,6 +1722,47 @@
   * accounting for the devices backing the pmp which is now undergoing an
   * unmount.
   */
@@ -10,7 +10,9 @@
 + * no ref, so the ref taken here is the one the last drop releases, and
 + * with the flags cleared and no children left the drop frees it and
 + * removes it from parent's tree.  A chain still referenced by someone is
-+ * left alone rather than looped on.
++ * left alone rather than looped on.  RELEASE is set because a release
++ * with the chain LRU cache parks a zero-ref chain on its PFS's list
++ * instead of freeing it, and the PFS is gone by the time this runs.
 + */
 +static void
 +hammer2_unmount_scrap(hammer2_chain_t *parent)
@@ -35,6 +37,7 @@
 +			atomic_add_long(&hammer2_count_modified_chains, -1);
 +		}
 +		atomic_clear_int(&chain->flags, HAMMER2_CHAIN_UPDATE);
++		atomic_set_int(&chain->flags, HAMMER2_CHAIN_RELEASE);
 +		hammer2_chain_drop(chain);
 +
 +		hammer2_spin_ex(&parent->core.spin);
@@ -45,7 +48,7 @@
  static
  void
  hammer2_unmount_helper(struct mount *mp, hammer2_pfs_t *pmp, hammer2_dev_t *hmp)
-@@ -1859,6 +1897,15 @@
+@@ -1859,6 +1900,15 @@
  		atomic_clear_int(&hmp->fchain.flags, HAMMER2_CHAIN_UPDATE);
  	}
  
