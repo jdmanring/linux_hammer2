@@ -2454,6 +2454,7 @@ unless noted:
 | 2fe755c, the shim's own lock, three runs | 212, 209, 196 | 483, 528, 507 | 545, 595, 551 | 8228 |
 | 154137d again, after those | 178 | 420 | 497 | 8228 |
 | 574b82b, host load 2.7, a 17 GiB link running | 288 | 195 | 165 | 8228 |
+| 7c7d6c4, host load 1.4, ext4 control 7314 | 277 | 557 | 602 | |
 
 The folio change is not the read cost it looked like: a cold read
 builds 8228 folios for 8192 blocks on either build, 36 more than one
@@ -2471,6 +2472,17 @@ record above stands as not reproduced today rather than as regressed,
 and the shim's own lock is charged with nothing on it. An owner spin before the sleep,
 the rw_semaphore's own shape, was tried against the drop, moved
 nothing and was not kept.
+
+The last row is the quiet-host reading the earlier rows lacked: load
+1.4 at launch, no build on the host, ext4 reading its file from the
+host's cache at 7314 MiB/s, which is the control the instrument names.
+The port read 557 and 602, the numbers of the 154137d morning runs,
+so the reading of record above is reproduced and the range since the
+read-ahead change is 545 to 683 across seven quiet runs. In the same
+run btrfs read 3657 and 3938 and DragonFly's own kernel read the
+Linux-written file at 868 and its own at 627, so on this run the port
+reads at DragonFly's own rate and btrfs, served from the host's
+cache like ext4, is no longer the comparison it was on 2026-09-06.
 The run reads the file back with the source hash, zero kernel
 warnings, both checkers clean with their negative controls. The
 instrument's first two runs failed on their own readings before any
