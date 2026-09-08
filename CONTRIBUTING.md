@@ -69,14 +69,14 @@ harder to keep.
     $ bash script/test-checkpatch.sh --selftest
     $ bash script/test-provenance.sh --selftest
 
-The first three are POSIX sh over grep, sed and git. They need no kernel
+The first five are POSIX sh over grep, sed and git. They need no kernel
 and no network, they take about a second, and they are what a
 documentation-only patch breaks: they check that the lists claiming to
 cover `src/` are complete, that every `file:line` citation in `doc/`
 resolves to the line it names, and that every roadmap row's commit hash
 resolves with a matching subject.
 
-The last three need a toolchain. `test-syntax.sh` wants the kernel of
+`test-shim.sh`, `test-syntax.sh` and `test-checkpatch.sh` need a toolchain. `test-syntax.sh` wants the kernel of
 record, pinned as `KERNEL_REF` in that
 script; anything else is COULD-NOT-RUN rather than a pass, because a
 result from the wrong kernel is not a result about this code. The floor
@@ -85,7 +85,7 @@ move together. Set `KDIR` to point at another tree,
 and `H2_KERNEL_REF` to check another version deliberately. `test-checkpatch.sh`
 needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
 
-All sight gates exit 2 when the instrument itself could not run, which is
+Every gate exits 2 when the instrument itself could not run, which is
 not a failure and must not be recorded as one.
 
 ## Licensing

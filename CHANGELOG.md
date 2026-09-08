@@ -13,8 +13,8 @@ released: no tag exists.
 
 The numbers before 0.1.11 are assigned retroactively to the state at each
 commit. Two rewrites of this repository's history have happened since,
-both recorded in `doc/history/`, so a hash here is the current one and
-`doc/history/2026-08-25-rewrite-commit-map.txt` maps the older set.
+so a hash here is the current one: `doc/history/` maps the first, and
+the 0.2.7 row records the second.
 
 `script/test-history.sh` reads this file: every row must pin a hash that
 resolves, no two rows may share a version, and the subject of the commit

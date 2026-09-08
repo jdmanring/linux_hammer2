@@ -8,7 +8,7 @@ vocabulary of the storage model of the first distribution built on
 this port, used here because it is precise; nothing in this tree
 depends on that model, and a consumer maps from this table to its
 own. Every level below is read off a measurement in
-`README.status.md` on the build the row names, and a row moves only
+`doc/history/verification-record.md` on the build the row names, and a row moves only
 when a measurement moves it. Where a capability is not here, the row
 says so and says what a consumer could compose above it.
 

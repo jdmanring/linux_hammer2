@@ -297,6 +297,8 @@ including what each gate cannot catch.
 |---|---|
 | [CHANGELOG.md](CHANGELOG.md) | every point release, pinned to its commit and its verifying gate |
 | [doc/README.status.md](doc/README.status.md) | what exists, what is verified, what is missing |
+| [doc/history/verification-record.md](doc/history/verification-record.md) | every measurement in the order taken, with the instrument and what it found |
+| [doc/README.md](doc/README.md) | which document answers which question |
 | [doc/README.roadmap.md](doc/README.roadmap.md) | the order, with the check that ends each step |
 | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | the layering, the shim boundary, the object and locking model |
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |

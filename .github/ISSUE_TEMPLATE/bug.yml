@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Read doc/README.status.md first. No module has been loaded, so a
-        mount bug is expected rather than a report.
+        Read doc/README.status.md first: it says what has been measured
+        and on which build, so a report can say what differed.
   - type: input
     id: kernel
     attributes:
@@ -37,5 +37,5 @@ body:
     id: gates
     attributes:
       label: Gate output
-      description: script/test-shim.sh and script/test-syntax.sh.
+      description: The gate or fleet script that reads the surface, if one does; doc/README.testing.md names them.
       render: shell

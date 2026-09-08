@@ -115,7 +115,7 @@ where `sx` without `SX_RECURSE` would panic; the alternative is the
 hang. The shared side does not recurse under an exclusive hold, on
 DragonFly either. The reading the primitive was judged on is the one
 the roadmap named for it, the churn of the tree instrument under
-lockdep, and the full-volume gate ran on it first; `README.status.md`
+lockdep, and the full-volume gate ran on it first; `doc/history/verification-record.md`
 has both.
 
 The DIRECTDATA flag itself is on disk, so a filesystem written by
@@ -154,7 +154,7 @@ any file, and one state per device means two interleaved sequential
 readers of one volume share it, which the kernel's algorithm tolerates
 as it does for two readers of one file. Both entry points are
 `EXPORT_SYMBOL_GPL`, which is what the module's license tag exists
-for. `doc/README.status.md` has the numbers.
+for. `doc/history/verification-record.md` has the numbers.
 
 `hammer2_io_data()` hands the core a pointer it keeps across sleeps, so
 the folio must be permanently mapped: `folio_address()`, not
@@ -384,7 +384,7 @@ progress on the tree head that `RB_REMOVE` moves past the node it
 removes, so a callback may release the tree's lock and a sibling may go
 in the meantime; `hammer2_rb.h` carries that over the vendored tree
 rather than editing it, after a flush walked into a freed chain
-(`README.status.md`, the closure's seventh defect).
+(`doc/history/verification-record.md`, the closure's seventh defect).
 
 Two names in those vendored files collide with the kernel's own macros and
 are spelled `BSD_LIST_HEAD` and `BSD_RB_ROOT` here, with the two core use

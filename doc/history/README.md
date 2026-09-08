@@ -1,7 +1,11 @@
 # Rewritten history
 
-This repository's history was rewritten once, on 2026-08-25, before it had
-any forks, stars or watchers. `2026-08-25-rewrite-commit-map.txt` is the
+This repository's history was rewritten on 2026-08-25, before it had any
+forks, stars or watchers, and once more on 2026-08-26, when a private
+instructions file and a symbol index were purged from every commit; the
+0.2.7 row in `CHANGELOG.md` records that one, and its 47 remapped
+citations were checked against a pre-rewrite mirror. The map here is
+the first rewrite's. `2026-08-25-rewrite-commit-map.txt` is the
 old-to-new commit map: two 40-character hashes per line, old then new,
 after a header line. 32 entries, of which 21 changed. A line whose columns
 are equal is a commit the rewrite did not touch.
