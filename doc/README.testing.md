@@ -1,35 +1,51 @@
 Testing
 =======
 
-Every gate is cheap to run. Most fall into two groups, and the split
-matters when you are deciding which to run: the compile gates need a
-toolchain and a kernel tree, the repository gates need neither. Two belong
-to neither group and are described below, `test-vectors-contract.sh` and
-`test-posix.sh`. No count of them is written in this file: the lists below
-are the statement of record, and a number beside a list is a second claim
-about one population with nothing checking the two against each other,
-which this file has already recorded happening twice.
+Every gate is cheap to run, and each is run on its own: there is no
+aggregate runner. The lists below are the statement of record; no
+count of them is written in this file, because a number beside a list
+is a second claim about one population with nothing checking the two
+against each other, which this file has already recorded happening
+twice.
 
-Compile gates:
+| gate | reads | needs |
+|---|---|---|
+| `test-inventory.sh` | the three lists that claim to cover `src/`, every file under `test/`, the `DEFER` ledger and the `XXX` table | sh, grep, git |
+| `test-citations.sh` | every `file:line` in a table under `doc/` or `doc/history/` resolves, and the named symbol is on the line | sh, grep |
+| `test-history.sh` | every changelog row's commit resolves with a matching subject, and no two rows share a version | git with full history |
+| `test-provenance.sh` | every file under `src/` has an origin row, and a carried file is re-checked with `cmp` | sh, git |
+| `test-absence.sh` | every "X() is not carried" and "->method is not written" claim resolves against `src/` | sh, grep |
+| `test-shim.sh` | the shim parses against `test/stub` in both knob positions, with a control that must fail | a C compiler |
+| `test-syntax.sh` | the files it names compile under clang and gcc at the kernel of record, warnings are failures, with a control | that kernel's tree, clang and gcc |
+| `test-checkpatch.sh` | the style deviation set against `doc/checkpatch-baseline.txt` | `checkpatch.pl` from the kernel of record, via `CHECKPATCH` or `KDIR` |
+| `test-vectors-contract.sh` | the exit status, output wording and constant spelling of the two vector files a consumer compiles | a C compiler |
+| `test-posix.sh` | the gates declaring `#!/bin/sh` parse under dash and busybox ash | dash and busybox |
+| `test-doc-prose.sh` | vale over every tracked `.md`; any finding is a failure | vale |
+| `test-fixtures.sh` | every fixture mounted on a guest, every file compared to its manifest | a guest, the fixture images, `KDIR` matching the guest's kernel |
+| `test-enospc.sh` | a volume filled as root or as a user, what it kept and what each writer was told | the same |
 
-    $ bash script/test-shim.sh        # needs only a C compiler
-    $ bash script/test-syntax.sh      # needs kernel headers and clang
-    $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
+Exit 2 from any of them means the instrument could not run, which is
+neither pass nor fail and is never recorded as either.
 
-Repository gates, POSIX sh over grep, sed and git, no kernel and no
-network:
+The scripts below need the guest fleet and are not gates. Each builds
+the module itself, exits 2 without the fleet, and produces a reading
+rather than a verdict; the readings are in
+`doc/history/verification-record.md`.
 
-    $ bash script/test-inventory.sh   # the lists covering src/ and test/, and the DEFER ledger
-    $ bash script/test-citations.sh   # the file:line citations in doc/ tables
-    $ bash script/test-history.sh     # every roadmap row's commit hash
-    $ bash script/test-provenance.sh  # every file under src/ has an origin row
-    $ bash script/test-absence.sh     # every "X() is not carried" claim resolves
+| script | does |
+|---|---|
+| `fuzz-mount.sh` | puts mutated images through the mount path and, with `H2_FUZZ_WRITE=1`, the write path |
+| `f4-roundtrip.sh` | writes a tree here and checks it on DragonFly, then the other way |
+| `cut-flush.sh` | cuts DragonFly off mid-write and mounts the result here |
+| `crash-matrix.sh` | runs the 0.6 crash matrix against the FreeBSD port |
+| `root-boot.sh` | boots a kernel whose root filesystem is a HAMMER2 volume, with the mapping and exec checks that let it be one |
+| `pfs-domains.sh` | creates PFS roots here, mounts each by label on both sides, and has DragonFly check what was written in each |
+| `million-tree.sh` | writes a million-file tree here and has both sides count it |
+| `throughput.sh` | times one large file against ext4 and reads its allocation order from the image beside DragonFly's |
+| `nix-closure.sh` | copies a real Nix closure in through the port and reads it cold beside squashfs and erofs |
+| `bulkfree.sh` | writes a set, removes it, and runs the bulkfree scan that frees it |
+| `hpanic-contain.sh` | reads what a device in error keeps off the media |
 
-Prose gate, needs vale and nothing else:
-
-    $ bash script/test-doc-prose.sh   # vale over tracked .md, any finding is a failure
-    $ bash script/test-fixtures.sh    # every fixture mounted on a guest, files compared to manifests
-    $ bash script/test-enospc.sh      # a volume filled, what it kept and what each writer was told
 
 `test-absence.sh` resolves a claim rather than a citation. Where a document
 says a named function is not carried, it asks `src/` whether that function
@@ -67,7 +83,7 @@ plus a negative control: the header is broken on a copy and the compile
 must fail. Without that control a gate whose healthy signature is silence
 cannot be told from a gate that never opened the file.
 
-## The gates run against a built tree, and until 2026-09-02 none had
+## The gates run against the built tree
 
 `make` was first run on 2026-09-02. It put thirteen objects and their
 `.cmd` files beside the sources, and `test-provenance.sh` and
@@ -1233,7 +1249,7 @@ substitution rather than a build. The CachyOS pacman repository is a
 different channel with its own cadence and had no 7.3 kernel on the same
 day, so a reading of one says nothing about the other.
 
-## Every COULD-NOT-RUN branch has been driven
+## Every COULD-NOT-RUN branch, driven
 
 An error path nobody has driven is an untested branch wearing the costume
 of a safety net: it reads as defensive prose rather than as code, so it is
