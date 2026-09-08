@@ -1043,8 +1043,10 @@ the copy and its source, with the symlink targets and the hard-linked
 file count compared the same way. DragonFly mounts the volume, counts
 it and runs its checker; the host's checker runs after each side with
 its negative control. Rates are printed and never judged; a run fails
-on a count or hash that differs, a kernel warning, a checker verdict
-or a missing reading, and a guest whose run times out is read through
+on a count or hash that differs, a kernel warning, lockdep turning
+itself off during the run (a lockdep report prints no `cut here`, so
+the warning count alone passed one), a checker verdict or a missing
+reading, and a guest whose run times out is read through
 `guest-dmesg.sh` before it is reset. The guest's whole `dmesg` is saved
 beside the log (`H2_CLOSURE_DMESG`), because the second warning of a
 run is the one that says why lockdep went off, and `H2_NC_GUESTPRE`

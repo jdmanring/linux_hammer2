@@ -338,7 +338,15 @@ if [ $gc = 1 ]; then
 	nfiles=$(printf '%s\n' "$out" | sed -n 's/^gc left \([0-9]*\) files.*/\1/p')
 	[ -n "$nfiles" ] || { echo "  FAIL  no gc count"; fail=$((fail + 1)); nfiles=-1; }
 fi
-printf '%s\n' "$out" | grep -q "^debug_locks 1$" || echo "  note  lockdep was off at the end of the run, so its silence is not a reading"
+# A lockdep report prints no "cut here", so the warning count above cannot
+# see it; what it leaves is debug_locks at 0.  Lockdep on at the start and
+# off at the end is a report, and the guest log names it.
+if printf '%s\n' "$out" | grep -q "^debug_locks before 1$"; then
+	printf '%s\n' "$out" | grep -q "^debug_locks 1$" && echo "  ok    lockdep stayed on through the run" || {
+		echo "  FAIL  lockdep turned itself off during the run: it printed a report, see $DMESG"; fail=$((fail + 1)); }
+else
+	echo "  note  lockdep was off before the run, so its silence is not a reading"
+fi
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
