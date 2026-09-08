@@ -2,7 +2,7 @@
 
 Part of the archaeology work package (`proposals/saxum_filesystem/`, document
 02 sections 3 and 14, document 07 section 3). Measured 2026-08-25 by the
-specification session over the nine trees on this disk, per file, from the
+specification pass over the nine trees on this disk, per file, from the
 first hundred lines of each source file: SPDX identifier, copyright lines, the
 first distinguishing line of the license text, and the clause count. The
 proposal's rule governs this document: "BSD licensed, therefore safe" is not a

@@ -1,9 +1,9 @@
 # HAMMER2 test fixture plan (H0 deliverable)
 
 Part of the archaeology work package the storage proposal requires before any
-Linux write path (`proposals/saxum_filesystem/04_AGENTIC_CODING_HANDOFF.md`,
-H0; `03_TEST_SECURITY_RESOURCE_SPEC.md` section 9). Written 2026-08-25 by the
-specification session from what is on this disk; every instrument named here
+Linux write path (the storage proposal's H0 work package, and
+`03_TEST_SECURITY_RESOURCE_SPEC.md` section 9). Written 2026-08-25 by the
+specification pass from what is on this disk; every instrument named here
 was checked to exist, and none was run that starts a guest.
 
 ## What a fixture is for
@@ -78,7 +78,7 @@ before any writable root) start from F3 and are the H3 stage's work.
 
 ## F2 without a boot: the DragonFly guest's disk read cold
 
-Measured 2026-08-25 by the specification session, with the fleet down.
+Measured 2026-08-25 by the specification pass, with the fleet down.
 The guest `dragonflybsd642` (installed DragonFly 6.4.2) has its disk at
 `/mnt/storage/VM_images/dragonflybsd642.qcow2`, 30 GiB virtual, 927 MiB
 allocated, and that disk is a kernel-written HAMMER2 volume: GPT behind a

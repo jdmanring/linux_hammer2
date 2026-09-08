@@ -3,7 +3,7 @@
 The plan for taking HAMMER2 from "create, check, read" on this platform to
 the flagship root filesystem the specification names, integrated into the
 storage model (specification section 27) rather than beside it. Written
-2026-08-25 by the specification session on the five H0 deliverables in this
+2026-08-25 by the specification pass on the five H0 deliverables in this
 directory and on the storage proposal's stages (documents 02, 04, 07, 09 in
 the specification repository's `proposals/saxum_filesystem/`). It is a plan
 with exit criteria, not a schedule; every stage says what it produces in this
@@ -208,11 +208,11 @@ H1 to H3.
 
 ## Who does what
 
-- **Implementation session**: every stage's code, package, gate and fixture
+- **Implementation phase**: every stage's code, package, gate and fixture
   generation; the H1 estimate after the first-week readings; the toolchain
   package corrections the license audit names (`meta.license`, the
   `USE_EXFAT` comment).
-- **Specification session**: the audits and this plan; the specification's
+- **Specification pass**: the audits and this plan; the specification's
   capability declaration for HAMMER2 (27.9) updated at each stage from the
   gate's measurement, never ahead of it; the relay of upstream findings; the
   filing drafts for James.

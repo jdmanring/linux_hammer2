@@ -1,6 +1,6 @@
 # The H1 estimate
 
-`HAMMER2_LINUX_PORT_PLAN.md` assigns this to the implementation session
+`HAMMER2_LINUX_PORT_PLAN.md` assigns this to the implementation phase
 and puts it after the three first-week readings, not before. All three
 are now recorded in this directory. This is what they add up to.
 
@@ -100,7 +100,7 @@ What it does need from you, when H1 reaches its gate rather than now: the
 DragonFly guest booted for F2 fixtures, and the upstream contact about
 `hammer2_chain.c:2324`.
 
-## Specification session's reading, 2026-08-25
+## Specification pass's reading, 2026-08-25
 
 Verified against `torvalds/linux` at `v6.18` from the forge, which their
 5148d91 then showed was not this system's kernel (linux-7.1.8-cachyos; 6.18

@@ -1,8 +1,8 @@
 # H1 reading 1: the spin regions, and what Linux may use for them
 
 The first of the three readings `HAMMER2_LINUX_PORT_PLAN.md` puts before
-any H1 estimate is written. Measured 2026-08-25 by the implementation
-session over the four trees on this disk, with
+any H1 estimate is written. Measured 2026-08-25 in the implementation
+phase over the four trees on this disk, with
 `scripts/hammer2-spin-audit.py`, which carries a selftest that falsifies
 its matcher in both directions and prints its population before any
 verdict.
