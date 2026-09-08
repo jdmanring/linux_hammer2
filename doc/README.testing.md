@@ -45,6 +45,7 @@ rather than a verdict; the readings are in
 | `nix-closure.sh` | copies a real Nix closure in through the port and reads it cold beside squashfs and erofs |
 | `bulkfree.sh` | writes a set, removes it, and runs the bulkfree scan that frees it |
 | `hpanic-contain.sh` | reads what a device in error keeps off the media |
+| `dfly-enospc.sh` | fills a volume to capacity on the DragonFly guest under an allocator that refuses on a count, the reproducer behind the staged unmount patch |
 
 
 `test-absence.sh` resolves a claim rather than a citation. Where a document
@@ -421,8 +422,8 @@ the way CI enumerates them. Install it:
     $ ln -sf ../../script/pre-push-check.sh .git/hooks/pre-push
 
 It is not named `test-*.sh` and does not live among the gates as an equal:
-the eleven are run individually on purpose, and one exit status for eleven
-questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
+the thirteen are run individually on purpose, and one exit status for
+thirteen questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
 overrides it for a push that is deliberately ahead of a green tree.
 
 It runs what CI runs, and CI's result still has to be read on the forge
@@ -1583,6 +1584,23 @@ that reported a failure describing a filesystem that had never been
 mounted. The setup steps now report themselves and the run exits 2, so
 the state this script leaves behind is told apart from the defect it
 exists to find.
+
+## The full volume on DragonFly
+
+`script/dfly-enospc.sh` runs the same fill on the DragonFly guest, against
+the tree the patches under `doc/upstream/` are written for, so a defect
+this port finds in carried code can be shown on the code's own kernel
+before it is filed. It needs a kernel built from DragonFly source with
+two sysctls added to `hammer2_freemap.c`, `vfs.hammer2.fail_alloc_after`
+and `vfs.hammer2.alloc_count`, which `doc/upstream/README-provenance.md`
+describes; on the release kernel the allocator never refuses and the run
+says so. The refusal is lifted after `H2_KNOB_LIFT` seconds, 120 by
+default, because a refusal left in place on DragonFly wedges the syncer
+on the buffers it cannot write and the fill never reaches the unmount.
+The reading is the writers' last error, the file count before and after
+a remount, the kernel messages the fill produced, and fsck; its two runs
+so far are recorded in the provenance document beside the patch they
+verified.
 
 ## The volume as a root filesystem, from the tree
 

@@ -206,7 +206,8 @@ lacks is a way to make the allocator refuse. A kernel built from the
 sysctls, `vfs.hammer2.fail_alloc_after` and `vfs.hammer2.alloc_count`,
 and a refusal at the top of `hammer2_freemap_alloc()`, before its size
 assertion, returning `HAMMER2_ERROR_ENOSPC` once the count passes the
-threshold, the shape the Linux knob has.
+threshold, the shape the Linux knob has. `script/dfly-enospc.sh` drives
+the fill against that kernel.
 
 With the threshold at 20000 and left in place, the kernel reports the
 refusal where the Linux port did, in `hammer2_chain_create_indirect()`
