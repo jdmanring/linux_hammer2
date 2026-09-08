@@ -1,5 +1,5 @@
 #!/bin/sh
-# A FLUSH CUT OFF, AND WHAT EACH RECOVERY MAKES OF IT.
+# A flush cut off, and what each recovery makes of it.
 # DragonFly writes small files continuously to a copy of a fixture, syncing
 # every two hundred; after SECONDS the host destroys the domain, which is
 # the power going out as far as the guest is concerned. The cut-off image
@@ -36,14 +36,14 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 SHOW=${H2_SHOW:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 W=$(mktemp -d) || exit 2
-# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# The long runs are bounded from this side. A guest whose task hangs, on a
 # hung mount or a wedged unmount, keeps sshd answering and the ssh open,
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
 # is a finding, not a pass and not a skip.
 RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
-# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
+# The negative control for every host fsck verdict: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
 # fsck_hammer2, naming the header CRC. Without it a checker that accepts
 # anything, a wrong binary on the path, or a copy that landed elsewhere

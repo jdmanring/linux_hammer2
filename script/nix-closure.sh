@@ -1,5 +1,5 @@
 #!/bin/sh
-# A REAL NIX CLOSURE THROUGH THE PORT, READ COLD BESIDE SQUASHFS AND EROFS.
+# A real Nix closure through the port, read cold beside squashfs and erofs.
 # 0.9's first criterion: F6, a Nix closure of hundreds of thousands of
 # paths, reads at a measured cost recorded beside the same read on
 # squashfs or erofs. The closure is one the host's Nix store already

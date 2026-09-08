@@ -32,7 +32,7 @@ for f in "$STATUS" "$MK" "$SYN"; do
 	[ -f "$f" ] || { echo "inventory: COULD-NOT-RUN: no $f"; exit 2; }
 done
 
-# BUILD ARTIFACTS ARE NOT SOURCE. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
+# Build artifacts are not source. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
 # modules.order and Module.symvers beside the sources it compiles, and this
 # gate had never seen a built tree until the first `make` on 2026-09-02.
 # Against one it read those files as though they were the port's own. The
@@ -187,8 +187,8 @@ for d in $COUNT_DOCS; do
 	done
 done
 
-# EVERY `DEFER(` IN THE TREE IS A ROW IN doc/README.status.md's LEDGER, AND
-# EVERY ROW IS A MARKER THAT STILL EXISTS. A deferral is only pragmatism
+# Every `DEFER(` in the tree is a row in doc/README.status.md's ledger, and
+# every row is a marker that still exists. A deferral is only pragmatism
 # while its trigger is written down, and the ledger is the only place the
 # four are collected; a marker deleted from the source leaves a row that
 # reads as outstanding work forever, which is the reassuring direction.
@@ -221,7 +221,7 @@ if [ "$ndefer" = 0 ]; then
 	echo "  note src/ holds no DEFER markers, so the ledger check below"
 	echo "       compared nothing"
 else
-	# ONLY LEDGER ROWS COUNT. This read the whole document and any
+	# Only ledger rows count. This read the whole document and any
 	# mention satisfied it, so a marker whose row had been rewritten
 	# under a new trigger stayed green on a sentence of narrative prose
 	# elsewhere in the file that happened to name the old one. That is
@@ -274,15 +274,15 @@ else
 	fi
 fi
 
-# THE `XXX` TABLE IN doc/README.status.md IS A COUNT, AND 0.2's FOURTH EXIT
-# CRITERION TURNS ON IT. Its total column is `grep -c XXX` and nothing more,
+# The `XXX` table in doc/README.status.md is a count, and 0.2's fourth exit
+# criterion turns on it. Its total column is `grep -c XXX` and nothing more,
 # so it is mechanically checkable and was drifting instead: measured
 # 2026-08-26, the table omitted `hammer2_disk.h` and `src/sys/sys/tree.h`,
 # both of which carry a mark, while listing `hammer2_cluster.c` at zero,
 # which is what makes the table read as a full inventory of a population it
 # did not cover.
 #
-# WHAT IS CHECKED AND WHAT DELIBERATELY IS NOT. The `upstream's` and `this
+# What is checked and what deliberately is not. The `upstream's` and `this
 # port's` columns are a subtraction against the FreeBSD tree at 3df307f,
 # which is not on most machines, so a gate over them would exit 2 forever
 # and never actually run. They stay prose carrying their dated measurement.
@@ -294,7 +294,7 @@ fi
 # under src/ that HOLDS a mark needs one, which is what caught the vendored
 # header. A file outside the port directory with no mark needs no row.
 #
-# A FAKE PASS HERE LOOKS EXACTLY LIKE A REAL ONE: a table with no rows and a
+# A fake pass here looks exactly like a real one: a table with no rows and a
 # glob matching no files both compare nothing and print zero findings. Both
 # populations are asserted before either is used.
 xtmp=$(mktemp -d) || exit 2
@@ -345,7 +345,7 @@ else
 	fi
 fi
 
-# EVERY STAGED PATCH MUST SAY WHERE IT STANDS AGAINST UPSTREAM. Patches
+# Every staged patch must say where it stands against upstream. Patches
 # sat in doc/upstream/ describing a fix with nothing recorded about
 # whether upstream had already made it, already rejected it, or already
 # been told, and a patch with no such record invites the reader to assume

@@ -1,5 +1,5 @@
 #!/bin/sh
-# A MILLION-FILE TREE, WRITTEN HERE, COUNTED AFTER A REMOUNT AND BY DRAGONFLY.
+# A million-file tree, written here, counted after a remount and by DragonFly.
 # 0.9 asks for million-file trees with the number they produced, and a run
 # without a number is not a pass. This is the first of its criteria that
 # needs only the fleet: a tree of H2_TREE_FILES files under H2_TREE_FANOUT

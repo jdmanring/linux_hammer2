@@ -1,5 +1,5 @@
 #!/bin/sh
-# WHAT A FULL VOLUME DOES, WHICH NOTHING HERE HAD EVER ASKED.
+# What a full volume does, which nothing here had ever asked.
 #
 # Every write measurement in this tree was taken on a volume with room
 # in it. This one fills a volume until the first write fails, then calls
@@ -15,18 +15,18 @@
 # and the cause was hammer2_chain_create() clearing a caller's chain
 # pointer on the ENOSPC path, which skipped the caller's own release and
 # left the chain locked. Eight runs reported the cycle before that fix
-# and none has since. doc/README.status.md carries the whole account.
+# and none has since. doc/history/verification-record.md carries the
+# whole account.
 #
 # The report is read by streaming /dev/kmsg for the whole run, because
 # the ring wraps before a fill ends, and it is printed before the
 # unmount, because the unmount is where a bad run loses the log.
 #
-# WHAT IS STILL OPEN, and why this is not a gate: lockdep reported a
-# held lock freed during the fill on two runs before the unmount fix,
-# neither captured past the banner nor tied to a build. A recurrence
-# fails this script, is captured whole, and names its build.
+# A lockdep report of any kind fails this script, is captured whole
+# past the banner, and names the build that produced it, because the
+# two reports the early runs saw were captured as neither.
 #
-# NOTHING HERE IS JUDGED BY A PROCESS'S EXIT STATUS ALONE. The unmount
+# Nothing here is judged by a process's exit status alone. The unmount
 # is judged by whether the filesystem went away, because the unmount
 # process is killed on these runs by something outside this script and
 # the status alone read for several runs as an unmount that hung.
@@ -35,7 +35,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
-# --selftest: THE CONTROL THIS SCRIPT DID NOT HAVE. Every gate in this
+# --selftest: the control this script did not have. Every gate in this
 # tree carries one; the reproducer did not, and its readings are exactly
 # the kind that fail silently. Several have never been observed to take a
 # value other than their default, so any of them could have stopped
@@ -145,10 +145,9 @@ if [ "${1:-}" = "--selftest" ]; then
 fi
 
 # H2_REPEAT=n runs the whole thing n times and tallies the outcomes.
-# BOTH DEFECTS LEFT ON THIS REPRODUCER ARE INTERMITTENT: the module has
-# held references after unmount on five runs of seven and lockdep has
-# reported a held lock freed on two of nine, so a single run is the
-# wrong instrument for either and answers only about itself. A wedged
+# Every defect this reproducer has found was intermittent, one fill in
+# eight or in thirty-three, so a single run is the wrong instrument for
+# a rate and answers only about itself. A wedged
 # guest also costs the NEXT run, which is COULD-NOT-RUN rather than a
 # result, so each iteration resets the guest rather than inheriting
 # whatever the last one left. Nothing is summed that was not counted:
@@ -402,7 +401,7 @@ out=$(ssh "$GUEST_SSH" '
 	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
 	    { echo "SETUP mount failed"; exit 0; }
 	echo "locks after mount $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
-	# THE POPULATION THIS SCRIPT CLAIMS IS "THE VOLUME FILLED", and a
+	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
 	# describe a volume that never filled. Keep the reason dd gave and

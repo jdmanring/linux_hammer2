@@ -163,7 +163,7 @@ if [ -z "$cpver" ]; then
 	fi
 fi
 
-# BUILD ARTIFACTS ARE NOT SOURCE. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
+# Build artifacts are not source. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
 # modules.order and Module.symvers beside the sources it compiles, and this
 # gate had never seen a built tree until the first `make` on 2026-09-02.
 # Against one it read those files as though they were the port's own. The

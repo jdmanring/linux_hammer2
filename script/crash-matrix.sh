@@ -1,5 +1,5 @@
 #!/bin/sh
-# THE CRASH MATRIX, CALIBRATED AGAINST THE FREEBSD PORT.
+# The crash matrix, calibrated against the FreeBSD port.
 # Four ways a write workload stops, two writers, and three verdicts on
 # what each leaves behind. A writer mounts a copy of a host-made volume
 # read-write and writes small files with a sync every two hundred; after
@@ -45,14 +45,14 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
-# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# The long runs are bounded from this side. A guest whose task hangs, on a
 # hung mount or a wedged unmount, keeps sshd answering and the ssh open,
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
 # is a finding, not a pass and not a skip.
 RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
-# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
+# The negative control for every host fsck verdict: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
 # fsck_hammer2, naming the header CRC. Without it a checker that accepts
 # anything, a wrong binary on the path, or a copy that landed elsewhere

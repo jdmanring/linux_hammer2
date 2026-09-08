@@ -1,5 +1,5 @@
 #!/bin/sh
-# A DOCUMENT THAT SAYS A SYMBOL IS NOT CARRIED IS MAKING A CHECKABLE CLAIM.
+# A document that says a symbol is not carried is making a checkable claim.
 # This gate resolves every one of them against src/ and fails when the symbol
 # is there.
 #
@@ -13,7 +13,7 @@
 # subset is: the claims name a symbol, and whether a symbol is defined under
 # src/ is a fact.
 #
-# A SECOND CLAIM SHAPE, added 2026-09-04. On that day the README's opening
+# A second claim shape, added 2026-09-04. On that day the README's opening
 # paragraph said the port does not mount anything, four days after it began
 # mounting, and three documents said `->iterate_shared` is not written after
 # it was. The same sweep found `->reconfigure` described as not written while
@@ -94,7 +94,7 @@ fail=0
 # The matcher flattens each file first. These claims wrap across lines
 # constantly, and a line-at-a-time pattern is blind to a continuation: the
 # phrase that started this gate's existence, "Nothing mounts yet" in
-# CLAUDE.md, broke across lines 8 and 9 and survived a hand sweep that
+# an instructions file, broke across two lines and survived a hand sweep that
 # matched it nowhere.
 files=$(ls doc/README*.md doc/ARCHITECTURE.md doc/IO_MODEL.md README.md 2>/dev/null)
 files="$files $(find src -name '*.c' -o -name '*.h' 2>/dev/null)"
@@ -146,7 +146,7 @@ for f in $files; do
 	done < "$tmp/win"
 done
 
-# THE SECOND SHAPE: "->method is not written", resolved against the operations
+# The second shape: "->method is not written", resolved against the operations
 # tables. Present tense only. A dated observation is written in the past with
 # the commit it was true at ("was not written at 1f025fe"), which is a claim
 # about that commit and cannot go stale, so it is deliberately not matched.
@@ -182,7 +182,7 @@ for f in $files; do
 	done < "$tmp/mwin"
 done
 
-# NO GATE IS TRUSTED ON SILENCE. Zero sites is a possible and correct state
+# No gate is trusted on silence. Zero sites is a possible and correct state
 # of the tree, and it is also exactly what a broken pattern looks like, so
 # the two are separated rather than both reported as a pass.
 if [ "$sites" -eq 0 ]; then

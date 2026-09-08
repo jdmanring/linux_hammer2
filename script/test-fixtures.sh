@@ -1,10 +1,10 @@
 #!/bin/sh
-# EVERY READ-PATH RESULT THIS TREE RECORDS WAS TYPED AT A GUEST BY HAND.
+# Every read-path result this tree records was typed at a guest by hand.
 # This gate is the same measurements without a person driving them: it builds
 # the module, puts it on a guest, mounts each fixture image and compares every
 # file against a manifest committed here.
 #
-# WHY THE MANIFESTS ARE IN THIS REPOSITORY AND THE IMAGES ARE NOT. An image is
+# Why the manifests are in this repository and the images are not. An image is
 # 2 to 8 GiB and fully allocated, so it cannot be carried; a manifest is the
 # part that constitutes the claim. f5's manifest holds checksums DragonFly
 # itself reported before unmounting, which is the only form in which that
@@ -122,7 +122,7 @@ fi
 $VIRSH domstate "$GUEST" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 
-# ONE IMAGE ATTACHED AT A TIME, always as vdb, released before the next is
+# One image attached at a time, always as vdb, released before the next is
 # attached. Holding every image at once ran out of the guest's virtio slots
 # at the eighth, which the gate reported as an attach failure it had caused;
 # the twenty-five-target ceiling this used to check was never the limit.
@@ -137,8 +137,8 @@ fi
 KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "fixtures: FAIL: $KO was not produced"; exit 1; }
 
-# STARTING A GUEST IS A SIDE EFFECT, NOT A PREREQUISITE THIS GATE MAY TAKE
-# ON ITS OWN. script/pre-push-check.sh runs every gate on every push, so a
+# Starting a guest is a side effect, not a prerequisite this gate may take
+# on its own. script/pre-push-check.sh runs every gate on every push, so a
 # gate that boots a 4 GiB domain when it finds one stopped spends that on
 # every push, on a machine whose memory somebody else is using. It is opt in.
 started=no
@@ -176,7 +176,7 @@ while [ "$i" -lt 60 ]; do
 			echo "          gate does not start one unless H2_FIXTURE_START=1" >&2
 			exit 2
 		fi
-		# ONE GUEST AT A TIME ON THIS HOST. Each holds 4 GiB and the host
+		# One guest at a time on this host. Each holds 4 GiB and the host
 		# is shared with other sessions' benches, so a second domain
 		# already running is a reason not to start this one, not a reason
 		# to race it. A virsh that fails must stop this, not count as no
@@ -202,8 +202,8 @@ if [ "$i" -ge 60 ]; then
 	exit 2
 fi
 
-# A MODULE BUILT FOR ANOTHER KERNEL IS A CONFIGURATION MISMATCH AND NOT A
-# DEFECT IN THIS TREE. The first run of this gate under pre-push built
+# A module built for another kernel is a configuration mismatch and not a
+# defect in this tree. The first run of this gate under pre-push built
 # against the host's KDIR, since that is the default, and reported the
 # refusal to load on a guest running something else as a failure. insmod
 # rejects it on vermagic, so the answer is knowable before the attempt and
@@ -222,7 +222,7 @@ if [ "$guest_rel" != "$ko_rel" ]; then
 	exit 2
 fi
 
-# LOCKDEP MUST STILL BE ALIVE WHEN THIS GATE ENDS. The instrument disables
+# Lockdep must still be alive when this gate ends. The instrument disables
 # itself after its first report and validates nothing from then on, so a
 # clean dmesg after that point is silence and not evidence. On a guest
 # with CONFIG_PROVE_LOCKING, debug_locks is read before the module loads
@@ -240,7 +240,7 @@ ssh "$GUEST_SSH" "rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko ${H2_FIXTURE
 # argument, since an insmod that ignored it would pass the same manifests.
 echo "  note module io_buf_only $(ssh "$GUEST_SSH" 'cat /sys/module/hammer2/parameters/io_buf_only' 2>/dev/null)"
 
-# THE IOCTL EXERCISER, WHICH IS PART OF THIS GATE AND NOT A PREREQUISITE OF
+# The ioctl exerciser, which is part of this gate and not a prerequisite of
 # IT. test/hammer2-ioctl-exercise.c is built here rather than on the guest,
 # which has no toolchain, and statically, because a host binary linked
 # against this machine's glibc against another distribution's loader fails
@@ -317,7 +317,7 @@ for m in $manifests; do
 
 	mnt=/mnt/h2gate-$base
 
-	# F3, THE MEDIA THAT MUST BE REFUSED. `# refuse` says the mount has
+	# F3, the media that must be refused. `# refuse` says the mount has
 	# to fail; the image is not modified by the attempt, which the
 	# manifest's own md5 of the image would say but the gate does not
 	# take, a 2 GiB checksum per run being the wrong price for a
@@ -351,7 +351,7 @@ for m in $manifests; do
 		continue
 	fi
 
-	# THE READ-ONLY IOCTLS, ON A MOUNT THAT HAS JUST VERIFIED. Only the
+	# The read-only ioctls, on a mount that has just verified. Only the
 	# read-only subset: the fixtures are attached read-only, so snapshot
 	# create, PFS create and delete, growfs and bulkfree cannot be
 	# reached from here and stay hand-verified on a guest.
@@ -395,7 +395,7 @@ for m in $manifests; do
 	fi
 	files=$((files + want))
 
-	# THE BLOCK COUNTS, WHICH ARE ABOUT THE FIXTURE AND NOT THE CODE.
+	# The block counts, which are about the fixture and not the code.
 	# i_blocks is the on-media count, so it says whether a file is
 	# embedded in its inode, stored compressed, stored raw or a hole. A
 	# set of matching checksums cannot say that: if an image were
@@ -428,7 +428,7 @@ for m in $manifests; do
 		fail=$((fail + 1)); continue
 	fi
 
-	# THE NEGATIVE CONTROL, ON EVERY RUN AND ON THIS IMAGE. A manifest
+	# The negative control, on every run and on this image. A manifest
 	# with one hash altered must fail against the same mount that just
 	# passed. Without it a silent md5sum, an empty sums file or a mount
 	# that landed somewhere else all read as a pass.
@@ -455,7 +455,7 @@ for m in $manifests; do
 	fi
 	blocks=$((blocks + nb))
 
-	# F3, THE FILE THAT MUST NOT READ. `# corrupt relpath` names a file
+	# F3, the file that must not read. `# corrupt relpath` names a file
 	# whose data block was altered on media; the checksum on the block
 	# has to catch it and the read has to fail, never return the bytes.
 	for rel in $corrupt; do
@@ -470,7 +470,7 @@ for m in $manifests; do
 		printf '%s\n' "$err" | sed 's/^\[[^]]*\] //; s/^/        /'
 	done
 
-	# THE STAT FIELDS, FROM THE WRITER'S OWN stat. A `# stat` row carries
+	# The stat fields, from the writer's own stat. A `# stat` row carries
 	# the octal mode with its type bits, the link count, owner, group and
 	# inode number DragonFly reported for a path, and the guest's stat is
 	# printed in the same shape: %f is the raw mode in hex, so it is
@@ -496,7 +496,7 @@ for m in $manifests; do
 		stats=$((stats + ns))
 	fi
 
-	# STATFS, AGAINST DragonFly's df AS ROOT: 1 KiB blocks in total, used
+	# Statfs, against DragonFly's df as root: 1 KiB blocks in total, used
 	# and free, and inodes in use. The free figure is f_bfree, the root
 	# view, since the row was taken as root and the 5% reserve only moves
 	# f_bavail here. Blocks and bsize come from the guest's statfs and
@@ -513,7 +513,7 @@ for m in $manifests; do
 		statfss=$((statfss + 1))
 	fi
 
-	# THE SYMLINKS, WHICH md5sum FOLLOWS AND SO NEVER READS. A symlink's
+	# The symlinks, which md5sum follows and so never reads. A symlink's
 	# target is file data, embedded in the inode for every link here, and
 	# ->get_link reads it through the same ->read_folio a file uses. The
 	# rows are optional: an image with no symlink asserts none, and the

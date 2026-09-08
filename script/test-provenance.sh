@@ -109,7 +109,7 @@ CLONES=${H2_CLONE_DIR-$HOME/Projects}
 # Assert both populations before comparing anything. Either one empty makes
 # every loop below vacuous, and a vacuous run prints zero findings, which is
 # indistinguishable from a clean tree.
-# BUILD ARTIFACTS ARE NOT SOURCE. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
+# Build artifacts are not source. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
 # modules.order and Module.symvers beside the sources it compiles, and this
 # gate had never seen a built tree until the first `make` on 2026-09-02.
 # Against one it read those files as though they were the port's own. The

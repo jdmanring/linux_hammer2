@@ -1,5 +1,5 @@
 #!/bin/sh
-# PFS ROOTS CREATED HERE, MOUNTED BY LABEL HERE, READ BACK BY DRAGONFLY.
+# PFS roots created here, mounted by label here, read back by DragonFly.
 # 0.8 maps the storage model's domains onto PFS roots and gates them by
 # the read-only gate mounting each PFS by label. The model and its
 # installer belong to the consumer; what belongs here is the half a
@@ -29,7 +29,7 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
-# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# The long runs are bounded from this side. A guest whose task hangs, on a
 # hung mount or a wedged unmount, keeps sshd answering and the ssh open,
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
@@ -37,7 +37,7 @@ W=$(mktemp -d) || exit 2
 RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 trap 'rm -rf "$W"' EXIT
 
-# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT, as the other fleet
+# The negative control for every host fsck verdict, as the other fleet
 # scripts carry it: a sparse copy with one header byte complemented must
 # fail the same checker naming the header CRC.
 fsck_control() {	# image

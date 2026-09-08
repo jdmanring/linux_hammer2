@@ -1,5 +1,5 @@
 #!/bin/sh
-# WHAT A HUNG GUEST HOLDS, READ THROUGH THE QEMU GUEST AGENT.
+# What a hung guest holds, read through the QEMU guest agent.
 # A guest whose task has hung in the module keeps its kernel log, its
 # blocked-task list and its lockdep counters until it is reset, and ssh is
 # usually gone by then, sshd's fork having touched the wedged mount. The

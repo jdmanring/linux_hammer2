@@ -1,22 +1,22 @@
 #!/bin/sh
-# MUTATED MEDIA AGAINST THE MOUNT PATH, WITH NO CRASH AS THE VERDICT.
+# Mutated media against the mount path, with no crash as the verdict.
 # 0.5 asks for a fuzzing corpus run against the mount path before any
 # writable root is offered. This is that run: N copies of a seed image, each
 # with a few bytes changed at recorded offsets, hot-plugged read-only into a
 # running guest, mounted, listed and read end to end. The mount may succeed
 # or be refused, a file may read or fail with EIO; what may not happen is a
-# WARNING, BUG, oops, hung task, lockdep report or a guest that stops
+# Warning, bug, oops, hung task, lockdep report or a guest that stops
 # answering. The corpus is the generator and its seed: every mutation is
 # printed as offset:old>new, so a finding reproduces from its seed and index
 # without keeping the images.
 #
-# THE SEED IS NOT MADE HERE. It is a small volume formatted by newfs_hammer2
+# The seed is not made here. It is a small volume formatted by newfs_hammer2
 # and populated through the write path; doc/README.testing.md has the
 # procedure. The mutator samples until it hits
 # a byte that is not zero, so a 64 MiB image that is mostly empty does not
 # absorb the hits.
 #
-# TWO CONTROLS RUN FIRST. The seed itself must mount with every file
+# Two controls run first. The seed itself must mount with every file
 # readable, or the reader is broken and nothing below means anything; and
 # the seed with one bit of its volume header crc changed must be refused,
 # or the refusal this run counts cannot be told from a silent pass.

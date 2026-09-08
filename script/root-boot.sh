@@ -1,5 +1,5 @@
 #!/bin/sh
-# THE VOLUME AS A ROOT FILESYSTEM, AND THE MAPPING THAT LETS IT BE ONE.
+# The volume as a root filesystem, and the mapping that lets it be one.
 #
 # A file on this filesystem could read back byte for byte correct and
 # still not execute, because hammer2_file_fops carried no mapping

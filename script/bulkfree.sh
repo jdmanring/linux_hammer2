@@ -1,5 +1,5 @@
 #!/bin/sh
-# A DELETE FREES NOTHING ON HAMMER2 UNTIL BULKFREE RUNS TWICE. The
+# A delete frees nothing on hammer2 until bulkfree runs twice. The
 # freemap is rebuilt by a scan, not decremented by a remove: the first
 # pass moves a block nothing references from allocated to staged, and
 # the next pass frees what stayed staged, so a volume that has had
@@ -34,7 +34,7 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
-# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# The long runs are bounded from this side. A guest whose task hangs, on a
 # hung mount or a wedged unmount, keeps sshd answering and the ssh open,
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
@@ -42,7 +42,7 @@ W=$(mktemp -d) || exit 2
 RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 trap 'rm -rf "$W"' EXIT
 
-# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT, as the other fleet
+# The negative control for every host fsck verdict, as the other fleet
 # scripts carry it: a sparse copy with one header byte complemented must
 # fail the same checker naming the header CRC.
 fsck_control() {	# image
@@ -145,7 +145,7 @@ staged=$(printf '%s\n' "$out" | sed -n 's/^pass 1: .*transition->staged *//p')
 freed=$(printf '%s\n' "$out" | sed -n 's/^pass 2: .*transition->free *//p')
 f4=$(printf '%s\n' "$out" | sed -n 's/^second wrote .* free //p')
 printf '%s\n' "$out" | grep -q "^first wrote $MB of $MB files" || { echo "  FAIL  the first set did not all write"; fail=$((fail + 1)); }
-# THE CONTROL: the remove alone must not have freed the set, or the scan
+# The control: the remove alone must not have freed the set, or the scan
 # is not what is being measured.
 if [ -n "$f1" ] && [ -n "$f2" ] && [ "$f2" -lt $((f1 + MB * 4)) ]; then
 	echo "  ok    the remove freed nothing: $f1 blocks free before, $f2 after"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# F4, BOTH DIRECTIONS, ON A VOLUME FORMATTED HERE.
+# F4, both directions, on a volume formatted here.
 # A tree written by this port, mounted and verified on DragonFly, then the
 # reverse. The image is formatted on the host by hammer2-utils' newfs_hammer2
 # so nothing on it is DragonFly's until DragonFly's turn: Linux writes a tree
@@ -26,14 +26,14 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
-# THE LONG RUNS ARE BOUNDED FROM THIS SIDE. A guest whose task hangs, on a
+# The long runs are bounded from this side. A guest whose task hangs, on a
 # hung mount or a wedged unmount, keeps sshd answering and the ssh open,
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
 # is a finding, not a pass and not a skip.
 RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
-# THE NEGATIVE CONTROL FOR EVERY HOST fsck VERDICT: a sparse copy of the
+# The negative control for every host fsck verdict: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
 # fsck_hammer2, naming the header CRC. Without it a checker that accepts
 # anything, a wrong binary on the path, or a copy that landed elsewhere
