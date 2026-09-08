@@ -2549,9 +2549,33 @@ measured 2686 and 2804 in two runs. What remains between the port and
 btrfs is that btrfs verifies its checksums in bio completion on every
 CPU while this port verifies and copies each block in the reader, one
 block at a time; the profile says that ceiling is near 3 GiB/s on
-this guest, and lifting it means an asynchronous `->readahead` that
-hands each block's verify and copy to a worker, which is a strategy
-layer change and not a mount-time constant.
+this guest.
+
+That ceiling was then tried, the same evening, on the branch
+`strategy-readahead-workers`: a `->readahead` that hands each folio of
+the window to an unbound workqueue, the superblock's bdi raised to the
+same 4 MiB, and the read XOP allocated with `HAMMER2_XOP_STRATEGY`.
+The first run read at 313 to 1159 MiB/s with several hundred workers
+and 72% of every CPU's samples in `down_write`: the port's XOP start,
+carried from the synchronous ports, serializes every XOP on an inode
+through `hammer2_xop_testset_ipdep()`, so the workers queued on one
+lock and spun while its holder was preempted. DragonFly serializes
+only non-strategy XOPs and spreads strategy XOPs across its worker
+groups by block, so the second run exempted strategy XOPs from the
+dependency at start and retire, as DragonFly does, and bounded the
+workers to the CPU count. It read at 2065 to 3246 MiB/s in three runs,
+level with the synchronous path, with `xxh64` at 53% of all samples
+and a spinlock at 13%, and the port's own check in
+`hammer2_chain_drop()` fired once from a worker's retire: a data
+chain reached its last drop while its lock was held. The inode's
+chain cache in `hammer2_xop_retire()` assumes one XOP per inode at a
+time, which the dependency guaranteed; concurrent retires replace and
+drop each other's entries, the parent block is re-verified per data
+block, and the drop race is the same assumption from the other side.
+The branch keeps the shape and its commit message says what it
+measured; main keeps the synchronous read, which is the tree every
+gate has run against, and the ceiling stands at one reader until that
+cache is made safe under concurrent strategy XOPs.
 
 `O_DIRECT` stays unserved. DragonFly's `IO_DIRECT` means
 semi-synchronous, set by the reserve check, and every read and write
