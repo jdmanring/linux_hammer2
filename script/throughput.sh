@@ -80,8 +80,13 @@ KO=src/sys/fs/hammer2/hammer2.ko
 built=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 [ -z "$(git status --porcelain -- src 2>/dev/null)" ] || built="$built-dirty"
 
-# Both volumes hold the file four times over, so neither fills.
-vol=$((MIB * 4 + 256))
+# Each pass writes the file twice on HAMMER2, once in place and once
+# after dd's truncate, and copy-on-write gives both fresh media: a
+# truncated block goes back to the freemap at bulkfree, not before, so
+# H2_REPEAT passes need 2*REPEAT files of room plus DragonFly's one.
+# The first sizing held one pass four times over and a third pass hit
+# the reserve, which refused the write and left an empty file.
+vol=$((MIB * (2 * REPEAT + 2) + 256))
 rm -f "$IMG" "$EXT4" "$BTRFS"
 truncate -s "${vol}M" "$IMG" && "$NEWFS" -L ROOT "$IMG" >/dev/null 2>&1 || {
 	echo "throughput: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
@@ -139,23 +144,29 @@ mount -t ext4 /dev/vdc /mnt/e4 || { echo "ext4 mount failed"; exit 1; }
 mount -t btrfs /dev/vdd /mnt/bt || { echo "btrfs mount failed"; exit 1; }
 now() { awk '{print \$1}' /proc/uptime; }
 rate() { awk -v b="\$1" -v t0="\$2" -v t1="\$3" 'BEGIN{d=t1-t0; if (d<=0) d=0.01; printf "%.0f", b/d}'; }
-head -c $((MIB * 1024 * 1024)) /dev/urandom > /dev/shm/src || { echo "no source"; exit 1; }
-src=\$(md5sum < /dev/shm/src | cut -c1-32)
-echo "source $MIB MiB md5 \$src"
 # The kernel timed on is part of the reading: a lockdep kernel charges
 # every lock the port takes per block, which is what put a third of a
 # read's samples in lock bookkeeping and the port at 3% of its own profile.
 echo "kernel \$(uname -r) lockdep \$(zcat /proc/config.gz 2>/dev/null | grep -c '^CONFIG_PROVE_LOCKING=y')"
+# Every pass is a first write of new bytes into a cold cache: the file
+# is removed, the guest cache dropped and the source drawn again, so a
+# second pass cannot read as a dedup hit or a warm overwrite. A refused
+# dd prints as a refusal, never as a rate over the time it took to fail.
 i=0
 while [ \$i -lt $REPEAT ]; do
+	rm -f /mnt/h2/big /mnt/e4/big /mnt/bt/big
+	head -c $((MIB * 1024 * 1024)) /dev/urandom > /dev/shm/src || { echo "no source"; exit 1; }
+	src=\$(md5sum < /dev/shm/src | cut -c1-32)
+	echo "source $MIB MiB md5 \$src (run \$i)"
+	sync; echo 3 > /proc/sys/vm/drop_caches
 	for fs in h2 e4 bt; do
-		# Isolate page cache admission from the flush:
-		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=notrunc status=none; t1=\$(now)
+		# The page cache admission and the flush, timed apart.
+		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=notrunc status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
 		echo "\$fs buffered_write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
 		t0=\$(now); sync -f /mnt/\$fs; t1=\$(now)
 		echo "\$fs syncfs \$(awk -v t0=\$t0 -v t1=\$t1 'BEGIN{printf "%.2f", t1-t0}') s (run \$i)"
-		# Combined for historical continuity:
-		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=fsync status=none; t1=\$(now)
+		# The combined number every earlier reading of record is.
+		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=fsync status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
 		echo "\$fs write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
 	done
 	i=\$((i + 1))
@@ -211,13 +222,16 @@ down "$GUEST" "$GUEST_SSH"
 e4=$(printf '%s\n' "$out" | sed -n 's/^e4 read 1M \([0-9]*\) MiB.*/\1/p')
 printf '%s\n' "$out" | grep -q "^kernel .* lockdep 1$" && echo "  note  the guest kernel carries CONFIG_PROVE_LOCKING: every number above is the debug kernel's, and a read on the release build of the same kernel measured four times faster"
 [ -n "$e4" ] && [ "$e4" -lt 2000 ] && echo "  note  ext4 read $e4 MiB/s: the host's cache was cold, so every read above is the host's disk and compares only with a run that says the same"
-src=$(printf '%s\n' "$out" | sed -n 's/^source .* md5 //p')
+src=$(printf '%s\n' "$out" | sed -n 's/^source .* md5 \([0-9a-f]*\).*/\1/p' | tail -1)
 got=$(printf '%s\n' "$out" | sed -n 's/^hammer2 md5 //p')
 if [ -n "$src" ] && [ "$src" = "$got" ]; then
 	echo "  ok    the file reads back from hammer2 with the source hash after a remount"
 else
 	echo "  FAIL  hammer2 hash '$got' is not the source hash '$src'"; fail=$((fail + 1))
 fi
+printf '%s\n' "$out" | grep -q " write refused " && { echo "  FAIL  a write was refused: $(printf '%s\n' "$out" | grep ' write refused ' | tr '\n' ';')"; fail=$((fail + 1)); }
+nw=$(printf '%s\n' "$out" | grep -c "^h2 write [0-9]* MiB/s (run [0-9]*)$")
+[ "$nw" = "$REPEAT" ] || { echo "  FAIL  $nw hammer2 write readings for $REPEAT run(s)"; fail=$((fail + 1)); }
 for want in "^h2 write [0-9]* MiB/s (run 0)" "^e4 write [0-9]* MiB/s (run 0)" "^h2 buffered_write [0-9]* MiB/s (run 0)" "^h2 syncfs [0-9.]* s (run 0)" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s (run 0)" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
