@@ -155,10 +155,14 @@ echo "kernel \$(uname -r) lockdep \$(zcat /proc/config.gz 2>/dev/null | grep -c 
 i=0
 while [ \$i -lt $REPEAT ]; do
 	rm -f /mnt/h2/big /mnt/e4/big /mnt/bt/big
+	# The source is drawn after the cache drop, not before: tmpfs is
+	# not evicted by drop_caches, so a buffer drawn first is warm for
+	# the second pass and every filesystem's admission read four times
+	# faster on passes two and three of the first run of this loop.
+	sync; echo 3 > /proc/sys/vm/drop_caches
 	head -c $((MIB * 1024 * 1024)) /dev/urandom > /dev/shm/src || { echo "no source"; exit 1; }
 	src=\$(md5sum < /dev/shm/src | cut -c1-32)
 	echo "source $MIB MiB md5 \$src (run \$i)"
-	sync; echo 3 > /proc/sys/vm/drop_caches
 	for fs in h2 e4 bt; do
 		# The page cache admission and the flush, timed apart.
 		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=notrunc status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
