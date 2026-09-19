@@ -2398,6 +2398,40 @@ DragonFly counted the fourth run's volume at the source's numbers,
 its file, and its checker was clean in 87 s; the host's checker was
 clean after each side and refused the header-byte control.
 
+## The closure rerun on the fixed build
+
+The closure rerun was launched from `bf314c6` on 2026-09-19 after the
+sibling notation fix in `38c3998`. It used the 48 GiB HAMMER2 image, the
+same 1978-path Nix closure, four writers, the debug kernel, lockdep and
+kmemleak. The run copied the closure in 133 s, synced in 1 s, and copied
+the ext4 reference in 188 s. The HAMMER2 walk took 39 s, the cold read
+102 s, and the hashed read 139 s. The hash lists matched on HAMMER2,
+squashfs and ext4 at `708a8df3c508a6dd`; the symlink lists matched at
+`4c2f5e2e3a0b7df6`.
+
+The collection removed 989 of 1978 store paths in 63 s while the reader
+ran beside it. It left 103693 files and 76012 symlinks, and the survivor
+list matched the source at `b61951160703aeb2`. `debug_locks` was 1 before
+and after the run, the lockdep ceiling was 0, kernel warnings were 0,
+both unmounts and `rmmod` exited 0, and the host checker was clean after
+both Linux and DragonFly. DragonFly counted 103693 files and 76012
+symlinks and its checker was clean in 60 s. The script reported
+`0 failure(s)` and exited 0. `mkfs.erofs` was absent, so the erofs
+reference was skipped.
+
+| reading | result |
+|---|---|
+| source | 1978 store paths, 205871 files, 150219 symlinks, 11.8 GB |
+| HAMMER2 copy | 133 s, copy exit 0 |
+| ext4 copy | 188 s |
+| HAMMER2 hash | `708a8df3c508a6dd` |
+| squashfs hash | `708a8df3c508a6dd` |
+| ext4 hash | `708a8df3c508a6dd` |
+| symlink hash | `4c2f5e2e3a0b7df6` on all three |
+| GC survivors | `b61951160703aeb2` on source and HAMMER2 |
+| lockdep | `debug_locks` 1 before and after, ceiling 0 |
+| checks | 0 kernel warnings, 0 failures, exit 0 |
+
 ## One large file, and what the BSD buffer cache gave for free
 
 DragonFly's HAMMER2 reads ahead through `cluster_readx()` and writes

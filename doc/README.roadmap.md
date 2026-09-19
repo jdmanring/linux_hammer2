@@ -12,9 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met, 0.9 on the fifteenth run of the real closure,
-nothing refused and lockdep on from the first mount to the unload,
-with the driver at 0.9.19 in `CHANGELOG.md`. The shipped module mounts
+0.5 to 0.9 are met. 0.9.20 closes the closure verification: the fixed
+build copied 1978 store paths and 205871 files with four writers, kept
+lockdep enabled from the first mount through garbage collection and
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.20
+in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
 both ports, and the read-write refusal that stood since 0.3 is lifted
