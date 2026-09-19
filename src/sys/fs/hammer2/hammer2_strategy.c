@@ -1455,9 +1455,12 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 		/*
 		 * The block is assembled in a buffer of the XOP's own,
 		 * allocated here rather than for every write XOP, since a
-		 * whole-block folio needs none.  It is freed at retire.
+		 * whole-block folio needs none.  hammer2_xop_retire() frees
+		 * it, and sizes the free the same way, so the two cannot
+		 * drift apart if the logical size ever becomes per-inode.
 		 */
-		xop->head.scratch = hmalloc(lblksize, M_HAMMER2, M_WAITOK);
+		xop->head.scratch = hmalloc(hammer2_get_logical(), M_HAMMER2,
+		    M_WAITOK);
 		bio_data = xop->head.scratch;
 		error = hammer2_strategy_assemble(folio->mapping->host, &parent,
 		    lbase, lblksize, bio_data);

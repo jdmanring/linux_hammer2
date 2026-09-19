@@ -47,7 +47,7 @@ a defect.
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1923 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 3301 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks |
-| `hammer2_strategy.c` | 1530 | this port's; `hammer2_dedup_clear()` carried, `->readahead` hands each folio of the window to a worker, and the write XOP hands the core a whole-block folio's address rather than a copy |
+| `hammer2_strategy.c` | 1533 | this port's; `hammer2_dedup_clear()` carried, `->readahead` hands each folio of the window to a worker, and the write XOP hands the core a whole-block folio's address rather than a copy |
 | `hammer2_vnops.c` | 1527 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, and the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type |
 | `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
