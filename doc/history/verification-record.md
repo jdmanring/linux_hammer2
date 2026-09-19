@@ -2726,6 +2726,63 @@ carries no tracefs, which is why every release-kernel row prints its
 `read_folio` count as unavailable; the debug kernel is where that count
 is read.
 
+### The folio handed to the core, and what its safety costs
+
+Measured 2026-09-19 on the release kernel, `6bcd011`, host load 5.13 at
+launch against the run above's 4.29. The write XOP copied a whole 64 KiB
+block out of the folio into a scratch buffer that every write XOP
+allocated and zeroed up front, one of the two full-block copies per block
+the section above names, and a sixth of a sync's samples. A folio that is
+already the whole block needs none of that, so the block-aligned case now
+hands the core `folio_address()` and the scratch buffer is allocated only
+where a partial block is assembled.
+
+That folio is not locked while the core reads it. `hammer2_writepages()`
+calls `folio_start_writeback()` and then `folio_unlock()` before the XOP
+runs, so with the copy removed a concurrent `write(2)` to the same offset
+could change the bytes between the check code being computed over them and
+their copy into the device buffer, and the block would fail verification
+on a later read. `mapping_set_stable_writes()` on regular files closes
+that window: `write_begin_get_folio()` passes `FGP_WRITEBEGIN`, which
+carries `FGP_STABLE`, and `hammer2_page_mkwrite()` tails into
+`filemap_page_mkwrite()`, so both write paths reach `folio_wait_stable()`,
+which waits on the folio's writeback only when the flag is set. The flag
+is a correctness requirement of the no-copy path, not a tuning knob, and
+its cost is part of the change rather than separable from it.
+
+MiB/s except the `syncfs` rows in seconds, against the `daecc89` run
+above. The two runs were taken at different host loads, so the control
+filesystems are given beside the port:
+
+| pass | | `daecc89` | `6bcd011` | ext4 then, now | btrfs then, now |
+|---|---|---|---|---|---|
+| 0 | buffered write | 1280 | 914 | 883, 806 | 1024, 1024 |
+| 0 | `syncfs` | 0.88 | 2.15 | 2.17, 1.78 | 1.03, 1.04 |
+| 0 | write with `fsync` | 966 | 966 | 272, 344 | 441, 332 |
+| 1 | write with `fsync` | 2048 | 2327 | 371, 423 | 457, 457 |
+| 2 | write with `fsync` | 2133 | 2327 | 371, 434 | 457, 441 |
+
+The cold-source pass, the only one the section above treats as
+comparable, is unchanged at 966 MiB/s. The warm passes gained about a
+tenth. The reading that asks for an explanation is pass 0's `syncfs`,
+0.88 s to 2.15: the controls moved by a tenth to a fifth under the higher
+load and in both directions, which does not account for a rise of that
+size, so part of it is the stable-writes wait and how much is not
+established here. One pass on a loaded host is too thin to attribute,
+and the honest statement is that the copy is gone, the combined figure
+did not move on the comparable pass, and the flush got slower by an
+amount this run cannot separate from the machine.
+
+The file read back with its source hash after a remount, no kernel
+warning, `rmmod` clean, both checkers clean with their negative controls
+on both the Linux-written and the DragonFly-written image, and DragonFly
+6.4 mounted the volume and read the Linux-written file at 681 MiB/s
+beside its own at 828. Allocation order is undisturbed: 8192 data blocks
+in 6213 contiguous steps against the earlier run's 6169, still ahead of
+DragonFly's own 1468 on the same volume. The full-volume fill passed on
+this build as root and as a user, 463 and 458 files intact with no
+damage and no warning.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
