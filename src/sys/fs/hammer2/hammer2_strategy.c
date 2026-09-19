@@ -1439,7 +1439,7 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	hammer2_inode_t *ip = xop->head.ip1; /* retained by ref */
 	hammer2_key_t lbase = xop->lbase;
 	struct folio *folio = xop->folio;	/* XXX Linux: was struct buf *bp */
-	char *bio_data = scratch;
+	char *bio_data = scratch;	/* the assembled block, when one is needed */
 	unsigned int i;	/* Linux */
 	int error, lblksize, pblksize;
 
@@ -1452,6 +1452,13 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 		    (unsigned long long)lbase, folio_size(folio),
 		    (unsigned long long)xop->lbase,
 		    xop->siblings ? folio_batch_count(xop->siblings) : 0);
+		/*
+		 * The block is assembled in a buffer of the XOP's own,
+		 * allocated here rather than for every write XOP, since a
+		 * whole-block folio needs none.  It is freed at retire.
+		 */
+		xop->head.scratch = hmalloc(lblksize, M_HAMMER2, M_WAITOK);
+		bio_data = xop->head.scratch;
 		error = hammer2_strategy_assemble(folio->mapping->host, &parent,
 		    lbase, lblksize, bio_data);
 		if (error) {
@@ -1472,7 +1479,19 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 			    sf, 0, folio_size(sf));
 		}
 	} else {
-		memcpy_from_folio(bio_data, folio, 0, lblksize); /* XXX Linux: bcopy(bp->b_data) */
+		/*
+		 * Linux: a folio that is the whole block is handed to the
+		 * core as it is.  The core reads the buffer and never
+		 * writes it (the compressor, the check code, the dedup
+		 * probe and the copy into the device buffer all take it
+		 * as a source), the folio is under writeback and locked
+		 * against truncation, and it is permanently mapped, so
+		 * folio_address() is the pointer the BSD ports get from
+		 * bp->b_data.  The copy into scratch was one of two full
+		 * copies per block on the write path, a sixth of a sync's
+		 * samples on the release kernel, and bought nothing.
+		 */
+		bio_data = folio_address(folio);
 	}
 	folio = NULL; /* safety, illegal to access after unlock */
 

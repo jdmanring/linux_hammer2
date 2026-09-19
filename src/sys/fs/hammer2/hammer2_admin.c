@@ -324,9 +324,14 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 	hammer2_assert_cluster(&ip->cluster);
 	xop->desc = desc;
 
-	if (desc == &hammer2_strategy_write_desc)
-		xop->scratch = hmalloc(hammer2_get_logical(), M_HAMMER2,
-		    M_WAITOK | M_ZERO);
+	/*
+	 * Linux: the write XOP's scratch is the block assembled around a
+	 * folio smaller than it.  A whole-block folio is handed to the core
+	 * directly, which is every folio a write on a volume with room
+	 * produces, so the block is allocated only when the XOP finds it
+	 * needs one; see hammer2_xop_strategy_write().
+	 */
+	xop->scratch = NULL;
 
 	for (i = 0; i < ip->cluster.nchains; ++i) {
 		mask = 1LLU << i;

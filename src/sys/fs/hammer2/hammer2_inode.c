@@ -886,6 +886,15 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 		inode->i_mapping->a_ops = &hammer2_file_aops;	/* Linux */
 		hammer2_mapping_set_block_folios(inode->i_mapping,
 		    HAMMER2_PBUFRADIX);	/* Linux */
+		/*
+		 * Linux: the write XOP hashes the folio itself, so a
+		 * writer must not change it between the check code and
+		 * the copy to the device buffer.  With this set the page
+		 * cache holds write_begin() and the write fault until
+		 * the folio's writeback ends, which is what btrfs asks
+		 * for every inode that carries a data checksum.
+		 */
+		mapping_set_stable_writes(inode->i_mapping);	/* Linux */
 	}
 
 	/*
