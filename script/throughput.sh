@@ -43,6 +43,7 @@ EXT4=${H2_TP_EXT4:-$FIXDIR/throughput-ext4.img}
 BTRFS=${H2_TP_BTRFS:-$FIXDIR/throughput-btrfs.img}
 MIB=${H2_TP_MIB:-512}
 MODARGS=${H2_TP_MODARGS:-}
+REPEAT=${H2_REPEAT:-1}
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 DFLY=${H2_DFLY_GUEST:-dragonflybsd642}
@@ -145,9 +146,19 @@ echo "source $MIB MiB md5 \$src"
 # every lock the port takes per block, which is what put a third of a
 # read's samples in lock bookkeeping and the port at 3% of its own profile.
 echo "kernel \$(uname -r) lockdep \$(zcat /proc/config.gz 2>/dev/null | grep -c '^CONFIG_PROVE_LOCKING=y')"
-for fs in h2 e4 bt; do
-	t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=fsync status=none; t1=\$(now)
-	echo "\$fs write \$(rate $MIB \$t0 \$t1) MiB/s"
+i=0
+while [ \$i -lt $REPEAT ]; do
+	for fs in h2 e4 bt; do
+		# Isolate page cache admission from the flush:
+		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=notrunc status=none; t1=\$(now)
+		echo "\$fs buffered_write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
+		t0=\$(now); sync -f /mnt/\$fs; t1=\$(now)
+		echo "\$fs syncfs \$(awk -v t0=\$t0 -v t1=\$t1 'BEGIN{printf "%.2f", t1-t0}') s (run \$i)"
+		# Combined for historical continuity:
+		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=fsync status=none; t1=\$(now)
+		echo "\$fs write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
+	done
+	i=\$((i + 1))
 done
 umount /mnt/h2; echo "hammer2 umount exit \$?"; umount /mnt/e4; umount /mnt/bt
 mount -t hammer2 /dev/vdb@ROOT /mnt/h2 || { echo "hammer2 remount failed"; exit 1; }
@@ -207,7 +218,7 @@ if [ -n "$src" ] && [ "$src" = "$got" ]; then
 else
 	echo "  FAIL  hammer2 hash '$got' is not the source hash '$src'"; fail=$((fail + 1))
 fi
-for want in "^h2 write [0-9]* MiB/s" "^e4 write [0-9]* MiB/s" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
+for want in "^h2 write [0-9]* MiB/s (run 0)" "^e4 write [0-9]* MiB/s (run 0)" "^h2 buffered_write [0-9]* MiB/s (run 0)" "^h2 syncfs [0-9.]* s (run 0)" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s (run 0)" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
