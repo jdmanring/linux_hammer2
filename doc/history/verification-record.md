@@ -2652,6 +2652,80 @@ there goes through the buffer cache because each block is checksummed
 and possibly compressed on the way; a direct open falls back to
 buffered I/O here as it does there.
 
+### The write timed apart from its flush, on the release kernel
+
+Every write number above is one figure, `dd conv=fsync`, which is the
+page cache admitting the bytes, writeback allocating and writing them,
+and the flush committing them, with no boundary between the three. On
+2026-09-19 the instrument gained `H2_REPEAT=n` and times them apart:
+a buffered write with no sync, then `syncfs` on its own, then the
+combined figure every earlier row is. Each pass removes the file, drops
+the guest's cache, draws a fresh 512 MiB from `/dev/urandom` and writes
+it to all three filesystems, so a second pass cannot read as a dedup hit
+or a warm overwrite. The first shape of the loop got both wrong: it
+overwrote one file with the same bytes and sized the volume for one
+pass, so the third pass hit the reserve, `dd` was refused, the empty
+file read at the rate function's floor and the instrument printed 25600
+MiB/s beside a hash of nothing; and its source buffer was drawn before
+the cache drop, which tmpfs survives, so passes two and three of the
+corrected run below admitted from a warm source on every filesystem.
+The volume is `2 * REPEAT + 2` files now, a refused write is printed as
+one and fails the run, and the source is drawn after the drop.
+
+Release kernel, host load 4.3 at launch, `daecc89`, MiB/s except the
+`syncfs` column in seconds. Pass 0 is the cold-source reading and the
+one comparable to the rows above; passes 1 and 2 had a warm source:
+
+| pass | | HAMMER2 | ext4 | btrfs |
+|---|---|---|---|---|
+| 0 | buffered write | 1280 | 883 | 1024 |
+| 0 | `syncfs` | 0.88 | 2.17 | 1.03 |
+| 0 | write with `fsync` | 966 | 272 | 441 |
+| 1, 2 | buffered write | 5120, 5689 | 4267, 3938 | 4267, 4655 |
+| 1, 2 | `syncfs` | 1.21, 1.18 | 1.64, 1.65 | 1.01, 1.02 |
+| 1, 2 | write with `fsync` | 2048, 2133 | 371, 371 | 457, 457 |
+
+The file read back with its source hash after a remount, no write was
+refused, no kernel warning, both checkers clean with their controls,
+DragonFly wrote its own file in 4 s and read the two at 801 and 658, and
+the Linux-written file was contiguous at 6169 of 8191 steps, lower than
+the 8185 above because two earlier copies had been removed on the same
+volume before the pass that survived. The split says where the cost is:
+the port admits the fastest of the three and flushes 512 MiB in 0.9 s
+to ext4's 2.2 and btrfs's 1.0, so its combined figure leads by two to
+four times, and on this workload the write path is not behind the
+references. The one-bio-per-block synchronous submission in the DIO
+layer, `submit_bio_wait()` with no plug where ext4 plugs the whole
+`writepages` pass, iomap accumulates an ioend and btrfs a `bio_ctrl`,
+is a real difference and this workload does not reach it: a 64 KiB
+write to a host-cached virtio disk completes before batching would
+matter. It will show on a device with queue latency, on many small
+files and under concurrent writers, none of which this instrument
+runs; `million-tree.sh` is the small-file reading.
+
+The cold read is the other number that asked for an explanation, 5120
+to 6400 here against ext4's 12800 and btrfs's 10240 on the same guest.
+A raw read of the same 512 MiB region of `/dev/vdb`, no filesystem,
+went at 533 MiB/s cold, so the guest's drop of its cache leaves the
+image warm in the host's, and every "cold" read on this guest is the
+host's memory: ext4 and btrfs copy it out with almost no per-byte work,
+and the port adds the format's work, one xxh64 over every block and one
+copy from the device mapping's folio into the file's. A system-wide
+`perf` of the read put nine tenths of the samples in the readahead
+workers, each worker's top symbols `xxh64` and `memcpy`, the reader
+itself only `_copy_to_iter`, no lock at the top and no idle. Raising
+the cluster hint from 4 to 16 and 64 moved nothing outside the run to
+run spread, which at 0.08 s per read is the instrument's floor, not the
+driver's. So the ceiling on this guest is twelve CPUs of portable-C
+xxh64 plus one 64 KiB copy per block, about 6 GiB/s, and the one change
+that would raise it is reading the device into the file's folio
+directly and verifying there, as btrfs does, which removes the copy and
+changes the DIO layer's ownership of data blocks. That is a design
+change to size with a measurement first, not a knob. The release kernel
+carries no tracefs, which is why every release-kernel row prints its
+`read_folio` count as unavailable; the debug kernel is where that count
+is read.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
