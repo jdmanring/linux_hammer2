@@ -1107,6 +1107,26 @@ against its own source; a run fails on any file read back wrong. Every
 writer's refusal is counted and printed, and the run fails if any
 writer was refused, so a full volume cannot read as a fast one.
 
+The same script carries the race trigger for the write path's one
+invariant that no check code can see, a file folio the core is reading
+must not be modified. `test/hammer2-mmap-exercise.c` takes a `race`
+argument beside the two modes the fixture and full-volume gates
+already use: it opens eight files, maps each shared and writable, and
+stores through the mappings in a loop with no bound while the parent
+drives writeback over the same ranges with
+`sync_file_range(SYNC_FILE_RANGE_WRITE)`, which starts writeback and
+does not wait for it. That is the writer that can reach a folio the
+core holds, since `write(2)` cannot (it takes `i_rwsem` exclusively and
+a second writer waits) and a write fault reaches the folio through
+`->page_mkwrite`, which takes the folio lock and not `i_rwsem`. The
+module counts what changed under the core: the write XOP hashes every
+folio it reads with XXH64 immediately before and after and increments
+the read-only parameter `folio_changed` on any difference. The script
+runs the trigger before it reads the counter and treats a non-zero
+count as a failure, with `unavailable` read as the instrument saying it
+cannot answer rather than a pass, since the counter is on the debug
+kernel's module.
+
 All four judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,
 on the image it judged rather than in a selftest: the same checker is
