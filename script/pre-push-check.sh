@@ -58,6 +58,19 @@ if [ -z "${CHECKPATCH:-}" ]; then
 	fi
 fi
 
+# The kernel tree the fleet gates build against. Without one they fall back
+# to the host's headers, which on this machine is below the floor, so the
+# two gates that actually build the module and boot it reported
+# COULD-NOT-RUN on every push and were covered only by a hand run. KDIR is
+# only set when the caller has not set it and the tree of record is where
+# the testing document says it is, so a machine without it behaves as
+# before rather than failing for a new reason.
+if [ -z "${KDIR:-}" ]; then
+	for d in "$HOME/kernels/linux-7.3-rc1" "$HOME/kernels/linux-7.3"; do
+		[ -d "$d" ] && { KDIR=$d; export KDIR; break; }
+	done
+fi
+
 for g in script/test-*.sh; do
 	out=$(bash "$g" 2>&1)
 	s=$?
