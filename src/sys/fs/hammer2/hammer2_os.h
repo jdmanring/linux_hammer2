@@ -610,6 +610,7 @@ hammer2_mtx_ex_waits(hammer2_mtx_t *p, unsigned long *waits)
 	if (hammer2_mtx_ex_recurse(p))
 		return;
 	hammer2_mtx_acquire(p, 0, 0);
+	__atomic_fetch_add(waits + 1, 1, __ATOMIC_RELAXED);
 	if (!hammer2_mtx_ex_grab(p)) {
 		__atomic_fetch_add(waits, 1, __ATOMIC_RELAXED);
 		__hammer2_mtx_ex_wait(p);

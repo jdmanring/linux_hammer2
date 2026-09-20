@@ -519,7 +519,7 @@ hammer2_io_getblk(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
 	KKASSERT((1 << (int)(lbase & HAMMER2_OFF_MASK_RADIX)) == lsize);
 
 	hammer2_mtx_ex_waits(&hmp->iohash_lock,
-	    &hammer2_iohash_waits);	/* Linux: counted acquire */
+	    hammer2_iohash_waits);	/* Linux: counted acquire */
 	if (op == HAMMER2_DOP_READQ) {
 		dio = hammer2_io_alloc(hmp, lbase, btype, 0);
 		if (dio == NULL) {
@@ -722,7 +722,7 @@ hammer2_io_putblk(hammer2_io_t **diop)
 	 * but if too many build up we have to clean them out.
 	 */
 	hammer2_mtx_ex_waits(&hmp->iohash_lock,
-	    &hammer2_iohash_waits);	/* Linux: counted acquire */
+	    hammer2_iohash_waits);	/* Linux: counted acquire */
 	dio_limit = hammer2_dio_limit;
 	if (dio_limit < 256)
 		dio_limit = 256;
@@ -1131,7 +1131,7 @@ hammer2_io_dedup_set(hammer2_dev_t *hmp, hammer2_blockref_t *bref)
 	int lsize;
 
 	hammer2_mtx_ex_waits(&hmp->iohash_lock,
-	    &hammer2_iohash_waits);	/* Linux: counted acquire */
+	    hammer2_iohash_waits);	/* Linux: counted acquire */
 	dio = hammer2_io_alloc(hmp, bref->data_off, bref->type, 1);
 	if (dio == NULL) {	/* XXX Linux: hpanic returns */
 		hammer2_mtx_unlock(&hmp->iohash_lock);
@@ -1173,7 +1173,7 @@ hammer2_io_dedup_delete(hammer2_dev_t *hmp, uint8_t btype,
 		return;
 
 	hammer2_mtx_ex_waits(&hmp->iohash_lock,
-	    &hammer2_iohash_waits);	/* Linux: counted acquire */
+	    hammer2_iohash_waits);	/* Linux: counted acquire */
 	dio = hammer2_io_alloc(hmp, data_off, btype, 0);
 	if (dio) {
 		hammer2_assert_io_refs(dio); /* dio locked + refs > 0 */
@@ -1212,7 +1212,7 @@ hammer2_io_dedup_assert(hammer2_dev_t *hmp, hammer2_off_t data_off,
 	hammer2_io_t *dio;
 
 	hammer2_mtx_ex_waits(&hmp->iohash_lock,
-	    &hammer2_iohash_waits);	/* Linux: counted acquire */
+	    hammer2_iohash_waits);	/* Linux: counted acquire */
 	dio = hammer2_io_alloc(hmp, data_off, HAMMER2_BREF_TYPE_DATA, 0);
 	if (dio) {
 		hammer2_assert_io_refs(dio); /* dio locked + refs > 0 */

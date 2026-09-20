@@ -306,10 +306,16 @@ echo "hammer2 md5 \$bad wrong of $WRITERS file(s)"
 # that can reach a folio the core is reading.  A write(2) cannot, since
 # generic_file_write_iter() holds i_rwsem exclusively.
 if [ -x /tmp/h2mmaptest ]; then
-	cd /mnt/h2 && /tmp/h2mmaptest /mnt/h2/raced race $RACE_ROUNDS 2>&1 | sed 's/^/race /'
+	# The trigger writes one file per writer, named from the path it is
+	# given, so the cleanup takes the whole set by glob and not the bare
+	# name.  The subshell keeps the cd out of this shell: a cwd left
+	# inside the mount makes the umount below report the volume busy and
+	# the module stay in use, which reads as a defect in the driver.
+	raceout=\$( (cd /mnt/h2 && /tmp/h2mmaptest /mnt/h2/raced race $RACE_ROUNDS) 2>&1 )
 	rc=\$?
+	printf '%s\n' "\$raceout" | sed 's/^/race /'
 	echo "mmap race exit \$rc"
-	rm -f /mnt/h2/raced
+	rm -f /mnt/h2/raced /mnt/h2/raced.*
 	sync -f /mnt/h2
 else
 	echo "mmap race exit unavailable"
@@ -373,8 +379,12 @@ if [ "$WRITERS" -gt 1 ]; then
 	# The io hash lock's wait count, reported beside the flush seconds so
 	# the coarser lock's cost is read where it would show.  Zero is a
 	# finding here rather than a pass: it says the lock never waited.
-	iw=$(printf '%s\n' "$out" | sed -n 's/^hammer2 iohash_waits \([0-9]*\)$/\1/p')
-	echo "  note  io hash lock waited ${iw:-unavailable} time(s) with $WRITERS writer(s)"
+	# The lock's wait count beside its total acquisitions, so the number
+	# is a rate and not a raw count: whether the coarser lock costs
+	# anything is the share of acquisitions that had to wait, and a
+	# reading of the count alone cannot say.
+	iw=$(printf '%s\n' "$out" | sed -n 's/^hammer2 iohash_waits \([0-9]*\),\([0-9]*\)$/\1 \2/p')
+	echo "  note  io hash lock waited ${iw:-unavailable} of ${iw:+$(printf '%s' "$iw" | cut -d" " -f2)} acquisition(s) with $WRITERS writer(s)"
 	case "${fc:-unavailable}" in
 	0) echo "  ok    no block changed under the core with $WRITERS writers" ;;
 	unavailable) echo "  note  folio_changed is not in this module: the reading is the debug kernel's" ;;

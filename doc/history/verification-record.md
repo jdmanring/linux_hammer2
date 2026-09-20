@@ -2968,6 +2968,16 @@ read-only and hashes twice per block, so it is the debug kernel's
 reading, which is where the gates that read it run; a release build
 prints it as unavailable, which is not a pass.
 
+The same pair run through `throughput.sh` at four writers, which is the
+load the flag was added for and the only one where a second writer
+arrives at a folio the core holds: 20000 rounds over the eight files,
+`mmap race exit 0`, `hammer2 folio_changed 0`, and the script's own
+verdict `ok no block changed under the core with 4 writers`, with all
+four files hashing back to their sources and the run exiting 0. That is
+the reading the single-writer control cannot give, and it is the one the
+script prints, so a later run that reopens the window fails on the
+counter rather than on a reader noticing.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
