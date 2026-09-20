@@ -967,6 +967,15 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
  * on the media until something overwrites them, and a later extend would
  * read them back as file data.  Runs outside ip->lock, since the read it
  * may take goes through ->read_folio, which takes that lock shared.
+ *
+ * Linux: the folio is waited on before it is zeroed.  The mapping is
+ * marked stable because the write XOP hashes a whole-block folio itself
+ * rather than a copy, so a folio under writeback is one the core is
+ * reading: zeroing it here would change bytes the core has already read
+ * and is about to either copy to the media or compare against a dedup
+ * candidate, and a false match there points the file at another block's
+ * content.  read_mapping_folio() takes no FGP_STABLE of its own, so the
+ * wait is made here, once, rather than by asking for the folio again.
  */
 static int
 hammer2_zero_tail(struct inode *inode, loff_t off)
@@ -979,6 +988,13 @@ hammer2_zero_tail(struct inode *inode, loff_t off)
 	if (IS_ERR(folio))
 		return (PTR_ERR(folio));
 	folio_lock(folio);
+	/*
+	 * The lock is held and the writeback is waited on under it: a
+	 * writer that is already in the core's hands cannot be holding
+	 * the lock, so no writer can begin while the wait runs and the
+	 * zeroing below then lands on a folio nobody else is reading.
+	 */
+	folio_wait_stable(folio);
 	if (off < folio_pos(folio) + folio_size(folio))
 		folio_zero_segment(folio, offset_in_folio(folio, off),
 		    folio_size(folio));

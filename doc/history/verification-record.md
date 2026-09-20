@@ -2873,6 +2873,53 @@ per block removed together with a per-XOP 64 KiB allocation. The gate
 that found every write-path defect this port has had is
 `test-enospc.sh`; it found none here, on either variant.
 
+### The tail a truncate zeroes, which the guard did not reach
+
+Found 2026-09-20, by reading rather than by a failing run, and fixed the
+same day. Handing the core a whole-block folio instead of a copy puts the
+folio's bytes in the core's hands while the folio is under writeback and
+unlocked, and `mapping_set_stable_writes()` closes that window for the
+writers that go through `write_begin()` and the write fault. It does not
+close it for a writer that reaches a folio another way, and one does:
+`hammer2_zero_tail()`, which a size change calls before it takes
+`ip->lock`, reads the folio with `read_mapping_folio()`. That lands in
+`do_read_cache_folio()`, which passes no `FGP_STABLE`, so the zeroing
+that follows took the folio lock without waiting for the writeback the
+core was in the middle of.
+
+What that costs is worse than a torn block. A block whose bytes a
+truncate changed while the core was reading it is copied to the media and
+its check code is computed over the same bytes, so the mix verifies and
+reads back as data the writer never wrote. The dedup probe is the sharper
+one: the core compares the folio against a candidate block with `bcmp()`
+and points the file at that block when they match, so a folio changing
+under the compare can match a block it does not equal, and the file then
+reads another block's content. Neither is reported by any check.
+
+The fix is one call. `hammer2_zero_tail()` waits with
+`folio_wait_stable()` after it takes the folio lock and before it zeroes,
+which is the same wait the write paths already reach and needs no new
+flag. Under the lock no writer can start while the wait runs, and the
+zeroing then lands on a folio nobody is reading. Measured on the fix:
+the full-volume fill 468 of 468 files intact as root and 459 of 459 as a
+user, 0 damaged, 0 kernel warnings, `rmmod` clean, exit 0 on both; syntax
+65 checks 0 failed under clang, gcc and sparse; checkpatch unchanged at
+1140.
+
+The instrument that was written to catch this is not kept, and why is
+part of the finding. It raced two writers over one block and checked
+that the block read back as one writer's state or the other's, and run
+against a build with the guard deliberately removed, where the defect is
+reachable, it reported 0 torn in 40 rounds. The reading cannot see this
+defect: the racing folio stays dirty and is written again after the race,
+so the media a later read sees is consistent whatever happened during the
+core's read. A control that cannot fail on the build carrying the defect
+proves nothing, which is the same reason the instrument was not committed.
+What did find it was reading every place the port modifies a folio, which
+is two: this one, and the read path's own zeroing of a folio the core has
+locked for its own decode, which is safe because the core holds the lock
+across it.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
