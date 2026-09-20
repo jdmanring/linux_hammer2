@@ -12,7 +12,14 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.22 closes one more way a folio could be changed
+0.5 to 0.9 are met. 0.9.23 shows that the window 0.9.22 closed is real
+rather than argued: a count on the write XOP read 14160919 folios changed
+under the core on a build with the stable-writes marking removed and 0 on
+the build with it, twenty thousand rounds over eight files. It also
+measures the io layer's lock, which is the FreeBSD port's arrangement
+rather than DragonFly's, at 2.6 percent of acquisitions waiting under four
+writers, and records that as a reading rather than changing code three
+ports share. 0.9.22 closed one more way a folio could be changed
 while the core reads it, found by reading rather than by a failing run.
 0.9.21 removed one of the two full-block copies the
 write path was making and measures what its safety costs, on the release
@@ -20,7 +27,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.22
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.23
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

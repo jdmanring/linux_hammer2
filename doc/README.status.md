@@ -3,9 +3,12 @@ Status
 
 The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
-DragonFly itself. The tree is at 0.9.22 in `CHANGELOG.md`; nothing is
+DragonFly itself. The tree is at 0.9.23 in `CHANGELOG.md`; nothing is
 tagged. What stands between it and 1.0 is the release shape and the
-filings staged under `doc/upstream/`; the throughput reading is taken.
+filings staged under `doc/upstream/`; the throughput reading is taken,
+and the write path's one invariant that no check code can see is now
+measured rather than argued, a count of folios changed under the core
+reading 14160919 on a build with its guard removed and 0 with it.
 
 | what | state | read by |
 |---|---|---|
