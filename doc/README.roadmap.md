@@ -529,12 +529,16 @@ keeping their upstream notices unchanged; the findings staged in
 each; the maintenance plan in `doc/README.maintenance.md`; and an out-of-tree
 release a distribution can package, meaning a tagged version, a
 `../CHANGELOG.md` entry, and the gates runnable from the tarball. Read
-on 2026-09-07 from a `git archive` of `b06fe74` with the kernel of
-record's tree named: ten gates ran and passed, and three reported
-could-not-run for the reasons a tarball has, the history gate wanting
-a repository and the two fleet gates a guest; the prose gate had failed
-there, its population being the tracked set, and reads the tree where
-there is no repository since. Reproducibility read on 2026-09-20 from `a4ae61a`: the module
+on 2026-09-20 from a `git archive` of `dcf187e`, the kernel of record's
+tree named: thirteen gates were invoked, ten ran and passed, and three
+reported could-not-run for the reasons a tarball has. The history gate
+wants a repository and says so; the two fleet gates want a guest and say
+so, and one of them first reported `KDIR` below the floor, which is the
+host default and not the tarball's shape, so a consumer names `KDIR`.
+The prose gate, which had failed in the earlier read because its
+population was the tracked set, reads the tree where there is no
+repository since. The earlier read was taken 2026-09-07 against
+`b06fe74`, which is hundreds of commits behind. Reproducibility read on 2026-09-20 from `a4ae61a`: the module
 built twice from `make clean` against the kernel of record's tree
 (7.3.0-rc1, an unpacked tarball at `~/kernels/linux-7.3-rc1`, which has
 no commit hash of its own) compares byte for byte, the same sha256 both
