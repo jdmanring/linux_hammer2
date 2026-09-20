@@ -217,6 +217,24 @@ keeps the change to the write XOP, the two decompressors, one order
 pin and one grab. `pr_debug` names each assembled block, so the count
 is read with the module's `dyndbg=+p` parameter.
 
+The assembly happens only where it is needed. A folio that is the
+whole block, which is every folio a write on a volume with room
+produces, is handed to the core as `folio_address()` and no scratch
+buffer is allocated for it: the copy into one was one of the two full
+copies a block was making, and the core only reads the buffer
+(compressor, check code, dedup probe and the copy into the device
+buffer all take it as a source). That puts the folio's bytes in the
+core's hands while the folio is under writeback and unlocked, so a
+regular file's mapping is marked `mapping_set_stable_writes()` and a
+second writer waits for the writeback to end before dirtying it again,
+which is what btrfs does for an inode carrying a data checksum. Both
+write paths reach that wait: `write_begin_get_folio()` passes
+`FGP_WRITEBEGIN`, which carries `FGP_STABLE`, and the write fault
+tails into `filemap_page_mkwrite()`. The scratch buffer, when the
+smaller folio does need one, is allocated by the XOP that needs it
+rather than for every write XOP, freed at retire, and sized by
+`hammer2_get_logical()` on both sides.
+
 What the smaller folio costs, read 2026-09-07 from the full-volume
 gate once the freemap counted what it handed out: the page cache asks
 for any order above a mapping's minimum with `__GFP_NORETRY`, so the
