@@ -2940,12 +2940,19 @@ the parent drives writeback over the same ranges with
 `sync_file_range(SYNC_FILE_RANGE_WRITE)`, which starts writeback and
 does not wait for it. That is the writer that reaches a folio the core
 may be reading; `write(2)` cannot, because `generic_file_write_iter()`
-holds `i_rwsem` exclusively and a second writer waits. The first two
-shapes of the trigger failed for reasons worth recording: one ran the
-writers to completion and only then started writeback, so the two never
-overlapped, and read 0 over six thousand rounds; the other sampled only
-the whole-block branch, which a write fault never reaches, since the
-folio it creates is page-sized.
+holds `i_rwsem` exclusively and a second writer waits. Earlier shapes
+of the trigger read zero, and one of the explanations this record gave
+for that was wrong. It said a write fault reaches only the assemble
+branch, because the folio a fault creates is page-sized. That is false:
+`hammer2_mapping_set_block_folios()` has given every file mapping a
+minimum folio order of `HAMMER2_PBUFRADIX` since 0.4.9 (`118d787`), so
+the page cache hands a fault a 64 KiB folio and the write entry
+allocates the block folio itself with the mapping's retrying mask, which
+is the whole-block branch. An earlier zero is real for a reason the code
+shows: writers run to completion and writeback starts after, so the two
+never overlap. Whether the window is reachable from the assemble branch
+is not measured here, and that branch takes an order-4 grab failing,
+which needs memory pressure this harness does not create.
 
 | build | rounds | `folio_changed` |
 |---|---|---|
