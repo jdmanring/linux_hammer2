@@ -1093,6 +1093,20 @@ four contiguous steps, and its first two runs found the tool called
 without its subcommand and the name looked up in the wrong block, each
 reading zero blocks for both files and failing on the count.
 
+`H2_TP_WRITERS=n` splits the same total between n writers running at
+once, each on its own random source and its own file, and times the
+admission, the `syncfs` and the write with `fsync` the same way, for
+all three filesystems. It exists because the single-writer reading does
+not reach what the write path costs when several writers dirty the
+volume together: the flush is where a per-block wait is paid, and one
+writer rarely makes the kernel wait. The file names change with the
+writer count (`big.0` upward rather than one `big`), so the read phase,
+the post-remount hash check, the DragonFly leg and the layout parser
+all walk the list the run actually wrote, and each file is hashed
+against its own source; a run fails on any file read back wrong. Every
+writer's refusal is counted and printed, and the run fails if any
+writer was refused, so a full volume cannot read as a fast one.
+
 All four judge their image by the host's `fsck_hammer2` exiting zero,
 and each of those verdicts now carries its negative control beside it,
 on the image it judged rather than in a selftest: the same checker is

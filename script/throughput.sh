@@ -21,7 +21,8 @@
 #
 # Exits 2 without the fleet or the tools. Not a gate.
 #
-#   H2_TP_MIB=512            size of the file, MiB
+#   H2_TP_MIB=512            total bytes per filesystem, MiB
+#   H2_TP_WRITERS=1          concurrent writers, each writing an equal share
 #   H2_TP_IMAGE, H2_TP_EXT4  the two images (H2_FIXTURE_DIR by default)
 #   H2_TP_MODARGS            module parameters for the guest's insmod
 #   KDIR                     the kernel of record's build tree, required
@@ -44,6 +45,26 @@ BTRFS=${H2_TP_BTRFS:-$FIXDIR/throughput-btrfs.img}
 MIB=${H2_TP_MIB:-512}
 MODARGS=${H2_TP_MODARGS:-}
 REPEAT=${H2_REPEAT:-1}
+WRITERS=${H2_TP_WRITERS:-1}
+case "$WRITERS" in
+''|*[!0-9]*) echo "throughput: COULD-NOT-RUN: H2_TP_WRITERS is not a number" >&2; exit 2 ;;
+esac
+[ "$WRITERS" -gt 0 ] && [ "$WRITERS" -le 64 ] || {
+	echo "throughput: COULD-NOT-RUN: H2_TP_WRITERS must be between 1 and 64" >&2; exit 2; }
+[ "$MIB" -gt 0 ] || { echo "throughput: COULD-NOT-RUN: H2_TP_MIB must be positive" >&2; exit 2; }
+[ $((MIB % WRITERS)) -eq 0 ] || {
+	echo "throughput: COULD-NOT-RUN: H2_TP_MIB must divide evenly by H2_TP_WRITERS" >&2; exit 2; }
+PER_MIB=$((MIB / WRITERS))
+# The names of the files the Linux side leaves behind: one per writer
+# when writers run at once, one otherwise.  Both the read phase and the
+# DragonFly leg walk this list, so neither looks for a name no run made.
+files="big.0"
+w=1
+while [ "$w" -lt "$WRITERS" ]; do
+	files="$files big.$w"
+	w=$((w + 1))
+done
+[ "$WRITERS" -gt 1 ] || files="big"
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 DFLY=${H2_DFLY_GUEST:-dragonflybsd642}
@@ -148,31 +169,94 @@ rate() { awk -v b="\$1" -v t0="\$2" -v t1="\$3" 'BEGIN{d=t1-t0; if (d<=0) d=0.01
 # every lock the port takes per block, which is what put a third of a
 # read's samples in lock bookkeeping and the port at 3% of its own profile.
 echo "kernel \$(uname -r) lockdep \$(zcat /proc/config.gz 2>/dev/null | grep -c '^CONFIG_PROVE_LOCKING=y')"
-# Every pass is a first write of new bytes into a cold cache: the file
-# is removed, the guest cache dropped and the source drawn again, so a
+# Every pass is a first write of new bytes into a cold cache: the files
+# are removed, the guest cache dropped and fresh sources drawn again, so a
 # second pass cannot read as a dedup hit or a warm overwrite. A refused
 # dd prints as a refusal, never as a rate over the time it took to fail.
 i=0
 while [ \$i -lt $REPEAT ]; do
-	rm -f /mnt/h2/big /mnt/e4/big /mnt/bt/big
 	# The source is drawn after the cache drop, not before: tmpfs is
 	# not evicted by drop_caches, so a buffer drawn first is warm for
 	# the second pass and every filesystem's admission read four times
 	# faster on passes two and three of the first run of this loop.
 	sync; echo 3 > /proc/sys/vm/drop_caches
-	head -c $((MIB * 1024 * 1024)) /dev/urandom > /dev/shm/src || { echo "no source"; exit 1; }
-	src=\$(md5sum < /dev/shm/src | cut -c1-32)
-	echo "source $MIB MiB md5 \$src (run \$i)"
-	for fs in h2 e4 bt; do
-		# The page cache admission and the flush, timed apart.
-		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=notrunc status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
-		echo "\$fs buffered_write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
-		t0=\$(now); sync -f /mnt/\$fs; t1=\$(now)
-		echo "\$fs syncfs \$(awk -v t0=\$t0 -v t1=\$t1 'BEGIN{printf "%.2f", t1-t0}') s (run \$i)"
-		# The combined number every earlier reading of record is.
-		t0=\$(now); dd if=/dev/shm/src of=/mnt/\$fs/big bs=1M conv=fsync status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
-		echo "\$fs write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
-	done
+	if [ "$WRITERS" -gt 1 ]; then
+		w=0
+		while [ \$w -lt $WRITERS ]; do
+			rm -f /dev/shm/h2tp.src.\$w
+			head -c $((PER_MIB * 1024 * 1024)) /dev/urandom > /dev/shm/h2tp.src.\$w || {
+				echo "no source for writer \$w"; exit 1; }
+			md5sum < /dev/shm/h2tp.src.\$w | cut -c1-32 > /dev/shm/h2tp.src.\$w.md5
+			w=\$((w + 1))
+		done
+		echo "source $MIB MiB drawn in $WRITERS files (run \$i)"
+		for fs in h2 e4 bt; do
+			w=0
+			while [ \$w -lt $WRITERS ]; do
+				rm -f /mnt/\$fs/big.\$w
+				w=\$((w + 1))
+			done
+			rm -f /tmp/h2tp.\$fs.*.rc
+			t0=\$(now); w=0
+			while [ \$w -lt $WRITERS ]; do
+				(dd if=/dev/shm/h2tp.src.\$w of=/mnt/\$fs/big.\$w bs=1M conv=notrunc status=none
+					echo \$? > /tmp/h2tp.\$fs.\$w.rc) &
+				w=\$((w + 1))
+			done
+			wait; t1=\$(now)
+			refused=0; w=0
+			while [ \$w -lt $WRITERS ]; do
+				rc=\$(cat /tmp/h2tp.\$fs.\$w.rc)
+				[ \$rc -ne 0 ] && refused=\$((refused + 1))
+				w=\$((w + 1))
+			done
+			echo "\$fs concurrent buffered_write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i, $WRITERS writers)"
+			echo "\$fs concurrent write refusals \$refused (run \$i, $WRITERS writers)"
+			t0=\$(now); sync -f /mnt/\$fs; sr=\$?; t1=\$(now)
+			echo "\$fs concurrent syncfs \$(awk -v t0=\$t0 -v t1=\$t1 'BEGIN{printf "%.2f", t1-t0}') s (run \$i, $WRITERS writers)"
+			echo "\$fs concurrent syncfs exit \$sr (run \$i, $WRITERS writers)"
+			rm -f /tmp/h2tp.\$fs.*.rc
+			t0=\$(now); w=0
+			while [ \$w -lt $WRITERS ]; do
+				(dd if=/dev/shm/h2tp.src.\$w of=/mnt/\$fs/big.\$w bs=1M conv=fsync status=none
+					echo \$? > /tmp/h2tp.\$fs.\$w.rc) &
+				w=\$((w + 1))
+			done
+			wait; t1=\$(now)
+			refused=0; w=0
+			while [ \$w -lt $WRITERS ]; do
+				rc=\$(cat /tmp/h2tp.\$fs.\$w.rc)
+				[ \$rc -ne 0 ] && refused=\$((refused + 1))
+				w=\$((w + 1))
+			done
+			echo "\$fs concurrent write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i, $WRITERS writers)"
+			echo "\$fs concurrent write refusals \$refused (run \$i, $WRITERS writers)"
+			bad=0; w=0
+			while [ \$w -lt $WRITERS ]; do
+				src=\$(cat /dev/shm/h2tp.src.\$w.md5)
+				got=\$(md5sum < /mnt/\$fs/big.\$w | cut -c1-32)
+				[ "\$src" = "\$got" ] || bad=\$((bad + 1))
+				w=\$((w + 1))
+			done
+			echo "\$fs concurrent hash mismatches \$bad (run \$i, $WRITERS writers)"
+		done
+	else
+		rm -f /mnt/h2/big /mnt/e4/big /mnt/bt/big
+		head -c $((MIB * 1024 * 1024)) /dev/urandom > /dev/shm/h2tp.src.0 || { echo "no source"; exit 1; }
+		src=\$(md5sum < /dev/shm/h2tp.src.0 | cut -c1-32)
+		echo "\$src" > /dev/shm/h2tp.src.0.md5
+		echo "source $MIB MiB md5 \$src (run \$i)"
+		for fs in h2 e4 bt; do
+			# The page cache admission and the flush, timed apart.
+			t0=\$(now); dd if=/dev/shm/h2tp.src.0 of=/mnt/\$fs/big bs=1M conv=notrunc status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
+			echo "\$fs buffered_write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
+			t0=\$(now); sync -f /mnt/\$fs; t1=\$(now)
+			echo "\$fs syncfs \$(awk -v t0=\$t0 -v t1=\$t1 'BEGIN{printf "%.2f", t1-t0}') s (run \$i)"
+			# The combined number every earlier reading of record is.
+			t0=\$(now); dd if=/dev/shm/h2tp.src.0 of=/mnt/\$fs/big bs=1M conv=fsync status=none || echo "\$fs write refused (run \$i)"; t1=\$(now)
+			echo "\$fs write \$(rate $MIB \$t0 \$t1) MiB/s (run \$i)"
+		done
+	fi
 	i=\$((i + 1))
 done
 umount /mnt/h2; echo "hammer2 umount exit \$?"; umount /mnt/e4; umount /mnt/bt
@@ -183,7 +267,7 @@ mount -t ext4 /dev/vdc /mnt/e4; mount -t btrfs /dev/vdd /mnt/bt
 # while the next hits the host's cache, a difference of ten times that
 # is the host's and not the driver's.  Every timed read below is cold
 # in the guest and warm on the host, which is the driver's own cost.
-for fs in h2 e4 bt; do dd if=/mnt/\$fs/big of=/dev/null bs=1M status=none; done
+for fs in h2 e4 bt; do for f in $files; do dd if=/mnt/\$fs/\$f of=/dev/null bs=1M status=none; done; done
 sync; echo 3 > /proc/sys/vm/drop_caches
 # The port's ->read_folio decodes a whole block for whatever folio it is
 # handed, so the number of calls a cold read makes is the number of
@@ -200,12 +284,21 @@ for fs in h2 e4 bt; do
 	for bs in 1M 64k; do
 		echo 3 > /proc/sys/vm/drop_caches
 		[ \$fs = h2 ] && prof_start
-		t0=\$(now); dd if=/mnt/\$fs/big of=/dev/null bs=\$bs status=none; t1=\$(now)
+		t0=\$(now)
+		for f in $files; do dd if=/mnt/\$fs/\$f of=/dev/null bs=\$bs status=none; done
+		t1=\$(now)
 		echo "\$fs read \$bs \$(rate $MIB \$t0 \$t1) MiB/s"
 		[ \$fs = h2 ] && echo "h2 read \$bs read_folio calls \$(prof_count)"
 	done
 done
-echo "hammer2 md5 \$(md5sum < /mnt/h2/big | cut -c1-32)"
+bad=0; k=0
+for f in $files; do
+	src=\$(cat /dev/shm/h2tp.src.\$k.md5 2>/dev/null)
+	got=\$(md5sum < /mnt/h2/\$f | cut -c1-32)
+	[ -n "\$src" ] && [ "\$src" = "\$got" ] || bad=\$((bad + 1))
+	k=\$((k + 1))
+done
+echo "hammer2 md5 \$bad wrong of $WRITERS file(s)"
 umount /mnt/h2; echo "second umount exit \$?"; umount /mnt/e4; umount /mnt/bt
 echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
 dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
@@ -226,19 +319,35 @@ down "$GUEST" "$GUEST_SSH"
 e4=$(printf '%s\n' "$out" | sed -n 's/^e4 read 1M \([0-9]*\) MiB.*/\1/p')
 printf '%s\n' "$out" | grep -q "^kernel .* lockdep 1$" && echo "  note  the guest kernel carries CONFIG_PROVE_LOCKING: every number above is the debug kernel's, and a read on the release build of the same kernel measured four times faster"
 [ -n "$e4" ] && [ "$e4" -lt 2000 ] && echo "  note  ext4 read $e4 MiB/s: the host's cache was cold, so every read above is the host's disk and compares only with a run that says the same"
-src=$(printf '%s\n' "$out" | sed -n 's/^source .* md5 \([0-9a-f]*\).*/\1/p' | tail -1)
-got=$(printf '%s\n' "$out" | sed -n 's/^hammer2 md5 //p')
-if [ -n "$src" ] && [ "$src" = "$got" ]; then
-	echo "  ok    the file reads back from hammer2 with the source hash after a remount"
+if [ "$WRITERS" -gt 1 ]; then
+	printf '%s\n' "$out" | grep -q "^hammer2 md5 0 wrong of $WRITERS file(s)$" && {
+		echo "  ok    every file reads back from hammer2 with its source hash after a remount"
+	} || { echo "  FAIL  the files did not read back with their source hashes after a remount"; fail=$((fail + 1)); }
+	for fs in h2 e4 bt; do
+		expected=0
+		while [ "$expected" -lt "$REPEAT" ]; do
+			for want in "^$fs concurrent buffered_write [0-9]* MiB/s (run $expected, $WRITERS writers)$" \
+			    "^$fs concurrent write refusals 0 (run $expected, $WRITERS writers)$" \
+			    "^$fs concurrent syncfs [0-9.]* s (run $expected, $WRITERS writers)$" \
+			    "^$fs concurrent syncfs exit 0 (run $expected, $WRITERS writers)$" \
+			    "^$fs concurrent write [0-9]* MiB/s (run $expected, $WRITERS writers)$" \
+			    "^$fs concurrent hash mismatches 0 (run $expected, $WRITERS writers)$"; do
+				printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
+			done
+			expected=$((expected + 1))
+		done
+	done
 else
-	echo "  FAIL  hammer2 hash '$got' is not the source hash '$src'"; fail=$((fail + 1))
+	printf '%s\n' "$out" | grep -q "^hammer2 md5 0 wrong of 1 file(s)$" && {
+		echo "  ok    the file reads back from hammer2 with the source hash after a remount"
+	} || { echo "  FAIL  the file did not read back with its source hash after a remount"; fail=$((fail + 1)); }
+	printf '%s\n' "$out" | grep -q " write refused " && { echo "  FAIL  a write was refused: $(printf '%s\n' "$out" | grep ' write refused ' | tr '\n' ';')"; fail=$((fail + 1)); }
+	nw=$(printf '%s\n' "$out" | grep -c "^h2 write [0-9]* MiB/s (run [0-9]*)$")
+	[ "$nw" = "$REPEAT" ] || { echo "  FAIL  $nw hammer2 write readings for $REPEAT run(s)"; fail=$((fail + 1)); }
+	for want in "^h2 write [0-9]* MiB/s (run 0)" "^e4 write [0-9]* MiB/s (run 0)" "^h2 buffered_write [0-9]* MiB/s (run 0)" "^h2 syncfs [0-9.]* s (run 0)" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s (run 0)" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
+		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
+	done
 fi
-printf '%s\n' "$out" | grep -q " write refused " && { echo "  FAIL  a write was refused: $(printf '%s\n' "$out" | grep ' write refused ' | tr '\n' ';')"; fail=$((fail + 1)); }
-nw=$(printf '%s\n' "$out" | grep -c "^h2 write [0-9]* MiB/s (run [0-9]*)$")
-[ "$nw" = "$REPEAT" ] || { echo "  FAIL  $nw hammer2 write readings for $REPEAT run(s)"; fail=$((fail + 1)); }
-for want in "^h2 write [0-9]* MiB/s (run 0)" "^e4 write [0-9]* MiB/s (run 0)" "^h2 buffered_write [0-9]* MiB/s (run 0)" "^h2 syncfs [0-9.]* s (run 0)" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s (run 0)" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
-	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
-done
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
@@ -250,9 +359,9 @@ t0=\$(date +%s)
 dd if=/dev/random of=/mnt/tp/big.dfly bs=1m count=$MIB 2>/dev/null; sync; t1=\$(date +%s)
 echo "dragonfly wrote $MIB MiB in \$((t1 - t0)) s"
 umount /mnt/tp; mount_hammer2 /dev/vbd1@ROOT /mnt/tp || { echo "remount failed"; exit 1; }
-for f in big big.dfly; do dd if=/mnt/tp/\$f of=/dev/null bs=1m 2>/dev/null; done
+for f in $files big.dfly; do dd if=/mnt/tp/\$f of=/dev/null bs=1m 2>/dev/null; done
 umount /mnt/tp; mount_hammer2 /dev/vbd1@ROOT /mnt/tp || { echo "remount failed"; exit 1; }
-for f in big big.dfly; do
+for f in $files big.dfly; do
 	r=\$(dd if=/mnt/tp/\$f of=/dev/null bs=1m 2>&1 | sed -n 's/.*(\\([0-9]*\\) bytes\\/sec).*/\\1/p')
 	echo "dragonfly read \$f \$((\${r:-0} / 1048576)) MiB/s"
 done
@@ -263,9 +372,12 @@ scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "throughput:
 dout=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1); st=$?
 printf '%s\n' "$dout" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
-for want in "^dragonfly read big [1-9][0-9]* MiB/s" "^dragonfly read big.dfly [1-9][0-9]* MiB/s"; do
-	printf '%s\n' "$dout" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
+for f in $files; do
+	printf '%s\n' "$dout" | grep -q "^dragonfly read $f [1-9][0-9]* MiB/s" || {
+		echo "  FAIL  wanted ^dragonfly read $f [1-9][0-9]* MiB/s"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$dout" | grep -q "^dragonfly read big.dfly [1-9][0-9]* MiB/s" || {
+	echo "  FAIL  wanted ^dragonfly read big.dfly [1-9][0-9]* MiB/s"; fail=$((fail + 1)); }
 printf '%s\n' "$dout" | grep -q "^dragonfly umount exit 0$" || { echo "  FAIL  dragonfly did not write and unmount the reference file"; fail=$((fail + 1)); }
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
@@ -295,11 +407,14 @@ layout() {	# layout <name>
 		  last = off }
 		END { printf "%d %d %d %d\n", n, c + 0, f + 0, b + 0 }'
 }
-for f in big big.dfly; do
+for f in $files; do
 	set -- $(layout "$f")
 	echo "  layout  $f: $1 data blocks, $2 contiguous steps, $3 forward jumps, $4 backward jumps"
-	[ "$1" = "$((MIB * 16))" ] || { echo "  FAIL  $f has $1 data blocks, not $((MIB * 16))"; fail=$((fail + 1)); }
+	[ "$1" = "$((PER_MIB * 16))" ] || { echo "  FAIL  $f has $1 data blocks, not $((PER_MIB * 16))"; fail=$((fail + 1)); }
 done
+set -- $(layout "big.dfly")
+echo "  layout  big.dfly: $1 data blocks, $2 contiguous steps, $3 forward jumps, $4 backward jumps"
+[ "$1" = "$((MIB * 16))" ] || { echo "  FAIL  big.dfly has $1 data blocks, not $((MIB * 16))"; fail=$((fail + 1)); }
 
 rm -f "$EXT4" "$BTRFS"
 echo "throughput: a $MIB MiB file written both ways and read back, $fail failure(s)"
