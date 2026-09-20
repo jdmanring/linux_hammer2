@@ -60,6 +60,42 @@ memory of its own, and the module parameter `io_buf_only=1` puts every
 block through it so the fixture and full-volume gates read the path
 rather than wait for it.
 
+## A file folio the core is handed
+
+The block device's folio is not the only one the core reads. The write
+and read halves of the strategy XOP are handed a folio of the *file's*
+mapping, and a whole-block one is read in place rather than copied, so
+the core holds the file's own memory across its hashing, its
+compression and its copy into the device buffer. One rule follows from
+that, and it applies to every path that reaches a file folio:
+
+**A file folio the core is reading must not be modified.** The core's
+check code is computed over the bytes it read and copied to the media
+together, so a folio changed between those two reads carries a check
+code computed over a mix, and the block writes out and verifies as data
+nobody wrote. The dedup probe is the sharper case: it compares the
+folio against a candidate block with `bcmp()` and points the file at
+that block on a match, so a folio changing under the compare can match
+a block it does not equal, and the file then reads another block's
+content. Neither is visible to any check.
+
+The guard is the mapping's `AS_STABLE_WRITES` flag, which a regular
+file sets in `hammer2_igetv()`. `folio_wait_stable()` waits on a folio's
+writeback only when that flag is set, and both write paths reach it:
+`write_begin_get_folio()` passes `FGP_WRITEBEGIN`, which carries
+`FGP_STABLE`, and the write fault tails into `filemap_page_mkwrite()`.
+The order the kernel itself uses is the folio lock and then the wait,
+which is what `hammer2_zero_tail()` now does too.
+
+That last one is the case worth remembering, because it is the way a
+writer reaches a folio without going through either write path.
+`hammer2_zero_tail()` runs on a size change, before `ip->lock`, and it
+read its folio with `read_mapping_folio()`, which lands in
+`do_read_cache_folio()` and passes no `FGP_STABLE`: it took the folio
+lock and zeroed without waiting, on a folio the core could be reading.
+It waits now. Any new path that gets a file folio and writes to it owes
+the same wait, and the flag alone does not supply it.
+
 ## The one assumption that shapes everything
 
 `hammer2_io_data()` hands the core a pointer it keeps across sleeps. That
