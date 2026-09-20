@@ -2968,6 +2968,27 @@ read-only and hashes twice per block, so it is the debug kernel's
 reading, which is where the gates that read it run; a release build
 prints it as unavailable, which is not a pass.
 
+### The io hash lock, measured before it is changed
+
+The io layer's lock is the FreeBSD port's arrangement rather than
+DragonFly's: that port replaced DragonFly's lockless `INPROG` state
+machine with a per-dio mutex and one lock for the whole device, and this
+port carries what that port wrote. DragonFly locks nothing here, its
+lookup taking a bucket spin shared and refs staying in a word the last
+drop flips.
+
+An added lock is worth a number before it is worth a change. Measured
+2026-09-20 with `throughput.sh` at four writers, the debug kernel, the
+same run that read `folio_changed 0` and hashed every file back to its
+source: `iohash_waits 45736,1776264`, that is 45736 acquisitions that
+had to wait out of 1776264, 2.6 percent. The script prints the pair, so
+a later run reports the share rather than a count, and a share worth
+acting on is what would justify departing from an arrangement three
+ports share rather than assuming one. The `second umount` and `rmmod`
+exits were 0 in this run, where the first carried both at 32 and 1 from
+the race trigger leaving its files and its working directory behind;
+that defect and its fix are in the commit that reported the pair.
+
 The same pair run through `throughput.sh` at four writers, which is the
 load the flag was added for and the only one where a second writer
 arrives at a folio the core holds: 20000 rounds over the eight files,

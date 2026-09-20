@@ -128,34 +128,38 @@ fault would occur, and a store would go straight into the folio the core
 was given. Nothing in the check code sees that, which is what the
 `folio_changed` count on the debug kernel exists to catch.
 
-### The io hash lock, and where this port is coarser than DragonFly
+### The io hash lock, and the mechanism it replaced
 
-A reader comparing this port against the tree it came from will find one
-structural difference in the io layer, and it is worth naming here
-because it is correct and easy to mistake for a bug. DragonFly puts a
-spinlock in each of the `HAMMER2_IOHASH_SIZE` buckets: a lookup takes
-the bucket's spin **shared** and refs the dio with an atomic
-`fetchadd_64()`, so a lookup takes no dio lock at all; a bucket is taken
-exclusive only to enter a dio into the chain or to unhash one during a
-cleanup. This port carries a single `iohash_lock` for the whole device,
-takes it exclusively for every one of those operations, takes the dio's
-own lock inside it, and holds it across the entire bucket scan a cleanup
-performs.
+A reader comparing this port against the tree it came from will find the
+io lock structurally different, and this section exists so the
+difference is not read as a bug. DragonFly locks nothing in the io
+layer: a dio carries an `INPROG` flag inside its `refs` word and the
+last drop sets it while it disposes of the buffer, so a lookup that
+arrives mid-disposal sleeps on the dio and retries, and the hash bucket
+carries a spinlock taken shared for a lookup and exclusive for an insert
+or a cleanup.
 
-Both arrangements serialize the same structures correctly, and this one
-is coarser: two lookups for blocks in different buckets contend on one
-lock here and would not there, and the cleanup's scan blocks every
-lookup for its duration. Whether that coarseness costs anything is not
-known, and the place it would show is the flush figure that
-`throughput.sh` reports, which the four-writer control already
-attributes to the host's spread rather than to the port. So the reading
-comes first: `hammer2_iohash_waits` counts the acquisitions of this lock
-that had to wait, added on the wait path only so an uncontended acquire
-compiles to the same thing it did and an idle run pays nothing for being
-watched. The counter is read in the debug kernel's run beside
-`folio_changed`. A number worth acting on is what would justify making
-the lock per-bucket, which is a change to carried code and not one to
-make on a suspicion.
+That lockless state machine is DragonFly's alone. The FreeBSD port
+replaced it with a per-dio mutex and a single `iohash_lock` for the
+whole device, and **this port carries the FreeBSD arrangement, not
+DragonFly's**: `hammer2_io.c`'s own header says so, the same
+`iohash_lock` appears 17 times in the FreeBSD file against one vestigial
+spin initializer, and neither tree has `INPROG`. So the coarse lock is
+inherited from a port the project already treats as a precedent, and it
+is the FreeBSD port's shape that would have to change first.
+
+Both arrangements serialize the same structures correctly. The Linux
+one adds a lock the original does not have, and the price of that is the
+acquisitions that wait: `hammer2_iohash_waits` counts them beside the
+total, and on the four-writer run that motivated it the reading was
+45736 of 1776264, or 2.6 percent, with every file hashing back to its
+source and nothing refused.
+
+What would justify departing from the inherited arrangement is a number
+that shows the waits costing something, and 2.6 percent on a workload
+that is already the port's reference figure for the write path is not
+that. The counter stays as the reading that would decide it, which is
+cheaper than a change to code three ports share.
 
 ## The one assumption that shapes everything
 

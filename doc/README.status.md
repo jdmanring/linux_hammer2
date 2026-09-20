@@ -33,7 +33,7 @@ a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1416 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1420 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 652 | FreeBSD port, carried with four `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; strategy XOPs are exempt from that dependency at start and retire, as they are in DragonFly, so the readahead workers read one file on every CPU; the xop allocation zone is shimmed |

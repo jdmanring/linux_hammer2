@@ -839,14 +839,18 @@ struct hammer2_dev {
 	hammer2_devvp_list_t	devvp_list;	/* list of devices including *bdev_file */
 	hammer2_io_hash_t	iohash[HAMMER2_IOHASH_SIZE];
 	/*
-	 * XXX Linux: DragonFly puts a spinlock in each io hash bucket and
-	 * refs a dio with an atomic add, so its lookup takes no dio lock;
-	 * this port carries one lock for the whole device and takes the dio
-	 * lock inside it, and holds it across the bucket scan in a cleanup.
-	 * The locking is correct either way and this one is coarser, which
-	 * is why hammer2_iohash_waits counts the acquisitions that wait:
-	 * whether the coarser lock costs anything under writers is a reading
-	 * before it becomes a change.  See doc/IO_MODEL.md.
+	 * XXX Linux: one lock for the whole device, which is the FreeBSD
+	 * port's arrangement and not DragonFly's.  DragonFly locks nothing
+	 * here: a dio carries an INPROG flag in its refs word and the last
+	 * drop sets it across the disposal, so a lookup sleeps on the dio
+	 * and retries, with a spinlock per bucket.  The FreeBSD port
+	 * replaced that with a per-dio mutex and this lock, and this port
+	 * carries the FreeBSD arrangement, so the coarse lock is inherited
+	 * rather than invented here.  It is correct either way and this one
+	 * adds a lock the original does not have, which is why
+	 * hammer2_iohash_waits counts the acquisitions that wait: the
+	 * reading comes before any change to code three ports share.  See
+	 * doc/IO_MODEL.md.
 	 */
 	hammer2_mtx_t		iohash_lock;	/* XXX Linux: one for the device */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
