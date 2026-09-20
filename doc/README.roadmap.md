@@ -534,9 +534,16 @@ record's tree named: ten gates ran and passed, and three reported
 could-not-run for the reasons a tarball has, the history gate wanting
 a repository and the two fleet gates a guest; the prose gate had failed
 there, its population being the tracked set, and reads the tree where
-there is no repository since. Reproducibility read the same day: the
-module built twice from `make clean` against the kernel of record's
-tree, `b892064`, compares byte for byte, the same sha256 both times. A filing that
+there is no repository since. Reproducibility read on 2026-09-20 from `a4ae61a`: the module
+built twice from `make clean` against the kernel of record's tree
+(7.3.0-rc1, an unpacked tarball at `~/kernels/linux-7.3-rc1`, which has
+no commit hash of its own) compares byte for byte, the same sha256 both
+times, `2f9a567c75ae52d30278830e2cc184c49f8198294f34a9fb26d3b1c5f7f4aa67`
+over 8016136 bytes. A hash that repeats proves nothing on its own, a
+`make` that did nothing reading the same, so the read carries its control:
+a single statement added to `hammer2_vfsops.c` moves the sum to
+`62b552f42d22dfb0f0d1633fc017b748872bc9af8c6f2ee54be75af4e3b9a0f5`,
+and removing it returns the sum to the first value. A filing that
 is refused or unanswered still meets its criterion: the finding stays applied
 here with its provenance note and the refusal recorded beside it.
 
