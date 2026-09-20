@@ -1442,6 +1442,7 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	char *bio_data = scratch;	/* the assembled block, when one is needed */
 	unsigned int i;	/* Linux */
 	int whole = 0;	/* Linux: the core is reading the folio itself */
+	uint64_t before = 0;	/* Linux: the folio's hash around the read */
 	int error, lblksize, pblksize;
 
 	lblksize = hammer2_calc_logical(ip, lbase, &lbase, NULL);
@@ -1473,14 +1474,37 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 			hammer2_xop_feed(&xop->head, NULL, clindex, error);
 			goto done;
 		}
+		/*
+		 * Linux: this branch copies the folio into a buffer of the
+		 * XOP's own, so the core reads a private buffer, but the
+		 * copy itself reads the live folio while it is unlocked.
+		 * A writer changing the folio during the copy leaves a mix
+		 * in the buffer, and the check code then covers the mix:
+		 * the same defect as the whole-block path, reached through
+		 * the copy rather than through the pointer.  Each folio
+		 * the copy reads is sampled around it, since a buffer that
+		 * only ever received a consistent folio cannot show it.
+		 */
+		before = XXH64(folio_address(folio), folio_size(folio),
+		    XXH_HAMMER2_SEED);
 		memcpy_from_folio(bio_data + (xop->lbase - lbase), folio, 0,
 		    folio_size(folio));
+		if (before != XXH64(folio_address(folio), folio_size(folio),
+		    XXH_HAMMER2_SEED))
+			__atomic_fetch_add(&hammer2_folio_changed, 1,
+			    __ATOMIC_RELAXED);
 		for (i = 0; xop->siblings &&
 		    i < folio_batch_count(xop->siblings); i++) {
 			struct folio *sf = xop->siblings->folios[i];
 
+			before = XXH64(folio_address(sf), folio_size(sf),
+			    XXH_HAMMER2_SEED);
 			memcpy_from_folio(bio_data + (folio_pos(sf) - lbase),
 			    sf, 0, folio_size(sf));
+			if (before != XXH64(folio_address(sf), folio_size(sf),
+			    XXH_HAMMER2_SEED))
+				__atomic_fetch_add(&hammer2_folio_changed, 1,
+				    __ATOMIC_RELAXED);
 		}
 	} else {
 		/*
@@ -1515,8 +1539,7 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	 * where the gates that would read it already run.
 	 */
 	if (whole) {
-		uint64_t before = XXH64(bio_data, pblksize, XXH_HAMMER2_SEED);
-
+		before = XXH64(bio_data, pblksize, XXH_HAMMER2_SEED);
 		hammer2_write_file_core(bio_data, ip, &parent, lbase, IO_ASYNC,
 		    pblksize, xop->head.mtid, &error);
 		if (before != XXH64(bio_data, pblksize, XXH_HAMMER2_SEED))

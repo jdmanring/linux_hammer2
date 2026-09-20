@@ -55,6 +55,7 @@ esac
 [ $((MIB % WRITERS)) -eq 0 ] || {
 	echo "throughput: COULD-NOT-RUN: H2_TP_MIB must divide evenly by H2_TP_WRITERS" >&2; exit 2; }
 PER_MIB=$((MIB / WRITERS))
+RACE_ROUNDS=${H2_TP_RACE_ROUNDS:-4000}
 # The names of the files the Linux side leaves behind: one per writer
 # when writers run at once, one otherwise.  Both the read phase and the
 # DragonFly leg walk this list, so neither looks for a name no run made.
@@ -299,12 +300,27 @@ for f in $files; do
 	k=\$((k + 1))
 done
 echo "hammer2 md5 \$bad wrong of $WRITERS file(s)"
+# The trigger, run against the mounted volume before the counter is read:
+# a shared writable mapping of one block faulted on one side while
+# writeback runs on the same file from the other, which is the writer
+# that can reach a folio the core is reading.  A write(2) cannot, since
+# generic_file_write_iter() holds i_rwsem exclusively.
+if [ -x /tmp/h2mmaptest ]; then
+	cd /mnt/h2 && /tmp/h2mmaptest /mnt/h2/raced race $RACE_ROUNDS 2>&1 | sed 's/^/race /'
+	rc=\$?
+	echo "mmap race exit \$rc"
+	rm -f /mnt/h2/raced
+	sync -f /mnt/h2
+else
+	echo "mmap race exit unavailable"
+fi
 # The write XOP samples the block it hands the core before and after the
 # core reads it and counts any change.  A non-zero count is a folio that
 # changed while the core was reading it, which is the defect the
 # stable-writes rule exists to prevent and which no check code reports:
 # the block verifies, and the file can read back content nobody wrote.
-# Read here where several writers are dirtying one volume at once.
+# Read after the trigger above and before the module is unloaded, since
+# the counter lives on the module.
 echo "hammer2 folio_changed \$(cat /sys/module/hammer2/parameters/folio_changed 2>/dev/null || echo unavailable)"
 umount /mnt/h2; echo "second umount exit \$?"; umount /mnt/e4; umount /mnt/bt
 echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
@@ -318,7 +334,18 @@ echo "  built from $built, a $MIB MiB file on a ${vol} MiB volume, ext4 beside i
 # host's cache when the cache is warm and the host's disk when it is not.
 echo "  host    load $(cut -d' ' -f1-3 /proc/loadavg), MemAvailable $(awk '/MemAvailable/ {printf "%d", $2/1048576}' /proc/meminfo) GiB"
 boot "$GUEST" "$GUEST_SSH" "$EXT4" "$BTRFS" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
+# The mmap race trigger, from the harness the other gates already build:
+# a shared writable mapping faulted in a loop while writeback runs on
+# the same file, which is the one writer that reaches a folio the core
+# is reading.  The counter read below is what this run is for; where the
+# trigger cannot be built the reading is reported as unavailable rather
+# than silently skipped.
+MMAPTEST=
+if cc -static -O2 -o "$W/mmaptest" test/hammer2-mmap-exercise.c 2>/dev/null; then
+	MMAPTEST="$W/mmaptest"
+fi
 scp -q -o ConnectTimeout=5 "$KO" "$W/linux.sh" "$GUEST_SSH:/tmp/" || { echo "throughput: COULD-NOT-RUN: scp failed" >&2; down "$GUEST" "$GUEST_SSH"; exit 2; }
+[ -n "$MMAPTEST" ] && scp -q -o ConnectTimeout=5 "$MMAPTEST" "$GUEST_SSH:/tmp/h2mmaptest" || true
 out=$($RUN "$GUEST_SSH" 'sh /tmp/linux.sh' 2>&1); st=$?
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 down "$GUEST" "$GUEST_SSH"
