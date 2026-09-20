@@ -2906,19 +2906,60 @@ user, 0 damaged, 0 kernel warnings, `rmmod` clean, exit 0 on both; syntax
 65 checks 0 failed under clang, gcc and sparse; checkpatch unchanged at
 1140.
 
-The instrument that was written to catch this is not kept, and why is
-part of the finding. It raced two writers over one block and checked
-that the block read back as one writer's state or the other's, and run
-against a build with the guard deliberately removed, where the defect is
-reachable, it reported 0 torn in 40 rounds. The reading cannot see this
-defect: the racing folio stays dirty and is written again after the race,
-so the media a later read sees is consistent whatever happened during the
-core's read. A control that cannot fail on the build carrying the defect
-proves nothing, which is the same reason the instrument was not committed.
-What did find it was reading every place the port modifies a folio, which
-is two: this one, and the read path's own zeroing of a folio the core has
-locked for its own decode, which is safe because the core holds the lock
-across it.
+The first instrument written to catch this could not, and that is part
+of the finding. It raced two writers over one block and checked that the
+block read back as one writer's state or the other's, and against a
+build with the guard deliberately removed, where the defect is
+reachable, it reported 0 torn in 40 rounds. Media cannot show this
+defect: the racing folio stays dirty and is written again after the
+race, so what a later read sees is consistent whatever happened during
+the core's read. A control that cannot fail on the build carrying the
+defect proves nothing, and it was not committed.
+
+What found it first was reading every place the port modifies a folio,
+which is two: the truncate tail above, and the read path's own zeroing
+of a folio the core has locked for its own decode, which is safe because
+the core holds the lock across it. What confirms it is a counter, since
+reading can find a defect and only a measurement can show whether it is
+live.
+
+### The counter that shows the window is real
+
+Measured 2026-09-20 on `6a1a625` and on the same tree with the guard
+removed, both on the debug kernel. The write XOP samples every folio it
+reads with XXH64 immediately before and immediately after, and
+increments a read-only module parameter on any difference. Both places
+a file folio is read are sampled: the whole-block branch, where the core
+reads the folio's own address, and the assemble branch, where the copy
+out of the folio is what reads it while the folio is unlocked.
+
+The trigger is in `test/hammer2-mmap-exercise.c`, in the harness the
+other gates already build. It opens eight files, maps each shared and
+writable, and stores through the mappings in a loop with no bound while
+the parent drives writeback over the same ranges with
+`sync_file_range(SYNC_FILE_RANGE_WRITE)`, which starts writeback and
+does not wait for it. That is the writer that reaches a folio the core
+may be reading; `write(2)` cannot, because `generic_file_write_iter()`
+holds `i_rwsem` exclusively and a second writer waits. The first two
+shapes of the trigger failed for reasons worth recording: one ran the
+writers to completion and only then started writeback, so the two never
+overlapped, and read 0 over six thousand rounds; the other sampled only
+the whole-block branch, which a write fault never reaches, since the
+folio it creates is page-sized.
+
+| build | rounds | `folio_changed` |
+|---|---|---|
+| guard removed | 20000 | 14160919 |
+| guard present | 20000 | 0 |
+
+Fourteen million blocks changed while the core was reading them on the
+build without the stable-writes marking, and none on the build with it.
+That is the placement control the earlier instrument could not give: the
+defect is real, it is reachable from a mapped writer, and
+`mapping_set_stable_writes()` is what prevents it. The counter is
+read-only and hashes twice per block, so it is the debug kernel's
+reading, which is where the gates that read it run; a release build
+prints it as unavailable, which is not a pass.
 
 ## Mapped files, and the volume as a root filesystem
 
