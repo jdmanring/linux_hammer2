@@ -3356,3 +3356,54 @@ that is one call. The trigger now names the function, which is true
 whichever file the replacement ends up in. The gate below matches marker
 text and cannot check a trigger's truth, so that is checked by hand at
 each import.
+
+## Stale state claims, and which of them a gate can see
+
+Corrected 2026-09-20 in the roadmap: eight claims that had stopped being
+true, six of them in the fixture table and the paragraph above it. The
+table's F3 row read `unwritten` against images committed on 2026-09-04.
+Its F2 row carried an inode count belonging to a different image and said
+the rest of the row needed a guest, where `f5`, `f7` and `f12` are
+committed and the gate mounts them. Its F5 row pointed at
+`README.status.md` for a crash-matrix table that had moved to this record,
+and undercounted it as sixteen where the table has twenty, an error the
+0.6 section repeated. The paragraph on guests said no instrument in this
+repository drives one and concluded that every runtime criterion from 0.3
+on is unverifiable here; it was written 2026-08-26, the first fleet script
+landed 2026-09-04, and two of them are gates. The 0.5 section said the
+fuzzing corpus is seeded from F3, which it never was. A day later the 1.0
+row still read `not started` while the section beneath it recorded the
+criteria of its own bar already read, and the decision table still said
+`the two upstream filings` against a staging directory holding twelve
+patches and two reports.
+
+Every gate was green through all of it. That is not a gate defect and not
+a gap one more gate closes. The gates check that a citation resolves to a
+line, that a count matches the source, that a "not carried" claim names a
+symbol `src/` does not define, and that the prose is clean. None of them
+can check whether a stated cause or a stated state is TRUE, and a
+sentence of the shape "X does not exist" carries no fact a matcher can
+resolve when the subject is a script count, an image set, or a property
+of the repository.
+
+What does catch it, in the order it worked here:
+
+- Reading the source or artifact the claim names. Every one of the six
+  the fixture table carried fell to `ls`, `git ls-files` or a grep of the
+  script the row said would do the work.
+- A dated observation instead of a present-tense state. The CHANGELOG's
+  rows and the porting notes' past-tense justifications are the same
+  claims, correctly frozen: they say what was true on a day, so they
+  cannot rot.
+- Refusing to write a count that a later commit falsifies. Two of the
+  corrections made here are phrased to name the mechanism that
+  enumerates a set rather than the size of the set, because the first
+  replacement written for F5 carried a new count that the next
+  crash-matrix run would have made false.
+
+The population of each mechanical shape was measured before deciding
+against a gate: zero sentences now match "nothing under DIR verbs TOOL",
+and the "unwritten" shape matches four sites that are all correct. A gate
+over either would have nothing to match and would report clean having
+read nothing, which is the failure this repository's gates are built to
+refuse.
