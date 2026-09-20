@@ -596,6 +596,29 @@ hammer2_mtx_ex(hammer2_mtx_t *p)
 }
 
 /*
+ * Linux: an exclusive acquisition that counts how often it had to wait,
+ * for a lock whose contention is a question rather than a known cost.
+ * The count is a relaxed add on the wait path only, so an uncontended
+ * acquire is the same code as hammer2_mtx_ex() and an idle run pays
+ * nothing for being watched.  Used where one device-wide lock stands in
+ * for the per-bucket locking DragonFly has, so whether that coarser lock
+ * costs anything under writers is a reading rather than an argument.
+ */
+static inline void
+hammer2_mtx_ex_waits(hammer2_mtx_t *p, unsigned long *waits)
+{
+	if (hammer2_mtx_ex_recurse(p))
+		return;
+	hammer2_mtx_acquire(p, 0, 0);
+	if (!hammer2_mtx_ex_grab(p)) {
+		__atomic_fetch_add(waits, 1, __ATOMIC_RELAXED);
+		__hammer2_mtx_ex_wait(p);
+	}
+	WRITE_ONCE(p->owner, current);
+	hammer2_nofs_enter();
+}
+
+/*
  * Linux: an exclusive acquisition of a lock nothing else can reach.
  * hammer2_inode_get() locks a freshly allocated inode, and
  * hammer2_pfsalloc() the root inode of a PFS not yet mounted, while the

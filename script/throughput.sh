@@ -322,6 +322,12 @@ fi
 # Read after the trigger above and before the module is unloaded, since
 # the counter lives on the module.
 echo "hammer2 folio_changed \$(cat /sys/module/hammer2/parameters/folio_changed 2>/dev/null || echo unavailable)"
+# How often the device-wide io hash lock had to wait, which is the
+# reading that decides whether it should be per-bucket as DragonFly's is.
+# A relaxed add on the wait path only, so an uncontended acquire costs the
+# same as before and a zero here says the coarser lock is not being paid
+# for.  Printed, not judged: it is a measurement, not a threshold.
+echo "hammer2 iohash_waits \$(cat /sys/module/hammer2/parameters/iohash_waits 2>/dev/null || echo unavailable)"
 umount /mnt/h2; echo "second umount exit \$?"; umount /mnt/e4; umount /mnt/bt
 echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
 dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
@@ -364,6 +370,11 @@ if [ "$WRITERS" -gt 1 ]; then
 	# pass and not a failure: it is the instrument saying it cannot
 	# answer, and it is why this reading is taken on the debug kernel.
 	fc=$(printf '%s\n' "$out" | sed -n 's/^hammer2 folio_changed \([0-9]*\)$/\1/p')
+	# The io hash lock's wait count, reported beside the flush seconds so
+	# the coarser lock's cost is read where it would show.  Zero is a
+	# finding here rather than a pass: it says the lock never waited.
+	iw=$(printf '%s\n' "$out" | sed -n 's/^hammer2 iohash_waits \([0-9]*\)$/\1/p')
+	echo "  note  io hash lock waited ${iw:-unavailable} time(s) with $WRITERS writer(s)"
 	case "${fc:-unavailable}" in
 	0) echo "  ok    no block changed under the core with $WRITERS writers" ;;
 	unavailable) echo "  note  folio_changed is not in this module: the reading is the debug kernel's" ;;

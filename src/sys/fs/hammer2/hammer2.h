@@ -950,6 +950,7 @@ extern unsigned long hammer2_alloc_data_bytes;	/* Linux */
 extern unsigned long hammer2_alloc_meta_bytes;	/* Linux */
 extern unsigned long hammer2_data_rewrites;	/* Linux */
 extern unsigned long hammer2_folio_changed;	/* Linux */
+extern unsigned long hammer2_iohash_waits;	/* Linux */
 #if defined(HAMMER2_LOCKDEBUG)
 extern int hammer2_fail_alloc_after;	/* Linux */
 extern int hammer2_debug_hpanic;	/* Linux */

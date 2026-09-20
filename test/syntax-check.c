@@ -42,6 +42,12 @@ hammer2_syntax_check_all(void)
 
 	hammer2_mtx_init(&mtx, "mtx");
 	hammer2_mtx_ex(&mtx);
+	{
+		unsigned long waits = 0;
+
+		hammer2_mtx_ex_waits(&mtx, &waits);
+		hammer2_mtx_unlock(&mtx);
+	}
 	(void)hammer2_mtx_owned(&mtx);
 	(void)hammer2_mtx_ex_recurse(&mtx);
 	hammer2_mtx_ex_nested(&mtx, 1);
