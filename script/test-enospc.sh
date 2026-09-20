@@ -369,6 +369,21 @@ scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/h2.ko" >/dev/null 2>&1
 scp -q -o ConnectTimeout=5 /tmp/h2mmaptest.$$ "$GUEST_SSH:/tmp/h2mmaptest" >/dev/null 2>&1
 rm -f /tmp/h2mmaptest.$$
 
+# The seek exerciser, from test/hammer2-seek.c, on the same terms: built
+# here, copied statically. SEEK_DATA and SEEK_HOLE are the one read-path
+# facility whose failure is a wrong ANSWER rather than a refusal. A
+# filesystem with no ->llseek of its own is answered by
+# generic_file_llseek(), which treats the whole file as data, so
+# SEEK_HOLE reports end-of-file for a file that is mostly hole and a
+# sparse file copied with cp --sparse=always or archived with tar -S
+# comes out dense and looks correct. It runs on this gate's read-write
+# volume because it has to write the file whose holes it asks about,
+# which the read-only fixture gate cannot host.
+cc -static -O2 -o /tmp/h2seekt.$$ test/hammer2-seek.c 2>/dev/null || {
+	echo "enospc: COULD-NOT-RUN: the seek exerciser did not compile" >&2; exit 2; }
+scp -q -o ConnectTimeout=5 /tmp/h2seekt.$$ "$GUEST_SSH:/tmp/h2seek" >/dev/null 2>&1
+rm -f /tmp/h2seekt.$$
+
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
@@ -401,6 +416,20 @@ out=$(ssh "$GUEST_SSH" '
 	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
 	    { echo "SETUP mount failed"; exit 0; }
 	echo "locks after mount $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
+	# The seek exerciser, on the volume with room. It has to write the
+	# file whose holes it asks about, so it cannot run on the filled
+	# volume below and cannot run on a fixture image, which this tree
+	# attaches read-only because the fixture is the claim. Seeking on a
+	# full volume would test nothing: the file could not be created.
+	# Its own file is removed on every path, so it leaves the volume as
+	# it found it and the fill below measures the same thing it did
+	# before.
+	# The exerciser prints its own counts, prefixed, so this side does
+	# no quoting: a quote inside this single-quoted ssh command ends the
+	# string early and hands the rest of the block to the host. The
+	# lines go out as they are and the host counts them.
+	$as /tmp/h2seek /mnt/h2enospc/.h2seek 2>&1 | sed -n /seek-/p
+	$as rm -f /mnt/h2enospc/.h2seek >/dev/null 2>&1
 	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
@@ -851,6 +880,25 @@ fi
 # an unmount that never finished for as long as the status was the only
 # thing being asked.
 # An oops is the finding; everything below it is what the oops caused.
+# SEEK_DATA and SEEK_HOLE, asked on the live volume. A wrong answer here
+# is silent in the other direction from a refusal: the generic path
+# reports the whole file as data, so a sparse file copies out dense and
+# looks correct. Zero checks is a run that proved nothing and is failed
+# for that reason rather than read as a pass.
+sc=$(printf '%s\n' "$out" | sed -n 's/^seek-checks //p')
+sf=$(printf '%s\n' "$out" | sed -n 's/^seek-failures //p')
+if [ -z "$sc" ] || [ "${sc:-0}" -eq 0 ]; then
+	echo "  FAIL  the seek exerciser printed no check, so it ran and"
+	echo "        proved nothing"
+	fail=$((fail + 1))
+elif [ "${sf:-0}" -ne 0 ]; then
+	echo "  FAIL  the seek exerciser answered wrongly on a live mount:"
+	printf '%s\n' "$out" | sed -n 's/^seek-fail /        /p' | head -6
+	fail=$((fail + 1))
+else
+	echo "  ok    seek $sc check(s) on a live mount, 0 failed"
+fi
+
 printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||
 	{ echo "  FAIL  the kernel warned during the run:"
 	  printf '%s\n' "$out" | sed -n 's/^kernel warnings/        &/p'

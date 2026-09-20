@@ -771,7 +771,18 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 	return (hammer2_vfs_errno(error));
 }
 
+/*
+ * Linux: ->getattr is defined below with the other read-side entries, and
+ * the directory table is the first of the three to name it.  A static
+ * function called before its definition is an error in clang
+ * (-Wundefined-internal) and in gcc ("used but never defined"), which
+ * script/test-syntax.sh does not suppress, so it is declared here.
+ */
+static int hammer2_getattr(struct mnt_idmap *, const struct path *,
+	struct kstat *, u32, unsigned int);
+
 const struct inode_operations hammer2_dir_iops = {
+	.getattr	= hammer2_getattr,		/* Linux */
 	.lookup		= hammer2_vop_lookup,
 	.create		= hammer2_vop_create,
 	.mknod		= hammer2_vop_mknod,
@@ -1260,8 +1271,146 @@ hammer2_file_mmap_prepare(struct vm_area_desc *desc)
 	return (0);
 }
 
+/*
+ * One logical block's physical offset, through the carried bmap XOP.
+ *
+ * This is upstream's hammer2_bmap_impl() with the parts a Linux ->bmap
+ * and ->llseek need and no vnode buffer object to hand back.  The XOP
+ * reports ENOENT for an offset no chain covers, which is a hole: the
+ * read path takes the same answer at the same place and zeroes the
+ * folio rather than failing, so a hole is reported here as a hole and
+ * never as an error.
+ *
+ * Returns 0 and sets *poff, or an errno.  The errno is POSITIVE, which
+ * is this module's convention inside the core: hammer2_error_to_errno()
+ * returns positive values and the VFS entry points negate them.  ENOENT
+ * means the block is a hole.  Getting this wrong is silent, since a
+ * positive ENOENT compared against a negative one is simply never
+ * equal, and the first run of this code returned ENOENT as a file
+ * position for every offset in the file.
+ */
+static int
+hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
+{
+	hammer2_inode_t *ip = VTOI(inode);
+	hammer2_xop_bmap_t *xop;
+	int error;
+
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	xop = hammer2_xop_alloc(ip, 0);
+	xop->lbn = lbn;
+	hammer2_xop_start(&xop->head, &hammer2_bmap_desc);
+	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
+	if (error == 0)
+		*poff = xop->offset;
+	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	hammer2_inode_unlock(ip);
+
+	return (error);
+}
+
+/*
+ * Linux: SEEK_DATA and SEEK_HOLE, which the BSDs reach through FIOSEEKDATA
+ * and FIOSEEKHOLE on vn_bmap_seekhole().  Linux has no such ioctl: they
+ * are whences of lseek(2), and a filesystem that does not implement them
+ * gets generic_file_llseek(), which treats the whole file as data.  That
+ * is not a refusal but a wrong answer, and a sparse file copied with
+ * cp --sparse=always or archived with tar -S would be dense and correct
+ * to look at and wrong.
+ *
+ * HAMMER2's model is that a hole is an offset no chain covers, which is
+ * what hammer2_xop_bmap() answers with ENOENT, so both whences are that
+ * one question asked repeatedly: advance a block at a time until the
+ * answer changes.  Upstream asks it the same way, one block at a time,
+ * from vn_bmap_seekhole(); there is no freelist or extent map to consult
+ * instead, and the blockref tree is the only record of what is allocated.
+ *
+ * A file's last block may be allocated and hold data only to i_size.
+ * The bytes past i_size are a hole by definition, so the scan stops
+ * there and the answer is i_size.
+ */
+static loff_t
+hammer2_llseek(struct file *file, loff_t offset, int whence)
+{
+	struct inode *inode = file->f_mapping->host;
+	loff_t isize = i_size_read(inode);
+	loff_t maxbytes = inode->i_sb->s_maxbytes;
+	unsigned int bsize = i_blocksize(inode);
+	bool seek_data;
+	loff_t pos;
+
+	switch (whence) {
+	case SEEK_DATA:
+	case SEEK_HOLE:
+		break;
+	default:
+		return (generic_file_llseek_size(file, offset, whence,
+		    maxbytes, isize));
+	}
+
+	if (offset < 0)
+		return (-EINVAL);
+	seek_data = (whence == SEEK_DATA);
+	/*
+	 * SEEK_DATA at or past the end finds nothing, and SEEK_HOLE finds
+	 * the end of the file, which is where the hole after the last data
+	 * begins.  This is the kernel's own contract for both, and it is
+	 * the whole answer when there is no i_size.
+	 */
+	if (offset >= isize)
+		return (seek_data ? -ENXIO : offset);
+
+	pos = offset;
+	for (;;) {
+		loff_t base = pos & ~((loff_t)bsize - 1);
+		hammer2_off_t poff = 0;
+		int error;
+
+		error = hammer2_bmap_lbn(inode, base >> inode->i_blkbits,
+		    &poff);
+		if (error != 0 && error != ENOENT)
+			return (-error);
+
+		/*
+		 * A hole answers the question for SEEK_HOLE at its own
+		 * start, which is at or below the offset asked about: an
+		 * offset inside a hole is in that hole and not in the next
+		 * one.  For SEEK_DATA it is the answer only once the scan
+		 * has reached a block that holds data, so the scan steps a
+		 * whole block and asks again.
+		 *
+		 * Data answers SEEK_DATA at the offset asked about, not at
+		 * the block's start, since the caller may be partway into a
+		 * block it already knows holds data.
+		 */
+		if (error == ENOENT) {
+			if (!seek_data)
+				return (base);
+			pos = base + bsize;
+		} else {
+			if (seek_data)
+				return (pos);
+			pos = base + bsize;
+		}
+		if (pos >= isize)
+			return (seek_data ? -ENXIO : isize);
+	}
+}
+
+static sector_t
+hammer2_bmap(struct address_space *mapping, sector_t lbn)
+{
+	hammer2_off_t poff;
+	int error;
+
+	error = hammer2_bmap_lbn(mapping->host, lbn, &poff);
+	if (error != 0)
+		return (0);		/* a hole, or an error: nothing there */
+	return (poff >> 9);		/* Linux: 512-byte sectors */
+}
+
 const struct file_operations hammer2_file_fops = {
-	.llseek		= generic_file_llseek,
+	.llseek		= hammer2_llseek,		/* Linux */
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= hammer2_file_write_iter,	/* Linux */
 	.mmap_prepare	= hammer2_file_mmap_prepare,	/* Linux */
@@ -1517,6 +1666,7 @@ const struct address_space_operations hammer2_file_aops = {
 	.write_end	= hammer2_write_end,		/* Linux */
 	.writepages	= hammer2_writepages,		/* Linux */
 	.migrate_folio	= filemap_migrate_folio,	/* Linux */
+	.bmap		= hammer2_bmap,			/* Linux */
 };
 
 /*
@@ -1524,8 +1674,55 @@ const struct address_space_operations hammer2_file_aops = {
  * and times out of the inode itself, which hammer2_igetv() fills, so
  * stat needs nothing here; setting them, and the size, is ->setattr.
  */
+/*
+ * Linux: the block count, computed per call.
+ *
+ * st_blocks is how du, cp --sparse and every backup tool decide what a
+ * file occupies, and i_blocks is what generic_fillattr() copies into
+ * it.  The value comes from the inode's own blockref counter, which the
+ * flush maintains, so it is only as fresh as the inode's cached meta.
+ *
+ * hammer2_igetv() sets i_blocks once, when the inode is first read in.
+ * A file that then grows in this mount keeps reporting the allocation it
+ * had at that moment: measured on a fresh volume, a 512 KiB file written
+ * in one mount reported 0 blocks of 512, and the same file reported 1056
+ * after a remount, which is where the number on media is read back.
+ * Upstream has no such window, because hammer2_getattr() computes
+ * va_bytes inside getattr() and every stat therefore re-derives it.
+ *
+ * So this is upstream's arrangement rather than a new one: getattr
+ * recomputes both fields the same way hammer2_getattr() does, and the
+ * assignment in hammer2_igetv() stays for the inode's first reader.
+ */
+static int
+hammer2_getattr(struct mnt_idmap *idmap, const struct path *path,
+	struct kstat *stat, u32 request_mask __maybe_unused,
+	unsigned int flags)
+{
+	struct inode *inode = d_inode(path->dentry);
+	hammer2_inode_t *ip = VTOI(inode);
+
+	generic_fillattr(idmap, request_mask, inode, stat);
+
+	/*
+	 * The same two lines hammer2_igetv() writes at instantiation,
+	 * repeated here because stat is answered from the inode's cached
+	 * meta and that meta moves as the file does.  hammer2_inode_lock()
+	 * is what the core requires before reading an inode's meta.
+	 */
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	if (S_ISDIR(inode->i_mode))
+		stat->blocks = HAMMER2_INODE_BYTES >> 9;
+	else
+		stat->blocks = hammer2_inode_data_count(ip) >> 9;
+	hammer2_inode_unlock(ip);
+
+	return (0);
+}
+
 const struct inode_operations hammer2_file_iops = {
 	.setattr	= hammer2_vop_setattr,
+	.getattr	= hammer2_getattr,		/* Linux */
 };
 
 /*

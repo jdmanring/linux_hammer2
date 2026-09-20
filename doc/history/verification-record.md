@@ -3411,3 +3411,59 @@ and the "unwritten" shape matches four sites that are all correct. A gate
 over either would have nothing to match and would report clean having
 read nothing, which is the failure this repository's gates are built to
 refuse.
+
+## SEEK_DATA and SEEK_HOLE, and the block count that was not refreshed
+
+Two reader-visible defects, measured 2026-09-20 on `artix-s6-kde` at
+7.3.0-rc1.
+
+**The seek whences.** `hammer2_file_fops` had no `->llseek` of its own and
+took `generic_file_llseek`, which treats a whole file as data. So
+`SEEK_HOLE` on a HAMMER2 file answered end-of-file wherever the hole
+actually was, and `SEEK_DATA` inside a hole answered the offset it was
+asked about. That is not a refusal, which is why nothing caught it: a
+sparse file copied with `cp --sparse=always`, archived with `tar -S`, or
+read by any backup tool that asks where the data is comes out dense and
+looks correct. FreeBSD and DragonFly both implement it, through
+`vn_bmap_seekhole()` and the `FIOSEEK*` ioctls; NetBSD registers
+`genfs_seek`. This port had neither, and the mechanism was already
+carried: `hammer2_xop_bmap()` reads exactly the `data_off` a seek needs,
+and had no caller.
+
+`->llseek` and `->bmap` are now built on that XOP, which is upstream's
+`hammer2_bmap_impl()` with the parts Linux needs. `test/hammer2-seek.c`
+writes a file of one block of data, one block of hole, one block of data
+and a truncate into a fourth, and asks at twelve offsets. Run against a
+module built with the old `generic_file_llseek`, six of them fail:
+`SEEK_HOLE` at 0 answers 229376 where the hole ends at 65536,
+`SEEK_DATA in hole` answers the offset asked about, and `SEEK_DATA past
+end` returns a position instead of `ENXIO`. Against the shipped module all
+twelve pass on a live mount, `ok seek 12 check(s) on a live mount, 0
+failed`, run by `test-enospc.sh` on its read-write volume. It cannot run
+in the fixture gate, which attaches every image read-only because the
+fixture is the claim, and the exerciser has to write the file it asks
+about.
+
+Two defects in this work were found by the instruments rather than by
+reading. The first: `hammer2_error_to_errno()` returns a POSITIVE errno,
+which is this module's convention inside the core, and the first version
+compared it against a negative one, so every offset in the file answered
+`ENOENT` as a position. The second: the scan did not snap to block
+boundaries, so an offset inside a block answered with the offset instead
+of the block. Both showed as wrong numbers in a run, not as a build
+failure.
+
+**The block count.** `st_blocks` is how `du`, `cp --sparse` and every
+backup tool decide what a file occupies, and it is filled from
+`inode->i_blocks`. This port set it once, in `hammer2_igetv()`, and never
+recomputed it, so a file that grew in the same mount kept reporting the
+allocation it had when the inode was first read: a 512 KiB file written
+in one mount read `blocks=0` where ext4 on the same guest read 1024, and
+the same file read 1056 after a remount. Upstream has no such window,
+because `hammer2_getattr()` computes `va_bytes` inside getattr and every
+stat re-derives it. `->getattr` is now registered on all three inode
+tables and recomputes the count the same way, and the same file reports
+1056 in the live mount.
+
+Both are the shape this record has already named: a wrong answer that
+reads as a right one, in a path no checksum and no read test looks at.

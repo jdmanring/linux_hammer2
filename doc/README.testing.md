@@ -569,6 +569,25 @@ belonging to another driver, and a zero-size command, which is reachable
 only as root because the entry point checks the capability before the
 size.
 
+`test/hammer2-seek.c` is run by `test-enospc.sh`, not by the fixture
+gate: it has to write the file whose holes it asks about, and the fixture
+images are attached read-only because the fixture is the claim. It builds
+a file whose shape it knows, one block of data, one block of hole, one
+block of data and a truncate into a fourth, and asks where the data is at
+thirteen offsets. SEEK_DATA and SEEK_HOLE are the
+one read-path facility whose failure is a wrong answer rather than a
+refusal: a filesystem registering no `->llseek` of its own is answered by
+`generic_file_llseek()`, which treats the whole file as data, so
+`SEEK_HOLE` reports end-of-file for a file whose middle is a hole and a
+sparse file copied with `cp --sparse=always` or archived with `tar -S`
+comes out dense and looks correct. The test asserts the hole is real on
+media first, via the block count, because a file whose middle block was
+written as zeroes is not sparse and the run would be measuring a
+different file from the one it built. Against the module before this
+work it failed six of thirteen checks, `SEEK_HOLE` at 0 answering the
+file's size where the hole ends one block in; `doc/history/verification-record.md`
+has both runs.
+
 Two defects came out of its first two runs, one in the driver and one in
 the exerciser. An unrecognized command returned EOPNOTSUPP, which a BSD's
 ioctl layer maps to ENOTTY and Linux does not, so userland read
