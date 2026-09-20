@@ -12,10 +12,13 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.20 closes the closure verification: the fixed
+0.5 to 0.9 are met. 0.9.21 removes one of the two full-block copies the
+write path was making and measures what its safety costs, on the release
+kernel and under four writers at once. 0.9.20 closed the closure
+verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.20
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.21
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
