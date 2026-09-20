@@ -33,7 +33,7 @@ a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1406 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1416 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 652 | FreeBSD port, carried with four `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; strategy XOPs are exempt from that dependency at start and retire, as they are in DragonFly, so the readahead workers read one file on every CPU; the xop allocation zone is shimmed |
@@ -52,7 +52,7 @@ a defect.
 | `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 1228 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 1233 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 1258 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
@@ -258,7 +258,9 @@ question, the carried files arriving with upstream's own. Measured 2026-08-26
 against the FreeBSD port at
 `3df307f` (v1.2.13), by file, ours minus upstream's; the first column
 re-read 2026-09-07 after every `hpanic` site got its way out and
-`hpanic` returned, seventy lines in eight files, each a mark:
+`hpanic` returned, seventy lines in eight files, each a mark, and again
+2026-09-20 for the two marks that describe the io hash lock, which is one
+for the device where DragonFly has one per bucket:
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
@@ -277,7 +279,7 @@ re-read 2026-09-07 after every `hpanic` site got its way out and
 | `hammer2_ioctl.c` | 18 | 3 | 15 |
 | `hammer2_strategy.c` | 25 | 0 | 25 |
 | `hammer2_vnops.c` | 2 | 0 | 2 |
-| `hammer2.h` | 10 | 3 | 7 |
+| `hammer2.h` | 12 | 3 | 9 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 4 | 0 | 4 |
 | `hammer2_compat.h` | 0 | 0 | 0 |

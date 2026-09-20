@@ -838,7 +838,17 @@ struct hammer2_dev {
 	TAILQ_ENTRY(hammer2_dev) mntentry;	/* hammer2_mntlist */
 	hammer2_devvp_list_t	devvp_list;	/* list of devices including *bdev_file */
 	hammer2_io_hash_t	iohash[HAMMER2_IOHASH_SIZE];
-	hammer2_mtx_t		iohash_lock;
+	/*
+	 * XXX Linux: DragonFly puts a spinlock in each io hash bucket and
+	 * refs a dio with an atomic add, so its lookup takes no dio lock;
+	 * this port carries one lock for the whole device and takes the dio
+	 * lock inside it, and holds it across the bucket scan in a cleanup.
+	 * The locking is correct either way and this one is coarser, which
+	 * is why hammer2_iohash_waits counts the acquisitions that wait:
+	 * whether the coarser lock costs anything under writers is a reading
+	 * before it becomes a change.  See doc/IO_MODEL.md.
+	 */
+	hammer2_mtx_t		iohash_lock;	/* XXX Linux: one for the device */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */

@@ -128,6 +128,35 @@ fault would occur, and a store would go straight into the folio the core
 was given. Nothing in the check code sees that, which is what the
 `folio_changed` count on the debug kernel exists to catch.
 
+### The io hash lock, and where this port is coarser than DragonFly
+
+A reader comparing this port against the tree it came from will find one
+structural difference in the io layer, and it is worth naming here
+because it is correct and easy to mistake for a bug. DragonFly puts a
+spinlock in each of the `HAMMER2_IOHASH_SIZE` buckets: a lookup takes
+the bucket's spin **shared** and refs the dio with an atomic
+`fetchadd_64()`, so a lookup takes no dio lock at all; a bucket is taken
+exclusive only to enter a dio into the chain or to unhash one during a
+cleanup. This port carries a single `iohash_lock` for the whole device,
+takes it exclusively for every one of those operations, takes the dio's
+own lock inside it, and holds it across the entire bucket scan a cleanup
+performs.
+
+Both arrangements serialize the same structures correctly, and this one
+is coarser: two lookups for blocks in different buckets contend on one
+lock here and would not there, and the cleanup's scan blocks every
+lookup for its duration. Whether that coarseness costs anything is not
+known, and the place it would show is the flush figure that
+`throughput.sh` reports, which the four-writer control already
+attributes to the host's spread rather than to the port. So the reading
+comes first: `hammer2_iohash_waits` counts the acquisitions of this lock
+that had to wait, added on the wait path only so an uncontended acquire
+compiles to the same thing it did and an idle run pays nothing for being
+watched. The counter is read in the debug kernel's run beside
+`folio_changed`. A number worth acting on is what would justify making
+the lock per-bucket, which is a change to carried code and not one to
+make on a suspicion.
+
 ## The one assumption that shapes everything
 
 `hammer2_io_data()` hands the core a pointer it keeps across sleeps. That
