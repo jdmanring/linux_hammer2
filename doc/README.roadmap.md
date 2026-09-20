@@ -180,10 +180,10 @@ the column first.
 | set | what | written by | serves | state |
 |---|---|---|---|---|
 | F1 | six trees of known shape: empty, flat, deep, sizes at each block-size boundary, links, names at the length limit | `makefs -t hammer2` | 0.4 | generator run, output verified through `hammer2-fuse` against the source-tree manifest |
-| F2 | the same trees from a DragonFly kernel, plus two PFS roots, a snapshot after modification, a tree after bulk-free, deleted files held by a snapshot | DragonFly 6.4.2 in a guest | 0.4, and the F1-against-F2 comparison | one image: a guest's installed root read cold, 28,171 inodes, `fsck_hammer2` clean. The rest needs the guest booted |
-| F3 | F2 images with metadata deliberately damaged, with `fsck_hammer2`'s verdict on each recorded first | a script over F2 | 0.4 and 0.6 | unwritten |
+| F2 | the same trees from a DragonFly kernel, plus two PFS roots, a snapshot after modification, a tree after bulk-free, deleted files held by a snapshot | DragonFly 6.4.2 in a guest | 0.4, and the F1-against-F2 comparison | `f5`, media DragonFly wrote, and `f7`, a device carrying a second PFS `DATA` beside `ROOT`; `f8`, a guest's installed root read cold, where `fsck_hammer2` reports 83002 blockrefs, 28167 inodes and 28209 dirents with no error line and this port read all 28209 entries. A snapshot written into and the tree after bulk-free are fleet readings rather than committed images |
+| F3 | images with metadata deliberately damaged, with `fsck_hammer2`'s verdict on each recorded first | copies of `f5` altered on the media | 0.4 and 0.6 | built: `f9` with one data byte flipped and `f10` with one volume-header bit flipped, carrying `# corrupt` and `# refuse`; `test-fixtures.sh` reads both and `doc/history/verification-record.md` has the verdicts |
 | F4 | a tree written by this port, mounted and verified on DragonFly, then the reverse | this port and DragonFly | 0.5 | `script/f4-roundtrip.sh`, run both ways on a volume formatted here |
-| F5 | images captured mid-write under the crash matrix, calibrated first against the FreeBSD port | a crash harness in QEMU | 0.6 | `script/crash-matrix.sh` makes them per run; sixteen recorded in `README.status.md`, none kept |
+| F5 | images captured mid-write under the crash matrix, calibrated first against the FreeBSD port | a crash harness in QEMU | 0.6 | `script/crash-matrix.sh` makes them per run and keeps none, so the images are never the fixture and the rows are: `doc/history/verification-record.md` carries them |
 | F6 | a real Nix closure copied in through the write path | `script/nix-closure.sh` | 0.9 | run; clean at 4 GiB with lockdep on to the unload, `doc/history/verification-record.md` has the readings |
 
 Images are never committed, and cannot be. `makefs -t hammer2` writes 8 GiB
@@ -250,14 +250,20 @@ lockdep half needs a debug kernel package or a build, and the loading half
 needs neither: Nobara at 7.1.3 and Void at 6.18.42 are both inside the range
 this module compiles for.
 
-No instrument in this repository drives a guest: nothing under `script/` or
-`test/` invokes `qemu`, `virsh` or `virt-install`. This paragraph used to
-offer a wider claim, that `doc/` does not mention them either, which was
-already false when written, the F5 row above and the crash-matrix section
-below both naming QEMU. Discussing a tool and running one are different
-claims and only the second is the one that matters here. The gates are
-compile-time and repository-time, which is why every runtime criterion from
-0.3 on is unverifiable in this repository whatever machines exist elsewhere.
+The fleet scripts under `script/` drive a guest, and two of them are gates:
+`test-fixtures.sh` and `test-enospc.sh` start a domain, attach an image and
+read the result back. `doc/README.testing.md` enumerates them. This
+paragraph said no instrument here drives a guest, and that every runtime
+criterion from 0.3 on is therefore unverifiable in this repository. It was
+written 2026-08-26, when it was true, and the first fleet gate landed
+2026-09-04, so the sentence outlived the state it described. What holds is
+the shape of the split: eleven gates need no guest, the other two report
+COULD-NOT-RUN without one, and a machine carrying the guests is what turns
+those two from a refusal into a verdict. Two of the eleven can still
+decline for something other than a guest, each naming what it could not
+find: `test-checkpatch.sh` a `checkpatch.pl`, which no headers package
+ships, and `test-provenance.sh` an origin clone to re-verify a carry
+against.
 
 ## Milestones
 
@@ -383,8 +389,11 @@ store. F4 is
 the round trip in both directions, and it is the only test that separates the
 format from a dialect of it: HAMMER2's default per-blockref check is XXH64, so
 a subtly wrong writer reads as corruption on DragonFly rather than as a bug.
-The format fuzzing corpus, seeded from F3, runs against the mount path with no
-crash before any writable root is offered. The flush path must order its
+The format fuzzing corpus runs against the mount path with
+no crash before any writable root is offered. Its seed is not an F3 image:
+it is a 64 MiB volume `newfs_hammer2` formats and the write path populates,
+because the mutator samples until it hits a byte that is not zero and a
+2 GiB fixture is almost entirely zero. The flush path must order its
 writes so the root checkpoint becomes durable only after everything it
 references, shown by a write trace rather than by reading the source.
 
@@ -414,8 +423,9 @@ claimed only over the cells that do repeat.
 
 Gate: `script/crash-matrix.sh`, which runs the four cells twice each, the
 FreeBSD port writing first, and reports a cell green only when its runs
-agree. It ran 2026-09-05 over sixteen rows with both recoveries clean on
-every one; `doc/history/verification-record.md` carries the table, and the torn cell's
+agree. It ran 2026-09-05 over twenty rows, sixteen from the first full run
+and four from a second run of the torn cell alone, with both recoveries
+clean on every one; `doc/history/verification-record.md` carries the table, and the torn cell's
 verdict from `fsck_hammer2`, which reports a torn header rather than
 skipping it as the mounts do, is recorded there as the expected verdict.
 

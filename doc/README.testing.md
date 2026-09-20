@@ -629,7 +629,7 @@ rows, 2 symlinks, one corrupt file refused, one mount refused, 0 failures.
 A `# stat mode nlink uid gid inode relpath` row and a `# statfs size used
 free inodes-used` row carry what DragonFly's own `stat` and `df` reported,
 and `f11` exists to hold hard links, a setuid bit, an owner and a 0750
-directory. The ten are `f11`, `makefs`
+directory. The ten the gate mounts are `f11`, `makefs`
 output, `makefs` at LZ4 and at ZLIB, the boundary tree, media DragonFly
 wrote at its LZ4 default, media DragonFly wrote after `hammer2 setcomp
 zlib` on the mount root, a device carrying two PFSes of which the gate
