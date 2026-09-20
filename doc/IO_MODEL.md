@@ -96,6 +96,38 @@ lock and zeroed without waiting, on a folio the core could be reading.
 It waits now. Any new path that gets a file folio and writes to it owes
 the same wait, and the flag alone does not supply it.
 
+### Why the flag is enough for a mapped writer
+
+The wait is only worth anything if a writer cannot reach the folio some
+other way, so the path a mapped write takes is worth following. The
+write XOP does not take the folio lock: its exclusion is the chain lock,
+and it calls `folio_end_writeback()` at its close, so the folio is under
+writeback for the whole of the core's read. `hammer2_writepages()` is
+what puts it there, calling `folio_start_writeback()` before the XOP
+starts.
+
+A folio under writeback has had its dirty bit cleared and its page table
+entries write-protected. `writeback_iter()` reaches
+`folio_prepare_writeback()` and then `folio_clear_dirty_for_io()`, which
+calls `folio_mkclean()`, and that is where the entries are cleared, all
+of it under the folio lock. So a mapped writer's next store to that byte
+takes a write fault, and a write fault returns through `->page_mkwrite`,
+which for a file is `filemap_page_mkwrite()`: it takes the folio lock,
+marks the folio dirty and then waits on `folio_wait_stable()`. With the
+mapping flagged, that wait lands on the writeback the XOP is holding
+open, so the store cannot land until the core has finished reading. The
+kernel's own comment at the `folio_mkclean()` call states the
+arrangement: faults hold the page lock while they dirty the folio, and
+writeback arrives with the folio locked, so the two exclude each other.
+
+What would silently undo this is any change that stops a folio being
+under writeback for the core's read: dropping the
+`folio_start_writeback()` in `hammer2_writepages()`, or ending writeback
+before the XOP closes. `folio_mkclean()` would then clear no entry, no
+fault would occur, and a store would go straight into the folio the core
+was given. Nothing in the check code sees that, which is what the
+`folio_changed` count on the debug kernel exists to catch.
+
 ## The one assumption that shapes everything
 
 `hammer2_io_data()` hands the core a pointer it keeps across sleeps. That
