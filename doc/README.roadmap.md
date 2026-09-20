@@ -232,9 +232,13 @@ lists `hammer2`, the module's reference count reads 0, `rmmod` returns 0 and
 `/sys/module/hammer2` is gone afterwards. The kernel log carries the two
 taint lines an unsigned out-of-tree module always produces and nothing else.
 What the criterion asks for beyond that, no leaked allocation under kmemleak
-and no lockdep report, is unmeasured: neither `CONFIG_DEBUG_KMEMLEAK` nor
-`CONFIG_PROVE_LOCKING` is set in any kernel measured so far, the Fedora
-7.3 build included.
+and no lockdep report, was unmeasured when this was written because no
+kernel measured then carried either option, the Fedora 7.3 build included.
+Both are measured now: the kernel of record's tree sets
+`CONFIG_DEBUG_KMEMLEAK=y` and `CONFIG_PROVE_LOCKING=y`, and the fleet
+scripts print the lockdep state they ran under, `kernel 7.3.0-rc1 lockdep
+1` on the four-writer throughput run. The closure and million-file gates
+are the ones that read it, and the 0.9 rows below carry their results.
 
 `PROVE_LOCKING` is genuinely absent from stock kernels, which is now measured
 rather than supposed. Five configs read straight out of the guest images with
