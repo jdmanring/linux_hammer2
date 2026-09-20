@@ -2841,6 +2841,38 @@ thin comparison and this instrument's own run-to-run spread is the size
 of the effect being looked for. That reading has not been taken and is
 not claimed.
 
+### What the no-copy build still does, measured on it
+
+The question the numbers above leave open is whether the write path they
+measure still writes correctly, so the build carrying the no-copy change
+and the stable-writes flag was put through the gates that exercise it
+rather than only the ones that time it. On `d4e5702`, the release kernel
+for the rates and the debug kernel for the defect gates:
+
+- the full-volume fill as root, 472 of 472 files intact, 0 damaged, 0
+  kernel warnings, `rmmod` clean, exit 0;
+- the same fill as a user, 453 of 453 intact, 0 damaged, 0 warnings,
+  `rmmod` clean, exit 0;
+- 13 repository and syntax gates green, checkpatch unchanged at 1140
+  hits against the v7.3-rc1 baseline, syntax 65 checks 0 failed under
+  clang, gcc and sparse;
+- the throughput run's own checks on every pass: the file read back with
+  its source hash after a remount, the host checker clean on the
+  Linux-written and the DragonFly-written image with its negative
+  control, `rmmod` exit 0, kernel warnings 0;
+- DragonFly 6.4 mounted the volume and read every file this build wrote,
+  one writer and four, which is the compatibility reading: the change
+  alters what bytes the write path hands the core, and the other
+  implementation still decodes them.
+
+No defect was found in the no-copy path. It carries one measured cost,
+the flush under four writers at a tenth to four tenths of a second
+against the references, which the control above could not separate from
+the host's own spread, and one real gain, one of two full-block copies
+per block removed together with a per-XOP 64 KiB allocation. The gate
+that found every write-path defect this port has had is
+`test-enospc.sh`; it found none here, on either variant.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
