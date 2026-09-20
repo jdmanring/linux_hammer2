@@ -2783,6 +2783,64 @@ DragonFly's own 1468 on the same volume. The full-volume fill passed on
 this build as root and as a user, 463 and 458 files intact with no
 damage and no warning.
 
+### The flush with several writers at once
+
+Measured 2026-09-19 on the release kernel, `eebb2db`, host load 2.64 at
+launch. The reading above is one writer, and one writer rarely makes the
+kernel wait: the stable-writes flag added by the no-copy path only costs
+anything when a second writer arrives at a folio the core is hashing, so
+the single-writer flush said nothing about its price under contention.
+`throughput.sh` gained `H2_TP_WRITERS=n`, which splits the same total
+between n writers at once, each on its own random source and its own
+file, and times admission, `syncfs` and write-with-`fsync` for all three
+filesystems the same way.
+
+Four writers, 512 MiB split four ways, seconds for `syncfs` and MiB/s for
+the combined write, three passes each, with the one-writer control from
+the same instrument beneath:
+
+| writers | | HAMMER2 | ext4 | btrfs |
+|---|---|---|---|---|
+| 4 | `syncfs` | 1.46, 1.14, 1.18 | 1.03, 1.05, 1.05 | 1.02, 1.07, 1.04 |
+| 4 | write with `fsync` | 2048, 3413, 3012 | 465, 457, 465 | 470, 470, 236 |
+| 1 | `syncfs` | 1.14, 1.13, 1.12 | 1.76, 1.98, 2.04 | 0.84, 0.99, 1.01 |
+| 1 | write with `fsync` | 1089, 2133, 2438 | 247, 423, 438 | 465, 465, 457 |
+
+The flush is the one column where the port is behind, and by how much is
+what the control settles. Four writers put the port's `syncfs` at 1.14 to
+1.46 s against ext4's 1.03 to 1.05 and btrfs's 1.02 to 1.07, so it trails
+the references by a tenth to four tenths of a second on a 512 MiB flush,
+while its combined write stays four to seven times theirs, 2048 to 3413
+against 465 and 470. No writer was refused, all four files hashed back to
+their own sources after the remount, and DragonFly read every one of them
+at 520 to 1022 MiB/s. Allocation under four writers runs 1208 to 1466
+contiguous steps of 2047 per file against 6271 of 8191 with one writer,
+which is four allocators interleaving and not a regression.
+
+Whether that tenth to four tenths is the no-copy path's or the
+machine's is what a control settles, and the control says the machine's.
+Two runs of the same instrument at four writers and two passes each, the
+build before the no-copy change (`a0bb998`) at host load 21.11 and this
+one (`3fff7f1`) at 17.14, so the pair is close enough in load to compare:
+
+| build | | HAMMER2 | ext4 | btrfs |
+|---|---|---|---|---|
+| `a0bb998` | `syncfs` | 1.06, 1.26 | 1.92, 1.92 | 1.28, 1.12 |
+| `3fff7f1` | `syncfs` | 1.47, 1.20 | 1.13, 2.24 | 1.12, 1.96 |
+| `a0bb998` | write with `fsync` | 1600, 2438 | 453, 330 | 351, 449 |
+| `3fff7f1` | write with `fsync` | 883, 2226 | 430, 361 | 397, 427 |
+
+Every range overlaps, on the port and on both references, so the two
+builds are not distinguishable on this instrument at four writers and
+the difference from the references above is within what the host does
+run to run. The single-writer rise the section above recorded, 0.88 s to
+2.15 s, does not reproduce at four writers on a matched pair: the flag's
+cost is not visible here at all. What would settle it is a pair taken on
+a quiet host with more passes, since two passes at load 17 to 21 is a
+thin comparison and this instrument's own run-to-run spread is the size
+of the effect being looked for. That reading has not been taken and is
+not claimed.
+
 ## Mapped files, and the volume as a root filesystem
 
 Measured 2026-09-05. `/bin/true` copied onto a HAMMER2 volume compared
