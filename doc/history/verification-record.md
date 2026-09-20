@@ -3040,9 +3040,13 @@ wrote a file, `fsync`ed and `sync`ed it, read it back, and remounted the
 root read-only through the transition above before powering the machine
 off. The host's `fsck_hammer2` exited 0 on the image afterwards.
 
-That is one boot of a single-purpose root, not a distribution: nothing
-here has run a service manager, a package manager or a shared-library
-loader off the volume.
+That is one boot of a single-purpose root, not a distribution. The
+loader above was run off the volume, so that clause of this caveat was
+false as first written and is corrected here; what has not run is a
+service manager, a package manager, or a system built through
+`ld.so.cache` rather than an explicit `--library-path`. Nothing here has
+brought up a service, installed a package, or resolved a library through
+the loader's cache from this filesystem.
 
 ## The remount from read-only to read-write
 
