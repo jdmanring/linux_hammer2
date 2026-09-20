@@ -299,6 +299,13 @@ for f in $files; do
 	k=\$((k + 1))
 done
 echo "hammer2 md5 \$bad wrong of $WRITERS file(s)"
+# The write XOP samples the block it hands the core before and after the
+# core reads it and counts any change.  A non-zero count is a folio that
+# changed while the core was reading it, which is the defect the
+# stable-writes rule exists to prevent and which no check code reports:
+# the block verifies, and the file can read back content nobody wrote.
+# Read here where several writers are dirtying one volume at once.
+echo "hammer2 folio_changed \$(cat /sys/module/hammer2/parameters/folio_changed 2>/dev/null || echo unavailable)"
 umount /mnt/h2; echo "second umount exit \$?"; umount /mnt/e4; umount /mnt/bt
 echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
 dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
@@ -323,6 +330,18 @@ if [ "$WRITERS" -gt 1 ]; then
 	printf '%s\n' "$out" | grep -q "^hammer2 md5 0 wrong of $WRITERS file(s)$" && {
 		echo "  ok    every file reads back from hammer2 with its source hash after a remount"
 	} || { echo "  FAIL  the files did not read back with their source hashes after a remount"; fail=$((fail + 1)); }
+	# The counter is a checked reading, not a printed one: a folio that
+	# changed under the core while writers ran is the defect, and a run
+	# that saw none says so here.  A kernel without the counter (a
+	# release build of the module) reads "unavailable", which is not a
+	# pass and not a failure: it is the instrument saying it cannot
+	# answer, and it is why this reading is taken on the debug kernel.
+	fc=$(printf '%s\n' "$out" | sed -n 's/^hammer2 folio_changed \([0-9]*\)$/\1/p')
+	case "${fc:-unavailable}" in
+	0) echo "  ok    no block changed under the core with $WRITERS writers" ;;
+	unavailable) echo "  note  folio_changed is not in this module: the reading is the debug kernel's" ;;
+	*) echo "  FAIL  $fc block(s) changed while the core was reading them"; fail=$((fail + 1)) ;;
+	esac
 	for fs in h2 e4 bt; do
 		expected=0
 		while [ "$expected" -lt "$REPEAT" ]; do

@@ -1441,6 +1441,7 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	struct folio *folio = xop->folio;	/* XXX Linux: was struct buf *bp */
 	char *bio_data = scratch;	/* the assembled block, when one is needed */
 	unsigned int i;	/* Linux */
+	int whole = 0;	/* Linux: the core is reading the folio itself */
 	int error, lblksize, pblksize;
 
 	lblksize = hammer2_calc_logical(ip, lbase, &lbase, NULL);
@@ -1495,11 +1496,36 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 		 * samples on the release kernel, and bought nothing.
 		 */
 		bio_data = folio_address(folio);
+		whole = 1;
 	}
 	folio = NULL; /* safety, illegal to access after unlock */
 
-	hammer2_write_file_core(bio_data, ip, &parent, lbase, IO_ASYNC,
-	    pblksize, xop->head.mtid, &error);
+	/*
+	 * Linux: a folio handed to the core must not change while the core
+	 * reads it.  The mapping's stable-writes flag is what holds writers
+	 * off, but the flag only supplies the wait to the paths that call
+	 * folio_wait_stable(), and one path that reaches a file folio did
+	 * not.  Rather than trust that the set of paths is complete, the
+	 * block is sampled before the core reads it and again after, and a
+	 * difference is counted.  The counter is exported read-only, so a
+	 * run reads whether the rule held instead of arguing that it must
+	 * have.
+	 *
+	 * Two xxh64 per block, so this is for the debug kernel, which is
+	 * where the gates that would read it already run.
+	 */
+	if (whole) {
+		uint64_t before = XXH64(bio_data, pblksize, XXH_HAMMER2_SEED);
+
+		hammer2_write_file_core(bio_data, ip, &parent, lbase, IO_ASYNC,
+		    pblksize, xop->head.mtid, &error);
+		if (before != XXH64(bio_data, pblksize, XXH_HAMMER2_SEED))
+			__atomic_fetch_add(&hammer2_folio_changed, 1,
+			    __ATOMIC_RELAXED);
+	} else {
+		hammer2_write_file_core(bio_data, ip, &parent, lbase, IO_ASYNC,
+		    pblksize, xop->head.mtid, &error);
+	}
 	if (parent) {
 		hammer2_chain_unlock(parent);
 		hammer2_chain_drop(parent);
