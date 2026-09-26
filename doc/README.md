@@ -19,6 +19,7 @@ Which file answers which question.
 | What is the style gate's baseline count? | `checkpatch-baseline.txt` |
 | What did the lockdep report of the full-volume defect look like? | `enospc-lockdep.txt` |
 | What was measured, when, with what, and what did it find? | `history/verification-record.md` |
+| What is not verified, what is not measured, and what is missing before a root filesystem? | `readiness-audit-2026-09-25.md` |
 | What was the history rewrite, and how does an old hash map to a new one? | `history/README.md` |
 | What is staged for upstream, and where does each item stand against their head? | `upstream/README-provenance.md` |
 | What did the port plan, API map, license and portability audits say before the import? | `research/README.md` |

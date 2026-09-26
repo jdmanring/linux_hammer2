@@ -1,0 +1,113 @@
+{
+ "schema": 1,
+ "sha256": "a458262f9dffe2550f94353744f896ff93b5592a75926f9d57c608d2389508fd",
+ "size": 8029128,
+ "paths": [
+  "/home/james/Projects/linux_hammer2/src/sys/fs/hammer2/hammer2.ko"
+ ],
+ "goals": [
+  "The shipped module contains the seek implementation pushed as 1eda038",
+  "The shipped module defines the seek implementation pushed as 1eda038"
+ ],
+ "created": "2026-09-26T05:37:19Z",
+ "updated": "2026-09-26T05:37:34Z",
+ "facts": [
+  {
+   "key": "string_present:{\"value\": \"hammer2_getattr\"}",
+   "kind": "string_present",
+   "tier": "VERIFIED",
+   "weight": 0.283,
+   "location": null,
+   "detail": "string present",
+   "line": "string_present: string present value='hammer2_getattr'",
+   "claim": {
+    "kind": "string_present",
+    "params": {
+     "value": "hammer2_getattr"
+    }
+   },
+   "evidence": {},
+   "round": null,
+   "session": null,
+   "ts": "2026-09-26T05:37:26Z"
+  }
+ ],
+ "refuted": [
+  {
+   "key": "string_present:{\"value\": \"SEEK_DATA\"}",
+   "kind": "string_present",
+   "location": null,
+   "detail": "string absent",
+   "line": "string_present: string absent value='SEEK_DATA'",
+   "claim": {
+    "kind": "string_present",
+    "params": {
+     "value": "SEEK_DATA"
+    }
+   },
+   "evidence": {},
+   "round": null,
+   "session": null,
+   "ts": "2026-09-26T05:37:19Z"
+  },
+  {
+   "key": "import_present:{\"function\": \"generic_file_llseek_size\"}",
+   "kind": "import_present",
+   "location": null,
+   "detail": "import absent",
+   "line": "import_present: import absent ?!generic_file_llseek_size",
+   "claim": {
+    "kind": "import_present",
+    "params": {
+     "function": "generic_file_llseek_size"
+    }
+   },
+   "evidence": {
+    "imported_libs": []
+   },
+   "round": null,
+   "session": null,
+   "ts": "2026-09-26T05:37:26Z"
+  },
+  {
+   "key": "import_present:{\"function\": \"generic_fillattr\"}",
+   "kind": "import_present",
+   "location": null,
+   "detail": "import absent",
+   "line": "import_present: import absent ?!generic_fillattr",
+   "claim": {
+    "kind": "import_present",
+    "params": {
+     "function": "generic_fillattr"
+    }
+   },
+   "evidence": {
+    "imported_libs": []
+   },
+   "round": null,
+   "session": null,
+   "ts": "2026-09-26T05:37:26Z"
+  },
+  {
+   "key": "import_present:{\"function\": \"copy_splice_read\"}",
+   "kind": "import_present",
+   "location": null,
+   "detail": "import absent",
+   "line": "import_present: import absent ?!copy_splice_read",
+   "claim": {
+    "kind": "import_present",
+    "params": {
+     "function": "copy_splice_read"
+    }
+   },
+   "evidence": {
+    "imported_libs": []
+   },
+   "round": null,
+   "session": null,
+   "ts": "2026-09-26T05:37:26Z"
+  }
+ ],
+ "observed": {},
+ "runs": []
+}
