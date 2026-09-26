@@ -35,10 +35,10 @@ jobs:
         run: |
           # The baseline records this file's sha256, so the gate identifies
           # the checker by content rather than by what anyone says it is.
-          # v7.3-rc1 because the checker should be the one shipping with the
+          # v7.3-rc4 because the checker should be the one shipping with the
           # kernel this tree compiles against, which is also its floor.
           curl -sSLo /tmp/checkpatch.pl \
-            https://raw.githubusercontent.com/torvalds/linux/v7.3-rc1/scripts/checkpatch.pl
+            https://raw.githubusercontent.com/torvalds/linux/v7.3-rc4/scripts/checkpatch.pl
           echo "CHECKPATCH=/tmp/checkpatch.pl" >> "$GITHUB_ENV"
 
       # The provenance gate re-runs every "identical" row through cmp when

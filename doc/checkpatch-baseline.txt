@@ -1,4 +1,8 @@
-# checkpatch.pl from linux v7.3-rc1
+# checkpatch.pl from linux v7.3-rc4
+# Byte-identical to the v7.3-rc1 copy this baseline was first recorded against
+# (same sha256), so the counts below did not move when the kernel of record
+# advanced from rc1 to rc4. Line 1 above is what the gate prints as its
+# baseline name, so it stays short; this is a note for a reader.
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
