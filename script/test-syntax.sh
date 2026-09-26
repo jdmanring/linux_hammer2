@@ -37,18 +37,22 @@ if [ "${1:-}" = "--selftest" ]; then
 		tv=$(sed -n 's/^VERSION *= *//p' "$t/Makefile" | head -1).$(sed -n 's/^PATCHLEVEL *= *//p' "$t/Makefile" | head -1)
 		[ "$tv" != "$ref" ] && { ov=$t; break; }
 	done
+	# Normalize a multi-line output before matching: several of the
+	# readings below wrap, and a line-at-a-time matcher reports a phrase
+	# missing while it is plainly there. Defined here, before the branch
+	# below, because both directions of the override check and the
+	# UAPI-shaped-tree check all use it and the first version defined it
+	# inside the else arm only, so on a machine with no override tree the
+	# later uses ran `flat` as a command that does not exist, the match
+	# failed, and the check took its failure path for a reason that had
+	# nothing to do with what it was testing.
+	flat() { printf '%s' "$1" | tr '\n' ' ' | tr -s ' '; }
 	if [ -z "$ov" ]; then
 		echo "  note  every tree here is the kernel of record ($ref), so the"
 		echo "        override direction was NOT exercised"
 	else
 	lv=$(sed -n 's/^VERSION *= *//p' "$ov/Makefile" | head -1)
 	lp=$(sed -n 's/^PATCHLEVEL *= *//p' "$ov/Makefile" | head -1)
-	# Normalize first, because the warning wraps: "WHICH IS NOT" ends one
-	# line and "THE KERNEL OF RECORD" starts the next, so a line-at-a-time
-	# matcher reports it missing while it is plainly there. This fixture
-	# failed that way on its first run, the same defect the inventory
-	# gate's document reader was fixed for hours earlier.
-	flat() { printf '%s' "$1" | tr '\n' ' ' | tr -s ' '; }
 	out=$(KDIR=$ov H2_KERNEL_REF="$lv.$lp" bash "$0" 2>&1)
 	if flat "$out" | command grep -q 'NOT THE KERNEL OF RECORD'; then
 		echo "  ok    an overridden run says so in its summary"
