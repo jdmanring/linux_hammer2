@@ -12,7 +12,12 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.26 closes a class of documentation defect rather
+0.5 to 0.9 are met. 0.9.27 is the same class again, found while running
+the gates after a build: `kbuild`'s `.o.d` dependency file was named by
+neither `.gitignore` nor the four gates excluding build output, and a
+`make` below the kernel floor writes it before the version `#error`
+stops the compile, so a failed build left a file that failed
+`test-provenance.sh`. 0.9.26 closes a class of documentation defect rather
 than a code one: four documents sent a reader to `doc/README.roadmap.md`
 for the version rows `test-history.sh` checks, a file it stopped reading
 when the table moved to `CHANGELOG.md`, and no gate read prose for truth
@@ -45,7 +50,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.26
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.27
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
