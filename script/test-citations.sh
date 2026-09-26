@@ -107,7 +107,8 @@ for d in $docs; do
 					elsewhere=$(command grep -rlF \
 						--exclude='*.o' --exclude='*.ko' \
 						--exclude='*.mod' --exclude='*.mod.c' \
-						--exclude='*.cmd' --exclude='*.order' \
+						--exclude='*.cmd' --exclude='*.o.d' \
+						--exclude='*.order' \
 						--exclude='*.symvers' \
 						-- "$sym" src doc script test 2>/dev/null |
 						head -3 | tr '\n' ' ')

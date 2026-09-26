@@ -110,14 +110,18 @@ CLONES=${H2_CLONE_DIR-$HOME/Projects}
 # every loop below vacuous, and a vacuous run prints zero findings, which is
 # indistinguishable from a clean tree.
 # Build artifacts are not source. kbuild writes .o, .ko, .mod, .mod.c, .cmd,
-# modules.order and Module.symvers beside the sources it compiles, and this
-# gate had never seen a built tree until the first `make` on 2026-09-02.
+# .o.d, modules.order and Module.symvers beside the sources it compiles, and
+# this gate had never seen a built tree until the first `make` on 2026-09-02.
 # Against one it read those files as though they were the port's own. The
 # patterns match .gitignore's, and .mod.c is listed separately because it
-# ends in .c and so enters a *.c glob.
+# ends in .c and so enters a *.c glob. .o.d was left out of both lists until
+# 2026-09-26, and a bare `make` below the kernel floor writes one before the
+# version #error stops the compile, so a failed build left a file that made
+# test-provenance.sh fail on the next run.
 files=$(find "$SRC" -type f \
 	! -name '*.o' ! -name '*.ko' ! -name '*.mod' ! -name '*.mod.c' \
-	! -name '*.cmd' ! -name '*.order' ! -name '*.symvers' \
+	! -name '*.cmd' ! -name '*.o.d' ! -name '*.order' \
+	! -name '*.symvers' \
 	! -path '*/.tmp_versions/*' | LC_ALL=C sort)
 rows=$(command grep -v '^#' "$CSV" | command grep -v '^file,origin,' | command grep -v '^[[:space:]]*$')
 [ -n "$files" ] || { echo "provenance: FAIL: no files under $SRC at all" >&2; exit 1; }

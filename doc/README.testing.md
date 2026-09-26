@@ -99,6 +99,18 @@ having tripped. The one that bites latest is the `*.c` glob: kbuild writes
 `hammer2.mod.c`, which no build has reached, because modpost stops first.
 
 All four now exclude kbuild's output, and the patterns match `.gitignore`'s.
+One suffix was missing from both lists until 2026-09-26: `.o.d`, kbuild's
+dependency file. It went unnoticed because every build that reached this
+tree had succeeded, and a successful build's `.o.d` files are covered by the
+`*.cmd` entries beside them in the reader's eye but not in a matcher. A
+`make` against the host's kernel, which the version `#error` stops before
+the compile, still writes the `.d` for whichever object it reached, so a
+failed build left `src/sys/fs/hammer2/.hammer2_io.o.d` behind and the next
+`test-provenance.sh` run failed asking for a row for it. That had been
+hand-deleted once as a stray, which treated the symptom. `.o.d` is in
+`.gitignore` and in all four exclusion lists now, driven both ways: with the
+real artifact present the gate passes, and a planted non-source file in
+`src/` still fails it with exit 1.
 The permanent guard is not a new gate but an ordering: the pre-push hook
 builds the module before it runs any gate, so every gate runs against the
 tree a developer actually has. Until 2026-09-03 this paragraph also said that step asserts
