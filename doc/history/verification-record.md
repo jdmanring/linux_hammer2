@@ -3660,3 +3660,30 @@ the same, so the rc1 table stands as the reading of record and this one
 is the confirmation that the kernel move did not move it. The `fsync`
 figure is the same finding as above and is not re-argued.
 
+## A path-sensitive reader, and what it found
+
+`script/analyze.sh` runs clang's static analyzer over the six files this
+port edits most, with the syntax gate's kernel flag set and the core,
+unix and deadcode checkers, and a control that must report a planted
+null dereference before any file is read. First run 2026-09-26 against
+`4189e35` on the rc4 tree: 7 candidates over 6 files, and each was read
+against the origin tree before a disposition.
+
+| where | candidate | disposition |
+|---|---|---|
+| `hammer2_io.c`, `hammer2_dedup_mask()` | left shift by 64 | false: the `bbeg + bits == 64` case takes the all-ones branch two lines above and the analyzer does not carry the constraint through the subtraction; upstream's function verbatim |
+| `hammer2_io.c`, `hammer2_io_getblk()` | `error = 0` never read | upstream's store, the same line in the FreeBSD file; carried |
+| `hammer2_strategy.c`, zlib branch | `ret` from `deflateEnd` never read | upstream's store, `ret = deflateEnd()` in the FreeBSD file; carried, and the `XXX Linux` mark on the line is for the renamed call, not the store |
+| `hammer2_vfsops.c`, `hammer2_recovery()` | `sync_tid = elm->sync_tid` never read | upstream's store, the loop passes `freemap_tid` instead; carried |
+| `hammer2_vfsops.c`, inode sync | `error = 0` after the vnode flush failed | this port's `XXX`, deliberate: upstream's `vn_fsync_buf()` has no return to check and the flush continues, so the reset is what keeps the carried control flow; the message before it is the record |
+| `hammer2_ondisk.c` through `hstrdup()` | null passed to `strlen` | false: the path reaches `hstrdup()` from `hmalloc()` with `M_WAITOK`, which is `__GFP_NOFAIL` and cannot return null, and `kstrdup()` itself returns null for a null argument before `strlen` would run; the analyzer cannot see the GFP contract |
+| `hammer2_ioctl.c`, PFS create | `nipdata` never read | upstream's store; carried |
+
+Nothing to change: four are upstream's dead stores that a carried file
+keeps, one is this port's own marked choice, and two are the analyzer
+missing a constraint it cannot see. What the run establishes is the
+negative, that the port's own six files hold no null dereference, no
+use of an uninitialized value, no double free and no leaked allocation
+along any path the analyzer can enumerate, which two compilers and
+sparse do not ask.
+

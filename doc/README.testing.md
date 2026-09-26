@@ -46,6 +46,7 @@ rather than a verdict; the readings are in
 | `nix-closure.sh` | copies a real Nix closure in through the port and reads it cold beside squashfs and erofs |
 | `bulkfree.sh` | writes a set, removes it, and runs the bulkfree scan that frees it |
 | `hpanic-contain.sh` | reads what a device in error keeps off the media |
+| `analyze.sh` | clang's static analyzer over the port's own six files with the syntax gate's kernel flag set, a path-sensitive reading no compiler or sparse pass takes; a host instrument, not a gate, since the carried core carries upstream's dead stores and the reading is a candidate list to triage against the origin tree |
 | `dfly-enospc.sh` | fills a volume to capacity on the DragonFly guest under an allocator that refuses on a count, the reproducer behind the staged unmount patch |
 
 
@@ -795,7 +796,18 @@ A second build of the same source sits beside it in the guest since
 `~/kernels/linux-7.3-rc1-release`, and `7.3.0-rc4-release` from
 `~/kernels/linux-7.3-rc4-release` since 2026-09-26, the same
 configuration with every debug option off, chosen at boot by the grub
-default, which `setkernel.sh` on the guest rewrites. It exists because a throughput number is a claim about the
+default, which `setkernel.sh` on the guest rewrites. A third build,
+`7.3.0-rc4-kasan` from `~/kernels/linux-7.3-rc4-kasan`, sits beside
+them since 2026-09-26: the debug configuration plus `KASAN` inline with
+`KASAN_VMALLOC`, `UBSAN` with the bounds, shift, bool and enum checks,
+`DEBUG_ATOMIC_SLEEP`, `DEBUG_LIST`, `DEBUG_VM`, `DEBUG_OBJECTS` and the
+fault injection framework with `FAILSLAB`, `FAIL_PAGE_ALLOC` and
+`FAIL_MAKE_REQUEST` behind debugfs. The debug kernel's lockdep and
+kmemleak see locks and leaks and nothing else; an out-of-bounds read
+inside a folio, a use after free the allocator has not yet reused, a
+sleep under a spinlock, or a shift past the type are this build's
+reading and no other's, and it is where a fleet gate runs when the
+question is memory rather than order. The release build exists because a throughput number is a claim about the
 port and a lockdep kernel charges the port for every lock it takes per
 block: a profile of the 512 MiB read on the debug kernel put a third of
 the reader's samples in lock bookkeeping, more in kmemleak's object
