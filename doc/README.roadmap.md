@@ -12,8 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.30 repeats the latency reading on rc4 and
-finds every median within a tenth of rc1's. 0.9.29 advances the kernel of record from 7.3-rc1
+0.5 to 0.9 are met. 0.9.31 is the sweep by last-edit date over the
+four documents no gate reads for state, which found the architecture
+document describing a lock and a mount three weeks gone. 0.9.30 repeats
+the latency reading on rc4 and finds every median within a tenth of
+rc1's. 0.9.29 advances the kernel of record from 7.3-rc1
 to 7.3-rc4, the pin being the newest candidate of the line until the
 release, with both fleet gates run on it for the first time and the
 checker found to be the same file at both tags. 0.9.28 measures what
@@ -62,7 +65,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.30
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.31
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
