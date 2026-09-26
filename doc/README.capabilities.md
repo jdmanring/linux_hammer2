@@ -20,7 +20,10 @@ and unsafe, possible but not acceptable for transactional use.
 
 Measured on `artix-s6-kde` at 7.3.0-rc1 against the build the
 0.9.0 row of `CHANGELOG.md` pins, unless a row says otherwise. The
-writing ioctls are a hand run on 2026-09-05 and not a gate, since the
+kernel of record moved to 7.3.0-rc4 on 2026-09-26; the rows below still
+name rc1 where that is where the measurement was taken, since a reading
+records the build it ran on, and a row moves only when a reading moves
+it. The writing ioctls are a hand run on 2026-09-05 and not a gate, since the
 fixture gate's images are read-only; the fill, the round trip, the
 closure and the PFS roots are fleet runs named in `README.testing.md`.
 
