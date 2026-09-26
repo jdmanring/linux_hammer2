@@ -3640,4 +3640,23 @@ at `v7.3-rc1` and at `v7.3-rc4` are the same file, `sha256`
 both, so the baseline's sha line is unchanged and the gate still
 identifies the checker by content. The latency table above was taken on
 rc1 and says so; it is not repeated here, since a reading names the
-build it ran on and rc4 has not been timed.
+build it ran on and rc4 was timed later the same day, below.
+
+**The latency reading repeated on rc4.** `script/latency.sh` at 1500
+operations over a 1024 MiB file on the rc4 debug kernel, the same
+instrument and arguments as the rc1 table, the `tmpfs` control failing
+its own check at a 441 ns median first, every guest pass taken with
+`mountpoint -q` holding, 0 kernel warnings, and `fsck_hammer2` clean on
+the host after the run. Microseconds, min / p50 / p99:
+
+| filesystem | randread4k | randwrite4k_fsync | fsync_batch8 |
+|---|---|---|---|
+| HAMMER2 | 40 / 47 / 177 | 178 / 346 / 5412 | 1164 / 1332 / 1829 |
+| ext4 | 5 / 11 / 32 | 5422 / 6840 / 14625 | 7826 / 8546 / 14245 |
+| btrfs | 18 / 24 / 55 | 6425 / 7762 / 14686 | 7372 / 9152 / 23376 |
+
+Every median is within a tenth of its rc1 figure and the ordering is
+the same, so the rc1 table stands as the reading of record and this one
+is the confirmation that the kernel move did not move it. The `fsync`
+figure is the same finding as above and is not re-argued.
+
