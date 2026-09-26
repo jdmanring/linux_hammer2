@@ -221,11 +221,11 @@ module_param_named(fail_alloc_after, hammer2_fail_alloc_after, int, 0644);
  *   defined" in gcc, and neither is suppressed here.  The two halves of
  *   what looks like one check are not both on.
  *
- * - hammer2_pfsfree_scan() keeps its hammer2_vfs_sync_pmp() call, which is
- *   declared in hammer2.h and not yet defined anywhere.  That is deliberate:
- *   nothing in this tree links yet, and a symbol that is missing at link
- *   time is visible, where a stub returning success would be silent on the
- *   one path that decides whether an unmount lost data.
+ * - hammer2_pfsfree_scan() keeps its hammer2_vfs_sync_pmp() call.  While
+ *   that symbol was declared in hammer2.h and defined nowhere, before
+ *   0.4.7, the call stayed on purpose: a symbol missing at link time is
+ *   visible, where a stub returning success would be silent on the one
+ *   path that decides whether an unmount lost data.  It is upstream's now.
  */
 
 /*

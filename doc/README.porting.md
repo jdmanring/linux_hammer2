@@ -818,10 +818,10 @@ upstream is to add `FORCECLOSE` to that `vflush()` call, goes with it.
 The three `hammer2_vfs_sync_pmp()` calls stay. Until 0.4.7 that symbol
 was declared in `hammer2.h` and defined nowhere, deliberately, and then
 a floor; it is upstream's sync now. The choice it recorded was the same
-choice `hammer2_pfsfree_scan()` already makes: nothing in this tree
-links yet, and a missing symbol is visible at link time where a stub
-returning success would be silent on the one path that decides whether
-an unmount lost data. Three is upstream's number, and its comment says
+choice `hammer2_pfsfree_scan()` made while the tree did not yet link: a
+missing symbol is visible at link time where a stub returning success
+would be silent on the one path that decides whether an unmount lost
+data. Three is upstream's number, and its comment says
 why: freemap updates lag a flush by one, plus one for safety.
 
 `mp->mnt_data` becomes `sb->s_fs_info`, which is the slot the VFS hands
@@ -963,8 +963,9 @@ signature, and a day went to a kernel that nothing here runs, nothing in
 Saxum runs, and no fixture has ever been mounted on. The maintainer's
 ruling on 2026-09-05: a floor two releases below the features the code
 uses is not worth a second tree, so raise it when a newer facility is
-needed and stop carrying the range. 7.3 is at rc1 as this is written and
-is expected to be longterm; if kernel.org's release table says otherwise
+needed and stop carrying the range. 7.3 was at rc1 when this was written
+and at rc4 on 2026-09-26, the pin following each candidate, and is
+expected to be longterm; if kernel.org's release table says otherwise
 when it ships, that changes which release the pin names, not the rule.
 
 What the move deleted: the second CI job that fetched, configured and

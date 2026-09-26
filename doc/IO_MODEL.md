@@ -498,9 +498,10 @@ refusal is a diagnosis improvement and not an open hole: the
 `hammer2_io.c` fails the build outright without THP, and
 `hammer2_io_folio_check()` re-checks at every read. The clamp case needs
 `MAX_PAGECACHE_ORDER` below `get_order(65536)`, which no configuration
-this module can currently build on reaches. It is roadmap item 3 rather
-than a `DEFER`, because what makes it reachable is a kernel change and
-not anything in this tree.
+this module can currently build on reaches. It is the third exit
+criterion of the roadmap's 0.3, the named refusal, rather than a
+`DEFER`, because what makes it reachable is a kernel change and not
+anything in this tree.
 
 ### The narrower design, and its cost
 
