@@ -12,7 +12,14 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.25 measures deduplication, which was on by
+0.5 to 0.9 are met. 0.9.26 closes a class of documentation defect rather
+than a code one: four documents sent a reader to `doc/README.roadmap.md`
+for the version rows `test-history.sh` checks, a file it stopped reading
+when the table moved to `CHANGELOG.md`, and no gate read prose for truth
+so nothing noticed. The gate now compares the newest row's version
+against every sentence in a current-state document that names one, which
+is what found `README.status.md` and this section both still saying 0.9.24
+after 0.9.25 landed. 0.9.25 measures deduplication, which was on by
 default and asked before every data block was allocated while no run in
 this tree had ever written a duplicate block, `throughput.sh` drawing
 fresh data every pass so that a run cannot read as a hit;
@@ -38,7 +45,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.25
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.26
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
