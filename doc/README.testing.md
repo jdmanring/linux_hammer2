@@ -42,6 +42,7 @@ rather than a verdict; the readings are in
 | `pfs-domains.sh` | creates PFS roots here, mounts each by label on both sides, and has DragonFly check what was written in each |
 | `million-tree.sh` | writes a million-file tree here and has both sides count it |
 | `throughput.sh` | times one large file against ext4 and reads its allocation order from the image beside DragonFly's |
+| `latency.sh` | times random 4 KiB reads and write-then-`fsync` per operation on this port and on ext4 and btrfs in the same guest, from `test/hammer2-latency.c`, with the page cache dropped first |
 | `nix-closure.sh` | copies a real Nix closure in through the port and reads it cold beside squashfs and erofs |
 | `bulkfree.sh` | writes a set, removes it, and runs the bulkfree scan that frees it |
 | `hpanic-contain.sh` | reads what a device in error keeps off the media |
@@ -1139,6 +1140,35 @@ every other store path removed while a reader walks the ones that
 stay, what stays hashed against its source, and the count DragonFly
 must then see. The guest kernel needs squashfs
 and erofs as modules, which the debug guest's did not until F6 asked.
+
+`script/latency.sh` takes the reading `throughput.sh` cannot: what one
+operation costs, rather than what a large sequential stream averages.
+Every performance number in this tree before it was sequential, which is
+the half where a copy-on-write filesystem with 64 KiB blocks and a
+checksum per block is expected to look good; the cost of a random small
+read and of making one write durable is the other half, and nothing
+measured it. The measurement is `test/hammer2-latency.c`, because
+percentiles over per-operation timings cannot be taken honestly in shell.
+Three passes: random 4 KiB reads, random 4 KiB writes each followed by
+`fsync`, and `fsync` alone over a batch of eight writes. The two write
+forms are separate because a bare `pwrite` returns when the page cache
+has the bytes, so its latency is the page cache's and would flatter
+every filesystem equally, while a database or an installer pays the
+commit. `O_DIRECT` is not used and cannot be: this port carries no
+`->direct_IO`, so `open(O_DIRECT)` returns `EINVAL`.
+
+It runs on HAMMER2 and on ext4 and btrfs in the same guest, because the
+number is only interesting as a comparison. The failure it is built
+around is a reading served from the page cache: that reports hundreds of
+nanoseconds and would otherwise look like an excellent result, so the
+file is sized above the guest's RAM, the driving side drops the caches
+before the read pass, and the exerciser asserts its own median is above a
+microsecond and prints the raw minimum beside every percentile. The host
+runs the same binary on `tmpfs` first as the cache control, which must
+report cache speed and fail that check, so the check is known to be live
+before the guest's numbers are believed. `H2_LAT_MIB` may not be set
+below 256, since a file smaller than a guest's cache cannot produce a
+media reading whatever else is done.
 
 `script/throughput.sh` takes the two readings that decide whether the
 port adds `->readahead` and changes its writeback order, the services

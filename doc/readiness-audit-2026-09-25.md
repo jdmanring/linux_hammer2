@@ -37,7 +37,7 @@ a reader is meant to find here, and it had no instrument. It does now, and it
 passes, with controls that fail. A feature advertised in the first paragraph
 and exercised by nothing is the shape this project has a rule about.
 
-## 2. Performance: one workload measured, several not
+## 2. Performance: the sequential half measured, the per-operation half now too
 
 What is measured, on the release kernel of record:
 
@@ -46,19 +46,28 @@ What is measured, on the release kernel of record:
 - a Nix closure, 1978 paths / 205871 files, cold read beside squashfs, erofs,
   ext4.
 - a full-volume fill, and bulkfree's two passes.
+- **per-operation latency, added 2026-09-26**: random 4 KiB reads and
+  write-then-`fsync`, on this port and on ext4 and btrfs in the same guest,
+  with the page cache dropped and a `tmpfs` cache control that must fail its
+  own check. `script/latency.sh`, from `test/hammer2-latency.c`.
 
-What is **not** measured anywhere in the tree, searched by name:
+What that closes: this section previously named random 4 KiB and `fsync`
+latency as unmeasured, which was the half of the picture where a 64 KiB-block
+copy-on-write design is expected to pay rather than win. The gap was not that
+the measurement was hard; it is that nothing in the roadmap's exit criteria
+ever asked for it, so the process had no step that would produce it. Every
+instrument this tree had answered "is the data correct", and correctness
+instruments do not report cost.
 
-- random 4 KiB I/O, read or write;
-- `fsync` latency, or any single-operation latency;
+What is **still** not measured anywhere in the tree, searched by name:
+
 - small-file create/delete rate (the million-file tree measures a walk, not a rate);
 - mixed read/write workloads;
 - sustained multi-hour load, or behavior past the 2 GiB/4 GiB guests.
 
 Sequential throughput is where a copy-on-write filesystem with 64 KiB blocks and
 a checksum per block is expected to look good. The unmeasured set is where the
-same design is expected to cost, so the current numbers are the favourable half
-of the picture and cannot be quoted as "performance is good".
+same design is expected to cost.
 
 ## 3. Missing VFS surface, checked against what a root filesystem needs
 
@@ -102,9 +111,12 @@ supports that, but only after this.
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
 2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
 3. `->direct_IO`, if databases or VM images are a target.
-4. Random-4K and fsync latency, to learn what the design costs, not only what
-   it wins.
+4. ~~Random-4K and fsync latency.~~ Done 2026-09-26: `script/latency.sh` and
+   `test/hammer2-latency.c`, on this port and on ext4 and btrfs beside it.
 5. A gate that requires a reference-filesystem control for kernel-facing tests.
 
-Items 1 and 3 change what a consumer can do; 2, 4 and 5 change what this tree
-can claim. Item 2 is closed above; 1, 3, 4 and 5 are not started.
+Items 1 and 3 change what a consumer can do; 4 and 5 change what this tree
+can claim, and 2 and 4 are done. Item 5 is the one that generalizes: every
+instrument added since it was written, including the two above, has needed a
+filesystem that is not this port before its reading could be believed, and
+nothing enforces that.

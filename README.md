@@ -50,7 +50,8 @@ At a glance, on a kernel of 7.3 or newer:
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image
 + not verified or not built: `fallocate` and `O_DIRECT`, which are
-  refused; random 4K and `fsync` latency, which are unmeasured; and what
+  refused; small-file create and delete rates, mixed read/write and
+  sustained multi-hour load, which are unmeasured; and what
   stands between this and a root filesystem, in
   `doc/readiness-audit-2026-09-25.md`
 

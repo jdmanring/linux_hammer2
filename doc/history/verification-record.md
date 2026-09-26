@@ -3543,3 +3543,61 @@ code had two; the code was corrected, not the sentence.
 
 Both are the shape this record has already named: a wrong answer that
 reads as a right one, in a path no checksum and no read test looks at.
+
+## Per-operation latency, the half that was never measured
+
+Measured 2026-09-26 on `artix-s6-kde` at 7.3.0-rc1, `script/latency.sh`
+driving `test/hammer2-latency.c` at 1500 operations over a 1024 MiB file.
+
+Every performance number this tree had was sequential: one large file, a
+closure, a fill, bulkfree. Sequential throughput is where a
+copy-on-write filesystem with 64 KiB blocks and a checksum per block is
+expected to look good, and the cost of a random small read and of making
+one write durable is the other half. The gap was not that the
+measurement was hard; it is that no milestone's exit criteria ever asked
+for it, so nothing in the process would have produced it. Every
+instrument here answered "is the data correct", and correctness
+instruments do not report cost.
+
+All figures are microseconds. `randwrite4k_fsync` is one write and its
+commit; `fsync_batch8` is eight writes and one commit, so its per-op
+figure is not comparable to the other two and is not read that way. The
+page cache is dropped before the read pass, on a file larger than the
+guest's RAM.
+
+| filesystem | randread4k min/p50/p99 | randwrite4k_fsync min/p50/p99 | fsync_batch8 min/p50/p99 |
+|---|---|---|---|
+| HAMMER2 | 41 / 49 / 185 | 201 / 384 / 6092 | 1164 / 1386 / 1933 |
+| ext4 | 5 / 11 / 28 | 5241 / 7119 / 20262 | 8061 / 8732 / 14602 |
+| btrfs | 17 / 23 / 48 | 6446 / 7824 / 15120 | 7717 / 9249 / 21281 |
+
+Reads: HAMMER2 is 2 to 4 times slower than btrfs and about 4.5 times
+slower than ext4 at the median, which is what a 64 KiB block read
+through a DIO cache costs against a 4 KiB page-cache read. That is the
+expected direction and the expected size.
+
+Writes: HAMMER2 commits in 384 us where ext4 takes 7119 and btrfs 7824,
+about 18 times faster. That number was checked rather than published,
+because a durability barrier that fast is a smell. It is not a defect
+here: `hammer2_dev_cache_flush()`, the `blkdev_issue_flush()` wrapper in
+`hammer2_os.h`, has no callers, and neither does its counterpart in the
+tree it is carried from. DragonFly's own `hammer2_vop_fsync()` flushes
+the file's buffers and the inode's chains and issues no device cache
+flush, and the FreeBSD port does the same. Durability on that design
+comes from the device layer's ordering, not from a barrier in `fsync`,
+so this port reproduces upstream's behavior. The number is a statement
+about what `fsync` does on this filesystem, not evidence that a flush was
+skipped here and performed elsewhere.
+
+Two things about the instrument are worth recording, both found by its
+own controls. The first version created the ext4 and btrfs control images
+with `truncate` and never formatted them, so both mounts failed, the
+exerciser wrote to the empty mount points as directories on the guest's
+root filesystem, and the two "controls" reported 39139 and 39581 op/s
+with the same 24 us median. They were one filesystem measured twice and
+read as two agreeing. The images are now formatted and asserted with
+`file -b`, the guest takes no reading unless `mountpoint -q` holds for
+the path, and the host fails the run on a skipped pass. The host also
+runs the binary on `tmpfs` first, where it must report cache speed and
+fail its own check, so the check is known to be live before the guest's
+numbers are believed.
