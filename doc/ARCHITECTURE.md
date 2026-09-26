@@ -57,25 +57,41 @@ Three objects matter and only one of them is ours.
 is the only place the filesystem meets Linux memory. See `doc/IO_MODEL.md`
 for its lifetime, which is where the port's real design decisions are.
 
-`hammer2_dev` holds the per-mount state, including the device `struct file`
-and the dio hash. Its Linux lifetime is what the mount work defines, and
-`doc/README.status.md` says how much of `hammer2_vfsops.c` exists.
+`hammer2_dev` holds the per-device state, the `struct file` for each
+volume and the dio hash under its one `iohash_lock`, which
+`doc/IO_MODEL.md` explains against DragonFly's lockless io layer. It
+lives from the first mount of a PFS on the device to the last unmount,
+and `hammer2_kill_sb()` prints what it left allocated, which the fleet
+gates read as zero.
 
 ## Locking
 
-`hammer2_mtx_t` is a `struct rw_semaphore_wrapper`: a `rw_semaphore` plus a
-reference count and an owner pointer. The wrapper exists because DragonFly's
-`mtx` interface answers questions Linux's does not, `hammer2_mtx_owned()`
-above all, and the core asks them.
+`hammer2_mtx_t`, the chain lock and the inode lock, is DragonFly's `mtx`
+carried as a primitive of the shim's own: the lock word in DragonFly's
+layout, the exclusive bit over a count that is the shared holders or the
+exclusive holder's depth, an owner, and one wait queue, annotated for
+lockdep as a sleeping lock. It was a `rw_semaphore` inside a wrapper
+until 0.9.6, and the wrapper was removed because the core asks three
+things of this lock that a semaphore does not promise: who holds it,
+an upgrade that turns the sole reader into the writer in one compare
+and swap ahead of any queued writer, and recursion by the exclusive
+holder. Each had been patched onto the semaphore separately as a mount
+or a tree found it, and the upgrade ended up reading a count layout the
+kernel keeps private, which is what made the semaphore go.
+`README.porting.md`'s "Locks" section has the three answers that were
+tried and why each fell.
 
-`hammer2_mtx_upgrade_try()` returns `hammer2_mtx_owned(p) ? 0 : 1` and is
-marked `XXX`: it is a translation that satisfies the callers rather than an
-implementation of the DragonFly semantics. It is the sharpest open item in
-the shim.
+Recursion is what DragonFly does: the exclusive holder's re-lock adds
+one to the count, and a lock initialized without `hammer2_mtx_init_recurse()`
+that recurses warns once and is admitted rather than hanging. The path
+that needs it is `hammer2_chain_lookup()` returning the inode chain
+itself for a DIRECTDATA inode, which the first buffered write to a
+small file reached. The shared side does not recurse under an exclusive
+hold, on DragonFly either.
 
-Recursive acquisition is NOT provided. NetBSD's port handles the two call
-sites that would need it individually, and this port follows that rather
-than carrying a recursion counter nothing else wants.
+`hammer2_spin_*` is a `rw_semaphore`, not a `spinlock_t`, as FreeBSD's
+`sx(9)` mapping sleeps too; every acquire site was audited and none is
+under an I/O completion.
 
 ## Build knobs
 
@@ -86,21 +102,20 @@ than carrying a recursion counter nothing else wants.
 All three are Kusumi's names from the other ports. Do not add a knob that
 none of them has without saying why in the same commit.
 
-## What does not exist yet
+## The mount, and what is deliberately not `get_tree_bdev()`
 
-There is a `file_system_type`, a `module_init` and a `->get_tree` that
-opens the device; there is no root inode behind it. `hammer2_get_tree()`
-splits `fc->source`, creates an anonymous superblock, opens the volumes,
-builds the `hammer2_dev` and reads its super-root, and then tears all of
-it back down and fails the mount, deliberately and with an error rather
-than a stub. What it still owes is the PFS half: the label lookup under
-the super-root, the `pmp` it yields, and a fill-super. Two `DEFER` rows
-name that, one for the half itself and one for the read-write recovery
-upstream runs before it, which is not run for a mount that cannot
-succeed. `hammer2_vfsops.c` holds the PFS support half, which is
-DragonFly's, plus the globals, the module entry and the mount entry,
-which are this port's; the design is recorded in that file's opening
-comment. The gates
-compile and type-check; nothing here has ever been loaded into a kernel,
-and the first kbuild compile is a decision rather than a task.
-`doc/README.status.md` is the authority on what is done.
+`hammer2_vfsops.c` is a rewrite with a carried body: FreeBSD's one
+`hammer2_mount()` maps onto `->init_fs_context`, `->parse_param`,
+`->get_tree` and a fill-super, with `MNT_UPDATE` split off to
+`->reconfigure`. HAMMER2 spans up to `HAMMER2_MAX_VOLUMES` devices and
+the carried `hammer2_open_devvp()` opens all of them with the superblock
+as holder, so the port does not use `get_tree_bdev()`, which opens
+exactly one device and takes `sb->s_bdev` for it; it follows btrfs, the
+multi-device filesystem in tree, with `sget_fc()` and no `sb->s_bdev`.
+The PFS half below the entry is DragonFly's and reads against the BSD
+ports. The file's opening comment collects the differences.
+
+`doc/README.status.md` is the authority on what is done, and its origin
+table has a row for every file here. The `DEFER` markers, four at this
+writing, are collected in that document's ledger, which
+`test-inventory.sh` compares against the source in both directions.
