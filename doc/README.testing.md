@@ -610,6 +610,29 @@ caller's capacity going in and it had been zeroed. That second one is the
 reason the gate checks the two counts for being non-zero rather than only
 checking the status: a scan that copies nothing returns success.
 
+`test/hammer2-dedup.c` runs on the same volume, by the same gate and on the
+same terms. Deduplication is on by default, `hammer2_dedup_enable` being 1,
+and the write path asks `hammer2_dedup_lookup()` before allocating every
+data block, so a second copy of a block should point at the first one's
+media. Nothing here had ever written a duplicate block: `throughput.sh` is
+the only script that names dedup and it draws fresh data every pass so a
+run cannot read as a dedup hit, and `README.md`'s opening paragraph names
+block-level deduplication among the format's features. The exerciser is
+black-box: it writes one file, reads `statfs`, writes a second file holding
+the same bytes, and reads `statfs` again, so a shared block shows as a small
+second cost against the first file's. It asserts the first file moved the
+count before it interprets the second, since a duplicate that costs nothing
+and a run that wrote nothing look the same in the difference alone.
+
+That exerciser's control is a filesystem with no dedup, and there are two
+on any machine that has them: on `tmpfs` the duplicate costs its full
+allocation, and on `btrfs` 1032 blocks against the first file's 1024, so
+both fail the third check. The control needs no guest and is the check that
+says the test can detect the absence of the feature at all. It is run by
+copying the unit out of `statfs` rather than assuming 64 KiB, because
+`btrfs` reports 4 KiB and a test that only runs on this port cannot be
+controlled by a filesystem that is not this port.
+
 It carries a negative control per image rather than only in the selftest.
 After a manifest verifies, one hash in it is altered and the same mount is
 compared again, which must fail. Without that, an empty sums file, a

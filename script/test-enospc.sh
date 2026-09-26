@@ -384,6 +384,19 @@ cc -static -O2 -o /tmp/h2seekt.$$ test/hammer2-seek.c 2>/dev/null || {
 scp -q -o ConnectTimeout=5 /tmp/h2seekt.$$ "$GUEST_SSH:/tmp/h2seek" >/dev/null 2>&1
 rm -f /tmp/h2seekt.$$
 
+# The dedup exerciser, from test/hammer2-dedup.c, on the same terms.
+# Deduplication is on by default (hammer2_dedup_enable is 1) and the write
+# path asks hammer2_dedup_lookup() before allocating every data block, so a
+# second copy of a block should point at the first one's media rather than
+# take fresh media. Nothing had ever written a duplicate block here, and
+# throughput.sh draws fresh data every pass precisely so a run cannot read
+# as a dedup hit. It measures free blocks from statfs, which needs no debug
+# hook, and it runs on this gate's read-write volume.
+cc -static -O2 -o /tmp/h2dedupt.$$ test/hammer2-dedup.c 2>/dev/null || {
+	echo "enospc: COULD-NOT-RUN: the dedup exerciser did not compile" >&2; exit 2; }
+scp -q -o ConnectTimeout=5 /tmp/h2dedupt.$$ "$GUEST_SSH:/tmp/h2dedup" >/dev/null 2>&1
+rm -f /tmp/h2dedupt.$$
+
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
@@ -430,6 +443,10 @@ out=$(ssh "$GUEST_SSH" '
 	# lines go out as they are and the host counts them.
 	$as /tmp/h2seek /mnt/h2enospc/.h2seek 2>&1 | sed -n /seek-/p
 	$as rm -f /mnt/h2enospc/.h2seek >/dev/null 2>&1
+	# The dedup exerciser, before the fill: it writes two files and needs
+	# the room to write them, and the fill is what takes the room away.
+	# It unlinks what it made, so the fill below measures what it did.
+	$as /tmp/h2dedup /mnt/h2enospc 2>&1 | sed -n /dedup-/p
 	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
@@ -897,6 +914,23 @@ elif [ "${sf:-0}" -ne 0 ]; then
 	fail=$((fail + 1))
 else
 	echo "  ok    seek $sc check(s) on a live mount, 0 failed"
+fi
+
+# Dedup, on the same terms: a count printed by the exerciser, checked for
+# being non-zero before it is believed.  The failure this catches is a
+# feature advertised in README.md's opening paragraph and never run.
+dc=$(printf '%s\n' "$out" | sed -n 's/^dedup-checks //p')
+df=$(printf '%s\n' "$out" | sed -n 's/^dedup-failures //p')
+if [ -z "$dc" ] || [ "${dc:-0}" -eq 0 ]; then
+	echo "  FAIL  the dedup exerciser printed no check, so it ran and"
+	echo "        proved nothing"
+	fail=$((fail + 1))
+elif [ "${df:-0}" -ne 0 ]; then
+	echo "  FAIL  deduplication did not share a duplicate block:"
+	printf '%s\n' "$out" | sed -n 's/^dedup-fail /        /p' | head -6
+	fail=$((fail + 1))
+else
+	echo "  ok    dedup $dc check(s) on a live mount, 0 failed"
 fi
 
 printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||

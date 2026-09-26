@@ -3412,6 +3412,42 @@ over either would have nothing to match and would report clean having
 read nothing, which is the failure this repository's gates are built to
 refuse.
 
+## Deduplication, which was on by default and never run
+
+Measured 2026-09-25 on `artix-s6-kde` at 7.3.0-rc1.
+
+`hammer2_dedup_enable` defaults to 1 and the write path asks
+`hammer2_dedup_lookup()` before allocating every data block, so a second
+copy of a block is meant to point at the first one's media. No run in this
+tree had ever written a duplicate block, and the tree was arranged so that
+none would: `script/throughput.sh` is the only script naming dedup, and it
+draws fresh random data every pass precisely so a run cannot read as a dedup
+hit. `README.md`'s opening paragraph names block-level deduplication among
+the format's features, so the feature was advertised and unmeasured at once.
+
+`test/hammer2-dedup.c` measures it black-box, on free blocks from `statfs`,
+which is what a consumer would use and needs no debug hook. It writes one
+file, syncs, reads the count, writes a second file holding the same bytes,
+syncs, reads again, and compares what the two cost. On the gate's volume at
+64 KiB blocks: file A cost 64 blocks for 64 blocks of data, and the
+duplicate cost 2 blocks against it, so the block was shared rather than
+allocated.
+
+Two things keep that reading from being an artifact. The data is
+pseudo-random rather than zeros, so the zero-elision in
+`hammer2_write_file_core()` (a write of all zeros calls `zero_write()`,
+which deletes the chain) cannot be what made the second file cheap. And the
+control is a filesystem with no dedup, which every machine has two of:
+`tmpfs` charges the duplicate its full 1024 blocks, and `btrfs` charges 1032
+against the first file's 1024, so both fail the third check while this port
+passes it. Without that control the difference would be consistent with
+anything that makes a second write cheap.
+
+The exerciser reads its unit out of `statfs` rather than assuming 64 KiB,
+because `btrfs` reports 4 KiB and a test that can only run on this port
+cannot be controlled by a filesystem that is not this port. The same
+correction the seek exerciser needed.
+
 ## SEEK_DATA and SEEK_HOLE, and the block count that was not refreshed
 
 Two reader-visible defects, measured 2026-09-20 on `artix-s6-kde` at
