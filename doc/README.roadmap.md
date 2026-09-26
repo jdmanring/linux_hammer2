@@ -12,7 +12,14 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.27 is the same class again, found while running
+0.5 to 0.9 are met. 0.9.28 measures what one operation costs, which no
+milestone's exit criteria had ever asked for: random 4 KiB reads and
+write-then-`fsync` on this port and on ext4 and btrfs in the same guest,
+where reads are 2 to 4 times btrfs's at the median and a durable write
+commits in 384 us against ext4's 7119, checked rather than published
+because the port's `fsync`, like DragonFly's own, issues no device cache
+flush and takes durability from the device layer's ordering. 0.9.27 is
+the same class again, found while running
 the gates after a build: `kbuild`'s `.o.d` dependency file was named by
 neither `.gitignore` nor the four gates excluding build output, and a
 `make` below the kernel floor writes it before the version `#error`
@@ -50,7 +57,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.27
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.28
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
