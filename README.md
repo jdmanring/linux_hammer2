@@ -36,7 +36,7 @@ At a glance, on a kernel of 7.3 or newer:
 + works: mount read-write by PFS label, read, write, mmap and exec,
   snapshots and writes into them, a filesystem across two volumes,
   PFS create, delete and list through `hammer2-utils`,
-  LZ4 and ZLIB media, crash recovery to the same tree as the FreeBSD port,
+  LZ4 and ZLIB media, deduplication, crash recovery to the same tree as the FreeBSD port,
   `SEEK_DATA` and `SEEK_HOLE` so a sparse file copies and archives as one
 + works with a caution: a volume filled to capacity refuses the fill and
   keeps every accepted file whole, after seven defects in that path were
@@ -49,10 +49,10 @@ At a glance, on a kernel of 7.3 or newer:
 + not yet: a package, a tag, a kernel below 7.3, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image
-+ not verified or not built: deduplication, which no run here has
-  exercised; `fallocate` and `O_DIRECT`, which are refused; random 4K and
-  `fsync` latency, which are unmeasured; and what stands between this and
-  a root filesystem, in `doc/readiness-audit-2026-09-25.md`
++ not verified or not built: `fallocate` and `O_DIRECT`, which are
+  refused; random 4K and `fsync` latency, which are unmeasured; and what
+  stands between this and a root filesystem, in
+  `doc/readiness-audit-2026-09-25.md`
 
 Every write operation has been run on scratch media and read back by
 DragonFly, in both directions of a round trip, and the crash matrix, a

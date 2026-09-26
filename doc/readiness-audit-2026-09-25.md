@@ -23,7 +23,7 @@ that compiles.
 
 | feature | instrument | state |
 |---|---|---|
-| Deduplication | **none** | `script/throughput.sh` is the only file that names dedup, and it explicitly avoids dedup hits: every pass draws fresh random data after dropping caches, so a second pass "cannot read as a dedup hit". The write path calls `hammer2_dedup_lookup()` and the code is real, but no run in this tree has ever exercised a duplicate block. |
+| Deduplication | `test-enospc.sh` | **Closed 2026-09-25.** `test/hammer2-dedup.c` measures it on free blocks from `statfs`; a 4 MiB duplicate cost 2 blocks against the first file's 64 on a live mount. The controls (`tmpfs`, `btrfs`) both charge full price, so the reading is specific to this port. |
 | Scrub | none (offline `fsck_hammer2` only) | Declared `limited`; nothing scrubs a mounted volume. |
 | Quota | none | Declared `unavailable`; the core enforces none, on DragonFly either. |
 | Compression | fixtures + closure | Exercised, LZ4 and ZLIB both read and written. |
@@ -31,10 +31,11 @@ that compiles.
 | Bulkfree | `bulkfree.sh` | Exercised. |
 | Growfs | ioctl exercise, fixtures | Partly: the ioctl is driven, the growth is not measured. |
 
-Dedup is the gap that matters most relative to its billing: `README.md`'s
+Dedup was the gap that mattered most relative to its billing: `README.md`'s
 opening paragraph names "block-level deduplication" among the format's features
-a reader is meant to find here. A feature advertised in the first paragraph and
-exercised by no instrument is the exact shape this project has a rule about.
+a reader is meant to find here, and it had no instrument. It does now, and it
+passes, with controls that fail. A feature advertised in the first paragraph
+and exercised by nothing is the shape this project has a rule about.
 
 ## 2. Performance: one workload measured, several not
 
@@ -99,7 +100,7 @@ supports that, but only after this.
 ## 6. Ordered next steps
 
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
-2. An instrument for dedup, since a headline feature has none.
+2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
 3. `->direct_IO`, if databases or VM images are a target.
 4. Random-4K and fsync latency, to learn what the design costs, not only what
    it wins.
