@@ -46,7 +46,8 @@ At a glance, on a kernel of 7.3 or newer:
   four writers, the write path taking a folio smaller than its block
   and the device side a buffer of its own when the page cache cannot
   give a 64 KiB folio; `doc/IO_MODEL.md` has both and the run
-+ not yet: a package, a tag, a kernel below 7.3, a run of that closure
++ not yet: a package, a tag, a kernel below 7.3 or a released 7.3 to
+  build against at all, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image
 + not verified or not built: `fallocate` and `O_DIRECT`, which are
@@ -187,10 +188,13 @@ than about a shared bug.
 
 ## Requirements
 
-+ Linux 7.3 or newer, enforced by an `#error`. The floor is the kernel
-  the port is developed and tested against, one tree: `script/test-syntax.sh`
-  refuses to report a pass against anything else, the pin is `KERNEL_REF`
-  in that script, and both move together when a release ships. There is
++ Linux 7.3 or newer, enforced by an `#error`. The kernel of record is
+  one tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
+  refuses to report a pass against anything else, and the two move
+  together when a release ships. It is a release candidate at present,
+  7.3.0-rc1, so the floor today is a candidate tree from kernel.org
+  rather than a version a distribution ships; the pin advances to 7.3
+  when 7.3 releases. There is
   no conditional compilation on the kernel version in the tree. Two
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
