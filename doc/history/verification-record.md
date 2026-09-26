@@ -3424,25 +3424,53 @@ actually was, and `SEEK_DATA` inside a hole answered the offset it was
 asked about. That is not a refusal, which is why nothing caught it: a
 sparse file copied with `cp --sparse=always`, archived with `tar -S`, or
 read by any backup tool that asks where the data is comes out dense and
-looks correct. FreeBSD and DragonFly both implement it, through
-`vn_bmap_seekhole()` and the `FIOSEEK*` ioctls; NetBSD registers
-`genfs_seek`. This port had neither, and the mechanism was already
-carried: `hammer2_xop_bmap()` reads exactly the `data_off` a seek needs,
-and had no caller.
+looks correct. The whences are in `lseek(2)`, and the BSDs reach the same
+question through `FIOSEEKDATA`/`FIOSEEKHOLE` on `vn_bmap_seekhole()`.
+That description is true of FreeBSD only, which is what an earlier draft
+of this paragraph said the other three did. Read at the clones:
+DragonFly's ioctl answers `EOPNOTSUPP` with the `vn_bmap_seekhole()` call
+`#if 0` and commented "doesn't work correctly yet", NetBSD's answers
+`EOPNOTSUPP`, and OpenBSD's is `#if 0` as well. This port had neither
+facility, and the mechanism was already carried: `hammer2_xop_bmap()`
+reads exactly the `data_off` a seek needs, and had no caller.
 
 `->llseek` and `->bmap` are now built on that XOP, which is upstream's
 `hammer2_bmap_impl()` with the parts Linux needs. `test/hammer2-seek.c`
 writes a file of one block of data, one block of hole, one block of data
-and a truncate into a fourth, and asks at twelve offsets. Run against a
-module built with the old `generic_file_llseek`, six of them fail:
-`SEEK_HOLE` at 0 answers 229376 where the hole ends at 65536,
-`SEEK_DATA in hole` answers the offset asked about, and `SEEK_DATA past
-end` returns a position instead of `ENXIO`. Against the shipped module all
-twelve pass on a live mount, `ok seek 12 check(s) on a live mount, 0
-failed`, run by `test-enospc.sh` on its read-write volume. It cannot run
-in the fixture gate, which attaches every image read-only because the
-fixture is the claim, and the exerciser has to write the file it asks
-about.
+and a truncate into a fourth, and asks at twelve offsets: ten that locate
+data or a hole, and `SEEK_SET`/`SEEK_CUR`/`SEEK_END`, which reach the
+same entry point and have to keep working. Run against a module built
+with the old `generic_file_llseek`, six of them fail, `SEEK_HOLE` at 0
+answering 229376 where the hole ends at 65536, `SEEK_DATA in hole`
+answering the offset asked about, and `SEEK_DATA past end` returning a
+position instead of `ENXIO`. Against the shipped module all twelve pass on
+a live mount, `ok seek 12 check(s) on a live mount, 0 failed`, run by
+`test-enospc.sh` on its read-write volume. It cannot run in the fixture
+gate, which attaches every image read-only because the fixture is the
+claim, and the exerciser has to write the file it asks about.
+
+**The first run of that exerciser proved nothing, and the reason is the
+finding.** Two checks passed on this port and failed on `tmpfs` and
+`btrfs`, both answering `65636` where the test wanted `65536`. The
+exerciser had been written from this implementation's answers rather than
+from the contract, so it agreed with the bug. `SEEK_HOLE` is "the next
+hole greater than or equal to offset", and `lseek(2)` says an offset
+inside a hole is answered with that offset; returning the hole's start
+answers *below* the offset asked, and a tool stepping on it moves
+backwards. The second: at `i_size` both whences are `ENXIO`, which is what
+`generic_file_llseek()` does, what `iomap_seek_hole()` and `iomap_seek_data()`
+do, and what btrfs and tmpfs do. The port answered the offset for
+`SEEK_HOLE` and the size for a scan that ran off the end while seeking
+one. Both were fixed in the driver and both expectations were fixed in the
+test, which then read 12 of 12 on `tmpfs` and `btrfs` as well, and those
+two filesystems are what made the wrong expectation visible.
+
+What made it invisible was placement: the exerciser only runs on a live
+HAMMER2 mount, inside a gate that needs the guest fleet, so there was no
+build to compare against when it was written. Two reference filesystems
+the machine already had, `/tmp` on tmpfs and `/home` on btrfs, would have
+answered in a second. That is the check to run first the next time a
+kernel-facing expectation is written here.
 
 Two defects in this work were found by the instruments rather than by
 reading. The first: `hammer2_error_to_errno()` returns a POSITIVE errno,
@@ -3461,9 +3489,21 @@ allocation it had when the inode was first read: a 512 KiB file written
 in one mount read `blocks=0` where ext4 on the same guest read 1024, and
 the same file read 1056 after a remount. Upstream has no such window,
 because `hammer2_getattr()` computes `va_bytes` inside getattr and every
-stat re-derives it. `->getattr` is now registered on all three inode
-tables and recomputes the count the same way, and the same file reports
-1056 in the live mount.
+stat re-derives it. `->getattr` is registered on the three inode tables
+and recomputes the count the same way, and the same file reports 1056 in
+the live mount.
+
+The first version of that fix registered it on two of the three. A
+directory and a regular file were covered and `hammer2_symlink_iops` was
+not, so a symlink whose target exceeds `HAMMER2_EMBEDDED_BYTES` and
+therefore owns a data block still reported the count it was created with.
+The creation path is what makes that reachable rather than theoretical:
+`hammer2_igetv()` fills `i_blocks` from the inode as it stands, and for a
+symlink that runs before `page_symlink()` writes the target, so the count
+is taken from an empty inode and nothing revisited it. On the BSDs one
+`vop_getattr` covers every vnode type through the mount's vop vector, so
+there is no per-type table to miss. The record said "all three" while the
+code had two; the code was corrected, not the sentence.
 
 Both are the shape this record has already named: a wrong answer that
 reads as a right one, in a path no checksum and no read test looks at.

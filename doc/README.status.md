@@ -3,7 +3,7 @@ Status
 
 The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
-DragonFly itself. The tree is at 0.9.23 in `CHANGELOG.md`; nothing is
+DragonFly itself. The tree is at 0.9.24 in `CHANGELOG.md`; nothing is
 tagged. What stands between it and 1.0 is the release shape and the
 filings staged under `doc/upstream/`; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
@@ -24,6 +24,7 @@ reading 14160919 on a build with its guard removed and 0 with it.
 | one large file | on the release build of the kernel of record, writes at twice the rate of ext4 and btrfs and reads at six times the rate of DragonFly's own kernel on the same volume, every block verified on its own CPU; every reading before 2026-09-07 was the debug kernel's | `throughput.sh` |
 | space a remove does not free | the bulkfree scan frees it | `bulkfree.sh` |
 | a device in error | `hpanic` marks the device and returns; the writer is told `EIO`, the mount goes read-only, the media stays at the last good sync | `hpanic-contain.sh` |
+| where a file's data is, and what it occupies | `SEEK_DATA` and `SEEK_HOLE` answer the whences of `lseek(2)` and `->bmap` is registered, so a sparse file copies and archives as one; `st_blocks` is recomputed on every stat, so a file that grew in the mount reports what it holds, on a regular file and a symlink alike | `test-enospc.sh` |
 
 Every row above was measured, and the measurements are in
 `doc/history/verification-record.md`, section by section in the order
@@ -51,7 +52,7 @@ a defect.
 | `hammer2_inode.c` | 1923 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 3305 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks. `folio_changed` and `iohash_waits` are exported read-only beside `data_rewrites`, the first counting a block that changed between the write XOP's two reads of it and the second counting an acquisition of the device-wide io hash lock that had to wait |
 | `hammer2_strategy.c` | 1582 | this port's; `hammer2_dedup_clear()` carried, `->readahead` hands each folio of the window to a worker, and the write XOP hands the core a whole-block folio's address rather than a copy, sampling every folio it reads around the read so a folio changed under the core is counted rather than argued about |
-| `hammer2_vnops.c` | 1740 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, the four operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type, `hammer2_zero_tail()` waits for a folio's writeback before zeroing it, since the write XOP hashes the folio itself, and `->llseek` and `->bmap` are built on the carried `hammer2_xop_bmap()`, which the BSDs reach through `vn_bmap_seekhole()` and `FIOSEEK*` and Linux reaches through the whences of `lseek(2)` |
+| `hammer2_vnops.c` | 1746 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, the six operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type, `hammer2_zero_tail()` waits for a folio's writeback before zeroing it, since the write XOP hashes the folio itself, and `->llseek` and `->bmap` are built on the carried `hammer2_xop_bmap()`, which the BSDs reach through `vn_bmap_seekhole()` and `FIOSEEK*` and Linux reaches through the whences of `lseek(2)`; `->getattr` is on all three inode tables, including the symlink one, since a symlink's target past `HAMMER2_EMBEDDED_BYTES` owns a data block |
 | `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |

@@ -36,7 +36,8 @@ At a glance, on a kernel of 7.3 or newer:
 + works: mount read-write by PFS label, read, write, mmap and exec,
   snapshots and writes into them, a filesystem across two volumes,
   PFS create, delete and list through `hammer2-utils`,
-  LZ4 and ZLIB media, crash recovery to the same tree as the FreeBSD port
+  LZ4 and ZLIB media, crash recovery to the same tree as the FreeBSD port,
+  `SEEK_DATA` and `SEEK_HOLE` so a sparse file copies and archives as one
 + works with a caution: a volume filled to capacity refuses the fill and
   keeps every accepted file whole, after seven defects in that path were
   found and fixed; read the paragraph on it below before trying it. A

@@ -1352,13 +1352,14 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 		return (-EINVAL);
 	seek_data = (whence == SEEK_DATA);
 	/*
-	 * SEEK_DATA at or past the end finds nothing, and SEEK_HOLE finds
-	 * the end of the file, which is where the hole after the last data
-	 * begins.  This is the kernel's own contract for both, and it is
-	 * the whole answer when there is no i_size.
+	 * At or past the end of the file both whences fail with ENXIO, which
+	 * is what generic_file_llseek() does for SEEK_HOLE and what
+	 * iomap_seek_hole(), btrfs and tmpfs do as well.  The implicit hole
+	 * after the last byte is what a scan from within the data reports,
+	 * not what a seek already at the end reports.
 	 */
 	if (offset >= isize)
-		return (seek_data ? -ENXIO : offset);
+		return (-ENXIO);
 
 	pos = offset;
 	for (;;) {
@@ -1372,20 +1373,24 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 			return (-error);
 
 		/*
-		 * A hole answers the question for SEEK_HOLE at its own
-		 * start, which is at or below the offset asked about: an
-		 * offset inside a hole is in that hole and not in the next
-		 * one.  For SEEK_DATA it is the answer only once the scan
-		 * has reached a block that holds data, so the scan steps a
+		 * A hole answers SEEK_HOLE at the offset the caller asked
+		 * about, not at the hole's own start: the contract is the next
+		 * hole *greater than or equal to* offset, and an offset inside
+		 * a hole is in that hole.  Reporting the hole's start would
+		 * answer below the offset asked and a tool stepping on it
+		 * would move backwards.  Every later block starts at or after
+		 * the offset, so only the first one needs the clamp.
+		 *
+		 * For SEEK_DATA a hole is not the answer, so the scan steps a
 		 * whole block and asks again.
 		 *
-		 * Data answers SEEK_DATA at the offset asked about, not at
-		 * the block's start, since the caller may be partway into a
-		 * block it already knows holds data.
+		 * Data answers SEEK_DATA at the offset asked, not at the
+		 * block's start, for the same reason: the caller may be
+		 * partway into a block it already knows holds data.
 		 */
 		if (error == ENOENT) {
 			if (!seek_data)
-				return (base);
+				return (base > offset ? base : offset);
 			pos = base + bsize;
 		} else {
 			if (seek_data)
@@ -1736,5 +1741,6 @@ const struct inode_operations hammer2_file_iops = {
  */
 const struct inode_operations hammer2_symlink_iops = {
 	.get_link	= page_get_link,
+	.getattr	= hammer2_getattr,		/* Linux */
 	.setattr	= hammer2_vop_setattr,
 };

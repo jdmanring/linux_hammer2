@@ -574,7 +574,7 @@ gate: it has to write the file whose holes it asks about, and the fixture
 images are attached read-only because the fixture is the claim. It builds
 a file whose shape it knows, one block of data, one block of hole, one
 block of data and a truncate into a fourth, and asks where the data is at
-thirteen offsets. SEEK_DATA and SEEK_HOLE are the
+twelve offsets. SEEK_DATA and SEEK_HOLE are the
 one read-path facility whose failure is a wrong answer rather than a
 refusal: a filesystem registering no `->llseek` of its own is answered by
 `generic_file_llseek()`, which treats the whole file as data, so
@@ -584,9 +584,20 @@ comes out dense and looks correct. The test asserts the hole is real on
 media first, via the block count, because a file whose middle block was
 written as zeroes is not sparse and the run would be measuring a
 different file from the one it built. Against the module before this
-work it failed six of thirteen checks, `SEEK_HOLE` at 0 answering the
+work it failed six of twelve checks, `SEEK_HOLE` at 0 answering the
 file's size where the hole ends one block in; `doc/history/verification-record.md`
 has both runs.
+
+That first version of the exerciser also passed two checks that were
+wrong, on this port and on no other filesystem: `SEEK_HOLE` inside a hole
+and at `i_size`, both of which `tmpfs` and `btrfs` answer differently.
+The expectations came from this driver's behavior instead of from
+`lseek(2)`, so the test agreed with the bug it was written to catch and
+reported a clean run. Corrected, the same twelve checks pass on these
+filesystems, which need no filesystem under test to run against and are
+the control to reach for first: `cc -O2 -o /tmp/h2seek test/hammer2-seek.c
+&& /tmp/h2seek /tmp/probe` (tmpfs) and the same against a path on btrfs.
+The record has the detail.
 
 Two defects came out of its first two runs, one in the driver and one in
 the exerciser. An unrecognized command returned EOPNOTSUPP, which a BSD's

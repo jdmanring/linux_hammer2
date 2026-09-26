@@ -12,7 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.23 shows that the window 0.9.22 closed is real
+0.5 to 0.9 are met. 0.9.24 answers the seek whences and refreshes the
+block count, and corrects two seek expectations the exerciser had taken
+from this driver rather than from `lseek(2)`, which `tmpfs` and `btrfs`
+showed up by answering them the other way. 0.9.23 shows that the window
+0.9.22 closed is real
 rather than argued: a count on the write XOP read 14160919 folios changed
 under the core on a build with the stable-writes marking removed and 0 on
 the build with it, twenty thousand rounds over eight files. It also
@@ -27,7 +31,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.23
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.24
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

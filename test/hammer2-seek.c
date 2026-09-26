@@ -61,14 +61,14 @@ probe(int fd, const char *what, int whence, long from, long want)
 		printf("seek-ok   %s: %ld -> %ld\n", what, from, (long)got);
 }
 
-/* SEEK_DATA past the end is ENXIO, which lseek reports as -1. */
+/* A seek that finds nothing is ENXIO, which lseek reports as -1. */
 static void
-probe_enxio(int fd, const char *what, long from)
+probe_enxio(int fd, const char *what, int whence, long from)
 {
 	off_t got;
 
 	checks++;
-	got = lseek(fd, from, SEEK_DATA);
+	got = lseek(fd, from, whence);
 	if (got != -1)
 		fail(what, (long)got, -1);
 	else
@@ -126,18 +126,21 @@ main(int argc, char **argv)
 	probe(fd, "SEEK_DATA at 0", SEEK_DATA, 0, 0);
 	/* The first hole starts at the end of block 0. */
 	probe(fd, "SEEK_HOLE at 0", SEEK_HOLE, 0, bsize);
-	/* Inside the hole: data resumes at block 2. */
+	/* Inside the hole: data resumes at block 2.  SEEK_HOLE inside a hole
+	 * answers the offset asked, not the hole's start, because the next
+	 * hole at or after that offset is the one already being stood in. */
 	probe(fd, "SEEK_DATA in hole", SEEK_DATA, bsize + 100, 2 * bsize);
-	probe(fd, "SEEK_HOLE in hole", SEEK_HOLE, bsize + 100, bsize);
+	probe(fd, "SEEK_HOLE in hole", SEEK_HOLE, bsize + 100, bsize + 100);
 	/* Inside block 2, which holds data: the next hole is block 3, made
 	 * by the ftruncate with nothing ever written into it. */
 	probe(fd, "SEEK_HOLE in data", SEEK_HOLE, 2 * bsize + 10, 3 * bsize);
 	/* No data at or after block 3, and none at i_size. */
-	probe_enxio(fd, "SEEK_DATA in last hole", 3 * bsize);
-	probe_enxio(fd, "SEEK_DATA at i_size", nbytes);
-	/* At i_size, SEEK_HOLE reports i_size: the implicit hole after the
-	 * last byte is where it points. */
-	probe(fd, "SEEK_HOLE at i_size", SEEK_HOLE, nbytes, nbytes);
+	probe_enxio(fd, "SEEK_DATA in last hole", SEEK_DATA, 3 * bsize);
+	probe_enxio(fd, "SEEK_DATA at i_size", SEEK_DATA, nbytes);
+	/* At i_size both whences find nothing: the caller is already at the
+	 * implicit hole after the last byte, and the kernel reports ENXIO
+	 * rather than handing back the offset it was given. */
+	probe_enxio(fd, "SEEK_HOLE at i_size", SEEK_HOLE, nbytes);
 
 	/* SEEK_SET/CUR/END must still work; they go through the same entry. */
 	probe(fd, "SEEK_SET", SEEK_SET, 1234, 1234);
