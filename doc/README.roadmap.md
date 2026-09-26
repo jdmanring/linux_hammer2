@@ -12,7 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.28 measures what one operation costs, which no
+0.5 to 0.9 are met. 0.9.29 advances the kernel of record from 7.3-rc1
+to 7.3-rc4, the pin being the newest candidate of the line until the
+release, with both fleet gates run on it for the first time and the
+checker found to be the same file at both tags. 0.9.28 measures what
+one operation costs, which no
 milestone's exit criteria had ever asked for: random 4 KiB reads and
 write-then-`fsync` on this port and on ext4 and btrfs in the same guest,
 where reads are 2 to 4 times btrfs's at the median and a durable write
@@ -57,7 +61,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.28
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.29
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
