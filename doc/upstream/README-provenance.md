@@ -269,3 +269,57 @@ clean. That is the reading the staged patch is filed with: the leak
 is closed on 6.4.2 and, by the same code, on head; the twenty files
 the refused strategy writes belonged to are still lost without a
 word to their writers, and that remains `hammer2_strategy.c`'s.
+
+## hammer2_ioctl-volume-list-string-copy
+
+`dragonfly-hammer2_ioctl-volume-list-string-copy.patch` and
+`ports-hammer2_ioctl-volume-list-string-copy.patch`.
+
+`hammer2_ioctl_volume_list()` fills each entry's `path` and the list's
+`pfs_name` with `bcopy()` of `sizeof` the destination, 1024 and 256
+bytes, from `vol->dev->path` and `pmp->pfs_names[0]`, which are
+`kstrdup()` strings sized to their length. The copy reads past the
+source allocation by the difference, and on a kernel with KASAN the
+read of `/dev/vdb` from a 9-byte object is reported at once. What
+lands in the entry past the terminator is whatever followed the
+string in the slab, copied out to the caller. The FreeBSD port has
+the same four copies across both list versions; the NetBSD and OpenBSD
+ports are byte-identical there and the ports patch applies to both.
+
+Still present at head on 2026-09-26: DragonFly `b47adf86e5` has the
+`bcopy` at `hammer2_ioctl.c:1439` and `:1449`; `kusumi/freebsd_hammer2`
+`3df307f7db`, `netbsd_hammer2` `64095c3947` and `openbsd_hammer2`
+`a3747df966` each have all four, read through the forge API. Not
+searched for on DragonFly's tracker, which is behind a proof of work.
+
+Found here by the sanitizer kernel and not by reading: `test-fixtures.sh`
+drives the ioctl on every image and had passed 100 results on the
+debug kernel for three weeks, because a read past a slab object
+returns bytes and lockdep and kmemleak do not watch reads. The Linux
+tree takes `strscpy_pad()`, which is `strlcpy()` with the tail zeroed
+as `bzero()` of the entry had already done; the upstream patches use
+`strlcpy()`, which every BSD has.
+
+## hammer2_freemap-bmap-pointer-past-bound
+
+`dragonfly-hammer2_freemap-bmap-pointer-past-bound.patch` and
+`ports-hammer2_freemap-bmap-pointer-past-bound.patch`.
+
+`hammer2_freemap_try_alloc()` scans the 256 `bmdata[]` entries of a
+freemap leaf outward from a starting index, and forms
+`&chain->data->bmdata[n]` before testing whether `n` is inside the
+array, in both directions; the comment beside each says the pointer is
+invalid then, and it is never dereferenced. Forming it is still an
+out-of-bounds index in C, and UBSAN with bounds checking reports it on
+the first allocation of any mount, three times in the first file
+created, with `n` at -1 and -34. The patch forms the pointer only
+inside the bound, which is the same statement moved after the test.
+
+Still present at head on 2026-09-26 in all four trees, the same two
+lines as above, read through the forge API. Not searched for on the
+tracker.
+
+Found by the same kernel as the string copies: the debug kernel has
+no bounds sanitizer, and a pointer formed and not dereferenced is
+invisible to every other instrument here.
+

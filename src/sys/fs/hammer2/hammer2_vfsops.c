@@ -2597,6 +2597,26 @@ restart:
 		}
 
 		/*
+		 * XXX Linux: the mapping is written back before ip->lock is
+		 * taken, where upstream's vfsync() runs under it.  A writer
+		 * in hammer2_write_end() holds a folio lock and takes
+		 * ip->lock to extend the file, and writeback_iter() under
+		 * this lock waits for that folio; upstream's vnode lock
+		 * serializes the two and i_rwsem is not held here.  The
+		 * sanitizer kernel's fill sat in that cycle at file 438
+		 * with lockdep silent, a folio lock being a bit and not a
+		 * class.  hammer2_fsync() already flushes first.
+		 */
+		if (vp) {
+			error = -filemap_write_and_wait(vp->i_mapping);
+			if (error) {
+				hprintf("inum %016llx vnode flush failed %d\n",
+				    (long long)ip->meta.inum, error);
+				error = 0; /* XXX */
+			}
+		}
+
+		/*
 		 * Relock the inode, and we inherit a ref from the above.
 		 * We will check for a race after we acquire the vnode.
 		 */
@@ -2622,17 +2642,8 @@ restart:
 		/*
 		 * Ok we have the inode exclusively locked and if vp is
 		 * not NULL that will also be exclusively locked.  Do the
-		 * meat of the flush.
+		 * meat of the flush.  Linux: the vnode flush ran above.
 		 */
-		if (vp) {
-			/* XXX Linux: vn_fsync_buf() on the inode's mapping */
-			error = -filemap_write_and_wait(vp->i_mapping);
-			if (error) {
-				hprintf("inum %016llx vnode flush failed %d\n",
-				    (long long)ip->meta.inum, error);
-				error = 0; /* XXX */
-			}
-		}
 
 		/*
 		 * If the inode has not yet been inserted into the tree

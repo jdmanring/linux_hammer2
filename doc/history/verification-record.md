@@ -3678,6 +3678,7 @@ against the origin tree before a disposition.
 | `hammer2_vfsops.c`, inode sync | `error = 0` after the vnode flush failed | this port's `XXX`, deliberate: upstream's `vn_fsync_buf()` has no return to check and the flush continues, so the reset is what keeps the carried control flow; the message before it is the record |
 | `hammer2_ondisk.c` through `hstrdup()` | null passed to `strlen` | false: the path reaches `hstrdup()` from `hmalloc()` with `M_WAITOK`, which is `__GFP_NOFAIL` and cannot return null, and `kstrdup()` itself returns null for a null argument before `strlen` would run; the analyzer cannot see the GFP contract |
 | `hammer2_ioctl.c`, PFS create | `nipdata` never read | upstream's store; carried |
+| `hammer2_freemap.c`, `hammer2_freemap_adjust()` | `chain->error` read through a null `chain` | reachable: the early return covers a missing leaf only when `how` is not `DORECOVER`, and the recovery case falls through to the dereference; DragonFly and the three ports are identical there, and it needs a recovery pass over a leaf the volume does not hold, which is a damaged freemap; read on the second run, after the two sanitizer fixes below moved the file, and left as a staged-patch candidate rather than edited here |
 
 Nothing to change: four are upstream's dead stores that a carried file
 keeps, one is this port's own marked choice, and two are the analyzer
@@ -3686,4 +3687,96 @@ negative, that the port's own six files hold no null dereference, no
 use of an uninitialized value, no double free and no leaked allocation
 along any path the analyzer can enumerate, which two compilers and
 sparse do not ask.
+
+## The sanitizer kernel, and what three weeks of green had not seen
+
+The first fleet run on `7.3.0-rc4-kasan`, 2026-09-26 against `ca14d91`,
+failed both gates, and neither failure was the port's Linux half.
+
+**A read past a slab object in the volume list ioctl.** KASAN, on the
+first fixture that carries a `volume-list` result:
+
+    BUG: KASAN: slab-out-of-bounds in hammer2_ioctl_impl+0x1f39/0x4e08 [hammer2]
+    Read of size 64 at addr ffff88811f767f40 by task h2ioctl/1146
+    Allocated by task 1139: kstrdup ... hammer2_init_devvp ... hammer2_get_tree
+    The buggy address is located 0 bytes inside of allocated 9-byte region
+
+`addr2line` on the module puts the offset at `hammer2_ioctl_volume_list2()`,
+`bcopy(vol->dev->path, entry->path, sizeof(entry->path))`: 64 bytes read
+from the 9-byte `/dev/vdb`. The version-1 list does the same with 1024,
+and both copy `pfs_names[0]` at 256 into `pfs_name`. All four are
+upstream's, byte-identical in DragonFly and the three ports at their
+heads today, and every one of the 100 ioctl results this gate had
+reported since 2026-09-05 was taken with the read in it, because a read
+past a slab object returns bytes, and neither lockdep nor kmemleak
+watches a read. Fixed here with `strscpy_pad()`, marked `XXX`, and
+staged upstream as `strlcpy()` in two patches.
+
+**A pointer formed past the freemap array.** UBSAN, three times in the
+first file the fill created, before the fixture run reached the ioctl:
+
+    UBSAN: array-index-out-of-bounds in hammer2_freemap.c:401:31
+    index -1 is out of range for type 'hammer2_bmap_data_t [256]'
+
+`hammer2_freemap_try_alloc()` forms `&bmdata[n]` before testing `n`
+against the array in both scan directions. The pointer is never
+dereferenced when out of range, which the comment beside it says, so
+nothing reads bad memory; forming it is still undefined and the
+sanitizer is right to say so. Same four trees, same two lines. Fixed
+here by forming the pointer inside the test, marked `XXX`, and staged
+upstream the same way.
+
+**What the gate did with the first report.** UBSAN's epilogue counts a
+warning and KASAN's taints with `LOCKDEP_NOW_UNRELIABLE`, so lockdep
+turned itself off and `test-fixtures.sh` failed on that, then printed
+nothing, because the report it looks for is lockdep's own two forms.
+The gate now prints a KASAN or UBSAN report beside them, which is the
+row added to the testing guide's control table.
+
+On the module with both fixes, the same kernel: fixtures 11 images, 43
+files, 100 ioctl results, 0 failures, lockdep on throughout, 0 `cut
+here` in a kernel log streamed to the host for the whole run.
+
+**The fill gate on the same kernel did not finish.** It wrote 438 of
+the files a 2 GiB fill takes, the volume at 98 percent, and then one
+`dd` sat in D state for the rest of the hour with 0 sanitizer reports,
+`debug_locks` 1, and the hung-task detector naming it at 122, 245 and
+368 seconds. The `sysrq` lock dump is a cycle lockdep cannot see,
+because one side of it is a folio lock, which is a page bit and not a
+lockdep class:
+
+    dd/2527          holds i_rwsem and a folio lock (write_end),
+                     waits on h2ip/2 in hammer2_mtx_ex_nested
+    kworker/2:0/35   hammer2_sync_work -> hammer2_vfs_sync_pmp
+                     holds h2ip/2, waits in folio_wait_bit_common
+                     under writeback_iter, for that folio
+
+`hammer2_write_end()` extends the file under the folio lock and takes
+`ip->lock` to do it, the order the read path already uses. The sync
+loop took `ip->lock` and then called `filemap_write_and_wait()` on the
+inode's mapping, which walks every dirty folio and waits for a locked
+one. DragonFly's loop holds the same lock across `vfsync()` and is
+safe there, because its vnode lock serializes the writer before any
+buffer is touched; here the writer's `i_rwsem` is taken by
+`generic_file_write_iter()` and the sync loop never takes it, so the
+serialization that makes upstream's order safe is absent. The line the
+loop takes the lock on already carried `XXX2 DragonFly takes inode lock
+before vget` as the place the two trees differ.
+
+Twenty-odd fills on the debug kernel never reached this and three
+weeks of the fill gate read green. The sanitizer kernel is about twice
+as slow, the writer's window between marking the folio dirty and
+releasing it is wider, and the sync worker's periodic pass landed
+inside it. The deadlock is real on any kernel; the slower one is what
+made the timing land. The fix is in the sync loop, this port's side:
+the mapping is flushed before `ip->lock` is taken, which is the order
+`hammer2_fsync()` already had, and the flush under the lock is gone.
+
+The finding about the process is the one worth keeping. Every fleet
+instrument in this tree asked about order and leaks and answered
+correctly for three weeks; none asked about memory, and the two defects
+that a memory question finds in the first minute were in the carried
+core the whole time. A kernel with the sanitizers on is now the fourth
+build in the guest and the one a fleet gate runs on when the question is
+memory.
 

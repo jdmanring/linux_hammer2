@@ -550,7 +550,7 @@ if [ "${locks_before:-}" = 1 ]; then
 	locks_after=$(ssh "$GUEST_SSH" 'sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats' 2>/dev/null)
 	if [ "$locks_after" != 1 ]; then
 		echo "  FAIL lockdep disabled itself during this run; its report:"
-		ssh "$GUEST_SSH" 'dmesg | grep -A12 "^\[[^]]*\] WARNING: possible\|^\[[^]]*\] WARNING: inconsistent" | head -14' 2>/dev/null |
+		ssh "$GUEST_SSH" 'dmesg | grep -A12 "^\[[^]]*\] WARNING: possible\|^\[[^]]*\] WARNING: inconsistent\|^\[[^]]*\] BUG: KASAN\|^\[[^]]*\] UBSAN:" | head -14' 2>/dev/null |
 		    sed 's/^/        /'
 		fail=$((fail + 1))
 	else

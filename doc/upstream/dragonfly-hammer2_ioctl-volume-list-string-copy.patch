@@ -1,0 +1,21 @@
+--- a/sys/vfs/hammer2/hammer2_ioctl.c
++++ b/sys/vfs/hammer2/hammer2_ioctl.c
+@@ -1436,7 +1436,7 @@
+ 		bzero(&entry, sizeof(entry));
+ 		/* copy hammer2_volume_t fields */
+ 		entry.id = vol->id;
+-		bcopy(vol->dev->path, entry.path, sizeof(entry.path));
++		strlcpy(entry.path, vol->dev->path, sizeof(entry.path));
+ 		entry.offset = vol->offset;
+ 		entry.size = vol->size;
+ 		error = copyout(&entry, &vollist->volumes[cnt], sizeof(entry));
+@@ -1446,7 +1446,8 @@
+ 	}
+ 	vollist->nvolumes = cnt;
+ 	vollist->version = hmp->voldata.version;
+-	bcopy(pmp->pfs_names[0], vollist->pfs_name, sizeof(vollist->pfs_name));
++	strlcpy(vollist->pfs_name, pmp->pfs_names[0],
++		sizeof(vollist->pfs_name));
+ failed:
+ 	hammer2_voldata_unlock(hmp);
+ 

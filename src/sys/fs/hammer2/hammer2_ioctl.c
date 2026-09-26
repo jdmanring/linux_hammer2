@@ -1035,7 +1035,12 @@ hammer2_ioctl_volume_list(hammer2_inode_t *ip, void *data)
 		bzero(&entry, sizeof(entry));
 		/* Copy hammer2_volume_t fields. */
 		entry.id = vol->id;
-		bcopy(vol->dev->path, entry.path, sizeof(entry.path));
+		/*
+		 * XXX Linux: was bcopy of sizeof(entry.path) from a string
+		 * kstrdup() sized to its length, a read past the allocation
+		 * that KASAN reports; the string copy is what was meant.
+		 */
+		strscpy_pad(entry.path, vol->dev->path);
 		entry.offset = vol->offset;
 		entry.size = vol->size;
 		/*
@@ -1051,8 +1056,8 @@ hammer2_ioctl_volume_list(hammer2_inode_t *ip, void *data)
 	}
 	vollist->nvolumes = cnt;
 	vollist->version = hmp->voldata.version;
-	bcopy(ip->pmp->pfs_names[0], vollist->pfs_name,
-	    sizeof(vollist->pfs_name));
+	/* XXX Linux: was bcopy, as above */
+	strscpy_pad(vollist->pfs_name, ip->pmp->pfs_names[0]);
 
 	return (error);
 }
@@ -1079,15 +1084,15 @@ hammer2_ioctl_volume_list2(hammer2_inode_t *ip, void *data)
 		entry = &vollist->volumes[cnt];
 		/* Copy hammer2_volume_t fields. */
 		entry->id = vol->id;
-		bcopy(vol->dev->path, entry->path, sizeof(entry->path));
+		strscpy_pad(entry->path, vol->dev->path);	/* XXX Linux */
 		entry->offset = vol->offset;
 		entry->size = vol->size;
 		cnt++;
 	}
 	vollist->nvolumes = cnt;
 	vollist->version = hmp->voldata.version;
-	bcopy(ip->pmp->pfs_names[0], vollist->pfs_name,
-	    sizeof(vollist->pfs_name));
+	/* XXX Linux: was bcopy, as above */
+	strscpy_pad(vollist->pfs_name, ip->pmp->pfs_names[0]);
 
 	return (error);
 }

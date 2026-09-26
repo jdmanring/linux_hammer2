@@ -1,0 +1,21 @@
+--- a/sys/vfs/hammer2/hammer2_freemap.c
++++ b/sys/vfs/hammer2/hammer2_freemap.c
+@@ -409,7 +409,8 @@
+ 			 * NOTE: bmap pointer is invalid if n >= FREEMAP_COUNT.
+ 			 */
+ 			n = start + count;
+-			bmap = &chain->data->bmdata[n];
++			bmap = (n < HAMMER2_FREEMAP_COUNT) ?
++			       &chain->data->bmdata[n] : NULL;
+ 
+ 			if (n >= HAMMER2_FREEMAP_COUNT) {
+ 				availchk = 0;
+@@ -453,7 +454,7 @@
+ 			 * NOTE: bmap pointer is invalid if n < 0.
+ 			 */
+ 			n = start - count;
+-			bmap = &chain->data->bmdata[n];
++			bmap = (n >= 0) ? &chain->data->bmdata[n] : NULL;
+ 			if (n < 0) {
+ 				availchk = 0;
+ 			} else if (bmap->avail) {

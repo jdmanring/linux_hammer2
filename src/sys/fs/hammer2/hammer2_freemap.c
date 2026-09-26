@@ -360,7 +360,9 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 			 * NOTE: bmap pointer is invalid if n >= FREEMAP_COUNT.
 			 */
 			n = start + count;
-			bmap = &chain->data->bmdata[n];
+			/* XXX Linux: the pointer after the bound, not before */
+			bmap = n < HAMMER2_FREEMAP_COUNT ?
+			    &chain->data->bmdata[n] : NULL;
 			if (n >= HAMMER2_FREEMAP_COUNT)
 				availchk = 0;
 			else if (bmap->avail)
@@ -398,7 +400,8 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 			 * NOTE: bmap pointer is invalid if n < 0.
 			 */
 			n = start - count;
-			bmap = &chain->data->bmdata[n];
+			/* XXX Linux: the pointer after the bound, not before */
+			bmap = n >= 0 ? &chain->data->bmdata[n] : NULL;
 			if (n < 0)
 				availchk = 0;
 			else if (bmap->avail)

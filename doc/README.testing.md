@@ -807,7 +807,13 @@ kmemleak see locks and leaks and nothing else; an out-of-bounds read
 inside a folio, a use after free the allocator has not yet reused, a
 sleep under a spinlock, or a shift past the type are this build's
 reading and no other's, and it is where a fleet gate runs when the
-question is memory rather than order. The release build exists because a throughput number is a claim about the
+question is memory rather than order. It answers a second question by
+accident: it runs at about half the debug kernel's speed, so a window
+two tasks have to land in together is wider, and its first fill found
+a folio-lock against inode-lock cycle between a writer and the sync
+loop that twenty-odd fills on the debug kernel had never hit and
+lockdep cannot see, a folio lock being a page bit and not a class. A
+gate that has passed on the debug kernel has not been run slow. The release build exists because a throughput number is a claim about the
 port and a lockdep kernel charges the port for every lock it takes per
 block: a profile of the 512 MiB read on the debug kernel put a third of
 the reader's samples in lock bookkeeping, more in kmemleak's object
@@ -1466,6 +1472,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
 | `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at the kernel of record, 7.3.0-rc1 when driven |
+| `test-fixtures.sh` | a sanitizer report that turns lockdep off | its first run on the KASAN kernel, which failed on lockdep's state and printed nothing, since the report it looked for was lockdep's own; it now prints a KASAN or UBSAN report beside the two lockdep forms |
 | `test-enospc.sh` | a lockdep shutdown that no captured banner attributes | nothing; the run counted every shutdown as the cycle it was written for, and now reports the banner and exits 2 when none names it |
 | `test-enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
 | `test-enospc.sh` | a guest listed running that never answered ssh | the host load average, twice, with nothing about the guest; the refusal now prints every vCPU's instruction pointer, the disk requests over three seconds and whether the guest agent answers, read from outside before the exit trap shuts the guest down |

@@ -1,0 +1,37 @@
+--- a/src/sys/fs/hammer2/hammer2_ioctl.c
++++ b/src/sys/fs/hammer2/hammer2_ioctl.c
+@@ -1020,7 +1020,7 @@
+ 		bzero(&entry, sizeof(entry));
+ 		/* Copy hammer2_volume_t fields. */
+ 		entry.id = vol->id;
+-		bcopy(vol->dev->path, entry.path, sizeof(entry.path));
++		strlcpy(entry.path, vol->dev->path, sizeof(entry.path));
+ 		entry.offset = vol->offset;
+ 		entry.size = vol->size;
+ 		error = copyout(&entry, &vollist->volumes[cnt], sizeof(entry));
+@@ -1030,7 +1030,7 @@
+ 	}
+ 	vollist->nvolumes = cnt;
+ 	vollist->version = hmp->voldata.version;
+-	bcopy(ip->pmp->pfs_names[0], vollist->pfs_name,
++	strlcpy(vollist->pfs_name, ip->pmp->pfs_names[0],
+ 	    sizeof(vollist->pfs_name));
+ 
+ 	return (error);
+@@ -1058,14 +1058,14 @@
+ 		entry = &vollist->volumes[cnt];
+ 		/* Copy hammer2_volume_t fields. */
+ 		entry->id = vol->id;
+-		bcopy(vol->dev->path, entry->path, sizeof(entry->path));
++		strlcpy(entry->path, vol->dev->path, sizeof(entry->path));
+ 		entry->offset = vol->offset;
+ 		entry->size = vol->size;
+ 		cnt++;
+ 	}
+ 	vollist->nvolumes = cnt;
+ 	vollist->version = hmp->voldata.version;
+-	bcopy(ip->pmp->pfs_names[0], vollist->pfs_name,
++	strlcpy(vollist->pfs_name, ip->pmp->pfs_names[0],
+ 	    sizeof(vollist->pfs_name));
+ 
+ 	return (error);
