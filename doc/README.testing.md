@@ -696,7 +696,7 @@ compares the module's vermagic with the guest's release and reports
 COULD-NOT-RUN naming both. A verdict reached against the wrong kernel is
 an artifact of the setup and not a finding about the code.
 
-    KDIR=~/kernels/linux-7.3-rc1 H2_FIXTURE_START=1 \
+    KDIR=~/kernels/linux-7.3-rc4 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
 Measured on 2026-09-04: eleven images, 43 files, 34 stat rows, 5 statfs
@@ -771,10 +771,14 @@ Run one guest at a time. Each holds 4 GiB, both together are most of what
 this machine has spare, and the two halves of the test never overlap:
 DragonFly writes, then is shut down, then Linux reads.
 
-The Linux guest's kernel is plain 7.3.0-rc1 built on the host from
-`~/kernels/linux-7.3-rc1`, the tree `KDIR` names, and copied into the
-guest by hand; every reading in `doc/history/verification-record.md` taken on that guest
-was taken on it. Its configuration is the tarball's default plus the
+The Linux guest's kernel is plain mainline 7.3 at the candidate the
+kernel of record names, built on the host and copied into the guest by
+hand: 7.3.0-rc1 from `~/kernels/linux-7.3-rc1` until 2026-09-26, and
+7.3.0-rc4 from `~/kernels/linux-7.3-rc4`, the tree `KDIR` names, since.
+Both stay installed and the grub default chooses between them, so a
+reading in `doc/history/verification-record.md` taken on that guest
+names the build it ran on, and one dated before 2026-09-26 was taken on
+rc1. Its configuration is the tarball's default plus the
 debug and instrument options the port's readings depend on:
 `PROVE_LOCKING` with `DEBUG_RWSEMS`, `PROVE_RCU`, `DEBUG_KMEMLEAK`,
 `BLK_DEV_IO_TRACE`, DWARF 5 debug information so `addr2line` resolves
@@ -787,10 +791,11 @@ it is recorded here and the build number `uname -v` prints is recorded
 beside the readings it first appears in.
 
 A second build of the same source sits beside it in the guest since
-2026-09-07, `7.3.0-rc1-release`: the same configuration with every
-debug option off, built from `~/kernels/linux-7.3-rc1-release`, and
-chosen at boot by the grub default, which `setkernel.sh` on the guest
-rewrites. It exists because a throughput number is a claim about the
+2026-09-07, the release build: `7.3.0-rc1-release` from
+`~/kernels/linux-7.3-rc1-release`, and `7.3.0-rc4-release` from
+`~/kernels/linux-7.3-rc4-release` since 2026-09-26, the same
+configuration with every debug option off, chosen at boot by the grub
+default, which `setkernel.sh` on the guest rewrites. It exists because a throughput number is a claim about the
 port and a lockdep kernel charges the port for every lock it takes per
 block: a profile of the 512 MiB read on the debug kernel put a third of
 the reader's samples in lock bookkeeping, more in kmemleak's object
@@ -1448,7 +1453,7 @@ disagreeing. Read the table.
 | `test-fixtures.sh` | no image, no guest, no `KDIR` | each driven by pointing the variable at a path that does not exist |
 | `test-fixtures.sh` | a manifest that does not match the media | one hash altered in `f5.manifest`, which failed the image and named it |
 | `test-fixtures.sh` | the comparison itself cannot fail | `--selftest`, and a per-image control on every run |
-| `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at 7.3.0-rc1 |
+| `test-fixtures.sh` | a module built for another kernel | the default `KDIR`, which is the host's, against a guest at the kernel of record, 7.3.0-rc1 when driven |
 | `test-enospc.sh` | a lockdep shutdown that no captured banner attributes | nothing; the run counted every shutdown as the cycle it was written for, and now reports the banner and exits 2 when none names it |
 | `test-enospc.sh` | a run against a guest still holding a wedged module | its own second run, which reported five failures about a filesystem that had never mounted; the setup steps now report themselves and exit 2 |
 | `test-enospc.sh` | a guest listed running that never answered ssh | the host load average, twice, with nothing about the guest; the refusal now prints every vCPU's instruction pointer, the disk requests over three seconds and whether the guest agent answers, read from outside before the exit trap shuts the guest down |

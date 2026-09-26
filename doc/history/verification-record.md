@@ -3601,3 +3601,43 @@ the path, and the host fails the run on a skipped pass. The host also
 runs the binary on `tmpfs` first, where it must report cache speed and
 fail its own check, so the check is known to be live before the guest's
 numbers are believed.
+
+## The kernel of record advanced to 7.3-rc4
+
+The pin is the 7.3 line, the newest candidate while the release is a
+candidate, and on 2026-09-26 it advanced from rc1 to rc4 in `ac93478`:
+`script/pre-push-check.sh` searches `~/kernels/linux-7.3-rc4` first, CI
+fetches the checker from the `v7.3-rc4` tag, and the baseline's name
+line says rc4. `KERNEL_REF` in `test-syntax.sh` did not move, since it
+pins the family and reads the exact version off the tree it is pointed
+at. Two trees were built from the `linux-7.3-rc4` tarball, a debug tree
+with lockdep, kmemleak, BTF and DWARF 5 and a release tree with
+`DEBUG_INFO_NONE`, each configured from the rc1 tree of the same kind
+through `olddefconfig`, and both installed in `artix-s6-kde` beside the
+rc1 pair, which stay for a reading that has to be repeated on the build
+it was taken on.
+
+What was read on rc4 the same day, from a tree at `d72017d`:
+
+    syntax: 65 check(s), 0 failed against the kernel of record (7.3), 7.3.0-rc4, mainline
+    checkpatch: deviation set unchanged (1142 hits, baseline: checkpatch.pl from linux v7.3-rc4)
+    fixtures: 11 image(s), 43 file(s), 43 block count(s), 34 stat row(s), 5 statfs, 2 symlink(s), 1 corrupt file(s) refused, 100 ioctl result(s), 0 failure(s)
+    enospc: filled 2G, 0 failure(s)
+
+Both fleet gates were driven with `KDIR=~/kernels/linux-7.3-rc4` and
+`H2_FIXTURE_START=1` against the debug rc4 kernel, the module's vermagic
+`7.3.0-rc4` matching the guest's release by the gate's own check, every
+unmount reporting 0 inodes, 0 chains, 0 modified and 0 dio still
+allocated, and 0 kernel warnings after the module loaded; the fill's
+seek and dedup checks passed, 12 and 3. Before that run both gates had
+been COULD-NOT-RUN on every push since the move, because the guest was
+shut off and a pre-push run does not start it, so the move had been
+verified by a hand mount and a 1 MiB round trip only.
+
+The checkpatch count did not move because it could not: `checkpatch.pl`
+at `v7.3-rc1` and at `v7.3-rc4` are the same file, `sha256`
+`2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a` on
+both, so the baseline's sha line is unchanged and the gate still
+identifies the checker by content. The latency table above was taken on
+rc1 and says so; it is not repeated here, since a reading names the
+build it ran on and rc4 has not been timed.
