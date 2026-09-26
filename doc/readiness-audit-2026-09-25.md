@@ -71,7 +71,7 @@ Checked by reading the kernel's own fallback for each, not from memory:
 | `->fiemap` | yes | `-EOPNOTSUPP` from `fs/ioctl.c`. Tools like `filefrag` report nothing. Low priority; `SEEK_HOLE` covers the common need. |
 | `->freeze_fs`/`->unfreeze_fs` | yes | No filesystem freeze. Used by `fsfreeze`, some snapshot and backup tools. btrfs has them. |
 | `->remap_file_range` | yes | No `FICLONE`/reflink. Cheap on a CoW filesystem and expected of one; btrfs and xfs have it. |
-| super ops | 3 (`evict_inode`, `statfs`, `sync_fs`) | btrfs carries 15. Not all are needed, but `put_super`, `show_options`, `shutdown` are normal. |
+| super ops | 3 (`evict_inode`, `statfs`, `sync_fs`) | btrfs carries 17. Not all are needed, but `put_super`, `show_options`, `shutdown` are normal. |
 
 ## 4. What is genuinely established
 
