@@ -3,7 +3,7 @@ Status
 
 The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
-DragonFly itself. The tree is at 0.9.24 in `CHANGELOG.md`; nothing is
+DragonFly itself. The tree is at 0.9.25 in `CHANGELOG.md`; nothing is
 tagged. What stands between it and 1.0 is the release shape and the
 filings staged under `doc/upstream/`; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
@@ -25,6 +25,7 @@ reading 14160919 on a build with its guard removed and 0 with it.
 | space a remove does not free | the bulkfree scan frees it | `bulkfree.sh` |
 | a device in error | `hpanic` marks the device and returns; the writer is told `EIO`, the mount goes read-only, the media stays at the last good sync | `hpanic-contain.sh` |
 | where a file's data is, and what it occupies | `SEEK_DATA` and `SEEK_HOLE` answer the whences of `lseek(2)` and `->bmap` is registered, so a sparse file copies and archives as one; `st_blocks` is recomputed on every stat, so a file that grew in the mount reports what it holds, on a regular file and a symlink alike | `test-enospc.sh` |
+| two files holding the same data | the second copy points at the first one's media; a 4 MiB duplicate cost 2 blocks against the first copy's 64, with `tmpfs` and `btrfs` charging it full price as the control | `test-enospc.sh` |
 
 Every row above was measured, and the measurements are in
 `doc/history/verification-record.md`, section by section in the order

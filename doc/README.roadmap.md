@@ -12,7 +12,14 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.24 answers the seek whences and refreshes the
+0.5 to 0.9 are met. 0.9.25 measures deduplication, which was on by
+default and asked before every data block was allocated while no run in
+this tree had ever written a duplicate block, `throughput.sh` drawing
+fresh data every pass so that a run cannot read as a hit;
+`test/hammer2-dedup.c` reads the cost off `statfs` and a 4 MiB duplicate
+cost 2 blocks against the first copy's 64, with `tmpfs` and `btrfs`
+charging it full price as the control. 0.9.24 answers the seek whences
+and refreshes the
 block count, and corrects two seek expectations the exerciser had taken
 from this driver rather than from `lseek(2)`, which `tmpfs` and `btrfs`
 showed up by answering them the other way. 0.9.23 shows that the window
@@ -31,7 +38,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.24
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.25
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

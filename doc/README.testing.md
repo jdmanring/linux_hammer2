@@ -12,7 +12,7 @@ twice.
 |---|---|---|
 | `test-inventory.sh` | the three lists that claim to cover `src/`, every file under `test/`, the `DEFER` ledger and the `XXX` table | sh, grep, git |
 | `test-citations.sh` | every `file:line` in a table under `doc/` or `doc/history/` resolves, and the named symbol is on the line | sh, grep |
-| `test-history.sh` | every changelog row's commit resolves with a matching subject, and no two rows share a version | git with full history |
+| `test-history.sh` | every changelog row's commit resolves with a matching subject, no two rows share a version, and every document stating the tree's current version names the newest row | git with full history |
 | `test-provenance.sh` | every file under `src/` has an origin row, and a carried file is re-checked with `cmp` | sh, git |
 | `test-absence.sh` | every "X() is not carried" and "->method is not written" claim resolves against `src/` | sh, grep |
 | `test-shim.sh` | the shim parses against `test/stub` in both knob positions, with a control that must fail | a C compiler |
@@ -269,8 +269,19 @@ and the count is printed rather than assumed so a prose citation into
 `hammer2_inode.c:1664` in `doc/README.status.md`, was read by hand on the
 same day and lands on the size comparison the sentence describes. This
 paragraph's own example is the thirty-third.
-`test-history.sh` checks that every roadmap row's commit hash resolves
+`test-history.sh` checks that every changelog row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
+It reads one thing no other gate reads: the documents that state which
+version the tree is on. A document naming an older one describes the state
+before the milestone it sits above, and that had happened four times in two
+days (0.2.116, `8d2495a`, 0.2.130, and the roadmap and status openings after
+0.9.25), so the newest row's number is now checked against every sentence in
+a state document that names one. `CHANGELOG.md` and `doc/history/` are
+excluded as measurements of the version they were written at. The check
+asserts it found at least one such sentence and carries a control that must
+read `0.0.0` out of a planted sentence on every run, since a matcher that
+never fires reports clean; both directions were driven on 2026-09-26 by
+planting a stale sentence and by breaking the matcher.
 `test-inventory.sh` also reads the `DEFER` ledger in
 `doc/README.status.md` against `src/` in both directions: a marker with no
 row, and a row whose marker the source no longer holds. The second is the
@@ -1371,7 +1382,10 @@ disagreeing. Read the table.
 | `test-citations.sh` | no `doc/*.md` | the directory moved aside |
 | `test-provenance.sh` | no origin clone, so no carry re-verified | `H2_CLONE_DIR` pointed at a path that does not exist |
 | `test-history.sh` | not a repository | `.git` moved aside |
-| `test-history.sh` | no roadmap | the file moved aside |
+| `test-history.sh` | no changelog | the file moved aside |
+| `test-history.sh` | no current-state document | every `.md` outside `CHANGELOG.md` and `doc/history/` moved aside |
+| `test-history.sh` | a document names a version that is not the newest row's | `0.9.25` changed to `0.9.24` in `README.status.md` |
+| `test-history.sh` | the state-sentence matcher stops matching | its pattern altered in a scratch copy of the gate, which the built-in control catches |
 | `test-inventory.sh` | no `src/sys/fs/hammer2` | moved aside |
 | `test-absence.sh` | the population is empty | `doc/` and `src/` moved aside |
 | `test-absence.sh` | no claim matched, so the pattern has stopped | the phrase it matches renamed in a scratch copy of the gate |

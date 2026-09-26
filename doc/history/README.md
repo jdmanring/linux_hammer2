@@ -31,6 +31,6 @@ have moved it.
     awk '$1 ~ /^<old-prefix>/ {print $2}' doc/history/2026-08-25-rewrite-commit-map.txt
 
 Citations inside this repository were swept at the time and resolve
-directly; `script/test-history.sh` fails on any roadmap row whose commit
+directly; `script/test-history.sh` fails on any changelog row whose commit
 does not resolve, so a missed one is caught rather than merely unlikely.
 The map is here for readers holding a hash from outside the tree.

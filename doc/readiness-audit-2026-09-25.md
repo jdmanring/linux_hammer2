@@ -107,4 +107,4 @@ supports that, but only after this.
 5. A gate that requires a reference-filesystem control for kernel-facing tests.
 
 Items 1 and 3 change what a consumer can do; 2, 4 and 5 change what this tree
-can claim. None is started.
+can claim. Item 2 is closed above; 1, 3, 4 and 5 are not started.

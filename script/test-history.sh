@@ -25,7 +25,7 @@ git rev-parse --git-dir >/dev/null 2>&1 || { echo "history: COULD-NOT-RUN: not a
 DOC=CHANGELOG.md
 [ -f "$DOC" ] || { echo "history: COULD-NOT-RUN: no $DOC"; exit 2; }
 
-rows=0; bad=0; newest=""; newest_depth=0
+rows=0; bad=0; newest=""; newest_depth=0; newest_ver=""
 # A row is `| <version> | <date> | <text (`hash`)> | <verifier> |`. The hash
 # is the last backticked 7-to-40 hex token on the line, because the text
 # also backticks symbol names.
@@ -63,7 +63,9 @@ while IFS= read -r line; do
 	# or a table sorted descending later, would make the prompt below
 	# measure from the wrong commit and report zero.
 	d=$(git rev-list --count "$h")
-	if [ "$d" -gt "${newest_depth:-0}" ]; then newest="$h"; newest_depth="$d"; fi
+	if [ "$d" -gt "${newest_depth:-0}" ]; then
+		newest="$h"; newest_depth="$d"; newest_ver="$ver"
+	fi
 	rows=$((rows+1))
 done < "$DOC"
 
@@ -87,6 +89,56 @@ if [ -n "$dups" ]; then
 		bad=$((bad+1))
 	done
 fi
+
+# The newest row is what the tree IS. A document stating the tree's current
+# version and naming an older one describes the state before the milestone it
+# sits above, and no gate read prose for truth: four such documents were found
+# in two days (0.2.116, `8d2495a`, 0.2.130, and the roadmap and status opening
+# after 0.9.25). This reads the subset that names a version in the form a state
+# sentence uses, which is the part a grep can settle.
+#
+# CHANGELOG.md and doc/history/ are excluded deliberately: a row and a
+# measurement record describe the version as it stood when they were written,
+# which is their job. Only documents stating what the tree is now are read,
+# and the exclusion is asserted below so a wrong glob cannot empty the check.
+extract_ver() {
+	grep -o -E '(tree|driver|port) (is|are) at [0-9]+\.[0-9]+\.[0-9]+' |
+		sed -n 's/.* at //p'
+}
+state_files=$(git ls-files '*.md' | grep -v -e '^CHANGELOG\.md$' -e '^doc/history/')
+[ -n "$state_files" ] || {
+	echo "history: FAIL: no current-state document to read. Either every" >&2
+	echo "  document was excluded or the glob stopped matching, and a check" >&2
+	echo "  over an empty population passes without reading anything." >&2
+	exit 1; }
+
+# The control. A matcher that never fires reports clean on every document, so
+# one stale sentence is fed through the same extractor every run and must come
+# back. It sits where the subject executes: the same function over the same
+# form of sentence the check above reads.
+ctl=$(printf 'the tree is at 0.0.0\n' | extract_ver)
+[ "$ctl" = "0.0.0" ] || {
+	echo "  FAIL control: the extractor read '${ctl:-<empty>}' from a version" >&2
+	echo "  sentence naming 0.0.0, so this check cannot see a stale one." >&2
+	exit 1; }
+
+found=0
+for f in $state_files; do
+	[ -f "$f" ] || continue
+	for v in $(extract_ver < "$f" | LC_ALL=C sort -u); do
+		found=$((found+1))
+		if [ "$v" != "$newest_ver" ]; then
+			echo "  FAIL $f: says the tree is at $v, and $newest_ver is the newest row"
+			bad=$((bad+1))
+		fi
+	done
+done
+[ "$found" -gt 0 ] || {
+	echo "history: FAIL: no document states the tree's version. The state" >&2
+	echo "  sentence moved or was reworded, and a check that reads nothing" >&2
+	echo "  must not be read as a check that found nothing wrong." >&2
+	exit 1; }
+echo "history: $found state sentence(s) name the newest row's version ($newest_ver)"
 
 echo "history: $rows row(s), $bad bad"
 [ "$bad" = 0 ] || exit 1

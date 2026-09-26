@@ -73,7 +73,7 @@ The first five are POSIX sh over grep, sed and git. They need no kernel
 and no network, they take about a second, and they are what a
 documentation-only patch breaks: they check that the lists claiming to
 cover `src/` are complete, that every `file:line` citation in `doc/`
-resolves to the line it names, and that every roadmap row's commit hash
+resolves to the line it names, and that every changelog row's commit hash
 resolves with a matching subject.
 
 `test-shim.sh`, `test-syntax.sh` and `test-checkpatch.sh` need a toolchain. `test-syntax.sh` wants the kernel of
