@@ -3814,3 +3814,44 @@ core the whole time. A kernel with the sanitizers on is now the fourth
 build in the guest and the one a fleet gate runs on when the question is
 memory.
 
+
+## The staged patches, read for whether their fix is applied here
+
+On 2026-09-27, after the freemap null-chain fix was applied rather than
+left staged, every patch under `doc/upstream/` was read for the other
+half of the same question: a provenance entry records where the code
+stands at upstream's head, and none of them recorded whether the fix had
+been applied in this tree. `doc/README.maintenance.md` states the rule
+without an exception, that a defect found here in carried code is fixed
+here and marked `XXX` so the port does not wait on anyone, so a patch
+that is staged and not applied is a defect this tree carries while its
+fix sits in a file.
+
+The reading was mechanical first and then read line by line, because a
+mechanical one is wrong in both directions here. Each patch's added lines
+were looked for under `src/sys/fs/hammer2/`, and the results include two
+false negatives that a person has to resolve: the volume-list string
+copies are applied as `strscpy_pad()` where the patch says `strlcpy()`,
+since the BSD call does not exist on Linux and 0.9.32 fixed them that
+way, and the freemap bmap ternaries are applied with the condition
+wrapped across two lines, so a whole-line match misses them.
+
+One patch was genuinely unapplied. `hammer2_chain_repchange()` takes
+`reptrack->spin`, links the reptrack into the parent's list and returns
+without releasing it; every pass through the loop leaks the write lock on
+that reptrack and the next visitor to the structure blocks on it for
+good. The only other release of a `reptrack->spin` in the tree is a
+different local structure in `hammer2_chain_repparent()`, so nothing
+releases this one, and DragonFly's own file at head reads the same way.
+Applied as one line and an `XXX`, 5198 lines to 5200, with the `XXX`
+table, the origin line count and the prose total moved and the syntax
+gate at 65 checks 0 failed.
+
+What that reading cannot claim: no run here drives
+`hammer2_chain_repchange()` on a chain that carries a reptrack, which
+needs the permanent deletion of an indirect block or a freemap node with
+live children. The freemap fix at least had an instrument that exercised
+its function, even though the branch itself was not taken; this one rests
+on the source and is recorded as resting on it. The other seven patches
+are applied, in the port's form, and the sweep is what establishes that
+rather than the assumption that staging means pending.
