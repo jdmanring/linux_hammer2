@@ -12,7 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.32 is the first fleet run on the sanitizer
+0.5 to 0.9 are met. 0.9.33 is a gate whose checked population was
+narrower than the rule its documents state: `test-inventory.sh` read
+`doc/upstream/*.patch` while the provenance obligation is written over
+every staged file, so a report with no such entry went unchecked, and it
+covers all of them now. 0.9.32 is the first fleet run on the sanitizer
 kernel, which asked about memory where every instrument here had asked
 about order and leaks, and answered in its first hour: two defects of
 the carried core that all four trees still hold, and a deadlock in this
@@ -70,7 +74,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.32
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.33
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
