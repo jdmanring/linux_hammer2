@@ -49,9 +49,10 @@ this tree's.
 Reading 1 of H1's three, done the same day (`H1_READING_1_SPIN_AUDIT.md`,
 their 05ac973): no acquire site sleeps under the lock, so `rw_semaphore`
 is legal everywhere; one site, `hammer2_chain_repchange` at
-`hammer2_chain.c:2324`, takes `reptrack->spin` and releases it on no path
-in all four trees, staged as a question for Dillon and carried with a
-provenance note; and the DIO layer must complete bios into a workqueue,
+`hammer2_chain.c:2324` in DragonFly's numbering, takes `reptrack->spin`
+and releases it on no path in all four trees, filed upstream as a
+question for Dillon and fixed here on the maintenance rule, marked `XXX`
+(`c70f4b7`); and the DIO layer must complete bios into a workqueue,
 which constrains reading 2.
 
 The documents in this directory. Remaining inside H0 by the audit's own

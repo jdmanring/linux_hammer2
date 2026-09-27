@@ -98,7 +98,8 @@ nothing here builds until the package exists.
 
 What it does need from you, when H1 reaches its gate rather than now: the
 DragonFly guest booted for F2 fixtures, and the upstream contact about
-`hammer2_chain.c:2324`.
+`hammer2_chain.c:2324`, DragonFly's line for the unreleased reptrack
+spin, still unfixed upstream and fixed here since (`c70f4b7`).
 
 ## Specification pass's reading, 2026-08-25
 

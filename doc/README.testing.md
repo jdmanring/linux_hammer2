@@ -1946,6 +1946,28 @@ names and is run by hand until that exists. Until then, changing either
 file's output shape or exit status breaks a gate in a repository this one
 does not reference.
 
+### The one that drives a fix in `src/` without compiling `src/`
+
+Saxum's `scripts/test-hammer2-reptrack.sh` compiles
+`tests/storage/hammer2/reptrack_harness.c`, which is not a test file of
+this tree and not a copy of one. It reimplements
+`hammer2_chain_repparent()` and `hammer2_chain_repchange()` as two
+threads with `hammer2_spin_ex` as an ownerless non-recursive mutex,
+DragonFly's `spin_lock`, and it carries both controls: the stock protocol
+must deadlock, the fixed protocol must complete, and both wrong means the
+harness is wrong. It is the only instrument on this disk that reaches the
+unreleased `reptrack->spin` found in `H1_READING_1_SPIN_AUDIT.md`, and it
+is green on 2026-09-27, 2 checks 0 failed.
+
+It does NOT reference `LINUX_HAMMER2`, unlike the three Saxum gates that
+do, so a green run is evidence about the protocol and not about this
+tree's file. The link to `src/sys/fs/hammer2/hammer2_chain.c` is that the
+harness body and the carried function agree hunk for hunk, which is a
+reading taken on a date and not a property anything enforces. It is
+recorded here so the next sweep for what runs this tree's code does not
+conclude "run by nothing" from a search of this repository alone, which
+is the mistake this section already documents twice.
+
 ## What the real test will be
 
 A volume created by DragonFly's `newfs_hammer2`, mounted here, compared

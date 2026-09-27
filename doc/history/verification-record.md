@@ -3851,7 +3851,40 @@ What that reading cannot claim: no run here drives
 `hammer2_chain_repchange()` on a chain that carries a reptrack, which
 needs the permanent deletion of an indirect block or a freemap node with
 live children. The freemap fix at least had an instrument that exercised
-its function, even though the branch itself was not taken; this one rests
-on the source and is recorded as resting on it. The other seven patches
-are applied, in the port's form, and the sweep is what establishes that
-rather than the assumption that staging means pending.
+its function, even though the branch itself was not taken. The other seven
+patches are applied, in the port's form, and the sweep is what establishes
+that rather than the assumption that staging means pending.
+
+### The one instrument that does drive this fix, and why it is not a gate here
+
+The reading above said no run drives the fix. That is true of every
+script in this repository and false of the instrument that was on this
+disk the whole time: `tests/storage/hammer2/reptrack_harness.c` in the
+Saxum tree, run by `scripts/test-hammer2-reptrack.sh`. It reimplements
+both functions' lock sequence as two threads with `hammer2_spin_ex` as an
+ownerless non-recursive mutex, which is what DragonFly's `spin_lock` is,
+and it carries its own negative control: the stock protocol must DEADLOCK
+(`rc 3`) and the fixed protocol must complete (`rc 0`), so both wrong
+means the harness is wrong rather than the source. Run on 2026-09-27, the
+gate is green, 2 checks 0 failed, and the harness's `#ifdef FIX` release
+sits at the identical position the port took, after the four field
+updates and before the two chain spins are released.
+
+The harness does not compile this tree. It has no `LINUX_HAMMER2`
+reference and compiles its own statement-for-statement copy of the
+function, so a green run is evidence that the PROTOCOL the port adopted
+is correct and not that the port's file has it. The two are joined by
+reading: the harness's body and `src/sys/fs/hammer2/hammer2_chain.c:2135`
+agree hunk for hunk, which is what makes the harness's verdict bear on
+this file at all. A model and its subject agreeing is weaker than
+compiling the subject, and it is much stronger than the reading alone
+this section first recorded. Copy and consumer drift independently, so
+the agreement is a reading taken on a date, not a property the gate
+enforces.
+
+This is the same class as the two vector files recorded at 0.1.19: a
+sweep for what runs a file, searched in this repository only, concludes
+"run by nothing" about an instrument that lives in the distribution
+consuming the port. Three of Saxum's gates reach this tree through
+`LINUX_HAMMER2`; this one does not, so it belongs in the record as an
+instrument over the protocol rather than as a gate over the file.
