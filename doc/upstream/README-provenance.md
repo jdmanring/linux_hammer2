@@ -323,3 +323,36 @@ Found by the same kernel as the string copies: the debug kernel has
 no bounds sanitizer, and a pointer formed and not dereferenced is
 invisible to every other instrument here.
 
+
+## hammer2_freemap-adjust-null-chain-on-recover
+
+`dragonfly-hammer2_freemap-adjust-null-chain-on-recover.patch` and
+`ports-hammer2_freemap-adjust-null-chain-on-recover.patch`.
+
+`hammer2_freemap_adjust()` looks up the level1 freemap chain and stops
+early when the lookup returns null, but only when `how` is not
+`HAMMER2_FREEMAP_DORECOVER`:
+
+	if (chain == NULL && how != HAMMER2_FREEMAP_DORECOVER) {
+		...
+		goto done;
+	}
+	if (chain->error) {
+
+A recovery pass that finds no leaf for the block it is marking therefore
+reaches the `chain->error` dereference with `chain` null. The block that
+creates the missing leaf runs below it, and only for the recovery case, so
+it cannot have run yet. The patch tests the pointer as well as the error.
+The window is a recovery pass over a freemap leaf the volume does not
+hold, which is a damaged freemap being repaired, and the three ports have
+the same five lines.
+
+Found by `script/analyze.sh` on 2026-09-26 and not by a run: clang's
+static analyzer reports the null reaching a dereference along that path,
+which the two compilers and sparse do not ask about. It is a staged
+candidate and not an edit here, because reaching it means a damaged
+volume and nothing in this tree has produced one.
+
+Still present at head on 2026-09-26 in all four trees, read in the local
+clones at each head and confirmed by dry-run applying the patch to each.
+Not searched for on the tracker.

@@ -1,0 +1,11 @@
+--- a/sys/vfs/hammer2/hammer2_freemap.c
++++ b/sys/vfs/hammer2/hammer2_freemap.c
+@@ -1018,7 +1018,7 @@
+ 			(intmax_t)bref->data_off);
+ 		goto done;
+ 	}
+-	if (chain->error) {
++	if (chain && chain->error) {
+ 		kprintf("hammer2_freemap_adjust: %016jx: error %s\n",
+ 			(intmax_t)bref->data_off,
+ 			hammer2_error_str(chain->error));

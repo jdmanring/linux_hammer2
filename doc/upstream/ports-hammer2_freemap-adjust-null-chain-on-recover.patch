@@ -1,0 +1,11 @@
+--- a/src/sys/fs/hammer2/hammer2_freemap.c
++++ b/src/sys/fs/hammer2/hammer2_freemap.c
+@@ -843,7 +843,7 @@
+ 		    (long long)bref->data_off);
+ 		goto done;
+ 	}
+-	if (chain->error) {
++	if (chain && chain->error) {
+ 		hprintf("error %d at data_off %016llx\n",
+ 		    chain->error, (long long)bref->data_off);
+ 		hammer2_chain_unlock(chain);
