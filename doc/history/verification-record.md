@@ -3772,6 +3772,25 @@ made the timing land. The fix is in the sync loop, this port's side:
 the mapping is flushed before `ip->lock` is taken, which is the order
 `hammer2_fsync()` already had, and the flush under the lock is gone.
 
+The fix is not verified. It has not been run: the fill that found the
+cycle left the guest wedged holding the module built before this change,
+so the paragraph above reads from the patch and not from a fill. It
+stands verified when a fill on the sanitizer kernel and one on the debug
+kernel both finish with every accepted file intact, which is the pair
+`test-enospc.sh` was made a gate on.
+
+The shape was searched for elsewhere, since one instance of it is a
+class. The port blocks on a folio in seven places: the volume header
+write and the device mapping's flush in `hammer2_xop_inode_flush()`, the
+tail zeroing in `hammer2_zero_tail()`, the write path's two waits in
+`hammer2_write_begin()` and `hammer2_write_end()`, and the two folio
+grabs in `hammer2_io_putblk()`. None of the other six holds `ip->lock`
+across its wait: `hammer2_zero_tail()` is documented as running before
+the lock is taken, the write path takes the inode lock at the end of the
+write under the folio, and the flush and io sites take no inode lock at
+all. The sync loop was the only site, and the only blocking call in this
+port that took the inode lock before a wait rather than after it.
+
 The finding about the process is the one worth keeping. Every fleet
 instrument in this tree asked about order and leaks and answered
 correctly for three weeks; none asked about memory, and the two defects
