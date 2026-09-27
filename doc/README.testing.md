@@ -690,6 +690,19 @@ address in module space with no disk requests on 2026-09-26, which is the
 deadlock `doc/history/verification-record.md` describes, read from
 outside the guest.
 
+The push has a bound of its own for the same reason.
+`script/pre-push-check.sh` runs every gate in turn, and a gate that
+outlives the window a remote keeps an idle connection open is worse than
+one that fails, because the push dies with nothing sent and no gate
+having returned a failure. `H2_PREPUSH_BUDGET` is the number of seconds
+the whole hook may take, defaulting to 400. A gate past the budget is
+reported COULD-NOT-RUN with the fact that it was not run, which is what
+exit 2 already means, and a gate that outlives the seconds remaining is
+killed and reported the same way. The eleven gates needing only this
+machine take about forty-five seconds together, so a healthy tree never
+reaches it, and `H2_PREPUSH_BUDGET=<seconds>` raises it for a run that
+means to wait.
+
 Exit 2 is COULD-NOT-RUN and is reported for a missing guest, a stopped one
 without that variable, missing images, no `KDIR` and a guest that does not
 answer ssh, because most machines have none of these and CI has none at

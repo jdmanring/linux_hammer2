@@ -3772,12 +3772,19 @@ made the timing land. The fix is in the sync loop, this port's side:
 the mapping is flushed before `ip->lock` is taken, which is the order
 `hammer2_fsync()` already had, and the flush under the lock is gone.
 
-The fix is not verified. It has not been run: the fill that found the
-cycle left the guest wedged holding the module built before this change,
-so the paragraph above reads from the patch and not from a fill. It
-stands verified when a fill on the sanitizer kernel and one on the debug
-kernel both finish with every accepted file intact, which is the pair
-`test-enospc.sh` was made a gate on.
+The fix is verified, on both kernels, by the pair `test-enospc.sh` was
+made a gate on. On the sanitizer kernel, the run that had wedged at file
+438: 464 of 464 files intact and 0 damaged, `cycles 0`,
+`lockdebug lines 0`, lockdep enabled from the mount through the unmount,
+`umount 0`, `rmmod 0`, and the fill stopped where a fill should, on the
+volume filling rather than on anything waiting. On the debug kernel,
+which had taken twenty-odd green fills before this cycle existed: 475 of
+475 intact and 0 damaged, the same readings, 0 inode, 0 chain and 0 dio
+still allocated after the unmount. Neither run reported KASAN, UBSAN or
+a kernel warning. The two capture logs are
+`doc/history/enospc-kasan-deadlock-fix-2026-09-26.log` and
+`doc/history/enospc-rc4debug-deadlock-fix-2026-09-26.log`, beside this
+record so that the claim above is read from a run and not from a patch.
 
 The shape was searched for elsewhere, since one instance of it is a
 class. The port blocks on a folio in seven places: the volume header
