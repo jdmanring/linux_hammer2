@@ -315,8 +315,19 @@ started=no
 # line: a COULD-NOT-RUN after the start left it running for the next script
 # to refuse.
 trap '[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1' EXIT
+# The wait is five minutes, which is what a boot takes and also what a guest
+# that is up but wedged costs a caller who meant only to check the tree: the
+# pre-push hook runs this gate, so that wait is paid on every push, and two
+# such gates push the push itself past the life of the connection. H2_GUEST_WAIT
+# is the number of five-second rounds to wait and defaults to sixty, so a caller
+# that has already established the guest is silent spends seconds, not minutes.
+# It bounds waiting, never the check.
+guest_wait=${H2_GUEST_WAIT:-60}
+case $guest_wait in
+''|*[!0-9]*) echo "enospc: COULD-NOT-RUN: H2_GUEST_WAIT is not a number" >&2; exit 2 ;;
+esac
 i=0
-while [ "$i" -lt 60 ]; do
+while [ "$i" -lt "$guest_wait" ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
 	state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "enospc: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 	if [ "$state" != "running" ]; then
@@ -328,8 +339,8 @@ while [ "$i" -lt 60 ]; do
 	sleep 5
 	i=$((i + 1))
 done
-[ "$i" -lt 60 ] || {
-	echo "enospc: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2
+[ "$i" -lt "$guest_wait" ] || {
+	echo "enospc: COULD-NOT-RUN: $GUEST did not answer ssh in $((guest_wait * 5))s; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2
 	# What the silent guest is doing, read from outside before the trap
 	# shuts it down: the instruction pointer of every vCPU, its disk I/O
 	# over three seconds, and whether the guest agent still answers.

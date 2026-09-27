@@ -138,6 +138,17 @@ fi
 # The reason a COULD-NOT-RUN gate gives is kept: it was being dropped, so
 # a harness defect that stopped a gate from running read exactly like a
 # machine that was not available.
+# A push checks the tree, not the guest fleet. The two fleet gates wait five
+# minutes for a guest that does not answer ssh, and a guest that is up but
+# wedged is indistinguishable from a slow one to the gate; two of those waits
+# are what killed a push whose every other gate was green. The check that the
+# fleet gates perform is worth having when they can run, and it costs nothing
+# when the guest answers at once, so the wait is cut to ten seconds here and
+# the gates return COULD-NOT-RUN as they would anyway. Both remain hand
+# runnable at their own five minutes, which is the run that means something.
+H2_GUEST_WAIT=${H2_GUEST_WAIT:-2}
+export H2_GUEST_WAIT
+
 for g in script/test-*.sh; do
 	run_gate "$g"
 done

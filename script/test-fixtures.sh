@@ -166,8 +166,19 @@ trap 'cleanup' EXIT
 # off inside it and can then be started. Only a guest that stays listed
 # running and silent for the whole wait is given up on. This gate starts
 # a guest only when H2_FIXTURE_START=1 says so, and then only alone.
+# The wait is five minutes, which is what a boot takes and also what a guest
+# that is up but wedged costs a caller who meant only to check the tree: the
+# pre-push hook runs this gate, so that wait is paid on every push, and two
+# such gates push the push itself past the life of the connection. H2_GUEST_WAIT
+# is the number of five-second rounds to wait and defaults to sixty, so a caller
+# that has already established the guest is silent spends seconds, not minutes.
+# It bounds waiting, never the check.
+guest_wait=${H2_GUEST_WAIT:-60}
+case $guest_wait in
+''|*[!0-9]*) echo "fixtures: COULD-NOT-RUN: H2_GUEST_WAIT is not a number" >&2; exit 2 ;;
+esac
 i=0
-while [ "$i" -lt 60 ]; do
+while [ "$i" -lt "$guest_wait" ]; do
 	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && break
 	state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "fixtures: COULD-NOT-RUN: no guest $GUEST" >&2; exit 2; }
 	if [ "$state" != "running" ]; then
@@ -197,8 +208,8 @@ while [ "$i" -lt 60 ]; do
 	sleep 5
 	i=$((i + 1))
 done
-if [ "$i" -ge 60 ]; then
-	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2
+if [ "$i" -ge "$guest_wait" ]; then
+	echo "fixtures: COULD-NOT-RUN: $GUEST did not answer ssh in $((guest_wait * 5))s; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2
 	exit 2
 fi
 

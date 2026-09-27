@@ -674,6 +674,22 @@ through the block buffer the DIO layer otherwise takes only when the
 page cache cannot make a 64 KiB folio, so that path is read by the same
 manifests as the page cache path rather than waited for.
 
+Both fleet gates wait five minutes for a guest that does not answer ssh
+before giving up on it, which is what a boot takes and also what a guest
+that is up but wedged costs a caller who meant only to check the tree.
+`H2_GUEST_WAIT` is the number of five-second rounds to wait, defaulting to
+sixty, and it bounds the waiting rather than the check: the pre-push hook
+sets it to two, so a push against a wedged guest ends in a report in
+seconds instead of holding the connection open, and a hand run keeps the
+five minutes that distinguishes a boot from a hang. When a guest is
+running and still silent at the end of the wait, the gate prints every
+vCPU's instruction pointer, the disk requests over three seconds and
+whether the guest agent answers, read from outside before the exit trap
+shuts the guest down. All twelve vCPUs of `artix-s6-kde` were at one
+address in module space with no disk requests on 2026-09-26, which is the
+deadlock `doc/history/verification-record.md` describes, read from
+outside the guest.
+
 Exit 2 is COULD-NOT-RUN and is reported for a missing guest, a stopped one
 without that variable, missing images, no `KDIR` and a guest that does not
 answer ssh, because most machines have none of these and CI has none at
