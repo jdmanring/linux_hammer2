@@ -349,15 +349,24 @@ else
 	fi
 fi
 
-# Every staged patch must say where it stands against upstream. Patches
+# Every staged file must say where it stands against upstream. Patches
 # sat in doc/upstream/ describing a fix with nothing recorded about
 # whether upstream had already made it, already rejected it, or already
 # been told, and a patch with no such record invites the reader to assume
 # somebody looked. Seven of eight had none the day this check was
 # written. The gate cannot read whether a note is any good; it can insist
-# one exists and is not the patch talking about itself.
+# one exists and is not the file talking about itself.
+#
+# The population is every file here rather than *.patch: this directory
+# also holds reports, and a report saying where a defect stands against
+# upstream is the same obligation. The rule was written over every file
+# from the start, in CLAUDE.md and in README.maintenance.md's section on
+# sending a defect back, and the glob was left at *.patch, so a report
+# staged with no entry rode on the gap and the gate read a narrower set
+# than every document describing it claimed.
 npatch=0
-for f in doc/upstream/*.patch; do
+for f in doc/upstream/*; do
+	[ -f "$f" ] || continue
 	[ -e "$f" ] || continue
 	npatch=$((npatch + 1))
 	b=$(basename "$f")
@@ -371,12 +380,12 @@ for f in doc/upstream/*.patch; do
 		fail=$((fail + 1))
 	fi
 done
-# The patches are a population like the rest. A glob that matched nothing
-# would check nothing and still print a clean count.
+# The staged files are a population like the rest. A glob that matched
+# nothing would check nothing and still print a clean count.
 [ "$npatch" -gt 0 ] || {
-	echo "  FAIL doc/upstream/ holds no patch at all, so the provenance"
-	echo "       check above read nothing"
+	echo "  FAIL doc/upstream/ holds no staged file at all, so the"
+	echo "       provenance check above read nothing"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged patch(es), $fail finding(s)"
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
