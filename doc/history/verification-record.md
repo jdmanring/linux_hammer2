@@ -3678,15 +3678,23 @@ against the origin tree before a disposition.
 | `hammer2_vfsops.c`, inode sync | `error = 0` after the vnode flush failed | this port's `XXX`, deliberate: upstream's `vn_fsync_buf()` has no return to check and the flush continues, so the reset is what keeps the carried control flow; the message before it is the record |
 | `hammer2_ondisk.c` through `hstrdup()` | null passed to `strlen` | false: the path reaches `hstrdup()` from `hmalloc()` with `M_WAITOK`, which is `__GFP_NOFAIL` and cannot return null, and `kstrdup()` itself returns null for a null argument before `strlen` would run; the analyzer cannot see the GFP contract |
 | `hammer2_ioctl.c`, PFS create | `nipdata` never read | upstream's store; carried |
-| `hammer2_freemap.c`, `hammer2_freemap_adjust()` | `chain->error` read through a null `chain` | reachable: the early return covers a missing leaf only when `how` is not `DORECOVER`, and the recovery case falls through to the dereference; DragonFly and the three ports are identical there, and it needs a recovery pass over a leaf the volume does not hold, which is a damaged freemap; read on the second run, after the two sanitizer fixes below moved the file, and left as a staged-patch candidate rather than edited here |
+| `hammer2_freemap.c`, `hammer2_freemap_adjust()` | `chain->error` read through a null `chain` | reachable: the early return covers a missing leaf only when `how` is not `DORECOVER`, and the recovery case falls through to the dereference; DragonFly and the three ports are identical there, and it needs a recovery pass over a leaf the volume does not hold, which is a damaged freemap; read on the second run, after the two sanitizer fixes below moved the file, and left as a staged-patch candidate rather than edited here; applied 2026-09-27, since the maintenance document's rule for a carried defect is to fix it here first and mark it `XXX` so the port does not wait on anyone, and the staging was the delay rather than a decision to leave it out; confirmed by the instrument that found it, `script/analyze.sh` over the file reporting 0 candidates with its planted-null control firing against 1 before the edit, and the syntax gate at 65 checks 0 failed. The reach condition was measured, not assumed: `script/cut-flush.sh` does run the freemap replay and the guest prints `hammer2_recovery: freemap recovery`, so no damaged volume is needed to reach the function, but reverting the guard and re-running it passes at 0 failures and no report, so that run cannot control this fix and the null branch is not what those images produce. The fix rests on the analyzer, which does exercise the path |
 
-Nothing to change: four are upstream's dead stores that a carried file
+Seven of the eight needed no change, each counted once from the
+dispositions above: four are upstream's dead stores that a carried file
 keeps, one is this port's own marked choice, and two are the analyzer
-missing a constraint it cannot see. What the run establishes is the
-negative, that the port's own six files hold no null dereference, no
-use of an uninitialized value, no double free and no leaked allocation
-along any path the analyzer can enumerate, which two compilers and
-sparse do not ask.
+missing a constraint it cannot see. The eighth was a real defect in
+carried code and is applied here as of 2026-09-27, marked `XXX`. The
+first run's seven candidates were all non-defects; the second run added
+the eighth, which was real, so the negative the first run read did not
+hold until it was fixed. With it applied, the full run over the port's
+files reports the same seven triaged non-defects and no new candidate,
+and `hammer2_freemap.c` reports none at all, where the run before the
+edit reported this one on that file. The negative that stands is
+therefore the narrow one the control supports: the port's own six files
+hold no null dereference, no use of an uninitialized value, no double
+free and no leaked allocation along any path the analyzer can enumerate,
+which two compilers and sparse do not ask.
 
 ## The sanitizer kernel, and what three weeks of green had not seen
 

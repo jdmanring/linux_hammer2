@@ -349,9 +349,29 @@ the same five lines.
 
 Found by `script/analyze.sh` on 2026-09-26 and not by a run: clang's
 static analyzer reports the null reaching a dereference along that path,
-which the two compilers and sparse do not ask about. It is a staged
-candidate and not an edit here, because reaching it means a damaged
-volume and nothing in this tree has produced one.
+which the two compilers and sparse do not ask about.
+
+Applied here on 2026-09-27, marked `XXX`, as the maintenance document's
+rule for a carried defect requires: the port does not wait on anyone, and
+a defect present in all four trees is a defect here. The staging was the
+delay, not a decision to leave it out. The change is the pointer test and
+the mark, 1033 lines to 1034, and the instrument that found it is the one
+that confirms it: `script/analyze.sh` over that file reports 0 candidates
+with its planted-null control still firing, where the same run before the
+edit reported this one. The syntax gate reports 65 checks 0 failed.
+
+The reach condition, measured rather than assumed: `script/cut-flush.sh`
+runs the freemap replay in its fourth stage. It lowers the header's
+`freemap_tid` by `H2_CUT_LAG` transactions and the guest prints
+`hammer2_recovery: freemap recovery <lo>-<hi>`, so the recovery path this
+function sits on is exercised on every run and needs no damaged volume.
+That run is not a control for this fix, and was reverted to check: with
+the guard removed the same run passes, 0 failures and no report, because
+the lookup returns a chain for these images and the null branch is not
+taken. The replay is reachable; the null leaf inside it is not what that
+image produces. So the fix stands on the analyzer, which does exercise
+the path, and the fleet run establishes only that the applied guard does
+not disturb a recovery that was working.
 
 Still present at head on 2026-09-26 in all four trees, read in the local
 clones at each head and confirmed by dry-run applying the patch to each.

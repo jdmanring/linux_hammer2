@@ -42,7 +42,7 @@ a defect.
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
 | `hammer2_admin.c` | 652 | FreeBSD port, carried with four `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; strategy XOPs are exempt from that dependency at start and retire, as they are in DragonFly, so the readahead workers read one file on every CPU; the xop allocation zone is shimmed |
-| `hammer2_freemap.c` | 1033 | FreeBSD port, carried with five `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, the print of what a refusal saw, the return after `hpanic`, and the two `bmdata[]` pointers formed only inside the array's bounds, which UBSAN caught being formed one past either end |
+| `hammer2_freemap.c` | 1034 | FreeBSD port, carried with six `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, the print of what a refusal saw, the return after `hpanic`, the two `bmdata[]` pointers formed only inside the array's bounds, which UBSAN caught being formed one past either end, and the recovery pass testing the freemap chain for null as well as for an error before reading through it, since the early return covers a missing leaf only when the caller is not recovering |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1169 | FreeBSD port, carried with nineteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, the snapshot's lock order corrected under lockdep, and the four string copies in the volume lists that read `sizeof` the destination from a source `kstrdup()` sized to its length, which KASAN caught reading 64 bytes of a 9-byte allocation |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
@@ -270,7 +270,7 @@ for the device where DragonFly has one per bucket:
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
 | `hammer2_chain.c` | 91 | 18 | 73 |
-| `hammer2_freemap.c` | 11 | 6 | 5 |
+| `hammer2_freemap.c` | 12 | 6 | 6 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 12 | 2 | 10 |
@@ -294,10 +294,12 @@ for the device where DragonFly has one per bucket:
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Two hundred and fifty-eight are this port's, the right-hand column
-summed, and they fall in eighteen files: seventy-three in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, seven in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, five in `hammer2_freemap.c`, three in `hammer2_rb.h`, two in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
+Two hundred and sixty-one are this port's, the right-hand column
+summed, and they fall in eighteen files: seventy-three in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, two in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
-is prose because `test-inventory.sh` checks the total column only.
+is prose because `test-inventory.sh` checks the total column only, and
+the per-file figures here are read off that column rather than
+recounted, which had left the total two low and `hammer2.h` two short.
 
 `hammer2_admin.c`,
 `hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c`,

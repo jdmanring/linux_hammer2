@@ -876,7 +876,8 @@ hammer2_freemap_adjust(hammer2_dev_t *hmp, hammer2_blockref_t *bref, int how)
 		    (long long)bref->data_off);
 		goto done;
 	}
-	if (chain->error) {
+	/* XXX Linux: the pointer tested as well as the error */
+	if (chain && chain->error) {
 		hprintf("error %d at data_off %016llx\n",
 		    chain->error, (long long)bref->data_off);
 		hammer2_chain_unlock(chain);
