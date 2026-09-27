@@ -46,7 +46,7 @@ a defect.
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1169 | FreeBSD port, carried with nineteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, the snapshot's lock order corrected under lockdep, and the four string copies in the volume lists that read `sizeof` the destination from a source `kstrdup()` sized to its length, which KASAN caught reading 64 bytes of a 9-byte allocation |
 | `hammer2_bulkfree.c` | 1239 | FreeBSD port, carried byte-for-byte; `printf` and `tsleep` shimmed |
-| `hammer2_chain.c` | 5198 | FreeBSD port, carried byte-for-byte but the `XXX` lines below, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, the last drop of a chain naming the caller that still holds its lock and, in its spin, a lock stranded by a task that let go, a new chain's data resolved after its insert rather than before so a lost insert race costs no read, and the way out after each of its `hpanic` sites; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
+| `hammer2_chain.c` | 5200 | FreeBSD port, carried byte-for-byte but the `XXX` lines below, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, the reptrack spin released before the chain is dropped where the port took it and never let it go, the last drop of a chain naming the caller that still holds its lock and, in its spin, a lock stranded by a task that let go, a new chain's data resolved after its insert rather than before so a lost insert race costs no read, and the way out after each of its `hpanic` sites; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1354 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place, the header write reads the device-in-error bit, and the three `hpanic` sites record their error |
 | `hammer2_cluster.c` | 189 | FreeBSD port, carried byte-for-byte but the one `XXX` after its `hpanic`; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
@@ -269,7 +269,7 @@ for the device where DragonFly has one per bucket:
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 91 | 18 | 73 |
+| `hammer2_chain.c` | 92 | 18 | 74 |
 | `hammer2_freemap.c` | 12 | 6 | 6 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
@@ -294,8 +294,8 @@ for the device where DragonFly has one per bucket:
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Two hundred and sixty-one are this port's, the right-hand column
-summed, and they fall in eighteen files: seventy-three in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, two in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
+Two hundred and sixty-two are this port's, the right-hand column
+summed, and they fall in eighteen files: seventy-four in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, two in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only, and
 the per-file figures here are read off that column rather than

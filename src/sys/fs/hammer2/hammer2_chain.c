@@ -2152,6 +2152,8 @@ hammer2_chain_repchange(hammer2_chain_t *parent, hammer2_chain_t *chain)
 		reptrack->next = parent->core.reptrack;
 		parent->core.reptrack = reptrack;
 		hammer2_chain_ref(parent); /* reptrack */
+		/* XXX Linux: the spin taken above, released before the drop */
+		hammer2_spin_unex(&reptrack->spin);
 
 		hammer2_spin_unex(&chain->core.spin);
 		hammer2_spin_unex(&parent->core.spin);

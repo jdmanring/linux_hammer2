@@ -63,7 +63,21 @@ orders on one task. The missed release is not specific to anything.
 `ports-hammer2_chain-repchange-release-reptrack-spin.patch`.
 
 `hammer2_chain_repchange()` takes `reptrack->spin`, links the reptrack
-into the parent, and returns without releasing it.
+into the parent, and returns without releasing it. Every pass through the
+loop leaks the write lock on that reptrack, and the next visitor to the
+structure blocks on it for good.
+
+Applied here on 2026-09-27, marked `XXX`, on the same rule as the freemap
+entry above: a defect in carried code is fixed here and marked so the
+port does not wait on anyone. The change is one line and the mark, 5198
+lines to 5200. Verified by the syntax gate at 65 checks 0 failed and the
+`XXX` table and origin line count moved with it. No run here drives
+`hammer2_chain_repchange()` on a chain that carries a reptrack, which is
+the permanent deletion of an indirect block or freemap node with live
+children, so this rests on the reading rather than a reproduction: the
+spin is taken on the line above and the only other release of a
+`reptrack->spin` in the tree is a different local structure in
+`hammer2_chain_repparent()`.
 
 Still present at DragonFly head: `hammer2_chain.c:2328` is followed by
 the two other unlocks and not by this one.
