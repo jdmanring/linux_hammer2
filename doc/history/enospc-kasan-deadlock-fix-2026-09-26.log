@@ -1,0 +1,230 @@
+  built from b89e204
+  kmsg capture unbuffered
+  module io_buf_only 0
+  locks after mount 1
+  seek-ok   the middle block is a hole on media (4 blocks of 512)
+  seek-ok   SEEK_DATA at 0: 0 -> 0
+  seek-ok   SEEK_HOLE at 0: 0 -> 65536
+  seek-ok   SEEK_DATA in hole: 65636 -> 131072
+  seek-ok   SEEK_HOLE in hole: 65636 -> 65636
+  seek-ok   SEEK_HOLE in data: 131082 -> 196608
+  seek-ok   SEEK_DATA in last hole: 196608 -> -1
+  seek-ok   SEEK_DATA at i_size: 229376 -> -1
+  seek-ok   SEEK_HOLE at i_size: 229376 -> -1
+  seek-ok   SEEK_SET: 1234 -> 1234
+  seek-ok   SEEK_CUR: 100 -> 1334
+  seek-ok   SEEK_END: 0 -> 229376
+  seek-checks 12
+  seek-failures 0
+  dedup-ok   filesystem counts in 65536-byte units, 64 per file
+  dedup-ok   free blocks before: 30591
+  dedup-ok   free blocks after file A: 30527
+  dedup-ok   free blocks after file B: 30525
+  dedup-ok   file A allocated 64 blocks for 64 blocks of data
+  dedup-ok   the duplicate cost 2 blocks against file A's 64
+  dedup-ok   the duplicate was shared, not allocated: 2 against 64 blocks
+  dedup-checks 3
+  dedup-failures 0
+  files written 464
+  fill stopped because dd: error writing '/mnt/h2enospc/fill.462': No space left on device
+  blocks available 0
+  locks after fill 1
+  fsync of the last file returned 0 
+  syncfs returned 0 
+  write of 128K on the full volume exit 1 : dd: error writing '/mnt/h2enospc/written': No space left on device
+  bash: line 126:  2744 Bus error                  $as /tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1
+  mmap on the full volume exit 135 : 
+  allocated before sync 1944192000 data 10383360 meta
+  allocated after sync 1944192000 data 10383360 meta
+  data blocks rewritten 0, assembled 12
+  block folios refused 0, free pages by order 64   1742   1518    420     15      9      3      0      0      0      0 
+  refusal refuses 196608 bytes with 50266112 free, reserve 100243865, 1944192000 data and 10261504 meta allocated
+  refusal refuses 262144 bytes with 50151424 free, reserve 100243865, 1944192000 data and 10383360 meta allocated
+  refusal refuses 135168 bytes with 50151424 free, reserve 100243865, 1944192000 data and 10383360 meta allocated
+  locks after sync 1
+  blocks available after sync 0
+  blocks free after sync 765
+  user write after the sync exit 1 : dd: failed to open '/mnt/h2enospc/user.after': No space left on device
+  root write after the sync exit 1 : dd: error writing '/mnt/h2enospc/root.after': No space left on device
+  files intact 464 of 464, damaged 0
+  cycles 0
+  shutdown-reason none-found
+  oom kills 0
+  drop-with-lock warns 0
+  lockdebug lines 0
+  === first report begins
+  === first report ends
+  mem available 2506604 kB
+  kmsg capture 82307 bytes
+  umount left at or before 15s
+  umount 0
+  umount took 15s
+  oom kills after umount 0
+  oops 0
+  kernel warnings 0 after the module loaded 
+  faulted in nowhere
+  faulted on nothing
+  faulting rcx none
+  chains on a freed pmp 0
+  still mounted 0
+  module refs 0
+  outstanding after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+  busy inodes 0
+  === log tail begins
+  6,832,23468094,-;BTRFS info (device vda1): enabling free space tree
+  6,833,25268760,-;clocksource: Watchdog remote CPU 11 read timed out
+  5,834,25591764,-;rfkill: module verification failed: signature and/or required key missing - tainting kernel
+  6,835,25657037,-;device-mapper: uevent: version 1.0.3
+  6,836,25671094,-;device-mapper: ioctl: 4.50.0-ioctl (2025-04-28) initialised: dm-devel@lists.linux.dev
+  6,837,25924779,-;Bluetooth: Core ver 2.22
+  6,838,25925040,-;NET: Registered PF_BLUETOOTH protocol family
+  6,839,25925044,-;Bluetooth: HCI device and connection manager initialized
+  6,840,25925098,-;Bluetooth: HCI socket layer initialized
+  6,841,25925130,-;Bluetooth: L2CAP socket layer initialized
+  6,842,25925256,-;Bluetooth: SCO socket layer initialized
+  6,843,25980302,-;Bluetooth: BNEP (Ethernet Emulation) ver 1.3
+  6,844,25980310,-;Bluetooth: BNEP filters: protocol multicast
+  6,845,25980340,-;Bluetooth: BNEP socket layer initialized
+  6,846,26435166,-;NET: Registered PF_QIPCRTR protocol family
+  5,847,31216507,-;lpc_ich 0000:00:1f.0: I/O space for GPIO uninitialized
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:00:1f.0
+  6,848,31324113,-;i801_smbus 0000:00:1f.3: Enabling SMBus device
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:00:1f.3
+  6,849,31326199,-;i801_smbus 0000:00:1f.3: SMBus using PCI interrupt
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:00:1f.3
+  6,850,31361964,-;i2c i2c-0: Memory type 0x07 not supported yet, not instantiating SPD
+   SUBSYSTEM=i2c
+   DEVICE=+i2c:i2c-0
+  6,851,31505902,-;[drm] pci: virtio-vga detected at 0000:00:01.0
+  6,852,31628332,-;virtio-pci 0000:00:01.0: vgaarb: deactivate vga console
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:00:01.0
+  6,853,31628918,-;[drm] Host memory window: 0x387000000000 +0x10000000
+  6,854,31628926,-;[drm] features: +virgl +edid +resource_blob +host_visible
+  6,855,31628931,-;[drm] features: +context_init -blob_alignment
+  5,856,31635569,-;netfs: FS-Cache loaded
+  6,857,31639559,-;[drm] number of scanouts: 1
+  6,858,31639573,-;[drm] number of cap sets: 3
+  6,859,31662346,-;[drm] cap set 0: id 1, max-version 1, max-size 308
+  6,860,31662534,-;[drm] cap set 1: id 2, max-version 2, max-size 1408
+  6,861,31662750,-;[drm] cap set 2: id 4, max-version 0, max-size 160
+  6,862,31669321,-;virtio-pci 0000:00:01.0: [drm] Registered 1 planes with drm panic
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:00:01.0
+  6,863,31704777,-;[drm] Initialized virtio_gpu 0.1.0 for 0000:00:01.0 on minor 1
+  6,864,31733214,-;fbcon: virtio_gpudrmfb (fb0) is primary device
+  6,865,31733222,-;fbcon: Deferring console take-over
+  6,866,31733231,-;virtio-pci 0000:00:01.0: [drm] fb0: virtio_gpudrmfb frame buffer device
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:00:01.0
+  6,867,31794368,-;input: PC Speaker as /devices/platform/pcspkr/input/input5
+  6,868,31814742,-;9pnet: Installing 9P2000 support
+  6,869,31890294,-;sr 0:0:0:0: [sr0] scsi3-mmc drive: 4x/4x cd/rw xa/form2 tray
+   SUBSYSTEM=scsi
+   DEVICE=+scsi:0:0:0:0
+  6,870,31947812,-;cdrom: Uniform CD-ROM driver Revision: 3.20
+  7,871,32128113,-;sr 0:0:0:0: Attached scsi CD-ROM sr0
+   SUBSYSTEM=scsi
+   DEVICE=+scsi:0:0:0:0
+  6,872,32242921,-;snd_hda_codec_generic hdaudioC0D0: autoconfig for Generic: line_outs=1 (0x3/0x0/0x0/0x0/0x0) type:line
+   SUBSYSTEM=hdaudio
+   DEVICE=+hdaudio:hdaudioC0D0
+  6,873,32242937,-;snd_hda_codec_generic hdaudioC0D0:    speaker_outs=0 (0x0/0x0/0x0/0x0/0x0)
+   SUBSYSTEM=hdaudio
+   DEVICE=+hdaudio:hdaudioC0D0
+  6,874,32242957,-;snd_hda_codec_generic hdaudioC0D0:    hp_outs=0 (0x0/0x0/0x0/0x0/0x0)
+   SUBSYSTEM=hdaudio
+   DEVICE=+hdaudio:hdaudioC0D0
+  6,875,32242963,-;snd_hda_codec_generic hdaudioC0D0:    mono: mono_out=0x0
+   SUBSYSTEM=hdaudio
+   DEVICE=+hdaudio:hdaudioC0D0
+  6,876,32242969,-;snd_hda_codec_generic hdaudioC0D0:    inputs:
+   SUBSYSTEM=hdaudio
+   DEVICE=+hdaudio:hdaudioC0D0
+  6,877,32242975,-;snd_hda_codec_generic hdaudioC0D0:      Line=0x5
+   SUBSYSTEM=hdaudio
+   DEVICE=+hdaudio:hdaudioC0D0
+  6,878,32349965,-;mousedev: PS/2 mouse device common for all mice
+  6,879,32613339,-;iTCO_wdt iTCO_wdt.1.auto: Found a ICH9 TCO device (Version=2, TCOBASE=0x0660)
+   SUBSYSTEM=platform
+   DEVICE=+platform:iTCO_wdt.1.auto
+  6,880,32636658,-;iTCO_wdt iTCO_wdt.1.auto: initialized. heartbeat=30 sec (nowayout=0)
+   SUBSYSTEM=platform
+   DEVICE=+platform:iTCO_wdt.1.auto
+  6,881,32812981,-;kvm_amd: TSC scaling supported
+  6,882,32812998,-;kvm_amd: Nested Virtualization enabled
+  6,883,32813008,-;kvm_amd: Nested Paging enabled
+  6,884,32813015,-;kvm_amd: LBR virtualization supported
+  6,885,32813107,-;kvm_amd: Virtual GIF supported
+  6,886,32813111,-;kvm_amd: Virtual NMI enabled
+  6,887,32901428,-;input: ImExPS/2 Generic Explorer Mouse as /devices/platform/i8042/serio1/input/input6
+  6,888,33609173,-;i2c_dev: i2c /dev entries driver
+  4,889,33759249,-;FAT-fs (vda2): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+  6,890,33901977,-;zram: Added device: zram0
+  6,891,33965017,-;zram0: detected capacity change from 0 to 3247592
+  6,892,34040082,-;Adding 1623792k swap on /dev/zram0.  Priority:100 extents:1 across:1623792k SS
+  6,893,34045816,-;BTRFS info (device vda1 state M): use zstd compression, level 1
+  6,894,34163602,-;BTRFS info (device vda1): swapfile activated on root 256 ino 489439, pinned down 4294967296 bytes from 4 block group(s)
+  4,895,34163797,-;BTRFS warning (device vda1): block groups with swapfile extents will not be scrubbed or balanced
+  6,896,34164064,-;Adding 4194300k swap on /swapfile.  Priority:10 extents:1 across:4194300k 
+  6,897,34473177,-;fbcon: Taking over console
+  6,898,34497345,-;Console: switching to colour frame buffer device 160x45
+  6,899,34514352,-;9p: Installing v9fs 9p2000 file system support
+  6,900,54759294,-;pci 0000:08:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,901,54759932,-;pci 0000:08:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,902,54759983,-;pci 0000:08:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,903,54760064,-;pci 0000:08:00.0: enabling Extended Tags
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,904,54862483,-;pci 0000:08:00.0: BAR 4 [mem 0x383800000000-0x383800003fff 64bit pref]: assigned
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,905,54862588,-;pci 0000:08:00.0: BAR 1 [mem 0x81400000-0x81400fff]: assigned
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,906,54863930,-;virtio-pci 0000:08:00.0: enabling device (0000 -> 0002)
+   SUBSYSTEM=pci
+   DEVICE=+pci:0000:08:00.0
+  6,907,54933437,-;virtio_blk virtio7: 12/0/0 default/read/poll queues
+   SUBSYSTEM=virtio
+   DEVICE=+virtio:virtio7
+  5,908,54969605,-;virtio_blk virtio7: [vdb] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+   SUBSYSTEM=virtio
+   DEVICE=+virtio:virtio7
+  4,909,57953811,-;hammer2: loading out-of-tree module taints kernel.
+  7,910,83996033,-;hammer2: block 70000 assembled around 4096 bytes at 70000 with 15 siblings
+  7,911,83997216,-;hammer2: block 90000 assembled around 4096 bytes at 90000 with 15 siblings
+  7,912,83997594,-;hammer2: block a0000 assembled around 4096 bytes at a0000 with 15 siblings
+  7,913,83998059,-;hammer2: block b0000 assembled around 4096 bytes at b0000 with 15 siblings
+  7,914,83998968,-;hammer2: block c0000 assembled around 4096 bytes at c0000 with 15 siblings
+  7,915,83999795,-;hammer2: block e0000 assembled around 4096 bytes at e0000 with 15 siblings
+  7,916,84000194,-;hammer2: block f0000 assembled around 4096 bytes at f0000 with 15 siblings
+  7,917,84002249,-;hammer2: block 150000 assembled around 4096 bytes at 150000 with 15 siblings
+  7,918,84003015,-;hammer2: block 160000 assembled around 4096 bytes at 160000 with 15 siblings
+  7,919,84012482,-;hammer2: block 310000 assembled around 4096 bytes at 310000 with 15 siblings
+  7,920,84012910,-;hammer2: block 320000 assembled around 4096 bytes at 320000 with 15 siblings
+  7,921,84019501,-;hammer2: block 10000 assembled around 4096 bytes at 10000 with 15 siblings
+  7,922,93413118,-;hammer2: enospace refuses 1179648 bytes with 50429952 free, reserve 100243865, 1944060928 data and 10225664 meta allocated
+  7,923,93503502,-;hammer2: enospace refuses 196608 bytes with 50266112 free, reserve 100243865, 1944192000 data and 10261504 meta allocated
+  7,924,93854385,-;hammer2: enospace refuses 262144 bytes with 50151424 free, reserve 100243865, 1944192000 data and 10383360 meta allocated
+  7,925,93867989,-;hammer2: enospace refuses 135168 bytes with 50151424 free, reserve 100243865, 1944192000 data and 10383360 meta allocated
+  7,926,94153064,-;hammer2: enospace refuses 0 bytes with 50151424 free, reserve 100243865, 1944192000 data and 10383360 meta allocated
+  7,927,94170997,-;hammer2: enospace refuses 196608 bytes with 50151424 free, reserve 100243865, 1944192000 data and 10384384 meta allocated
+  6,928,96244191,-;bash (1156): drop_caches: 3
+  6,929,102331012,-;hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+  === log tail ends
+  rmmod 0
+  ok    seek 12 check(s) on a live mount, 0 failed
+  ok    dedup 3 check(s) on a live mount, 0 failed
+enospc: filled 2G, 0 failure(s)
+
+[exited with code 0]

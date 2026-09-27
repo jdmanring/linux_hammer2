@@ -12,7 +12,12 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.31 is the sweep by last-edit date over the
+0.5 to 0.9 are met. 0.9.32 is the first fleet run on the sanitizer
+kernel, which asked about memory where every instrument here had asked
+about order and leaks, and answered in its first hour: two defects of
+the carried core that all four trees still hold, and a deadlock in this
+port's sync loop that twenty-odd fills on the debug kernel had missed.
+0.9.31 is the sweep by last-edit date over the
 four documents no gate reads for state, which found the architecture
 document describing a lock and a mount three weeks gone. 0.9.30 repeats
 the latency reading on rc4 and finds every median within a tenth of
@@ -65,7 +70,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.31
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.32
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
