@@ -12,7 +12,10 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.34 fixes the freemap recovery dereferencing a
+0.5 to 0.9 are met. 0.9.35 is the sibling the first fix's sweep turned
+up: the chain reparent took a reptrack spin and never released it,
+staged as an upstream patch and never applied here, now fixed and marked
+under the same rule. 0.9.34 fixes the freemap recovery dereferencing a
 chain the lookup had just returned null, on the path every mount's
 recovery scan takes, and applied it here rather than waiting on the
 upstream patch that had been staged for it. 0.9.33 is a gate whose
@@ -78,7 +81,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.34
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.35
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
