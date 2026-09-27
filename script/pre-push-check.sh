@@ -19,6 +19,15 @@
 # H2_SKIP_PREPUSH=1 git push  skips it, for a push that is deliberately
 # ahead of a green tree. Exit 2 from a gate is COULD-NOT-RUN and is a
 # warning here exactly as it is in CI, never a pass and never a failure.
+#
+# A budget bounds the whole run, because a fleet gate against a guest that
+# is up but wedged spends its own five-minute ssh wait and returns 2, and
+# two such gates outlive the window the remote keeps an idle connection
+# open: the push then dies before it sends anything, with no gate having
+# failed. The eleven gates that need only this machine take about
+# forty-five seconds together, so the budget is never reached on a healthy
+# tree and only ever ends a push the fleet was going to refuse anyway.
+# H2_PREPUSH_BUDGET=<seconds> raises it for a run that means to wait.
 set -u
 
 [ "${H2_SKIP_PREPUSH:-0}" = "1" ] && exit 0
@@ -28,6 +37,60 @@ cd "$root" || exit 1
 
 rc=0
 warned=0
+
+budget=${H2_PREPUSH_BUDGET:-400}
+case $budget in
+''|*[!0-9]*) echo "pre-push: H2_PREPUSH_BUDGET is not a number" >&2; exit 1 ;;
+esac
+began=$(date +%s)
+
+# Run one gate under the remaining budget. Past it the gate is reported
+# rather than run, so a wedged guest cannot hold the push open: the state
+# of the tree is not the question at that point, only the machine's.
+run_gate() {
+	gate=$1
+	shift
+	now=$(date +%s)
+	left=$((budget - (now - began)))
+	if [ "$left" -le 0 ]; then
+		warned=$((warned + 1))
+		printf 'pre-push: COULD-NOT-RUN %s\n' "$gate" >&2
+		printf '          the %ss budget elapsed, so this gate was not run;\n' "$budget" >&2
+		printf '          run it by hand, or raise H2_PREPUSH_BUDGET\n' >&2
+		return 0
+	fi
+	out=$(timeout "$left" bash "$gate" "$@" 2>&1)
+	s=$?
+	if [ "$s" -eq 124 ]; then
+		warned=$((warned + 1))
+		printf 'pre-push: COULD-NOT-RUN %s\n' "$gate" >&2
+		printf '          it did not finish in the %ss left of the budget\n' "$left" >&2
+		return 0
+	fi
+	case "$s" in
+	0) ;;
+	2)
+		warned=$((warned + 1))
+		printf 'pre-push: COULD-NOT-RUN %s\n' "$gate" >&2
+		why=$(printf '%s\n' "$out" | command grep -i 'COULD-NOT-RUN' |
+		    command sed 's/^[^:]*: *COULD-NOT-RUN: *//' | head -3)
+		if [ -n "$why" ]; then
+			printf '%s\n' "$why" | command sed 's/^/          /' >&2
+		else
+			echo "          the gate gave no reason" >&2
+		fi
+		;;
+	*)
+		rc=1
+		printf 'pre-push: FAILED %s\n' "$gate" >&2
+		printf '%s\n' "$out" | tail -12 >&2
+		keep=".git/pre-push-failed-$(basename "$gate" .sh).log"
+		printf '%s\n' "$out" > "$keep"
+		printf 'pre-push: full output kept in %s\n' "$keep" >&2
+		;;
+	esac
+	return 0
+}
 
 # The style gate needs the checker the baseline was produced with, or it
 # reports COULD-NOT-RUN rather than attributing a moved deviation set to
@@ -72,55 +135,18 @@ if [ -z "${KDIR:-}" ]; then
 	done
 fi
 
+# The reason a COULD-NOT-RUN gate gives is kept: it was being dropped, so
+# a harness defect that stopped a gate from running read exactly like a
+# machine that was not available.
 for g in script/test-*.sh; do
-	out=$(bash "$g" 2>&1)
-	s=$?
-	case "$s" in
-	0) ;;
-	2)
-		# The gate says why it could not run and the reason was being
-		# dropped, so a harness defect that stopped a gate from running
-		# read exactly like a machine that was not available. Print the
-		# gate's own reason, or say plainly that it gave none.
-		warned=$((warned + 1))
-		printf 'pre-push: COULD-NOT-RUN %s\n' "$g" >&2
-		why=$(printf '%s\n' "$out" | command grep -i 'COULD-NOT-RUN' |
-		    command sed 's/^[^:]*: *COULD-NOT-RUN: *//' | head -3)
-		if [ -n "$why" ]; then
-			printf '%s\n' "$why" | command sed 's/^/          /' >&2
-		else
-			echo "          the gate gave no reason" >&2
-		fi
-		;;
-	*)
-		rc=1
-		printf 'pre-push: FAILED %s\n' "$g" >&2
-		printf '%s\n' "$out" | tail -12 >&2
-		keep=".git/pre-push-failed-$(basename "$g" .sh).log"
-		printf '%s\n' "$out" > "$keep"
-		printf 'pre-push: full output kept in %s\n' "$keep" >&2
-		;;
-	esac
+	run_gate "$g"
 done
 
 # Anchored on the implementation and not on the name, the way CI does it:
 # matching the bare flag picks up a gate that only MENTIONS --selftest in
 # a comment.
 for g in $(command grep -l '"${1:-}" = "--selftest"' script/test-*.sh); do
-	out=$(bash "$g" --selftest 2>&1)
-	s=$?
-	case "$s" in
-	0) ;;
-	2)
-		warned=$((warned + 1))
-		printf 'pre-push: COULD-NOT-RUN %s --selftest\n' "$g" >&2
-		;;
-	*)
-		rc=1
-		printf 'pre-push: FAILED %s --selftest\n' "$g" >&2
-		printf '%s\n' "$out" | tail -12 >&2
-		;;
-	esac
+	run_gate "$g" --selftest
 done
 
 if [ "$rc" != 0 ]; then
