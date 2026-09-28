@@ -152,3 +152,14 @@ Saxum's. Requiring a cite into a directory this repository owns to
 resolve returned 6, half of them BSD's and libfs's `src/`, and it cannot
 see the five that started this because they read `scripts/` plural. What
 holds is the reading: a path into this tree resolves, or it is a defect.
+
+The other response to the same finding is to lift whatever those
+documents assert about this tree into a governed one, and that was
+measured too: it is unnecessary. The decisions the readings actually
+carry are already in governed documents, not only in them. The lock
+ruling that no region sleeps and `rw_semaphore` is legal at every site is
+in `doc/README.porting.md` and `doc/ARCHITECTURE.md`, the DIO layer's
+completion into a workqueue is in `doc/IO_MODEL.md`, and the reading's
+own contribution is the evidence behind those, which belongs with the
+reading. Lifting it would duplicate a governed claim into a second place
+and give the two a chance to disagree.
