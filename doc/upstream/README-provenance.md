@@ -53,9 +53,13 @@ Still present at DragonFly head: the `if (allocated)` block at
 
 Found here by measurement, not by reading: eight runs of
 `script/test-enospc.sh` reported a lockdep cycle and none has since the
-change. The stranded lock is what made it visible, and that half is
-specific to this port, where XOPs run synchronously and put both lock
-orders on one task. The missed release is not specific to anything.
+change. The stranded lock is what made it visible, and that half is about
+this port's XOP scheduling rather than about the release. At the time it
+was found the port gated every XOP on the inode dependency, which the
+synchronous ports do and DragonFly does not, so both lock orders could
+land on one task. 0.9.19 exempted strategy XOPs from that dependency as
+DragonFly does, and the lockdep cycle has not recurred since. The missed
+release is not specific to anything and is present in all four trees.
 
 ## hammer2_chain-repchange-release-reptrack-spin
 
