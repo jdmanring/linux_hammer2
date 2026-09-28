@@ -167,10 +167,24 @@ supports that, but only after this.
 3. `->direct_IO`, if databases or VM images are a target.
 4. ~~Random-4K and fsync latency.~~ Done 2026-09-26: `script/latency.sh` and
    `test/hammer2-latency.c`, on this port and on ext4 and btrfs beside it.
-5. A gate that requires a reference-filesystem control for kernel-facing tests.
+5. ~~A gate that requires a reference-filesystem control for kernel-facing
+   tests.~~ Done 2026-09-28. `README.testing.md` carries a table naming each   file under `test/` and the reference it is checked against, or saying it
+   has none and why, and `test-inventory.sh` fails on a test file with no row
+   and on a row naming a file that does not exist. Both directions are
+   checked because either alone is satisfiable trivially, and the population
+   is asserted first so a table that lost its rows cannot pass by comparing
+   nothing. On its first run it found two files with no row, both
+   kernel-facing harnesses, which is the check working rather than the table
+   being complete.
+
+   The declaration is authored and not inferred, and that was a decision made
+   after trying the alternative: a lexical rule over the test files classified
+   `hammer2-dedup.c` as pure when it measures a kernel behavior, and missed
+   the same file in the same pass. A row that says "none" is a decision
+   recorded, not a gap.
 
 Items 1 and 3 change what a consumer can do; 4 and 5 change what this tree
-can claim, and 2 and 4 are done. Item 5 is the one that generalizes: every
+can claim, and all four are now done. Item 5 is the one that generalizes: every
 instrument added since it was written, including the two above, has needed a
-filesystem that is not this port before its reading could be believed, and
-nothing enforces that.
+filesystem that is not this port before its reading could be believed, and it
+is enforced now rather than remembered.

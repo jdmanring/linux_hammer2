@@ -1968,6 +1968,43 @@ recorded here so the next sweep for what runs this tree's code does not
 conclude "run by nothing" from a search of this repository alone, which
 is the mistake this section already documents twice.
 
+## The reference control every kernel-facing test declares
+
+This is the readiness audit's item 5, and the reason it generalizes is
+already in this repository's history: `test-seek.sh` shipped a check that
+asserted the implementation rather than the contract, and the only thing
+that caught it was running the same question against `tmpfs` and `btrfs`
+on the same machine. A test written from the implementation passes
+against the implementation. A test with a reference beside it cannot.
+
+So every file under `test/` that asserts a kernel-facing contract declares
+the reference it is checked against, or declares that it has none and why.
+The declaration is a line in the table below, which `test-inventory.sh`
+reads: a file under `test/` with no row is a finding, and so is a row
+naming a file that does not exist. Nothing is inferred from the file's
+text, because a lexical rule was tried and got this wrong in both
+directions in one pass, calling `hammer2-dedup.c` pure when it measures a
+kernel behavior and missing `hammer2-dedup.c` in the same breath.
+
+| test file | reference control | what it asserts |
+|---|---|---|
+| `test/hammer2-seek.c` | `tmpfs` and `btrfs` on the same guest | `SEEK_DATA`/`SEEK_HOLE` answer the offsets the media holds. The control is what found the original defect: both references disagreed with the port. |
+| `test/hammer2-dedup.c` | `tmpfs` and `btrfs` on the same guest | a duplicate block is not charged twice. Both controls charge full price, which is what makes the reading specific to this port. |
+| `test/hammer2-latency.c` | `ext4` and `btrfs` on the same guest | per-operation latency is a property of the port, not of the machine. |
+| `test/hammer2-mmap-exercise.c` | `tmpfs` on the same guest | a shared writable mapping reaches the media. |
+| `test/hammer2-ioctl-exercise.c` | `tmpfs` on the same guest | the ioctls refuse what they should, and the refusals are the filesystem's and not the VFS's. |
+| `test/hammer2-header.c` | none, and it says why | the on-disk header layout, which is a format fact with no other filesystem to compare against. DragonFly is the reference and it is the cross-side runs in the fleet. |
+| `test/getdents-resume.c` | none, and it says why | `->iterate_shared` resumes across calls, which is a VFS contract and not a per-filesystem choice; the fleet's fixture run is the check. |
+| `test/crc32c-vectors.c` | reference vectors, not a filesystem | the CRC-32C digest against the published vector. |
+| `test/xxh64-vectors.c` | reference vectors, not a filesystem | xxHash64 against xxhsum's own output. |
+| `test/syntax-check.c` | the compiler is the reference | the carried headers define no name the kernel defines. |
+| `test/contract/ctl-sparse-user.c` | `sparse` is the reference, and it must refuse this | the negative control for the syntax gate's sparse pass: a kernel pointer handed to `copy_to_user()` has to be refused, or that pass is blind to its own class. |
+| `test/rootfs/h2root-init.c` | the same file in both roles, which is the control | PID 1 runs off a HAMMER2 volume: it writes, syncs, reads back and powers off. The initramfs role and the on-volume role are the same binary, so a failure in either is not a difference between two builds. |
+
+A row that says "none" is a decision recorded, not a gap: what remains
+open is whether the decision is right, which the row states. What the
+gate enforces is that the decision was made at all.
+
 ## What the real test will be
 
 A volume created by DragonFly's `newfs_hammer2`, mounted here, compared

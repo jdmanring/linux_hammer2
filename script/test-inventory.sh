@@ -380,6 +380,49 @@ for f in doc/upstream/*; do
 		fail=$((fail + 1))
 	fi
 done
+# The reference-control declarations, the readiness audit's item 5. Every
+# file under test/ declares the reference it is checked against, or says it
+# has none and why; the declaration is a row in README.testing.md's table
+# and nothing is inferred from the file's own text. A lexical rule was tried
+# first and was wrong in both directions in one pass, which is why this is
+# an authored table with a gate rather than a pattern.
+#
+# Both directions are checked, because either alone is satisfiable
+# trivially: a test file with no row is a finding, and a row naming a file
+# that does not exist is a finding. The population is asserted first, so a
+# table that lost its rows and a test tree that lost its files cannot both
+# pass by comparing nothing.
+nref=0
+if [ -f "$TESTDOC" ]; then
+	refs=$(sed -n '/^| test file | reference control |/,/^$/p' "$TESTDOC" |
+		sed -n 's/^| `\([^`]*\)` |.*/\1/p' | LC_ALL=C sort)
+	nref=$(printf '%s\n' "$refs" | command grep -c .) || nref=0
+	[ "$nref" -gt 0 ] || {
+		echo "  FAIL $TESTDOC: the reference-control table has no row,"
+		echo "       so the check below would compare nothing"
+		fail=$((fail + 1)); }
+	nrefcheck=0
+	for f in $tests; do
+		case "$f" in
+		*.c) ;;
+		*) continue ;;
+		esac
+		nrefcheck=$((nrefcheck + 1))
+		printf '%s\n' "$refs" | command grep -qxF -- "$f" || {
+			echo "  FAIL $f: no reference-control row in $TESTDOC"
+			fail=$((fail + 1)); }
+	done
+	[ "$nrefcheck" -gt 0 ] || {
+		echo "  FAIL no .c file under $TESTDIR was checked for a"
+		echo "       reference declaration"
+		fail=$((fail + 1)); }
+	for r in $refs; do
+		[ -f "$r" ] || {
+			echo "  FAIL $TESTDOC names $r, which does not exist"
+			fail=$((fail + 1)); }
+	done
+fi
+
 # The staged files are a population like the rest. A glob that matched
 # nothing would check nothing and still print a clean count.
 [ "$npatch" -gt 0 ] || {
@@ -387,5 +430,5 @@ done
 	echo "       provenance check above read nothing"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $fail finding(s)"
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
