@@ -126,3 +126,29 @@ fix to a defect this tree has staged is the exception and is taken
 directly. A sync that fails a gate is not merged until the gate passes,
 and a sync that has waited more than one release is a problem to record
 in `doc/README.status.md`, not a reason to skip the gates.
+
+## What a dated document is allowed to say about this tree
+
+`doc/research/` and `doc/upstream/` are imported deliverables and filing
+drafts, kept as written, and their measurements are left alone on purpose.
+A reference into this tree is not a measurement and must resolve, because
+the import is what invalidated those: the three analysis tools came here
+and live at `script/`, and `script/floor-symbols.py` was deleted on
+2026-09-05 when the floor moved.
+
+The prose gate checks style there and the citations gate parses
+`file:line` table rows, so a path or a present-tense claim in running
+prose is unchecked. Two sweeps on 2026-09-27 found what that costs: five
+citations left at `scripts/hammer2-*.py` after the move, and a filing
+draft still saying the port runs XOPs synchronously, five weeks after
+0.9.19 exempted strategy XOPs from the inode dependency. That second one
+was going to Kusumi as a description of this port.
+
+No gate is proposed for the class, because four were measured and every
+one fails on this corpus. A basename-drift rule returned 33 findings and
+all 33 were false, `sys/tree.h` and `include/linux/blkdev.h` being real
+files in other trees. A near-miss-directory rule returned 17, all 17
+Saxum's. Requiring a cite into a directory this repository owns to
+resolve returned 6, half of them BSD's and libfs's `src/`, and it cannot
+see the five that started this because they read `scripts/` plural. What
+holds is the reading: a path into this tree resolves, or it is a defect.
