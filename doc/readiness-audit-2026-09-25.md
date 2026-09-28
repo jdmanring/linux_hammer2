@@ -121,11 +121,30 @@ supports that, but only after this.
    `umount`/`mount`: a 64 KiB range at offset 262144 has the same md5 before
    the punch and after a remount, with `st_blocks` unchanged at 2080 across
    both. Dropping the caches first does not change it and neither does
-   `fsync`. So the defect is not that the zeros are written by a path that
-   skips elision; it is that the zeroed folios never become a block the core
-   writes. The identical range and the identical zeros written by `dd` DO
+   `fsync`. The identical range and the identical zeros written by `dd` DO
    elide (2080 to 1568 blocks), so the media's zero handling is intact and
    the fault is entirely in what the punch hands it.
+
+   **Where it goes wrong, from counters rather than from reading.** Two
+   counters were added to the write path for one run and removed after it:
+   one on the elision decision itself, which `zero_write()` marks on the
+   side it takes, and one on the block count either way. Both were exported
+   through `module_param_named` as `folio_changed` already is. On a 1 MiB
+   file, 16 blocks:
+
+       dd if=/dev/zero, same range:   elided 0 -> 16,  blocks 2080 -> 0
+       fallocate -p,   same range:    elided stays 16, blocks stay 2080
+                                      not-elided 64 -> 80
+
+   So the punch DOES drive a write of those 16 blocks, within the call, and
+   every one of them is written as NON-zeros: the elision is never offered a
+   zero block, and the file keeps its old block count with fresh blocks
+   allocated. A read of the range through the page cache straight after the
+   punch returns the ORIGINAL bytes, so the zeroing does not take effect on
+   the data the write path sees at all. The defect is therefore in what
+   `hammer2_fallocate()` does to the folios before writeback, not in the
+   elision and not in the media, and a rewrite should establish that the
+   folios it zeroes are the ones the write path reads.
 
    Three earlier attempts at a cause were wrong and are recorded so they are
    not repeated. That the punch writes real zeros and allocates 64 MiB:
