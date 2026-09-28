@@ -168,6 +168,20 @@ supports that, but only after this.
    read at three stages. Nothing less than that settled it, and the next
    person should start there rather than from a source reading.
 
+   One candidate is eliminated by reading the kernel rather than the port,
+   and it is recorded so it is not proposed again. `folio_zero_segment()`
+   forwards to `zero_user_segments()`, which opens with
+   `BUG_ON(end1 > page_size(page))`, and the punch passes offsets computed
+   from `folio_size()` up to 65536 where `PAGE_SIZE` is 4096, so this looked
+   like an assertion violation on a 64 KiB folio. It is not:
+   `page_size(page)` is `PAGE_SIZE << compound_order(page)`
+   (`include/linux/mm.h`), which is the whole folio, so the bound is 65536
+   and the call is in range. The shape of the loop is also the shape the
+   kernel itself uses for the same job in `pagecache_isize_extended()`:
+   lock the folio, mark it dirty, zero it, unlock. So the call and its
+   bounds are right, and the defect is in the state the folios are in when
+   it runs, not in this call.
+
    The lesson is on the measurement side, which is why this entry is long.
    Four readings of the source produced four wrong causes, and then the first
    counter meant to settle it was itself unbounded and produced a fifth. None
