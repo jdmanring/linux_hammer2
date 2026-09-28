@@ -68,3 +68,35 @@ port, and is declared absent rather than emulated.
 
 This file is the port's side of any adapter a consumer writes over
 these rows; `README.roadmap.md`'s 0.7 milestone closed on it.
+
+## The ioctl surface, against DragonFly's
+
+The rows above are capabilities; this is the interface, because a
+consumer asks both and only the second is a list. DragonFly declares 27
+`HAMMER2IOC_*` ioctls. This port implements 19. The eight it does not are
+enumerated here rather than left to be discovered, and each maps onto a
+row above so the two cannot drift apart:
+
+| ioctl | what it does upstream | covered by |
+|---|---|---|
+| `HAMMER2IOC_REMOTE_ADD` | add a cluster member | Replication, IncrementalReplication, RemoteCheckpoint: `unavailable` |
+| `HAMMER2IOC_REMOTE_DEL` | remove a cluster member | the same row |
+| `HAMMER2IOC_REMOTE_REP` | replicate to a member | the same row |
+| `HAMMER2IOC_REMOTE_SCAN` | scan for members | the same row |
+| `HAMMER2IOC_SOCKET_GET` | read cluster comms socket settings | the same row |
+| `HAMMER2IOC_SOCKET_SET` | set them | the same row |
+| `HAMMER2IOC_RECLUSTER` | re-form the cluster after a topology change | the same row |
+| `HAMMER2IOC_BULKFREE_ASYNC` | start a bulkfree scan and return | GC candidates: the port answers the synchronous `HAMMER2IOC_BULKFREE_SCAN`, which `script/bulkfree.sh` measures |
+
+Seven of the eight are the cluster surface, which the rows above declare
+absent and which no BSD port carries either. The eighth is the
+asynchronous form of an ioctl this port does carry, so a consumer that
+wants bulkfree without waiting composes it by running the scan on its own
+thread; it is not a missing operation, it is a missing convenience, and
+the difference matters when sizing a port against upstream.
+
+So the answer to "is every upstream ioctl implemented" is no, and the
+answer to "is anything missing that a consumer would expect" is the same
+eight names, all but one of them clustering. Both statements are here so
+neither has to be inferred.
+
