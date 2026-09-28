@@ -131,23 +131,39 @@ supports that, but only after this.
        punch 0..65536, exactly one block:     2080 blocks -> 1952
        punch 0..1048576, the whole file:      2080 blocks -> 0
 
-   It frees what a whole block covers. The exerciser asks for a 32 KiB range
-   starting 16 KiB into the file, which on 64 KiB blocks covers no whole
-   block, so there is nothing to elide and nothing is freed; its check that
-   the punch freed something is the check that fails. The reference
-   filesystem makes this plain: the same range on btrfs, whose block is
-   4 KiB, takes 2048 blocks to 1984.
+   **Those three readings do not reproduce and must not be relied on.** The
+   block-aligned punch was run again on later builds and gave 2080 -> 0 once
+   and 2080 -> 2080 twice, on fresh volumes, with the host module hash
+   checked against the guest's at each step. The whole-file punch has not
+   been repeated at all. Until the same range, build and volume reproduce the
+   same number, nothing here is established, and a cause built on it is
+   worthless. That is the state this item is in and it is stated rather than
+   dressed up.
 
-   The exerciser needs a range covering a whole block before a punch has
-   anything to free, and until it has one its punch check reports a failure
-   this port does not have. That is the next step for this item, and it is
-   smaller than writing the operation again.
+   What does reproduce, and is the reason the first claim was withdrawn:
+   zeroing every block of a range does NOT free it in the runs above, while
+   `dd if=/dev/zero` over the same range does, and the reference filesystem
+   behaves differently again. The range the exerciser punches, 32 KiB
+   starting 16 KiB into the file, covers no whole 64 KiB block; on btrfs,
+   whose block is 4 KiB, the same range takes 2048 blocks to 1984. That much
+   is consistent across every run and is why the exerciser's check is
+   suspect. It is not enough to conclude the implementation is correct.
+
+   The next step is therefore not a rewrite and not an application. It is a
+   reproducible measurement: one build, one fresh volume, the same range,
+   repeated until it gives the same answer twice, with the module hash
+   recorded beside each number. Nothing in this item should move until that
+   exists, and the counter that would do it is the one used here, kept in the
+   tree until the numbers settle rather than compiled out after one run.
 
    The lesson is on the measurement side, which is why this entry is long.
    Four readings of the source produced four wrong causes, and then the first
-   counter meant to settle it was itself unbounded and produced a fifth. What
-   settled it was a control on a filesystem whose block size differs, which
-   is exactly the gate item 5 below asks for.
+   counter meant to settle it was itself unbounded and produced a fifth. None
+   of the five survived a repeat run. The control on a filesystem whose block
+   size differs is what showed the exerciser's range is suspect, and it is
+   also what showed that a difference between two filesystems is not by
+   itself a finding: it is the gate item 5 below asks for, and this item is
+   the demonstration of why that gate is needed.
 
    Space accounting, which several of the wrong attempts tripped on:
    `statvfs` moves at allocation and at the SECOND bulkfree pass, not at a
