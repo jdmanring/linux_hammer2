@@ -111,13 +111,37 @@ supports that, but only after this.
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
    **An implementation was written and is defective; it is not sitting ready.**
    Written 2026-09-26, kept outside this tree, applied and run on 2026-09-28.
-   It built rc=0 with the symbol in the module and then failed the run: a
-   punch reads back as zeros, frees no block, and costs another 64 MiB,
-   because it zeroes folios in the page cache and never reaches the elision
-   that `zero_write()` performs on the write path. The exerciser's own line:
-   `falloc-fail the punch did not free anything: 2080 blocks against 2080`.
-   Write it against the write path, not the page cache, and run the punch
-   check first; a build is not evidence for this operation.
+   It builds rc=0 with the symbol in the module and then fails on the
+   filesystem. The exerciser's line: `falloc-fail the punch did not free
+   anything: 2080 blocks against 2080`, 12 checks and 1 failure.
+
+   **A punch does not reach the media.** That is the measured statement, and
+   the one to start a rewrite from. Punched bytes read back as zeros through
+   the page cache and the original bytes are still there after
+   `umount`/`mount`: a 64 KiB range at offset 262144 has the same md5 before
+   the punch and after a remount, with `st_blocks` unchanged at 2080 across
+   both. Dropping the caches first does not change it and neither does
+   `fsync`. So the defect is not that the zeros are written by a path that
+   skips elision; it is that the zeroed folios never become a block the core
+   writes. The identical range and the identical zeros written by `dd` DO
+   elide (2080 to 1568 blocks), so the media's zero handling is intact and
+   the fault is entirely in what the punch hands it.
+
+   Three earlier attempts at a cause were wrong and are recorded so they are
+   not repeated: that the punch writes real zeros and allocates 64 MiB (the
+   `df` movement that suggested it is the allocation half of a deferred
+   free, not this operation's cost); that a page-sized step misses a
+   block-sized elision (for an aligned offset the page index and the block
+   index are the same number, so that change is a no-op); and that the
+   folios need invalidating. None was tested against the media and all three
+   were stated with more confidence than the evidence carried.
+
+   What a rewrite needs before it needs a design: an instrument that reads
+   the media rather than the page cache, because every cheap probe here
+   reads the cache and reports success. `statvfs` follows allocations and
+   does not follow frees, and `st_blocks` follows neither after a punch, so
+   neither can be used alone. A build is not evidence for this operation and
+   neither is a read-back.
 2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
 3. `->direct_IO`, if databases or VM images are a target.
 4. ~~Random-4K and fsync latency.~~ Done 2026-09-26: `script/latency.sh` and
