@@ -128,13 +128,27 @@ supports that, but only after this.
    the fault is entirely in what the punch hands it.
 
    Three earlier attempts at a cause were wrong and are recorded so they are
-   not repeated: that the punch writes real zeros and allocates 64 MiB (the
-   `df` movement that suggested it is the allocation half of a deferred
-   free, not this operation's cost); that a page-sized step misses a
-   block-sized elision (for an aligned offset the page index and the block
-   index are the same number, so that change is a no-op); and that the
-   folios need invalidating. None was tested against the media and all three
-   were stated with more confidence than the evidence carried.
+   not repeated. That the punch writes real zeros and allocates 64 MiB:
+   wrong, and the `df` movement that suggested it is a whole-file punch of a
+   file whose blocks were not freed, which is the accounting below and not
+   this operation's cost. That a page-sized step misses a block-sized
+   elision: wrong, because for an aligned offset the page index and the
+   block index are the same number, so the change that claim justified was a
+   no-op, reverted rather than committed. That the folios need invalidating:
+   never tried, because the evidence did not reach it. None of the three was
+   tested against the media, and all three were stated with more confidence
+   than the evidence carried.
+
+   One reading of mine was wrong about this filesystem too, and it is the
+   one to be careful with when measuring the punch's cost. Space a punch
+   appears to consume is space a *remove* has not returned: `statvfs` moves
+   at allocation and at the SECOND bulkfree pass, not at a remove, so a
+   deleted file is counted until two passes run. Measured here on a 2G
+   volume: 1859968 kb free, 200 MB written, 1654720 after the write, and
+   1654720 still after `rm` and after the first pass; the second pass
+   returns it to 1859968. The invocation matters, `hammer2 -s <mount>
+   bulkfree <mount>`; without `-s` the utility exits with EINVAL and frees
+   nothing, which is a probe that reports a failure that did not happen.
 
    What a rewrite needs before it needs a design: an instrument that reads
    the media rather than the page cache, because every cheap probe here
