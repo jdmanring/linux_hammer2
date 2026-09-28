@@ -151,6 +151,31 @@ supports that, but only after this.
    and the fault is between the punch's zeroing and the folios the write path
    reads.
 
+   Where that boundary is, from the port's own exported counters and the
+   kernel's Dirty line, on a 2 MiB file of 4128 blocks:
+
+       punch 0..65536:  alloc_data_bytes unchanged, data_rewrites
+                        unchanged, blocks 4128 -> 4128
+       dd the same zeros: alloc unchanged as well, blocks 4128 -> 4000
+       Dirty kB across the punch: 152 -> 344 -> 192 after a second
+
+   So the punch does mark folios dirty and writeback does run and drain them,
+   and the allocation counters do not move on either path. The difference is
+   that the `dd` path elides a block and the punch path does not, and the
+   page-cache read after the punch shows the ORIGINAL bytes, not zeros. The
+   zeros the punch writes are not the bytes the write path reads back. That
+   is the boundary, and it is narrower than "the operation does not work":
+   the folio the punch zeroes and the data the write XOP receives are not the
+   same object.
+
+   `ZERO_RANGE` is worth noting because it looked like a counterexample.
+   Called on the same file it writes zeros that DO read back as zeros, while
+   `PUNCH_HOLE` does not, with the same loop and the same parameters. Both
+   free nothing. The difference is that `ZERO_RANGE` is called with
+   `FALLOC_FL_KEEP_SIZE` and the size check `end > isize` therefore does not
+   run; that is the only divergence between them after the mode switch, and
+   it is where a rewrite should start.
+
    The exerciser's range is a second, separate defect and worth fixing on its
    own terms: it punches 32 KiB from 16 KiB in, which on a 64 KiB block
    covers no whole block, and on btrfs, whose block is 4 KiB, the same range
