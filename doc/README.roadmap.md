@@ -12,7 +12,13 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.35 is the sibling the first fix's sweep turned
+0.5 to 0.9 are met. 0.9.36 is the `->fallocate` operation the audit lists
+as ordered next step 1, whose punch zeroed nothing: the range of each folio
+was computed with `offset_in_folio()`, a mask and not a subtraction, so a
+range ending at a folio's end wrapped to zero and the zeroing call was
+skipped. It is fixed in `hammer2_vnops.c` and the exerciser passes 12
+checks with the btrfs control passing beside it. 0.9.35 is the sibling the
+first fix's sweep turned
 up: the chain reparent took a reptrack spin and never released it,
 staged as an upstream patch and never applied here, now fixed and marked
 under the same rule. 0.9.34 fixes the freemap recovery dereferencing a
@@ -81,7 +87,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.35
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.36
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

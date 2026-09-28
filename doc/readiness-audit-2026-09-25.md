@@ -109,133 +109,48 @@ supports that, but only after this.
 ## 6. Ordered next steps
 
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
-   **The staged implementation does not work.** The exerciser that failed it
-   is wrong about one thing, and right about another. Which is which was got
-   wrong here four times in a row, so this entry records the experiment, not
-   only the conclusion.
+   **Done 2026-09-28.** The defect was one line of arithmetic and it is fixed
+   in `hammer2_vnops.c`; the entry records the defect, the measurement that
+   found it, and the six causes that were proposed and refuted before it, so
+   the search is not walked again.
 
-   What was claimed and is withdrawn: that the punch never reaches the media,
-   and that its zeroing does not take. Both came from counters, and one of
-   those counters read past the end of the folio it had just zeroed, so it
-   reported every zeroing attempt as a failure. Clamped to the range the call
-   actually zeroed, the same probe reports the opposite:
+   **The defect.** Each folio's zero range was computed with
+   `offset_in_folio()`, which is a MASK and not a subtraction,
+   `((p) & (folio_size(folio) - 1))`. For a range ending exactly at a folio's
+   end the mask wraps to zero, so the call became
+   `folio_zero_segment(folio, 0, 0)`, which `zero_user_segments()` skips
+   because the end is not past the start. Every punch covering whole 64 KiB
+   blocks therefore zeroed nothing and freed nothing, and a punch covering
+   only part of a block zeroed correctly and freed nothing because there was
+   no whole block to elide. The two offsets are now the subtraction they were
+   meant to be.
 
-       zeroed=256  zerook=256  nonzero=0     (a 1 MiB punch)
+   **The measurement that found it**, after five readings of the source had
+   failed: a `pr_info` inside the loop printing the computed range. It showed
+   `zs=0 ze=65536 -> 0 .. 0 ... skips=1` for a whole-block punch and
+   `zs=16384 ze=49152 -> 16384 .. 49152 ... skips=0` for a partial one. The
+   kernel's `offset_in_folio` is in `include/linux/mm.h`; the answer was in
+   the header the port compiles against, and reading it took one command.
 
-   Every zeroing attempt succeeded. A probe that reads beyond what it bounded
-   will confirm whatever it was pointed at.
+   **What holds now.** A whole-block punch zeroes the block and frees it,
+   2080 blocks to 1952; a whole-file punch takes it to 0; the exerciser
+   reports 12 checks and 0 failures, and the same exerciser on btrfs reports
+   12 and 0 with its range adapted to that filesystem's 4 KiB block, which is
+   the reference-filesystem control item 5 below asks for. Syntax 65 checks
+   0 failed and checkpatch moved by one, a new `return (x);` in the tree's own
+   BSD style.
 
-   What the pristine implementation does. The first readings here were not
-   reproducible and are replaced by these, which were:
-
-       one build, md5 72fbda096797c32d6b97b6a981a0296c, both ends checked
-       fresh 4G volume, first-use file, 8224 blocks
-
-       the SAME punch, three times, one file:  8224, 8224, 8224
-       dd if=/dev/zero, the same 16 pages:      8224 -> 8096
-       punch the whole file:                    8224 -> 8224
-       the punched range, read at each stage:
-           before         67cd8db4...384033
-           after punch    67cd8db4...384033
-           after remount  67cd8db4...384033
-
-   **So the punch changes nothing, and this is the defect.** It is not that
-   the free is deferred, not that the range misses a block, and not that
-   writeback has not run: the bytes at the punched range are byte-identical
-   before the punch, after it, and after an unmount and mount, and the block
-   count is unmoved. The zeroing counter increments, so
-   `folio_zero_segment()` is called and returns without error; the data it was
-   asked to zero is unchanged afterwards. `dd` of the same zeros over the same
-   range DOES
-   elide, 8224 to 8096, so the write path and the elision are both working
-   and the fault is between the punch's zeroing and the folios the write path
-   reads.
-
-   Where that boundary is, from the port's own exported counters and the
-   kernel's Dirty line, on a 2 MiB file of 4128 blocks:
-
-       punch 0..65536:  alloc_data_bytes unchanged, data_rewrites
-                        unchanged, blocks 4128 -> 4128
-       dd the same zeros: alloc unchanged as well, blocks 4128 -> 4000
-       Dirty kB across the punch: 152 -> 344 -> 192 after a second
-
-   So the punch does mark folios dirty and writeback does run and drain them,
-   and the allocation counters do not move on either path. The difference is
-   that the `dd` path elides a block and the punch path does not, and the
-   page-cache read after the punch shows the ORIGINAL bytes, not zeros. The
-   zeros the punch writes are not the bytes the write path reads back. That
-   is the boundary, and it is narrower than "the operation does not work":
-   the folio the punch zeroes and the data the write XOP receives are not the
-   same object.
-
-   `ZERO_RANGE` is worth noting because it looked like a counterexample and
-   is not one, and the reason is worth recording so it is not chased again.
-   Called on the same file it writes zeros that DO read back as zeros, where
-   `PUNCH_HOLE` does not, with the same loop and the same parameters. Both
-   free nothing. The obvious candidate, that the two differ in whether
-   `KEEP_SIZE` is set, is wrong, and the kernel of record says so:
-   `vfs_fallocate()` refuses `PUNCH_HOLE` unless `KEEP_SIZE` is set, and
-   passes the mode through with the flag, so both arrive at the port as
-   `mode | KEEP_SIZE` and the size check is skipped for both. So the
-   difference is not in the port's handling of the two modes and is not in
-   this function's mode switch.
-
-   That leaves the difference in the state each call finds, which is the
-   honest position: `ZERO_RANGE` is called on a file that has already been
-   punched and `PUNCH_HOLE` on a freshly written one, and nothing measured
-   separates the two cases. A rewrite should establish that before changing
-   anything, because six explanations for this defect have already been
-   proposed and refuted by measurement and the seventh by reading
-   `fs/open.c`.
-
-   The exerciser's range is a second, separate defect and worth fixing on its
-   own terms: it punches 32 KiB from 16 KiB in, which on a 64 KiB block
-   covers no whole block, and on btrfs, whose block is 4 KiB, the same range
-   takes 2048 blocks to 1984. A check whose range cannot be freed on the
-   filesystem under test reports a failure that means nothing. Fixing it will
-   not make the punch work; it will only stop one of the two failures from
-   being spurious.
-
-   What took the time, recorded because it is the transferable part: five
-   causes were proposed here before this one, four from reading the source
-   and one from a counter that read past the folio it had bounded. Each was
-   replaced only by measurement, and two were committed before being
-   withdrawn. The reading above took a fixed build, a fresh volume, the same
-   range repeated, the module hash checked at both ends, and a byte-level
-   read at three stages. Nothing less than that settled it, and the next
-   person should start there rather than from a source reading.
-
-   One candidate is eliminated by reading the kernel rather than the port,
-   and it is recorded so it is not proposed again. `folio_zero_segment()`
-   forwards to `zero_user_segments()`, which opens with
-   `BUG_ON(end1 > page_size(page))`, and the punch passes offsets computed
-   from `folio_size()` up to 65536 where `PAGE_SIZE` is 4096, so this looked
-   like an assertion violation on a 64 KiB folio. It is not:
-   `page_size(page)` is `PAGE_SIZE << compound_order(page)`
-   (`include/linux/mm.h`), which is the whole folio, so the bound is 65536
-   and the call is in range. The shape of the loop is also the shape the
-   kernel itself uses for the same job in `pagecache_isize_extended()`:
-   lock the folio, mark it dirty, zero it, unlock. So the call and its
-   bounds are right, and the defect is in the state the folios are in when
-   it runs, not in this call.
-
-   The lesson is on the measurement side, which is why this entry is long.
-   Four readings of the source produced four wrong causes, and then the first
-   counter meant to settle it was itself unbounded and produced a fifth. None
-   of the five survived a repeat run. The control on a filesystem whose block
-   size differs is what showed the exerciser's range is suspect, and it is
-   also what showed that a difference between two filesystems is not by
-   itself a finding: it is the gate item 5 below asks for, and this item is
-   the demonstration of why that gate is needed.
-
-   Space accounting, which several of the wrong attempts tripped on:
-   `statvfs` moves at allocation and at the SECOND bulkfree pass, not at a
-   remove, so a removed file is counted until two passes run. Measured on a
-   2G volume in kb: 1859968 free, 1654720 after a 200 MB write, 1654720 still
-   after `rm` and after the first pass, 1859968 after the second. The
-   invocation matters, `hammer2 -s <mount> bulkfree <mount>`; without `-s`
-   the utility exits with EINVAL, frees nothing, and a probe that swallows
-   that line reports a pass that did nothing.
+   **The six causes that were wrong**, kept because each cost time:
+   (1) the punch writes real zeros and allocates 64 MiB - the figure came
+   from `df` and is a deferred free; (2) a page-sized step misses a
+   block-sized elision - wrong arithmetic; (3) the punch never reaches the
+   media - from an md5 taken after an `umount` that had failed; (4) the
+   zeroing does not take - from a probe that read past the folio it had
+   bounded; (5) `folio_zero_segment()` violates
+   `BUG_ON(end > page_size(page))` - `page_size()` is the whole compound
+   page, so it does not; (6) the two modes differ in `KEEP_SIZE` -
+   `vfs_fallocate()` requires that flag for `PUNCH_HOLE`, so both carry it.
+   Each was replaced only by measurement or by reading the kernel.
 
 2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
 3. `->direct_IO`, if databases or VM images are a target.
