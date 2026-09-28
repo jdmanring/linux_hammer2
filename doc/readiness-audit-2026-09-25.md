@@ -109,6 +109,15 @@ supports that, but only after this.
 ## 6. Ordered next steps
 
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
+   **An implementation was written and is defective; it is not sitting ready.**
+   Written 2026-09-26, kept outside this tree, applied and run on 2026-09-28.
+   It built rc=0 with the symbol in the module and then failed the run: a
+   punch reads back as zeros, frees no block, and costs another 64 MiB,
+   because it zeroes folios in the page cache and never reaches the elision
+   that `zero_write()` performs on the write path. The exerciser's own line:
+   `falloc-fail the punch did not free anything: 2080 blocks against 2080`.
+   Write it against the write path, not the page cache, and run the punch
+   check first; a build is not evidence for this operation.
 2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
 3. `->direct_IO`, if databases or VM images are a target.
 4. ~~Random-4K and fsync latency.~~ Done 2026-09-26: `script/latency.sh` and
