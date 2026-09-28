@@ -109,9 +109,10 @@ supports that, but only after this.
 ## 6. Ordered next steps
 
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
-   **The staged implementation works. The exerciser that failed it is wrong.**
-   Both halves of that were got wrong here first, in the opposite direction,
-   so this entry records the experiment and not only the answer.
+   **The staged implementation does not work.** The exerciser that failed it
+   is wrong about one thing, and right about another. Which is which was got
+   wrong here four times in a row, so this entry records the experiment, not
+   only the conclusion.
 
    What was claimed and is withdrawn: that the punch never reaches the media,
    and that its zeroing does not take. Both came from counters, and one of
@@ -124,37 +125,48 @@ supports that, but only after this.
    Every zeroing attempt succeeded. A probe that reads beyond what it bounded
    will confirm whatever it was pointed at.
 
-   What the pristine implementation does, measured on rc4 with nothing added
-   but a call counter:
+   What the pristine implementation does. The first readings here were not
+   reproducible and are replaced by these, which were:
 
-       punch 16384..49152, inside one block:  2080 blocks -> 2080
-       punch 0..65536, exactly one block:     2080 blocks -> 1952
-       punch 0..1048576, the whole file:      2080 blocks -> 0
+       one build, md5 72fbda096797c32d6b97b6a981a0296c, both ends checked
+       fresh 4G volume, first-use file, 8224 blocks
 
-   **Those three readings do not reproduce and must not be relied on.** The
-   block-aligned punch was run again on later builds and gave 2080 -> 0 once
-   and 2080 -> 2080 twice, on fresh volumes, with the host module hash
-   checked against the guest's at each step. The whole-file punch has not
-   been repeated at all. Until the same range, build and volume reproduce the
-   same number, nothing here is established, and a cause built on it is
-   worthless. That is the state this item is in and it is stated rather than
-   dressed up.
+       the SAME punch, three times, one file:  8224, 8224, 8224
+       dd if=/dev/zero, the same 16 pages:      8224 -> 8096
+       punch the whole file:                    8224 -> 8224
+       the punched range, read at each stage:
+           before         67cd8db4...384033
+           after punch    67cd8db4...384033
+           after remount  67cd8db4...384033
 
-   What does reproduce, and is the reason the first claim was withdrawn:
-   zeroing every block of a range does NOT free it in the runs above, while
-   `dd if=/dev/zero` over the same range does, and the reference filesystem
-   behaves differently again. The range the exerciser punches, 32 KiB
-   starting 16 KiB into the file, covers no whole 64 KiB block; on btrfs,
-   whose block is 4 KiB, the same range takes 2048 blocks to 1984. That much
-   is consistent across every run and is why the exerciser's check is
-   suspect. It is not enough to conclude the implementation is correct.
+   **So the punch changes nothing, and this is the defect.** It is not that
+   the free is deferred, not that the range misses a block, and not that
+   writeback has not run: the bytes at the punched range are byte-identical
+   before the punch, after it, and after an unmount and mount, and the block
+   count is unmoved. The zeroing counter increments, so
+   `folio_zero_segment()` is called and returns without error; the data it was
+   asked to zero is unchanged afterwards. `dd` of the same zeros over the same
+   range DOES
+   elide, 8224 to 8096, so the write path and the elision are both working
+   and the fault is between the punch's zeroing and the folios the write path
+   reads.
 
-   The next step is therefore not a rewrite and not an application. It is a
-   reproducible measurement: one build, one fresh volume, the same range,
-   repeated until it gives the same answer twice, with the module hash
-   recorded beside each number. Nothing in this item should move until that
-   exists, and the counter that would do it is the one used here, kept in the
-   tree until the numbers settle rather than compiled out after one run.
+   The exerciser's range is a second, separate defect and worth fixing on its
+   own terms: it punches 32 KiB from 16 KiB in, which on a 64 KiB block
+   covers no whole block, and on btrfs, whose block is 4 KiB, the same range
+   takes 2048 blocks to 1984. A check whose range cannot be freed on the
+   filesystem under test reports a failure that means nothing. Fixing it will
+   not make the punch work; it will only stop one of the two failures from
+   being spurious.
+
+   What took the time, recorded because it is the transferable part: five
+   causes were proposed here before this one, four from reading the source
+   and one from a counter that read past the folio it had bounded. Each was
+   replaced only by measurement, and two were committed before being
+   withdrawn. The reading above took a fixed build, a fresh volume, the same
+   range repeated, the module hash checked at both ends, and a byte-level
+   read at three stages. Nothing less than that settled it, and the next
+   person should start there rather than from a source reading.
 
    The lesson is on the measurement side, which is why this entry is long.
    Four readings of the source produced four wrong causes, and then the first
