@@ -140,6 +140,17 @@ supports that, but only after this.
    0 failed and checkpatch moved by one, a new `return (x);` in the tree's own
    BSD style.
 
+   **The siblings were checked rather than assumed.** `offset_in_folio()` is
+   used in two other places in the port, and both are correct:
+   `hammer2_zero_tail()` passes an offset strictly inside the folio, guarded
+   by `off < folio_pos(folio) + folio_size(folio)`, so it can never reach the
+   folio's end and wrap; and `hammer2_flush.c` masks a volume offset to write
+   a 256 KiB header into a large folio, where the mask is what is wanted. The
+   first was driven rather than reasoned about, since it is reachable from
+   `->setattr`: a 1 MiB file truncated to 100000 bytes and extended to
+   200000 re-exposes the tail as zeros with no warning, which is the
+   behavior that fails if the offset is wrong.
+
    **The six causes that were wrong**, kept because each cost time:
    (1) the punch writes real zeros and allocates 64 MiB - the figure came
    from `df` and is a deferred free; (2) a page-sized step misses a
