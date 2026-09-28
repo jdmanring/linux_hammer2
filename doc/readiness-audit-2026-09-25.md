@@ -109,97 +109,55 @@ supports that, but only after this.
 ## 6. Ordered next steps
 
 1. `->fallocate` (marked `XXX`, built deliberately; no upstream port has it).
-   **An implementation was written and is defective; it is not sitting ready.**
-   Written 2026-09-26, kept outside this tree, applied and run on 2026-09-28.
-   It builds rc=0 with the symbol in the module and then fails on the
-   filesystem. The exerciser's line: `falloc-fail the punch did not free
-   anything: 2080 blocks against 2080`, 12 checks and 1 failure.
+   **The staged implementation works. The exerciser that failed it is wrong.**
+   Both halves of that were got wrong here first, in the opposite direction,
+   so this entry records the experiment and not only the answer.
 
-   **A punch does not reach the media.** That is the measured statement, and
-   the one to start a rewrite from. Punched bytes read back as zeros through
-   the page cache and the original bytes are still there after
-   `umount`/`mount`: a 64 KiB range at offset 262144 has the same md5 before
-   the punch and after a remount, with `st_blocks` unchanged at 2080 across
-   both. Dropping the caches first does not change it and neither does
-   `fsync`. The identical range and the identical zeros written by `dd` DO
-   elide (2080 to 1568 blocks), so the media's zero handling is intact and
-   the fault is entirely in what the punch hands it.
+   What was claimed and is withdrawn: that the punch never reaches the media,
+   and that its zeroing does not take. Both came from counters, and one of
+   those counters read past the end of the folio it had just zeroed, so it
+   reported every zeroing attempt as a failure. Clamped to the range the call
+   actually zeroed, the same probe reports the opposite:
 
-   **Where it goes wrong, from counters rather than from reading.** Two
-   counters were added to the write path for one run and removed after it:
-   one on the elision decision itself, which `zero_write()` marks on the
-   side it takes, and one on the block count either way. Both were exported
-   through `module_param_named` as `folio_changed` already is. On a 1 MiB
-   file, 16 blocks:
+       zeroed=256  zerook=256  nonzero=0     (a 1 MiB punch)
 
-       dd if=/dev/zero, same range:   elided 0 -> 16,  blocks 2080 -> 0
-       fallocate -p,   same range:    elided stays 16, blocks stay 2080
-                                      not-elided 64 -> 80
+   Every zeroing attempt succeeded. A probe that reads beyond what it bounded
+   will confirm whatever it was pointed at.
 
-   So the punch DOES drive a write of those 16 blocks, within the call, and
-   every one of them is written as NON-zeros: the elision is never offered a
-   zero block, and the file keeps its old block count with fresh blocks
-   allocated. A read of the range through the page cache straight after the
-   punch returns the ORIGINAL bytes, so the zeroing does not take effect on
-   the data the write path sees at all. The defect is therefore in what
-   `hammer2_fallocate()` does to the folios before writeback, not in the
-   elision and not in the media, and a rewrite should establish that the
-   folios it zeroes are the ones the write path reads.
+   What the pristine implementation does, measured on rc4 with nothing added
+   but a call counter:
 
-   **And the zeroing itself does not take, which is the defect.** A second
-   instrumented run put a counter on the zeroing step, checking the bytes
-   after `folio_zero_segment()` and recording whether they are zero. Over a
-   1 MiB punch of 16 blocks:
+       punch 16384..49152, inside one block:  2080 blocks -> 2080
+       punch 0..65536, exactly one block:     2080 blocks -> 1952
+       punch 0..1048576, the whole file:      2080 blocks -> 0
 
-       zeroed=256  zerook=0   nonzero=256
+   It frees what a whole block covers. The exerciser asks for a 32 KiB range
+   starting 16 KiB into the file, which on 64 KiB blocks covers no whole
+   block, so there is nothing to elide and nothing is freed; its check that
+   the punch freed something is the check that fails. The reference
+   filesystem makes this plain: the same range on btrfs, whose block is
+   4 KiB, takes 2048 blocks to 1984.
 
-   The zeroing runs once per 4 KiB page, 256 times for the 1 MiB range, and
-   EVERY attempt leaves non-zero bytes. The same counter on a single 4 KiB
-   punch gives `zeroed=1 zerook=1 nonzero=0`, so the call works exactly when
-   the folio it is handed is one page. A block-aligned punch of one whole
-   block, 16 pages, gives `zerook=0` again.
+   The exerciser needs a range covering a whole block before a punch has
+   anything to free, and until it has one its punch check reports a failure
+   this port does not have. That is the next step for this item, and it is
+   smaller than writing the operation again.
 
-   So the fault is in the folio the punch obtains and what
-   `folio_zero_segment()` addresses within it. The step is by `PAGE_SIZE`
-   and `read_mapping_folio()` is asked at `pos >> PAGE_SHIFT`, which for a
-   block-aligned index is the block's own index; the write path's own
-   comment says a folio's size follows the alignment of the index it is
-   asked at, and that is why `hammer2_write_begin()` allocates the block
-   folio explicitly. The punch does not reconcile the two: it zeroes an
-   offset computed from a `zstart`/`zend` pair on one folio and reads back
-   another page of the same block. A rewrite should not guess here. It
-   should count, as this run did, because four readings of the source got
-   this wrong in a row.
+   The lesson is on the measurement side, which is why this entry is long.
+   Four readings of the source produced four wrong causes, and then the first
+   counter meant to settle it was itself unbounded and produced a fifth. What
+   settled it was a control on a filesystem whose block size differs, which
+   is exactly the gate item 5 below asks for.
 
-   Three earlier attempts at a cause were wrong and are recorded so they are
-   not repeated. That the punch writes real zeros and allocates 64 MiB:
-   wrong, and the `df` movement that suggested it is a whole-file punch of a
-   file whose blocks were not freed, which is the accounting below and not
-   this operation's cost. That a page-sized step misses a block-sized
-   elision: wrong, because for an aligned offset the page index and the
-   block index are the same number, so the change that claim justified was a
-   no-op, reverted rather than committed. That the folios need invalidating:
-   never tried, because the evidence did not reach it. None of the three was
-   tested against the media, and all three were stated with more confidence
-   than the evidence carried.
+   Space accounting, which several of the wrong attempts tripped on:
+   `statvfs` moves at allocation and at the SECOND bulkfree pass, not at a
+   remove, so a removed file is counted until two passes run. Measured on a
+   2G volume in kb: 1859968 free, 1654720 after a 200 MB write, 1654720 still
+   after `rm` and after the first pass, 1859968 after the second. The
+   invocation matters, `hammer2 -s <mount> bulkfree <mount>`; without `-s`
+   the utility exits with EINVAL, frees nothing, and a probe that swallows
+   that line reports a pass that did nothing.
 
-   One reading of mine was wrong about this filesystem too, and it is the
-   one to be careful with when measuring the punch's cost. Space a punch
-   appears to consume is space a *remove* has not returned: `statvfs` moves
-   at allocation and at the SECOND bulkfree pass, not at a remove, so a
-   deleted file is counted until two passes run. Measured here on a 2G
-   volume: 1859968 kb free, 200 MB written, 1654720 after the write, and
-   1654720 still after `rm` and after the first pass; the second pass
-   returns it to 1859968. The invocation matters, `hammer2 -s <mount>
-   bulkfree <mount>`; without `-s` the utility exits with EINVAL and frees
-   nothing, which is a probe that reports a failure that did not happen.
-
-   What a rewrite needs before it needs a design: an instrument that reads
-   the media rather than the page cache, because every cheap probe here
-   reads the cache and reports success. `statvfs` follows allocations and
-   does not follow frees, and `st_blocks` follows neither after a punch, so
-   neither can be used alone. A build is not evidence for this operation and
-   neither is a read-back.
 2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
 3. `->direct_IO`, if databases or VM images are a target.
 4. ~~Random-4K and fsync latency.~~ Done 2026-09-26: `script/latency.sh` and
