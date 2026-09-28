@@ -168,13 +168,25 @@ supports that, but only after this.
    the folio the punch zeroes and the data the write XOP receives are not the
    same object.
 
-   `ZERO_RANGE` is worth noting because it looked like a counterexample.
-   Called on the same file it writes zeros that DO read back as zeros, while
+   `ZERO_RANGE` is worth noting because it looked like a counterexample and
+   is not one, and the reason is worth recording so it is not chased again.
+   Called on the same file it writes zeros that DO read back as zeros, where
    `PUNCH_HOLE` does not, with the same loop and the same parameters. Both
-   free nothing. The difference is that `ZERO_RANGE` is called with
-   `FALLOC_FL_KEEP_SIZE` and the size check `end > isize` therefore does not
-   run; that is the only divergence between them after the mode switch, and
-   it is where a rewrite should start.
+   free nothing. The obvious candidate, that the two differ in whether
+   `KEEP_SIZE` is set, is wrong, and the kernel of record says so:
+   `vfs_fallocate()` refuses `PUNCH_HOLE` unless `KEEP_SIZE` is set, and
+   passes the mode through with the flag, so both arrive at the port as
+   `mode | KEEP_SIZE` and the size check is skipped for both. So the
+   difference is not in the port's handling of the two modes and is not in
+   this function's mode switch.
+
+   That leaves the difference in the state each call finds, which is the
+   honest position: `ZERO_RANGE` is called on a file that has already been
+   punched and `PUNCH_HOLE` on a freshly written one, and nothing measured
+   separates the two cases. A rewrite should establish that before changing
+   anything, because six explanations for this defect have already been
+   proposed and refuted by measurement and the seventh by reading
+   `fs/open.c`.
 
    The exerciser's range is a second, separate defect and worth fixing on its
    own terms: it punches 32 KiB from 16 KiB in, which on a 64 KiB block
