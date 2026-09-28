@@ -21,6 +21,16 @@ Saxum's storage proposal, which is not in this tree, and the specification
 pass and implementation phase they name are the two halves of the port
 plan, not anything in this repository's history.
 
+"Left as written" covers the measurements and the prose. It does not cover
+a path into this repository, because the move is what changed those: the
+three analysis tools came here and live at `script/` singular, while
+Saxum keeps its package and `scripts/hammer2-toolchain.nix`. Five
+citations were left pointing at `scripts/hammer2-*.py` after the move and
+were corrected on 2026-09-27; a `scripts/hammer2-toolchain.nix` reference
+is Saxum's and is correct as written. The distinction is which tree the
+named file is in, so a reference that resolves nowhere is a defect and a
+dated number is not.
+
 `doc/upstream/` beside this holds the filing drafts.
 
 ## What deliberately stayed in Saxum

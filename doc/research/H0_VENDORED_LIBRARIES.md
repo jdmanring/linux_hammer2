@@ -161,7 +161,7 @@ vendors instead, the way the three BSD ports get them from their own
 - `sys/sys/tree.h` and `sys/sys/queue.h` from freebsd-src at
   `release/15.1.0` (commit `96841ea`), sparse-cloned at
   `~/Projects/freebsd-src-upstream` so the provenance CSV can name a
-  commit. Tree `freebsd-src` in `scripts/hammer2-provenance.py`, rows
+  commit. Tree `freebsd-src` in `script/hammer2-provenance.py`, rows
   `vendored`/`carry`; only the two listed files get rows, and the
   selftest's negative control is an unlisted file producing none.
 - `hammer2_rb.h` from FreeBSD's port at `3df307f`, the one port-only

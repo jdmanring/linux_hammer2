@@ -127,7 +127,7 @@ the scan, so the table cannot drift from the trees. It is not hand-written
 here because a hand-written copy of a measurement is the thing this project's
 rules forbid.
 
-Produced 2026-08-25: `scripts/hammer2-provenance.py --write` generates
+Produced 2026-08-25: `script/hammer2-provenance.py --write` generates
 `legal/hammer2-provenance.csv` over the kernel core of the four trees, at
 the revisions the CSV's own `commit_or_tag` column records; `--check` is a
 gate in `local_ci.py` that regenerates and fails if the committed file has

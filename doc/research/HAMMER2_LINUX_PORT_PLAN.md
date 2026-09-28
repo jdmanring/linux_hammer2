@@ -62,7 +62,7 @@ dependency class the lists could not contain: the BSD `sys/tree.h` and
 to file-level provenance, surfaced when `hammer2.h` was written
 (2026-08-25) and are vendored; the second section of
 `H0_VENDORED_LIBRARIES.md` records it. The provenance CSV generator landed 2026-08-25
-(`scripts/hammer2-provenance.py`, H1's first task), and the `sys/libkern`
+(`script/hammer2-provenance.py`, H1's first task), and the `sys/libkern`
 helper resolved to one stock CRC-32C file needing no clone
 (`H0_VENDORED_LIBRARIES.md`). The vendored-library
 question closed 2026-08-25 (`H0_VENDORED_LIBRARIES.md`, their 6859a29):

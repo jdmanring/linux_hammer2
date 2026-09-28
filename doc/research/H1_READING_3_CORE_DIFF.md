@@ -1,7 +1,7 @@
 # H1 reading 3: which lines of the core a port actually carries
 
 The third of the three readings `HAMMER2_LINUX_PORT_PLAN.md` puts before
-any H1 estimate. Measured 2026-08-25 with `scripts/hammer2-core-diff.py`,
+any H1 estimate. Measured 2026-08-25 with `script/hammer2-core-diff.py`,
 which normalizes the mechanical differences between DragonFly and a port
 and then compares statements. Twelve selftest cases, each falsifying one
 normalization in both directions: a cosmetic difference must vanish and a
