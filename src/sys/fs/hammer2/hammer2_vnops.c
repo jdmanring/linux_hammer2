@@ -67,6 +67,7 @@
 
 #include <linux/pagemap.h>	/* Linux: write_begin_get_folio, folio_* */
 #include <linux/writeback.h>	/* Linux: writeback_iter */
+#include <linux/falloc.h>	/* Linux: FALLOC_FL_MODE_MASK, fallocate(2) */
 #include <linux/folio_batch.h>	/* Linux: the siblings of a split block */
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
@@ -1414,12 +1415,196 @@ hammer2_bmap(struct address_space *mapping, sector_t lbn)
 	return (poff >> 9);		/* Linux: 512-byte sectors */
 }
 
+/*
+ * Linux: fallocate(2).  No BSD port has this.  FreeBSD, DragonFly and OpenBSD
+ * carry no fallocate vop at all, and NetBSD's entries in its vop table are
+ * genfs_eopnotsupp, so there is no upstream arrangement to follow and this is
+ * marked XXX where it decides something the format did not.
+ *
+ * WHAT THE FORMAT GIVES.  A write whose block is all zeros does not store
+ * that block: hammer2_write_file_core() calls zero_write(), which deletes the
+ * chain where one exists.  So a hole and a zeroed range are the same thing on
+ * this media, and the only question a mode has to answer is whether the file
+ * should also get bigger.
+ *
+ *   FALLOC_FL_PUNCH_HOLE   deallocate the range.  Zeroing it is exactly that,
+ *                          since the block is then not stored.
+ *   FALLOC_FL_ZERO_RANGE   the same, and on this format it cannot be
+ *                          distinguished from a punch afterwards.
+ *   KEEP_SIZE              leave i_size alone, which is what a punch always
+ *                          does and what a plain allocate does not.
+ *   plain allocate         zero the range and extend i_size to cover it.
+ *
+ * Preallocation in the sense ext4 means it, blocks reserved and readable as
+ * zeros, is what this cannot provide: the media does not hold a zero block,
+ * so a preallocated range costs nothing until it is written and reads back as
+ * a hole.  That is not a weaker fallocate, it is what the format's block
+ * elision makes of one, and it is the reason the range is zeroed here rather
+ * than allocated.
+ *
+ * The zeroing goes through the page cache, which is the path that already
+ * turns zeros into chain deletion, under the lock order the size change in
+ * ->setattr uses: the VFS holds i_rwsem for the call, the page cache is
+ * touched before ip->lock, and ->read_folio (which the read of a folio may
+ * take) takes ip->lock shared.  The transaction and ip->lock are then taken
+ * for the size change alone.
+ */
+static long
+hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
+{
+	struct inode *inode = file_inode(file);
+	hammer2_inode_t *ip = VTOI(inode);
+	loff_t end = offset + len;
+	loff_t isize = i_size_read(inode);
+	bool keep_size = (mode & FALLOC_FL_KEEP_SIZE) != 0;
+	int error;
+
+	/*
+	 * vfs_fallocate() has already rejected the modes this format does not
+	 * carry and checked the range against s_maxbytes, but it hands every
+	 * mode it recognizes down, so the refusals below are this port's and
+	 * are why they are named rather than left to a default.
+	 */
+	switch (mode & FALLOC_FL_MODE_MASK) {
+	case FALLOC_FL_PUNCH_HOLE:
+		/*
+		 * A punch is defined to keep the size, and the VFS has already
+		 * refused a punch without the flag.
+		 */
+		break;
+	case FALLOC_FL_ZERO_RANGE:
+		break;
+	case FALLOC_FL_ALLOCATE_RANGE:
+		break;
+	case FALLOC_FL_COLLAPSE_RANGE:
+	case FALLOC_FL_INSERT_RANGE:
+		/*
+		 * These move data rather than write it, and this port has no
+		 * range shift: the blockref tree is keyed by logical offset, so
+		 * a shift is a re-key of every chain past the point, which no
+		 * upstream port does either.
+		 */
+		return (-EOPNOTSUPP);
+	case FALLOC_FL_UNSHARE_RANGE:
+		/*
+		 * Every write here is already a copy on write, so there is
+		 * nothing shared to unshare.  Answering 0 rather than
+		 * EOPNOTSUPP is what a caller wants: the postcondition holds.
+		 */
+		return (0);
+	case FALLOC_FL_WRITE_ZEROES:
+		/*
+		 * The device is not told to write zeroes and the format has no
+		 * command for it; a zeroed range is a hole here as above.
+		 */
+		return (-EOPNOTSUPP);
+	default:
+		return (-EOPNOTSUPP);
+	}
+
+	if (READ_ONCE(hammer2_device_error))	/* Linux */
+		return (-EIO);
+	if (ip->pmp->rdonly)
+		return (-EROFS);
+	/*
+	 * The same reservation check the write and setattr paths make.  A
+	 * punch frees space rather than taking it, so only the modes that can
+	 * grow the file are checked.
+	 */
+	if (!(mode & (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE))) {
+		hammer2_pfs_memory_wait(ip->pmp);	/* Linux */
+		if (hammer2_vfs_enospace(ip, len, current_cred()) > 1)
+			return (-ENOSPC);
+	}
+
+	/*
+	 * A punch past the end finds nothing to free, and the range is
+	 * clamped to the end of the file: the bytes past i_size are a hole
+	 * already.  The alignment is not forced, since the page cache can
+	 * zero a partial folio and the block elision reads whatever it is
+	 * given.
+	 */
+	if (mode & (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE)) {
+		if (offset >= isize)
+			return (0);
+		if (end > isize)
+			end = isize;
+	}
+
+	/* An empty range after clamping is nothing to do, not an error. */
+	if (end <= offset)
+		return (0);
+
+	/*
+	 * The page cache side, in folio-sized steps, before ip->lock.  Each
+	 * folio is locked, waited on and zeroed the way hammer2_zero_tail()
+	 * does, and for the same reason: the write XOP hashes a whole-block
+	 * folio itself, so a folio under writeback is one the core is reading
+	 * and zeroing it would change bytes it has already read.
+	 */
+	{
+		loff_t pos = offset & ~(loff_t)(PAGE_SIZE - 1);
+
+		while (pos < end) {
+			struct folio *folio;
+
+			folio = read_mapping_folio(inode->i_mapping,
+			    pos >> PAGE_SHIFT, file);
+			if (IS_ERR(folio))
+				return (PTR_ERR(folio));
+			folio_lock(folio);
+			folio_wait_stable(folio);
+			{
+				loff_t zstart = max_t(loff_t, offset,
+				    folio_pos(folio));
+				loff_t zend = min_t(loff_t, end,
+				    folio_pos(folio) + folio_size(folio));
+
+				if (zend > zstart)
+					folio_zero_segment(folio,
+					    (size_t)(zstart - folio_pos(folio)),
+					    (size_t)(zend - folio_pos(folio)));
+			}
+			folio_mark_dirty(folio);
+			folio_unlock(folio);
+			folio_put(folio);
+			pos += PAGE_SIZE;
+		}
+	}
+
+	/*
+	 * The size change alone, under the transaction and ip->lock, as
+	 * ->setattr does it.  A punch and KEEP_SIZE leave the size where it
+	 * is; an allocate extends to cover the range, and the extend is what
+	 * makes the new tail read back as zeros rather than as the media that
+	 * was there.
+	 */
+	if (!keep_size && !(mode & FALLOC_FL_PUNCH_HOLE) && end > isize) {
+		hammer2_trans_init(ip->pmp, 0);
+		hammer2_inode_lock(ip, 0);
+		hammer2_extend_file(ip, end);
+		hammer2_inode_modify(ip);
+		if (ip->flags & HAMMER2_INODE_RESIZED)
+			hammer2_inode_chain_sync(ip);
+		hammer2_inode_unlock(ip);
+		hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+		truncate_setsize(inode, end);
+	}
+
+	error = filemap_write_and_wait_range(inode->i_mapping, offset,
+	    end - 1);
+	if (error)
+		return (error);
+	return (0);
+}
+
 const struct file_operations hammer2_file_fops = {
 	.llseek		= hammer2_llseek,		/* Linux */
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= hammer2_file_write_iter,	/* Linux */
 	.mmap_prepare	= hammer2_file_mmap_prepare,	/* Linux */
 	.fsync		= hammer2_vop_fsync,
+	.fallocate	= hammer2_fallocate,		/* Linux: XXX */
 	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
 };
 

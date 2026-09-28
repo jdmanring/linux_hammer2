@@ -53,7 +53,7 @@ a defect.
 | `hammer2_inode.c` | 1923 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
 | `hammer2_vfsops.c` | 3316 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks. `folio_changed` and `iohash_waits` are exported read-only beside `data_rewrites`, the first counting a block that changed between the write XOP's two reads of it and the second counting an acquisition of the device-wide io hash lock that had to wait |
 | `hammer2_strategy.c` | 1582 | this port's; `hammer2_dedup_clear()` carried, `->readahead` hands each folio of the window to a worker, and the write XOP hands the core a whole-block folio's address rather than a copy, sampling every folio it reads around the read so a folio changed under the core is counted rather than argued about |
-| `hammer2_vnops.c` | 1746 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, the six operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type, `hammer2_zero_tail()` waits for a folio's writeback before zeroing it, since the write XOP hashes the folio itself, and `->llseek` and `->bmap` are built on the carried `hammer2_xop_bmap()`, which the BSDs reach through `vn_bmap_seekhole()` and `FIOSEEK*` and Linux reaches through the whences of `lseek(2)`; `->getattr` is on all three inode tables, including the symlink one, since a symlink's target past `HAMMER2_EMBEDDED_BYTES` owns a data block |
+| `hammer2_vnops.c` | 1931 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, the six operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type, `hammer2_zero_tail()` waits for a folio's writeback before zeroing it, since the write XOP hashes the folio itself, and `->llseek` and `->bmap` are built on the carried `hammer2_xop_bmap()`, which the BSDs reach through `vn_bmap_seekhole()` and `FIOSEEK*` and Linux reaches through the whences of `lseek(2)`; `->getattr` is on all three inode tables, including the symlink one, since a symlink's target past `HAMMER2_EMBEDDED_BYTES` owns a data block |
 | `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
@@ -283,7 +283,7 @@ for the device where DragonFly has one per bucket:
 | `hammer2_vfsops.c` | 48 | 7 | 40 |
 | `hammer2_ioctl.c` | 22 | 3 | 19 |
 | `hammer2_strategy.c` | 25 | 0 | 25 |
-| `hammer2_vnops.c` | 2 | 0 | 2 |
+| `hammer2_vnops.c` | 4 | 0 | 4 |
 | `hammer2.h` | 12 | 3 | 9 |
 | `hammer2_disk.h` | 2 | 1 | 1 |
 | `hammer2_admin.c` | 4 | 0 | 4 |
@@ -294,8 +294,8 @@ for the device where DragonFly has one per bucket:
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Two hundred and sixty-two are this port's, the right-hand column
-summed, and they fall in eighteen files: seventy-four in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, two in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
+Two hundred and sixty-four are this port's, the right-hand column
+summed, and they fall in eighteen files: seventy-four in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, four in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only, and
 the per-file figures here are read off that column rather than
