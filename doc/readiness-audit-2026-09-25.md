@@ -146,6 +146,31 @@ supports that, but only after this.
    elision and not in the media, and a rewrite should establish that the
    folios it zeroes are the ones the write path reads.
 
+   **And the zeroing itself does not take, which is the defect.** A second
+   instrumented run put a counter on the zeroing step, checking the bytes
+   after `folio_zero_segment()` and recording whether they are zero. Over a
+   1 MiB punch of 16 blocks:
+
+       zeroed=256  zerook=0   nonzero=256
+
+   The zeroing runs once per 4 KiB page, 256 times for the 1 MiB range, and
+   EVERY attempt leaves non-zero bytes. The same counter on a single 4 KiB
+   punch gives `zeroed=1 zerook=1 nonzero=0`, so the call works exactly when
+   the folio it is handed is one page. A block-aligned punch of one whole
+   block, 16 pages, gives `zerook=0` again.
+
+   So the fault is in the folio the punch obtains and what
+   `folio_zero_segment()` addresses within it. The step is by `PAGE_SIZE`
+   and `read_mapping_folio()` is asked at `pos >> PAGE_SHIFT`, which for a
+   block-aligned index is the block's own index; the write path's own
+   comment says a folio's size follows the alignment of the index it is
+   asked at, and that is why `hammer2_write_begin()` allocates the block
+   folio explicitly. The punch does not reconcile the two: it zeroes an
+   offset computed from a `zstart`/`zend` pair on one folio and reads back
+   another page of the same block. A rewrite should not guess here. It
+   should count, as this run did, because four readings of the source got
+   this wrong in a row.
+
    Three earlier attempts at a cause were wrong and are recorded so they are
    not repeated. That the punch writes real zeros and allocates 64 MiB:
    wrong, and the `df` movement that suggested it is a whole-file punch of a
