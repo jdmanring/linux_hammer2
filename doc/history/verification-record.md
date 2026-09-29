@@ -3995,3 +3995,70 @@ value as zero: the rename had matched only the quoted literals, and the
 three multi-line `printf`s spelled the old prefix inside a string that
 begins with a newline.
 
+## The third exerciser with a published reading and no runner
+
+The sweep that found the fiemap exerciser unwired was extended to every
+file under `test/` on the same day, and asked a sharper question than the
+first: not whether a script NAMES the file, which the inventory gate
+already checks, but whether any line COMPILES or RUNS it. The first sweep
+had matched a basename appearing anywhere in a script, including in a
+comment, which is the named-against-run defect one level up from the one
+it was looking for.
+
+`test/getdents-resume.c` has no compile site in `script/`, the `Makefile`
+or `.github/`, at any commit: `git log --oneline -S'getdents-resume' --
+script/` returns nothing, so the file arrived in one commit (`7508b12`)
+and was never wired to anything. Its row in `doc/README.testing.md` said
+"the fleet's fixture run is the check" and the row above it carried a
+reading, five entries over three calls in the root and three over two in
+the subdirectory, taken against the five-path fixture on 2026-09-04. That
+run was made by hand and nothing recorded or repeated it, so the row was
+citing an instrument with no runner. This is the third of the class in
+three milestones: the fallocate exerciser at 0.9.37, the fiemap exerciser
+at 0.9.39, and this one, which is why the fix is a runner rather than a
+fourth note.
+
+**What it measures.** `->iterate_shared` must resume across calls. A
+single `ls` cannot show it: a 32 KiB buffer takes a small directory in one
+call, so the branch that stops mid-directory is never reached, and a
+driver that restarts from offset zero on every call still lists every name
+correctly when the caller's buffer is large enough. The exerciser reads
+with a 64-byte buffer, one or two entries at a time.
+
+**It has no check protocol, and saying so is part of the wiring.** It
+prints each name and then `entries=N calls=M`, and exits nonzero on an
+error or on a runaway past 100 calls. The gate therefore asserts the two
+properties itself rather than reading a count the program does not print:
+the CALLS exceeded one, which is the only thing that shows the
+mid-directory stop was reached at all, and no name REPEATED, which is
+what a read restarting from offset zero produces. The second is the
+defect the file was written for, and the one-entry-per-call buffer makes
+it visible as an exact duplicate each call.
+
+**The run of record.** `KDIR=~/kernels/linux-7.3-rc4 bash
+script/test-fixtures.sh` on `artix-s6-kde` against the shipped module:
+`11 image(s), 43 file(s), 43 block count(s), 34 stat row(s), 5 statfs, 2
+symlink(s), 1 corrupt file(s) refused, 100 ioctl result(s), 8 getdents
+resume check(s), 0 failure(s)`, `EXIT=0`. The exerciser read 8 entries
+over 4 calls on the first manifest that verified, `f11`, with each name
+once.
+
+**The negative control.** The exerciser was rebuilt with `lseek(fd, 0,
+SEEK_SET)` forced before every `getdents64`, which is what a driver
+restarting from zero does. It repeats the names, trips its own runaway
+guard and exits 1, so the gate's run branch fails it rather than passing
+it, which is the placement that matters: the break sits where the subject
+executes. A variant that exits 0 with duplicate names would be caught by
+the uniqueness branch instead, and the two branches are separate for that
+reason.
+
+The third exerciser in three milestones was found by asking what RUNS a
+file rather than what NAMES it. That question is not gated, because a
+search of this repository cannot see a consumer in another one: two of the
+files under `test/` are compiled by a gate in Saxum through
+`LINUX_HAMMER2`, and `doc/README.testing.md` holds that contract. It has
+to be asked by hand on each sweep, and the tell to grep for is a doc row
+that asserts a RUNNER rather than a property, since those are the rows
+that can be true about the file and false about the tree.
+
+
