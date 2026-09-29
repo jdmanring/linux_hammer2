@@ -188,3 +188,19 @@ can claim, and all four are now done. Item 5 is the one that generalizes: every
 instrument added since it was written, including the two above, has needed a
 filesystem that is not this port before its reading could be believed, and it
 is enforced now rather than remembered.
+
+6. The instrument for item 1 was outside the tree that cited it.
+   **Done 2026-09-28.** The exerciser whose "12 checks and 0 failures" this
+   audit and `CHANGELOG.md` 0.9.36 publish lived in a scratch directory
+   beside the applied patch, and `test/` held no fallocate instrument at
+   all, so neither document's figure could be reproduced from this
+   repository. It is `test/hammer2-fallocate.c` and `test-enospc.sh` runs
+   it, which is the rule item 5's own table now enforces for every
+   kernel-facing test. Re-measuring rather than trusting the carried
+   number found that the exerciser's header asserted `tmpfs` refuses
+   `PUNCH_HOLE` and it does not: `tmpfs` accepts `PUNCH_HOLE` and refuses
+   `ZERO_RANGE`, and the header and the reference row say what was
+   observed. The numbers themselves held: btrfs re-measured at 12 checks
+   0 failures, and this port at 12 and 0 with its punch range at 65536
+   against btrfs's 4096, on a run that filled 2G with 462 of 462 files
+   intact.

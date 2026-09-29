@@ -12,7 +12,12 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.36 is the `->fallocate` operation the audit lists
+0.5 to 0.9 are met. 0.9.37 is the instrument for the operation 0.9.36
+fixed: the exerciser whose 12-checks figure both this tree and the
+readiness audit published lived outside the repository, so the number
+could not be reproduced from it. It is `test/hammer2-fallocate.c` now,
+run by `test-enospc.sh`, and it reports the same 12 checks and 0 failures
+on the debug kernel with the btrfs control beside it at 12 and 0. 0.9.36 is the `->fallocate` operation the audit lists
 as ordered next step 1, whose punch zeroed nothing: the range of each folio
 was computed with `offset_in_folio()`, a mask and not a subtraction, so a
 range ending at a folio's end wrapped to zero and the zeroing call was
@@ -87,7 +92,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.36
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.37
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
