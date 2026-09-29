@@ -57,6 +57,7 @@ closure and the PFS roots are fleet runs named in `README.testing.md`.
 | SnapshotRetentionHold | unavailable | the backend keeps no hold; the model's registry does | nothing on this side |
 | GC candidates | limited | two bulkfree passes through `HAMMER2IOC_BULKFREE_SCAN` are what free removed blocks, the first staging and the second freeing, and they are a run, not a gate; `script/bulkfree.sh` measured them, 52134 blocks staged by the first and freed by the second | a scheduled pass is the consumer's; the port answers the ioctl |
 | Health | limited | the header CRC at mount and the offline checker; no online health reading | an online reading, which no port has |
+| NFSExport | unavailable | the port registers no `export_operations`, so `s_export_op` is NULL and nfsd refuses to export the mount: `exportfs_may_export()` is false without `fh_to_dentry`, and `exp_export()` returns `EINVAL` for the filesystem type. DragonFly carries the surface this port does not, `vfs_vptofh` encoding the inode number into the file handle and `vfs_fhtovp` looking the inode up by number, with `vfs_checkexp` behind them; the readdir cookie array that belonged to the same interface was dropped at 0.2.115 on the reasoning that `ctx->pos` carries its values, which is true of the cookie and not of the file handle. Recorded because the vnode and superblock operation matrix in `readiness-audit-2026-09-25.md` is drawn against DragonFly's full set and this is the operation that set has and this port does not | an export of a mounted HAMMER2 volume, which is the port's `encode_fh`/`fh_to_dentry` pair |
 
 What the table says at a glance: the checkpoint primitives the model
 needs, snapshot, delete, durable flush and the two checksums, are
@@ -64,7 +65,9 @@ native and measured on both sides; rollback and the durable checkpoint
 are composed from those and the mount by label; the accounting is the
 format's lazy accounting with a fixed reserve; and everything to do
 with copies, replication, quota and online repair is absent, in every
-port, and is declared absent rather than emulated.
+port, and is declared absent rather than emulated. One row is absent
+here and present upstream: NFS export, which DragonFly implements and
+this port does not, so it is a gap rather than a decision.
 
 This file is the port's side of any adapter a consumer writes over
 these rows; `README.roadmap.md`'s 0.7 milestone closed on it.

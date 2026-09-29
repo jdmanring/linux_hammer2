@@ -95,6 +95,82 @@ Stated precisely, because the negative claims above need a fair positive:
 - The port's own capabilities document is honest: it declares nine capabilities
   `unavailable` rather than overclaiming.
 
+## 4a. Every vnode and superblock operation, DragonFly's set against this port's
+
+The table above answers "which operations are absent", and an absent list is
+only as good as the population it was drawn from. This is that population:
+every operation in DragonFly's `hammer2_vnodeops` vector, all 32 of them,
+each mapped to what this port registers in its place or to the reason it
+needs no counterpart. It was produced by reading the two vectors, not by
+recalling them, and a port that is missing an operation upstream has shows
+up here as a row with an empty right-hand column.
+
+The framework entries are the ones worth stating, because they are the rows
+that look like omissions and are not: DragonFly's `vop_open`, `vop_close`
+and `vop_access` are `vop_stdopen`, `vop_stdclose` and
+`vop_helper_access` rather than HAMMER2 code, so Linux performs the same
+work in its generic paths, and `vop_inactive`/`vop_reclaim` are that
+framework's inode teardown where Linux has `->evict_inode`. The `n`-prefixed
+names are DragonFly's component-name operations (`ncreate`, `nresolve`,
+`nremove` and the rest), each of which this port reaches through the
+path-based operation Linux names without the prefix.
+
+| DragonFly vop | this port | note |
+|---|---|---|
+| `vop_default` | `vop_defaultop` | framework |
+| `vop_open`, `vop_close` | generic | `vop_stdopen`/`vop_stdclose` upstream, which Linux's `->open`/`->release` defaults match |
+| `vop_access` | generic | `vop_helper_access` upstream; Linux's permission path answers from the mode the port reports |
+| `vop_chmod`, `vop_chown` | `->setattr` | one Linux operation for DragonFly's separate two |
+| `vop_getattr`, `vop_getattr_lite` | `->getattr` | the lite form is DragonFly's cached variant, which Linux's `i_size`/`i_blocks` caching covers |
+| `vop_setattr` | `->setattr` | |
+| `vop_read` | `->read_iter` | |
+| `vop_write` | `->write_iter` | |
+| `vop_fsync` | `->fsync` | |
+| `vop_readdir` | `->iterate_shared` | |
+| `vop_readlink` | `->get_link` | renamed upstream in Linux |
+| `vop_inactive`, `vop_reclaim` | `->evict_inode` | inode teardown |
+| `vop_bmap` | `->bmap` | same name, `hammer2_bmap()` |
+| `vop_ioctl` | `->unlocked_ioctl` | the HAMMER2 ioctl surface, 19 of 27 ioctls |
+| `vop_strategy` | `->read_folio`/`->write_begin`/`->write_end`/`->writepages` | Linux splits the buffer-cache strategy entry point across the folio operations |
+| `vop_getpages`, `vop_putpages` | `->read_folio`, `->readahead`, `->writepages` | DragonFly's page-in/page-out, which Linux's read and writeback paths perform |
+| `vop_nlink` | `->link` | |
+| `vop_ncreate` | `->create` | |
+| `vop_nmknod` | `->mknod` | |
+| `vop_nmkdir` | `->mkdir` | |
+| `vop_nsymlink` | `->symlink` | |
+| `vop_nremove` | `->unlink` | |
+| `vop_nrmdir` | `->rmdir` | |
+| `vop_nrename` | `->rename` | |
+| `vop_nresolve` | `->lookup` | |
+| `vop_nlookupdotdot` | generic | Linux resolves `..` in the dcache before the filesystem sees it |
+| `vop_advlock` | generic | `vop_stdadvlock` upstream, Linux's `->lock` default |
+| `vop_mountctl` | not applicable | DragonFly's mount-control channel has no Linux equivalent and no consumer here |
+| `vop_kqfilter` | not applicable | kqueue is a BSD facility; Linux's equivalent is the `->poll` path, which the port does not need for a filesystem with no character device |
+
+Nothing in the vector is left unmapped, and the two rows with no counterpart
+are BSD-only facilities rather than HAMMER2 functions, so the operation
+surface DragonFly implements is implemented here. What that does not say is
+whether each one is correct under load: that is the per-operation evidence
+in `doc/README.status.md`, and this table is the population that evidence is
+drawn against, so an operation absent from both is visible rather than
+counted as present.
+
+**The superblock set is where that table is not clean.** DragonFly's
+`vfsops` carries `vfs_vptofh`, `vfs_fhtovp` and `vfs_checkexp`, which
+together are its NFS export surface, and each is a real implementation: the
+file handle encodes the inode number and the reverse lookup finds the vnode
+by number. This port registers no `export_operations`, so `s_export_op` is
+NULL, `exportfs_may_export()` is false without `fh_to_dentry`, and nfsd
+refuses the export with `EINVAL` (`fs/nfsd/export.c`). The other rows of
+DragonFly's set have counterparts: `vfs_mount`/`vfs_unmount` are the
+`fs_context` callbacks and `kill_sb`, `vfs_root` is `->get_tree`'s root
+dentry, `vfs_statfs` is `->statfs`, `vfs_sync` is `->sync_fs`,
+`vfs_vget` is `hammer2_igetv()`, and `vfs_init`/`vfs_uninit` are the module
+init and exit. So NFS export is the one operation here that upstream has,
+this port does not, and no document previously said so. It is a gap rather
+than a decision, it is now a row of `README.capabilities.md`, and the
+kernel sources named above are where the refusal was read.
+
 ## 5. The process finding, which outranks the rest
 
 The `SEEK_HOLE` bug shipped with a test that passed, because the test asserted
