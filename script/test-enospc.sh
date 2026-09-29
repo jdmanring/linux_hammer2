@@ -5,6 +5,14 @@
 # in it. This one fills a volume until the first write fails, then calls
 # sync(2), and reads lockdep on both sides of each step.
 #
+# It runs four exercisers from test/ before the fill, and each count is
+# checked for being non-zero before it is believed: hammer2-seek.c,
+# hammer2-dedup.c, hammer2-fallocate.c and hammer2-fiemap.c. The last
+# one is why the rule is written down here: ->fiemap and the freeze vops
+# landed with their counts in CHANGELOG.md and the readiness audit and
+# no script in this repository running the file that produced them, and
+# test-inventory.sh knows a file is NAMED, never that anything runs it.
+#
 # Its first runs found a circular lock dependency: lockdep stayed
 # enabled through 583 files and 2 GiB of writing and disabled itself
 # during the sync that followed. The report named two orders,
@@ -423,6 +431,15 @@ cc -static -O2 -o /tmp/h2falloct.$$ test/hammer2-fallocate.c 2>/dev/null || {
 scp -q -o ConnectTimeout=5 /tmp/h2falloct.$$ "$GUEST_SSH:/tmp/h2falloc" >/dev/null 2>&1
 rm -f /tmp/h2falloct.$$
 
+# The fiemap and freeze exerciser, from test/hammer2-fiemap.c.  Its two
+# subjects had their counts published and no instrument in the tree
+# running them, which is the failure mode this wiring exists to close:
+# `test-inventory.sh` knows a file is NAMED, never that anything runs it.
+cc -static -O2 -o /tmp/h2fiemapt.$$ test/hammer2-fiemap.c 2>/dev/null || {
+	echo "enospc: COULD-NOT-RUN: the fiemap exerciser did not compile" >&2; exit 2; }
+scp -q -o ConnectTimeout=5 /tmp/h2fiemapt.$$ "$GUEST_SSH:/tmp/h2fiemap" >/dev/null 2>&1
+rm -f /tmp/h2fiemapt.$$
+
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
@@ -478,6 +495,15 @@ out=$(ssh "$GUEST_SSH" '
 	# takes away.  It unlinks its file, so the fill below measures what
 	# it did.
 	$as /tmp/h2falloc /mnt/h2enospc 2>&1 | sed -n /falloc-/p
+	# The fiemap and freeze exerciser, from test/hammer2-fiemap.c, on the
+	# same terms.  ->fiemap and ->freeze_fs/->unfreeze_fs both landed
+	# together and neither had a gate until this line: the counts were in
+	# the changelog and the readiness audit with nothing to reproduce
+	# them.  It opens a hole in a file it writes, reads the map back,
+	# freezes the volume across a write from a child and thaws from the
+	# parent, so it needs the room the fill takes away and it unlinks its
+	# file before the fill measures what it did.
+	$as /tmp/h2fiemap /mnt/h2enospc 2>&1 | sed -n /fiemap-/p
 	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
@@ -982,6 +1008,50 @@ elif [ "${ff:-0}" -ne 0 ]; then
 	fail=$((fail + 1))
 else
 	echo "  ok    fallocate $fc check(s) on a live mount, 0 failed"
+fi
+
+# ->fiemap and the freeze vops, on the same terms.  The failure this
+# catches is a published count with no instrument behind it: both landed
+# with 11 checks recorded in the changelog and the readiness audit and
+# nothing in this repository ran the file that produced it.  It reads
+# the map back and checks the hole it opened is a gap in it, so a stub
+# that reports the whole file as one extent fails here, and it freezes
+# the volume across a write from a child so a vop that wedges is a
+# failure rather than a hang with no report.
+#
+# THE CHECK COUNT IS PINNED, and the reason is measured rather than
+# assumed.  A filesystem that refuses FIEMAP and refuses FIFREEZE prints
+# fiemap-checks 1 and fiemap-failures 0, because the assertion that the
+# file is really sparse runs before the call is made: a non-zero count
+# and zero failures is exactly what a volume that answered NOTHING looks
+# like.  Run against tmpfs on the host, which refuses FIEMAP with
+# EOPNOTSUPP, that is the whole of its output.  So the answering volume's
+# count is the check: eleven on this port, and every refusal path loses
+# at least the four freeze checks, because the freeze block is skipped
+# whole when FIFREEZE is refused.
+mc=$(printf '%s\n' "$out" | sed -n 's/^fiemap-checks //p')
+mf=$(printf '%s\n' "$out" | sed -n 's/^fiemap-failures //p')
+ms=$(printf '%s\n' "$out" | sed -n 's/^fiemap-skipped //p')
+if [ -z "$mc" ] || [ "${mc:-0}" -eq 0 ]; then
+	echo "  FAIL  the fiemap exerciser printed no check, so it ran and"
+	echo "        proved nothing"
+	fail=$((fail + 1))
+elif [ "${mf:-0}" -ne 0 ]; then
+	echo "  FAIL  the fiemap exerciser answered wrongly on a live mount:"
+	printf '%s\n' "$out" | sed -n 's/^fiemap-fail /        /p' | head -6
+	fail=$((fail + 1))
+elif [ "${ms:-0}" -ne 0 ]; then
+	echo "  FAIL  the filesystem refused an operation under test, so this"
+	echo "        run is about what it answers and it did not answer:"
+	printf '%s\n' "$out" | sed -n 's/^fiemap-skip /        /p' | head -4
+	fail=$((fail + 1))
+elif [ "$mc" -ne 11 ]; then
+	echo "  FAIL  the fiemap exerciser ran $mc check(s) where the"
+	echo "        answering volume runs 11, so either it stopped early or"
+	echo "        a check moved and the count in the docs did not"
+	fail=$((fail + 1))
+else
+	echo "  ok    fiemap $mc check(s) on a live mount, 0 failed"
 fi
 
 printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||

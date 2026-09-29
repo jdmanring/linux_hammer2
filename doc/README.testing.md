@@ -692,10 +692,49 @@ the same binary on both shows what a refusal looks like against this port's
 answer; a mode that is refused prints `falloc-skip` and is counted, and the
 gate fails a run in which no check ran.
 
-It carries a negative control per image rather than only in the selftest.
-After a manifest verifies, one hash in it is altered and the same mount is
-compared again, which must fail. Without that, an empty sums file, a
-silent `md5sum` and a mount that landed somewhere else all read as a pass.
+`test/hammer2-fiemap.c` runs on the same volume, by the same gate and on
+the same terms, and it exists because the two operations it covers had
+their numbers published with nothing to reproduce them. `->fiemap` and
+`->freeze_fs`/`->unfreeze_fs` landed together as 0.9.38 with eleven checks
+and zero failures written into the changelog row and the readiness audit,
+and no script in this repository ran the file that produced that count:
+`test-inventory.sh` knows a file is NAMED and never that anything runs it,
+which is the gap this wiring closes. FIEMAP is the read-path operation
+whose failure is a wrong answer rather than a refusal, and in the same
+direction as `SEEK_HOLE`: a filesystem carrying no `->fiemap` is answered
+`EOPNOTSUPP` from `fs/ioctl.c` and `filefrag(8)` is told nothing, but a
+stub returning one extent covering the whole file answers success and
+describes a sparse file as dense. The exerciser opens the hole in the
+middle of the file itself with a sparse seek, asserts against `st_blocks`
+that the hole is real before asking, and compares the returned map against
+the shape it built, so the first fake pass is caught by the gap check and
+the second, a map whose physical addresses are all zero, by a check that
+at least one extent carries an address.
+
+Its control is the file rather than a reference filesystem, and the reason
+is in the file: FIEMAP and the seek whences both describe this media's own
+layout, so a control on `btrfs` would compare two different layouts rather
+than check an answer. `tmpfs` is not the control either, because it
+refuses FIEMAP outright, measured `EOPNOTSUPP`. The consumer that shows
+the map is good for something is `filefrag -v`, which reads the same two
+extents at the same blocks and reports the hole as a gap. The freeze half
+of the same file measured the operation the first version of the
+exerciser wrongly condemned: a write while frozen blocks and is released
+by the thaw, so every blocking call in the test is in a child and every
+thaw is reached by the parent that cannot block. A run in which FIEMAP or
+FIFREEZE is refused prints `fiemap-skip` and runs fewer checks rather than
+failing, so the gate pins the count at eleven: a volume that refused
+everything prints one check and zero failures, because the assertion that
+the file is really sparse runs before the call is made. That is measured
+rather than reasoned about, being the whole output against `tmpfs` on the
+host, and it is why the count rather than the failure number carries the
+verdict here. Any other count is a failure, in either direction.
+
+`test-fixtures.sh` carries a negative control per image rather than only in
+the selftest. After a manifest verifies, one hash in it is altered and the
+same mount is compared again, which must fail. Without that, an empty sums
+file, a silent `md5sum` and a mount that landed somewhere else all read as
+a pass.
 
 It leaves the machine as it found it: what it attached is detached, and
 the guest is shut down only if the gate started it. It will not start one
@@ -2025,7 +2064,7 @@ kernel behavior and missing `hammer2-dedup.c` in the same breath.
 | `test/hammer2-seek.c` | `tmpfs` and `btrfs` on the same guest | `SEEK_DATA`/`SEEK_HOLE` answer the offsets the media holds. The control is what found the original defect: both references disagreed with the port. |
 | `test/hammer2-dedup.c` | `tmpfs` and `btrfs` on the same guest | a duplicate block is not charged twice. Both controls charge full price, which is what makes the reading specific to this port. |
 | `test/hammer2-fallocate.c` | `tmpfs` and `btrfs` on the same guest | a punched or zeroed range reads back as zeros with the bytes outside it intact, and the punch leaves a hole. Measured 2026-09-28: `btrfs` accepts every mode and runs all twelve checks, `tmpfs` accepts `PUNCH_HOLE` and refuses `ZERO_RANGE`, which is ten checks and one refusal, so the pair shows what a refusal looks like beside an answer. Its ranges come from the filesystem's own block size, so the same binary is a real check on a 4 KiB control and on this port's 64 KiB block. |
-| `test/hammer2-fiemap.c` | none, and it says why: the control is the file | FIEMAP describes this filesystem's own layout, so a reference filesystem would compare two layouts rather than check an answer. The file's shape is built by the test and known before the call, and the map is compared against it: a hole opened at block 1 must come back as a gap, and the written blocks at blocks 0 and 2 must come back as data with a nonzero physical address. `tmpfs` is not the control because it refuses FIEMAP outright (measured 2026-09-29: `EOPNOTSUPP`). The consumer that proves the map useful is `filefrag -v`, which reads the same two extents at the same blocks. The same file also covers `->freeze_fs`/`->unfreeze_fs` on the same terms, with every blocking call in a child so the thaw is always reached, which is the structure the first version of the test lacked when it deadlocked itself and got the vop wrongly withdrawn. |
+| `test/hammer2-fiemap.c` | none, and it says why: the control is the file | FIEMAP describes this filesystem's own layout, so a reference filesystem would compare two layouts rather than check an answer. The file's shape is built by the test and known before the call, and the map is compared against it: a hole opened at block 1 must come back as a gap, and the written blocks at blocks 0 and 2 must come back as data with a nonzero physical address. `tmpfs` is not the control because it refuses FIEMAP outright (measured 2026-09-29: `EOPNOTSUPP`). The consumer that proves the map useful is `filefrag -v`, which reads the same two extents at the same blocks. The same file also covers `->freeze_fs`/`->unfreeze_fs` on the same terms, with every blocking call in a child so the thaw is always reached, which is the structure the first version of the test lacked when it deadlocked itself and got the vop wrongly withdrawn. It is run by `test-enospc.sh` on the volume with room, before the fill, because it writes the file whose hole it asks about; every write it makes is unlinked before the fill measures what it did. |
 | `test/hammer2-latency.c` | `ext4` and `btrfs` on the same guest | per-operation latency is a property of the port, not of the machine. |
 | `test/hammer2-mmap-exercise.c` | `tmpfs` on the same guest | a shared writable mapping reaches the media. |
 | `test/hammer2-ioctl-exercise.c` | `tmpfs` on the same guest | the ioctls refuse what they should, and the refusals are the filesystem's and not the VFS's. |

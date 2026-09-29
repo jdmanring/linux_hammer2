@@ -34,18 +34,28 @@
  * while the filesystem is frozen BLOCKS and is released by the thaw, so
  * a test that writes and then thaws from the SAME process deadlocks
  * itself and leaves the volume frozen.  That is exactly what the first
- * version of this file did on 2026-09-29, and it made the freeze vop
- * look broken when the test was.  Every blocking call here is therefore
- * in a child and every thaw is reached by the parent that cannot block.
+ * version did on 2026-09-29, and it made the freeze vop look broken when
+ * the test was.  Every blocking call here is therefore in a child and
+ * every thaw is reached by the parent that cannot block.
+ *
+ * THE COUNT.  Eleven checks on a volume that answers, which is the
+ * number the changelog row and the readiness audit cite.  The count is
+ * what carries the verdict here, because a volume that refuses FIEMAP or
+ * FIFREEZE prints a LOW count and zero failures rather than a failure:
+ * the assertion that the file is really sparse runs before the call is
+ * made, so a run that answered nothing at all still prints a count of
+ * one.  `test-enospc.sh` pins the count at eleven for that reason and
+ * fails any other value, and the refusal is visible twice over, in the
+ * count and in the fiemap-skip lines it prints.
  *
  * Every line is prefixed so the gate does no quoting:
  *
- *     fm-ok <what>          a check that passed
- *     fm-fail <what>        a check that failed
- *     fm-skip <what>        an operation this filesystem or kernel refused
- *     fm-checks <n>         how many checks ran
- *     fm-failures <n>       how many failed
- *     fm-skipped <n>        how many were refused here
+ *     fiemap-ok <what>          a check that passed
+ *     fiemap-fail <what>        a check that failed
+ *     fiemap-skip <what>        an operation this filesystem or kernel refused
+ *     fiemap-checks <n>         how many checks ran
+ *     fiemap-failures <n>       how many failed
+ *     fiemap-skipped <n>        how many were refused here
  */
 #define _GNU_SOURCE
 #include <sys/stat.h>
@@ -128,11 +138,11 @@ get_map(const char *path)
 		close(fd);
 		free(buf);
 		if (unsupported(e)) {
-			printf("fm-skip FIEMAP refused with errno %d\n", e);
+			printf("fiemap-skip FIEMAP refused with errno %d\n", e);
 			skipped++;
 			return (-1);
 		}
-		printf("fm-fail FIEMAP failed with errno %d\n", e);
+		printf("fiemap-fail FIEMAP failed with errno %d\n", e);
 		fails++;
 		checks++;
 		return (-2);
@@ -203,7 +213,7 @@ main(int argc, char **argv)
 
 	if (snprintf(path, sizeof(path), "%s/fiemap-a", dir) >=
 	    (int)sizeof(path)) {
-		fprintf(stderr, "fm-setup path too long\n");
+		fprintf(stderr, "fiemap-setup path too long\n");
 		return (2);
 	}
 	memset(buf, 0x5a, sizeof(buf));
@@ -225,14 +235,14 @@ main(int argc, char **argv)
 	unlink(path);
 	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd < 0) {
-		fprintf(stderr, "fm-setup create failed\n");
+		fprintf(stderr, "fiemap-setup create failed\n");
 		return (2);
 	}
 
 	/* Block 0: data. */
 	n = pwrite(fd, buf, blk, off_data1);
 	if (n != (ssize_t)blk) {
-		fprintf(stderr, "fm-setup write1 failed\n");
+		fprintf(stderr, "fiemap-setup write1 failed\n");
 		close(fd);
 		return (2);
 	}
@@ -240,7 +250,7 @@ main(int argc, char **argv)
 	/* Block 2: data. */
 	n = pwrite(fd, buf, blk, off_data2);
 	if (n != (ssize_t)blk) {
-		fprintf(stderr, "fm-setup write2 failed\n");
+		fprintf(stderr, "fiemap-setup write2 failed\n");
 		close(fd);
 		return (2);
 	}
@@ -258,17 +268,17 @@ main(int argc, char **argv)
 
 		checks++;
 		if (stat(path, &st) != 0) {
-			printf("fm-fail stat failed\n");
+			printf("fiemap-fail stat failed\n");
 			fails++;
 		} else if ((unsigned long long)st.st_blocks * 512 >=
 		    (unsigned long long)off_data2 + blk) {
-			printf("fm-fail the file has no hole: %lld blocks "
+			printf("fiemap-fail the file has no hole: %lld blocks "
 			    "for a %ld-byte file, so the map is being "
 			    "asked about a dense file\n",
 			    (long long)st.st_blocks, off_data2 + (long)blk);
 			fails++;
 		} else {
-			printf("fm-ok   the file is sparse: %lld blocks for "
+			printf("fiemap-ok   the file is sparse: %lld blocks for "
 			    "%ld bytes\n", (long long)st.st_blocks,
 			    off_data2 + (long)blk);
 		}
@@ -278,13 +288,13 @@ main(int argc, char **argv)
 	if (ret == -1) {
 		/* Refused: report and stop, the count check is the gate's. */
 		unlink(path);
-		printf("fm-checks %d\nfm-failures %d\nfm-skipped %d\n",
+		printf("fiemap-checks %d\nfiemap-failures %d\nfiemap-skipped %d\n",
 		    checks, fails, skipped);
 		return (fails ? 1 : 0);
 	}
 	if (ret == -2) {
 		unlink(path);
-		printf("fm-checks %d\nfm-failures %d\nfm-skipped %d\n",
+		printf("fiemap-checks %d\nfiemap-failures %d\nfiemap-skipped %d\n",
 		    checks, fails, skipped);
 		return (1);
 	}
@@ -292,19 +302,19 @@ main(int argc, char **argv)
 	/* The map must have at least one extent at all. */
 	checks++;
 	if (nexts == 0) {
-		printf("fm-fail FIEMAP reported no extent for a file with "
+		printf("fiemap-fail FIEMAP reported no extent for a file with "
 		    "data in it\n");
 		fails++;
 	} else {
-		printf("fm-ok   FIEMAP returned %u extent(s)\n", nexts);
+		printf("fiemap-ok   FIEMAP returned %u extent(s)\n", nexts);
 	}
 
 	/* Data where the data is. */
 	checks++;
 	if (range_is_data((unsigned long long)off_data1, blk))
-		printf("fm-ok   the map shows data at the first block\n");
+		printf("fiemap-ok   the map shows data at the first block\n");
 	else {
-		printf("fm-fail the map shows no data at the first block, "
+		printf("fiemap-fail the map shows no data at the first block, "
 		    "which was written\n");
 		fails++;
 	}
@@ -313,9 +323,9 @@ main(int argc, char **argv)
 	 * would fail. */
 	checks++;
 	if (range_is_hole((unsigned long long)off_hole, blk))
-		printf("fm-ok   the map shows the middle block as a hole\n");
+		printf("fiemap-ok   the map shows the middle block as a hole\n");
 	else {
-		printf("fm-fail the map reports data over the hole at %ld, "
+		printf("fiemap-fail the map reports data over the hole at %ld, "
 		    "so it is not describing the file\n", off_hole);
 		fails++;
 	}
@@ -323,9 +333,9 @@ main(int argc, char **argv)
 	/* Data after the hole. */
 	checks++;
 	if (range_is_data((unsigned long long)off_data2, blk))
-		printf("fm-ok   the map shows data at the third block\n");
+		printf("fiemap-ok   the map shows data at the third block\n");
 	else {
-		printf("fm-fail the map shows no data at the third block, "
+		printf("fiemap-fail the map shows no data at the third block, "
 		    "which was written\n");
 		fails++;
 	}
@@ -347,11 +357,11 @@ main(int argc, char **argv)
 				any_set = 1;
 		}
 		if (nexts > 0 && !any_set) {
-			printf("fm-fail every extent reports physical 0, so "
+			printf("fiemap-fail every extent reports physical 0, so "
 			    "the map was not walked\n");
 			fails++;
 		} else {
-			printf("fm-ok   the extents carry a physical address "
+			printf("fiemap-ok   the extents carry a physical address "
 			    "(none set: %d)\n", !any_set);
 		}
 		(void)any_zero;
@@ -371,18 +381,18 @@ main(int argc, char **argv)
 
 		checks++;
 		if (wfd < 0) {
-			printf("fm-fail reopen for the write control failed\n");
+			printf("fiemap-fail reopen for the write control failed\n");
 			fails++;
 		} else {
 			ssize_t w = write(wfd, "x", 1);
 
 			close(wfd);
 			if (w != 1 || size_of(path) != before + 1) {
-				printf("fm-fail a write after the map did "
+				printf("fiemap-fail a write after the map did "
 				    "not take\n");
 				fails++;
 			} else {
-				printf("fm-ok   the volume still accepts a "
+				printf("fiemap-ok   the volume still accepts a "
 				    "write after the map\n");
 			}
 		}
@@ -410,10 +420,10 @@ main(int argc, char **argv)
 		long before;
 
 		if (dfd < 0) {
-			printf("fm-skip freeze: could not open the directory\n");
+			printf("fiemap-skip freeze: could not open the directory\n");
 			skipped++;
 		} else if (ioctl(dfd, FIFREEZE, 0) != 0) {
-			printf("fm-skip FIFREEZE refused with errno %d\n",
+			printf("fiemap-skip FIFREEZE refused with errno %d\n",
 			    errno);
 			skipped++;
 			close(dfd);
@@ -421,7 +431,7 @@ main(int argc, char **argv)
 		}
 
 		if (dfd >= 0) {
-			printf("fm-ok   FIFREEZE returned 0\n");
+			printf("fiemap-ok   FIFREEZE returned 0\n");
 			checks++;
 
 			/* The file is made before the freeze so the child's
@@ -454,7 +464,7 @@ main(int argc, char **argv)
 			sleep(2);
 			checks++;
 			if (ioctl(dfd, FITHAW, 0) != 0) {
-				printf("fm-fail FITHAW failed with errno %d, so "
+				printf("fiemap-fail FITHAW failed with errno %d, so "
 				    "the volume is left frozen\n", errno);
 				fails++;
 				kill(pid, SIGKILL);
@@ -462,7 +472,7 @@ main(int argc, char **argv)
 				close(dfd);
 				goto freeze_done;
 			}
-			printf("fm-ok   FITHAW returned 0\n");
+			printf("fiemap-ok   FITHAW returned 0\n");
 
 			checks++;
 			{
@@ -472,7 +482,7 @@ main(int argc, char **argv)
 				while ((r = waitpid(pid, &status,
 				    WNOHANG)) != pid) {
 					if (waited >= 10) {
-						printf("fm-fail the writer is "
+						printf("fiemap-fail the writer is "
 						    "still blocked 10s after "
 						    "the thaw\n");
 						fails++;
@@ -485,10 +495,10 @@ main(int argc, char **argv)
 				}
 				if (r == pid && WIFEXITED(status) &&
 				    WEXITSTATUS(status) == 0)
-					printf("fm-ok   the blocked write was "
+					printf("fiemap-ok   the blocked write was "
 					    "released by the thaw\n");
 				else if (r == pid) {
-					printf("fm-fail the write across the "
+					printf("fiemap-fail the write across the "
 					    "freeze did not succeed: exit "
 					    "%d\n", WIFEXITED(status) ?
 					    WEXITSTATUS(status) : -1);
@@ -499,12 +509,12 @@ main(int argc, char **argv)
 			/* And the data the child wrote must be there. */
 			checks++;
 			if (size_of(path) != before + 6) {
-				printf("fm-fail the write released by the thaw "
+				printf("fiemap-fail the write released by the thaw "
 				    "did not reach the file: %ld against "
 				    "%ld\n", size_of(path), before + 6);
 				fails++;
 			} else {
-				printf("fm-ok   the write the thaw released "
+				printf("fiemap-ok   the write the thaw released "
 				    "is in the file\n");
 			}
 
@@ -514,7 +524,7 @@ main(int argc, char **argv)
 freeze_done:
 
 	unlink(path);
-	printf("fm-checks %d\nfm-failures %d\nfm-skipped %d\n",
+	printf("fiemap-checks %d\nfiemap-failures %d\nfiemap-skipped %d\n",
 	    checks, fails, skipped);
 	return (fails ? 1 : 0);
 }
