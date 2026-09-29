@@ -658,6 +658,40 @@ copying the unit out of `statfs` rather than assuming 64 KiB, because
 `btrfs` reports 4 KiB and a test that only runs on this port cannot be
 controlled by a filesystem that is not this port.
 
+`test/hammer2-fallocate.c` runs on the same volume, by the same gate and on
+the same terms, and it is the instrument for the operation the readiness
+audit called the largest real gap. No BSD port carries a fallocate vop, so
+before this the call fell through to the kernel's default and every caller
+was told EOPNOTSUPP, which an installer and a package manager both meet.
+The format makes the modes converge in a way worth stating: a write whose
+block is all zeros is not stored, so a hole and a zeroed range are the same
+thing on this media and PUNCH_HOLE cannot be told from ZERO_RANGE
+afterwards. Preallocation as ext4 means it, blocks reserved and readable as
+zeros, does not exist here, because the media never holds a zero block.
+
+The exerciser therefore checks what is observable and true on any
+filesystem rather than that a preallocation reserved media: a punched or
+zeroed range reads back as zeros with the bytes outside it compared byte
+for byte, a punch leaves a hole and never changes the size, KEEP_SIZE never
+changes it either, and a plain allocate extends the file. The file is
+written from a pseudo-random stream with no zero block in it, because a
+file that was already zeros would read as a hole and a punch of it would
+prove nothing, and its size is asserted to have moved before any punched
+reading is believed.
+
+Two things make it a control and not merely a check. Its punch range is one
+whole block taken from `statvfs`, because the first version punched 16 KiB
+from a fixed offset: on the 4 KiB-block reference that covers whole blocks,
+and on this port's 64 KiB block it covers none, so nothing could be freed
+and the exerciser reported a failure of a correct operation. And whether
+the punch freed anything is asked of `SEEK_HOLE`, not of `st_blocks`, since
+this port's block accounting moves at allocation and at the bulkfree pass
+rather than at an elision. `btrfs` accepts every mode and runs all twelve
+checks, and `tmpfs` accepts `PUNCH_HOLE` while refusing `ZERO_RANGE`, so
+the same binary on both shows what a refusal looks like against this port's
+answer; a mode that is refused prints `falloc-skip` and is counted, and the
+gate fails a run in which no check ran.
+
 It carries a negative control per image rather than only in the selftest.
 After a manifest verifies, one hash in it is altered and the same mount is
 compared again, which must fail. Without that, an empty sums file, a
@@ -1990,6 +2024,7 @@ kernel behavior and missing `hammer2-dedup.c` in the same breath.
 |---|---|---|
 | `test/hammer2-seek.c` | `tmpfs` and `btrfs` on the same guest | `SEEK_DATA`/`SEEK_HOLE` answer the offsets the media holds. The control is what found the original defect: both references disagreed with the port. |
 | `test/hammer2-dedup.c` | `tmpfs` and `btrfs` on the same guest | a duplicate block is not charged twice. Both controls charge full price, which is what makes the reading specific to this port. |
+| `test/hammer2-fallocate.c` | `tmpfs` and `btrfs` on the same guest | a punched or zeroed range reads back as zeros with the bytes outside it intact, and the punch leaves a hole. Measured 2026-09-28: `btrfs` accepts every mode and runs all twelve checks, `tmpfs` accepts `PUNCH_HOLE` and refuses `ZERO_RANGE`, which is ten checks and one refusal, so the pair shows what a refusal looks like beside an answer. Its ranges come from the filesystem's own block size, so the same binary is a real check on a 4 KiB control and on this port's 64 KiB block. |
 | `test/hammer2-latency.c` | `ext4` and `btrfs` on the same guest | per-operation latency is a property of the port, not of the machine. |
 | `test/hammer2-mmap-exercise.c` | `tmpfs` on the same guest | a shared writable mapping reaches the media. |
 | `test/hammer2-ioctl-exercise.c` | `tmpfs` on the same guest | the ioctls refuse what they should, and the refusals are the filesystem's and not the VFS's. |

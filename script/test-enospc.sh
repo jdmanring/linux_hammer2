@@ -408,6 +408,21 @@ cc -static -O2 -o /tmp/h2dedupt.$$ test/hammer2-dedup.c 2>/dev/null || {
 scp -q -o ConnectTimeout=5 /tmp/h2dedupt.$$ "$GUEST_SSH:/tmp/h2dedup" >/dev/null 2>&1
 rm -f /tmp/h2dedupt.$$
 
+# The fallocate exerciser, from test/hammer2-fallocate.c, on the same
+# terms.  ->fallocate is the operation the readiness audit called the
+# largest real gap: an installer and a package manager both expect it, and
+# before it landed every call fell through to the kernel's default and
+# returned EOPNOTSUPP.  It writes the file it punches and needs the room to
+# write it, so it runs here and not on the filled volume, and it takes the
+# filesystem's own block size from statvfs so the punch it makes is one
+# whole block on whatever it is pointed at.  On this gate's volume that is
+# the port; the reference-control table names tmpfs and btrfs for the
+# refusal each reports against the port's answer.
+cc -static -O2 -o /tmp/h2falloct.$$ test/hammer2-fallocate.c 2>/dev/null || {
+	echo "enospc: COULD-NOT-RUN: the fallocate exerciser did not compile" >&2; exit 2; }
+scp -q -o ConnectTimeout=5 /tmp/h2falloct.$$ "$GUEST_SSH:/tmp/h2falloc" >/dev/null 2>&1
+rm -f /tmp/h2falloct.$$
+
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
@@ -458,6 +473,11 @@ out=$(ssh "$GUEST_SSH" '
 	# the room to write them, and the fill is what takes the room away.
 	# It unlinks what it made, so the fill below measures what it did.
 	$as /tmp/h2dedup /mnt/h2enospc 2>&1 | sed -n /dedup-/p
+	# The fallocate exerciser, also before the fill: it writes a 1 MiB
+	# file and punches a block out of it, which needs the room the fill
+	# takes away.  It unlinks its file, so the fill below measures what
+	# it did.
+	$as /tmp/h2falloc /mnt/h2enospc 2>&1 | sed -n /falloc-/p
 	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
@@ -942,6 +962,26 @@ elif [ "${df:-0}" -ne 0 ]; then
 	fail=$((fail + 1))
 else
 	echo "  ok    dedup $dc check(s) on a live mount, 0 failed"
+fi
+
+# ->fallocate, on the same terms as seek and dedup above.  The failure this
+# catches is the one the readiness audit named as the largest real gap: the
+# operation was absent, so every call returned EOPNOTSUPP and an installer
+# or a package manager could not use a HAMMER2 root.  A filesystem that
+# refuses a mode reports falloc-skip and is counted, so a run where every
+# mode was refused fails on the zero check rather than reading as clean.
+fc=$(printf '%s\n' "$out" | sed -n 's/^falloc-checks //p')
+ff=$(printf '%s\n' "$out" | sed -n 's/^falloc-failures //p')
+if [ -z "$fc" ] || [ "${fc:-0}" -eq 0 ]; then
+	echo "  FAIL  the fallocate exerciser printed no check, so it ran and"
+	echo "        proved nothing"
+	fail=$((fail + 1))
+elif [ "${ff:-0}" -ne 0 ]; then
+	echo "  FAIL  the fallocate exerciser answered wrongly on a live mount:"
+	printf '%s\n' "$out" | sed -n 's/^falloc-fail /        /p' | head -6
+	fail=$((fail + 1))
+else
+	echo "  ok    fallocate $fc check(s) on a live mount, 0 failed"
 fi
 
 printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||
