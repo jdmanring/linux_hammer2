@@ -12,7 +12,18 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.39 is the instrument for the two operations
+0.5 to 0.9 are met. 0.9.40 is the third instrument wired to the tree that
+cites it: `test/getdents-resume.c` drives `->iterate_shared` across calls,
+which one `ls` cannot reach, and its row said the fleet's fixture run was
+the check while nothing built or ran it. It runs in `test-fixtures.sh` on
+the first manifest that verifies, and the gate asserts what the exerciser
+does not: that the calls exceeded one, which is the only thing showing the
+mid-directory stop was reached, and that no name repeated, which is what a
+read restarting from offset zero produces. Three exercisers in three
+milestones had a count published with nothing running the file behind it,
+after the fallocate one at 0.9.37 and the fiemap one at 0.9.39, which is
+why each was closed with a runner rather than a note. 0.9.39 is the
+instrument for the two operations
 0.9.38 delivered: `->fiemap` and the freeze vops had their counts, eleven
 checks and zero failures, published in the changelog and the readiness
 audit while no script in this tree ran the file that produced them, and
@@ -110,7 +121,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.39
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.40
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

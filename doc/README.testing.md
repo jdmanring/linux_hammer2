@@ -2014,10 +2014,11 @@ The first two are not wired into a gate HERE, because there is nothing in
 this tree to link either against; Saxum links them against the BSD tree instead.
 They get a local gate the day 0.2 imports the algorithms, and the
 inventory gate is what remembers to ask. The third needs a booted guest
-holding a mount, so it belongs to the read-only fixture gate the roadmap
-names and is run by hand until that exists. Until then, changing either
-file's output shape or exit status breaks a gate in a repository this one
-does not reference.
+holding a mount, and it is wired into `test-fixtures.sh` on the first
+manifest that verifies: it ran by hand until that gate existed, which is
+how its row came to carry a reading from an invocation nothing recorded.
+Until then, changing either file's output shape or exit status breaks a
+gate in a repository this one does not reference.
 
 ### The one that drives a fix in `src/` without compiling `src/`
 
