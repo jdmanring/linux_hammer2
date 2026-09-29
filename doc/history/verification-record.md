@@ -4068,4 +4068,66 @@ to be asked by hand on each sweep, and the tell to grep for is a doc row
 that asserts a RUNNER rather than a property, since those are the rows
 that can be true about the file and false about the tree.
 
+## Upstream moved to a new candidate, and the port compiles against it
+
+The kernel of record is a version, `KERNEL_REF=7.3` in
+`script/test-syntax.sh`, and the tree it is read against is the newest
+7.3 candidate. On 2026-09-29 the forge showed `v7.3-rc5`, tagged
+2026-09-27, where the guest and the instruments had been on rc4. The
+project's own rule is that the pin advances with each candidate, so the
+question was whether the port still builds and passes its style gate at
+the new one.
+
+**Measured.** `v7.3-rc5` cloned from git.kernel.org at the tag, rc4's
+`.config` copied in, `olddefconfig` and `prepare` run, then:
+
+    KDIR=~/kernels/linux-7.3-rc5 bash script/test-syntax.sh
+    syntax: 65 check(s), 0 failed against the kernel of record (7.3),
+            7.3.0-rc5, mainline
+
+65 checks, 0 failed, clang 22.1.8, no warnings in the port's files. The
+style gate against the same tree reports the deviation set unchanged at
+1145, and it reads the checker the baseline records by `sha256` rather
+than rc5's own `checkpatch.pl`, so the count is comparable across the two
+candidates. The port needs no change for rc5.
+
+**What rc5 is, and why nothing here breaks.** `fs/super.c` is the file
+that carries the shared block device open, one of the two facilities that
+puts the floor at 7.3, and rc5 changes it: `2d2a2d7aa` moves
+`hlist_del_init(&sb->s_instances)` out of `kill_super_notify()` and into
+`put_super()`, and takes `sb_lock` around `super_wake(sb, SB_DEAD)`. The
+facility the port depends on is the ability of several mounts to hold the
+same block device, which is untouched; the change is to the order a
+superblock leaves the instance list under concurrent mount, and the port
+registers no mount-time walk of that list.
+
+**What is not done, and is the next step rather than a claim.** The tree
+of record for the guest and for the instruments is still rc4
+(`doc/README.testing.md` names `~/kernels/linux-7.3-rc4` and the guest's
+three builds are `h2debug-rc4`, `h2release-rc4`, `h2kasan-rc4`). Advancing
+the guest means rebuilding and reinstalling those kernels on
+`artix-s6-kde`, which changes the machine every reading after it is taken
+on, so it is a deliberate act with a build behind it rather than a
+document edit. Until it is done, a fleet reading is a reading on rc4 and
+this section is the only rc5 result there is.
+
+**The dependency check that prompted this, for the record.** Every tree
+the port carries from was read at the forge on the same day:
+
+| tree | head | moved since the carry |
+|---|---|---|
+| `kusumi/freebsd_hammer2` | `v1.2.13`, tag and branch head alike | no |
+| `kusumi/netbsd_hammer2` | `v1.2.13`, the same | no |
+| `kusumi/openbsd_hammer2` | `v1.2.13`, the same | no |
+| `kusumi/hammer2-utils` | `v0.5.0`, the same | no |
+| DragonFly `sys/vfs/hammer2/hammer2_disk.h` | no commit since `22b0532` | no |
+| DragonFly `sys/vfs/hammer2/hammer2_ioctl.h` | no commit since `22b0532` | no |
+| DragonFly `sys/vfs/hammer2/hammer2.h` | one commit, `30436b52c` | yes, harmless |
+| `torvalds/linux` | `v7.3-rc5` | yes, measured clean above |
+
+The two host tools are current for the box: clang 22.1.8 and gcc 16.2.1,
+with Rust 1.98.1 for the userland, and `newfs_hammer2` is the
+hammer2-utils v0.5.0 build.
+
+
 
