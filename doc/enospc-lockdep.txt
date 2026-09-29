@@ -10,7 +10,8 @@ a reproduction.
 
 
 Measured on artix-s6-kde at 7.3.0-rc1 with CONFIG_PROVE_LOCKING, on a 2 GiB
-volume, by script/enospc.sh. 583 files of 4 MiB were written before dd
+volume, by the script now named script/test-enospc.sh (script/enospc.sh when
+this run was made). 583 files of 4 MiB were written before dd
 reported ENOSPC; debug_locks was 1 after the fill and 0 after the sync(2)
 that followed. One report, counted by banner occurrences.
 
