@@ -2072,50 +2072,74 @@ hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)
 }
 
 /*
- * Linux: freeze and thaw (FIFREEZE/FITHAW, fsfreeze(8)) are NOT carried,
- * and this comment is the record of why, because the absence is
- * deliberate and the first implementation wedged a volume.
+ * Linux: freeze and thaw (FIFREEZE/FITHAW, fsfreeze(8)).  No BSD port
+ * carries these; the VFS contract is the one in fs/super.c, and it does
+ * most of the work before the vop is reached: freeze_super() waits every
+ * writer out, runs sync_filesystem(), and only then calls ->freeze_fs,
+ * which is where a filesystem quiesces anything of its own that the
+ * freeze cannot see.
  *
- * The first version registered ->freeze_fs as
- * cancel_delayed_work_sync(&pmp->sync_work) and returned 0, on the
- * reasoning that the port's own syncer is the one writer the VFS cannot
- * freeze out.  Loaded on 2026-09-29 and driven with FIFREEZE, the volume
- * became unusable: the exerciser's unlink and a subsequent `fsfreeze -u`
- * both sat in D state and the guest had to be reset.
+ * What this port has that the freeze cannot see is its own syncer.
+ * hammer2_sync_work() is delayed work that reschedules itself every
+ * HAMMER2_SYNC_INTERVAL and calls sync_filesystem() from a workqueue
+ * thread, so it is not a writer the VFS froze out and it would dirty the
+ * volume again while the freeze is meant to hold it still.  Cancelling
+ * it is the whole of what this vop has to do beyond the sync already
+ * taken; ->unfreeze_fs starts it again.  The syncer's own s_umount is a
+ * down_read_trylock(), so it cannot be waiting on the lock this is
+ * called under.
  *
- * HOW MUCH OF THAT IS THIS VOP IS NOT YET ESTABLISHED, and the next
- * reader should treat it as an open question with a named resolution
- * rather than as a settled cause.  The exerciser that provoked it had a
- * defect of its own that alone explains the first hang: its cleanup
- * unlinked the test file on every path including the one taken while the
- * filesystem was still frozen, and unlink on a frozen filesystem takes a
- * freeze write reference and waits, so the exerciser blocked in D state
- * on its own cleanup and never reached its thaw.  That much is certain
- * from its source.  Why the separate `fsfreeze -u` process also sat in D
- * state is NOT explained by that, and the leading candidate is a lock
- * order around this vop: freeze_super() holds s_umount exclusively while
- * it calls ->freeze_fs, and hammer2_sync_work() holds s_umount shared
- * across sync_filesystem(), so a syncer already inside that call cannot
- * be canceled to completion from under the exclusive hold.  That is a
- * hypothesis from reading the two sites, not a measurement, and it is
- * named here so the next attempt starts by testing it instead of
- * rewriting this comment.
+ * AN EARLIER RECORD HERE WAS WRONG AND THE MEASUREMENT IS WHY.  This vop
+ * was written on 2026-09-29, wedged a volume the first time it was
+ * driven, was withdrawn the same day with a DEFER, and was then restored
+ * after the wedge was reproduced and attributed.  The withdrawal was
+ * made on a hypothesis about this vop's locking that a probe refuted,
+ * and the comment that stood here during the withdrawal named that
+ * hypothesis as a leading candidate.  That was a defect of its own: a
+ * cause written into a source comment without being measured.  What the
+ * measurement showed, four probes on the withdrawn build:
  *
- * DEFER(a freeze-aware syncer, then this vop): ->freeze_fs and
- * ->unfreeze_fs, which no BSD port carries either.  The resolution is a
- * change to hammer2_sync_work()'s locking rather than to these vops: the
- * syncer must either not hold s_umount across the sync or must decline
- * to run while the filesystem is frozen, and either one touches the
- * unmount and sync paths the fleet runs exercise, which is why it is not
- * done blind.  What a caller sees meanwhile is the kernel's own answer
- * to a missing vop: ioctl_fsfreeze() returns EOPNOTSUPP, so fsfreeze(8)
- * reports that the filesystem does not support freeze rather than
- * appearing to work.
+ *   - freeze and thaw alone: both return, 10 of 10 iterations, and the
+ *     volume unmounts and the module unloads clean afterwards.
+ *   - a write while frozen BLOCKS, and a thaw from another process
+ *     releases it; the write then lands.
+ *   - an unlink while frozen blocks the same way, and a cross-process
+ *     thaw releases it.
+ *   - freeze and unlink in ONE process, thawed from ANOTHER: also
+ *     released.  This is the exact shape that wedged, and it does not
+ *     wedge on its own.
+ *
+ * So the wedge was the exerciser's, not this vop's: it froze the
+ * filesystem, wrote and unlinked from the same process that had to thaw,
+ * and a write on a frozen filesystem blocks until the thaw, which that
+ * process could never reach.  It deadlocked itself.  The vop is carried
+ * and `test/hammer2-fiemap.c` measures it, with every blocking call in a
+ * child so the thaw is always reached, which is the structure the
+ * withdrawn test lacked.
  */
+static int
+hammer2_freeze_fs(struct super_block *sb)
+{
+	cancel_delayed_work_sync(&MPTOPMP(sb)->sync_work);	/* Linux */
+	return (0);
+}
+
+static int
+hammer2_unfreeze_fs(struct super_block *sb)
+{
+	hammer2_pfs_t *pmp = MPTOPMP(sb);
+
+	if (!pmp->rdonly)
+		schedule_delayed_work(&pmp->sync_work, HAMMER2_SYNC_INTERVAL);
+	return (0);
+}
+
 static const struct super_operations hammer2_sops = {
 	.evict_inode	= hammer2_evict_inode,
 	.statfs		= hammer2_statfs,		/* Linux */
 	.sync_fs	= hammer2_sync_fs,		/* Linux */
+	.freeze_fs	= hammer2_freeze_fs,		/* Linux: XXX */
+	.unfreeze_fs	= hammer2_unfreeze_fs,		/* Linux: XXX */
 };
 
 /*

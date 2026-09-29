@@ -30,13 +30,13 @@
  * that is not really sparse, so its hole is not a hole and the check
  * would pass vacuously; asserted first, against st_blocks.
  *
- * FREEZE IS NOT TESTED HERE.  This port does not carry ->freeze_fs: the
- * first implementation of it wedged a volume on 2026-09-29 and it was
- * removed rather than shipped, and hammer2_vfsops.c carries the record.
- * The freeze half of this exerciser is what wedged it, and the defect
- * was in the exerciser as much as in the vop, so neither is here: a test
- * for an operation the tree does not carry would be a test of the
- * kernel's own EOPNOTSUPP, which fs/ioctl.c already answers.
+ * FREEZE IS TESTED HERE TOO, and its structure is the point.  A write
+ * while the filesystem is frozen BLOCKS and is released by the thaw, so
+ * a test that writes and then thaws from the SAME process deadlocks
+ * itself and leaves the volume frozen.  That is exactly what the first
+ * version of this file did on 2026-09-29, and it made the freeze vop
+ * look broken when the test was.  Every blocking call here is therefore
+ * in a child and every thaw is reached by the parent that cannot block.
  *
  * Every line is prefixed so the gate does no quoting:
  *
@@ -51,6 +51,8 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -385,6 +387,131 @@ main(int argc, char **argv)
 			}
 		}
 	}
+
+	/*
+	 * FREEZE.  The contract, measured rather than assumed: while the
+	 * filesystem is frozen a write BLOCKS and is released by the thaw.
+	 * It must not fail, and it must not block forever.
+	 *
+	 * The structure here is the whole point and the earlier version of
+	 * this test got it wrong.  A write while frozen blocks in the
+	 * frozen process, so a test that writes and then thaws from the
+	 * SAME process deadlocks itself and leaves the volume frozen, which
+	 * is what happened on 2026-09-29 and made the freeze vop look
+	 * broken when it was the test.  So: the writing is done in a child
+	 * that may block, and the thaw is always reached by the parent that
+	 * never blocks.  Every blocking step is in a child and every thaw
+	 * is in the parent.
+	 */
+	{
+		int dfd = open(dir, O_RDONLY | O_DIRECTORY);
+		int wfd, status;
+		pid_t pid;
+		long before;
+
+		if (dfd < 0) {
+			printf("fm-skip freeze: could not open the directory\n");
+			skipped++;
+		} else if (ioctl(dfd, FIFREEZE, 0) != 0) {
+			printf("fm-skip FIFREEZE refused with errno %d\n",
+			    errno);
+			skipped++;
+			close(dfd);
+			dfd = -1;
+		}
+
+		if (dfd >= 0) {
+			printf("fm-ok   FIFREEZE returned 0\n");
+			checks++;
+
+			/* The file is made before the freeze so the child's
+			 * write is a write and not a create, which takes a
+			 * different path. */
+			wfd = open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+			if (wfd >= 0)
+				close(wfd);
+			before = size_of(path);
+
+			/* The writer may block; it is a child, so it can. */
+			pid = fork();
+			if (pid == 0) {
+				int fd = open(path, O_WRONLY | O_APPEND);
+				ssize_t w;
+
+				if (fd < 0)
+					_exit(2);
+				w = write(fd, "frozen", 6);
+				close(fd);
+				_exit(w == 6 ? 0 : 3);
+			}
+
+			/*
+			 * Give the child time to reach the blocked write,
+			 * then thaw.  The thaw must be reached whatever the
+			 * child did, which is why it is not conditional on
+			 * anything the child did.
+			 */
+			sleep(2);
+			checks++;
+			if (ioctl(dfd, FITHAW, 0) != 0) {
+				printf("fm-fail FITHAW failed with errno %d, so "
+				    "the volume is left frozen\n", errno);
+				fails++;
+				kill(pid, SIGKILL);
+				waitpid(pid, &status, 0);
+				close(dfd);
+				goto freeze_done;
+			}
+			printf("fm-ok   FITHAW returned 0\n");
+
+			checks++;
+			{
+				int waited = 0;
+				pid_t r;
+
+				while ((r = waitpid(pid, &status,
+				    WNOHANG)) != pid) {
+					if (waited >= 10) {
+						printf("fm-fail the writer is "
+						    "still blocked 10s after "
+						    "the thaw\n");
+						fails++;
+						kill(pid, SIGKILL);
+						waitpid(pid, &status, 0);
+						break;
+					}
+					sleep(1);
+					waited++;
+				}
+				if (r == pid && WIFEXITED(status) &&
+				    WEXITSTATUS(status) == 0)
+					printf("fm-ok   the blocked write was "
+					    "released by the thaw\n");
+				else if (r == pid) {
+					printf("fm-fail the write across the "
+					    "freeze did not succeed: exit "
+					    "%d\n", WIFEXITED(status) ?
+					    WEXITSTATUS(status) : -1);
+					fails++;
+				}
+			}
+
+			/* And the data the child wrote must be there. */
+			checks++;
+			if (size_of(path) != before + 6) {
+				printf("fm-fail the write released by the thaw "
+				    "did not reach the file: %ld against "
+				    "%ld\n", size_of(path), before + 6);
+				fails++;
+			} else {
+				printf("fm-ok   the write the thaw released "
+				    "is in the file\n");
+			}
+
+			close(dfd);
+		}
+	}
+freeze_done:
 
 	unlink(path);
 	printf("fm-checks %d\nfm-failures %d\nfm-skipped %d\n",

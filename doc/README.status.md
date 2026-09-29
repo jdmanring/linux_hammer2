@@ -3,7 +3,7 @@ Status
 
 The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
-DragonFly itself. The tree is at 0.9.37 in `CHANGELOG.md`; nothing is
+DragonFly itself. The tree is at 0.9.38 in `CHANGELOG.md`; nothing is
 tagged. What stands between it and 1.0 is the release shape and the
 filings staged under `doc/upstream/`; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
@@ -51,7 +51,7 @@ a defect.
 | `hammer2_cluster.c` | 189 | FreeBSD port, carried byte-for-byte but the one `XXX` after its `hpanic`; nothing in it touches the OS |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1923 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()` |
-| `hammer2_vfsops.c` | 3357 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks. `folio_changed` and `iohash_waits` are exported read-only beside `data_rewrites`, the first counting a block that changed between the write XOP's two reads of it and the second counting an acquisition of the device-wide io hash lock that had to wait; `->freeze_fs` and `->unfreeze_fs` are deliberately not carried, and the comment where they would go records what the first implementation did to a volume |
+| `hammer2_vfsops.c` | 3381 | FreeBSD port; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks. `folio_changed` and `iohash_waits` are exported read-only beside `data_rewrites`, the first counting a block that changed between the write XOP's two reads of it and the second counting an acquisition of the device-wide io hash lock that had to wait; `->freeze_fs` and `->unfreeze_fs` are this port's, canceling the syncer a VFS freeze cannot see, and the comment there records the wedge they were wrongly withdrawn for and the probes that cleared them |
 | `hammer2_strategy.c` | 1582 | this port's; `hammer2_dedup_clear()` carried, `->readahead` hands each folio of the window to a worker, and the write XOP hands the core a whole-block folio's address rather than a copy, sampling every folio it reads around the read so a folio changed under the core is counted rather than argued about |
 | `hammer2_vnops.c` | 2048 | this port's; `->lookup` is upstream's `hammer2_lookup()` with the dcache's own cases and the nameiop pre-checks dropped, the six operations tables have no BSD counterpart, a vnode taking its vop vector from the mount rather than from its type, `hammer2_zero_tail()` waits for a folio's writeback before zeroing it, since the write XOP hashes the folio itself, and `->llseek` and `->bmap` are built on the carried `hammer2_xop_bmap()`, which the BSDs reach through `vn_bmap_seekhole()` and `FIOSEEK*` and Linux reaches through the whences of `lseek(2)`; `->getattr` is on all three inode tables, including the symlink one, since a symlink's target past `HAMMER2_EMBEDDED_BYTES` owns a data block, `->fallocate` is marked `XXX` because no BSD port carries the vop at all: on this format a write whose block is all zeros is not stored, so a hole and a zeroed range are the same thing and a punch is a zeroing that deletes the chain, and `->fiemap` is built on the same bmap XOP the seeks use |
 | `hammer2_ondisk.c` | 1043 | FreeBSD port; the volume-header verification half carried, the device half rewritten on `lookup_bdev()` and `bdev_file_open_by_path()`, and four functions not carried: `hammer2_lookup_device()` and the three GEOM access helpers |
@@ -241,7 +241,6 @@ against the source is the same shape as an empty one.
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
-| `hammer2_vfsops.c`, where the super operations table is declared | `DEFER(a freeze-aware syncer, then this vop)` | `->freeze_fs` and `->unfreeze_fs` are not carried. The first implementation canceled the port's own syncer from `->freeze_fs` and wedged a volume on 2026-09-29, with `unlink` and `fsfreeze -u` left in D state until the guest was reset; how much of that is the vop is not settled, and the resolution is a change to `hammer2_sync_work()`'s locking rather than to the vop. `fsfreeze(8)` reports `EOPNOTSUPP` meanwhile, which is the kernel's own answer to the missing vop |
 
 The middle column is the marker as it is spelled in the source, because
 that is what the gate matches on: a reworded trigger in either place is a
@@ -281,7 +280,7 @@ for the device where DragonFly has one per bucket:
 | `hammer2_cluster.c` | 1 | 0 | 1 |
 | `hammer2_ondisk.c` | 22 | 1 | 21 |
 | `hammer2_inode.c` | 29 | 6 | 23 |
-| `hammer2_vfsops.c` | 48 | 7 | 40 |
+| `hammer2_vfsops.c` | 50 | 7 | 42 |
 | `hammer2_ioctl.c` | 22 | 3 | 19 |
 | `hammer2_strategy.c` | 25 | 0 | 25 |
 | `hammer2_vnops.c` | 4 | 0 | 4 |
@@ -295,8 +294,8 @@ for the device where DragonFly has one per bucket:
 | `hammer2_xxhash.h` | 0 | 0 | 0 |
 | `sys/tree.h` | 1 | 1 | 0 |
 
-Two hundred and sixty-four are this port's, the right-hand column
-summed, and they fall in eighteen files: seventy-four in `hammer2_chain.c`, forty in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, four in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
+Two hundred and sixty-six are this port's, the right-hand column
+summed, and they fall in eighteen files: seventy-four in `hammer2_chain.c`, forty-two in `hammer2_vfsops.c`, twenty-five in `hammer2_strategy.c`, twenty-three in `hammer2_inode.c`, twenty-one in `hammer2_ondisk.c`, nineteen in `hammer2_ioctl.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, seven in `hammer2_subr.c`, four in `hammer2_admin.c`, four in `hammer2_os.h`, six in `hammer2_freemap.c`, three in `hammer2_rb.h`, four in `hammer2_vnops.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_disk.h`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only, and
 the per-file figures here are read off that column rather than
