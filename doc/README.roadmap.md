@@ -706,9 +706,15 @@ Each is the maintainer's, and each names what it blocks.
 - Serving `O_DIRECT`. DragonFly's HAMMER2 has no direct path either: its
   `IO_DIRECT` means semi-synchronous, set by the reserve check, and every
   read and write goes through the buffer cache because each block is
-  checksummed and possibly compressed on the way. A direct open falls back
-  to buffered I/O, as it does there. Revisited only if a mission-profile
-  workload in 1.0 needs it.
+  checksummed and possibly compressed on the way. The two systems differ
+  in what they do with the OPEN flag, and the difference is stated here
+  because the behavior on this port is the opposite of a fallback rather
+  than the same thing under another name: a BSD direct open is served
+  from the buffer cache, while this port registers no `->direct_IO`, so
+  the kernel refuses the open with `EINVAL` at `fs/open.c` before any I/O
+  is attempted, and `doc/README.testing.md` records the same of the
+  latency instrument, which cannot use it for that reason. Revisited only
+  if a mission-profile workload in 1.0 needs it.
 - Replacing `hammer2-fuse`. It is an independent Rust reader of the same
   format over libhammer2, which is what makes it useful as a second reader: a
   disagreement between the two is a finding about one of them.

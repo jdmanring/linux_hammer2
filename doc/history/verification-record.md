@@ -2649,8 +2649,15 @@ insert race was counted.
 `O_DIRECT` stays unserved. DragonFly's `IO_DIRECT` means
 semi-synchronous, set by the reserve check, and every read and write
 there goes through the buffer cache because each block is checksummed
-and possibly compressed on the way; a direct open falls back to
-buffered I/O here as it does there.
+and possibly compressed on the way. The open flag is the one place the
+two differ and it was read rather than assumed: DragonFly's direct open
+is served from the buffer cache, while this port registers no
+`->direct_IO`, so the kernel refuses the open itself with `EINVAL` at
+`fs/open.c` (`FMODE_CAN_ODIRECT` is set only when the mapping carries the
+operation) before any I/O is attempted. An earlier paragraph of
+`doc/README.roadmap.md` said a direct open falls back to buffered I/O
+here as it does there, which is true of the DragonFly half and false of
+this one, and is corrected there.
 
 ### The write timed apart from its flush, on the release kernel
 
