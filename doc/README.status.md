@@ -67,14 +67,32 @@ a defect.
 
 ### Upstream heads, as last read
 
-Read from the forge on 2026-09-07, the check `doc/README.maintenance.md`
-names: the FreeBSD, NetBSD and OpenBSD ports are all at v1.2.13, which
-is what the snapshots beside this repository hold (`3df307f`, `64095c3`,
-`a3747df`). DragonFly's newest commit under `sys/vfs/hammer2` is
-`40e5c5625` of 2026-09-02, which puts the unmount chain dump under
-`#if 0` in `hammer2_vfsops.c`; the two before it touch `hammer2_vnops.c`
-and `hammer2.h`. None of the three touches a file in the carried set,
-so nothing starts a sync.
+Read from the forge on 2026-09-29, the check `doc/README.maintenance.md`
+names: the FreeBSD, NetBSD and OpenBSD ports are all at v1.2.13, tag and
+branch head alike, which is what the snapshots beside this repository hold
+(`3df307f`, `64095c3`, `a3747df`), so nothing there has moved since the
+carry. `kusumi/hammer2-utils` is at v0.5.0, also tag and head alike.
+DragonFly's newest commit under `sys/vfs/hammer2` is `40e5c5625` of
+2026-09-02, which puts the unmount chain dump under `#if 0` in
+`hammer2_vfsops.c`, and the one before it, `30436b52c` of 2026-09-01,
+touches `hammer2_vnops.c` and `hammer2.h`.
+
+The earlier reading of this section said those commits touch nothing in the
+carried set, and that is wrong: `hammer2.h` is carried from DragonFly at
+`22b0532`, so the claim was false for a file the sync decision turns on.
+The commit is harmless here, which was checked rather than assumed:
+`30436b52c` removes `struct lockf advlock` from `struct hammer2_inode` and
+replaces the port's `hammer2_vop_advlock` with `vop_stdadvlock`, and this
+port's copy of the struct carries no `lockf` member and has no advlock vop,
+because the BSD-only type is not the format. It is recorded because a
+decision that rests on a wrong reading of which files are carried is a
+decision that will be wrong the first time a change is not harmless.
+
+`hammer2_disk.h` and `hammer2_ioctl.h`, the format and ioctl surfaces, have
+had no commit since the carry, which is what the format being stable looks
+like from here. The kernel of record is a separate pin and **has** moved:
+`v7.3-rc5` exists, and this section does not yet say whether the port was
+run against it.
 
 ## What has been verified
 
