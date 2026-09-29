@@ -239,6 +239,13 @@ a second on a stranded lock, whose text does not fit one. The work
 item's allocation took `kmalloc_obj()` when the checker asked, since
 that is a line this port wrote. No category is new.
 
+1143 to 1145 when `->fiemap` and `->freeze_fs` landed: two `return is not
+a function`, the tree's BSD style on the two refusals `hammer2_fiemap()`
+has, one for a real bmap error and one for a filled extent array. No
+category is new, and nothing was fixed rather than baselined: FIEMAP is
+this port's own, since no BSD port carries the vop, and the freeze vops
+are marked `XXX` for the same reason.
+
 1142 to 1143 when `->fallocate` landed: one `return is not a function`,
 the tree's BSD style on the one `return (x);` in the mode switch's
 refusal of `FALLOC_FL_COLLAPSE_RANGE`. No category is new, and nothing
