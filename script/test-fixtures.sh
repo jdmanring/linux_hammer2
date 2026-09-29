@@ -154,7 +154,7 @@ cleanup() {
 		$VIRSH detach-disk "$GUEST" "$d" >/dev/null 2>&1
 	done
 	[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1
-	rm -f "${tmpb:-}" "${tmpx:-}" "${tmpi:-}"
+	rm -f "${tmpb:-}" "${tmpx:-}" "${tmpi:-}" "${tmpg:-}"
 	return 0
 }
 trap 'cleanup' EXIT
@@ -261,6 +261,7 @@ echo "  note module io_buf_only $(ssh "$GUEST_SSH" 'cat /sys/module/hammer2/para
 IOCTL_EX=
 tmpx=$(mktemp) || exit 2
 tmpi=$(mktemp) || exit 2
+tmpg=$(mktemp) || exit 2
 if cc -static -O2 -Isrc/sys/fs/hammer2 -o "$tmpx" \
     test/hammer2-ioctl-exercise.c >/dev/null 2>&1 &&
     scp -o ConnectTimeout=5 "$tmpx" "$GUEST_SSH:/tmp/h2ioctl" >/dev/null 2>&1
@@ -269,6 +270,27 @@ then
 fi
 [ -n "$IOCTL_EX" ] ||
     echo "  note the ioctl exerciser did not build or copy, so no ioctl ran"
+
+# The getdents exerciser, built here on the same terms as the ioctl one
+# above. ->iterate_shared has to resume across calls, which one `ls` cannot
+# show: a 32 KiB buffer takes a small directory in a single call, so the
+# branch that stops mid-directory never runs, and a driver that restarts
+# from zero on every call still lists every name if the caller's buffer is
+# large enough. The exerciser reads with a 64-byte buffer, one or two
+# entries at a time, and fails on a runaway rather than hanging. It is
+# wired here because its row in doc/README.testing.md claimed the fleet's
+# fixture run was the check while nothing in this tree built or ran it, so
+# the readings that row cites came from an invocation nobody recorded. A
+# failure to build is a finding and not a note, because the whole point of
+# the row is that this runs.
+GETDENTS_EX=
+if cc -static -O2 -o "$tmpg" test/getdents-resume.c >/dev/null 2>&1 &&
+    scp -o ConnectTimeout=5 "$tmpg" "$GUEST_SSH:/tmp/h2getdents" \
+    >/dev/null 2>&1
+then
+	ssh "$GUEST_SSH" 'chmod 755 /tmp/h2getdents' >/dev/null 2>&1 &&
+	    GETDENTS_EX=1
+fi
 
 # The recorded results, measured on the guest against the shipped module.
 # `unknown-h` is the dispatch's own default arm and `foreign-type` the
@@ -296,6 +318,8 @@ corrupts=0
 stats=0
 statfss=0
 ioctls=0
+getdents=0
+getdents_ran=0
 tmpb=$(mktemp) || exit 2
 release_image() {
 	[ -n "$attached" ] || return 0
@@ -403,6 +427,64 @@ for m in $manifests; do
 		fi
 		ioctls=$((ioctls + $(printf '%s\n%s\n' "$igot" "$uout" |
 		    command grep -c .)))
+	fi
+
+	# The getdents exerciser, on the first manifest that verifies. It runs
+	# once because it depends on the media only through being a directory
+	# holding names, and every fixture here is that.
+	#
+	# The exerciser has no check protocol of its own: it prints each name
+	# and then `entries=N calls=M`, and exits nonzero on an error or a
+	# runaway past 100 calls. The two properties are asserted here rather
+	# than by the program, and they are what the operation means. The first
+	# is that the CALLS exceeded one, which is the whole subject: with one
+	# call the branch that stops mid-directory never ran, and a run that
+	# made one call has proven nothing about resumption. The second is that
+	# no name repeats, which is the defect this file was written for: a
+	# driver restarting from offset zero on each call re-yields the names
+	# already read, each exactly once per call when the buffer holds one
+	# entry, so a duplicate is the signature and a single call would hide
+	# it. A failure to build is counted rather than passed over, which is
+	# the difference between this and the ioctl exerciser above.
+	if [ "$getdents_ran" = 0 ]; then
+		if [ -z "$GETDENTS_EX" ]; then
+			echo "  FAIL $base: the getdents exerciser did not build or"
+			echo "        copy, so ->iterate_shared was not exercised"
+			fail=$((fail + 1))
+		else
+			gdout=$(ssh "$GUEST_SSH" "/tmp/h2getdents $mnt" 2>&1)
+			grc=$?
+			gdent=$(printf '%s\n' "$gdout" | sed -n 's/^entries=\([0-9]*\) .*/\1/p')
+			gdcalls=$(printf '%s\n' "$gdout" | sed -n 's/^entries=[0-9]* calls=\([0-9]*\)$/\1/p')
+			gduniq=$(printf '%s\n' "$gdout" | sed -n 's/^  //p' | LC_ALL=C sort -u | command grep -c .)
+			if [ "$grc" -ne 0 ]; then
+				echo "  FAIL $base: the getdents exerciser did not run:"
+				printf '%s\n' "$gdout" | sed 's/^/        /' | head -6
+				fail=$((fail + 1))
+			elif [ -z "$gdent" ] || [ "${gdent:-0}" -eq 0 ]; then
+				echo "  FAIL $base: the directory read gave no entry, so"
+				echo "        the resumption was not exercised:"
+				printf '%s\n' "$gdout" | sed 's/^/        /' | head -6
+				fail=$((fail + 1))
+			elif [ "${gdcalls:-0}" -le 1 ]; then
+				echo "  FAIL $base: the whole directory came back in"
+				echo "        ${gdcalls:-0} call(s), so the mid-directory stop"
+				echo "        was never reached and this proves nothing"
+				fail=$((fail + 1))
+			elif [ "$gduniq" -ne "$gdent" ]; then
+				echo "  FAIL $base: $gdent entries over $gdcalls calls with"
+				echo "        only $gduniq distinct names, so the read"
+				echo "        restarted instead of resuming"
+				fail=$((fail + 1))
+			else
+				echo "  ok   $base: $gdent entries over $gdcalls calls,"
+				echo "        each name once"
+				getdents=$gdent
+			fi
+		fi
+		# Set on both paths, so a build that failed is reported once and
+		# not eleven times on the images that follow.
+		getdents_ran=1
 	fi
 	files=$((files + want))
 
@@ -571,7 +653,7 @@ else
 	echo "  note lockdep is not built into $guest_rel, so lock order was not validated"
 fi
 
-echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $ioctls ioctl result(s), $fail failure(s)"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $ioctls ioctl result(s), $getdents getdents resume check(s), $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
 echo "          being equal for LZ4 and ZLIB, anything a second mount of the"
 echo "          same device would show, and the writing ioctls: snapshot,"
