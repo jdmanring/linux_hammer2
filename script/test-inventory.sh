@@ -147,6 +147,45 @@ for f in $tests; do
 		fail=$((fail+1)); }
 done
 
+# The fourth population is the runner behind each runnable file under test/,
+# and it exists because the check above cannot see one. A name in a document
+# or a gate says the file is ACCOUNTED FOR, never that anything RUNS it, and
+# three exercisers in three milestones were cited by a document with no
+# runner at all: the fallocate one at 0.9.37, the fiemap one at 0.9.39 and
+# test/getdents-resume.c at 0.9.40. Each was found by a hand sweep, which is
+# why the class kept recurring; this is that sweep as a gate.
+#
+# Every .c under test/ that is not built by another repository must appear
+# in script/*.sh somewhere other than a comment, which is where a run, a
+# compile or a read of it lives. The two files compiled by Saxum through
+# LINUX_HAMMER2 are named here and skipped, because neither a search of this
+# tree nor this gate can see that consumer; README.testing.md holds that
+# contract. Everything else under test/ is data a gate reads by path (the
+# fixture manifests), a header reached through -I (test/stub), or a fixture
+# whose path is built rather than named, so a .c is the right population and
+# asserting it is non-empty is what keeps a sweep that matched nothing from
+# passing.
+FOREIGN_C="test/crc32c-vectors.c test/xxh64-vectors.c"
+nrun=0
+for f in $(find "$TESTDIR" -name '*.c' | LC_ALL=C sort); do
+	case " $FOREIGN_C " in *" $f "*) continue;; esac
+	nrun=$((nrun+1))
+	# A commented-out mention reads the same as a live one, so comments are
+	# stripped first. The invocation itself is what remains.
+	command grep -h -F -- "$(basename "$f")" script/*.sh 2>/dev/null |
+	    command grep -vE '^[[:space:]]*#' > /dev/null || {
+		echo "  FAIL $f: no script compiles, runs or reads it, so"
+		echo "        nothing here exercises it and its output is a"
+		echo "        memory of a run rather than a reading. Wire it into"
+		echo "        a gate, or name it in \$FOREIGN_C above if a"
+		echo "        consumer outside this repository builds it."
+		fail=$((fail+1)); }
+done
+[ "$nrun" -ge 8 ] || {
+	echo "  FAIL: only $nrun runnable .c file(s) under $TESTDIR were checked,"
+	echo "        so the runner sweep matched far less than it should"
+	fail=$((fail+1)); }
+
 # The third population is the gate count itself, stated in prose by five
 # documents and derived by nothing. At 0.1.10 three gates existed that no
 # document mentioned, and adding a seventh on 2026-08-26 falsified the word

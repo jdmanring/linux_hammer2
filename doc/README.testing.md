@@ -10,7 +10,7 @@ twice.
 
 | gate | reads | needs |
 |---|---|---|
-| `test-inventory.sh` | the three lists that claim to cover `src/`, every file under `test/`, the `DEFER` ledger and the `XXX` table | sh, grep, git |
+| `test-inventory.sh` | the lists that claim to cover `src/`, every file under `test/`, the runner behind each runnable file under `test/`, the `DEFER` ledger and the `XXX` table | sh, grep, git |
 | `test-citations.sh` | every `file:line` in a table under `doc/` or `doc/history/` resolves, and the named symbol is on the line | sh, grep |
 | `test-history.sh` | every changelog row's commit resolves with a matching subject, no two rows share a version, and every document stating the tree's current version names the newest row | git with full history |
 | `test-provenance.sh` | every file under `src/` has an origin row, and a carried file is re-checked with `cmp` | sh, git |
@@ -316,6 +316,22 @@ the count passed and the list a future reader would run was short by the
 newest gate.
 What none of them can check is whether a row's CLAIM is true; that takes a
 person reading the artifact the row names.
+
+It has a third population, added because the second could not see this
+one: the RUNNER behind each runnable file under `test/`. Being named by a
+document and being run are two properties, and the second population only
+gates the first, which is how three exercisers in three milestones came to
+have a reading published with nothing running the file that produced it:
+the fallocate one at 0.9.37, the fiemap one at 0.9.39, and
+`test/getdents-resume.c` at 0.9.40. Each was found by a hand sweep, so the
+class kept recurring; the gate is that sweep. Every `.c` under `test/`
+must appear in `script/*.sh` outside a comment, which is where a run, a
+compile or a read of it lives. The two files compiled by Saxum through
+`LINUX_HAMMER2` are named in the gate and skipped, because neither a
+search of this tree nor the gate can see that consumer. The population is
+asserted at eight or more, so a sweep that matched almost nothing cannot
+report clean, and a planted `.c` with no runner fails it in both
+directions.
 
 `test-syntax.sh --selftest` and `test-checkpatch.sh --selftest` check the
 two prints that separate a loosened run from a real one: the override
