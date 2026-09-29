@@ -3888,3 +3888,110 @@ sweep for what runs a file, searched in this repository only, concludes
 consuming the port. Three of Saxum's gates reach this tree through
 `LINUX_HAMMER2`; this one does not, so it belongs in the record as an
 instrument over the protocol rather than as a gate over the file.
+
+## The extent map and the freeze, and the count that nothing ran
+
+`->fiemap` and `->freeze_fs`/`->unfreeze_fs` are Linux VFS operations
+with no counterpart in the three BSD ports, so neither has an upstream
+arrangement to compare against and the contract for both is the kernel's
+own, read from `fs/ioctl.c` and `fs/open.c`. Both landed together at
+0.9.38. FIEMAP had returned `EOPNOTSUPP` from `fs/ioctl.c` because no
+`->fiemap` was registered, and `filefrag(8)` was told nothing about where
+a file's blocks are. The port already had the mapping: `hammer2_xop_bmap()`
+answers "does a chain cover this offset" one logical block at a time,
+which is what `SEEK_DATA` and `SEEK_HOLE` reach through, so
+`hammer2_fiemap()` walks the file a block at a time on the same call,
+skips the offsets the XOP reports as holes, and coalesces the runs of
+data into extents carrying the real `data_off`. It sets
+`FIEMAP_EXTENT_MERGED` and no encoded flag, because the XOP returns the
+offset alone and nothing in the call can tell whether the block is
+compressed.
+
+The freeze vops cancel the port's own syncer, `MPTOPMP(sb)->sync_work`,
+which is the one writer a VFS freeze cannot see because it runs from a
+workqueue rather than from a task the freeze blocks; `->unfreeze_fs`
+schedules it again unless the mount is read-only.
+
+**The freeze vops were written, wedged a volume, were withdrawn, and
+were restored the same day.** The first exerciser wrote to the frozen
+filesystem and then called the thaw from the same process, and a write
+on a frozen filesystem blocks until the thaw, so the process deadlocked
+itself in `D` state and never reached its own thaw. The vop was
+condemned on the strength of that, and the withdrawal's source comment
+named a lock order as the cause. Neither held up. Four probes on the
+withdrawn build, on `h2debug-rc4` against a 2 GiB HAMMER2 volume:
+
+| probe | reading |
+|---|---|
+| freeze and thaw alone, no I/O across them | both return, 10 of 10 iterations |
+| a write while frozen, thawed by another process | the write BLOCKS and the cross-process thaw releases it |
+| an unlink while frozen, thawed by another process | the unlink BLOCKS and the cross-process thaw releases it |
+| freeze and unlink in one process, thawed from another | does NOT wedge |
+
+The fourth probe is the shape that had wedged, run cross-process, and it
+completed. The defect was the exerciser's. The lock-order cause the
+withdrawal comment named was never reproduced by any probe and is
+recorded in `hammer2_vfsops.c` as a defect of the comment rather than
+deleted, because a cause written into a source comment without being
+measured is its own defect and it stood in four documents for the length
+of the withdrawal.
+
+**The measurement.** `test/hammer2-fiemap.c` against a live HAMMER2
+mount on `h2debug-rc4`, with every blocking call in a child so the thaw
+is always reached by the parent that cannot block: 11 checks, 0
+failures. The file opens its own hole with a sparse seek, asserts
+against `st_blocks` that the hole is real before asking, then compares
+the returned map against the shape it built. `filefrag -v`, a real
+consumer rather than the exerciser reading itself, reports the same map
+on the same media: extent 0 at block 0, extent 1 at block 2, the hole at
+block 1 correctly absent, physical offsets 2244 and 2245, and 1 extent
+for a dense file. `tmpfs` refuses FIEMAP outright, measured
+`EOPNOTSUPP`.
+
+**The defect the record is here for: the count had no instrument.**
+That 11-checks figure was written into the 0.9.38 row of `CHANGELOG.md`
+and into `doc/readiness-audit-2026-09-25.md`, and no script in this
+repository ran `test/hammer2-fiemap.c`. `test-inventory.sh` reads the
+reference-control table in `doc/README.testing.md` and the file list
+under `test/`, so it knows a file is NAMED by a document and never that
+anything RUNS it. This is the second time in two milestones: 0.9.37 put
+the fallocate exerciser into `test/` and wired it into `test-enospc.sh`
+for exactly this reason, and 0.9.38 recreated the gap with a new file.
+`test/hammer2-fiemap.c` now runs in `test-enospc.sh` on the same volume
+and on the same terms as the seek, dedup and fallocate exercisers beside
+it, and its output prefix moved from `fm-` to `fiemap-` so the gate can
+read it.
+
+**Wiring it exposed a second defect, in the assertion.** The gate counts
+the exerciser the way it counts the three beside it: fail if no check
+ran, fail if any failed. Both are satisfied by a filesystem that
+answered nothing. Run against `tmpfs` on the host, which refuses FIEMAP
+and FIFREEZE, the exerciser prints:
+
+    fiemap-ok   the file is sparse: 16 blocks for 12288 bytes
+    fiemap-skip FIEMAP refused with errno 95
+    fiemap-checks 1
+    fiemap-failures 0
+    fiemap-skipped 1
+
+One check, zero failures, from a volume that refused everything, because
+the assertion that the file is really sparse runs before the call it is
+controlling. The count is what separates an answer from a refusal here,
+so the gate pins it at eleven and fails any other value, in either
+direction. The general rule this is an instance of: where the subject
+can DECLINE rather than fail, the failure count cannot carry the
+verdict, because refusal and success both print zero.
+
+**The run of record.** `H2_FIXTURE_START=1 KDIR=~/kernels/linux-7.3-rc4
+bash script/test-enospc.sh` on `artix-s6-kde`, twice, once before the
+count was pinned and once after. Both reported `fiemap` 11 checks and 0
+failed beside seek 12, dedup 3 and fallocate 12, all at zero, with
+`fiemap-failures 0` and `fiemap-skipped 0`; the fill completed 2G with 0
+failures, `oops 0`, `kernel warnings 0` after the module loaded, and the
+unmount and the module unload clean. The first of the two is what showed
+the format strings still emitting `fm-failures` after the prefix rename,
+since the remote filter dropped the line and the gate read the missing
+value as zero: the rename had matched only the quoted literals, and the
+three multi-line `printf`s spelled the old prefix inside a string that
+begins with a newline.
+
