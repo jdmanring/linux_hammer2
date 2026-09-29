@@ -2071,6 +2071,47 @@ hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return (0);
 }
 
+/*
+ * Linux: freeze and thaw (FIFREEZE/FITHAW, fsfreeze(8)) are NOT carried,
+ * and this comment is the record of why, because the absence is
+ * deliberate and the first implementation wedged a volume.
+ *
+ * The first version registered ->freeze_fs as
+ * cancel_delayed_work_sync(&pmp->sync_work) and returned 0, on the
+ * reasoning that the port's own syncer is the one writer the VFS cannot
+ * freeze out.  Loaded on 2026-09-29 and driven with FIFREEZE, the volume
+ * became unusable: the exerciser's unlink and a subsequent `fsfreeze -u`
+ * both sat in D state and the guest had to be reset.
+ *
+ * HOW MUCH OF THAT IS THIS VOP IS NOT YET ESTABLISHED, and the next
+ * reader should treat it as an open question with a named resolution
+ * rather than as a settled cause.  The exerciser that provoked it had a
+ * defect of its own that alone explains the first hang: its cleanup
+ * unlinked the test file on every path including the one taken while the
+ * filesystem was still frozen, and unlink on a frozen filesystem takes a
+ * freeze write reference and waits, so the exerciser blocked in D state
+ * on its own cleanup and never reached its thaw.  That much is certain
+ * from its source.  Why the separate `fsfreeze -u` process also sat in D
+ * state is NOT explained by that, and the leading candidate is a lock
+ * order around this vop: freeze_super() holds s_umount exclusively while
+ * it calls ->freeze_fs, and hammer2_sync_work() holds s_umount shared
+ * across sync_filesystem(), so a syncer already inside that call cannot
+ * be canceled to completion from under the exclusive hold.  That is a
+ * hypothesis from reading the two sites, not a measurement, and it is
+ * named here so the next attempt starts by testing it instead of
+ * rewriting this comment.
+ *
+ * DEFER(a freeze-aware syncer, then this vop): ->freeze_fs and
+ * ->unfreeze_fs, which no BSD port carries either.  The resolution is a
+ * change to hammer2_sync_work()'s locking rather than to these vops: the
+ * syncer must either not hold s_umount across the sync or must decline
+ * to run while the filesystem is frozen, and either one touches the
+ * unmount and sync paths the fleet runs exercise, which is why it is not
+ * done blind.  What a caller sees meanwhile is the kernel's own answer
+ * to a missing vop: ioctl_fsfreeze() returns EOPNOTSUPP, so fsfreeze(8)
+ * reports that the filesystem does not support freeze rather than
+ * appearing to work.
+ */
 static const struct super_operations hammer2_sops = {
 	.evict_inode	= hammer2_evict_inode,
 	.statfs		= hammer2_statfs,		/* Linux */

@@ -69,6 +69,7 @@
 #include <linux/writeback.h>	/* Linux: writeback_iter */
 #include <linux/falloc.h>	/* Linux: FALLOC_FL_MODE_MASK, fallocate(2) */
 #include <linux/folio_batch.h>	/* Linux: the siblings of a split block */
+#include <linux/fiemap.h>	/* Linux: fiemap_prep, fiemap_fill_next_extent */
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
@@ -1860,6 +1861,121 @@ const struct address_space_operations hammer2_file_aops = {
 };
 
 /*
+ * Linux: fiemap, the extent map ioctl (FIEMAP).  No BSD port has it, and
+ * the three that carry a seek ioctl answer FIOSEEKDATA/FIOSEEKHOLE
+ * instead, which is where ->llseek above comes from.  It is what
+ * filefrag(8), lvm, and a defragmenter read to learn where a file's
+ * blocks are.
+ *
+ * WHAT IT CAN HONESTLY SAY.  The carried bmap XOP answers ENOENT for an
+ * offset no chain covers, so a hole is exactly what ->llseek already
+ * calls one: the same question, asked a block at a time.  Two things a
+ * reporting filesystem must not do here, and this does neither: it must
+ * not report a hole as an extent, and it must not invent a physical
+ * address it does not have.  A hole is skipped, and each extent carries
+ * the block's real data_off with FIEMAP_EXTENT_MERGED, since two
+ * adjacent logical blocks are two allocations and the caller is being
+ * told a physical run, not that the run was allocated together.
+ *
+ * WHAT IT CANNOT SAY.  A compressed block's stored length is not its
+ * logical block size, and the bmap XOP returns the physical offset alone,
+ * with no length and no compression flag.  So fe_length here is the
+ * logical block size, which is what the data occupies in the file, and
+ * no FIEMAP_EXTENT_ENCODED is set, because nothing in this call can tell
+ * whether a block is compressed.  The alternative was to refuse the
+ * ioctl outright; reporting the logical length is what a caller can use
+ * and is flagged in this comment as the weaker of the two answers rather
+ * than dressed up as exact.  A caller that needs the stored length asks
+ * the media, which is what `fsck_hammer2` does.
+ *
+ * A whole-file walk is O(blocks), which is what every non-iomap
+ * filesystem in the tree does for this call (nilfs2 and ext2 walk
+ * block by block as well), and FIEMAP_MAX_EXTENTS from the caller bounds
+ * how much of it is returned.
+ */
+static int
+hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
+	u64 start, u64 len)
+{
+	u64 isize = i_size_read(inode);
+	hammer2_off_t poff = 0;
+	u32 bsize = i_blocksize(inode);
+	u64 logical, end;
+	u64 run_start = 0, run_phys = 0, run_len = 0;
+	int error, ret;
+
+	error = fiemap_prep(inode, fieinfo, start, &len, 0);
+	if (error)
+		return (error);
+
+	if (start >= isize)
+		return (0);
+	if (start + len > isize)
+		len = isize - start;
+	end = start + len;
+
+	/*
+	 * Walk one logical block at a time from the first block at or after
+	 * start.  A block whose XOP answer is any error other than ENOENT is
+	 * a real failure and is reported; ENOENT is a hole, which is skipped
+	 * rather than reported, and it also ends any run being accumulated.
+	 */
+	for (logical = start; logical < end; logical += bsize) {
+		int hole;
+
+		error = hammer2_bmap_lbn(inode, logical >> inode->i_blkbits,
+		    &poff);
+		if (error != 0 && error != ENOENT) {
+			/* A real error: flush what is accumulated, then fail. */
+			if (run_len) {
+				ret = fiemap_fill_next_extent(fieinfo,
+				    run_start, run_phys, run_len,
+				    FIEMAP_EXTENT_MERGED);
+				if (ret < 0)
+					return (ret);
+			}
+			return (-error);
+		}
+		hole = (error == ENOENT);
+
+		if (hole || (run_len && poff != run_phys + run_len)) {
+			/*
+			 * A hole, or a physical discontinuity: the run ends
+			 * here.  Emit it and start over.
+			 */
+			if (run_len) {
+				ret = fiemap_fill_next_extent(fieinfo,
+				    run_start, run_phys, run_len,
+				    FIEMAP_EXTENT_MERGED);
+				if (ret < 0)
+					return (ret);
+				if (ret > 0)
+					return (0);	/* array full */
+				run_len = 0;
+			}
+			if (hole)
+				continue;
+		}
+		if (run_len == 0) {
+			run_start = logical;
+			run_phys = poff;
+		}
+		run_len += bsize;
+	}
+
+	/* The run still open at the end of the range. */
+	if (run_len) {
+		ret = fiemap_fill_next_extent(fieinfo, run_start, run_phys,
+		    run_len, FIEMAP_EXTENT_MERGED |
+		    (end >= isize ? FIEMAP_EXTENT_LAST : 0));
+		if (ret < 0)
+			return (ret);
+	}
+
+	return (0);
+}
+
+/*
  * A regular file's inode operations.  The VFS reads size, mode, owner
  * and times out of the inode itself, which hammer2_igetv() fills, so
  * stat needs nothing here; setting them, and the size, is ->setattr.
@@ -1913,6 +2029,7 @@ hammer2_getattr(struct mnt_idmap *idmap, const struct path *path,
 const struct inode_operations hammer2_file_iops = {
 	.setattr	= hammer2_vop_setattr,
 	.getattr	= hammer2_getattr,		/* Linux */
+	.fiemap		= hammer2_fiemap,		/* Linux */
 };
 
 /*
