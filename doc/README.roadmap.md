@@ -12,13 +12,23 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.38 is `->fiemap` and `->freeze_fs`/
-`->unfreeze_fs`, both measured together at 11 checks and 0 failures on a
-live mount, with `filefrag -v` reading the same map the port reports. The
-freeze vops were withdrawn on the day they were first driven and restored
-the same day, because the wedge that condemned them was the test's: it
-blocked in a write on the frozen filesystem from the process that had to
-thaw it, and could never reach its own thaw. 0.9.37 is the
+0.5 to 0.9 are met. 0.9.39 is the instrument for the two operations
+0.9.38 delivered: `->fiemap` and the freeze vops had their counts, eleven
+checks and zero failures, published in the changelog and the readiness
+audit while no script in this tree ran the file that produced them, and
+`test/hammer2-fiemap.c` now runs in `test-enospc.sh` beside the seek,
+dedup and fallocate exercisers. The gate pins the count at eleven rather
+than accepting a non-zero one, because a volume that refuses FIEMAP and
+FIFREEZE answers one check and zero failures, the assertion that the
+file is really sparse running before the call it controls, so the failure
+count alone cannot tell an answer from a refusal. 0.9.38 is `->fiemap`
+and `->freeze_fs`/`->unfreeze_fs`, both measured together at 11 checks
+and 0 failures on a live mount, with `filefrag -v` reading the same map
+the port reports. The freeze vops were withdrawn on the day they were
+first driven and restored the same day, because the wedge that condemned
+them was the test's: it blocked in a write on the frozen filesystem from
+the process that had to thaw it, and could never reach its own thaw.
+0.9.37 is the
 instrument for the operation 0.9.36
 fixed: the exerciser whose 12-checks figure both this tree and the
 readiness audit published lived outside the repository, so the number
@@ -100,7 +110,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.38
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.39
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
