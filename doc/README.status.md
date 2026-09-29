@@ -24,7 +24,8 @@ reading 14160919 on a build with its guard removed and 0 with it.
 | one large file | on the release build of the kernel of record, writes at twice the rate of ext4 and btrfs and reads at six times the rate of DragonFly's own kernel on the same volume, every block verified on its own CPU; every reading before 2026-09-07 was the debug kernel's | `throughput.sh` |
 | space a remove does not free | the bulkfree scan frees it | `bulkfree.sh` |
 | a device in error | `hpanic` marks the device and returns; the writer is told `EIO`, the mount goes read-only, the media stays at the last good sync | `hpanic-contain.sh` |
-| where a file's data is, and what it occupies | `SEEK_DATA` and `SEEK_HOLE` answer the whences of `lseek(2)` and `->bmap` is registered, so a sparse file copies and archives as one; `st_blocks` is recomputed on every stat, so a file that grew in the mount reports what it holds, on a regular file and a symlink alike | `test-enospc.sh` |
+| where a file's data is, and what it occupies | `SEEK_DATA` and `SEEK_HOLE` answer the whences of `lseek(2)` and `->bmap` is registered, so a sparse file copies and archives as one; `st_blocks` is recomputed on every stat, so a file that grew in the mount reports what it holds, on a regular file and a symlink alike; `->fiemap` answers FIEMAP from the same bmap XOP, so `filefrag -v` reads this port's layout and reports the hole as a gap | `test-enospc.sh`, `test/hammer2-fiemap.c` |
+| a filesystem freeze | `fsfreeze(8)` freezes and thaws (`->freeze_fs`/`->unfreeze_fs`), canceling the port's own syncer while frozen; a write to a frozen volume blocks and is released by the thaw | `test/hammer2-fiemap.c` |
 | two files holding the same data | the second copy points at the first one's media; a 4 MiB duplicate cost 2 blocks against the first copy's 64, with `tmpfs` and `btrfs` charging it full price as the control | `test-enospc.sh` |
 
 Every row above was measured, and the measurements are in

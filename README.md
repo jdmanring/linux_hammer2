@@ -37,7 +37,8 @@ At a glance, on a kernel of 7.3 or newer:
   snapshots and writes into them, a filesystem across two volumes,
   PFS create, delete and list through `hammer2-utils`,
   LZ4 and ZLIB media, deduplication, crash recovery to the same tree as the FreeBSD port,
-  `SEEK_DATA` and `SEEK_HOLE` so a sparse file copies and archives as one
+  `SEEK_DATA` and `SEEK_HOLE` so a sparse file copies and archives as one, `FIEMAP`
+  so `filefrag` reads the layout, and a freeze `fsfreeze` can drive
 + works with a caution: a volume filled to capacity refuses the fill and
   keeps every accepted file whole, after seven defects in that path were
   found and fixed; read the paragraph on it below before trying it. A
