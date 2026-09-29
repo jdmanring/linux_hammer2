@@ -237,7 +237,9 @@ for, which is the usual case on a development machine:
 Three build knobs, the same three the FreeBSD and NetBSD ports carry:
 `HAMMER2_INVARIANTS` turns on `KKASSERT` and `KASSERTMSG`,
 `HAMMER2_MALLOC` turns on the allocation leak counters, and
-`HAMMER2_ATIME` turns on atime updates. Pass them on the `make` line.
+`HAMMER2_ATIME` reports the stored access time instead of returning the
+modification time in its place, which is what the format's own default
+does. Pass them on the `make` line.
 
 ## Install
 

@@ -828,7 +828,24 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 	inode_set_ctime_to_ts(inode, ts);
 	hammer2_time_to_timespec(ip->meta.mtime, &ts);
 	inode_set_mtime_to_ts(inode, ts);
+	/*
+	 * Linux, and the same gate the three BSD ports carry.  HAMMER2 does
+	 * not maintain atime: DragonFly reports the mtime in its place and
+	 * has its set path under an `if 0`, marked atime not supported, and
+	 * the FreeBSD, NetBSD and OpenBSD ports default to the same
+	 * substitution, reporting the stored atime only when HAMMER2_ATIME
+	 * is defined.  The knob was defined by this port's Makefile and
+	 * read by no source file, so it turned nothing on and the stored
+	 * atime was reported unconditionally, which is a divergence from
+	 * the origin tree rather than the port's own choice.  The set path
+	 * above stays ungated, as in the three ports: a `utimes(2)` is
+	 * stored either way, and only the reading of it is gated.
+	 */
+#ifdef HAMMER2_ATIME
 	hammer2_time_to_timespec(ip->meta.atime, &ts);
+#else
+	hammer2_time_to_timespec(ip->meta.mtime, &ts);
+#endif
 	inode_set_atime_to_ts(inode, ts);
 
 	/*

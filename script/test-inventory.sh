@@ -186,6 +186,30 @@ done
 	echo "        so the runner sweep matched far less than it should"
 	fail=$((fail+1)); }
 
+# The fifth population is the build knobs. Every -D the Makefile passes must
+# be read by a source file, because a knob that is defined and read by
+# nothing is a documented no-op: HAMMER2_ATIME was defined, described in
+# ARCHITECTURE.md, CLAUDE.md and README.md as turning atime updates on, and
+# referenced by no line of C in the tree, so it changed nothing and the
+# stored atime was reported whether it was set or not. No compile can catch
+# this, because a knob that gates nothing compiles both ways; the gate is
+# the reference count. The population is asserted non-empty so a Makefile
+# whose -D lines moved cannot make this check vacuous.
+knobs=$(command grep -oE '^ccflags-y \+= -D[A-Z_0-9]+' "$MK" |
+    sed 's/.*-D//' | LC_ALL=C sort -u)
+nk=$(printf '%s\n' "$knobs" | command grep -c . || true)
+[ "${nk:-0}" -ge 3 ] || {
+	echo "  FAIL: only ${nk:-0} build knob(s) were read from $MK, so this"
+	echo "        sweep matched far less than the Makefile defines"
+	fail=$((fail+1)); }
+for k in $knobs; do
+	command grep -rq "$k" "$DIR"/*.c "$DIR"/*.h 2>/dev/null || {
+		echo "  FAIL $k: $MK defines it and no source file reads it, so"
+		echo "        the knob is a documented no-op. Gate something with"
+		echo "        it, or stop defining and documenting it."
+		fail=$((fail+1)); }
+done
+
 # The third population is the gate count itself, stated in prose by five
 # documents and derived by nothing. At 0.1.10 three gates existed that no
 # document mentioned, and adding a seventh on 2026-08-26 falsified the word
