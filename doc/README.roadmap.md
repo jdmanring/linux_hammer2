@@ -12,7 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.40 is the third instrument wired to the tree that
+0.5 to 0.9 are met. 0.9.41 moved the rc5 pin, which had reached the
+verification record and the testing document while eight others still named
+rc4, the pre-push tree search among them, so the check that builds the
+module before a push would have built it against the retired candidate.
+0.9.40 is the third instrument wired to the tree that
 cites it: `test/getdents-resume.c` drives `->iterate_shared` across calls,
 which one `ls` cannot reach, and its row said the fleet's fixture run was
 the check while nothing built or ran it. It runs in `test-fixtures.sh` on
@@ -121,7 +125,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.40
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.41
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
