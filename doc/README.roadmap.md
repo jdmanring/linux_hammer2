@@ -12,7 +12,11 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.41 moved the rc5 pin, which had reached the
+0.5 to 0.9 are met. 0.9.42 widened the style gate's search for a checker to
+`$HOME/kernels`, the one place its own testing document puts the trees of
+record and the one place the gate did not look, so its default run could
+refuse the host's 7.2 checker on a machine that held 7.3. 0.9.41 moved the
+rc5 pin, which had reached the
 verification record and the testing document while eight others still named
 rc4, the pre-push tree search among them, so the check that builds the
 module before a push would have built it against the retired candidate.
@@ -125,7 +129,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.41
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.42
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
