@@ -4198,5 +4198,44 @@ gates are green: inventory 15 source files and 0 findings, syntax 65 checks
 checks 0 failed, provenance 32 checks 0 findings. The pre-push tree search
 selects `~/kernels/linux-7.3-rc5`.
 
+## The style gate could not see the tree of record, and said otherwise
+
+Asking whether the documentation was current turned up a gate whose default
+run did not do what `doc/README.status.md` says it does. The document
+claims, of the state with no environment variables set, that "the syntax
+gate finds that tree, and the style gate finds its `checkpatch.pl`", and on
+this machine only the first half held: `test-syntax.sh` reported 65 checks
+0 failed against rc5 while `test-checkpatch.sh` exited 2 refusing the host's
+7.2 checker.
+
+**The cause is a search list that was extended once and not twice.** Both
+gates look for the kernel of record when `KDIR` is unset. The syntax gate
+searches the host's build tree, `H2_KERNEL_TREES`, `$HOME/kernels/*/` and
+the Nix store. The style gate searched the host's build tree and the store,
+skipping `$HOME/kernels`, which is where `doc/README.testing.md` says the
+trees of record are. The gate's own comment records the first half of this
+class: it once looked only at the host tree and was widened to the store
+because "the kernel the port targets sat in the store with a
+`checkpatch.pl` in it". `$HOME/kernels` is the same defect one candidate
+further down, and it is the location this repository's own document names,
+so the machine most likely to run the gate is the one it could not help.
+
+**Not a wrong verdict, a missing instrument.** The refusal is correct: 7.2's
+checkpatch is not the checker the baseline records, and attributing this
+code's deviation set to it would be wrong. Nothing was mis-measured. What
+was wrong is that the documented unattended run did not happen.
+
+**The correction, measured.** The candidate list gains the
+`H2_KERNEL_TREES` directories and `$HOME/kernels/*/scripts/checkpatch.pl`,
+in the same shape the syntax gate uses. With no environment variables
+`bash script/test-checkpatch.sh` now reports the deviation set unchanged at
+1145 and identifies the checker as the one the baseline records, by
+`sha256`, derived from `$HOME/kernels/linux-7.3-rc5`; exit 0. The negative
+control still refuses: pointed at the host's 7.2 checker alone it prints
+COULD-NOT-RUN and exits 2, so the widening did not turn a refusal into a
+pass. `--selftest` passes at 1 check 0 failed, a 7.3 checker reachable only
+through `H2_KERNEL_TREES` is found with `$HOME` empty, and an explicit
+`CHECKPATCH` still wins.
+
 
 

@@ -77,6 +77,15 @@ fi
 # store with a checkpatch.pl in it. A nixpkgs kernel dev output keeps the
 # script under source/scripts; build/scripts holds gdb helpers.
 #
+# The store was one half of the class and `$HOME/kernels` was the other, and
+# only the syntax gate got both. That gate searches `$HOME/kernels/*/` and
+# the store; this one searched the host tree and the store, so on a machine
+# whose trees of record live under `$HOME/kernels`, which is where
+# `doc/README.testing.md` says they are, the syntax gate found 7.3 and this
+# gate refused the host's 7.2: the documented state "the syntax gate finds
+# that tree, and the style gate finds its checkpatch.pl" was false here.
+# `H2_KERNEL_TREES` is read for the same reason it is read there.
+#
 # The candidate whose sha256 matches the baseline wins, being the checker the
 # recorded deviation set was produced with and the only one whose disagreement
 # is attributable to this code. Otherwise the first that exists, with its
@@ -94,6 +103,8 @@ else
 	refver=$(sed -n '1s/.*linux \(v[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$base" 2>/dev/null)
 	CP=""; cpsrc=""; cpver_cand=""
 	for cand in "${KDIR:-/lib/modules/$(uname -r)/build}/scripts/checkpatch.pl" \
+		$(IFS=:; for d in ${H2_KERNEL_TREES:-}; do echo "$d/scripts/checkpatch.pl"; done) \
+		$(ls "$HOME"/kernels/*/scripts/checkpatch.pl 2>/dev/null | sort -V -r) \
 		$(ls /nix/store/*-linux-*-dev/lib/modules/*/source/scripts/checkpatch.pl 2>/dev/null | sort -V -r); do
 		[ -f "$cand" ] || continue
 		[ -z "$CP" ] && { CP=$cand; cpsrc="first found, version unmatched"; }
