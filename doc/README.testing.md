@@ -815,7 +815,7 @@ compares the module's vermagic with the guest's release and reports
 COULD-NOT-RUN naming both. A verdict reached against the wrong kernel is
 an artifact of the setup and not a finding about the code.
 
-    KDIR=~/kernels/linux-7.3-rc4 H2_FIXTURE_START=1 \
+    KDIR=~/kernels/linux-7.3-rc5 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
 Measured on 2026-09-04: eleven images, 43 files, 34 stat rows, 5 statfs
@@ -892,9 +892,10 @@ DragonFly writes, then is shut down, then Linux reads.
 
 The Linux guest's kernel is plain mainline 7.3 at the candidate the
 kernel of record names, built on the host and copied into the guest by
-hand: 7.3.0-rc1 from `~/kernels/linux-7.3-rc1` until 2026-09-26, and
-7.3.0-rc4 from `~/kernels/linux-7.3-rc4`, the tree `KDIR` names, since.
-Both stay installed and the grub default chooses between them, so a
+hand: 7.3.0-rc1 from `~/kernels/linux-7.3-rc1` until 2026-09-26, then
+7.3.0-rc4 from `~/kernels/linux-7.3-rc4`, and 7.3.0-rc5 from
+`~/kernels/linux-7.3-rc5`, the tree `KDIR` names, since 2026-09-29.
+All stay installed and the grub default chooses between them, so a
 reading in `doc/history/verification-record.md` taken on that guest
 names the build it ran on, and one dated before 2026-09-26 was taken on
 rc1. Its configuration is the tarball's default plus the
@@ -911,12 +912,14 @@ beside the readings it first appears in.
 
 A second build of the same source sits beside it in the guest since
 2026-09-07, the release build: `7.3.0-rc1-release` from
-`~/kernels/linux-7.3-rc1-release`, and `7.3.0-rc4-release` from
-`~/kernels/linux-7.3-rc4-release` since 2026-09-26, the same
+`~/kernels/linux-7.3-rc1-release`, `7.3.0-rc4-release` from
+`~/kernels/linux-7.3-rc4-release` since 2026-09-26, and
+`7.3.0-rc5-release` from `~/kernels/linux-7.3-rc5-release` since
+2026-09-29, the same
 configuration with every debug option off, chosen at boot by the grub
 default, which `setkernel.sh` on the guest rewrites. A third build,
-`7.3.0-rc4-kasan` from `~/kernels/linux-7.3-rc4-kasan`, sits beside
-them since 2026-09-26: the debug configuration plus `KASAN` inline with
+`7.3.0-rc5-kasan` from `~/kernels/linux-7.3-rc5-kasan`, sits beside
+them: the debug configuration plus `KASAN` inline with
 `KASAN_VMALLOC`, `UBSAN` with the bounds, shift, bool and enum checks,
 `DEBUG_ATOMIC_SLEEP`, `DEBUG_LIST`, `DEBUG_VM`, `DEBUG_OBJECTS` and the
 fault injection framework with `FAILSLAB`, `FAIL_PAGE_ALLOC` and

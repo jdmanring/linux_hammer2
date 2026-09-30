@@ -4102,14 +4102,36 @@ superblock leaves the instance list under concurrent mount, and the port
 registers no mount-time walk of that list.
 
 **What is not done, and is the next step rather than a claim.** The tree
-of record for the guest and for the instruments is still rc4
-(`doc/README.testing.md` names `~/kernels/linux-7.3-rc4` and the guest's
-three builds are `h2debug-rc4`, `h2release-rc4`, `h2kasan-rc4`). Advancing
-the guest means rebuilding and reinstalling those kernels on
-`artix-s6-kde`, which changes the machine every reading after it is taken
-on, so it is a deliberate act with a build behind it rather than a
-document edit. Until it is done, a fleet reading is a reading on rc4 and
-this section is the only rc5 result there is.
+of record for the guest and for the instruments was rc4
+(`doc/README.testing.md` named `~/kernels/linux-7.3-rc4`), and this
+section first recorded only that rc5 compiles. The guest was then
+advanced, because a build-clean candidate is not a reading: rc5 was
+built in the debug, release and kasan configurations with rc4's exact
+configs carried forward, the three module trees and kernel images were
+installed on `artix-s6-kde` beside rc1 and rc4, the mkinitcpio presets
+and initramfs images were made, the grub default was pinned to
+`h2debug-rc5` and the guest rebooted onto it.
+
+**The run of record.** `uname -r` reads `7.3.0-rc5`, `uname -v`
+`#1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026`, lockdep reports
+`debug_locks: 1` and kmemleak is present, so the debug configuration
+carried. `KDIR=~/kernels/linux-7.3-rc5 bash script/test-enospc.sh`
+against the rc5 guest:
+
+    ok    seek 12 check(s) on a live mount, 0 failed
+    ok    dedup 3 check(s) on a live mount, 0 failed
+    ok    fallocate 12 check(s) on a live mount, 0 failed
+    ok    fiemap 11 check(s) on a live mount, 0 failed
+    oops 0
+    kernel warnings 0 after the module loaded
+    enospc: filled 2G, 0 failure(s)
+
+Identical to the rc4 reading, every count. `script/build-check.sh`
+against the rc5 tree links the module warning-clean, so the port is
+current on the candidate the kernel of record names, and the candidate
+is now the tree `KDIR` points at by default in the docs. The rc4 trees
+and kernels remain installed, and `setkernel.sh` on the guest chooses
+between them, so an rc4 reading can still be repeated.
 
 **The dependency check that prompted this, for the record.** Every tree
 the port carries from was read at the forge on the same day:
