@@ -4151,5 +4151,52 @@ The two host tools are current for the box: clang 22.1.8 and gcc 16.2.1,
 with Rust 1.98.1 for the userland, and `newfs_hammer2` is the
 hammer2-utils v0.5.0 build.
 
+## The rc5 pin reached the documents that name it, a step late
+
+The rc5 section above recorded the move and the run of record. The commits
+that carried it touched two files, this record and `doc/README.testing.md`,
+so every other file naming the tree of record still named rc4. The rc4 move
+on 2026-09-26 had a row in `CHANGELOG.md` for that reason, naming the files
+that had to move with it: `script/pre-push-check.sh`, which searches for a
+kernel to build the fleet gates against, and `CLAUDE.md`, which states which
+checkpatch version CI fetches. The rc5 commits moved neither.
+
+**What the stale pin controlled.** `script/pre-push-check.sh` searched
+`~/kernels/linux-7.3-rc4` first, so the pre-push check would have built the
+module against rc4 on every push while the record named rc5, which is a
+second tree of record under a different name. `.github/workflows/ci.yml`
+fetched the style checker from the `v7.3-rc4` tag. `CLAUDE.md` said CI
+fetches the v7.3-rc4 copy "pinned to the kernel of record",
+`doc/README.kernel-style.md` said v7.3-rc4 "is the version CI fetches", and
+`doc/README.porting.md` said the pin was "at rc4 on 2026-09-26": three
+present-tense statements about a pin that had moved. `doc/README.status.md`
+still said the upstream section "does not yet say whether the port was run
+against" rc5, which the run of record above had made false.
+
+**The checker fetch was stale in the tag and correct in the bytes.**
+`sha256sum` over `scripts/checkpatch.pl` at rc4 and rc5 gives the same
+value, `2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a`,
+which is the hash `doc/checkpatch-baseline.txt` records. The tag in the URL
+named a retired candidate while the bytes it fetched were the pinned
+checker, so no count was ever attributed to the wrong one. It is corrected
+because a URL naming a retired tag stops resolving when that tag is pruned,
+and because that line is what a reader takes for the pin.
+
+**The correction.** Nine files name rc5 now: the CI fetch, the pre-push tree
+search (rc5 first, rc4 and rc1 behind it so a machine holding only those
+still behaves as before), `analyze.sh`'s usage line, `CLAUDE.md`,
+`README.kernel-style.md`, `README.porting.md`, `README.capabilities.md`,
+`README.status.md`, and the baseline's name line. The baseline's counts did
+not move: 1145 before and after, the checker being the same bytes, which is
+the result the rc4 move recorded for the same reason.
+
+**Measured after.** `CHECKPATCH=~/kernels/linux-7.3-rc5/scripts/checkpatch.pl
+bash script/test-checkpatch.sh` reports the deviation set unchanged at 1145
+with the baseline naming rc5, and its `--selftest` passes. The eleven host
+gates are green: inventory 15 source files and 0 findings, syntax 65 checks
+0 failed against 7.3.0-rc5, doc-prose 34 documents 0 findings, posix 65
+checks 0 failed, provenance 32 checks 0 findings. The pre-push tree search
+selects `~/kernels/linux-7.3-rc5`.
+
 
 

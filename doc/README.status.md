@@ -3,7 +3,7 @@ Status
 
 The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
-DragonFly itself. The tree is at 0.9.40 in `CHANGELOG.md`; nothing is
+DragonFly itself. The tree is at 0.9.41 in `CHANGELOG.md`; nothing is
 tagged. What stands between it and 1.0 is the release shape and the
 filings staged under `doc/upstream/`; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
@@ -91,8 +91,13 @@ decision that will be wrong the first time a change is not harmless.
 `hammer2_disk.h` and `hammer2_ioctl.h`, the format and ioctl surfaces, have
 had no commit since the carry, which is what the format being stable looks
 like from here. The kernel of record is a separate pin and **has** moved:
-`v7.3-rc5` exists, and this section does not yet say whether the port was
-run against it.
+`v7.3-rc5` was tagged 2026-09-27 and the port was run against it on
+2026-09-29. The syntax gate reports 65 checks and 0 failed and the module
+links warning-clean against the tree, so rc5 is a build-clean candidate;
+the fixture and fill gates were then run on an rc5 guest kernel, whose
+readings are in `doc/history/verification-record.md`. The two tags carry
+the same `checkpatch.pl` byte for byte, so the style baseline moved only
+its name line.
 
 ## What has been verified
 

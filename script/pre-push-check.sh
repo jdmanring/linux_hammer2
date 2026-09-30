@@ -129,8 +129,8 @@ fi
 # the testing document says it is, so a machine without it behaves as
 # before rather than failing for a new reason.
 if [ -z "${KDIR:-}" ]; then
-	for d in "$HOME/kernels/linux-7.3-rc4" "$HOME/kernels/linux-7.3" \
-		 "$HOME/kernels/linux-7.3-rc1"; do
+	for d in "$HOME/kernels/linux-7.3-rc5" "$HOME/kernels/linux-7.3" \
+		 "$HOME/kernels/linux-7.3-rc4" "$HOME/kernels/linux-7.3-rc1"; do
 		[ -d "$d" ] && { KDIR=$d; export KDIR; break; }
 	done
 fi

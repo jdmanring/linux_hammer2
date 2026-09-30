@@ -26,7 +26,7 @@ script on the day it matters.
 
 ## The recorded deviations, and which are convertible
 
-Counts below are what `checkpatch.pl` from linux **v7.3-rc4** reports, which is
+Counts below are what `checkpatch.pl` from linux **v7.3-rc5** reports, which is
 the version `doc/checkpatch-baseline.txt` names in its first line and the
 version CI fetches. Its second line records that checker's `sha256`, which
 is the identity the file answers for itself: a version read off the tree a
@@ -225,7 +225,11 @@ so the baseline had to be regenerated to record which one produced it, but
 nothing about this tree reads differently to the newer one. The move from
 v7.3-rc1 to v7.3-rc4 on 2026-09-26 moved less than that: the two tags
 carry the same `checkpatch.pl` byte for byte, the same `sha256`, so only
-the baseline's name line changed and the count stayed at 1142.
+the baseline's name line changed and the count stayed at 1142. The move
+from v7.3-rc4 to v7.3-rc5 on 2026-09-29 was the same kind again: those two
+tags carry the same checker as each other, so once more only the baseline's
+name line changed and the count stayed at 1145, where the milestones below
+had left it.
 
 1118 to 1120 when the debug build gained its list of every chain and
 the print of what is left at the unload: one BSD continuation indent on

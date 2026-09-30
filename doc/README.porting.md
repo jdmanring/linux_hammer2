@@ -964,7 +964,8 @@ Saxum runs, and no fixture has ever been mounted on. The maintainer's
 ruling on 2026-09-05: a floor two releases below the features the code
 uses is not worth a second tree, so raise it when a newer facility is
 needed and stop carrying the range. 7.3 was at rc1 when this was written
-and at rc4 on 2026-09-26, the pin following each candidate, and is
+and at rc4 on 2026-09-26 and rc5 on 2026-09-29, the pin following each
+candidate, and is
 expected to be longterm; if kernel.org's release table says otherwise
 when it ships, that changes which release the pin names, not the rule.
 

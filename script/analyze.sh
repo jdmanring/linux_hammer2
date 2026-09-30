@@ -7,7 +7,7 @@
 # edited, so the reading is a candidate list to triage against the
 # origin tree, and the triage is what the verification record keeps.
 #
-#   KDIR=~/kernels/linux-7.3-rc4 bash script/analyze.sh [file...]
+#   KDIR=~/kernels/linux-7.3-rc5 bash script/analyze.sh [file...]
 #
 # Exit 2 without a kernel tree or clang. The first run, 2026-09-26, is in
 # doc/history/verification-record.md with each candidate's disposition.
