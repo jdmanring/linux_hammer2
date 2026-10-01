@@ -4133,6 +4133,23 @@ is now the tree `KDIR` points at by default in the docs. The rc4 trees
 and kernels remain installed, and `setkernel.sh` on the guest chooses
 between them, so an rc4 reading can still be repeated.
 
+**The fixture gate, a day late.** `doc/README.status.md` said the fixture
+and fill gates were both run on rc5, and only the fill gate had been. The
+fixture run was made on 2026-09-30 at `289c30a`, with
+`KDIR=~/kernels/linux-7.3-rc5 H2_FIXTURE_START=1 bash script/test-fixtures.sh`.
+The module's vermagic read `7.3.0-rc5`, and the gate refuses a run whose
+vermagic differs from the guest's `uname -r`, so the guest was on rc5:
+
+    fixtures: 11 image(s), 43 file(s), 43 block count(s), 34 stat row(s),
+              5 statfs, 2 symlink(s), 1 corrupt file(s) refused,
+              100 ioctl result(s), 8 getdents resume check(s), 0 failure(s)
+    ok   lockdep stayed enabled across every mount, read and unmount
+
+The `Input/output error` and `hammer2_chain_testcheck: failed` lines in the
+log are f9's expected refusal of a data block flipped on media, which is
+the corrupt file counted above. Every count matches the rc4 reading. The
+gate shut the guest down after the run.
+
 **The dependency check that prompted this, for the record.** Every tree
 the port carries from was read at the forge on the same day:
 
