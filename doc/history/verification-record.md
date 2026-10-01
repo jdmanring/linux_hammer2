@@ -4190,6 +4190,14 @@ still behaves as before), `analyze.sh`'s usage line, `CLAUDE.md`,
 not move: 1145 before and after, the checker being the same bytes, which is
 the result the rc4 move recorded for the same reason.
 
+**Correction, read against the commit.** `CLAUDE.md` is in that list and
+not in `2e64305`. It has been ignored by `.gitignore` and untracked since
+`81d38f9` on 2026-08-26, so its rc5 edit exists on the machine that made it
+and in no clone. The commit carries eight of the nine files above plus this
+record. The same holds for the rc4 move's claim that it updated
+`CLAUDE.md`. Neither changes a behavior: the two files that control one,
+the pre-push search and the CI fetch, are tracked and moved.
+
 **Measured after.** `CHECKPATCH=~/kernels/linux-7.3-rc5/scripts/checkpatch.pl
 bash script/test-checkpatch.sh` reports the deviation set unchanged at 1145
 with the baseline naming rc5, and its `--selftest` passes. The eleven host
