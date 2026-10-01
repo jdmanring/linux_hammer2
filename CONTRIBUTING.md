@@ -83,7 +83,8 @@ result from the wrong kernel is not a result about this code. The floor
 is the same version, stated by an `#error` in `hammer2_os.h`, and the two
 move together. Set `KDIR` to point at another tree,
 and `H2_KERNEL_REF` to check another version deliberately. `test-checkpatch.sh`
-needs `checkpatch.pl`, so point `CHECKPATCH` or `KDIR` at one.
+finds `checkpatch.pl` by the same search, so it needs the kernel of record
+present or `CHECKPATCH` pointed at one.
 
 Every gate exits 2 when the instrument itself could not run, which is
 not a failure and must not be recorded as one.

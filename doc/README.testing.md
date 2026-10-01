@@ -17,7 +17,7 @@ twice.
 | `test-absence.sh` | every "X() is not carried" and "->method is not written" claim resolves against `src/` | sh, grep |
 | `test-shim.sh` | the shim parses against `test/stub` in both knob positions, with a control that must fail | a C compiler |
 | `test-syntax.sh` | the files it names compile under clang and gcc at the kernel of record, warnings are failures, with a control | that kernel's tree, clang and gcc |
-| `test-checkpatch.sh` | the style deviation set against `doc/checkpatch-baseline.txt` | `checkpatch.pl` from the kernel of record, via `CHECKPATCH` or `KDIR` |
+| `test-checkpatch.sh` | the style deviation set against `doc/checkpatch-baseline.txt` | `checkpatch.pl` from the kernel of record: found by the same search `test-syntax.sh` uses, or named by `CHECKPATCH` or `KDIR` |
 | `test-vectors-contract.sh` | the exit status, output wording and constant spelling of the two vector files a consumer compiles | a C compiler |
 | `test-posix.sh` | the gates declaring `#!/bin/sh` parse under dash and busybox ash | dash and busybox |
 | `test-doc-prose.sh` | vale over every tracked `.md`; any finding is a failure | vale |
@@ -255,7 +255,12 @@ came from, because an ASSERTED version and a DERIVED one used to render
 identically: pointed at the v6.15 checker with `CHECKPATCH_REF=v7.2`, it
 reported a real style regression, the assertion having laundered a wrong
 checker into a verdict about this code. A content mismatch is
-COULD-NOT-RUN now whatever names the checker carries. See
+COULD-NOT-RUN now whatever names the checker carries. It finds that checker
+by the same search `test-syntax.sh` uses when neither `CHECKPATCH` nor
+`KDIR` names one, so the unattended run reaches the tree of record wherever
+the syntax gate does; before 2026-09-29 it stopped at the host tree and the
+store and skipped `$HOME/kernels`, which is where this file says the trees
+live, so on that machine the syntax gate passed and this one refused. See
 [README.kernel-style.md](README.kernel-style.md) for why this tree is BSD
 style on purpose and what that means for mainline. Both of its sorts are
 `LC_ALL=C`, because the baseline is compared byte for byte and glibc

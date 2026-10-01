@@ -108,22 +108,28 @@ machine that has the kernel of record installed, as they have since
 report COULD-NOT-RUN there and on every machine without a guest, a set of
 fixture images and a `KDIR` matching the guest's kernel, which is most of
 them and all of CI.
-What that unattended style run can say is narrower than it looks, and the
-narrow half is the useful one: the found checker's `sha256` does not match
-the baseline's, so an unchanged set is reportable and a moved set is not.
-The gate exits 2 rather than charge a move to the code, which means the
-one run that matters, the run after a carried file lands, needs
-`CHECKPATCH` pointed at the checker the baseline names. That happened
-twice on 2026-08-26. Saxum's delegator, which runs these same gates from another
+What that unattended style run can say depends on which checker it finds.
+The gate searches for the kernel of record the way the syntax gate does,
+`/lib/modules/$(uname -r)/build` then `H2_KERNEL_TREES` then
+`$HOME/kernels/*` then the store, and prefers the checker whose `sha256`
+matches the baseline's, then one whose own tree reports the baseline's
+version. Either can report an unchanged set. Only the first can charge a
+moved set to the code: a version-matched checker with a different hash
+exits 2 on a diff, because its counts are not the baseline's counts. So the
+run after a carried file lands needs the baseline's checker reachable,
+which on a machine holding the trees of record under `$HOME/kernels` it
+now is, and otherwise `CHECKPATCH` pointed at it. Before 2026-09-29 the
+search skipped `$HOME/kernels`, so on that machine the unattended run
+found only the host's 7.2 checker and refused outright. Saxum's delegator, which runs these same gates from another
 repository, enumerates `script/test-*.sh` instead of naming them, so a gate
 added here is picked up there without an edit. Each gate prints its own
 count, and the gates are the authority; the dated figures below are snapshots
 of one run.
 
-`test-checkpatch.sh` is the one that commonly cannot run. It needs
-`checkpatch.pl`, which no kernel headers package ships, so it exits 2 unless
-`CHECKPATCH` or `KDIR` points at a full source tree. That is could-not-run,
-not a pass.
+`test-checkpatch.sh` is the one that commonly cannot run on a machine that
+does not carry the kernel of record: `checkpatch.pl` ships with no kernel
+headers package, so without a reachable tree it exits 2 unless `CHECKPATCH`
+or `KDIR` points at one. That is could-not-run, not a pass.
 
 - `script/test-shim.sh` and `script/test-syntax.sh`: 6 and 28 on 2026-08-26,
   two of the thirty-four being controls that must fail and do. The shim
