@@ -118,7 +118,10 @@ moved set to the code: a version-matched checker with a different hash
 exits 2 on a diff, because its counts are not the baseline's counts. So the
 run after a carried file lands needs the baseline's checker reachable,
 which on a machine holding the trees of record under `$HOME/kernels` it
-now is, and otherwise `CHECKPATCH` pointed at it. Before 2026-09-29 the
+now is, and otherwise `CHECKPATCH` pointed at it. `KDIR` does not select
+the checker the way it selects the tree in the syntax gate: it is only the
+first place searched, and a checker matching the baseline's `sha256`
+anywhere else in the search wins over it. Before 2026-09-29 the
 search skipped `$HOME/kernels`, so on that machine the unattended run
 found only the host's 7.2 checker and refused outright. Saxum's delegator, which runs these same gates from another
 repository, enumerates `script/test-*.sh` instead of naming them, so a gate
