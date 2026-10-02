@@ -4506,3 +4506,36 @@ This is the second instrument defect found the same day, after the throughput
 run building against the debug tree while the guest ran the release kernel.
 Both are the same shape: an instrument that reports a number without the
 control that says the number means what it claims.
+
+**HAMMER2's random-read latency moved between rc4 and rc5, cause open,
+2026-10-01.** The latency table above is rc1's and rc4's, 49 us for
+`randread4k` at the median. Re-run on rc5 the same instrument reports 74, and
+a second run under a higher host load reports 81, against ext4 at 12 and
+btrfs at 25 where the table holds 11 and 23. The controls moved nine percent
+between the two builds; HAMMER2 moved fifty-one.
+
+That asymmetry is why this is written down rather than dismissed as load. A
+host that is busy slows every filesystem in the same guest through the same
+CPU and the same disk; ext4 and btrfs barely moved and HAMMER2 moved by half.
+Both readings were taken with the host between load 14 and 17 on 24 CPUs
+under a Nix LTO build, so the absolute figures are not the reading of record
+and are not offered as one. What they are is a reason to re-take it on an
+idle host before anything else is concluded, which the entry above says the
+same day's throughput attempt showed was not possible.
+
+One code change touches the read path between the two readings:
+`c70f4b7`, which released a reptrack spinlock that
+`hammer2_chain_repchange()` had been leaking on every pass through the
+indirect-block and freemap-node path. That is the path a random read
+traverses when it descends to a data block, so it is the only candidate; it
+also removes contention rather than adding it, which is the direction
+opposite to the observation, so it is a candidate and not an explanation. No
+measurement here separates it from the build or the host.
+
+What would settle it: the same instrument on rc5 on an idle host, and a
+profile of the random-read pass rather than a sequential one, since every
+profile in this tree so far is sequential. Re-running the older kernel was
+considered and dropped: 7.3-rc5 is the kernel of record and the floor, the
+tree moves forward only, and characterising a previous build answers a
+question nothing would act on. The reading to take is rc5's, on a quiet
+machine.
