@@ -283,6 +283,13 @@ hammer2_get_parent(struct dentry *child)
 	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_tid_t inum, self;
 
+	/*
+	 * ip->pmp and ip itself stay valid here without a lock: the caller
+	 * holds child->d_inode, whose i_private is this ip
+	 * (hammer2_iget_set()), and hammer2_evict_inode() is what drops the
+	 * last reference, at which point the inode is already being torn
+	 * down and no dentry->i_private can name it.
+	 */
 	if (ip == ip->pmp->iroot)
 		return (ERR_PTR(-ESTALE));
 
