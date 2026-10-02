@@ -4736,3 +4736,43 @@ this tree treats as a bug, while the batching it would have requested already
 happens in the layer below. The parameter's disposition belongs with the
 port's author: removing it changes the module's parameter list, and wiring it
 would ask for a merge Linux already performs.
+
+**What DragonFly has that this port does not, taken as a set, 2026-10-02.**
+The question behind three readings of one file is whether the port is a
+thinner design than DragonFly's rather than a translated one. Compared by
+file, DragonFly's `sys/vfs/hammer2` carries twenty `.c` files and this port
+seventeen, two of which are its own (`hammer2_export.c`, and the generated
+`hammer2.mod.c`). Five are absent:
+
+| file | what it is |
+|---|---|
+| `hammer2_synchro.c` | the cluster state machine, twelve functions |
+| `hammer2_iocom.c` | the cluster communication layer, twelve |
+| `hammer2_msgops.c` | the cluster message operations |
+| `hammer2_ccms.c` | the cluster cache management layer |
+| `hammer2_lz4.c` | DragonFly's own LZ4 |
+
+Four of the five are one subsystem. DragonFly's cluster synchronization is
+what makes a HAMMER2 volume replicated, and every file it lives in is absent
+here. That is not a gap found now: `doc/README.capabilities.md` declares
+Replication, IncrementalReplication and RemoteCheckpoint `unavailable` and
+says the same of seven of the eight `HAMMER2IOC_*` this port lacks, and the
+same reason is given there, that none of the three BSD ports carries the
+subsystem either.
+
+The fifth is a substitution rather than a gap: this port uses the kernel's
+LZ4 through `<linux/lz4.h>` where DragonFly ships its own, which
+`hammer2_strategy.c` records as measured rather than assumed.
+
+So the answer by file set is that the port is thinner in exactly one place,
+the cluster subsystem, and that thinning is the BSD ports' as much as this
+port's, taken deliberately and declared. Nothing else in the layer is
+subtracted: read side by side, `hammer2_io.c`'s functions differ from
+DragonFly's only by the leading underscore its debug-argument macro adds, and
+`cluster_write` is the one parameter of sixteen that is declared and unread.
+
+Where a difference *was* real it was in a call rather than in a file, and the
+two found this session were both a Linux API used for a purpose its argument
+did not carry: `page_cache_sync_ra()` given the cluster hint where the
+request's page count belongs, and the seek loop asking for one block at a
+time where the tree already had a forward scan.
