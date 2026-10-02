@@ -397,6 +397,16 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		hammer2_spin_unex(&pmp->blockset_spin);
 
 		/*
+		 * Count the masters as the slots are filled: the quorum
+		 * hammer2_cluster_check() computes is this count halved plus
+		 * one, so a single-master PFS gets one and behaves exactly as
+		 * it did when the check was single-chain.
+		 */
+		if (pmp->pfs_types[j] == HAMMER2_PFSTYPE_MASTER ||
+		    pmp->pfs_types[j] == HAMMER2_PFSTYPE_SUPROOT)
+			++pmp->pfs_nmasters;
+
+		/*
 		 * If the PFS is already mounted we must account
 		 * for the mount_count here.
 		 */

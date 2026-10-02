@@ -406,14 +406,40 @@ struct hammer2_cluster_item {
 
 typedef struct hammer2_cluster_item hammer2_cluster_item_t;
 
+#define HAMMER2_CLUSTER_INODE	0x00000001	/* embedded in inode struct */
+#define HAMMER2_CLUSTER_LOCKED	0x00000004	/* cluster lks not recursive */
+#define HAMMER2_CLUSTER_WRHARD	0x00000100	/* hard-mount can write */
+#define HAMMER2_CLUSTER_RDHARD	0x00000200	/* hard-mount can read */
+#define HAMMER2_CLUSTER_UNHARD	0x00000400	/* unsynchronized masters */
+#define HAMMER2_CLUSTER_NOHARD	0x00000800	/* no masters visible */
+#define HAMMER2_CLUSTER_WRSOFT	0x00001000	/* soft-mount can write */
+#define HAMMER2_CLUSTER_RDSOFT	0x00002000	/* soft-mount can read */
+#define HAMMER2_CLUSTER_UNSOFT	0x00004000	/* unsynchronized slaves */
+#define HAMMER2_CLUSTER_NOSOFT	0x00008000	/* no slaves visible */
+#define HAMMER2_CLUSTER_MSYNCED	0x00010000	/* all masters synchronized */
+#define HAMMER2_CLUSTER_SSYNCED	0x00020000	/* known slaves synchronized */
+
+#define HAMMER2_CLUSTER_ANYDATA	(HAMMER2_CLUSTER_RDHARD |	\
+				 HAMMER2_CLUSTER_RDSOFT)
+#define HAMMER2_CLUSTER_RDOK	(HAMMER2_CLUSTER_RDHARD |	\
+				 HAMMER2_CLUSTER_RDSOFT)
+#define HAMMER2_CLUSTER_WROK	(HAMMER2_CLUSTER_WRHARD |	\
+				 HAMMER2_CLUSTER_WRSOFT)
+
+#define HAMMER2_CITEM_INVALID	0x00000001
+#define HAMMER2_CITEM_FEMOD	0x00000002
 #define HAMMER2_CITEM_NULL	0x00000004
 
 struct hammer2_cluster {
 	hammer2_cluster_item_t	array[HAMMER2_MAXCLUSTER];
 	hammer2_pfs_t		*pmp;
 	hammer2_chain_t		*focus;		/* current focus (or mod) */
+	int			focus_index;
 	int			nchains;
 	int			error;		/* error code valid on lock */
+	int			refs;
+	uint32_t		flags;		/* HAMMER2_CLUSTER_xxx */
+	int			ddflag;		/* focus bref is an inode */
 };
 
 typedef struct hammer2_cluster	hammer2_cluster_t;
@@ -915,6 +941,7 @@ struct hammer2_pfs {
 	hammer2_dev_t		*pfs_hmps[HAMMER2_MAXCLUSTER];
 	char			*pfs_names[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_types[HAMMER2_MAXCLUSTER];
+	uint8_t			pfs_nmasters;	/* masters in this cluster */
 	hammer2_blockset_t	pfs_iroot_blocksets[HAMMER2_MAXCLUSTER];
 	int			flags;		/* for HAMMER2_PMPF_xxx */
 	int			rdonly;		/* read-only mount */
@@ -1397,8 +1424,16 @@ hammer2_xop_pdata(hammer2_xop_head_t *xop)
 static __inline void
 hammer2_assert_cluster(const hammer2_cluster_t *cluster)
 {
-	/* Currently a valid cluster can only have 1 nchains. */
-	KASSERTMSG(cluster->nchains == 1,
+	/*
+	 * A cluster holds one chain per PFS in the set, and the format
+	 * permits up to HAMMER2_MAXCLUSTER of them.  The single-chain port
+	 * asserted 1 here, which is what made a multi-chain cluster a
+	 * KASSERT failure before any quorum code could run; the manager
+	 * side still mounts one, and hammer2_cluster_check() is now the
+	 * code that handles more.
+	 */
+	KASSERTMSG(cluster->nchains >= 0 &&
+	    cluster->nchains <= HAMMER2_MAXCLUSTER,
 	    "unexpected cluster nchains %d", cluster->nchains);
 }
 
