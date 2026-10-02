@@ -12,10 +12,14 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.43 closed the port's last gap against upstream: a
-HAMMER2 mount can now be exported, and an object in it reopened by handle,
-through the kernel's `export_operations`, which is NFSExport's move from
-`unavailable` to `native` in `README.capabilities.md`. 0.9.42 widened the
+0.5 to 0.9 are met. 0.9.43 closed the port's last gap against upstream: the
+file-handle surface DragonFly reaches through `vfs_vptofh`, `vfs_fhtovp` and
+`vfs_checkexp` is reached here through the kernel's `export_operations`, and
+an object in a mount is reopened by handle, which is NFSExport's move from
+`unavailable` to `native` in `README.capabilities.md`. No export has been
+served by `nfsd` yet, the kernel of record's guest being built without it;
+the row rests on the syscall reading and on the predicate `nfsd` checks.
+0.9.42 widened the
 style gate's search for a checker to
 `$HOME/kernels`, the one place its own testing document puts the trees of
 record and the one place the gate did not look, so its default run could

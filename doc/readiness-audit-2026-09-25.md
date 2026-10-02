@@ -173,12 +173,16 @@ kernel sources named above are where the refusal was read.
 
 **Closed 2026-10-01.** The gap above was real on the day it was found and
 is not any more: `hammer2_export.c` registers `export_operations`, so
-`exportfs_may_export()` is true and nfsd may export the mount. The handle
-carries the inode number in DragonFly's encoding under the kernel's
-`FILEID_INO64_GEN` types, and the reverse lookup is the FreeBSD port's
-`hammer2_vget()`. `test/hammer2-fh.c` drives `name_to_handle_at(2)` and
-`open_by_handle_at(2)` on a live mount and is run by `test-enospc.sh`;
-`README.capabilities.md` moved the row from `unavailable` to `native`. This
+`exportfs_may_export()` is true, which is the predicate `exp_export()`
+checks before it refuses with EINVAL. The handle carries the inode number in
+DragonFly's encoding under the kernel's `FILEID_INO64_GEN` types, and the
+reverse lookup is the FreeBSD port's `hammer2_vget()`. `test/hammer2-fh.c`
+drives `name_to_handle_at(2)` and `open_by_handle_at(2)` on a live mount and
+is run by `test-enospc.sh`; `README.capabilities.md` moved the row from
+`unavailable` to `native`. What has NOT been run is an export served by
+`nfsd`: the kernel of record's guest is built with `CONFIG_NFSD` unset, so
+the reading is the syscall path and the acceptance predicate, and the
+capability row says so rather than claiming an export. This
 paragraph is left as written because an audit is a record of the tree on
 the day it was made, and the day's finding was correct.
 
