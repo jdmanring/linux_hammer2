@@ -4622,5 +4622,26 @@ allocation. The release before the I/O is correct; the serialization is in
 the lookup and the insert.
 
 This is the evidence the record asked for before any change to code three
-ports share. It says the coarse lock costs throughput at eight threads and
-above, which the 2.6 percent figure on one workload did not show.
+ports share. It says the coarse lock's acquisitions are contended and the
+contention grows with threads, which the 2.6 percent figure on one workload
+did not show.
+
+**What it does not say, and the reading that corrected it.** The same
+benchmark on ext4, same guest, same disk, same 4 KiB `pread` workload,
+reports 14,479 ops/s at one thread and 88,209 at eight, against HAMMER2's
+3,096 and 17,545. Read as ops/s that looks like a five-to-one gap, and it is
+a units error: ext4 serves a 4 KiB request from a 4 KiB block while this port
+reads and verifies a 64 KiB block for the same request, so the two counts are
+not the same work. In media bytes they are 194 MiB/s to 1,097 for this port
+against 57 to 345 for ext4, so the port moves three times the bytes at both
+ends and scales 5.7 times against ext4's 6.1. The per-operation latency
+confirms the units: ext4's 4 KiB random read measures 70.2 us by hand against
+this port's 69.1, so both are real media access and the port is doing sixteen
+times the media work at the same latency.
+
+So the contention is real and the throughput ceiling it was read as causing
+is not: both filesystems plateau near the same media rate, for the disk's
+reason. No locking change is justified by this measurement, and the
+per-bucket lock FreeBSD disabled is not shown to be worth taking. The
+measurement stays because the contention figure is what the record asked for
+and because the units error is the thing to not repeat.
