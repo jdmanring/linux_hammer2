@@ -4776,3 +4776,32 @@ two found this session were both a Linux API used for a purpose its argument
 did not carry: `page_cache_sync_ra()` given the cluster hint where the
 request's page count belongs, and the seek loop asking for one block at a
 time where the tree already had a forward scan.
+
+**The rc5 latency reading, on an idle host, and what it corrects,
+2026-10-02.** Taken with the host at load 0.33, the first time in this
+session the machine was quiet, `script/latency.sh` on `h2debug-rc5`, a
+1024 MiB file, 2000 operations, the page cache dropped before the read pass:
+
+| filesystem | randread4k p50 | randwrite4k_fsync p50 | fsync_batch8 p50 |
+|---|---|---|---|
+| HAMMER2 | 64 | 357 | 1323 |
+| ext4 | 17 | 6819 | 8696 |
+| btrfs | 33 | 7854 | 9499 |
+
+`lat-failures 0`, `kernel warnings 0`, and the host control reported cache
+speed and failed its own check as it must.
+
+This corrects two entries above. The first read the earlier rc5 runs (74, 81,
+79 us) as HAMMER2 moving half again while the controls moved nine percent,
+and called that an asymmetry needing an explanation. It is not: with the host
+idle the medians are 64, 17 and 33 against the record's 49, 11 and 23, so
+every filesystem reads slower in this guest than in the rc4 record, ext4 by
+half again and HAMMER2 by a third. The earlier runs were taken under host
+load between 13 and 19, and their controls were not cold: ext4 reported
+439,506 ops/s, which is page cache, so the comparison in those runs was
+between a media reading and a cached one. An environment that moves all
+three together is a difference of environment; the asymmetry was an artifact
+of the controls not being cold.
+
+The write side agrees with the record rather than moving: 357 us against 384
+for one write and its commit, 1323 against 1386 for a batch of eight.
