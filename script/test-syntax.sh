@@ -437,6 +437,8 @@ check "hammer2_xops.c: invariants on"  pass src/sys/fs/hammer2/hammer2_xops.c -D
 check "hammer2_xops.c: invariants off" pass src/sys/fs/hammer2/hammer2_xops.c $CARRIED
 check "hammer2_ioctl.c: invariants on"  pass src/sys/fs/hammer2/hammer2_ioctl.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_ioctl.c: invariants off" pass src/sys/fs/hammer2/hammer2_ioctl.c $CARRIED
+check "hammer2_export.c: invariants on"  pass src/sys/fs/hammer2/hammer2_export.c -DHAMMER2_INVARIANTS
+check "hammer2_export.c: invariants off" pass src/sys/fs/hammer2/hammer2_export.c
 check "hammer2_bulkfree.c: invariants on"  pass src/sys/fs/hammer2/hammer2_bulkfree.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_bulkfree.c: invariants off" pass src/sys/fs/hammer2/hammer2_bulkfree.c $CARRIED
 check "hammer2_chain.c: invariants on"     pass src/sys/fs/hammer2/hammer2_chain.c -DHAMMER2_INVARIANTS $CARRIED
@@ -501,14 +503,15 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_vfsops.c \
 		src/sys/fs/hammer2/hammer2_strategy.c \
 		src/sys/fs/hammer2/hammer2_vnops.c \
-		src/sys/fs/hammer2/hammer2_ioctl.c; do
+		src/sys/fs/hammer2/hammer2_ioctl.c \
+		src/sys/fs/hammer2/hammer2_export.c; do
 		ran=$((ran + 1))
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
 		# hammer2_io.c and the header TU are held to the full set,
 		# and the header TU is where the alignment is asserted.
 		case "$f" in
-		*/hammer2_io.c|*/hammer2_strategy.c|test/*) carried= ;;
+		*/hammer2_io.c|*/hammer2_strategy.c|*/hammer2_export.c|test/*) carried= ;;
 		*) carried=$CARRIED ;;
 		esac
 		"$CC2" "${CFLAGS2[@]}" $carried "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
@@ -573,7 +576,8 @@ if command -v sparse >/dev/null 2>&1; then
 		src/sys/fs/hammer2/hammer2_vfsops.c \
 		src/sys/fs/hammer2/hammer2_strategy.c \
 		src/sys/fs/hammer2/hammer2_vnops.c \
-		src/sys/fs/hammer2/hammer2_ioctl.c; do
+		src/sys/fs/hammer2/hammer2_ioctl.c \
+		src/sys/fs/hammer2/hammer2_export.c; do
 		ran=$((ran + 1))
 		out=$(sp "$f" | command grep '^src/' || true)
 		if [ -z "$out" ]; then

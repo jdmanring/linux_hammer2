@@ -171,6 +171,17 @@ this port does not, and no document previously said so. It is a gap rather
 than a decision, it is now a row of `README.capabilities.md`, and the
 kernel sources named above are where the refusal was read.
 
+**Closed 2026-10-01.** The gap above was real on the day it was found and
+is not any more: `hammer2_export.c` registers `export_operations`, so
+`exportfs_may_export()` is true and nfsd may export the mount. The handle
+carries the inode number in DragonFly's encoding under the kernel's
+`FILEID_INO64_GEN` types, and the reverse lookup is the FreeBSD port's
+`hammer2_vget()`. `test/hammer2-fh.c` drives `name_to_handle_at(2)` and
+`open_by_handle_at(2)` on a live mount and is run by `test-enospc.sh`;
+`README.capabilities.md` moved the row from `unavailable` to `native`. This
+paragraph is left as written because an audit is a record of the tree on
+the day it was made, and the day's finding was correct.
+
 ## 5. The process finding, which outranks the rest
 
 The `SEEK_HOLE` bug shipped with a test that passed, because the test asserted

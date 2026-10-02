@@ -1351,6 +1351,7 @@ next_hmp:
 
 	/* Linux fill-super */
 	sb->s_op = &hammer2_sops;
+	sb->s_export_op = &hammer2_export_ops;	/* Linux */
 	sb->s_magic = HAMMER2_VOLUME_ID_HBO;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_time_gran = 1;

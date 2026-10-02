@@ -5,11 +5,11 @@
 # in it. This one fills a volume until the first write fails, then calls
 # sync(2), and reads lockdep on both sides of each step.
 #
-# It runs four exercisers from test/ before the fill, and each count is
+# It runs five exercisers from test/ before the fill, and each count is
 # checked for being non-zero before it is believed: hammer2-seek.c,
-# hammer2-dedup.c, hammer2-fallocate.c and hammer2-fiemap.c. The last
-# one is why the rule is written down here: ->fiemap and the freeze vops
-# landed with their counts in CHANGELOG.md and the readiness audit and
+# hammer2-dedup.c, hammer2-fallocate.c, hammer2-fiemap.c and
+# hammer2-fh.c. The last two are why the rule is written down here: the
+# file-handle surface and the freeze vops landed with their counts in CHANGELOG.md and the readiness audit and
 # no script in this repository running the file that produced them, and
 # test-inventory.sh knows a file is NAMED, never that anything runs it.
 #
@@ -440,6 +440,18 @@ cc -static -O2 -o /tmp/h2fiemapt.$$ test/hammer2-fiemap.c 2>/dev/null || {
 scp -q -o ConnectTimeout=5 /tmp/h2fiemapt.$$ "$GUEST_SSH:/tmp/h2fiemap" >/dev/null 2>&1
 rm -f /tmp/h2fiemapt.$$
 
+# The file-handle exerciser, from test/hammer2-fh.c, on the same terms.
+# name_to_handle_at(2) is ->encode_fh and open_by_handle_at(2) is
+# ->fh_to_dentry and, for a directory, the reconnect path that calls
+# ->get_parent, so this drives the whole export_operations table with no
+# nfsd.  It writes, unlinks and renames its own files in a subdirectory it
+# makes and removes, so it needs the room the fill takes away and it leaves
+# the volume as it found it.
+cc -static -O2 -o /tmp/h2fht.$$ test/hammer2-fh.c 2>/dev/null || {
+	echo "enospc: COULD-NOT-RUN: the file-handle exerciser did not compile" >&2; exit 2; }
+scp -q -o ConnectTimeout=5 /tmp/h2fht.$$ "$GUEST_SSH:/tmp/h2fh" >/dev/null 2>&1
+rm -f /tmp/h2fht.$$
+
 # The unmount is given a bound, because the defect this script exists for
 # hangs it: without one the ssh never returns and the run reads as a
 # machine that went away rather than as the failure it is.
@@ -504,6 +516,17 @@ out=$(ssh "$GUEST_SSH" '
 	# parent, so it needs the room the fill takes away and it unlinks its
 	# file before the fill measures what it did.
 	$as /tmp/h2fiemap /mnt/h2enospc 2>&1 | sed -n /fiemap-/p
+	# The file-handle exerciser, from test/hammer2-fh.c, on the same
+	# terms.  name_to_handle_at(2) calls ->encode_fh and
+	# open_by_handle_at(2) calls ->fh_to_dentry and, for a directory, the
+	# reconnect path that calls ->get_parent, so this is the whole
+	# export_operations table driven with no nfsd.  It cannot run as
+	# `nobody`: open_by_handle_at(2) requires CAP_DAC_READ_SEARCH, so it
+	# is run as root whatever $as is, and it needs the room the fill
+	# takes away.  It makes a directory, puts its files in it and removes
+	# the directory at the end, so the fill measures what it did.
+	/tmp/h2fh /mnt/h2enospc/.h2fh 2>&1 | sed -n /fh-/p
+	rm -rf /mnt/h2enospc/.h2fh >/dev/null 2>&1
 	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
@@ -1052,6 +1075,33 @@ elif [ "$mc" -ne 11 ]; then
 	fail=$((fail + 1))
 else
 	echo "  ok    fiemap $mc check(s) on a live mount, 0 failed"
+fi
+
+# The file-handle surface, on the same terms.  The failure this catches is
+# a handle that opens the WRONG object: a check that a handle reopens a
+# file is satisfied by a decoder that ignores the inode number, so the
+# exerciser pairs it with a control (two files whose contents differ) and
+# a forged handle that must be refused.  Zero checks is a run that proved
+# nothing; the count is pinned because a decoder that refuses everything
+# answers the positive checks with failures and the negative one with a
+# pass, and the total is what shows a check stopped running.
+hc=$(printf '%s\n' "$out" | sed -n 's/^fh-checks //p')
+hf=$(printf '%s\n' "$out" | sed -n 's/^fh-failures //p')
+if [ -z "$hc" ] || [ "${hc:-0}" -eq 0 ]; then
+	echo "  FAIL  the file-handle exerciser printed no check, so it ran"
+	echo "        and proved nothing"
+	fail=$((fail + 1))
+elif [ "${hf:-0}" -ne 0 ]; then
+	echo "  FAIL  the file-handle surface answered wrongly on a live mount:"
+	printf '%s\n' "$out" | sed -n 's/^fh-fail /        /p' | head -6
+	fail=$((fail + 1))
+elif [ "$hc" -ne 8 ]; then
+	echo "  FAIL  the file-handle exerciser ran $hc check(s) where the"
+	echo "        answering volume runs 8, so either it stopped early or"
+	echo "        a check moved and the count in the docs did not"
+	fail=$((fail + 1))
+else
+	echo "  ok    file handles $hc check(s) on a live mount, 0 failed"
 fi
 
 printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||

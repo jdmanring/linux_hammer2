@@ -58,7 +58,7 @@ closure and the PFS roots are fleet runs named in `README.testing.md`.
 | SnapshotRetentionHold | unavailable | the backend keeps no hold; the model's registry does | nothing on this side |
 | GC candidates | limited | two bulkfree passes through `HAMMER2IOC_BULKFREE_SCAN` are what free removed blocks, the first staging and the second freeing, and they are a run, not a gate; `script/bulkfree.sh` measured them, 52134 blocks staged by the first and freed by the second | a scheduled pass is the consumer's; the port answers the ioctl |
 | Health | limited | the header CRC at mount and the offline checker; no online health reading | an online reading, which no port has |
-| NFSExport | unavailable | the port registers no `export_operations`, so `s_export_op` is NULL and nfsd refuses to export the mount: `exportfs_may_export()` is false without `fh_to_dentry`, and `exp_export()` returns `EINVAL` for the filesystem type. DragonFly carries the surface this port does not, `vfs_vptofh` encoding the inode number into the file handle and `vfs_fhtovp` looking the inode up by number, with `vfs_checkexp` behind them; the readdir cookie array that belonged to the same interface was dropped at 0.2.115 on the reasoning that `ctx->pos` carries its values, which is true of the cookie and not of the file handle. Recorded because the vnode and superblock operation matrix in `readiness-audit-2026-09-25.md` is drawn against DragonFly's full set and this is the operation that set has and this port does not | an export of a mounted HAMMER2 volume, which is the port's `encode_fh`/`fh_to_dentry` pair |
+| NFSExport | native | `export_operations` is registered (`hammer2_export.c`), so `exportfs_may_export()` is true and nfsd may export the mount; the handle carries the inode number masked with `HAMMER2_DIRHASH_USERMSK`, DragonFly's `hammer2_vfs_vptofh()` encoding, under the kernel's `FILEID_INO64_GEN` types, and the reverse lookup is the FreeBSD port's `hammer2_vget()` on the carried `hammer2_lookup_desc` XOP, with `fh_to_parent` and `get_parent` so a connectable handle encodes and a directory handle reconnects. Measured without nfsd, since `name_to_handle_at(2)` calls `encode_fh` and `open_by_handle_at(2)` calls `fh_to_dentry`: `test/hammer2-fh.c` opens two files by handle and each reads its own bytes and reports its own `st_ino`, opens a directory handle and lists it, refuses a handle with a bit flipped in its inode number, sees a handle to a removed file go stale and not answer the file made after it, and opens a file by a handle taken before it was renamed, 8 checks 0 failed on the volume `test-enospc.sh` mounts (status, "a file handle, as a file is looked up by number rather than by name"). The generation field is zero and read as accept-any: HAMMER2 allocates inode numbers from `pmp->inode_tid` with `atomic_fetchadd_64()`, so a number is not reused within a PFS and a stale handle resolves to ENOENT rather than to a different inode | a handle held across a reformat, which would reuse numbers and is what a generation derived from the PFS `fsid` would catch; nothing today needs it |
 
 What the table says at a glance: the checkpoint primitives the model
 needs, snapshot, delete, durable flush and the two checksums, are
@@ -66,9 +66,11 @@ native and measured on both sides; rollback and the durable checkpoint
 are composed from those and the mount by label; the accounting is the
 format's lazy accounting with a fixed reserve; and everything to do
 with copies, replication, quota and online repair is absent, in every
-port, and is declared absent rather than emulated. One row is absent
-here and present upstream: NFS export, which DragonFly implements and
-this port does not, so it is a gap rather than a decision.
+port, and is declared absent rather than emulated. No row is now absent
+here and present upstream: NFS export, the one such gap, is closed at
+`native` above, and the operation DragonFly reaches through `vfs_vptofh`,
+`vfs_fhtovp` and `vfs_checkexp` is reached here through the kernel's
+`export_operations` and measured by `test/hammer2-fh.c`.
 
 This file is the port's side of any adapter a consumer writes over
 these rows; `README.roadmap.md`'s 0.7 milestone closed on it.

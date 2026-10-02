@@ -53,6 +53,7 @@
 #include <linux/cred.h>
 #include <linux/crc32.h>
 #include <linux/errno.h>
+#include <linux/exportfs.h>	/* Linux: struct export_operations */
 #include <linux/time64.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>	/* Linux: the syncer */
@@ -989,6 +990,8 @@ extern const struct inode_operations hammer2_symlink_iops;	/* Linux */
 extern const struct file_operations hammer2_dir_fops;	/* Linux */
 extern const struct file_operations hammer2_file_fops;	/* Linux */
 extern const struct address_space_operations hammer2_file_aops;	/* Linux */
+/* hammer2_export.c */
+extern const struct export_operations hammer2_export_ops;	/* Linux */
 
 extern hammer2_xop_desc_t hammer2_nresolve_desc;
 extern hammer2_xop_desc_t hammer2_unlink_desc;

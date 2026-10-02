@@ -39,6 +39,7 @@ hammer2-y += hammer2_vfsops.o
 hammer2-y += hammer2_strategy.o
 hammer2-y += hammer2_vnops.o
 hammer2-y += hammer2_ioctl.o
+hammer2-y += hammer2_export.o
 
 # ../.. is src/sys, which holds the vendored <sys/tree.h> and <sys/queue.h>.
 ccflags-y += -I$(src)/../..

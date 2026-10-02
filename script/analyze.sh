@@ -42,7 +42,8 @@ else echo "  FAIL  control: the planted null dereference was not reported"; rm -
 rm -f "$ctl"
 [ $# -gt 0 ] || set -- src/sys/fs/hammer2/hammer2_io.c src/sys/fs/hammer2/hammer2_vnops.c \
 	src/sys/fs/hammer2/hammer2_strategy.c src/sys/fs/hammer2/hammer2_vfsops.c \
-	src/sys/fs/hammer2/hammer2_ondisk.c src/sys/fs/hammer2/hammer2_ioctl.c
+	src/sys/fs/hammer2/hammer2_ondisk.c src/sys/fs/hammer2/hammer2_ioctl.c \
+	src/sys/fs/hammer2/hammer2_export.c
 n=0
 for f in "$@"; do
 	out=$(run "$f"); c=$(printf '%s' "$out" | grep -c . || true); n=$((n + c))

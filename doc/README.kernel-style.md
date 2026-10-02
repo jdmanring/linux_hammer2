@@ -257,6 +257,14 @@ was fixed rather than baselined: the operation is this port's own, since
 no BSD port carries a fallocate vop, and its Linux-only lines are marked
 `XXX` where they decide something the format did not.
 
+1145 to 1159 when the file-handle surface landed: ten `return is not a
+function`, the tree's BSD style on the new file's `return (x);`, and four
+`no spaces at the start of a line`, the same BSD continuation indent used
+for the multi-line prototypes and calls. No category is new, and nothing
+was fixed rather than baselined: `hammer2_export.c` is this port's own,
+the Linux `export_operations` surface, which no BSD tree has in this
+shape, and it is written in the style the whole tree is.
+
 1135 to 1137 when writeback learned to write a split block once: one
 `return is not a function`, the tree's BSD style on the refusal's one
 `return (2);`, and one `no spaces at the start of a line`, the tree's
