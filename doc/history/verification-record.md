@@ -4264,3 +4264,48 @@ through `H2_KERNEL_TREES` is found with `$HOME` empty, and an explicit
 
 
 
+
+**An adversarial audit of the file-handle surface, 2026-10-01.** A
+`silent-failure-hunter` pass over `hammer2_export.c`, told to assume three
+earlier rounds had fixed the obvious and to hunt the subtle, returned
+fourteen findings. Three were acted on and one was refuted; the rest are
+recorded here so a later reader knows they were seen.
+
+Acted on, each verified against the kernel of record first:
+
+- The encoder wrote `inode->i_generation` into the handle and the decoder
+  read it nowhere, so the field looked like a stale-handle check and enforced
+  nothing. Now written as zero with the reason beside it (`9c284a7`).
+- The encoder's comment said the caller retries a refused connectable handle
+  with the size it reports. True of `name_to_handle_at(2)`, false of nfsd,
+  where `_fh_update()` takes `fileid_type > 0 ? fileid_type : FILEID_INVALID`
+  and `fh_compose()` answers `nfserr_stale`. The refusal is right for both;
+  the comment now names which caller does which (`9c284a7`).
+- A lookup failure other than ENOENT, which is a read error on an exported
+  volume, was turned into a stale handle with nothing written down. It now
+  prints (`9c284a7`).
+- `hammer2_fh_to_parent()` decoded the handle's parent number without asking
+  whether it named a directory. erofs and fuse do the same, so it is not a
+  divergence, but a handle should resolve to the object it names or not at
+  all. A non-directory parent is now refused (`9c284a7`).
+
+Refuted. The audit's third finding held that `hammer2_get_parent()` can read
+a stale `meta.iparent` because `hammer2_inode_lock()` does not refresh `meta`
+from the chain, so a cached inode would carry a snapshot from before a
+rename. `hammer2_vop_rename()` updates the in-memory copy directly:
+`fip = VTOI(finode)` is the cached inode and `fip->meta.iparent =
+tdip->meta.inum` is written under the inode lock (hammer2_vnops.c:516, :645),
+which is the lock the read takes. No refresh is needed and the finding does
+not hold.
+
+Not acted on, with the reason. The parent number in a handle is not checked
+against the child's, which the audit ranked highest; erofs and fuse decode
+the same type the same way, `fh_to_parent` runs only on the nfsd
+subtree-checked path, and the new directory test closes the part of it that
+has an answer. `hammer2_vget()` short-circuits nothing for the PFS root, so a
+root handle pays one guaranteed-to-fail lookup; real, unmeasured, and left
+because it is a cost and not a correctness defect.
+
+Both of the last two live on the one path this tree has no reading for:
+`fh_to_parent` and the nfsd decode. `README.capabilities.md` names that as
+the gap, and it is the same gap the whole surface has, so it is not new here.
