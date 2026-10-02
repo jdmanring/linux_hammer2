@@ -4878,3 +4878,54 @@ timing and both are correct in its assertions. `fallocate 12 check(s),
 not touch. That is the shape this repository names as the reason a test
 must use the input the real caller passes, and here the real caller
 punches ranges, not blocks.
+
+**The mechanism answer: why the port is not doing what DragonFly does,
+2026-10-02.** The file-set answer above says nothing is subtracted except
+the cluster subsystem, and that is true of what is CARRIED. It is not
+the same question as whether the carried code still does what DragonFly's
+does, and three readings of one file had been standing in for it. Read
+against the DragonFly tree at `250a8b4928`, the difference is where the
+device I/O is issued from, and it is one call wide.
+
+DragonFly issues device reads through `cluster_readx()` with the cluster
+hint as its last argument, `HAMMER2_PBUFSIZE*hce`, 256 KiB with the hint
+at 4, and end-of-file aligned down to `HAMMER2_SEGMASK64`. Linux has no
+`cluster_readx()`: the nearest is `page_cache_sync_ra()`, and its
+argument is the pages the request itself needs, which is the correction
+0.9.49 made. The port's read-ahead distance is consequently the kernel's
+`ra->size` bounded by `ra_pages`, which mount raises to 4 MiB, and not a
+distance the filesystem sets per read. On a sequential stream the two
+reach a similar window by different means; on a random read they differ,
+and the measured result is on record, 73 KiB of device traffic per random
+4 KiB read after the correction against 256 before.
+
+The write side is the same shape and is the one place the port has a
+parameter it does not use. DragonFly, when `HAMMER2_DIO_FLUSH` is set,
+takes `hce = hammer2_cluster_write` and calls `cluster_write(bp, peof,
+psize, hce)` after setting `B_CLUSTEROK`, so the buffer layer writes the
+cluster as well as the buffer; when the hint is zero it clears the flag
+and calls `bawrite()`, and when the flush bit is absent it calls
+`bdwrite()` and lets the data accumulate. The port's equivalent is
+`folio_mark_dirty_lock()` plus `filemap_fdatawrite_range()` over exactly
+the one buffer, which is the delay-and-issue-now decision kept from
+DragonFly's comment, and `hammer2_cluster_write` is declared and read
+nowhere. So the port does not ask the block layer to merge anything.
+
+That is the one real difference in mechanism, and the evidence says it
+costs nothing: the block layer already merges adjacent dirty folios before
+the device sees them, measured at 171 KiB average device write for 64 KiB
+blocks, so wiring the parameter would request a merge Linux performs
+anyway. The honest statement is not that the port is missing a DragonFly
+mechanism but that the mechanism has no Linux counterpart to reach for,
+and the layer below supplies it.
+
+What this settles about the question itself: asking why the port is not
+doing what DragonFly does has, three times, resolved to the same answer,
+that a DragonFly facility named in the carried code is a facility Linux
+does not have, and the port is not thinner so much as translated where
+translation is possible and substituted where it is not. The yield from
+the question is therefore not more porting. It is a reading of each place
+the port calls a Linux facility and a check that the argument is what that
+API expects, which is how all three defects found this session were found:
+`page_cache_sync_ra()` given a hint, the seek loop asking per block, and
+`read_mapping_folio()` walked by the page.
