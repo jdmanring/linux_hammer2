@@ -4805,3 +4805,76 @@ of the controls not being cold.
 
 The write side agrees with the record rather than moving: 357 us against 384
 for one write and its commit, 1323 against 1386 for a batch of eight.
+
+**The punch walked the page cache by a page where the folio is a
+block, 2026-10-02.** `hammer2_fallocate()`'s `PUNCH_HOLE` path looped
+`pos += PAGE_SIZE` over `read_mapping_folio()`, and that call returns
+the folio CONTAINING the index (`read_mapping_folio()` is
+`read_cache_folio()`, mm/filemap.c, which resolves through
+`filemap_get_folio()`). A block folio covers sixteen pages, so the loop
+took the same folio sixteen times per block, the comment above it
+saying "in folio-sized steps" while the code stepped by a page. The
+walk now advances by `folio_next_index()`.
+
+**The finding, as a class.** This is the third call in this session
+where a Linux API was used for a purpose its argument did not carry,
+and it is the first found by reading the kernel's own implementation of
+the callee rather than by reading the port. The sweep that found it was
+not a grep for the call names but the module's undefined-symbol list,
+`nm -u hammer2.ko`, 217 entries, which names every kernel facility the
+port enters with no guessing about where to look. The remaining entries
+were checked against their implementations in linux-7.3-rc5 and are
+correct as called; four that appeared to have no call site
+(`read_cache_folio`, `d_parent_ino`, `page_get_link`, `file_ra_state_init`)
+are reached through kernel inline helpers, `dir_emit_dotdot()` and
+`read_mapping_folio()` among them, and resolve.
+
+**What the measurement refused.** The arithmetic says sixteen repeats
+became one and suggests sixteen times the work; the kernel refuses that
+reading. Each repeat is a hash probe on a folio already present plus a
+refcount, and the zeroing of pages already zeroed is a no-op, so the
+cost removed is the walk and not a sixteenth of the work. Measured on
+`h2debug-rc5` through a fresh 4 GiB image, `/tmp/h2punch3` punching
+512 MiB, three runs each state, warm and with `/proc/sys/vm/drop_caches`
+written between runs:
+
+| build | 512 MiB punch, three runs | |
+|---|---|---|
+| page step (before) | 0.739, 0.734, 0.729 s warm; 0.733, 0.727, 0.768 s cold | 0.734 s |
+| folio step (after) | 0.576, 0.578, 0.581 s warm; 0.583, 0.580, 0.576 s cold | 0.579 s |
+
+0.734 s to 0.579 s, a factor of 1.27. The comment written into the
+source first claimed the sixteen-times figure and was corrected against
+this reading; a source comment asserting a cause no probe measured is
+the defect this record names elsewhere, and it was about to be
+committed a second time.
+
+**An earlier reading of this probe was wrong and is recorded as the
+instrument's fault.** A first version called `drop_caches` from inside
+the static binary through `system(3)`; the guest has no shell for it, so
+the write was never made and three "cold" runs at 6.4 s for 512 MiB
+were warm ones against a cache the binary had failed to drop. The
+correction is not the number but the shape: cache control belongs
+outside the thing being timed, and a probe reporting a state it did not
+establish is the same defect as a comment asserting an unmeasured
+cause.
+
+**The correctness check, and what it does not show.** A punch that
+starts and ends inside block folios, spanning several whole blocks
+between, must zero exactly the requested bytes and nothing outside
+them. Checked byte for byte over 1 MiB on the final build, 1,048,576
+bytes compared against the pattern the file was written with: 0 wrong.
+Run against the pre-fix build as well, where it also passes, which is
+what that check is: the correctness of the punch was never in question,
+only how many times each folio was visited, so this is a regression
+guard for the walk and not a discriminator for the change.
+
+**The existing exerciser could not have found this.** `test/hammer2-fallocate.c`
+punches one block, taken from `statvfs(dir).f_bsize`, which is the
+filesystem's own block size; a one-block punch enters the loop once, so
+neither the page step nor the folio step is distinguishable in its
+timing and both are correct in its assertions. `fallocate 12 check(s),
+0 failed` on the gate is a true reading about a case the defect does
+not touch. That is the shape this repository names as the reason a test
+must use the input the real caller passes, and here the real caller
+punches ranges, not blocks.
