@@ -1425,12 +1425,26 @@ static __inline void
 hammer2_assert_cluster(const hammer2_cluster_t *cluster)
 {
 	/*
-	 * A cluster holds one chain per PFS in the set, and the format
-	 * permits up to HAMMER2_MAXCLUSTER of them.  The single-chain port
-	 * asserted 1 here, which is what made a multi-chain cluster a
-	 * KASSERT failure before any quorum code could run; the manager
-	 * side still mounts one, and hammer2_cluster_check() is now the
-	 * code that handles more.
+	 * A cluster holds one chain per PFS in the set, and the array is
+	 * HAMMER2_MAXCLUSTER wide, so the bound is the array's.
+	 *
+	 * This asserted nchains == 1, which made a multi-chain cluster a
+	 * KASSERT failure before any of the code that handles one could
+	 * run. Widening it is only sound because the state behind it was
+	 * widened with it: hammer2_xop_alloc() now allocates a FIFO per
+	 * chain rather than collect[0] alone, and hammer2_cluster_check()
+	 * runs DragonFly's quorum passes rather than the single-chain
+	 * short circuit. A bound relaxed without that backing would let
+	 * nchains past a guard into code that indexes past its allocation,
+	 * which is the failure this assert exists to catch.
+	 *
+	 * nchains > 1 is reachable: hammer2_pfsalloc() appends at
+	 * nchains and the super-root scan calls it once per PFS root
+	 * chain, so a volume whose super-root lists more than one root
+	 * chain for a PFS produces one. No such volume has been built
+	 * here, so the multi-chain path is carried and reviewed, not
+	 * exercised; the single-chain path is what every measurement in
+	 * doc/history/verification-record.md runs.
 	 */
 	KASSERTMSG(cluster->nchains >= 0 &&
 	    cluster->nchains <= HAMMER2_MAXCLUSTER,

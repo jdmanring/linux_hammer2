@@ -119,6 +119,7 @@ void *
 hammer2_xop_alloc(hammer2_inode_t *ip, int flags)
 {
 	hammer2_xop_t *xop;
+	int i;
 
 	xop = uma_zalloc(hammer2_zone_xops, M_WAITOK | M_ZERO);
 	KKASSERT(xop->head.cluster.array[0].chain == NULL);
@@ -138,9 +139,18 @@ hammer2_xop_alloc(hammer2_inode_t *ip, int flags)
 	/* run_mask - Frontend associated with XOP. */
 	xop->head.run_mask = HAMMER2_XOPMASK_VOP;
 
-	hammer2_xop_fifo_t *fifo = &xop->head.collect[0];
+	/*
+	 * One FIFO per chain in the cluster, not one for the cluster.
+	 * hammer2_xop_start() walks every index up to nchains and each
+	 * storage function feeds collect[i] for its own i, so a cluster
+	 * with more than one chain reads and writes FIFOs beyond the first.
+	 * This allocated collect[0] alone, which was correct only while
+	 * hammer2_assert_cluster() refused nchains != 1.
+	 */
 	xop->head.fifo_size = HAMMER2_XOPFIFO;
-	hammer2_xop_fifo_alloc(fifo, xop->head.fifo_size, 0);
+	for (i = 0; i < xop->head.cluster.nchains; ++i)
+		hammer2_xop_fifo_alloc(&xop->head.collect[i],
+		    xop->head.fifo_size, 0);
 
 	hammer2_inode_ref(ip);
 

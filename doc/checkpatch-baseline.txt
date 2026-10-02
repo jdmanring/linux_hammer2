@@ -16,7 +16,7 @@
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
 16 Misplaced SPDX-License-Identifier tag - use line 1 instead
-2 Missing a blank line after declarations
+1 Missing a blank line after declarations
 16 Missing or malformed SPDX-License-Identifier tag in line 1
 1 Possible comma where semicolon could be used
 3 Possible repeated word: 'X'
