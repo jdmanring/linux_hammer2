@@ -415,8 +415,19 @@ hammer2_io_readahead(hammer2_io_t *dio)
 	{
 		DEFINE_READAHEAD(ractl, NULL, dio->ra, mapping, index);
 
-		page_cache_sync_ra(&ractl, (unsigned long)hint *
-		    (dio->psize >> PAGE_SHIFT));
+		/*
+		 * req_count is the pages THIS REQUEST needs, not how far
+		 * ahead to read: page_cache_sync_ra() reads it as-is for a
+		 * standalone small random read (mm/readahead.c) and lets
+		 * ra->size, bounded by ra_pages, do the look-ahead on a
+		 * sequential stream.  Passing the hint here made the
+		 * argument 4 x the block's own 16 pages, so a random 4 KiB
+		 * read asked for 64 pages and got 256 KiB from the device
+		 * where one 64 KiB block is what it needs.  The block's own
+		 * pages are the whole request; the hint reaches the window
+		 * through ra_pages, which mount sets to 4 MiB.
+		 */
+		page_cache_sync_ra(&ractl, dio->psize >> PAGE_SHIFT);
 	}
 }
 

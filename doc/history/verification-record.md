@@ -4676,3 +4676,35 @@ read-ahead table above found hint 4 with a 4 MiB device window the best of
 the three hints tried (2936 and 2908 MiB/s against hint 16's 2802 and 2778),
 so on a sequential read the constant earns its place and the missing piece is
 the pattern test, not the constant.
+
+**The read-ahead call passed the wrong quantity, 2026-10-02.**
+`hammer2_io_readahead()` asks `page_cache_sync_ra()` for
+`hint * (dio->psize >> PAGE_SHIFT)` pages on every device read. That argument
+is the pages **this request needs**, not how far ahead to read: the kernel
+reads it as-is for a standalone random read (mm/readahead.c, "Read as is, and
+do not pollute the readahead state") and lets `ra->size`, bounded by
+`ra_pages`, do the look-ahead on a stream. With `hint` at 4 and the block at
+16 pages the argument was 64, so a random 4 KiB read asked the kernel for
+64 pages and got 256 KiB from the device where the block it needs is 64 KiB.
+
+Passing the block's own pages fixes it. Measured on the release build of the
+kernel of record, both modules built against
+`~/kernels/linux-7.3-rc5-release`, device sectors counted across 500 random
+4 KiB reads with the page cache dropped, two runs each:
+
+| build | device KiB per 4 KiB read | random, 1 thread |
+|---|---|---|
+| before | 256, 256 | 41.9, 45.0 us |
+| after | 73, 73 | 28.5, 27.7 us |
+
+Three and a half times less device traffic per random read and about a third
+less latency, reproduced. The 73 KiB is one 64 KiB block plus the metadata
+the walk touches, which is the floor for this format. Sequential read measured
+4,884 and 5,100 MiB/s with the fix against 4,884 and 3,176 to 3,215 before,
+so it is not paid for out of the sequential path; the pair runs under host
+load above 13 and the sequential figure is not a controlled comparison.
+
+`hammer2_cluster_data_read` stays at 4. It is the read-ahead distance the
+kernel's own state machine uses, it is DragonFly's value, and the read-ahead
+table above found it the best of the three tried; what was wrong was passing
+it where the request size belongs.

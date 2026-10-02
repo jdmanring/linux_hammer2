@@ -60,7 +60,7 @@ a defect.
 | `hammer2_export.c` | 371 | this port's; the Linux file-handle surface, which no BSD tree has in this shape: the interface is the kernel's `export_operations` where DragonFly reaches NFS through `vfsops`, and the encoding is DragonFly's (`hammer2_vfs_vptofh()`), the inode number masked with `HAMMER2_DIRHASH_USERMSK`; the reverse lookup is the FreeBSD port's `hammer2_vget()`, built on the carried `hammer2_lookup_desc` XOP |
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
-| `hammer2_io.c` | 1233 | hash and dedup halves carried; OS half written on the page cache |
+| `hammer2_io.c` | 1244 | hash and dedup halves carried; OS half written on the page cache |
 | `hammer2_os.h` | 1259 | ours, the OS shim |
 | `hammer2_compat.h` | 198 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
