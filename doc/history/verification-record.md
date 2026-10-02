@@ -4373,6 +4373,15 @@ and the seek steps by that instead of by a block. Not done here, because it
 changes the seek path's shape rather than its correctness and that is a
 decision for the tree's author rather than one to take while measuring.
 
+**It was done, the next day.** `hammer2_bmap_next_key()` and the rewrite of
+`hammer2_llseek()` around it landed as `6f26d63` and are row 0.9.47, which
+carries the result: 9,787.7 us to 2.1 us per `SEEK_DATA` on a 1 GiB
+all-hole file, a factor of 4,660, with the answers unchanged. The paragraph
+above is kept as the reading and the reasoning at the time, and the code
+still carries `EXPERIMENT:` at both sites, which is the marker for work
+whose value is not yet established; the measurement is taken and the
+disposition of that marker is the author's.
+
 Not a correctness finding. `test/hammer2-seek.c` passed throughout, and the
 answers above are right: `SEEK_DATA(0)` on an all-hole file is ENXIO and it
 is reported as ENXIO, just slowly.
@@ -4676,6 +4685,21 @@ read-ahead table above found hint 4 with a 4 MiB device window the best of
 the three hints tried (2936 and 2908 MiB/s against hint 16's 2802 and 2778),
 so on a sequential read the constant earns its place and the missing piece is
 the pattern test, not the constant.
+
+**What this entry described as current was fixed the same day, and the
+paragraphs above are kept as the reading rather than corrected.** The
+multiplier is gone: `page_cache_sync_ra()` is now passed the block's own
+pages, `dio->psize >> PAGE_SHIFT`, so a random read no longer over-reads
+whatever the hint is set to, and the hint is a switch rather than a
+multiplier. The entry below has the kernel reading that settles it and the
+resulting traffic, 256 KiB down to 73 KiB per random 4 KiB read. The
+measurement table above stands as taken, since the hint did scale the
+window when it was measured; the sentence saying the port "has no
+equivalent of `hce`" does not, and a reader should take the entry below.
+This note exists because a stale statement of a live DEFECT is the most
+costly kind to leave unmarked: a stale all-clear gets re-checked, and a
+stale defect sends the next reader looking for something that is not
+there.
 
 **The read-ahead call passed the wrong quantity, 2026-10-02.**
 `hammer2_io_readahead()` asks `page_cache_sync_ra()` for
