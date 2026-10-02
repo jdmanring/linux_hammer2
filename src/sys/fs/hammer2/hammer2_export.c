@@ -88,10 +88,25 @@ hammer2_vget(hammer2_pfs_t *pmp, hammer2_tid_t inum)
 	xop->lhc = inum;
 	hammer2_xop_start(&xop->head, &hammer2_lookup_desc);
 	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
-	if (error == 0)
+	if (error == 0) {
 		ip = hammer2_inode_get(pmp, &xop->head, -1, -1);
-	else
+	} else {
+		/*
+		 * A lookup that failed for a reason other than "no such
+		 * number" is a read error or a bad block on an exported
+		 * volume, and the caller turns every failure here into
+		 * ESTALE, which the kernel then collapses to ESTALE again
+		 * (exportfs_decode_fh).  A client told a file it can see in
+		 * a listing "no longer exists" has no way to recover, so the
+		 * error is recorded rather than dropped: without this line
+		 * nothing distinguishes a stale handle from a failing
+		 * device.  ENOENT is the ordinary miss and stays quiet.
+		 */
+		if (error != ENOENT)
+			hprintf("fh lookup inum %016llx failed: %d\n",
+			    (long long)inum, error);
 		ip = NULL;
+	}
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 
 	return (ip);
@@ -169,7 +184,16 @@ hammer2_get_inode(struct super_block *sb, hammer2_tid_t inum)
  *
  * A request that does not fit returns FILEID_INVALID with *max_len set to the
  * size needed in 32-bit words, the size-out protocol the kernel's own
- * exportfs_encode_ino64_fid() uses, and the caller retries with that size.
+ * exportfs_encode_ino64_fid() uses.  The two callers read the refusal
+ * differently and the difference matters here: name_to_handle_at(2) retries
+ * with the size (fs/fhandle.c, and the gate measures it), while nfsd does not
+ * — _fh_update() takes `fileid_type > 0 ? fileid_type : FILEID_INVALID` and
+ * fh_compose() then answers nfserr_stale for the object (fs/nfsd/nfsfh.c), so
+ * for nfsd a refusal is a failed handle and not a retry.  The refusal is
+ * still the right answer for both: nfsd passes a parent only on a
+ * subtree-checked export, where fh_to_parent is what the decode needs, and
+ * the alternative was a handle that claimed connectable and carried no
+ * parent, which the decode cannot reconnect at all.
  *
  * When the kernel passes a parent it is asking for a CONNECTABLE handle, and
  * this must not answer with the shorter type instead: that handle carries no
@@ -194,9 +218,20 @@ hammer2_encode_fh(struct inode *inode, __u32 *fh, int *max_len,
 		}
 		fhp = (void *)fh;
 		fhp->ino = inode->i_ino;
-		fhp->gen = inode->i_generation;
+		/*
+		 * gen and parent_gen are written as zero and the decoder
+		 * reads neither: this port compares no generation, because an
+		 * inode number is not reused within a PFS (see the file
+		 * header).  They are written as zero rather than left
+		 * uninitialised so a handle is reproducible byte for byte.
+		 * Do not put a real i_generation here without teaching
+		 * hammer2_get_inode to compare it, or the field reads as a
+		 * stale-handle check that is not made; a reformat is the case
+		 * it would catch and is named in README.capabilities.md.
+		 */
+		fhp->gen = 0;
 		fhp->parent_ino = parent->i_ino;
-		fhp->parent_gen = parent->i_generation;
+		fhp->parent_gen = 0;
 		*max_len = HAMMER2_FH_PARENT_LEN;
 		return (FILEID_INO64_GEN_PARENT);
 	}
@@ -205,7 +240,7 @@ hammer2_encode_fh(struct inode *inode, __u32 *fh, int *max_len,
 		return (FILEID_INVALID);
 	}
 	((struct fid *)fh)->i64.ino = inode->i_ino;
-	((struct fid *)fh)->i64.gen = inode->i_generation;
+	((struct fid *)fh)->i64.gen = 0;	/* see the parent form above */
 	*max_len = HAMMER2_FH_INO64_LEN;
 	return (FILEID_INO64_GEN);
 }
@@ -244,6 +279,7 @@ static struct dentry *
 hammer2_fh_to_parent(struct super_block *sb, struct fid *fid, int fh_len,
     int fh_type)
 {
+	struct dentry *parent;
 	hammer2_tid_t inum;
 
 	if (fh_type != FILEID_INO64_GEN_PARENT ||
@@ -251,7 +287,25 @@ hammer2_fh_to_parent(struct super_block *sb, struct fid *fid, int fh_len,
 		return (NULL);
 	inum = ((struct hammer2_fid_parent *)fid->raw)->parent_ino;
 
-	return (hammer2_get_inode(sb, inum));
+	parent = hammer2_get_inode(sb, inum);
+	/*
+	 * The parent half of a handle is a number the caller supplied, and
+	 * nothing above checks it names a directory.  A handle forged with a
+	 * parent that is a regular file reaches exportfs_get_name() with it
+	 * and either reports EACCES where ESTALE is the honest answer or,
+	 * where a name happens to match, places the dentry under an object
+	 * that is not its parent.  Rejecting a non-directory costs one test
+	 * and closes that.  erofs and fuse decode this type without the
+	 * check; this port's own rule for a handle is that it must resolve
+	 * to the object it names or not at all (see the nlinks test in
+	 * hammer2_get_inode).
+	 */
+	if (!IS_ERR(parent) && !d_is_dir(parent)) {
+		dput(parent);
+		return (NULL);
+	}
+
+	return (parent);
 }
 
 /*
