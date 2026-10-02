@@ -4309,3 +4309,36 @@ because it is a cost and not a correctness defect.
 Both of the last two live on the one path this tree has no reading for:
 `fh_to_parent` and the nfsd decode. `README.capabilities.md` names that as
 the gap, and it is the same gap the whole surface has, so it is not new here.
+
+**`fh_to_parent` is unreachable from the syscalls, measured 2026-10-01.** The
+capability row said its decode body runs in no test and left it there. That
+understates it: it is unreachable from `name_to_handle_at`/`open_by_handle_at`
+entirely, so no test written against those syscalls could reach it whatever it
+did, and the reason is worth having on the record.
+
+`exportfs_decode_fh_raw()` reaches `fh_to_parent` only from its
+non-directory branch, and only after `find_acceptable_alias()` fails. For
+`open_by_handle_at(2)` that cannot happen: the callback it passes,
+`vfs_dentry_acceptable`, returns 1 without looking while `ctx->flags` is zero
+(fs/fhandle.c), and `ctx->flags` is set only for a handle opened with
+`O_DIRECTORY` (fs/fhandle.c:334, :338). A directory handle is also the one
+form that encodes no parent, since `exportfs_encode_fh()` passes a parent to
+the encoder only for a connectable non-directory. So the branch that calls
+`fh_to_parent` is entered only for a non-directory, and a non-directory is
+exactly what leaves the callback inert.
+
+Measured rather than argued. A probe line was placed at the top of
+`hammer2_fh_to_parent()` that prints to the kernel ring, and every shape of
+the syscall was driven against a live mount: a connectable file handle opened
+plain, with `O_DIRECTORY`, with `O_PATH` and with `O_NOFOLLOW`, and a
+directory handle (`type=0x30081`) opened with `O_DIRECTORY`. The probe fired
+zero times. The file was restored and rebuilt after.
+
+nfsd is the only caller that can reach it: it passes `flags = 0` with
+`nfsd_acceptable`, which returns 0 unless the walk from the decoded dentry
+reaches `exp->ex_path.dentry` (fs/nfsd/nfsfh.c), so on a subtree-checked
+export `find_acceptable_alias()` can fail and the parent decode runs. That is
+why the member is registered and why nothing in this tree can exercise it;
+the guest cannot serve an export because every kernel in the fleet and every
+tree here is built with `CONFIG_NFSD` unset, and enabling it needs SUNRPC,
+which the kernel of record does not build either.
