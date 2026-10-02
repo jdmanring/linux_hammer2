@@ -4588,3 +4588,39 @@ could drop. The read walks the blockref tree under the lock the port chose.
 For the open latency question above, this is the instrument that would
 resolve it: the same profile is the reading a fix would move, and it is
 load-tolerant in a way a rate is not.
+
+**The io hash lock is contended and scales to a plateau, measured
+2026-10-02.** The port takes one device-wide `iohash_lock` for a structure
+that has 32,768 buckets (`HAMMER2_IOHASH_SIZE`), and the record's cost for it
+was 2.6 percent of acquisitions waiting on a four-writer workload. Measured
+with thread count as the variable instead, a 2 GiB file on a 4 GiB volume on
+`h2debug-rc5`, the page cache dropped, each count reading the port's own
+`iohash_waits` before and after:
+
+| threads | ops/s | acquisitions | waiting |
+|---|---|---|---|
+| 1 | 3,096 | 23,822 | 0 (0.0%) |
+| 2 | 6,894 | 45,591 | 1,898 (4.2%) |
+| 4 | 10,248 | 84,954 | 10,117 (11.9%) |
+| 8 | 17,545 | 142,745 | 42,793 (30.0%) |
+| 12 | 17,210 | 179,052 | 68,604 (38.3%) |
+
+Two things are in that table. The waiting share rises with concurrency, and
+throughput stops scaling: 8 threads run 17,545 ops/s and 12 threads run
+17,210, so fifty percent more threads buys nothing and takes a little back.
+
+The control says the guest is not the ceiling. The same benchmark on a 64 MiB
+file whose blocks are cache-resident, where the module is out of the path
+entirely, runs 386,336 ops/s at one thread and 2,098,974 at twelve, scaling
+cleanly. The cached path is a hundred and twenty times the cold one, so the
+cold path's plateau is not the CPU and not the page cache.
+
+What is held under the lock is not only a list scan: on a miss
+`hammer2_io_alloc()` runs `hmalloc(..., M_WAITOK)` inside the critical
+section, and `M_WAITOK` may sleep, so the device-wide lock is held across an
+allocation. The release before the I/O is correct; the serialization is in
+the lookup and the insert.
+
+This is the evidence the record asked for before any change to code three
+ports share. It says the coarse lock costs throughput at eight threads and
+above, which the 2.6 percent figure on one workload did not show.
