@@ -5010,3 +5010,88 @@ remains is not a DragonFly gap at all. It is the class this session found
 three times, a Linux facility called with an argument that facility does
 not mean, and the way to find the next one is to keep reading the kernel's
 implementation of what the port calls rather than the port.
+
+**What the cluster subsystem would cost, measured 2026-10-02.** The
+capability table has declared Replication, IncrementalReplication and
+RemoteCheckpoint `unavailable` since it was written, and the roadmap puts
+clustering beyond H7 with the words "investigate after qualification". No
+investigation had been recorded, so the declaration rested on the three
+BSD ports having deleted the layer rather than on a measure of what
+carrying it would take. The three ports were checked here rather than
+taken on trust: `hammer2_synchro.c`, `hammer2_ccms.*`, `hammer2_iocom.c`
+and `hammer2_msgops.c` are absent from the FreeBSD, NetBSD and OpenBSD
+trees in this workspace, and no file in any of them names `kdmsg` or
+`cluster_readx()`. The declaration is correct.
+
+What follows is the cost the declaration was missing.
+
+| what | lines |
+|---|---|
+| `hammer2_synchro.c` | 1069 |
+| `hammer2_iocom.c` | 387 |
+| `hammer2_msgops.c` | 87 |
+| `hammer2_ccms.c` | 311 |
+| `lib/libdmsg` (the layer all four call) | 5490 |
+
+The 1,854 lines of cluster code are the smaller half and are portable:
+read for their kernel dependencies, `hammer2_synchro.c` uses `kprintf`,
+`KKASSERT` and `tsleep`/`wakeup`, all of which the shim already provides.
+The load-bearing dependency is `kdmsg` instead: `hammer2_iocom.c` builds
+on it, the four files reach ten distinct entry points
+(`kdmsg_iocom_init`, `_autoinitiate`, `_reconnect`, `_uninit`,
+`kdmsg_msg_alloc`, `_reply`, `_result`, `_write`, `kdmsg_msg_t`,
+`kdmsg_state_t`), and `lib/libdmsg` is a USERSPACE library, so a kernel
+module cannot link it. A port means writing an in-kernel message
+transport, the filesystem/message boundary and a link state machine
+before the first line of cluster logic runs, since the kernel side of
+`kdmsg` lives in `sys/kern/kern_dmsg.c`, which this workspace's partial
+DragonFly tree does not carry.
+
+The reason to decline is not the size. It is that the size buys no
+capability that is measurable here and no peer to compare against: the
+cluster is replication, incremental replication and remote checkpoints,
+none of which any BSD port has, so there is no second implementation to
+measure the port against and nothing in the performance record that a
+cluster would move. Every reading this port has and the ports do not,
+the million-file scaling, the closure copy, the seek rewrite and the
+read-ahead correction, is on the single-volume path the cluster does not
+touch.
+
+**Every module parameter accounted for, and the one that is inert,
+2026-10-02.** The tree's rule is that a setting accepted whether or not
+it takes effect is a defect, and no document listed the module's
+parameters or said which are read, so the rule had nothing to be checked
+against. There are seventeen, and sixteen are read. The sweep is recorded
+here because its first version was wrong in a way worth keeping: a search
+over `.c` files alone reported `nofs_scope` as unread, and it is read in
+`hammer2_os.h` at two sites, so a parameter's readers are not confined to
+the file that declares it.
+
+| parameter | read at | what it does |
+|---|---|---|
+| `nofs_scope` | `hammer2_os.h` x2 | the NFSSCOPE control around the allocation scopes |
+| `io_buf_only` | `hammer2_io.c` x3 | forces the DIO layer's own buffer instead of the page cache |
+| `cluster_meta_read`, `cluster_data_read` | `hammer2_io.c` | switches, below 1 turning read-ahead off |
+| `dedup_enable`, `dio_limit`, `bulkfree_tps` | several | the named facilities |
+| `limit_scan_depth`, `limit_saved_chains` | chain and inode | the scan bounds |
+| `always_compress`, `alloc_data_bytes`, `alloc_meta_bytes`, `data_rewrites` | several | compression and the allocation counters |
+| `folio_changed`, `debug_hpanic`, `fail_alloc_after` | several | the counters and the fault injections |
+| `cluster_write` | nowhere | **inert** |
+
+`hammer2_cluster_write` is declared at `hammer2_vfsops.c:81`, exported at
+`hammer2.h:959`, and registered at `hammer2_vfsops.c:159` with mode 0644,
+so it is settable at runtime, and no code reads it. The intent was
+DragonFly's `cluster_write(bp, peof, psize, hce)`, which sets
+`B_CLUSTEROK` and asks the buffer layer to write the cluster as well as
+the buffer, and the port's write path does neither, marking the folio
+dirty and issuing `filemap_fdatawrite_range()` over the one buffer.
+
+The reading that decides its disposition is on record already: the block
+layer merges adjacent dirty folios before the device sees them, measured
+at 171 KiB average device write for 64 KiB blocks. So wiring the parameter
+would request a merge Linux performs anyway, and the parameter is not a
+capability that is missing but one that has no work to do. It should be
+removed rather than wired, and until it is, it is a defect of the class
+the tree names: a setting a user can set with nothing to observe. That is
+the maintainer's to take, since removing it changes the module's
+parameter list.

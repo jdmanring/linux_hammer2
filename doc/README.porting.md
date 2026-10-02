@@ -691,9 +691,12 @@ none of them is a translation.
 the read-only half cannot.** FreeBSD exports fifteen values under
 `vfs.hammer2`, read-write for the tunables and read-only for the four
 allocation counters and `supported_version`. Linux's nearest mechanism
-that costs nothing to build is `module_param_named()`, which puts the
-nine tunables under `/sys/module/hammer2/parameters/` at 0644 and drops
-the `hammer2_` prefix exactly as `sysctl` does.
+that costs nothing to build is `module_param_named()`, which puts
+eleven settable parameters under `/sys/module/hammer2/parameters/` at
+0644 and drops the `hammer2_` prefix exactly as `sysctl` does, beside
+six at 0444 that are not tunables. One of the eleven, `cluster_write`,
+is read nowhere and is a defect of the class this tree names rather than
+a tunable; `README.roadmap.md` carries its disposition.
 
 The counters are not there, and the reason is that `perm` is visibility
 in sysfs and nothing else. `include/linux/moduleparam.h` says it in as
