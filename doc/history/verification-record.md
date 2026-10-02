@@ -4571,12 +4571,19 @@ chain to the data block: `chain_lookup` and `chain_load_data` are that walk,
 and each block it touches goes through `getblk`.
 
 What this does not yet establish, and is not claimed: whether seventy-two is
-the correct count for the walk or contains redundant lookups. The tree depth
-for a 1 GiB file at 64 KiB blocks is three or four (`16384` data blocks,
-`128` refs per indirect), so a walk of three or four blocks should not need
-seventy-two hash lookups, but the walk per read is the carried core's and the
-extra count has not been attributed to a specific re-entry. The measurement
-is here so that the next step is an attribution rather than a guess.
+the correct count for the walk or contains redundant lookups. It is the
+coarse lock `doc/IO_MODEL.md` already records as a port decision: this port
+carries the FreeBSD arrangement, one `iohash_lock` for the whole device,
+where DragonFly locks nothing in the io layer and takes a per-bucket spinlock
+shared for a lookup. The document names the price, the acquisitions that
+wait, and measures it at 2.6 percent on the four-writer run; the same section
+says the FreeBSD shape would have to change first. So the acquisitions are
+known and accepted rather than a defect found here.
+
+Attributed further: a page-cached read of the same offset measures 1.66 us,
+so the module is not in the path when the page cache answers, and the
+acquisitions are the price of a cold miss rather than redundant work the tree
+could drop. The read walks the blockref tree under the lock the port chose.
 
 For the open latency question above, this is the instrument that would
 resolve it: the same profile is the reading a fix would move, and it is
