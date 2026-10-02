@@ -4708,3 +4708,31 @@ load above 13 and the sequential figure is not a controlled comparison.
 kernel's own state machine uses, it is DragonFly's value, and the read-ahead
 table above found it the best of the three tried; what was wrong was passing
 it where the request size belongs.
+
+**`cluster_write` is declared and read nowhere, and the mechanism it names
+is already there, 2026-10-02.** Of the sixteen module parameters this port
+declares, fifteen are read; `hammer2_cluster_write` is the one that is not.
+It is DragonFly's physical write clustering, carried by all three BSD ports
+as a parameter and used by FreeBSD (`cluster_write_vn()`, hammer2_io.c) and
+by DragonFly (`cluster_write()`, hammer2_io.c), while NetBSD and OpenBSD
+carry the parameter and read it nowhere, and this port follows them.
+
+The question is whether the mechanism is missing. Measured on the release
+build of the kernel of record, a 4 GiB volume, `dd` of 800 MiB with
+`conv=fsync`, device writes and sectors counted from `/proc/diskstats`:
+
+    800 MiB written, 4810 device writes, 1645184 sectors = 803 MiB
+    average device write request: 171.0 KiB
+
+For 64 KiB blocks that is 2.7 blocks per device request, so the writes are
+already batched: Linux's block layer merges the adjacent bios the port
+issues, which is the work `cluster_write()` does on the BSDs. The ordering
+is right as well, the file landing contiguous on the media at 6503 of 8192
+steps against DragonFly's own 2018 on the same volume.
+
+So the parameter is dead rather than the feature being absent, and the two
+are worth separating: a knob that is accepted and does nothing is the defect
+this tree treats as a bug, while the batching it would have requested already
+happens in the layer below. The parameter's disposition belongs with the
+port's author: removing it changes the module's parameter list, and wiring it
+would ask for a merge Linux already performs.
