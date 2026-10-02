@@ -4417,6 +4417,23 @@ so there is no per-block win left to find here. What the profiles do not
 settle, and what `doc/README.status.md` already names: every figure above is
 the debug kernel's.
 
+**A throughput reading is not takeable under host load, 2026-10-01.** Cold
+reads on `7.3.0-rc5-release` measured 2.1 to 3.4 GiB/s for a 2 GiB file at
+1 MiB requests against the 3.7 to 5.4 the record holds, and the host was at
+load 19 on 24 CPUs with a Nix LTO build, several `lto1-wpa` and `nix`
+processes at 100 percent. That is not a regression and is not recorded as
+one: a rate measured on a saturated host is the host's, and the port's
+throughput readings are taken and read with the comparison filesystems beside
+them on the same guest in the same run for exactly this reason. The rate is
+re-taken when the machine is idle; the number above is kept to date the
+attempt, not to move the reading of record.
+
+The release kernel carries no function profiler, so the profile of record
+stays the debug build's: `CONFIG_FUNCTION_TRACER` is not in the release
+config, which is what makes it the build to measure rates on and the wrong
+build to profile. The seek figure below is a CPU measurement on one call and
+is not load-sensitive the way a rate is.
+
 **Seek forward scan, measured on the release kernel.** The debug-build figures
 above (0.345 s per GiB) are that build's; the reading that ships was taken
 2026-10-01 on `7.3.0-rc5-release` with no lockdep and no kmemleak, A/B against
