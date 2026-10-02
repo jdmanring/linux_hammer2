@@ -4458,3 +4458,30 @@ from ~320 ms to 28 us. `test/hammer2-seek.c` passes 12 of 12 and
 `seek-forward-scan` (`6f26d63`) rather than main: it changes the seek path's
 shape, and that is the tree's decision rather than one to take while
 measuring.
+
+**The read path's named ceiling, identified, 2026-10-01.** The entry above left
+the next ceiling as "a spinlock and an rwsem at a tenth and a fourteenth of
+the profile, named rather than measured". Profiled on the debug kernel with
+the full function set, a cold 512 MiB read of one file:
+
+| function | calls | for 8,864 blocks |
+|---|---|---|
+| `hammer2_read_folio` | 8,864 | one per block, the floor |
+| `hammer2_chain_testcheck` | 8,297 | under one verification per block |
+| `hammer2_chain_get` | 43,357 | 4.9 per block |
+| `hammer2_chain_lock` | 78,817 | 8.9 per block |
+| `down_write` / `up_write` | 215,720 each | 24 per block |
+
+The verification ratio is the one the fix above was for and it holds: under
+one `chain_testcheck` per data block, so the "four verifications per block"
+that the read-ahead rework found are still gone. What remains is the tree
+walk: `chain_get` and `chain_lock` are the inode's chain descending through
+its indirect blocks to the data block, and the 24 lock pairs per block are
+that descent twice over, once each way. The read XOP takes its chain shared
+(`HAMMER2_RESOLVE_SHARED`, one lookup per block), so the `down_write` count is
+the exclusive acquires inside the traversal rather than the read's own lock.
+
+None of this is a defect and none of it is fixable here: the depth is the
+format's, the locks are DragonFly's arrangement, and the counter that would
+have shown a redundant re-verification shows none. The ceiling is now a
+number per block instead of an adjective, which is what the record asked for.
