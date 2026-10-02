@@ -184,10 +184,27 @@ scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 ||
 # The host's tmpfs is the fourth control and needs no guest: it is what a
 # reading served from memory looks like, and it must fail the exerciser's
 # own cache check so that the check is known to be live.
+#
+# It runs "$W/h2lat", where the exerciser is built, and not /tmp/h2lat,
+# which is the copy scp put on the guest.  Running the guest's path here
+# meant this control ran a file the host does not have: it printed "No
+# such file or directory" and the script did not fail on it, so the one
+# control that shows the cache check is live had never run on the host.
 echo "== tmpfs, the cache control (must report cache speed and fail its own check)"
 mkdir -p /tmp/latctl
-/tmp/h2lat /tmp/latctl tmpfs 64 200 2>&1 | sed 's/^/  /'
+ctlout=$("$W/h2lat" /tmp/latctl tmpfs 64 200 2>&1)
+printf '%s\n' "$ctlout" | sed 's/^/  /'
 rmdir /tmp/latctl 2>/dev/null
+# The control's own failure is the point, and its output is what says it
+# ran.  Without this the whole line can be a command-not-found and the run
+# continues, which is how the guest's path came to be used here unnoticed:
+# a control that cannot run is not a control, and the numbers below are
+# only as good as its having run.
+printf '%s\n' "$ctlout" | command grep -q '^lat-' || {
+	echo "latency: COULD-NOT-RUN: the tmpfs cache control produced no reading," >&2
+	echo "         so the exerciser did not run on the host and the cache" >&2
+	echo "         check is not known to be live" >&2
+	down; exit 2; }
 
 n=0
 while [ "$n" -lt "$REPEAT" ]; do

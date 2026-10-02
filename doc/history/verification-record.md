@@ -4485,3 +4485,24 @@ None of this is a defect and none of it is fixable here: the depth is the
 format's, the locks are DragonFly's arrangement, and the counter that would
 have shown a redundant re-verification shows none. The ceiling is now a
 number per block instead of an adjective, which is what the record asked for.
+
+**The latency instrument's host control had never run, 2026-10-01.** The
+`tmpfs` control is the fourth comparison in `script/latency.sh` and the one
+that shows the exerciser's own cache check is live: a reading served from
+memory must fail that check, or nothing proves a guest reading came from
+media. It ran `/tmp/h2lat`, which is where the exerciser is copied **on the
+guest**; on the host the binary is built at `$W/h2lat`, a temporary
+directory. So the control printed `No such file or directory` on every run,
+its output went through `sed` so its status was dropped, and nothing asserted
+it had run. The check the whole instrument rests on was never exercised.
+
+It runs `"$W/h2lat"` now, and the control's output is checked for a reading
+before the run continues: a control that cannot run exits 2 rather than
+letting the numbers below stand on nothing. Run by hand the check is what it
+should be, `lat-fail randread4k median 471 ns is cache speed, so the cache
+was not cold and this is not a media reading`.
+
+This is the second instrument defect found the same day, after the throughput
+run building against the debug tree while the guest ran the release kernel.
+Both are the same shape: an instrument that reports a number without the
+control that says the number means what it claims.
