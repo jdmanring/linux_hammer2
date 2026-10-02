@@ -4376,3 +4376,54 @@ decision for the tree's author rather than one to take while measuring.
 Not a correctness finding. `test/hammer2-seek.c` passed throughout, and the
 answers above are right: `SEEK_DATA(0)` on an all-hole file is ENXIO and it
 is reported as ENXIO, just slowly.
+
+**The write path, profiled for the first time, 2026-10-01.** The read path was
+profiled and optimized (the read-ahead workers, 0.9.19), and no profile of the
+write path existed anywhere in this tree. Taken on `artix-s6-kde` at
+7.3.0-rc5 with the kernel's function profiler filtered to the module's own 303
+symbols, a 200 MiB `dd` with `conv=fsync`, on the debug kernel (lockdep and
+kmemleak on, so every figure is that build's):
+
+| hammer2 function | calls | self time | per call |
+|---|---|---|---|
+| `hammer2_vop_fsync` | 1 | 819,764 us | 819,764 us |
+| `hammer2_writepages` | 2 | 792,653 us | 396,326 us |
+| `hammer2_xop_start` | 3,213 | 743,092 us | 231 us |
+| `hammer2_xop_strategy_write` | 3,200 | 712,607 us | 223 us |
+| `hammer2_write_file_core` | 3,200 | 621,223 us | 194 us |
+| `hammer2_compress_and_write` | 3,200 | 620,624 us | 194 us |
+| `hammer2_assign_physical` | 3,200 | 292,913 us | 92 us |
+| `hammer2_chain_create` | 5,613 | 264,963 us | 47 us |
+| `hammer2_file_write_iter` | 200 | 204,343 us | 1,022 us |
+
+The one-call costs dominate: the flush at the end of `fsync` is 819 ms, and
+`writepages` 396 ms per call, against 223 us for each of the 3,200 write XOPs.
+Nothing here is out of line with the design: `fsync` syncs the inode's chain
+and flushes, and the flush issues the device cache barrier `a235a5b` wired in;
+`writepages` walks the folios of a 200 MiB file. The write XOP's per-block cost
+is the carried strategy path, which 0.9.21 already took one full-block copy out
+of.
+
+`hammer2_chain_find_cmp` is the largest single self-time row in the whole
+profile, 403 ms, and it is `RB_SCAN` over the chain rbtree. That is DragonFly's
+own code and the FreeBSD port's, line for line, including the scan-in-progress
+bookkeeping `hammer2_rb.h` explains; a linear scan is what finds the best
+matching chain in a key range, and replacing it with a direct `RB_FIND` would
+break the four-tree symmetry the port exists to keep.
+
+What the profile settles: the write path's cost is where the design puts it,
+in the two whole-file operations at the end rather than in the per-block path,
+so there is no per-block win left to find here. What the profiles do not
+settle, and what `doc/README.status.md` already names: every figure above is
+the debug kernel's.
+
+**Seek forward scan, measured and left on a branch.** `SEEK_DATA` had the one
+algorithmic defect this audit found: it walked the file one 64 KiB block at a
+time, one XOP each. Replacing the loop with the tree's own forward scan
+(`hammer2_xop_scanall`, carried and unused) took it from 0.345 s per GiB,
+linear, to 0.0001 s per GiB flat to 16 GiB, and a seek across a 1 GiB hole
+from ~320 ms to 28 us. `test/hammer2-seek.c` passes 12 of 12 and
+`test-enospc.sh` reports the full run green. It is on the branch
+`seek-forward-scan` (`6f26d63`) rather than main: it changes the seek path's
+shape, and that is the tree's decision rather than one to take while
+measuring.
