@@ -4645,3 +4645,34 @@ reason. No locking change is justified by this measurement, and the
 per-bucket lock FreeBSD disabled is not shown to be worth taking. The
 measurement stays because the contention figure is what the record asked for
 and because the units error is the thing to not repeat.
+
+**A 4 KiB random read pulls 256 KiB from the device, measured 2026-10-02.**
+The device sectors read were counted across 500 random 4 KiB reads of a 2 GiB
+file, before and after, on `h2debug-rc5` with the page cache dropped:
+256,256 sectors for 500 reads, 256.3 KiB of device traffic for a 4 KiB
+request, a 64-fold amplification.
+
+The multiplier is `hammer2_cluster_data_read`, whose default is 4, passed to
+`page_cache_sync_ra()` in `hammer2_io_readahead()` as a multiple of the
+device's read-ahead window. It is read flat: the call is made for every data
+read whether the access is sequential or random. Measured by setting the
+multiplier at load, one pass each, the device traffic tracks it directly:
+
+| `cluster_data_read` | device KiB per 4 KiB read |
+|---|---|
+| 4 (the default) | 256 |
+| 2 | 135 |
+| 1 | 73 |
+
+DragonFly does not read flat. Its `hammer2_io.c` calls `cluster_readx()`
+with an `hce` cluster estimate that the buffer cache derives from the access
+pattern, and where `hce` is zero it calls `breadnx()` and reads the one block
+with no read-ahead at all, so a random access over-reads nothing. The port
+has no equivalent of `hce`: `page_cache_sync_ra()` is asked for the hint's
+worth of pages on every miss.
+
+The hint's value is itself measured and should not be lowered on its own: the
+read-ahead table above found hint 4 with a 4 MiB device window the best of
+the three hints tried (2936 and 2908 MiB/s against hint 16's 2802 and 2778),
+so on a sequential read the constant earns its place and the missing piece is
+the pattern test, not the constant.
