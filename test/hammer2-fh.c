@@ -1,10 +1,23 @@
 /* The file-handle surface: name_to_handle_at(2) and open_by_handle_at(2).
  *
- * These two syscalls are the whole of what a filesystem's export_operations
- * table does, and they need no nfsd: name_to_handle_at() calls ->encode_fh,
- * open_by_handle_at() calls ->fh_to_dentry and, for a directory, the
- * reconnect path that calls ->get_parent.  So a mount with a correct table
- * answers both and a mount with no table answers neither.
+ * These two syscalls drive a filesystem's export_operations table, and they
+ * need no nfsd: name_to_handle_at() calls ->encode_fh, open_by_handle_at()
+ * calls ->fh_to_dentry and, for a directory, the reconnect path that calls
+ * ->get_parent.  So a mount with a correct table answers both and a mount
+ * with no table answers neither.
+ *
+ * What this does NOT drive, so the reading is not read as more than it is:
+ * ->fh_to_parent, and the acceptance callback nfsd uses.  open_by_handle_at
+ * passes vfs_dentry_acceptable, and that returns 1 without looking when
+ * ctx->flags is zero, which it is for every handle opened without O_DIRECTORY
+ * (fs/fhandle.c: for a regular file ctx->flags stays 0 and the callback is
+ * inert).  nfsd passes nfsd_acceptable and walks parents for a subtree
+ * checked export, which is the only caller that reaches ->fh_to_parent
+ * (fs/exportfs/expfs.c).  So the regular-file checks below prove the decode
+ * returns the object the handle names; they do not prove the kernel would
+ * have rejected it if it had not.  The directory check does exercise the
+ * callback, because O_DIRECTORY sets ctx->flags, and a refused handle there
+ * is the kernel's verdict rather than this program's comparison.
  *
  * The failure this exists to catch is a handle that opens the WRONG object.
  * "The open succeeded" is satisfied by a decoder that ignores the inode
