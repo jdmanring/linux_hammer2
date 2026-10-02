@@ -4929,3 +4929,36 @@ the port calls a Linux facility and a check that the argument is what that
 API expects, which is how all three defects found this session were found:
 `page_cache_sync_ra()` given a hint, the seek loop asking per block, and
 `read_mapping_folio()` walked by the page.
+
+**The Linux counterpart that does exist, and why it does not apply,
+2026-10-02.** The entry above concludes that DragonFly's clustered
+device I/O has no Linux counterpart to reach for. That is half right and
+the wrong half would have been left standing: `readahead_expand()` does
+exist, it is the API for a filesystem that wants to set its own read-ahead
+extent rather than accept the request it was handed, and four filesystems
+in the tree of record use it (btrfs in `fs/btrfs/extent_io.c`, erofs in
+`fs/erofs/zdata.c`, squashfs in `fs/squashfs/file.c`, and netfs in
+`fs/netfs/buffered_read.c`). It is the closest thing Linux has to
+`cluster_readx()`'s extent argument, so "no counterpart" was too strong a
+claim to leave.
+
+It does not apply here, and the reason is in this port's own words rather
+than in the API. `readahead_expand()` expands the window over folios it
+can add to the page cache; what it needs from the filesystem is a length
+to expand TO, which is why every caller reads one out of an extent map.
+btrfs passes `em_end - ra_pos` from its extent map, squashfs passes the
+end of the decompression block it is already assembling, erofs passes the
+end of the current cluster. HAMMER2 has no such quantity: the carried
+bmap XOP returns a physical offset alone, with no length and no
+compression flag, and the fiemap row above records the consequence
+directly, that "two adjacent logical blocks are two allocations" and a
+caller is being told a physical run rather than that the run was allocated
+together. There is no extent whose end could be named, so there is nothing
+to expand into, and inventing a length would be the port reporting a
+contiguity the format does not promise.
+
+The distinction matters because it changes what the finding IS. The port
+is not withholding a Linux facility that would make it faster; the
+facility needs a piece of filesystem metadata HAMMER2 does not carry. What
+would carry it is a length in the blockref, which is a format change and
+not a port change, and the format is DragonFly's to change.
