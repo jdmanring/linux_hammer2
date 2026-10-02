@@ -4342,3 +4342,37 @@ why the member is registered and why nothing in this tree can exercise it;
 the guest cannot serve an export because every kernel in the fleet and every
 tree here is built with `CONFIG_NFSD` unset, and enabling it needs SUNRPC,
 which the kernel of record does not build either.
+
+**Seek on a sparse file is O(size), measured 2026-10-01.** `SEEK_DATA` and
+`SEEK_HOLE` advance one block at a time through `hammer2_llseek()`, asking
+`hammer2_bmap_lbn()` per 64 KiB block, and each of those allocates an XOP,
+takes the inode lock, runs a `hammer2_chain_lookup()` for one key and retires.
+The code comment says "one block at a time" and no reading anywhere had it.
+
+Measured on `artix-s6-kde` at 7.3.0-rc5, a 4 GiB volume, an all-hole file:
+
+| file size | `SEEK_DATA(0)` |
+|---|---|
+| 1 GiB | 0.349 s |
+| 2 GiB | 0.697 s |
+| 3 GiB | 1.030 s |
+
+Linear at 0.343 to 0.349 s per GiB, which is the per-block cost: 16,384 XOPs
+for the 1 GiB case, each a lookup and a lock cycle. `SEEK_HOLE` is not
+affected in the same way because it stops at the first hole; `SEEK_DATA` is
+the one that walks, and on a file whose data is past the hole it walks every block before the answer changes
+before answering ENXIO.
+
+The fix is bounded and uses a primitive the tree already has: `SEEK_DATA`
+wants the NEXT allocated key at or after an offset, which is a forward scan
+of the blockref tree, and `hammer2_chain_next()` is that scan, already used
+in six places including `hammer2_xop_scanlhc()` and `hammer2_xop_scanall()`,
+which is also how `readdir` walks a directory. One scan would replace the
+per-block loop: the XOP memoizes its position and returns the next data key,
+and the seek steps by that instead of by a block. Not done here, because it
+changes the seek path's shape rather than its correctness and that is a
+decision for the tree's author rather than one to take while measuring.
+
+Not a correctness finding. `test/hammer2-seek.c` passed throughout, and the
+answers above are right: `SEEK_DATA(0)` on an all-hole file is ENXIO and it
+is reported as ENXIO, just slowly.
