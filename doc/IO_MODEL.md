@@ -148,6 +148,21 @@ spin initializer, and neither tree has `INPROG`. So the coarse lock is
 inherited from a port the project already treats as a precedent, and it
 is the FreeBSD port's shape that would have to change first.
 
+The three trees read together for this, on 2026-10-01, say more than the
+paragraph above did. DragonFly's `hammer2_io_hash_lookup()` takes
+`hammer2_spin_sh(&hash->spin)` for the bucket, scans the bucket's list and
+releases it, and the dio is reserved by an `INPROG` bit in its `refs` word
+rather than by a held lock, so nothing device-wide is held across the I/O.
+FreeBSD's function is the same code with the two bucket-spin lines
+**commented out** (`//hammer2_spin_sh`, `//hammer2_spin_unsh`), the lookup
+running under `iohash_lock` instead. This port's is FreeBSD's byte for byte
+but for the two dead comment lines, which were dropped.
+
+That is worth stating because it is stronger than "the coarse lock is
+inherited": FreeBSD did not lack DragonFly's per-bucket lock: it had
+it, disabled it, and left the line there. A port that follows a precedent
+should know the precedent chose, not that it never had the choice.
+
 Both arrangements serialize the same structures correctly. The Linux
 one adds a lock the original does not have, and the price of that is the
 acquisitions that wait: `hammer2_iohash_waits` counts them beside the
