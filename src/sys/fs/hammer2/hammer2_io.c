@@ -266,14 +266,21 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
  * folio absent from the device mapping is one synchronous read of one
  * block.  Measured 2026-09-06 as the ceiling of a sequential read, 380
  * MiB/s from a host-cached disk on a guest where ext4 reads at 6400, so
- * on a miss the kernel's own read-ahead is asked for the hint's worth
- * of pages first, with the device's ra state, and the read that follows
- * finds its folio in flight.  page_cache_sync_ra() ramps the window
- * within the device's read_ahead_kb as it does for any file.  That
- * figure and the ext4 one are the debug kernel's; on the release build
- * of the same kernel the read runs at 2.7 GiB/s with the window
- * hammer2_open_devvp() sets, and 5.3 with hammer2_readahead()
- * verifying blocks on every CPU.
+ * on a miss the kernel's own read-ahead is asked for the block that was
+ * missed, with the device's ra state, and the read that follows finds
+ * its folio in flight.  page_cache_sync_ra() then ramps the window
+ * within the device's ra_pages as it does for any file.
+ *
+ * The distance is ra_pages, which hammer2_ondisk.c raises to 4 MiB at
+ * open, and not the cluster hint: the hint scales nothing any more.  It
+ * was passed to page_cache_sync_ra() as if it were the number of pages
+ * the request needs, which made a random 4 KiB read ask for 256 KiB;
+ * how far ahead to read is the kernel's state machine's answer, and the
+ * hint is only a switch, a value below 1 turning the read-ahead off.
+ * The figures from the 2026-09-06 measurement are the debug kernel's;
+ * on the release build of the same kernel the read ran at 2.7 GiB/s
+ * with the window hammer2_open_devvp() sets then, and 5.3 with
+ * hammer2_readahead() verifying blocks on every CPU.
  */
 /*
  * The device mapping's mask with the retry the file mapping carries:

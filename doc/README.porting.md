@@ -149,11 +149,18 @@ opposite. The BSDs hand `cluster_read()` a hint in blocks,
 `hammer2_cluster_data_read` for data and `hammer2_cluster_meta_read`
 for metadata, both carried as module parameters. On Linux the
 counterpart is the kernel's own read-ahead on the device mapping: on a
-miss `hammer2_bread()` calls `page_cache_sync_ra()` for the hint's
-worth of pages with a `file_ra_state` kept per device in
-`hammer2_devvp`, initialized by `file_ra_state_init()` where the
-device is opened, and the read that follows finds its folio in flight.
-The window ramps within the device's `read_ahead_kb` as it does for
+miss `hammer2_bread()` calls `page_cache_sync_ra()` for the block that
+was missed, with a `file_ra_state` kept per device in `hammer2_devvp`,
+initialized by `file_ra_state_init()` where the device is opened, and
+the read that follows finds its folio in flight. The distance read
+ahead is the kernel's own `ra->size`, bounded by `ra_pages`, which
+`hammer2_ondisk.c` raises to 4 MiB at open; the two cluster hint
+parameters are switches rather than distances, a value below 1 turning
+the read-ahead off. They were passed as the page count the request
+needs until 2026-10-02, which made a random 4 KiB read ask for 256 KiB
+because the hint was a multiple of the 16 pages one 64 KiB block
+occupies; the request's own pages are what that argument takes. The
+window ramps within `ra_pages` as it does for
 any file, and one state per device means two interleaved sequential
 readers of one volume share it, which the kernel's algorithm tolerates
 as it does for two readers of one file. Both entry points are
