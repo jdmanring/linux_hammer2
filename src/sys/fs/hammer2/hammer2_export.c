@@ -165,10 +165,19 @@ hammer2_get_inode(struct super_block *sb, hammer2_tid_t inum)
  * name_to_handle_at(2) and from nfsd's fh_compose().
  *
  * The parent is encoded only when the kernel passes one, which it does for a
- * connectable request and a non-directory (exportfs_encode_fh()).  A request
- * that does not fit returns FILEID_INVALID with *max_len set to the size
- * needed in 32-bit words, the size-out protocol the kernel's own
- * exportfs_encode_ino64_fid() uses.
+ * connectable request and a non-directory (exportfs_encode_fh()).
+ *
+ * A request that does not fit returns FILEID_INVALID with *max_len set to the
+ * size needed in 32-bit words, the size-out protocol the kernel's own
+ * exportfs_encode_ino64_fid() uses, and the caller retries with that size.
+ *
+ * When the kernel passes a parent it is asking for a CONNECTABLE handle, and
+ * this must not answer with the shorter type instead: that handle carries no
+ * parent, so a subtree-checked export cannot reconnect it and the decode
+ * falls to find_acceptable_alias alone (fs/exportfs/expfs.c).  A connectable
+ * request that does not fit is therefore refused with the size needed, not
+ * degraded.  Measured: with the fallthrough, 3, 4 and 5 words all returned
+ * the non-parent type.
  */
 static int
 hammer2_encode_fh(struct inode *inode, __u32 *fh, int *max_len,
@@ -176,9 +185,14 @@ hammer2_encode_fh(struct inode *inode, __u32 *fh, int *max_len,
 {
 	int len = *max_len;
 
-	if (parent && len >= HAMMER2_FH_PARENT_LEN) {
-		struct hammer2_fid_parent *fhp = (void *)fh;
+	if (parent) {
+		struct hammer2_fid_parent *fhp;
 
+		if (len < HAMMER2_FH_PARENT_LEN) {
+			*max_len = HAMMER2_FH_PARENT_LEN;
+			return (FILEID_INVALID);
+		}
+		fhp = (void *)fh;
 		fhp->ino = inode->i_ino;
 		fhp->gen = inode->i_generation;
 		fhp->parent_ino = parent->i_ino;
@@ -186,20 +200,14 @@ hammer2_encode_fh(struct inode *inode, __u32 *fh, int *max_len,
 		*max_len = HAMMER2_FH_PARENT_LEN;
 		return (FILEID_INO64_GEN_PARENT);
 	}
-	if (len >= HAMMER2_FH_INO64_LEN) {
-		struct fid *fid = (void *)fh;
-
-		fid->i64.ino = inode->i_ino;
-		fid->i64.gen = inode->i_generation;
+	if (len < HAMMER2_FH_INO64_LEN) {
 		*max_len = HAMMER2_FH_INO64_LEN;
-		return (FILEID_INO64_GEN);
+		return (FILEID_INVALID);
 	}
-
-	if (parent)
-		*max_len = HAMMER2_FH_PARENT_LEN;
-	else
-		*max_len = HAMMER2_FH_INO64_LEN;
-	return (FILEID_INVALID);
+	((struct fid *)fh)->i64.ino = inode->i_ino;
+	((struct fid *)fh)->i64.gen = inode->i_generation;
+	*max_len = HAMMER2_FH_INO64_LEN;
+	return (FILEID_INO64_GEN);
 }
 
 /*
@@ -249,9 +257,7 @@ hammer2_fh_to_parent(struct super_block *sb, struct fid *fid, int fh_len,
 /*
  * The parent of a child directory, for reconnect_path().  The inode holds
  * its parent's number in meta.iparent, the same field hammer2_checkpath()
- * walks, so no lookup is needed.  This is called with the child's i_rwsem
- * held (include/linux/exportfs.h), which is what makes meta.iparent safe to
- * read here.
+ * walks, so no lookup is needed.
  *
  * "No parent" is an error return and never NULL: reconnect_one() checks
  * IS_ERR(parent) and nothing else, then hands the pointer to
@@ -261,19 +267,36 @@ hammer2_fh_to_parent(struct super_block *sb, struct fid *fid, int fh_len,
  * points at itself; all three answer ESTALE.  A disconnected dentry is
  * always IS_ROOT, so IS_ROOT cannot stand for "at the root" and is not
  * tested.
+ *
+ * meta.iparent is read under the inode lock, not the caller's i_rwsem.
+ * reconnect_one() holds child->d_inode->i_rwsem, which stops a lookup from
+ * racing this, but iparent is written by the rename path with that same
+ * inode's hammer2 lock held and nothing else (hammer2_vop_rename(),
+ * hammer2_inode_modify() takes no lock of its own), so i_rwsem alone does
+ * not order against a concurrent rename of this directory.  Every other
+ * reader of meta in this tree holds the inode lock; this one now does too.
  */
 static struct dentry *
 hammer2_get_parent(struct dentry *child)
 {
 	struct inode *inode = d_inode(child);
 	hammer2_inode_t *ip = VTOI(inode);
-	hammer2_tid_t inum;
+	hammer2_tid_t inum, self;
 
 	if (ip == ip->pmp->iroot)
 		return (ERR_PTR(-ESTALE));
 
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	inum = ip->meta.iparent;
-	if (inum == 0 || inum == ip->meta.inum)
+	self = ip->meta.inum;
+	/*
+	 * The reference taken by hammer2_inode_lock() is released by
+	 * hammer2_inode_unlock(), so nothing is held across the lookup
+	 * below.
+	 */
+	hammer2_inode_unlock(ip);
+
+	if (inum == 0 || inum == self)
 		return (ERR_PTR(-ESTALE));
 
 	return (hammer2_get_inode(child->d_sb, inum));

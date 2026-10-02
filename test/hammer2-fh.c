@@ -156,6 +156,31 @@ main(int argc, char **argv)
 	ha = fh_alloc();
 	hb = fh_alloc();
 
+	/*
+	 * A buffer too short for the parent form must be REFUSED with the
+	 * size needed, not answered with the shorter type.  The shorter type
+	 * carries no parent, so a subtree-checked export cannot reconnect
+	 * the handle and the caller believes it holds a connectable one.  It
+	 * is reachable: handle_bytes is the caller's, up to MAX_HANDLE_SZ.
+	 * Before the encoder refused here, 12, 16 and 20 bytes all returned
+	 * a 0x10081 handle with no parent instead of EOVERFLOW.
+	 */
+	{
+		struct file_handle *hs = fh_alloc();
+		int mnt_id = 0;
+		int rc;
+
+		hs->handle_bytes = 16;	/* under the 24 the parent form needs */
+		rc = name_to_handle_at(mfd, "a", hs, &mnt_id,
+		    AT_HANDLE_CONNECTABLE);
+		if (rc != 0 && errno == EOVERFLOW &&
+		    hs->handle_bytes == 24)
+			ok("a short buffer is refused with the size needed");
+		else
+			fail("a short buffer is refused with the size needed");
+		free(hs);
+	}
+
 	/* (a) encode and reopen a regular file, and read its bytes back. */
 	if (fh_encode(mfd, "a", ha) != 0) {
 		fail("encode a regular file");

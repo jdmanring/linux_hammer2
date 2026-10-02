@@ -1095,9 +1095,9 @@ elif [ "${hf:-0}" -ne 0 ]; then
 	echo "  FAIL  the file-handle surface answered wrongly on a live mount:"
 	printf '%s\n' "$out" | sed -n 's/^fh-fail /        /p' | head -6
 	fail=$((fail + 1))
-elif [ "$hc" -ne 8 ]; then
+elif [ "$hc" -ne 9 ]; then
 	echo "  FAIL  the file-handle exerciser ran $hc check(s) where the"
-	echo "        answering volume runs 8, so either it stopped early or"
+	echo "        answering volume runs 9, so either it stopped early or"
 	echo "        a check moved and the count in the docs did not"
 	fail=$((fail + 1))
 else
