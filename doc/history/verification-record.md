@@ -4962,3 +4962,51 @@ is not withholding a Linux facility that would make it faster; the
 facility needs a piece of filesystem metadata HAMMER2 does not carry. What
 would carry it is a length in the blockref, which is a format change and
 not a port change, and the format is DragonFly's to change.
+
+**The remaining comparison, run to the end, 2026-10-02.** The two entries
+above answer the file set and the device-I/O call. This one closes the
+algorithmic layer between them, and the method was a function-by-function
+diff of DragonFly's `hammer2_strategy.c` against the port's, since that
+is the file where a performance choice would live that is neither a
+missing file nor a missing kernel facility.
+
+Every function in DragonFly's strategy file is carried. This port's
+`hammer2_strategy.c` defines `hammer2_assign_physical`,
+`hammer2_compress_and_write`, `hammer2_dedup_record`, `hammer2_write_bp`,
+`hammer2_write_file_core` and `hammer2_zero_check_and_write`; the rest of
+DragonFly's list, `hammer2_strategy_read`,
+`hammer2_strategy_read_completion`, `hammer2_strategy_write`,
+`hammer2_xop_strategy_read`, `hammer2_xop_strategy_write`,
+`hammer2_dedup_lookup`, `hammer2_dedup_clear` and `hammer2_bioq_sync`,
+resolve in the port at the same names in the same file or beside it. The
+only two with no counterpart are `hammer2_vop_strategy` and
+`hammer2_vop_bmap_impl`, and both are VFS entry points a port necessarily
+re-expresses: Linux reaches them through `->read_folio`, `->writepages`
+and `->bmap` in `hammer2_file_aops`, not through a `vop_strategy`.
+Nothing algorithmic is absent. The tuning constants agree as well:
+`HAMMER2_PBUFSIZE` is 65536 on both sides and `HAMMER2_EMBEDDED_BYTES`
+512.
+
+The one mechanism that IS DragonFly's and not the FreeBSD port's, the
+threaded XOP backend, was already weighed and already has a number. This
+port runs XOPs synchronously, which is the FreeBSD port's choice recorded
+in `README.porting.md`, with the deliberate exception of strategy XOPs,
+which run concurrently on one inode as DragonFly's worker groups do, so
+the read-ahead workers verify a file's blocks on every CPU. The cost of
+the synchronous pool was measured against a filesystem with no XOP at
+all: six seconds in eighty-five, which is the reading that kept the pool
+synchronous and left the workqueue-backed one unbuilt. What the
+synchronous choice does NOT cost is scoped parallelism, because the
+concurrency on metadata work comes from the callers rather than from a
+per-operation thread pool: a million files took 248 s from four writers
+against 1007 s from one, a factor of 4.06 in the one measurement of it.
+
+So the answer to whether anything further can be taken from DragonFly is
+no at the three layers a port can take it from: the file set is thin only
+where the BSD ports are thin and it is declared, the device-I/O call has
+no Linux counterpart and the nearest one needs metadata the format does
+not carry, and the algorithms are all present with their constants. What
+remains is not a DragonFly gap at all. It is the class this session found
+three times, a Linux facility called with an argument that facility does
+not mean, and the way to find the next one is to keep reading the kernel's
+implementation of what the port calls rather than the port.
