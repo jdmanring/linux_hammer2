@@ -5119,3 +5119,43 @@ removed rather than wired, and until it is, it is a defect of the class
 the tree names: a setting a user can set with nothing to observe. That is
 the maintainer's to take, since removing it changes the module's
 parameter list.
+
+**The capability surface re-audited for what could be developed further,
+2026-10-02.** The question is whether something beyond the current state
+would surpass it in function or in efficiency and is being left undone.
+The capability table is the tree's own answer and it was checked against
+the sources rather than read.
+
+Every row that is not `native` is one of two kinds, and neither is a
+port shortfall. Nine are `unavailable` and each is absent on DragonFly
+too or absent from the format: `Quota` is enforced by neither the port
+nor the core, `Encryption` the format does not have, and `SelfHealing`
+and `FailureDomains` need `ncopies` to be written by more than one
+volume, which in DragonFly is done by `hammer2_synchro.c`, the cluster
+file no BSD port carries. Four more are `limited`, and the limit was
+traced to the format as well: `SpaceAccounting` reports
+`hmp->voldata.allocator_free`, and DragonFly's `hammer2_vfs_statfs()`
+reads that same stored counter, so the free count moving at allocation
+and at the second bulkfree pass rather than at a remove is HAMMER2's
+design and not a Linux choice; the 5% non-root reservation is on both
+sides at `free_reserved`. `Scrub` is offline-only on both sides too,
+`fsck_hammer2` over an unmounted volume.
+
+The ioctl surface was audited the same way and produced one correction
+and one non-finding. The non-finding is `HAMMER2IOC_BULKFREE_ASYNC`,
+which the port does not carry: DragonFly reaches the same handler with a
+NULL argument to avoid waiting, so a consumer that wants bulkfree
+without blocking runs the synchronous ioctl on its own, and the table's
+row says so. The correction is the count that surrounded it. The section
+said DragonFly declares 27, this port implements 19, and 8 are missing,
+and 27 less 8 is 19, so the arithmetic closed and the figure read as
+checked. It is not: DragonFly's 27 names are 22 commands and 5
+`HAMMER2IOC_INODE_FLAG_*` bits that `INODE_SET` reads out of `ino->flags`
+rather than dispatching, and the port's 20 names are 15 commands and the
+same 5 bits. Measured by comparing the two headers, the port is missing 8
+DragonFly commands and carries one DragonFly does not have,
+`HAMMER2IOC_VOLUME_LIST2`, so it implements 15 of DragonFly's commands
+rather than 19. The section now states the split it can be checked
+against instead of a total that was true of no definition: a figure whose
+arithmetic closes over a mixed unit is the failure this class produces,
+since it cannot fail the way a wrong subtotal does.

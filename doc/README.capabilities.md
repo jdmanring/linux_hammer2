@@ -79,9 +79,14 @@ these rows; `README.roadmap.md`'s 0.7 milestone closed on it.
 
 The rows above are capabilities; this is the interface, because a
 consumer asks both and only the second is a list. DragonFly declares 27
-`HAMMER2IOC_*` ioctls. This port implements 19. The eight it does not are
-enumerated here rather than left to be discovered, and each maps onto a
-row above so the two cannot drift apart:
+`HAMMER2IOC_*` names, of which 22 are commands and 5 are the
+`HAMMER2IOC_INODE_FLAG_*` bits that `INODE_SET` reads out of
+`ino->flags` rather than dispatching. This port declares 20 names on the
+same split, 15 commands and the same 5 flag bits, and dispatches one
+command DragonFly does not have, `HAMMER2IOC_VOLUME_LIST2`. The eight
+DragonFly commands it does not carry are enumerated here rather than
+left to be discovered, and each maps onto a row above so the two cannot
+drift apart:
 
 | ioctl | what it does upstream | covered by |
 |---|---|---|
