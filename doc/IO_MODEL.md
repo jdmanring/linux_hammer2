@@ -445,9 +445,17 @@ The device mapping carries no read-ahead of its own: a folio absent
 from it is one synchronous read of one block, which held a sequential
 read of a large file to 353 MiB/s on a guest where btrfs read at 507.
 On a miss `hammer2_bread()` now asks the kernel's read-ahead for the
-BSD cluster hint's worth of pages first, with a `file_ra_state` per
-device, and reads at 602 to 683 MiB/s on the same guest, DragonFly's
-own rate for the same files. `doc/history/verification-record.md` has the table.
+pages the request itself needs, which is what `page_cache_sync_ra()`'s
+count means: it reads that many for a standalone small random read and
+lets `ra->size`, bounded by `ra_pages`, ramp the window on a stream.
+The BSD cluster hint is a switch here rather than a distance, since a
+value below 1 turns the read-ahead off and a value above it changes
+nothing. With a `file_ra_state` per device the read runs at 602 to 683
+MiB/s on the same guest, DragonFly's own rate for the same files. Asking
+for the hint's worth of pages instead, 64 where the block's own request
+is 16, made one random 4 KiB read take 256 KiB from the device: 73 KiB
+after the correction against 256 before, and a median latency of 27.7 to
+28.5 us against 41.9 to 45.0. `doc/history/verification-record.md` has the table.
 
 The file mapping has `->readahead` as well: each folio of the window,
 4 MiB by the superblock's bdi as in btrfs, goes to an unbound

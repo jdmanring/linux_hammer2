@@ -12,7 +12,36 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.43 closed the port's last gap against upstream: the
+0.5 to 0.9 are met. The last seven milestones are a performance pass
+over calls rather than files: each found a Linux facility used for a
+purpose its argument did not carry, which is a class this port had not
+looked for and which no gate reads, since the call is legal, compiles
+and runs. 0.9.51 is the third call of that kind and the first found by
+reading the kernel's own implementation of the callee: `hammer2_fallocate()`'s
+`PUNCH_HOLE` path advanced `pos += PAGE_SIZE` over
+`read_mapping_folio()`, which returns the folio CONTAINING the index,
+so a block folio of sixteen pages was taken sixteen times per block. The
+arithmetic suggests sixteen times the work and the measurement refuses
+it: 0.734 s to 0.579 s for a 512 MiB punch, a factor of 1.27, because
+each repeat is a hash probe on a folio already present. 0.9.50 and 0.9.49
+are one finding and its correction: `page_cache_sync_ra()` was passed
+`hint * (psize >> PAGE_SHIFT)`, 64 pages, where the argument is the
+pages the request itself needs, 16, so a random 4 KiB read took 256 KiB
+from the device where the block it needs is 64 KiB; the fix then left
+two documents describing a hint that scaled a window it no longer
+scaled. 0.9.48 is the latency instrument's host control, which ran
+`/tmp/h2lat`, the path it is copied to on the guest, so on the host it
+had never executed: the one check showing the cache control is live.
+0.9.47 retires the per-block seek: `SEEK_DATA` walked a hole one 64 KiB
+block at a time, 0.345 s per GiB and one XOP per block, where the tree
+already carried the forward scan `readdir` uses, for 9,787.7 us to
+2.1 us. Its code still carries `EXPERIMENT:` at both sites, which is the
+marker for work whose value is not yet established; the measurement is
+taken and the disposition of the marker is the author's. 0.9.46 and
+0.9.45 are three findings from an adversarial audit of the export file
+and the reasoning behind one lock-free read, the first of which was a
+generation field written into every handle that nothing read back.
+0.9.43 closed the port's last gap against upstream: the
 file-handle surface DragonFly reaches through `vfs_vptofh`, `vfs_fhtovp` and
 `vfs_checkexp` is reached here through the kernel's `export_operations`, and
 an object in a mount is reopened by handle, which is NFSExport's move from
@@ -137,7 +166,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.44
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.51
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
