@@ -4539,3 +4539,45 @@ considered and dropped: 7.3-rc5 is the kernel of record and the floor, the
 tree moves forward only, and characterising a previous build answers a
 question nothing would act on. The reading to take is rc5's, on a quiet
 machine.
+
+**The random-read path profiled, and what it costs per 4 KiB, 2026-10-01.**
+Every profile in this tree is sequential. The latency table measures random
+4 KiB reads and the port loses there, so this profiles that pass instead:
+`test/hammer2-latency.c` on a 1 GiB file of a 2 GiB volume on
+`h2debug-rc5`, the function profiler filtered to the read path's own
+functions, the page cache dropped first.
+
+Per random 4 KiB read, over 7,458 `hammer2_read_folio` calls for 3,000
+operations at one 64 KiB block read each:
+
+| function | calls | per read_folio | average |
+|---|---|---|---|
+| `hammer2_read_folio` | 7,458 | 2.5 | 72.9 us |
+| `hammer2_xop_strategy_read` | 7,458 | 2.5 | 46.9 us |
+| `hammer2_chain_load_data` | 8,747 | 1.2 | per 1,000 ops |
+| `hammer2_chain_lookup` | 5,393 | 5.4 | per 1,000 ops |
+| `hammer2_io_bread` | 142,992 | 19 | per read_folio |
+| `hammer2_bread` | 92,067 | 12 | per read_folio |
+| `hammer2_chain_testcheck` | 17,828 | 2.4 | per read_folio |
+| `hammer2_io_getblk` | 144,182 | 72 | per 2,000 ops |
+
+The number that stands out is `hammer2_io_getblk`: seventy-two calls per
+random read, and each takes `hmp->iohash_lock` **exclusively**
+(`hammer2_mtx_ex_waits`, hammer2_io.c), a device-wide mutex. The port counts
+these waits already and the throughput run reports them as
+`iohash_waits 34198,1527628`, the second figure being microseconds spent
+waiting on that one lock. A read that misses the cache walks the inode's
+chain to the data block: `chain_lookup` and `chain_load_data` are that walk,
+and each block it touches goes through `getblk`.
+
+What this does not yet establish, and is not claimed: whether seventy-two is
+the correct count for the walk or contains redundant lookups. The tree depth
+for a 1 GiB file at 64 KiB blocks is three or four (`16384` data blocks,
+`128` refs per indirect), so a walk of three or four blocks should not need
+seventy-two hash lookups, but the walk per read is the carried core's and the
+extra count has not been attributed to a specific re-entry. The measurement
+is here so that the next step is an attribution rather than a guess.
+
+For the open latency question above, this is the instrument that would
+resolve it: the same profile is the reading a fix would move, and it is
+load-tolerant in a way a rate is not.
