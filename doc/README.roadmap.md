@@ -23,7 +23,12 @@ reading the kernel's own implementation of the callee: `hammer2_fallocate()`'s
 so a block folio of sixteen pages was taken sixteen times per block. The
 arithmetic suggests sixteen times the work and the measurement refuses
 it: 0.734 s to 0.579 s for a 512 MiB punch, a factor of 1.27, because
-each repeat is a hash probe on a folio already present. 0.9.50 and 0.9.49
+each repeat is a hash probe on a folio already present. The exerciser
+punched one block, so it entered the walk once and could not have found
+this; it now also punches a range across several whole blocks and asserts
+the boundary, which is a correctness guard for that range and not a
+discriminator for the walk, since a byte-compare cannot see how many
+times a folio was visited. 0.9.50 and 0.9.49
 are one finding and its correction: `page_cache_sync_ra()` was passed
 `hint * (psize >> PAGE_SHIFT)`, 64 pages, where the argument is the
 pages the request itself needs, 16, so a random 4 KiB read took 256 KiB

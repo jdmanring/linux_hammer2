@@ -707,11 +707,23 @@ and on this port's 64 KiB block it covers none, so nothing could be freed
 and the exerciser reported a failure of a correct operation. And whether
 the punch freed anything is asked of `SEEK_HOLE`, not of `st_blocks`, since
 this port's block accounting moves at allocation and at the bulkfree pass
-rather than at an elision. `btrfs` accepts every mode and runs all twelve
+rather than at an elision. `btrfs` accepts every mode and runs all sixteen
 checks, and `tmpfs` accepts `PUNCH_HOLE` while refusing `ZERO_RANGE`, so
 the same binary on both shows what a refusal looks like against this port's
 answer; a mode that is refused prints `falloc-skip` and is counted, and the
 gate fails a run in which no check ran.
+
+The exerciser also punches a range spanning SEVERAL whole blocks, on a file
+of its own, and asserts that exactly the requested bytes read as zeros and
+nothing outside them moved. That range is the shape a walk defect lives in:
+the one-block punch above enters the page cache walk once, so it could not
+see `hammer2_fallocate()` advancing by `PAGE_SIZE` over
+`read_mapping_folio()`, which returns the folio containing the index, and
+taking a 64 KiB folio sixteen times. The extra check is a correctness guard
+for that range and not a discriminator for the walk, passing on the pre-fix
+build as well, because a byte-compare cannot observe how many times a folio
+was visited; the walk's own reading is the timing in
+`doc/history/verification-record.md`.
 
 `test/hammer2-fiemap.c` runs on the same volume, by the same gate and on
 the same terms, and it exists because the two operations it covers had
@@ -2088,7 +2100,7 @@ kernel behavior and missing `hammer2-dedup.c` in the same breath.
 |---|---|---|
 | `test/hammer2-seek.c` | `tmpfs` and `btrfs` on the same guest | `SEEK_DATA`/`SEEK_HOLE` answer the offsets the media holds. The control is what found the original defect: both references disagreed with the port. |
 | `test/hammer2-dedup.c` | `tmpfs` and `btrfs` on the same guest | a duplicate block is not charged twice. Both controls charge full price, which is what makes the reading specific to this port. |
-| `test/hammer2-fallocate.c` | `tmpfs` and `btrfs` on the same guest | a punched or zeroed range reads back as zeros with the bytes outside it intact, and the punch leaves a hole. Measured 2026-09-28: `btrfs` accepts every mode and runs all twelve checks, `tmpfs` accepts `PUNCH_HOLE` and refuses `ZERO_RANGE`, which is ten checks and one refusal, so the pair shows what a refusal looks like beside an answer. Its ranges come from the filesystem's own block size, so the same binary is a real check on a 4 KiB control and on this port's 64 KiB block. |
+| `test/hammer2-fallocate.c` | `tmpfs` and `btrfs` on the same guest | a punched or zeroed range reads back as zeros with the bytes outside it intact, and the punch leaves a hole. Its ranges come from the filesystem's own block size, so the same binary is a real check on a 4 KiB control and on this port's 64 KiB block. It also punches a range spanning several whole blocks and asserts the boundary, which is the range a walk that visits each folio more than once lives in. Measured 2026-10-02, after that check was added: 16 checks and 0 failures on this port and 14 with 1 refusal on `tmpfs`, which accepts `PUNCH_HOLE` and refuses `ZERO_RANGE`. The 2026-09-28 reading was 12 on this port and on `btrfs`, 10 and 1 on `tmpfs`. `btrfs` is not re-measured here: the guest has no loop device, and a run pointed at an unmounted directory reads the guest's own root filesystem and reports a clean control beside this port's answer. |
 | `test/hammer2-fiemap.c` | none, and it says why: the control is the file | FIEMAP describes this filesystem's own layout, so a reference filesystem would compare two layouts rather than check an answer. The file's shape is built by the test and known before the call, and the map is compared against it: a hole opened at block 1 must come back as a gap, and the written blocks at blocks 0 and 2 must come back as data with a nonzero physical address. `tmpfs` is not the control because it refuses FIEMAP outright (measured 2026-09-29: `EOPNOTSUPP`). The consumer that proves the map useful is `filefrag -v`, which reads the same two extents at the same blocks. The same file also covers `->freeze_fs`/`->unfreeze_fs` on the same terms, with every blocking call in a child so the thaw is always reached, which is the structure the first version of the test lacked when it deadlocked itself and got the vop wrongly withdrawn. It is run by `test-enospc.sh` on the volume with room, before the fill, because it writes the file whose hole it asks about; every write it makes is unlinked before the fill measures what it did. |
 | `test/hammer2-fh.c` | none, and it says why: the control is the handle it forges | a file handle names the object it was taken from. A reference filesystem would compare its own handle format, not this port's answer, and the operation has no wrong-answer-that-looks-right mode the way the seeks do: a decoder either finds the inode the handle names or refuses. So the force is applied inside the file, by the checks that make a wrong object detectable: two files with different contents whose handles must open two different inodes, and a handle with a bit flipped in its inode number that must be REFUSED rather than resolved to a neighbor. A decoder that ignored the inode number would pass "the handle reopens the file" and fail these. **What it does not cover, and a reader would otherwise assume it did:** the acceptance callback. `open_by_handle_at(2)` passes `vfs_dentry_acceptable`, which returns 1 without looking when `ctx->flags` is zero, and that is zero for every handle opened without `O_DIRECTORY` (fs/fhandle.c), so the regular-file checks prove the decode returns the object named and not that the kernel would have rejected a wrong one. The directory check does exercise the callback, `O_DIRECTORY` being what sets the flags. nfsd passes `nfsd_acceptable` and walks parents, which is the only caller that reaches `->fh_to_parent`, so that member and the acceptance path are the two things this file cannot see; `doc/README.capabilities.md` names the same gap. It is run by `test-enospc.sh` on the volume with room, before the fill, because it writes, unlinks and renames its own files; it makes one directory and removes it, so the fill measures what it did. |
 | `test/hammer2-latency.c` | `ext4` and `btrfs` on the same guest | per-operation latency is a property of the port, not of the machine. |

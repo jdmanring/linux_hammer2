@@ -198,6 +198,7 @@ main(int argc, char **argv)
 	off_t hole_off = 4 * 4096;
 	off_t hole_len = 8 * 4096;
 	long s1;
+	unsigned long mblocks;
 	int refused;
 	struct statvfs svfs;
 
@@ -382,6 +383,108 @@ main(int argc, char **argv)
 			}
 		}
 	}
+
+	/*
+	 * A punch spanning SEVERAL whole blocks, on a file of its own.
+	 *
+	 * The punch above is one block by design, and that size is what the
+	 * earlier check needed: a range that covered no whole block asked
+	 * the filesystem to free what it does not allocate in.  The cost of
+	 * that choice is that a one-block punch enters the page cache walk
+	 * once, so a walk that visits each folio more than once is invisible
+	 * to it.  That is not hypothetical: `hammer2_fallocate()` advanced
+	 * by PAGE_SIZE over `read_mapping_folio()`, which returns the folio
+	 * CONTAINING the index, so a 64 KiB block folio was taken sixteen
+	 * times per block.  Every check here passed throughout, correctly,
+	 * and the walk was still wrong.
+	 *
+	 * So this asks the other question: does a punch that spans whole
+	 * blocks, starting and ending INSIDE one, zero exactly what was
+	 * asked and nothing else.  It asserts the boundary and not the
+	 * range's freeing, which the check above covers.
+	 *
+	 * It is a correctness guard for that range and NOT a discriminator
+	 * for the walk: run against the pre-fix build it passes too, which
+	 * is expected, since the punch's bytes were never in question.  A
+	 * byte-compare cannot see how many times a folio was visited, and
+	 * nothing here can.  What would catch the walk is the timing, 0.734
+	 * s against 0.579 s for a 512 MiB punch, which belongs in the
+	 * measurement record rather than in a gate whose reading must be a
+	 * pass or a failure.
+	 */
+	mblocks = (unsigned long)(total / blk);
+	if (mblocks >= 4) {
+		off_t moff = (off_t)blk;
+		off_t mlen = (off_t)(mblocks - 3) * (off_t)blk;
+		char mpath[4096];
+		int fd;
+
+		if (snprintf(mpath, sizeof(mpath), "%s/falloc-multi", dir) >=
+		    (int)sizeof(mpath)) {
+			fprintf(stderr, "falloc-setup path too long\n");
+			return (2);
+		}
+		unlink(mpath);
+		checks++;
+		if (write_pattern(mpath, buf, total) != 0) {
+			printf("falloc-fail the multi-block file did not "
+			    "land\n");
+			fails++;
+		} else {
+			fd = open(mpath, O_RDWR);
+			checks++;
+			if (fd < 0) {
+				printf("falloc-fail open for the multi-block "
+				    "punch failed\n");
+				fails++;
+			} else {
+				int rc = fallocate(fd, FALLOC_FL_PUNCH_HOLE |
+				    FALLOC_FL_KEEP_SIZE, moff, mlen);
+
+				close(fd);
+				checks++;
+				if (rc != 0) {
+					printf("falloc-fail the multi-block "
+					    "punch failed: errno %d\n", errno);
+					fails++;
+				} else if (read_at(mpath, out, total, 0) != 0) {
+					printf("falloc-fail read back after "
+					    "the multi-block punch failed\n");
+					fails++;
+				} else {
+					size_t tat = (size_t)(moff + mlen);
+					int head = memcmp(out, buf,
+					    (size_t)moff) == 0;
+					int tail = memcmp(out + tat, buf + tat,
+					    total - tat) == 0;
+					int mid = all_zero(out + moff,
+					    (size_t)mlen);
+
+					checks++;
+					if (!mid) {
+						printf("falloc-fail the "
+						    "multi-block punch did not "
+						    "read as zeros\n");
+						fails++;
+					} else if (!head || !tail) {
+						printf("falloc-fail the "
+						    "multi-block punch changed "
+						    "bytes outside its "
+						    "range\n");
+						fails++;
+					} else {
+						printf("falloc-ok   a punch "
+						    "across %lu blocks zeroed "
+						    "exactly its range\n",
+						    (unsigned long)(mlen /
+						    (off_t)blk));
+					}
+				}
+			}
+		}
+		unlink(mpath);
+	}
+
 
 	/* A punch wholly past the end is a no-op that succeeds. */
 	refused = try_mode(path, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
