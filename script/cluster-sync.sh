@@ -119,7 +119,7 @@ umount /mnt/h2c && umount /mnt/h2s && umount /mnt/h2m && echo "cluster-umount ok
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
 rmmod hammer2 && echo "rmmod ok"
 echo "scrapped $(dmesg | grep -c unmount_scrap)"
-echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|circular locking|possible recursive')"
+echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive')"
 if [ -w /sys/kernel/debug/kmemleak ]; then
 	echo scan > /sys/kernel/debug/kmemleak; sleep 6; echo scan > /sys/kernel/debug/kmemleak
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
@@ -152,7 +152,7 @@ u=$(val cluster-updates); [ "${u:-0}" -ge 55 ] 2>/dev/null; check "the thread co
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
-k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning or lockdep report" $? "${k:-none}"
+k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${k:-none}"
 l=$(val kmemleak); [ -z "$l" ] || { [ "$l" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l"; }
 
 for img in "$MASTER" "$SLAVE"; do

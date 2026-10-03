@@ -5786,3 +5786,13 @@ found nothing on either volume, the master's included, so it is not the
 instrument for a volume written this way and the comparison is `fsck`'s
 counts. Not run: the KASAN kernel, two masters, and a master changed while
 the slave stays mounted.
+
+**The cluster run on the sanitizer kernel, 2026-10-03.** `cluster-sync.sh`
+on `h2kasan-rc5` (KASAN inline, UBSAN), module built against
+`~/kernels/linux-7.3-rc5-kasan` with 20 `__asan` imports: 17 checks 0
+failed, the same counts as the debug kernel, the lone SLAVE's unmount 374
+ms after a pass, the slave's 61 inodes, 120 data blocks and 57 directory
+entries equal to the master's. The script's report check read `WARNING`,
+`BUG:` and lockdep's two phrases and not `UBSAN:`, so a UBSAN report would
+have passed it; it reads all four now, and read 0. The guest's grub
+default is back on `h2debug-rc5`.

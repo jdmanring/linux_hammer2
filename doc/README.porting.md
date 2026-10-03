@@ -137,7 +137,8 @@ not be carried with that function; the setter is what DragonFly does.
 
 DragonFly's `tsleep(ident)` and `wakeup(ident)` make any kernel address a
 wait channel. The port mapped `tsleep` to a plain timed sleep while its
-only caller was bulkfree's throttle, which nothing wakes; the sync thread
+three callers were sleeps nothing wakes, bulkfree's throttle and two
+short back-offs in the inode and sync code; the sync thread
 is woken to stop, freeze and resume, and a sleep that ignores its channel
 turned each of those into the full timeout, or into a spin where the
 timeout is zero. Linux's own sleep on an address is the hashed pool
