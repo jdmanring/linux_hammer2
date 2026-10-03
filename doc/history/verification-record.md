@@ -5480,3 +5480,47 @@ two of them overwhelmingly do not, and synchronization is the part that
 makes a SLAVE converge, which is what Replication and SelfHealing both
 need. Carrying `synchro.c` and `ccms.c` first is both smaller and closer
 to the capability the tables call unavailable.
+
+**The transport shim is dead code in the module, and the graph says which
+symbols the next file needs, 2026-10-03.** Two instruments were used for
+the first time here and both corrected something.
+
+**The shim is not in the built module.** `fp_read` and `fp_write` are
+`static inline` and nothing in the tree calls them, so the compiler drops
+them and neither `kernel_read` nor `kernel_write` appears among the
+module's undefined symbols. Checked rather than assumed: the module
+carries 217 undefined symbols and neither name is among them, `nm` on the
+object file finds no `fp_read`, and a grep of the tree finds the two
+definitions and no caller. That is correct for an unused static inline and
+it means the rows claiming the cluster transport's file I/O is
+implemented describe a function that is not compiled into anything. It is
+verified only by `test/syntax-check.c`, which references both by name so
+the standalone compile checks them; nothing runs them and nothing links
+to their kernel symbols until `kern_dmsg.c` lands. The rows below should
+be read with that.
+
+**The code graph says the density is where the next file plugs in.** Built
+and queried in one breath, 1426 nodes and 3770 edges. The top of the
+god-node ranking is `hammer2_chain_drop` 74, `hammer2_chain_unlock` 67,
+`hammer2_chain_lookup` 46, `hammer2_chain_modify` 41, and those are
+exactly the calls `hammer2_synchro.c` makes and nothing else: its 1069
+lines drive the carried core and no transport. The graph also shows why
+its degree is not a caller count: `hammer2_chain_drop`'s 74 edges include
+`CHANGELOG.md`, because the extractor counts a document that mentions a
+symbol as a referencing node. The authoritative caller set is the
+semantic index's, which returns about 30 sites, all of them in
+`hammer2_chain.c`, each with its enclosing symbol. Graph degree ranks what
+to read first; it does not count callers.
+
+**What `hammer2_synchro.c` needs, counted rather than guessed.** Its 35
+distinct `hammer2_*` calls resolve against the port as follows: 26 exist
+already, 5 are its own functions, and 4 are real gaps. Three of the four
+are `hammer2_thr_break`, `hammer2_thr_signal` and `hammer2_xop_start_except`,
+all of which live in DragonFly's `hammer2_admin.c`, a file this port
+already carries: its XOP half is here and its thread-management half is
+not, so the work is extracting a thread API over `kthread`, not writing
+one. The fourth is `hammer2_primary_sync_thread` itself, which is the
+file's own entry point.
+
+So the plan holds and is now measured: `synchro.c` needs a thread API and
+the two primitives already added, and no transport.

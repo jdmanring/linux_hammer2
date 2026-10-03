@@ -1,0 +1,96 @@
+{
+ "schema": 1,
+ "sha256": "297dea408c834e184d85ec80f0025f999968a91a41ba58e56d5a2f15e8c952da",
+ "size": 8386544,
+ "paths": [
+  "/home/james/Projects/linux_hammer2/src/sys/fs/hammer2/hammer2.ko"
+ ],
+ "goals": [
+  "Confirm the new cluster-transport shim is present in the built module and reference kernel_read/kernel_write, which is what the port's fp_read/fp_write call",
+  "Verify the cluster transport's file I/O is actually linked into the built module"
+ ],
+ "created": "2026-10-03T10:25:05Z",
+ "updated": "2026-10-03T10:25:13Z",
+ "facts": [
+  {
+   "key": "export_present:{\"name\": \"hammer2_xop_start\"}",
+   "kind": "export_present",
+   "tier": "VERIFIED",
+   "weight": 0.3,
+   "location": null,
+   "detail": "export present",
+   "line": "export_present: export present hammer2_xop_start",
+   "claim": {
+    "kind": "export_present",
+    "params": {
+     "name": "hammer2_xop_start"
+    }
+   },
+   "evidence": {},
+   "round": null,
+   "session": null,
+   "ts": "2026-10-03T10:25:05Z"
+  }
+ ],
+ "refuted": [
+  {
+   "key": "import_present:{\"function\": \"kernel_read\"}",
+   "kind": "import_present",
+   "location": null,
+   "detail": "import absent",
+   "line": "import_present: import absent ?!kernel_read",
+   "claim": {
+    "kind": "import_present",
+    "params": {
+     "function": "kernel_read"
+    }
+   },
+   "evidence": {
+    "imported_libs": []
+   },
+   "round": null,
+   "session": null,
+   "ts": "2026-10-03T10:25:13Z"
+  },
+  {
+   "key": "import_present:{\"function\": \"kernel_write\"}",
+   "kind": "import_present",
+   "location": null,
+   "detail": "import absent",
+   "line": "import_present: import absent ?!kernel_write",
+   "claim": {
+    "kind": "import_present",
+    "params": {
+     "function": "kernel_write"
+    }
+   },
+   "evidence": {
+    "imported_libs": []
+   },
+   "round": null,
+   "session": null,
+   "ts": "2026-10-03T10:25:13Z"
+  },
+  {
+   "key": "import_present:{\"function\": \"sockfd_lookup\"}",
+   "kind": "import_present",
+   "location": null,
+   "detail": "import absent",
+   "line": "import_present: import absent ?!sockfd_lookup",
+   "claim": {
+    "kind": "import_present",
+    "params": {
+     "function": "sockfd_lookup"
+    }
+   },
+   "evidence": {
+    "imported_libs": []
+   },
+   "round": null,
+   "session": null,
+   "ts": "2026-10-03T10:25:13Z"
+  }
+ ],
+ "observed": {},
+ "runs": []
+}
