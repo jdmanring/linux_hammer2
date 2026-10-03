@@ -22,6 +22,7 @@ graphify-out/
 # src/ and correctly reports one with no origin.
 /compile_commands.json
 /.cache/
+/.clangd
 
 # Reverify's per-binary ledger, keyed by the hash of one build.
 .reverify/
