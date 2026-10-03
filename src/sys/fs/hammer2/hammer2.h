@@ -1516,10 +1516,12 @@ hammer2_assert_cluster(const hammer2_cluster_t *cluster)
 	 * one root chain for a PFS produces one. script/cluster-sync.sh
 	 * builds that volume, a MASTER and a SLAVE sharing one cluster
 	 * id across two devices, and doc/history/verification-record.md
-	 * carries its readings. What remains carried and reviewed rather
-	 * than exercised is more than one MASTER, where the quorum passes
-	 * in hammer2_cluster_check() decide an answer instead of agreeing
-	 * with the only master present.
+	 * carries its readings. script/cluster-quorum.sh builds the other
+	 * shape, two MASTERs of one cluster id, where pfs_nmasters is 2 and
+	 * the quorum passes in hammer2_cluster_check() have to agree across
+	 * both chains rather than accept the only master present. What is
+	 * still unexercised is a quorum that cannot be met, a master absent
+	 * from a cluster whose quorum needs it.
 	 */
 	KASSERTMSG(cluster->nchains >= 0 &&
 	    cluster->nchains <= HAMMER2_MAXCLUSTER,

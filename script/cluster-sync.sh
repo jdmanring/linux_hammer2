@@ -20,6 +20,13 @@
 # leak and warning check, so the thread, its passes and its copies are
 # each counted rather than assumed.
 #
+# A second one: the warning check reads dmesg for sanitizer reports, and a
+# module built against a kernel without KASAN emits none however broken it
+# is, so that reading would pass in silence on the wrong kernel. The
+# kernel tree's config says what to expect and the built module's imports
+# say what it has, and the two are compared, which fails in both
+# directions rather than only on an absent report.
+#
 # Exit 2 without the guest, the tools or a kernel tree. H2_FIXTURE_SHARE=1
 # starts the guest beside another running domain, as test-fixtures.sh
 # does; otherwise another domain is a reason not to.
@@ -58,6 +65,15 @@ make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || {
 	echo "cluster: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
+
+# What the kernel tree configures against what the module actually carries.
+# grep -c prints its count and exits 1 on no match, so the count is kept and
+# the status discarded.
+command -v nm >/dev/null 2>&1 || {
+	echo "cluster: COULD-NOT-RUN: no nm, so the module's instrumentation cannot be read" >&2; exit 2; }
+want_asan=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config" 2>/dev/null)
+have_asan=$(nm -u "$KO" 2>/dev/null | grep -c '__asan' || true)
+have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
 
 # The volumes are detached before they are recreated: a running guest's
 # qemu holds an image open, and a file replaced under it is a file it no
@@ -177,12 +193,25 @@ p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
+if [ "$want_asan" = y ]; then
+	[ "${have_asan:-0}" -gt 0 ] 2>/dev/null
+	check "the module carries the instrumentation its kernel tree configures" $? "${have_asan:-0} __asan and ${have_ubsan:-0} __ubsan import(s), so a KASAN report can be emitted"
+else
+	[ "${have_asan:-0}" = 0 ] 2>/dev/null
+	check "the module carries no instrumentation, its kernel tree configuring none" $? "${have_asan:-0} __asan import(s); the KASAN and UBSAN patterns below cannot report on this kernel, and say nothing here"
+fi
 k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${k:-none}"
 l=$(val kmemleak); [ -z "$l" ] || { [ "$l" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l"; }
 
 for img in "$MASTER" "$SLAVE"; do
-	"$FSCK" "$img" > "$W/fsck.$(basename "$img")" 2>&1
-	check "fsck_hammer2 $(basename "$img")" $? "exit $?"
+	# The status is captured before anything else runs. Written as
+	# check "... $(basename "$img")" $? "exit $?" the substitution in the
+	# same command replaced the status with its own, so both fsck checks
+	# read 0 and passed whatever fsck did.
+	b=$(basename "$img")
+	"$FSCK" "$img" > "$W/fsck.$b" 2>&1
+	s=$?
+	check "fsck_hammer2 $b" $s "exit $s"
 done
 # fsck prints a running total as it walks; the last one is the volume's.
 last() { grep -o '([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)' "$1" | tail -1; }

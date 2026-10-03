@@ -5943,3 +5943,74 @@ fiemap and file-handle exercisers 12, 3, 16, 11 and 9 checks with none
 failed, the unmount leaving 0 inode, 0 chain, 0 modified and 0 dio
 allocated. Eleven gates green, syntax 73 checks 0 failed, checkpatch
 unchanged at 1240.
+
+**Two of cluster-sync.sh's checks could not fail, 2026-10-03.** Both
+`fsck_hammer2` checks were written
+
+    check "fsck_hammer2 $(basename "$img")" $? "exit $?"
+
+and the command substitution in the same command replaced the status the
+`$?` was meant to read, so both reported `exit 0` whatever `fsck_hammer2`
+returned. Reproduced against a command returning 8: the old shape prints
+`ok ... exit 0`, the corrected shape, which captures the status into a
+variable before anything else runs, prints `FAIL ... exit 8`. Every
+reading of that gate recorded in this file before this entry therefore
+counted 22 checks of which 20 could fail. Re-run after the fix, the two
+checks evaluate and `fsck_hammer2` does exit 0 on both volumes, so the
+claim they were carrying was true and merely untested. A sweep for the
+shape across `script/*.sh` found this one line and no other: the safe
+form, where the substitution sits in an earlier command and the `$?`
+reads the test that follows it, is what the other 14 occurrences are.
+
+**The sanitizer reading could not fail either.** The gate greps dmesg for
+`KASAN:` and `UBSAN:` and never checked that the module carries the
+instrumentation which emits them, so a module built against a kernel
+without KASAN passes it in silence however broken it is. The kernel
+tree's `CONFIG_KASAN` is now compared against the built module's `__asan`
+imports, which fails in both directions rather than only on an absent
+report: want and have disagreeing either way is a failure. Controls at
+all four combinations: configured with 18 imports passes, configured with
+0 fails, unconfigured with 0 passes, unconfigured with 18 fails. In
+place, the debug kernel reports 0 `__asan` with the KASAN and UBSAN
+patterns explicitly saying nothing there, and the sanitizer kernel
+reports 18 `__asan` and 3 `__ubsan`. `cluster-sync.sh` is 23 checks, 0
+failed on both kernels.
+
+**The two-master quorum, 2026-10-03.** The configuration the quorum code
+decides for had never been run. A PFS with one master short-circuits,
+since `hammer2_cluster_check()` agrees with the only chain there is; with
+two, `pfs_nmasters` is 2, the quorum is `pfs_nmasters / 2 + 1` and so
+both, and every lookup has to agree across both chains.
+`script/cluster-quorum.sh` builds it: a MASTER PFS on one volume and a
+second MASTER of the same cluster id on the other, assembled by mounting
+both volumes' ROOT, since the super-root scan calls `hammer2_pfsalloc()`
+once per PFS root chain and the second call appends at nchains.
+
+The fake pass that mattered here is a second volume silently unseen,
+which would leave an ordinary single-master mount passing every write,
+read and `fsck` in the run. Two readings separate them. The support
+thread count is the first: `hammer2_vfsops.c` skips that thread for a
+MASTER element only when `pfs_nmasters` is 1, so one master and one slave
+give one thread and two masters must give two, and two is what the run
+reads against `cluster-sync.sh`'s one. The second volume's own media is
+the second, fingerprinted and `fsck`'d separately rather than through the
+mount that would answer from either.
+
+It passed on the first run, which the thread machinery in 0.9.61 did not.
+Readings, 20 checks 0 failed on `h2debug-rc5` and on `h2kasan-rc5`: a
+36-character cluster id shared, the second MASTER accepted, both volumes
+recording their PFS as MASTER, 2 support threads, the cluster's PFS
+mounting, 24 of 24 files written through the quorum and 24 of 24 read
+back by checksum, a clean unmount with no thread left and nothing
+scrapped, the module unloading, no warning, lockdep, KASAN or UBSAN
+report, kmemleak empty, both volumes clean by `fsck_hammer2`, each
+holding all 24 files by its own media with 38 data blocks, and the two
+fingerprints differing on 0 of 88 lines. The sanitizer module carried 18
+`__asan` and 3 `__ubsan` imports by the check above.
+
+What this does not reach is a quorum that cannot be met: a master absent
+from a cluster whose quorum counts it. That is the half of a quorum which
+decides rather than agrees, and the question to settle before asserting
+anything about it is what upstream does when a master leaves, since the
+expectation has to come from the original rather than from what this port
+happens to do.
