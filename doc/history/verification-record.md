@@ -5220,3 +5220,47 @@ build BEFORE the fix, and unmounted the same way. `fsck_hammer2` on the
 host reports the media clean on both, the second at 9 inodes and 86 data
 blocks. Every one of those paths runs through `hammer2_cluster_check()`
 at one of the 26 `xop_collect` call sites.
+
+**How a multi-chain cluster is formed, and why this port cannot form
+one, 2026-10-02.** The entry above says the multi-chain path is carried
+and reviewed and not exercised, and the obvious next step was to build a
+volume that has one. That was attempted and the attempt found why it
+cannot be done from this side.
+
+A cluster is the set of PFS roots sharing a `pfs_clid`, and the mount's
+super-root scan appends one chain per `PFSROOT` inode it finds, matching
+on that id. So two PFS roots with one `pfs_clid` is a two-chain cluster,
+and the format explicitly expects it: `hammer2_disk.h` says
+`{pfs_clid, pfs_fsid}` must be used to identify an instance because "a
+mount may contain more than one copy of the PFS as a separate node".
+
+The route taken was to create a second PFS with `HAMMER2IOC_PFS_CREATE`
+and give it the first's `pfs_clid` through `HAMMER2IOC_INODE_SET`, which
+carries the whole `hammer2_inode_data_t` and so appears to reach the
+field. It does not, and the kernel is not at fault: `INODE_SET` writes
+only `check_algo`, `comp_algo`, `inode_quota`, `data_quota` and
+`ncopies`, each gated on its own `HAMMER2IOC_INODE_FLAG_*` bit, and
+`pfs_clid` is in none of them. Read side by side at the kernel of record
+and at DragonFly's `hammer2_ioctl.c`, the two are identical, so this is
+upstream's behavior and not a port gap. The write succeeded, returned 0,
+and changed nothing; the reading that caught it is `HAMMER2IOC_PFS_GET`
+on the remounted volume, which reports MCFIX at
+`00000000-0000-0000-0000-000000000000` beside MC2's own id.
+
+Clusters are formed upstream by `HAMMER2IOC_REMOTE_ADD` and
+`HAMMER2IOC_RECLUSTER`, which are 7 of the 8 ioctls the capability table
+lists as absent, and which need the cluster subsystem: `kdmsg`, 5490
+lines of userspace library with no kernel half in the tree this workspace
+holds. So the chain of reasoning closes where the capability table
+already said it would, and now it is measured rather than argued: a
+two-chain cluster cannot be built here, and the reason is the same one
+that leaves Replication unavailable, not the assertion the entry above
+removed.
+
+The method is worth recording too, since it is the second time this
+session a hand-rolled probe reported a state it had not established. The
+first probe's PFS walk reset `name_key` every pass and read one entry
+forever; the second read the field it had written and believed it. What
+settled the question was reading the kernel's own `hammer2_ioctl_pfs_get`
+iteration protocol and then reading `hammer2_ioctl_inode_set` to see which
+fields it acts on, not adding a third probe.

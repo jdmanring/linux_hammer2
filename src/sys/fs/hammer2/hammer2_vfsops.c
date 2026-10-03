@@ -397,16 +397,6 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		hammer2_spin_unex(&pmp->blockset_spin);
 
 		/*
-		 * Count the masters as the slots are filled: the quorum
-		 * hammer2_cluster_check() computes is this count halved plus
-		 * one, so a single-master PFS gets one and behaves exactly as
-		 * it did when the check was single-chain.
-		 */
-		if (pmp->pfs_types[j] == HAMMER2_PFSTYPE_MASTER ||
-		    pmp->pfs_types[j] == HAMMER2_PFSTYPE_SUPROOT)
-			++pmp->pfs_nmasters;
-
-		/*
 		 * If the PFS is already mounted we must account
 		 * for the mount_count here.
 		 */
@@ -415,6 +405,32 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		++j;
 	}
 	iroot->cluster.nchains = j;
+
+	/*
+	 * pfs_nmasters is the quorum's base: hammer2_cluster_check() takes
+	 * it halved plus one, so it must not undercount or a cluster of two
+	 * masters would decide on one.  Upstream computes it the same way,
+	 * from the on-disk field first and the visible masters second.
+	 *
+	 * The on-disk field is what a master recorded about the cluster it
+	 * belongs to, and is how this mount learns of masters it cannot
+	 * see; MASTER PFSs are authoritative for it and refine it later.
+	 * Masters are usually created with the field at 1, so the visible
+	 * count is what detects that there are more.
+	 */
+	if (ripdata && pmp->pfs_nmasters < ripdata->meta.pfs_nmasters)
+		pmp->pfs_nmasters = ripdata->meta.pfs_nmasters;
+	{
+		int count = 0;
+
+		for (i = 0; i < iroot->cluster.nchains; ++i) {
+			if (pmp->pfs_types[i] == HAMMER2_PFSTYPE_MASTER)
+				++count;
+		}
+		if (pmp->pfs_nmasters < count)
+			pmp->pfs_nmasters = count;
+	}
+
 	hammer2_assert_cluster(&iroot->cluster);
 
 	hammer2_mtx_unlock(&iroot->lock);

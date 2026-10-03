@@ -24,7 +24,14 @@ still missing rather than what is now carried: the writer that emits a
 second blockref, which DragonFly does not have either. 0.9.53 is the
 defect an adversarial review of that work found, a FIFO allocated for one
 chain and freed for every chain, which eleven green gates and a clean
-`fsck_hammer2` all passed over. The last seven milestones before them are
+`fsck_hammer2` all passed over. Building a volume that HAS two chains was
+then attempted, and the attempt closed the question: a cluster is formed
+by `HAMMER2IOC_REMOTE_ADD` and `HAMMER2IOC_RECLUSTER`, `pfs_clid` cannot be
+set through `HAMMER2IOC_INODE_SET` on either side because upstream does not
+write that field either, and so the two-chain state cannot be reached
+without the cluster subsystem. The chain-and-quorum code is carried and
+reviewed, it is what the read side would use, and nothing here can exercise
+it until that subsystem exists. The last seven milestones before them are
 a performance pass
 over calls rather than files: each found a Linux facility used for a
 purpose its argument did not carry, which is a class this port had not
