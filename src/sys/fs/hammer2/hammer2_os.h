@@ -1224,20 +1224,38 @@ fp_read(struct file *fp, void *buf, size_t nbytes, long *res, int all,
 	}
 
 	/*
-	 * An error after some bytes moved is forgotten, as upstream does;
-	 * an error with nothing moved is reported.
-	 */
-	if (error && done != 0)
-		error = 0;
-	/*
-	 * all was asked for and the request is short: upstream's ESPIPE.
-	 * auio_resid nonzero is the same test as done < nbytes, and there
-	 * is no "some bytes moved" condition on it, because a stream that
-	 * ended before the request started is the case a caller most needs
-	 * told about.
+	 * The order of these two blocks is upstream's and it matters.
+	 * ESPIPE is decided FIRST and only when no error occurred, so a
+	 * short request that already carries an error is reported with
+	 * that error and not with ESPIPE.
 	 */
 	if (all && error == 0 && done < nbytes)
 		error = ESPIPE;
+
+	/*
+	 * Then the error a partial transfer left behind is forgotten, and
+	 * only for the cases that apply here: an interrupted call, and a
+	 * would-block ONLY when all was not asked for.  The first version
+	 * of this cleared any error once some bytes had moved, which would
+	 * have discarded a real I/O failure and hidden a dead link behind a
+	 * short count.  A would-block under all is deliberately NOT
+	 * forgiven, because all on a non-blocking descriptor is the
+	 * caller's bug and upstream reports it.
+	 *
+	 * Upstream's ERESTART arm is absent because Linux has no such
+	 * errno: __kernel_read() returns whatever the file's read_iter
+	 * returns, and that is EINVAL, EBADF, EFAULT, EAGAIN or the
+	 * driver's own code, never an ERESTART*.  EINTR is the restart
+	 * case on this side and is kept.  EWOULDBLOCK is EAGAIN's other
+	 * name, the same value, which is why the two arms cannot both
+	 * fire.
+	 */
+	if (error && done != 0 && done != nbytes) {
+		if (error == EINTR)
+			error = 0;
+		if (error == EWOULDBLOCK && all == 0)
+			error = 0;
+	}
 	if (res)
 		*res = (long)done;
 	return (error);
