@@ -302,6 +302,7 @@ struct hammer2_chain {
 #define HAMMER2_ERROR_ENOENT		0x00000040	/* entry not found */
 #define HAMMER2_ERROR_ENOTEMPTY		0x00000080	/* dir not empty */
 #define HAMMER2_ERROR_EAGAIN		0x00000100	/* retry */
+#define HAMMER2_ERROR_ETIMEDOUT		0x00040000	/* timed out */
 #define HAMMER2_ERROR_ENOTDIR		0x00000200	/* not directory */
 #define HAMMER2_ERROR_EISDIR		0x00000400	/* is directory */
 #define HAMMER2_ERROR_ABORTED		0x00001000	/* aborted operation */
@@ -392,6 +393,16 @@ struct hammer2_chain {
  * representing the same entity.
  */
 #define HAMMER2_XOPFIFO		16
+
+/*
+ * A worker thread's pending-XOP queue.  DragonFly keeps one per
+ * hammer2_thread so a collector can find the XOPs a thread is holding
+ * without walking the cluster; the head is over hammer2_xop_head, which
+ * is declared below, so the typedef carries the struct tag.
+ */
+struct hammer2_xop_head;
+TAILQ_HEAD(hammer2_xop_list, hammer2_xop_head);
+typedef struct hammer2_xop_list	hammer2_xop_list_t;
 
 #define HAMMER2_MAXCLUSTER	8
 #define HAMMER2_XOPMASK_VOP	((uint32_t)0x80000000U)
@@ -1048,6 +1059,61 @@ size_t hammer2_xop_setname_inum(hammer2_xop_head_t *, hammer2_key_t);
 void hammer2_xop_setip2(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_setip3(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_setip4(hammer2_xop_head_t *, hammer2_inode_t *);
+/*
+ * A worker thread and the group it belongs to.  DragonFly keeps one of
+ * these per thread and hangs the pending XOPs off it, so a collector
+ * finds what a thread holds without walking the cluster, and a remaster
+ * or freeze request is a flag on a structure that already exists rather
+ * than a message.  Carried whole from upstream's hammer2.h because the
+ * thread bodies and the sync code both read every field.
+ */
+struct hammer2_thread {
+	struct hammer2_pfs	*pmp;
+	struct hammer2_dev	*hmp;
+	hammer2_xop_list_t	xopq;
+	thread_t		td;
+	uint32_t		flags;
+	/*
+	 * Linux: DragonFly's wakeup() hashes a bare address into a global
+	 * table of sleep queues, so `wakeup(&thr->flags)` finds whoever is
+	 * sleeping on that word.  Linux has no such table and a wait queue
+	 * is an object, so the channel is one, kept here where DragonFly
+	 * keeps nothing.  It is initialised by hammer2_thr_create() and
+	 * paired with the flag word it guards; thr_wait takes it and
+	 * thr_signal wakes it.
+	 */
+	hammer2_lkc_t		cv;
+	int			clindex;	/* cluster element index */
+	int			repidx;
+	char			*scratch;	/* MAXPHYS */
+};
+typedef struct hammer2_thread	hammer2_thread_t;
+
+#define HAMMER2_THREAD_UNMOUNTING	0x0001	/* unmount request */
+#define HAMMER2_THREAD_DEV		0x0002	/* related to dev, not pfs */
+#define HAMMER2_THREAD_WAITING		0x0004	/* thread in idle tsleep */
+#define HAMMER2_THREAD_REMASTER		0x0008	/* remaster request */
+#define HAMMER2_THREAD_STOP		0x0010	/* exit request */
+#define HAMMER2_THREAD_FREEZE		0x0020	/* force idle */
+#define HAMMER2_THREAD_FROZEN		0x0040	/* thread is frozen */
+#define HAMMER2_THREAD_XOPQ		0x0080	/* work pending */
+#define HAMMER2_THREAD_STOPPED		0x0100	/* thread has stopped */
+#define HAMMER2_THREAD_UNFREEZE		0x0200	/* resume */
+
+void hammer2_thr_signal(hammer2_thread_t *, uint32_t);
+void hammer2_thr_signal2(hammer2_thread_t *, uint32_t, uint32_t);
+void hammer2_thr_wait(hammer2_thread_t *, uint32_t);
+int hammer2_thr_wait_any(hammer2_thread_t *, uint32_t, int);
+void hammer2_thr_wait_neg(hammer2_thread_t *, uint32_t);
+void hammer2_thr_create(hammer2_thread_t *, hammer2_pfs_t *,
+    hammer2_dev_t *, const char *, int, int, void (*)(void *));
+void hammer2_thr_delete(hammer2_thread_t *);
+void hammer2_thr_remaster(hammer2_thread_t *);
+void hammer2_thr_freeze_async(hammer2_thread_t *);
+void hammer2_thr_freeze(hammer2_thread_t *);
+void hammer2_thr_unfreeze(hammer2_thread_t *);
+int hammer2_thr_break(hammer2_thread_t *);
+
 void hammer2_xop_start(hammer2_xop_head_t *, hammer2_xop_desc_t *);
 void hammer2_xop_retire(hammer2_xop_head_t *, uint32_t);
 int hammer2_xop_feed(hammer2_xop_head_t *, hammer2_chain_t *, int, int);

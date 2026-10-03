@@ -87,6 +87,7 @@ void dump_stack(void);
  * of record where it is 16.
  */
 #include <stdarg.h>
+#include <stdbool.h>
 #define TASK_COMM_LEN	16
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
 

@@ -155,6 +155,11 @@ hammer2_syntax_check_all(void)
 	 */
 	(void)lwkt_create(NULL, NULL, &td, NULL, 0, -1, "h2test");
 	(void)ncpus;
+	/*
+	 * The thread API's wait with no lock to drop, which is what a
+	 * flag-word wait is.
+	 */
+	(void)hammer2_lkc_sleep_nolock(&lkc, "h2thr", 1);
 	(void)hammer2_vfs_errno(EDOM);
 	hammer2_mapping_set_block_folios(NULL, 16);
 	{

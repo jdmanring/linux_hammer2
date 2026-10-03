@@ -40,10 +40,10 @@ a defect.
 
 | file | lines | origin |
 |---|---|---|
-| `hammer2.h` | 1472 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
+| `hammer2.h` | 1538 | DragonFly, in the FreeBSD port's shape, OS-facing types rewritten |
 | `hammer2_disk.h` | 1205 | DragonFly, carried; `struct uuid` defined locally |
 | `hammer2_ioctl.h` | 221 | DragonFly, carried; `<linux/ioctl.h>`, `HAMMER2_MAXPATHLEN` pinned |
-| `hammer2_admin.c` | 662 | FreeBSD port, carried with four `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; strategy XOPs are exempt from that dependency at start and retire, as they are in DragonFly, so the readahead workers read one file on every CPU; the xop allocation zone is shimmed |
+| `hammer2_admin.c` | 911 | FreeBSD port, carried with four `XXX` lines: the XOP inode dependency wait no longer sets the PFS-wide waiting flag and its retire wakes unconditionally, since the flag was cleared by a retire on another index and a writeback worker slept for good; strategy XOPs are exempt from that dependency at start and retire, as they are in DragonFly, so the readahead workers read one file on every CPU; the xop allocation zone is shimmed |
 | `hammer2_freemap.c` | 1034 | FreeBSD port, carried with six `XXX`: the allocation refusal the debug build takes from `fail_alloc_after`, the print of what a refusal saw, the return after `hpanic`, the two `bmdata[]` pointers formed only inside the array's bounds, which UBSAN caught being formed one past either end, and the recovery pass testing the freemap chain for null as well as for an error before reading through it, since the early return covers a missing leaf only when the caller is not recovering |
 | `hammer2_xops.c` | 1453 | FreeBSD port, carried byte-for-byte but two `XXX` lines, the lock level of the inode chain the detached create makes and the subclass of the entry the rename holds detached |
 | `hammer2_ioctl.c` | 1169 | FreeBSD port, carried with nineteen `XXX`: the seek ioctls and GEOM dropped, the read-only test and the copy-out on Linux primitives, growfs clearing headers through the DIO layer, the mount-wide sync through the kernel's, an unrecognized command answered ENOTTY rather than EOPNOTSUPP, the snapshot's lock order corrected under lockdep, and the four string copies in the volume lists that read `sizeof` the destination from a source `kstrdup()` sized to its length, which KASAN caught reading 64 bytes of a 9-byte allocation |
@@ -61,7 +61,7 @@ a defect.
 | `hammer2_mount.h` | 58 | FreeBSD port, carried; `hammer2_chain.c` includes it |
 | `hammer2_xxhash.h` | 60 | ours: the kernel's `xxh64()` under the core's `XXH64` name and HAMMER2's seed |
 | `hammer2_io.c` | 1251 | hash and dedup halves carried; OS half written on the page cache |
-| `hammer2_os.h` | 1604 | ours, the OS shim |
+| `hammer2_os.h` | 1628 | ours, the OS shim |
 | `hammer2_compat.h` | 212 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |

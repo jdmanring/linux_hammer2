@@ -293,6 +293,30 @@ typedef struct task_struct *thread_t;
 
 
 /*
+ * The wait with no lock to drop, for a caller that sleeps on a channel
+ * whose state it has already tested under its own ordering.  The thread
+ * API is the caller: it sets a WAITING bit and sleeps in the same atomic
+ * step, so there is nothing to release between the test and the sleep and
+ * DragonFly's tsleep_interlock()/tsleep(PINTERLOCKED) pair has no work to
+ * do.  This is wait_event_interruptible_timeout(), which is that shape,
+ * and it returns the same -EINTR or -ETIMEDOUT the locked form does so a
+ * caller can treat both alike.
+ */
+/* Linux */
+static inline int
+hammer2_lkc_sleep_nolock(hammer2_lkc_t *c,
+    const char *s __always_unused, int timo)
+{
+	long r;
+
+	r = wait_event_interruptible_timeout(*c, false,
+	    timo ? timo : MAX_SCHEDULE_TIMEOUT);
+	if (r == -ERESTARTSYS)
+		return (-EINTR);
+	return (r < 0 ? (int)r : (r == 0 ? -ETIMEDOUT : 0));
+}
+
+/*
  * hammer2_mtx is DragonFly's mtx (sys/mutex.h, kern_mutex.c), carried as
  * a primitive of the shim's own rather than mapped onto a rw_semaphore:
  * a lock word in DragonFly's layout, the exclusive bit over a count that
