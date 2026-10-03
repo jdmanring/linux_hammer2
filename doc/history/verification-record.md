@@ -5159,3 +5159,64 @@ rather than 19. The section now states the split it can be checked
 against instead of a total that was true of no definition: a figure whose
 arithmetic closes over a mixed unit is the failure this class produces,
 since it cannot fail the way a wrong subtotal does.
+
+**A cluster may hold more than one chain, and the guard forbidding it,
+2026-10-02.** The capability table has declared `SelfHealing` and
+`FailureDomains` unavailable since it was written, with the reason that
+"the copies mechanism is not carried in any port", and that reason was
+doing two jobs at once: it was true of the ports AND it was hiding a
+guard this port had added of its own. `hammer2_assert_cluster()` asserted
+`nchains == 1` with the comment that a valid cluster can only have one,
+and `hammer2_cluster_check()` carried DragonFly's first pass and the tail
+of its third while dropping the quorum machinery between them, the
+dropped tail asserting that every slot past the first was NULL. Between
+them a multi-chain cluster was a `KASSERT` failure before any code could
+reach it.
+
+**What was ported rather than invented.** `hammer2_cluster_check()` is
+now DragonFly's, all four passes: the first counting masters and slaves
+and setting the soft and hard read and write flags, the second resolving
+`nmasters`, `umasters` and `nmasters_keymatch` against a quorum-reduced
+transaction id, the third validating the quorum-agreed elements, and the
+fourth checking the elements not marked invalid against the focus. The
+quorum is the PFS's master count halved plus one, so a single-master PFS
+gets one and behaves exactly as it did when the check was single-chain,
+which is why the readings elsewhere in this record are unchanged. The
+returns name the port's positive error bits rather than upstream's
+negative errnos, and upstream's three-way disagreement return collapses
+to `EAGAIN` for "more replies may arrive" and `EIO` for the two settled
+cases, since the port has no bit for `ESRCH` or `EDEADLK`.
+
+**The defect the review found, which no gate could.** The commit that
+removed the guard was reviewed adversarially and the review found that
+`hammer2_xop_alloc()` allocated a FIFO for `collect[0]` alone while
+`hammer2_xop_start()` walks every index below `nchains` and each storage
+function feeds `collect[i]`, and `hammer2_xop_retire()` already freed
+`collect[i]` for every `i`. The allocator was single-chain and the free
+side was multi-chain; raising the bound let the two disagree on the
+array's width. Eleven green gates, a clean `fsck_hammer2` and zero kernel
+warnings all passed over it, because the single-chain path every test
+exercises never touches `collect[1..]`. That is the shape worth keeping:
+a bound relaxed without the state behind it is fail-open, and the guard
+being relaxed was the one that used to catch the disagreement.
+
+**What is carried and what is not, said plainly.** The read and
+coordination half is now here: chains, quorum, and a FIFO per chain. The
+writer that emits a second blockref for a block is absent, in this port
+and in DragonFly both, and the format's own comment says so in DragonFly's
+words: "When redundancy is desired a set may contain several duplicate
+entries pointing to different copies of the same data. Up to 4 copies are
+supported. Not implemented." No multi-chain volume has been built here,
+so the multi-chain path is carried and reviewed and NOT exercised; the
+single-chain path is what every measurement in this record runs.
+
+**The measurements.** On 7.3.0-rc5 with the debug kernel: a 4 GiB volume
+mounts, takes a directory, a file, a 4 MiB random write and a sparse
+file, reads all of it back, seeks, syncs, remounts and reads again, with
+0 kernel warnings, and unmounts at 0 inode, 0 chain, 0 modified and 0 dio
+still allocated. After the FIFO fix a second run wrote a further
+directory, file and 2 MiB random write, read back a file written by the
+build BEFORE the fix, and unmounted the same way. `fsck_hammer2` on the
+host reports the media clean on both, the second at 9 inodes and 86 data
+blocks. Every one of those paths runs through `hammer2_cluster_check()`
+at one of the 26 `xop_collect` call sites.

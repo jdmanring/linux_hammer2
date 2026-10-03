@@ -12,7 +12,20 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. The last seven milestones are a performance pass
+0.5 to 0.9 are met. 0.9.52 and 0.9.53 open a capability the port had
+asserted away: `hammer2_assert_cluster()` required `nchains == 1` and
+`hammer2_cluster_check()` had DragonFly's first pass and the tail of its
+third with the quorum dropped between them, so a cluster could not hold
+two chains and nothing could ever back a second copy of a block. The
+check is now upstream's four passes over a quorum computed from the PFS's
+master count, the FIFO allocator allocates per chain to match, and
+`SelfHealing`'s reason in `README.capabilities.md` is narrowed to what is
+still missing rather than what is now carried: the writer that emits a
+second blockref, which DragonFly does not have either. 0.9.53 is the
+defect an adversarial review of that work found, a FIFO allocated for one
+chain and freed for every chain, which eleven green gates and a clean
+`fsck_hammer2` all passed over. The last seven milestones before them are
+a performance pass
 over calls rather than files: each found a Linux facility used for a
 purpose its argument did not carry, which is a class this port had not
 looked for and which no gate reads, since the call is legal, compiles
@@ -171,7 +184,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.51
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.53
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
