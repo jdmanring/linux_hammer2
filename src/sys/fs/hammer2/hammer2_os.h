@@ -252,6 +252,28 @@ hammer2_lkc_sleep(hammer2_lkc_t *c, hammer2_lk_t *p,
 }
 
 /*
+ * The errno fp_read() and fp_write() report.  Linux's names are not
+ * DragonFly's and one of them has no userspace meaning at all:
+ * ERESTARTSYS is 512, above the range a system call returns, and it is
+ * what a blocking socket read produces when a signal interrupts it, which
+ * for the cluster transport's read thread is kthread_stop().  Mapping it
+ * to EINTR gives the caller a restart it can recognise, which is what the
+ * same event is called everywhere the caller can branch on it.
+ *
+ * Every other errno passes through unchanged.  The argument arrives as
+ * kernel_read()'s return, which is negative, and the result is the
+ * positive form the core's convention uses.
+ */
+/* Linux */
+static inline int
+hammer2_fp_errno(long n)
+{
+	int e = (int)-n;
+
+	return (e == ERESTARTSYS ? EINTR : e);
+}
+
+/*
  * thread_t and curthread, DragonFly's names for a thread and the calling
  * one, over Linux's task_struct.  The cache-coherency machine stores one
  * in a CST to record the exclusive holder and compares it to tell a
@@ -1234,6 +1256,14 @@ hammer2_dev_cache_flush(struct file *bdev_file)
  * upstream sets it; a caller that reads a negative as a large size_t is
  * the same defect as not checking at all.
  *
+ * The position is the file's own, handled as ksys_read() handles it and
+ * only for a file that has one: the FMODE_STREAM test is file_ppos()'s,
+ * which returns NULL for a stream, so the socket the transport uses takes
+ * the NULL path and no position is read or written.  Passing NULL to
+ * kernel_read() unconditionally would start every read at offset zero,
+ * which a positional file would see as an all=1 loop re-reading its head
+ * over the bytes already filled.
+ *
  * Both follow upstream's error policy: an error after some bytes moved is
  * forgotten for the cases it names, and the count is what actually moved.
  * fp_write() issues once, as upstream does, and a partial write is
@@ -1264,9 +1294,25 @@ fp_read(struct file *fp, void *buf, size_t nbytes, long *res, int all,
 	 * request is satisfied or something other than progress stops it.
 	 */
 	for (;;) {
-		n = kernel_read(fp, (char *)buf + done, nbytes - done, NULL);
+		/*
+		 * The file's own position, taken and written back the way
+		 * ksys_read() does it, INCLUDING its test: file_ppos()
+		 * returns NULL for a stream, and a socket is opened with
+		 * FMODE_STREAM, so the transport's descriptor takes the NULL
+		 * path and touches no position at all.  A positional file
+		 * instead gets its f_pos advanced across the loop, which
+		 * passing NULL unconditionally would not do: every read
+		 * would start at offset zero and an all=1 loop over a short
+		 * read would re-read the file's head onto buf + done.
+		 */
+		loff_t pos = fp->f_pos;
+		loff_t *ppos = (fp->f_mode & FMODE_STREAM) ? NULL : &pos;
+
+		n = kernel_read(fp, (char *)buf + done, nbytes - done, ppos);
+		if (n >= 0 && ppos)
+			fp->f_pos = pos;
 		if (n < 0) {
-			error = (int)-n;	/* the core's errnos are positive */
+			error = hammer2_fp_errno(n);
 			break;
 		}
 		if (n == 0)
@@ -1295,13 +1341,27 @@ fp_read(struct file *fp, void *buf, size_t nbytes, long *res, int all,
 	 * forgiven, because all on a non-blocking descriptor is the
 	 * caller's bug and upstream reports it.
 	 *
-	 * Upstream's ERESTART arm is absent because Linux has no such
-	 * errno: __kernel_read() returns whatever the file's read_iter
-	 * returns, and that is EINVAL, EBADF, EFAULT, EAGAIN or the
-	 * driver's own code, never an ERESTART*.  EINTR is the restart
-	 * case on this side and is kept.  EWOULDBLOCK is EAGAIN's other
-	 * name, the same value, which is why the two arms cannot both
-	 * fire.
+	 * Upstream's ERESTART arm is absent and the reason is the one this
+	 * comment used to get backwards.  It claimed __kernel_read() never
+	 * returns an ERESTART*, and that is false at the kernel of record:
+	 * sock_intr_errno() returns -ERESTARTSYS when the timeout is
+	 * MAX_SCHEDULE_TIMEOUT, which is the DEFAULT sk_rcvtimeo a socket
+	 * is initialized with, and the unix and tcp receive paths return
+	 * it on interruption, as does a pipe.  So a blocking socket read
+	 * cut short by a signal returns -ERESTARTSYS, which is 512.
+	 *
+	 * The arm is still absent, for a different reason: retrying is
+	 * what upstream does and it would spin forever here, because the
+	 * only signal a kthread receives is kthread_stop() through
+	 * TIF_NOTIFY_SIGNAL and that flag is sticky for a kthread, the
+	 * only clearers being the return-to-user path a kthread never
+	 * takes and io_uring.  So the break is right and the VALUE was
+	 * wrong: hammer2_fp_errno() maps it to EINTR, which is the name
+	 * the caller's error tables carry, instead of handing back 512,
+	 * which is not in the userspace errno space at all.
+	 *
+	 * EWOULDBLOCK is EAGAIN's other name, the same value, which is why
+	 * the two arms below cannot both fire.
 	 */
 	if (error && done != 0 && done != nbytes) {
 		if (error == EINTR)

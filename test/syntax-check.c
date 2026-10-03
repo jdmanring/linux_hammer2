@@ -142,6 +142,12 @@ hammer2_syntax_check_all(void)
 	 * CST's spin lock and reacquiring it around the sleep.
 	 */
 	ssleep(&mtx, &spin, 0, "ccms", 1);
+	/*
+	 * The errno mapper: ERESTARTSYS is what a blocking socket read
+	 * returns when a signal interrupts it, and it is not a name a
+	 * caller's error tables carry.
+	 */
+	(void)hammer2_fp_errno(-ERESTARTSYS);
 	(void)hammer2_vfs_errno(EDOM);
 	hammer2_mapping_set_block_folios(NULL, 16);
 	{
