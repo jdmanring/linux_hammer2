@@ -130,7 +130,8 @@ hammer2_dedup_clear(hammer2_dev_t *hmp)
  * win: the frontend collects after start returns, exactly as ->lookup and
  * ->iterate_shared do.  That is why hammer2_xop_strategy carries no
  * finished flag, no lock and no bio, which was decided when the struct was
- * written.
+ * written; the write, whose completion is in the backend, completes at its
+ * last cluster element instead, as hammer2_xop_strategy_write() says.
  */
 void
 hammer2_xop_strategy_read(hammer2_xop_t *arg, void *scratch __maybe_unused,
@@ -1461,8 +1462,9 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 		 * it, and sizes the free the same way, so the two cannot
 		 * drift apart if the logical size ever becomes per-inode.
 		 */
-		xop->head.scratch = hmalloc(hammer2_get_logical(), M_HAMMER2,
-		    M_WAITOK);
+		if (xop->head.scratch == NULL)	/* once per XOP, not element */
+			xop->head.scratch = hmalloc(hammer2_get_logical(),
+			    M_HAMMER2, M_WAITOK);
 		bio_data = xop->head.scratch;
 		error = hammer2_strategy_assemble(folio->mapping->host, &parent,
 		    lbase, lblksize, bio_data);
@@ -1556,7 +1558,30 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	}
 	hammer2_xop_feed(&xop->head, NULL, clindex, error);
 done:
+	/*
+	 * XXX Linux: the folio is completed by the last cluster element with
+	 * a chain, after every element has written it.  The completion below
+	 * runs in the backend, once per element, and upstream lets the first
+	 * element whose collect is not EINPROGRESS complete it and the others
+	 * return unwritten behind its finished flag.  Upstream's elements run
+	 * in parallel and the skip is a race they usually win; here they run
+	 * in order on one thread and the skip is every time, and a skipped
+	 * slave is not caught up later: the inode XOPs ran on it with the
+	 * same transaction id, so its sync thread finds the inode current and
+	 * never compares the data.  Holding writeback across all the elements
+	 * keeps the folio stable for each of them.
+	 */
+	for (i = clindex + 1; i < ip->cluster.nchains; i++)
+		if (ip->cluster.array[i].chain != NULL)
+			return;
 	error = hammer2_xop_collect(&xop->head, HAMMER2_XOP_COLLECT_NOWAIT);
+	/*
+	 * Every element has replied, so a quorum still in progress is one
+	 * whose missing master is not in this cluster at all, and waiting
+	 * would leave the folio under writeback for good.
+	 */
+	if (error == HAMMER2_ERROR_EINPROGRESS)
+		error = HAMMER2_ERROR_EIO;
 
 	folio = xop->folio; /* now owned by us */
 	if (error == HAMMER2_ERROR_ENOENT || error == 0) {

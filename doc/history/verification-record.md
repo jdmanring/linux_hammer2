@@ -5796,3 +5796,54 @@ entries equal to the master's. The script's report check read `WARNING`,
 `BUG:` and lockdep's two phrases and not `UBSAN:`, so a UBSAN report would
 have passed it; it reads all four now, and read 0. The guest's grub
 default is back on `h2debug-rc5`.
+
+**A slave kept in step through change, and three defects only that found,
+2026-10-03.** Every run before this one copied files onto an empty slave,
+which is `sync_insert` alone. `cluster-sync.sh` now changes the master
+after the first copy, with both volumes mounted: ten files and a
+directory removed, five files rewritten at new sizes, five added and one
+renamed, which is the destroy, replace and insert paths. It compares the
+cluster's PFS on the two volumes from `hammer2 -v show` rather than by
+totals: every directory entry's name, inode and type, every inode's size
+and type, every data block's key and check code. Planting a changed check
+code or a missing entry in a copy of the fingerprint fails the comparison,
+so a pass is not the comparison being blind.
+
+The first run oopsed on the sanitizer kernel. `hammer2_xop_strategy_write`
+ran its completion once per cluster element, so the second element ended
+writeback on a folio the first had already ended it on, and
+`folio_end_writeback()` met `VM_BUG_ON_FOLIO(!folio_test_writeback)`. The
+debug kernel, without `CONFIG_DEBUG_VM`, does not check that. Upstream has
+a `finished` flag that lets the first element to complete answer for the
+rest; restored as written, the debug kernel run then showed the slave
+missing every data block the master had rewritten or added, 17 of 103.
+Upstream's elements run in parallel and the skip is a race; here they run
+in order and the skip is every time, and the skipped slave is never
+caught up, because the inode XOPs ran on it with the same transaction id
+and the sync thread finds the inode current. The folio is now completed by
+the last element with a chain, after every element has written it, and a
+quorum still waiting at that point is an error, since no further reply
+can come.
+
+`hammer2_cluster_check()` returned `EAGAIN` for a quorum still in
+progress, the port having had no `EINPROGRESS` bit until this work; the
+sync thread reads `EAGAIN` as its request to drain deferrals and go
+round, so it returns `EINPROGRESS`, as upstream does.
+
+With those, the sanitizer kernel found a slab write past an array in
+`hammer2_xop_feed()` from a readdir of 36 entries. The FIFO size and its
+mask are the XOP's and the arrays are each element's, so growing one
+element's FIFO left the other's arrays at the old size under the new mask.
+Every element's FIFO now grows together, and the grow moves queued entries
+to where the new mask reads them, a no-op while the start leaves a FIFO's
+read index at zero. The three later NULL dereferences in that log were in
+KASAN's own quarantine, freeing memory the overrun had corrupted.
+
+Readings after all three, `cluster-sync.sh` 22 checks 0 failed on
+`h2debug-rc5` and on `h2kasan-rc5`: the slave's PFS identical to the
+master's entry for entry and block for block, 175 lines, 35 files and 103
+data blocks; no warning, lockdep, KASAN or UBSAN report; kmemleak empty.
+The single-device paths these changes run through were re-run on the
+debug kernel: `test-fixtures.sh` 0 failures over 11 images, and
+`test-enospc.sh` filled 2G with 0 failures, its seek, dedup, fallocate,
+fiemap and file-handle exercisers all passing.

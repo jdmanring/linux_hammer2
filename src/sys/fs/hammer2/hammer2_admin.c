@@ -108,6 +108,26 @@ hammer2_xop_fifo_alloc(hammer2_xop_fifo_t *fifo, size_t new_nmemb,
 		    flags);
 	KKASSERT(fifo->errors);
 	adjust_malloc_leak(-old_size, M_HAMMER2);
+
+	/*
+	 * XXX Linux: an entry at index k lives at k & (old - 1) and is read
+	 * at k & (new - 1), which differ when k has the old size's bit set.
+	 * Moving those to the upper half keeps every queued entry where the
+	 * new mask looks.  It is a no-op while ri is zero, which is how the
+	 * synchronous start leaves a FIFO it is filling.
+	 */
+	if (old_nmemb) {
+		int k;
+
+		for (k = fifo->ri; k != fifo->wi; ++k) {
+			size_t o = k & (old_nmemb - 1), n = k & (new_nmemb - 1);
+
+			if (o == n)
+				continue;
+			fifo->array[n] = fifo->array[o];
+			fifo->errors[n] = fifo->errors[o];
+		}
+	}
 }
 
 /*
@@ -603,6 +623,7 @@ hammer2_xop_feed(hammer2_xop_head_t *xop, hammer2_chain_t *chain, int clindex,
 {
 	hammer2_xop_fifo_t *fifo;
 	size_t old_fifo_size;
+	int i;	/* Linux */
 
 	/* Early termination (typically of xop_readir). */
 	if (hammer2_xop_active(xop) == 0) {
@@ -622,7 +643,17 @@ hammer2_xop_feed(hammer2_xop_head_t *xop, hammer2_chain_t *chain, int clindex,
 		}
 		old_fifo_size = xop->fifo_size;
 		xop->fifo_size *= 2;
-		hammer2_xop_fifo_alloc(fifo, xop->fifo_size, old_fifo_size);
+		/*
+		 * XXX Linux: every element's FIFO, not this one alone.  The
+		 * size and the mask are the XOP's and the arrays are each
+		 * element's, so growing one left the others at the old size
+		 * under the new mask, and the next element to feed wrote past
+		 * its arrays.  KASAN caught it in a readdir of 36 entries on a
+		 * two-element cluster.
+		 */
+		for (i = 0; i < xop->cluster.nchains; ++i)
+			hammer2_xop_fifo_alloc(&xop->collect[i],
+			    xop->fifo_size, old_fifo_size);
 	}
 
 	if (chain)

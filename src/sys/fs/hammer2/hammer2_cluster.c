@@ -321,12 +321,17 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	 * ESRCH when the quorum does not even agree on the key, and EDEADLK
 	 * when it agrees on the key but not on the transaction id.  The
 	 * port has no bit for ESRCH or EDEADLK, so those two collapse to
-	 * EIO and EAGAIN carries the first, which is what its callers
-	 * branch on.
+	 * EIO.
+	 *
+	 * XXX Linux: this returned EAGAIN for the first until the port had an
+	 * EINPROGRESS bit.  EAGAIN is what hammer2_sync_slaves() returns to
+	 * ask its thread to drain deferrals and go again, so a collect still
+	 * waiting on a master read as that request, and with no deferrals
+	 * queued the thread went round without sleeping.
 	 */
 	if (nmasters < nquorum) {
 		if (nmasters + umasters >= nquorum)
-			return (HAMMER2_ERROR_EAGAIN);
+			return (HAMMER2_ERROR_EINPROGRESS);
 		return (HAMMER2_ERROR_EIO);
 	}
 

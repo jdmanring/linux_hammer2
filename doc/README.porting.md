@@ -179,6 +179,14 @@ at the end of each pass the thread flushes its own element from the
 slave's PFS root down through every inode and flags the path above it.
 DragonFly does not need this, its slave being a PFS no one mounts.
 
+A file write goes to every element in turn and the folio completes at the
+last. Upstream lets the first element to complete answer for the others,
+which in its parallel threads is a race the slower elements usually still
+run; run in order, the others would never be written, and the sync thread
+would not catch them up, since the inode XOPs already gave the slave the
+master's transaction id. The XOP's FIFOs grow together for the same
+reason the dependency is per XOP: the size is one, the arrays are many.
+
 ## The DIO layer
 
 On the BSDs a `hammer2_io` holds a `struct buf *`, and the DIO layer

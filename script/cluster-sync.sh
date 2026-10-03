@@ -6,9 +6,15 @@
 # pass, because a wakeup that does not reach the sleeper costs the five
 # seconds left in its sleep. The second is a MASTER on one volume holding
 # a set of files written before a SLAVE with the same cluster id exists on
-# the other, so the only way the files reach the slave is the thread. Both
-# volumes are then checked on the host by fsck_hammer2, and the slave's
-# final counters must equal the master's.
+# the other, so the only way the files reach the slave is the thread. The
+# master is then changed while both stay mounted: files removed, a
+# directory removed, files rewritten at new sizes, files added and one
+# renamed, which is the thread's destroy, replace and insert paths after
+# its first copy. Both volumes are checked on the host by fsck_hammer2,
+# and the cluster's PFS on each is fingerprinted from `hammer2 -v show`:
+# every directory entry's name, inode and type, every inode's size and
+# type, and every data block's key and check code. The two must match, and
+# each must hold the 35 files the changes leave.
 #
 # A fake pass to guard against: a thread that never starts passes every
 # leak and warning check, so the thread, its passes and its copies are
@@ -24,6 +30,7 @@ GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
+HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 MASTER=$FIXDIR/cluster-master.img
@@ -34,6 +41,7 @@ trap 'rm -rf "$W"' EXIT
 command -v virsh >/dev/null 2>&1 || { echo "cluster: COULD-NOT-RUN: no virsh" >&2; exit 2; }
 [ -x "$NEWFS" ] || { echo "cluster: COULD-NOT-RUN: no newfs_hammer2 (H2_NEWFS)" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "cluster: COULD-NOT-RUN: no fsck_hammer2 (H2_FSCK)" >&2; exit 2; }
+[ -x "$HAMMER2" ] || { echo "cluster: COULD-NOT-RUN: no hammer2 (H2_HAMMER2)" >&2; exit 2; }
 [ -d "$FIXDIR" ] || { echo "cluster: COULD-NOT-RUN: no $FIXDIR" >&2; exit 2; }
 [ -d "$KDIR" ] || { echo "cluster: COULD-NOT-RUN: no kernel tree at $KDIR" >&2; exit 2; }
 state=$($VIRSH domstate "$GUEST" 2>/dev/null) || {
@@ -115,6 +123,20 @@ echo "cluster-thread $(ps -eo comm | grep -c '^h2nod-CL')"
 sleep 30
 echo "cluster-passes $(passes CL)"
 echo "cluster-updates $(dmesg | grep -c 'syncthr: update inode')"
+
+# 3. Change the master with the slave's copy in place.
+rm -f /mnt/h2c/set/f0 /mnt/h2c/set/f1 /mnt/h2c/set/f2 /mnt/h2c/set/f3 /mnt/h2c/set/f4
+rm -f /mnt/h2c/set/f5 /mnt/h2c/set/f6 /mnt/h2c/set/f7 /mnt/h2c/set/f8 /mnt/h2c/set/f9
+rm -f /mnt/h2c/set/sub/g*; rmdir /mnt/h2c/set/sub
+i=10; while [ $i -lt 15 ]; do head -c $(( i * 5003 + 70000 )) /dev/urandom > /mnt/h2c/set/f$i; i=$((i + 1)); done
+i=0; while [ $i -lt 5 ]; do head -c $(( i * 12007 + 9000 )) /dev/urandom > /mnt/h2c/set/n$i; i=$((i + 1)); done
+mv /mnt/h2c/set/f20 /mnt/h2c/set/renamed20
+sync
+c=$(passes CL)
+sleep 30
+echo "change-passes $(( $(passes CL) - c ))"
+echo "change-files $(find /mnt/h2c/set -type f | wc -l)"
+echo "pass-errors $(dmesg | grep -c 'hammer2_sync_slaves: error')"
 umount /mnt/h2c && umount /mnt/h2s && umount /mnt/h2m && echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
 rmmod hammer2 && echo "rmmod ok"
@@ -149,6 +171,9 @@ a=$(val lone-delete-rc); [ "${a:-1}" = 0 ]; check "pfs-delete removes the SLAVE"
 a=$(val lone-threads-deleted); [ "${a:-1}" = 0 ]; check "pfs-delete stops its thread" $? "${a:-none} left"
 c=$(val cluster-thread); [ "${c:-0}" = 1 ]; check "the SLAVE in a cluster starts one thread" $? "${c:-0}"
 u=$(val cluster-updates); [ "${u:-0}" -ge 55 ] 2>/dev/null; check "the thread copies the set" $? "${u:-0} inode updates for 55 files and their directories"
+p=$(val change-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the thread keeps passing after the master changes" $? "${p:-0} passes in 30 s"
+p=$(val change-files); [ "${p:-0}" = 35 ]; check "the changes leave 35 files on the master" $? "${p:-none}"
+p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${p:-none}"
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
@@ -164,6 +189,34 @@ last() { grep -o '([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)' "
 m=$(last "$W/fsck.cluster-master.img" | sed 's/ [0-9]* indirect,//')
 v=$(last "$W/fsck.cluster-slave.img" | sed 's/ [0-9]* indirect,//')
 [ -n "$m" ] && [ "$m" = "$v" ]; check "the slave holds what the master holds" $? "master $m, slave $v; indirect blocks are left out, the slave's being built in insertion order"
+
+# The fingerprint of the cluster's PFS, from the line naming it to the
+# line closing it. Inode check codes are left out: they cover timestamps
+# and transaction ids, which a slave does not share with its master.
+fingerprint() {	# image
+	"$HAMMER2" -v show "$1" 2>/dev/null | awk '
+	/filename "CL"$/ && !on { on = 1; next }
+	on && /^ *} \(inode\.[0-9]*, "CL"\)/ { exit }
+	!on { next }
+	/^ *inode\.[0-9]/ { mode = "inode"; next }
+	/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
+	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+	/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
+	mode == "dirent" && $1 == "filename" { name = $2 }
+	mode == "dirent" && $1 == "inum" { dinum = $2 }
+	mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
+	mode == "inode" && $1 == "inum" { inum = $2 }
+	mode == "inode" && $1 == "type" { itype = $2 }
+	mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
+	mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
+	' | LC_ALL=C sort
+}
+fingerprint "$MASTER" > "$W/fp.master"
+fingerprint "$SLAVE" > "$W/fp.slave"
+nm=$(grep -c ' FILE$' "$W/fp.master"); ns=$(grep -c ' FILE$' "$W/fp.slave")
+nd=$(grep -c '^data ' "$W/fp.master")
+[ "$nm" = 35 ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the 35 files, by its own media" $? "$nm file entries, $nd data blocks"
+cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
 
 echo "cluster: $checks check(s), $fail failed"
 [ "$fail" = 0 ]
