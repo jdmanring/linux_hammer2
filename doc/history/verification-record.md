@@ -5584,3 +5584,40 @@ port has every primitive `hammer2_synchro.c` and `hammer2_ccms.c` call
 except the twelve `hammer2_thr_*` functions and `hammer2_xop_start_except`,
 which live in DragonFly's `hammer2_admin.c`, a file this port already
 carries in part.  Nothing in the transport is on their path.
+
+**synchro.c's prerequisites, counted, and the one that is infrastructure
+rather than a function, 2026-10-03.** The twelve `hammer2_thr_*` functions
+are carried and `synchro.c`'s unresolved calls fell from nine to seven,
+and six of those seven are the file's own functions, which arrive with it.
+The seventh is `hammer2_xop_start_except`.
+
+**It is not one function.** Read at the forge it is 106 lines whose real
+dependencies are the worker-thread pool: `pmp->xop_groups[]`, an array of
+thread groups each holding one thread per cluster element;
+`pmp->has_xop_threads` and `hammer2_xop_helper_create(pmp)`, which builds
+them; `xop->collect[i].thr`, a thread field on the XOP's FIFO; and the
+partitioning constants `hammer2_xop_mod`, `_xgroups`, `_sgroups` and
+`_xbase`, plus `mycpu->gd_cpuid`, `ip1->ihash` and
+`hammer2_spread_workers`. None of the six is in this port, checked
+rather than assumed.
+
+That is the thing `README.porting.md` records as deliberately absent:
+"the XOP thread pool replaced by synchronous XOPs", the FreeBSD port's
+choice this one followed. So `hammer2_xop_start_except` cannot be carried
+without either carrying the pool or writing its synchronous equivalent,
+and that is a design decision and not a port step.
+
+**What `synchro.c` uses it for decides which.** Three call sites, all
+with a cluster index: two start an `ipcluster` XOP to fetch a peer's
+chain for one element, and one starts a `scanall`. Each is a *targeted*
+start, "every element except this one", which is what the `notidx`
+argument means, and it is how a master reads what a slave holds without
+reading its own copy. The port's synchronous `hammer2_xop_start()` has no
+such argument and no per-element routing.
+
+So the honest state of the plan is that the shim is complete and the next
+step is a decision: carry the worker pool, or extend the synchronous
+start with a targeted form. The reading that decides it is whether
+`synchro.c`'s three callers need a thread per element or only the routing,
+and that is answered by attempting the second and measuring, which has not
+been done.
