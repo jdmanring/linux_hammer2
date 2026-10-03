@@ -15,6 +15,17 @@
 graphify-out/
 .graphifyignore
 
+# clangd's compilation database, emitted by kbuild's compile_commands.json
+# target for Serena's language server, and clangd's index: both hold
+# absolute paths into one machine's kernel tree.  Moved here from the
+# module directory, where script/test-provenance.sh finds every file under
+# src/ and correctly reports one with no origin.
+/compile_commands.json
+/.cache/
+
+# Reverify's per-binary ledger, keyed by the hash of one build.
+.reverify/
+
 # Local editor and tool instructions and caches. Not part of the port.
 CLAUDE.md
 .claude/
