@@ -5361,3 +5361,80 @@ defined on disk already, as the set of PFS roots sharing a `pfs_clid`,
 which `hammer2_disk.h` states outright. A port that implements the
 transport and the quorum changes nothing a DragonFly mount reads, which
 is the answer to whether this diverges: it does not.
+
+**The cluster transport was built on the wrong Linux primitive, and a
+published claim about its consumer is false, 2026-10-03.** Both were found
+by an adversarial audit that read the kernel of record and the two
+clustered filesystems already in it, and both are corrections to work
+recorded above.
+
+**The false claim.** Commit `9444b9a`'s message says the four cluster
+files call `fp_read()` and `fp_write()` and that nothing links until they
+exist. They do not. Read at the forge, `hammer2_iocom.c` contains no
+`fp_read`, `fp_write` or `fp_shutdown` at all; it calls eight `kdmsg_*`
+functions and passes its `struct file *` through
+`kdmsg_iocom_reconnect(&hmp->iocom, fp, "hammer2")`. The `fp_*` callers
+are in `sys/kern/kern_dmsg.c`, 2202 lines, which is not in this port. So
+the shim's consumer is that file and not the four, and the entries above
+describing the transport are right while the commit message that
+introduced it is wrong. A commit message cannot be corrected in place, so
+this entry is the correction.
+
+**The wrong primitive.** The transport was written over
+`kernel_read()` and `kernel_write()` on a `struct file`. The kernel's own
+answer, read from `drivers/block/nbd.c` and `net/sunrpc/svcsock.c`, is to
+resolve the descriptor to a `struct socket` and use the socket API:
+- `MSG_WAITALL` is upstream's `all=1` performed by the protocol
+  (`net/ipv4/tcp.c`, `net/unix/af_unix.c`, both setting
+  `target = sock_rcvlowat(sk, flags & MSG_WAITALL, len)`), so
+  `kernel_recvmsg(sock, &msg, &kv, 1, len, all ? MSG_WAITALL : 0)` is the
+  loop the shim hand-rolled.
+- Blocking belongs to the call and not to the daemon's descriptor. With
+  `kernel_read()` it is inherited: `sock_read_iter()` sets `MSG_DONTWAIT`
+  when the file carries `O_NONBLOCK`, so a daemon that passes a
+  non-blocking descriptor gets `EAGAIN` under `all=1`, which the shim
+  correctly does not forgive, and the read thread would die on its first
+  read. That is a bug reachable only at run time.
+- `fp_shutdown()` has no counterpart here at all. DragonFly's
+  `kdmsg_iocom_uninit()` and the read thread's own exit both call
+  `fp_shutdown(fp, SHUT_RDWR)` to wake a blocked reader, and on Linux
+  that is `kernel_sock_shutdown(sock_from_file(fp), how)`, which works
+  only on a socket. The shim has no `fp_shutdown`; `kern_dmsg.c` cannot
+  link without it.
+- The three acceptance checks are nbd's: reject a non-socket, a
+  non-stream, and a socket whose `ops->shutdown == sock_no_shutdown`.
+  A pipe would work through `kernel_read` but has no shutdown, so
+  `kthread_stop()` would be its only unsticker, which is the reason nbd
+  refuses one.
+
+**The errno model in the shim comment is wrong at the one path teardown
+uses.** The comment says `__kernel_read()` never returns an `ERESTART*`
+and that `EINTR` is the restart case here. A blocking socket read
+interrupted while waiting returns `-ERESTARTSYS`, from
+`sock_intr_errno()` when the timeout is `MAX_SCHEDULE_TIMEOUT`, and a
+pipe returns it from `fs/pipe.c`. The only interrupter a kthread has is
+`kthread_stop()`, through `TIF_NOTIFY_SIGNAL`, which `signal_pending()`
+reports and which is sticky for a kthread because the only clearers are
+the return-to-user path a kthread never takes and io_uring. The behavior
+happens to be right, any nonzero error breaking the read loop, and the
+reason to write down is that a retry would spin forever rather than that
+the error cannot arrive.
+
+**Two more findings that change what comes next.** The `lwkt` shim must
+be `kthread_create()` plus `get_task_struct()` plus `wake_up_process()`,
+joined by `kthread_stop_put()`, which is what gfs2 does; DragonFly's own
+thread exits on its first read error and `kdmsg_iocom_uninit()` polls a
+NULL pointer it set, and carrying that poll on Linux is a use-after-free
+against a freed `task_struct`. And `hammer2_ra_wq` is not usable for
+cluster work: it is `WQ_UNBOUND` with no `WQ_MEM_RECLAIM` and is shared
+with read-ahead, where both in-tree transports use a reclaim-capable
+queue because the message path sits under writeback.
+
+**What there is no substitute for.** A sweep of `mm/` and
+`include/linux/` for cross-node cache state finds only hardware
+interconnect and DMA maintenance, so DragonFly's `ccms.c` has no in-tree
+analog to replace it. The kernel's own coherence model is the DLM lock
+lattice that gfs2 and ocfs2 build on, and reaching for it would replace
+`kdmsg`, the quorum protocol and the cache sub-protocol with corosync and
+`dlm_controld`, which is a different architecture and not a port. The
+cache sub-protocol is carried, as the DESIGN document specifies it.
