@@ -1510,13 +1510,16 @@ hammer2_assert_cluster(const hammer2_cluster_t *cluster)
 	 * nchains past a guard into code that indexes past its allocation,
 	 * which is the failure this assert exists to catch.
 	 *
-	 * nchains > 1 is reachable: hammer2_pfsalloc() appends at
-	 * nchains and the super-root scan calls it once per PFS root
-	 * chain, so a volume whose super-root lists more than one root
-	 * chain for a PFS produces one. No such volume has been built
-	 * here, so the multi-chain path is carried and reviewed, not
-	 * exercised; the single-chain path is what every measurement in
-	 * doc/history/verification-record.md runs.
+	 * nchains > 1 is reachable and is exercised: hammer2_pfsalloc()
+	 * appends at nchains and the super-root scan calls it once per
+	 * PFS root chain, so a volume whose super-root lists more than
+	 * one root chain for a PFS produces one. script/cluster-sync.sh
+	 * builds that volume, a MASTER and a SLAVE sharing one cluster
+	 * id across two devices, and doc/history/verification-record.md
+	 * carries its readings. What remains carried and reviewed rather
+	 * than exercised is more than one MASTER, where the quorum passes
+	 * in hammer2_cluster_check() decide an answer instead of agreeing
+	 * with the only master present.
 	 */
 	KASSERTMSG(cluster->nchains >= 0 &&
 	    cluster->nchains <= HAMMER2_MAXCLUSTER,

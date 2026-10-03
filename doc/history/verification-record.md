@@ -5868,3 +5868,78 @@ XOP's allocation would have its new element skipped silently; it warns
 now. Readings: `cluster-sync.sh` 22 checks 0 failed on `h2debug-rc5` and
 `h2kasan-rc5`, `test-fixtures.sh` 0 failures, `test-enospc.sh` filled 2G
 with 0 failures.
+
+**The sibling sweep after 0.9.64, 2026-10-03.** The fix in `73e2ecc`
+closed one unsynchronized read of an inode's cluster, so the rest were
+looked for: 73 reads of `nchains` across eight files, each one read. Two
+sit outside the cluster spin where the inode lock is not certainly held.
+One is upstream's, in `hammer2_xop_inode_flush()`, whose loop
+deduplicating volume headers by `hmp` reads `ip->cluster.array[]`; its
+body cannot run while a cluster has one element, the flush XOP is
+serialized by its inode dependency and its caller holds the inode, and it
+stays as upstream has it. The other was this port's own.
+
+`hammer2_xop_start_except()` read `ip1->cluster.nchains` and the chain
+array with no spin held, where `hammer2_inode_repoint()` writes both under
+`ip->cluster_spin`, and it bounded its loop by the inode's element count
+rather than the XOP's, so an element appended after `hammer2_xop_alloc()`
+would be run and fed into a FIFO never allocated for it. Upstream reads
+the same array under `pmp->xop_spin` and marks in place that it is not
+stable without one; this port replaced the worker queue that spin also
+covered and dropped the spin with it. Of the three implementations of
+this selection, upstream's locked, the `hammer2_xop_start()` fixed in
+`73e2ecc` locked, and this one did not.
+
+Upstream's `hammer2_xop_start()` is `hammer2_xop_start_except()` at a
+notidx of -1. This port's is now the same, so the selection, the inode
+dependencies and the recorded `chk_mask` exist once rather than in two
+copies free to drift. The fold also makes the `ECONNABORTED` feed on an
+inactive XOP mandatory: with `chk_mask` recorded before any element runs,
+the old `break` would leave recorded bits whose FIFOs nothing fills, and
+a collect waits on them. `chk_mask` is a `uint32_t` and
+`HAMMER2_MAXCLUSTER` is 8, so the completion's shift reaches 8 of 32
+bits.
+
+A stale claim went with it. `hammer2_assert_cluster()` in `hammer2.h`
+said no multi-chain volume had been built here and that the single-chain
+path was what every measurement in this file runs. `cluster-sync.sh` has
+built a MASTER and a SLAVE sharing one cluster id across two devices
+since 0.9.61, which is a PFS of two root chains, and its readings are
+recorded above. What remains carried and reviewed rather than exercised
+is more than one MASTER, where the quorum passes decide an answer instead
+of agreeing with the only master present.
+
+Two readings of the instruments came out of the same sweep, neither a
+code defect. clang-tidy's `bugprone-sizeof-expression` fires on
+`READ_ONCE(thr->td)` in `hammer2_thr_delete()`. `thread_t` is `struct
+task_struct *`, and the `sizeof` the check objects to is inside
+`compiletime_assert_rwonce_type()`, an assertion that the access size is
+supported rather than a size computation; `__native_word` is already true
+for a pointer, so that branch does not decide. One of the port's ten
+`READ_ONCE` sites is on a pointer, so this is a single site and not a
+class. Second, `compile_commands.json` held 16 of the module's 17 source
+files, `hammer2_synchro.c` having been added after it was last generated,
+and a caller search for `hammer2_xop_start_except()` through the semantic
+index returned one of four callers rather than reporting that it could
+not answer. `grep` had four. `make compile_commands.json` now builds it
+from the `.cmd` files a build leaves, using the kernel of record's own
+generator, and `doc/README.testing.md` carries the instrument with the
+reason no gate can require it.
+
+Readings: `cluster-sync.sh` 22 checks 0 failed on `h2debug-rc5` and again
+on `h2kasan-rc5`, the slave's PFS identical to the master's entry for
+entry and block for block, 0 of 175 lines differing, 40 inodes, 103 data
+blocks and 36 directory entries on each, both volumes clean by
+`fsck_hammer2`, nothing scrapped, no warning, lockdep, KASAN or UBSAN
+report, kmemleak empty. That gate greps for report patterns and does not
+check that the module carries the instrumentation which produces them, so
+an uninstrumented build would pass it in silence; the module under the
+sanitizer run was read instead, `vermagic 7.3.0-rc5-kasan` with 18
+`__asan` and 3 `__ubsan` imports. The fold sits on the path every XOP
+takes, so the single-device paths were re-run on the debug kernel:
+`test-fixtures.sh` 11 images, 43 files, 0 failures, and
+`test-enospc.sh` filled 2G with 0 failures, its seek, dedup, fallocate,
+fiemap and file-handle exercisers 12, 3, 16, 11 and 9 checks with none
+failed, the unmount leaving 0 inode, 0 chain, 0 modified and 0 dio
+allocated. Eleven gates green, syntax 73 checks 0 failed, checkpatch
+unchanged at 1240.

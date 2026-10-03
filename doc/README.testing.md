@@ -49,6 +49,7 @@ rather than a verdict; the readings are in
 | `cluster-sync.sh` | runs the cluster's synchronization thread on two volumes: a lone SLAVE's thread passing and stopping on unmount and `pfs-delete`, then a SLAVE created after its MASTER's files and compared with it by `fsck_hammer2` |
 | `analyze.sh` | clang's static analyzer over the port's own seven files with the syntax gate's kernel flag set, a path-sensitive reading no compiler or sparse pass takes; a host instrument, not a gate, since the carried core carries upstream's dead stores and the reading is a candidate list to triage against the origin tree |
 | `dfly-enospc.sh` | fills a volume to capacity on the DragonFly guest under an allocator that refuses on a count, the reproducer behind the staged unmount patch |
+| `make compile_commands.json` | the kernel of record's own `gen_compile_commands.py` over the `.cmd` files a build leaves, so a semantic index reads every file in the module. Not a gate and not checkable by one: the database is untracked, and a source file absent from it returns no callers for a symbol rather than an error, which reads as a negative result. `hammer2_synchro.c` was outside it for a day and a caller search over `hammer2_xop_start_except()` returned one of its four callers |
 
 
 `test-absence.sh` resolves a claim rather than a citation. Where a document

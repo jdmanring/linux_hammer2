@@ -340,10 +340,6 @@ xop_storage_func(hammer2_xop_head_t *xop, hammer2_inode_t *ip, void *scratch,
 #endif
 
 /*
- * Start a XOP request, queueing it to all nodes in the cluster to
- * execute the cluster op.
- */
-/*
  * Start a XOP on every cluster element except one.
  *
  * This is upstream's hammer2_xop_start_except() reduced to what the port
@@ -357,52 +353,29 @@ xop_storage_func(hammer2_xop_head_t *xop, hammer2_inode_t *ip, void *scratch,
  * the routing is the whole of what the three callers in synchro.c need.
  *
  * What is NOT carried is the worker pool, and nothing here pretends
- * otherwise.  The three callers start an ipcluster or scanall XOP for the
- * elements other than their own, which is how a master reads what a slave
- * holds; the synchronous port answers that by running each of them here.
- * A pool would let them overlap, and the port does not overlap XOPs
- * except strategy ones, which is the choice already recorded.
+ * otherwise.  The three callers in synchro.c start an ipcluster or scanall
+ * XOP for the elements other than their own, which is how a master reads
+ * what a slave holds; the synchronous port answers that by running each of
+ * them here.  A pool would let them overlap, and the port does not overlap
+ * XOPs except strategy ones, which is the choice already recorded.
+ *
+ * Every other XOP arrives through hammer2_xop_start(), which is this
+ * function with a notidx of -1, as it is upstream.  The port had two
+ * copies of the element selection instead, and they drifted: the one here
+ * read the inode's cluster with no spin held and ran every element the
+ * inode claimed, including one allocated after the XOP and so without a
+ * FIFO to feed.
  */
 void
 hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
     int notidx)
 {
 	hammer2_inode_t *ip1 = xop->ip1;
-	int i;
-	int nchains;
-
-	KKASSERT(ip1);
-	hammer2_assert_cluster(&ip1->cluster);
-	xop->desc = desc;
-
-	/* Once per XOP, as hammer2_xop_start() does and for its reason. */
-	if (!(xop->flags & HAMMER2_XOP_STRATEGY))
-		hammer2_xop_testset_ipdep(ip1);
-
-	nchains = ip1->cluster.nchains;
-	for (i = 0; i < nchains; ++i) {
-		uint32_t mask = 1LLU << i;
-
-		if (i == notidx || ip1->cluster.array[i].chain == NULL)
-			continue;
-		if (!hammer2_xop_active(xop))
-			break;
-		atomic_set_32(&xop->run_mask, mask);
-		atomic_set_32(&xop->chk_mask, mask);
-		xop_storage_func(xop, ip1, xop->scratch, i);
-		hammer2_xop_retire(xop, mask);
-	}
-}
-
-void
-hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
-{
-	hammer2_inode_t *ip = xop->ip1;
 	uint32_t mask;
 	int i;
 
-	KKASSERT(ip);
-	hammer2_assert_cluster(&ip->cluster);
+	KKASSERT(ip1);
+	hammer2_assert_cluster(&ip1->cluster);
 	xop->desc = desc;
 
 	/*
@@ -432,7 +405,7 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 	 * thread and the unmount behind it.
 	 */
 	if (!(xop->flags & HAMMER2_XOP_STRATEGY))
-		hammer2_xop_testset_ipdep(ip);
+		hammer2_xop_testset_ipdep(ip1);
 	if (xop->ip2)
 		hammer2_xop_testset_ipdep(xop->ip2);
 	if (xop->ip3 && xop->ip3 != xop->ip1) /* rename */
@@ -448,21 +421,26 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 	 * for that and for this loop separately could leave the folio with
 	 * no element to complete it, or two.  chk_mask is the set retire
 	 * already cleans, so recording it early changes nothing there.
+	 *
+	 * Upstream reads this array under pmp->xop_spin and marks in place
+	 * that it is not stable without one.  The spin held here is the
+	 * inode's, because what needs covering is the array rather than the
+	 * worker queue the upstream spin also protected.
 	 */
-	hammer2_spin_sh(&ip->cluster_spin);
-	for (i = 0; i < ip->cluster.nchains &&
+	hammer2_spin_sh(&ip1->cluster_spin);
+	for (i = 0; i < ip1->cluster.nchains &&
 	    i < xop->cluster.nchains; ++i)	/* FIFOs exist to here */
-		if (ip->cluster.array[i].chain)
+		if (i != notidx && ip1->cluster.array[i].chain)
 			atomic_set_32(&xop->chk_mask, 1U << i);
 	/*
 	 * An element added since hammer2_xop_alloc() has no FIFO and is not
 	 * run.  Cluster membership is set at mount and only shrinks, so this
 	 * is not expected; it is said rather than assumed.
 	 */
-	WARN_ONCE(ip->cluster.nchains > xop->cluster.nchains,
+	WARN_ONCE(ip1->cluster.nchains > xop->cluster.nchains,
 	    "hammer2: cluster grew from %d to %d under an XOP\n",
-	    xop->cluster.nchains, ip->cluster.nchains);
-	hammer2_spin_unsh(&ip->cluster_spin);
+	    xop->cluster.nchains, ip1->cluster.nchains);
+	hammer2_spin_unsh(&ip1->cluster_spin);
 
 	for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
 		mask = 1LLU << i;
@@ -471,13 +449,23 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 		atomic_set_32(&xop->run_mask, mask);
 
 		if (hammer2_xop_active(xop)) {
-			xop_storage_func(xop, ip, xop->scratch, i);
+			xop_storage_func(xop, ip1, xop->scratch, i);
 			hammer2_xop_retire(xop, mask);
 		} else {
 			hammer2_xop_feed(xop, NULL, i, ECONNABORTED);
 			hammer2_xop_retire(xop, mask);
 		}
 	}
+}
+
+/*
+ * Start a XOP request, queueing it to all nodes in the cluster to
+ * execute the cluster op.
+ */
+void
+hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
+{
+	hammer2_xop_start_except(xop, desc, -1);
 }
 
 /*
