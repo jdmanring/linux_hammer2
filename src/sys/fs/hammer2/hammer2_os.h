@@ -289,6 +289,9 @@ hammer2_fp_errno(long n)
 typedef struct task_struct *thread_t;
 #define curthread	current
 
+
+
+
 /*
  * hammer2_mtx is DragonFly's mtx (sys/mutex.h, kern_mutex.c), carried as
  * a primitive of the shim's own rather than mapped onto a rw_semaphore:
@@ -1071,6 +1074,106 @@ hfree(void *addr, void *type, size_t freedsize)
 	kvfree(addr);
 }
 
+/*
+ * lwkt_create() and ncpus: DragonFly's thread creation, for the worker
+ * groups the sync and bulkfree code drives.  This is the shim the cluster
+ * needs and the audit of the kernel of record says what shape is right.
+ *
+ * The argument list is DragonFly's, from sys/sys/thread.h:
+ *     lwkt_create(void (*)(void *), void *, struct thread **, struct
+ *         thread *, int, int, const char *, ...);
+ * The third is where the thread's identity is stored, and the sixth is
+ * the cpu to bind to, -1 for any.
+ *
+ * kthread_create() is Linux's, and two things about it are load-bearing
+ * rather than stylistic.  First, it returns an ERR_PTR and does NOT start
+ * the thread; kthread_run() is the wrapper that does, and the caller here
+ * wants the same two-step because it stores the task before waking it.
+ * Second, a kthread that returns from its function has had its
+ * task_struct freed unless someone holds a reference, so the create takes
+ * one with get_task_struct() and the teardown is kthread_stop_put(), which
+ * is the join.  gfs2 does exactly this pair; DragonFly's own
+ * kdmsg_iocom_uninit() instead polls a pointer the thread NULLs, which on
+ * Linux is a use-after-free.  The port carries neither the poll nor a
+ * thread that clears its own identity.
+ *
+ * A cpu of -1 is any cpu, which is kthread_create()'s default and right
+ * for a sync worker; a specific cpu is kthread_bind() before the wake.  A
+ * thread that cannot be created is reported the way every other failure
+ * in this file is, by the errno the caller will see, and the identity is
+ * left NULL so a later break or wait is a no-op rather than a dereference.
+ */
+
+/* Linux */
+#define ncpus		num_online_cpus()
+
+/*
+ * The arguments passed to a thread, and the trampoline that adapts the
+ * two function shapes.  DragonFly's thread bodies are void (*)(void *)
+ * ending by return, which its lwkt_exit() turns into a thread exit; the
+ * carried bodies keep that shape, so the trampoline supplies the
+ * int (*)(void *) kthread_create() requires and reports 0, which is what
+ * kthread_stop() hands back and nothing reads.
+ *
+ * The arguments are freed by the thread itself, at the last moment it can
+ * still use them.  DragonFly has no such object: its struct hammer2_thread
+ * carries everything and outlives the thread.  This does not, so it is
+ * allocated for the thread and freed by the thread, and a create that
+ * fails frees it before returning.
+ */
+struct hammer2_lwkt_args {
+	void	(*func)(void *);
+	void	*arg;
+};
+
+/* Linux */
+static int
+hammer2_lwkt_trampoline(void *data)
+{
+	struct hammer2_lwkt_args *a = data;
+	void (*func)(void *) = a->func;
+	void *arg = a->arg;
+
+	hfree(a, M_HAMMER2, sizeof(*a));
+	func(arg);
+	return (0);
+}
+
+/* Linux */
+static inline int
+lwkt_create(void (*func)(void *), void *arg, thread_t *tdpp,
+    thread_t template __always_unused, int flags __always_unused,
+    int cpu, const char *fmt, ...)
+{
+	struct task_struct *task;
+	struct hammer2_lwkt_args *a;
+	va_list ap;
+	char name[TASK_COMM_LEN];
+
+	va_start(ap, fmt);
+	vsnprintf(name, sizeof(name), fmt, ap);
+	va_end(ap);
+
+	a = hmalloc(sizeof(*a), M_HAMMER2, M_WAITOK);
+	a->func = func;
+	a->arg = arg;
+
+	task = kthread_create(hammer2_lwkt_trampoline, a, "%s", name);
+	if (IS_ERR(task)) {
+		hfree(a, M_HAMMER2, sizeof(*a));
+		return ((int)-PTR_ERR(task));
+	}
+	/*
+	 * The reference that makes kthread_stop_put() safe after the thread
+	 * has returned on its own; see the comment above.
+	 */
+	get_task_struct(task);
+	if (cpu >= 0)
+		kthread_bind(task, cpu);
+	*tdpp = task;
+	wake_up_process(task);
+	return (0);
+}
 /*
  * XXX Linux: FreeBSD's hstrdup() is strdup(9) with M_WAITOK, which is
  * the same contract as the block above and cannot return NULL, so no

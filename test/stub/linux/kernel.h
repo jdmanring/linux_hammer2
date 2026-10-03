@@ -79,4 +79,42 @@ void dump_stack(void);
  */
 #define LONG_MAX	((long)(~0UL >> 1))
 
+/*
+ * The varargs type and the name buffer lwkt_create() needs to turn
+ * DragonFly's printf-style thread name into what kthread_create() takes.
+ * va_list comes from the compiler's own stdarg.h on both sides, and
+ * TASK_COMM_LEN is transcribed from include/linux/sched.h at the kernel
+ * of record where it is 16.
+ */
+#include <stdarg.h>
+#define TASK_COMM_LEN	16
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
+
+/*
+ * The thread calls lwkt_create() makes.  kthread_create() returns an
+ * ERR_PTR and does NOT start the thread; kthread_bind() pins it to a cpu
+ * before it runs; get_task_struct() takes the reference that makes
+ * kthread_stop_put() a safe join after the thread returns on its own;
+ * wake_up_process() is what starts it.  All four from
+ * include/linux/kthread.h and include/linux/sched/task.h at the kernel of
+ * record.
+ */
+struct task_struct;
+struct task_struct *kthread_create(int (*threadfn)(void *data), void *data,
+    const char *namefmt, ...);
+void kthread_bind(struct task_struct *k, unsigned int cpu);
+struct task_struct *get_task_struct(struct task_struct *t);
+int wake_up_process(struct task_struct *p);
+int kthread_should_stop(void);
+void kthread_stop_put(struct task_struct *k);
+#define IS_ERR_VALUE(x) ((unsigned long)(void *)(x) >= (unsigned long)-4095)
+#define IS_ERR(ptr) IS_ERR_VALUE((unsigned long)(ptr))
+#define PTR_ERR(ptr) ((long)(ptr))
+
+/*
+ * ncpus is this, from include/linux/cpumask.h at the kernel of record.
+ * lwkt_create() binds a worker to repidx % ncpus when it is given one.
+ */
+unsigned int num_online_cpus(void);
+
 #endif

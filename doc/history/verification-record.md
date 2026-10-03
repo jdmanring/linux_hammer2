@@ -5524,3 +5524,44 @@ file's own entry point.
 
 So the plan holds and is now measured: `synchro.c` needs a thread API and
 the two primitives already added, and no transport.
+
+**The thread shim, and the same dead-code caveat as the transport,
+2026-10-03.** The worker-group API the cluster's sync code needs is now
+here, and like the transport shim it is not yet in the module.
+
+`lwkt_create()` is DragonFly's thread creation, from its prototype at
+`sys/sys/thread.h`: the function, its argument, where to store the
+thread's identity, a template, flags, a cpu and a printf-style name.  It
+is Linux's `kthread_create()` with two differences that matter rather
+than being stylistic.  The kernel's call returns an ERR_PTR and does not
+start the thread, so this stores the task and then wakes it.  And a
+kthread that returns from its function has had its task_struct freed
+unless someone holds a reference, so the create takes one with
+`get_task_struct()` and the teardown is `kthread_stop_put()`, which is
+the join.  That pair is gfs2's; DragonFly's own `kdmsg_iocom_uninit()`
+instead polls a pointer its reader NULLs, and carrying that poll would be
+a use-after-free on Linux.
+
+The two function shapes differ and the adapter is explicit rather than a
+cast.  DragonFly's thread bodies are `void (*)(void *)` ending by return,
+which its `lwkt_exit()` turns into a thread exit; `kthread_create()` wants
+`int (*)(void *)`.  A struct carrying the function and its argument, and a
+trampoline that calls one and returns 0, is the whole of it.  The
+arguments are freed by the thread itself, at the last moment it can still
+use them, and by the create if the create fails: DragonFly has no such
+object because its `struct hammer2_thread` carries everything and outlives
+the thread, and this one does not.
+
+**The caveat.** `nm` on the built module finds no `kthread_create`,
+`get_task_struct` or `kthread_bind`, because nothing calls `lwkt_create()`
+yet and the compiler drops an unreferenced static inline.  It is checked
+by `test/syntax-check.c` and by the shim gate, which counts 61 inlines, all referenced. It is
+not in the module.  The same is true of `fp_read`
+and `fp_write`, recorded above.  That is the honest state of both: written
+against their originals, type-checked, and not yet load-bearing.
+
+**What this completes.** With `lwkt_create`, `ssleep` and `curthread`, the
+port has every primitive `hammer2_synchro.c` and `hammer2_ccms.c` call
+except the twelve `hammer2_thr_*` functions and `hammer2_xop_start_except`,
+which live in DragonFly's `hammer2_admin.c`, a file this port already
+carries in part.  Nothing in the transport is on their path.

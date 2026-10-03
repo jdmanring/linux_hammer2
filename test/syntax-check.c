@@ -24,6 +24,7 @@ hammer2_syntax_check_all(void)
 	hammer2_mtx_t mtx;
 	hammer2_spin_t spin;
 	uma_zone_t zone;
+	thread_t td;
 	void *p;
 	int x;
 
@@ -148,6 +149,12 @@ hammer2_syntax_check_all(void)
 	 * caller's error tables carry.
 	 */
 	(void)hammer2_fp_errno(-ERESTARTSYS);
+	/*
+	 * Thread creation: the worker-group shim the sync and bulkfree
+	 * code drives, and its ncpus.
+	 */
+	(void)lwkt_create(NULL, NULL, &td, NULL, 0, -1, "h2test");
+	(void)ncpus;
 	(void)hammer2_vfs_errno(EDOM);
 	hammer2_mapping_set_block_folios(NULL, 16);
 	{
