@@ -5310,3 +5310,54 @@ have to exist before the four cluster files link, and that no volume with
 two chains can be built here until they do. That is a body of work, not a
 wall, and the earlier entry called it a wall.
 
+
+**What the cluster port actually is, read from the specification and the
+forge, 2026-10-03.** The instruction is to implement the cluster: the
+message core, the block device, error handling, the quorum protocol and
+synchronization. What follows is what those are, read from DragonFly's
+own DESIGN document and from the code, so the plan is the author's design
+and not an inference from file names.
+
+**The architecture, and it is the reason there is no systemd question.**
+The socket lives in USERSPACE. `sbin/hammer2/cmd_service.c` creates it
+with `socket(AF_INET, SOCK_STREAM, 0)`, sets `SO_REUSEADDR`, binds
+`INADDR_ANY:DMSG_LISTEN_PORT`, `listen(50)`, forks, and accepts. The
+accepted descriptor is passed INTO the kernel through the mount path,
+which is what `mount_hammer2.c`'s own `socket()` call is for. The kernel
+side then does `fp_read()` and `fp_write()` on that descriptor inside
+`kern_dmsg.c` and never opens a socket itself. Grepped for the name, the
+whole of `sys/vfs/hammer2` and `lib/libdmsg` contains no reference to
+systemd, socket activation, or any init system: the transport is a file
+descriptor that the operator's daemon owns, and on Linux that is
+`kernel_read()` and `kernel_write()` over the same descriptor. Nothing in
+this needs an init system to pass it, and nothing will use one.
+
+**The four protocols, from the DESIGN document.** There are four, and
+only two of them run between master nodes:
+- Quorum protocol, between MASTER nodes, to vote on operations, resolve
+  deadlocks, determine the latest transaction id for an element, and
+  commit.
+- The Cache sub-protocol, a MESI protocol running UNDER the quorum one,
+  maintaining cache state for sub-trees so operations stay coherent.
+- The Proxy protocol, used by every node type that is not a MASTER or
+  SOFT_MASTER, which forwards through one adjacent node rather than
+  participating in the vote.
+- The Media protocol, which is the physical media path.
+The six node types are DUMMY, CACHE, SLAVE, MASTER, SOFT_SLAVE and
+SOFT_MASTER, and the distinction that matters is that SOFT_* may source
+and sink data locally WITHOUT quorum agreement because they are directly
+mounted, which is the class this port is in today.
+
+**What is genuinely left to build, by the DESIGN's own status.** The
+network message core and the network block device are marked operational,
+error handling, the Quorum Protocol and Synchronization are marked under
+development. The stalled commits confirm it: the transport was finished
+and the agreement above it was not. So the port is not writing a
+protocol from nothing; it is carrying a finished transport and finishing
+the part upstream never did, against a specification that exists.
+
+**Compatibility.** None of the four touches the media. The cluster is
+defined on disk already, as the set of PFS roots sharing a `pfs_clid`,
+which `hammer2_disk.h` states outright. A port that implements the
+transport and the quorum changes nothing a DragonFly mount reads, which
+is the answer to whether this diverges: it does not.

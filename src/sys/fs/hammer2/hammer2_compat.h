@@ -195,4 +195,18 @@ enum vtype { VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD };
 #define IO_ASYNC	0x0002	/* Linux */
 #define MAXPHYS		(128 * 1024)	/* Linux */
 
+/*
+ * The uio address-space selector fp_read() and fp_write() take, from
+ * DragonFly's sys/uio.h.  Only UIO_SYSSPACE is reachable: the cluster
+ * transport reads and writes kernel buffers, and the shim asserts the
+ * value rather than accepting a userspace one it cannot honour.
+ *
+ * The numbers are DragonFly's and are written here rather than imported,
+ * because this tree does not carry sys/uio.h.  If a future caller needs
+ * UIO_USERSPACE the mapping has to be reconsidered, not just the
+ * constant.
+ */
+#define UIO_SYSSPACE	0	/* Linux */
+#define UIO_USERSPACE	1	/* Linux */
+
 #endif /* !_FS_HAMMER2_COMPAT_H_ */

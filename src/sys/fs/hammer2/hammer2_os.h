@@ -53,6 +53,7 @@
 #include <linux/sched/mm.h>	/* memalloc_nofs_save, for the lock scope */
 #include <linux/string.h>
 #include <linux/blkdev.h>
+#include <linux/fs.h>	/* Linux: kernel_read, kernel_write, the cluster transport */
 
 #include "hammer2_compat.h"
 
@@ -1155,6 +1156,75 @@ static inline int
 hammer2_dev_cache_flush(struct file *bdev_file)
 {
 	return (-blkdev_issue_flush(file_bdev(bdev_file)));
+}
+
+/*
+ * DragonFly's fp_read() and fp_write(): a read or write on a struct file
+ * the caller holds, at the file's own position, from kernel space.
+ *
+ * They exist here for the cluster transport.  DragonFly's kdmsg does its
+ * message I/O with exactly these, on a descriptor its userland service
+ * daemon opened and passed in through the mount path, so the kernel never
+ * opens a socket of its own.  Linux's kernel_read() and kernel_write()
+ * are the same operation with the argument list spelled out, and both are
+ * EXPORT_SYMBOL, so the mapping is direct.
+ *
+ * The uio argument DragonFly passes is always UIO_SYSSPACE with a NULL
+ * iovec and a count, and the offset is always NULL so the file's own
+ * position advances, which is what a message stream wants.  Both of those
+ * are asserted rather than assumed: a caller that asked for UIO_USERSPACE
+ * or a fixed offset would get a different operation than the name
+ * promises, and this port has no caller for either.
+ *
+ * The res argument is the byte count, returned by value as DragonFly's
+ * fp_read() does, and both return a positive errno by the core's
+ * convention.
+ */
+/* Linux */
+static inline int
+fp_read(struct file *fp, void *buf, size_t nbytes, size_t *res,
+    int flags, int space)
+{
+	/*
+	 * long rather than ssize_t: the kernel's own return is ssize_t, and
+	 * this is the same width on every target the module builds for,
+	 * while the shim's standalone compile against test/stub has no
+	 * ssize_t and the gate compiles this header there.
+	 */
+	long n;
+
+	KKASSERT(space == UIO_SYSSPACE);
+	KKASSERT(flags == 0 || flags == 1);
+	/*
+	 * The descriptor outlives every call: it is the one the mount holds
+	 * for the cluster link's life, so a NULL here is a defect in the
+	 * caller rather than a condition to report.  Asserted rather than
+	 * answered with an errno the caller would have to interpret.
+	 */
+	KKASSERT(fp != NULL);
+	n = kernel_read(fp, buf, nbytes, NULL);
+	if (n < 0)
+		return ((int)-n);	/* the core's errnos are positive */
+	if (res)
+		*res = (size_t)n;
+	return (0);
+}
+
+/* Linux */
+static inline int
+fp_write(struct file *fp, const void *buf, size_t nbytes, size_t *res,
+    int space)
+{
+	long n;		/* see fp_read() */
+
+	KKASSERT(space == UIO_SYSSPACE);
+	KKASSERT(fp != NULL);		/* see fp_read() */
+	n = kernel_write(fp, buf, nbytes, NULL);
+	if (n < 0)
+		return ((int)-n);	/* the core's errnos are positive */
+	if (res)
+		*res = (size_t)n;
+	return (0);
 }
 
 /*

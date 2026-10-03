@@ -129,6 +129,14 @@ hammer2_syntax_check_all(void)
 	 */
 	(void)hammer2_dev_writeback(NULL);
 	(void)hammer2_dev_cache_flush(NULL);
+	/*
+	 * The cluster transport's two calls, exercised here so the header
+	 * is compiled and type-checked rather than merely parsed: the gate
+	 * reports an inline nothing references, because a header that is
+	 * never instantiated is not a header that works.
+	 */
+	(void)fp_read(NULL, NULL, 0, NULL, 0, UIO_SYSSPACE);
+	(void)fp_write(NULL, NULL, 0, NULL, UIO_SYSSPACE);
 	(void)hammer2_vfs_errno(EDOM);
 	hammer2_mapping_set_block_folios(NULL, 16);
 	{
