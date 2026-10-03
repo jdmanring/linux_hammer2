@@ -464,7 +464,8 @@ two more braces in the DragonFly lines restored in `hammer2_vfsops.c` and
 indent and one `return (x);`, and the errno rows, all in the recorded
 convention: `EINPROGRESS` and `ETIMEDOUT` gained the mappings upstream
 has, and `pfs-create` lost one `EOPNOTSUPP` with the MASTER-only refusal,
-a net of one. Two
+a net of one. The type and subtype checks `pfs-create` gained after a
+security review moved the `EINVAL` row by two more, to 1,240. Two
 rows the first count showed were the shim's own and were fixed rather
 than recorded: the channel parameters were `const volatile`, DragonFly's
 spelling, where `READ_ONCE` already makes the one read that needs it, and

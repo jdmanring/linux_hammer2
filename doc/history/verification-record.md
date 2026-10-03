@@ -5727,3 +5727,20 @@ findings and what became of each:
 | two comments false: "nor a thread that clears its own identity" in the `lwkt_create()` block, and `tsleep()` "at its one caller", where there are three | fixed |
 | a slave that fails every pass logs every 5 s | kept: the cadence of upstream's own collect errors, and a degraded replica worth a line per pass |
 | upstream reads `chain->bref.modify_tid` before testing `chain` for null in `hammer2_sync_slaves()` | recorded for the upstream note; unreachable here, the thread being deleted before its element's chain is cleared |
+
+**A security review of `826d07e`, 2026-10-03.** An automated review named
+four issues; a second reader reproduced each against the commit. The
+`pfs-create` type check had been removed with nothing in its place, so
+root could store NONE, which the cluster code reads as an empty slot,
+SUPROOT, or any byte, on media: confirmed, and fixed by accepting the five
+cluster-element types and no subtype past AUTOSNAP. The "authorization
+regression" is the same finding; every write ioctl still requires
+`CAP_SYS_ADMIN`. The use-after-free it proposed, a sibling device's sync
+thread running on a PFS the scan frees, does not hold: `hammer2_pfsfree()`
+runs only once `nchains` is zero, every element removed and each element's
+thread deleted with it, so a sibling element still present keeps the PFS.
+The fourth, a MAXPHYS scratch buffer and a thread per non-MASTER element,
+is upstream's shape, reachable by root mounting such a volume, and is
+recorded rather than changed. The unbounded thread waits it also named are
+upstream's, and a wedged pass is what the earlier entry's dependency fix
+closed.

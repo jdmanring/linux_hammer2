@@ -276,10 +276,25 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	/*
 	 * XXX Linux: the three BSD ports refuse every type but MASTER here,
 	 * having no synchronization thread for any other type to start.
-	 * This port carries hammer2_synchro.c, so the test is DragonFly's,
-	 * which is none: hammer2_pfsalloc() starts the thread a SLAVE or a
-	 * soft type needs, and a single MASTER still gets none.
+	 * This port carries hammer2_synchro.c and takes the types a cluster
+	 * element can be: hammer2_pfsalloc() starts the thread a SLAVE or a
+	 * soft type needs, and a single MASTER still gets none.  DragonFly
+	 * tests nothing, so a caller could store NONE, which the cluster code
+	 * reads as an empty slot, SUPROOT, the super-root's own type, or any
+	 * byte up to 255 in a PFS root on media.
 	 */
+	switch (pfs->pfs_type) {
+	case HAMMER2_PFSTYPE_CACHE:
+	case HAMMER2_PFSTYPE_SLAVE:
+	case HAMMER2_PFSTYPE_SOFT_SLAVE:
+	case HAMMER2_PFSTYPE_SOFT_MASTER:
+	case HAMMER2_PFSTYPE_MASTER:
+		break;
+	default:
+		return (EINVAL);
+	}
+	if (pfs->pfs_subtype > HAMMER2_PFSSUBTYPE_AUTOSNAP)	/* Linux */
+		return (EINVAL);
 
 	hammer2_trans_init(hmp->spmp, HAMMER2_TRANS_ISFLUSH);
 	mtid = hammer2_trans_sub(hmp->spmp);
