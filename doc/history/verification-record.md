@@ -5264,3 +5264,49 @@ forever; the second read the field it had written and believed it. What
 settled the question was reading the kernel's own `hammer2_ioctl_pfs_get`
 iteration protocol and then reading `hammer2_ioctl_inode_set` to see which
 fields it acts on, not adding a third probe.
+
+**Is DragonFly's cluster subsystem alive, and what would porting it
+cost, 2026-10-03.** Both questions were answered by asking the forge
+rather than the shallow clone in this workspace, which cannot answer
+either: it is depth 1.
+
+**It is stalled, and the stall is old.** By file, the last commits:
+`hammer2_synchro.c` 2018-11-09, `hammer2_msgops.c` 2018-03-16,
+`hammer2_ccms.c` 2018-03-16, `hammer2_iocom.c` 2020-03-28. Everything
+after those dates on those files is trailing whitespace, unused header
+includes, and unused-variable removal. The only cluster-adjacent commit
+in 2026 is "fix `HAMMER2IOC_RECLUSTER` ioctl failing on local mounts",
+which keeps the code compiling rather than extending it. HAMMER2 itself
+IS under active maintenance: fifteen commits since June 2026, mtime
+fixes, typos, error paths. The cluster subsystem is not part of that;
+it has had no functional development in seven years. The DESIGN
+document's own status list agrees and is the reason: the network message
+core and network block device are "operational", while error handling,
+the Quorum Protocol and Synchronization are all "under development", so
+the transport exists and the consensus on top of it does not. Waiting for
+upstream to lead on this is waiting on work that has not moved since
+2018.
+
+**The cost was overstated here and is corrected.** The earlier entry
+priced the port at `kdmsg`'s userspace half plus an unwritten kernel
+transport. Read from the forge, `sys/kern/kern_dmsg.c` is 2202 lines and
+its kernel dependencies are four: `lwkt_create` and `lwkt_exit` for its
+two threads, `wakeup`, and `kmalloc`, all of which the shim already
+provides. The transport itself is `fp_read()` and `fp_write()` on a
+`struct file` handed in by the caller, which is one call pair in the
+kernel and has a direct Linux counterpart in `kernel_read()` and
+`kernel_write()` over a file descriptor, the descriptor arriving the way
+upstream's does, from the mounting side. That is not a network protocol
+to be written from nothing; it is a message stream over a passed file.
+
+**Compatibility is not the risk the earlier entry implied.** `kdmsg`
+carries messages; it does not change the media. The on-disk format is
+what makes two PFS roots sharing a `pfs_clid` one cluster, and it already
+says so. A port that implements the transport changes nothing a DragonFly
+mount reads.
+
+What remains true is that the ten `kdmsg_*` entry points HAMMER2 calls
+have to exist before the four cluster files link, and that no volume with
+two chains can be built here until they do. That is a body of work, not a
+wall, and the earlier entry called it a wall.
+
