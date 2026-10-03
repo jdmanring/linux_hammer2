@@ -747,9 +747,21 @@ transport exists and the agreement on top of it does not. What a port needs
 is `kdmsg`, and read from the forge rather than from this workspace's
 depth-1 clone, `sys/kern/kern_dmsg.c` is 2202 lines whose kernel
 dependencies are a thread create and exit, a wakeup and an allocator, and
-whose transport is a read and a write on a file descriptor passed in by the
-caller. The media is untouched by it, so a port does not diverge: the format
-already defines a cluster as PFS roots sharing a `pfs_clid`.
+whose transport resolves a descriptor to a socket. The media is untouched by
+it, so a port does not diverge: the format already defines a cluster as PFS
+roots sharing a `pfs_clid`.
+
+The order changed on 2026-10-03 when the four files' dependency on that
+transport was counted rather than assumed. `hammer2_synchro.c`, 1069 lines,
+calls no `kdmsg` function at all: it drives the core this port already
+carries, `hammer2_chain_*` and `hammer2_inode_*` and the XOP cluster arrays,
+over `kprintf`, `KKASSERT`, `tsleep`, `wakeup`, `kmalloc` and `kfree`. `hammer2_ccms.c`, 311 lines, is the same shape: the MESI cache-state
+machine over the port's own spinlock and a sleep it does not yet have.
+Together those two are 1380 lines of the cluster needing no transport,
+and only `hammer2_iocom.c` with 25 `kdmsg` calls and `hammer2_msgops.c`
+with 4 gate the message layer. So synchronization, which is what makes a
+SLAVE converge and is the first step asked for, is the smaller one and
+the nearer to the capabilities the tables call unavailable.
 
 Mainline submission is an asset to spend once. The BSD license permits it,
 which OpenZFS's CDDL does not, but a mainline submission of an immature

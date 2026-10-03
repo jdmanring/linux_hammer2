@@ -5438,3 +5438,45 @@ lattice that gfs2 and ocfs2 build on, and reaching for it would replace
 `kdmsg`, the quorum protocol and the cache sub-protocol with corosync and
 `dlm_controld`, which is a different architecture and not a port. The
 cache sub-protocol is carried, as the DESIGN document specifies it.
+
+**Most of the cluster is transport-free, and the plan changes, 2026-10-03.**
+The fetched originals were counted for their real dependency on kdmsg, and
+the count inverts what the earlier entries assume. Read at the forge and
+counted here:
+
+| file | lines | kdmsg calls |
+|---|---|---|
+| `hammer2_ccms.c` | 311 | 0 |
+| `hammer2_synchro.c` | 1069 | 0 |
+| `hammer2_msgops.c` | 87 | 4 |
+| `hammer2_iocom.c` | 387 | 25 |
+
+`hammer2_synchro.c` is the one that matters. It is the master and slave
+synchronization thread, the largest of the four, and it calls no kdmsg
+function at all: it is driven entirely through the core this port already
+carries, `hammer2_chain_lock` and `_lookup` and `_modify` and `_create`
+and `_delete` and `_next` and `_setcheck` and `_cmp` and `_resize`, with
+`hammer2_inode_lock` and `_chain` and `_get` and `_ref` and `_drop`, and
+the XOP cluster arrays. Its kernel facilities are `kprintf`, `KKASSERT`,
+`tsleep` with the atomic-then-sleep pattern, `wakeup`, `kmalloc` and
+`kfree`, every one of which the shim has. `hammer2_ccms.c` is the same
+shape: the MESI cache-state machine over `hammer2_spin_ex`/`_unex` and
+`ssleep`, no kdmsg, no locks the port lacks. Together they are 1380 lines
+of the cluster that need no transport.
+
+`hammer2_iocom.c` is the transport-facing file, 25 kdmsg calls, and
+`hammer2_msgops.c` is 87 lines with 4, both of them leaf handlers over the
+message layer. So the kdmsg work gates 474 lines, not 1854, and the 1380
+that need only the carried core and two shim primitives can land first.
+
+**The two primitives those files need and the port lacks** are `curthread`,
+which DragonFly uses to identify the owning thread in a CST, and `ssleep`,
+the sleep that releases a spinlock, sleeps and reacquires it. Both are
+shim work of the size already done, not new architecture.
+
+**What that means for order.** The plan recorded above put the transport
+first because the four files were assumed to depend on it. They do not,
+two of them overwhelmingly do not, and synchronization is the part that
+makes a SLAVE converge, which is what Replication and SelfHealing both
+need. Carrying `synchro.c` and `ccms.c` first is both smaller and closer
+to the capability the tables call unavailable.
