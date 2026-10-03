@@ -137,6 +137,11 @@ hammer2_syntax_check_all(void)
 	 */
 	(void)fp_read(NULL, NULL, 0, NULL, 0, UIO_SYSSPACE);
 	(void)fp_write(NULL, NULL, 0, NULL, UIO_SYSSPACE);
+	/*
+	 * The cache-coherency machine's sleep: on a channel, releasing the
+	 * CST's spin lock and reacquiring it around the sleep.
+	 */
+	ssleep(&mtx, &spin, 0, "ccms", 1);
 	(void)hammer2_vfs_errno(EDOM);
 	hammer2_mapping_set_block_folios(NULL, 16);
 	{

@@ -252,6 +252,22 @@ hammer2_lkc_sleep(hammer2_lkc_t *c, hammer2_lk_t *p,
 }
 
 /*
+ * thread_t and curthread, DragonFly's names for a thread and the calling
+ * one, over Linux's task_struct.  The cache-coherency machine stores one
+ * in a CST to record the exclusive holder and compares it to tell a
+ * recursive acquisition from a competing one; nothing in this port
+ * dereferences it, so the comparison is the pointer identity that
+ * current already gives.
+ *
+ * The bare name thread_t is what the carried header uses, so that is the
+ * name declared; hammer2_thread_t is a different thing, DragonFly's own
+ * wrapper for a sync thread, and is not this.
+ */
+/* Linux */
+typedef struct task_struct *thread_t;
+#define curthread	current
+
+/*
  * hammer2_mtx is DragonFly's mtx (sys/mutex.h, kern_mutex.c), carried as
  * a primitive of the shim's own rather than mapped onto a rw_semaphore:
  * a lock word in DragonFly's layout, the exclusive bit over a count that
@@ -858,6 +874,43 @@ hammer2_spin_unsh(hammer2_spin_t *p)
 {
 	up_read(&p->lock);
 }
+
+/*
+ * ssleep(): sleep on a channel, releasing a hammer2_spin_t and reacquiring
+ * it around the sleep.  The name is DragonFly's and it is used by the
+ * cache-coherency machine, which holds a CST's spin lock and must not hold
+ * it while blocked on another thread's release of that CST.
+ *
+ * The release-and-reacquire is exactly what hammer2_lkc_sleep() already
+ * does, so this is that function with the lock type swapped and no error
+ * to report: DragonFly's ssleep() returns void, and its callers are all
+ * `while (condition) ssleep(...)` loops that re-test the condition and
+ * have no error path.  A signal therefore ends the sleep and the loop
+ * re-tests, which is the same convergence the DragonFly call site has.
+ *
+ * The spin lock is a rw_semaphore here, not a real spinlock, and that is
+ * what makes this expressible at all: releasing it to sleep is legal
+ * because it was never a spin lock.  README.porting.md records that as
+ * FreeBSD's choice, whose sx(9) sleeps too, and not a Linux liberty.
+ */
+/* Linux */
+static inline void
+ssleep(const void *chan, hammer2_spin_t *spin,
+    int pri __always_unused, const char *wmesg __always_unused, int timo)
+{
+	hammer2_lkc_t c;
+
+	/*
+	 * A wait queue built on the stack, keyed to the address of the
+	 * channel the caller passes, which is what DragonFly's sleep
+	 * address is.  Every sleeper and waker of one channel must agree on
+	 * that address, and they do: the callers pass the CST they hold, and
+	 * the wakers wake that same pointer.
+	 */
+	init_waitqueue_head(&c);
+	(void)hammer2_lkc_sleep(&c, &spin->lock, wmesg, timo);
+}
+
 
 static inline void
 hammer2_spin_destroy(hammer2_spin_t *p __always_unused)
