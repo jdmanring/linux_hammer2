@@ -88,6 +88,80 @@ static int hammer2_sync_replace(hammer2_thread_t *thr,
  *			    HAMMER2 SYNC THREADS 			    *
  ****************************************************************************/
 /*
+ * XXX Linux: make a change the sync thread made visible to the flusher.
+ * hammer2_chain_setflush() stops at the first inode chain, because a
+ * frontend change reaches the flusher through its hammer2_inode, whose
+ * flush bridges the inode chain to its parent; see
+ * hammer2_xop_inode_flush().  This thread changes chains directly and
+ * puts no inode on the sync queue, so nothing bridged them: the path from
+ * the slave's PFS root down to its changes was never flagged, and the
+ * final flush of an unmount, FLUSH_ALL included, never reached them and
+ * the unmount scrapped them unwritten.  This flags the whole path to the
+ * volume root, inode boundaries included.  The chain is held exclusively,
+ * so its parent is stable, and the handoff up the path is
+ * hammer2_chain_setflush()'s.
+ *
+ * A mounted PFS's own sync stops at inode boundaries whatever the flags,
+ * so the slave's changes reach media when the PFS is no longer mounted or
+ * its device is torn down.  A crash before then loses only work the next
+ * pass redoes, the slave being compared with its masters by modify_tid.
+ */
+static void
+hammer2_sync_setflush(hammer2_chain_t *chain)
+{
+	hammer2_chain_t *parent;
+
+	hammer2_spin_sh(&chain->core.spin);
+	for (;;) {
+		atomic_set_int(&chain->flags, HAMMER2_CHAIN_ONFLUSH);
+		parent = chain->parent;
+		if (parent == NULL)
+			break;
+		hammer2_spin_sh(&parent->core.spin);
+		hammer2_spin_unsh(&chain->core.spin);
+		chain = parent;
+	}
+	hammer2_spin_unsh(&chain->core.spin);
+}
+
+/*
+ * XXX Linux: write what a pass copied.  A mounted PFS's sync clears
+ * ONFLUSH on its way down and stops at each child inode, leaving that
+ * inode's subtree to the inode's own flush, and the chains this thread
+ * changes have no inode on the sync queue to do it.  So the first sync
+ * after a pass erased the path hammer2_sync_setflush() had flagged and
+ * the copies stayed in memory until an unmount scrapped them.  The thread
+ * flushes its own element instead, from the slave's PFS root down through
+ * every inode, in a flush transaction taken in the order
+ * hammer2_vfs_sync_pmp() takes it, and flags the root's parent so the next
+ * flush of the device writes the volume header.  A root with nothing
+ * flagged returns at once, so an idle pass costs a lock.
+ */
+static void
+hammer2_sync_flush(hammer2_thread_t *thr)
+{
+	hammer2_pfs_t *pmp = thr->pmp;
+	hammer2_chain_t *chain;
+
+	hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
+	hammer2_inode_lock(pmp->iroot, HAMMER2_RESOLVE_SHARED);
+	chain = hammer2_inode_chain(pmp->iroot, thr->clindex,
+	    HAMMER2_RESOLVE_ALWAYS);
+	hammer2_inode_unlock(pmp->iroot);
+	if (chain) {
+		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
+			hammer2_flush(chain, HAMMER2_FLUSH_TOP |
+			    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);
+			if (chain->parent)
+				hammer2_sync_setflush(chain->parent);
+		}
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
+	}
+	hammer2_trans_done(pmp, HAMMER2_TRANS_ISFLUSH);
+}
+
+/*
  * Primary management thread for an element of a node.  A thread will exist
  * for each element requiring management.
  *
@@ -243,6 +317,7 @@ hammer2_primary_sync_thread(void *arg)
 
 		hammer2_inode_drop(pmp->iroot);
 		hammer2_trans_done(pmp, 0);
+		hammer2_sync_flush(thr);	/* XXX Linux */
 
 		if (error && error != HAMMER2_ERROR_EINPROGRESS)
 			kprintf("hammer2_sync_slaves: error %d\n", error);
@@ -796,6 +871,7 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 		error = hammer2_chain_modify(chain, mtid, 0, 0);
 		if (error)
 			goto failed;
+		hammer2_sync_setflush(chain);	/* XXX Linux */
 
 		/*
 		 * Copy focus to new chain
@@ -919,6 +995,7 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 	hammer2_chain_lock(chain, HAMMER2_RESOLVE_NEVER);
 
 	hammer2_chain_delete(*parentp, chain, mtid, HAMMER2_DELETE_PERMANENT);
+	hammer2_sync_setflush(*parentp);	/* XXX Linux */
 	hammer2_chain_unlock(chain);
 	hammer2_chain_drop(chain);
 	chain = NULL;			/* safety */
@@ -975,6 +1052,7 @@ hammer2_sync_replace(hammer2_thread_t *thr,
 		error = hammer2_chain_modify(chain, mtid, 0, 0);
 		if (error)
 			goto failed;
+		hammer2_sync_setflush(chain);	/* XXX Linux */
 		otype = chain->bref.type;
 		data = hammer2_xop_gdata(xop);
 		chain->bref.type = focus->bref.type;

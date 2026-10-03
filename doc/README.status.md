@@ -8,7 +8,10 @@ tagged. What stands between it and 1.0 is the release shape and the
 filings staged under `doc/upstream/`; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
 measured rather than argued, a count of folios changed under the core
-reading 14160919 on a build with its guard removed and 0 with it.
+reading 14160919 on a build with its guard removed and 0 with it. The cluster's synchronization thread is carried and keeps
+a SLAVE on a second local device in step with its MASTER, measured by
+`script/cluster-sync.sh`; members on other hosts need a transport that
+is not ported.
 
 | what | state | read by |
 |---|---|---|
@@ -51,7 +54,7 @@ a defect.
 | `hammer2_chain.c` | 5200 | FreeBSD port, carried byte-for-byte but the `XXX` lines below, the debug build's list of every chain and the print of what is left at the unload, the lockdep class set where a chain lock is initialized, the nesting level handed to the shim where a chain is first placed under its parent or created under one, the level below for the children an indirect block takes over, the new block's own first lock recording no order, the caller's chain left alone when an indirect block cannot be created, the reptrack spin released before the chain is dropped where the port took it and never let it go, the last drop of a chain naming the caller that still holds its lock and, in its spin, a lock stranded by a task that let go, a new chain's data resolved after its insert rather than before so a lost insert race costs no read, and the way out after each of its `hpanic` sites; the recursive lock is NetBSD's non-recursive answer, `pause` and `__diagused` shimmed |
 | `hammer2_flush.c` | 1354 | FreeBSD port, carried; the device flush and the volume header write are the port decision below, marked `XXX` in place, the header write reads the device-in-error bit, and the three `hpanic` sites record their error |
 | `hammer2_cluster.c` | 475 | FreeBSD port, with `hammer2_cluster_check()` restored from DragonFly's: the port carried the first pass and the tail of the third and dropped the quorum between them, and its dropped tail asserted every slot past the first was NULL, which is what made `nchains > 1` impossible. The three passes, the quorum from the PFS's master count and the fourth validation pass are now upstream's, with the error returns in the port's own positive-bit convention. Nothing in it touches the OS |
-| `hammer2_synchro.c` | 1098 | DragonFly, carried, with fourteen `XXX` lines: its two interlocked sleeps on `tsleep_word()`, the deferral allocations on `hmalloc()`, the FreeBSD port's `hammer2_chain_next()` without `key_beg`, four prints whose `%jx` printk does not implement, and the slave-side errors upstream discards rolled up, so a slave that failed to take a chain is not marked synchronized and the next pass retries it |
+| `hammer2_synchro.c` | 1176 | DragonFly, carried, with twenty `XXX` lines: its two interlocked sleeps on `tsleep_word()`, the deferral allocations on `hmalloc()`, the FreeBSD port's `hammer2_chain_next()` without `key_beg`, four prints whose `%jx` printk does not implement, and the slave-side errors upstream discards rolled up, so a slave that failed to take a chain is not marked synchronized and the next pass retries it; and two helpers of this port's that make what the thread copies reach media, since its chain changes have no inode on the sync queue and a mounted PFS's sync stops at inode boundaries: one flags the path to the volume root after each change, the other flushes the thread's own element at the end of each pass |
 | `hammer2_subr.c` | 450 | FreeBSD port, carried; the timestamp, the signal check and the two `timespec64` signatures are marked `XXX` in place, and `hammer2_getnewfsid()` is not carried |
 | `hammer2_inode.c` | 1940 | FreeBSD port; carried, `hammer2_inode_create_normal()` with the owner rule written against the idmap. `hammer2_igetv()` is this port's, written on `iget5_locked()`, and its atime is reported under the `HAMMER2_ATIME` gate the three BSD ports carry, since HAMMER2 does not maintain atime and DragonFly reports the mtime in its place |
 | `hammer2_vfsops.c` | 3505 | FreeBSD port, with DragonFly's sync-thread lines restored in `hammer2_pfsalloc()`, `hammer2_pfsdealloc()`, `hammer2_pfsfree()` and `hammer2_pfsfree_scan()`, the last freezing the threads before its sync rather than after, marked `XXX`, and its `debug` tunable as a module parameter; the PFS half and the recovery carried, the module entry, globals, mount path, mount helper, evict_inode, and sops this port's. A rewrite with a carried body, since Linux redistributes `hammer2_mount()` across four `fs_context` callbacks. `folio_changed` and `iohash_waits` are exported read-only beside `data_rewrites`, the first counting a block that changed between the write XOP's two reads of it and the second counting an acquisition of the device-wide io hash lock that had to wait; `->freeze_fs` and `->unfreeze_fs` are this port's, canceling the syncer a VFS freeze cannot see, and the comment there records the wedge they were wrongly withdrawn for and the probes that cleared them |
@@ -314,7 +317,7 @@ for the device where DragonFly has one per bucket:
 | `hammer2_flush.c` | 19 | 8 | 11 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 0 | 0 | 0 |
-| `hammer2_synchro.c` | 21 | 7 | 14 |
+| `hammer2_synchro.c` | 27 | 7 | 20 |
 | `hammer2_ondisk.c` | 22 | 1 | 21 |
 | `hammer2_inode.c` | 29 | 6 | 23 |
 | `hammer2_vfsops.c` | 53 | 9 | 43 |

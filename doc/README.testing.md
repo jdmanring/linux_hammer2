@@ -46,6 +46,7 @@ rather than a verdict; the readings are in
 | `nix-closure.sh` | copies a real Nix closure in through the port and reads it cold beside squashfs and erofs |
 | `bulkfree.sh` | writes a set, removes it, and runs the bulkfree scan that frees it |
 | `hpanic-contain.sh` | reads what a device in error keeps off the media |
+| `cluster-sync.sh` | runs the cluster's synchronization thread on two volumes: a lone SLAVE's thread passing and stopping on unmount and `pfs-delete`, then a SLAVE created after its MASTER's files and compared with it by `fsck_hammer2` |
 | `analyze.sh` | clang's static analyzer over the port's own seven files with the syntax gate's kernel flag set, a path-sensitive reading no compiler or sparse pass takes; a host instrument, not a gate, since the carried core carries upstream's dead stores and the reading is a candidate list to triage against the origin tree |
 | `dfly-enospc.sh` | fills a volume to capacity on the DragonFly guest under an allocator that refuses on a count, the reproducer behind the staged unmount patch |
 

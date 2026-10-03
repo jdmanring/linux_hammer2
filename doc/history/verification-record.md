@@ -5744,3 +5744,45 @@ is upstream's shape, reachable by root mounting such a volume, and is
 recorded rather than changed. The unbounded thread waits it also named are
 upstream's, and a wedged pass is what the earlier entry's dependency fix
 closed.
+
+**The slave's copies were never written, 2026-10-03.** With the unmount
+wedge fixed, the two-device run unmounted, and the unmount reported
+`250 modified` and scrapped every chain the sync thread had copied:
+directory entries with `MODIFIED|UPDATE`, indirect blocks with `ONFLUSH`
+set and nothing above them flagged. Two causes, one under the other.
+`hammer2_chain_setflush()` stops at the first inode chain, because a
+frontend change reaches the flusher through its `hammer2_inode` on the
+sync queue, whose flush bridges the boundary; the thread changes chains
+directly and queues no inode, so the path from the slave's PFS root down
+to its copies was never flagged. Flagging the whole path was not enough
+either, measured: the mounted PFS's periodic sync clears `ONFLUSH` on its
+way down and stops at every child inode, so the first sync after a pass
+erased the path again and the unmount scrapped the same 250 chains.
+DragonFly does not reach this, its slave being an unmounted PFS whose
+chains are under its own device's flush; on this port the run had the
+slave's device mounted to create it. The thread now flushes its own
+element at the end of each pass, from the slave's PFS root through every
+inode, in a flush transaction, and flags the path above so the next device
+flush writes the volume header.
+
+`script/cluster-sync.sh` carries the run, 17 checks on `h2debug-rc5`: a
+lone SLAVE's thread idle at `I`, three passes in 12 s, its unmount 284 ms
+after a pass, no thread left, restarted by a remount and stopped by
+`pfs-delete`; a MASTER with 55 files and a SLAVE created after them on a
+second volume, 58 inode updates, the cluster unmounting with nothing
+scrapped, `rmmod`, no warning or lockdep report, kmemleak empty, both
+volumes clean by `fsck_hammer2`, and the slave's final count by `fsck`
+equal to the master's, 61 inodes, 120 data blocks, 57 directory entries.
+The indirect-block count is left out of that comparison, a slave building
+its tree in insertion order. The first version of the check compared
+whole volumes and failed by one inode, the lone SLAVE's root, which the
+run had left on the master's volume; the run now removes it with
+`pfs-delete`, which is also the teardown path that stops a thread through
+`hammer2_pfsdealloc()`, so the comparison is the cluster's and the
+failure was the test's.
+
+`hammer2 recover` was tried for reading the slave's files back by path and
+found nothing on either volume, the master's included, so it is not the
+instrument for a volume written this way and the comparison is `fsck`'s
+counts. Not run: the KASAN kernel, two masters, and a master changed while
+the slave stays mounted.

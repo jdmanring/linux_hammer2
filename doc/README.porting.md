@@ -169,6 +169,15 @@ thread's start, is the same routing with one element left out, run in
 the caller as every XOP here is: a pool would let the elements overlap,
 and the port overlaps only strategy XOPs.
 
+The thread writes what it copies itself. A frontend change reaches media
+through its inode on the sync queue, whose flush carries the change across
+the inode boundary where `hammer2_chain_setflush()` stops; the sync thread
+changes chains directly and queues no inode, and a mounted PFS's own sync
+clears the flush flags on its way down and stops at each child inode. So
+at the end of each pass the thread flushes its own element from the
+slave's PFS root down through every inode and flags the path above it.
+DragonFly does not need this, its slave being a PFS no one mounts.
+
 ## The DIO layer
 
 On the BSDs a `hammer2_io` holds a `struct buf *`, and the DIO layer
