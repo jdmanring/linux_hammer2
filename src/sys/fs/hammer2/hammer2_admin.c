@@ -440,14 +440,35 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 	if (xop->ip4 && xop->ip4 != xop->ip2) /* rename */
 		hammer2_xop_testset_ipdep(xop->ip4);
 
-	for (i = 0; i < ip->cluster.nchains; ++i) {
+	/*
+	 * XXX Linux: the elements to run are read from the inode once, into
+	 * chk_mask, before any runs.  A strategy XOP holds no inode lock, so
+	 * the cluster can change while it runs, and the write's completion
+	 * asks whether a later element will run; reading the live cluster
+	 * for that and for this loop separately could leave the folio with
+	 * no element to complete it, or two.  chk_mask is the set retire
+	 * already cleans, so recording it early changes nothing there.
+	 */
+	hammer2_spin_sh(&ip->cluster_spin);
+	for (i = 0; i < ip->cluster.nchains &&
+	    i < xop->cluster.nchains; ++i)	/* FIFOs exist to here */
+		if (ip->cluster.array[i].chain)
+			atomic_set_32(&xop->chk_mask, 1U << i);
+	/*
+	 * An element added since hammer2_xop_alloc() has no FIFO and is not
+	 * run.  Cluster membership is set at mount and only shrinks, so this
+	 * is not expected; it is said rather than assumed.
+	 */
+	WARN_ONCE(ip->cluster.nchains > xop->cluster.nchains,
+	    "hammer2: cluster grew from %d to %d under an XOP\n",
+	    xop->cluster.nchains, ip->cluster.nchains);
+	hammer2_spin_unsh(&ip->cluster_spin);
+
+	for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
 		mask = 1LLU << i;
-		if (ip->cluster.array[i].chain) {
-			atomic_set_32(&xop->run_mask, mask);
-			atomic_set_32(&xop->chk_mask, mask);
-		} else {
+		if ((xop->chk_mask & mask) == 0)
 			continue;
-		}
+		atomic_set_32(&xop->run_mask, mask);
 
 		if (hammer2_xop_active(xop)) {
 			xop_storage_func(xop, ip, xop->scratch, i);

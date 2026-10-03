@@ -5847,3 +5847,24 @@ The single-device paths these changes run through were re-run on the
 debug kernel: `test-fixtures.sh` 0 failures over 11 images, and
 `test-enospc.sh` filled 2G with 0 failures, its seek, dedup, fallocate,
 fiemap and file-handle exercisers all passing.
+
+**A security review of `a2f67df`, 2026-10-03.** An automated review named
+four issues and a second reader reproduced them against the commit. One
+was real and is fixed: the write's completion decided whether its element
+was the last by reading `ip->cluster` again, while `hammer2_xop_start()`
+had chosen the elements by reading it at each iteration, and a strategy
+XOP holds no inode lock, so a repoint between the two could leave the
+folio completed twice, a second `folio_end_writeback()` and a second
+`hammer2_trans_done()`, or never, the folio under writeback for good.
+`hammer2_xop_start()` now records the elements to run in `chk_mask` once,
+under the cluster spin, before any runs, and the write completes at the
+highest recorded bit; an element whose chain left the cluster meanwhile
+replies EIO and still reaches the completion. The FIFO relocation was
+found correct, reproduced in C over windows with a zero, nonzero and
+wrapped read index. The `EINPROGRESS` change was found unable to reach
+userspace: every frontend collect follows a start in which each element
+has fed, so no master is still in progress. A cluster grown after an
+XOP's allocation would have its new element skipped silently; it warns
+now. Readings: `cluster-sync.sh` 22 checks 0 failed on `h2debug-rc5` and
+`h2kasan-rc5`, `test-fixtures.sh` 0 failures, `test-enospc.sh` filled 2G
+with 0 failures.

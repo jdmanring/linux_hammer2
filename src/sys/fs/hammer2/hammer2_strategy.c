@@ -1450,6 +1450,16 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	pblksize = hammer2_calc_physical(ip, lbase);
 	KKASSERT(lblksize <= MAXPHYS);
 	parent = hammer2_inode_chain(ip, clindex, HAMMER2_RESOLVE_ALWAYS);
+	if (parent == NULL) {
+		/*
+		 * Linux: the element left the cluster after
+		 * hammer2_xop_start() chose it.  Its reply is an error, and
+		 * the folio is still completed below by whichever element
+		 * is last.
+		 */
+		hammer2_xop_feed(&xop->head, NULL, clindex, HAMMER2_ERROR_EIO);
+		goto done;
+	}
 	if (folio_size(folio) < (size_t)lblksize) {	/* Linux */
 		pr_debug("hammer2: block %llx assembled around %zu bytes at %llx with %u siblings\n",
 		    (unsigned long long)lbase, folio_size(folio),
@@ -1571,9 +1581,8 @@ done:
 	 * never compares the data.  Holding writeback across all the elements
 	 * keeps the folio stable for each of them.
 	 */
-	for (i = clindex + 1; i < ip->cluster.nchains; i++)
-		if (ip->cluster.array[i].chain != NULL)
-			return;
+	if (xop->head.chk_mask >> (clindex + 1))
+		return;		/* hammer2_xop_start() runs a later element */
 	error = hammer2_xop_collect(&xop->head, HAMMER2_XOP_COLLECT_NOWAIT);
 	/*
 	 * Every element has replied, so a quorum still in progress is one
