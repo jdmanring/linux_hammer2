@@ -5055,11 +5055,20 @@ What follows is the cost the declaration was missing.
 | `hammer2_iocom.c` | 387 |
 | `hammer2_msgops.c` | 87 |
 | `hammer2_ccms.c` | 311 |
-| `lib/libdmsg` (the layer all four call) | 5490 |
+| `lib/libdmsg` | 5490 |
 
 The 1,854 lines of cluster code are the smaller half and are portable:
 read for their kernel dependencies, `hammer2_synchro.c` uses `kprintf`,
 `KKASSERT` and `tsleep`/`wakeup`, all of which the shim already provides.
+
+**Corrected, 2026-10-03.** This table first described `lib/libdmsg` as
+"the layer all four call", and that is wrong: counted later and recorded
+below, `hammer2_synchro.c` and `hammer2_ccms.c` call no `kdmsg` function
+at all, and only `hammer2_iocom.c` with 25 calls and `hammer2_msgops.c`
+with 4 reach it. The paragraph immediately below this table already said
+the right thing about `synchro.c`, so the entry contradicted itself two
+lines apart. The figures are unchanged; the parenthetical is gone, and
+the entry below has the per-file counts.
 The load-bearing dependency is `kdmsg` instead: `hammer2_iocom.c` builds
 on it, the four files reach ten distinct entry points
 (`kdmsg_iocom_init`, `_autoinitiate`, `_reconnect`, `_uninit`,
@@ -5331,6 +5340,16 @@ systemd, socket activation, or any init system: the transport is a file
 descriptor that the operator's daemon owns, and on Linux that is
 `kernel_read()` and `kernel_write()` over the same descriptor. Nothing in
 this needs an init system to pass it, and nothing will use one.
+
+**Refined below, 2026-10-03.** The sentence naming `kernel_read()` and
+`kernel_write()` as the Linux form of that transport is the first answer
+and not the one to implement: read later against the kernel's own
+clustered filesystems and against nbd and nfsd, the descriptor resolves to
+a `struct socket` and the calls are `kernel_recvmsg()` with `MSG_WAITALL`,
+`kernel_sendmsg()` and `kernel_sock_shutdown()`. The reason is recorded
+below and it is three things the file API cannot express, one of them the
+shutdown that `kdmsg_iocom_uninit()` needs to wake a blocked reader. The
+design paragraph above stands; only the mapping is superseded.
 
 **The four protocols, from the DESIGN document.** There are four, and
 only two of them run between master nodes:
