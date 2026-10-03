@@ -5649,3 +5649,81 @@ functions: `hammer2_primary_sync_thread`, `hammer2_sync_destroy`,
 the forge. So the file has no external prerequisite left. What would land
 it is `synchro.c` itself, 1069 lines, and with it the thread API and the
 shim both become load-bearing for the first time.
+
+**synchro.c carried, and the set above was not closed, 2026-10-03.** The
+count above covered `hammer2_*` calls and nothing else. The first compile
+of the file in the module found what it did not count: `tsleep_interlock`,
+`PINTERLOCKED` and `wakeup`, DragonFly's three-argument `kmalloc` and
+two-argument `kfree`, `kprintf`, `hammer2_debug`,
+`HAMMER2_ERROR_EINPROGRESS`, a prototype, and the FreeBSD port's
+six-argument `hammer2_chain_next()` against upstream's seven. The compiler
+was the instrument the count should have been.
+
+Carrying it found four defects in what the previous entries had written
+and type-checked but never run. The shim's `tsleep` ignored its channel, so
+the sync thread's frozen sleep, a timeout of zero, returned at once and
+spun. `hammer2_lkc_sleep_nolock()` waited on a condition of `false`, so a
+wake re-tested, found it false and slept on, and only the timeout or a
+signal ended it. `hammer2_thr_wait_any()` compared the negative errno that
+function returned against a positive one. `lwkt_create()` took the task
+reference that makes `kthread_stop_put()` a join, and nothing called
+`kthread_stop_put()`. All four are gone: `tsleep` and `wakeup` are the
+`wake_up_var()` pool, the interlocked sites are `tsleep_word()`, the
+thread API is upstream's text again with those sites marked, and
+`hammer2_thr_delete()` joins. `README.porting.md` has the reasoning.
+
+`printk` has no `j` length modifier (`lib/vsprintf.c` at v7.3-rc5 knows
+`l L h H z t`), so upstream's four `%016jx` prints would have stopped at
+the first conversion. `gcc -Wformat` said so and they are `%016llx`, the
+FreeBSD port's spelling.
+
+Upstream's `hammer2_sync_slaves()` discards the result of every
+`sync_insert`, `sync_replace` and `sync_destroy` and of its own local scan,
+then sets the slave inode's `modify_tid` to the master's, so a slave that
+failed to take a chain is recorded as synchronized and no later pass
+retries it. Its own comment asks for the rollup. The port keeps the first
+such error and treats it as a failed collect, marked `XXX`.
+
+Readings, `artix-s6-kde` on `h2debug-rc5` (lockdep, kmemleak), module
+loaded with `debug=0x8000`:
+
+| run | reading |
+|---|---|
+| `pfs-create -t SLAVE` before `ioctl.c` took every type | `EOPNOTSUPP`, the BSD ports' refusal, so the thread could not be reached |
+| lone SLAVE `SL`, after | thread `h2nod-SL` in state `I` at creation; passes at 219.80, 224.93, 230.05 and 235.17 s, every 5.12 s, each `sync_slaves error 0` |
+| unmount 0.1 s after a pass | 0.029 s, where a lost wakeup costs the 5 s left in the sleep; no `h2nod` afterwards; `rmmod` 0.19 s; `0 inode, 0 chain, 0 modified, 0 dio`; kmemleak, 0 hammer2 reports; no lockdep report |
+| mounting the lone SLAVE | refused: no master, no quorum. The refusal reached the user as "permission denied", because the root-inode collect's `HAMMER2_ERROR_EIO`, bit 1, left the mount unconverted and read as `EPERM`. Converted; not re-run |
+| MASTER `CL` on `vdb` with 55 files written, then SLAVE `CL` with the same cluster id created on `vdc` | `h2nod-CL` started; six passes and 59 `syncthr: update inode` lines in 30 s, the copy the files can only have had from the thread, since they were written before the slave existed |
+| the unmount of that cluster | wedged. `sysrq-d`: the periodic sync's worker held the `CL` root's inode lock from `hammer2_vfs_sync_pmp()`; the sync thread and `umount` waited for it |
+
+The wedge is `hammer2_xop_start()`, not `synchro.c`. It took the inode
+dependency once per cluster element, as the FreeBSD port does, and the
+retire releases it once; a second element found the first's set and slept
+on it with a timeout of zero. Two MASTERs sharing a cluster id reached it
+before this change. It now takes the dependencies once per XOP, which is
+what the retire pairs with, and the same in `hammer2_xop_start_except()`.
+
+**Not run:** the cluster test again after that fix, the slave's files read
+back off its image by `hammer2 recover` and compared with the 55-entry
+manifest, `fsck_hammer2` on both images, and the KASAN build. The guest
+steps that would have run them were declined by the session's permission
+classifier, and the run waits for one that is not. Replication stays
+`unavailable` in the capability table until they pass.
+
+**An adversarial read of the carry, 2026-10-03.** A second model read the
+diff with the kernel source of record and upstream beside it, edited
+nothing, and attacked the wake path, the join, the lock order and the
+rollup. It refuted a lost wakeup in `tsleep_word()` against
+`kernel/sched/wait_bit.c` and `prepare_to_wait_event()`, a double or early
+`kthread_stop_put()`, and a deadlock between `hammer2_pfsfree_scan()`'s
+freeze and the thread's pass. It found the per-element inode dependency
+independently, in the tree before the fix above had landed in it. Its other
+findings and what became of each:
+
+| finding | disposition |
+|---|---|
+| `hammer2_pfsalloc()` takes the root inode with the acquire that warns if it waits, and an existing PFS's root can be held by its sync thread or a mount | fixed, but not as proposed. The proposal was to start the thread after the unlock, on the premise that `hammer2_mntlk` serializes every `pfsalloc()`; `hammer2_ioctl_pfs_create()` and `_snapshot()` call it without that lock, so the root inode's lock is what keeps two calls from starting two threads, and it stays. The root inode this call created keeps the warning acquire; one that existed takes `hammer2_mtx_ex_unordered()`, the same acquire without it |
+| `pfsfree_scan()` syncs, then freezes, so a pass between them modifies chains the unmount's final sync never saw | fixed: freeze first, marked `XXX`; upstream has the original order |
+| two comments false: "nor a thread that clears its own identity" in the `lwkt_create()` block, and `tsleep()` "at its one caller", where there are three | fixed |
+| a slave that fails every pass logs every 5 s | kept: the cadence of upstream's own collect errors, and a degraded replica worth a line per pass |
+| upstream reads `chain->bref.modify_tid` before testing `chain` for null in `hammer2_sync_slaves()` | recorded for the upstream note; unreachable here, the thread being deleted before its element's chain is cleared |

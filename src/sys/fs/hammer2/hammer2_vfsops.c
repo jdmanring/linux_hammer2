@@ -76,6 +76,7 @@ hammer2_lk_t hammer2_mntlk;
 uma_zone_t hammer2_zone_inode;
 uma_zone_t hammer2_zone_xops;
 
+int hammer2_debug;
 int hammer2_cluster_meta_read = 1;	/* for physical read-ahead */
 int hammer2_cluster_data_read = 4;	/* for physical read-ahead */
 int hammer2_cluster_write;		/* for physical write clustering */
@@ -154,6 +155,7 @@ int malloc_leak_m_temp;
  * every mount on the machine, which is what sysctl gave upstream too, so
  * nothing is lost on the tunables until that day.
  */
+module_param_named(debug, hammer2_debug, int, 0644);
 module_param_named(cluster_meta_read, hammer2_cluster_meta_read, int, 0644);
 module_param_named(cluster_data_read, hammer2_cluster_data_read, int, 0644);
 module_param_named(cluster_write, hammer2_cluster_write, int, 0644);
@@ -286,7 +288,7 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 {
 	hammer2_pfs_t *pmp = NULL;
 	hammer2_inode_t *iroot;
-	int i, j;
+	int i, j, fresh;
 
 	/*
 	 * Locate or create the PFS based on the cluster id.  If ripdata
@@ -342,7 +344,9 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 	}
 
 	/* Create the PFS's root inode. */
+	fresh = 0;	/* Linux */
 	if ((iroot = pmp->iroot) == NULL) {
+		fresh = 1;	/* Linux */
 		iroot = hammer2_inode_get(pmp, NULL, 1, -1);
 		if (ripdata)
 			iroot->meta = ripdata->meta;
@@ -369,13 +373,19 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 	/*
 	 * Linux: the root inode is locked here under its chain, which the
 	 * caller holds, the reverse of the order every path after mount
-	 * uses.  Nothing else can reach this inode yet, hammer2_mntlk being
-	 * held and the PFS not yet mounted, so the acquire is the
-	 * unpublished kind that records no order and warns if it ever has
-	 * to wait.  The level is the chain's, set before the lock is taken.
+	 * uses, so the acquire records no order.  A root inode this call
+	 * created is unreachable and the acquire warns if it ever has to
+	 * wait.  One that already existed is not: the PFS may be mounted, or
+	 * its sync thread may hold it for a pass, so a second element joining
+	 * waits without the warning; hammer2_os.h says why neither can be
+	 * waiting on the joining chain.  The level is the chain's, set before
+	 * the lock is taken.
 	 */
 	hammer2_inode_lockdep_level(&iroot->lock, &chain->lock);
-	hammer2_mtx_ex_fresh(&iroot->lock);
+	if (fresh)
+		hammer2_mtx_ex_fresh(&iroot->lock);
+	else
+		hammer2_mtx_ex_unordered(&iroot->lock);
 	j = iroot->cluster.nchains;
 
 	if (j == HAMMER2_MAXCLUSTER) {
@@ -431,6 +441,46 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 			pmp->pfs_nmasters = count;
 	}
 
+	/*
+	 * Create missing synchronization and support threads.
+	 *
+	 * Single-node masters (including snapshots) have nothing to
+	 * synchronize and do not require this thread.
+	 *
+	 * Multi-node masters or any number of soft masters, slaves, copy,
+	 * or other PFS types need the thread.
+	 *
+	 * Each thread is responsible for its particular cluster index.
+	 * We use independent threads so stalls or mismatches related to
+	 * any given target do not affect other targets.
+	 *
+	 * Upstream also creates the XOP helper threads here, which this port
+	 * replaced with synchronous XOPs; see hammer2_xop_start_except().
+	 */
+	for (i = 0; i < iroot->cluster.nchains; ++i) {
+		/*
+		 * Single-node masters (including snapshots) have nothing
+		 * to synchronize and will make direct xops support calls,
+		 * thus they do not require this thread.
+		 *
+		 * Note that there can be thousands of snapshots.  We do not
+		 * want to create thousands of threads.
+		 */
+		if (pmp->pfs_nmasters <= 1 &&
+		    pmp->pfs_types[i] == HAMMER2_PFSTYPE_MASTER) {
+			continue;
+		}
+
+		/*
+		 * Sync support thread
+		 */
+		if (pmp->sync_thrs[i].td == NULL) {
+			hammer2_thr_create(&pmp->sync_thrs[i], pmp, NULL,
+					   "h2nod", i, -1,
+					   hammer2_primary_sync_thread);
+		}
+	}
+
 	hammer2_assert_cluster(&iroot->cluster);
 
 	hammer2_mtx_unlock(&iroot->lock);
@@ -453,6 +503,14 @@ hammer2_pfsdealloc(hammer2_pfs_t *pmp, int clindex,
 	 */
 	iroot = pmp->iroot;
 	if (iroot) {
+		/*
+		 * Stop synchronizing
+		 *
+		 * XXX flush after acquiring the iroot lock.
+		 * XXX clean out the cluster index from all inode structures.
+		 */
+		hammer2_thr_delete(&pmp->sync_thrs[clindex]);
+
 		/* Remove the cluster index from the group. */
 		hammer2_mtx_ex(&iroot->lock);
 		chain = iroot->cluster.array[clindex].chain;
@@ -527,6 +585,7 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 	iroot = pmp->iroot;
 	if (iroot) {
 		for (i = 0; i < iroot->cluster.nchains; ++i) {
+			hammer2_thr_delete(&pmp->sync_thrs[i]);
 			chain = iroot->cluster.array[i].chain;
 			if (chain && !RB_EMPTY(&chain->core.rbtree))
 				chains_still_present = 1;
@@ -588,6 +647,26 @@ again:
 		hprintf("pfsfree_scan which %d syncing pmp %px\n",
 		    which, pmp);
 #endif
+		/*
+		 * Make sure all synchronization threads are locked
+		 * down.
+		 *
+		 * XXX Linux: before the sync rather than after it, as
+		 * upstream has it.  A pass between the two can modify a
+		 * slave's chains after the last sync of an unmount, and the
+		 * unmount then finds chains the final sync never saw.
+		 */
+		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+			if (pmp->pfs_hmps[i] == NULL)
+				continue;
+			hammer2_thr_freeze_async(&pmp->sync_thrs[i]);
+		}
+		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+			if (pmp->pfs_hmps[i] == NULL)
+				continue;
+			hammer2_thr_freeze(&pmp->sync_thrs[i]);
+		}
+
 		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
 
 		/*
@@ -603,6 +682,7 @@ again:
 		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
 			if (pmp->pfs_hmps[i] != hmp)
 				continue;
+			hammer2_thr_delete(&pmp->sync_thrs[i]);
 			rchain = iroot->cluster.array[i].chain;
 			iroot->cluster.array[i].chain = NULL;
 			pmp->pfs_types[i] = HAMMER2_PFSTYPE_NONE;
@@ -658,6 +738,17 @@ again:
 			/* Free the pmp and restart the loop. */
 			hammer2_pfsfree(pmp);
 			goto again;
+		}
+
+		/*
+		 * If elements still remain we need to set the REMASTER
+		 * flag and unfreeze it.
+		 */
+		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+			if (pmp->pfs_hmps[i] == NULL)
+				continue;
+			hammer2_thr_remaster(&pmp->sync_thrs[i]);
+			hammer2_thr_unfreeze(&pmp->sync_thrs[i]);
 		}
 	}
 }
@@ -1434,7 +1525,13 @@ next_hmp:
 
 		ixop = hammer2_xop_alloc(pmp->iroot, HAMMER2_XOP_MODIFYING);
 		hammer2_xop_start(&ixop->head, &hammer2_ipcluster_desc);
-		error = hammer2_xop_collect(&ixop->head, 0);
+		/*
+		 * Linux: the collect answers in HAMMER2_ERROR_* bits and this
+		 * error leaves the mount as an errno, where EIO's bit, 1,
+		 * would read as EPERM.
+		 */
+		error = hammer2_error_to_errno(hammer2_xop_collect(&ixop->head,
+		    0));
 		if (error == 0) {
 			meta = &hammer2_xop_gdata(&ixop->head)->ipdata.meta;
 			pmp->iroot->meta = *meta;

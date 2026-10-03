@@ -273,8 +273,13 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	if (hammer2_ioctl_pfs_lookup(ip, pfs) == 0)
 		return (EEXIST);
 
-	if (pfs->pfs_type != HAMMER2_PFSTYPE_MASTER)
-		return (EOPNOTSUPP);
+	/*
+	 * XXX Linux: the three BSD ports refuse every type but MASTER here,
+	 * having no synchronization thread for any other type to start.
+	 * This port carries hammer2_synchro.c, so the test is DragonFly's,
+	 * which is none: hammer2_pfsalloc() starts the thread a SLAVE or a
+	 * soft type needs, and a single MASTER still gets none.
+	 */
 
 	hammer2_trans_init(hmp->spmp, HAMMER2_TRANS_ISFLUSH);
 	mtid = hammer2_trans_sub(hmp->spmp);

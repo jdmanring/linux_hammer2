@@ -439,6 +439,8 @@ check "hammer2_ioctl.c: invariants on"  pass src/sys/fs/hammer2/hammer2_ioctl.c 
 check "hammer2_ioctl.c: invariants off" pass src/sys/fs/hammer2/hammer2_ioctl.c $CARRIED
 check "hammer2_export.c: invariants on"  pass src/sys/fs/hammer2/hammer2_export.c -DHAMMER2_INVARIANTS
 check "hammer2_export.c: invariants off" pass src/sys/fs/hammer2/hammer2_export.c
+check "hammer2_synchro.c: invariants on"  pass src/sys/fs/hammer2/hammer2_synchro.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_synchro.c: invariants off" pass src/sys/fs/hammer2/hammer2_synchro.c $CARRIED
 check "hammer2_bulkfree.c: invariants on"  pass src/sys/fs/hammer2/hammer2_bulkfree.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_bulkfree.c: invariants off" pass src/sys/fs/hammer2/hammer2_bulkfree.c $CARRIED
 check "hammer2_chain.c: invariants on"     pass src/sys/fs/hammer2/hammer2_chain.c -DHAMMER2_INVARIANTS $CARRIED
@@ -504,7 +506,8 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_strategy.c \
 		src/sys/fs/hammer2/hammer2_vnops.c \
 		src/sys/fs/hammer2/hammer2_ioctl.c \
-		src/sys/fs/hammer2/hammer2_export.c; do
+		src/sys/fs/hammer2/hammer2_export.c \
+		src/sys/fs/hammer2/hammer2_synchro.c; do
 		ran=$((ran + 1))
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
@@ -577,7 +580,8 @@ if command -v sparse >/dev/null 2>&1; then
 		src/sys/fs/hammer2/hammer2_strategy.c \
 		src/sys/fs/hammer2/hammer2_vnops.c \
 		src/sys/fs/hammer2/hammer2_ioctl.c \
-		src/sys/fs/hammer2/hammer2_export.c; do
+		src/sys/fs/hammer2/hammer2_export.c \
+		src/sys/fs/hammer2/hammer2_synchro.c; do
 		ran=$((ran + 1))
 		out=$(sp "$f" | command grep '^src/' || true)
 		if [ -z "$out" ]; then

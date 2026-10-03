@@ -305,6 +305,7 @@ struct hammer2_chain {
 #define HAMMER2_ERROR_ETIMEDOUT		0x00040000	/* timed out */
 #define HAMMER2_ERROR_ENOTDIR		0x00000200	/* not directory */
 #define HAMMER2_ERROR_EISDIR		0x00000400	/* is directory */
+#define HAMMER2_ERROR_EINPROGRESS	0x00000800	/* already running */
 #define HAMMER2_ERROR_ABORTED		0x00001000	/* aborted operation */
 #define HAMMER2_ERROR_EOF		0x00002000	/* end of scan */
 #define HAMMER2_ERROR_EINVAL		0x00004000	/* catch-all */
@@ -933,6 +934,38 @@ struct hammer2_dev {
  */
 #define HAMMER2_IHASH_SIZE	32
 
+/*
+ * A worker thread.  DragonFly keeps one of these per thread and hangs the
+ * pending XOPs off it, so a remaster or freeze request is a flag on a
+ * structure that already exists rather than a message.  Carried whole
+ * from upstream's hammer2.h, and declared here, before the PFS, for the
+ * reason upstream declares it there: the PFS holds its sync threads by
+ * value.  The flag word is also the wait channel, as it is upstream;
+ * tsleep() and wakeup() in hammer2_os.h make any address one.
+ */
+struct hammer2_thread {
+	struct hammer2_pfs	*pmp;
+	struct hammer2_dev	*hmp;
+	hammer2_xop_list_t	xopq;
+	thread_t		td;
+	uint32_t		flags;
+	int			clindex;	/* cluster element index */
+	int			repidx;
+	char			*scratch;	/* MAXPHYS */
+};
+typedef struct hammer2_thread	hammer2_thread_t;
+
+#define HAMMER2_THREAD_UNMOUNTING	0x0001	/* unmount request */
+#define HAMMER2_THREAD_DEV		0x0002	/* related to dev, not pfs */
+#define HAMMER2_THREAD_WAITING		0x0004	/* thread in idle tsleep */
+#define HAMMER2_THREAD_REMASTER		0x0008	/* remaster request */
+#define HAMMER2_THREAD_STOP		0x0010	/* exit request */
+#define HAMMER2_THREAD_FREEZE		0x0020	/* force idle */
+#define HAMMER2_THREAD_FROZEN		0x0040	/* thread is frozen */
+#define HAMMER2_THREAD_XOPQ		0x0080	/* work pending */
+#define HAMMER2_THREAD_STOPPED		0x0100	/* thread has stopped */
+#define HAMMER2_THREAD_UNFREEZE		0x0200	/* resume */
+
 struct hammer2_pfs {
 	TAILQ_ENTRY(hammer2_pfs) mntentry;	/* hammer2_pfslist */
 	hammer2_ipdep_list_t	*ipdep_lists;	/* inode dependencies for XOP */
@@ -953,6 +986,7 @@ struct hammer2_pfs {
 	char			*pfs_names[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_types[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_nmasters;	/* masters in this cluster */
+	hammer2_thread_t	sync_thrs[HAMMER2_MAXCLUSTER];
 	hammer2_blockset_t	pfs_iroot_blocksets[HAMMER2_MAXCLUSTER];
 	int			flags;		/* for HAMMER2_PMPF_xxx */
 	int			rdonly;		/* read-only mount */
@@ -991,6 +1025,7 @@ extern struct hammer2_pfslist hammer2_pfslist;
 
 extern hammer2_lk_t hammer2_mntlk;
 
+extern int hammer2_debug;
 extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
 extern int hammer2_cluster_data_read;
@@ -1059,47 +1094,6 @@ size_t hammer2_xop_setname_inum(hammer2_xop_head_t *, hammer2_key_t);
 void hammer2_xop_setip2(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_setip3(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_setip4(hammer2_xop_head_t *, hammer2_inode_t *);
-/*
- * A worker thread and the group it belongs to.  DragonFly keeps one of
- * these per thread and hangs the pending XOPs off it, so a collector
- * finds what a thread holds without walking the cluster, and a remaster
- * or freeze request is a flag on a structure that already exists rather
- * than a message.  Carried whole from upstream's hammer2.h because the
- * thread bodies and the sync code both read every field.
- */
-struct hammer2_thread {
-	struct hammer2_pfs	*pmp;
-	struct hammer2_dev	*hmp;
-	hammer2_xop_list_t	xopq;
-	thread_t		td;
-	uint32_t		flags;
-	/*
-	 * Linux: DragonFly's wakeup() hashes a bare address into a global
-	 * table of sleep queues, so `wakeup(&thr->flags)` finds whoever is
-	 * sleeping on that word.  Linux has no such table and a wait queue
-	 * is an object, so the channel is one, kept here where DragonFly
-	 * keeps nothing.  It is initialised by hammer2_thr_create() and
-	 * paired with the flag word it guards; thr_wait takes it and
-	 * thr_signal wakes it.
-	 */
-	hammer2_lkc_t		cv;
-	int			clindex;	/* cluster element index */
-	int			repidx;
-	char			*scratch;	/* MAXPHYS */
-};
-typedef struct hammer2_thread	hammer2_thread_t;
-
-#define HAMMER2_THREAD_UNMOUNTING	0x0001	/* unmount request */
-#define HAMMER2_THREAD_DEV		0x0002	/* related to dev, not pfs */
-#define HAMMER2_THREAD_WAITING		0x0004	/* thread in idle tsleep */
-#define HAMMER2_THREAD_REMASTER		0x0008	/* remaster request */
-#define HAMMER2_THREAD_STOP		0x0010	/* exit request */
-#define HAMMER2_THREAD_FREEZE		0x0020	/* force idle */
-#define HAMMER2_THREAD_FROZEN		0x0040	/* thread is frozen */
-#define HAMMER2_THREAD_XOPQ		0x0080	/* work pending */
-#define HAMMER2_THREAD_STOPPED		0x0100	/* thread has stopped */
-#define HAMMER2_THREAD_UNFREEZE		0x0200	/* resume */
-
 void hammer2_thr_signal(hammer2_thread_t *, uint32_t);
 void hammer2_thr_signal2(hammer2_thread_t *, uint32_t, uint32_t);
 void hammer2_thr_wait(hammer2_thread_t *, uint32_t);
@@ -1314,6 +1308,9 @@ void hammer2_xop_strategy_write(hammer2_xop_t *, void *, int);
 void hammer2_bioq_sync(hammer2_pfs_t *);
 void hammer2_dedup_clear(hammer2_dev_t *);
 
+/* hammer2_synchro.c */
+void hammer2_primary_sync_thread(void *);
+
 /* hammer2_subr.c */
 int hammer2_get_dtype(uint8_t);
 int hammer2_get_vtype(uint8_t);
@@ -1404,6 +1401,10 @@ hammer2_error_to_errno(int error)
 		return (ENOTDIR);
 	else if (error & HAMMER2_ERROR_EISDIR)
 		return (EISDIR);
+	else if (error & HAMMER2_ERROR_EINPROGRESS)
+		return (EINPROGRESS);
+	else if (error & HAMMER2_ERROR_ETIMEDOUT)
+		return (ETIMEDOUT);
 	else if (error & HAMMER2_ERROR_ABORTED)
 		return (EINTR);
 	//else if (error & HAMMER2_ERROR_EOF)
@@ -1442,6 +1443,10 @@ hammer2_errno_to_error(int error)
 		return (HAMMER2_ERROR_ENOTDIR);
 	case EISDIR:
 		return (HAMMER2_ERROR_EISDIR);
+	case EINPROGRESS:
+		return (HAMMER2_ERROR_EINPROGRESS);
+	case ETIMEDOUT:
+		return (HAMMER2_ERROR_ETIMEDOUT);
 	case EINTR:
 		return (HAMMER2_ERROR_ABORTED);
 	//case xxx:

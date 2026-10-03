@@ -21,6 +21,11 @@ inode, as DragonFly's worker groups run them, where the synchronous
 ports gate every XOP on the inode dependency. It is what lets the
 readahead workers verify one file's blocks on every CPU.
 
+The cluster layer is coming back a file at a time, beside the synchronous
+XOPs rather than on the pool. `hammer2_synchro.c` is DragonFly's and is
+carried; its thread runs for a SLAVE or soft PFS, and a single MASTER,
+which is what `newfs_hammer2` makes, starts none.
+
 ## Locks
 
 `hammer2_spin_*` is a `rw_semaphore`, not a `spinlock_t`. FreeBSD maps the
@@ -127,6 +132,42 @@ DragonFly or a BSD port has such inodes whoever mounts it, and the lookup
 reads the flag off the media. NetBSD's `#if 0` around the flag's setter
 in `hammer2_inode_create_normal()` is therefore not needed here and will
 not be carried with that function; the setter is what DragonFly does.
+
+## Sleeping on an address: tsleep, wakeup and the sync thread
+
+DragonFly's `tsleep(ident)` and `wakeup(ident)` make any kernel address a
+wait channel. The port mapped `tsleep` to a plain timed sleep while its
+only caller was bulkfree's throttle, which nothing wakes; the sync thread
+is woken to stop, freeze and resume, and a sleep that ignores its channel
+turned each of those into the full timeout, or into a spin where the
+timeout is zero. Linux's own sleep on an address is the hashed pool
+behind `wake_up_var()`, whose waiters ask to be woken for one address
+only, so `tsleep` and `wakeup` in `hammer2_os.h` are that, and the thread
+keeps no wait queue of its own. `wakeup()` takes the full barrier
+`wake_up_var()` asks of its caller, because DragonFly's asks nothing.
+Without `PCATCH`, which no caller here passes, the sleep is `TASK_IDLE`,
+so a thread frozen for the life of a mount is neither load nor a hung
+task.
+
+`tsleep_interlock()` with `tsleep(PINTERLOCKED)` is not shimmed. It
+queues the thread before the caller's test so a wakeup between test and
+sleep is not lost, and carrying that queue entry from one call to the
+next needs per-thread state a module does not have. Every site has the
+same shape, a cmpset storing a value in the flag word and a sleep while
+the word holds it, and every waker changes the word before it wakes. So
+each site calls `tsleep_word()`, which tests the word after the thread
+is queued, `wait_var_event()`'s order, and is marked `XXX` where it sits.
+
+Two things the synchronous XOPs had never been asked surfaced with the
+second cluster element. `hammer2_xop_start()` took the inode dependency
+inside its loop over the elements, as the FreeBSD port does, and the
+retire releases it once; with two elements the second slept on the
+first's for good, and the periodic sync did so holding the PFS root,
+which wedged the sync thread and the unmount behind it. The dependency
+is now taken once per XOP. `hammer2_xop_start_except()`, the sync
+thread's start, is the same routing with one element left out, run in
+the caller as every XOP here is: a pool would let the elements overlap,
+and the port overlaps only strategy XOPs.
 
 ## The DIO layer
 
@@ -466,7 +507,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:93` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:95` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:148` | `hpanic`, `pr_emerg`, the device-in-error mark and a `WARN_ONCE`, then a return; `hammer2_os.h:142` is the `HAMMER2_INVARIANTS` form, which is `BUG()` after the mark |
+| `hammer2_os.h:149` | `hpanic`, `pr_emerg`, the device-in-error mark and a `WARN_ONCE`, then a return; `hammer2_os.h:143` is the `HAMMER2_INVARIANTS` form, which is `BUG()` after the mark |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.

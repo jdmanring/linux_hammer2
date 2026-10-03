@@ -8,38 +8,40 @@
 # tree's BSD style in a file this port wrote, not a new class of deviation:
 # eleven `return (x);` and four continuation-line indents. Nothing outside the
 # style gate sees them, and the tree converts at submission or not at all.
+# sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
 1 Block comments use * on subsequent lines
-1 Consider removing the code enclosed by this #if 0 and its #endif
+5 Consider removing the code enclosed by this #if 0 and its #endif
 1 LINUX_VERSION_CODE should be avoided, code should be for the version to which it is merged
 2 Macros with complex values should be enclosed in parentheses
 16 Misplaced SPDX-License-Identifier tag - use line 1 instead
 1 Missing a blank line after declarations
-16 Missing or malformed SPDX-License-Identifier tag in line 1
+17 Missing or malformed SPDX-License-Identifier tag in line 1
 1 Possible comma where semicolon could be used
 3 Possible repeated word: 'X'
 1 Prefer 'X' to bare use of 'X'
 1 Statements terminations use 1 semicolon
 2 Using vsprintf specifier 'X' potentially exposes the kernel memory layout, if you don'X'%p'.
-1 braces {} are not necessary for single statement blocks
+6 braces {} are not necessary for single statement blocks
 1 break is not useful after a return
 1 code indent should use tabs where possible
-77 do not add new typedefs
+79 do not add new typedefs
 1 do not initialise statics to 0
-14 do not use assignment in if condition
+17 do not use assignment in if condition
 3 else is not generally useful after a break or return
-444 function definition argument 'X' should also have an identifier name
+445 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
-1 please, no space before tabs
-192 please, no spaces at the start of a line
-41 quoted string split across lines
-258 return is not a function, parentheses are not required
+2 please, no space before tabs
+193 please, no spaces at the start of a line
+42 quoted string split across lines
+259 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 1 return of an errno should typically be negative (ie: return -EBUSY)
 2 return of an errno should typically be negative (ie: return -EDOM)
 2 return of an errno should typically be negative (ie: return -EEXIST)
+1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 1 return of an errno should typically be negative (ie: return -EINTR)
 52 return of an errno should typically be negative (ie: return -EINVAL)
 11 return of an errno should typically be negative (ie: return -EIO)
@@ -49,7 +51,9 @@
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
-6 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+5 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
 9 return of an errno should typically be negative (ie: return -EROFS)
-# sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
+1 return of an errno should typically be negative (ie: return -ETIMEDOUT)
 2 space required after that 'X' (ctx:VxB)
+2 space required before the open parenthesis 'X'
+3 suspect code indent for conditional statements (8, 8)

@@ -11,14 +11,9 @@ void wake_up_all(wait_queue_head_t *wq);
 int waitqueue_active(wait_queue_head_t *wq);
 void might_sleep(void);
 #define wait_event(wq, cond) do { while (!(cond)) ; } while (0)
-/*
- * The timeout form, from include/linux/wait.h at the kernel of record,
- * where it returns 0 on timeout, the remaining jiffies if the condition
- * came true, and -ERESTARTSYS if a signal arrived.  The thread API calls
- * it for a wait with no lock to drop.
- */
-long wait_event_interruptible_timeout(wait_queue_head_t wq, int cond,
-    long timeout);
+/* include/linux/wait.h:1227 at v7.3-rc5; tsleep() queues itself with it. */
+long prepare_to_wait_event(struct wait_queue_head *wq,
+    struct wait_queue_entry *e, int state);
 void prepare_to_wait(wait_queue_head_t *wq, struct wait_queue_entry *e, int state);
 void finish_wait(wait_queue_head_t *wq, struct wait_queue_entry *e);
 #endif

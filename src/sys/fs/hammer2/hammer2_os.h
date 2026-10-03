@@ -48,6 +48,7 @@
 #include <linux/lockdep.h>
 #include <linux/atomic.h>
 #include <linux/wait.h>
+#include <linux/wait_bit.h>	/* Linux: tsleep and wakeup, on the var pool */
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/mm.h>	/* memalloc_nofs_save, for the lock scope */
@@ -288,33 +289,6 @@ hammer2_fp_errno(long n)
 /* Linux */
 typedef struct task_struct *thread_t;
 #define curthread	current
-
-
-
-
-/*
- * The wait with no lock to drop, for a caller that sleeps on a channel
- * whose state it has already tested under its own ordering.  The thread
- * API is the caller: it sets a WAITING bit and sleeps in the same atomic
- * step, so there is nothing to release between the test and the sleep and
- * DragonFly's tsleep_interlock()/tsleep(PINTERLOCKED) pair has no work to
- * do.  This is wait_event_interruptible_timeout(), which is that shape,
- * and it returns the same -EINTR or -ETIMEDOUT the locked form does so a
- * caller can treat both alike.
- */
-/* Linux */
-static inline int
-hammer2_lkc_sleep_nolock(hammer2_lkc_t *c,
-    const char *s __always_unused, int timo)
-{
-	long r;
-
-	r = wait_event_interruptible_timeout(*c, false,
-	    timo ? timo : MAX_SCHEDULE_TIMEOUT);
-	if (r == -ERESTARTSYS)
-		return (-EINTR);
-	return (r < 0 ? (int)r : (r == 0 ? -ETIMEDOUT : 0));
-}
 
 /*
  * hammer2_mtx is DragonFly's mtx (sys/mutex.h, kern_mutex.c), carried as
@@ -702,6 +676,26 @@ hammer2_mtx_ex_fresh(hammer2_mtx_t *p)
 {
 	hammer2_mtx_acquire(p, 0, 1);
 	if (WARN_ON_ONCE(!hammer2_mtx_ex_grab(p)))
+		__hammer2_mtx_ex_wait(p);
+	WRITE_ONCE(p->owner, current);
+	hammer2_nofs_enter();
+}
+
+/*
+ * Linux: the same unordered acquire for a lock that others can reach,
+ * where waiting is expected and so is not warned about.
+ * hammer2_pfsalloc() adds a cluster element to a PFS that already exists,
+ * under the joining element's chain, and the PFS's root inode may be held
+ * by a mount or by the PFS's sync thread.  Neither can be waiting on that
+ * chain while holding the inode: every chain reached through the inode
+ * belongs to an element already in the cluster, and the joining one is
+ * not in it until this lock is held.
+ */
+static inline void
+hammer2_mtx_ex_unordered(hammer2_mtx_t *p)
+{
+	hammer2_mtx_acquire(p, 0, 1);
+	if (!hammer2_mtx_ex_grab(p))
 		__hammer2_mtx_ex_wait(p);
 	WRITE_ONCE(p->owner, current);
 	hammer2_nofs_enter();
@@ -1118,8 +1112,9 @@ hfree(void *addr, void *type, size_t freedsize)
  * one with get_task_struct() and the teardown is kthread_stop_put(), which
  * is the join.  gfs2 does exactly this pair; DragonFly's own
  * kdmsg_iocom_uninit() instead polls a pointer the thread NULLs, which on
- * Linux is a use-after-free.  The port carries neither the poll nor a
- * thread that clears its own identity.
+ * Linux is a use-after-free.  The poll is not carried.  The sync thread
+ * does clear its own identity, as upstream's does, so hammer2_thr_delete()
+ * reads it before asking the thread to stop and joins on what it read.
  *
  * A cpu of -1 is any cpu, which is kthread_create()'s default and right
  * for a sync worker; a specific cpu is kthread_bind() before the wake.  A
@@ -1250,23 +1245,100 @@ hstrfree(char *str)
  * reason it is here; the upgrade is to build the line in a buffer and
  * emit it in one call, which is a core edit and waits for a reason.
  *
- * tsleep's contract is a timed sleep on a wait channel that wakeup()
- * can cut short.  The one call site is a throttle - bulkfree pausing
- * between passes - and nothing wakes that channel, so a plain timed
- * sleep is faithful there and not in general.
- * XXX A tsleep whose sleeper must be woken early needs the wait queue
- * hammer2_lkc_t already provides; this mapping would silently ignore
- * the wakeup.
+ * kprintf is DragonFly's name for the same call, and hammer2_synchro.c,
+ * which no BSD port carries, is the file that spells it that way.
  */
 /* Linux */
 #define printf(X, ...)	pr_cont(X, ## __VA_ARGS__)
+#define kprintf		printf
 
+/*
+ * tsleep() and wakeup() are DragonFly's sleep on an address: any kernel
+ * address is a wait channel and wakeup(ident) ends every tsleep(ident).
+ * Linux's form of that is the hashed wait-queue pool behind wake_up_var(),
+ * whose waiters ask to be woken for one address only, so the mapping is
+ * direct and needs no queue in the object slept on.  tsleep() was a plain
+ * timed sleep until the sync thread arrived, which was faithful at its
+ * three callers, bulkfree's throttle and two short back-offs in the inode
+ * and sync code, none of which anything wakes, and is not for a thread
+ * that is woken to stop.  Those three were interruptible and are now
+ * TASK_IDLE, which for sleeps of two ticks and of under a second changes
+ * nothing a caller reads.
+ *
+ * Without PCATCH a DragonFly sleep is uninterruptible, and no caller here
+ * passes PCATCH, so the sleep is TASK_IDLE: uninterruptible, not counted
+ * as load and not reported by the hung-task check, which a sync thread
+ * frozen for the life of a mount would otherwise trip.  A timeout returns
+ * EWOULDBLOCK, which is DragonFly's value for it, and a flag this mapping
+ * does not implement is reported rather than ignored.
+ *
+ * wake_up_var() tests for a sleeper without taking the queue lock, so it
+ * needs a full barrier between the store that made a waiter's condition
+ * true and the wake.  DragonFly's wakeup() asks nothing of its caller, so
+ * the barrier is taken here for every caller.
+ *
+ * tsleep_interlock() and tsleep(PINTERLOCKED) are DragonFly's atomic
+ * sleep: the interlock queues the thread on the channel before the caller
+ * tests its condition, so a wakeup between the test and the sleep is not
+ * lost.  Carrying the queue entry from one call to the other needs
+ * per-thread state Linux does not give a module, so the pair is not
+ * shimmed, and each site is a marked edit to tsleep_word() instead.  Every
+ * such site has one shape: a cmpset stores val in the word at ident and
+ * the thread sleeps while the word still holds it, and every waker
+ * changes the word before calling wakeup().  So "the word no longer holds
+ * val" is the condition the interlock protects, and testing it after the
+ * thread is queued, which is wait_var_event()'s order, closes the same
+ * window.  A wakeup that leaves the word unchanged does not end the
+ * sleep, and none of the callers sends one.
+ */
+/* Linux */
 static inline int
-tsleep(const void *ident __always_unused, int flags __always_unused,
+hammer2_tsleep_var(const void *ident, const uint32_t *word,
+    uint32_t val, int timo)
+{
+	void *chan = (void *)(uintptr_t)ident;
+	struct wait_queue_head *wq = __var_waitqueue(chan);
+	struct wait_bit_queue_entry wbq;
+	long left = timo ? timo : MAX_SCHEDULE_TIMEOUT;
+
+	init_wait_var_entry(&wbq, chan, 0);
+	for (;;) {
+		prepare_to_wait_event(wq, &wbq.wq_entry, TASK_IDLE);
+		if (word != NULL && READ_ONCE(*word) != val)
+			break;
+		left = schedule_timeout(left);
+		if (word == NULL || left == 0)
+			break;
+	}
+	finish_wait(wq, &wbq.wq_entry);
+	return ((timo && left == 0) ? EWOULDBLOCK : 0);
+}
+
+/* Linux */
+static inline int
+tsleep(const void *ident, int flags,
     const char *wmesg __always_unused, int timo)
 {
-	schedule_timeout_interruptible(timo);
-	return (signal_pending(current) ? EINTR : 0);
+	WARN_ON_ONCE(flags != 0);
+	return (hammer2_tsleep_var(ident, NULL, 0, timo));
+}
+
+/* Linux */
+static inline int
+tsleep_word(const uint32_t *ident, uint32_t val, int flags,
+    const char *wmesg __always_unused, int timo)
+{
+	WARN_ON_ONCE(flags != 0);
+	return (hammer2_tsleep_var(ident, ident, val, timo));
+}
+
+/* Linux */
+static inline void
+wakeup(const void *ident)
+{
+	/* Pairs with the state store in prepare_to_wait_event(). */
+	smp_mb();
+	wake_up_var((void *)(uintptr_t)ident);
 }
 
 /*

@@ -156,10 +156,16 @@ hammer2_syntax_check_all(void)
 	(void)lwkt_create(NULL, NULL, &td, NULL, 0, -1, "h2test");
 	(void)ncpus;
 	/*
-	 * The thread API's wait with no lock to drop, which is what a
-	 * flag-word wait is.
+	 * The sleep on an address and its wake, and the flag-word sleep the
+	 * thread API and the sync thread use where DragonFly interlocks.
 	 */
-	(void)hammer2_lkc_sleep_nolock(&lkc, "h2thr", 1);
+	{
+		uint32_t word = 0;
+
+		(void)tsleep_word(&word, 0, 0, "h2thr", 1);
+		(void)hammer2_tsleep_var(&word, NULL, 0, 1);
+		wakeup(&word);
+	}
 	(void)hammer2_vfs_errno(EDOM);
 	hammer2_mapping_set_block_folios(NULL, 16);
 	{
@@ -169,6 +175,8 @@ hammer2_syntax_check_all(void)
 		__hammer2_mtx_init_recurse(&mtx, "x", &k);
 	}
 	hammer2_mtx_ex_fresh(&mtx);
+	hammer2_mtx_unlock(&mtx);
+	hammer2_mtx_ex_unordered(&mtx);
 	hammer2_mtx_unlock(&mtx);
 	hammer2_mtx_sh(&mtx);
 	hammer2_mtx_sh_again(&mtx);

@@ -451,6 +451,25 @@ which asked whether the mount's own file was opened for writing, and
 refuses with `EROFS`, which asks whether the device is write-protected.
 That row is the recorded errno convention, not a finding.
 
+`hammer2_synchro.c` moved the total from 1,212 to 1,238, measured with the
+checker whose sha256 the baseline records. Twenty of the 26 are that file
+alone, DragonFly's text in a file no BSD port carries and none restyled:
+four `#if 0` blocks, three assignments in a condition, three
+single-statement braces, the three conditional indents of upstream's
+unindented `if` bodies, two typedefs, two missing spaces before a
+parenthesis, a split string, a space before a tab and the one missing SPDX
+line every carried file brings. The other six are the change around it:
+two more braces in the DragonFly lines restored in `hammer2_vfsops.c` and
+`hammer2_admin.c`, the new prototype's unnamed argument, one continuation
+indent and one `return (x);`, and the errno rows, all in the recorded
+convention: `EINPROGRESS` and `ETIMEDOUT` gained the mappings upstream
+has, and `pfs-create` lost one `EOPNOTSUPP` with the MASTER-only refusal,
+a net of one. Two
+rows the first count showed were the shim's own and were fixed rather
+than recorded: the channel parameters were `const volatile`, DragonFly's
+spelling, where `READ_ONCE` already makes the one read that needs it, and
+`wakeup()`'s barrier now says what it pairs with.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

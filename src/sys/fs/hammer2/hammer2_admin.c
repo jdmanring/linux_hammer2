@@ -355,6 +355,10 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 	hammer2_assert_cluster(&ip1->cluster);
 	xop->desc = desc;
 
+	/* Once per XOP, as hammer2_xop_start() does and for its reason. */
+	if (!(xop->flags & HAMMER2_XOP_STRATEGY))
+		hammer2_xop_testset_ipdep(ip1);
+
 	nchains = ip1->cluster.nchains;
 	for (i = 0; i < nchains; ++i) {
 		uint32_t mask = 1LLU << i;
@@ -365,8 +369,6 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 			break;
 		atomic_set_32(&xop->run_mask, mask);
 		atomic_set_32(&xop->chk_mask, mask);
-		if (!(xop->flags & HAMMER2_XOP_STRATEGY))
-			hammer2_xop_testset_ipdep(ip1);
 		xop_storage_func(xop, ip1, xop->scratch, i);
 		hammer2_xop_retire(xop, mask);
 	}
@@ -392,6 +394,32 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 	 */
 	xop->scratch = NULL;
 
+	/*
+	 * XXX Linux: DragonFly serializes only non-strategy XOPs on an inode
+	 * and spreads strategy XOPs across its worker groups by block; the
+	 * synchronous ports gate every XOP, which serialized the reads of
+	 * one file across every CPU and left the readahead workers spinning
+	 * for the dependency lock.  The strategy XOP holds the inode shared
+	 * and its chains shared, and those are the guards it runs under.
+	 *
+	 * XXX Linux: the dependencies are taken once per XOP, here, because
+	 * hammer2_xop_retire() releases them once, at the last retire.  The
+	 * FreeBSD port takes them inside the loop, once per cluster element,
+	 * which is the same thing while a cluster has one element; with two,
+	 * the second element found the first's dependency set and slept on
+	 * it for good, holding whatever the caller held.  The periodic sync
+	 * did so holding the PFS root exclusively, which wedged the sync
+	 * thread and the unmount behind it.
+	 */
+	if (!(xop->flags & HAMMER2_XOP_STRATEGY))
+		hammer2_xop_testset_ipdep(ip);
+	if (xop->ip2)
+		hammer2_xop_testset_ipdep(xop->ip2);
+	if (xop->ip3 && xop->ip3 != xop->ip1) /* rename */
+		hammer2_xop_testset_ipdep(xop->ip3);
+	if (xop->ip4 && xop->ip4 != xop->ip2) /* rename */
+		hammer2_xop_testset_ipdep(xop->ip4);
+
 	for (i = 0; i < ip->cluster.nchains; ++i) {
 		mask = 1LLU << i;
 		if (ip->cluster.array[i].chain) {
@@ -402,24 +430,6 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 		}
 
 		if (hammer2_xop_active(xop)) {
-			/*
-			 * XXX Linux: DragonFly serializes only non-strategy
-			 * XOPs on an inode and spreads strategy XOPs across
-			 * its worker groups by block; the synchronous ports
-			 * gate every XOP, which serialized the reads of one
-			 * file across every CPU and left the readahead
-			 * workers spinning for the dependency lock.  The
-			 * strategy XOP holds the inode shared and its chains
-			 * shared, and those are the guards it runs under.
-			 */
-			if (!(xop->flags & HAMMER2_XOP_STRATEGY))
-				hammer2_xop_testset_ipdep(ip);
-			if (xop->ip2)
-				hammer2_xop_testset_ipdep(xop->ip2);
-			if (xop->ip3 && xop->ip3 != xop->ip1) /* rename */
-				hammer2_xop_testset_ipdep(xop->ip3);
-			if (xop->ip4 && xop->ip4 != xop->ip2) /* rename */
-				hammer2_xop_testset_ipdep(xop->ip4);
 			xop_storage_func(xop, ip, xop->scratch, i);
 			hammer2_xop_retire(xop, mask);
 		} else {
@@ -721,23 +731,18 @@ hammer2_xop_collect(hammer2_xop_head_t *xop, int flags)
  *
  * These are flags-and-wakeup, not messages: a request is a bit set on the
  * thread's own flag word and a wakeup on that address, and the thread
- * decides what to do when it next looks.  Every function here says so in
- * upstream's own warning, that the thread can disappear the instant a
- * cmpset succeeds, which is why each takes the flags it needs before it
- * touches the thread again.
- *
- * tsleep_interlock() and tsleep() with PINTERLOCKED are DragonFly's
- * atomic sleep: the interlock is taken before the cmpset so a wakeup that
- * lands between the test and the sleep is not lost, and tsleep releases
- * it.  The shim's tsleep() is a plain timed sleep and does not implement
- * that pair, which is recorded where it is defined; the wait functions
- * below therefore re-test in a loop and a wakeup only makes them go
- * round, which is correct and costs one extra pass.  That is a deviation
- * and it is this comment's to name rather than the shim's to hide.
+ * decides what to do when it next looks.  The flag word is the wait
+ * channel, as upstream has it.  Each tsleep_interlock()/tsleep(PINTERLOCKED)
+ * pair is a marked edit to tsleep_word(), whose comment in hammer2_os.h
+ * says why the pair cannot be shimmed and why the word's own value is the
+ * condition that closes the same window.
  */
 
 /*
  * Set flags and wakeup any waiters.
+ *
+ * WARNING! During teardown (thr) can disappear the instant our cmpset
+ *	    succeeds.
  */
 void
 hammer2_thr_signal(hammer2_thread_t *thr, uint32_t flags)
@@ -752,7 +757,7 @@ hammer2_thr_signal(hammer2_thread_t *thr, uint32_t flags)
 
 		if (oflags & HAMMER2_THREAD_WAITING) {
 			if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
-				hammer2_lkc_wakeup(&thr->cv);
+				wakeup(&thr->flags);
 				break;
 			}
 		} else {
@@ -764,6 +769,9 @@ hammer2_thr_signal(hammer2_thread_t *thr, uint32_t flags)
 
 /*
  * Set and clear flags and wakeup any waiters.
+ *
+ * WARNING! During teardown (thr) can disappear the instant our cmpset
+ *	    succeeds.
  */
 void
 hammer2_thr_signal2(hammer2_thread_t *thr, uint32_t posflags,
@@ -779,7 +787,7 @@ hammer2_thr_signal2(hammer2_thread_t *thr, uint32_t posflags,
 			 ~(negflags | HAMMER2_THREAD_WAITING);
 		if (oflags & HAMMER2_THREAD_WAITING) {
 			if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
-				hammer2_lkc_wakeup(&thr->cv);
+				wakeup(&thr->flags);
 				break;
 			}
 		} else {
@@ -791,6 +799,9 @@ hammer2_thr_signal2(hammer2_thread_t *thr, uint32_t posflags,
 
 /*
  * Wait until all the bits in flags are set.
+ *
+ * WARNING! During teardown (thr) can disappear the instant our cmpset
+ *	    succeeds.
  */
 void
 hammer2_thr_wait(hammer2_thread_t *thr, uint32_t flags)
@@ -804,14 +815,24 @@ hammer2_thr_wait(hammer2_thread_t *thr, uint32_t flags)
 		if ((oflags & flags) == flags)
 			break;
 		nflags = oflags | HAMMER2_THREAD_WAITING;
-		if (atomic_cmpset_int(&thr->flags, oflags, nflags))
-			(void)hammer2_lkc_sleep_nolock(&thr->cv, "h2twait",
-			    hz * 60);
+		/* XXX Linux: tsleep_interlock() and PINTERLOCKED, see os.h */
+		if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
+			tsleep_word(&thr->flags, nflags, 0, "h2twait", hz*60);
+		}
 	}
 }
 
 /*
  * Wait until any of the bits in flags are set, with timeout.
+ *
+ * WARNING! During teardown (thr) can disappear the instant our cmpset
+ *	    succeeds.
+ *
+ * Upstream's test is for ETIMEDOUT, and DragonFly's tsleep() reports a
+ * timeout as EWOULDBLOCK, so as written the timeout never ends the wait.
+ * Both of upstream's callers, the XOP helper and bulkfree threads, are
+ * absent here, so nothing in this port waits on it; the text is upstream's
+ * and the defect is upstream's to settle.
  */
 int
 hammer2_thr_wait_any(hammer2_thread_t *thr, uint32_t flags, int timo)
@@ -827,8 +848,11 @@ hammer2_thr_wait_any(hammer2_thread_t *thr, uint32_t flags, int timo)
 		if (oflags & flags)
 			break;
 		nflags = oflags | HAMMER2_THREAD_WAITING;
-		if (atomic_cmpset_int(&thr->flags, oflags, nflags))
-			error = hammer2_lkc_sleep_nolock(&thr->cv, "h2twait", timo);
+		/* XXX Linux: tsleep_interlock() and PINTERLOCKED, see os.h */
+		if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
+			error = tsleep_word(&thr->flags, nflags, 0,
+				       "h2twait", timo);
+		}
 		if (error == ETIMEDOUT) {
 			error = HAMMER2_ERROR_ETIMEDOUT;
 			break;
@@ -839,6 +863,9 @@ hammer2_thr_wait_any(hammer2_thread_t *thr, uint32_t flags, int timo)
 
 /*
  * Wait until the bits in flags are clear.
+ *
+ * WARNING! During teardown (thr) can disappear the instant our cmpset
+ *	    succeeds.
  */
 void
 hammer2_thr_wait_neg(hammer2_thread_t *thr, uint32_t flags)
@@ -852,9 +879,10 @@ hammer2_thr_wait_neg(hammer2_thread_t *thr, uint32_t flags)
 		if ((oflags & flags) == 0)
 			break;
 		nflags = oflags | HAMMER2_THREAD_WAITING;
-		if (atomic_cmpset_int(&thr->flags, oflags, nflags))
-			(void)hammer2_lkc_sleep_nolock(&thr->cv, "h2twait",
-			    hz * 60);
+		/* XXX Linux: tsleep_interlock() and PINTERLOCKED, see os.h */
+		if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
+			tsleep_word(&thr->flags, nflags, 0, "h2twait", hz*60);
+		}
 	}
 }
 
@@ -869,12 +897,13 @@ hammer2_thr_create(hammer2_thread_t *thr, hammer2_pfs_t *pmp,
     hammer2_dev_t *hmp, const char *id, int clindex, int repidx,
     void (*func)(void *))
 {
+	int error;
+
 	thr->pmp = pmp;		/* xop helpers */
 	thr->hmp = hmp;		/* bulkfree */
 	thr->clindex = clindex;
 	thr->repidx = repidx;
 	TAILQ_INIT(&thr->xopq);
-	hammer2_lkc_init(&thr->cv, "h2thr");
 	atomic_clear_int(&thr->flags, HAMMER2_THREAD_STOP |
 				      HAMMER2_THREAD_STOPPED |
 				      HAMMER2_THREAD_FREEZE |
@@ -882,27 +911,54 @@ hammer2_thr_create(hammer2_thread_t *thr, hammer2_pfs_t *pmp,
 	if (thr->scratch == NULL)
 		thr->scratch = hmalloc(MAXPHYS, M_HAMMER2, M_WAITOK | M_ZERO);
 	if (repidx >= 0) {
-		lwkt_create(func, thr, &thr->td, NULL, 0, repidx % ncpus,
-		    "%s-%s.%02d", id, pmp->pfs_names[clindex], repidx);
+		error = lwkt_create(func, thr, &thr->td, NULL, 0,
+		    repidx % ncpus, "%s-%s.%02d", id,
+		    pmp->pfs_names[clindex], repidx);
 	} else if (pmp) {
-		lwkt_create(func, thr, &thr->td, NULL, 0, -1,
+		error = lwkt_create(func, thr, &thr->td, NULL, 0, -1,
 		    "%s-%s", id, pmp->pfs_names[clindex]);
 	} else {
-		lwkt_create(func, thr, &thr->td, NULL, 0, -1, "%s", id);
+		error = lwkt_create(func, thr, &thr->td, NULL, 0, -1, "%s", id);
+	}
+	/*
+	 * XXX Linux: DragonFly's lwkt_create() cannot fail.  kthread_create()
+	 * can, on memory or a fatal signal to the mounting task, and leaves
+	 * thr->td NULL, which every other function here takes to mean the
+	 * thread was never started.  The scratch buffer is released with it
+	 * so a thread that does not exist holds nothing.
+	 */
+	if (error) {
+		hprintf("cannot start thread %s: error %d\n", id, error);
+		hfree(thr->scratch, M_HAMMER2, MAXPHYS);
+		thr->scratch = NULL;
 	}
 }
 
 /*
  * Terminate a thread.  Returns silently if the thread was never
  * initialized or has already been deleted.
+ *
+ * This is safe whether or not the thread is running, as it will either
+ * stop or not stop depending on the flags.
  */
 void
 hammer2_thr_delete(hammer2_thread_t *thr)
 {
-	if (thr->td == NULL)
+	thread_t td = READ_ONCE(thr->td);	/* Linux: the thread clears it */
+
+	if (td == NULL)
 		return;
 	hammer2_thr_signal(thr, HAMMER2_THREAD_STOP);
 	hammer2_thr_wait(thr, HAMMER2_THREAD_STOPPED);
+	/*
+	 * XXX Linux: STOPPED is signalled from inside the thread body, which
+	 * still has to return through the trampoline in this module's text,
+	 * and the body clears thr->td itself, which is why it is read above.
+	 * kthread_stop_put() waits for the task to exit and drops the
+	 * reference lwkt_create() took, so a module unloaded after an unmount
+	 * is not freeing code a thread is still running.
+	 */
+	kthread_stop_put(td);
 	thr->td = NULL;
 	thr->pmp = NULL;
 	if (thr->scratch) {
