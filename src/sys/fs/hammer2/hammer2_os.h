@@ -1159,72 +1159,113 @@ hammer2_dev_cache_flush(struct file *bdev_file)
 }
 
 /*
- * DragonFly's fp_read() and fp_write(): a read or write on a struct file
- * the caller holds, at the file's own position, from kernel space.
+ * DragonFly's fp_read() and fp_write(), from sys/kern/kern_fp.c: a read
+ * or write on a struct file the caller holds, at the file's own position,
+ * from kernel space.
  *
  * They exist here for the cluster transport.  DragonFly's kdmsg does its
  * message I/O with exactly these, on a descriptor its userland service
  * daemon opened and passed in through the mount path, so the kernel never
- * opens a socket of its own.  Linux's kernel_read() and kernel_write()
- * are the same operation with the argument list spelled out, and both are
- * EXPORT_SYMBOL, so the mapping is direct.
+ * opens a socket of its own.
  *
- * The uio argument DragonFly passes is always UIO_SYSSPACE with a NULL
- * iovec and a count, and the offset is always NULL so the file's own
- * position advances, which is what a message stream wants.  Both of those
- * are asserted rather than assumed: a caller that asked for UIO_USERSPACE
- * or a fixed offset would get a different operation than the name
- * promises, and this port has no caller for either.
+ * THE ALL ARGUMENT IS NOT DECORATION.  kdmsg calls fp_read() with all=1,
+ * which means read the WHOLE request before returning, and upstream
+ * implements it as a loop that re-issues until the residual is zero, then
+ * ESPIPE if the request still is not satisfied.  A descriptor carrying a
+ * message stream returns partial reads as a matter of course, so a single
+ * read here would hand the caller a half-filled header and it would fail
+ * its magic check or misparse.  fp_read() below loops for that reason and
+ * is not a thin wrapper over kernel_read().
  *
- * The res argument is the byte count, returned by value as DragonFly's
- * fp_read() does, and both return a positive errno by the core's
- * convention.
+ * The res argument is a SIGNED count, set to 0 before any work, as
+ * upstream sets it; a caller that reads a negative as a large size_t is
+ * the same defect as not checking at all.
+ *
+ * Both follow upstream's error policy: an error after some bytes moved is
+ * forgotten for the cases it names, and the count is what actually moved.
+ * fp_write() issues once, as upstream does, and a partial write is
+ * reported through res rather than looped, which is upstream's behaviour
+ * and the caller's to handle.
+ *
+ * Only UIO_SYSSPACE is reachable: the transport moves kernel buffers, so
+ * the selector is asserted rather than accepted.
  */
 /* Linux */
 static inline int
-fp_read(struct file *fp, void *buf, size_t nbytes, size_t *res,
-    int flags, int space)
+fp_read(struct file *fp, void *buf, size_t nbytes, long *res, int all,
+    int space)
 {
-	/*
-	 * long rather than ssize_t: the kernel's own return is ssize_t, and
-	 * this is the same width on every target the module builds for,
-	 * while the shim's standalone compile against test/stub has no
-	 * ssize_t and the gate compiles this header there.
-	 */
+	size_t done = 0;
 	long n;
+	int error = 0;
 
 	KKASSERT(space == UIO_SYSSPACE);
-	KKASSERT(flags == 0 || flags == 1);
-	/*
-	 * The descriptor outlives every call: it is the one the mount holds
-	 * for the cluster link's life, so a NULL here is a defect in the
-	 * caller rather than a condition to report.  Asserted rather than
-	 * answered with an errno the caller would have to interpret.
-	 */
 	KKASSERT(fp != NULL);
-	n = kernel_read(fp, buf, nbytes, NULL);
-	if (n < 0)
-		return ((int)-n);	/* the core's errnos are positive */
 	if (res)
-		*res = (size_t)n;
-	return (0);
+		*res = 0;
+	if (nbytes > (size_t)LONG_MAX)
+		return (EINVAL);
+
+	/*
+	 * One read when all is false.  When it is true, re-issue until the
+	 * request is satisfied or something other than progress stops it.
+	 */
+	for (;;) {
+		n = kernel_read(fp, (char *)buf + done, nbytes - done, NULL);
+		if (n < 0) {
+			error = (int)-n;	/* the core's errnos are positive */
+			break;
+		}
+		if (n == 0)
+			break;			/* end of stream */
+		done += (size_t)n;
+		if (!all || done >= nbytes)
+			break;
+	}
+
+	/*
+	 * An error after some bytes moved is forgotten, as upstream does;
+	 * an error with nothing moved is reported.
+	 */
+	if (error && done != 0)
+		error = 0;
+	/*
+	 * all was asked for and the request is short: upstream's ESPIPE.
+	 * auio_resid nonzero is the same test as done < nbytes, and there
+	 * is no "some bytes moved" condition on it, because a stream that
+	 * ended before the request started is the case a caller most needs
+	 * told about.
+	 */
+	if (all && error == 0 && done < nbytes)
+		error = ESPIPE;
+	if (res)
+		*res = (long)done;
+	return (error);
 }
 
 /* Linux */
 static inline int
-fp_write(struct file *fp, const void *buf, size_t nbytes, size_t *res,
+fp_write(struct file *fp, const void *buf, size_t nbytes, long *res,
     int space)
 {
-	long n;		/* see fp_read() */
+	long n;
+	int error = 0;
 
 	KKASSERT(space == UIO_SYSSPACE);
-	KKASSERT(fp != NULL);		/* see fp_read() */
-	n = kernel_write(fp, buf, nbytes, NULL);
-	if (n < 0)
-		return ((int)-n);	/* the core's errnos are positive */
+	KKASSERT(fp != NULL);
 	if (res)
-		*res = (size_t)n;
-	return (0);
+		*res = 0;
+	if (nbytes > (size_t)LONG_MAX)
+		return (EINVAL);
+
+	n = kernel_write(fp, buf, nbytes, NULL);
+	if (n < 0) {
+		error = (int)-n;	/* the core's errnos are positive */
+		n = 0;
+	}
+	if (res)
+		*res = n;
+	return (error);
 }
 
 /*

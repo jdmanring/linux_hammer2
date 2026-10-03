@@ -41,7 +41,7 @@
 2 return of an errno should typically be negative (ie: return -EDOM)
 2 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINTR)
-50 return of an errno should typically be negative (ie: return -EINVAL)
+52 return of an errno should typically be negative (ie: return -EINVAL)
 11 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 2 return of an errno should typically be negative (ie: return -ENOENT)
