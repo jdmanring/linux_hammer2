@@ -1115,6 +1115,7 @@ void hammer2_thr_unfreeze(hammer2_thread_t *);
 int hammer2_thr_break(hammer2_thread_t *);
 
 void hammer2_xop_start(hammer2_xop_head_t *, hammer2_xop_desc_t *);
+void hammer2_xop_start_except(hammer2_xop_head_t *, hammer2_xop_desc_t *, int);
 void hammer2_xop_retire(hammer2_xop_head_t *, uint32_t);
 int hammer2_xop_feed(hammer2_xop_head_t *, hammer2_chain_t *, int, int);
 int hammer2_xop_collect(hammer2_xop_head_t *, int);

@@ -5621,3 +5621,31 @@ start with a targeted form. The reading that decides it is whether
 `synchro.c`'s three callers need a thread per element or only the routing,
 and that is answered by attempting the second and measuring, which has not
 been done.
+
+**The decision taken, and synchro.c's prerequisite set closed,
+2026-10-03.** The entry above ends by naming the decision and not taking
+it. It is taken here: the port carries the routing and not the pool.
+
+`hammer2_xop_start_except()` is now the synchronous start with an excepted
+index. Upstream needs that index because a worker thread drawn from a pool
+must not be asked to fetch the cluster element it is itself standing on;
+this port runs the storage function in the caller, so the index selects
+which elements to run and nothing else. The three callers in `synchro.c`
+start an `ipcluster` or `scanall` XOP for the elements other than their
+own, which is how a master reads what a slave holds, and each of those now
+runs here in turn.
+
+What the pool would have bought is overlap, and the port does not overlap
+XOPs except strategy ones. That is the same order recorded in
+`README.porting.md` when the pool was replaced, and this is the second
+place the choice pays: the first was the read path, where a pool would
+have serialized a file's reads across the CPUs.
+
+**The set is closed.** Recounted after this, `synchro.c`'s 35 distinct
+`hammer2_*` calls leave six unresolved and all six are the file's own
+functions: `hammer2_primary_sync_thread`, `hammer2_sync_destroy`,
+`hammer2_sync_insert`, `hammer2_sync_replace`, `hammer2_sync_slaves` and
+`hammer2_update_pfs_status`, each verified to be defined in `synchro.c` at
+the forge. So the file has no external prerequisite left. What would land
+it is `synchro.c` itself, 1069 lines, and with it the thread API and the
+shim both become load-bearing for the first time.

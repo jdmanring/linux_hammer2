@@ -323,6 +323,55 @@ xop_storage_func(hammer2_xop_head_t *xop, hammer2_inode_t *ip, void *scratch,
  * Start a XOP request, queueing it to all nodes in the cluster to
  * execute the cluster op.
  */
+/*
+ * Start a XOP on every cluster element except one.
+ *
+ * This is upstream's hammer2_xop_start_except() reduced to what the port
+ * can honour.  Upstream assigns the work to a worker thread drawn from a
+ * pool partitioned by inode and cluster element, and the except index
+ * exists because a thread must not be asked to fetch the element it is
+ * itself standing on.  This port runs XOPs synchronously, which
+ * README.porting.md records as the FreeBSD port's choice and this one's,
+ * so there is no pool to partition and no thread to exclude: the storage
+ * function runs in the caller for each element but the excepted one, and
+ * the routing is the whole of what the three callers in synchro.c need.
+ *
+ * What is NOT carried is the worker pool, and nothing here pretends
+ * otherwise.  The three callers start an ipcluster or scanall XOP for the
+ * elements other than their own, which is how a master reads what a slave
+ * holds; the synchronous port answers that by running each of them here.
+ * A pool would let them overlap, and the port does not overlap XOPs
+ * except strategy ones, which is the choice already recorded.
+ */
+void
+hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
+    int notidx)
+{
+	hammer2_inode_t *ip1 = xop->ip1;
+	int i;
+	int nchains;
+
+	KKASSERT(ip1);
+	hammer2_assert_cluster(&ip1->cluster);
+	xop->desc = desc;
+
+	nchains = ip1->cluster.nchains;
+	for (i = 0; i < nchains; ++i) {
+		uint32_t mask = 1LLU << i;
+
+		if (i == notidx || ip1->cluster.array[i].chain == NULL)
+			continue;
+		if (!hammer2_xop_active(xop))
+			break;
+		atomic_set_32(&xop->run_mask, mask);
+		atomic_set_32(&xop->chk_mask, mask);
+		if (!(xop->flags & HAMMER2_XOP_STRATEGY))
+			hammer2_xop_testset_ipdep(ip1);
+		xop_storage_func(xop, ip1, xop->scratch, i);
+		hammer2_xop_retire(xop, mask);
+	}
+}
+
 void
 hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 {
