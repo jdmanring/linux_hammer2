@@ -191,7 +191,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 0.9.53
+unload, and passed Linux and DragonFly checks. The driver is at 0.9.54
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
@@ -734,7 +734,22 @@ here with its provenance note and the refusal recorded beside it.
 H7 is advanced storage: multi-device, replication, remote checkpoints,
 clustering. Every port dropped the cluster layer (`hammer2_ccms.c`,
 `hammer2_iocom.c`, `hammer2_msgops.c`, `hammer2_synchro.c`) and so does this
-one. Investigate after qualification.
+one.
+
+Investigated 2026-10-03, and the answer is that this must
+not wait on upstream. The forge says the four cluster files have had no
+functional commit since 2018 and nothing but whitespace and unused-include
+cleanup since; the one cluster commit in 2026 makes an ioctl stop failing on
+local mounts. The DESIGN document's own status list says why: the network
+message core and network block device are operational while error handling,
+the Quorum Protocol and Synchronization are under development, so the
+transport exists and the agreement on top of it does not. What a port needs
+is `kdmsg`, and read from the forge rather than from this workspace's
+depth-1 clone, `sys/kern/kern_dmsg.c` is 2202 lines whose kernel
+dependencies are a thread create and exit, a wakeup and an allocator, and
+whose transport is a read and a write on a file descriptor passed in by the
+caller. The media is untouched by it, so a port does not diverge: the format
+already defines a cluster as PFS roots sharing a `pfs_clid`.
 
 Mainline submission is an asset to spend once. The BSD license permits it,
 which OpenZFS's CDDL does not, but a mainline submission of an immature
