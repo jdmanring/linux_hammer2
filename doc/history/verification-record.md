@@ -6014,3 +6014,76 @@ decides rather than agrees, and the question to settle before asserting
 anything about it is what upstream does when a master leaves, since the
 expectation has to come from the original rather than from what this port
 happens to do.
+
+**The quorum's read-back compared nothing, 2026-10-04.** An adversarial
+audit of the documents describing 0.9.66 found that `cluster-quorum.sh`'s
+"every file reads back through the quorum" counted the lines `md5sum`
+printed and never compared them with anything: the sums were copied to
+the host and not read, and the read ran in the same mount straight after
+the write, so the page cache answered it rather than a lookup through the
+cluster's chains. Any file that opened passed. The 0.9.66 readings above
+that say 24 of 24 files read back by checksum are therefore 24 of 24
+files that opened, which is weaker than they read.
+
+The set is now made off the volume and summed before it is written,
+copied in through the cluster's mount, read back after an unmount and
+`drop_caches` with the PFS mounted again, and compared sum for sum on the
+host, with both files required to hold 24 lines so two missing copies
+cannot compare equal. `H2_QUORUM_CONTROL=1` appends a byte to one file
+after its sum is taken, so what is written differs from what was summed.
+
+Readings: `h2debug-rc5` 22 checks 0 failed, 0 of 24 sums differing from
+the source's; the control on the same kernel 22 checks 1 failed, exactly
+that check, 1 of 24 sums differing, exit 1; `h2kasan-rc5` 22 checks 0
+failed, the module carrying 18 `__asan` and 3 `__ubsan` imports and no
+report. The two masters agreed in every run, so this reads agreement
+reached and not a disagreement decided.
+
+What the cache drop establishes is narrower than "read from the media".
+Unmounting the cluster's PFS frees its superblock, so its file pages and
+inodes go and each lookup after the remount is a new XOP across both
+chains. Both volumes' ROOT stay mounted throughout, so both devices and
+the PFS itself live across the remount, and nothing here reads an I/O
+count showing the blocks came off the device rather than from what the
+devices still held. A second audit also found the guest never removed an
+earlier run's sum files, so a run stopping before it wrote its own would
+have compared the earlier pair; the run fails on its other checks then,
+but this one check read ok. The guest script now removes both first. A
+third audit found the cluster-PFS mounts before the write and before the
+read-back carried no failure guard, so a failed mount left the set on the
+guest's root filesystem, where the write and the read-back both read ok:
+both now exit on a non-zero mount status. A fourth audit then
+found the kmemleak check could report nothing on a real leak. A guest
+whose kmemleak was switched off by an earlier control run answers every
+`echo scan > /sys/kernel/debug/kmemleak` with `EPERM` until a reboot, and
+nothing here read the scan's exit status; the `grep -c hammer2` then
+printed 0 and the check read ok. In `cluster-sync.sh` `rmmod` ran
+before the scan, so the report's `%pS` resolved the module's symbols to
+`0x...` addresses and matched only allocations by a process named
+`hammer2`, which the utility also is. Both scripts now scan once after a
+6 s wait for the scanner's own 5 s age rule (kmemleak.c MSECS_MIN_AGE),
+before rmmod, read the scan's exit status, and fail on a refusal. The
+unmounts that end `cluster-quorum.sh`'s guest run now fail it on a
+non-zero status, as `cluster-sync.sh`'s chained ones already did. Each
+mount has its own superblock (`sget_fc()` with no test function, in
+`hammer2_vfsops.c`), so a write mount that failed to unmount does not
+serve the reread through a shared superblock; what it would share is the
+PFS's chains in memory, which a cache drop leaves alone. That case is
+caught by the thread count and the unload after it rather than by this
+guard, which tops the stack and sees only the reread mount.
+
+Readings, both on `h2debug-rc5` and `h2kasan-rc5`: `cluster-quorum.sh`
+22 checks 0 failed, kmemleak 0 and usable; `cluster-sync.sh` 23 checks 0
+failed, kmemleak 0 and usable. A KASAN control run with `echo off >
+/sys/kernel/debug/kmemleak` first: 22 checks 1 failed, exactly the
+kmemleak-unusable check, exit 1. A reboot restored kmemleak, so a fresh
+kernel enlarges this check and the next run's passes.
+
+Getting the run started found a second defect, in both cluster scripts.
+A stopped guest is attached with `--config`, and both scripts detached
+only with `--live`, which does nothing to a stopped domain, so a
+persistent attachment left by an earlier run made the next attach fail
+with "target vdb already exists", reported as COULD-NOT-RUN with virsh's
+message sent to /dev/null. Both now detach both halves and print virsh's
+error when an attach fails. `cluster-sync.sh` after that change: 23
+checks 0 failed on `h2debug-rc5` and on `h2kasan-rc5`.

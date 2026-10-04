@@ -78,16 +78,22 @@ have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
 # The volumes are detached before they are recreated: a running guest's
 # qemu holds an image open, and a file replaced under it is a file it no
 # longer reads.
-for d in vdb vdc; do $VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1; done
+# Both halves: a stopped guest is attached with --config, which --live
+# does not remove, and a persistent attachment left behind by an earlier
+# run makes the next attach fail with the target already taken.
+for d in vdb vdc; do
+	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+done
 rm -f "$MASTER" "$SLAVE"
 for img in "$MASTER" "$SLAVE"; do
 	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
 		echo "cluster: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
 if [ "$state" = running ]; then how=--live; else how=--config; fi
-$VIRSH attach-disk "$GUEST" "$MASTER" vdb --targetbus virtio $how >/dev/null 2>&1 &&
-$VIRSH attach-disk "$GUEST" "$SLAVE" vdc --targetbus virtio $how >/dev/null 2>&1 || {
-	echo "cluster: COULD-NOT-RUN: could not attach the volumes" >&2; exit 2; }
+err=$($VIRSH attach-disk "$GUEST" "$MASTER" vdb --targetbus virtio $how 2>&1) &&
+err=$($VIRSH attach-disk "$GUEST" "$SLAVE" vdc --targetbus virtio $how 2>&1) || {
+	echo "cluster: COULD-NOT-RUN: could not attach the volumes: $err" >&2; exit 2; }
 if [ "$state" != running ]; then
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "cluster: COULD-NOT-RUN: $GUEST did not start" >&2; exit 2; }
 fi
@@ -155,13 +161,19 @@ echo "change-files $(find /mnt/h2c/set -type f | wc -l)"
 echo "pass-errors $(dmesg | grep -c 'hammer2_sync_slaves: error')"
 umount /mnt/h2c && umount /mnt/h2s && umount /mnt/h2m && echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
-rmmod hammer2 && echo "rmmod ok"
 echo "scrapped $(dmesg | grep -c unmount_scrap)"
 echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive')"
-if [ -w /sys/kernel/debug/kmemleak ]; then
-	echo scan > /sys/kernel/debug/kmemleak; sleep 6; echo scan > /sys/kernel/debug/kmemleak
+# Before rmmod, so the report's %pS resolves the module's own symbols. The
+# scan used to follow rmmod, where those symbols print as addresses and only
+# a process named hammer2 could match, and to run without the wait the
+# scanner's age rule needs (kmemleak.c MSECS_MIN_AGE, 5000 ms).
+sleep 6
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
+else
+	echo "kmemleak unusable"
 fi
+rmmod hammer2 && echo "rmmod ok"
 sync
 GUEST
 
@@ -169,7 +181,10 @@ scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN:
 $RUN "$GUEST_SSH" 'mv /tmp/guest.sh /tmp/h2cluster.sh; sh /tmp/h2cluster.sh' > "$W/out" 2>&1
 rc=$?
 [ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
-for d in vdb vdc; do $VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1; done
+for d in vdb vdc; do
+	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+done
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 fail=0; checks=0
@@ -201,7 +216,19 @@ else
 	check "the module carries no instrumentation, its kernel tree configuring none" $? "${have_asan:-0} __asan import(s); the KASAN and UBSAN patterns below cannot report on this kernel, and say nothing here"
 fi
 k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${k:-none}"
-l=$(val kmemleak); [ -z "$l" ] || { [ "$l" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l"; }
+# A scan that refused is not an empty report. An earlier control run can
+# switch kmemleak off, after which it reports nothing and stays off until a
+# reboot, so a refusal fails here rather than reading as a clean scan. A
+# kernel built without kmemleak has no file to write and fails the same
+# way, which is right for the two kernels this runs on, both built with
+# it. No value at all means the guest stopped before this point.
+l=$(val kmemleak)
+case "$l" in
+0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
+"") ;;
+*) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
+esac
 
 for img in "$MASTER" "$SLAVE"; do
 	# The status is captured before anything else runs. Written as

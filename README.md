@@ -48,9 +48,12 @@ At a glance, on a kernel of 7.3 or newer:
   and the device side a buffer of its own when the page cache cannot
   give a 64 KiB folio; `doc/IO_MODEL.md` has both and the run
 + new and narrow: a SLAVE PFS on a second device of the same host is kept
-  in step with its MASTER by DragonFly's synchronization thread, measured
-  on one cluster of two devices on the debug kernel; no member on another
-  host, since the cluster transport is not ported
+  in step with its MASTER by DragonFly's synchronization thread, and a
+  cluster of two MASTERs on two devices is written and read through the
+  quorum that requires both to agree, every file reading back what was
+  written; both on the debug and the sanitizer kernel. No member on
+  another host, since the cluster transport is not ported, and no run yet
+  of a quorum that cannot be met
 + not yet: a package, a tag, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image

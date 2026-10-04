@@ -77,16 +77,22 @@ have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
 # The volumes are detached before they are recreated: a running guest's
 # qemu holds an image open, and a file replaced under it is a file it no
 # longer reads.
-for d in vdb vdc; do $VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1; done
+# Both halves: a stopped guest is attached with --config, which --live
+# does not remove, and a persistent attachment left behind by an earlier
+# run makes the next attach fail with the target already taken.
+for d in vdb vdc; do
+	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+done
 rm -f "$QA" "$QB"
 for img in "$QA" "$QB"; do
 	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
 		echo "quorum: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
 if [ "$state" = running ]; then how=--live; else how=--config; fi
-$VIRSH attach-disk "$GUEST" "$QA" vdb --targetbus virtio $how >/dev/null 2>&1 &&
-$VIRSH attach-disk "$GUEST" "$QB" vdc --targetbus virtio $how >/dev/null 2>&1 || {
-	echo "quorum: COULD-NOT-RUN: could not attach the volumes" >&2; exit 2; }
+err=$($VIRSH attach-disk "$GUEST" "$QA" vdb --targetbus virtio $how 2>&1) &&
+err=$($VIRSH attach-disk "$GUEST" "$QB" vdc --targetbus virtio $how 2>&1) || {
+	echo "quorum: COULD-NOT-RUN: could not attach the volumes: $err" >&2; exit 2; }
 if [ "$state" != running ]; then
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "quorum: COULD-NOT-RUN: $GUEST did not start" >&2; exit 2; }
 fi
@@ -98,6 +104,9 @@ done
 
 cat > "$W/guest.sh" <<'GUEST'
 set -u
+# An earlier run's sums would be copied back if this one stopped before
+# writing its own, so a comparison could pass on files it never made.
+rm -f /tmp/q.want /tmp/q.sums
 rmmod hammer2 2>/dev/null; dmesg -C
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2a /mnt/h2b /mnt/h2q
@@ -122,26 +131,48 @@ echo "quorum-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 
 # The cluster's own mount. Every lookup through it is answered by the
 # quorum rather than by a single chain.
-mount -t hammer2 /dev/vdb@CL /mnt/h2q
-echo "cluster-mount-rc $?"
-mkdir -p /mnt/h2q/set
-i=0; while [ $i -lt 24 ]; do head -c $(( (i * 6151) % 200000 + 1 )) /dev/urandom > /mnt/h2q/set/q$i; i=$((i + 1)); done
+mount -t hammer2 /dev/vdb@CL /mnt/h2q; rc=$?
+echo "cluster-mount-rc $rc"
+# A failed mount leaves /mnt/h2q on the guest's root filesystem, where
+# the set would be written and read back and compare equal to itself.
+[ "$rc" = 0 ] || exit 1
+# The set is made off the volume and summed before anything touches it, so
+# the sums read back are compared against what was written rather than
+# merely counted. CONTROL=1 changes one file after its sum is taken, which
+# the comparison on the host must report.
+rm -rf /tmp/qsrc; mkdir -p /tmp/qsrc /mnt/h2q/set
+i=0; while [ $i -lt 24 ]; do head -c $(( (i * 6151) % 200000 + 1 )) /dev/urandom > /tmp/qsrc/q$i; i=$((i + 1)); done
+( cd /tmp/qsrc && md5sum q* | LC_ALL=C sort ) > /tmp/q.want
+[ "${CONTROL:-0}" = 1 ] && printf x >> /tmp/qsrc/q0
+cp /tmp/qsrc/q* /mnt/h2q/set/
 sync
 echo "write-files $(find /mnt/h2q/set -type f | wc -l)"
 
-# Read every file back through the quorum and checksum it, so a lookup the
-# quorum answered wrongly is a changed sum rather than a silent success.
+# Read every file back after an unmount and a cache drop, so each lookup
+# and each block is answered through the cluster's chains rather than
+# from the page cache the write left behind.
+umount /mnt/h2q
+echo 3 > /proc/sys/vm/drop_caches
+mount -t hammer2 /dev/vdb@CL /mnt/h2q; rc=$?
+echo "reread-mount-rc $rc"
+[ "$rc" = 0 ] || exit 1
 ( cd /mnt/h2q/set && md5sum q* 2>/dev/null | LC_ALL=C sort ) > /tmp/q.sums
 echo "read-sums $(grep -c . /tmp/q.sums)"
 sync
-umount /mnt/h2q && echo "cluster-umount ok"
-umount /mnt/h2b; umount /mnt/h2a
+umount /mnt/h2q && echo "cluster-umount ok" || exit 1
+umount /mnt/h2b && umount /mnt/h2a || exit 1
 echo "threads-after $(ps -eo comm | grep -c '^h2nod')"
 echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive')"
-if [ -r /sys/kernel/debug/kmemleak ]; then
-	echo scan > /sys/kernel/debug/kmemleak 2>/dev/null
-	sleep 2
-	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak 2>/dev/null || true)"
+# Before rmmod, so the report's %pS resolves the module's own symbols, and
+# after a wait past the scanner's own age rule (kmemleak.c MSECS_MIN_AGE,
+# 5000 ms), so what the teardown just freed is old enough to be reported.
+# A scan that refuses is what an earlier control run's `echo off` leaves
+# behind until a reboot; a refusal is not an empty report.
+sleep 6
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
+else
+	echo "kmemleak unusable"
 fi
 rmmod hammer2 && echo "rmmod ok"
 echo "scrapped $(dmesg | grep -c unmount_scrap)"
@@ -149,11 +180,15 @@ dmesg | tail -40 > /tmp/q.log
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" 'mv /tmp/guest.sh /tmp/h2quorum.sh; sh /tmp/h2quorum.sh' > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
 [ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
 scp -q "$GUEST_SSH:/tmp/q.sums" "$W/sums" >/dev/null 2>&1
-for d in vdb vdc; do $VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1; done
+scp -q "$GUEST_SSH:/tmp/q.want" "$W/want" >/dev/null 2>&1
+for d in vdb vdc; do
+	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+done
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 fail=0; checks=0
@@ -169,7 +204,13 @@ a=$(val type-b); [ "${a:-none}" = MASTER ]; check "the second volume records its
 a=$(val quorum-threads); [ "${a:-0}" = 2 ]; check "both MASTER elements have a support thread, so pfs_nmasters is 2" $? "${a:-0} thread(s); one would mean a lone master and no quorum"
 a=$(val cluster-mount-rc); [ "${a:-1}" = 0 ]; check "the cluster's PFS mounts" $? "exit ${a:-none}"
 a=$(val write-files); [ "${a:-0}" = 24 ]; check "a set written through the quorum lands" $? "${a:-0} of 24 file(s)"
+a=$(val reread-mount-rc); [ "${a:-1}" = 0 ]; check "the cluster's PFS mounts again with the caches dropped" $? "exit ${a:-none}"
 a=$(val read-sums); [ "${a:-0}" = 24 ]; check "every file reads back through the quorum" $? "${a:-0} of 24 checksum(s)"
+# A count of sums says each file opened; only this says what it held. Both
+# files must hold 24 lines, so two missing or empty copies cannot compare equal.
+w=$(grep -c . "$W/want" 2>/dev/null); s=$(grep -c . "$W/sums" 2>/dev/null)
+[ "${w:-0}" = 24 ] && [ "${s:-0}" = 24 ] && cmp -s "$W/want" "$W/sums"
+check "every file read back holds what was written" $? "$(diff "$W/want" "$W/sums" 2>/dev/null | grep -c '^>') of ${w:-0} sum(s) differ from the source's"
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 a=$(val threads-after); [ "${a:-1}" = 0 ]; check "no thread is left" $? "${a:-none}"
 a=$(val scrapped); [ "${a:-1}" = 0 ]; check "nothing is scrapped unwritten" $? "${a:-none} chain(s) scrapped"
@@ -182,7 +223,19 @@ else
 	check "the module carries no instrumentation, its kernel tree configuring none" $? "${have_asan:-0} __asan import(s); the KASAN and UBSAN patterns below cannot report on this kernel, and say nothing here"
 fi
 a=$(val kernel-warnings); [ "${a:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${a:-none}"
-l=$(val kmemleak); [ -z "$l" ] || { [ "$l" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l"; }
+# A scan that refused is not an empty report. An earlier control run can
+# switch kmemleak off, after which it reports nothing and stays off until a
+# reboot, so a refusal fails here rather than reading as a clean scan. A
+# kernel built without kmemleak has no file to write and fails the same
+# way, which is right for the two kernels this runs on, both built with
+# it. No value at all means the guest stopped before this point.
+l=$(val kmemleak)
+case "$l" in
+0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
+"") ;;
+*) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
+esac
 
 for img in "$QA" "$QB"; do
 	# The status is captured before anything else runs, since a command
