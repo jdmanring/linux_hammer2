@@ -4761,6 +4761,19 @@ happens in the layer below. The parameter's disposition belongs with the
 port's author: removing it changes the module's parameter list, and wiring it
 would ask for a merge Linux already performs.
 
+**Taken 2026-10-04: removed.** The reading above was made on 2026-10-02 and
+left the call open; the call is removal, and `hammer2_cluster_write` is gone
+from all three sites that carried it, the definition and the registration in
+`hammer2_vfsops.c` and the declaration in `hammer2.h`. The module is one
+parameter shorter. What the parameter named, physical write clustering, is
+still not a facility this port lacks: the block layer merges the adjacent
+dirty folios before the device sees them, at the 171 KiB average request the
+measurement above records, so there is no work for a knob to do and none was
+lost with it. A tree that lists its parameters is what reads this next, and
+the parameter list is now sixteen, counted from the source's own
+`module_param_named` lines; `modinfo` reports thirteen of them, the other
+three sitting behind `#ifdef`.
+
 **What DragonFly has that this port does not, taken as a set, 2026-10-02.**
 The question behind three readings of one file is whether the port is a
 thinner design than DragonFly's rather than a translated one. Compared by
@@ -5109,7 +5122,6 @@ the file that declares it.
 | `limit_scan_depth`, `limit_saved_chains` | chain and inode | the scan bounds |
 | `always_compress`, `alloc_data_bytes`, `alloc_meta_bytes`, `data_rewrites` | several | compression and the allocation counters |
 | `folio_changed`, `debug_hpanic`, `fail_alloc_after` | several | the counters and the fault injections |
-| `cluster_write` | nowhere | **inert** |
 
 `hammer2_cluster_write` is declared at `hammer2_vfsops.c:81`, exported at
 `hammer2.h:959`, and registered at `hammer2_vfsops.c:159` with mode 0644,
@@ -5128,6 +5140,12 @@ removed rather than wired, and until it is, it is a defect of the class
 the tree names: a setting a user can set with nothing to observe. That is
 the maintainer's to take, since removing it changes the module's
 parameter list.
+
+Taken 2026-10-04: removed rather than wired, the maintainer having ruled on
+the 2026-10-02 reading. The parameter is absent from the source and from the
+built module: the list stands at sixteen where this section's sweep found
+seventeen, and all sixteen are read, so the defect this paragraph names is
+the one the removal closes.
 
 **The capability surface re-audited for what could be developed further,
 2026-10-02.** The question is whether something beyond the current state

@@ -79,7 +79,6 @@ uma_zone_t hammer2_zone_xops;
 int hammer2_debug;
 int hammer2_cluster_meta_read = 1;	/* for physical read-ahead */
 int hammer2_cluster_data_read = 4;	/* for physical read-ahead */
-int hammer2_cluster_write;		/* for physical write clustering */
 int hammer2_dedup_enable = 1;
 int hammer2_count_inode_allocated;
 int hammer2_count_chain_allocated;
@@ -158,7 +157,6 @@ int malloc_leak_m_temp;
 module_param_named(debug, hammer2_debug, int, 0644);
 module_param_named(cluster_meta_read, hammer2_cluster_meta_read, int, 0644);
 module_param_named(cluster_data_read, hammer2_cluster_data_read, int, 0644);
-module_param_named(cluster_write, hammer2_cluster_write, int, 0644);
 module_param_named(dedup_enable, hammer2_dedup_enable, int, 0644);
 module_param_named(dio_limit, hammer2_dio_limit, int, 0644);
 module_param_named(bulkfree_tps, hammer2_bulkfree_tps, int, 0644);

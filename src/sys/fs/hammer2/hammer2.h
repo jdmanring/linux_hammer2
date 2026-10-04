@@ -1029,7 +1029,6 @@ extern int hammer2_debug;
 extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
 extern int hammer2_cluster_data_read;
-extern int hammer2_cluster_write;
 extern int hammer2_dedup_enable;
 extern int hammer2_count_inode_allocated;
 extern int hammer2_count_chain_allocated;
