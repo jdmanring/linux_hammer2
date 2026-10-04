@@ -76,15 +76,18 @@ a defect.
 
 ### Upstream heads, as last read
 
-Read from the forge on 2026-09-29, the check `doc/README.maintenance.md`
-names: the FreeBSD, NetBSD and OpenBSD ports are all at v1.2.13, tag and
-branch head alike, which is what the snapshots beside this repository hold
-(`3df307f`, `64095c3`, `a3747df`), so nothing there has moved since the
-carry. `kusumi/hammer2-utils` is at v0.5.0, also tag and head alike.
+Read from the forge on 2026-10-04, the check `doc/README.maintenance.md`
+names and the one made before a tagged release: the FreeBSD, NetBSD and
+OpenBSD ports are all at v1.2.13, tag and branch head alike, which is what
+the snapshots beside this repository hold (`3df307f`, `64095c3`,
+`a3747df`), so nothing there has moved since the carry.
+`kusumi/hammer2-utils` is at v0.5.0, also tag and head alike.
 DragonFly's newest commit under `sys/vfs/hammer2` is `40e5c5625` of
 2026-09-02, which puts the unmount chain dump under `#if 0` in
 `hammer2_vfsops.c`, and the one before it, `30436b52c` of 2026-09-01,
-touches `hammer2_vnops.c` and `hammer2.h`.
+touches `hammer2_vnops.c` and `hammer2.h`. Nothing had moved since the
+reading of 2026-09-29 below; the four figures are the same and the date is
+the only change.
 
 The earlier reading of this section said those commits touch nothing in the
 carried set, and that is wrong: `hammer2.h` is carried from DragonFly at

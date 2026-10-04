@@ -740,7 +740,11 @@ host default and not the tarball's shape, so a consumer names `KDIR`.
 The prose gate, which had failed in the earlier read because its
 population was the tracked set, reads the tree where there is no
 repository since. The earlier read was taken 2026-09-07 against
-`b06fe74`, which is hundreds of commits behind. Reproducibility read on 2026-09-20 from `a4ae61a`: the module
+`b06fe74`, which is hundreds of commits behind. Re-read from a `git archive`
+of `5d55c26` on 2026-10-04: thirteen gates invoked, ten ran and passed, and
+the same three reported could-not-run for the same three reasons, so the
+release shape holds against the tree as it stands rather than against one
+hundreds of commits back. Reproducibility read on 2026-09-20 from `a4ae61a`: the module
 built twice from `make clean` against the kernel of record's tree
 (7.3.0-rc1, an unpacked tarball at `~/kernels/linux-7.3-rc1`, which has
 no commit hash of its own) compares byte for byte, the same sha256 both
