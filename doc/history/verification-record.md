@@ -5387,7 +5387,7 @@ by an adversarial audit that read the kernel of record and the two
 clustered filesystems already in it, and both are corrections to work
 recorded above.
 
-**The false claim.** Commit `9444b9a`'s message says the four cluster
+**The false claim.** Commit `9237966`'s message says the four cluster
 files call `fp_read()` and `fp_write()` and that nothing links until they
 exist. They do not. Read at the forge, `hammer2_iocom.c` contains no
 `fp_read`, `fp_write` or `fp_shutdown` at all; it calls eight `kdmsg_*`
@@ -5728,7 +5728,7 @@ findings and what became of each:
 | a slave that fails every pass logs every 5 s | kept: the cadence of upstream's own collect errors, and a degraded replica worth a line per pass |
 | upstream reads `chain->bref.modify_tid` before testing `chain` for null in `hammer2_sync_slaves()` | recorded for the upstream note; unreachable here, the thread being deleted before its element's chain is cleared |
 
-**A security review of `826d07e`, 2026-10-03.** An automated review named
+**A security review of `ec92e6b`, 2026-10-03.** An automated review named
 four issues; a second reader reproduced each against the commit. The
 `pfs-create` type check had been removed with nothing in its place, so
 root could store NONE, which the cluster code reads as an empty slot,
@@ -5848,7 +5848,7 @@ debug kernel: `test-fixtures.sh` 0 failures over 11 images, and
 `test-enospc.sh` filled 2G with 0 failures, its seek, dedup, fallocate,
 fiemap and file-handle exercisers all passing.
 
-**A security review of `a2f67df`, 2026-10-03.** An automated review named
+**A security review of `0fc0942`, 2026-10-03.** An automated review named
 four issues and a second reader reproduced them against the commit. One
 was real and is fixed: the write's completion decided whether its element
 was the last by reading `ip->cluster` again, while `hammer2_xop_start()`
@@ -5869,7 +5869,7 @@ now. Readings: `cluster-sync.sh` 22 checks 0 failed on `h2debug-rc5` and
 `h2kasan-rc5`, `test-fixtures.sh` 0 failures, `test-enospc.sh` filled 2G
 with 0 failures.
 
-**The sibling sweep after 0.9.64, 2026-10-03.** The fix in `73e2ecc`
+**The sibling sweep after 0.9.64, 2026-10-03.** The fix in `baaa941`
 closed one unsynchronized read of an inode's cluster, so the rest were
 looked for: 73 reads of `nchains` across eight files, each one read. Two
 sit outside the cluster spin where the inode lock is not certainly held.
@@ -5888,7 +5888,7 @@ the same array under `pmp->xop_spin` and marks in place that it is not
 stable without one; this port replaced the worker queue that spin also
 covered and dropped the spin with it. Of the three implementations of
 this selection, upstream's locked, the `hammer2_xop_start()` fixed in
-`73e2ecc` locked, and this one did not.
+`baaa941` locked, and this one did not.
 
 Upstream's `hammer2_xop_start()` is `hammer2_xop_start_except()` at a
 notidx of -1. This port's is now the same, so the selection, the inode
