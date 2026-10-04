@@ -10,8 +10,11 @@ and the write path's one invariant that no check code can see is now
 measured rather than argued, a count of folios changed under the core
 reading 14160919 on a build with its guard removed and 0 with it. The cluster's synchronization thread is carried and keeps
 a SLAVE on a second local device in step with its MASTER, measured by
-`script/cluster-sync.sh`; members on other hosts need a transport that
-is not ported.
+`script/cluster-sync.sh`, and the quorum a two-MASTER cluster is decided
+by is reached and read by `script/cluster-quorum.sh`, which builds the
+`pfs_nmasters` of 2 that makes the quorum bind; members on other hosts
+need a transport that is not ported, and a quorum that cannot be met is
+unrun.
 
 | what | state | read by |
 |---|---|---|

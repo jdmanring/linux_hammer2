@@ -12,7 +12,31 @@ decisions and their reasoning are `README.porting.md`, `ARCHITECTURE.md` and
 
 ## Where we are
 
-0.5 to 0.9 are met. 0.9.52 and 0.9.53 open a capability the port had
+0.5 to 0.9 are met. `doc/README.status.md` is the authority on what the
+tree is at; this section is the milestone history behind it and is swept
+when a milestone moves.
+
+0.9.61 to 0.9.66 carried `hammer2_synchro.c`, one of the two cluster
+files that need no transport (`hammer2_ccms.c`, the other, is not
+carried), and they retire a claim this section used to make, that a
+two-chain state "cannot be reached without the cluster subsystem". What
+makes it reachable is not that file: neither `HAMMER2IOC_REMOTE_ADD` nor
+`HAMMER2IOC_RECLUSTER` is involved, and a cluster is formed here by creating a second PFS with the
+first's cluster id, `hammer2 -t SLAVE -u "$clid" pfs-create` for a slave
+and `-t MASTER` for a second master, and mounting both volumes' ROOT,
+since the super-root scan calls `hammer2_pfsalloc()` once per PFS root
+chain and the second call appends at nchains. `script/cluster-sync.sh`
+keeps a SLAVE on a second local device in step with its MASTER through
+removes, rewrites, additions and a rename, and `script/cluster-quorum.sh`
+builds the two-MASTER cluster `hammer2_cluster_check()` decides for,
+where `pfs_nmasters` is 2 and both chains must agree before a lookup is
+answered; its two masters agree in every run, so what it reads is
+agreement reached, not a disagreement decided. The transport half is not
+carried: a member on another host needs `kern_dmsg.c`, which no port
+carries, and a quorum that cannot be met is unrun, its expected behavior
+to come from upstream rather than from this port's output.
+
+0.9.52 and 0.9.53 open a capability the port had
 asserted away: `hammer2_assert_cluster()` required `nchains == 1` and
 `hammer2_cluster_check()` had DragonFly's first pass and the tail of its
 third with the quorum dropped between them, so a cluster could not hold
@@ -25,13 +49,13 @@ second blockref, which DragonFly does not have either. 0.9.53 is the
 defect an adversarial review of that work found, a FIFO allocated for one
 chain and freed for every chain, which eleven green gates and a clean
 `fsck_hammer2` all passed over. Building a volume that HAS two chains was
-then attempted, and the attempt closed the question: a cluster is formed
-by `HAMMER2IOC_REMOTE_ADD` and `HAMMER2IOC_RECLUSTER`, `pfs_clid` cannot be
-set through `HAMMER2IOC_INODE_SET` on either side because upstream does not
-write that field either, and so the two-chain state cannot be reached
-without the cluster subsystem. The chain-and-quorum code is carried and
-reviewed, it is what the read side would use, and nothing here can exercise
-it until that subsystem exists. The last seven milestones before them are
+then attempted, and at the time the attempt seemed to close the question:
+`pfs_clid` cannot be set through `HAMMER2IOC_INODE_SET` on either side,
+because upstream does not write that field either, so the two-chain state
+was recorded as unreachable without the cluster subsystem. That conclusion
+did not survive 0.9.61: `pfs-create` takes a cluster id at creation, so a
+second PFS is born with the first's, and mounting both volumes' ROOT
+assembles the cluster, as the paragraph above describes. The last seven milestones before them are
 a performance pass
 over calls rather than files: each found a Linux facility used for a
 purpose its argument did not carry, which is a class this port had not
@@ -732,9 +756,10 @@ here with its provenance note and the refusal recorded beside it.
 ## Beyond 1.0
 
 H7 is advanced storage: multi-device, replication, remote checkpoints,
-clustering. Every port dropped the cluster layer (`hammer2_ccms.c`,
-`hammer2_iocom.c`, `hammer2_msgops.c`, `hammer2_synchro.c`) and so does this
-one.
+clustering. Every BSD port dropped the cluster layer (`hammer2_ccms.c`,
+`hammer2_iocom.c`, `hammer2_msgops.c`, `hammer2_synchro.c`). This one
+dropped it too until 0.9.61, which carried `hammer2_synchro.c`, for the
+reason the paragraphs below give; the other three are still absent.
 
 Investigated 2026-10-03, and the answer is that this must
 not wait on upstream. The forge says the four cluster files have had no
