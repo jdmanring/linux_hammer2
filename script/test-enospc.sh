@@ -223,7 +223,8 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(oops [0-9]*\)$/      \1/p;\
-		    s/^  \(kernel warnings [0-9]*.*\)$/      \1/p;\
+		    s/^  \(kernel warnings .*\)$/      \1/p;\
+		    s/^  \(module faults .*\)$/      \1/p;\
 		    s/^  \(faulted in .*\)$/      \1/p;\
 		    s/^  \(still mounted [0-9]*\)$/      \1/p;\
 		    s/^  \(umount [0-9]*\)$/      \1/p;\
@@ -478,6 +479,16 @@ out=$(ssh "$GUEST_SSH" '
 		kpid=$!
 		echo "kmsg capture buffered, late lines may be missing"
 	fi
+	# A boundary this run writes itself. A fresh read of /dev/kmsg replays
+	# the whole retained ring, so the capture opens on every earlier run in
+	# this boot, and the taint line the counts below once anchored on is
+	# printed once per boot and not again by a later insmod: on every run
+	# after the first the anchor matched nothing and the counts silently
+	# ran from the start of the ring. A token unique to this run cannot be
+	# replayed from another.
+	mark="h2enospc-run-$$-$(date +%s%N)"
+	echo "$mark" > /dev/kmsg
+	echo "$mark" > /tmp/h2mark
 	insmod /tmp/h2.ko $(cat /tmp/h2modargs) || { echo "SETUP insmod failed"; exit 0; }
 	echo "module io_buf_only $(cat /sys/module/hammer2/parameters/io_buf_only)"
 	mkdir -p /mnt/h2enospc
@@ -796,16 +807,35 @@ out=$(ssh "$GUEST_SSH" '
 	# the warning from the compaction daemon that the file mapping does not
 	# implement folio migration sat in 39 of 62 kept logs, counted by
 	# none of them. One count for the class, with the first line.
-	# Scoped to after the module loaded: the capture holds the ring
-	# from boot, and the guest kernel warns for itself there, a DMA
-	# allocation in the USB host controller at boot, PID 1, untainted.
-	# Without the anchor the count says so and counts from the start.
-	anchor=$(command grep -n "hammer2: loading out-of-tree module" /tmp/kmsg.log | tail -1 | cut -d: -f1)
-	w=$(tail -n +"${anchor:-1}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure" || true)
+	# Scoped to after the run marker this run wrote itself. The capture
+	# holds the ring from before the run, and the guest kernel warns for
+	# itself there, a DMA allocation in the USB host controller at boot,
+	# PID 1, untainted. A missing marker is COULD-NOT-RUN rather than a
+	# count from the start: counting the ring would fold every earlier
+	# run in this boot into this one.
+	anchor=$(command grep -n "$(cat /tmp/h2mark)" /tmp/kmsg.log | tail -1 | cut -d: -f1)
+	w=$(tail -n +"${anchor:-0}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure" || true)
 	if [ -n "$anchor" ]; then
-		echo "kernel warnings $w after the module loaded $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*" | cut -c1-90)"
+		echo "kernel warnings $w after the run marker $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*" | cut -c1-90)"
 	else
-		echo "kernel warnings $w with no module-load line in the capture, counted from the start $(command grep -m1 -o "WARNING: .*" /tmp/kmsg.log | cut -c1-90)"
+		w=0
+		echo "kernel warnings COULD-NOT-RUN the run marker is not in the capture, so nothing can be attributed to this run"
+	fi
+	# The count above matches "cut here", which hprintf never prints and
+	# hpanic prints only in the WARN_ONCE build. A checksum failure on
+	# media is the fault this script is most likely to be the first to
+	# see, and it would have sat in the capture unseen: the f9 fixture
+	# deliberately corrupts one block and printing it names that block
+	# with hammer2_chain_testcheck: failed, and nothing here counted
+	# that string, so a real one on a filled volume would have read as
+	# a clean run. Counted separately, by the fault lines the module
+	# prints, and asserted below with the rest.
+	if [ -n "$anchor" ]; then
+		m=$(tail -n +"$anchor" /tmp/kmsg.log | command grep -c "hammer2_chain_testcheck: failed\|device in error, see the message above" || true)
+		echo "module faults $m after the run marker $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "hammer2_chain_testcheck: failed.*\|device in error, see the message above" | cut -c1-90)"
+	else
+		m=0
+		echo "module faults COULD-NOT-RUN the run marker is not in the capture, so nothing can be attributed to this run"
 	fi
 	if [ "$w" -gt 0 ]; then
 		echo "=== first warning begins"
@@ -1104,6 +1134,16 @@ else
 	echo "  ok    file handles $hc check(s) on a live mount, 0 failed"
 fi
 
+# The run marker scopes the two fault counts to this run. A capture that
+# holds everything back to boot cannot attribute anything to this run, so
+# the two counts below would be readings of other runs and the exit
+# status would say nothing. That is COULD-NOT-RUN, never a pass.
+if printf '%s\n' "$out" | command grep -q '^kernel warnings COULD-NOT-RUN\|^module faults COULD-NOT-RUN'; then
+	printf '%s\n' "$out" | sed -n 's/^\(kernel warnings\|module faults\) COULD-NOT-RUN/        \1: could not run/p' >&2
+	echo "enospc: COULD-NOT-RUN: the run marker is not in the capture, so the" >&2
+	echo "        fault counts cannot be attributed to this run" >&2
+	exit 2
+fi
 printf '%s\n' "$out" | command grep -q '^kernel warnings 0' ||
 	{ echo "  FAIL  the kernel warned during the run:"
 	  printf '%s\n' "$out" | sed -n 's/^kernel warnings/        &/p'
@@ -1112,6 +1152,10 @@ printf '%s\n' "$out" | command grep -q '^oops 0$' ||
 	{ echo "  FAIL  the kernel faulted during this run:"
 	  printf '%s\n' "$out" | sed -n 's/^oops /        oops count /p'
 	  printf '%s\n' "$out" | sed -n 's/^faulted in /        at /p'
+	  fail=$((fail + 1)); }
+printf '%s\n' "$out" | command grep -q '^module faults 0' ||
+	{ echo "  FAIL  the module reported a media fault during this run:"
+	  printf '%s\n' "$out" | sed -n 's/^module faults/        &/p'
 	  fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q '^still mounted 0$' ||
 	{ echo "  FAIL  the filesystem is still mounted after the unmount"
