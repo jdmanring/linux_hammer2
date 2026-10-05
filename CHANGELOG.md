@@ -8,8 +8,9 @@ when a deliverable is verified, not when work starts.
 Versions are milestones, not calendar releases. The first two numbers say
 how far along the ladder in `doc/README.roadmap.md` the driver is; the
 third is the point release and increments inside the current milestone.
-Until 1.0 the number says nothing about stability. Nothing here is
-released: no tag exists.
+Before 1.0 the number said nothing about stability. 1.0.0 is the first
+tagged release, `v1.0.0`, and the number above it names a milestone the
+tree has met rather than one it is working toward.
 
 The numbers before 0.1.11 are assigned retroactively to the state at each
 commit. Two rewrites of this repository's history have happened since,
