@@ -156,12 +156,21 @@ done
 # shell. So two things are checked here: the block must contain no single
 # quote at all, which is the property the quoting depends on, and it must
 # parse, which no gate did for remote code before.
+#
+# A block opens on a line ending in a space and a quote after `ssh`, or on a
+# variable assigned an opening quote and nothing else (a script that runs two
+# blocks around a reboot holds each in a variable), and closes on the next
+# line that begins with a quote. The space keeps a one-line `ssh host '...'`
+# from opening a block that runs on to some later quote, and each block's own
+# delimiters are dropped one block at a time, so a file with two blocks hands
+# the parser both bodies and neither's delimiters.
+open="(ssh .* |^[A-Za-z_][A-Za-z0-9_]*=)'\$"
 nb=0
 for f in script/*.sh; do
-	command grep -q "ssh .*'$" "$f" || continue
+	command grep -qE "$open" "$f" || continue
 	nb=$((nb + 1))
 	b="$tmp/remote-$(basename "$f")"
-	command sed -n "/ssh .*'\$/,/^'/p" "$f" | command sed "1d;\$d" > "$b"
+	command sed -nE "/$open/,/^'/{/$open/d;/^'/d;p;}" "$f" > "$b"
 	q=$(tr -cd "'" < "$b" | wc -c)
 	ran=$((ran + 1))
 	if [ "$q" -eq 0 ]; then
