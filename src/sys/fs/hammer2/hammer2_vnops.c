@@ -1440,6 +1440,27 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 	}
 
 	/*
+	 * A file whose data lives in the inode has no blockref tree to scan.
+	 * HAMMER2 stores up to HAMMER2_EMBEDDED_BYTES of a file in the
+	 * inode's own metadata and sets HAMMER2_OPFLAG_DIRECTDATA, and
+	 * hammer2_chain_next() reports EOF for such an inode rather than
+	 * walking sub-chains that do not exist (hammer2_chain.c, the
+	 * BREF_TYPE_INODE case).  A scan therefore finds nothing and would
+	 * answer from an unset key: measured on the guest, SEEK_DATA at 0 on
+	 * a 512-byte file returned 1339, a value that differed between two
+	 * calls on the same file, and SEEK_HOLE at 0 returned 0.
+	 *
+	 * SEEK_HOLE answering 0 is the harmful one: it says the whole file
+	 * is a hole from the start, which is what `cp` asks to decide
+	 * whether to read at all, so copying a small file wrote one of the
+	 * right length filled with zeros and reported success.  The whole
+	 * file is data from 0 to i_size and the only hole is past the end,
+	 * which is the answer for every offset below i_size.
+	 */
+	if (VTOI(inode)->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA)
+		return (seek_data ? offset : isize);
+
+	/*
 	 * EXPERIMENT: one forward scan instead of a lookup per block.
 	 *
 	 * The loop this replaces asked hammer2_bmap_lbn() for each 64 KiB

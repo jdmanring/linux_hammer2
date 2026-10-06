@@ -205,6 +205,66 @@ one_byte(const char *path, long off, int synced, long bsize)
  * A write through a shared mapping and no msync(): the folio is dirtied
  * at the fault, and the tree knows nothing of it until writeback.
  */
+/*
+ * A file small enough to live in the inode.  HAMMER2 stores up to
+ * HAMMER2_EMBEDDED_BYTES (512) of a file's data in the inode's own
+ * metadata, with HAMMER2_OPFLAG_DIRECTDATA set and no blockref tree at
+ * all, so a scan of the tree finds nothing and has no answer to give.
+ * The file is still all data from 0 to i_size, so the contract is that
+ * SEEK_DATA answers the offset asked and SEEK_HOLE answers i_size.
+ *
+ * This is the case a copier trips over: `cp` asks SEEK_HOLE at 0, and an
+ * answer of 0 says the whole file is a hole, so it writes a file of the
+ * right length filled with zeros and reports success.
+ */
+static void
+embedded(const char *path, long bsize)
+{
+	char what[128];
+	long sizes[] = { 1, 512 };
+	int i;
+	int fd;
+
+	(void)bsize;
+	for (i = 0; i < 2; i++) {
+		long n = sizes[i];
+
+		/* Written small on purpose: build() writes whole blocks. */
+		if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0) {
+			perror(path);
+			continue;
+		}
+		if (write(fd, "E", 1) != 1) {
+			fprintf(stderr, "seek-setup small write failed\n");
+			close(fd);
+			continue;
+		}
+		if (ftruncate(fd, n) != 0) {
+			fprintf(stderr, "seek-setup small truncate failed\n");
+			close(fd);
+			continue;
+		}
+		fsync(fd);
+		close(fd);
+		if ((fd = open(path, O_RDONLY)) < 0)
+			continue;
+		snprintf(what, sizeof(what), "%ld-byte file in the inode, "
+		    "SEEK_DATA at 0", n);
+		probe(fd, what, SEEK_DATA, 0, 0);
+		snprintf(what, sizeof(what), "%ld-byte file in the inode, "
+		    "SEEK_HOLE at 0", n);
+		probe(fd, what, SEEK_HOLE, 0, n);
+		snprintf(what, sizeof(what), "%ld-byte file in the inode, "
+		    "SEEK_DATA at the last byte", n);
+		probe(fd, what, SEEK_DATA, n - 1, n - 1);
+		snprintf(what, sizeof(what), "%ld-byte file in the inode, "
+		    "SEEK_HOLE at the last byte", n);
+		probe(fd, what, SEEK_HOLE, n - 1, n);
+		close(fd);
+		unlink(path);
+	}
+}
+
 static void
 mapped(const char *path, long bsize)
 {
@@ -415,6 +475,7 @@ main(int argc, char **argv)
 		regrow(dpath, buf, 1, bsize);
 		mapped(dpath, bsize);
 		compressed(dpath, buf, bsize, nbytes);
+		embedded(dpath, bsize);
 	}
 
 	if ((fd = build(path, buf, bsize, nbytes)) < 0)

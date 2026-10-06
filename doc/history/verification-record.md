@@ -6246,3 +6246,47 @@ failure, and a none side that lost its data. Measured 2026-10-06 with the
 correction, `KDIR=linux-7.3-rc5` on `h2debug-rc5`: compression 256 blocks
 of 512 under none against 4 under zlib, seek-checks 41, seek-failures 0,
 the fill 0 failures.
+
+## SEEK_HOLE called every small file a hole, and cp wrote zeros
+
+Found by running xfstests' `generic/001` against the port, which failed
+with "Error: corruption for sub/j ... Binary files sub/j and sub/j.last
+differ". Reproduced outside xfstests in three commands: `fill` a 512-byte
+file, `cp` it, and compare. `dd` and `cat` copied it correctly, `cp` and
+`cp -a` produced 512 zero bytes.
+
+The discriminator was which operation asks where the holes are. `cp` calls
+`SEEK_HOLE` at 0 to decide whether to read at all; `dd` and `cat` do not.
+On a 512-byte file the port answered `SEEK_HOLE(0) = 0`, which says the
+whole file is a hole from the start, so `cp` skipped the read, created a
+file of the right length, wrote nothing, and reported success.
+
+`SEEK_DATA(0)` on the same file answered 1338, and 1339 on the next call,
+a different value for the same file. Both answers came from the scan in
+`hammer2_llseek()` reading `sxop->head.cluster.focus->bref.key` after a
+scan that found nothing. A file of 512 bytes or less keeps its data in the
+inode's own metadata with `HAMMER2_OPFLAG_DIRECTDATA` set and has no
+blockref tree, and `hammer2_chain_next()` reports EOF for such an inode
+rather than walking sub-chains that do not exist. The scan had no answer
+and returned an unset key anyway.
+
+Measured before the fix on `h2debug-rc5`, `test/hammer2-seek.c` extended
+with the embedded case: 49 checks, 8 failures, exactly the eight probes on
+1-byte and 512-byte files, `SEEK_DATA at 0` reading 1338 and 1339 where 0
+was asked. Files of 1024 bytes and larger were correct, so the defect is
+bounded by `HAMMER2_EMBEDDED_BYTES`.
+
+The fix answers from the format's own flag rather than from the tree: a
+file with `HAMMER2_OPFLAG_DIRECTDATA` set is data from 0 to `i_size`, so
+`SEEK_DATA` returns the offset asked and `SEEK_HOLE` returns `i_size` for
+any offset below it. That is the same test `hammer2_chain.c` uses to
+report EOF for the case, and it is one guard before the scan. Measured
+after: 49 checks, 0 failures, and `cp` of a 512-byte file byte-identical
+to its source. `tmpfs` and `btrfs` pass the same 43-check exerciser on the
+host, which is where the expected answers came from rather than from this
+port's own behaviour.
+
+The exerciser that existed before this did not catch it, and the reason is
+worth keeping: its file is three 64 KiB blocks, so every probe was on a
+file large enough to have a blockref tree. A test whose subject is always
+past the boundary the defect lives behind does not test the boundary.
