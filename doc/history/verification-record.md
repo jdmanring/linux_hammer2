@@ -6200,3 +6200,30 @@ every one answering ENXIO for data or a hole at the data's own offset,
 while all the synced probes passed. The regrown file passed unsynced
 there too, which is expected rather than a gap: it is synced before its
 two truncates, and a truncate changes the tree directly.
+
+**P1's third reading.** `script/seek-matrix.sh` covers the three cases a
+file on a mounted volume cannot: a snapshot of a file that is still dirty,
+a file sharing its blocks with a sibling, and a hard stop. Each runs on a
+scratch volume attached to the guest, with `virsh destroy` for the stop
+and `fsck_hammer2` on the image before the reboot. The first draft passed
+37 probes and still asked too little in two places. Its dedup pair was one
+64 KiB block each, so "the second file costs under a quarter of the
+first" held at 1 block against 0, a reading consistent with sharing and
+equally with luck. Its crash file was written and not synced, so recovery
+dropped it and the case printed a pass on the file's absence. In that run
+the hole walk the case exists for read nothing. The second draft wrote 16
+blocks per dedup file from one generator restarted per block, and the
+first file cost 1 block, the 16 blocks having deduplicated against each
+other inside it; the case failed, rightly, since no sharing between the
+two files had been measured. The generator now continues across blocks,
+so each block in a file is distinct and the two files are identical. The
+crash file is synced in the seek shape and then extended unsynced, so the
+synced part survives and the walk reads the result. Measured 2026-10-06 on
+`h2debug-rc5`: 31 checks, 0 failed. The second dedup file cost 1 block
+against the first's 16. The file recovered from the stop was 229376 bytes
+with 2 hole ranges, each reading back zero. `fsck_hammer2` was clean.
+Unmount and unload returned 0, with no BUG, oops or warning in the log.
+`test-posix.sh` refused the first version of the script, because it read
+one remote block per file and took the second for part of the first; its
+extractor now reads both, and a quote planted in the second block fails
+it. Still open in P1: concurrent writers.

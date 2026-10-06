@@ -824,7 +824,7 @@ Rules it adds to the ones this tree already keeps:
 | step | work | after | state |
 |---|---|---|---|
 | P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
-| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; snapshots, compression, dedup, concurrent writers and crashes open |
+| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass; concurrent writers open |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | instruments exist for the root boot, the million-file tree, the Nix closure and low memory; `readiness-audit-2026-09-25.md` names the small-file rate, mixed load and multi-hour runs unmeasured, and the export is measured through the handle syscalls rather than nfsd. `O_DIRECT` is decided, under "Not on the roadmap" |
 | P3 | cache coherency (CCMS): a design note before any code | P2 | rewritten, see below |
 | P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |

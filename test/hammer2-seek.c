@@ -33,6 +33,10 @@
 #define _GNU_SOURCE
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -262,6 +266,125 @@ regrow(const char *path, const char *buf, int synced, long bsize)
 	unlink(path);
 }
 
+/*
+ * Run `hammer2 setcomp <algo> <dir>`.  0 when the command ran and exited
+ * 0, which on this driver means the inode ioctl took the setting.
+ */
+static int
+setcomp(const char *algo, const char *dir)
+{
+	int st;
+	pid_t pid = fork();
+
+	if (pid == 0) {
+		int nul = open("/dev/null", O_WRONLY);
+
+		if (nul >= 0) {
+			dup2(nul, 1);
+			dup2(nul, 2);
+		}
+		execlp("hammer2", "hammer2", "setcomp", algo, dir, (char *)NULL);
+		_exit(127);
+	}
+	if (pid < 0 || waitpid(pid, &st, 0) != pid)
+		return (-1);
+	return (WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+}
+
+/*
+ * The block count of the three-block test file, written under the calling
+ * directory's compression and synced, so the two sides below compare.
+ * -1 on failure.
+ */
+static long
+written_blocks(const char *t, const char *buf, long bsize, long nbytes)
+{
+	struct stat st;
+	int fd = build(t, buf, bsize, nbytes);
+
+	if (fd < 0)
+		return (-1);
+	if (fsync(fd) != 0 || fstat(fd, &st) != 0) {
+		close(fd);
+		unlink(t);
+		return (-1);
+	}
+	close(fd);
+	unlink(t);
+	return ((long)st.st_blocks);
+}
+
+/*
+ * The unsynced questions again, under compression.  A compressed block is
+ * written by a different path, hammer2_compress_and_write(), so the seek's
+ * writeback has to reach that path too before the scan.  The file is the
+ * same as everywhere else here, and its contents compress to almost
+ * nothing.
+ *
+ * Compression is set per directory with `hammer2 setcomp` and inherited by
+ * the files made in it.  The volume's default is LZ4, so the comparison
+ * side is set to none explicitly rather than assumed.  That compression
+ * actually happened is asserted, not trusted: the file written under zlib
+ * has to occupy fewer blocks of 512 than the same file under none.  Without
+ * pass every seek check below on uncompressed data and report it as
+ * compressed.
+ *
+ * Only on HAMMER2, whose statfs type is HAMMER2_SUPER_MAGIC: the control
+ * filesystems have no setcomp, and the phase prints that it was skipped.
+ */
+#define H2_SUPER_MAGIC	0x48414d32	/* HAMMER2_SUPER_MAGIC */
+
+static void
+compressed(const char *path, const char *buf, long bsize, long nbytes)
+{
+	char dd[4096], dn[4096 + 16], dz[4096 + 16], tn[4096 + 32],
+	    tz[4096 + 32];
+	struct statfs sfs;
+	long bn, bz;
+	char *slash;
+
+	snprintf(dd, sizeof(dd), "%s", path);
+	if ((slash = strrchr(dd, '/')) != NULL)
+		*slash = 0;
+	else
+		snprintf(dd, sizeof(dd), ".");
+	if (statfs(dd, &sfs) != 0 || sfs.f_type != H2_SUPER_MAGIC) {
+		printf("seek-skip compression: not a HAMMER2 mount\n");
+		return;
+	}
+	snprintf(dn, sizeof(dn), "%s/.h2seek-none", dd);
+	snprintf(dz, sizeof(dz), "%s/.h2seek-zlib", dd);
+	snprintf(tn, sizeof(tn), "%s/f", dn);
+	snprintf(tz, sizeof(tz), "%s/f", dz);
+
+	checks++;
+	if ((mkdir(dn, 0755) != 0 && errno != EEXIST) ||
+	    (mkdir(dz, 0755) != 0 && errno != EEXIST) ||
+	    setcomp("none", dn) != 0 || setcomp("zlib:9", dz) != 0) {
+		fails++;
+		printf("seek-fail compression: setcomp did not take\n");
+		goto out;
+	}
+	bn = written_blocks(tn, buf, bsize, nbytes);
+	bz = written_blocks(tz, buf, bsize, nbytes);
+	if (bz < 2 * bsize / 512 || bn < 0 || bn >= bz) {
+		fails++;
+		printf("seek-fail compression: %ld blocks of 512 under none "
+		    "against %ld under zlib, so nothing was compressed\n",
+		    bn, bz);
+		goto out;
+	}
+	printf("seek-ok   compression: %ld blocks of 512 under none against "
+	    "%ld under zlib\n", bn, bz);
+
+	unsynced(tz, buf, bsize, nbytes);
+out:
+	unlink(tn);
+	unlink(tz);
+	rmdir(dn);
+	rmdir(dz);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -290,6 +413,7 @@ main(int argc, char **argv)
 		regrow(dpath, buf, 0, bsize);
 		regrow(dpath, buf, 1, bsize);
 		mapped(dpath, bsize);
+		compressed(dpath, buf, bsize, nbytes);
 	}
 
 	if ((fd = build(path, buf, bsize, nbytes)) < 0)
