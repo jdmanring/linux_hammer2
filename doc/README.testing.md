@@ -623,7 +623,12 @@ gate: it has to write the file whose holes it asks about, and the fixture
 images are attached read-only because the fixture is the claim. It builds
 a file whose shape it knows, one block of data, one block of hole, one
 block of data and a truncate into a fourth, and asks where the data is at
-twelve offsets. SEEK_DATA and SEEK_HOLE are the
+twelve offsets after an `fsync()` and five before one. The five were added
+after upstream disabled `FIOSEEKHOLE` for answering from a tree that lags
+the file's buffers; they failed all five here, the whole unsynced file
+reading as a hole, until the seek wrote the dirty range back first. Their
+bounds are one-sided, since `lseek(2)` lets a hole be reported as data and
+never the reverse. SEEK_DATA and SEEK_HOLE are the
 one read-path facility whose failure is a wrong answer rather than a
 refusal: a filesystem registering no `->llseek` of its own is answered by
 `generic_file_llseek()`, which treats the whole file as data, so
@@ -2101,7 +2106,7 @@ kernel behavior and missing `hammer2-dedup.c` in the same breath.
 
 | test file | reference control | what it asserts |
 |---|---|---|
-| `test/hammer2-seek.c` | `tmpfs` and `btrfs` on the same guest | `SEEK_DATA`/`SEEK_HOLE` answer the offsets the media holds. The control is what found the original defect: both references disagreed with the port. |
+| `test/hammer2-seek.c` | `tmpfs` and `btrfs` on the same guest | `SEEK_DATA`/`SEEK_HOLE` answer the offsets the media holds, and before a sync the offsets the file holds. The control is what found the original defect: both references disagreed with the port. |
 | `test/hammer2-dedup.c` | `tmpfs` and `btrfs` on the same guest | a duplicate block is not charged twice. Both controls charge full price, which is what makes the reading specific to this port. |
 | `test/hammer2-fallocate.c` | `tmpfs` and `btrfs` on the same guest | a punched or zeroed range reads back as zeros with the bytes outside it intact, and the punch leaves a hole. Its ranges come from the filesystem's own block size, so the same binary is a real check on a 4 KiB control and on this port's 64 KiB block. It also punches a range spanning several whole blocks and asserts the boundary, which is the range a walk that visits each folio more than once lives in. Measured 2026-10-02, after that check was added: 16 checks and 0 failures on this port and 14 with 1 refusal on `tmpfs`, which accepts `PUNCH_HOLE` and refuses `ZERO_RANGE`. The 2026-09-28 reading was 12 on this port and on `btrfs`, 10 and 1 on `tmpfs`. `btrfs` is not re-measured here: the guest has no loop device, and a run pointed at an unmounted directory reads the guest's own root filesystem and reports a clean control beside this port's answer. |
 | `test/hammer2-fiemap.c` | none, and it says why: the control is the file | FIEMAP describes this filesystem's own layout, so a reference filesystem would compare two layouts rather than check an answer. The file's shape is built by the test and known before the call, and the map is compared against it: a hole opened at block 1 must come back as a gap, and the written blocks at blocks 0 and 2 must come back as data with a nonzero physical address. `tmpfs` is not the control because it refuses FIEMAP outright (measured 2026-09-29: `EOPNOTSUPP`). The consumer that proves the map useful is `filefrag -v`, which reads the same two extents at the same blocks. The same file also covers `->freeze_fs`/`->unfreeze_fs` on the same terms, with every blocking call in a child so the thaw is always reached, which is the structure the first version of the test lacked when it deadlocked itself and got the vop wrongly withdrawn. It is run by `test-enospc.sh` on the volume with room, before the fill, because it writes the file whose hole it asks about; every write it makes is unlinked before the fill measures what it did. |

@@ -1404,6 +1404,40 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 		return (-ENXIO);
 
 	/*
+	 * The blockref tree is the only record the scan below reads, and a
+	 * written block enters it at writeback, in hammer2_xop_strategy_write(),
+	 * not at write(2).  Until then a dirty folio holds data the tree calls
+	 * a hole: measured on the guest, SEEK_DATA at 0 on a file written and
+	 * not yet synced answered ENXIO, and a copy that trusts that writes
+	 * zeroes where the data was.  It is the defect upstream disabled
+	 * FIOSEEKHOLE for in 0d0182bdb4.
+	 *
+	 * So a mapping with any folio dirty or under writeback is written back
+	 * from the offset's block first.  That is enough: a folio's writeback
+	 * ends only after its chain is assigned, inside the same XOP.  NFS 4.2
+	 * does the same in _nfs42_proc_llseek().  The page cache answer iomap
+	 * uses, mapping_seek_hole_data(), is not exported to modules.  The wait
+	 * keeps the error for fsync to report, and a failed writeback answers
+	 * the whole file as data, which lseek(2) permits and which can never
+	 * call data a hole.
+	 */
+	{
+		struct address_space *mapping = file->f_mapping;
+		loff_t from = offset & ~((loff_t)bsize - 1);
+		int error = 0;
+
+		if (mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
+		    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK)) {
+			error = filemap_fdatawrite_range(mapping, from, LLONG_MAX);
+			if (error == 0)
+				error = filemap_fdatawait_range_keep_errors(mapping,
+				    from, LLONG_MAX);
+		}
+		if (error != 0)
+			return (seek_data ? offset : isize);
+	}
+
+	/*
 	 * EXPERIMENT: one forward scan instead of a lookup per block.
 	 *
 	 * The loop this replaces asked hammer2_bmap_lbn() for each 64 KiB

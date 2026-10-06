@@ -75,34 +75,109 @@ probe_enxio(int fd, const char *what, int whence, long from)
 		printf("seek-ok   %s: %ld -> -1\n", what, from);
 }
 
+/*
+ * One probe whose answer may fall anywhere in [lo, hi].  lseek(2) lets a
+ * filesystem report a hole as data, so a SEEK_HOLE may land late and a
+ * SEEK_DATA early, but never may data be reported as a hole: the bounds
+ * are what that one-sided contract allows.
+ */
+static void
+probe_range(int fd, const char *what, int whence, long from, long lo,
+    long hi)
+{
+	off_t got = lseek(fd, from, whence);
+
+	checks++;
+	if (got < (off_t)lo || got > (off_t)hi) {
+		printf("seek-fail %s: got %ld, want %ld..%ld\n", what,
+		    (long)got, lo, hi);
+		fails++;
+	} else
+		printf("seek-ok   %s: %ld -> %ld\n", what, from, (long)got);
+}
+
+/* block 0: data, block 1: hole, block 2: data, then a truncate past it */
+static int
+build(const char *path, const char *buf, long bsize, long nbytes)
+{
+	int fd;
+
+	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0) {
+		perror(path);
+		return (-1);
+	}
+	if (pwrite(fd, buf, bsize, 0) != bsize ||
+	    pwrite(fd, buf, bsize, 2 * bsize) != bsize) {
+		fprintf(stderr, "seek-setup pwrite failed\n");
+		close(fd);
+		return (-1);
+	}
+	if (ftruncate(fd, nbytes) != 0) {
+		fprintf(stderr, "seek-setup ftruncate failed\n");
+		close(fd);
+		return (-1);
+	}
+	return (fd);
+}
+
+/*
+ * The same file, asked before anything has synced it.  Upstream disabled
+ * FIOSEEKHOLE in 0d0182bdb4 because its blockref tree lags the file's
+ * buffers after a write, and the answer from the tree alone reports
+ * written data as a hole.  A copy that trusts that answer writes zeroes
+ * where the data was.  The phase above cannot see this: its fsync() has
+ * already put every block in the tree.
+ *
+ * The probes run microseconds after the writes, inside the writeback
+ * interval, so the data is dirty in the page cache when they ask.  A pass
+ * that came from writeback winning that race would look identical; it is
+ * not likely at this distance, and the control is the same run on tmpfs
+ * and btrfs, which must pass.
+ */
+static void
+unsynced(const char *path, const char *buf, long bsize, long nbytes)
+{
+	int fd = build(path, buf, bsize, nbytes);
+
+	if (fd < 0) {
+		checks++;
+		fails++;
+		printf("seek-fail unsynced: the file could not be built\n");
+		return;
+	}
+	probe(fd, "unsynced SEEK_DATA at 0", SEEK_DATA, 0, 0);
+	probe(fd, "unsynced SEEK_DATA in data", SEEK_DATA, 2 * bsize + 10,
+	    2 * bsize + 10);
+	probe_range(fd, "unsynced SEEK_DATA in hole", SEEK_DATA, bsize + 100,
+	    bsize + 100, 2 * bsize);
+	probe_range(fd, "unsynced SEEK_HOLE at 0", SEEK_HOLE, 0, bsize, nbytes);
+	probe_range(fd, "unsynced SEEK_HOLE in data", SEEK_HOLE,
+	    2 * bsize + 10, 3 * bsize, nbytes);
+	close(fd);
+	unlink(path);
+}
+
 int
 main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "seek-test";
 	long bsize = 65536;			/* HAMMER2_PBUFSIZE */
 	long nbytes = 3 * bsize + bsize / 2;
+	char dpath[4096];
 	char *buf;
 	int fd;
 
-	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0) {
-		perror(path);
-		return 2;
-	}
 	buf = malloc(bsize);
 	if (!buf)
 		return 2;
 	memset(buf, 'A', bsize);
 
-	/* block 0: data, block 1: hole, block 2: data */
-	if (pwrite(fd, buf, bsize, 0) != bsize ||
-	    pwrite(fd, buf, bsize, 2 * bsize) != bsize) {
-		fprintf(stderr, "seek-setup pwrite failed\n");
+	/* First, before any sync of its own has run on this file. */
+	snprintf(dpath, sizeof(dpath), "%s.unsynced", path);
+	unsynced(dpath, buf, bsize, nbytes);
+
+	if ((fd = build(path, buf, bsize, nbytes)) < 0)
 		return 2;
-	}
-	if (ftruncate(fd, nbytes) != 0) {
-		fprintf(stderr, "seek-setup ftruncate failed\n");
-		return 2;
-	}
 	fsync(fd);
 
 	/* The hole has to be real before anything below means anything. */

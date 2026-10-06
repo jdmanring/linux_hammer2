@@ -6105,3 +6105,71 @@ with "target vdb already exists", reported as COULD-NOT-RUN with virsh's
 message sent to /dev/null. Both now detach both halves and print virsh's
 error when an attach fails. `cluster-sync.sh` after that change: 23
 checks 0 failed on `h2debug-rc5` and on `h2kasan-rc5`.
+
+## SEEK_DATA on a file not yet written back called its data a hole
+
+Upstream disabled `FIOSEEKHOLE` in `0d0182bdb4` (2025-11-17, "hammer2 -
+disable FIOSEEKHOLE"): the blockref tree may lag a file's buffers just
+after a write, so a seek between the write and the next flush can answer
+wrongly, and `grep` on DragonFly's dports was the consumer that found it.
+This port's `hammer2_llseek()` asks the same tree and nothing else, through
+`hammer2_xop_scanall()`, and a written block enters that tree at writeback,
+in `hammer2_xop_strategy_write()`, not at `write(2)`. The question was
+whether that window is open here.
+
+**`test/hammer2-seek.c` could not see it.** Its file was built and then
+`fsync()`ed before the first probe, so every block was in the tree by the
+time anything was asked. That is a test written to a shape the consumer
+does not use: `cp` asks where the data is in a file it may have been handed
+a moment after the write. The exerciser now builds the same file a second
+time, one block of data, one of hole, one of data and a truncate past it,
+and asks five questions of it before anything has synced it. `lseek(2)`
+lets a filesystem report a hole as data, so the bounds are one-sided: a
+SEEK_HOLE may land late and a SEEK_DATA early, but no answer may call
+written data a hole. 12 checks became 17.
+
+Controls, which need no module: `tmpfs` and `btrfs` on the host (`/tmp`,
+`$HOME`) and on the guest (`/tmp`, `/root`), 17 checks 0 failed on each
+of the four.
+
+**Before the fix**, `KDIR=$HOME/kernels/linux-7.3-rc5 bash
+script/test-enospc.sh` at `4cfa009` with the new exerciser, guest on
+`h2debug-rc5`: the twelve synced checks passed and all five unsynced ones
+failed.
+
+| unsynced probe | answered | contract |
+|---|---|---|
+| `SEEK_DATA` at 0 | -1 (ENXIO) | 0 |
+| `SEEK_DATA` inside block 2 | -1 | 131082 |
+| `SEEK_DATA` inside the hole | -1 | 65636..131072 |
+| `SEEK_HOLE` at 0 | 0 | 65536..229376 |
+| `SEEK_HOLE` inside block 2 | 131082 | 196608..229376 |
+
+The whole file read as a hole. A copy that trusts those answers produces
+a file of the right size holding zeroes, and reports success.
+
+**The fix** writes the mapping back from the offset's block before the
+scan when any folio in it is tagged dirty or under writeback, and waits.
+That suffices because `hammer2_xop_strategy_write()` ends a folio's
+writeback only after `hammer2_write_file_core()` has assigned its chain,
+inside the same synchronous XOP, so a folio whose writeback has ended is
+in the tree. NFS 4.2 does the same in `_nfs42_proc_llseek()`
+(`fs/nfs/nfs42proc.c` in the kernel of record). The alternative the
+kernel's own seek helpers take, asking the page cache through
+`mapping_seek_hole_data()`, is not open to a module: the symbol is not in
+the kernel of record's `Module.symvers`. The wait is
+`filemap_fdatawait_range_keep_errors()`, so a writeback error stays for
+`fsync` to report; a failed writeback answers the whole file as data,
+which the contract permits and which cannot call data a hole. A mapping
+with nothing dirty costs two tag tests.
+
+**After the fix**, the same gate on the same guest kernel: seek 17 checks
+0 failed, the five unsynced answers exact rather than merely in bounds
+(0, 131082, 131072, 65536, 196608), the 2 GiB fill 0 failures, kernel
+warnings 0 and module faults 0 after the run marker, and dedup, fallocate,
+FIEMAP and file-handle exercisers unchanged at 3, 16, 11 and 9 checks.
+Lockdep was live for the new writeback-from-`llseek` path and reported
+nothing. Not run: the KASAN build, a user-mode fill, and the rest of the
+seek matrix the completion plan names (mapped writes, a snapshot taken
+while dirty, compressed and deduplicated files, concurrent writers, a
+crash between write and seek).
