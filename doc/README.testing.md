@@ -628,7 +628,13 @@ after upstream disabled `FIOSEEKHOLE` for answering from a tree that lags
 the file's buffers; they failed all five here, the whole unsynced file
 reading as a hole, until the seek wrote the dirty range back first. Their
 bounds are one-sided, since `lseek(2)` lets a hole be reported as data and
-never the reverse. SEEK_DATA and SEEK_HOLE are the
+never the reverse. Eighteen more follow for P1 of the completion plan: one
+byte either side of a block boundary and on it, synced and not, a file
+shrunk into its first block and grown back, and a write through a shared
+mapping with no `msync()`, 35 checks in all. A bound taken from HAMMER2's
+64 KiB block failed on `tmpfs` and `btrfs`, which end data at their own
+4 KiB as `lseek(2)` allows, and was corrected to the contract before the
+first run on the port. SEEK_DATA and SEEK_HOLE are the
 one read-path facility whose failure is a wrong answer rather than a
 refusal: a filesystem registering no `->llseek` of its own is answered by
 `generic_file_llseek()`, which treats the whole file as data, so

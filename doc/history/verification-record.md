@@ -6173,3 +6173,27 @@ nothing. Not run: the KASAN build, a user-mode fill, and the rest of the
 seek matrix the completion plan names (mapped writes, a snapshot taken
 while dirty, compressed and deduplicated files, concurrent writers, a
 crash between write and seek).
+
+**P1's second reading.** Eighteen probes joined the exerciser: one byte at
+65535, 65536 and 65537 in a file three blocks long, each asked synced and
+not; a file written, synced, shrunk to half a block and grown back to
+three, asked synced and not; and a byte written through a `MAP_SHARED`
+mapping with no `msync()`, whose folio is dirtied at the fault. The first
+draft bounded each `SEEK_HOLE` below by the end of HAMMER2's 64 KiB block,
+and `tmpfs` and `btrfs` failed five checks against it, ending the data at
+their own 4 KiB as `lseek(2)` allows; the bound was the driver's
+granularity rather than the contract, so it became the byte after the one
+written. Corrected, 35 checks 0 failed on `tmpfs` and `btrfs` on the host
+and on the guest. On the port, the same gate on `h2debug-rc5` with the
+fix in: seek 35 checks 0 failed, the mapped byte found at 131072 and its
+hole at 196608, the 2 GiB fill 0 failures, kernel warnings 0 and module
+faults 0 after the run marker. The mmap exerciser's SIGBUS in the log is
+the refusal of a mapped write on the full volume, which the gate expects
+and which every run of the day shows. The control is the same gate with
+`hammer2_vnops.c` put back to `4cfa009`, the module without the fix and
+the exerciser with all thirty-five: 13 failed, exactly the five original
+unsynced probes, the six unsynced one-byte probes and both mapped ones,
+every one answering ENXIO for data or a hole at the data's own offset,
+while all the synced probes passed. The regrown file passed unsynced
+there too, which is expected rather than a gap: it is synced before its
+two truncates, and a truncate changes the tree directly.

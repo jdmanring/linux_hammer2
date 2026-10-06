@@ -273,17 +273,20 @@ invokes the kernel's build system, so running `make` is that act.
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
 dependency order, and the first two steps are under way.
 
-1. P0, the baseline: the documents brought back to the tree at 1.0, with
-   the gates re-run on it. This section listed the pre-1.0 moves until
-   2026-10-06, three readings after all of them had closed.
+1. P0, the baseline, closed 2026-10-06: the documents naming the version
+   agree with the newest row, the thirteen gates ran and passed on the
+   tree at `9b0bc92`, the two fleet gates included, and provenance is
+   clean. This section had listed the pre-1.0 moves three readings after
+   all of them closed.
 2. P1, `SEEK_DATA` and `SEEK_HOLE` against the defect upstream disabled
    `FIOSEEKHOLE` for in `0d0182bdb4`. The window was open here: a file
    written and not yet synced read as all hole, all five unsynced probes
    failing, until the seek wrote the dirty range back first; five of five
-   pass now and `doc/history/verification-record.md` has both runs. The
-   rest of P1's matrix is open: mapped writes, a snapshot taken while
-   dirty, compressed and deduplicated files, concurrent writers, a crash
-   between the write and the seek.
+   pass now and `doc/history/verification-record.md` has both runs. Since
+   then a write through a shared mapping, block boundaries and a regrown
+   file pass too, 35 checks. Open: a snapshot taken while dirty,
+   compressed and deduplicated files, concurrent writers, a crash between
+   the write and the seek.
 
 ## Versioning
 
@@ -820,8 +823,8 @@ Rules it adds to the ones this tree already keeps:
 
 | step | work | after | state |
 |---|---|---|---|
-| P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | under way, "Next moves" above |
-| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; the matrix of mapped writes, snapshots, compression, dedup, concurrent writers and crashes open |
+| P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
+| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; snapshots, compression, dedup, concurrent writers and crashes open |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | instruments exist for the root boot, the million-file tree, the Nix closure and low memory; `readiness-audit-2026-09-25.md` names the small-file rate, mixed load and multi-hour runs unmeasured, and the export is measured through the handle syscalls rather than nfsd. `O_DIRECT` is decided, under "Not on the roadmap" |
 | P3 | cache coherency (CCMS): a design note before any code | P2 | rewritten, see below |
 | P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |

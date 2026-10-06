@@ -31,6 +31,7 @@
  * different file from the one it built.
  */
 #define _GNU_SOURCE
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -157,6 +158,110 @@ unsynced(const char *path, const char *buf, long bsize, long nbytes)
 	unlink(path);
 }
 
+/*
+ * One byte at `off` in a file three blocks long, synced or not.  The
+ * offsets that matter are either side of a block boundary and on it,
+ * since the scan asks by block and rounds.  The bounds hold on any block
+ * size: the data must be found no later than the byte, and the hole
+ * after it no earlier than the byte after it.  Not the end of HAMMER2's
+ * 64 KiB block: tmpfs and btrfs end the data at their own 4 KiB, which
+ * lseek(2) allows, and a bound taken from this driver's granularity is
+ * the mistake this exerciser's first version made.
+ */
+static void
+one_byte(const char *path, long off, int synced, long bsize)
+{
+	long size = 3 * bsize;
+	char what[96];
+	int fd;
+
+	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0 ||
+	    ftruncate(fd, size) != 0 || pwrite(fd, "B", 1, off) != 1) {
+		checks++;
+		fails++;
+		printf("seek-fail byte at %ld: the file could not be built\n",
+		    off);
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	if (synced)
+		fsync(fd);
+	snprintf(what, sizeof(what), "%s byte at %ld, SEEK_DATA at 0",
+	    synced ? "synced" : "unsynced", off);
+	probe_range(fd, what, SEEK_DATA, 0, 0, off);
+	snprintf(what, sizeof(what), "%s byte at %ld, SEEK_HOLE at it",
+	    synced ? "synced" : "unsynced", off);
+	probe_range(fd, what, SEEK_HOLE, off, off + 1, size);
+	close(fd);
+	unlink(path);
+}
+
+/*
+ * A write through a shared mapping and no msync(): the folio is dirtied
+ * at the fault, and the tree knows nothing of it until writeback.
+ */
+static void
+mapped(const char *path, long bsize)
+{
+	long size = 3 * bsize, off = 2 * bsize + 5;
+	char *p;
+	int fd;
+
+	checks++;
+	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0 ||
+	    ftruncate(fd, size) != 0 ||
+	    (p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+	    0)) == MAP_FAILED) {
+		fails++;
+		printf("seek-fail mapped: the mapping could not be built\n");
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	checks--;
+	p[off] = 'M';
+	probe_range(fd, "mapped, SEEK_DATA at 0", SEEK_DATA, 0, 0, off);
+	probe_range(fd, "mapped, SEEK_HOLE at the byte", SEEK_HOLE, off,
+	    off + 1, size);
+	munmap(p, size);
+	close(fd);
+	unlink(path);
+}
+
+/*
+ * Shrunk into the first block and grown back: the data ends at the cut,
+ * and nothing after it is data, synced or not.
+ */
+static void
+regrow(const char *path, const char *buf, int synced, long bsize)
+{
+	long size = 3 * bsize, cut = bsize / 2;
+	char what[96];
+	int fd;
+
+	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0 ||
+	    pwrite(fd, buf, bsize, 0) != bsize || fsync(fd) != 0 ||
+	    ftruncate(fd, cut) != 0 || ftruncate(fd, size) != 0) {
+		checks++;
+		fails++;
+		printf("seek-fail regrow: the file could not be built\n");
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	if (synced)
+		fsync(fd);
+	snprintf(what, sizeof(what), "%s regrown, SEEK_HOLE at 0",
+	    synced ? "synced" : "unsynced");
+	probe_range(fd, what, SEEK_HOLE, 0, cut, size);
+	snprintf(what, sizeof(what), "%s regrown, SEEK_DATA at 0",
+	    synced ? "synced" : "unsynced");
+	probe(fd, what, SEEK_DATA, 0, 0);
+	close(fd);
+	unlink(path);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -175,6 +280,17 @@ main(int argc, char **argv)
 	/* First, before any sync of its own has run on this file. */
 	snprintf(dpath, sizeof(dpath), "%s.unsynced", path);
 	unsynced(dpath, buf, bsize, nbytes);
+	{
+		long offs[] = { bsize - 1, bsize, bsize + 1 };
+		int i, s;
+
+		for (s = 0; s < 2; s++)
+			for (i = 0; i < 3; i++)
+				one_byte(dpath, offs[i], s, bsize);
+		regrow(dpath, buf, 0, bsize);
+		regrow(dpath, buf, 1, bsize);
+		mapped(dpath, bsize);
+	}
 
 	if ((fd = build(path, buf, bsize, nbytes)) < 0)
 		return 2;
