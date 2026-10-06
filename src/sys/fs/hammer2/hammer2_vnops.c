@@ -1416,7 +1416,9 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 	 * from the offset's block first.  That is enough: a folio's writeback
 	 * ends only after its chain is assigned, inside the same XOP.  NFS 4.2
 	 * does the same in _nfs42_proc_llseek().  The page cache answer iomap
-	 * uses, mapping_seek_hole_data(), is not exported to modules.  The wait
+	 * uses, mapping_seek_hole_data(), is not exported to modules; a
+	 * DEFER in doc/README.roadmap.md names building in tree as when that
+	 * changes.  The wait
 	 * keeps the error for fsync to report, and a failed writeback answers
 	 * the whole file as data, which lseek(2) permits and which can never
 	 * call data a hole.

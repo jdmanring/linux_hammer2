@@ -6157,7 +6157,10 @@ in the tree. NFS 4.2 does the same in `_nfs42_proc_llseek()`
 (`fs/nfs/nfs42proc.c` in the kernel of record). The alternative the
 kernel's own seek helpers take, asking the page cache through
 `mapping_seek_hole_data()`, is not open to a module: the symbol is not in
-the kernel of record's `Module.symvers`. The wait is
+the kernel of record's `Module.symvers`, so it can be reached only from a
+build that is part of the kernel, which is the state this port is headed
+for and not the one it is in. `doc/README.roadmap.md` records the
+deferral and the trigger. The wait is
 `filemap_fdatawait_range_keep_errors()`, so a writeback error stays for
 `fsync` to report; a failed writeback answers the whole file as data,
 which the contract permits and which cannot call data a hole. A mapping
