@@ -270,29 +270,20 @@ invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
-1. 0.9's low-memory row is measured: the write path assembles a block
-   around a folio smaller than the block and the DIO layer holds a
-   buffer of its own when the device mapping cannot give one, both in
-   and read at 2 GiB with nothing refused, with the controls that
-   attribute the refusals in `IO_MODEL.md`. The full volume's window,
-   one fill in thirty-three losing four files to a flush that needed
-   more than the count promised, is attributed and closed: a block held
-   in page-sized folios went out once per folio and took fresh media
-   each time, and now the write entry asks for the block folio with
-   the retrying mask and writeback writes a split block once with its
-   dirty siblings. `README.status.md` has the eight fills that named
-   it and the four that read the change.
-2. The syncer is carried: DragonFly's thirty-second period and its
-   dirty-count trigger, added when the million-file tree showed the
-   dirty set growing without bound between `sync` calls. The first
-   real closure through the write path is in `README.status.md`.
-3. The fuzzer on each build that moves the mount or write path; its
-   last run is on the build where `hpanic` returns, fifty images
-   through the mount path and the same fifty through the write path,
-   no report and nothing stuck, beside the other fleet instruments.
-4. The iomap decision stands: classic address space operations with
-   block-sized folios, recorded under open decisions below with the
-   reason.
+The work past 1.0 follows the completion plan under "Beyond 1.0", in its
+dependency order, and the first two steps are under way.
+
+1. P0, the baseline: the documents brought back to the tree at 1.0, with
+   the gates re-run on it. This section listed the pre-1.0 moves until
+   2026-10-06, three readings after all of them had closed.
+2. P1, `SEEK_DATA` and `SEEK_HOLE` against the defect upstream disabled
+   `FIOSEEKHOLE` for in `0d0182bdb4`. The window was open here: a file
+   written and not yet synced read as all hole, all five unsynced probes
+   failing, until the seek wrote the dirty range back first; five of five
+   pass now and `doc/history/verification-record.md` has both runs. The
+   rest of P1's matrix is open: mapped writes, a snapshot taken while
+   dirty, compressed and deduplicated files, concurrent writers, a crash
+   between the write and the seek.
 
 ## Versioning
 
@@ -784,13 +775,93 @@ The order changed on 2026-10-03 when the four files' dependency on that
 transport was counted rather than assumed. `hammer2_synchro.c`, 1069 lines,
 calls no `kdmsg` function at all: it drives the core this port already
 carries, `hammer2_chain_*` and `hammer2_inode_*` and the XOP cluster arrays,
-over `kprintf`, `KKASSERT`, `tsleep`, `wakeup`, `kmalloc` and `kfree`. `hammer2_ccms.c`, 311 lines, is the same shape: the MESI cache-state
-machine over the port's own spinlock and a sleep it does not yet have.
-Together those two are 1380 lines of the cluster needing no transport,
-and only `hammer2_iocom.c` with 25 `kdmsg` calls and `hammer2_msgops.c`
-with 4 gate the message layer. So synchronization, which is what makes a
-SLAVE converge and is the first step asked for, is the smaller one and
-the nearer to the capabilities the tables call unavailable.
+over `kprintf`, `KKASSERT`, `tsleep`, `wakeup`, `kmalloc` and `kfree`.
+`hammer2_ccms.c`, 311 lines, needs no transport either, and is not
+cluster code any more. DragonFly took it out of its build in `94491fa098`
+("hammer2 - locking revamp", 2015-03-23) and deleted its cache-coherency
+half in the same commit (`ccms_domain`, `ccms_lock_get`,
+`ccms_rstate_get`), saying it would return with cache coherency. What is
+left is a recursive shared/exclusive thread lock with no caller in any
+of the four trees, read on 2026-10-06 against the forge and the clone at
+`250a8b4`; the header's MESI states survive only as its two lock modes.
+Carrying it would compile code upstream does not. Only `hammer2_iocom.c`,
+with 25 `kdmsg` calls, and `hammer2_msgops.c`, with 4, gate the message
+layer. So synchronization, which is what makes a SLAVE converge and is
+the first step asked for, is smaller than the transport and nearer to
+the capabilities the tables call unavailable.
+
+### The completion plan
+
+On 2026-10-06 the maintainer set the direction past 1.0: finish the
+distributed and storage design Matthew Dillon laid out, in the 2011
+announcement on `kernel@` and the 2015 design and status mail on `users@`,
+then extend it, with the media staying readable by every implementation
+that reads it today. HAMMER2's cluster stalled upstream for want of hands
+rather than of a design, which is what the paragraphs above found on the
+forge. The plan below was written for that direction outside this
+repository, from its public documents, and is adopted here with the
+corrections listed after it. Its order is by dependency: the distributed
+state machine has to be right before storage redundancy can lean on it.
+
+Rules it adds to the ones this tree already keeps:
+
+- A change to on-disk meaning is an extension, named as one, with a
+  written design, a compatibility and versioning plan and what an old
+  reader does with it, before any code.
+- Cluster code is tested under partition, delay, loss, duplication,
+  reordering, restart and quorum loss, first on a deterministic loopback
+  transport whose failing runs replay from a recorded seed, and only then
+  over a network.
+- A decision that would change the media format, the security model or
+  distributed commit semantics stops at a design note with alternatives
+  and what each would have to prove.
+- The original protocol is reproduced before any modern replacement for
+  it is weighed.
+
+| step | work | after | state |
+|---|---|---|---|
+| P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | under way, "Next moves" above |
+| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; the matrix of mapped writes, snapshots, compression, dedup, concurrent writers and crashes open |
+| P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | instruments exist for the root boot, the million-file tree, the Nix closure and low memory; `readiness-audit-2026-09-25.md` names the small-file rate, mixed load and multi-hour runs unmeasured, and the export is measured through the handle syscalls rather than nfsd. `O_DIRECT` is decided, under "Not on the roadmap" |
+| P3 | cache coherency (CCMS): a design note before any code | P2 | rewritten, see below |
+| P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |
+| P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
+| P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |
+| P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | open |
+| P8 | quorum across masters, and the seven cluster ioctls (`REMOTE_ADD`, `_DEL`, `_REP`, `_SCAN`, `SOCKET_GET`, `_SET`, `RECLUSTER`) | P7 | the local two-master shape measured; a quorum that cannot be met is not |
+| P9 | transaction replay and the reintegration of a stale master | P8 | open |
+| P10 | physical copies: read fallback, write replication, rebuild | P9 | open |
+| P11 | scrub on a mounted volume, and repair from a verified copy | P10 | open; scrub is `fsck_hammer2` offline today |
+| P12 | device add, remove, replace and evacuate | P11 | open |
+| P13 | subtree quota enforcement over the accounting the media already keeps | P4 | open |
+| P14 | logical encryption, once its interaction with copies and dedup is specified | P10, P13 | open |
+| P15 | the fsync shortcut through volume-header auxiliary space, only if the current format still supports it | P2 | design review first |
+| P16 | snapshot send and receive, and remote checkpoints | P9, P10 | open |
+| P17 | observability and stronger digests, as extensions | P16 | open |
+| P18 | erasure coding and failure-domain placement, as extensions | P12, P17 | design review first |
+| P19 | an executable model of the cluster state machine and a full fault campaign | P18 | open |
+| P20 | production qualification | P19 | open |
+
+`HAMMER2IOC_BULKFREE_ASYNC`, the eighth ioctl absent here, depends on none
+of this and can land whenever its cancellation is specified.
+
+Corrections to the plan as it was written, each checked on 2026-10-06:
+
+- **P3 had nothing to carry.** It asked for the MESI state machine in
+  `hammer2_ccms.c` to be ported. The file as it stood before `94491fa098`
+  has `ccms_lock_get()` resolving its local locks against remote grant
+  state through `ccms_rstate_get()`, and that function's body, under
+  `#if 0`, is `/* XXX */` and one assignment. The coherency protocol was
+  never written; what upstream kept is the thread lock described above.
+  So P3 is new design at the boundary the rules above stop at, and P4 no
+  longer waits on it.
+- **The lock it described is the other one.** It called the port's lock
+  "deliberately not a plain `rw_semaphore`". `hammer2_spin_t` is a
+  wrapper around one; the chain and inode locks are the shim's own
+  `mtx`, under "Open decisions" below.
+- **Its commit form is not this tree's.** It proposed `hammer2:` subjects
+  and a labeled body. Subjects here stay sentences, as `CLAUDE.md` says,
+  until the submission conversion settles style for the whole tree.
 
 Mainline submission is an asset to spend once. The BSD license permits it,
 which OpenZFS's CDDL does not, but a mainline submission of an immature
