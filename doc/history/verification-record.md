@@ -6227,3 +6227,22 @@ Unmount and unload returned 0, with no BUG, oops or warning in the log.
 one remote block per file and took the second for part of the first; its
 extractor now reads both, and a quote planted in the second block fails
 it. Still open in P1: concurrent writers.
+
+**P1's compression check was inverted.** The phase that proves
+compression really happened before asking the seek questions under it read
+`bz < 2 * bsize / 512 || bn < 0 || bn >= bz`: it failed when the zlib file
+was SMALLER than the file under none and demanded the none file hold at
+least two blocks, which is backwards for both tests. A reading of 256
+blocks of 512 under none against 4 under zlib, compression working, was
+reported as "nothing was compressed". The condition could pass only when
+the zlib file was at least as large as the uncompressed one, so every
+earlier green on it was green on a falsified premise, and the pre-push
+hook refused the push that carried it. It is now
+`bn < 2 * bsize / 512 || bz < 0 || bz >= bn`: the file under none must
+hold both its data blocks, and the zlib file must be smaller. A truth
+table over the five readings confirms the corrected form passes the
+working case and still fails a setcomp that did nothing, a `written_blocks`
+failure, and a none side that lost its data. Measured 2026-10-06 with the
+correction, `KDIR=linux-7.3-rc5` on `h2debug-rc5`: compression 256 blocks
+of 512 under none against 4 under zlib, seek-checks 41, seek-failures 0,
+the fill 0 failures.

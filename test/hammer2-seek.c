@@ -325,9 +325,10 @@ written_blocks(const char *t, const char *buf, long bsize, long nbytes)
  * the files made in it.  The volume's default is LZ4, so the comparison
  * side is set to none explicitly rather than assumed.  That compression
  * actually happened is asserted, not trusted: the file written under zlib
- * has to occupy fewer blocks of 512 than the same file under none.  Without
- * pass every seek check below on uncompressed data and report it as
- * compressed.
+ * has to occupy fewer blocks of 512 than the same file under none, and the
+ * file under none has to hold both its data blocks.  Without that, a
+ * setcomp that silently did nothing would pass every seek check below on
+ * uncompressed data and report it as compressed.
  *
  * Only on HAMMER2, whose statfs type is HAMMER2_SUPER_MAGIC: the control
  * filesystems have no setcomp, and the phase prints that it was skipped.
@@ -367,7 +368,7 @@ compressed(const char *path, const char *buf, long bsize, long nbytes)
 	}
 	bn = written_blocks(tn, buf, bsize, nbytes);
 	bz = written_blocks(tz, buf, bsize, nbytes);
-	if (bz < 2 * bsize / 512 || bn < 0 || bn >= bz) {
+	if (bn < 2 * bsize / 512 || bz < 0 || bz >= bn) {
 		fails++;
 		printf("seek-fail compression: %ld blocks of 512 under none "
 		    "against %ld under zlib, so nothing was compressed\n",
