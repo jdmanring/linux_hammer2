@@ -116,7 +116,7 @@ its name line.
 
 ## What has been verified
 
-Eleven of the thirteen gates pass with no environment variables set on a
+Twelve of the fourteen gates pass with no environment variables set on a
 machine that has the kernel of record installed, as they have since
 2026-08-26: the syntax gate finds that tree, and the style gate finds its
 `checkpatch.pl`. The other two, `test-fixtures.sh` and `test-enospc.sh`,

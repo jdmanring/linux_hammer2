@@ -84,7 +84,7 @@ catch first.
 
 ## What has to pass before the result is a driver
 
-The thirteen gates listed in `README.md`, then the fleet scripts in
+The fourteen gates listed in `README.md`, then the fleet scripts in
 `doc/README.testing.md` that exercise what the sync touched, and at
 least these three on every sync regardless: `f4-roundtrip.sh`, which
 has DragonFly read what the port wrote and back; `fuzz-mount.sh`, which

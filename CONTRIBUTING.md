@@ -41,8 +41,8 @@ anything, and its own green run is not evidence: three fixtures across
 these repositories passed on 2026-08-26 while testing nothing, each caught
 by running it against the defect rather than by reading it.
 
-**Every change comes with the gate that would have caught it.** Eleven of
-the thirteen are cheap and need nothing but this checkout; `test-fixtures.sh`
+**Every change comes with the gate that would have caught it.** Twelve of
+the fourteen are cheap and need nothing but this checkout; `test-fixtures.sh`
 and `test-enospc.sh` need a guest and report COULD-NOT-RUN without one. `test-absence.sh`
 exists because that rule was kept for code and not for prose. `test-shim.sh`, `test-syntax.sh` and
 `test-absence.sh` carry built-in controls that must fail on every run; the others buy the same assurance
@@ -63,6 +63,7 @@ harder to keep.
     $ bash script/test-vectors-contract.sh
     $ bash script/test-posix.sh
     $ bash script/test-doc-prose.sh
+    $ bash script/test-tools.sh
     $ bash script/test-fixtures.sh
     $ bash script/test-enospc.sh
     $ bash script/test-syntax.sh --selftest

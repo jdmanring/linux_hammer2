@@ -6361,3 +6361,59 @@ the fill 0 failures. The five `hammer2_chain_testcheck: failed` lines in
 that boot's ring name block `0x9020010`, which is f9's deliberately
 flipped byte, recorded in the fixture table above. They are not a fault
 of this run.
+
+## smatch, first run, with each candidate triaged
+
+`script/smatch.sh` runs smatch through kbuild's own checker hook, `make
+C=2 CHECK="smatch --project=kernel"`, which is how the kernel's
+`smatch_scripts/kchecker` runs it. A scratch module with a planted double
+free is reported first, `error: double free of 'p'`. Without that control
+a count of zero would show only that smatch printed nothing. Measured
+2026-10-06 against linux-7.3-rc5: 17 files checked and 13 candidates.
+
+Each candidate was checked against DragonFly's tree,
+`dragonfly-hammer2-upstream/sys/vfs/hammer2`, by finding both the line
+smatch read as a NULL test and the line it read as the dereference in the
+upstream file, with whitespace ignored.
+
+| candidate | both lines upstream | disposition |
+|---|---|---|
+| `hammer2_freemap.c:936` `hammer2_freemap_adjust()` | yes | carried |
+| `hammer2_xops.c:1074` `hammer2_xop_inode_create_det()` | yes | carried |
+| `hammer2_chain.c:668` `hammer2_chain_lastdrop()` | yes | carried |
+| `hammer2_chain.c:2883` `hammer2_chain_create()` | yes | carried |
+| `hammer2_flush.c:858` `hammer2_flush_core()` | yes | carried |
+| `hammer2_flush.c:1058` `hammer2_flush_recurse()` | yes | carried |
+| `hammer2_inode.c:451` `hammer2_inode_chain_and_parent()` | yes | carried |
+| `hammer2_vfsops.c:400` `hammer2_pfsalloc()` | yes | carried |
+| `hammer2_synchro.c:501` `hammer2_sync_slaves()` | yes | carried |
+| `hammer2_cluster.c:201` `hammer2_cluster_check()` | no | port text, upstream's logic |
+| `hammer2_synchro.c:828`, `:975`, `:1032` | yes | carried, layout only |
+
+The `hammer2_cluster.c` row is the one place the text differs, and it
+differs only in spelling. Upstream writes `cluster->pmp->pfs_types[i]`.
+The port, restored from DragonFly at `a9a7a14`, writes `pmp->pfs_types[i]`
+after `pmp = cluster->pmp`. Both trees carry the same `nquorum = pmp ? ...
+: 0` and the same `KKASSERT(pmp != NULL || cluster->nchains == 0)` before
+the loop, so the `switch` runs only when `nchains` is nonzero and `pmp` is
+therefore set. Smatch reads the conditional as a NULL test and does not
+connect it to the assertion, which compiles to nothing without
+`HAMMER2_INVARIANTS`.
+
+The rest follow two upstream shapes. One is a pointer tested in one
+branch and dereferenced in another that only runs when it is set, for
+example a `chain` checked after a lookup that the caller has already
+established returns non-NULL. The other is a `hammer2_debug` print under
+an `if` at the same indent, which is how DragonFly writes them. None of
+the thirteen is a defect of this port. Because the code is carried, they
+stay as upstream wrote them. That is the same rule `analyze.sh`'s
+candidates follow.
+
+One of them shows what a line comparison cannot. In
+`hammer2_inode_chain_and_parent()` the loop reads `chain->parent` on a
+path where `chain` was set to NULL, which happens when `clindex >=
+ip->cluster.nchains`. Upstream has the identical loop. Every caller passes
+an index below `nchains`, so the path is unreachable in both trees, but
+nothing in the function enforces that. This is the same latent shape the
+completion plan's P3 and P4 work on the cluster index will meet, and it
+is recorded there rather than patched here.

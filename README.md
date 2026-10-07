@@ -260,7 +260,7 @@ does. Pass them on the `make` line.
 
 ## Test
 
-Thirteen gates. The compile gates need a toolchain and a kernel tree:
+Fourteen gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
@@ -294,6 +294,12 @@ bash, because every gate here is normally run by bash and a bash-only
 construct in such a script breaks only when something honors the shebang:
 
         $ bash script/test-posix.sh
+
+And one runs the selftests the analysis tools under `script/` carry, which
+nothing else ran, so the readings they produce are checked rather than
+remembered:
+
+        $ bash script/test-tools.sh
 
 Two need a guest, and exit 2 without one:
 
