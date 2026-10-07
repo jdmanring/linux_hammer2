@@ -43,6 +43,12 @@ NEWFS=${H2_NEWFS:-$HOME/Projects/hammer2-utils-upstream/target/release/newfs_ham
 FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 PATCH=$ROOT/test/xfstests/hammer2.patch
 KO=src/sys/fs/hammer2/hammer2.ko
+# A test that never ends is a finding, not a long run: generic/274 filled
+# with zeros, which this format does not store, and ran for an hour with
+# its writer in balance_dirty_pages. Each test is bounded, and the guest
+# side outlives a killed ssh, so a check left by an earlier run is stopped
+# before this one starts.
+PER=${H2_XFSTESTS_TIMEOUT:-900}
 TESTS=${H2_XFSTESTS_TESTS:-$*}
 
 [ -n "$TESTS" ] || { echo "xfstests: COULD-NOT-RUN: no tests named" >&2; exit 2; }
@@ -81,7 +87,7 @@ ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')
 # Made with newfs_hammer2's defaults, so each has the DATA PFS a bare
 # device mounts. xfstests reformats the scratch volume itself.
 for img in "$TV" "$SV"; do
-	rm -f "$img"; truncate -s 2G "$img"
+	rm -f "$img"; truncate -s 3G "$img"
 	"$NEWFS" "$img" >/dev/null 2>&1 || {
 		echo "xfstests: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
@@ -103,6 +109,8 @@ i=0; while [ ! -e /dev/disk/by-id/virtio-h2xscratch ] && [ $i -lt 15 ]; do sleep
 T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
 S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
 [ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+pkill -f "^/bin/bash ./check " 2>/dev/null; sleep 1
+umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2 2>/dev/null; insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
 mkdir -p /mnt/h2xtest /mnt/h2xscratch
 cd /root/h2xfstests || exit 0
@@ -112,19 +120,38 @@ printf "%s\n" "export FSTYP=hammer2" "export TEST_DEV=$T" "export TEST_DIR=/mnt/
 '
 scp -q "$NEWFS" "$GUEST_SSH:/root/h2xfstests/newfs_hammer2" || exit 2
 out=$(ssh "$GUEST_SSH" "$run
-./check $TESTS 2>&1
+for t in $TESTS; do timeout -k 30 $PER ./check \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
 printf '%s\n' "$out" | sed 's/^/  /'
 
 case $out in *SETUP*) echo "xfstests: COULD-NOT-RUN: $(printf '%s\n' "$out" | command grep -m1 SETUP)" >&2; exit 2 ;; esac
-ran=$(printf '%s\n' "$out" | sed -n 's/^Ran: //p')
-failed=$(printf '%s\n' "$out" | sed -n 's/^Failures: //p')
+# One check per test, so every summary line is joined: a single sed -n
+# without the join keeps the lines apart and counts only by word.
+ran=$(printf '%s\n' "$out" | sed -n 's/^Ran: //p' | tr '\n' ' ')
+failed=$(printf '%s\n' "$out" | sed -n 's/^Failures: //p' | tr '\n' ' ')
+notrun=$(printf '%s\n' "$out" | sed -n 's/^Not run: //p' | tr '\n' ' ')
+timedout=$(printf '%s\n' "$out" | sed -n 's/^TIMEOUT \([^ ]*\).*/\1/p' | tr '\n' ' ')
+failed="$failed$timedout"
+failed=$(printf '%s\n' "$failed" | sed 's/^ *//; s/ *$//')
+# A test killed at its bound wrote no Ran line, and a hang is a failure,
+# so it is counted before the check that nothing ran.
+[ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; echo "xfstests: failed $failed"; exit 1; }
 [ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
+# check prints "Passed all N tests" whether or not any of the N executed:
+# a test that skips with _notrun is counted among them. So the pass is
+# what ran less what was not run, and a batch where nothing executed is
+# COULD-NOT-RUN rather than a pass. The first concurrency batch read
+# "Passed all 7 tests" with all seven skipped.
+nran=$(printf '%s\n' "$ran" | wc -w)
+nskip=$(printf '%s\n' "$notrun" | wc -w)
+nexec=$((nran - nskip))
 fail=0
 [ -n "$failed" ] && fail=1
 printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
-echo "xfstests: ran $ran; failed ${failed:-none}"
-[ "$fail" -eq 0 ]
+echo "xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}); failed ${failed:-none}"
+[ "$fail" -eq 0 ] || exit 1
+[ "$nexec" -gt 0 ] || { echo "xfstests: COULD-NOT-RUN: every test named was skipped" >&2; exit 2; }
+exit 0

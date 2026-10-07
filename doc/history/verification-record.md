@@ -6453,3 +6453,62 @@ could ever have told ENXIO from EINVAL either.
 490, 539, 706), measured 2026-10-06 on `h2debug-rc5` with the fix: 8 of 8
 passed, kernel log `bug 0 oops 0 warn 0`. Before it, 448 was the one
 failure.
+
+## xfstests: the sized tests, a test that never ended, and a pass that was not one
+
+**Every test was counted as passed, including those skipped.** `check` prints
+"Passed all N tests" whether or not the N executed. A test that skips with
+`_notrun` is counted among them. The first concurrency batch through
+`script/xfstests.sh` (generic/038, 269, 300, 371, 391, 586, 748) read
+"Passed all 7 tests" and the wrapper reported success, but all seven were
+skipped. The wrapper now counts the executed tests as the tests run minus
+those not run, and reports a batch where none executed as COULD-NOT-RUN.
+Those seven skip for real reasons: O_DIRECT (300, 391, 586), user xattrs
+(748), a 10 GB scratch (038). Two of them, 269 and 371, skipped because
+the adapter had no sized format step.
+
+**The sized format step.** `_try_scratch_mkfs_sized` had no hammer2 arm.
+`newfs_hammer2 -s` takes a size with a unit suffix and refuses a volume
+below 1 GiB, so a byte count failed with EINVAL. The arm passes the size
+in MiB and reports a request below the floor as not runnable, which is
+what it is. generic/269 asks for 512 MiB and 371 for 330 MiB, so both
+remain skips, now for the right reason.
+
+**generic/274 ran for an hour.** It fills a 2 GiB scratch volume with
+`dd if=/dev/zero` and expects ENOSPC. This format stores no all-zero
+block: `hammer2_write_file_core()` sends one to `zero_write()`, which
+deletes the chain. The fill therefore never consumes space. After 44
+minutes the file was 8.2 TB long with 0 blocks, the volume was 1% used,
+the writer was in D state in `balance_dirty_pages`, and the flush worker
+was at 40 minutes of CPU in `hammer2_xop_strategy_write()`, sampled
+through sysrq-l at `hammer2_strategy.c:1555` and `:1557`. No lock was
+held across the wait and no hung-task report was printed. It was a writer
+being throttled behind writeback that could keep pace with it only by
+doing nothing. The test cannot be met on this format. xfstests already
+has the mechanism a filesystem uses for this, `_require_no_compress`,
+which btrfs answers when compression would keep a fill from reaching
+ENOSPC. The adapter answers it for hammer2, which compresses by default
+and stores no zero block. Seven tests ask it: 027, 274, 275, 352, 427,
+747 and 793, and each gives its reason as data-space usage the writes do
+not consume.
+
+**Each test now runs under its own bound**, `H2_XFSTESTS_TIMEOUT`,
+default 900 s, and a test killed there is a failure. The control is the
+bound set to 5 s against generic/001, which returns exit 1 and names
+the test. Before the bound, a hung test left `check` running on the
+guest after the host's ssh was killed. It held both scratch volumes
+mounted, so the next run could not attach them and reported
+COULD-NOT-RUN. The wrapper now stops a `check` left by an earlier run
+before it starts.
+
+**The sized batch, measured 2026-10-06** on `h2debug-rc5`: generic/269,
+273, 274, 275, 488, 558 and 679. 273 and 488 passed. 269 skipped on the
+1 GiB floor, 274 and 275 on `_require_no_compress`, and 558 because the
+format has no fixed inode count. 679 failed on one line, the count of
+unwritten extents after an allocate over a file with two holes: 0 here
+where 2 are expected. That is the format's own answer, the one
+`hammer2_fallocate()` describes. A preallocated range is not stored, so
+it reads back as a hole and FIEMAP has no unwritten extent to report.
+The file's content after the allocate, which is the part of the test
+that detects corruption, matched byte for byte. Kernel log: bug 0, oops
+0, warn 0.
