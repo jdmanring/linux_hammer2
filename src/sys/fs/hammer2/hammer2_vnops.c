@@ -1650,13 +1650,52 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 		return (0);
 
 	/*
+	 * The size change first, under the transaction and ip->lock, as
+	 * ->setattr does it.  A punch and KEEP_SIZE leave the size where it
+	 * is; an allocate extends to cover the range, and the extend is what
+	 * makes the new tail read back as zeros rather than as the media that
+	 * was there.
+	 *
+	 * It runs BEFORE the folios are read.  Reading a folio of a range
+	 * past the current size asks the blockref tree for a block the inode
+	 * does not have: on a file of size 0 the chain's key is at 0 and the
+	 * read is for the block after it, which hammer2_read_folio() refuses
+	 * with EIO and a WARN_ONCE.  Measured: fallocate(fd, 0, 0, 131072)
+	 * on a new file returned EIO and tripped "chain key 0 above read at
+	 * 1000", while the same call on a file whose size was already
+	 * 131072 returned 0 with no warning.  xfstests' seek sanity test
+	 * calls exactly that to probe for unwritten-extent support and
+	 * aborts on it, so this is what made generic/436 fail.
+	 */
+	if (!keep_size && !(mode & FALLOC_FL_PUNCH_HOLE) && end > isize) {
+		hammer2_trans_init(ip->pmp, 0);
+		hammer2_inode_lock(ip, 0);
+		hammer2_extend_file(ip, end);
+		hammer2_inode_modify(ip);
+		if (ip->flags & HAMMER2_INODE_RESIZED)
+			hammer2_inode_chain_sync(ip);
+		hammer2_inode_unlock(ip);
+		hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+		truncate_setsize(inode, end);
+	}
+
+	/*
 	 * The page cache side, in folio-sized steps, before ip->lock.  Each
 	 * folio is locked, waited on and zeroed the way hammer2_zero_tail()
 	 * does, and for the same reason: the write XOP hashes a whole-block
 	 * folio itself, so a folio under writeback is one the core is reading
 	 * and zeroing it would change bytes it has already read.
+	 *
+	 * ONLY a punch or a zero range zeroes anything.  A plain allocate is
+	 * not a write path: its postcondition is that the range is allocated
+	 * and reads back, and the bytes already in it stay.  Zeroing on that
+	 * mode destroys them.  Measured: a plain allocate over a written
+	 * 200000-byte file left all 200000 bytes zero on this port while
+	 * tmpfs and btrfs kept them, and the folio loop was the only thing
+	 * that could have written them.  The mode reaches the page cache
+	 * only to flush it below.
 	 */
-	{
+	if (mode & (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE)) {
 		loff_t pos = offset & ~(loff_t)(PAGE_SIZE - 1);
 
 		while (pos < end) {
@@ -1700,25 +1739,6 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 			pos = (loff_t)(folio_next_index(folio)) << PAGE_SHIFT;
 			folio_put(folio);
 		}
-	}
-
-	/*
-	 * The size change alone, under the transaction and ip->lock, as
-	 * ->setattr does it.  A punch and KEEP_SIZE leave the size where it
-	 * is; an allocate extends to cover the range, and the extend is what
-	 * makes the new tail read back as zeros rather than as the media that
-	 * was there.
-	 */
-	if (!keep_size && !(mode & FALLOC_FL_PUNCH_HOLE) && end > isize) {
-		hammer2_trans_init(ip->pmp, 0);
-		hammer2_inode_lock(ip, 0);
-		hammer2_extend_file(ip, end);
-		hammer2_inode_modify(ip);
-		if (ip->flags & HAMMER2_INODE_RESIZED)
-			hammer2_inode_chain_sync(ip);
-		hammer2_inode_unlock(ip);
-		hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
-		truncate_setsize(inode, end);
 	}
 
 	error = filemap_write_and_wait_range(inode->i_mapping, offset,

@@ -611,6 +611,87 @@ main(int argc, char **argv)
 		}
 	}
 
+	/*
+	 * A plain allocate over a range that ALREADY HOLDS DATA must leave
+	 * the bytes alone.  The mode is not a write path: its postcondition
+	 * is that the range is allocated and readable, and what was there
+	 * stays there.  Both reference filesystems keep the data.
+	 *
+	 * The baseline is what the file holds just before the call, read
+	 * back into `pre`, not the pattern it was first written with: the
+	 * punches above have already zeroed parts of it, so comparing with
+	 * the original buffer fails on every filesystem, the references
+	 * included.
+	 *
+	 * This is the check whose absence let a defect through: the plain
+	 * allocate above runs at offset `total`, past the end of the file,
+	 * so it only ever exercised an extend.  Measured on this port before
+	 * the fix, a plain allocate over written data zeroed all 200000
+	 * bytes of it, and on tmpfs the same call kept them.
+	 */
+	{
+		int fd = open(path, O_RDWR);
+
+		if (fd < 0) {
+			printf("falloc-fail reopen for allocate failed\n");
+			fails++;
+		} else if (pread(fd, pre, (size_t)total, 0) !=
+		    (ssize_t)total) {
+			printf("falloc-fail could not read the baseline\n");
+			fails++;
+		} else {
+			checks++;
+			if (fallocate(fd, 0, 0, (off_t)total) != 0 &&
+			    errno != EOPNOTSUPP && errno != EINVAL) {
+				printf("falloc-fail plain allocate over data "
+				    "failed with errno %d\n", errno);
+				fails++;
+			} else if (pread(fd, out, (size_t)total, 0) !=
+			    (ssize_t)total ||
+			    memcmp(out, pre, (size_t)total) != 0) {
+				printf("falloc-fail a plain allocate over "
+				    "written data changed the bytes\n");
+				fails++;
+			} else {
+				printf("falloc-ok   a plain allocate over "
+				    "written data left the bytes alone\n");
+			}
+		}
+		if (fd >= 0)
+			close(fd);
+	}
+
+	/*
+	 * And a plain allocate from an EMPTY file, which is how a probe for
+	 * unwritten-extent support asks (xfstests' seek sanity test does
+	 * exactly this and aborts when it fails).  A new file has size 0 and
+	 * therefore no block above key 0 for the zeroing to read.
+	 */
+	{
+		int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+
+		checks++;
+		if (fd < 0) {
+			printf("falloc-fail truncate for the empty-file "
+			    "allocate failed\n");
+			fails++;
+		} else if (fallocate(fd, 0, 0, 65536) != 0 &&
+		    errno != EOPNOTSUPP && errno != EINVAL) {
+			printf("falloc-fail plain allocate from an empty "
+			    "file failed with errno %d\n", errno);
+			fails++;
+		} else if (size_of(path) != 65536) {
+			printf("falloc-fail plain allocate from an empty "
+			    "file left the size at %ld\n", size_of(path));
+			fails++;
+		} else {
+			printf("falloc-ok   a plain allocate from an empty "
+			    "file extended it to 65536\n");
+		}
+		if (fd >= 0)
+			close(fd);
+	}
+
 	unlink(path);
 	free(buf);
 	free(out);

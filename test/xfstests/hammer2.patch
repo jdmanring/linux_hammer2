@@ -1,0 +1,90 @@
+diff --git a/common/config b/common/config
+index 69e5d83..6ad02a1 100644
+--- a/common/config
++++ b/common/config
+@@ -339,6 +339,7 @@ export E2FSCK_PROG=$(type -P e2fsck)
+ export TUNE2FS_PROG=$(type -P tune2fs)
+ export FSCK_OVERLAY_PROG=$(type -P fsck.overlay)
+ export MKFS_BCACHEFS_PROG=$(set_mkfs_prog_path_with_opts bcachefs)
++export NEWFS_HAMMER2=$(type -P newfs_hammer2)
+ 
+ # SELinux adds extra xattrs which can mess up our expected output.
+ # So, mount with a context, and they won't be created.
+@@ -548,6 +549,11 @@ _source_specific_fs()
+ 	reiser4)
+ 		[ "$MKFS_REISER4_PROG" = "" ] && _fatal "mkfs.reiser4 not found"
+ 		;;
++	hammer2)
++		[ "$NEWFS_HAMMER2" = "" ] && _fatal "newfs_hammer2 not found"
++
++		. ./common/hammer2
++		;;
+ 	pvfs2)
+ 		;;
+ 	ubifs)
+diff --git a/common/hammer2 b/common/hammer2
+new file mode 100644
+index 0000000..25948e0
+--- /dev/null
++++ b/common/hammer2
+@@ -0,0 +1,45 @@
++#!/bin/bash
++# SPDX-License-Identifier: GPL-2.0
++#
++# HAMMER2 support for xfstests.
++#
++# The Linux port mounts a volume by device alone. A bare device mounts the
++# volume's DATA PFS, which newfs_hammer2 creates by default; an explicit
++# `device@label` selects another PFS. xfstests hands a bare device, so the
++# device contract is met without a label, verified on the guest by mounting
++# a freshly made volume as `mount -t hammer2 /dev/vdb` and writing through
++# it.
++#
++# What this file supplies is therefore only the format step: the generic
++# fallback in common/rc runs `mkfs -t $FSTYP`, and this port's format tool
++# is newfs_hammer2. Everything else the generic path already does.
++
++NEWFS_HAMMER2=${NEWFS_HAMMER2:-$(type -P newfs_hammer2)}
++
++_hammer2_newfs()
++{
++	$NEWFS_HAMMER2 "$@"
++}
++
++# The generic _scratch_mkfs() case falls through to `mkfs -t $FSTYP` for an
++# unknown type, which does not exist for hammer2.
++_mkfs_hammer2()
++{
++	_scratch_options mkfs
++
++	_hammer2_newfs $MKFS_OPTIONS "$SCRATCH_DEV" >> $seqres.full 2>&1
++}
++
++_check_hammer2_filesystem()
++{
++	[ "$(_fs_type "$1")" = "hammer2" ]
++}
++
++_require_newfs_hammer2()
++{
++	[ -n "$NEWFS_HAMMER2" ] || _notrun "newfs_hammer2 is not installed"
++}
++
++# _fs_type is common/rc's own and reads the mount table, where this port
++# reports `hammer2`; it is consumed here, not redefined, since redefining
++# it would replace the generic one for every filesystem.
+diff --git a/common/rc b/common/rc
+index 8add0ee..ec12984 100644
+--- a/common/rc
++++ b/common/rc
+@@ -1022,6 +1022,10 @@ _scratch_mkfs()
+ 		_try_scratch_mkfs_xfs $*
+ 		return $?
+ 		;;
++	hammer2)
++		mkfs_cmd="$NEWFS_HAMMER2"
++		mkfs_filter="cat"
++		;;
+ 	udf)
+ 		mkfs_cmd="$MKFS_UDF_PROG"
+ 		mkfs_filter="cat"

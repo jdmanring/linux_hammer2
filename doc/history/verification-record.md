@@ -6284,9 +6284,57 @@ report EOF for the case, and it is one guard before the scan. Measured
 after: 49 checks, 0 failures, and `cp` of a 512-byte file byte-identical
 to its source. `tmpfs` and `btrfs` pass the same 43-check exerciser on the
 host, which is where the expected answers came from rather than from this
-port's own behaviour.
+port's own behavior.
 
 The exerciser that existed before this did not catch it, and the reason is
 worth keeping: its file is three 64 KiB blocks, so every probe was on a
 file large enough to have a blockref tree. A test whose subject is always
 past the boundary the defect lives behind does not test the boundary.
+
+## fallocate failed on an empty file and destroyed data on a full one
+
+Both found by xfstests, on the first batch run through `script/xfstests.sh`.
+
+**An allocate on an empty file returned EIO.** generic/436, xfstests' own
+`SEEK_DATA`/`SEEK_HOLE` sanity suite, aborted at its setup with "ERROR 5:
+Failed to preallocate". The suite probes for unwritten extents with
+`fallocate(fd, 0, 0, 2 * alloc_size)` on a new file. On this port the
+call returned EIO, and the kernel log carried `chain key 0 above read at
+1000` from the WARN_ONCE at `hammer2_read_folio()`, reached from
+`hammer2_fallocate()` through `read_mapping_folio()`. The allocate read
+and zeroed each folio of the range and only then extended the size, so on
+a file of size 0 it asked for a block the inode did not yet have. A
+controlled contrast confirmed the order: the same call on a file already
+`ftruncate`d to 131072 returned 0 with no warning. The size change now
+runs before the folios are touched.
+
+**An allocate over existing data zeroed it.** generic/013's fsstress
+tripped the same warning, at `read at 22000`, and reading why showed that
+an allocate does not need to touch the folios at all. Its postcondition is
+that the range is allocated and reads back, and the bytes already in it
+stay. The folio loop zeroed every range for every mode. Measured: a plain
+allocate over a written 200000-byte file left all 200000 bytes zero on
+this port, while `tmpfs` kept them. The loop now runs for a punch and a
+zero range only.
+
+**Why the existing exerciser missed both.** `test/hammer2-fallocate.c`
+ran its only plain allocate at offset `total`, past the end of the file,
+so it exercised an extend and nothing else. It gains two checks: an
+allocate over a range that holds data, compared with what the file held
+just before the call, and an allocate on an empty file. The first draft of
+the data check compared with the pattern the file was first written with,
+which the earlier punches had already zeroed. It failed on `tmpfs` and
+`btrfs` as well as here, and it now compares with a read taken just before
+the allocate. With the correction both references pass all their checks,
+16 on `tmpfs` and 18 on `btrfs`. On this port before the fix the data
+check failed, 18 checks with 1 failure. After the fix it reads 18 checks,
+0 failures, the 200000-byte reproducer keeps its data, and the kernel log
+has no warning.
+
+**xfstests before and after these three fixes**, the same thirteen generic
+tests on `h2debug-rc5`. Before: 8 passed, 5 failed (013, 028, 285, 436,
+445), and the kernel log held four warnings. After the seek fix and the
+first fallocate fix: 11 passed, 2 failed. generic/028 failed with exit 127
+because `src/t_getcwd` had not been built: the `make` that built the suite
+stopped at `src/locktest`, which does not compile against the kernel of
+record's `fcntl.h`. `make -k` builds every other target.
