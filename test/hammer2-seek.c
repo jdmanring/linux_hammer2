@@ -38,6 +38,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,18 +67,29 @@ probe(int fd, const char *what, int whence, long from, long want)
 		printf("seek-ok   %s: %ld -> %ld\n", what, from, (long)got);
 }
 
-/* A seek that finds nothing is ENXIO, which lseek reports as -1. */
+/*
+ * A seek that finds nothing is ENXIO, which lseek reports as -1.  The
+ * errno is checked as well as the -1: every lseek failure returns -1, so
+ * a probe that read only the return took EINVAL for ENXIO, and the
+ * negative-offset checks passed on a build that answered EINVAL to all
+ * four of generic/448's questions.
+ */
 static void
 probe_enxio(int fd, const char *what, int whence, long from)
 {
 	off_t got;
 
 	checks++;
+	errno = 0;
 	got = lseek(fd, from, whence);
 	if (got != -1)
 		fail(what, (long)got, -1);
-	else
-		printf("seek-ok   %s: %ld -> -1\n", what, from);
+	else if (errno != ENXIO) {
+		printf("seek-fail %s: -1 with errno %d, want ENXIO (%d)\n",
+		    what, errno, ENXIO);
+		fails++;
+	} else
+		printf("seek-ok   %s: %ld -> -1 ENXIO\n", what, from);
 }
 
 /*
@@ -518,6 +530,47 @@ main(int argc, char **argv)
 	 * implicit hole after the last byte, and the kernel reports ENXIO
 	 * rather than handing back the offset it was given. */
 	probe_enxio(fd, "SEEK_HOLE at i_size", SEEK_HOLE, nbytes);
+	/*
+	 * A negative offset is before the start of the file, so both whences
+	 * find nothing and the answer is ENXIO, not EINVAL.  That is what
+	 * iomap_seek_hole() and iomap_seek_data() do and what
+	 * generic_file_llseek() does, comparing the offset as unsigned so a
+	 * negative one reads as past the end, and tmpfs agrees.  This port
+	 * answered EINVAL until xfstests generic/448 asked it four ways.
+	 *
+	 * The offsets are the ones generic/448 asks with, -1 and LLONG_MIN,
+	 * on a file of size 0, which is the shape that case uses.  A
+	 * negative answer of 0 would mean a scan from before the file
+	 * answered as though it were at its start.
+	 */
+	probe_enxio(fd, "SEEK_HOLE at -1", SEEK_HOLE, -1);
+	probe_enxio(fd, "SEEK_DATA at -1", SEEK_DATA, -1);
+	probe_enxio(fd, "SEEK_HOLE at LLONG_MIN", SEEK_HOLE, LLONG_MIN);
+	probe_enxio(fd, "SEEK_DATA at LLONG_MIN", SEEK_DATA, LLONG_MIN);
+	{
+		/*
+		 * Its own file: truncating `path` would empty the file `fd`
+		 * still has open, and the SEEK_END below would then read 0.
+		 */
+		char zpath[4096 + 8];
+		int zfd;
+
+		snprintf(zpath, sizeof(zpath), "%s.zero", path);
+		zfd = open(zpath, O_CREAT | O_TRUNC | O_RDWR, 0644);
+		if (zfd < 0) {
+			checks++;
+			fails++;
+			printf("seek-fail a zero-length file could not be "
+			    "made for the negative-offset checks\n");
+		} else {
+			probe_enxio(zfd, "SEEK_HOLE at -1 on a file of size 0",
+			    SEEK_HOLE, -1);
+			probe_enxio(zfd, "SEEK_DATA at -1 on a file of size 0",
+			    SEEK_DATA, -1);
+			close(zfd);
+		}
+		unlink(zpath);
+	}
 
 	/* SEEK_SET/CUR/END must still work; they go through the same entry. */
 	probe(fd, "SEEK_SET", SEEK_SET, 1234, 1234);

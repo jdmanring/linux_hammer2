@@ -6417,3 +6417,39 @@ an index below `nchains`, so the path is unreachable in both trees, but
 nothing in the function enforces that. This is the same latent shape the
 completion plan's P3 and P4 work on the cluster index will meet, and it
 is recorded there rather than patched here.
+
+## A negative offset answered EINVAL, and the probe could not tell
+
+xfstests generic/448, the second half of its seek sanity suite, failed at
+case 18, "Test file with negative SEEK_{HOLE,DATA} offsets". On a file of
+size 0 it asks `SEEK_HOLE` and `SEEK_DATA` at -1 and at `LLONG_MIN` and
+expects ENXIO for all four. The port answered EINVAL, from a
+`return (-EINVAL)` on `offset < 0` at the top of `hammer2_llseek()`.
+
+The references disagree, so the contract was read from the kernel of
+record rather than taken from any one of them. `iomap_seek_hole()` and
+`iomap_seek_data()` return ENXIO on `pos < 0 || pos >= size`, and ext4
+and xfs reach both through iomap. `generic_file_llseek()` compares the
+offset as unsigned in `must_set_pos()`, so a negative offset reads as past
+the end and gets ENXIO. tmpfs answers ENXIO. btrfs answers 65536 for
+`SEEK_HOLE` at -1: `btrfs_file_llseek()` makes no negative test and
+`find_desired_extent()` takes its no-holes quick path before testing the
+offset. That is btrfs's own departure and not the contract. The port now
+returns ENXIO for any offset before the start or at or past the end.
+
+**The port's own probe could not see the defect.** `probe_enxio()` in
+`test/hammer2-seek.c` checked only that `lseek` returned -1, and every
+lseek failure returns -1. The four new negative-offset probes passed on
+a module built without the fix, which answers EINVAL to each, so the
+check was satisfied by any refusal at all. The probe now checks errno as
+well. With that change, the module without the fix fails all six
+negative-offset probes with errno 22, the module with it fails none, and
+tmpfs passes all 49 checks. btrfs fails the two `SEEK_HOLE` probes on a
+non-empty file, for the reason above. Every earlier ENXIO probe in the
+exerciser had the same blind spot, so none of the three at `i_size`
+could ever have told ENXIO from EINVAL either.
+
+**xfstests' `seek` group, all eight tests** (285, 286, 436, 445, 448,
+490, 539, 706), measured 2026-10-06 on `h2debug-rc5` with the fix: 8 of 8
+passed, kernel log `bug 0 oops 0 warn 0`. Before it, 448 was the one
+failure.

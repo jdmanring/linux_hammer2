@@ -1390,17 +1390,21 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 		    maxbytes, isize));
 	}
 
-	if (offset < 0)
-		return (-EINVAL);
 	seek_data = (whence == SEEK_DATA);
 	/*
-	 * At or past the end of the file both whences fail with ENXIO, which
-	 * is what generic_file_llseek() does for SEEK_HOLE and what
-	 * iomap_seek_hole(), btrfs and tmpfs do as well.  The implicit hole
-	 * after the last byte is what a scan from within the data reports,
-	 * not what a seek already at the end reports.
+	 * Before the start or at or past the end of the file both whences
+	 * fail with ENXIO.  That is what iomap_seek_hole() and
+	 * iomap_seek_data() do, testing pos < 0 || pos >= size, and what
+	 * generic_file_llseek() does for both, comparing the offset as
+	 * unsigned so that a negative one reads as past the end.  tmpfs
+	 * agrees.  The implicit hole after the last byte is what a scan from
+	 * within the data reports, not what a seek already at the end
+	 * reports.
+	 *
+	 * A negative offset answered EINVAL here, which no reference does:
+	 * xfstests generic/448 asks it four ways and expects ENXIO for each.
 	 */
-	if (offset >= isize)
+	if (offset < 0 || offset >= isize)
 		return (-ENXIO);
 
 	/*
