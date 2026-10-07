@@ -464,6 +464,19 @@ out=$(ssh "$GUEST_SSH" '
 	# back with dmesg afterwards. Everything derived from it is printed
 	# BEFORE the unmount, because a bad unmount is where the evidence is
 	# lost. The capture itself runs on across the unmount.
+	# A capture this script started is stopped on EVERY way out of the
+	# block, not only at the end. The early exits below (insmod, mount)
+	# returned without it, and the orphan kept writing to /tmp/kmsg.log
+	# at its own file offset after the next run truncated the file: the
+	# next run read a file holding NULs and two replays of the ring, the
+	# marker grep took it for binary, and the run reported COULD-NOT-RUN.
+	# A capture from an earlier run of this script is stopped first, by
+	# the file it writes, since nothing else on the guest writes there.
+	for p in $(pgrep -x cat); do
+		[ "$(readlink /proc/$p/fd/1 2>/dev/null)" = /tmp/kmsg.log ] &&
+		    kill "$p" 2>/dev/null
+	done
+	trap "kill \$kpid 2>/dev/null" EXIT
 	: > /tmp/kmsg.log
 	# Unbuffered, because cat block-buffers to a file: a line the kernel
 	# prints during the unmount can still be sitting in the buffer when
@@ -813,7 +826,7 @@ out=$(ssh "$GUEST_SSH" '
 	# PID 1, untainted. A missing marker is COULD-NOT-RUN rather than a
 	# count from the start: counting the ring would fold every earlier
 	# run in this boot into this one.
-	anchor=$(command grep -n "$(cat /tmp/h2mark)" /tmp/kmsg.log | tail -1 | cut -d: -f1)
+	anchor=$(command grep -an "$(cat /tmp/h2mark)" /tmp/kmsg.log | tail -1 | cut -d: -f1)
 	w=$(tail -n +"${anchor:-0}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure" || true)
 	if [ -n "$anchor" ]; then
 		echo "kernel warnings $w after the run marker $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*" | cut -c1-90)"

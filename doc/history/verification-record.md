@@ -6338,3 +6338,26 @@ first fallocate fix: 11 passed, 2 failed. generic/028 failed with exit 127
 because `src/t_getcwd` had not been built: the `make` that built the suite
 stopped at `src/locktest`, which does not compile against the kernel of
 record's `fcntl.h`. `make -k` builds every other target.
+
+**The enospc gate could not attribute its counts after an early exit.**
+The push carrying the fallocate fixes reported `test-enospc.sh`
+COULD-NOT-RUN: "the run marker is not in the capture". The gate streams
+`/dev/kmsg` into `/tmp/kmsg.log` on the guest and starts the stream before
+`insmod` and `mount`. An earlier run that day had stopped at its mount,
+because a scratch volume of this session's own held `/dev/vdb`. It
+returned through the block's early `exit 0`, which never reached the
+`kill $kpid` at the end, and that capture kept running. The next run
+truncated the file, and the orphan went on writing at its own offset of
+247957. The result held 68695 NUL bytes and two replays of the ring, so
+`grep` called it a binary file and printed "binary file matches" instead
+of the line number. The anchor came back empty, and both fault counts were
+reported as could-not-run. That result was correct, but it came from the
+gate's own leftover process. The capture is now stopped by a trap on every
+exit from the block. A capture from an earlier run, found by the file it
+writes, is stopped before the new one starts, and the anchor is read with
+`grep -a`. The next run read kernel warnings 0 and module faults 0 after
+the marker, seek 49 checks and fallocate 18 checks with 0 failures, and
+the fill 0 failures. The five `hammer2_chain_testcheck: failed` lines in
+that boot's ring name block `0x9020010`, which is f9's deliberately
+flipped byte, recorded in the fixture table above. They are not a fault
+of this run.
