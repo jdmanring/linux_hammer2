@@ -277,6 +277,103 @@ embedded(const char *path, long bsize)
 	}
 }
 
+/*
+ * A writer and a seeker on the same file at once.  The writer fills the
+ * file's blocks one at a time in increasing order, unsynced, and after
+ * each one publishes how many it has finished through a shared counter.
+ * The seeker reads the counter, then asks SEEK_HOLE from 0: every block
+ * below the counter it read was complete before the question was asked,
+ * so the hole may not start inside them.  It may start anywhere at or
+ * past them, since the writer is still going.  SEEK_DATA from 0 has to
+ * answer 0 once the first block is done.
+ *
+ * This is the window the writeback-before-scan fix closes, with the
+ * writeback racing new dirty folios rather than settled ones: a scan that
+ * wrote back only what was dirty when it started, then read a tree that a
+ * second writeback was changing, could report a finished block as a hole.
+ *
+ * The count of questions asked is printed and asserted, since a seeker
+ * that never overlapped the writer would pass without testing anything.
+ */
+#define RACE_BLOCKS	64
+
+static void
+concurrent(const char *path, long bsize)
+{
+	volatile long *done;
+	char *buf;
+	pid_t pid;
+	long asked = 0, bad = 0, i;
+	int fd, st;
+
+	checks++;
+	done = mmap(NULL, sizeof(*done), PROT_READ | PROT_WRITE,
+	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	buf = malloc(bsize);
+	if (done == MAP_FAILED || buf == NULL ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0 ||
+	    ftruncate(fd, RACE_BLOCKS * bsize) != 0) {
+		printf("seek-fail concurrent: the file could not be built\n");
+		fails++;
+		free(buf);
+		return;
+	}
+	*done = 0;
+	memset(buf, 'C', bsize);
+	pid = fork();
+	if (pid == 0) {
+		for (i = 0; i < RACE_BLOCKS; i++) {
+			if (pwrite(fd, buf, bsize, i * bsize) != bsize)
+				_exit(1);
+			__atomic_store_n(done, i + 1, __ATOMIC_RELEASE);
+			/*
+			 * Paced, so the overlap does not depend on which
+			 * process the scheduler favours: unpaced, tmpfs
+			 * finished all 64 blocks before the seeker asked
+			 * twice, in one run of three.
+			 */
+			usleep(2000);
+		}
+		_exit(0);
+	}
+	while (__atomic_load_n(done, __ATOMIC_ACQUIRE) < RACE_BLOCKS) {
+		long n = __atomic_load_n(done, __ATOMIC_ACQUIRE);
+		off_t h, d;
+
+		if (n == 0)
+			continue;
+		asked++;
+		h = lseek(fd, 0, SEEK_HOLE);
+		d = lseek(fd, 0, SEEK_DATA);
+		if (h < n * bsize || d != 0) {
+			if (bad++ == 0)
+				printf("seek-fail concurrent: with %ld block(s) "
+				    "done, SEEK_HOLE at 0 said %ld and SEEK_DATA "
+				    "%ld\n", n, (long)h, (long)d);
+		}
+	}
+	waitpid(pid, &st, 0);
+	close(fd);
+	unlink(path);
+	free(buf);
+	munmap((void *)done, sizeof(*done));
+	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+		printf("seek-fail concurrent: the writer failed\n");
+		fails++;
+	} else if (asked < RACE_BLOCKS) {
+		printf("seek-fail concurrent: only %ld question(s) overlapped "
+		    "the writer, so the race was not run\n", asked);
+		fails++;
+	} else if (bad) {
+		printf("seek-fail concurrent: %ld of %ld answers called a "
+		    "finished block a hole\n", bad, asked);
+		fails++;
+	} else
+		printf("seek-ok   concurrent: %ld answers during %d block "
+		    "writes, none calling a finished block a hole\n", asked,
+		    RACE_BLOCKS);
+}
+
 static void
 mapped(const char *path, long bsize)
 {
@@ -488,6 +585,7 @@ main(int argc, char **argv)
 		mapped(dpath, bsize);
 		compressed(dpath, buf, bsize, nbytes);
 		embedded(dpath, bsize);
+		concurrent(dpath, bsize);
 	}
 
 	if ((fd = build(path, buf, bsize, nbytes)) < 0)

@@ -271,22 +271,25 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order, and the first two steps are under way.
+dependency order. P0 and P1 are closed and P2 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
-   agree with the newest row, the thirteen gates ran and passed on the
-   tree at `9b0bc92`, the two fleet gates included, and provenance is
-   clean. This section had listed the pre-1.0 moves three readings after
-   all of them closed.
+   agree with the newest row, the gates ran and passed on the tree at
+   `9b0bc92`, the two fleet gates included, and provenance is clean.
 2. P1, `SEEK_DATA` and `SEEK_HOLE` against the defect upstream disabled
-   `FIOSEEKHOLE` for in `0d0182bdb4`. The window was open here: a file
-   written and not yet synced read as all hole, all five unsynced probes
-   failing, until the seek wrote the dirty range back first; five of five
-   pass now and `doc/history/verification-record.md` has both runs. Since
-   then a write through a shared mapping, block boundaries and a regrown
-   file pass too, 35 checks. Open: a snapshot taken while dirty,
-   compressed and deduplicated files, concurrent writers, a crash between
-   the write and the seek.
+   `FIOSEEKHOLE` for in `0d0182bdb4`, closed 2026-10-06. The window was
+   open here, and a file written and not yet synced read as all hole
+   until the seek wrote the dirty range back first. Running xfstests
+   against the port found four more: `SEEK_HOLE` called a file held in
+   the inode a hole, so `cp` wrote zeros, `fallocate` returned EIO on an
+   empty file and zeroed data on a written one, and a negative offset
+   answered EINVAL. Each has a probe that failed before its fix and
+   passes after. `doc/history/verification-record.md` has every reading,
+   the race between a writer and the seek included, and xfstests' `seek`
+   group passes, 8 of 8.
+3. P2, root filesystem and long-run readiness, is next. Its row below
+   names what is measured and what is not, and `script/xfstests.sh` is
+   now the instrument for the parts the suite covers.
 
 ## Versioning
 
@@ -824,7 +827,7 @@ Rules it adds to the ones this tree already keeps:
 | step | work | after | state |
 |---|---|---|---|
 | P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
-| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass; concurrent writers open |
+| P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass, and so do files held in the inode, negative offsets and a writer racing the seek; xfstests' `seek` group passes, 8 of 8. Closed |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | instruments exist for the root boot, the million-file tree, the Nix closure and low memory; `readiness-audit-2026-09-25.md` names the small-file rate, mixed load and multi-hour runs unmeasured, and the export is measured through the handle syscalls rather than nfsd. `O_DIRECT` is decided, under "Not on the roadmap" |
 | P3 | cache coherency (CCMS): a design note before any code | P2 | rewritten, see below |
 | P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |

@@ -6512,3 +6512,32 @@ it reads back as a hole and FIEMAP has no unwritten extent to report.
 The file's content after the allocate, which is the part of the test
 that detects corruption, matched byte for byte. Kernel log: bug 0, oops
 0, warn 0.
+
+## P1's last case: a writer and a seeker on the same file at once
+
+`test/hammer2-seek.c` gains `concurrent()`. A forked writer fills 64
+blocks of a file in order without syncing, pausing 2 ms after each, and
+publishes how many it has finished through a shared counter. The seeker
+reads the counter, then asks `SEEK_HOLE` and `SEEK_DATA` at 0. A block
+below the counter was finished before the question was asked, so the hole
+may not start inside it, and `SEEK_DATA` at 0 must be 0. The number of
+questions that overlapped the writer is asserted to be at least the number
+of blocks, since a seeker that never overlapped would pass without testing
+the race. Before the pause was added, `tmpfs` finished all 64 blocks while
+the seeker asked twice, in one run of three.
+
+Measured 2026-10-06, five runs each. `tmpfs` gave 33723 to 38716 answers
+and `btrfs` 46057 to 47695, none calling a finished block a hole. On
+`h2debug-rc5` the current module gave 143 to 199 answers in five runs,
+none wrong, and 56 checks with 0 failures each time. The answer count is
+lower here because each question writes back what is dirty before it
+scans. The control is the module built from `4cfa009`, before the
+writeback-before-scan fix. It failed all five runs, every answer wrong,
+3086 to 3146 of them. With one block done, `SEEK_HOLE` at 0 answered 0
+and `SEEK_DATA` answered ENXIO. The kernel log had no warning in either.
+
+That closes P1's list: unsynced, boundaries, regrown, mapped, compressed,
+in the inode, negative offsets, concurrent writers, a dirty snapshot,
+shared blocks and a hard stop. The six of those that the exerciser asks
+on its own run in every enospc gate. The other three run under
+`script/seek-matrix.sh`. xfstests' `seek` group passes, all eight tests.
