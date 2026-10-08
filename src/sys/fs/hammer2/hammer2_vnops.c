@@ -1636,13 +1636,15 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	}
 
 	/*
-	 * A punch past the end finds nothing to free, and the range is
-	 * clamped to the end of the file: the bytes past i_size are a hole
-	 * already.  The alignment is not forced, since the page cache can
-	 * zero a partial folio and the block elision reads whatever it is
-	 * given.
+	 * A punch, or a zero range with KEEP_SIZE, past the end finds
+	 * nothing to free, and the range is clamped to the end of the file:
+	 * the bytes past i_size are a hole already.  A zero range without
+	 * KEEP_SIZE extends the file, so its range is not clamped.  The
+	 * alignment is not forced, since the page cache can zero a partial
+	 * folio and the block elision reads whatever it is given.
 	 */
-	if (mode & (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE)) {
+	if ((mode & FALLOC_FL_PUNCH_HOLE) ||
+	    ((mode & FALLOC_FL_ZERO_RANGE) && keep_size)) {
 		if (offset >= isize)
 			return (0);
 		if (end > isize)
@@ -1656,9 +1658,9 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	/*
 	 * The size change first, under the transaction and ip->lock, as
 	 * ->setattr does it.  A punch and KEEP_SIZE leave the size where it
-	 * is; an allocate extends to cover the range, and the extend is what
-	 * makes the new tail read back as zeros rather than as the media that
-	 * was there.
+	 * is; an allocate or a zero range extends to cover the range, and the
+	 * extend is what makes the new tail read back as zeros rather than as
+	 * the media that was there.
 	 *
 	 * It runs BEFORE the folios are read.  Reading a folio of a range
 	 * past the current size asks the blockref tree for a block the inode

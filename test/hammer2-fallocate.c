@@ -19,8 +19,9 @@
  * WHAT IS CHECKED.  A range that is punched or zeroed reads back as zeros
  * and the bytes outside it are untouched, which is the contract and is the
  * same on ext4.  A punch never changes the size; KEEP_SIZE never changes it
- * either; a plain allocate extends it.  A punch wholly past the end and a
- * punch over an existing hole are both no-ops that succeed.
+ * either; a plain allocate and a zero range without KEEP_SIZE extend it.  A
+ * punch wholly past the end and a punch over an existing hole are no-ops that
+ * succeed.
  *
  * A FAKE PASS would be a filesystem where the range happened to be zeros
  * already, so the file is written with a pseudo-random pattern that has no
@@ -690,6 +691,44 @@ main(int argc, char **argv)
 		}
 		if (fd >= 0)
 			close(fd);
+	}
+
+	/* ZERO_RANGE without KEEP_SIZE extends a range beyond EOF. */
+	{
+		size_t prefix = 65536;
+		off_t offset = (off_t)prefix + (off_t)blk;
+		off_t len = (off_t)blk;
+		off_t want = offset + len;
+
+		if (write_pattern(path, buf, prefix) != 0) {
+			printf("falloc-fail the zero-range tail file did not land\n");
+			fails++;
+			checks++;
+		} else if (!try_mode(path, FALLOC_FL_ZERO_RANGE, offset, len,
+		    "ZERO_RANGE beyond EOF")) {
+			checks++;
+			if (size_of(path) != (long)want) {
+				printf("falloc-fail ZERO_RANGE beyond EOF left the "
+				    "size at %ld, wanted %ld\n", size_of(path),
+				    (long)want);
+				fails++;
+			} else {
+				printf("falloc-ok   ZERO_RANGE beyond EOF extended "
+				    "the file to %ld\n", (long)want);
+			}
+
+			checks++;
+			if (read_at(path, out, (size_t)want, 0) != 0 ||
+			    memcmp(out, buf, prefix) != 0 ||
+			    !all_zero(out + prefix, (size_t)(want - prefix))) {
+				printf("falloc-fail ZERO_RANGE beyond EOF changed the "
+				    "prefix or did not read as zeros\n");
+				fails++;
+			} else {
+				printf("falloc-ok   ZERO_RANGE beyond EOF left the "
+				    "prefix intact and reads as zeros\n");
+			}
+		}
 	}
 
 	unlink(path);
