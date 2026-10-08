@@ -1741,6 +1741,20 @@ hammer2_inode_chain_sync(hammer2_inode_t *ip)
 			    ip->meta.size > HAMMER2_EMBEDDED_BYTES) {
 				ip->meta.op_flags &= ~HAMMER2_OPFLAG_DIRECTDATA;
 				xop->clear_directdata = 1;
+			} else if ((ip->meta.op_flags &
+			    HAMMER2_OPFLAG_DIRECTDATA) &&
+			    ip->meta.size < ip->osize) {
+				/*
+				 * Linux: a shrink inside the inode zeroes the
+				 * embedded bytes past the new size.  They stay
+				 * in u.data otherwise and a later extend reads
+				 * them back as file data (xfstests generic/393:
+				 * write 40, truncate to 0, truncate to 50).
+				 * The blockset is not in use while DIRECTDATA
+				 * is set, so this is the same store the data
+				 * came from.
+				 */
+				xop->clear_directdata = 1;
 			}
 			xop->osize = ip->osize;
 		} else {

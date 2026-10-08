@@ -6501,6 +6501,38 @@ mounted, so the next run could not attach them and reported
 COULD-NOT-RUN. The wrapper now stops a `check` left by an earlier run
 before it starts.
 
+**The quick group, measured 2026-10-08** on `h2debug-rc5`, the fixed
+module: 646 tests, 590 passed, 26 failed, 30 not run, kernel log clean.
+The failures are three classes and the not-runs are all declared
+absences. Two of the classes are recorded elsewhere in this section and
+one is new:
+
+- `generic/393` was a real defect and is fixed: a truncate inside the
+  inode left the embedded bytes past the new size in `u.data`, and a
+  later extend read them back. `hammer2_inode_chain_sync()` now clears
+  the embedded data on a shrink while DIRECTDATA is set, as it already
+  did when the file grew past the embedded size. The exerciser's
+  embedded case, run from a file that was never larger than the embedded
+  size, failed 1 of 21 checks on the module before the fix and passes
+  after, and `generic/393` passes.
+- `generic/009`, `255` and `679` are the format's own answer: a
+  preallocated range is not stored, so FIEMAP reports a hole where the
+  expected output has an unwritten extent, and the file's content after
+  the allocate, which is the part that detects corruption, matches byte
+  for byte. This is the disposition recorded for 679 below, reached by
+  two more tests.
+- The rest are not this filesystem's to pass: `003`, `313`, `423` and
+  `258` read `st_atime`/`st_ctime` and the nanosecond ordering of
+  `statx` timestamps, which this port does not store as the tests
+  expect; `131` needs `src/locktest`, which does not build against the
+  kernel of record's `fcntl.h`; `228`, `306` and `409`/`410`/`411` are
+  `->fallocate` past `s_maxbytes`, `->freeze` while read-only and the
+  same device mounted twice, each a surface this port does not carry or
+  declares; `092` and `467`/`478`/`519`/`604`/`610`/`634`/`732`/`738`
+  and `796`/`797`/`798`/`676` are recorded with the test's own reason in
+  the run's output. A reader should treat this list as the work queue
+  for the next pass, not as a clean sheet.
+
 **The sized batch, measured 2026-10-06** on `h2debug-rc5`: generic/269,
 273, 274, 275, 488, 558 and 679. 273 and 488 passed. 269 skipped on the
 1 GiB floor, 274 and 275 on `_require_no_compress`, and 558 because the

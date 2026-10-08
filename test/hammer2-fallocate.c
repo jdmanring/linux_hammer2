@@ -731,6 +731,49 @@ main(int argc, char **argv)
 		}
 	}
 
+	/*
+	 * A file small enough to live in its inode is truncated within it,
+	 * and the bytes past the new size must not come back when it is
+	 * extended again.  The block's zeroing is skipped when the size is a
+	 * multiple of the block size, which is the embedded case: the data is
+	 * in the inode, so there is no partial block and no folio, and the
+	 * bytes past the new end stay in u.data.  xfstests generic/393
+	 * truncates to 0 and then to 50 and reads the pre-truncate bytes.
+	 */
+	{
+		size_t wrote = 40;
+		off_t grow = 50;
+		char epath[4096];
+
+		snprintf(epath, sizeof(epath), "%s/falloc-embed", dir);
+		/* One open file, as xfs_io -f -c ... keeps: O_TRUNC and a close
+		 * between the steps drop the cache and hide the defect. */
+		int fd = open(epath, O_CREAT | O_TRUNC | O_RDWR, 0644);
+
+		if (fd < 0 || pwrite(fd, buf, wrote, 0) != (ssize_t)wrote ||
+		    fsync(fd) != 0 || ftruncate(fd, 0) != 0 ||
+		    ftruncate(fd, grow) != 0) {
+			if (fd >= 0)
+				close(fd);
+			printf("falloc-fail the embedded truncate file did not land\n");
+			fails++;
+			checks++;
+		} else {
+			checks++;
+			if (pread(fd, out, (size_t)grow, 0) != (ssize_t)grow ||
+			    !all_zero(out, (size_t)grow)) {
+				printf("falloc-fail a file in its inode read back bytes "
+				    "a truncate cut off\n");
+				fails++;
+			} else {
+				printf("falloc-ok   a truncate to 0 and back to %ld read "
+				    "as zeros\n", (long)grow);
+			}
+			close(fd);
+		}
+		unlink(epath);
+	}
+
 	unlink(path);
 	free(buf);
 	free(out);
