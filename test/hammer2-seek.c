@@ -300,15 +300,16 @@ embedded(const char *path, long bsize)
 static void
 concurrent(const char *path, long bsize)
 {
-	volatile long *done;
+	volatile long *done, *seen;
 	char *buf;
 	pid_t pid;
 	long asked = 0, bad = 0, i;
 	int fd, st;
 
 	checks++;
-	done = mmap(NULL, sizeof(*done), PROT_READ | PROT_WRITE,
+	done = mmap(NULL, 2 * sizeof(*done), PROT_READ | PROT_WRITE,
 	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	seen = done + 1;
 	buf = malloc(bsize);
 	if (done == MAP_FAILED || buf == NULL ||
 	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0 ||
@@ -319,19 +320,30 @@ concurrent(const char *path, long bsize)
 		return;
 	}
 	*done = 0;
+	*seen = 0;
 	memset(buf, 'C', bsize);
 	pid = fork();
 	if (pid == 0) {
 		for (i = 0; i < RACE_BLOCKS; i++) {
+			int w;
+
 			if (pwrite(fd, buf, bsize, i * bsize) != bsize)
 				_exit(1);
 			__atomic_store_n(done, i + 1, __ATOMIC_RELEASE);
 			/*
-			 * Paced, so the overlap does not depend on which
-			 * process the scheduler favours: unpaced, tmpfs
-			 * finished all 64 blocks before the seeker asked
-			 * twice, in one run of three.
+			 * Paced by the seeker, so the overlap does not depend
+			 * on machine speed: unpaced, tmpfs finished all 64
+			 * blocks before the seeker asked twice, and a fixed
+			 * 2 ms pause let a KASAN kernel's slower seek fall
+			 * to 35 questions.  The writer waits until a question
+			 * has been asked about the block it just finished,
+			 * then pauses so the next write lands mid-scan.  The
+			 * wait is bounded at 2 s, since the seeker stops
+			 * asking once the last block is published.
 			 */
+			for (w = 0; w < 20000 && __atomic_load_n(seen,
+			    __ATOMIC_ACQUIRE) < i + 1; w++)
+				usleep(100);
 			usleep(2000);
 		}
 		_exit(0);
@@ -345,6 +357,7 @@ concurrent(const char *path, long bsize)
 		asked++;
 		h = lseek(fd, 0, SEEK_HOLE);
 		d = lseek(fd, 0, SEEK_DATA);
+		__atomic_store_n(seen, n, __ATOMIC_RELEASE);
 		if (h < n * bsize || d != 0) {
 			if (bad++ == 0)
 				printf("seek-fail concurrent: with %ld block(s) "
@@ -356,7 +369,7 @@ concurrent(const char *path, long bsize)
 	close(fd);
 	unlink(path);
 	free(buf);
-	munmap((void *)done, sizeof(*done));
+	munmap((void *)done, 2 * sizeof(*done));
 	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
 		printf("seek-fail concurrent: the writer failed\n");
 		fails++;
