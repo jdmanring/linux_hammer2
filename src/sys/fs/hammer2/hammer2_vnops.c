@@ -1008,11 +1008,27 @@ hammer2_zero_tail(struct inode *inode, loff_t off)
 	 */
 	bend = (off | HAMMER2_PBUFMASK64) + 1;
 	for (pos = off; pos < bend; pos = folio_pos(folio) + folio_size(folio)) {
-		folio = read_mapping_folio(inode->i_mapping, pos >> PAGE_SHIFT,
-		    NULL);
+		/*
+		 * Only the folio holding off has bytes to keep.  One wholly
+		 * past it is zeroed entire, so it is grabbed rather than
+		 * read: a read past the end asks the tree for a block a
+		 * file held in its inode does not have, and fails EIO
+		 * (xfstests generic/438, an extending fallocate).
+		 */
+		if (pos == off)
+			folio = read_mapping_folio(inode->i_mapping,
+			    pos >> PAGE_SHIFT, NULL);
+		else
+			folio = filemap_grab_folio(inode->i_mapping,
+			    pos >> PAGE_SHIFT);
 		if (IS_ERR(folio))
 			return (PTR_ERR(folio));
-		folio_lock(folio);
+		if (pos == off)
+			folio_lock(folio);
+		else if (!folio_test_uptodate(folio)) {
+			folio_zero_range(folio, 0, folio_size(folio));
+			folio_mark_uptodate(folio);
+		}
 		/*
 		 * The lock is held and the writeback is waited on under it:
 		 * a writer that is already in the core's hands cannot be
