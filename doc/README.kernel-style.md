@@ -471,6 +471,10 @@ than recorded: the channel parameters were `const volatile`, DragonFly's
 spelling, where `READ_ONCE` already makes the one read that needs it, and
 `wakeup()`'s barrier now says what it pairs with.
 
+The fallocate fixes xfstests' generic/075 found moved the total to
+1,239, one `return (x);` fewer: `FALLOC_FL_UNSHARE_RANGE` returned 0
+before the size extend and now falls through to it. Nothing was added.
+
 The table below is the dispositions, not the counts. It used to carry a
 count column, and every row of it was stale within a commit or two: the
 SPDX pair read 14 and 14 against a baseline of 15 and 15, the errno row

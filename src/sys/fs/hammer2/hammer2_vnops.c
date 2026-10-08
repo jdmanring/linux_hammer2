@@ -994,26 +994,39 @@ static int
 hammer2_zero_tail(struct inode *inode, loff_t off)
 {
 	struct folio *folio;
+	loff_t pos, bend;
 
 	if (off == 0 || (off & HAMMER2_PBUFMASK64) == 0)
 		return (0);
-	folio = read_mapping_folio(inode->i_mapping, off >> PAGE_SHIFT, NULL);
-	if (IS_ERR(folio))
-		return (PTR_ERR(folio));
-	folio_lock(folio);
 	/*
-	 * The lock is held and the writeback is waited on under it: a
-	 * writer that is already in the core's hands cannot be holding
-	 * the lock, so no writer can begin while the wait runs and the
-	 * zeroing below then lands on a folio nobody else is reading.
+	 * Linux: to the end of the logical block, not of one folio.  Under
+	 * memory pressure the block is cached as several smaller folios,
+	 * and the media keeps the old bytes past off until the block is
+	 * rewritten, so a later extend read them back as file data.  fsx
+	 * (xfstests generic/075) found it: a truncate inside a block, then
+	 * an extend, read bytes the file no longer held.
 	 */
-	folio_wait_stable(folio);
-	if (off < folio_pos(folio) + folio_size(folio))
-		folio_zero_segment(folio, offset_in_folio(folio, off),
-		    folio_size(folio));
-	folio_mark_dirty(folio);
-	folio_unlock(folio);
-	folio_put(folio);
+	bend = (off | HAMMER2_PBUFMASK64) + 1;
+	for (pos = off; pos < bend; pos = folio_pos(folio) + folio_size(folio)) {
+		folio = read_mapping_folio(inode->i_mapping, pos >> PAGE_SHIFT,
+		    NULL);
+		if (IS_ERR(folio))
+			return (PTR_ERR(folio));
+		folio_lock(folio);
+		/*
+		 * The lock is held and the writeback is waited on under it:
+		 * a writer that is already in the core's hands cannot be
+		 * holding the lock, so no writer can begin while the wait
+		 * runs and the zeroing below then lands on a folio nobody
+		 * else is reading.
+		 */
+		folio_wait_stable(folio);
+		folio_zero_segment(folio, pos - folio_pos(folio),
+		    min_t(loff_t, bend - folio_pos(folio), folio_size(folio)));
+		folio_mark_dirty(folio);
+		folio_unlock(folio);
+		folio_put(folio);
+	}
 	return (0);
 }
 
@@ -1675,6 +1688,10 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	 * aborts on it, so this is what made generic/436 fail.
 	 */
 	if (!keep_size && !(mode & FALLOC_FL_PUNCH_HOLE) && end > isize) {
+		/* As ->setattr does: the old tail block must not reappear. */
+		error = hammer2_zero_tail(inode, isize);
+		if (error)
+			return (error);
 		hammer2_trans_init(ip->pmp, 0);
 		hammer2_inode_lock(ip, 0);
 		hammer2_extend_file(ip, end);
