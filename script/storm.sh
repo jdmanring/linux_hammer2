@@ -61,13 +61,13 @@ case $SIZE in
 *) VOL=$SIZE ;;
 esac
 case $VOL in ''|0|*[!0-9]*) echo "storm: COULD-NOT-RUN: H2_STORM_SIZE=$SIZE is not a size" >&2; exit 2 ;; esac
-# A cycle may spend most of the volume, because every cycle is bulkfreed
-# and removed before the next one starts, so nothing carries over.  The
-# fraction leaves room for the metadata a cycle allocates beside its data
-# and for the reserve the allocator keeps: at 80% the data and the meta a
-# cycle spends together stay under the reserve line, and a cycle that
-# somehow overran would fail its own checks rather than quietly pass.
-BUDGET=$((VOL * 4 / 5))
+# A cycle may spend half the volume, data and meta together.  Every cycle
+# is bulkfreed and removed before the next, so nothing carries over, but
+# the probe's rate is lower than a full cycle's (the load is still ramping
+# in its first seconds) and the allocator keeps a twentieth in reserve.
+# At four fifths of data alone, a 24-cycle run on 8G spent 7.95 GB a cycle
+# against 7.81 usable and lost 9 cycles to ENOSPC by chance.
+BUDGET=$((VOL / 2))
 echo "storm: a cycle may spend $BUDGET B of $VOL B"
 [ -x "$NEWFS" ] || { echo "storm: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "storm: COULD-NOT-RUN: no fsck_hammer2 at $FSCK" >&2; exit 2; }
@@ -125,8 +125,8 @@ for cyc in $(seq 1 NCYC); do
 	# so it reports the number the last bulkfree left and not what a run has
 	# spent.  The module counters move on every allocation and are
 	# the reading the cost of a cycle is taken from.
-	d0=$(cat $ALLOC/alloc_data_bytes)
-	echo "cost before cycle $cyc: data $d0 meta $(cat $ALLOC/alloc_meta_bytes)"
+	d0=$(($(cat $ALLOC/alloc_data_bytes) + $(cat $ALLOC/alloc_meta_bytes)))
+	echo "cost before cycle $cyc: data $(cat $ALLOC/alloc_data_bytes) meta $(cat $ALLOC/alloc_meta_bytes)"
 	# The first cycle is the probe: it runs for PROBE seconds and what it
 	# spent is what a second of this load costs, which sizes every cycle
 	# after it.  An assumed rate is a rate that is wrong on the machine
@@ -134,11 +134,18 @@ for cyc in $(seq 1 NCYC); do
 	if [ "$cyc" = 1 ]; then runsecs=PROBESEC; else runsecs=$cycsecs; fi
 	/tmp/h2storm /mnt/storm $runsecs FILES
 	echo "run exit $?"
-	d1=$(cat $ALLOC/alloc_data_bytes)
+	d1=$(($(cat $ALLOC/alloc_data_bytes) + $(cat $ALLOC/alloc_meta_bytes)))
+	spent=$((d1 - d0))
+	[ "$spent" -gt "${maxspent:-0}" ] && maxspent=$spent
+	echo "cycle spend $spent B, most any cycle spent ${maxspent:-0} B of BUDGET B"
 	if [ "$cyc" = 1 ]; then
-		spent=$((d1 - d0))
 		rate=$((spent / PROBESEC))
 		[ "$rate" -gt 0 ] || rate=1
+		# The probe is the first seconds of the load and its rate is lower
+		# than the steady one, so a cycle sized from it alone overruns.
+		# The budget is halved for that, which covers the ramp measured
+		# on 2026-10-08 (6.7 GB in the first full cycle against 7.2 GB
+		# once the four write roles had all started).
 		cycsecs=$((BUDGET / rate))
 		[ "$cycsecs" -ge 1 ] || cycsecs=1
 		echo "probe: $spent B in PROBESEC s is $rate B/s, so $cycsecs s per cycle"
