@@ -85,9 +85,13 @@ ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')
 	echo "xfstests: COULD-NOT-RUN: the module is for $ko_rel and $GUEST runs $guest_rel" >&2; exit 2; }
 
 # Made with newfs_hammer2's defaults, so each has the DATA PFS a bare
-# device mounts. xfstests reformats the scratch volume itself.
+# device mounts. xfstests reformats the scratch volume itself. A remove
+# frees nothing here until two bulkfree passes run, and no test runs
+# them, so a test that churns more than the volume holds, generic/127's
+# four 100000-operation fsx runs among them, ends in ENOSPC on a volume
+# that is mostly freed blocks. H2_XFSTESTS_SIZE gives such a test room.
 for img in "$TV" "$SV"; do
-	rm -f "$img"; truncate -s 3G "$img"
+	rm -f "$img"; truncate -s "${H2_XFSTESTS_SIZE:-3G}" "$img"
 	"$NEWFS" "$img" >/dev/null 2>&1 || {
 		echo "xfstests: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done

@@ -73,6 +73,7 @@
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
+static int hammer2_zero_tail(struct inode *, loff_t);	/* Linux */
 
 /*
  * Resolve one name in a directory.
@@ -960,7 +961,23 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		break;
 	}
 	hammer2_trans_init(ip->pmp, 0);
-	ret = generic_file_write_iter(iocb, from);
+	/*
+	 * Linux: generic_file_write_iter(), with the tail of the block that
+	 * holds the old end zeroed before a write that starts past it, as
+	 * ->setattr and an extending fallocate do.  Otherwise the bytes a
+	 * truncate left past the end in that block come back as file data
+	 * (xfstests generic/112, a truncate then a write past the end).
+	 * The size is read under i_rwsem, which keeps it still.
+	 */
+	inode_lock(inode);
+	ret = generic_write_checks(iocb, from);
+	if (ret > 0 && iocb->ki_pos > i_size_read(inode))
+		ret = hammer2_zero_tail(inode, i_size_read(inode)) ?: ret;
+	if (ret > 0)
+		ret = __generic_file_write_iter(iocb, from);
+	inode_unlock(inode);
+	if (ret > 0)
+		ret = generic_write_sync(iocb, ret);
 	if (ret > 0) {
 		hammer2_update_time(&mtime);
 		hammer2_mtx_ex(&ip->lock);
