@@ -1606,10 +1606,11 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	case FALLOC_FL_UNSHARE_RANGE:
 		/*
 		 * Every write here is already a copy on write, so there is
-		 * nothing shared to unshare.  Answering 0 rather than
-		 * EOPNOTSUPP is what a caller wants: the postcondition holds.
+		 * nothing shared to unshare, and the mode is a plain allocate:
+		 * without KEEP_SIZE it still extends the file, which returning
+		 * 0 early skipped (xfstests generic/075 read the size short).
 		 */
-		return (0);
+		break;
 	case FALLOC_FL_WRITE_ZEROES:
 		/*
 		 * The device is not told to write zeroes and the format has no
