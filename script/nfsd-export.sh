@@ -136,8 +136,17 @@ rmmod hammer2; echo "rmmod exit $?"
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
 '
 out=$(timeout 1200 ssh "$GUEST_SSH" "$run" 2>&1)
-detach
+rc=$?
 printf '%s\n' "$out" | sed 's/^/  /'
+if [ "$rc" -eq 124 ]; then
+	# A hang is read through the agent before the disk is detached, or
+	# its checks would be graded on whatever output preceded it.
+	echo "nfsd: FAIL: the guest did not finish within 1200 s"
+	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
+	detach
+	exit 1
+fi
+detach
 case $out in *SETUP*) echo "nfsd: COULD-NOT-RUN: $(printf '%s\n' "$out" | command grep -m1 SETUP)" >&2; exit 2 ;; esac
 
 ok=$(printf '%s\n' "$out" | command grep -c '^check .* ok$')
