@@ -147,16 +147,51 @@ check(const unsigned char *b, uint32_t file, uint32_t cell, uint64_t *seq)
 static void
 fail(const char *what, int f, int c)
 {
+	int e = errno;
+
 	if (__atomic_fetch_add(&sh->fails, 1, __ATOMIC_SEQ_CST) == 0)
-		snprintf(sh->first, sizeof(sh->first), "%s at file %d cell %d",
-		    what, f, c);
+		snprintf(sh->first, sizeof(sh->first),
+		    "%s at file %d cell %d (errno %d %s)", what, f, c, e,
+		    strerror(e));
 }
 
+/*
+ * A mapped store on a volume with nothing left in the reserve faults, as
+ * ext4 does.  The run has to say so and stop, not die to a signal with
+ * the reason left in the kernel log.
+ */
+static void
+sigbus_handler(int sig)
+{
+	(void)sig;
+	fail("a mapped store hit a full volume", -1, -1);
+	_exit(1);
+}
+
+
+/*
+ * The lock word holds its holder's pid.  A worker that dies holding one
+ * would otherwise leave every other worker spinning here for good, so a
+ * waiter that finds the holder gone fails the run and exits.
+ */
 static void
 lock(int f, int c)
 {
-	while (__atomic_exchange_n(&sh->lock[f][c], 1, __ATOMIC_ACQUIRE))
+	uint32_t me = (uint32_t)getpid(), o;
+	unsigned n = 0;
+
+	for (;;) {
+		o = 0;
+		if (__atomic_compare_exchange_n(&sh->lock[f][c], &o, me, 0,
+		    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+			return;
+		if ((++n & 1023) == 0 && kill((pid_t)o, 0) < 0 &&
+		    errno == ESRCH) {
+			fail("a cell lock's holder died holding it", f, c);
+			_exit(1);
+		}
 		sched_yield();
+	}
 }
 
 static void
@@ -311,7 +346,32 @@ selftest(void)
 	b[100] = 1;
 	if (check(b, 1, 2, &q) != -1)
 		bad++, printf("storm-fail selftest: garbage passed as unwritten\n");
-	printf("storm-%s selftest: 5 cases, %d failed\n", bad ? "fail" : "ok", bad);
+	/* A lock left by a dead holder must end the waiter, not spin it. */
+	{
+		pid_t h, w;
+		int st;
+
+		sh = mmap(NULL, sizeof(*sh), PROT_READ | PROT_WRITE,
+		    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+		if (sh == MAP_FAILED)
+			return (2);
+		memset(sh, 0, sizeof(*sh));
+		if ((h = fork()) == 0) {
+			lock(0, 0);
+			_exit(0);
+		}
+		waitpid(h, &st, 0);
+		if ((w = fork()) == 0) {
+			alarm(10);
+			lock(0, 0);
+			_exit(0);
+		}
+		waitpid(w, &st, 0);
+		if (!WIFEXITED(st) || WEXITSTATUS(st) != 1 || sh->fails != 1)
+			bad++, printf("storm-fail selftest: a dead holder's lock did not end the waiter\n");
+		munmap(sh, sizeof(*sh));
+	}
+	printf("storm-%s selftest: 6 cases, %d failed\n", bad ? "fail" : "ok", bad);
 	return (bad != 0);
 }
 
@@ -322,6 +382,7 @@ main(int argc, char **argv)
 	unsigned char b[CELL];
 	long checks = 0, failures;
 	pid_t pids[64];
+	int role_of[64];
 	int np = 0, f, c, r, i, st;
 	time_t end;
 	char p[4200];
@@ -381,15 +442,41 @@ main(int argc, char **argv)
 			pid_t pid = fork();
 
 			if (pid == 0) {
+				if (r == R_MAP || r == R_MAPREAD)
+					signal(SIGBUS, sigbus_handler);
 				worker(r, np, end);
 				_exit(0);
 			}
+			role_of[np] = r;
 			pids[np++] = pid;
 		}
-	for (i = 0; i < np; i++)
-		if (waitpid(pids[i], &st, 0) < 0 || !WIFEXITED(st) ||
-		    WEXITSTATUS(st) != 0)
-			fail("a worker died", -1, -1);
+	/*
+	 * A worker killed while it holds a cell lock leaves the lock set and
+	 * every other worker spinning on it, so the first death ends the run
+	 * and says how the worker died, rather than waiting on the rest.
+	 */
+	for (i = 0; i < np; i++) {
+		pid_t w = wait(&st);
+		int k;
+
+		if (w < 0)
+			break;
+		if (WIFEXITED(st) && WEXITSTATUS(st) == 0)
+			continue;
+		for (k = 0; k < np; k++)
+			if (pids[k] == w)
+				break;
+		printf("storm-fail worker %d (%s) %s %d\n", k,
+		    k < np ? rname[role_of[k]] : "?",
+		    WIFSIGNALED(st) ? "killed by signal" : "exited",
+		    WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st));
+		fail("a worker died", -1, -1);
+		for (k = 0; k < np; k++)
+			kill(pids[k], SIGKILL);
+		while (wait(&st) > 0)
+			;
+		break;
+	}
 
 	for (r = 0; r < NROLES; r++) {
 		printf("storm-ops %s %ld\n", rname[r], sh->ops[r]);
