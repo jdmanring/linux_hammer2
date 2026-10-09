@@ -178,8 +178,23 @@ run=$(printf '%s' "$run" | sed "s/SECS/$SECS/; s/FILES/$FILES/g; s/NCYC/$CYCLES/
 # unread for an hour.  H2_STORM_BOUND overrides.
 BOUND=${H2_STORM_BOUND:-$((CYCLES * (SECS + SECS / 5 + 600)))}
 echo "storm: $CYCLES cycles of $SECS s, called hung at $BOUND s"
-out=$(timeout "$BOUND" ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "$GUEST_SSH" "$run" 2>&1)
+# The guest output is streamed to a file as it arrives and read back
+# from there, rather than captured into a variable that is printed
+# only when ssh returns.  A soak is hours long, and a capture prints
+# nothing until it ends, so a run that is making progress and a run
+# that hung an hour ago look the same from here; a dropped
+# connection would also take the whole run's output with it.  The
+# file is the progress signal: `tail -f` it.  H2_STORM_LOG names it.
+STORM_LOG=${H2_STORM_LOG:-/tmp/storm.log}
+echo "storm: guest output follows to $STORM_LOG"
+# The ssh writes the log itself, so the status is its own and not a
+# pipeline's, which a sh without PIPESTATUS cannot report.  A reader
+# follows the log with `tail -f`; the run's own output is printed
+# from the log once it returns, so a soak reports progress while it
+# runs and the checks read the same bytes either way.
+timeout "$BOUND" ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "$GUEST_SSH" "$run" > "$STORM_LOG" 2>&1
 rc=$?
+out=$(cat "$STORM_LOG")
 printf '%s\n' "$out" | sed 's/^/  /'
 if [ "$rc" -eq 124 ]; then
 	# What the guest holds is read before anything is torn down, through

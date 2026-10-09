@@ -6573,3 +6573,78 @@ in the inode, negative offsets, concurrent writers, a dirty snapshot,
 shared blocks and a hard stop. The six of those that the exerciser asks
 on its own run in every enospc gate. The other three run under
 `script/seek-matrix.sh`. xfstests' `seek` group passes, all eight tests.
+
+## A storm cycle filled the volume before its time was up
+
+`test/hammer2-storm.c` runs mapped writers, write-then-fsync writers,
+fdatasync batchers and readers on one set of files at once and checks
+every 4 KiB cell against the last write it received, after a remount with
+the page cache dropped. `script/storm.sh` drives it in cycles, and the
+first version sized a cycle by the clock, `H2_STORM_SECS` (300 by
+default). A cycle then filled an 8G volume in seconds and died on the
+allocator's reserve check: the run printed `storm-fail pwrite failed at
+file 6 cell 110 (errno 28 No space left on device)`, `run exit 1` and
+`storm-failures 73`, and every check after that was a reading about a run
+that had been cut off rather than about the load.
+
+The cost is the finding. Read from the module's own `alloc_data_bytes`
+and `alloc_meta_bytes`, one 4 KiB cell write allocates about 80 KiB: the
+write allocates a fresh 64 KiB block and rewrites the inode's indirect
+blocks beside it, and nothing is freed until bulkfree runs. Measured over
+10 s of the load, `data=4357521408 B` against `write-ops=53363`, which is
+81658 B per write op. Upstream DragonFly allocates `chain->bytes` at the
+identical site (`hammer2_freemap_alloc(chain, chain->bytes)` in
+`hammer2_chain.c`, `chain_modify`), so this is the carried core's
+behavior and not a port regression. `df` cannot see any of it:
+`statfs` reports `voldata.allocator_free`, a field only bulkfree
+recomputes, and it read `7626688 kB` unchanged across a 512 MB write.
+
+A cycle is now bounded by the volume. The first cycle runs for
+`H2_STORM_PROBE` seconds and its own cost counter says what a second of
+the load spends; every cycle after it gets the seconds that half the
+volume buys at that measured rate. An assumed rate is a rate that is
+wrong on the machine the run is on: the first version of this sized a
+cycle from 700 operations a second and the load did 5100, so the budget
+arithmetic was fiction, and a second version that allowed four fifths of
+the volume for data alone lost 9 of 24 cycles to ENOSPC by chance, a
+cycle spending 7.95 GB against 7.81 usable above the reserve.
+
+Measured 2026-10-08 on `h2debug-rc5`, 24 cycles: exit 0, every cell whole
+after each remount and cache drop, `fsck_hammer2` clean, and the kernel
+log clean on all six counters (`bug 0 oops 0 warn 0 kasan 0 ubsan 0
+lockdep 0`). The largest cycle spent 4.35 GB against a 4.29 GB budget,
+which is a target and not a cap, so the run prints the most any cycle has
+spent. The exerciser's own controls: `--selftest` is 6 cases including a
+dead cell-lock holder, and a build with that check disabled fails it.
+
+## An export served by nfsd, and a renamed file under subtree_check
+
+`script/nfsd-export.sh` serves a HAMMER2 mount to the guest itself on
+127.0.0.1 and works through the client mount, which is the path
+`test/hammer2-fh.c` cannot reach: the syscalls drive the same
+`export_operations` table but not nfsd's acceptance callback, and
+`fh_to_parent` runs only from a subtree-checked export's decode. The run
+needs a kernel with `CONFIG_NFSD` and an NFS client, so a tree was built
+with both (`7.3.0-rc5-nfsd`) and the guest booted it; the pinned trees are
+untouched.
+
+Measured 2026-10-08: 14 checks 0 failed, `fsck_hammer2` clean, kernel log
+clean. The decode members are counted by the function tracer rather than
+assumed: `no_subtree_check` reached `fh_to_dentry` 65 times and neither of
+the other two, `subtree_check` reached `fh_to_dentry` 62 and
+`fh_to_parent` once.
+
+The first run failed one check, and the check was wrong rather than the
+filesystem. Under `subtree_check` it expected a file renamed after the
+client took its handle to read back through that handle; nfsd validates
+the name against the parent on that export, the name is gone, and the
+answer is stale. Read step by step: `get_parent` climbed inode 1026 to
+1025 to 1024 to 1 and returned a dentry at every step, so the reconnect
+walk succeeded; the stale answer comes from the generic
+`exportfs_get_name`, which this port does not override and does not need
+to, and which opens the parent and iterates it for the child's inode
+number. ext4 under the same export answers the same stale, measured on
+the guest, so the behavior is the export mode and not this port. The
+check now asserts what the two modes are for: `subtree_check` answers
+stale for a name that no longer resolves, `no_subtree_check` reads the
+file because it never looks.

@@ -94,9 +94,12 @@ generation field written into every handle that nothing read back.
 file-handle surface DragonFly reaches through `vfs_vptofh`, `vfs_fhtovp` and
 `vfs_checkexp` is reached here through the kernel's `export_operations`, and
 an object in a mount is reopened by handle, which is NFSExport's move from
-`unavailable` to `native` in `README.capabilities.md`. No export has been
-served by `nfsd` yet, the kernel of record's guest being built without it;
-the row rests on the syscall reading and on the predicate `nfsd` checks.
+`unavailable` to `native` in `README.capabilities.md`. An export is served by
+`nfsd` as well: `script/nfsd-export.sh` runs the guest against a kernel built
+with `CONFIG_NFSD` and an NFS client, serves a HAMMER2 mount to itself on
+127.0.0.1 and works through the client mount under both export modes, 14 checks
+0 failed, reaching `fh_to_parent` on the subtree-checked one, which is the
+member no syscall can reach.
 0.9.42 widened the
 style gate's search for a checker to
 `$HOME/kernels`, the one place its own testing document puts the trees of
@@ -828,7 +831,7 @@ Rules it adds to the ones this tree already keeps:
 |---|---|---|---|
 | P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
 | P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass, and so do files held in the inode, negative offsets and a writer racing the seek; xfstests' `seek` group passes, 8 of 8. Closed |
-| P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | instruments exist for the root boot, the million-file tree, the Nix closure and low memory; `readiness-audit-2026-09-25.md` names the small-file rate, mixed load and multi-hour runs unmeasured, and the export is measured through the handle syscalls rather than nfsd. `O_DIRECT` is decided, under "Not on the roadmap" |
+| P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | small-file create and delete times are measured by `million-tree.sh` (1,000,000 files in 248 s with four writers, whole-tree delete in 41 s); low-memory closure reads at 2, 4 and 8 GiB, a single-purpose root boot and one 128 KiB mapped write are recorded, and `latency.sh` reports per-operation fsync rather than a storm. Mixed concurrent read/write with mmap and fsync storms is measured by `script/storm.sh`, which runs mapped writers, write-then-fsync writers, fdatasync batchers and readers on one set of files at once and checks every cell after a remount with the cache dropped; a 24-cycle run passes with the kernel log clean. An export is served by `nfsd` under both export modes, 14 checks 0 failed. Still open: a sustained multi-hour soak. `O_DIRECT` is decided, under "Not on the roadmap" |
 | P3 | cache coherency (CCMS): a design note before any code | P2 | rewritten, see below |
 | P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
