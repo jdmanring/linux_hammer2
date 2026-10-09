@@ -6602,7 +6602,14 @@ recomputes, and it read `7626688 kB` unchanged across a 512 MB write.
 A cycle is now bounded by the volume. The first cycle runs for
 `H2_STORM_PROBE` seconds and its own cost counter says what a second of
 the load spends; every cycle after it gets the seconds that half the
-volume buys at that measured rate. An assumed rate is a rate that is
+volume buys at the worst rate the run has seen, not at the probe alone.
+The rate varies by a factor of two between cycles: an 800-cycle run
+sized from one 5 s probe of 354 MB/s produced 12 s cycles whose spend
+ranged 1.8 GB to 7.68 GB, and 7.68 GB is the reserve line on an 8G
+volume, so that run was stopped rather than left to fail by chance.
+The budget is a target and not a cap: a cycle whose rate rises spends
+over it once before the correction applies, measured at 4.84 GB
+against 4.29 GB, which the reserve line absorbs. An assumed rate is a rate that is
 wrong on the machine the run is on: the first version of this sized a
 cycle from 700 operations a second and the load did 5100, so the budget
 arithmetic was fiction, and a second version that allowed four fifths of

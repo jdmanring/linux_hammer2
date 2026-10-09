@@ -138,18 +138,29 @@ for cyc in $(seq 1 NCYC); do
 	spent=$((d1 - d0))
 	[ "$spent" -gt "${maxspent:-0}" ] && maxspent=$spent
 	echo "cycle spend $spent B, most any cycle spent ${maxspent:-0} B of BUDGET B"
+	# The seconds a cycle gets are recomputed from the WORST rate the run
+	# has seen and not from the probe alone.  The rate of the load varies by a
+	# factor of two between cycles, so a length sized from one sample
+	# spends twice the budget on a fast cycle: measured 2026-10-08, a
+	# probe of 354 MB/s sized 12 s cycles whose spend ranged 1.8 GB to
+	# 7.7 GB, and 7.7 GB is the reserve line on an 8G volume.  The worst
+	# rate is the largest spend over the seconds that cycle ran, which
+	# only ever shrinks the next cycle.  The budget is a target and not
+	# a cap: a cycle whose rate rises spends over it once before the
+	# correction applies, measured at 4.84 GB against 4.29 GB on
+	# 2026-10-08, which the reserve line at 7.81 GB absorbs.  A cycle
+	# that reached the reserve would fail its own checks rather than
+	# pass quietly.
 	if [ "$cyc" = 1 ]; then
-		rate=$((spent / PROBESEC))
-		[ "$rate" -gt 0 ] || rate=1
-		# The probe is the first seconds of the load and its rate is lower
-		# than the steady one, so a cycle sized from it alone overruns.
-		# The budget is halved for that, which covers the ramp measured
-		# on 2026-10-08 (6.7 GB in the first full cycle against 7.2 GB
-		# once the four write roles had all started).
-		cycsecs=$((BUDGET / rate))
-		[ "$cycsecs" -ge 1 ] || cycsecs=1
-		echo "probe: $spent B in PROBESEC s is $rate B/s, so $cycsecs s per cycle"
+		worst=$((spent / PROBESEC))
+	else
+		worst=$((spent / runsecs))
 	fi
+	[ "$worst" -gt "${maxrate:-0}" ] && maxrate=$worst
+	[ "${maxrate:-0}" -gt 0 ] || maxrate=1
+	cycsecs=$((BUDGET / maxrate))
+	[ "$cycsecs" -ge 1 ] || cycsecs=1
+	echo "rate $worst B/s this cycle, worst ${maxrate} B/s, so $cycsecs s per cycle"
 	umount /mnt/storm; echo "umount exit $?"
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	mount -t hammer2 /dev/vdb@STORM /mnt/storm || { echo "SETUP remount failed"; exit 0; }
