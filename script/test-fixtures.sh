@@ -246,6 +246,16 @@ ssh "$GUEST_SSH" 'dmesg -C' >/dev/null 2>&1
 scp -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: could not copy the module" >&2; exit 2; }
 ssh "$GUEST_SSH" "rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko ${H2_FIXTURE_MODARGS:-}" 2>/dev/null || {
+	# A load that fails because the module never left is a busy guest and
+	# not a defect in this tree: the rmmod above is refused while another
+	# hammer2 user, a soak on the storm's volume, holds the module. The
+	# module still listed is what tells them apart, since an insmod
+	# refused on a real load error leaves nothing behind.
+	if ssh "$GUEST_SSH" 'lsmod' 2>/dev/null | command grep -q '^hammer2 '; then
+		echo "fixtures: COULD-NOT-RUN: a hammer2 module is still in use on" >&2
+		echo "          $GUEST, so this gate cannot load its own build" >&2
+		exit 2
+	fi
 	echo "fixtures: FAIL: the module built for this guest did not load"; exit 1; }
 # The parameter is read back from the module rather than assumed from the
 # argument, since an insmod that ignored it would pass the same manifests.
