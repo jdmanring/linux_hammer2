@@ -62,8 +62,9 @@ At a glance, on a kernel of 7.3 or newer:
   `doc/readiness-audit-2026-09-25.md`. Small-file create and delete
   rates, mixed read/write with mmap and fsync storms, and an export
   served by `nfsd` are measured, by `million-tree.sh`, `storm.sh` and
-  `nfsd-export.sh`; a sustained multi-hour soak is the one reading
-  still open
+  `nfsd-export.sh`; a sustained soak is the same load over
+  `H2_STORM_CYCLES` cycles, each checked and reclaimed on its own, and
+  the readings are in `doc/history/verification-record.md`
 
 Every write operation has been run on scratch media and read back by
 DragonFly, in both directions of a round trip, and the crash matrix, a
