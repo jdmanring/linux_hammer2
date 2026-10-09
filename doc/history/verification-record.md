@@ -6655,6 +6655,17 @@ which is a target and not a cap, so the run prints the most any cycle has
 spent. The exerciser's own controls: `--selftest` is 6 cases including a
 dead cell-lock holder, and a build with that check disabled fails it.
 
+Re-measured 2026-10-09 on the script as it now stands, 8 cycles: 0 failures,
+every cell whole after each remount and cache drop, `fsck_hammer2` clean,
+kernel log clean on all six counters, and the run's output written beside
+its image rather than to a path the next run overwrites. The per-cycle
+spends, in GB: 2.68, 4.60, 4.29, 3.94, 4.49, 3.44, 3.70, 3.43, the worst
+4.60 GB against the 4.29 GB budget, an overshoot of seven percent absorbed
+by the next cycle's sizing. The worst rate seen was 641 MB/s, the best
+186 MB/s in the earlier runs, so the factor of 3.5 above is the measured
+range and not a guess. The log is kept at
+`/mnt/storage/hammer2-fixtures/storm.log`.
+
 ## An export served by nfsd, and a renamed file under subtree_check
 
 `script/nfsd-export.sh` serves a HAMMER2 mount to the guest itself on
@@ -6672,6 +6683,16 @@ clean. The decode members are counted by the function tracer rather than
 assumed: `no_subtree_check` reached `fh_to_dentry` 65 times and neither of
 the other two, `subtree_check` reached `fh_to_dentry` 62 and
 `fh_to_parent` once.
+
+**Re-measured 2026-10-08 on the script as it now stands, 12 checks 0 failed.**
+The deep file is no longer read by name before its handle is held, so the
+cold-cache check is a decode of the handle and not a warm hit in nfsd's file
+cache, and the run's output is written beside its image rather than to a path
+the next run overwrites. `no_subtree_check` reached `fh_to_dentry` 54 times
+and neither of the other two, `subtree_check` reached `fh_to_dentry` 51 and
+`fh_to_parent` twice, with `get_parent` three times on the reconnect walk.
+`fsck_hammer2` clean, kernel log clean on all six counters. The log is kept
+at `/mnt/storage/hammer2-fixtures/nfsd-export.log`.
 
 The first run failed one check, and the check was wrong rather than the
 filesystem. Under `subtree_check` it expected a file renamed after the
