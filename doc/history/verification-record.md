@@ -6735,3 +6735,20 @@ the guest, so the behavior is the export mode and not this port. The
 check now asserts what the two modes are for: `subtree_check` answers
 stale for a name that no longer resolves, `no_subtree_check` reads the
 file because it never looks.
+
+## The P2 readings, audited
+
+The storm, export and voldata records above went through five rounds of an
+independent adversarial audit, 2026-10-08 and 2026-10-09, each round reading
+the documents, the kernel source of record and the kept logs, and mutating
+the instruments. The subject findings ran 11, 8, 2, 1 and 0. Most of the
+later ones were in the corrections themselves: a mechanism for
+`fh_to_parent` that named file depth where the cause is a warm dentry cache,
+a claimed bound on the storm's overshoot that nothing enforces, rate figures
+from runs whose logs were not kept, and a cross-check in `h2-voldata.py`
+that searched the wrong output and never fired. Round 5 signed off against
+`48550b9`.
+
+What the audit did not cover: a soak of several hours on the debug and KASAN
+builds. The longest kept run is 24 cycles; the 800-cycle run was stopped
+before it finished.
