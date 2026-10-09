@@ -115,7 +115,22 @@ for mode in no_subtree_check subtree_check; do
 	mv $S/a/b/old $S/a/b/c/renamed
 	sync; echo 2 > /proc/sys/vm/drop_caches
 	[ "$(cat <&7)" = deep-file ] && echo "check $mode deep file by handle after a cold cache ok" || echo "check $mode deep file by handle after a cold cache wrong"
-	[ "$(cat <&8)" = before-rename ] && echo "check $mode renamed file by its handle ok" || echo "check $mode renamed file by its handle wrong"
+	# The old name of a renamed file is what the client still holds, and the
+	# two exports answer it differently on purpose.  subtree_check has
+	# nfsd verify the name against the parent, and the name is gone, so
+	# the answer is stale; no_subtree_check never looks and reads the
+	# file.  ext4 answers subtree_check the same way, measured on the
+	# guest, so this asserts the export mode and not the filesystem.
+	case $mode in
+	subtree_check)
+		if cat <&8 >/dev/null 2>&1; then
+			echo "check $mode renamed file still answered wrong"
+		else
+			echo "check $mode renamed file is stale by name ok"
+		fi ;;
+	*)
+		[ "$(cat <&8)" = before-rename ] && echo "check $mode renamed file by its handle ok" || echo "check $mode renamed file by its handle wrong" ;;
+	esac
 	exec 7<&- 8<&-
 	# A stale handle: removed on the server, its handle must not answer.
 	exec 9<$C/a/b/c/new-$mode
