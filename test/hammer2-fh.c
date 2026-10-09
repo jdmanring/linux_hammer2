@@ -7,16 +7,20 @@
  * with no table answers neither.
  *
  * What this does NOT drive, so the reading is not read as more than it is:
- * ->fh_to_parent, and the acceptance callback nfsd uses.  open_by_handle_at
- * passes vfs_dentry_acceptable.  The handles here are connectable, which sets
- * HANDLE_CHECK_SUBTREE (fs/fhandle.c, handle_to_path), so the callback walks
- * up from the decoded dentry; but every file this program encodes sits
- * directly in the mount directory it opens by, so the walk reaches that root
- * at once and accepts.  ->fh_to_parent runs only when the walk stops short,
- * a disconnected non-directory deeper in the tree, and nothing here builds
- * that case; script/nfsd-export.sh reaches it through nfsd_acceptable on a
- * subtree-checked export.  So the regular-file checks below prove the decode
- * returns the object the handle names, not that a refusal path ran.
+ * ->fh_to_parent, and the acceptance callback nfsd uses.  The handles here
+ * are connectable, which sets HANDLE_CHECK_SUBTREE (fs/fhandle.c), so
+ * vfs_dentry_acceptable walks up from the decoded dentry and accepts only
+ * inside the mount directory the handle was opened by.  A cold-decoded
+ * non-directory comes from d_obtain_alias as a disconnected dentry whose
+ * d_parent is itself, so the walk rejects it and the decode falls to
+ * find_acceptable_alias, which accepts the first cached dentry for the
+ * inode.  This program never drops the cache and creates each file just
+ * before encoding it, so a connected dentry is always cached and
+ * ->fh_to_parent is never reached.  A cold cache through the same syscall
+ * would reach it, which is what a subtree-checked nfsd export builds and
+ * script/nfsd-export.sh measures.  So the regular-file checks below prove
+ * the decode returns the object the handle names, not that a refusal path
+ * ran.
  *
  * The failure this exists to catch is a handle that opens the WRONG object.
  * "The open succeeded" is satisfied by a decoder that ignores the inode

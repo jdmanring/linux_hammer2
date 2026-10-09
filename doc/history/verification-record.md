@@ -4328,22 +4328,38 @@ the encoder only for a connectable non-directory. So the branch that calls
 `fh_to_parent` is entered only for a non-directory, and a non-directory is
 exactly what leaves the callback inert.
 
-**Corrected 2026-10-08.** The paragraph above is wrong, and the probe below
-measured nothing. `vfs_dentry_acceptable` returns 1 without looking only under
-the old permission model, `ctx->flags == 0` with `CAP_DAC_READ_SEARCH` held
-(fs/fhandle.c:210-212). Without that capability, `may_decode_fh()` refuses a
-plain open outright (`fs/fhandle.c:330-340`), and the gate runs as root, so
-that model is not what the probe drove. What the gate actually does is set
-`HANDLE_CHECK_SUBTREE` on every connectable handle (`fs/fhandle.c:401-404`),
-which makes the callback walk up from the decoded dentry and accept only if
-the walk reaches the mount directory the handle was opened by
-(`fs/fhandle.c:252`). The walk is not inert; it just accepts at the first
-step, because every file the gate encodes sits directly in the mount directory
-it opens by. The probe was placed inside `hammer2_fh_to_parent()`, which is
-entered only after `find_acceptable_alias()` fails, and that never happens here,
-so zero firings is the expected reading and not evidence about the callback.
-The claim that `fh_to_parent` is unreachable through the syscalls is true of
-this gate's file placement only, not of the interface.
+**Corrected 2026-10-08, and the correction corrected 2026-10-09.** The
+paragraph above is wrong, and the probe below measured nothing.
+`vfs_dentry_acceptable` returns 1 without looking when `ctx->flags` is
+zero (fs/fhandle.c:210-212), and the gate runs as root, which holds
+`CAP_DAC_READ_SEARCH`, so `may_decode_fh()` returns at once
+(fs/fhandle.c:306-307) and sets no flag; root is the old permission model.
+What changes it is the handle type: every handle the gate encodes is
+connectable, and `handle_to_path()` adds `HANDLE_CHECK_SUBTREE` for any
+handle whose type carries `FILEID_IS_CONNECTABLE`
+(fs/fhandle.c:401-404). The callback then walks up from the decoded
+dentry and accepts only if the walk reaches the mount directory
+(fs/fhandle.c:230-252).
+
+The first correction gave the wrong reason the walk accepts. It is not
+the depth of the file. A non-directory decoded cold comes from
+`d_obtain_alias()` as a disconnected dentry, whose `d_parent` is itself
+(fs/dcache.c:1953), so `IS_ROOT` is true at the first step
+(include/linux/dcache.h:31), the walk stops short of the mount directory,
+and the callback rejects it whether the file sits at the top of the
+mount or ten directories down. `exportfs_decode_fh_raw()` then asks
+`find_acceptable_alias()` (fs/exportfs/expfs.c:510), which tries every
+cached dentry for the inode, and falls to `fh_to_parent` only when none
+is acceptable (fs/exportfs/expfs.c:518-523). The gate creates each file
+just before it encodes it and never drops the cache, so a connected
+dentry from the create is always there, the alias search accepts it,
+and `fh_to_parent` is never entered. The probe was placed inside
+`hammer2_fh_to_parent()`, behind that search, and the record does not
+say whether caches were dropped, so its zero firings are the reading
+a warm cache predicts and not evidence about the callback. The claim
+that `fh_to_parent` is unreachable through the syscalls is true of this
+gate's warm cache only, not of the interface: a cold cache through
+`open_by_handle_at(2)` would reach it too.
 
 Measured rather than argued. A probe line was placed at the top of
 `hammer2_fh_to_parent()` that prints to the kernel ring, and every shape of
@@ -6634,14 +6650,16 @@ A cycle is now bounded by the volume. The first cycle runs for
 `H2_STORM_PROBE` seconds and its own cost counter says what a second of
 the load spends; every cycle after it gets the seconds that half the
 volume buys at the worst rate the run has seen, not at the probe alone.
-The rate varies by a factor of 3.5 between cycles: an 800-cycle run
-sized from one 5 s probe of 354 MB/s produced 12 s cycles whose spend
-ranged 1.8 GB to 7.68 GB, and 7.68 GB is the reserve line on an 8G
-volume, so that run was stopped rather than left to fail by chance.
-The budget is a target and not a cap: a cycle whose rate rises spends
-over it once before the correction applies, measured at 4.84 GB
-against 4.29 GB, and the overshoot is bounded by the target, since the
-rate that produced it is the rate the next cycle is sized from. An assumed rate is a rate that is
+A run sized from one probe produced cycles spending several times the
+budget (its figures were from a run whose log was not kept, so they are
+not repeated here as numbers); the worst rate, the largest spend over
+the seconds that cycle ran, only ever shrinks the next cycle. The budget
+is a target and not a cap, and the overshoot is not bounded: a cycle
+whose rate rises above every rate the run has seen spends over the
+budget by the ratio of the two, so a rate the run has never seen can
+spend past the volume, which is why the run prints the most any cycle
+has spent and a cycle that reaches the reserve fails its own checks
+rather than passing quietly. An assumed rate is a rate that is
 wrong on the machine the run is on: the first version of this sized a
 cycle from 700 operations a second and the load did 5100, so the budget
 arithmetic was fiction, and a second version that allowed four fifths of
@@ -6650,7 +6668,9 @@ cycle spending 7.95 GB against 7.81 usable above the reserve.
 Measured 2026-10-08 on `h2debug-rc5`, 24 cycles: exit 0, every cell whole
 after each remount and cache drop, `fsck_hammer2` clean, and the kernel
 log clean on all six counters (`bug 0 oops 0 warn 0 kasan 0 ubsan 0
-lockdep 0`). The largest cycle spent 4.35 GB against a 4.29 GB budget,
+lockdep 0`), log kept at
+`/mnt/storage/hammer2-fixtures/hammer2-verification-20261008/storm-soak-24cycle.log`.
+The largest cycle spent 4.35 GB against a 4.29 GB budget,
 which is a target and not a cap, so the run prints the most any cycle has
 spent. The exerciser's own controls: `--selftest` is 6 cases including a
 dead cell-lock holder, and a build with that check disabled fails it.
@@ -6660,11 +6680,14 @@ every cell whole after each remount and cache drop, `fsck_hammer2` clean,
 kernel log clean on all six counters, and the run's output written beside
 its image rather than to a path the next run overwrites. The per-cycle
 spends, in GB: 2.68, 4.60, 4.29, 3.94, 4.49, 3.44, 3.70, 3.43, the worst
-4.60 GB against the 4.29 GB budget, an overshoot of seven percent absorbed
-by the next cycle's sizing. The worst rate seen was 641 MB/s, the best
-186 MB/s in the earlier runs, so the factor of 3.5 above is the measured
-range and not a guess. The log is kept at
-`/mnt/storage/hammer2-fixtures/storm.log`.
+4.60 GB against the 4.29 GB budget, a seven percent overshoot, with
+per-cycle rates from 535 to 641 MB/s. The earlier 8-cycle sizing run, log
+kept at
+`/mnt/storage/hammer2-fixtures/hammer2-verification-20261008/storm-sizing-check.log`,
+shows rates from 197 to 217 MB/s and a worst spend of 4.12 GB, so the
+rate moves between runs as well as between cycles; no single log shows
+both extremes, so no factor is claimed from pairing them. The log is
+kept at `/mnt/storage/hammer2-fixtures/storm.log`.
 
 ## An export served by nfsd, and a renamed file under subtree_check
 

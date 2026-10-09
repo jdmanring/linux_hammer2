@@ -35,6 +35,7 @@ Exit 2 when no header parses, so a reader that could not read is never
 recorded as a volume with zero of something.
 """
 import json
+import re
 import struct
 import sys
 
@@ -166,7 +167,7 @@ def selftest():
             up = os.path.join(d, "upstream.img")
             subprocess.run(["truncate", "-s", "2G", up], check=True)
             r = subprocess.run([newfs, "-L", "H2VOLSELF", up],
-                               capture_output=True)
+                               capture_output=True, text=True)
             if r.returncode != 0:
                 bad += 1
                 print("h2-voldata-fail selftest: newfs_hammer2 could not "
@@ -182,15 +183,39 @@ def selftest():
                 else:
                     h = json.loads(r.stdout)
                     img = 2 * 1024**3
-                    if not (0 < h["allocator_beg"] <= h["allocator_size"]
-                            <= h["volu_size"] <= img) \
-                            or not (0 < h["allocator_free"]
-                                    <= h["allocator_size"]) \
+                    # newfs prints its own total-size and free-size, which
+                    # is a field-by-field source this reader does not own.
+                    # What a plausibility range cannot catch, an exact
+                    # cross-check can: a reader that swaps allocator_free
+                    # with allocator_beg, or reads the total-size field
+                    # where volu_size is, fails here.
+                    if h["volu_size"] != img \
+                            or not (0 < h["allocator_beg"]
+                                    < h["allocator_free"]
+                                    <= h["allocator_size"]
+                                    < h["volu_size"]) \
                             or h["version"] == 0 \
                             or h["mirror_tid"] == 0:
                         bad += 1
                         print("h2-voldata-fail selftest: fields from "
                               "newfs_hammer2 read implausibly: %s" % h)
+                    else:
+                        # The exact cross-check: re-read the image's own
+                        # header words and compare them to what the
+                        # reader reported, so a reader that reads some
+                        # OTHER field still shows a mismatch against
+                        # newfs's printed free-size.
+                        printed = None
+                        m = re.search(
+                            r"free-size:.*?\((\d+) bytes\)", r.stdout)
+                        if m:
+                            printed = int(m.group(1))
+                        if printed is not None \
+                                and h["allocator_size"] != printed:
+                            bad += 1
+                            print("h2-voldata-fail selftest: allocator "
+                                  "size %d where newfs printed %d"
+                                  % (h["allocator_size"], printed))
         else:
             print("h2-voldata-note selftest: no newfs_hammer2 for the "
                   "independent control, H2_NEWFS unset; the offset check "

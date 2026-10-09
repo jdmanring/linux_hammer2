@@ -72,17 +72,17 @@ case $VOL in ''|0|*[!0-9]*) echo "storm: COULD-NOT-RUN: H2_STORM_SIZE=$SIZE is n
 # At four fifths of data alone, a 24-cycle run on 8G spent 7.95 GB a cycle
 # against 7.81 usable and lost 9 cycles to ENOSPC by chance.
 #
-# Half the volume is a target and not a cap, and the cap it is meant to
-# keep clear of is not the reserve.  The reserve is allocator_size / 20
-# (hammer2_vfsops.c), 400 MB on an 8G volume, and a cycle sized to half
-# the volume spends 4 GB against it.  What half the volume does bound is
-# the allocator's own growth: a cycle that spends the whole volume leaves
-# nothing for the metadata the next cycle's writes need, and the run dies
-# on the reserve check with its checks unrun.  The rate of this load
-# varies by a factor of 3.5 between cycles, measured 2026-10-08, so a
-# cycle whose rate rises spends over the target once before the
-# correction applies, and the overshoot is bounded by the target itself
-# rather than by the reserve.
+# Half the volume is a target and not a cap.  The reserve is
+# allocator_size / 20 (hammer2_vfsops.c), 400 MB on an 8G volume, and what
+# half the volume bounds is the allocator's own growth: a cycle that
+# spends the whole volume leaves nothing for the metadata the next
+# cycle's writes need, and the run dies on the reserve check with its
+# checks unrun.  A cycle sized at BUDGET/maxrate spends over the budget
+# when its rate is higher than the worst rate seen so far, by the ratio
+# of the two, and nothing bounds that ratio: the first cycle after a rate
+# the run has never seen can overshoot past the volume, which is why the
+# run prints the most any cycle has spent and stops on the first
+# ENOSPC rather than being left to fail by chance.
 BUDGET=$((VOL / 2))
 echo "storm: a cycle may spend $BUDGET B of $VOL B"
 [ -x "$NEWFS" ] || { echo "storm: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
@@ -157,20 +157,17 @@ for cyc in $(seq 1 NCYC); do
 	[ "$spent" -gt "${maxspent:-0}" ] && maxspent=$spent
 	echo "cycle spend $spent B, most any cycle spent ${maxspent:-0} B of BUDGET B"
 	# The seconds a cycle gets are recomputed from the WORST rate the run
-	# has seen and not from the probe alone.  The rate of the load varies by
-	# a factor of 3.5 between cycles, so a length sized from one sample
-	# spends three and a half times the budget on a fast cycle: measured
-	# 2026-10-08, a probe of 354 MB/s sized 12 s cycles whose spend ranged
-	# 1.8 GB to 7.68 GB, and 7.68 GB is the reserve line on an 8G volume,
-	# so that run was stopped rather than left to fail by chance.  The worst
-	# rate is the largest spend over the seconds that cycle ran, which
-	# only ever shrinks the next cycle.  The budget is a target and not
-	# a cap: a cycle whose rate rises spends over it once before the
-	# correction applies, measured at 4.84 GB against 4.29 GB on
-	# 2026-10-08, and the overshoot is bounded by the target, since the
-	# rate that produced it is the rate the next cycle is sized from.
-	# A cycle that reached the reserve would fail its own checks rather
-	# than pass quietly.
+	# has seen and not from the probe alone.  The rate of the load moves
+	# between cycles and between runs, so a length sized from one sample
+	# overspends on a fast cycle: a run sized from one probe produced
+	# cycles spending several times the budget, which is why the worst
+	# rate is the largest spend over the seconds that cycle ran, a number
+	# that only ever shrinks the next cycle.  The budget is a target and
+	# not a cap: a cycle whose rate rises above every rate the run has
+	# seen spends over it by the ratio of the two, and nothing bounds that
+	# ratio, so the run prints the most any cycle has spent and a cycle
+	# that reached the reserve fails its own checks rather than passing
+	# quietly.
 	if [ "$cyc" = 1 ]; then
 		worst=$((spent / PROBESEC))
 	else
