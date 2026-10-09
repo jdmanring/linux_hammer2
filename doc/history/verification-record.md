@@ -4347,10 +4347,13 @@ goes through `d_obtain_alias()`, which calls `d_find_any_alias()` first
 and returns a cached dentry for the inode when one exists
 (fs/dcache.c:2244). With the gate's warm cache the decode gets the
 connected dentry the create left, the callback's walk reaches the mount
-directory and accepts, and nothing is rejected anywhere. `find_acceptable_alias()`
-(fs/exportfs/expfs.c:510) runs only after a rejection, and falls to
-`fh_to_parent` when it finds no acceptable alias
-(fs/exportfs/expfs.c:518-523), which a warm-cache decode never asks it.
+directory and accepts, and nothing is rejected anywhere.
+`find_acceptable_alias()` (fs/exportfs/expfs.c:510) first offers the
+decoded dentry to the callback (fs/exportfs/expfs.c:50); only if that is
+rejected does it try the inode's other cached dentries
+(fs/exportfs/expfs.c:54-66), and the decode falls to `fh_to_parent`
+(fs/exportfs/expfs.c:518-523) when none is acceptable. A warm-cache
+decode is accepted at the first offer, so the loop never runs.
 On a cold cache the dentry would be disconnected (`d_parent` is itself,
 fs/dcache.c:1953, so `IS_ROOT` holds, include/linux/dcache.h:31), the
 walk would reject it wherever the file sits, no alias would exist, and
