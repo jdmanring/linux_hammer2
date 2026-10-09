@@ -151,7 +151,51 @@ def selftest():
                 bad += 1
                 print("h2-voldata-fail selftest: fields read at the wrong "
                       "offset: %s" % h)
-    print("h2-voldata-%s selftest: 2 cases, %d failed"
+        # The independent control: a header written by newfs_hammer2, the
+        # upstream tool this repository does not own, parsed by this reader
+        # alone.  Everything above writes the offsets it is about to read,
+        # so it proves rotation and refusal, not that the offsets match the
+        # on-media layout.  The fields are checked against the image size
+        # rather than against constants, since newfs chooses its own numbers.
+        newfs = os.environ.get(
+            "H2_NEWFS",
+            os.path.expanduser(
+                "~/Projects/hammer2-utils-upstream/target/release/"
+                "newfs_hammer2"))
+        if os.path.isfile(newfs) and os.access(newfs, os.X_OK):
+            up = os.path.join(d, "upstream.img")
+            subprocess.run(["truncate", "-s", "2G", up], check=True)
+            r = subprocess.run([newfs, "-L", "H2VOLSELF", up],
+                               capture_output=True)
+            if r.returncode != 0:
+                bad += 1
+                print("h2-voldata-fail selftest: newfs_hammer2 could not "
+                      "make the control image")
+            else:
+                r = subprocess.run(
+                    [sys.executable, "-I", __file__, up, "--json"],
+                    capture_output=True, text=True)
+                if r.returncode != 0:
+                    bad += 1
+                    print("h2-voldata-fail selftest: a newfs_hammer2 "
+                          "header was refused: %s" % r.stderr.strip())
+                else:
+                    h = json.loads(r.stdout)
+                    img = 2 * 1024**3
+                    if not (0 < h["allocator_beg"] <= h["allocator_size"]
+                            <= h["volu_size"] <= img) \
+                            or not (0 < h["allocator_free"]
+                                    <= h["allocator_size"]) \
+                            or h["version"] == 0 \
+                            or h["mirror_tid"] == 0:
+                        bad += 1
+                        print("h2-voldata-fail selftest: fields from "
+                              "newfs_hammer2 read implausibly: %s" % h)
+        else:
+            print("h2-voldata-note selftest: no newfs_hammer2 for the "
+                  "independent control, H2_NEWFS unset; the offset check "
+                  "above is circular")
+    print("h2-voldata-%s selftest: 3 cases, %d failed"
           % ("fail" if bad else "ok", bad))
     return 1 if bad else 0
 

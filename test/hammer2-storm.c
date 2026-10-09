@@ -149,22 +149,33 @@ fail(const char *what, int f, int c)
 {
 	int e = errno;
 
-	if (__atomic_fetch_add(&sh->fails, 1, __ATOMIC_SEQ_CST) == 0)
+	if (__atomic_fetch_add(&sh->fails, 1, __ATOMIC_SEQ_CST) != 0)
+		return;
+	if (e != 0)
 		snprintf(sh->first, sizeof(sh->first),
 		    "%s at file %d cell %d (errno %d %s)", what, f, c, e,
 		    strerror(e));
+	else
+		snprintf(sh->first, sizeof(sh->first),
+		    "%s at file %d cell %d", what, f, c);
 }
 
 /*
  * A mapped store on a volume with nothing left in the reserve faults, as
  * ext4 does.  The run has to say so and stop, not die to a signal with
- * the reason left in the kernel log.
+ * the reason left in the kernel log.  A signal handler may call nothing
+ * that is not async-signal-safe, and errno is not meaningful in one, so
+ * this writes a plain message and exits; the shared record is read and
+ * printed by the parent after wait().
  */
 static void
 sigbus_handler(int sig)
 {
+	static const char msg[] = "a mapped store hit a full volume\n";
+
 	(void)sig;
-	fail("a mapped store hit a full volume", -1, -1);
+	ssize_t n = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+	(void)n;
 	_exit(1);
 }
 
@@ -470,6 +481,7 @@ main(int argc, char **argv)
 		    k < np ? rname[role_of[k]] : "?",
 		    WIFSIGNALED(st) ? "killed by signal" : "exited",
 		    WIFSIGNALED(st) ? WTERMSIG(st) : WEXITSTATUS(st));
+		errno = 0;
 		fail("a worker died", -1, -1);
 		for (k = 0; k < np; k++)
 			kill(pids[k], SIGKILL);
@@ -482,7 +494,7 @@ main(int argc, char **argv)
 		printf("storm-ops %s %ld\n", rname[r], sh->ops[r]);
 		checks++;
 		if (sh->ops[r] == 0)
-			fail("a role completed no operation", -1, -1);
+			errno = 0, fail("a role completed no operation", -1, -1);
 	}
 
 	for (f = 0; f < nfiles; f++) {
