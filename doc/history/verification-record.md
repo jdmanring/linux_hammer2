@@ -4342,24 +4342,25 @@ dentry and accepts only if the walk reaches the mount directory
 (fs/fhandle.c:230-252).
 
 The first correction gave the wrong reason the walk accepts. It is not
-the depth of the file. A non-directory decoded cold comes from
-`d_obtain_alias()` as a disconnected dentry, whose `d_parent` is itself
-(fs/dcache.c:1953), so `IS_ROOT` is true at the first step
-(include/linux/dcache.h:31), the walk stops short of the mount directory,
-and the callback rejects it whether the file sits at the top of the
-mount or ten directories down. `exportfs_decode_fh_raw()` then asks
-`find_acceptable_alias()` (fs/exportfs/expfs.c:510), which tries every
-cached dentry for the inode, and falls to `fh_to_parent` only when none
-is acceptable (fs/exportfs/expfs.c:518-523). The gate creates each file
-just before it encodes it and never drops the cache, so a connected
-dentry from the create is always there, the alias search accepts it,
-and `fh_to_parent` is never entered. The probe was placed inside
-`hammer2_fh_to_parent()`, behind that search, and the record does not
-say whether caches were dropped, so its zero firings are the reading
-a warm cache predicts and not evidence about the callback. The claim
-that `fh_to_parent` is unreachable through the syscalls is true of this
-gate's warm cache only, not of the interface: a cold cache through
-`open_by_handle_at(2)` would reach it too.
+the depth of the file, and it is not an alias search either: the decode
+goes through `d_obtain_alias()`, which calls `d_find_any_alias()` first
+and returns a cached dentry for the inode when one exists
+(fs/dcache.c:2244). With the gate's warm cache the decode gets the
+connected dentry the create left, the callback's walk reaches the mount
+directory and accepts, and nothing is rejected anywhere. `find_acceptable_alias()`
+(fs/exportfs/expfs.c:510) runs only after a rejection, and falls to
+`fh_to_parent` when it finds no acceptable alias
+(fs/exportfs/expfs.c:518-523), which a warm-cache decode never asks it.
+On a cold cache the dentry would be disconnected (`d_parent` is itself,
+fs/dcache.c:1953, so `IS_ROOT` holds, include/linux/dcache.h:31), the
+walk would reject it wherever the file sits, no alias would exist, and
+the decode would fall to `fh_to_parent`. The gate never drops the cache
+and the record does not say whether caches were dropped, so the probe's
+zero firings are the reading a warm cache predicts and not evidence
+about the callback. The claim that `fh_to_parent` is unreachable through
+the syscalls is true of this gate's warm cache only, not of the
+interface: a cold cache through `open_by_handle_at(2)` would reach it
+too.
 
 Measured rather than argued. A probe line was placed at the top of
 `hammer2_fh_to_parent()` that prints to the kernel ring, and every shape of

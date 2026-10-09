@@ -166,9 +166,9 @@ def selftest():
         if os.path.isfile(newfs) and os.access(newfs, os.X_OK):
             up = os.path.join(d, "upstream.img")
             subprocess.run(["truncate", "-s", "2G", up], check=True)
-            r = subprocess.run([newfs, "-L", "H2VOLSELF", up],
+            mk = subprocess.run([newfs, "-L", "H2VOLSELF", up],
                                capture_output=True, text=True)
-            if r.returncode != 0:
+            if mk.returncode != 0:
                 bad += 1
                 print("h2-voldata-fail selftest: newfs_hammer2 could not "
                       "make the control image")
@@ -200,27 +200,56 @@ def selftest():
                         print("h2-voldata-fail selftest: fields from "
                               "newfs_hammer2 read implausibly: %s" % h)
                     else:
-                        # The exact cross-check: re-read the image's own
-                        # header words and compare them to what the
-                        # reader reported, so a reader that reads some
-                        # OTHER field still shows a mismatch against
-                        # newfs's printed free-size.
-                        printed = None
+                        # The exact cross-check against the free-size newfs
+                        # itself prints, kept in mk because r is the reader.
+                        # A missing line is a failure, not a skip, or a
+                        # newfs that changed its output would pass this
+                        # vacuously.  On a fresh volume allocator_size and
+                        # allocator_free are equal, so this alone cannot
+                        # tell those two fields apart; the case below does.
                         m = re.search(
-                            r"free-size:.*?\((\d+) bytes\)", r.stdout)
-                        if m:
-                            printed = int(m.group(1))
-                        if printed is not None \
-                                and h["allocator_size"] != printed:
+                            r"free-size:.*?\((\d+) bytes\)", mk.stdout)
+                        if m is None:
+                            bad += 1
+                            print("h2-voldata-fail selftest: newfs_hammer2 "
+                                  "printed no free-size to check against")
+                        elif h["allocator_size"] != int(m.group(1)):
                             bad += 1
                             print("h2-voldata-fail selftest: allocator "
-                                  "size %d where newfs printed %d"
-                                  % (h["allocator_size"], printed))
+                                  "size %d where newfs printed %s"
+                                  % (h["allocator_size"], m.group(1)))
+                        # The two fields apart: newfs's header with
+                        # allocator_free lowered in the live copy, which is
+                        # what a written volume looks like to this reader.
+                        # The other fields stay newfs's own, so a reader
+                        # that swaps size and free reads the lowered value
+                        # as the size and fails against the printed one.
+                        used = os.path.join(d, "used.img")
+                        with open(up, "rb") as src:
+                            blk = bytearray(src.read(VOLHDR))
+                        size = struct.unpack_from("<Q", blk, 0x60)[0]
+                        struct.pack_into("<Q", blk, 0x68, size // 2)
+                        subprocess.run(["truncate", "-s", "2G", used],
+                                       check=True)
+                        with open(used, "r+b") as dst:
+                            dst.write(blk)
+                        r = subprocess.run(
+                            [sys.executable, "-I", __file__, used, "--json"],
+                            capture_output=True, text=True)
+                        u = json.loads(r.stdout) if r.returncode == 0 \
+                            else None
+                        if m is None or u is None \
+                                or u["allocator_size"] != int(m.group(1)) \
+                                or u["allocator_free"] != size // 2:
+                            bad += 1
+                            print("h2-voldata-fail selftest: allocator "
+                                  "size and free not told apart on a used "
+                                  "volume: %s" % u)
         else:
             print("h2-voldata-note selftest: no newfs_hammer2 for the "
                   "independent control, H2_NEWFS unset; the offset check "
                   "above is circular")
-    print("h2-voldata-%s selftest: 3 cases, %d failed"
+    print("h2-voldata-%s selftest: 4 cases, %d failed"
           % ("fail" if bad else "ok", bad))
     return 1 if bad else 0
 
