@@ -6747,8 +6747,24 @@ later ones were in the corrections themselves: a mechanism for
 a claimed bound on the storm's overshoot that nothing enforces, rate figures
 from runs whose logs were not kept, and a cross-check in `h2-voldata.py`
 that searched the wrong output and never fired. Round 5 signed off against
-`48550b9`.
+`4ad860d`.
 
 What the audit did not cover: a soak of several hours on the debug and KASAN
 builds. The longest kept run is 24 cycles; the 800-cycle run was stopped
 before it finished.
+
+## The 800-cycle soak
+
+`script/storm.sh` with `H2_STORM_CYCLES=800` on `h2debug-rc5`, an 8 GiB
+volume, a 4.29 GB budget per cycle, ran 4 h 16 min to `storm: 800 cycles
+over 8 files, 0 failures`. Every cycle checked all 2048 cells after a
+remount with the cache dropped and reported `storm-failures 0` and
+`verify-failures 0`; every cycle's two bulkfree passes and removal exited
+0. One cycle of 800 spent over budget, 4.34 GB against 4.29 GB, which the
+volume absorbed. The rate per cycle ran 197 to 666 MB/s. Cumulative
+allocation reached 2.32 TB of data and 263 GB of meta. `fsck_hammer2` was
+clean after the run, the module unloaded, and the kernel log read `bug 0
+oops 0 warn 0 kasan 0 ubsan 0 lockdep 0`. Available memory after unload was
+3,402,152 kB against 3,336,316 kB before. The log is
+`/mnt/storage/hammer2-fixtures/storm.log`. This run was not audited, and a
+soak on the KASAN build remains open.
