@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """What a HAMMER2 volume header says about its allocator, read from media.
 
-`statfs` reports `voldata.allocator_free`, and that field is only
-recomputed by bulkfree: it does not move as blocks are handed out during
-a run.  Measuring a run's consumption with `df` therefore returns the
-number the last bulkfree left, and it reads 0 for any write on a volume
-that has not been bulkfreed since.  A run measured that way reports
-either nothing consumed or a volume "full" seconds after it was made.
+This reads the header off the media rather than asking the mounted
+filesystem, so it answers what the last writer left on the volume: the
+allocator fields as they stand on disk, and which of the four rotating
+copies is live.  `statfs` and `df` report the same field from the
+in-memory copy, and the two agree while the volume is mounted and clean.
 
-This prints the fields the reserve check itself uses, so a run's cost is
-a number read from the media rather than inferred:
+The field is live, not a bulkfree-only figure: `hammer2_freemap_alloc()`
+decrements `allocator_free` on every allocation at bitmap granularity
+(`hammer2_freemap.c`), and `hammer2_vfs_enospace()` reads that same field
+to refuse a write, which is why a volume can refuse one before it is
+full.  A run's consumption can therefore be read from `df` as well as
+from the module's own counters; what `df` cannot do is read a volume that
+is not mounted, and what the module counters cannot do is survive an
+unmount.  This reads the media, which is the reading that outlives both.
 
     allocator_size  total data space the allocator covers
-    allocator_free  free as the last bulkfree computed it
+    allocator_free  free space as the last writer left it
     allocator_beg   space in use at newfs time
     free_reserved   the reserve hammer2_vfs_enospace keeps (allocator_size/20)
 

@@ -6595,9 +6595,21 @@ blocks beside it, and nothing is freed until bulkfree runs. Measured over
 81658 B per write op. Upstream DragonFly allocates `chain->bytes` at the
 identical site (`hammer2_freemap_alloc(chain, chain->bytes)` in
 `hammer2_chain.c`, `chain_modify`), so this is the carried core's
-behavior and not a port regression. `df` cannot see any of it:
-`statfs` reports `voldata.allocator_free`, a field only bulkfree
-recomputes, and it read `7626688 kB` unchanged across a 512 MB write.
+behavior and not a port regression. The cost is read from the module's
+own `alloc_data_bytes` and `alloc_meta_bytes`, which are cumulative, so
+a cycle's spend is the delta across it.
+
+An earlier version of this entry said `df` could not see the cost,
+because `statfs` reports `voldata.allocator_free` and that field was
+taken to be a bulkfree-only figure. That is wrong: `hammer2_freemap_alloc()`
+decrements `allocator_free` on every allocation at bitmap granularity
+(`hammer2_freemap.c`), and `hammer2_vfs_enospace()` reads the same field
+to refuse a write, so the ENOSPC refusals this very run recorded could
+not have fired if it were static. The reading that was taken as support
+(`df` unchanged across a 512 MB write) was a write this format does not
+store, since a block of zeros is not written. The correction is recorded
+rather than the passage deleted, because the wrong reading is the kind
+that reads as evidence.
 
 A cycle is now bounded by the volume. The first cycle runs for
 `H2_STORM_PROBE` seconds and its own cost counter says what a second of

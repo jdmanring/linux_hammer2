@@ -4,15 +4,15 @@
 # test/hammer2-storm.c runs mapped writers, write-then-fsync writers,
 # fdatasync batchers and readers on one set of files at once and checks
 # every cell it reads.  This builds the module and the exerciser, attaches
-# a fresh volume to the guest, runs it for H2_STORM_SECS, then unmounts,
+# a fresh volume to the guest, runs it in cycles, then unmounts,
 # drops the cache, remounts and has the exerciser check every cell against
 # the last write each received, and checks the image with fsck_hammer2.
 # Memory available and unreclaimable slab are printed before and after, so
 # a long run reports growth as a number.  It is P2's mixed-load and
-# storm reading, and with H2_STORM_SECS of hours its soak.
+# storm reading, and with H2_STORM_CYCLES in the hundreds its soak.
 #
 #   KDIR=~/kernels/linux-7.3-rc5 bash script/storm.sh
-#   H2_STORM_SECS=10800 KDIR=... bash script/storm.sh     a three-hour soak
+#   H2_STORM_CYCLES=800 KDIR=... bash script/storm.sh    a soak, hours long
 #
 # Not a gate.  Exit 2 without the guest, the tools or a kernel tree.
 set -u
@@ -20,6 +20,10 @@ cd "$(dirname "$0")/.." || exit 2
 FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
 IMG=$FIXDIR/storm.img
 SIZE=${H2_STORM_SIZE:-8G}
+# A cycle runs for the seconds the volume budget buys at the measured
+# rate, so the length is not set here.  SECS is the ceiling a cycle may
+# run for, which bounds the hang detection below; the default is far
+# above any cycle the budget produces on an 8G volume.
 SECS=${H2_STORM_SECS:-300}
 FILES=${H2_STORM_FILES:-8}
 CYCLES=${H2_STORM_CYCLES:-1}
@@ -121,10 +125,12 @@ echo "before: $(mem)"
 # a full volume is refused by the reserve check upstream carries too.
 for cyc in $(seq 1 NCYC); do
 	echo "== cycle $cyc of NCYC"
-	# df reads voldata.allocator_free, which only bulkfree recomputes,
-	# so it reports the number the last bulkfree left and not what a run has
-	# spent.  The module counters move on every allocation and are
-	# the reading the cost of a cycle is taken from.
+	# The cost of a cycle is read from the counters the module keeps,
+	# which are cumulative and never reset, so a cycle spend is the delta
+	# across it.  df reports the same allocator_free field from the
+	# in-memory copy and would serve as well while the volume is
+	# mounted; the counters are used because they are the same reading
+	# the allocator itself makes and they are already there.
 	d0=$(($(cat $ALLOC/alloc_data_bytes) + $(cat $ALLOC/alloc_meta_bytes)))
 	echo "cost before cycle $cyc: data $(cat $ALLOC/alloc_data_bytes) meta $(cat $ALLOC/alloc_meta_bytes)"
 	# The first cycle is the probe: it runs for PROBE seconds and what it
@@ -183,12 +189,15 @@ echo "after unload: $(mem)"
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:") lockdep $(dmesg | grep -c "possible circular locking")"
 '
 run=$(printf '%s' "$run" | sed "s/SECS/$SECS/; s/FILES/$FILES/g; s/NCYC/$CYCLES/g; s/PROBESEC/$PROBE/g; s/BUDGET/$BUDGET/g")
-# The bound is each cycle's run, a fifth of it again, and ten minutes
-# for its remount, checks and two bulkfree passes: one 300 s cycle is
-# called hung at 960 s, where an hour's margin once let a hang sit
-# unread for an hour.  H2_STORM_BOUND overrides.
+# The bound is each cycle at the ceiling, a fifth of it again, and ten
+# minutes for its remount, checks and two bulkfree passes.  The ceiling
+# and not the measured length, because the length is not known until the
+# first cycle has run and the bound has to exist before it starts; a
+# cycle that reached the ceiling while making progress would be called
+# hung, so the ceiling is set well above what the budget buys.
+# H2_STORM_BOUND overrides.
 BOUND=${H2_STORM_BOUND:-$((CYCLES * (SECS + SECS / 5 + 600)))}
-echo "storm: $CYCLES cycles of $SECS s, called hung at $BOUND s"
+echo "storm: $CYCLES cycles, each at most $SECS s, called hung at $BOUND s"
 # The guest output is streamed to a file as it arrives and read back
 # from there, rather than captured into a variable that is printed
 # only when ssh returns.  A soak is hours long, and a capture prints
@@ -196,7 +205,11 @@ echo "storm: $CYCLES cycles of $SECS s, called hung at $BOUND s"
 # that hung an hour ago look the same from here; a dropped
 # connection would also take the whole run's output with it.  The
 # file is the progress signal: `tail -f` it.  H2_STORM_LOG names it.
-STORM_LOG=${H2_STORM_LOG:-/tmp/storm.log}
+# The log goes beside the image, not in /tmp, because a reading a
+# document cites has to outlive the run that produced it: a /tmp log
+# is overwritten by the next run and the citation then traces to
+# nothing.  H2_STORM_LOG overrides.
+STORM_LOG=${H2_STORM_LOG:-$FIXDIR/storm.log}
 echo "storm: guest output follows to $STORM_LOG"
 # The ssh writes the log itself, so the status is its own and not a
 # pipeline's, which a sh without PIPESTATUS cannot report.  A reader
@@ -238,22 +251,21 @@ for want in '^rmmod exit 0$' '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0 lockdep 
 		echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done
 printf '%s\n' "$out" | command grep '^cost after cycle ' | sed 's/^/  note  /'
-# Each cycle has to have spent data and meta bytes: a cycle whose counters
-# did not move is a cycle that allocated nothing, which would make its
-# clean checks a reading about an idle filesystem.  The per-op figure is
-# printed because it is the amplification this load costs, and a change
-# in it is what a write-path regression looks like from here.
-for cyc in $(seq 1 "$CYCLES"); do
-	d=$(printf '%s\n' "$out" | sed -n "s/^cost after cycle $cyc: data \([0-9]*\) .*/\1/p")
-	[ -n "$d" ] || d=0
-	[ "$d" -gt 0 ] || { echo "  FAIL  cycle $cyc allocated no data bytes"; fail=$((fail + 1)); }
-done
+# Each cycle has to have spent bytes: a cycle that allocated nothing is a
+# cycle whose clean checks are a reading about an idle filesystem.  The
+# reading is the per-cycle delta, `cycle spend`, and not the cumulative
+# `cost after cycle N`, which is non-zero for every cycle after the first
+# whatever that cycle did: a check on the cumulative figure can only fail
+# on cycle 1 and is inert after it.
+n=$(printf '%s\n' "$out" | command grep -c "^cycle spend [1-9][0-9]* B")
+[ "$n" -eq "$CYCLES" ] || {
+	echo "  FAIL  $n cycle(s) spent bytes where $CYCLES are wanted"; fail=$((fail + 1)); }
 # A run whose roles did nothing would pass every check above, so each
 # role's count is required to be non-zero here as well as in the exerciser.
 printf '%s\n' "$out" | command grep -q '^storm-ops .* 0$' && {
 	echo "  FAIL  a role completed no operation"; fail=$((fail + 1)); }
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    fsck_hammer2 clean after the run" || {
 	echo "  FAIL  fsck_hammer2 after the run"; fail=$((fail + 1)); }
-echo "storm: $CYCLES cycles of $SECS s over $FILES files, $fail failures"
+echo "storm: $CYCLES cycles over $FILES files, $fail failures"
 [ "$fail" -eq 0 ]
 

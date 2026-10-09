@@ -103,7 +103,10 @@ for mode in no_subtree_check subtree_check; do
 	echo "check export $mode accepted"
 	mount -t nfs -o vers=3,proto=tcp,nolock,actimeo=0,lookupcache=none 127.0.0.1:$S $C || { echo "check client mount $mode failed"; exportfs -u 127.0.0.1:$S; continue; }
 	[ "$(cat $C/top)" = root-file ] && echo "check $mode root file ok" || echo "check $mode root file wrong"
-	[ "$(cat $C/a/b/c/deep)" = deep-file ] && echo "check $mode deep file ok" || echo "check $mode deep file wrong"
+	# The deep file is not read by name here.  A read would put it in
+	# the file cache of nfsd, which holds the dentry for NFSD_LAUNDRETTE_DELAY
+	# and would survive the cache drop below, so the handle check would
+	# be a warm hit rather than a decode.  Only its name is listed.
 	ls $C/a/b/c | grep -qx deep && echo "check $mode readdir ok" || echo "check $mode readdir wrong"
 	echo client-$mode > $C/a/b/c/new-$mode
 	sync
@@ -150,7 +153,14 @@ umount $S; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
 '
-out=$(timeout 1200 ssh "$GUEST_SSH" "$run" 2>&1)
+# The output is written to a file beside the image as well as read
+# back, because a reading a document cites has to outlive the run:
+# the decode counts and the check lines are what the capability row
+# rests on.  H2_NFSD_LOG overrides.
+NFSD_LOG=${H2_NFSD_LOG:-$FIXDIR/nfsd-export.log}
+timeout 1200 ssh "$GUEST_SSH" "$run" > "$NFSD_LOG" 2>&1
+rc=$?
+out=$(cat "$NFSD_LOG")
 rc=$?
 printf '%s\n' "$out" | sed 's/^/  /'
 if [ "$rc" -eq 124 ]; then
@@ -169,7 +179,7 @@ bad=$(printf '%s\n' "$out" | command grep -cE '^check .*(wrong|refused|failed)$'
 fail=$bad
 # Two exports of seven checks each; fewer is a run that asked less than it
 # says.
-[ "$ok" -eq 14 ] || { echo "  FAIL  $ok check(s) passed where 14 are asked"; fail=$((fail + 1)); }
+[ "$ok" -eq 22 ] || { echo "  FAIL  $ok check(s) passed where 22 are asked"; fail=$((fail + 1)); }
 # The decode has to have run through the handle at all, or the cold-cache
 # checks were cache hits and prove nothing about export_operations.
 for mode in no_subtree_check subtree_check; do
@@ -177,8 +187,13 @@ for mode in no_subtree_check subtree_check; do
 	[ "${n:-0}" -gt 0 ] && echo "  ok    $mode decoded $n handle(s) through fh_to_dentry" || {
 		echo "  FAIL  $mode never called fh_to_dentry, so no handle was decoded"; fail=$((fail + 1)); }
 done
+# The subtree-checked export is the only one that reaches fh_to_parent, and
+# reaching it is the whole reason this run exists: the syscalls drive the
+# same table but never that member.  A run that passed every check without
+# reaching it would be a reading about the other export twice.
 fp=$(printf '%s\n' "$out" | sed -n 's/^decode subtree_check .*fh_to_parent \([0-9]*\) .*/\1/p')
-echo "  note  subtree_check reached fh_to_parent ${fp:-0} time(s)"
+[ "${fp:-0}" -ge 1 ] && echo "  ok    subtree_check reached fh_to_parent ${fp} time(s)" || {
+	echo "  FAIL  subtree_check never reached fh_to_parent, so the decode this run exists for did not run"; fail=$((fail + 1)); }
 for want in '^umount exit 0$' '^rmmod exit 0$' '^log: bug 0 oops 0 warn 0$'; do
 	printf '%s\n' "$out" | command grep -q "$want" || { echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done
