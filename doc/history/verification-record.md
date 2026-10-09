@@ -4310,7 +4310,8 @@ Both of the last two live on the one path this tree has no reading for:
 `fh_to_parent` and the nfsd decode. `README.capabilities.md` names that as
 the gap, and it is the same gap the whole surface has, so it is not new here.
 
-**`fh_to_parent` is unreachable from the syscalls, measured 2026-10-01.** The
+**`fh_to_parent` is not reached by the syscall gate, measured 2026-10-01 and
+corrected 2026-10-08.** The
 capability row said its decode body runs in no test and left it there. That
 understates it: it is unreachable from `name_to_handle_at`/`open_by_handle_at`
 entirely, so no test written against those syscalls could reach it whatever it
@@ -4327,6 +4328,23 @@ the encoder only for a connectable non-directory. So the branch that calls
 `fh_to_parent` is entered only for a non-directory, and a non-directory is
 exactly what leaves the callback inert.
 
+**Corrected 2026-10-08.** The paragraph above is wrong, and the probe below
+measured nothing. `vfs_dentry_acceptable` returns 1 without looking only under
+the old permission model, `ctx->flags == 0` with `CAP_DAC_READ_SEARCH` held
+(fs/fhandle.c:210-212). Without that capability, `may_decode_fh()` refuses a
+plain open outright (`fs/fhandle.c:330-340`), and the gate runs as root, so
+that model is not what the probe drove. What the gate actually does is set
+`HANDLE_CHECK_SUBTREE` on every connectable handle (`fs/fhandle.c:401-404`),
+which makes the callback walk up from the decoded dentry and accept only if
+the walk reaches the mount directory the handle was opened by
+(`fs/fhandle.c:252`). The walk is not inert; it just accepts at the first
+step, because every file the gate encodes sits directly in the mount directory
+it opens by. The probe was placed inside `hammer2_fh_to_parent()`, which is
+entered only after `find_acceptable_alias()` fails, and that never happens here,
+so zero firings is the expected reading and not evidence about the callback.
+The claim that `fh_to_parent` is unreachable through the syscalls is true of
+this gate's file placement only, not of the interface.
+
 Measured rather than argued. A probe line was placed at the top of
 `hammer2_fh_to_parent()` that prints to the kernel ring, and every shape of
 the syscall was driven against a live mount: a connectable file handle opened
@@ -4334,11 +4352,12 @@ plain, with `O_DIRECTORY`, with `O_PATH` and with `O_NOFOLLOW`, and a
 directory handle (`type=0x30081`) opened with `O_DIRECTORY`. The probe fired
 zero times. The file was restored and rebuilt after.
 
-nfsd is the only caller that can reach it: it passes `flags = 0` with
-`nfsd_acceptable`, which returns 0 unless the walk from the decoded dentry
-reaches `exp->ex_path.dentry` (fs/nfsd/nfsfh.c), so on a subtree-checked
-export `find_acceptable_alias()` can fail and the parent decode runs. That is
-why the member is registered and why nothing in this tree can exercise it;
+nfsd is the caller this tree's own gate cannot stand in for: it passes
+`flags = 0` with `nfsd_acceptable`, which returns 0 unless the walk from the
+decoded dentry reaches `exp->ex_path.dentry` (fs/nfsd/nfsfh.c), so on a
+subtree-checked export `find_acceptable_alias()` can fail and the parent
+decode runs. That is why the member is registered and why the syscall gate
+does not exercise it;
 the guest cannot serve an export because every kernel in the fleet and every
 tree here is built with `CONFIG_NFSD` unset, and enabling it needs SUNRPC,
 which the kernel of record does not build either.
@@ -6615,19 +6634,19 @@ A cycle is now bounded by the volume. The first cycle runs for
 `H2_STORM_PROBE` seconds and its own cost counter says what a second of
 the load spends; every cycle after it gets the seconds that half the
 volume buys at the worst rate the run has seen, not at the probe alone.
-The rate varies by a factor of two between cycles: an 800-cycle run
+The rate varies by a factor of 3.5 between cycles: an 800-cycle run
 sized from one 5 s probe of 354 MB/s produced 12 s cycles whose spend
 ranged 1.8 GB to 7.68 GB, and 7.68 GB is the reserve line on an 8G
 volume, so that run was stopped rather than left to fail by chance.
 The budget is a target and not a cap: a cycle whose rate rises spends
 over it once before the correction applies, measured at 4.84 GB
-against 4.29 GB, which the reserve line absorbs. An assumed rate is a rate that is
+against 4.29 GB, and the overshoot is bounded by the target, since the
+rate that produced it is the rate the next cycle is sized from. An assumed rate is a rate that is
 wrong on the machine the run is on: the first version of this sized a
 cycle from 700 operations a second and the load did 5100, so the budget
 arithmetic was fiction, and a second version that allowed four fifths of
 the volume for data alone lost 9 of 24 cycles to ENOSPC by chance, a
 cycle spending 7.95 GB against 7.81 usable above the reserve.
-
 Measured 2026-10-08 on `h2debug-rc5`, 24 cycles: exit 0, every cell whole
 after each remount and cache drop, `fsck_hammer2` clean, and the kernel
 log clean on all six counters (`bug 0 oops 0 warn 0 kasan 0 ubsan 0
@@ -6642,7 +6661,8 @@ dead cell-lock holder, and a build with that check disabled fails it.
 127.0.0.1 and works through the client mount, which is the path
 `test/hammer2-fh.c` cannot reach: the syscalls drive the same
 `export_operations` table but not nfsd's acceptance callback, and
-`fh_to_parent` runs only from a subtree-checked export's decode. The run
+the gate never drives `fh_to_parent`; this run reaches it from a
+subtree-checked export's decode. The run
 needs a kernel with `CONFIG_NFSD` and an NFS client, so a tree was built
 with both (`7.3.0-rc5-nfsd`) and the guest booted it; the pinned trees are
 untouched.

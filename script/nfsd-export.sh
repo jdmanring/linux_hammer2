@@ -4,7 +4,7 @@
 # test/hammer2-fh.c drives export_operations through name_to_handle_at(2)
 # and open_by_handle_at(2), and README.capabilities.md is explicit that
 # this is not an export: nfsd checks a different acceptance callback, and
-# ->fh_to_parent runs only from nfsd's subtree check.  This is the export.
+# the gate never drives ->fh_to_parent.  This is the export.
 # The guest serves a HAMMER2 mount over NFS to itself on 127.0.0.1, works
 # through the client mount, and reads the answers back on the server side.
 #
@@ -15,7 +15,7 @@
 #   subtree_check     nfsd_acceptable() walks the decoded dentry up to the
 #                     export root, and when no acceptable alias is cached
 #                     the decode falls back to ->fh_to_parent, the one
-#                     member no syscall can reach
+#                     member test/hammer2-fh.c never reaches
 # Each is checked from a cold server cache (the client keeps its handles,
 # the server's dentries are dropped), which is what makes the server
 # decode the handle rather than find the dentry already in memory.
@@ -177,9 +177,10 @@ case $out in *SETUP*) echo "nfsd: COULD-NOT-RUN: $(printf '%s\n' "$out" | comman
 ok=$(printf '%s\n' "$out" | command grep -c '^check .* ok$')
 bad=$(printf '%s\n' "$out" | command grep -cE '^check .*(wrong|refused|failed)$')
 fail=$bad
-# Two exports of seven checks each; fewer is a run that asked less than it
-# says.
-[ "$ok" -eq 22 ] || { echo "  FAIL  $ok check(s) passed where 22 are asked"; fail=$((fail + 1)); }
+# Two exports of six checks each (root file, readdir, create, deep file by
+# handle, renamed file, removed file); fewer is a run that asked less than
+# it says.
+[ "$ok" -eq 12 ] || { echo "  FAIL  $ok check(s) passed where 12 are asked"; fail=$((fail + 1)); }
 # The decode has to have run through the handle at all, or the cold-cache
 # checks were cache hits and prove nothing about export_operations.
 for mode in no_subtree_check subtree_check; do
@@ -187,9 +188,9 @@ for mode in no_subtree_check subtree_check; do
 	[ "${n:-0}" -gt 0 ] && echo "  ok    $mode decoded $n handle(s) through fh_to_dentry" || {
 		echo "  FAIL  $mode never called fh_to_dentry, so no handle was decoded"; fail=$((fail + 1)); }
 done
-# The subtree-checked export is the only one that reaches fh_to_parent, and
-# reaching it is the whole reason this run exists: the syscalls drive the
-# same table but never that member.  A run that passed every check without
+# The subtree-checked export is the only one here that reaches fh_to_parent,
+# and reaching it is the whole reason this run exists: the syscall gate
+# drives the same table but never that member.  A run that passed every check without
 # reaching it would be a reading about the other export twice.
 fp=$(printf '%s\n' "$out" | sed -n 's/^decode subtree_check .*fh_to_parent \([0-9]*\) .*/\1/p')
 [ "${fp:-0}" -ge 1 ] && echo "  ok    subtree_check reached fh_to_parent ${fp} time(s)" || {

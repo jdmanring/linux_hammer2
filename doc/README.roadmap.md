@@ -99,7 +99,7 @@ an object in a mount is reopened by handle, which is NFSExport's move from
 with `CONFIG_NFSD` and an NFS client, serves a HAMMER2 mount to itself on
 127.0.0.1 and works through the client mount under both export modes, 14 checks
 0 failed, reaching `fh_to_parent` on the subtree-checked one, which is the
-member no syscall can reach.
+member the syscall gate `test/hammer2-fh.c` never reaches.
 0.9.42 widened the
 style gate's search for a checker to
 `$HOME/kernels`, the one place its own testing document puts the trees of
