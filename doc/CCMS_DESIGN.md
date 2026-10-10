@@ -33,22 +33,63 @@ in the version the commit removed:
     }
 
 It assigns the requested state to the granted state. A caller reading
-`cst->state` after it gets back what it asked for. The function is under
-`#if 0`, so it never ran, and `ccms_lock_get()` and `ccms_lock_put()`,
-which were to drive it, are absent from the file entirely: the header
-declares them and no definition exists in the version that was deleted.
-Dillon's own comment on the function says it "can be used to upgrade or
-downgrade the state", which the body does not do.
+`cst->state` after it gets back what it asked for. Dillon's own comment on
+the function says it "can be used to upgrade or downgrade the state",
+which the body does not do.
+
+The front end that calls it is written, and this is the part worth
+reproducing. `ccms_lock_get()` acquires the three local locks in a fixed
+order, topology then attribute then data, and only then resolves each
+against the remote state:
+
+    if (lock->req_t)
+            ccms_thread_lock(&cino->topo_cst, lock->req_t);
+    if (lock->req_a)
+            ccms_thread_lock(&cino->attr_cst, lock->req_a);
+    if (lock->req_d)
+            ccms_thread_lock(&cino->data_cst[0], lock->req_d);
+
+    if (lock->req_t > cino->topo_cst.state)
+            ccms_rstate_get(lock, &cino->topo_cst, lock->req_t);
+    else if (cino->topo_cst.state == CCMS_STATE_INVALID)
+            ccms_rstate_get(lock, &cino->topo_cst, CCMS_STATE_ALLOWED);
+    ...
+
+Its comment states the ordering rule and why: local locks first, then the
+remote resolution, because "once the local locks are established the CST
+grant state cannot be pulled out from under us". It also states the
+deadlock contract, which is the design's most interesting sentence: if
+`ccms_rstate_get()` blocks it "will release all local locks and set the
+FAILED bit", the remote grants are still acquired, and because the local
+locks were lost the caller must loop. `ccms_lock_get()` carries the
+`goto again` for it and `ccms_lock_put()` releases the three in reverse.
+
+So the front end is a specification, and the loop, the ordering and the
+failure contract are all reproducible. What is missing is the one step it
+delegates.
+
+The whole block sits under `#if 0`, and it would not compile if the guard
+were removed. `ccms_lock_get()` dereferences `lock->cino` as a
+`ccms_inode_t *`, and no such type is defined anywhere in the tree at that
+revision: `command grep` over `hammer2.h`, `hammer2_ccms.h` and the three
+files that would use it finds the name only in the header's prose and in
+these two functions. The `data_cst[0]` it indexes is likewise a member no
+structure declares. What the revision does define is a `ccms_cst_t` named
+`cst` inside `struct hammer2_chain_core`, and a `ccms_cst_t` named
+`topo_cst` inside `struct hammer2_inode`, whose comment says the attribute
+CST "is embedded in the chain (`chain.cst`) and aliased w/ `attr_cst`".
+The front end was written against a shape the same revision does not have.
 
 So the original protocol is not a specification that can be reproduced
-from the source. What the source holds is the vocabulary, the state names,
-the type flags and the intended shape of the call sites. The agreement
-procedure behind them was never written, in any tree, at any revision.
+whole. What the source holds is the vocabulary, the state names, the type
+flags, the three-way split, and the front end's ordering and failure
+contract. The remote grant step behind them was never written, in any
+tree, at any revision.
 
 This is the fact the rest of the note rests on, and it changes what P3
 can be. "Reproduce the original protocol before weighing a modern
-replacement" is a rule this tree keeps, and it is satisfiable here only
-for the part of the protocol that exists. The part that does not exist
+replacement" is a rule this tree keeps, and it is satisfiable here for
+everything except the one function the design turns on. That function
 cannot be reproduced; it has to be designed, and a design is a decision
 the maintainer takes rather than one this document can settle by reading.
 
@@ -164,26 +205,33 @@ maintainer's, and each names what it blocks.
 
 ### 1. What the grant is granted over
 
-The original grants over a topology subtree plus an inclusive key range.
-Two shapes are available here.
+The original answers this, and the answer is not one placement but three.
+The revision before `94491fa098` puts a `ccms_cst_t` named `topo_cst` in
+`struct hammer2_inode`, and a `ccms_cst_t` named `cst` in
+`struct hammer2_chain_core`, and its comment on the inode says the
+attribute CST "is embedded in the chain (`chain.cst`) and aliased w/
+`attr_cst`". So topology state lives on the inode, attribute state on the
+chain, and the two are the same storage seen under two names.
 
-A per-object state on the inode, which is what the header's "embeds
-CCMS_CST structures in its internal inode representation" describes. One
-state per inode, no range, so a write to one range of a file conflicts
-with a read of another range of the same file. Simpler to place, and it
-is what the surviving header's `ccms_cst` fields actually support: the
-key range lives on the lock, not on the CST, in the deleted version too.
+The data state is the one the revision does not place. `ccms_lock_get()`
+indexes `cino->data_cst[0]`, an array member no structure in that revision
+declares, and the `ccms_inode_t` it reaches through is undefined. The
+header's key range, `key_beg` to `key_end`, is on the lock rather than on
+the CST, which is consistent with one CST per range and settles nothing:
+the array's shape is not written down anywhere, and the `[0]` index is the
+only use of it in the tree. What would settle it is a revision that
+defines `ccms_inode_t`, and there is none.
 
-A per-range state on the chain, which is what the key range implies. A
-`hammer2_chain` already covers a key range and already has a parent, so
-the CST's natural home is the chain, and the topology recursion the
-header requires is the chain's own parent walk. This is the shape that
-makes the three-way split mean something.
-
-The second is the one the format's own structure suggests, and it is the
-larger change: it puts a state field on a structure the core allocates
-and frees on every block, and the chain is the hottest structure in the
-driver. The first is smaller and gives up range granularity.
+What that leaves here is a real decision, and it is narrower than it first
+looked. The topology and attribute halves have a placement the original
+chose, and a port can follow it. The data half has none, and the port's
+`hammer2_chain` is the structure that already covers a key range and
+already has a parent, so it is where a range state would go. That is the
+larger change of the two: it puts a state field on a structure the core
+allocates and frees on every block, and the chain is the hottest structure
+in the driver. The churn reading the roadmap records (twenty thousand
+files under a hundred directories, four writers, create 12 to 13 s) is
+the control that would move if the field cost anything.
 
 ### 2. Where the agreement procedure lives
 
@@ -336,9 +384,11 @@ format. A node that loses its state asks for it again; a node that never
 had it asks for it for the first time.
 
 The format's own cluster vocabulary is already on the media and is
-already read here: a cluster is PFS roots sharing a `pfs_clid`, and the
-node type is a `pfs_type` on the PFS root. Both are read by
-`hammer2_cluster_check()` today. So a coherency layer adds no field to
+already read here: a cluster is PFS roots sharing a `pfs_clid`, which the
+mount path matches on (`hammer2_vfsops.c`, where a volume whose PFS root
+carries the same `pfs_clid` joins the mount), and the node type is a
+`pfs_types[]` entry on the PFS root, which `hammer2_cluster_check()` reads
+to count masters for its quorum. So a coherency layer adds no field to
 the media, and an old reader of this port's media sees what it sees now.
 
 The one place that could change is if a grant had to be durable across a
@@ -350,7 +400,9 @@ stops at a design note of its own under the same rule.
 
 - Which of the three agreement positions is taken. That is the
   maintainer's, and it is the decision the whole layer turns on.
-- Whether the state lives on the inode or the chain.
+- Where the data state lives. The topology and attribute placements are
+  the original's and are recorded above; the data half has no placement in
+  any revision, and the chain is where a range state would go.
 - Whether the layer is built before the transport. The transport is P5
   and the message core P6; a grant needs both, and the roadmap's
   dependency order puts P4 between this step and them for the reason its
@@ -358,6 +410,10 @@ stops at a design note of its own under the same rule.
 - Whether the surviving thread lock is carried at all. Alternative A
   argues it should not be, and the argument is a provenance one rather
   than a performance one.
+- Whether `ccms_lock_get()`'s ordering and failure contract are carried as
+  they stand. They are the part of the original that is written down, so
+  the default is to keep them; the `goto again` loop is only meaningful
+  once the step it retries exists.
 
 ## Provenance
 
@@ -365,6 +421,9 @@ stops at a design note of its own under the same rule.
   the DragonFly clone at `250a8b4` by `git show 94491fa098^:...`. The
   clone is shallow, so the commit is read from the object store rather
   than from history.
+- The `ccms_cst_t` placements, from the same revision's `hammer2.h`:
+  `topo_cst` in `struct hammer2_inode` and `cst` in
+  `struct hammer2_chain_core`.
 - The surviving `hammer2_ccms.c`, 311 lines, and `hammer2_ccms.h`, 194
   lines, at `250a8b4`.
 - `94491fa098` ("hammer2 - locking revamp", 2015-03-22), whose message
@@ -374,3 +433,11 @@ stops at a design note of its own under the same rule.
 - The state model's invariants S6, S7 and the scenario list, from
   `proposals/hammer2-completion-handoff/HAMMER2_CLUSTER_STATE_MODEL.md`.
 - The roadmap's rules and the P3 row, in `doc/README.roadmap.md`.
+
+An earlier version of this note said `ccms_lock_get()` and
+`ccms_lock_put()` had no definition in any revision, which was wrong:
+both are defined in the version `94491fa098` deleted, at lines 98 and 160,
+inside the `#if 0` block that also holds `ccms_rstate_get()`. The claim
+was written from the header's declarations without reading the body, and
+the body is the more useful finding, so it is recorded here rather than
+quietly replaced.

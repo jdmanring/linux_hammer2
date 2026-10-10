@@ -12,6 +12,7 @@ Which file answers which question.
 | Why was a port decision taken the way it was? | `README.porting.md` |
 | How is the DragonFly source carried, and where is the shim boundary? | `ARCHITECTURE.md` |
 | What does the DIO layer do on Linux, and which sizes are the format's? | `IO_MODEL.md` |
+| What was the cache coherency protocol, and what would completing it have to prove? | `CCMS_DESIGN.md` |
 | What does the port guarantee to something built above it? | `README.capabilities.md` |
 | Why BSD style in a Linux tree, and what would a mainline submission change? | `README.kernel-style.md` |
 | How is the carried core kept in step with upstream after a release? | `README.maintenance.md` |
