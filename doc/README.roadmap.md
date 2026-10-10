@@ -218,7 +218,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 1.0.3
+unload, and passed Linux and DragonFly checks. The driver is at 1.0.4
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0 and P1 are closed and P2 is next.
+dependency order. P0, P1 and P2 are closed and P3 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -290,9 +290,11 @@ dependency order. P0 and P1 are closed and P2 is next.
    passes after. `doc/history/verification-record.md` has every reading,
    the race between a writer and the seek included, and xfstests' `seek`
    group passes, 8 of 8.
-3. P2, root filesystem and long-run readiness, is next. Its row below
-   names what is measured and what is not, and `script/xfstests.sh` is
-   now the instrument for the parts the suite covers.
+3. P2, root filesystem and long-run readiness, closed 2026-10-09: every
+   item in its row is measured, the two 800-cycle soaks included, on the
+   debug and KASAN builds. `script/xfstests.sh` is the instrument for the
+   parts the suite covers. P3, cache coherency, is next, and its row is a
+   design note before any code.
 
 ## Versioning
 
