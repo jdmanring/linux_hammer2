@@ -6751,12 +6751,13 @@ that searched the wrong output and never fired. Round 5 signed off against
 
 What the audit did not cover: a soak of several hours on the debug and KASAN
 builds. The longest kept run is 24 cycles; the 800-cycle run was stopped
-before it finished.
+before it finished. Both soaks below are that reading, and this paragraph is
+superseded by them.
 
 ## The 800-cycle soak
 
 `script/storm.sh` with `H2_STORM_CYCLES=800` on `h2debug-rc5`, an 8 GiB
-volume, a 4.29 GB budget per cycle, ran 4 h 16 min to `storm: 800 cycles
+volume, a 4.29 GB budget per cycle, ran 2 h 39 min to `storm: 800 cycles
 over 8 files, 0 failures`. Every cycle checked all 2048 cells after a
 remount with the cache dropped and reported `storm-failures 0` and
 `verify-failures 0`; every cycle's two bulkfree passes and removal exited
@@ -6765,14 +6766,15 @@ volume absorbed. The rate per cycle ran 197 to 666 MB/s. Cumulative
 allocation reached 2.32 TB of data and 263 GB of meta. `fsck_hammer2` was
 clean after the run, the module unloaded, and the kernel log read `bug 0
 oops 0 warn 0 kasan 0 ubsan 0 lockdep 0`. Available memory after unload was
-3,402,152 kB against 3,336,316 kB before. The log is
-`/mnt/storage/hammer2-fixtures/storm.log`. This run was not audited, and a
-soak on the KASAN build remains open.
+3,402,152 kB against 3,336,316 kB before. The run's own output is kept in
+the session task file `bks40vhjy.output`; the log it wrote,
+`/mnt/storage/hammer2-fixtures/storm.log`, was overwritten by the KASAN
+run below. This run was not audited.
 
 ## The 800-cycle KASAN soak
 
 The same command with `KDIR` pointed at the KASAN tree, on the guest booted
-into `h2kasan-rc5`, ran 6 h 13 min to `storm: 800 cycles over 8 files, 0
+into `h2kasan-rc5`, ran 6 h 14 min to `storm: 800 cycles over 8 files, 0
 failures`. Every cycle checked all 2048 cells after a remount with the
 cache dropped and reported `storm-failures 0` and `verify-failures 0`;
 every cycle's two bulkfree passes and removal exited 0. Two cycles of 800
@@ -6785,4 +6787,37 @@ kasan 0 ubsan 0 lockdep 0`, the KASAN and UBSAN counters being the reason
 this build exists. Available memory after unload was 2,606,788 kB against
 2,493,792 kB before. The log is
 `/mnt/storage/hammer2-fixtures/storm.log`, overwritten from the debug
-run. This run was not audited.
+run, and holds this run's per-cycle output; the script's own verdict and
+`fsck_hammer2` line are printed on the host and are kept in the session
+task file `bmbm300pf.output`. This run was not audited.
+
+## The busy-guest control, and both soak audits
+
+The fixture gate's busy-guest verdict was verified live before its commit,
+against a guest whose module was held by a mounted volume. The unchanged
+gate at `d46b7f0^` printed `fixtures: FAIL: the module built for this
+guest did not load` and exited 1; the changed gate printed `fixtures:
+COULD-NOT-RUN: a hammer2 module is still in use on artix-s6-kde, so this
+gate cannot load its own build` and exited 2. The held mount survived both
+runs. The two control outputs are kept in the session's task directory
+(`busy.out`, `unfixed.out`). With the guest free the changed gate passed
+11 images with 0 failures.
+
+An independent adversarial audit of the two soak sections, the roadmap,
+the capabilities table's flush row, the 1.0.4 changelog row and the
+testing document's storm and fixture rows ran 2026-10-10 against
+`d3419e4`: every figure recomputed from the kept log and the kept task
+output, the script's sizing and verification mechanism read from its
+source, and the same numbers cross-checked across every document stating
+them. Round 1 returned six subject findings: the debug soak's duration
+read from a log file's surviving birth time rather than the run's own
+start (4 h 16 min stated for a 2 h 39 min run), the KASAN duration short
+by a minute, a dead evidence pointer for the debug run's overwritten log,
+a testing-document default log path that had moved, a superseded passage
+not marked superseded, and an overshoot described as once when a later
+rise can overshoot again. Two apparatus findings: the kept log cannot
+back the verdict line the record cites it for, since the script prints
+that on the host, and the busy-guest control rested on a commit message
+with no log kept. All eight are corrected in this section's
+neighborhood; the durations now read from the run task outputs' own
+timestamps.
