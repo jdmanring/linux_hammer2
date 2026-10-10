@@ -172,10 +172,37 @@ clustering.
 
 ## What the port carries today
 
-Nothing of CCMS. `command grep` over `src/` for `ccms_cst`, `ccms_lock`,
-`ccms_domain`, `CCMS_STATE` and `CCMS_TYPE` returns no line. The only
-mention is a comment in `hammer2.h` recording that the FreeBSD port
-deletes the layer and that this port follows it.
+No part of the coherency layer, and one part of CCMS: the surviving
+thread lock, carried into the build at 1.0.6 as `hammer2_ccms.c`, 323
+lines, and `hammer2_ccms.h`, 177 lines. This section said the opposite
+when the note was first written, and the change is the thing that makes
+reading it back necessary: the note was written before the carry, and the
+carry is what the P3 row's code half turned out to be.
+
+`command grep` over `src/` for `ccms_cst`, `ccms_lock`, `ccms_domain`,
+`CCMS_STATE` and `CCMS_TYPE` now returns lines in exactly those two
+files, 46 of them, and no line anywhere else. So the split the note
+describes below is unchanged and is now written into the tree: the thread
+lock is present, and the coherency half is not.
+
+What that changes about this note is one thing and it is not small.
+Alternative A below ("carry the surviving `hammer2_ccms.c` and add the
+coherency half") is no longer a proposal, because the carry has happened:
+the 311 lines the note counts at `250a8b4` are 323 here with the port
+edits the origin table records, and they build and link. What remains of
+A is its second half, the agreement procedure, and the argument A makes
+against itself stands unchanged: the lock has no caller in this tree
+either, `ccms_thread_lock()` is called only from `ccms_thread_lock_upgrade()`
+inside the same file, and the port's `mtx` already provides the recursive
+exclusive hold, the shared re-lock and the upgrade that
+`hammer2_inode_lock_temp_release()` and `_restore()` use. Read A's
+provenance argument as applying to that: the lock is in the build because
+the carry was the recorded work, not because anything calls it.
+
+The only other mention is a comment in `hammer2.h` recording that the
+FreeBSD port deletes the dmsg/iocom/ccms layer and that this port follows
+it there, which it still does: what came in is one file of the layer, not
+the layer.
 
 What the port does carry, and what a coherency layer would sit on:
 
@@ -196,7 +223,8 @@ What the port does carry, and what a coherency layer would sit on:
 
 So the port has the topology, the node types, the local quorum decision
 and the synchronization thread. It has no cache state, no grant, and no
-way to ask another node for one.
+way to ask another node for one: what 1.0.6 added is the thread lock the
+grants would be resolved under, which is a lock and not a grant.
 
 ## What "completing CCMS" has to decide
 
@@ -305,18 +333,27 @@ have to prove". This section is that.
 
 ### A. Carry the surviving `hammer2_ccms.c` and add the coherency half
 
-What it is: port the 311-line thread lock, then write the agreement
-procedure behind it.
+What it is: the 311-line thread lock at `250a8b4`, carried here at 1.0.6
+as 323 lines with the port edits the origin table records and building
+against the kernel of record, and then the agreement procedure written
+behind it. The first half is done; what is left of this alternative is
+the second, which is the same procedure alternatives B and C write.
 
 What it would have to prove: that the thread lock has a caller. It has
-none in any of the four trees, and the port already has a recursive
-exclusive hold, a shared re-lock and a shared-to-exclusive upgrade on
-DragonFly's `mtx`, carried as a primitive of the shim's own and judged on
-the churn reading the roadmap records. Carrying a second recursive lock
-to sit under a coherency layer that does not exist yet is code upstream
-does not compile, which this tree's provenance rule treats as a defect.
-The thread lock would have to earn its place against the `mtx` already
-here, and on the evidence it does not.
+none in any of the four trees, and it has none here either:
+`ccms_thread_lock()` is called only by `ccms_thread_lock_upgrade()` in
+the same file, so the carried file is a lock nothing acquires. The port
+already has a recursive exclusive hold, a shared re-lock and a
+shared-to-exclusive upgrade on DragonFly's `mtx`, carried as a primitive
+of the shim's own, used by `hammer2_inode_lock_temp_release()` and
+`_restore()`, and judged on the churn reading the roadmap records.
+A second recursive lock sitting under a coherency layer that does not
+exist yet is a lock with two possible futures and no present use, and the
+`mtx` already here covers what it offers. The carry happened because it
+was the recorded work and it is upstream's file; whether it stays is the
+question this alternative now asks, and the answer on the evidence is
+that it should come out with the drop of `hammer2-y` unless a caller
+arrives with the procedure.
 
 ### B. Put the state on the chain and the procedure in the masters
 
@@ -407,9 +444,12 @@ stops at a design note of its own under the same rule.
   and the message core P6; a grant needs both, and the roadmap's
   dependency order puts P4 between this step and them for the reason its
   row gives.
-- Whether the surviving thread lock is carried at all. Alternative A
-  argues it should not be, and the argument is a provenance one rather
-  than a performance one.
+- Whether the surviving thread lock stays. It is carried and building as
+  of 1.0.6, so this is no longer "whether it is carried at all" but
+  whether it earns the place it now has. Alternative A argues it does
+  not, on the ground that it has no caller here and the `mtx` already
+  covers what it offers, and the argument is the same one it made when the
+  carry had not happened.
 - Whether `ccms_lock_get()`'s ordering and failure contract are carried as
   they stand. They are the part of the original that is written down, so
   the default is to keep them; the `goto again` loop is only meaningful
@@ -441,3 +481,25 @@ inside the `#if 0` block that also holds `ccms_rstate_get()`. The claim
 was written from the header's declarations without reading the body, and
 the body is the more useful finding, so it is recorded here rather than
 quietly replaced.
+
+The section "What the port carries today" was corrected on 2026-10-10,
+in the same change that carried the surviving lock. It said the port
+carried nothing of CCMS, and that was true when the note was written and
+false the moment 1.0.6 put `hammer2_ccms.c` in `hammer2-y`. The
+correction is written into the section rather than appended here because
+the section is a statement about the tree, which a reader consults for
+the current fact, while this list is the record of the readings.
+
+The claims this note rests on were re-read against the clone at
+`250a8b4` on the same date rather than carried forward from the first
+reading, and each resolved as recorded: `ccms_rstate_get()`'s body at
+line 508 of `94491fa098^:sys/vfs/hammer2/hammer2_ccms.c` is
+`cst->state = state;` under `/* XXX */`, the state model's point that the
+granted state is the requested state; that file is 516 lines with the
+`#if 0` blocks included; `topo_cst` is in `struct hammer2_inode` at
+`hammer2.h` line 462 with the aliasing comment above it; `data_cst[0]`
+appears in `ccms_lock_get()` at lines 117, 140, 141 and 165 and in no
+declaration in either file, which is the finding the data-state decision
+turns on; `94491fa098a9b62dd517fe5e5f0c8bf3315b9d5a` is dated 2015-03-22
+and its message carries the "used again when we get cache coherent in"
+sentence the finding quotes.

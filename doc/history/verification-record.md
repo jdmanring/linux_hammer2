@@ -6838,3 +6838,36 @@ corrected. Round 3, against `bbf25e5`, returned zero subject findings and
 one apparatus finding, that the clean-run control was the one reading in
 that section without a durable copy; it is now kept beside the other two.
 The audit is signed off.
+
+## The CCMS design note's state claims, re-read 2026-10-10
+
+`doc/CCMS_DESIGN.md` was written before 1.0.6 carried the surviving
+thread lock into the build, and three documents carried the sentence
+that the lock "is not carried": the note's own "What the port carries
+today", the capabilities table's CacheCoherence row, and the roadmap's
+P3 row. All three were true when written and false from the moment
+`hammer2_ccms.o` entered `hammer2-y`. No gate sees this class: the
+inventory gate reads the origin table and the Makefile together, so a
+carry moves both and stays consistent, and the absence gate resolves
+"X is not carried" only against files that are absent, not against a
+sentence in prose.
+
+The claims the note rests on were re-read at the clone rather than
+carried forward, and each resolved as recorded: `ccms_rstate_get()`'s
+body at line 508 of `94491fa098^:sys/vfs/hammer2/hammer2_ccms.c` is
+`cst->state = state;` under `/* XXX */`; that file is 516 lines with
+its `#if 0` blocks; `topo_cst` is in `struct hammer2_inode` at
+`hammer2.h` line 462; `data_cst[0]` appears at `hammer2_ccms.c` lines
+117, 140, 141 and 165 and in no declaration in either file;
+`94491fa098a9b62dd517fe5e5f0c8bf3315b9d5a` is dated 2015-03-22 with the
+"used again when we get cache coherent in" sentence in its message.
+
+Measured on this tree at the same date: `command grep` for the five
+CCMS names over `src/` returns lines in exactly `hammer2_ccms.c` and
+`hammer2_ccms.h`, 46 of them, and no line elsewhere;
+`ccms_thread_lock()` is called only by `ccms_thread_lock_upgrade()` in
+`hammer2_ccms.c`, so the carried lock has no caller; the origin table
+records 323 and 177 lines for the two files and `hammer2-y` names
+`hammer2_ccms.o`. Alternative A in the note now asks whether the lock
+earns the place it has rather than whether to carry it, which is the
+change the correction made to the design rather than to the record.
