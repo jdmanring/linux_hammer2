@@ -486,6 +486,34 @@ a gated number is not a summary, it is a claim that goes wrong quietly, so
 the counts are gone from here and the baseline is the only place that
 carries them.
 
+1,239 to 1,260 when `hammer2_ccms.c` and `hammer2_ccms.h` were carried,
+323 and 177 lines: 21 hits, one per 24, which is the density a short file
+of small functions has once the SPDX pair is counted per file. Fourteen
+are the mechanical rows below, ten `return (x);`, two continuation
+indents, one `braces {} are not necessary` and one `do not add new
+typedefs`. Three are the errno sign, all `EBUSY` from
+`ccms_thread_lock_nonblock()`'s refusals, which is the recorded port
+decision and not a finding. The remaining four are the SPDX pair and the
+new category below.
+
+One category is new, `Prefer using 'X' to using 'X', this function's
+name, in a string`, four hits. Each is an `hpanic()` message naming the
+function it sits in, which is upstream's text carried verbatim, and the
+checker's advice is to drop the name from the string. It stays: the
+message is what a reader sees in the log when the state machine is
+handed a state it does not implement, and the function name is the
+useful half of it. Nothing was fixed rather than baselined, and the
+counts are in `doc/checkpatch-baseline.txt` rather than here.
+
+Two hits were fixed rather than baselined, and they are the reason the
+carry was parked. `ccms_thread_lock()` and
+`ccms_thread_lock_nonblock()` each released the CST's spin, called
+`panic()`, and fell through to the release after the `if`/`else` chain.
+Upstream's `panic()` never returns, so that was correct there; the
+port's `hpanic()` does return, so the spin was released twice. Both arms
+now return, which is the shape every other carried `hpanic` site has.
+`README.porting.md` has the reasoning.
+
 | category | disposition |
 |---|---|
 | do not add new typedefs | required by the carried core; converts with the core |
@@ -495,6 +523,7 @@ carries them.
 | plain inline preferred over `__inline` | `hammer2.h`, `hammer2_admin.c`, `hammer2_io.c`, `hammer2_chain.c`, `hammer2_inode.c` and `hammer2_rb.h`, recounted per file on 2026-08-26. The disposition here used to read "in vendored `sys/tree.h` and `sys/queue.h`", which no run supports: the gate's file list is `src/sys/fs/hammer2/*.c` and `*.h` and has never scanned `src/sys/sys/` at all. Carried style; converts with the core |
 | please, no spaces at the start of a line | continuation alignment, in carried macros and in the BSD second-parameter-line indent every prototype and definition here uses |
 | misplaced or missing SPDX tag in line 1 | every file carried byte-for-byte from Kusumi's ports keeps his header shape, which puts the tag after the copyright block; the files this port wrote have it on line 1. One of each per carried file, so the pair tracks the number of carried files |
+| Prefer using 'X' to using 'X', this function's name, in a string | `hpanic()` messages that name the function they sit in, carried verbatim from upstream. The name is the useful half of the message, so it stays; see the `hammer2_ccms.c` entry above |
 | everything else | carried code |
 
 ## What this gate does not see

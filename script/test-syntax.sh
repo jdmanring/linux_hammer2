@@ -507,7 +507,8 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_vnops.c \
 		src/sys/fs/hammer2/hammer2_ioctl.c \
 		src/sys/fs/hammer2/hammer2_export.c \
-		src/sys/fs/hammer2/hammer2_synchro.c; do
+		src/sys/fs/hammer2/hammer2_synchro.c \
+		src/sys/fs/hammer2/hammer2_ccms.c; do
 		ran=$((ran + 1))
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
@@ -581,7 +582,8 @@ if command -v sparse >/dev/null 2>&1; then
 		src/sys/fs/hammer2/hammer2_vnops.c \
 		src/sys/fs/hammer2/hammer2_ioctl.c \
 		src/sys/fs/hammer2/hammer2_export.c \
-		src/sys/fs/hammer2/hammer2_synchro.c; do
+		src/sys/fs/hammer2/hammer2_synchro.c \
+		src/sys/fs/hammer2/hammer2_ccms.c; do
 		ran=$((ran + 1))
 		out=$(sp "$f" | command grep '^src/' || true)
 		if [ -z "$out" ]; then
