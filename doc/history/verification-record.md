@@ -6805,7 +6805,8 @@ gate cannot load its own build` and exited 2. The held mount survived both
 runs. The two control outputs are kept at
 `/mnt/storage/hammer2-fixtures/fixtures-busy-control.out` and
 `/mnt/storage/hammer2-fixtures/fixtures-unfixed-control.out`. With the
-guest free the changed gate passed 11 images with 0 failures.
+guest free the changed gate passed 11 images with 0 failures, its output
+kept at `/mnt/storage/hammer2-fixtures/fixtures-clean-control.out`.
 
 An independent adversarial audit of the two soak sections, the roadmap,
 the capabilities table's flush row, the 1.0.4 changelog row and the
@@ -6833,4 +6834,7 @@ without a directory and sat on tmpfs, and the debug section pointed at a
 log that cannot hold the verdict line. The run outputs and both control
 outputs are now copied to `/mnt/storage/hammer2-fixtures/` beside the
 per-cycle logs and named by full path, and the stale sentences are
-corrected.
+corrected. Round 3, against `bbf25e5`, returned zero subject findings and
+one apparatus finding, that the clean-run control was the one reading in
+that section without a durable copy; it is now kept beside the other two.
+The audit is signed off.
