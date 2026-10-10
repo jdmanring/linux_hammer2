@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0, P1 and P2 are closed and P3 is next.
+dependency order. P0, P1, P2 and P3 are closed and P4 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -293,8 +293,15 @@ dependency order. P0, P1 and P2 are closed and P3 is next.
 3. P2, root filesystem and long-run readiness, closed 2026-10-09: every
    item in its row is measured, the two 800-cycle soaks included, on the
    debug and KASAN builds. `script/xfstests.sh` is the instrument for the
-   parts the suite covers. P3, cache coherency, is next, and its row is a
-   design note before any code.
+   parts the suite covers. P3, cache coherency, closed 2026-10-10: its
+   row asked for a design note before any code, and the note is
+   `doc/CCMS_DESIGN.md`. Its finding is that there is no state machine to
+   port, the agreement procedure behind the original's states and flags
+   was never written in any tree, so the part of the rule that asks for
+   the original protocol to be reproduced first is satisfiable only for
+   the vocabulary and the three-way split, and the procedure is new
+   design for the maintainer to decide. P4, local synchronization
+   hardened, is next.
 
 ## Versioning
 
@@ -834,7 +841,7 @@ Rules it adds to the ones this tree already keeps:
 | P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
 | P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass, and so do files held in the inode, negative offsets and a writer racing the seek; xfstests' `seek` group passes, 8 of 8. Closed |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | small-file create and delete times are measured by `million-tree.sh` (1,000,000 files in 248 s with four writers, whole-tree delete in 41 s); low-memory closure reads at 2, 4 and 8 GiB, a single-purpose root boot and one 128 KiB mapped write are recorded, and `latency.sh` reports per-operation fsync rather than a storm. Mixed concurrent read/write with mmap and fsync storms is measured by `script/storm.sh`, which runs mapped writers, write-then-fsync writers, fdatasync batchers and readers on one set of files at once and checks every cell after a remount with the cache dropped; a 24-cycle run passes with the kernel log clean, and 800-cycle soaks ran clean on both the debug build (2 h 39 min) and the KASAN build (6 h 14 min, `kasan 0 ubsan 0`), each with `fsck_hammer2` clean and the kernel log clean. An export is served by `nfsd` under both export modes, 12 checks 0 failed. A sustained soak is the same load over `H2_STORM_CYCLES` cycles rather than one long cycle, since a cycle is bounded by the volume; the readings are in the verification record. `O_DIRECT` is decided, under "Not on the roadmap" |
-| P3 | cache coherency (CCMS): a design note before any code | P2 | rewritten, see below |
+| P3 | cache coherency (CCMS): a design note before any code | P2 | closed 2026-10-10. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0` and `ccms_lock_get()` has no definition in any revision, so what is reproducible is the four states, the six type flags and the three-way topology/attribute/data split, and the agreement procedure is new design. The note records four alternatives with what each would have to prove; the thread lock the surviving file holds has no caller in any of the four trees and is not carried. The correction paragraphs below it still stand: P3 had nothing to carry |
 | P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
 | P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |

@@ -17,7 +17,10 @@ a SLAVE on a second local device in step with its MASTER, measured by
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; members on other hosts
 need a transport that is not ported, and a quorum that cannot be met is
-unrun.
+unrun. Cache coherency is a design note rather than code:
+`doc/CCMS_DESIGN.md` records that the MESI state machine the plan asked
+to port was never written upstream, so the surviving thread lock, which
+has no caller in any of the four trees, is not carried.
 
 | what | state | read by |
 |---|---|---|
