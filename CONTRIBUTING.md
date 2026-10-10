@@ -41,10 +41,10 @@ anything, and its own green run is not evidence: three fixtures across
 these repositories passed on 2026-08-26 while testing nothing, each caught
 by running it against the defect rather than by reading it.
 
-**Every change comes with the gate that would have caught it.** Eleven of
-the thirteen are cheap and need nothing but this checkout; `test-fixtures.sh`
+**Every change comes with the gate that would have caught it.** Twelve of
+the fourteen are cheap and need nothing but this checkout; `test-fixtures.sh`
 and `test-enospc.sh` need a guest and report COULD-NOT-RUN without one. `test-absence.sh`
-exists because that rule was kept for code and not for prose. `test-shim.sh`, `test-syntax.sh` and
+exists because that rule was kept for code and not for prose. `test-shim.sh`, `test-ccms-lock.sh`, `test-syntax.sh` and
 `test-absence.sh` carry built-in controls that must fail on every run; the others buy the same assurance
 differently, and `doc/README.testing.md` says how for each. A patch that
 changes behavior with no way to observe the change is hard to review and
@@ -58,6 +58,7 @@ harder to keep.
     $ bash script/test-provenance.sh
     $ bash script/test-absence.sh
     $ bash script/test-shim.sh
+    $ bash script/test-ccms-lock.sh
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
     $ bash script/test-vectors-contract.sh

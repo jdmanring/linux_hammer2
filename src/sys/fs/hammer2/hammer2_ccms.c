@@ -46,12 +46,16 @@
  * primitive and a sleep, so nothing here reaches the network and nothing
  * of the port's is interleaved with the carried text.
  *
- * Two edits are the port's.  panic() becomes hpanic(), which marks the
- * device in error and returns rather than taking the machine, and the
- * lockdep entry and exit annotations are dropped: LOCKENTER and LOCKEXIT
- * exist to class CCMS's spin against the vnode locks it is held under,
- * and this port has no vnode lock in that sense, the inode lock being
- * its own and taken at a different level.  Both are in README.porting.md.
+ * Three edits are the port's.  panic() becomes hpanic(), which marks the
+ * device in error and returns rather than taking the machine; the lockdep
+ * entry and exit annotations are dropped, LOCKENTER and LOCKEXIT existing
+ * to class CCMS's spin against the vnode locks it is held under, and this
+ * port has no vnode lock in that sense, the inode lock being its own and
+ * taken at a different level; and the two bad-state arms of
+ * ccms_thread_lock() and ccms_thread_lock_nonblock() return after
+ * hpanic() rather than falling through, since upstream's panic() did not
+ * return and the spin would otherwise be released twice.  All three are
+ * in README.porting.md.
  *
  * The spin lock is a rw_semaphore in this port and so it may be released
  * around the sleeps below, which is what makes ssleep() expressible here
@@ -118,6 +122,7 @@ ccms_thread_lock(ccms_cst_t *cst, ccms_state_t state)
 	} else {
 		hammer2_spin_unex(&cst->spin);
 		hpanic("ccms_thread_lock: bad state %d", state);
+		return;		/* XXX Linux: hpanic returns */
 	}
 	hammer2_spin_unex(&cst->spin);
 }
@@ -152,6 +157,7 @@ ccms_thread_lock_nonblock(ccms_cst_t *cst, ccms_state_t state)
 	} else {
 		hammer2_spin_unex(&cst->spin);
 		hpanic("ccms_thread_lock_nonblock: bad state %d", state);
+		return (EBUSY);	/* XXX Linux: hpanic returns */
 	}
 	hammer2_spin_unex(&cst->spin);
 	return(0);

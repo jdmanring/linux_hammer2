@@ -260,9 +260,10 @@ does. Pass them on the `make` line.
 
 ## Test
 
-Thirteen gates. The compile gates need a toolchain and a kernel tree:
+Fourteen gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
+        $ bash script/test-ccms-lock.sh   # needs only a C compiler
         $ bash script/test-syntax.sh      # needs kernel headers and clang
         $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
 
@@ -303,11 +304,11 @@ Two need a guest, and exit 2 without one:
 No gate here is trusted on silence alone, because a check whose healthy
 signature is silence cannot otherwise be told from a check that never ran.
 How that is bought differs by gate, and they are not interchangeable:
-`test-shim.sh` and `test-syntax.sh` carry built-in controls that must fail
-on every run, `test-checkpatch.sh` compares against a recorded deviation
-set rather than asking for silence, and each repository gate asserts the
-population it searched before checking anything, so a glob that matches
-nothing cannot report a clean run.
+`test-shim.sh`, `test-ccms-lock.sh` and `test-syntax.sh` carry built-in
+controls that must fail on every run, `test-checkpatch.sh` compares against
+a recorded deviation set rather than asking for silence, and each
+repository gate asserts the population it searched before checking
+anything, so a glob that matches nothing cannot report a clean run.
 
 Exit 2 means the instrument could not run, which is not a verdict on the
 code. [doc/README.testing.md](doc/README.testing.md) has the detail,

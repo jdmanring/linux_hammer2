@@ -18,16 +18,17 @@
 2 Macros with complex values should be enclosed in parentheses
 16 Misplaced SPDX-License-Identifier tag - use line 1 instead
 1 Missing a blank line after declarations
-17 Missing or malformed SPDX-License-Identifier tag in line 1
+19 Missing or malformed SPDX-License-Identifier tag in line 1
 1 Possible comma where semicolon could be used
 3 Possible repeated word: 'X'
 1 Prefer 'X' to bare use of 'X'
+4 Prefer using 'X' to using 'X', this function's name, in a string
 1 Statements terminations use 1 semicolon
 2 Using vsprintf specifier 'X' potentially exposes the kernel memory layout, if you don'X'%p'.
-6 braces {} are not necessary for single statement blocks
+7 braces {} are not necessary for single statement blocks
 1 break is not useful after a return
 1 code indent should use tabs where possible
-79 do not add new typedefs
+80 do not add new typedefs
 1 do not initialise statics to 0
 17 do not use assignment in if condition
 3 else is not generally useful after a break or return
@@ -36,9 +37,9 @@
 2 please, no space before tabs
 193 please, no spaces at the start of a line
 42 quoted string split across lines
-259 return is not a function, parentheses are not required
+269 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
-1 return of an errno should typically be negative (ie: return -EBUSY)
+4 return of an errno should typically be negative (ie: return -EBUSY)
 2 return of an errno should typically be negative (ie: return -EDOM)
 2 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)

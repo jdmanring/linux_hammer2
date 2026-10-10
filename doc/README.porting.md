@@ -26,6 +26,36 @@ XOPs rather than on the pool. `hammer2_synchro.c` is DragonFly's and is
 carried; its thread runs for a SLAVE or soft PFS, and a single MASTER,
 which is what `newfs_hammer2` makes, starts none.
 
+`hammer2_ccms.c` is the second of the two transport-free halves and is
+carried for the same reason: it reaches no network and calls nothing of
+the port's, so a SLAVE's convergence does not wait on the message layer.
+Three edits are the port's, and the third is the one that matters.
+
+`panic()` becomes `hpanic()`, which prints, marks the device in error and
+returns rather than taking the machine, as it does at every carried call
+site. `LOCKENTER` and `LOCKEXIT` are dropped: they exist to class CCMS's
+spin against the vnode locks it is held under, and this port has no vnode
+lock in that sense, the inode lock being its own and taken at a different
+level.
+
+The third is the consequence of the first, and it is the defect the carry
+was parked for. `ccms_thread_lock()` and `ccms_thread_lock_nonblock()`
+each end their bad-state arm with `panic()`, which upstream never returns
+from, and the arm has already released the CST's spin before it. Under
+`hpanic()` the call returns, so control fell through to the release after
+the `if`/`else` chain and the spin was released twice. Both arms now
+return, marked `XXX Linux: hpanic returns` in place, which is the shape
+every other carried `hpanic` site already has. The bad state is a
+programming error rather than a media fault, so the return value is the
+one the function's own contract gives for a lock it did not take:
+`ccms_thread_lock()` is `void` and returns, and
+`ccms_thread_lock_nonblock()` returns `EBUSY`, which is what it returns
+for a lock it could not take for any other reason.
+
+The file's own header comment names all three. The two `hpanic` sites
+that are not in a bad-state arm are unaffected: one has `/* NOT REACHED
+*/ return(0)` after it, and the other holds no spin when it fires.
+
 ## Locks
 
 `hammer2_spin_*` is a `rw_semaphore`, not a `spinlock_t`. FreeBSD maps the
