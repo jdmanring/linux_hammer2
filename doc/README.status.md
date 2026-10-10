@@ -3,7 +3,7 @@ Status
 
 The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
-DragonFly itself. The tree is at 1.0.3 in `CHANGELOG.md`; the newest tag is
+DragonFly itself. The tree is at 1.0.4 in `CHANGELOG.md`; the newest tag is
 `v1.0.0`. The release shape holds: thirteen gates invoked from a `git
 archive`, ten run and pass, and the three that report could-not-run do
 so for the reasons a tarball has. The staged filings under
