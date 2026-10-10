@@ -6766,10 +6766,11 @@ volume absorbed. The rate per cycle ran 197 to 666 MB/s. Cumulative
 allocation reached 2.32 TB of data and 263 GB of meta. `fsck_hammer2` was
 clean after the run, the module unloaded, and the kernel log read `bug 0
 oops 0 warn 0 kasan 0 ubsan 0 lockdep 0`. Available memory after unload was
-3,402,152 kB against 3,336,316 kB before. The run's own output is kept in
-the session task file `bks40vhjy.output`; the log it wrote,
-`/mnt/storage/hammer2-fixtures/storm.log`, was overwritten by the KASAN
-run below. This run was not audited.
+3,402,152 kB against 3,336,316 kB before. The run's own output, verdict
+and `fsck_hammer2` line included, is kept at
+`/mnt/storage/hammer2-fixtures/storm-soak-debug.out`; the per-cycle log it
+wrote, `/mnt/storage/hammer2-fixtures/storm.log`, was overwritten by the
+KASAN run below. This run was audited, and the audit is recorded below.
 
 ## The 800-cycle KASAN soak
 
@@ -6785,11 +6786,13 @@ build's, which is the sanitizer's own cost. Cumulative allocation reached
 run, the module unloaded, and the kernel log read `bug 0 oops 0 warn 0
 kasan 0 ubsan 0 lockdep 0`, the KASAN and UBSAN counters being the reason
 this build exists. Available memory after unload was 2,606,788 kB against
-2,493,792 kB before. The log is
-`/mnt/storage/hammer2-fixtures/storm.log`, overwritten from the debug
-run, and holds this run's per-cycle output; the script's own verdict and
-`fsck_hammer2` line are printed on the host and are kept in the session
-task file `bmbm300pf.output`. This run was not audited.
+2,493,792 kB before. The per-cycle log is
+`/mnt/storage/hammer2-fixtures/storm-soak-kasan.log`, copied from the
+overwritten `storm.log`; the script's own verdict and `fsck_hammer2` line
+are printed on the host rather than into that log and are kept with the
+run's full output at
+`/mnt/storage/hammer2-fixtures/storm-soak-kasan.out`. This run was
+audited, and the audit is recorded below.
 
 ## The busy-guest control, and both soak audits
 
@@ -6799,9 +6802,10 @@ gate at `d46b7f0^` printed `fixtures: FAIL: the module built for this
 guest did not load` and exited 1; the changed gate printed `fixtures:
 COULD-NOT-RUN: a hammer2 module is still in use on artix-s6-kde, so this
 gate cannot load its own build` and exited 2. The held mount survived both
-runs. The two control outputs are kept in the session's task directory
-(`busy.out`, `unfixed.out`). With the guest free the changed gate passed
-11 images with 0 failures.
+runs. The two control outputs are kept at
+`/mnt/storage/hammer2-fixtures/fixtures-busy-control.out` and
+`/mnt/storage/hammer2-fixtures/fixtures-unfixed-control.out`. With the
+guest free the changed gate passed 11 images with 0 failures.
 
 An independent adversarial audit of the two soak sections, the roadmap,
 the capabilities table's flush row, the 1.0.4 changelog row and the
@@ -6821,3 +6825,12 @@ that on the host, and the busy-guest control rested on a commit message
 with no log kept. All eight are corrected in this section's
 neighborhood; the durations now read from the run task outputs' own
 timestamps.
+
+Round 2, against `309f2f9`, confirmed all six corrections and found one
+more subject finding and two apparatus ones: two sentences still said the
+soaks were not audited after they had been, the kept outputs were named
+without a directory and sat on tmpfs, and the debug section pointed at a
+log that cannot hold the verdict line. The run outputs and both control
+outputs are now copied to `/mnt/storage/hammer2-fixtures/` beside the
+per-cycle logs and named by full path, and the stale sentences are
+corrected.
