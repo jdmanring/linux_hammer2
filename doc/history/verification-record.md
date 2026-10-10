@@ -6768,3 +6768,21 @@ oops 0 warn 0 kasan 0 ubsan 0 lockdep 0`. Available memory after unload was
 3,402,152 kB against 3,336,316 kB before. The log is
 `/mnt/storage/hammer2-fixtures/storm.log`. This run was not audited, and a
 soak on the KASAN build remains open.
+
+## The 800-cycle KASAN soak
+
+The same command with `KDIR` pointed at the KASAN tree, on the guest booted
+into `h2kasan-rc5`, ran 6 h 13 min to `storm: 800 cycles over 8 files, 0
+failures`. Every cycle checked all 2048 cells after a remount with the
+cache dropped and reported `storm-failures 0` and `verify-failures 0`;
+every cycle's two bulkfree passes and removal exited 0. Two cycles of 800
+spent over budget, 4.73 GB and 4.36 GB against 4.29 GB, both absorbed by
+the volume. The rate ran 147 to 211 MB/s, about a third of the debug
+build's, which is the sanitizer's own cost. Cumulative allocation reached
+2.89 TB of data and 328 GB of meta. `fsck_hammer2` was clean after the
+run, the module unloaded, and the kernel log read `bug 0 oops 0 warn 0
+kasan 0 ubsan 0 lockdep 0`, the KASAN and UBSAN counters being the reason
+this build exists. Available memory after unload was 2,606,788 kB against
+2,493,792 kB before. The log is
+`/mnt/storage/hammer2-fixtures/storm.log`, overwritten from the debug
+run. This run was not audited.
