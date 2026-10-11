@@ -40,6 +40,21 @@ keeps the package, the six `test-hammer2` gates, their committed fixture
 manifests, and the C harness one of those gates compiles. Those check what it
 ships.
 
+## primary/, captured sources
+
+`primary/` arrived on 2026-10-10 and is different in kind: it holds other
+people's documents, kept so that a claim in this repository can be
+checked without a second fetch. Dillon's 2015 HAMMER2 design document,
+the CCMS sources from before DragonFly deleted them in `94491fa098`, and
+the twelve papers and specifications behind the comparable-systems survey
+in `../CCMS_REFERENCE.md`. `primary/PROVENANCE.txt` names the URL or `git
+show` and the extraction command for each file, and says which two survey
+sources were deliberately not captured and why.
+
+A question about cache coherency starts at `../CCMS_DESIGN.md` for what is
+decided and open, and `../CCMS_REFERENCE.md` for where each claim comes
+from. Neither should need a network fetch.
+
 ## These documents are governed
 
 `script/test-doc-prose.sh` runs vale over `doc/`, with the config and styles
@@ -50,3 +65,7 @@ Prose moved out of a governed tree and left ungoverned reproduces that.
 
 The gate asserts a non-empty population, because a sweep that matches nothing
 must not be able to pass.
+
+`primary/` is the one exception, excluded by path: those files are
+quotations, 246 findings in the IETF's and Microsoft's text when they
+arrived, and editing them to satisfy a style rule would falsify them.
