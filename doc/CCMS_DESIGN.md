@@ -324,6 +324,22 @@ before P8 without inventing the substrate. The administrative-rights
 policy is a knob the design explicitly leaves to administration and the
 port can defer. What is *not* open is the protocol's shape.
 
+"Runs under the Quorum protocol" is worth reading precisely, because it
+is the sentence that closes the question. The document's own
+`QUORUM OPERATIONS` section says the quorum is masters voting *amongst
+themselves* for commit, with the client excluded from that path on an
+explicit argument, while the client "must still validate the quorum (and
+obtain MESI cache states)" for reads and ownership is transferred when
+"cache state ownership is shifted from one client to another," which the
+masters serialize through the same two-phase machinery. A cache grant is
+therefore not a quorum vote; it is a state transfer that the commit
+protocol orders, served by the master that owns the object. That is also
+what every comparable system does: `doc/CCMS_REFERENCE.md` surveys GFS,
+Lustre, Ceph, NFSv4, SMB2/3, GPFS and Spanner and finds coherence
+authority held per object or subtree in all of them, with the quorum
+reserved for leadership and commit. HAMMER2's answer is the field's
+answer, and a per-grant vote would be a design none of them uses.
+
 The version of this section that stood from the note's first commit until
 2026-10-10 said the original "does not make this decision for us, because
 it never made it," and offered three positions: a cluster controller

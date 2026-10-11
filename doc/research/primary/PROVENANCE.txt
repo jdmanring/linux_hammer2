@@ -1,0 +1,7 @@
+The deleted CCMS sources are the state before commit 94491fa098
+("hammer2 - locking revamp", 2015-03-22).
+Extracted with:
+  git show 94491fa098^:sys/vfs/hammer2/hammer2_ccms.c
+  git show 94491fa098^:sys/vfs/hammer2/hammer2_ccms.h
+  git show 94491fa098^:sys/vfs/hammer2/hammer2.h
+from the clone at 250a8b4.

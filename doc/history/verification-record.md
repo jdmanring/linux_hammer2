@@ -6910,3 +6910,42 @@ the design as written and C is deferred by the project's own rule. What
 remains genuinely open is the quorum protocol's body (P8), which the
 cache layer runs under, and the administrative-rights policy the design
 leaves to administration.
+
+## The CCMS sources are captured, 2026-10-10
+
+Two readings in this record rest on a document that lived only on tmpfs
+and a clone that is shallow: Dillon's design document, and the deleted
+`hammer2_ccms.c` at `94491fa098^`. Both are now kept in the tree, under
+`doc/research/primary/`, so that neither the fetch nor the object-store
+read has to be repeated. The same directory holds the survey's primary
+sources where they were fetched to disk.
+
+- `DILLON_HAMMER2_DESIGN_2015.md`, from
+  `https://lists.dragonflybsd.org/pipermail/users/2015-April/448614.html`,
+  by `defuddle parse`. The design document begins at its own
+  `HAMMER2 DESIGN DOCUMENT` heading and is dated 03-Apr-2015 (v3).
+- `hammer2_ccms.c.deleted` and `hammer2_ccms.h.deleted`, from
+  `git show 94491fa098^:sys/vfs/hammer2/...` in the clone at `250a8b4`.
+- `hammer2.h.at-94491fa098-parent`, the same revision's header, for the
+  `topo_cst` placement.
+- `GFS-sosp2003.txt`, `Spanner-osdi2012.txt`, `Chubby-osdi06.txt`, the
+  three source documents the survey's claims about those systems rest on.
+
+The quorum reading was checked rather than taken from the survey. The
+survey reported that no production system votes per cache grant; the
+design document's `QUORUM OPERATIONS` section says the same thing in its
+own terms, and the check resolved the apparent conflict between "the
+cache sub-protocol runs under the quorum" and "coherence is per object."
+The quorum is masters voting amongst themselves for commit, the client
+excluded from that path on an explicit argument; cache state is obtained
+by the client and shifted between clients under the masters'
+serialization. So "under the quorum" means ordered by the commit
+protocol, not granted by a vote. Both readings are now quoted in
+`doc/CCMS_REFERENCE.md` with the section they come from.
+
+Counted at the same date, over the tree at `94491fa098^`: `ccms_`
+references number 19 in `hammer2_chain.c`, 18 in `hammer2_inode.c`, 10 in
+`hammer2_vnops.c`, and `hammer2_ccms.c` was in the Makefile `SRCS` line
+before the deletion and absent after. The lock was the core's lock
+interface, not a coherency-only structure, which is the correction to the
+"no caller" framing that the survey's arrival made worth restating.

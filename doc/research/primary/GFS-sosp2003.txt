@@ -1,0 +1,1054 @@
+                                                   The Google File System
+                                  Sanjay Ghemawat, Howard Gobioff, and Shun-Tak Leung
+                                                                               Google∗
+
+
+
+
+ABSTRACT                                                                             1. INTRODUCTION
+We have designed and implemented the Google File Sys-                                   We have designed and implemented the Google File Sys-
+tem, a scalable distributed ﬁle system for large distributed                         tem (GFS) to meet the rapidly growing demands of Google’s
+data-intensive applications. It provides fault tolerance while                       data processing needs. GFS shares many of the same goals
+running on inexpensive commodity hardware, and it delivers                           as previous distributed ﬁle systems such as performance,
+high aggregate performance to a large number of clients.                             scalability, reliability, and availability. However, its design
+   While sharing many of the same goals as previous dis-                             has been driven by key observations of our application work-
+tributed ﬁle systems, our design has been driven by obser-                           loads and technological environment, both current and an-
+vations of our application workloads and technological envi-                         ticipated, that reﬂect a marked departure from some earlier
+ronment, both current and anticipated, that reﬂect a marked                          ﬁle system design assumptions. We have reexamined tradi-
+departure from some earlier ﬁle system assumptions. This                             tional choices and explored radically diﬀerent points in the
+has led us to reexamine traditional choices and explore rad-                         design space.
+ically diﬀerent design points.                                                          First, component failures are the norm rather than the
+   The ﬁle system has successfully met our storage needs.                            exception. The ﬁle system consists of hundreds or even
+It is widely deployed within Google as the storage platform                          thousands of storage machines built from inexpensive com-
+for the generation and processing of data used by our ser-                           modity parts and is accessed by a comparable number of
+vice as well as research and development eﬀorts that require                         client machines. The quantity and quality of the compo-
+large data sets. The largest cluster to date provides hun-                           nents virtually guarantee that some are not functional at
+dreds of terabytes of storage across thousands of disks on                           any given time and some will not recover from their cur-
+over a thousand machines, and it is concurrently accessed                            rent failures. We have seen problems caused by application
+by hundreds of clients.                                                              bugs, operating system bugs, human errors, and the failures
+   In this paper, we present ﬁle system interface extensions                         of disks, memory, connectors, networking, and power sup-
+designed to support distributed applications, discuss many                           plies. Therefore, constant monitoring, error detection, fault
+aspects of our design, and report measurements from both                             tolerance, and automatic recovery must be integral to the
+micro-benchmarks and real world use.                                                 system.
+                                                                                        Second, ﬁles are huge by traditional standards. Multi-GB
+                                                                                     ﬁles are common. Each ﬁle typically contains many applica-
+Categories and Subject Descriptors                                                   tion objects such as web documents. When we are regularly
+D [4]: 3—Distributed ﬁle systems                                                     working with fast growing data sets of many TBs comprising
+                                                                                     billions of objects, it is unwieldy to manage billions of ap-
+General Terms                                                                        proximately KB-sized ﬁles even when the ﬁle system could
+                                                                                     support it. As a result, design assumptions and parameters
+Design, reliability, performance, measurement                                        such as I/O operation and block sizes have to be revisited.
+                                                                                        Third, most ﬁles are mutated by appending new data
+Keywords                                                                             rather than overwriting existing data. Random writes within
+Fault tolerance, scalability, data storage, clustered storage                        a ﬁle are practically non-existent. Once written, the ﬁles
+                                                                                     are only read, and often only sequentially. A variety of
+∗
+  The authors can be reached at the following addresses:                             data share these characteristics. Some may constitute large
+{sanjay,hgobioﬀ,shuntak}@google.com.                                                 repositories that data analysis programs scan through. Some
+                                                                                     may be data streams continuously generated by running ap-
+                                                                                     plications. Some may be archival data. Some may be in-
+                                                                                     termediate results produced on one machine and processed
+Permission to make digital or hard copies of all or part of this work for            on another, whether simultaneously or later in time. Given
+personal or classroom use is granted without fee provided that copies are            this access pattern on huge ﬁles, appending becomes the fo-
+not made or distributed for profit or commercial advantage and that copies
+                                                                                     cus of performance optimization and atomicity guarantees,
+bear this notice and the full citation on the first page. To copy otherwise, to
+republish, to post on servers or to redistribute to lists, requires prior specific   while caching data blocks in the client loses its appeal.
+permission and/or a fee.                                                                Fourth, co-designing the applications and the ﬁle system
+SOSP’03, October 19–22, 2003, Bolton Landing, New York, USA.                         API beneﬁts the overall system by increasing our ﬂexibility.
+Copyright 2003 ACM 1-58113-757-5/03/0010 ...$5.00.
+For example, we have relaxed GFS’s consistency model to          2.2 Interface
+vastly simplify the ﬁle system without imposing an onerous          GFS provides a familiar ﬁle system interface, though it
+burden on the applications. We have also introduced an           does not implement a standard API such as POSIX. Files are
+atomic append operation so that multiple clients can append      organized hierarchically in directories and identiﬁed by path-
+concurrently to a ﬁle without extra synchronization between      names. We support the usual operations to create, delete,
+them. These will be discussed in more details later in the       open, close, read, and write ﬁles.
+paper.                                                              Moreover, GFS has snapshot and record append opera-
+  Multiple GFS clusters are currently deployed for diﬀerent      tions. Snapshot creates a copy of a ﬁle or a directory tree
+purposes. The largest ones have over 1000 storage nodes,         at low cost. Record append allows multiple clients to ap-
+over 300 TB of disk storage, and are heavily accessed by         pend data to the same ﬁle concurrently while guaranteeing
+hundreds of clients on distinct machines on a continuous         the atomicity of each individual client’s append. It is use-
+basis.                                                           ful for implementing multi-way merge results and producer-
+                                                                 consumer queues that many clients can simultaneously ap-
+2.    DESIGN OVERVIEW                                            pend to without additional locking. We have found these
+                                                                 types of ﬁles to be invaluable in building large distributed
+2.1 Assumptions                                                  applications. Snapshot and record append are discussed fur-
+  In designing a ﬁle system for our needs, we have been          ther in Sections 3.4 and 3.3 respectively.
+guided by assumptions that oﬀer both challenges and op-
+portunities. We alluded to some key observations earlier         2.3 Architecture
+and now lay out our assumptions in more details.                    A GFS cluster consists of a single master and multiple
+                                                                 chunkservers and is accessed by multiple clients, as shown
+     • The system is built from many inexpensive commodity       in Figure 1. Each of these is typically a commodity Linux
+       components that often fail. It must constantly monitor    machine running a user-level server process. It is easy to run
+       itself and detect, tolerate, and recover promptly from    both a chunkserver and a client on the same machine, as long
+       component failures on a routine basis.                    as machine resources permit and the lower reliability caused
+                                                                 by running possibly ﬂaky application code is acceptable.
+     • The system stores a modest number of large ﬁles. We
+                                                                    Files are divided into ﬁxed-size chunks. Each chunk is
+       expect a few million ﬁles, each typically 100 MB or
+                                                                 identiﬁed by an immutable and globally unique 64 bit chunk
+       larger in size. Multi-GB ﬁles are the common case
+                                                                 handle assigned by the master at the time of chunk creation.
+       and should be managed eﬃciently. Small ﬁles must be
+                                                                 Chunkservers store chunks on local disks as Linux ﬁles and
+       supported, but we need not optimize for them.
+                                                                 read or write chunk data speciﬁed by a chunk handle and
+     • The workloads primarily consist of two kinds of reads:    byte range. For reliability, each chunk is replicated on multi-
+       large streaming reads and small random reads. In          ple chunkservers. By default, we store three replicas, though
+       large streaming reads, individual operations typically    users can designate diﬀerent replication levels for diﬀerent
+       read hundreds of KBs, more commonly 1 MB or more.         regions of the ﬁle namespace.
+       Successive operations from the same client often read        The master maintains all ﬁle system metadata. This in-
+       through a contiguous region of a ﬁle. A small ran-        cludes the namespace, access control information, the map-
+       dom read typically reads a few KBs at some arbitrary      ping from ﬁles to chunks, and the current locations of chunks.
+       oﬀset. Performance-conscious applications often batch     It also controls system-wide activities such as chunk lease
+       and sort their small reads to advance steadily through    management, garbage collection of orphaned chunks, and
+       the ﬁle rather than go back and forth.                    chunk migration between chunkservers. The master peri-
+                                                                 odically communicates with each chunkserver in HeartBeat
+     • The workloads also have many large, sequential writes     messages to give it instructions and collect its state.
+       that append data to ﬁles. Typical operation sizes are        GFS client code linked into each application implements
+       similar to those for reads. Once written, ﬁles are sel-   the ﬁle system API and communicates with the master and
+       dom modiﬁed again. Small writes at arbitrary posi-        chunkservers to read or write data on behalf of the applica-
+       tions in a ﬁle are supported but do not have to be        tion. Clients interact with the master for metadata opera-
+       eﬃcient.                                                  tions, but all data-bearing communication goes directly to
+                                                                 the chunkservers. We do not provide the POSIX API and
+     • The system must eﬃciently implement well-deﬁned se-
+                                                                 therefore need not hook into the Linux vnode layer.
+       mantics for multiple clients that concurrently append
+                                                                    Neither the client nor the chunkserver caches ﬁle data.
+       to the same ﬁle. Our ﬁles are often used as producer-
+                                                                 Client caches oﬀer little beneﬁt because most applications
+       consumer queues or for many-way merging. Hundreds
+                                                                 stream through huge ﬁles or have working sets too large
+       of producers, running one per machine, will concur-
+                                                                 to be cached. Not having them simpliﬁes the client and
+       rently append to a ﬁle. Atomicity with minimal syn-
+                                                                 the overall system by eliminating cache coherence issues.
+       chronization overhead is essential. The ﬁle may be
+                                                                 (Clients do cache metadata, however.) Chunkservers need
+       read later, or a consumer may be reading through the
+                                                                 not cache ﬁle data because chunks are stored as local ﬁles
+       ﬁle simultaneously.
+                                                                 and so Linux’s buﬀer cache already keeps frequently accessed
+     • High sustained bandwidth is more important than low       data in memory.
+       latency. Most of our target applications place a pre-
+       mium on processing data in bulk at a high rate, while     2.4 Single Master
+       few have stringent response time requirements for an        Having a single master vastly simpliﬁes our design and
+       individual read or write.                                 enables the master to make sophisticated chunk placement
+               Application                                 GFS master              /foo/bar
+                              (file name, chunk index)
+               GFS client                                  File namespace           chunk 2ef0
+                                 (chunk handle,
+                                  chunk locations)
+                                                                                                            Legend:
+                                                                                                                      Data messages
+                                                              Instructions to chunkserver                             Control messages
+
+                                                                            Chunkserver state
+                         (chunk handle, byte range)
+                                                           GFS chunkserver             GFS chunkserver
+                            chunk data
+                                                            Linux file system           Linux file system
+
+
+
+
+                                                         Figure 1: GFS Architecture
+
+
+
+and replication decisions using global knowledge. However,                      tent TCP connection to the chunkserver over an extended
+we must minimize its involvement in reads and writes so                         period of time. Third, it reduces the size of the metadata
+that it does not become a bottleneck. Clients never read                        stored on the master. This allows us to keep the metadata
+and write ﬁle data through the master. Instead, a client asks                   in memory, which in turn brings other advantages that we
+the master which chunkservers it should contact. It caches                      will discuss in Section 2.6.1.
+this information for a limited time and interacts with the                         On the other hand, a large chunk size, even with lazy space
+chunkservers directly for many subsequent operations.                           allocation, has its disadvantages. A small ﬁle consists of a
+   Let us explain the interactions for a simple read with refer-                small number of chunks, perhaps just one. The chunkservers
+ence to Figure 1. First, using the ﬁxed chunk size, the client                  storing those chunks may become hot spots if many clients
+translates the ﬁle name and byte oﬀset speciﬁed by the ap-                      are accessing the same ﬁle. In practice, hot spots have not
+plication into a chunk index within the ﬁle. Then, it sends                     been a major issue because our applications mostly read
+the master a request containing the ﬁle name and chunk                          large multi-chunk ﬁles sequentially.
+index. The master replies with the corresponding chunk                             However, hot spots did develop when GFS was ﬁrst used
+handle and locations of the replicas. The client caches this                    by a batch-queue system: an executable was written to GFS
+information using the ﬁle name and chunk index as the key.                      as a single-chunk ﬁle and then started on hundreds of ma-
+   The client then sends a request to one of the replicas,                      chines at the same time. The few chunkservers storing this
+most likely the closest one. The request speciﬁes the chunk                     executable were overloaded by hundreds of simultaneous re-
+handle and a byte range within that chunk. Further reads                        quests. We ﬁxed this problem by storing such executables
+of the same chunk require no more client-master interaction                     with a higher replication factor and by making the batch-
+until the cached information expires or the ﬁle is reopened.                    queue system stagger application start times. A potential
+In fact, the client typically asks for multiple chunks in the                   long-term solution is to allow clients to read data from other
+same request and the master can also include the informa-                       clients in such situations.
+tion for chunks immediately following those requested. This
+extra information sidesteps several future client-master in-                    2.6 Metadata
+teractions at practically no extra cost.                                           The master stores three major types of metadata: the ﬁle
+                                                                                and chunk namespaces, the mapping from ﬁles to chunks,
+2.5 Chunk Size                                                                  and the locations of each chunk’s replicas. All metadata is
+   Chunk size is one of the key design parameters. We have                      kept in the master’s memory. The ﬁrst two types (names-
+chosen 64 MB, which is much larger than typical ﬁle sys-                        paces and ﬁle-to-chunk mapping) are also kept persistent by
+tem block sizes. Each chunk replica is stored as a plain                        logging mutations to an operation log stored on the mas-
+Linux ﬁle on a chunkserver and is extended only as needed.                      ter’s local disk and replicated on remote machines. Using
+Lazy space allocation avoids wasting space due to internal                      a log allows us to update the master state simply, reliably,
+fragmentation, perhaps the greatest objection against such                      and without risking inconsistencies in the event of a master
+a large chunk size.                                                             crash. The master does not store chunk location informa-
+   A large chunk size oﬀers several important advantages.                       tion persistently. Instead, it asks each chunkserver about its
+First, it reduces clients’ need to interact with the master                     chunks at master startup and whenever a chunkserver joins
+because reads and writes on the same chunk require only                         the cluster.
+one initial request to the master for chunk location informa-
+tion. The reduction is especially signiﬁcant for our work-                      2.6.1 In-Memory Data Structures
+loads because applications mostly read and write large ﬁles                       Since metadata is stored in memory, master operations are
+sequentially. Even for small random reads, the client can                       fast. Furthermore, it is easy and eﬃcient for the master to
+comfortably cache all the chunk location information for a                      periodically scan through its entire state in the background.
+multi-TB working set. Second, since on a large chunk, a                         This periodic scanning is used to implement chunk garbage
+client is more likely to perform many operations on a given                     collection, re-replication in the presence of chunkserver fail-
+chunk, it can reduce network overhead by keeping a persis-                      ures, and chunk migration to balance load and disk space
+usage across chunkservers. Sections 4.3 and 4.4 will discuss                            Write           Record Append
+these activities further.                                                 Serial        defined         defined
+                                                                          success                       interspersed with
+   One potential concern for this memory-only approach is
+                                                                          Concurrent    consistent      inconsistent
+that the number of chunks and hence the capacity of the                   successes     but undefined
+whole system is limited by how much memory the master                     Failure                  inconsistent
+has. This is not a serious limitation in practice. The mas-
+ter maintains less than 64 bytes of metadata for each 64 MB
+chunk. Most chunks are full because most ﬁles contain many             Table 1: File Region State After Mutation
+chunks, only the last of which may be partially ﬁlled. Sim-
+ilarly, the ﬁle namespace data typically requires less then
+64 bytes per ﬁle because it stores ﬁle names compactly us-        limited number of log records after that. The checkpoint is
+ing preﬁx compression.                                            in a compact B-tree like form that can be directly mapped
+   If necessary to support even larger ﬁle systems, the cost      into memory and used for namespace lookup without ex-
+of adding extra memory to the master is a small price to pay      tra parsing. This further speeds up recovery and improves
+for the simplicity, reliability, performance, and ﬂexibility we   availability.
+gain by storing the metadata in memory.                              Because building a checkpoint can take a while, the mas-
+                                                                  ter’s internal state is structured in such a way that a new
+2.6.2 Chunk Locations                                             checkpoint can be created without delaying incoming muta-
+   The master does not keep a persistent record of which          tions. The master switches to a new log ﬁle and creates the
+chunkservers have a replica of a given chunk. It simply polls     new checkpoint in a separate thread. The new checkpoint
+chunkservers for that information at startup. The master          includes all mutations before the switch. It can be created
+can keep itself up-to-date thereafter because it controls all     in a minute or so for a cluster with a few million ﬁles. When
+chunk placement and monitors chunkserver status with reg-         completed, it is written to disk both locally and remotely.
+ular HeartBeat messages.                                             Recovery needs only the latest complete checkpoint and
+   We initially attempted to keep chunk location information      subsequent log ﬁles. Older checkpoints and log ﬁles can
+persistently at the master, but we decided that it was much       be freely deleted, though we keep a few around to guard
+simpler to request the data from chunkservers at startup,         against catastrophes. A failure during checkpointing does
+and periodically thereafter. This eliminated the problem of       not aﬀect correctness because the recovery code detects and
+keeping the master and chunkservers in sync as chunkservers       skips incomplete checkpoints.
+join and leave the cluster, change names, fail, restart, and
+so on. In a cluster with hundreds of servers, these events
+happen all too often.
+                                                                  2.7 Consistency Model
+   Another way to understand this design decision is to real-       GFS has a relaxed consistency model that supports our
+ize that a chunkserver has the ﬁnal word over what chunks         highly distributed applications well but remains relatively
+it does or does not have on its own disks. There is no point      simple and eﬃcient to implement. We now discuss GFS’s
+in trying to maintain a consistent view of this information       guarantees and what they mean to applications. We also
+on the master because errors on a chunkserver may cause           highlight how GFS maintains these guarantees but leave the
+chunks to vanish spontaneously (e.g., a disk may go bad           details to other parts of the paper.
+and be disabled) or an operator may rename a chunkserver.
+                                                                  2.7.1 Guarantees by GFS
+2.6.3 Operation Log                                                  File namespace mutations (e.g., ﬁle creation) are atomic.
+   The operation log contains a historical record of critical     They are handled exclusively by the master: namespace
+metadata changes. It is central to GFS. Not only is it the        locking guarantees atomicity and correctness (Section 4.1);
+only persistent record of metadata, but it also serves as a       the master’s operation log deﬁnes a global total order of
+logical time line that deﬁnes the order of concurrent op-         these operations (Section 2.6.3).
+erations. Files and chunks, as well as their versions (see           The state of a ﬁle region after a data mutation depends
+Section 4.5), are all uniquely and eternally identiﬁed by the     on the type of mutation, whether it succeeds or fails, and
+logical times at which they were created.                         whether there are concurrent mutations. Table 1 summa-
+   Since the operation log is critical, we must store it reli-    rizes the result. A ﬁle region is consistent if all clients will
+ably and not make changes visible to clients until metadata       always see the same data, regardless of which replicas they
+changes are made persistent. Otherwise, we eﬀectively lose        read from. A region is deﬁned after a ﬁle data mutation if it
+the whole ﬁle system or recent client operations even if the      is consistent and clients will see what the mutation writes in
+chunks themselves survive. Therefore, we replicate it on          its entirety. When a mutation succeeds without interference
+multiple remote machines and respond to a client opera-           from concurrent writers, the aﬀected region is deﬁned (and
+tion only after ﬂushing the corresponding log record to disk      by implication consistent): all clients will always see what
+both locally and remotely. The master batches several log         the mutation has written. Concurrent successful mutations
+records together before ﬂushing thereby reducing the impact       leave the region undeﬁned but consistent: all clients see the
+of ﬂushing and replication on overall system throughput.          same data, but it may not reﬂect what any one mutation
+   The master recovers its ﬁle system state by replaying the      has written. Typically, it consists of mingled fragments from
+operation log. To minimize startup time, we must keep the         multiple mutations. A failed mutation makes the region in-
+log small. The master checkpoints its state whenever the log      consistent (hence also undeﬁned): diﬀerent clients may see
+grows beyond a certain size so that it can recover by loading     diﬀerent data at diﬀerent times. We describe below how our
+the latest checkpoint from local disk and replaying only the      applications can distinguish deﬁned regions from undeﬁned
+regions. The applications do not need to further distinguish        ﬁle data that is still incomplete from the application’s per-
+between diﬀerent kinds of undeﬁned regions.                         spective.
+   Data mutations may be writes or record appends. A write             In the other typical use, many writers concurrently ap-
+causes data to be written at an application-speciﬁed ﬁle            pend to a ﬁle for merged results or as a producer-consumer
+oﬀset. A record append causes data (the “record”) to be             queue. Record append’s append-at-least-once semantics pre-
+appended atomically at least once even in the presence of           serves each writer’s output. Readers deal with the occa-
+concurrent mutations, but at an oﬀset of GFS’s choosing             sional padding and duplicates as follows. Each record pre-
+(Section 3.3). (In contrast, a “regular” append is merely a         pared by the writer contains extra information like check-
+write at an oﬀset that the client believes to be the current        sums so that its validity can be veriﬁed. A reader can
+end of ﬁle.) The oﬀset is returned to the client and marks          identify and discard extra padding and record fragments
+the beginning of a deﬁned region that contains the record.          using the checksums. If it cannot tolerate the occasional
+In addition, GFS may insert padding or record duplicates in         duplicates (e.g., if they would trigger non-idempotent op-
+between. They occupy regions considered to be inconsistent          erations), it can ﬁlter them out using unique identiﬁers in
+and are typically dwarfed by the amount of user data.               the records, which are often needed anyway to name corre-
+   After a sequence of successful mutations, the mutated ﬁle        sponding application entities such as web documents. These
+region is guaranteed to be deﬁned and contain the data writ-        functionalities for record I/O (except duplicate removal) are
+ten by the last mutation. GFS achieves this by (a) applying         in library code shared by our applications and applicable to
+mutations to a chunk in the same order on all its replicas          other ﬁle interface implementations at Google. With that,
+(Section 3.1), and (b) using chunk version numbers to detect        the same sequence of records, plus rare duplicates, is always
+any replica that has become stale because it has missed mu-         delivered to the record reader.
+tations while its chunkserver was down (Section 4.5). Stale
+replicas will never be involved in a mutation or given to           3. SYSTEM INTERACTIONS
+clients asking the master for chunk locations. They are
+garbage collected at the earliest opportunity.                        We designed the system to minimize the master’s involve-
+   Since clients cache chunk locations, they may read from a        ment in all operations. With that background, we now de-
+stale replica before that information is refreshed. This win-       scribe how the client, master, and chunkservers interact to
+dow is limited by the cache entry’s timeout and the next            implement data mutations, atomic record append, and snap-
+open of the ﬁle, which purges from the cache all chunk in-          shot.
+formation for that ﬁle. Moreover, as most of our ﬁles are           3.1 Leases and Mutation Order
+append-only, a stale replica usually returns a premature
+end of chunk rather than outdated data. When a reader                  A mutation is an operation that changes the contents or
+retries and contacts the master, it will immediately get cur-       metadata of a chunk such as a write or an append opera-
+rent chunk locations.                                               tion. Each mutation is performed at all the chunk’s replicas.
+   Long after a successful mutation, component failures can         We use leases to maintain a consistent mutation order across
+of course still corrupt or destroy data. GFS identiﬁes failed       replicas. The master grants a chunk lease to one of the repli-
+chunkservers by regular handshakes between master and all           cas, which we call the primary. The primary picks a serial
+chunkservers and detects data corruption by checksumming            order for all mutations to the chunk. All replicas follow this
+(Section 5.2). Once a problem surfaces, the data is restored        order when applying mutations. Thus, the global mutation
+from valid replicas as soon as possible (Section 4.3). A chunk      order is deﬁned ﬁrst by the lease grant order chosen by the
+is lost irreversibly only if all its replicas are lost before GFS   master, and within a lease by the serial numbers assigned
+can react, typically within minutes. Even in this case, it be-      by the primary.
+comes unavailable, not corrupted: applications receive clear           The lease mechanism is designed to minimize manage-
+errors rather than corrupt data.                                    ment overhead at the master. A lease has an initial timeout
+                                                                    of 60 seconds. However, as long as the chunk is being mu-
+                                                                    tated, the primary can request and typically receive exten-
+2.7.2 Implications for Applications                                 sions from the master indeﬁnitely. These extension requests
+   GFS applications can accommodate the relaxed consis-             and grants are piggybacked on the HeartBeat messages reg-
+tency model with a few simple techniques already needed for         ularly exchanged between the master and all chunkservers.
+other purposes: relying on appends rather than overwrites,          The master may sometimes try to revoke a lease before it
+checkpointing, and writing self-validating, self-identifying        expires (e.g., when the master wants to disable mutations
+records.                                                            on a ﬁle that is being renamed). Even if the master loses
+   Practically all our applications mutate ﬁles by appending        communication with a primary, it can safely grant a new
+rather than overwriting. In one typical use, a writer gener-        lease to another replica after the old lease expires.
+ates a ﬁle from beginning to end. It atomically renames the            In Figure 2, we illustrate this process by following the
+ﬁle to a permanent name after writing all the data, or pe-          control ﬂow of a write through these numbered steps.
+riodically checkpoints how much has been successfully writ-
+ten. Checkpoints may also include application-level check-            1. The client asks the master which chunkserver holds
+sums. Readers verify and process only the ﬁle region up                  the current lease for the chunk and the locations of
+to the last checkpoint, which is known to be in the deﬁned               the other replicas. If no one has a lease, the master
+state. Regardless of consistency and concurrency issues, this            grants one to a replica it chooses (not shown).
+approach has served us well. Appending is far more eﬃ-                2. The master replies with the identity of the primary and
+cient and more resilient to application failures than random             the locations of the other (secondary) replicas. The
+writes. Checkpointing allows writers to restart incremen-                client caches this data for future mutations. It needs
+tally and keeps readers from processing successfully written             to contact the master again only when the primary
+               4               step 1                                   ﬁle region may end up containing fragments from diﬀerent
+                    Client                      Master
+                                                                        clients, although the replicas will be identical because the in-
+                                        2                               dividual operations are completed successfully in the same
+                        3
+                                                                        order on all replicas. This leaves the ﬁle region in consistent
+                                                                        but undeﬁned state as noted in Section 2.7.
+                   Secondary
+                   Replica A
+                                6
+                                                                        3.2 Data Flow
+                                                                           We decouple the ﬂow of data from the ﬂow of control to
+           7                                                            use the network eﬃciently. While control ﬂows from the
+                   Primary
+                                            5                           client to the primary and then to all secondaries, data is
+                   Replica
+                                                    Legend:             pushed linearly along a carefully picked chain of chunkservers
+                                                                        in a pipelined fashion. Our goals are to fully utilize each
+                                                              Control   machine’s network bandwidth, avoid network bottlenecks
+                                6
+                   Secondary                                  Data      and high-latency links, and minimize the latency to push
+                   Replica B                                            through all the data.
+                                                                           To fully utilize each machine’s network bandwidth, the
+                                                                        data is pushed linearly along a chain of chunkservers rather
+      Figure 2: Write Control and Data Flow
+                                                                        than distributed in some other topology (e.g., tree). Thus,
+                                                                        each machine’s full outbound bandwidth is used to trans-
+                                                                        fer the data as fast as possible rather than divided among
+     becomes unreachable or replies that it no longer holds             multiple recipients.
+     a lease.                                                              To avoid network bottlenecks and high-latency links (e.g.,
+                                                                        inter-switch links are often both) as much as possible, each
+  3. The client pushes the data to all the replicas. A client
+                                                                        machine forwards the data to the “closest” machine in the
+     can do so in any order. Each chunkserver will store
+                                                                        network topology that has not received it. Suppose the
+     the data in an internal LRU buﬀer cache until the
+                                                                        client is pushing data to chunkservers S1 through S4. It
+     data is used or aged out. By decoupling the data ﬂow
+                                                                        sends the data to the closest chunkserver, say S1. S1 for-
+     from the control ﬂow, we can improve performance by
+                                                                        wards it to the closest chunkserver S2 through S4 closest to
+     scheduling the expensive data ﬂow based on the net-
+                                                                        S1, say S2. Similarly, S2 forwards it to S3 or S4, whichever
+     work topology regardless of which chunkserver is the
+                                                                        is closer to S2, and so on. Our network topology is simple
+     primary. Section 3.2 discusses this further.
+                                                                        enough that “distances” can be accurately estimated from
+  4. Once all the replicas have acknowledged receiving the              IP addresses.
+     data, the client sends a write request to the primary.                Finally, we minimize latency by pipelining the data trans-
+     The request identiﬁes the data pushed earlier to all of            fer over TCP connections. Once a chunkserver receives some
+     the replicas. The primary assigns consecutive serial               data, it starts forwarding immediately. Pipelining is espe-
+     numbers to all the mutations it receives, possibly from            cially helpful to us because we use a switched network with
+     multiple clients, which provides the necessary serial-             full-duplex links. Sending the data immediately does not
+     ization. It applies the mutation to its own local state            reduce the receive rate. Without network congestion, the
+     in serial number order.                                            ideal elapsed time for transferring B bytes to R replicas is
+  5. The primary forwards the write request to all sec-                 B/T + RL where T is the network throughput and L is la-
+     ondary replicas. Each secondary replica applies mu-                tency to transfer bytes between two machines. Our network
+     tations in the same serial number order assigned by                links are typically 100 Mbps (T ), and L is far below 1 ms.
+     the primary.                                                       Therefore, 1 MB can ideally be distributed in about 80 ms.
+  6. The secondaries all reply to the primary indicating
+     that they have completed the operation.
+  7. The primary replies to the client. Any errors encoun-              3.3 Atomic Record Appends
+     tered at any of the replicas are reported to the client.              GFS provides an atomic append operation called record
+     In case of errors, the write may have succeeded at the             append. In a traditional write, the client speciﬁes the oﬀ-
+     primary and an arbitrary subset of the secondary repli-            set at which data is to be written. Concurrent writes to
+     cas. (If it had failed at the primary, it would not                the same region are not serializable: the region may end up
+     have been assigned a serial number and forwarded.)                 containing data fragments from multiple clients. In a record
+     The client request is considered to have failed, and the           append, however, the client speciﬁes only the data. GFS
+     modiﬁed region is left in an inconsistent state. Our               appends it to the ﬁle at least once atomically (i.e., as one
+     client code handles such errors by retrying the failed             continuous sequence of bytes) at an oﬀset of GFS’s choosing
+     mutation. It will make a few attempts at steps (3)                 and returns that oﬀset to the client. This is similar to writ-
+     through (7) before falling back to a retry from the be-            ing to a ﬁle opened in O APPEND mode in Unix without the
+     ginning of the write.                                              race conditions when multiple writers do so concurrently.
+                                                                           Record append is heavily used by our distributed applica-
+  If a write by the application is large or straddles a chunk           tions in which many clients on diﬀerent machines append
+boundary, GFS client code breaks it down into multiple                  to the same ﬁle concurrently. Clients would need addi-
+write operations. They all follow the control ﬂow described             tional complicated and expensive synchronization, for ex-
+above but may be interleaved with and overwritten by con-               ample through a distributed lock manager, if they do so
+current operations from other clients. Therefore, the shared            with traditional writes. In our workloads, such ﬁles often
+serve as multiple-producer/single-consumer queues or con-            handle C’. It then asks each chunkserver that has a current
+tain merged results from many diﬀerent clients.                      replica of C to create a new chunk called C’. By creating
+   Record append is a kind of mutation and follows the con-          the new chunk on the same chunkservers as the original, we
+trol ﬂow in Section 3.1 with only a little extra logic at the        ensure that the data can be copied locally, not over the net-
+primary. The client pushes the data to all replicas of the           work (our disks are about three times as fast as our 100 Mb
+last chunk of the ﬁle Then, it sends its request to the pri-         Ethernet links). From this point, request handling is no dif-
+mary. The primary checks to see if appending the record              ferent from that for any chunk: the master grants one of the
+to the current chunk would cause the chunk to exceed the             replicas a lease on the new chunk C’ and replies to the client,
+maximum size (64 MB). If so, it pads the chunk to the max-           which can write the chunk normally, not knowing that it has
+imum size, tells secondaries to do the same, and replies to          just been created from an existing chunk.
+the client indicating that the operation should be retried
+on the next chunk. (Record append is restricted to be at
+most one-fourth of the maximum chunk size to keep worst-             4. MASTER OPERATION
+case fragmentation at an acceptable level.) If the record               The master executes all namespace operations. In addi-
+ﬁts within the maximum size, which is the common case,               tion, it manages chunk replicas throughout the system: it
+the primary appends the data to its replica, tells the secon-        makes placement decisions, creates new chunks and hence
+daries to write the data at the exact oﬀset where it has, and        replicas, and coordinates various system-wide activities to
+ﬁnally replies success to the client.                                keep chunks fully replicated, to balance load across all the
+   If a record append fails at any replica, the client retries the   chunkservers, and to reclaim unused storage. We now dis-
+operation. As a result, replicas of the same chunk may con-          cuss each of these topics.
+tain diﬀerent data possibly including duplicates of the same
+record in whole or in part. GFS does not guarantee that all          4.1 Namespace Management and Locking
+replicas are bytewise identical. It only guarantees that the
+                                                                        Many master operations can take a long time: for exam-
+data is written at least once as an atomic unit. This prop-
+                                                                     ple, a snapshot operation has to revoke chunkserver leases on
+erty follows readily from the simple observation that for the
+                                                                     all chunks covered by the snapshot. We do not want to delay
+operation to report success, the data must have been written
+                                                                     other master operations while they are running. Therefore,
+at the same oﬀset on all replicas of some chunk. Further-
+                                                                     we allow multiple operations to be active and use locks over
+more, after this, all replicas are at least as long as the end
+                                                                     regions of the namespace to ensure proper serialization.
+of record and therefore any future record will be assigned a
+                                                                        Unlike many traditional ﬁle systems, GFS does not have
+higher oﬀset or a diﬀerent chunk even if a diﬀerent replica
+                                                                     a per-directory data structure that lists all the ﬁles in that
+later becomes the primary. In terms of our consistency guar-
+                                                                     directory. Nor does it support aliases for the same ﬁle or
+antees, the regions in which successful record append opera-
+                                                                     directory (i.e, hard or symbolic links in Unix terms). GFS
+tions have written their data are deﬁned (hence consistent),
+                                                                     logically represents its namespace as a lookup table mapping
+whereas intervening regions are inconsistent (hence unde-
+                                                                     full pathnames to metadata. With preﬁx compression, this
+ﬁned). Our applications can deal with inconsistent regions
+                                                                     table can be eﬃciently represented in memory. Each node
+as we discussed in Section 2.7.2.
+                                                                     in the namespace tree (either an absolute ﬁle name or an
+                                                                     absolute directory name) has an associated read-write lock.
+3.4 Snapshot                                                            Each master operation acquires a set of locks before it
+  The snapshot operation makes a copy of a ﬁle or a direc-           runs. Typically, if it involves /d1/d2/.../dn/leaf, it will
+tory tree (the “source”) almost instantaneously, while min-          acquire read-locks on the directory names /d1, /d1/d2, ...,
+imizing any interruptions of ongoing mutations. Our users            /d1/d2/.../dn, and either a read lock or a write lock on the
+use it to quickly create branch copies of huge data sets (and        full pathname /d1/d2/.../dn/leaf. Note that leaf may be
+often copies of those copies, recursively), or to checkpoint         a ﬁle or directory depending on the operation.
+the current state before experimenting with changes that                We now illustrate how this locking mechanism can prevent
+can later be committed or rolled back easily.                        a ﬁle /home/user/foo from being created while /home/user
+  Like AFS [5], we use standard copy-on-write techniques to          is being snapshotted to /save/user. The snapshot oper-
+implement snapshots. When the master receives a snapshot             ation acquires read locks on /home and /save, and write
+request, it ﬁrst revokes any outstanding leases on the chunks        locks on /home/user and /save/user. The ﬁle creation ac-
+in the ﬁles it is about to snapshot. This ensures that any           quires read locks on /home and /home/user, and a write
+subsequent writes to these chunks will require an interaction        lock on /home/user/foo. The two operations will be seri-
+with the master to ﬁnd the lease holder. This will give the          alized properly because they try to obtain conﬂicting locks
+master an opportunity to create a new copy of the chunk              on /home/user. File creation does not require a write lock
+ﬁrst.                                                                on the parent directory because there is no “directory”, or
+  After the leases have been revoked or have expired, the            inode-like, data structure to be protected from modiﬁcation.
+master logs the operation to disk. It then applies this log          The read lock on the name is suﬃcient to protect the parent
+record to its in-memory state by duplicating the metadata            directory from deletion.
+for the source ﬁle or directory tree. The newly created snap-           One nice property of this locking scheme is that it allows
+shot ﬁles point to the same chunks as the source ﬁles.               concurrent mutations in the same directory. For example,
+  The ﬁrst time a client wants to write to a chunk C after           multiple ﬁle creations can be executed concurrently in the
+the snapshot operation, it sends a request to the master to          same directory: each acquires a read lock on the directory
+ﬁnd the current lease holder. The master notices that the            name and a write lock on the ﬁle name. The read lock on
+reference count for chunk C is greater than one. It defers           the directory name suﬃces to prevent the directory from
+replying to the client request and instead picks a new chunk         being deleted, renamed, or snapshotted. The write locks on
+ﬁle names serialize attempts to create a ﬁle with the same           The master picks the highest priority chunk and “clones”
+name twice.                                                       it by instructing some chunkserver to copy the chunk data
+  Since the namespace can have many nodes, read-write lock        directly from an existing valid replica. The new replica is
+objects are allocated lazily and deleted once they are not in     placed with goals similar to those for creation: equalizing
+use. Also, locks are acquired in a consistent total order         disk space utilization, limiting active clone operations on
+to prevent deadlock: they are ﬁrst ordered by level in the        any single chunkserver, and spreading replicas across racks.
+namespace tree and lexicographically within the same level.       To keep cloning traﬃc from overwhelming client traﬃc, the
+                                                                  master limits the numbers of active clone operations both
+4.2 Replica Placement                                             for the cluster and for each chunkserver. Additionally, each
+   A GFS cluster is highly distributed at more levels than        chunkserver limits the amount of bandwidth it spends on
+one. It typically has hundreds of chunkservers spread across      each clone operation by throttling its read requests to the
+many machine racks. These chunkservers in turn may be             source chunkserver.
+accessed from hundreds of clients from the same or diﬀerent          Finally, the master rebalances replicas periodically: it ex-
+racks. Communication between two machines on diﬀerent             amines the current replica distribution and moves replicas
+racks may cross one or more network switches. Addition-           for better disk space and load balancing. Also through this
+ally, bandwidth into or out of a rack may be less than the        process, the master gradually ﬁlls up a new chunkserver
+aggregate bandwidth of all the machines within the rack.          rather than instantly swamps it with new chunks and the
+Multi-level distribution presents a unique challenge to dis-      heavy write traﬃc that comes with them. The placement
+tribute data for scalability, reliability, and availability.      criteria for the new replica are similar to those discussed
+   The chunk replica placement policy serves two purposes:        above. In addition, the master must also choose which ex-
+maximize data reliability and availability, and maximize net-     isting replica to remove. In general, it prefers to remove
+work bandwidth utilization. For both, it is not enough to         those on chunkservers with below-average free space so as
+spread replicas across machines, which only guards against        to equalize disk space usage.
+disk or machine failures and fully utilizes each machine’s net-
+work bandwidth. We must also spread chunk replicas across         4.4 Garbage Collection
+racks. This ensures that some replicas of a chunk will sur-         After a ﬁle is deleted, GFS does not immediately reclaim
+vive and remain available even if an entire rack is damaged       the available physical storage. It does so only lazily during
+or oﬄine (for example, due to failure of a shared resource        regular garbage collection at both the ﬁle and chunk levels.
+like a network switch or power circuit). It also means that       We ﬁnd that this approach makes the system much simpler
+traﬃc, especially reads, for a chunk can exploit the aggre-       and more reliable.
+gate bandwidth of multiple racks. On the other hand, write
+traﬃc has to ﬂow through multiple racks, a tradeoﬀ we make
+willingly.
+                                                                  4.4.1 Mechanism
+                                                                     When a ﬁle is deleted by the application, the master logs
+4.3 Creation, Re-replication, Rebalancing                         the deletion immediately just like other changes. However
+                                                                  instead of reclaiming resources immediately, the ﬁle is just
+   Chunk replicas are created for three reasons: chunk cre-
+                                                                  renamed to a hidden name that includes the deletion times-
+ation, re-replication, and rebalancing.
+                                                                  tamp. During the master’s regular scan of the ﬁle system
+   When the master creates a chunk, it chooses where to
+                                                                  namespace, it removes any such hidden ﬁles if they have ex-
+place the initially empty replicas. It considers several fac-
+                                                                  isted for more than three days (the interval is conﬁgurable).
+tors. (1) We want to place new replicas on chunkservers with
+                                                                  Until then, the ﬁle can still be read under the new, special
+below-average disk space utilization. Over time this will
+                                                                  name and can be undeleted by renaming it back to normal.
+equalize disk utilization across chunkservers. (2) We want to
+                                                                  When the hidden ﬁle is removed from the namespace, its in-
+limit the number of “recent” creations on each chunkserver.
+                                                                  memory metadata is erased. This eﬀectively severs its links
+Although creation itself is cheap, it reliably predicts immi-
+                                                                  to all its chunks.
+nent heavy write traﬃc because chunks are created when de-
+                                                                     In a similar regular scan of the chunk namespace, the
+manded by writes, and in our append-once-read-many work-
+                                                                  master identiﬁes orphaned chunks (i.e., those not reachable
+load they typically become practically read-only once they
+                                                                  from any ﬁle) and erases the metadata for those chunks. In
+have been completely written. (3) As discussed above, we
+                                                                  a HeartBeat message regularly exchanged with the master,
+want to spread replicas of a chunk across racks.
+                                                                  each chunkserver reports a subset of the chunks it has, and
+   The master re-replicates a chunk as soon as the number
+                                                                  the master replies with the identity of all chunks that are no
+of available replicas falls below a user-speciﬁed goal. This
+                                                                  longer present in the master’s metadata. The chunkserver
+could happen for various reasons: a chunkserver becomes
+                                                                  is free to delete its replicas of such chunks.
+unavailable, it reports that its replica may be corrupted, one
+of its disks is disabled because of errors, or the replication
+goal is increased. Each chunk that needs to be re-replicated      4.4.2 Discussion
+is prioritized based on several factors. One is how far it is       Although distributed garbage collection is a hard problem
+from its replication goal. For example, we give higher prior-     that demands complicated solutions in the context of pro-
+ity to a chunk that has lost two replicas than to a chunk that    gramming languages, it is quite simple in our case. We can
+has lost only one. In addition, we prefer to ﬁrst re-replicate    easily identify all references to chunks: they are in the ﬁle-
+chunks for live ﬁles as opposed to chunks that belong to re-      to-chunk mappings maintained exclusively by the master.
+cently deleted ﬁles (see Section 4.4). Finally, to minimize       We can also easily identify all the chunk replicas: they are
+the impact of failures on running applications, we boost the      Linux ﬁles under designated directories on each chunkserver.
+priority of any chunk that is blocking client progress.           Any such replica not known to the master is “garbage.”
+   The garbage collection approach to storage reclamation          quantity of components together make these problems more
+oﬀers several advantages over eager deletion. First, it is         the norm than the exception: we cannot completely trust
+simple and reliable in a large-scale distributed system where      the machines, nor can we completely trust the disks. Com-
+component failures are common. Chunk creation may suc-             ponent failures can result in an unavailable system or, worse,
+ceed on some chunkservers but not others, leaving replicas         corrupted data. We discuss how we meet these challenges
+that the master does not know exist. Replica deletion mes-         and the tools we have built into the system to diagnose prob-
+sages may be lost, and the master has to remember to resend        lems when they inevitably occur.
+them across failures, both its own and the chunkserver’s.
+Garbage collection provides a uniform and dependable way           5.1 High Availability
+to clean up any replicas not known to be useful. Second,              Among hundreds of servers in a GFS cluster, some are
+it merges storage reclamation into the regular background          bound to be unavailable at any given time. We keep the
+activities of the master, such as the regular scans of names-      overall system highly available with two simple yet eﬀective
+paces and handshakes with chunkservers. Thus, it is done           strategies: fast recovery and replication.
+in batches and the cost is amortized. Moreover, it is done
+only when the master is relatively free. The master can re-
+spond more promptly to client requests that demand timely
+                                                                   5.1.1 Fast Recovery
+attention. Third, the delay in reclaiming storage provides a          Both the master and the chunkserver are designed to re-
+safety net against accidental, irreversible deletion.              store their state and start in seconds no matter how they
+   In our experience, the main disadvantage is that the delay      terminated. In fact, we do not distinguish between normal
+sometimes hinders user eﬀort to ﬁne tune usage when stor-          and abnormal termination; servers are routinely shut down
+age is tight. Applications that repeatedly create and delete       just by killing the process. Clients and other servers experi-
+temporary ﬁles may not be able to reuse the storage right          ence a minor hiccup as they time out on their outstanding
+away. We address these issues by expediting storage recla-         requests, reconnect to the restarted server, and retry. Sec-
+mation if a deleted ﬁle is explicitly deleted again. We also       tion 6.2.2 reports observed startup times.
+allow users to apply diﬀerent replication and reclamation
+policies to diﬀerent parts of the namespace. For example,          5.1.2 Chunk Replication
+users can specify that all the chunks in the ﬁles within some        As discussed earlier, each chunk is replicated on multiple
+directory tree are to be stored without replication, and any       chunkservers on diﬀerent racks. Users can specify diﬀerent
+deleted ﬁles are immediately and irrevocably removed from          replication levels for diﬀerent parts of the ﬁle namespace.
+the ﬁle system state.                                              The default is three. The master clones existing replicas as
+                                                                   needed to keep each chunk fully replicated as chunkservers
+4.5 Stale Replica Detection                                        go oﬄine or detect corrupted replicas through checksum ver-
+   Chunk replicas may become stale if a chunkserver fails          iﬁcation (see Section 5.2). Although replication has served
+and misses mutations to the chunk while it is down. For            us well, we are exploring other forms of cross-server redun-
+each chunk, the master maintains a chunk version number            dancy such as parity or erasure codes for our increasing read-
+to distinguish between up-to-date and stale replicas.              only storage requirements. We expect that it is challenging
+   Whenever the master grants a new lease on a chunk, it           but manageable to implement these more complicated re-
+increases the chunk version number and informs the up-to-          dundancy schemes in our very loosely coupled system be-
+date replicas. The master and these replicas all record the        cause our traﬃc is dominated by appends and reads rather
+new version number in their persistent state. This occurs          than small random writes.
+before any client is notiﬁed and therefore before it can start
+writing to the chunk. If another replica is currently unavail-     5.1.3 Master Replication
+able, its chunk version number will not be advanced. The
+                                                                      The master state is replicated for reliability. Its operation
+master will detect that this chunkserver has a stale replica
+                                                                   log and checkpoints are replicated on multiple machines. A
+when the chunkserver restarts and reports its set of chunks
+                                                                   mutation to the state is considered committed only after
+and their associated version numbers. If the master sees a
+                                                                   its log record has been ﬂushed to disk locally and on all
+version number greater than the one in its records, the mas-
+                                                                   master replicas. For simplicity, one master process remains
+ter assumes that it failed when granting the lease and so
+                                                                   in charge of all mutations as well as background activities
+takes the higher version to be up-to-date.
+                                                                   such as garbage collection that change the system internally.
+   The master removes stale replicas in its regular garbage
+                                                                   When it fails, it can restart almost instantly. If its machine
+collection. Before that, it eﬀectively considers a stale replica
+                                                                   or disk fails, monitoring infrastructure outside GFS starts a
+not to exist at all when it replies to client requests for chunk
+                                                                   new master process elsewhere with the replicated operation
+information. As another safeguard, the master includes
+                                                                   log. Clients use only the canonical name of the master (e.g.
+the chunk version number when it informs clients which
+                                                                   gfs-test), which is a DNS alias that can be changed if the
+chunkserver holds a lease on a chunk or when it instructs
+                                                                   master is relocated to another machine.
+a chunkserver to read the chunk from another chunkserver
+                                                                      Moreover, “shadow” masters provide read-only access to
+in a cloning operation. The client or the chunkserver veriﬁes
+                                                                   the ﬁle system even when the primary master is down. They
+the version number when it performs the operation so that
+                                                                   are shadows, not mirrors, in that they may lag the primary
+it is always accessing up-to-date data.
+                                                                   slightly, typically fractions of a second. They enhance read
+                                                                   availability for ﬁles that are not being actively mutated or
+5.   FAULT TOLERANCE AND DIAGNOSIS                                 applications that do not mind getting slightly stale results.
+  One of our greatest challenges in designing the system is        In fact, since ﬁle content is read from chunkservers, appli-
+dealing with frequent component failures. The quality and          cations do not observe stale ﬁle content. What could be
+stale within short windows is ﬁle metadata, like directory       ﬁnally compute and record the new checksums. If we do
+contents or access control information.                          not verify the ﬁrst and last blocks before overwriting them
+   To keep itself informed, a shadow master reads a replica of   partially, the new checksums may hide corruption that exists
+the growing operation log and applies the same sequence of       in the regions not being overwritten.
+changes to its data structures exactly as the primary does.         During idle periods, chunkservers can scan and verify the
+Like the primary, it polls chunkservers at startup (and infre-   contents of inactive chunks. This allows us to detect corrup-
+quently thereafter) to locate chunk replicas and exchanges       tion in chunks that are rarely read. Once the corruption is
+frequent handshake messages with them to monitor their           detected, the master can create a new uncorrupted replica
+status. It depends on the primary master only for replica        and delete the corrupted replica. This prevents an inactive
+location updates resulting from the primary’s decisions to       but corrupted chunk replica from fooling the master into
+create and delete replicas.                                      thinking that it has enough valid replicas of a chunk.
+
+5.2 Data Integrity                                               5.3 Diagnostic Tools
+   Each chunkserver uses checksumming to detect corruption          Extensive and detailed diagnostic logging has helped im-
+of stored data. Given that a GFS cluster often has thousands     measurably in problem isolation, debugging, and perfor-
+of disks on hundreds of machines, it regularly experiences       mance analysis, while incurring only a minimal cost. With-
+disk failures that cause data corruption or loss on both the     out logs, it is hard to understand transient, non-repeatable
+read and write paths. (See Section 7 for one cause.) We          interactions between machines. GFS servers generate di-
+can recover from corruption using other chunk replicas, but      agnostic logs that record many signiﬁcant events (such as
+it would be impractical to detect corruption by comparing        chunkservers going up and down) and all RPC requests and
+replicas across chunkservers. Moreover, divergent replicas       replies. These diagnostic logs can be freely deleted without
+may be legal: the semantics of GFS mutations, in particular      aﬀecting the correctness of the system. However, we try to
+atomic record append as discussed earlier, does not guar-        keep these logs around as far as space permits.
+antee identical replicas. Therefore, each chunkserver must          The RPC logs include the exact requests and responses
+independently verify the integrity of its own copy by main-      sent on the wire, except for the ﬁle data being read or writ-
+taining checksums.                                               ten. By matching requests with replies and collating RPC
+   A chunk is broken up into 64 KB blocks. Each has a corre-     records on diﬀerent machines, we can reconstruct the en-
+sponding 32 bit checksum. Like other metadata, checksums         tire interaction history to diagnose a problem. The logs also
+are kept in memory and stored persistently with logging,         serve as traces for load testing and performance analysis.
+separate from user data.                                            The performance impact of logging is minimal (and far
+   For reads, the chunkserver veriﬁes the checksum of data       outweighed by the beneﬁts) because these logs are written
+blocks that overlap the read range before returning any data     sequentially and asynchronously. The most recent events
+to the requester, whether a client or another chunkserver.       are also kept in memory and available for continuous online
+Therefore chunkservers will not propagate corruptions to         monitoring.
+other machines. If a block does not match the recorded
+checksum, the chunkserver returns an error to the requestor      6. MEASUREMENTS
+and reports the mismatch to the master. In response, the
+requestor will read from other replicas, while the master          In this section we present a few micro-benchmarks to illus-
+will clone the chunk from another replica. After a valid new     trate the bottlenecks inherent in the GFS architecture and
+replica is in place, the master instructs the chunkserver that   implementation, and also some numbers from real clusters
+reported the mismatch to delete its replica.                     in use at Google.
+   Checksumming has little eﬀect on read performance for
+several reasons. Since most of our reads span at least a         6.1 Micro-benchmarks
+few blocks, we need to read and checksum only a relatively         We measured performance on a GFS cluster consisting
+small amount of extra data for veriﬁcation. GFS client code      of one master, two master replicas, 16 chunkservers, and
+further reduces this overhead by trying to align reads at        16 clients. Note that this conﬁguration was set up for ease
+checksum block boundaries. Moreover, checksum lookups            of testing. Typical clusters have hundreds of chunkservers
+and comparison on the chunkserver are done without any           and hundreds of clients.
+I/O, and checksum calculation can often be overlapped with         All the machines are conﬁgured with dual 1.4 GHz PIII
+I/Os.                                                            processors, 2 GB of memory, two 80 GB 5400 rpm disks, and
+   Checksum computation is heavily optimized for writes          a 100 Mbps full-duplex Ethernet connection to an HP 2524
+that append to the end of a chunk (as opposed to writes          switch. All 19 GFS server machines are connected to one
+that overwrite existing data) because they are dominant in       switch, and all 16 client machines to the other. The two
+our workloads. We just incrementally update the check-           switches are connected with a 1 Gbps link.
+sum for the last partial checksum block, and compute new
+checksums for any brand new checksum blocks ﬁlled by the         6.1.1 Reads
+append. Even if the last partial checksum block is already          N clients read simultaneously from the ﬁle system. Each
+corrupted and we fail to detect it now, the new checksum         client reads a randomly selected 4 MB region from a 320 GB
+value will not match the stored data, and the corruption will    ﬁle set. This is repeated 256 times so that each client ends
+be detected as usual when the block is next read.                up reading 1 GB of data. The chunkservers taken together
+   In contrast, if a write overwrites an existing range of the   have only 32 GB of memory, so we expect at most a 10% hit
+chunk, we must read and verify the ﬁrst and last blocks of       rate in the Linux buﬀer cache. Our results should be close
+the range being overwritten, then perform the write, and         to cold cache results.
+   Figure 3(a) shows the aggregate read rate for N clients              Cluster                           A         B
+and its theoretical limit. The limit peaks at an aggregate of           Chunkservers                   342        227
+125 MB/s when the 1 Gbps link between the two switches                  Available disk space            72 TB     180 TB
+                                                                        Used disk space                 55 TB     155 TB
+is saturated, or 12.5 MB/s per client when its 100 Mbps                 Number of Files                735  k     737  k
+network interface gets saturated, whichever applies. The                Number of Dead files            22  k     232  k
+observed read rate is 10 MB/s, or 80% of the per-client                 Number of Chunks               992  k    1550  k
+limit, when just one client is reading. The aggregate read              Metadata at chunkservers        13 GB      21 GB
+rate reaches 94 MB/s, about 75% of the 125 MB/s link limit,             Metadata at master              48 MB      60 MB
+for 16 readers, or 6 MB/s per client. The eﬃciency drops
+from 80% to 75% because as the number of readers increases,
+so does the probability that multiple readers simultaneously          Table 2: Characteristics of two GFS clusters
+read from the same chunkserver.
+                                                                  longer and continuously generate and process multi-TB data
+6.1.2 Writes                                                      sets with only occasional human intervention. In both cases,
+   N clients write simultaneously to N distinct ﬁles. Each        a single “task” consists of many processes on many machines
+client writes 1 GB of data to a new ﬁle in a series of 1 MB       reading and writing many ﬁles simultaneously.
+writes. The aggregate write rate and its theoretical limit are
+shown in Figure 3(b). The limit plateaus at 67 MB/s be-           6.2.1 Storage
+cause we need to write each byte to 3 of the 16 chunkservers,        As shown by the ﬁrst ﬁve entries in the table, both clusters
+each with a 12.5 MB/s input connection.                           have hundreds of chunkservers, support many TBs of disk
+   The write rate for one client is 6.3 MB/s, about half of the   space, and are fairly but not completely full. “Used space”
+limit. The main culprit for this is our network stack. It does    includes all chunk replicas. Virtually all ﬁles are replicated
+not interact very well with the pipelining scheme we use for      three times. Therefore, the clusters store 18 TB and 52 TB
+pushing data to chunk replicas. Delays in propagating data        of ﬁle data respectively.
+from one replica to another reduce the overall write rate.           The two clusters have similar numbers of ﬁles, though B
+   Aggregate write rate reaches 35 MB/s for 16 clients (or        has a larger proportion of dead ﬁles, namely ﬁles which were
+2.2 MB/s per client), about half the theoretical limit. As in     deleted or replaced by a new version but whose storage have
+the case of reads, it becomes more likely that multiple clients   not yet been reclaimed. It also has more chunks because its
+write concurrently to the same chunkserver as the number          ﬁles tend to be larger.
+of clients increases. Moreover, collision is more likely for 16
+writers than for 16 readers because each write involves three     6.2.2 Metadata
+diﬀerent replicas.                                                   The chunkservers in aggregate store tens of GBs of meta-
+   Writes are slower than we would like. In practice this has     data, mostly the checksums for 64 KB blocks of user data.
+not been a major problem because even though it increases         The only other metadata kept at the chunkservers is the
+the latencies as seen by individual clients, it does not sig-     chunk version number discussed in Section 4.5.
+niﬁcantly aﬀect the aggregate write bandwidth delivered by           The metadata kept at the master is much smaller, only
+the system to a large number of clients.                          tens of MBs, or about 100 bytes per ﬁle on average. This
+                                                                  agrees with our assumption that the size of the master’s
+6.1.3 Record Appends                                              memory does not limit the system’s capacity in practice.
+   Figure 3(c) shows record append performance. N clients         Most of the per-ﬁle metadata is the ﬁle names stored in a
+append simultaneously to a single ﬁle. Performance is lim-        preﬁx-compressed form. Other metadata includes ﬁle own-
+ited by the network bandwidth of the chunkservers that            ership and permissions, mapping from ﬁles to chunks, and
+store the last chunk of the ﬁle, independent of the num-          each chunk’s current version. In addition, for each chunk we
+ber of clients. It starts at 6.0 MB/s for one client and drops    store the current replica locations and a reference count for
+to 4.8 MB/s for 16 clients, mostly due to congestion and          implementing copy-on-write.
+variances in network transfer rates seen by diﬀerent clients.        Each individual server, both chunkservers and the master,
+   Our applications tend to produce multiple such ﬁles con-       has only 50 to 100 MB of metadata. Therefore recovery is
+currently. In other words, N clients append to M shared           fast: it takes only a few seconds to read this metadata from
+ﬁles simultaneously where both N and M are in the dozens          disk before the server is able to answer queries. However, the
+or hundreds. Therefore, the chunkserver network congestion        master is somewhat hobbled for a period – typically 30 to
+in our experiment is not a signiﬁcant issue in practice be-       60 seconds – until it has fetched chunk location information
+cause a client can make progress on writing one ﬁle while         from all chunkservers.
+the chunkservers for another ﬁle are busy.
+                                                                  6.2.3 Read and Write Rates
+6.2 Real World Clusters                                              Table 3 shows read and write rates for various time pe-
+  We now examine two clusters in use within Google that           riods. Both clusters had been up for about one week when
+are representative of several others like them. Cluster A is      these measurements were taken. (The clusters had been
+used regularly for research and development by over a hun-        restarted recently to upgrade to a new version of GFS.)
+dred engineers. A typical task is initiated by a human user          The average write rate was less than 30 MB/s since the
+and runs up to several hours. It reads through a few MBs          restart. When we took these measurements, B was in the
+to a few TBs of data, transforms or analyzes the data, and        middle of a burst of write activity generating about 100 MB/s
+writes the results back to the cluster. Cluster B is primarily    of data, which produced a 300 MB/s network load because
+used for production data processing. The tasks last much          writes are propagated to three replicas.
+                                                                                  60                         Network limit
+                                          Network limit                                                                                                                    Network limit
+                                                                                                                                                   10
+
+
+
+
+                                                                                                                              Append rate (MB/s)
+                   100
+
+
+
+
+Read rate (MB/s)                                              Write rate (MB/s)
+                                                                                  40
+
+                    50              Aggregate read rate                                                                                             5
+                                                                                  20
+                                                                                                       Aggregate write rate                                        Aggregate append rate
+
+                     0                                                             0                                                                0
+                         0     5         10        15                                  0        5         10           15                               0       5         10        15
+                             Number of clients N                                              Number of clients N                                             Number of clients N
+
+                               (a) Reads                                                        (b) Writes                                                  (c) Record appends
+
+ Figure 3: Aggregate Throughputs. Top curves show theoretical limits imposed by our network topology. Bottom curves
+ show measured throughputs. They have error bars that show 95% conﬁdence intervals, which are illegible in some cases
+ because of low variance in measurements.
+
+                     Cluster                                  A                                B                  15,000 chunks containing 600 GB of data. To limit the im-
+                     Read rate (last minute)              583 MB/s                         380 MB/s               pact on running applications and provide leeway for schedul-
+                     Read rate (last hour)                562 MB/s                         384 MB/s
+                                                                                                                  ing decisions, our default parameters limit this cluster to
+                     Read rate (since restart)            589 MB/s                          49 MB/s
+                     Write rate (last minute)               1 MB/s                         101 MB/s               91 concurrent clonings (40% of the number of chunkservers)
+                     Write rate (last hour)                 2 MB/s                         117 MB/s               where each clone operation is allowed to consume at most
+                     Write rate (since restart)            25 MB/s                          13 MB/s               6.25 MB/s (50 Mbps). All chunks were restored in 23.2 min-
+                     Master ops (last minute)             325 Ops/s                        533 Ops/s              utes, at an eﬀective replication rate of 440 MB/s.
+                     Master ops (last hour)               381 Ops/s                        518 Ops/s                 In another experiment, we killed two chunkservers each
+                     Master ops (since restart)           202 Ops/s                        347 Ops/s              with roughly 16,000 chunks and 660 GB of data. This double
+                                                                                                                  failure reduced 266 chunks to having a single replica. These
+                                                                                                                  266 chunks were cloned at a higher priority, and were all
+ Table 3: Performance Metrics for Two GFS Clusters
+                                                                                                                  restored to at least 2x replication within 2 minutes, thus
+                                                                                                                  putting the cluster in a state where it could tolerate another
+   The read rates were much higher than the write rates.                                                          chunkserver failure without data loss.
+ The total workload consists of more reads than writes as we
+ have assumed. Both clusters were in the middle of heavy                                                          6.3 Workload Breakdown
+ read activity. In particular, A had been sustaining a read                                                         In this section, we present a detailed breakdown of the
+ rate of 580 MB/s for the preceding week. Its network con-                                                        workloads on two GFS clusters comparable but not identi-
+ ﬁguration can support 750 MB/s, so it was using its re-                                                          cal to those in Section 6.2. Cluster X is for research and
+ sources eﬃciently. Cluster B can support peak read rates of                                                      development while cluster Y is for production data process-
+ 1300 MB/s, but its applications were using just 380 MB/s.                                                        ing.
+
+       6.2.4 Master Load                                                                                            6.3.1 Methodology and Caveats
+    Table 3 also shows that the rate of operations sent to the                                                       These results include only client originated requests so
+ master was around 200 to 500 operations per second. The                                                          that they reﬂect the workload generated by our applications
+ master can easily keep up with this rate, and therefore is                                                       for the ﬁle system as a whole. They do not include inter-
+ not a bottleneck for these workloads.                                                                            server requests to carry out client requests or internal back-
+    In an earlier version of GFS, the master was occasionally                                                     ground activities, such as forwarded writes or rebalancing.
+ a bottleneck for some workloads. It spent most of its time                                                          Statistics on I/O operations are based on information
+ sequentially scanning through large directories (which con-                                                      heuristically reconstructed from actual RPC requests logged
+ tained hundreds of thousands of ﬁles) looking for particular                                                     by GFS servers. For example, GFS client code may break a
+ ﬁles. We have since changed the master data structures to                                                        read into multiple RPCs to increase parallelism, from which
+ allow eﬃcient binary searches through the namespace. It                                                          we infer the original read. Since our access patterns are
+ can now easily support many thousands of ﬁle accesses per                                                        highly stylized, we expect any error to be in the noise. Ex-
+ second. If necessary, we could speed it up further by placing                                                    plicit logging by applications might have provided slightly
+ name lookup caches in front of the namespace data struc-                                                         more accurate data, but it is logistically impossible to re-
+ tures.                                                                                                           compile and restart thousands of running clients to do so
+                                                                                                                  and cumbersome to collect the results from as many ma-
+       6.2.5 Recovery Time                                                                                        chines.
+    After a chunkserver fails, some chunks will become under-                                                        One should be careful not to overly generalize from our
+ replicated and must be cloned to restore their replication                                                       workload. Since Google completely controls both GFS and
+ levels. The time it takes to restore all such chunks depends                                                     its applications, the applications tend to be tuned for GFS,
+ on the amount of resources. In one experiment, we killed a                                                       and conversely GFS is designed for these applications. Such
+ single chunkserver in cluster B. The chunkserver had about                                                       mutual inﬂuence may also exist between general applications
+    Operation         Read       Write      Record Append           Operation         Read       Write      Record Append
+    Cluster           X Y         X Y         X         Y           Cluster           X    Y      X    Y      X         Y
+    0K               0.4 2.6       0    0      0         0          1B..1K          < .1 < .1   < .1 < .1   < .1     < .1
+    1B..1K           0.1 4.1     6.6 4.9     0.2       9.2          1K..8K          13.8 3.9    < .1 < .1   < .1       0.1
+    1K..8K          65.2 38.5    0.4 1.0    18.9      15.2          8K..64K         11.4 9.3     2.4 5.9     2.3       0.3
+    8K..64K         29.9 45.1   17.8 43.0   78.0       2.8          64K..128K        0.3 0.7     0.3 0.3    22.7       1.2
+    64K..128K        0.1 0.7     2.3 1.9    < .1       4.3          128K..256K       0.8 0.6    16.5 0.2    < .1       5.8
+    128K..256K       0.2 0.3    31.6 0.4    < .1      10.6          256K..512K       1.4 0.3     3.4 7.7    < .1      38.4
+    256K..512K       0.1 0.1     4.2 7.7    < .1      31.2          512K..1M        65.9 55.1   74.1 58.0     .1      46.8
+    512K..1M         3.9 6.9    35.5 28.7    2.2      25.5          1M..inf          6.4 30.1    3.3 28.0   53.9       7.4
+    1M..inf          0.1 1.8     1.5 12.3    0.7       2.2
+                                                                 Table 5: Bytes Transferred Breakdown by Opera-
+Table 4: Operations Breakdown by Size (%). For                   tion Size (%). For reads, the size is the amount of data
+reads, the size is the amount of data actually read and trans-   actually read and transferred, rather than the amount re-
+ferred, rather than the amount requested.                        quested. The two may diﬀer if the read attempts to read
+                                                                 beyond end of ﬁle, which by design is not uncommon in our
+                                                                 workloads.
+and ﬁle systems, but the eﬀect is likely more pronounced in
+our case.                                                                      Cluster                    X Y
+                                                                               Open                     26.1 16.3
+6.3.2 Chunkserver Workload                                                     Delete                    0.7 1.5
+   Table 4 shows the distribution of operations by size. Read                  FindLocation             64.3 65.8
+                                                                               FindLeaseHolder           7.8 13.4
+sizes exhibit a bimodal distribution. The small reads (un-                     FindMatchingFiles         0.6 2.2
+der 64 KB) come from seek-intensive clients that look up                       All other combined        0.5 0.8
+small pieces of data within huge ﬁles. The large reads (over
+512 KB) come from long sequential reads through entire           Table 6: Master Requests Breakdown by Type (%)
+ﬁles.
+   A signiﬁcant number of reads return no data at all in clus-
+ter Y. Our applications, especially those in the production      proximates the case where a client deliberately overwrites
+systems, often use ﬁles as producer-consumer queues. Pro-        previous written data rather than appends new data. For
+ducers append concurrently to a ﬁle while a consumer reads       cluster X, overwriting accounts for under 0.0001% of bytes
+the end of ﬁle. Occasionally, no data is returned when the       mutated and under 0.0003% of mutation operations. For
+consumer outpaces the producers. Cluster X shows this less       cluster Y, the ratios are both 0.05%. Although this is minute,
+often because it is usually used for short-lived data analysis   it is still higher than we expected. It turns out that most
+tasks rather than long-lived distributed applications.           of these overwrites came from client retries due to errors or
+   Write sizes also exhibit a bimodal distribution. The large    timeouts. They are not part of the workload per se but a
+writes (over 256 KB) typically result from signiﬁcant buﬀer-     consequence of the retry mechanism.
+ing within the writers. Writers that buﬀer less data, check-
+point or synchronize more often, or simply generate less data    6.3.4 Master Workload
+account for the smaller writes (under 64 KB).                      Table 6 shows the breakdown by type of requests to the
+   As for record appends, cluster Y sees a much higher per-      master. Most requests ask for chunk locations (FindLo-
+centage of large record appends than cluster X does because      cation) for reads and lease holder information (FindLease-
+our production systems, which use cluster Y, are more ag-        Locker) for data mutations.
+gressively tuned for GFS.                                          Clusters X and Y see signiﬁcantly diﬀerent numbers of
+   Table 5 shows the total amount of data transferred in op-     Delete requests because cluster Y stores production data
+erations of various sizes. For all kinds of operations, the      sets that are regularly regenerated and replaced with newer
+larger operations (over 256 KB) generally account for most       versions. Some of this diﬀerence is further hidden in the
+of the bytes transferred. Small reads (under 64 KB) do           diﬀerence in Open requests because an old version of a ﬁle
+transfer a small but signiﬁcant portion of the read data be-     may be implicitly deleted by being opened for write from
+cause of the random seek workload.                               scratch (mode “w” in Unix open terminology).
+                                                                   FindMatchingFiles is a pattern matching request that sup-
+6.3.3 Appends versus Writes                                      ports “ls” and similar ﬁle system operations. Unlike other
+   Record appends are heavily used especially in our pro-        requests for the master, it may process a large part of the
+duction systems. For cluster X, the ratio of writes to record    namespace and so may be expensive. Cluster Y sees it much
+appends is 108:1 by bytes transferred and 8:1 by operation       more often because automated data processing tasks tend to
+counts. For cluster Y, used by the production systems, the       examine parts of the ﬁle system to understand global appli-
+ratios are 3.7:1 and 2.5:1 respectively. Moreover, these ra-     cation state. In contrast, cluster X’s applications are under
+tios suggest that for both clusters record appends tend to       more explicit user control and usually know the names of all
+be larger than writes. For cluster X, however, the overall       needed ﬁles in advance.
+usage of record append during the measured period is fairly
+low and so the results are likely skewed by one or two appli-
+cations with particular buﬀer size choices.                      7. EXPERIENCES
+   As expected, our data mutation workload is dominated            In the process of building and deploying GFS, we have
+by appending rather than overwriting. We measured the            experienced a variety of issues, some operational and some
+amount of data overwritten on primary replicas. This ap-         technical.
+   Initially, GFS was conceived as the backend ﬁle system        and rely on distributed algorithms for consistency and man-
+for our production systems. Over time, the usage evolved         agement. We opt for the centralized approach in order to
+to include research and development tasks. It started with       simplify the design, increase its reliability, and gain ﬂexibil-
+little support for things like permissions and quotas but now    ity. In particular, a centralized master makes it much easier
+includes rudimentary forms of these. While production sys-       to implement sophisticated chunk placement and replication
+tems are well disciplined and controlled, users sometimes        policies since the master already has most of the relevant
+are not. More infrastructure is required to keep users from      information and controls how it changes. We address fault
+interfering with one another.                                    tolerance by keeping the master state small and fully repli-
+   Some of our biggest problems were disk and Linux related.     cated on other machines. Scalability and high availability
+Many of our disks claimed to the Linux driver that they          (for reads) are currently provided by our shadow master
+supported a range of IDE protocol versions but in fact re-       mechanism. Updates to the master state are made persis-
+sponded reliably only to the more recent ones. Since the pro-    tent by appending to a write-ahead log. Therefore we could
+tocol versions are very similar, these drives mostly worked,     adapt a primary-copy scheme like the one in Harp [7] to pro-
+but occasionally the mismatches would cause the drive and        vide high availability with stronger consistency guarantees
+the kernel to disagree about the drive’s state. This would       than our current scheme.
+corrupt data silently due to problems in the kernel. This           We are addressing a problem similar to Lustre [8] in terms
+problem motivated our use of checksums to detect data cor-       of delivering aggregate performance to a large number of
+ruption, while concurrently we modiﬁed the kernel to handle      clients. However, we have simpliﬁed the problem signiﬁ-
+these protocol mismatches.                                       cantly by focusing on the needs of our applications rather
+   Earlier we had some problems with Linux 2.2 kernels due       than building a POSIX-compliant ﬁle system. Additionally,
+to the cost of fsync(). Its cost is proportional to the size     GFS assumes large number of unreliable components and so
+of the ﬁle rather than the size of the modiﬁed portion. This     fault tolerance is central to our design.
+was a problem for our large operation logs especially before        GFS most closely resembles the NASD architecture [4].
+we implemented checkpointing. We worked around this for          While the NASD architecture is based on network-attached
+a time by using synchronous writes and eventually migrated       disk drives, GFS uses commodity machines as chunkservers,
+to Linux 2.4.                                                    as done in the NASD prototype. Unlike the NASD work,
+   Another Linux problem was a single reader-writer lock         our chunkservers use lazily allocated ﬁxed-size chunks rather
+which any thread in an address space must hold when it           than variable-length objects. Additionally, GFS implements
+pages in from disk (reader lock) or modiﬁes the address          features such as rebalancing, replication, and recovery that
+space in an mmap() call (writer lock). We saw transient          are required in a production environment.
+timeouts in our system under light load and looked hard for         Unlike Minnesota’s GFS and NASD, we do not seek to
+resource bottlenecks or sporadic hardware failures. Even-        alter the model of the storage device. We focus on ad-
+tually, we found that this single lock blocked the primary       dressing day-to-day data processing needs for complicated
+network thread from mapping new data into memory while           distributed systems with existing commodity components.
+the disk threads were paging in previously mapped data.             The producer-consumer queues enabled by atomic record
+Since we are mainly limited by the network interface rather      appends address a similar problem as the distributed queues
+than by memory copy bandwidth, we worked around this by          in River [2]. While River uses memory-based queues dis-
+replacing mmap() with pread() at the cost of an extra copy.      tributed across machines and careful data ﬂow control, GFS
+   Despite occasional problems, the availability of Linux code   uses a persistent ﬁle that can be appended to concurrently
+has helped us time and again to explore and understand           by many producers. The River model supports m-to-n dis-
+system behavior. When appropriate, we improve the kernel         tributed queues but lacks the fault tolerance that comes with
+and share the changes with the open source community.            persistent storage, while GFS only supports m-to-1 queues
+                                                                 eﬃciently. Multiple consumers can read the same ﬁle, but
+8.   RELATED WORK                                                they must coordinate to partition the incoming load.
+  Like other large distributed ﬁle systems such as AFS [5],
+GFS provides a location independent namespace which en-          9. CONCLUSIONS
+ables data to be moved transparently for load balance or            The Google File System demonstrates the qualities es-
+fault tolerance. Unlike AFS, GFS spreads a ﬁle’s data across     sential for supporting large-scale data processing workloads
+storage servers in a way more akin to xFS [1] and Swift [3] in   on commodity hardware. While some design decisions are
+order to deliver aggregate performance and increased fault       speciﬁc to our unique setting, many may apply to data pro-
+tolerance.                                                       cessing tasks of a similar magnitude and cost consciousness.
+  As disks are relatively cheap and replication is simpler          We started by reexamining traditional ﬁle system assump-
+than more sophisticated RAID [9] approaches, GFS cur-            tions in light of our current and anticipated application
+rently uses only replication for redundancy and so consumes      workloads and technological environment. Our observations
+more raw storage than xFS or Swift.                              have led to radically diﬀerent points in the design space.
+  In contrast to systems like AFS, xFS, Frangipani [12], and     We treat component failures as the norm rather than the
+Intermezzo [6], GFS does not provide any caching below the       exception, optimize for huge ﬁles that are mostly appended
+ﬁle system interface. Our target workloads have little reuse     to (perhaps concurrently) and then read (usually sequen-
+within a single application run because they either stream       tially), and both extend and relax the standard ﬁle system
+through a large data set or randomly seek within it and read     interface to improve the overall system.
+small amounts of data each time.                                    Our system provides fault tolerance by constant moni-
+  Some distributed ﬁle systems like Frangipani, xFS, Min-        toring, replicating crucial data, and fast and automatic re-
+nesota’s GFS[11] and GPFS [10] remove the centralized server     covery. Chunk replication allows us to tolerate chunkserver
+failures. The frequency of these failures motivated a novel          architecture. In Proceedings of the 8th Architectural
+online repair mechanism that regularly and transparently re-         Support for Programming Languages and Operating
+pairs the damage and compensates for lost replicas as soon           Systems, pages 92–103, San Jose, California, October
+as possible. Additionally, we use checksumming to detect             1998.
+data corruption at the disk or IDE subsystem level, which        [5] John Howard, Michael Kazar, Sherri Menees, David
+becomes all too common given the number of disks in the              Nichols, Mahadev Satyanarayanan, Robert
+system.                                                              Sidebotham, and Michael West. Scale and
+   Our design delivers high aggregate throughput to many             performance in a distributed ﬁle system. ACM
+concurrent readers and writers performing a variety of tasks.        Transactions on Computer Systems, 6(1):51–81,
+We achieve this by separating ﬁle system control, which              February 1988.
+passes through the master, from data transfer, which passes      [6] InterMezzo. http://www.inter-mezzo.org, 2003.
+directly between chunkservers and clients. Master involve-       [7] Barbara Liskov, Sanjay Ghemawat, Robert Gruber,
+ment in common operations is minimized by a large chunk              Paul Johnson, Liuba Shrira, and Michael Williams.
+size and by chunk leases, which delegates authority to pri-          Replication in the Harp ﬁle system. In 13th
+mary replicas in data mutations. This makes possible a sim-          Symposium on Operating System Principles, pages
+ple, centralized master that does not become a bottleneck.           226–238, Paciﬁc Grove, CA, October 1991.
+We believe that improvements in our networking stack will        [8] Lustre. http://www.lustreorg, 2003.
+lift the current limitation on the write throughput seen by
+                                                                 [9] David A. Patterson, Garth A. Gibson, and Randy H.
+an individual client.
+                                                                     Katz. A case for redundant arrays of inexpensive disks
+   GFS has successfully met our storage needs and is widely
+                                                                     (RAID). In Proceedings of the 1988 ACM SIGMOD
+used within Google as the storage platform for research and
+                                                                     International Conference on Management of Data,
+development as well as production data processing. It is an
+                                                                     pages 109–116, Chicago, Illinois, September 1988.
+important tool that enables us to continue to innovate and
+attack problems on the scale of the entire web.                 [10] Frank Schmuck and Roger Haskin. GPFS: A
+                                                                     shared-disk ﬁle system for large computing clusters. In
+                                                                     Proceedings of the First USENIX Conference on File
+ACKNOWLEDGMENTS                                                      and Storage Technologies, pages 231–244, Monterey,
+We wish to thank the following people for their contributions        California, January 2002.
+to the system or the paper. Brain Bershad (our shepherd)        [11] Steven R. Soltis, Thomas M. Ruwart, and Matthew T.
+and the anonymous reviewers gave us valuable comments                O’Keefe. The Gobal File System. In Proceedings of the
+and suggestions. Anurag Acharya, Jeﬀ Dean, and David des-            Fifth NASA Goddard Space Flight Center Conference
+Jardins contributed to the early design. Fay Chang worked            on Mass Storage Systems and Technologies, College
+on comparison of replicas across chunkservers. Guy Ed-               Park, Maryland, September 1996.
+jlali worked on storage quota. Markus Gutschke worked           [12] Chandramohan A. Thekkath, Timothy Mann, and
+on a testing framework and security enhancements. David              Edward K. Lee. Frangipani: A scalable distributed ﬁle
+Kramer worked on performance enhancements. Fay Chang,                system. In Proceedings of the 16th ACM Symposium
+Urs Hoelzle, Max Ibel, Sharon Perl, Rob Pike, and Debby              on Operating System Principles, pages 224–237,
+Wallach commented on earlier drafts of the paper. Many of            Saint-Malo, France, October 1997.
+our colleagues at Google bravely trusted their data to a new
+ﬁle system and gave us useful feedback. Yoshka helped with
+early testing.
+
+REFERENCES
+ [1] Thomas Anderson, Michael Dahlin, Jeanna Neefe,
+     David Patterson, Drew Roselli, and Randolph Wang.
+     Serverless network ﬁle systems. In Proceedings of the
+     15th ACM Symposium on Operating System
+     Principles, pages 109–126, Copper Mountain Resort,
+     Colorado, December 1995.
+ [2] Remzi H. Arpaci-Dusseau, Eric Anderson, Noah
+     Treuhaft, David E. Culler, Joseph M. Hellerstein,
+     David Patterson, and Kathy Yelick. Cluster I/O with
+     River: Making the fast case common. In Proceedings
+     of the Sixth Workshop on Input/Output in Parallel
+     and Distributed Systems (IOPADS ’99), pages 10–22,
+     Atlanta, Georgia, May 1999.
+ [3] Luis-Felipe Cabrera and Darrell D. E. Long. Swift:
+     Using distributed disk striping to provide high I/O
+     data rates. Computer Systems, 4(4):405–436, 1991.
+ [4] Garth A. Gibson, David F. Nagle, Khalil Amiri, Jeﬀ
+     Butler, Fay W. Chang, Howard Gobioﬀ, Charles
+     Hardin, Erik Riedel, David Rochberg, and Jim
+     Zelenka. A cost-eﬀective, high-bandwidth storage
+
