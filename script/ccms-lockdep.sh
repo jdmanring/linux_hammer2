@@ -67,17 +67,33 @@ secs=$1
 dl() { awk '/debug_locks:/{print $2}' /proc/lockdep_stats; }
 lsmod | grep -q '^hammer2 ' && { echo "busy"; exit 0; }
 echo "debug-locks-before $(dl)"
+rm -f /tmp/h2-rmmod-rc
 dmesg -C
 insmod /tmp/hammer2.ko || { echo "insmod-failed"; exit 0; }
 sleep "$secs"
-rmmod hammer2 || { echo "rmmod-failed"; exit 0; }
-echo "debug-locks-after $(dl)"
-dmesg | grep 'ccms locktest rounds' | sed 's/.*ccms locktest rounds /rounds /'
-echo "lockdep-reports $(dmesg | grep -cE 'possible circular locking|possible recursive locking|inconsistent lock state|bad unlock balance|held lock freed|BUG: sleeping function called|WARNING: .*lock')"
+# Read the report BEFORE the unload. A lock the run broke wedges its
+# threads in an uninterruptible sleep, and then rmmod waits in
+# kthread_stop() in D state, which timeout(1) cannot kill: measured, the
+# first control run never got past the unload. Everything lockdep says is
+# already in the log by now, so it is read here and the unload is only
+# attempted afterwards, in the background, with its own verdict.
+echo "lockdep-reports $(dmesg | grep -cE 'possible circular locking|possible recursive locking|inconsistent lock state|bad unlock balance|held lock freed|BUG: sleeping function called|WARNING: .*lock|DEBUG_RWSEMS_WARN_ON')"
 echo "kasan $(dmesg | grep -c 'BUG: KASAN')"
 echo "bug $(dmesg | grep -cE '^\[[ 0-9.]*\] (BUG|kernel BUG):')"
+echo "debug-locks-mid $(dl)"
 echo "---report---"
-dmesg | grep -A40 -E 'possible circular locking|possible recursive locking|inconsistent lock state|bad unlock balance|held lock freed|BUG:' | head -80
+dmesg | grep -A40 -E 'possible circular locking|possible recursive locking|inconsistent lock state|bad unlock balance|held lock freed|DEBUG_RWSEMS_WARN_ON|BUG:' | head -60
+echo "---end---"
+( rmmod hammer2 >/dev/null 2>&1; echo $? > /tmp/h2-rmmod-rc ) </dev/null >/dev/null 2>&1 &
+i=0
+while [ ! -s /tmp/h2-rmmod-rc ] && [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done
+if [ -s /tmp/h2-rmmod-rc ] && [ "$(cat /tmp/h2-rmmod-rc)" = 0 ]; then
+	echo "debug-locks-after $(dl)"
+	dmesg | grep 'ccms locktest rounds' | sed 's/.*ccms locktest rounds /rounds /'
+else
+	echo "rmmod-failed"
+fi
+rm -f /tmp/h2-rmmod-rc
 GUEST
 )
 rc=$?
@@ -87,11 +103,13 @@ get() { printf '%s\n' "$out" | sed -n "s/^$1 //p" | head -1; }
 case "$out" in
 *busy*) echo "ccms-lockdep: COULD-NOT-RUN: hammer2 is already loaded on $GUEST" >&2; exit 2 ;;
 *insmod-failed*) echo "ccms-lockdep: FAIL: the module did not load" >&2; exit 1 ;;
-*rmmod-failed*) echo "ccms-lockdep: FAIL: the module did not unload, the threads may not have stopped" >&2; exit 1 ;;
+esac
+case "$out" in
+*rmmod-failed*) unload=no ;;
+*) unload=ok ;;
 esac
 
 before=$(get debug-locks-before)
-after=$(get debug-locks-after)
 rounds=$(printf '%s\n' "$out" | sed -n 's/^rounds \([0-9]*\),.*/\1/p')
 fstate=$(printf '%s\n' "$out" | sed -n 's/^rounds [0-9]*, \(.*\)/\1/p')
 reports=$(get lockdep-reports)
@@ -113,19 +131,21 @@ check() {
 check "the threads took the lock: ${rounds:-0} round(s), ending $fstate" $r
 [ "$fstate" = "count 0 upgrade 0" ] && r=ok || r=no
 check "the lock ends unlocked with no upgrade pending" $r
-[ "$after" = 1 ] && r=ok || r=no
-check "lockdep still on after the run: debug_locks $after" $r
+mid=$(get debug-locks-mid)
+[ "$mid" = 1 ] && r=ok || r=no
+check "lockdep still on after the run: debug_locks ${mid:-?}" $r
 [ "${reports:-1}" = 0 ] && r=ok || r=no
 check "lockdep reports: ${reports:-?}" $r
 [ "${kasan:-1}" = 0 ] && r=ok || r=no
 check "KASAN reports: ${kasan:-?}" $r
 [ "${bug:-1}" = 0 ] && r=ok || r=no
 check "BUG lines: ${bug:-?}" $r
+check "the module unloaded, so the threads stopped" $unload
 
 if [ $bad -ne 0 ]; then
 	printf '%s\n' "$out" | sed -n '/^---report---$/,$p'
 	echo "ccms-lockdep: $bad failed"
 	exit 1
 fi
-echo "ccms-lockdep: 6 check(s), 0 failed, $SECS s on $grel"
+echo "ccms-lockdep: 7 check(s), 0 failed, $SECS s on $grel"
 exit 0

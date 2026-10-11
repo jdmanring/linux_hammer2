@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0, P1 and P2 are closed; P3 is reopened with one exit criterion left, and P4 follows it.
+dependency order. P0 to P3 are closed and P4 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -293,9 +293,9 @@ dependency order. P0, P1 and P2 are closed; P3 is reopened with one exit criteri
 3. P2, root filesystem and long-run readiness, closed 2026-10-09: every
    item in its row is measured, the two 800-cycle soaks included, on the
    debug and KASAN builds. `script/xfstests.sh` is the instrument for the
-   parts the suite covers. P3, cache coherency, reopened 2026-10-11:
-   closed first on its design note, which did not meet the work queue's
-   exit criteria, and reopened against them. The note is
+   parts the suite covers. P3, cache coherency, closed 2026-10-11 on
+   the work queue's exit criteria, after a first closing on its design
+   note alone was reopened. The note is
    `doc/CCMS_DESIGN.md`. Its finding is that there is no state machine to
    port, the coherency half having been deleted in `94491fa098` with the
    intent to return it. The note's first version read that deletion as
@@ -309,20 +309,21 @@ dependency order. P0, P1 and P2 are closed; P3 is reopened with one exit criteri
    transport. Two of the three positions the note offered were the
    note's invention and are now recorded as such.
 
-   P3 is reopened as of 2026-10-11. It was closed on the design note
-   alone, and the work queue's exit criteria for it are a full
-   state-transition matrix, lockdep-clean, concurrent access tests and a
-   provenance record, with the verification plan adding explicit pre-
-   and postconditions and a negative test for every transition. Three of
-   those are now met: `doc/CCMS_TRANSITIONS.md` writes every transition
-   of the carried lock with its precondition and postcondition,
-   `test-ccms-lock.sh` checks each one and the four refused calls against
-   the shipped source, and races the same functions across eight threads
-   with mutual exclusion asserted, controls failing against the source
-   broken two ways. The fourth is open: nothing in the module calls the
-   lock, so lockdep on the guest has nothing to see until an in-kernel
-   path exercises it, and that path is P3's remaining item. P4 waits on
-   it, as the work queue's dependency says.
+   P3 was reopened on 2026-10-11, having been closed on the design note
+   alone, and closed again the same day on the work queue's exit
+   criteria: a full state-transition matrix, lockdep-clean, concurrent
+   access tests and a provenance record, with the verification plan's
+   pre- and postconditions and negative test for every transition.
+   `doc/CCMS_TRANSITIONS.md` writes every transition of the carried lock;
+   `test-ccms-lock.sh` checks each and the four refused calls against the
+   shipped source and races the same functions across eight threads,
+   with controls failing against the source broken two ways; and
+   `script/ccms-lockdep.sh` runs two kernel threads taking the lock in
+   every mode under lockdep, clean on the debug kernel for 142 million
+   rounds and on the KASAN kernel for 77 million, its control (an unheld
+   spin release, the defect 1.0.6 fixed) reported as a bad unlock
+   balance. What P3 does not cover is the coherency half, which no tree
+   has written and which runs under the quorum protocol of P8.
 
 ## Versioning
 
@@ -872,7 +873,7 @@ Rules it adds to the ones this tree already keeps:
 | P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
 | P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass, and so do files held in the inode, negative offsets and a writer racing the seek; xfstests' `seek` group passes, 8 of 8. Closed |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | small-file create and delete times are measured by `million-tree.sh` (1,000,000 files in 248 s with four writers, whole-tree delete in 41 s); low-memory closure reads at 2, 4 and 8 GiB, a single-purpose root boot and one 128 KiB mapped write are recorded, and `latency.sh` reports per-operation fsync rather than a storm. Mixed concurrent read/write with mmap and fsync storms is measured by `script/storm.sh`, which runs mapped writers, write-then-fsync writers, fdatasync batchers and readers on one set of files at once and checks every cell after a remount with the cache dropped; a 24-cycle run passes with the kernel log clean, and 800-cycle soaks ran clean on both the debug build (2 h 39 min) and the KASAN build (6 h 14 min, `kasan 0 ubsan 0`), each with `fsck_hammer2` clean and the kernel log clean. An export is served by `nfsd` under both export modes, 12 checks 0 failed. A sustained soak is the same load over `H2_STORM_CYCLES` cycles rather than one long cycle, since a cycle is bounded by the volume; the readings are in the verification record. `O_DIRECT` is decided, under "Not on the roadmap" |
-| P3 | cache coherency (CCMS): a design note before any code | P2 | reopened 2026-10-11: transitions documented, matrix and concurrency tests pass, lockdep on the guest open because nothing in the module exercises the lock yet. Closed 2026-10-10 on the note alone, which did not meet the work queue's exit criteria. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
+| P3 | cache coherency (CCMS): a design note before any code | P2 | closed 2026-10-11 on the work queue's four exit criteria: transitions documented with pre- and postconditions (`doc/CCMS_TRANSITIONS.md`), each checked and the four refused calls refused by `test-ccms-lock.sh`, the same functions raced across eight threads, and lockdep clean on the debug and KASAN kernels by `script/ccms-lockdep.sh`, whose control, an unheld spin release, is reported. A first closing on 2026-10-10 on the note alone did not meet those criteria and was reopened. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
 | P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
 | P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |

@@ -130,11 +130,12 @@ returns */`.
 ## What this document does not cover
 
 - Concurrency. The transitions above are single-threaded readings of the
-  code. Whether they hold under concurrent acquirers is a separate
-  question, and it is the one the lockdep run on the guest answers. The
-  lock's own comment says the code is "in the critical path and highly
-  streamlined", which is the constraint any concurrency test has to
-  respect.
+  code. Under concurrent acquirers they are checked twice: on the host by
+  `test/hammer2-ccms-concurrent.c`, eight threads racing the same
+  functions with mutual exclusion asserted, and in the kernel by
+  `script/ccms-lockdep.sh`, two kernel threads taking the lock in every
+  mode under lockdep. The second is the only reading of the real
+  rw_semaphore and wait queue under this lock.
 - The grant state. `state` and `type` are not touched by any function in
   the carried file. `ccms_rstate_get()` was to set `state`, and it is not
   carried.

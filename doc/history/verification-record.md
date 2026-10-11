@@ -7124,3 +7124,46 @@ nothing else. That is the guest's own service state, not a module
 question, since no module was loaded, and it is left for the maintainer.
 P3's lockdep criterion stays open until `ccms-lockdep.sh` runs on a guest
 whose `debug_locks` reads 1.
+
+## P3 closed: the CCMS lock under lockdep, 2026-10-11
+
+The guest that blocked the reading above was brought back with a hard
+reset after an ACPI reboot left it idle on the old kernel; `debug_locks`
+read 1 on the fresh boot. Its grub default had been moved to the KASAN
+build once already and the reset arrived before the change was on disk,
+so the guest came up on the debug build again; `grub-mkconfig` was rerun
+and the root synced before the second reset. On this guest an ACPI
+reboot does not complete, which is the guest's service state and is
+recorded so the next run resets rather than waits.
+
+`script/ccms-lockdep.sh`, 120 s per run:
+
+- `h2debug-rc5`: 142,228,187 rounds, the lock ending `count 0 upgrade
+  0`, `debug_locks` 1, 0 lockdep reports, 0 KASAN, 0 BUG lines, the
+  module unloaded. A 60 s run before it read the same with 74,148,886
+  rounds.
+- `h2kasan-rc5`: 77,188,417 rounds, all seven checks the same, the module
+  carrying 18 `__asan` imports by `nm`, so the instrumentation the clean
+  reading depends on was present.
+
+The control, run on `h2debug-rc5`: one `hammer2_spin_unex()` added after
+each exclusive round, a release of a spin the thread does not hold, which
+is the defect 1.0.6 fixed in the bad-state arms. It read 3 lockdep
+reports, `DEBUG_RWSEMS_WARN_ON` and `WARNING: bad unlock balance
+detected!` among them, `debug_locks` 0, the threads wedged in
+`ccms_thread_lock_nonblock()` in D state and the unload refused: five of
+seven checks failed. Its first run reported only a hang. The script had
+read the log after `rmmod`, and `rmmod` blocked in `kthread_stop()` in D
+state, which `timeout(1)` cannot kill, so the report never reached the
+host. The log is now read before the unload, and the unload is attempted
+in the background and judged on its own.
+
+With this P3's four exit criteria are met for the carried thread lock:
+transitions with pre- and postconditions in `doc/CCMS_TRANSITIONS.md`,
+each checked with its negative cases by `test-ccms-lock.sh`, the same
+functions raced on the host, and lockdep clean in the kernel on both
+builds. The provenance record was met at 1.0.6. P4 is next.
+
+`doc/readiness-audit-2026-09-25.md` carried `->direct_IO` as an open next
+step after the roadmap had decided it; it is marked decided, with the
+reasoning cross-referenced.

@@ -12,9 +12,10 @@ Read against the DragonFly clone at `250a8b4`, the forge, and Dillon's 2015
 design document, on 2026-10-10 and 2026-10-11. P3 was closed on this note
 on 2026-10-10 and reopened on 2026-10-11: the work queue's exit criteria
 for it are a transition matrix, concurrent access tests, lockdep and a
-provenance record, and the note met one of the four. `doc/CCMS_TRANSITIONS.md`
-covers the first three of the four against the carried thread lock; the
-lockdep item is open because nothing in the module calls the lock.
+provenance record, and the note met one of the four. It closed again on
+2026-10-11 on all four: `doc/CCMS_TRANSITIONS.md`, `test-ccms-lock.sh`,
+and `script/ccms-lockdep.sh` on the debug and KASAN kernels. That covers
+the carried thread lock; the coherency half is not written in any tree.
 
 ## The finding that makes this note necessary
 
