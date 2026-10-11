@@ -7167,3 +7167,34 @@ builds. The provenance record was met at 1.0.6. P4 is next.
 `doc/readiness-audit-2026-09-25.md` carried `->direct_IO` as an open next
 step after the roadmap had decided it; it is marked decided, with the
 reasoning cross-referenced.
+
+## P4 begun: the synchronization thread's lifetime, read, 2026-10-11
+
+The handoff's audit for P4 starts with thread lifetime and stop/join, and
+this is the reading of it from the source, before any fault is injected.
+
+- `hammer2_thr_create()` (`hammer2_admin.c`) can fail here where it cannot
+  on DragonFly: `lwkt_create()` maps to `kthread_create()`, which fails on
+  memory or a fatal signal to the mounting task. The carry handles that
+  much, marked `XXX` in place: `thr->td` stays NULL and the scratch buffer
+  is released.
+- What the caller does with the failure is the open question.
+  `hammer2_pfsalloc()` creates the thread only when `td == NULL`, so the
+  next pfsalloc retries it, and between the two the cluster runs with no
+  synchronization thread and nothing but a log line to say so. Whether
+  that is correct is not decided by reading it; the handoff's
+  "allocation faults" item is the measurement that decides it, and it is
+  P4's first instrument.
+- `hammer2_thr_delete()` signals STOP, waits for STOPPED, then
+  `kthread_stop_put()`, reading `td` before the signal because the thread
+  clears it itself. The thread body breaks out of its loop on STOP only at
+  the top, so a stop arriving during `hammer2_sync_slaves()` waits for the
+  pass or for `hammer2_thr_break()` inside the deferred loop. That bound is
+  the time a pass takes, which is the second P4 measurement: an unmount or
+  a `pfs-delete` during a long pass.
+- The deletion sites are `hammer2_pfsdealloc()`, the PFS teardown loop over
+  `cluster.nchains` and the per-device loop over `HAMMER2_MAXCLUSTER`.
+  `cluster-sync.sh` covers the first two in the healthy case.
+
+Nothing is changed yet. Each item above becomes a fault-injection reading
+before it becomes a fix.
