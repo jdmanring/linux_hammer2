@@ -263,16 +263,78 @@ the control that would move if the field cost anything.
 
 ### 2. Where the agreement procedure lives
 
-This is the decision the original does not make for us, because it never
-made it. Three positions, each with a different cost.
+The original answers this too, and this section said otherwise until
+2026-10-10, when the answer was found in the design document itself. It
+listed three positions as though the choice were open and none of them
+the design's. Two of the three are not: the "cluster controller" is
+ruled out by the sentence that puts the state on the masters, and the
+lease is a replacement considered before the original had been read. The
+section is rewritten below, and the version it replaces is described at
+the end of it rather than deleted, because a reader who saw the first
+version in a changelog or a commit message will look for it here.
 
-In the cluster controller, as the header's language assumes: a node asks
-the controller for a state and the controller arbitrates. This needs the
-transport, so it cannot be built before P5 and P6, and it makes the
-controller a single point whose loss stops grants. The original's
-`QSALVE` flag says the controller was expected to know which masters hold
-a copy, which is a quorum question, so this position couples CCMS to the
-quorum protocol rather than to the transport alone.
+The design document is Matthew Dillon's, dated 2015-04-03 (v3), on the
+DragonFly users list, and it names the shape in one sentence:
+
+> **Cache sub-protocol** - This is the MESI sub-protocol which runs
+> under the Quorum protocol. This protocol is used to maintain cache
+> state for sub-trees to ensure that operations remain cache coherent.
+
+So the layer is specified as *layered*, not as a choice: the MESI state
+machine asks, and the quorum protocol answers. There is no separate grant
+authority to design, and the three "agreement positions" this note
+offered were the note's error rather than the design's silence. The same
+document's status table says it plainly on its first page:
+
+```
+* Clustering core
+  - Quorum Protocol    - under development
+  - Cache coherency    - not specced yet
+```
+
+"Not specced yet" is a statement about *this document's* coverage of the
+cache half, next to "under development" for the quorum it names as its
+substrate. It is not an invitation to choose a different substrate.
+
+Three further facts come from the same document and each settles
+something this note had listed as open:
+
+- **Who holds state.** "The servers hosting the MASTERs are also
+  responsible for keeping track of the cache state." So the masters,
+  not a controller node. The document uses the word "controller" exactly
+  once, for an administrative actor: "The administrative controller may
+  preemptively downgrade a leaf with insufficient administrative rights."
+- **Preemption exists in the design.** That sentence is the answer to
+  the liveness problem this note treated as a separate decision:
+  "Depending on administrative rights this protocol may or may not allow
+  a leaf node in the cluster to hold a cache element indefinitely." A
+  grant that can block the cluster is a grant that may be taken back
+  without negotiation, by policy.
+- **A leaf's state is already revocable.** The proxy protocol: a leaf
+  with insufficient rights "may only be allowed to maintain partial MESI
+  cache state or perhaps none at all (since cache state can block other
+  machines in the cluster). Instead a leaf with insufficient rights will
+  have to make due with a preemptive loss of cache state and any allowed
+  modifying operations will have to be forwarded to the proxy."
+
+What is therefore actually open is narrower and different. The quorum
+protocol's own body is not written in any tree (the roadmap's P8), and
+the MESI layer runs under it, so the MESI layer cannot be completed
+before P8 without inventing the substrate. The administrative-rights
+policy is a knob the design explicitly leaves to administration and the
+port can defer. What is *not* open is the protocol's shape.
+
+The version of this section that stood from the note's first commit until
+2026-10-10 said the original "does not make this decision for us, because
+it never made it," and offered three positions: a cluster controller
+that arbitrates grants, a per-grant quorum vote, and a lease. The second
+turned out to be the design, described less precisely; the first and
+third were alternatives invented in the note. The error was writing the
+section from the surviving source files, which contain no such sentence,
+without reading the design document the roadmap cites for the direction.
+The document was one link away, named in the port's own
+`proposals/hammer2-completion-handoff/SOURCE_REFERENCES.md`, and reading
+it took one fetch.
 
 In the masters, by a quorum vote per grant, which is what the state
 model's S6 invariant ("exclusive ownership cannot exist simultaneously at
@@ -313,23 +375,58 @@ something.
 
 ### 4. What happens to a grant when its holder goes away
 
-The state model's S7 again, and the scenario list names it directly as
-"MESI holder disconnects". The original has no answer: `ccms_cst_uninit()`
-in the surviving version is a `KKASSERT` and an empty `if` whose body is
-`/* XXX */`.
+The state model's S7, and the scenario list names it directly as "MESI
+holder disconnects". The surviving source has no answer:
+`ccms_cst_uninit()` is a `KKASSERT` and an empty `if` whose body is
+`/* XXX */`. The *design* does answer it, and this section treated the
+source's silence as the design's until the document was read.
 
-Three answers are available and they are not equivalent. A grant is
-released on an orderly disconnect and held until an epoch change on an
-abrupt one, which is safe and can block the cluster until the node
-returns. A grant expires on a lease, which is what S7 asks for. A grant
-is revoked by a quorum that agrees the holder is gone, which needs the
-quorum protocol to be able to decide a member is gone, which is P8.
+Three answers are available. Two of them are in the design document:
+
+- **Preemptive downgrade by policy.** "The administrative controller may
+  preemptively downgrade a leaf with insufficient administrative rights
+  without giving it a chance to synchronize any modified state back to
+  the cluster." This is the answer for a *leaf*, and it is
+  unconditional: a leaf cannot block the cluster, because the cluster may
+  take its state back.
+- **Deletion recorded by the proxy.** "When the link is lost to the
+  proxy, the proxy automatically forwards a deletion of the state to the
+  other nodes based on what it has recorded." So a leaf reached through a
+  proxy does not leave a dangling grant, and the design puts the burden
+  on the proxy rather than on the dead node.
+- **Quorum agreement, for a MASTER.** The remaining case, a *master*
+  that holds exclusive state and becomes unreachable, is the one the
+  document does not spell out. It falls under the quorum protocol, which
+  the document marks "under development," so its answer is P8's to give
+  and not CCMS's.
+
+So this is not a third decision for the maintainer. It is two rules
+already written, both about leaves, and one open question that belongs to
+the quorum protocol's design rather than to this one.
+
+An earlier version of this section offered "released on an orderly
+disconnect and held until an epoch change on an abrupt one" as a
+distinct answer. That is the behavior the first bullet above has, so it
+was the design described less precisely rather than a separate option.
 
 ## Alternatives, and what each would have to prove
 
 The rule the roadmap sets is that a decision changing distributed commit
 semantics stops at a design note "with alternatives and what each would
-have to prove". This section is that.
+have to prove". This section is that, with a correction to what counts
+as an alternative here.
+
+Two of the four below are *not* alternatives the design document leaves
+open, and are kept only to record that they were considered and why they
+are not. B is the design as written. C is a modern replacement, which
+Rule 11 of the project's own handoff forbids weighing before the original
+is implemented and validated: "Do not use a modern algorithm merely
+because it is fashionable... do not replace HAMMER2's quorum/MESI
+mechanisms with Raft without first implementing and validating the
+original semantics." So the real alternatives are A and D: carry the
+lock and build the half the design names, or do not build it and say so.
+B is what "build it" means, and C is deferred by rule rather than
+rejected on merit.
 
 ### A. Carry the surviving `hammer2_ccms.c` and add the coherency half
 
@@ -373,17 +470,34 @@ stays true across a synchronization pass, which is what
 
 ### C. Lease-based ownership, no controller
 
+Deferred by Rule 11, not rejected on merit, and the distinction matters
+for a reader deciding later whether to revisit it.
+
 What it is: exclusive state held for a bounded time, renewed while the
 holder is live, expiring otherwise, with the four states kept as the
 local vocabulary and the six flags kept as the description of what the
 cluster believes.
 
-What it would have to prove: that clock disagreement between nodes is
-bounded below the lease, which is a property no instrument here can
-measure because there is no second host. It would also have to prove
-that expiry cannot revoke a grant whose holder is alive and mid-write,
-which is the failure that turns a lease into data loss rather than a
-liveness fix.
+Why it is not an alternative now: the project's own handoff, Rule 11,
+forbids weighing a modern replacement before the original mechanism is
+implemented and validated. The design document also already contains the
+property a lease is usually adopted for. "Depending on administrative
+rights this protocol may or may not allow a leaf node in the cluster to
+hold a cache element indefinitely. The administrative controller may
+preemptively downgrade a leaf" is a preemptive revocation, decided by
+policy rather than by a clock, and it needs no bounded skew between
+machines. A lease would trade a policy decision for a timing assumption
+the port cannot measure here, which is a worse trade on this evidence.
+
+What it would have to prove if it is ever revisited: that clock
+disagreement between nodes is bounded below the lease. No instrument
+here can measure that, there being no second host, which is the same
+limit that puts alternative D's invariants out of reach. It would also
+have to prove that expiry cannot revoke a grant whose holder is alive and
+mid-write, the failure that turns a lease into data loss rather than a
+liveness fix. Fencing tokens and lease epochs are the standard pairing
+for that failure and are named here so a later reader does not have to
+rediscover them.
 
 ### D. Do not build it, and say so
 
@@ -435,15 +549,16 @@ stops at a design note of its own under the same rule.
 
 ## What this note does not settle
 
-- Which of the three agreement positions is taken. That is the
-  maintainer's, and it is the decision the whole layer turns on.
 - Where the data state lives. The topology and attribute placements are
   the original's and are recorded above; the data half has no placement in
-  any revision, and the chain is where a range state would go.
-- Whether the layer is built before the transport. The transport is P5
-  and the message core P6; a grant needs both, and the roadmap's
-  dependency order puts P4 between this step and them for the reason its
-  row gives.
+  any revision, and the chain is where a range state would go. The
+  design document says the lock carries a key range, which is consistent
+  with one CST per range, and does not place the structure.
+- Whether the layer is built before the quorum protocol. The document
+  names the cache layer as running *under* the quorum, and the quorum is
+  P8, so the layer is a dependency of P8 and not of the transport alone.
+  This is the correction to the previous version of this note, which put
+  the transport (P5, P6) in that position and called the choice open.
 - Whether the surviving thread lock stays. It is carried and building as
   of 1.0.6, so this is no longer "whether it is carried at all" but
   whether it earns the place it now has. Alternative A argues it does
@@ -454,9 +569,27 @@ stops at a design note of its own under the same rule.
   they stand. They are the part of the original that is written down, so
   the default is to keep them; the `goto again` loop is only meaningful
   once the step it retries exists.
+- The administrative-rights policy. Who may hold state indefinitely and
+  who loses it preemptively is a knob the design document explicitly
+  leaves to administration, so it is a policy decision rather than a
+  design one and is not this note's to take.
 
 ## Provenance
 
+- **Matthew Dillon's HAMMER2 design document, 2015-04-03 (v3)**, on the
+  DragonFly users list, read 2026-10-10 by `defuddle parse`:
+  https://lists.dragonflybsd.org/pipermail/users/2015-April/448614.html
+  This is the source the roadmap cites for the direction past 1.0, and
+  it is named in the port's own
+  `proposals/hammer2-completion-handoff/SOURCE_REFERENCES.md`. Every
+  claim in this note about what the design specifies comes from it: the
+  status table ("Quorum Protocol - under development", "Cache coherency
+  - not specced yet"), the cache sub-protocol running under the quorum,
+  the masters keeping track of cache state, and the administrative
+  controller's preemptive downgrade. The first version of this note
+  argued from the surviving source files alone, which contain none of
+  these sentences, and reached the opposite conclusion about whether the
+  protocol's shape was open.
 - The pre-`94491fa098` `hammer2_ccms.c` and `hammer2_ccms.h`, read from
   the DragonFly clone at `250a8b4` by `git show 94491fa098^:...`. The
   clone is shallow, so the commit is read from the object store rather

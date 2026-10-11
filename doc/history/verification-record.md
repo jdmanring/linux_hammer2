@@ -6871,3 +6871,42 @@ records 323 and 177 lines for the two files and `hammer2-y` names
 `hammer2_ccms.o`. Alternative A in the note now asks whether the lock
 earns the place it has rather than whether to carry it, which is the
 change the correction made to the design rather than to the record.
+
+## The CCMS design document read, 2026-10-10
+
+The P3 design note argued from the surviving source files alone and
+concluded that the original never specified the grant protocol, offering
+three positions for the maintainer to choose between. The primary source
+says otherwise. Matthew Dillon's HAMMER2 design document, 2015-04-03
+(v3), fetched from the DragonFly users list on this date, states the
+shape directly: "Cache sub-protocol - This is the MESI sub-protocol which
+runs under the Quorum protocol." Its first page carries the status
+table "Quorum Protocol - under development / Cache coherency - not
+specced yet," which is a statement that the protocol is documented as
+spanning two halves and that this document covers one of them.
+
+Readings taken from that document and now cited in the note: the cache
+state is kept by "the servers hosting the MASTERs," so not by a separate
+controller node; "the administrative controller may preemptively
+downgrade a leaf with insufficient administrative rights without giving
+it a chance to synchronize any modified state back," which is a
+revocation path the note had listed as an undecided liveness question;
+and "when the link is lost to the proxy, the proxy automatically
+forwards a deletion of the state to the other nodes," which places the
+burden of a dead leaf on the proxy rather than on an expiry timer.
+
+The source was one link away, named in this repository's own
+`proposals/hammer2-completion-handoff/SOURCE_REFERENCES.md`, and the
+roadmap already cited the document for the direction past 1.0. The note's
+error was reading the code and not the design, which is the same shape as
+the error recorded above it: a claim written from one artifact without
+reading the artifact that answers it. The handoff's Rule 11 forbids
+weighing a modern replacement before the original is implemented and
+validated, so alternative C is recorded as deferred by rule rather than
+as a live option.
+
+Two of the note's four alternatives are therefore not alternatives: B is
+the design as written and C is deferred by the project's own rule. What
+remains genuinely open is the quorum protocol's body (P8), which the
+cache layer runs under, and the administrative-rights policy the design
+leaves to administration.

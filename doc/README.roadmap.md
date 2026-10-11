@@ -296,12 +296,18 @@ dependency order. P0, P1, P2 and P3 are closed and P4 is next.
    parts the suite covers. P3, cache coherency, closed 2026-10-10: its
    row asked for a design note before any code, and the note is
    `doc/CCMS_DESIGN.md`. Its finding is that there is no state machine to
-   port, the agreement procedure behind the original's states and flags
-   was never written in any tree, so the part of the rule that asks for
-   the original protocol to be reproduced first is satisfiable only for
-   the vocabulary and the three-way split, and the procedure is new
-   design for the maintainer to decide. P4, local synchronization
-   hardened, is next.
+   port, the coherency half having been deleted in `94491fa098` with the
+   intent to return it. The note's first version read that deletion as
+   the design being unwritten and offered three grant positions for the
+   maintainer to choose between; the design document itself, one link
+   away in `proposals/hammer2-completion-handoff/SOURCE_REFERENCES.md`,
+   specifies the shape in a single sentence: the cache sub-protocol
+   "runs under the Quorum protocol." The masters keep the cache state,
+   the administrative controller may preemptively downgrade a leaf, and
+   the cache layer is a dependency of the quorum (P8) rather than of the
+   transport. Two of the three positions the note offered were the
+   note's invention and are now recorded as such. P4, local
+   synchronization hardened, is next.
 
 ## Versioning
 
