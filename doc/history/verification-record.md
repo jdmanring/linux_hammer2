@@ -7239,3 +7239,49 @@ is correct and no code change is owed.
   the difference from DragonFly, not as a defect marker.
 - The second P4 measurement stands: the stop bound is one sync pass,
   still unmeasured under a long pass.
+
+## P4 interruption: the probe built, the copy it needs not happening, 2026-10-11
+
+`cluster-sync.sh` gained a fourth phase for the work queue's
+`interrupt_resume` (the plan's interrupted and resumed convergence). It is
+not closed, and this records why rather than what was hoped.
+
+- What the phase does: create one large directory on the master with the
+  slave mounted, wait for the copy to begin, wait for a pass bracket to
+  open, unmount the slave, remount it, and require the copy to finish. The
+  pass brackets itself in the log, `sync_slaves pfs CL` opening it and
+  `sync_slaves error` closing it, and the stop is read at
+  `hammer2_synchro.c:277`, the one call of `hammer2_thr_break()`, between
+  deferred directories.
+- A pass's length grows with the largest directory it walks. Measured on
+  the KASAN guest by timing the bracket: 37 ms over an empty PFS, 40 ms at
+  2000 entries, 65 ms at 8000, 418 ms at 20000. That is what makes the
+  window real, and it is why the phase uses one large directory.
+- The run, 33 checks 7 failed, and the failures are one finding. The copy
+  of a 20000-file directory made 2 inode updates and stopped, with the
+  thread alive and 113 passes over the next five minutes making none. The
+  unmount therefore interrupted a copy that had already stalled, the
+  remount copied nothing, and the slave ended 82 inodes short of the
+  master. Nothing reported an error and no warning, lockdep, KASAN or
+  UBSAN report was emitted.
+- Two candidate causes were ruled out from the same run rather than
+  argued. Starvation by the probe's own polling is not it: the thread ran
+  113 passes and was scheduling normally while the copy made no progress.
+  A guest left dirty by an earlier run is not it either, and that defect
+  was found here and closed: the phase used to inherit a loaded module and
+  stale mounts and report 27 failures from a run that never started, so
+  the guest script now refuses with COULD-NOT-RUN and names what is left.
+- What is not yet established: whether the stall is a defect in the
+  thread's decision to synchronize, or a property of this workload that
+  the existing phases do not exercise. Phase 3 writes to a directory that
+  already exists on both sides and converges in 58 updates; this phase
+  creates a directory that the slave has never seen, at the PFS root. The
+  reading that separates them is the scan's own decision, which needs the
+  invariants build and a print at the `want_update` test rather than
+  another guess.
+- The measurements this entry does carry: a pass's duration against
+  directory size, the bracket as the pass's own evidence, and the fact
+  that `interrupt_resume` cannot be measured on a copy that stops after
+  two inodes. The probe stays in the script, failing, because a phase that
+  reports the shape it cannot measure is worth more than one that was
+  tuned until it passed.

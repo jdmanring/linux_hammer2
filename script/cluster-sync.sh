@@ -20,6 +20,15 @@
 # leak and warning check, so the thread, its passes and its copies are
 # each counted rather than assumed.
 #
+# The fourth phase interrupts one. A stop is read only at the top of the
+# thread body and between the deferred directories, so what a stop during
+# synchronization costs is the rest of the pass it landed in. The pass is
+# made long by one large directory, the unmount is issued once a pass
+# bracket is open and a file of that directory is already on the slave, and
+# the remount must finish the copy. The checks below it mean nothing
+# without the bracket check, since an unmount after the pass closed reads
+# as a clean stop that tested nothing.
+#
 # A second one: the warning check reads dmesg for sanitizer reports, and a
 # module built against a kernel without KASAN emits none however broken it
 # is, so that reading would pass in silence on the wrong kernel. The
@@ -40,6 +49,12 @@ NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# Phase 4's interruption copies this many files into one directory on the
+# master, which is what makes the pass long enough to interrupt: 37 ms empty,
+# 418 ms at 20000 entries, measured on the KASAN guest. The check below needs
+# the drain to outlast the unmount's own bookkeeping, which it does by an
+# order of magnitude at this size.
+NBIG=${H2_NBIG:-20000}
 MASTER=$FIXDIR/cluster-master.img
 SLAVE=$FIXDIR/cluster-slave.img
 W=$(mktemp -d) || exit 2
@@ -105,10 +120,32 @@ done
 
 cat > "$W/guest.sh" <<'GUEST'
 set -u
+# A guest left dirty by an earlier run that stopped early makes every check
+# below read nothing: the module is already loaded, so insmod fails, and the
+# mounts are already there, so the PFSes are not the ones this run creates.
+# Refuse and name what is left, rather than reporting a run that never ran.
+if lsmod 2>/dev/null | grep -q '^hammer2'; then
+	echo "cluster: COULD-NOT-RUN: the guest still has the hammer2 module loaded; unmount its volumes and rmmod it first" >&2
+	exit 2
+fi
+if mount 2>/dev/null | grep -q ' type hammer2'; then
+	echo "cluster: COULD-NOT-RUN: the guest still has a hammer2 volume mounted; unmount it first" >&2
+	exit 2
+fi
 rmmod hammer2 2>/dev/null; dmesg -C
+# The kernel's ring is 128 KiB on the KASAN build and a pass prints a line per
+# inode it copies, so a run that copies a large set overflows it and every
+# count taken from dmesg afterwards is short by whatever scrolled off. A
+# follower writes the same lines to a file as they arrive, and every count
+# below reads that file. The follower is killed last, after rmmod has stopped
+# the module's lines, so nothing written after the last count is lost.
+K=/tmp/h2cluster.klog
+dmesg -w > $K 2>&1 &
+KPID=$!
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
-passes() { dmesg | grep -c "sync_slaves pfs $1"; }
+klog() { grep -c "$1" $K; }
+passes() { klog "sync_slaves pfs $1"; }
 
 # 1. A lone SLAVE: start, pass, stop.
 mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
@@ -144,7 +181,7 @@ hammer2 -s /mnt/h2s -t SLAVE -u "$clid" pfs-create CL >/dev/null 2>&1 || { echo 
 echo "cluster-thread $(ps -eo comm | grep -c '^h2nod-CL')"
 sleep 30
 echo "cluster-passes $(passes CL)"
-echo "cluster-updates $(dmesg | grep -c 'syncthr: update inode')"
+echo "cluster-updates $(klog 'syncthr: update inode')"
 
 # 3. Change the master with the slave's copy in place.
 rm -f /mnt/h2c/set/f0 /mnt/h2c/set/f1 /mnt/h2c/set/f2 /mnt/h2c/set/f3 /mnt/h2c/set/f4
@@ -158,11 +195,73 @@ c=$(passes CL)
 sleep 30
 echo "change-passes $(( $(passes CL) - c ))"
 echo "change-files $(find /mnt/h2c/set -type f | wc -l)"
-echo "pass-errors $(dmesg | grep -c 'hammer2_sync_slaves: error')"
+echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
+
+# 4. Interrupt a synchronization pass and resume it. A stop is read at the
+# top of the thread body and between the deferred directories (hammer2_admin.c
+# hammer2_thr_break, called once from hammer2_synchro.c), so a stop arriving
+# during a pass waits for the current scan to finish. The scan's length grows
+# with the largest directory it walks: measured on the KASAN guest, a pass
+# over an empty PFS takes 37 ms and one over a 20000-entry directory 418 ms,
+# so the directory below makes the window real rather than a race won by
+# luck. A pass brackets itself in the log: "sync_slaves pfs CL" opens it and
+# "sync_slaves error" closes it, so the unmount is issued once a bracket is
+# open and the copy is provably in flight.
+# The slave is never read through a mount of its cluster PFS, because
+# mounting a SLAVE label fails with root-inode EIO (the pre-existing refusal
+# the allocation-fault entry records), and reading through the ROOT mount
+# sees the ROOT PFS, not the cluster. The copy is read from what is readable:
+# the thread's own update lines, one per inode it copies (phase 2 measured
+# 58 for 55 files and their directories), and both volumes' media at the end.
+u0=$(klog 'syncthr: update inode')
+echo "interrupt-base $u0"
+mkdir /mnt/h2c/bigdir
+i=0; while [ $i -lt $NBIG ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir/p$i; i=$((i + 1)); done
+sync
+# The copy has begun once its update lines pass the phase-3 baseline.
+n=0
+while [ $n -lt 600 ]; do
+	[ "$(klog 'syncthr: update inode')" -gt "$u0" ] && break
+	sleep 0.1; n=$((n + 1))
+done
+echo "interrupt-begun $([ "$(klog 'syncthr: update inode')" -gt "$u0" ]; echo $?)"
+# Wait for a pass bracket to open, then unmount the slave's ROOT mount, the
+# one whose unmount stopped the thread in phase 1.
+opened=$(klog 'sync_slaves pfs CL')
+n=0
+bracket=1
+while [ $n -lt 1200 ]; do
+	o=$(klog 'sync_slaves pfs CL'); c=$(klog 'sync_slaves error')
+	if [ "$o" -gt "$opened" ] && [ "$o" -gt "$c" ]; then bracket=0; break; fi
+	sleep 0.02; n=$((n + 1))
+done
+# The bracket state is read here, before the unmount: the pass that is open
+# now completes after the stop is read, so testing the bracket after the
+# unmount would read closed however well the interruption landed.
+echo "interrupt-bracket-open $bracket"
+t0=$(date +%s%N); umount /mnt/h2s; t1=$(date +%s%N)
+echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
+echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
+echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
+echo "interrupt-didbreak $(klog didbreak)"
+# 5. Resume: remount the slave volume, the thread starts again, and the copy
+# must finish. Convergence is the update count reaching the full set, one
+# line per inode (phase 2's ratio, with bigdir's own directory beside it),
+# and the media comparison at the end of the run is the off-media proof.
+mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
+n=0
+while [ $n -lt 300 ]; do
+	[ "$(klog 'syncthr: update inode')" -ge $(( u0 + NBIG + 1 )) ] && break
+	sleep 1; n=$((n + 1))
+done
+echo "resume-seconds $n"
+echo "resume-total $(( $(klog 'syncthr: update inode') - u0 ))"
+echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
 umount /mnt/h2c && umount /mnt/h2s && umount /mnt/h2m && echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
-echo "scrapped $(dmesg | grep -c unmount_scrap)"
-echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive')"
+echo "scrapped $(klog unmount_scrap)"
+echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K)"
 # Before rmmod, so the report's %pS resolves the module's own symbols. The
 # scan used to follow rmmod, where those symbols print as addresses and only
 # a process named hammer2 could match, and to run without the wait the
@@ -175,10 +274,11 @@ else
 fi
 rmmod hammer2 && echo "rmmod ok"
 sync
+kill $KPID 2>/dev/null
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" 'mv /tmp/guest.sh /tmp/h2cluster.sh; sh /tmp/h2cluster.sh' > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "NBIG=$NBIG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 [ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
 for d in vdb vdc; do
@@ -206,6 +306,19 @@ p=$(val change-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the thread keeps
 p=$(val change-files); [ "${p:-0}" = 35 ]; check "the changes leave 35 files on the master" $? "${p:-none}"
 p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${p:-none}"
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
+# Phase 4: the interruption must land inside an open pass bracket, or every
+# check below it tested an idle thread. The bracket check comes first because
+# the others mean nothing without it.
+b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
+b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
+c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
+ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
+a=$(val interrupt-threads); [ "${a:-1}" = 0 ]; check "the interrupted slave leaves no thread" $? "${a:-none} left"
+d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the stop is read between deferred directories" $? "${d:-0} line(s)"
+a=$(val resume-thread); [ "${a:-0}" = 1 ]; check "the remount starts its thread again" $? "${a:-none}"
+f=$(val resume-total); [ "${f:-0}" -ge "$NBIG" ] 2>/dev/null; check "the resumed pass finishes the copy" $? "${f:-0} of $NBIG files"
+s=$(val resume-seconds); [ "${s:-999}" -lt 300 ] 2>/dev/null; check "it converges within the wait" $? "${s:-none} s"
+e=$(val resume-errors); [ "${e:-1}" = 0 ]; check "no pass reports an error across the interruption" $? "${e:-none}"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
 if [ "$want_asan" = y ]; then
@@ -271,7 +384,10 @@ fingerprint "$MASTER" > "$W/fp.master"
 fingerprint "$SLAVE" > "$W/fp.slave"
 nm=$(grep -c ' FILE$' "$W/fp.master"); ns=$(grep -c ' FILE$' "$W/fp.slave")
 nd=$(grep -c '^data ' "$W/fp.master")
-[ "$nm" = 35 ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the 35 files, by its own media" $? "$nm file entries, $nd data blocks"
+# The interruption phase leaves its large directory on both volumes, so the
+# fingerprint's expected count is the set's 35 plus bigdir's NBIG.
+want_files=$((35 + NBIG))
+[ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
 
 echo "cluster: $checks check(s), $fail failed"
