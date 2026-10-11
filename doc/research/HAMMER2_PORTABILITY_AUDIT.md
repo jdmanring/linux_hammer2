@@ -57,7 +57,7 @@ it overstates the semantic diff; it never understates it.
 | hammer2_lz4.c | 525 | 542 | 25 | 25 | 27 | 2.3% |
 | hammer2_lz4_encoder.h | 467 | 467 | 0 | 0 | 0 | 0.0% |
 | hammer2_lz4.h | 93 | 93 | 0 | 0 | 0 | 0.0% |
-| hammer2_ccms.c / .h | 311 / 194 | absent | | | | dropped by every port |
+| hammer2_ccms.c / .h | 311 / 194 | 323 / 177 | | | | carried 1.0.6, see the note below |
 | hammer2_iocom.c | 387 | absent | | | | dropped |
 | hammer2_msgops.c | 87 | absent | | | | dropped |
 | hammer2_synchro.c | 1069 | absent | | | | dropped |
@@ -168,3 +168,26 @@ carried algorithm; how much of the chain, flush and inode diff survives
 normalizing the wrapper names; and whether `hammer2_disk.h`'s 222 diff lines
 are all non-semantic. Those three are H1's first reading, and the H1 estimate
 is not written until they are done.
+
+## Correction, 2026-10-10
+
+Two claims above were overtaken by work after this audit was written, and
+are corrected here rather than in place, since both are load-bearing for
+this document's conclusion.
+
+The `hammer2_ccms.c / .h` row read "311 / 194 | absent ... dropped by
+every port". Every port did drop it, which is what the row was about, but
+this port carries it as of 1.0.6 at 323 and 177 lines. The row is
+corrected in place; the "DRAGONFLY-INSEPARABLE" list and the
+"Linux port does the same" sentence that follow from it are not, because
+the interesting result is the reverse of what this audit predicted:
+separability was not settled by deletion, and `hammer2_ccms.c` and
+`hammer2_synchro.c` both build and run here with no transport, as
+`doc/README.status.md` records. The two halves of the clustering layer
+that the ports removed piecemeal are the two that turned out not to need
+the network.
+
+The line counts in this document are DragonFly's at the time of the
+audit, and the column beside each is the FreeBSD port's. Neither column
+is this port's; the origin table in `doc/README.status.md` is, and it is
+regenerated and gated.

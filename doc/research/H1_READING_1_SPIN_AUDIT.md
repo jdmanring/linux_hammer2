@@ -147,3 +147,14 @@ is the configuration FreeBSD has already run for two years. Completing in
 the interrupt handler saves a context switch and reopens the audit for
 the seven hottest sites in the driver. Reading 2 designs the DIO layer on
 that constraint rather than discovering it afterwards.
+
+## Correction, 2026-10-10
+
+"Seven of the 69 are in `hammer2_ccms.c`, which no BSD port carries, so 62
+are port-relevant" was written when that file was absent here. It is
+carried as of 1.0.6, so its seven sites are in this tree's build and the
+port-relevant count is 69 rather than 62. The measurement of seven is
+unchanged; only the file's presence is. That changes what this reading
+implies for the lock question: the seven sites are a real recursive
+shared/exclusive lock with a bad-state arm, not dead text, and
+`doc/README.porting.md` records the three edits the carry needed.

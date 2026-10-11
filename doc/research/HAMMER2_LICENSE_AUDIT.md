@@ -166,3 +166,14 @@ is imported, and the script says so in a DEFER.
   before H1 decides whether to use Linux's in-kernel LZ4, xxHash and zlib
   instead of carrying copies, which is the right answer if they are
   unmodified.
+
+## Correction, 2026-10-10
+
+"The clustering files the ports drop (`ccms`, `iocom`, `msgops`,
+`synchro`) are BSD-3 like the rest and are not imported for H1 to H6" is
+correct about the license and was correct about the import when written.
+Two of the four are now carried: `hammer2_synchro.c` since the
+synchronization work, and `hammer2_ccms.c` as of 1.0.6, both BSD-3 and
+both recorded with their origin, copyright and license in the origin
+table in `doc/README.status.md`. The other two, `hammer2_iocom.c` and
+`hammer2_msgops.c`, remain unimported and gate the message layer.

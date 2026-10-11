@@ -19,9 +19,11 @@ by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; members on other hosts
 need a transport that is not ported, and a quorum that cannot be met is
 unrun. Cache coherency is a design note rather than code:
-`doc/CCMS_DESIGN.md` records that the MESI state machine the plan asked
-to port was never written upstream, so the surviving thread lock, which
-has no caller in any of the four trees, is not carried.
+`doc/CCMS_DESIGN.md` records that the coherency half was deleted
+upstream before it was written, and that Dillon's design document puts it
+under the quorum protocol, which no tree has written either. The surviving
+thread lock is carried and builds as `hammer2_ccms.o`, with nothing here
+calling it; `doc/CCMS_REFERENCE.md` holds the sources.
 
 | what | state | read by |
 |---|---|---|

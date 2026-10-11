@@ -6988,3 +6988,44 @@ gate's population: 246 findings, every one in text the IETF or Microsoft
 wrote. The gate excludes that one directory by path, and the exclusion was
 added only once it was measured to change the outcome; an earlier version
 added before the RFC arrived changed nothing and was removed.
+
+## The "not carried" claims swept after the CCMS carry, 2026-10-10
+
+The carry of `hammer2_ccms.c` made one class of sentence false wherever it
+appeared, so every tracked markdown file was swept for the "is not
+carried", "absent", and "dropped by every" shapes rather than the four
+files that had already been found. Four were still wrong and are
+corrected; the rest were checked and hold.
+
+- `doc/README.status.md` said the surviving thread lock "is not carried".
+  It is carried and builds as `hammer2_ccms.o`. Corrected in place, since
+  that document is a statement about this tree.
+- `doc/research/HAMMER2_PORTABILITY_AUDIT.md` gave the file a row of
+  "absent ... dropped by every port" and built its
+  DRAGONFLY-INSEPARABLE conclusion on the deletion. The row is corrected
+  in place and a dated correction appended, because `doc/research/README.md`
+  draws the line at "a reference that resolves nowhere is a defect and a
+  dated number is not": a line count from the audit's date stands, but a
+  row asserting the file is absent from this port is a reference that
+  resolves nowhere. The interesting result is the reverse of the audit's
+  prediction, so the correction says so.
+- `doc/research/H1_READING_1_SPIN_AUDIT.md` called seven sites "in
+  `hammer2_ccms.c`, which no BSD port carries, so 62 are port-relevant".
+  The seven are in this tree's build now; the port-relevant count is 69.
+- `doc/research/HAMMER2_LICENSE_AUDIT.md` said the four clustering files
+  "are not imported for H1 to H6". Two of the four are carried. The
+  license half of the claim was and is correct.
+
+Checked and left as written: `doc/README.porting.md`'s two
+"not carried" claims, which `test-absence.sh` resolves against `src/` and
+which resolve correctly (the two hits under `src/` are comments saying the
+same thing), the capabilities table's `SelfHealing` and copies rows, the
+portability audit's zero-row sentence, and `doc/research/HAMMER2_LINUX_API_MAP.md`'s
+claim about FreeBSD's `hammer2.h`, which is a statement about FreeBSD and
+is unaffected.
+
+The class is only partly gateable, and it is worth naming what covers each
+half: `test-absence.sh` covers a claim naming a function, and
+`test-inventory.sh` covers the origin table and the Makefile together. A
+sentence in prose that a file is not carried is covered by neither, which
+is how all four of these survived a green sweep.
