@@ -7085,3 +7085,42 @@ One count was not reproducible and is corrected: the roadmap gave
 `hammer2_iocom.c` 25 `kdmsg` calls and `hammer2_msgops.c` 4. The first
 names `kdmsg` on 24 lines and calls 8 of its functions 14 times; the
 second calls `kdmsg_msg_reply()` twice.
+
+## P3's lockdep criterion: the exercise built, the guest run blocked, 2026-10-11
+
+Nothing in the module calls the CCMS lock, so a lockdep run of the module
+has nothing to observe. `hammer2_ccms.c` now carries, behind
+`HAMMER2_CCMS_LOCKTEST`, two kernel threads that take the carried lock in
+every way it implements, started from `hammer2_module_init()` and stopped
+from `hammer2_module_exit()`, which prints the rounds they ran and the
+lock's final count. `script/ccms-lockdep.sh` builds that module, loads it
+on the guest, and reads lockdep, KASAN and BUG lines, with three fake
+passes ruled out in its header: a lockdep already off, threads that never
+took the lock, and a report read from an earlier run's window.
+
+Measured on the host: the flagged build carries 7 `ccms_locktest`
+symbols and builds warning-free against the kernel of record; the default
+build carries none.
+
+The guest run did not happen, and the reason is a reading, kept at
+`doc/history/kernel-reports/2026-10-11-proc-lockdep-uaf.txt`. The guest
+had been up a day and a half on the KASAN build with `debug_locks` already
+0. The kernel log shows why: a KASAN slab-use-after-free in `string()`
+under `print_name()` and `l_show()`, reached by a `grep` reading
+`/proc/lockdep`, reading a name from a 64-byte object freed by
+`load_elf_binary()`. The module was not loaded at the time and the
+call trace has no frame of it; this port's lock names are string
+literals or a `snprintf` into a class it keeps until unload, and none of
+its `hammer2_spin_init()` calls passes anything else. So the report is
+recorded as the kernel's, `/proc/lockdep` naming a class whose name
+string a process image owned, not as this port's, and not filed. KASAN's
+taint is what set `debug_locks` to 0, and a lockdep that is off reports
+nothing on any lock, so the script refuses that state as could-not-run.
+
+The guest was rebooted to clear it. It booted to an idle kernel, its
+vCPUs halted, and did not open ssh in ten minutes; its serial console
+shows `s6-log` failing to rotate `/var/log/udevd/current` in a loop, and
+nothing else. That is the guest's own service state, not a module
+question, since no module was loaded, and it is left for the maintainer.
+P3's lockdep criterion stays open until `ccms-lockdep.sh` runs on a guest
+whose `debug_locks` reads 1.

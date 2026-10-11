@@ -174,4 +174,10 @@ void ccms_thread_unlock_upgraded(ccms_cst_t *cst, ccms_state_t ostate);
 int ccms_thread_lock_owned(ccms_cst_t *cst);
 void ccms_thread_lock_setown(ccms_cst_t *cst);
 
+#ifdef HAMMER2_CCMS_LOCKTEST	/* Linux */
+/* The lockdep exercise in hammer2_ccms.c, started and stopped by the module. */
+int ccms_locktest_start(void);
+void ccms_locktest_stop(void);
+#endif
+
 #endif

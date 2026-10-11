@@ -8,8 +8,13 @@ what the original protocol is, what the port carries today, which parts of
 the original are recoverable and which are not, and what each alternative
 would have to prove before it is written.
 
-Read against the DragonFly clone at `250a8b4` and the forge, on
-2026-10-10.
+Read against the DragonFly clone at `250a8b4`, the forge, and Dillon's 2015
+design document, on 2026-10-10 and 2026-10-11. P3 was closed on this note
+on 2026-10-10 and reopened on 2026-10-11: the work queue's exit criteria
+for it are a transition matrix, concurrent access tests, lockdep and a
+provenance record, and the note met one of the four. `doc/CCMS_TRANSITIONS.md`
+covers the first three of the four against the carried thread lock; the
+lockdep item is open because nothing in the module calls the lock.
 
 ## The finding that makes this note necessary
 

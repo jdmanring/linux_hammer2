@@ -321,3 +321,109 @@ ccms_thread_lock_owned(ccms_cst_t *cst)
 {
 	return(cst->count < 0 && cst->td == curthread);
 }
+
+#ifdef HAMMER2_CCMS_LOCKTEST	/* Linux */
+/*
+ * An in-kernel exercise of the lock above, for lockdep.
+ *
+ * Nothing in the module calls the CCMS lock: the coherency half it was
+ * written for is not carried, so the lock builds and nothing takes it.
+ * That leaves P3's lockdep criterion unmet, because lockdep reports only
+ * on a lock it sees taken.  This is the smallest path that takes it: two
+ * kernel threads acquire, upgrade, downgrade and release one CST, through
+ * the sleeps the lock's own loops use, under the kernel's rw_semaphore and
+ * wait queue, which is the only place lockdep's class for this spin exists.
+ *
+ * It is not the concurrency test.  test/hammer2-ccms-concurrent.c is that,
+ * on the host, with every crossing counted.  This is lockdep's view of the
+ * same functions.
+ *
+ * The CST is a static of its own rather than one embedded in a chain or an
+ * inode: those are reached through the coherency half, which does not
+ * exist, and a test that took them would be exercising a caller nobody
+ * wrote.  The lock does not care which CST it is given.
+ *
+ * Built only with make HAMMER2_CCMS_LOCKTEST=1, so the module a system
+ * loads carries no threads for it.  Started from hammer2_module_init() and
+ * stopped from hammer2_module_exit().
+ */
+#include <linux/kthread.h>
+
+static struct task_struct *ccms_lt_t[2];
+static ccms_cst_t ccms_lt_cst;
+static atomic_long_t ccms_lt_rounds;
+
+static int
+ccms_locktest_thread(void *arg __always_unused)
+{
+	ccms_state_t o;
+
+	while (!kthread_should_stop()) {
+		ccms_thread_lock(&ccms_lt_cst, CCMS_STATE_SHARED);
+		/*
+		 * Only thread 0 upgrades.  Two shared holders that both
+		 * upgrade each wait for the other's count to drain, which the
+		 * lock's contract allows ("other upgraders are allowed") and
+		 * no caller ever did; the host probe documents the same.
+		 */
+		if (current == ccms_lt_t[0]) {
+			o = ccms_thread_lock_upgrade(&ccms_lt_cst);
+			ccms_thread_lock_downgrade(&ccms_lt_cst, o);
+		}
+		ccms_thread_unlock(&ccms_lt_cst);
+
+		ccms_thread_lock(&ccms_lt_cst, CCMS_STATE_EXCLUSIVE);
+		ccms_thread_unlock(&ccms_lt_cst);
+
+		if (ccms_thread_lock_nonblock(&ccms_lt_cst,
+		    CCMS_STATE_EXCLUSIVE) == 0)
+			ccms_thread_unlock(&ccms_lt_cst);
+
+		atomic_long_inc(&ccms_lt_rounds);
+		cond_resched();
+	}
+	return (0);
+}
+
+int
+ccms_locktest_start(void)
+{
+	int i;
+
+	ccms_cst_init(&ccms_lt_cst);
+	atomic_long_set(&ccms_lt_rounds, 0);
+	for (i = 0; i < 2; i++) {
+		ccms_lt_t[i] = kthread_run(ccms_locktest_thread, NULL,
+		    "h2ccmslt%d", i);
+		if (IS_ERR(ccms_lt_t[i])) {
+			int error = PTR_ERR(ccms_lt_t[i]);
+
+			ccms_lt_t[i] = NULL;
+			ccms_locktest_stop();
+			return (error);
+		}
+	}
+	pr_info("hammer2: ccms locktest started\n");
+	return (0);
+}
+
+void
+ccms_locktest_stop(void)
+{
+	int i;
+
+	for (i = 0; i < 2; i++) {
+		if (ccms_lt_t[i] != NULL)
+			kthread_stop(ccms_lt_t[i]);
+		ccms_lt_t[i] = NULL;
+	}
+	/*
+	 * The line the fleet script reads: a count of zero means the
+	 * threads never ran the lock, which would make a clean lockdep
+	 * report worthless, so the script requires it nonzero.
+	 */
+	pr_info("hammer2: ccms locktest rounds %ld, count %d upgrade %d\n",
+	    atomic_long_read(&ccms_lt_rounds), ccms_lt_cst.count,
+	    ccms_lt_cst.upgrade);
+}
+#endif	/* HAMMER2_CCMS_LOCKTEST */

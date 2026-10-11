@@ -1,0 +1,129 @@
+[134832.006027] BUG: KASAN: slab-use-after-free in string+0x4b2/0x5b0
+[134832.006142] Read of size 1 at addr ffff8881044c9314 by task grep/11619
+
+[134832.006203] CPU: 11 UID: 0 PID: 11619 Comm: grep Tainted: G           OE       7.3.0-rc5-kasan #1 PREEMPT(full)  1af86c1050c70ca897ed00e12b00266deae865ec
+[134832.006224] Tainted: [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+[134832.006226] Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS unknown 02/02/2022
+[134832.006254] Call Trace:
+[134832.006282]  <TASK>
+[134832.006285]  dump_stack_lvl+0x6e/0xa0
+[134832.006389]  print_report+0x14b/0x4b0
+[134832.006469]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.006496]  ? __virt_addr_valid+0x255/0x510
+[134832.006574]  kasan_report+0x108/0x130
+[134832.006656]  ? string+0x4b2/0x5b0
+[134832.006661]  ? string+0x4b2/0x5b0
+[134832.006667]  string+0x4b2/0x5b0
+[134832.006673]  ? __pfx_string+0x10/0x10
+[134832.006675]  ? __pfx_format_decode+0x10/0x10
+[134832.006679]  ? number+0x880/0xdc0
+[134832.006684]  vsnprintf+0x3b0/0x1700
+[134832.006704]  ? __pfx_vsnprintf+0x10/0x10
+[134832.006708]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.006711]  ? seq_printf+0x19c/0x350
+[134832.006767]  seq_printf+0x19c/0x350
+[134832.006772]  ? __pfx_seq_printf+0x10/0x10
+[134832.006775]  ? __pfx_widen_string+0x10/0x10
+[134832.006779]  ? bitmap_list_string.isra.0+0x420/0x4d0
+[134832.006783]  ? __pfx_widen_string+0x10/0x10
+[134832.006786]  ? __pfx_print_name+0x10/0x10
+[134832.006844]  print_name+0xb1/0x1e0
+[134832.006848]  ? __pfx_print_name+0x10/0x10
+[134832.006871]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.006874]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.006876]  ? lockdep_count_backward_deps+0xa3/0xe0
+[134832.006893]  l_show+0x1ca/0x370
+[134832.006897]  ? __pfx_l_show+0x10/0x10
+[134832.006901]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.006907]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.006909]  seq_read_iter+0xa43/0x12c0
+[134832.006918]  proc_reg_read_iter+0x1c0/0x340
+[134832.006963]  vfs_read+0x6f8/0xb40
+[134832.006998]  ? seq_read_iter+0x553/0x12c0
+[134832.007001]  ? __pfx_vfs_read+0x10/0x10
+[134832.007010]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007013]  ? ksys_read+0x116/0x250
+[134832.007018]  ksys_read+0x116/0x250
+[134832.007022]  ? __pfx_ksys_read+0x10/0x10
+[134832.007024]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007027]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007030]  ? do_syscall_64+0x22f/0x690
+[134832.007033]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007036]  ? lockdep_hardirqs_on_prepare+0xf4/0x190
+[134832.007041]  do_syscall_64+0xfe/0x690
+[134832.007047]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007050]  ? ksys_read+0x116/0x250
+[134832.007054]  ? __pfx_ksys_read+0x10/0x10
+[134832.007057]  ? ksys_read+0x116/0x250
+[134832.007060]  ? do_syscall_64+0x211/0x690
+[134832.007063]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007066]  ? trace_hardirqs_on_prepare+0x13d/0x190
+[134832.007121]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007125]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007128]  ? do_syscall_64+0x22f/0x690
+[134832.007130]  ? do_syscall_64+0x211/0x690
+[134832.007134]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007136]  ? do_syscall_64+0x2d/0x690
+[134832.007139]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007142]  ? trace_hardirqs_off_finish+0x13d/0x190
+[134832.007146]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007148]  ? srso_alias_return_thunk+0x5/0xfbef5
+[134832.007151]  ? do_syscall_64+0x60/0x690
+[134832.007155]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+[134832.007171] RIP: 0033:0x7fbf05893c4a
+[134832.007174] Code: 08 03 00 00 59 5e 48 83 f8 fc 75 1e 83 e2 39 83 fa 08 75 16 e8 17 ff ff ff 0f 1f 80 00 00 00 00 49 89 ca 48 8b 44 24 20 0f 05 <48> 83 c4 18 c3 90 f3 0f 1e fa 48 83 ec 10 ff 74 24 18 e8 5f ff ff
+[134832.007177] RSP: 002b:00007ffeb3a5cb60 EFLAGS: 00000202 ORIG_RAX: 0000000000000000
+[134832.007225] RAX: ffffffffffffffda RBX: 0000000000018000 RCX: 00007fbf05893c4a
+[134832.007227] RDX: 0000000000018000 RSI: 00007fbf05a66f3b RDI: 0000000000000003
+[134832.007229] RBP: 0000000000018000 R08: 0000000000000000 R09: 0000000000000000
+[134832.007241] R10: 0000000000000000 R11: 0000000000000202 R12: 00007fbf05a66f3b
+[134832.007243] R13: 0000000000000003 R14: 00007fbf05a66f3b R15: 0000000000000000
+[134832.007253]  </TASK>
+
+[134832.007292] Allocated by task 11556:
+[134832.007333]  kasan_save_stack+0x2f/0x50
+[134832.007338]  kasan_save_track+0x14/0x30
+[134832.007342]  __kasan_kmalloc+0x9a/0xb0
+[134832.007346]  __kmalloc_cache_noprof+0x2d8/0x6c0
+[134832.007376]  load_elf_binary+0xdaa/0x4990
+[134832.007422]  bprm_execve+0x774/0x13b0
+[134832.007438]  do_execveat_common.isra.0+0x3ee/0x4f0
+[134832.007442]  __x64_sys_execve+0x91/0xc0
+[134832.007446]  do_syscall_64+0xfe/0x690
+[134832.007450]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+
+[134832.007457] Freed by task 11556:
+[134832.007460]  kasan_save_stack+0x2f/0x50
+[134832.007464]  kasan_save_track+0x14/0x30
+[134832.007467]  kasan_save_free_info+0x3b/0x70
+[134832.007472]  __kasan_slab_free+0x6c/0xa0
+[134832.007478]  kfree+0x28a/0x730
+[134832.007483]  load_elf_binary+0x1972/0x4990
+[134832.007489]  bprm_execve+0x774/0x13b0
+[134832.007495]  do_execveat_common.isra.0+0x3ee/0x4f0
+[134832.007501]  __x64_sys_execve+0x91/0xc0
+[134832.007505]  do_syscall_64+0xfe/0x690
+[134832.007509]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+
+[134832.007515] The buggy address belongs to the object at ffff8881044c9300
+                 which belongs to the cache kmalloc-64 of size 64
+[134832.007519] The buggy address is located 20 bytes inside of
+                 freed 64-byte region [ffff8881044c9300, ffff8881044c9340)
+
+[134832.007526] The buggy address belongs to the physical page:
+[134832.007529] page: refcount:0 mapcount:0 mapping:0000000000000000 index:0x0 pfn:0x1044c9
+[134832.007546] flags: 0x17ffffc0000000(node=0|zone=2|lastcpupid=0x1fffff)
+[134832.007575] page_type: f5(slab)
+[134832.007614] raw: 0017ffffc0000000 ffff8881000428c0 dead000000000100 dead000000000122
+[134832.007631] raw: 0000000000000000 0000000000200020 00000000f5000000 0000000000000000
+[134832.007634] page dumped because: kasan: bad access detected
+
+[134832.007639] Memory state around the buggy address:
+[134832.007642]  ffff8881044c9200: 00 00 00 00 00 00 00 fc fc fc fc fc fc fc fc fc
+[134832.007645]  ffff8881044c9280: fa fb fb fb fb fb fb fb fc fc fc fc fc fc fc fc
+[134832.007649] >ffff8881044c9300: fa fb fb fb fb fb fb fb fc fc fc fc fc fc fc fc
+[134832.007651]                          ^
+[134832.007654]  ffff8881044c9380: 00 00 00 00 00 00 00 fc fc fc fc fc fc fc fc fc
+[134832.007657]  ffff8881044c9400: 00 00 00 00 00 00 00 fc fc fc fc fc fc fc fc fc
+[134832.007660] ==================================================================
+[134832.007695] Disabling lock debugging due to kernel taint

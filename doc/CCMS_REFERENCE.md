@@ -325,7 +325,8 @@ struct carries the local lock, and the local lock has a replacement here.
   `src/sys/fs/hammer2/hammer2_ccms.h`, 46 of them, and no line elsewhere.
 - `ccms_thread_lock()` is called only by `ccms_thread_lock_upgrade()` in
   the same file. Nothing outside the file calls any `ccms_` function.
-- The carried files are 323 and 177 lines; `hammer2-y` in
+- The carried files were 323 and 177 lines at 1.0.6 (the origin table in
+  `doc/README.status.md` carries the current count); `hammer2-y` in
   `src/sys/fs/hammer2/Makefile` names `hammer2_ccms.o`; the origin table
   in `doc/README.status.md` carries both rows and the three `XXX` marks.
 - `hammer2_synchro.c` and `hammer2_ccms.c` are the only two cluster files

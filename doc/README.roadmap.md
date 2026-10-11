@@ -293,8 +293,9 @@ dependency order. P0, P1 and P2 are closed; P3 is reopened with one exit criteri
 3. P2, root filesystem and long-run readiness, closed 2026-10-09: every
    item in its row is measured, the two 800-cycle soaks included, on the
    debug and KASAN builds. `script/xfstests.sh` is the instrument for the
-   parts the suite covers. P3, cache coherency, closed 2026-10-10: its
-   row asked for a design note before any code, and the note is
+   parts the suite covers. P3, cache coherency, reopened 2026-10-11:
+   closed first on its design note, which did not meet the work queue's
+   exit criteria, and reopened against them. The note is
    `doc/CCMS_DESIGN.md`. Its finding is that there is no state machine to
    port, the coherency half having been deleted in `94491fa098` with the
    intent to return it. The note's first version read that deletion as

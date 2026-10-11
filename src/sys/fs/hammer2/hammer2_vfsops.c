@@ -38,6 +38,9 @@
 
 #include "hammer2.h"
 #include "hammer2_mount.h"
+#ifdef HAMMER2_CCMS_LOCKTEST	/* Linux */
+#include "hammer2_ccms.h"
+#endif
 
 #include <linux/fs_context.h>
 #include <linux/pagemap.h>	/* Linux: filemap_write_and_wait */
@@ -3442,6 +3445,13 @@ hammer2_module_init(void)
 	if (error)
 		goto fail_wq;
 
+#ifdef HAMMER2_CCMS_LOCKTEST	/* Linux */
+	error = ccms_locktest_start();
+	if (error) {
+		unregister_filesystem(&hammer2_fs_type);
+		goto fail_wq;
+	}
+#endif
 	return (0);
 
 fail_wq:
@@ -3461,6 +3471,9 @@ fail_xops:
 static void __exit
 hammer2_module_exit(void)
 {
+#ifdef HAMMER2_CCMS_LOCKTEST	/* Linux */
+	ccms_locktest_stop();
+#endif
 	unregister_filesystem(&hammer2_fs_type);
 	/* Linux: every inode is evicted with the last mount, so this is idle. */
 	destroy_workqueue(hammer2_ra_wq);

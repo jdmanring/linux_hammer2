@@ -514,6 +514,15 @@ port's `hpanic()` does return, so the spin was released twice. Both arms
 now return, which is the shape every other carried `hpanic` site has.
 `README.porting.md` has the reasoning.
 
+1,260 to 1,261 when the CCMS lockdep exercise was added to
+`hammer2_ccms.c` behind `HAMMER2_CCMS_LOCKTEST`: one `return (x);` in
+`ccms_locktest_start()`, the BSD style the rest of the file uses. The
+checker reads the source whatever the flag, so the exercise counts
+though a default build compiles none of it. A first version declared the
+exercise's two functions `extern` in the `.c` file, which the checker
+flags as `externs should be avoided in .c files`; they moved to
+`hammer2_ccms.h` behind the same flag rather than being baselined.
+
 | category | disposition |
 |---|---|
 | do not add new typedefs | required by the carried core; converts with the core |

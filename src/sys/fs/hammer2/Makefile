@@ -81,6 +81,12 @@ endif
 # hammer2_dbg_held_chains(), which names the chain locks the calling task
 # holds.  Needs CONFIG_LOCKDEP in the kernel it is built against; without
 # it the calls compile away and print nothing.
+# The in-kernel exercise of the CCMS lock, two kernel threads taking it
+# so lockdep can see its class: nothing else in the module calls it.
+# A test build only; script/ccms-lockdep.sh builds and loads it.
+ifdef HAMMER2_CCMS_LOCKTEST
+ccflags-y += -DHAMMER2_CCMS_LOCKTEST
+endif
 ifdef HAMMER2_LOCKDEBUG
 ccflags-y += -DHAMMER2_LOCKDEBUG
 endif
