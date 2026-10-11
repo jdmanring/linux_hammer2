@@ -7285,3 +7285,50 @@ not closed, and this records why rather than what was hoped.
   two inodes. The probe stays in the script, failing, because a phase that
   reports the shape it cannot measure is worth more than one that was
   tuned until it passed.
+
+## The interrupted copy's root is stamped synchronized while its subtree is short, 2026-10-11
+
+This entry corrects the one above it. The copy of a new directory does not
+stop after two inodes: the slave's media holds both directories, every
+file of them, and the master's own root `modify_tid` exactly. What the
+interruption leaves behind is a root whose tid has advanced past its
+subtree, and the thread's gate then reads that state as synchronized
+forever.
+
+- The reading, from the volumes the interrupted run left: master root
+  `mod=00000000000273b3 lfcnt=20039`, slave root
+  `mod=00000000000273b3 lfcnt=19957`. Equal modify_tid, 82 fewer files.
+  The thread's decision (`want_update = chain->bref.modify_tid != sync_tid`,
+  `hammer2_synchro.c:500`) is correct for the state it reads. The state
+  is wrong, and no later pass can see the gap, because the gate compares
+  the root's tid and nothing below it.
+- The thread's own log agrees with the media and not with the phase's
+  earlier reading: 113 passes over five minutes made no further updates,
+  which is what a correct gate does with an already-stamped root. The
+  "copy stops at two inodes" reading was the same fact seen from the
+  wrong side, and the phase's update count is not a copy count.
+- The instrument that produced this was temporary and is reverted: a print
+  at the `want_update` test in an `HAMMER2_INVARIANTS` build, which
+  showed `want 0` on a slave whose root tid equalled the master's while
+  its mounted view was empty. The print is in a carried file, so it is
+  not committed.
+- Two hypotheses were checked against the source and eliminated before
+  being recorded. The `ENOENT` arm of the marking guard does not mark
+  with deferrals outstanding: `needrescan` forces `HAMMER2_ERROR_EAGAIN`
+  first (`hammer2_synchro.c:749`), so a scan that deferred content never
+  stamps. And the isroot arm of `hammer2_sync_replace()` copies the
+  limited field set upstream copies and nothing else, matching
+  `sys/vfs/hammer2/hammer2_synchro.c` field for field, so the type change
+  the slave's CL shows on media is not the sync overwriting it.
+- What is not yet established: which writer stamped the root's tid past
+  its subtree. The one remaining candidate is the root-level marking with
+  `sync_tid` captured at the top of the call (`hammer2_synchro.c:499`),
+  which is the pre-recursion focus value; whether that value can reach the
+  root while the drain is incomplete is a question for a print at the
+  marking call, not for another workload guess.
+- A separate fact the same runs established, and it belongs to the
+  testing doc rather than to P4: a SLAVE's cluster PFS cannot be mounted
+  by label at all. `hammer2_get_tree()` answers "PFS already mounted!" and
+  the mount refuses, because the PFS joined a PMP at creation. Every
+  reading of a cluster PFS has to come from the media, which is why the
+  fingerprint checks exist.
