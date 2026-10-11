@@ -1922,8 +1922,12 @@ the flush keeps the child's `UPDATE` flag and continues when the
 parent's modify fails, by upstream's design, so the two references are
 somewhere downstream of that and not yet named. The reserve now keeps
 every run from reaching the path, so the reproduction has to be made
-on demand: the kernel of record's guest is built without
-`CONFIG_FAULT_INJECTION`, so the instrument is a module parameter,
+on demand: at the time, the kernel of record's guest trees were built
+without `CONFIG_FAULT_INJECTION` (true of the debug and release trees
+to this day; the KASAN tree has since gained it with `FAILSLAB`,
+`FAIL_PAGE_ALLOC`, `FAIL_MAKE_REQUEST` and the debugfs controls, which
+P4's `sync-alloc-fault.sh` uses), so the instrument is a module
+parameter,
 `fail_alloc_after`, under `HAMMER2_LOCKDEBUG` only, which counts
 `hammer2_freemap_alloc()` calls and refuses every one past the number
 with `ENOSPC`, the way a full freemap would; the freemap's own chains
@@ -7198,3 +7202,40 @@ this is the reading of it from the source, before any fault is injected.
 
 Nothing is changed yet. Each item above becomes a fault-injection reading
 before it becomes a fix.
+
+## P4 allocation faults: a failed thread create leaves a threadless SLAVE that heals on remount, 2026-10-11
+
+`script/sync-alloc-fault.sh` is the instrument for the record's open
+question above, and the question is now answered: the handling as carried
+is correct and no code change is owed.
+
+- The fault is one slab failure aimed at `hammer2_thr_create` during a
+  SLAVE's `pfs-create`, through failslab on the KASAN guest (the only
+  tree with `CONFIG_FAULT_INJECTION`, `FAILSLAB` and the debugfs
+  controls; the debug and release trees have none). Aimed four ways:
+  `ignore-gfp-wait=N`, without which the `GFP_KERNEL` allocation cannot
+  fail; `task-filter` on the utility process; `require-start`/`end` on
+  the function's own bytes from the built module's symbol table; and a
+  large `times` budget, since a budget of one is consumed in silence by
+  nested infrastructure allocations and the thread is created
+  undisturbed. The landing proof is the module's own `cannot start
+  thread` line.
+- Nine runs aimed at the mount first and all nine measured a different,
+  pre-existing failure: mounting a SLAVE label fails with root-inode EIO
+  with no fault at all, which the no-fault control confirmed. The fault
+  window is therefore the `pfs-create` ioctl, whose path to the create is
+  ioctl, pfsalloc, thr_create.
+- The reading, 10 checks 0 failed: 3 faults injected with the trace
+  through `should_failslab`, 1 `cannot start thread` line, the SLAVE
+  present in `pfs-list` with no `h2nod-SYNC` thread, the BASE master
+  still round-tripping a write, no sync pass reporting an error, and a
+  remount starting the thread, which is the retry the lifetime reading
+  hypothesized. Unmount, `pfs-delete`, module unload and `kmemleak` all
+  clean, no kernel warning, lockdep, KASAN or UBSAN report.
+- What this decides: between a failed create and the next pfsalloc the
+  cluster runs synchronization-less with only the log line, and that is
+  safe, the volume stays usable, nothing leaks, and the next pfsalloc
+  heals it. The `XXX` in `hammer2_thr_create()` stays as documentation of
+  the difference from DragonFly, not as a defect marker.
+- The second P4 measurement stands: the stop bound is one sync pass,
+  still unmeasured under a long pass.
