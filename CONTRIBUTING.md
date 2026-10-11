@@ -70,6 +70,7 @@ harder to keep.
     $ bash script/test-syntax.sh --selftest
     $ bash script/test-checkpatch.sh --selftest
     $ bash script/test-provenance.sh --selftest
+    $ bash script/test-doc-prose.sh --selftest
 
 The first five are POSIX sh over grep, sed and git. They need no kernel
 and no network, they take about a second, and they are what a

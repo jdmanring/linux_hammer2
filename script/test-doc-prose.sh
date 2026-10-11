@@ -8,6 +8,41 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 command -v vale >/dev/null || { echo "doc-prose: COULD-NOT-RUN: no vale"; exit 2; }
+
+# The control.  .vale.ini says the gate asserts that a finding survives a
+# fence above it, and until 2026-10-10 it did not: the gate had no
+# selftest at all, so that sentence described a check nobody had written.
+# The claim is made true rather than deleted, because the mechanism it is
+# about is load-bearing: a rule suppressed for the rest of a file would let
+# every document pass behind a fence, and the only way to know it does not
+# is to plant a violation after one and require the finding.
+#
+# Two probes, in a temporary directory so nothing here is governed by the
+# run that follows: one in plain prose that must be found, and one under a
+# fence that must also be found. The first is what separates "the rules
+# stopped firing" from "the documents improved".
+if [ "${1:-}" = "--selftest" ]; then
+	tmp=$(mktemp -d) || exit 2
+	trap 'rm -rf "$tmp"' EXIT INT TERM
+	printf 'A sentence with in order to fail.\n' > "$tmp/plain.md"
+	printf '```\ncode\n```\n\nA sentence with in order to fail.\n' > "$tmp/fenced.md"
+	cp .vale.ini "$tmp/" && cp -r styles "$tmp/"
+	p=$(cd "$tmp" && vale --no-exit --config .vale.ini plain.md 2>&1 | grep -cE ' (error|warning|suggestion) ')
+	f=$(cd "$tmp" && vale --no-exit --config .vale.ini fenced.md 2>&1 | grep -cE ' (error|warning|suggestion) ')
+	if [ "$p" -lt 1 ]; then
+		echo "doc-prose: FAIL: a planted violation in plain prose was not found" >&2
+		echo "         the rules are not firing, so a clean corpus means nothing" >&2
+		exit 1
+	fi
+	if [ "$f" -lt 1 ]; then
+		echo "doc-prose: FAIL: a planted violation after a fence was not found" >&2
+		echo "         the rules stop at a fence, so a document could hide behind one" >&2
+		exit 1
+	fi
+	echo "doc-prose: selftest: $p finding(s) in plain prose, $f after a fence, both required"
+	exit 0
+fi
+
 # Tracked rather than found, so a file the repository does not carry cannot
 # fail the gate and a file it does carry cannot escape it. git ls-files is the
 # authority on what this repository ships.

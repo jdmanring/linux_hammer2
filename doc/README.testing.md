@@ -355,7 +355,18 @@ warning and the checker's `sha256` provenance. Both prints were added on
 neither was read by anything, which is that same defect arriving inside its
 own repair. The syntax selftest failed on its first run because the warning
 WRAPS and the matcher read one line at a time - a rule about matching
-wrapped prose not firing while writing a matcher for wrapped prose. CI runs both, and derives which gates have a `--selftest` rather than
+wrapped prose not firing while writing a matcher for wrapped prose.
+`test-doc-prose.sh --selftest` is the third, added 2026-10-10, and it
+exists because `.vale.ini` had claimed since the corpus widened that "the
+gate's selftest asserts a finding survives a fence above it" while the
+gate had no selftest at all: a sentence describing a check nobody had
+written. It plants a violation in plain prose and another after a fence,
+and requires both, so a run that finds nothing is distinguishable from
+rules that stopped firing. Probed against its own break: making the
+planted prose clean makes the selftest fail, which is the direction that
+matters. A vale `BlockIgnores` on blockquote lines was probed first, in
+the shape it would be used, and measured to suppress neither the quoted
+lines nor prose after them, so it was not adopted. CI runs both, and derives which gates have a `--selftest` rather than
 naming them. They re-invoke their own gate with `bash`, never `sh`: the
 first version used `sh "$0"`, which works on a machine whose `/bin/sh` is
 bash and is a syntax error under dash, so it passed here and failed on the

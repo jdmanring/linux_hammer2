@@ -64,48 +64,48 @@ Under `There are four major protocols:` the document gives the Cache
 sub-protocol as the second of four, and its first sentence states the
 layering:
 
-> This is the MESI sub-protocol which runs under the Quorum protocol.
-> This protocol is used to maintain cache state for sub-trees to ensure
-> that operations remain cache coherent.
+    This is the MESI sub-protocol which runs under the Quorum protocol.
+    This protocol is used to maintain cache state for sub-trees to ensure
+    that operations remain cache coherent.
 
 The same entry continues with the revocation policy:
 
-> Depending on administrative rights this protocol may or may not allow
-> a leaf node in the cluster to hold a cache element indefinitely. The
-> administrative controller may preemptively downgrade a leaf with
-> insufficient administrative rights without giving it a chance to
-> synchronize any modified state back to the cluster.
+    Depending on administrative rights this protocol may or may not allow
+    a leaf node in the cluster to hold a cache element indefinitely. The
+    administrative controller may preemptively downgrade a leaf with
+    insufficient administrative rights without giving it a chance to
+    synchronize any modified state back to the cluster.
 
 ### The proxy protocol, and what happens to a dead leaf
 
 The third of the four protocols. This is where the document answers what
 happens to a grant whose holder stops answering:
 
-> The Quorum and Cache protocols only operate between MASTER and
-> SOFT_MASTER nodes. All other node types must use the Proxy protocol to
-> perform similar actions. This protocol differs in that proxy requests
-> are typically sent to just one adjacent node and that node then
-> maintains state and forwards the request or performs the required
-> operation. When the link is lost to the proxy, the proxy automatically
-> forwards a deletion of the state to the other nodes based on what it
-> has recorded.
+    The Quorum and Cache protocols only operate between MASTER and
+    SOFT_MASTER nodes. All other node types must use the Proxy protocol to
+    perform similar actions. This protocol differs in that proxy requests
+    are typically sent to just one adjacent node and that node then
+    maintains state and forwards the request or performs the required
+    operation. When the link is lost to the proxy, the proxy automatically
+    forwards a deletion of the state to the other nodes based on what it
+    has recorded.
 
-> If a leaf has insufficient administrative rights it may not be
-> allowed to actually initiate a quorum operation and may only be
-> allowed to maintain partial MESI cache state or perhaps none at all
-> (since cache state can block other machines in the cluster). Instead a
-> leaf with insufficient rights will have to make due with a preemptive
-> loss of cache state and any allowed modifying operations will have to
-> be forwarded to the proxy which continues forwarding it until a node
-> with sufficient administrative rights is encountered.
+    If a leaf has insufficient administrative rights it may not be
+    allowed to actually initiate a quorum operation and may only be
+    allowed to maintain partial MESI cache state or perhaps none at all
+    (since cache state can block other machines in the cluster). Instead a
+    leaf with insufficient rights will have to make due with a preemptive
+    loss of cache state and any allowed modifying operations will have to
+    be forwarded to the proxy which continues forwarding it until a node
+    with sufficient administrative rights is encountered.
 
 ### Who holds the state
 
 From the feature list, under the cache-coherency entry:
 
-> MESI Cache coherency for multi-master/multi-client clustering
-> operations. The servers hosting the MASTERs are also responsible for
-> keeping track of the cache state.
+    MESI Cache coherency for multi-master/multi-client clustering
+    operations. The servers hosting the MASTERs are also responsible for
+    keeping track of the cache state.
 
 So the masters hold it. The design document uses the word "controller"
 exactly once in the whole text, in the administrative-rights sentence
@@ -116,14 +116,14 @@ architectural node.
 
 Also from the proxy protocol entry, and relevant to any topology work:
 
-> To reduce issues and give the cluster more breath, sub-clusters made
-> up of SOFT_MASTERs can be formed in order to provide full cache
-> coherent within a subset of machines and yet still tie them into a
-> greater cluster that they normally would not have such access to. This
-> effectively makes it possible to create a two or three-tier fan-out of
-> groups of machines which are cache-coherent within the group, but
-> perhaps not between groups, and use other means to synchronize between
-> the groups.
+    To reduce issues and give the cluster more breath, sub-clusters made
+    up of SOFT_MASTERs can be formed in order to provide full cache
+    coherent within a subset of machines and yet still tie them into a
+    greater cluster that they normally would not have such access to. This
+    effectively makes it possible to create a two or three-tier fan-out of
+    groups of machines which are cache-coherent within the group, but
+    perhaps not between groups, and use other means to synchronize between
+    the groups.
 
 ### The node types
 
@@ -157,9 +157,9 @@ sits inside `#if 0`, so it was never compiled even before the deletion.
 The deletion commit is `94491fa098a9b62dd517fe5e5f0c8bf3315b9d5a`,
 "hammer2 - locking revamp", dated 2015-03-22, whose message says:
 
-> Temporarily remove hammer2_ccms.c from the build and remove the ccms
-> container. The CCMS container will be used again when we get cache
-> coherent in, but for now it isn't needed.
+    Temporarily remove hammer2_ccms.c from the build and remove the ccms
+    container. The CCMS container will be used again when we get cache
+    coherent in, but for now it isn't needed.
 
 ### `ccms_rstate_get()`, the function the whole finding turns on
 
@@ -178,10 +178,10 @@ ccms_rstate_get(ccms_lock_t *lock, ccms_cst_t *cst, ccms_state_t state)
 It assigns the requested state to the granted state. The introductory
 comment above it says what it was meant to do instead:
 
-> Acquire remote grant state. This routine can be used to upgrade or
-> downgrade the state. If it blocks it will release any local locks
-> acquired via (lock) but then it will continue getting the requested
-> remote grant.
+    Acquire remote grant state. This routine can be used to upgrade or
+    downgrade the state. If it blocks it will release any local locks
+    acquired via (lock) but then it will continue getting the requested
+    remote grant.
 
 A caller reading `cst->state` after this returns gets back what it asked
 for rather than what was granted.
@@ -210,18 +210,18 @@ again:
 		ccms_thread_lock(&cino->data_cst[0], lock->req_d);
 ```
 
-> Once the local locks are established the CST grant state cannot be
-> pulled out from under us. However, it is entirely possible to deadlock
-> on it so when CST grant state cannot be obtained trivially we have to
-> unwind our local locks, then get the state, and then loop.
+    Once the local locks are established the CST grant state cannot be
+    pulled out from under us. However, it is entirely possible to deadlock
+    on it so when CST grant state cannot be obtained trivially we have to
+    unwind our local locks, then get the state, and then loop.
 
 And the failure contract, which is what the `goto again` is for:
 
-> If the ccms_rstate_get() code deadlocks (or even if it just blocks), it
-> will release all local locks and set the FAILED bit. The routine will
-> still acquire the requested remote grants before returning but since
-> the local locks are lost at that point the remote grants are no longer
-> protected and we have to retry.
+    If the ccms_rstate_get() code deadlocks (or even if it just blocks), it
+    will release all local locks and set the FAILED bit. The routine will
+    still acquire the requested remote grants before returning but since
+    the local locks are lost at that point the remote grants are no longer
+    protected and we have to retry.
 
 `ccms_lock_put()` at line 160 releases the three in reverse order.
 
@@ -245,9 +245,9 @@ use in the tree.
 
 At line 59, the one comment that describes the intended structure:
 
-> Initialize a new CCMS dataspace. Create a new RB tree with a single
-> element covering the entire 64 bit offset range. This simplifies
-> algorithms enormously by removing a number of special cases.
+    Initialize a new CCMS dataspace. Create a new RB tree with a single
+    element covering the entire 64 bit offset range. This simplifies
+    algorithms enormously by removing a number of special cases.
 
 Its body is `bzero(dom, sizeof(*dom))` with the `kmalloc_create` and the
 root assignment commented out, so the tree was never actually built. The
@@ -337,32 +337,32 @@ than cited by path alone.
 Rule 11, which is why a lease or any other modern replacement is not a
 live alternative:
 
-> Do not use a modern algorithm merely because it is fashionable. For
-> example, do not replace HAMMER2's quorum/MESI mechanisms with Raft
-> without first implementing and validating the original semantics. A
-> modern control-plane model can be an H2X enhancement after the original
-> protocol is faithfully reproduced.
+    Do not use a modern algorithm merely because it is fashionable. For
+    example, do not replace HAMMER2's quorum/MESI mechanisms with Raft
+    without first implementing and validating the original semantics. A
+    modern control-plane model can be an H2X enhancement after the original
+    protocol is faithfully reproduced.
 
 Section 6.1, the CCMS carry:
 
-> Port the MESI cache-coherency state machine with minimal semantic
-> change. Do not rewrite it into an unrelated Linux cache architecture.
-> [...] Required deliverables: source provenance record; build cleanly
-> under the normal and invariant configurations; lockdep-clean tests;
-> deterministic state-machine tests; no transport dependency; explicit
-> state transition documentation.
+    Port the MESI cache-coherency state machine with minimal semantic
+    change. Do not rewrite it into an unrelated Linux cache architecture.
+    [...] Required deliverables: source provenance record; build cleanly
+    under the normal and invariant configurations; lockdep-clean tests;
+    deterministic state-machine tests; no transport dependency; explicit
+    state transition documentation.
 
 Rule 12, the classification an unfinished behavior must carry:
 
-> No feature is allowed to remain an undocumented `TODO`. Every
-> incomplete behavior must be classified as `implemented`, `limited`,
-> `deferred-with-trigger`, or `unavailable-with-reason`.
+    No feature is allowed to remain an undocumented `TODO`. Every
+    incomplete behavior must be classified as `implemented`, `limited`,
+    `deferred-with-trigger`, or `unavailable-with-reason`.
 
 The CCMS exit criterion, from `HAMMER2_TEST_AND_VERIFICATION_PLAN.md`:
 
-> Exit only after every state transition has: explicit preconditions;
-> explicit postconditions; negative transition test; lockdep-clean
-> concurrency tests.
+    Exit only after every state transition has: explicit preconditions;
+    explicit postconditions; negative transition test; lockdep-clean
+    concurrency tests.
 
 And from `HAMMER2_COMPLETION_SPEC.md`, the two rows that place this work:
 "Quorum protocol | masters vote / resolve conflicts | complete
@@ -392,30 +392,30 @@ a per-grant vote is even on the table.
 
 What the quorum does:
 
-> Masters handle quorum confirmation amongst themselves and do not rely
-> on the client for that purpose.
+    Masters handle quorum confirmation amongst themselves and do not rely
+    on the client for that purpose.
 
-> Masters will run a 2-phase commit amongst themselves, often concurrent
-> with other non-conflicting transactions, and will serialize operations
-> and/or enforce synchronization points for 2-phase completion on
-> serialized transactions from the same client or when cache state
-> ownership is shifted from one client to another.
+    Masters will run a 2-phase commit amongst themselves, often concurrent
+    with other non-conflicting transactions, and will serialize operations
+    and/or enforce synchronization points for 2-phase completion on
+    serialized transactions from the same client or when cache state
+    ownership is shifted from one client to another.
 
 What the client does with cache state:
 
-> A client can connect to one or more masters regardless of the size of
-> the quorum and can submit modifying operations to a single master if
-> desired. The master will take care of the rest.
->
-> A client must still validate the quorum (and obtain MESI cache states)
-> when doing read-only operations in order to present the correct data to
-> the user process for the VOP.
+    A client can connect to one or more masters regardless of the size of
+    the quorum and can submit modifying operations to a single master if
+    desired. The master will take care of the rest.
+
+    A client must still validate the quorum (and obtain MESI cache states)
+    when doing read-only operations in order to present the correct data to
+    the user process for the VOP.
 
 And the ordering constraint between the two:
 
-> Clients will usually allow operations to run asynchronously and return
-> from system calls more or less ASAP once they own the necessary cache
-> coherency locks.
+    Clients will usually allow operations to run asynchronously and return
+    from system calls more or less ASAP once they own the necessary cache
+    coherency locks.
 
 So the quorum votes on *commits*, amongst the masters, with the client
 excluded from that path by an explicit argument ("Apart from the reliance
