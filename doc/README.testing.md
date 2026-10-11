@@ -366,7 +366,17 @@ rules that stopped firing. Probed against its own break: making the
 planted prose clean makes the selftest fail, which is the direction that
 matters. A vale `BlockIgnores` on blockquote lines was probed first, in
 the shape it would be used, and measured to suppress neither the quoted
-lines nor prose after them, so it was not adopted. CI runs both, and derives which gates have a `--selftest` rather than
+lines nor prose after them, so it was not adopted. Writing the
+selftest also found the gate double-counting: vale's closing line for a
+single finding reads "1 warning and 0 suggestions", which the finding
+pattern matched too, so one finding was reported as two and the selftest's
+own first reading was "2 finding(s)" for one planted violation. Both
+counts now drop the summary line by its leading mark; one planted
+violation reads one. Captured primary sources under
+`doc/research/primary/` are excluded from the population by path: 246
+findings when the RFC 8881 and MS-SMB2 captures arrived, all in the IETF's
+and Microsoft's prose, which cannot be edited without falsifying the
+evidence it is kept as. CI runs both, and derives which gates have a `--selftest` rather than
 naming them. They re-invoke their own gate with `bash`, never `sh`: the
 first version used `sh "$0"`, which works on a machine whose `/bin/sh` is
 bash and is a syntax error under dash, so it passed here and failed on the

@@ -1,7 +1,111 @@
-The deleted CCMS sources are the state before commit 94491fa098
-("hammer2 - locking revamp", 2015-03-22).
-Extracted with:
-  git show 94491fa098^:sys/vfs/hammer2/hammer2_ccms.c
-  git show 94491fa098^:sys/vfs/hammer2/hammer2_ccms.h
-  git show 94491fa098^:sys/vfs/hammer2/hammer2.h
-from the clone at 250a8b4.
+Primary sources for the HAMMER2 cache-coherency (CCMS) work, captured so
+that no reading in doc/CCMS_REFERENCE.md has to be re-fetched or
+re-derived from a shallow clone.
+
+Everything here was captured 2026-10-10. Each entry names the command
+or reader that produced it. Files are named for the document; the
+"deleted" ones are the revision before commit 94491fa098, which is where
+the cache-coherency half of HAMMER2 lives.
+
+The HAMMER2 sources
+===================
+hammer2_ccms.c.deleted
+    git show 94491fa098^:sys/vfs/hammer2/hammer2_ccms.c
+    516 lines including its #if 0 blocks. Holds ccms_lock_get() at 98,
+    ccms_lock_put() at 160, ccms_rstate_get() at 508 and
+    ccms_domain_init() at 59.
+
+hammer2_ccms.h.deleted
+    git show 94491fa098^:sys/vfs/hammer2/hammer2_ccms.h
+    The ccms_lock, ccms_cst and ccms_domain definitions, and the API.
+
+hammer2.h.at-94491fa098-parent
+    git show 94491fa098^:sys/vfs/hammer2/hammer2.h
+    topo_cst in struct hammer2_inode, and the aliasing comment above it.
+
+DILLON_HAMMER2_DESIGN_2015.md
+    defuddle parse https://lists.dragonflybsd.org/pipermail/users/2015-April/448614.html --md
+    Matthew Dillon's HAMMER2 design document, 2015-04-03 (v3). The
+    architecture: the four protocols, the status table, the node types,
+    the quorum operations section, the cache sub-protocol sentence.
+
+The comparable-systems survey
+=============================
+All fetched and read on 2026-10-10. Papers were extracted with
+"pdftotext -layout", which splits sentences that cross a column break, so
+a search for a quoted phrase must join lines first.
+
+GFS-sosp2003.txt
+    pdftotext -layout of
+    https://static.googleusercontent.com/media/research.google.com/en//archive/gfs-sosp2003.pdf
+    Ghemawat, Gobioff, Leung, The Google File System, SOSP 2003.
+
+Lustre-internals-2009.txt
+    pdftotext -layout of
+    https://wiki.old.lustre.org/images/d/da/Understanding_Lustre_Filesystem_Internals.pdf
+    Wang, Oral, Shipman et al., Understanding Lustre Filesystem Internals,
+    ORNL/TM-2009/117, April 2009.
+
+Ceph-osdi06.txt
+    pdftotext -layout of
+    https://ceph.io/assets/pdfs/weil-ceph-osdi06.pdf
+    Weil, Brandt, Miller, Long, Maltzahn, Ceph: A Scalable, High-Performance
+    Distributed File System, OSDI 2006.
+
+GPFS-fast02.txt
+    pdftotext -layout of
+    https://www.usenix.org/event/fast02/full_papers/schmuck/schmuck.pdf
+    Schmuck, Haskin, GPFS: A Shared-Disk File System for Large Computing
+    Clusters, FAST 2002.
+
+Spanner-osdi2012.txt
+    pdftotext -layout of
+    https://static.googleusercontent.com/media/research.google.com/en//archive/spanner-osdi2012.pdf
+    Corbett et al., Spanner: Google's Globally-Distributed Database,
+    OSDI 2012.
+
+Chubby-osdi06.txt
+    pdftotext -layout of
+    https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf
+    Burrows, The Chubby lock service for loosely-coupled distributed
+    systems, OSDI 2006.
+
+Leases-sosp89.txt
+    pdftotext -layout of
+    https://web.stanford.edu/class/cs240/readings/leases.pdf
+    Gray, Cheriton, Leases: An Efficient Fault-Tolerant Mechanism for
+    Distributed File Cache Consistency, SOSP 1989.
+
+Dynamo-sosp07.txt
+    pdftotext -layout of
+    https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf
+    DeCandia et al., Dynamo: Amazon's Highly Available Key-value Store,
+    SOSP 2007.
+
+RFC8881.md
+    defuddle parse https://www.rfc-editor.org/rfc/rfc8881.html --md
+    Noveck, Lever, Network File System (NFS) Version 4 Minor Version 1
+    Protocol, RFC 8881, August 2020.
+
+MS-SMB2-lease-break-notification.md
+MS-SMB2-per-lease.md
+MS-SMB2-receiving-lease-break.md
+    defuddle parse of the three [MS-SMB2] sections of those names:
+      2.2.23.2 Lease Break Notification
+      3.3.1.12 Per Lease
+      3.2.5.19.2 Receiving a Lease Break Notification
+    https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/
+    Section numbers follow the current HTML rendering, which Microsoft
+    renumbers between revisions; the page titles are stable.
+
+Not captured, and why
+=====================
+Pacemaker "Fencing" and Red Hat "Configuring Fencing using SCSI
+Persistent Reservations" are the only survey sources not kept here. Both
+describe the fencing mechanism GPFS invokes rather than a design, and
+neither was needed to verify a claim in doc/CCMS_REFERENCE.md; their URLs
+are in that file's survey section.
+
+Colossus's lease details are not published. The survey's claim about it is
+the sharded metadata service, from the Google Cloud blog post "A peek
+behind Colossus, Google's file system" (2021-04-19).

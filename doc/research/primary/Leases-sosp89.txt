@@ -1,0 +1,550 @@
+                             Leases: An Efficient Fault-Tolerant Mechanism
+                                for Distributed File Cache Consistency
+                                                       Cary G. Gray and David R. Cheriton
+                                                          Computer Science Department
+                                                               !3tanford University
+
+
+
+Abstract                                                                                architectures; this work relies on reliable, synchronous
+                                                                                        broadcast communication as provided by the system bus.
+Caching introduces the overbead and complexity of ensur-                                A distributed system, however, can experience partial fail-
+ing consistency, reducing some of its performance bene-                                 ures: a host may crash or messagesmay be lost. Existing
+fits. In a distributed system, caching must deal ,wit.hthe                              approachesto consistency for file caches fall into two cat-
+additional complications of communication and host fail-                                egories: those that assume reliable broadcast, and so do
+ures.                                                                                   not tolerate communication failures, and those that require
+    Leases are proposed as a time-based mechanism that                                  a consistency check for every read, and so fail to deliver
+provides efficient consistent accessto cached data in dis-                              good performance.
+tributed systems. Non-Byzantine failures affect perfor-                                    In this paper, leases are proposed as a consistency pro-
+mance, not correctness, with their effect minimized by                                  tocol that handles host and communication failures us-
+short leases. An analytic model and an evaluation for file                              ing physical clocks. An analytic model and an evalua-
+accessin the V system show that leases of short duration                                tion using file accesscharacteristics of the V system show
+provide good performance. The impact of leases on per-                                  that short-term leases provide near optimal efficiency for
+formance grows more significant in systems of lar;gerscale                              a large class of systems in spite of the fault-tolerance pro-
+and higher processor performance.                                                       visions. We argue that leases are of increased benefit in
+                                                                                        future distributed systems of larger scale with their larger
+                                                                                        ratio of processor speed to network delay and larger ag-
+1 Introduction                                                                          gregate rate of failure.
+                                                                                           The next section describes leasesand how they are used
+Caching introduces the problem of ensuring consistency                                  to implement cache consistency. Section 3 derives our
+between the cached data and its primary location of stor-                               simple analytic model for picking lease terms andexplores
+age. By consistent, we mean that the behavior is equiv-                                 their application using data from the V distributed sys-
+alent to there being only a single (uncached) copy of the                               tem [4]. Section 4 describes some optimizations in lease
+data except for the performance benefit of the cache. With                              management. Section 5 examines the fault-tolerance of
+large caches, the traffic required to maintain consistency                              leasing. Section 6 compares leases with other work on
+can be the dominant factor in cache performance.                                        distributed cache consistency and related problems. The
+   Cache consistency protocols have been extensively                                    concluding section summarizes our results and speculates
+studied in the work on shared memory multiprocessor                                     on further applications of leases and directions for future
+     This work was supported   in part by the Defense Advanced Re-                      research.
+search Projects Agency under contract NOO039-84-C-02 11, by the Na-
+tional Science Foundation Grant DCR-83-52048, and by Digital Equip-
+ment Corporation.
+                                                                                        2    Leases and Cache Consistency
+                                                                                        A lease is a contract that gives its holder specified rights
+                                                                                        over property for a limited period of time. In the context
+Permission to copy without fee all or part of this material is granted provided         of caching, a lease grants to its holder control over writes
+that the copies are not made or distributed for direct commercial advantage,
+the ACM copyright notice and the title of the publication and its date appear,          to the covered datum during the term of the lease, such that
+and notice is given that copying is by permission of the Association for                the server must obtain the approval of the leaseholder be-
+Computing Machinery. To copy otherwise, or to republish, requires a fee
+and/or specific permission.                                                             fore the datum may be written. When a leaseholder grants
+0 1989 ACM089791-338-3/89/0012/0202          $1.50                                      approval for a write, it invalidates its local copy of the da-
+
+
+                                                                                  202
+mm.                                                                    a lease until that lease expires.] When a server is recover-
+    A cache using leases requires a valid lease on the da-             ing after crashing, it must honor the leases it granted be-
+tum (in addition to holding the datum) before it returns the           fore it crashed. This is most easily done if it remembers
+datum in response to a read, or modifies the datum in re-              the maximum term for which it had granted a lease, and
+sponseto a write. When a datum is fetched from the server              it delays writes to all tiles for that period, effectively in-
+(the primary storage site of the datum), the server also re-           creasing the time to fully recover by the maximum term.
+turns a lease guaranteeing that the data will not be writ-             Alternately, the server canmaintain a more detailed record
+ten by any client during the lease rerm unless the server              of leaseson persistent storage,but the additional I/O traffic
+first obtains the approval of this leaseholder. If the da-             is unlikely to be justified unless terms of leases are much
+tum is read again within the term of the lease (and the da-            longer than the time to recover.
+tum is still in the cache), the cache provides immediate ac-               Short leases also minimize the false write-sharing that
+cessto the datum without communicating with the server.                occurs. False sharing refers here to a lease conflict when
+After the lease expires, a read of the datum requires that             no actual conflict in file accessexists. Speciftcally, false
+the cache first extend the lease on the datum, updating the            sharing occurs when a client writes to a file which is cov-
+cache if the datum has been modified since the lease ex-               ered by a lease held by another client when the other client
+pired. When a client writes a datum, the server must defer             is not currently accessingthe tie. False sharing introduces
+the request until each leaseholder has granted approval or             the overhead of a callback to the leaseholder(s) (thereby
+the term of its lease has expired.                                     delaying the requesting client and loading the leaseholder
+    We limit ourselves here to write-through caches, for do-           and server) in a situation where without leasesthere would
+ing so simplifies the explanation; extending the mecha-                be no conflict. In the extreme, a lease term should be set
+nism to support non-write-through caches is straightfor-               to zero if a client is not going to accessthe file before it is
+ward. Write-through gives clean failure semantics: no                  modified by another client.
+write that has been made visible to any client can be lost;               Finally, short lease terms reduce the storage require-
+applications must otherwise be prepared to recover from                ments at the server, since the record of expired leases
+lost writes. Though the cost of write-through for file                 could be reclaimed. However, the storage overhead for the
+cachesis considered prohibitive by some [ 16], the cost can            server to keep track of the leasesit has granted is modest.
+be largely eliminated by giving special handling to tempo-             The server requires a record of each leaseholder’s identity
+rary files [9,24], since they receive the majority of writes.          and a list of the leasesit holds; each lease requires only a
+    To illustrate the operation of a file cache using leases,          couple of pointers. For a client holding about one hundred
+consider a diskless workstation being used for document                leases, the total is around one kilobyte per client. Even
+production. When the workstation executes latex for                    if this were a problem, it could be reduced by recording
+the first time, it obtains a lease on the binary file contain-         leases at a larger granularity, so that each client holds few
+ing latex for a term of (say) 10 seconds. Another ac-                  leases, at the expense of some increase in contention. We
+cess to the same file 5 seconds later can use the cached               show later how the per-client record can be eliminated for
+version of this file without checking with the file server.            the most common class of widely-shared files.
+An accessto this file after the lo-second term has expired                Longer-term leases are significantly more efficient both
+requires the cache to check with the server. When a new                for the client and server on files that are accessedrepeat-
+version of latex is installed, the write is delayed until              edly and have relatively little write-sharing. This may be
+every leaseholder has approved the write. If some host                 observed in the Andrew file system project [lo], which
+holding a lease for this file is unreachable, the delay con-           went from using a lease term of zero in the prototype to
+tinues until the lease expires.                                        effectively a lease term of infinity in the revised version.’
+    In the preceding example, the relevant reads and writes            The next section presents an analytic model of lease per-
+are not limited to operations on the contents of the file. In          formance and detemrines appropriate lease terms using
+order to support a repeated open, the cache must also hold             parameters based on data from the V distributed system.
+the name-to-file binding and permission information, and
+it needs a lease over this information in order to use that
+information to perform the open. Similarly, modification               3     Choosing the Lease Term
+of this information, such as renaming the file, would con-
+stitute a write.                                                       The choice of lease term is based on the trade-off between
+    Short lease terms have several advantages. One is that             minimizing lease extension overhead versus minimizing
+they minimize the delay resulting from client and server
+                                                                           ‘To avoid starvation of writes, the server does not grant new leases
+failures (and partitioning communication failures). When               on a file when a write is waiting for approval or for leases to expire.
+the server cannot communicate with a client, the server                    ‘At the expense of failing to guarantee consistency after a communi-
+must delay writes to a file for which the failed client holds          cations failure.
+
+
+
+
+                                                                 203
+                                                                                    because tc is shortened by the time for the cache to re-
+  Symbol        Description                                                         ceive the lease rnprop + 2~9,~~~ plus the allowance E for
+    N           number of clients (caches)                                          clock skew. Thus, in systems with large propagation de-
+     R          rate of reads for each client                                       lays between clients and large clock skew, the server must
+     W          rate of writes for each client                                      provide a proportionally larger lease term ts if the lease
+      s         number of caches in which the file is shared                        term at the clients is to be effectively greater than zero.
+   97,          propagation delay for a message                                        If a cache handles an expected R~c reads over the term
+   +Droc        time to process a message(send or receive)                          of the lease not counting the read that results in the lease
+     E          allowance for uncertainty in clocks                                 request, the cost of the lease request is amortized over 1 +
+    t.5         lease term (at server)               :                              Rtc reads, so that the rate of extension-related messages
+                                                                                    handled by the server is
+                Table 1: Performance parameters                                                                        2NR
+                                                                                                                     1 + Rtc
+                                                                                    adding an average delay of
+false sharing. This trade-off applies to minimizing both
+server load and client response. Lease space overhead is a
+less critical consideration and so is ignored as a Eactor.In
+addition, the rate of failures is assumedto be low enough
+to have no significant effect on the average responsetime,                          to each read request.
+especially with short-term leases. Finally, we consider                                When it receives a write, the server multicasts a re-
+here onIy on-demand extension of leases rather than peri-                           quest for approval to all of the leaseholders and processes
+                                                                                    the replies. Assuming the writer is one of the leasehold-
+odic extension or other options such as noted in Section 4.
+                                                                                    ers, one approval message can be saved if the request
+                                                                                    for a write carries the implicit approval of the requesting
+3.1 A Simple Analytic Model                                                         cache.5 Obtaining approval therefore requires one mnlti-
+                                                                                    cast request messageplus S - 1 approvals, for a total of
+We consider a system consisting of a single server, char-                           S messages.6The time t, to gain approval is
+acterized by the performance parameters given iu Table 1.
+That is, the server has one file and N clients for that fle,
+where each client’s reads and writes follow Poisson dis-                            for S > 1. Thus, the delay is at most t, and the load at
+tributions with rates R and W, respectively. The file is                            most NSW.
+shared by S of the caches at each point it is written. There                           In the file cache environment, we expect lease terms on
+is at most one lease per client for the file.                                       the order of seconds and messagetimes (including t,) in
+    We assumethat the messageprocessing time3 ‘mproeat                              the range of milliseconds. We therefore do not consider
+both the sender and recipient and the messagepropagation                            cases in which t, is a significant fraction of ts. The ex-
+time mprap are the same for all hosts. Thus, a message                              ception is ts = 0: it is important to recognize that a zero
+is received mprop + 279,,,, after it is sent and a unicast                          lease term is better than a very short lease term because a
+request and reply takes 27r+,, + 4rrpToC.Multicast mes-                             non-zero ts and zero tc means that writes are penalized
+sagesare sent once, and received with high probability by                           but reads do not benefit.
+the recipients using a multicast facility [5, 61; it requires                          When the lease term is zero or there is no sharing, the
+time 2qFop + (n + 3)mp roe to send a multicast message                              load and delay are limited to those due to extensions of
+and receive n repliesP.                                                             leases. For S > 1 and ts > 0, though, the server sends
+    For a lease with term ts, the effective term lit at the                         and receives
+cache is                                                                                                     ltNR;         + NSW                          (1)
+                                                                                                                       c
+          tc   = m=(O, ts - (mprop + 29,,,)                 - f:)                   consistency-related messagesper unit time, and the aver-
+                                                                                    age delay of
+     3The processing time does not include processing that occurs after
+the packet is sent or before it is received, only processing that is on the                         1     ,~R(~Tz’;~       ;t;m~r.c)
+critical delay path. Queueing delays due to congestion are ignored, as is
+                                                                                                                                         + W&a)            (2)
+                                                                                               R+W
+the xcond-order effect of response time on request rate.
+      4Thc average propagation and processing times m prop zandrnproe                   Vhis optimization is particularly important to allow the common
+include a normal IeveI of retransmissions, and so our estimates are rea-            case of an unshared file to be handled with a single unicast request-
+sonable for multicasts to small numbers of recipients. When rhe number              response from the client to the server. It means that a longer term always
+of recipients (and replies) is large, the delay and processing overhead             decreases the server load for unshared files.
+increase as more retransmissions may be required.                                       6Without multicast, it would require 2( S - 1) messages.
+
+
+
+                                                                              204
+is added to each read or write.
+   The load for zero lease term is 2N R; a term longer than                         I rate of reads                 IR               I 0.864 /set I
+t, produces a lower load if
+
+                  2NR > lyR;c              +NSW
+
+Defining a lease benefitfactor as
+                                                                                          Table 2: Parametersfor file caching in V.
+                                    2R
+                             a==’
+
+the preceding condition holds if cx > 1 and
+                                       1
+                         ”   ’   R(a - 1) ’                                                                                      . . . . . . . .. .       s =: 40
+                                                                                                                                   -.-                    sz20
+A sufficiently long lease term will reduce server load
+                                                                                                                                  ......                  s= 10
+whenever cyis greater than one. Larger values of CYand
+                                                                                                                                 w--                      SC1
+R imply better performance for short terms7 Intuitively,
+CYmeasures the ratio of reading to writing, scaled by the                                                                        -                        Trace
+additional overhead caused by sharing.
+   In extending this analysis to handle multiple files, we                                                       -‘*----.....*...........,.,..,.,...
+note that the load due to multiple leasessums directly. The
+cache can batch its requests for extensions so that a single
+request covers many tiles. R and W then correspond to                                                            .-*-.-.-.-,_,
+the total rates for all covered files, and so are higher; the
+higher absolute rate of readsincreases CY,and so the benefit                                                     *-**.............*,..
+is greater. In general, a cache should extend together all                                                                       I                    L
+leases over all files that it still holds.                                            0.00 +                I        I           I                            1
+    The server load due to consistency is roughly propor-                                 0.0     5.0     10.0    15.0       20.0            25.0           30.0
+tional to the number of messages handled (sent or re-                                                                        lease term (set)
+ceived) by the server. If we know the fraction of server                           Figure 1: Relative Server Consistency vs. Lease Term
+load due to consistency for a lease term of zero, we can
+calculate the (relative) total load from the (relative) con-
+ sistency load. Similarly, application-level response time                        no writes to shared files. We have calculated estimates for
+ includes other processing in addition to the time required                       different degrees of sharing to illustrate its effect over a
+ to ensure consistency.                                                           plausible range.
+    The formulas we have derived can be used to predict                              Figure 1 gives the relative server load for consistency
+performance in a specific system, given the appropriate                           as a function of the term, computed using formula 1 from
+ parameters, as demonstrated in the next section.                                 Section 3.1. The curve labelled Trace was determined us-
+                                                                                  ing a trace-driven simulation of the cache and server. The
+3.2     Expected Performance                   In V                               proximity of this curve to the no-sharing (S = 1) curve,
+                                                                                  derived from our analytic model, validates the model for
+The expected performance of leases with the V file                                this case. We note that the knee of the Truce curve is
+caching mechanism [9] is determined using the analytic                             sharper and at a lower term. This (favorable) discrepancy
+model developed above and system performance param-                               is to be expected becauseactual file accessis burstier than
+eters collected from measurement, given in Table 2. The                            that given by a Poisson distribution. This burstiness im-
+measurements are determined from a trace of file access                           plies that short terms should perform even better than our
+traffic generated by recompiling the V file server, with the                       estimates indicate.
+file service and client programs executing on MicroVAX                                From Figure 1, most of the benefit of a non-zero lease
+II workstations connectedby Ethernet. The messagetimes                             term is gained by a term of just a few seconds. For exam-
+are based on separate timings of V inter-process commu-                            ple, at S = 1, a term of 10 seconds reduces the consis-
+nication. The trace includes only one client so there are                          tency traffic to 10% of that for a zero term. The load for
+     ‘When unicast is used to request approval, the corresponding defini-          consistency must be considered as it affects the total on the
+tionisa   = R/(S - l)W.                                                            server. At a lease term of zero, consistency accounts for
+
+
+                                                                            205
+                                                                         cache, in a manner analogous to using a local disk for tem-
+                                                                         porary files. Second, unlike most other traces, our mea-
+                                                                         surements include program loading and accessto informa-
+                                                                         tion about files (such as directory lookups), both of which
+                                                                         are predominantly reads. Finally, the read and write mea-
+                                                                         surements correspond to when a file is opened for reading
+                                                                         or closed (committed) with writing, as opposed to each
+                                                                         time a block is read or written; the directory operations
+                                                                         therefore are a larger fraction of the (logical) reads and
+                                                                         writes.
+                                                                            When these factors are considered, the composition of
+                                                                         this short trace is fairly consistent with those of the longer
+                                                                         term traces of Unix systems. Only the last factor repre-
+                                                                         sents a departure from the more common semantics of the
+                                                                         Unix file system; the other two factors are consequences
+                                                                         of the cache design in V and might be profitably employed
+                                                                         in a Unix system. Supporting Unix semantics, where read
+                                                                         and write correspond to block-level operations, would
+                                                                         give a higher absolute rate of reads, but a somewhat lower
+                                        lease term [set)                 ratio of reads to writes (because the ratio of reads to writes
+                                                                         for file blocks is lower than for other file-system data). The
+            Figure 2: Delay due to consistency.                          performance of leases in such a system would be quali-
+                                                                         tatively similar; the higher rate of reads would give the
+                                                                         curves a sharper knee, favoring fairly short terms, while
+30% of the server traffic in the trace, so that the actual ben-          the more frequent writes makes it more sensitive to shar-
+efit is a 27% reduction in total server traffic, to a level just         ing.
+4.5% above that for infinite term. At S = 10, total server
+traffic is 20% less than for a zero term and 4.1% over that
+for an infinite term. Longer terms provide relatively little             3.3    Applicability     to Future Distributed         Sys-
+additional reduction in server load yet introduce all the dis-                  tems
+advantages of longer lease terms. Thus, a short lease term               Several trends anticipate properties of future distributed
+of (say) 10 seconds appearsas a good choice for these file               systems. Systems are being extended over wider-area
+accesscharacteristics, given the advantagesof short leases               networks, increasing the delay for communication. The
+described earlier and the insignificant reduction in server              speed of processors also continues to grow. Finally, larger
+load provided by longer lease terms.                                     numbers of hosts, both clients and servers, are being tied
+    Figure 2 shows the average delay added to e:ach read                 together within a single system.
+or write by consistency, as a function of the lease term.                    Larger propagation delay between clients and servers
+Because writes are a small fraction of all operations, the               means that the impact of lease extensions and invalida-
+delay added to shared writes contributes little t1othe av-               tions on responsetime is greater. Figure 3 shows the added
+erage delay, and the curves for S = 1 to S := 40 are                     delay on a network where the round-tip time is 100 mil-
+indistinguishable in the graph as shown. Again, much of                  liseconds, while all other parameters remain as in our pre-
+the benefit of leases is gained with lease terms in the 10               vious analysis. In this case, a 10 second term degradesre-
+second range. Because many programs have significant                     sponseby 10.1% over using an infinite term and a 30 sec-
+compute time between file accesses,the improvement in                    ond term degrades it by 3.6%. Thus, with a significant
+response time for longer lease terms is insignificant.                   increase in propagation delay, slightly longer lease terms
+    We expect that the sameresult would apply to Unix-like               may be appropriate, but terms in the lo-30 second range
+systems even though our measurements of access rates                     still appear to be adequate.
+are different from those that have been reported [g, 171                     Faster client processors reduce the amount of time for
+in longer-term traces of Unix systems. For example, our                  computation between read and write requests, so that the
+ratio of reads to writes is almost an order of magnitude                 number of operations occuring within a term increases.
+higher that those reported elsewhere. Several factors ac-                The higher rate pushes the knee of the load curve lower.
+count for this difference. First, operations on temporary                The impact on application-level response time is almost
+files (which account for a large fraction of the writes) do              identical to that of a slower networkz the fraction of time
+not appear becausethey are handled specially by the V file               spent in communication delay is larger, so that the signif-
+
+
+                                                                   206
+                                                                           The server can use these options to optimize the han-
+                                                                       dling of installed files, which account for a significant pro-
+                                                                       portion of shared access. fnstalledfiles are files such as
+                                                                       commands, header files and libraries which are part of the
+                                                                       standard system support. These files are widely shared,
+                                                                       heavily read and only infrequently written. In the trace
+                                                                       taken from V, they account for almost half of all reads, but
+                                                                       no writes. The handling of installed files is optimized by
+P                                                                      using a smaller number of leases to cover these files,8 such
+g      60.0                                                            as one per major directory, and multicasting an extension
+CrJ           R                                                        covering leaseson installed files to all clients periodically,
+                                                                       eliminating the need for clients to request extensions of
+                                                                       these leases. Additionally, the server can simply eliminate
+                                                                       a lease from the multicast extension when a file covered
+                                                                       by the lease is to be modified. The write operation then
+                                                                       proceeds as soon as the lease has expired. This approach
+                                                                       eliminates the need forthe server to contact alarge number
+                                                                       of clients when an installed file is updated and the resulting
+                                                                       implosion of responses. Given the significant probability
+                                        lease term (set)               of the server having to wait for lease timeout because one
+                                                                       of the many client machines is unreachable, write opera-
+      Figure 3: Added delay with 100 ms round-trip time.               tions to installed files do not necessarily experience higher
+                                                                       delay as a result of this optimization. This optimization
+                                                                       also eliminates the need for the server to keep track of the
+ icance of consistency is greater.
+                                                                       leaseholders for installed files. Finally, it eliminates added
+    Increased numbers of clients and servershave no signif-
+                                                                       delay at the client cache for reads of installed files because,
+ icant effect unless it increases the level of write-sharing,
+                                                                       in the absence of writes to installed files, these leases do
+ which we do not expect to be the case. In fact, there is no
+                                                                       not expire.
+ evidence that the level of write-sharing has increased over
+                                                                           Finally, the server can set the lease term based on the
+ the very modest levels measured by Montgomery [15] in
+                                                                       file access characteristics for the requested file as well as
+ Multics over 12 years ago. Leases have the benefit of in-
+                                                                       the propagation delay to the client. In particular, a heavily
+ creasing the ratio of clients to servers (by reducing consis-
+                                                                       write-shared file might be given a lease term of zero. A
+ tency overhead), thereby reducing the cost (or improving
+                                                                       lease given to a distant client could be increased to com-
+ the performance) of large-scale systems.
+                                                                       pensate for the amount the lease term is reduced by the
+                                                                       propagation delay and for the extra delay incurred by the
+ 4      Options for Lease Management                                   client to extend the lease. In general, a server can dynami-
+                                                                       cally pick lease terms on a per file and per client cache ba-
+ Lease management in the server admits several options                 sis using the analytic model, assuming the necessary per-
+ that may be exploited to improve performance. The server              formance parameters am monitored by the server.
+ controls the term of the leases it grants; it is also free to
+ wait for a lease to expire instead of seeking approval of a
+ write. The client is free in deciding when to request ex-             5 Fault-Tolerance
+ tension of leases, when to relinquish them, and when to
+                                                                       Leasesensure consistency provided that the hosts and net-
+ approve a write. The combinations of these options give
+ different trade-offs between load and responsetime.                   work do not suffer certain Byzantine failures including
+                                                                       clock failure. More specifically, consistency is maintained
+    For example, the client may anticipate the expiration of
+                                                                       in spite of messageloss (including partition), and client or
+ its leases and request extension before the covered file is
+                                                                       server failures (assuming writes are persistent at the server
+ accessed. Doing so improves response time by eliminat-
+                                                                       across a crash). Moreover, availability is not reduced by
+ ing the added delay for reads, but it does so at the cost of
+                                                                       the caches because an unreachable client at most briefly
+ increased load for the server. In particular, an idle client
+                                                                       delays write accessby other clients.
+ continues to request extensions even when files are not
+ being accessed, and because the cache continues to hold                  Leases depend on well-behaved clocks. In particular,
+ leases it may increase the level of contention due to false               *Multiple  files per lease can also result in a form of false sharing. We
+ sharing.                                                              ignore this effect with installed files because the rate of update is so low.
+
+
+
+
+                                                                 207
+ a server clock that advances too quickly can cause errors             optimizations we have described.
+ because it may allow a write before the term of a lease                  Burrows’s MFS [2] and the Echo file system of Mann et
+ held by a previous client has expired at that client. Sim-            al. 1131both use tokens, which can be regarded as limited-
+ ilarly, if a client clock fails by advancing too slowly, it          term leases, but supporting non-write-through caches.
+may continue using a lease which the server regards as                With extension, our analysis of performance could be
+having expired The opposite errors-a slow server clock                profitably applied to these systems.
+or fast client clock-do not result in inconsistencies, but                Other systemshave avoided the consistency problem by
+do generate extra traffic since a client will regard leases           either not guaranteeing consistency, as done by NFS [21],
+to have expired before the server does, Such failures are             or by prohibiting write-sharing, as done in the Cedar file
+much less common than either crashes or commu.nication                system CFS [ 191. We believe that the simplicity and effi-
+failures; they can be detected quickly by either a synchro-           ciency of leasing together with the importance of consis-
+nization protocol or by including explicit timest.ampsin              tency and write-sharing make these solutions less attrac-
+lease-related messages.                                               tive in the future. In particular, we note that the soft state
+    We also regard it as a reasonable assumption that clocks          required for leasing is compatible with the so-called state-
+at the nodes of a distributed system are synchronized                 less interface used in NFS.
+within E which is small relative to the lease terms of sev-               The Xerox DFS [20] uses breakable locks with time-
+eral seconds. Synchronized time is required for other as-             outs, which are supeticially similar to leases. However,
+pects of file accessas well, such as the file-modifi.ed times         the timeouts specify a minimum time before which a lock
+used by the Unix make facility. As a minimum, the cor-                can be broken to avoid an excessive rate of transaction
+rect functioning of leases requires only that c1ock.shave a           aborts. However, becauseclients do not use the lock time-
+known bounded drift, in which case the lease term can be              out value and they are not reliably notified when a lock is
+communicated as its duration t .                                      broken, the scheme degeneratesto leasing with a term of
+                                                                      zero.
+                                                                          Mirage [7] provides a consistent distributed shared
+6 Related work                                                        memory using infinite-term leases. Mirage augments this
+                                                                      with a timer that (in terms of the leasing fiarnework) speci-
+Previous caching file systems that have guaranteed con-               fies a minimum time after acquiring a lease before a client
+sistency have mostly used either a zero term or an infinite           will relinquish it. This time can be increased to reduce
+lease term. Sprite [16], RFS [l] and a prototype of the               the amount of thrashing, just as the lock timeout in DFS
+Andrew file system [18] use a zero-term lease at the grau-            reduces the frequency of aborted transactions.
+ularity of file opens; Sprite and RFS use an infinite term                Time-based methods resembling leasing have also been
+while a file is open. The Andrew prototype experienced                used in at least two distributed naming systems. Lamp-
+excessive server load from consistency checks as the sys-             son’s global directory service [12] has client caches that
+tem contiguration was scaled [lo]. Non-zero term leases               discard entries at a server-specified time. Servers are for-
+appear applicable to all three systems with significant per-          bidden from modifying an entry before it expires. This
+formance improvement over their current designs, espe-                condition is equivalent to our policy for leases over in-
+cially with faster processors and larger network latency.             stalled files. However, no provision is made for either
+   The later Andrew file system [lo, 111 basically uses               requesting approval of writes or for any extension of the
+an infinite term, relying on the server to notify the client          terms.
+when cached data is changed. If communication with a                      Name services more commonly use cached data as
+client fails (at the transport level), the server allows up-          hints, for which consistency need not be guaranteed. In
+dates to proceed, possibly leaving the client operating on            the Internet Domain Name Service [14], for example, a
+stale data. The client does not learn of the error until              name server specifies a time-to-live for the data it returns,
+it next attempts to communicate with the server; polling              and clients cache the data for that period. However, the
+with a period of ten minutes is used to limit the interval            data may be modified during that interval. Any inconsis-
+for which inconsistent data may be used. Andrew uses                  tency that results must be detected and corrected by other
+a separate immutable volume for installed files to avoid              means. Terry [22,23] discussesin more detail the caching
+the cost of their update under the normal mechanism. Our              of hints for name interpretation, including the use of on-
+work suggeststhat a short-tern1 lease would be adequate               use and periodic checks as options in maintaining the ac-
+for Andrew, as opposed to the infinite term, allowing up-             curacy of the cache at the desired level.
+dates to be deferred in the client failure case long enough               Finally, the consistency work with caching shared
+to avoid inconsistency. The other benefits of short leases            memory systems has ignored the problem of commu-
+are then available as well, including the ability ‘to handle          nication and cache failures to date. However, leasing
+installed files well within the same framework, using the             may represent a useful extension to consistency protocols
+
+
+                                                                208
+for large-scale multi-level shared memory multiproces-                by short lease terms. A key assumption is that clocks are
+sors [3].                                                             reasonably accurate, at least in terms of drift if not mutual
+                                                                      synchronization, We have argued that synchronized phys-
+                                                                      ical clocks are important in general in a system where files
+7     Conclusions                                                     are shared in the manner supported by leases.
+                                                                          There are several limitations to this work. First, we
+Leasing is an efficient, fault-tolerant approach to main-             have used a simplified model of file sharing and focused
+taining file cache consistency in distributed systems. In             our evaluation on relatively low degreesof sharing. How-
+this paper, we have analyzed its performance and evalu-               ever, low degrees of sharing appear common in most
+atedperformance in the context of a real system, examined             systems. Exceptions that warrant further investigation
+its fault-tolerance properties, and considered its applica-           include distributed transaction processing systems, dis-
+bility to other distributed systems, especially large-scale,          tributed parallel programming systems and possibly sys-
+high-performance systems of the future.                               tems that make extensive use of remote execution. Sec-
+    Our simple analytical model estimates the server con-             ond, our analysis of performance is only approximate,
+sistency load and consistency-induced delay to cache re-              since it ignores important factors such as queueing delays;
+quests as a function of the lease term, the ratio of reads            nonetheless, our easily computed estimates are useful. Fi-
+to writes, the degree of sharing and messagetimes. This               nally, there is limited experience with the use of leases in
+model provides a basis for a tie server setting lease terms           actual system operation. We are presently extending and
+dynamically based on observed file accesscharacteristics.             tuning the tile caching service within V, using the mea-
+In particular, it indicates when leaseswith a non-zero term           surementsof this service to further refine our model of per-
+reduce server load, given that high levels of write-sharing           formance and to gain further experience. We also plan to
+can make file caching ineffective. A trace-driven simula-             explore adaptive policies that vary the coverage and term
+tion using data from the V system provides (partial) vali-            of leasesin responseto system behavior in place of static,
+dation of the analytic model.                                         administratively set policies.
+    A relatively short lease term is close to optimal with                Leases have other applications besides file cache con-
+file access characteristics expected in Unix-like systems             sistency. In particular, leases may also be applicable to
+where the dominant file access is for software develop-               large-scale sharedmemory multiprocessors. However, the
+ment and document preparation. In particular, using pa-               benefits will have to be evaluated relative to the costs of
+rameter values from the V system with this model, a lease             timers on memory and cache lines, and the ability of the
+term of 10 seconds results in a server load that is within            software to handle failures.
+5 percent of that achievable with infinite term. We ar-                   The lease approach is an example of a communica-
+gued that the V file access characteristics are similar to            tion and coordination mechanism and reasoning based on
+those observed with various Unix-like systems. Short-                 (real) time, the availability of clocks that measure the pas-
+term leases have a number of significant advantages over              sage of time with modest accuracy, and the ability to draw
+longer leases, including lower write delays resulting from            conclusions after a passage of time, possibly in the ab-
+client crashes, lower recovery delay from server crashes              sence of communication. We are applying this general
+and reducedfalse sharing.                                             approach to other areas as well, including a distributed
+    Leasesappearwell-suited to large-scale distributed sys-           transaction management protogo and a transport proto-
+tems. The improvement in response time that they offer                col. We see this use of time as a fundamental aspect of
+is more significant for the faster processors and higher-             distributed systemswith potential for significant extension
+delay networks. In this setting, the round-trip time to the           beyond that described here.
+client becomes a significant cost and potentially affects
+the choice of lease term. The lease overhead of handling              Acknowledgements.      These ideas have benefited from
+large numbers of clients can be reduced by distinguishing             discussions with many members of the Distributed Sys-
+different classes of files based on access characteristics.           tems Group, of whom Joe Pallas has been especially help-
+In particular, installedfrIes-those with a high-degree of             ful. The comments of the SOSP referees, and especially
+sharing and read access but low degree of writing--can                the more detailed reviews by Marvin Theimer and Doug
+be handled efficiently using multicast extensions from the            Terry, have helped to improve the quality of this paper.
+server to extend the leases on directories of these files and         The name “lease” was suggestedby Marry Katz.
+delayed update to avoid the overhead of explicit lease in-
+validation.
+    Leases provide strict consistency in spite of non-                References
+Byzantine failures, including partitions. Failures result
+only in reduced performance, with their effect minimized               [l]   BACH,   M. J., LXJPPI,M. W., MELAMED, A. S., AND
+
+
+                                                                209
+     YUEH, K. A remote-tile cache for RFS. In Proceed-           v41 MOCKAPETRIS, P. Domain names - concepts and
+     ings of the Summer 1987 Usenix Conference (June                 facilities. Request for Comments 1034, Network
+     1987), Usenix Association, pp. 273-279.                         Information Center, SRI International, Menlo Park,
+                                                                     CA, Nov. 1987.
+ PI BURROWS, M. Efficient data sharing. Tech. Rep.
+     No. 153, Computer Laboratory, University of Cam-            WI MONTGOMERY, W. Measurements of sharing in
+     bridge, Dec. 1988. The author’s PhD thesis.                      h4SJLIXS. In Proc. of Sixth.ACM Symposium on
+                                                                      Operating SystemsPrinciples (1977), ACM, pp. 85-
+;31 CI-IEIUTON, D., GoosEN, H., AND BOYLE, F! Multi-                  90.
+    level shared caching techniques for scalability in
+    VMP-MC. In Proc. 16th Int. Symp. on Computer                 1161NELSON, M. N., WELCH, B. B., AND OUSTERHOUT,
+    Architecture (May 1989).                                          J. K. Caching in the Sprite network file system. ACM
+                                                                      Trans. Comput. Syst. 6, 1 (Feb. 1988), 134-154.
+ 141 &ERITON, D. R. The V distributed system. Com-
+     mun. ACM 31,3 (Mar. 1988), 314-333.                         Cl71 0us~E1U-Iom, J. K., COSTA, H. D., -SON,    D.,
+                                                                      KUNZE, J. A., KUPFER, M., ANDTHOMPSON, J. G. A
+ PI CHERITON, D. R., ANDDEERING, S. E. Host groups:                   trace-driven analysis of the UNIX 4.2BSD file sys-
+    A multicast extension for datagram internetworks. In              tem. In Proceedings of the Tenth ACM Symposium
+    Proc. 9th Data Communications Symposium (Sept.                    on Operating SystemsPrinciples (Dec. 1985), ACM,
+    1985), ACM/IEEE, pp. 172179.                                      pp. 15-24. Published as Operating SystemsReview
+                                                                      19,5.
+ WI cJ3m.ITON, D. R., ANDZWAEMPOEX., W. Distributed
+    process groups in the V kernel. ACMTrans. Comput.            WI SATYANARAYANAN, M., HOWARD, J. H., NICHOLS,
+    Syst. 3,2 (May 1985), 77-107.                                     D. A., SJDEBOTHAM, R. N., SPEDOR, A. Z., AND
+                                                                      WEST, M. J. The ITC distributed file system: Prin-
+ [71 FLEISCH,B. D., ANDPOPEK, G. J. Mirage: A coher-
+     ent distributed shared memory design. In Proceed-                ciples and design. In Proceedings of the Tenth ACM
+     ings of the Twelfth ACM Symposium on Operating                   Symposium on Operating SystemsPrinciples (Dec.
+     SystemsPrinciples (Dec. 1989), ACM.                              1985), ACM, pp. 35-50. Published as Operating
+                                                                      SystemsReview 19, 5.
+ 181 FLOYD, R. Short-term file reference patterns in a
+     UNIX environment. Tech. Rep. TR 177, Univer-                [I91 SCHROEDER, M. D., GIFFORD, D. K., AND NEED-
+                                                                      HAM, R. M. A caching tie system for a program-
+     sity of Rochester, Department of Computer Science,
+     Mar 1986.                                                        mer’s workstation. In Proceedings of the TenthACM
+                                                                      Symposium on Operating SystemsPrinciples (Dec.
+ PI GRAY, C. G. Pevormance and Fault-Tolerance in                     1985), ACM, pp. 25-34. Published as Operating
+     a Cache for Distributed File Service. PhD thesis,                SystemsReview 19,5.
+     Stanford University, Department of Computer Sci-
+     ence, 1989. In preparation.                                 [201%I’UGIS, H., MlKHELL,    J., AND ISRAEL, J. Issues in
+                                                                      the design and use of a distributed file system. Op-
+WI HOWARD, J. H., K&Y&, M. L., MENEES,S. G.,                          erating SystemsReview 14,3 (July 1980), 55-69.
+     NICXOLS, D. A., SATYANARAYANAN, h4, SLDE-
+     BOTHAM, R. N., AND WE-ST, M. J. Scale and per-              WI SUN MICROSYSTEMS, INC. SunOS Reference Man-
+                                                                      ual, 1988.
+     formance in a distributed file system. ACM Trans.
+     Comput. Syst. 6, 1 (Feb. 1988), 51-81.                      WI   TERRY, D. B. Distributed name servers: Naming
+                                                                      and caching in large distributed computing environ-
+WI KAZAR, M. L. Synchronization and caching issues                    ments. Tech. Rep. UCB/CSD 85/228, Computer
+     in the Andrew file system. Tech. Rep. CMU-XTC-
+                                                                      Science Division (EECS), University of California,
+     058, Information Technology Center, Carnegie Mel-
+                                                                      Mar. 1985. The author’s PhD thesis.
+     lon University, June 1987.
+                                                                 r231 TERRY, D. B. Caching hints in distributed systems.
+WI LAMPSON, B. W. Designing a global name service.                    IEEE Trans. Softw. Eng. SE-13, 1 (Jan. 1987), 48-
+     In Proceedings of the Fifth Annual ACM Symposium                 54.
+     on th.e Principles of Distributed Computing (Aug.
+     1986), ACM, pp. l-10.                                       r241 THOMPSON, J. G. Eticient analysis of caching sys-
+                                                                      tems. Tech. Rep. UCB/CSD 87/374, Computer Sci-
+Cl31 MANN, T., HISGEN, A., AND SWART, G. An algo-                     ence Division (EECS), University of California, Oct.
+     rithm for data replication. Research Report 46, DEC              1987. The author’s PhD thesis.
+     Systems Research Center, 1989.
+
+
+                                                           210
+

@@ -27,8 +27,8 @@ if [ "${1:-}" = "--selftest" ]; then
 	printf 'A sentence with in order to fail.\n' > "$tmp/plain.md"
 	printf '```\ncode\n```\n\nA sentence with in order to fail.\n' > "$tmp/fenced.md"
 	cp .vale.ini "$tmp/" && cp -r styles "$tmp/"
-	p=$(cd "$tmp" && vale --no-exit --config .vale.ini plain.md 2>&1 | grep -cE ' (error|warning|suggestion) ')
-	f=$(cd "$tmp" && vale --no-exit --config .vale.ini fenced.md 2>&1 | grep -cE ' (error|warning|suggestion) ')
+	p=$(cd "$tmp" && vale --no-exit --config .vale.ini plain.md 2>&1 | grep -vE '^(✖|✔) ' | grep -cE ' (error|warning|suggestion) ')
+	f=$(cd "$tmp" && vale --no-exit --config .vale.ini fenced.md 2>&1 | grep -vE '^(✖|✔) ' | grep -cE ' (error|warning|suggestion) ')
 	if [ "$p" -lt 1 ]; then
 		echo "doc-prose: FAIL: a planted violation in plain prose was not found" >&2
 		echo "         the rules are not firing, so a clean corpus means nothing" >&2
@@ -54,6 +54,14 @@ if command -v git >/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2
 else
 	files=$(find . -name '*.md' -not -path './.git/*' | sed 's|^\./||' | LC_ALL=C sort)
 fi
+# Captured primary sources are other people's text, kept so a claim in this
+# repository's documents can be checked against them. The house rules
+# cannot be applied there: editing RFC 8881 or the SMB2 specification to
+# satisfy a style rule would falsify the evidence. Measured when this was
+# added: 246 findings across doc/research/primary/, every one in the IETF's
+# or Microsoft's prose. The exclusion is this one directory, by path,
+# and everything that cites from it stays governed.
+files=$(printf '%s\n' "$files" | grep -v '^doc/research/primary/')
 n=$(printf '%s\n' "$files" | grep -c '\.md$')
 [ "$n" -gt 0 ] || { echo "doc-prose: FAIL: no documents found, an empty sweep cannot pass"; exit 1; }
 # The root is asserted by name, not counted. A population that silently
@@ -71,7 +79,10 @@ printf '%s\n' "$out"
 # Vale's own status is nonzero for errors only, so a corpus carrying nothing but
 # warnings printed twelve findings and exited 0 on every run from 2026-08-29 to
 # 2026-09-02. The gate counts the findings itself rather than reading that status.
-hits=$(printf '%s\n' "$out" | grep -cE ' (error|warning|suggestion) ')
+# vale's closing summary reads "1 warning and" for a single finding, which
+# the pattern also matches, so one finding counted as two; the summary line
+# is excluded by its leading mark rather than by its wording.
+hits=$(printf '%s\n' "$out" | grep -vE '^(✖|✔) ' | grep -cE ' (error|warning|suggestion) ')
 echo "doc-prose: $n document(s) examined, $hits finding(s)"
 [ "$hits" -eq 0 ] || { echo "doc-prose: FAIL: the corpus is governed, so a finding is a failure"; exit 1; }
 exit 0

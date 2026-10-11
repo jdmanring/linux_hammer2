@@ -24,6 +24,11 @@ at `250a8b4`, so `94491fa098^` is read from the object store rather than
 from history. The captures above make the clone unnecessary for reading
 the deleted revision.
 
+The comparable-systems survey's twelve captured documents (GFS, Lustre,
+Ceph, RFC 8881, three MS-SMB2 sections, GPFS, Spanner, Chubby, Leases,
+Dynamo) are in the same directory and cited section by section under "The
+survey's sources" near the end of this file.
+
 ## Source 1: the design document
 
 Fetched 2026-10-10 with `defuddle parse` from
@@ -504,9 +509,232 @@ fourth route and needs no clock at all for this purpose: an
 administrative-rights policy lets the cluster downgrade a leaf
 preemptively, which is a decision rather than a timeout.
 
-Primary sources captured in `doc/research/primary/`: `GFS-sosp2003.txt`,
-`Spanner-osdi2012.txt`, `Chubby-osdi06.txt`. The remaining citations in
-this section (Lustre internals, Ceph OSDI 2006, RFC 8881, MS-SMB2, GPFS
-FAST 2002, Pacemaker fencing, Red Hat SCSI-3 reservations) are URLs in
-the survey's report and are not captured here; each is a stable
-published document.
+Primary sources are captured in `doc/research/primary/` and listed with
+their sections under "The survey's sources" below.
+
+## The survey's sources
+
+Every quotation in the survey above, and every one below, was checked
+against the captured text on 2026-10-10 rather than taken from the
+agent's report. Four of them first appeared absent from the captures
+(the GFS lease sentence, the Spanner lease-vote sentence, the GPFS
+token-release sentence and the Dynamo slowest-replica sentence); each was
+present and verbatim, split across a line by `pdftotext` extracting a
+two-column page. A search of these files for a phrase has to join lines
+first (`tr '\n' ' ' | tr -s ' '`), or it reports a quote missing that is
+there.
+
+The captures are `pdftotext -layout` of the published PDF for the
+papers, and `defuddle parse --md` of the page for RFC 8881 and MS-SMB2.
+Section numbers are the documents' own and are reliable; page numbers in
+a `pdftotext` capture are not, and none is cited.
+
+### GFS: a single arbiter granting leases, with versions against staleness
+
+Ghemawat, Gobioff, Leung, *The Google File System*, SOSP 2003.
+`GFS-sosp2003.txt`, from
+https://static.googleusercontent.com/media/research.google.com/en//archive/gfs-sosp2003.pdf
+
+- 3.1, Leases and Mutation Order: "We use leases to maintain a consistent
+  mutation order across replicas. The master grants a chunk lease to one
+  of the replicas, which we call the primary. The primary picks a serial
+  order for all mutations to the chunk." The lease has "an initial
+  timeout of 60 seconds," extended on the HeartBeat messages, and the
+  master may grant a new lease to another replica once the old one
+  expires, even with the primary unreachable.
+- 4.5, Stale Replica Detection: each new lease increments the chunk
+  version number before any client is told, so a replica that missed
+  mutations is found stale when it reports its versions.
+
+Colossus, GFS's successor, moved the arbiter onto a sharded metadata
+service ("many Curators", metadata in Bigtable), per the Google Cloud blog
+post "A peek behind Colossus, Google's file system" (2021-04-19):
+https://cloud.google.com/blog/products/storage-data-transfer/a-peek-behind-colossus-googles-file-system
+Colossus's lease details are not published, and nothing here rests on
+them.
+
+### Lustre: per-resource lock master, callbacks, eviction that waits for I/O
+
+Wang, Oral, Shipman et al., *Understanding Lustre Filesystem Internals*,
+ORNL/TM-2009/117, April 2009. `Lustre-internals-2009.txt`, from
+https://wiki.old.lustre.org/images/d/da/Understanding_Lustre_Filesystem_Internals.pdf
+
+- 4.1: one lock namespace per Lustre service, so the server for a
+  resource is its lock master and there is no separate lock node.
+- 4.3: "six lock modes along with a compatibility matrix": EX, PW, PR,
+  CW, CR, NL.
+- 4.4 and 4.6.2: on conflict the master sends a blocking AST; the holder
+  flushes and cancels once its reference counts drain, so a lock under a
+  write in progress is not canceled.
+- 4.5: an intent carries the operation the client wants with the enqueue,
+  so resolution and grant take one RPC.
+- 4.7: "If the client doesn't release the lock and there is no ongoing
+  I/O under that lock for the duration of the timeout, then the client is
+  evicted. However, if there is ongoing I/O, then on every I/O RPC the
+  timeout is prolonged."
+
+### Ceph: per-inode authority by subtree, monitors vote on membership only
+
+Weil, Brandt, Miller, Long, Maltzahn, *Ceph: A Scalable, High-Performance
+Distributed File System*, OSDI 2006. `Ceph-osdi06.txt`, from
+https://ceph.io/assets/pdfs/weil-ceph-osdi06.pdf
+
+- 3.1: the MDS issues capabilities (read, cache reads, write, buffer
+  writes), revoked when a stat needs current size and mtime from several
+  writers.
+- 3.2: "For simplicity, no metadata locks or leases are issued to
+  clients."
+- 4: "dynamic subtree partitioning," one authoritative MDS per inode,
+  with migration journalled at both ends.
+- 5.3: monitors "use elections, active peer monitoring, short-term
+  leases, and two-phase commits" for the cluster map, not for per-file
+  state.
+
+### NFSv4: recallable delegations under a server-defined lease
+
+Noveck, Lever, RFC 8881, *Network File System (NFS) Version 4 Minor
+Version 1 Protocol*, August 2020. `RFC8881.md`, from
+https://www.rfc-editor.org/rfc/rfc8881.html
+
+- 1.7: a lease is "an interval of time defined by the server for which
+  the client is irrevocably granted locks."
+- 10.2 and 10.4.5: on recall the client flushes and returns the
+  delegation; "A client failure or a network partition can result in
+  failure to respond to a recall callback. In this case, the server will
+  revoke the delegation."
+- 8.4.3: past an expired lease the server may keep the state, but it
+  MUST be revoked when a conflicting request arrives.
+- 8.7: "To avoid the need for synchronized clocks, lease times are
+  granted by the server as a time delta."
+
+"Courtesy client" is the Linux NFSD implementation's term for the 8.4.3
+behavior, not a definition in the RFC; section 8.4.4 carries the title
+"Client Revocation and Courtesy Clients" but the RFC defines the
+behavior rather than the name. Cite the RFC for the rule and the kernel
+for the term.
+
+### SMB2/3: server-granted leases broken by the server, with an epoch
+
+Microsoft, [MS-SMB2] Server Message Block Protocol Versions 2 and 3.
+Section numbers are from the current HTML rendering, which Microsoft
+renumbers between revisions; the page titles are stable.
+
+- 2.2.23.2, Lease Break Notification (`MS-SMB2-lease-break-notification.md`):
+  https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/9abe6f73-f32f-4a23-998d-ee9da2b90e2e
+  The break is sent "by the server when the underlying object store
+  indicates that a lease is being broken."
+- 3.3.1.12, Per Lease (`MS-SMB2-per-lease.md`):
+  https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/212eb853-7e50-4608-877e-22d42e0664f3
+  `Lease.Epoch` is "A sequence number incremented by the server on every
+  lease state change."
+- 3.2.5.19.2, Receiving a Lease Break Notification
+  (`MS-SMB2-receiving-lease-break.md`):
+  https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/4f35576a-6f3b-40f0-a832-1c30b0afccb3
+  An epoch gap tells the client it missed a transition and must purge
+  cached data.
+
+### GPFS: a central token manager, release after recovery, fencing first
+
+Schmuck, Haskin, *GPFS: A Shared-Disk File System for Large Computing
+Clusters*, FAST 2002. `GPFS-fast02.txt`, from
+https://www.usenix.org/event/fast02/full_papers/schmuck/schmuck.pdf
+
+- 3.2: "a centralized global lock manager running on one of the nodes in
+  the cluster, in conjunction with local lock managers in each file
+  system node," handing out tokens that "convey the right to grant
+  distributed locks without the need for a separate message exchange
+  each time a lock is acquired or released."
+- 4.1: "After log recovery is complete, the token manager releases tokens
+  held by the failed node," so metadata the failed node had modified and
+  not written back is unreachable until it is known consistent.
+- 4.2: before recovery GPFS fences departed nodes, invoking "primitives
+  available in the disk subsystem to stop accepting I/O requests from the
+  other nodes."
+
+### Spanner: a quorum votes for a leader's lease, not per object
+
+Corbett et al., *Spanner: Google's Globally-Distributed Database*, OSDI
+2012. `Spanner-osdi2012.txt`, from
+https://static.googleusercontent.com/media/research.google.com/en//archive/spanner-osdi2012.pdf
+
+- 4.1.1: a potential leader "sends requests for timed lease votes; upon
+  receiving a quorum of lease votes the leader knows it has a lease."
+- Appendix A: the single-vote rule and the disjointness proof for leader
+  leases.
+- 5.1 and Table 3: a write at about 14.4 ms mean against about 1.4 ms for
+  a read-only transaction. The survey attributed roughly 9 ms of the
+  write to the Paxos round and 5 ms to commit wait; that split is the
+  survey's arithmetic, and this file states the two measured totals only.
+- 3: TrueTime's uncertainty, measured at about 1 to 7 ms per poll
+  interval.
+
+### Chubby: sequencers carrying the lock generation, and lock-delay
+
+Burrows, *The Chubby lock service for loosely-coupled distributed
+systems*, OSDI 2006. `Chubby-osdi06.txt`, from
+https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf
+
+- 2.4: a sequencer is "an opaque byte-string that describes the state of
+  the lock immediately after acquisition," including "the lock generation
+  number"; servers check it so a request issued under a lost lock is
+  rejected. The fallback is the lock-delay, which holds a lock from other
+  claimers for a bounded period after its holder fails.
+- 2.8: the client's lease timeout is a conservative approximation of the
+  master's, under the requirement that the server clock advances no
+  faster than a known constant factor faster than the client's.
+
+### Leases: the analytic result, and what clocks a lease needs
+
+Gray, Cheriton, *Leases: An Efficient Fault-Tolerant Mechanism for
+Distributed File Cache Consistency*, SOSP 1989. `Leases-sosp89.txt`, from
+https://web.stanford.edu/class/cs240/readings/leases.pdf
+
+- 3.1 and 3.2: most of the benefit of a non-zero lease term comes from a
+  term of a few seconds; "at S = 1, a term of 10 seconds reduces the
+  consistency traffic" to about 10% of a zero term in their model.
+- 5, Fault-Tolerance: "the correct functioning of leases requires only
+  that clocks have a known bounded drift." A fast server clock or a slow
+  client clock causes errors; the opposite pair costs only extra traffic.
+
+### Dynamo: per-operation quorums, and what they cost in the tail
+
+DeCandia et al., *Dynamo: Amazon's Highly Available Key-value Store*,
+SOSP 2007. `Dynamo-sosp07.txt`, from
+https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf
+
+- 4.5: with R + W > N, "the latency of a get (or put) operation is
+  dictated by the slowest of the R (or W) replicas."
+- 4.6: sloppy quorum and hinted handoff keep it available under failure.
+- 6: the 99.9th percentile latencies are about 200 ms, an order of
+  magnitude above the averages.
+
+### Fencing references, not captured
+
+Neither is a design source; both describe the fencing mechanism the GPFS
+paper invokes.
+
+- Pacemaker Explained 2.1, "Fencing" and the `stonith-enabled` property:
+  https://clusterlabs.org/projects/pacemaker/doc/2.1/Pacemaker_Explained/singlehtml/index.html
+- Red Hat, *Configuring Fencing using SCSI Persistent Reservations*:
+  https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/5/html/configuration_example_-_fence_devices/scsi_configuration
+
+## What the survey does not settle
+
+Recorded so it is not mistaken for evidence it is not.
+
+- No system surveyed votes per object for ordinary cache state. That is
+  an absence across seven systems, not a proof that it cannot work.
+- The survey's own recommendation, an arbiter per namespace issuing
+  term-bound grants with a generation number, is a modern design. Under
+  the project's Rule 11 it is weighed only after the original is
+  implemented, and HAMMER2's original already answers "who arbitrates"
+  (the masters) and "how a blocking holder is removed" (administrative
+  preemption for leaves, the quorum for masters).
+- What *is* carried forward from the survey regardless of design choice:
+  whatever completes the MESI layer has to make a late write from a
+  holder that lost its state rejectable, by a generation the receiver
+  checks, by fencing, or by withholding a conflicting grant until the old
+  holder's writes are reconciled. No surveyed system relies on expiry
+  alone, and HAMMER2's TIDs are the natural carrier: the design document
+  says "The inode TIDs are used as an aid for the cache coherency
+  subsystem."

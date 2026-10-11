@@ -1,0 +1,926 @@
+                                            USENIX Association
+
+
+
+
+                             Proceedings of the
+                        FAST 2002 Conference on
+                       File and Storage Technologies
+
+                                       Monterey, California, USA
+                                         January 28-30, 2002
+
+
+
+
+                                                     THE ADVANCED COMPUTING SYSTEMS ASSOCIATION
+
+
+
+
+© 2002 by The USENIX Association                All Rights Reserved             For more information about the USENIX Association:
+Phone: 1 510 528 8649            FAX: 1 510 548 5738              Email: office@usenix.org              WWW: http://www.usenix.org
+                                Rights to individual papers remain with the author or the author's employer.
+                  Permission is granted for noncommercial reproduction of the work for educational or research purposes.
+              This copyright notice must be included in the reproduced paper. USENIX acknowledges all trademarks herein.
+          GPFS: A Shared-Disk File System for Large Computing Clusters
+                                      Frank Schmuck and Roger Haskin
+                                       IBM Almaden Research Center
+                                               San Jose, CA
+
+                                                     Abstract
+GPFS is IBM’s parallel, shared-disk file system for cluster computers, available on the RS/6000 SP parallel
+supercomputer and on Linux clusters. GPFS is used on many of the largest supercomputers in the world. GPFS was
+built on many of the ideas that were developed in the academic community over the last several years, particularly
+distributed locking and recovery technology. To date it has been a matter of conjecture how well these ideas scale.
+We have had the opportunity to test those limits in the context of a product that runs on the largest systems in
+existence. While in many cases existing ideas scaled well, new approaches were necessary in many key areas. This
+paper describes GPFS, and discusses how distributed locking and recovery techniques were extended to scale to
+large clusters.
+
+
+                                                            powerful supercomputers in the world, including the
+1    Introduction                                           largest, ASCI White at Lawrence Livermore National
+Since the beginning of computing, there have always         Laboratory. GPFS successfully satisfies the needs for
+been problems too big for the largest machines of the       throughput, storage capacity, and reliability of the
+day. This situation persists even with today’s powerful     largest and most demanding problems.
+CPUs and shared-memory multiprocessors. Advances            Traditional supercomputing applications, when run on a
+in communication technology have allowed numbers of         cluster, require parallel access from multiple nodes
+machines to be aggregated into computing clusters of        within a file shared across the cluster. Other applica-
+effectively unbounded processing power and storage          tions, including scalable file and Web servers and large
+capacity that can be used to solve much larger problems     digital libraries, are characterized by interfile parallel
+than could a single machine. Because clusters are           access. In the latter class of applications, data in
+composed of independent and effectively redundant           individual files is not necessarily accessed in parallel,
+computers, they have a potential for fault-tolerance.       but since the files reside in common directories and
+This makes them suitable for other classes of problems      allocate space on the same disks, file system data
+in which reliability is paramount. As a result, there has   structures (metadata) are still accessed in parallel.
+been great interest in clustering technology in the past    GPFS supports fully parallel access both to file data and
+several years.                                              metadata. In truly large systems, even administrative
+One fundamental drawback of clusters is that programs       actions such as adding or removing disks from a file
+must be partitioned to run on multiple machines, and it     system or rebalancing files across disks, involve a great
+is difficult for these partitioned programs to cooperate    amount of work. GPFS performs its administrative
+or share resources. Perhaps the most important such         functions in parallel as well.
+resource is the file system. In the absence of a cluster    GPFS achieves its extreme scalability through its
+file system, individual components of a partitioned         shared-disk architecture (Figure 1) [2]. A GPFS system
+program must share cluster storage in an ad-hoc             consists of the cluster nodes, on which the GPFS file
+manner. This typically complicates programming,             system and the applications that use it run, connected to
+limits performance, and compromises reliability.            the disks or disk subsystems over a switching fabric.
+GPFS is a parallel file system for cluster computers that   All nodes in the cluster have equal access to all disks.
+provides, as closely as possible, the behavior of a         Files are striped across all disks in the file system –
+general-purpose POSIX file system running on a single       several thousand disks in the largest GPFS installations.
+machine. GPFS evolved from the Tiger Shark multime-         In addition to balancing load on the disks, striping
+dia file system [1]. GPFS scales to the largest clusters    achieves the full throughput of which the disk subsys-
+that have been built, and is used on six of the ten most    tem is capable.
+                                                             unique to clusters, the data structures and algorithms
+                                                             that allow GPFS to do this are worth describing.
+
+                                                             2.1 Data Striping and Allocation, Prefetch
+                                                                 and Write-behind
+                                                             Achieving high throughput to a single, large file
+                                                             requires striping the data across multiple disks and
+                                                             multiple disk controllers. Rather than relying on a
+                                                             separate logical volume manager (LVM) layer, GPFS
+                                                             implements striping in the file system. Managing its
+                                                             own striping affords GPFS the control it needs to
+                                                             achieve fault tolerance and to balance load across
+                                                             adapters, storage controllers, and disks. Although some
+                                                             LVMs provide similar function, they may not have
+                                                             adequate knowledge of topology to properly balance
+The switching fabric that connects file system nodes to      load. Furthermore, many LVMs expose logical volumes
+disks may consist of a storage area network (SAN), e.g.      as logical unit numbers (LUNs), which impose size
+fibre channel or iSCSI. Alternatively, individual disks      limits due to addressability limitations, e.g., 32-bit
+may be attached to some number of I/O server nodes           logical block addresses.
+that allow access from file system nodes through a
+software layer running over a general-purpose commu-         Large files in GPFS are divided into equal sized blocks,
+nication network, such as IBM’s Virtual Shared Disk          and consecutive blocks are placed on different disks in
+(VSD) running over the SP switch. Regardless of how          a round-robin fashion. To minimize seek overhead, the
+shared disks are implemented, GPFS only assumes a            block size is large (typically 256k, but can be config-
+conventional block I/O interface with no particular          ured between 16k and 1M). Large blocks give the same
+intelligence at the disks.                                   advantage as extents in file systems such as Veritas
+                                                             [15]: they allow a large amount of data to be retrieved
+Parallel read-write disk accesses from multiple nodes in     in a single I/O from each disk. GPFS stores small files
+the cluster must be properly synchronized, or both user      (and the end of large files) in smaller units called sub-
+data and file system metadata will become corrupted.         blocks, which are as small as 1/32 of the size of a full
+GPFS uses distributed locking to synchronize access to       block.
+shared disks. GPFS distributed locking protocols ensure
+file system consistency is maintained regardless of the      To exploit disk parallelism when reading a large file
+number of nodes simultaneously reading from and              from a single-threaded application GPFS prefetches
+writing to the file system, while at the same time           data into its buffer pool, issuing I/O requests in parallel
+allowing the parallelism necessary to achieve maximum        to as many disks as necessary to achieve the bandwidth
+throughput.                                                  of which the switching fabric is capable. Similarly,
+                                                             dirty data buffers that are no longer being accessed are
+This paper describes the overall architecture of GPFS,       written to disk in parallel. This approach allows reading
+details some of the features that contribute to its          or writing data from/to a single file at the aggregate
+performance and scalability, describes its approach to       data rate supported by the underlying disk subsystem
+achieving parallelism and data consistency in a cluster      and interconnection fabric. GPFS recognizes sequential,
+environment, describes its design for fault-tolerance,       reverse sequential, as well as various forms of strided
+and presents data on its performance.                        access patterns. For applications that do not fit one of
+                                                             these patterns, GPFS provides an interface that allows
+2    General Large File System Issues                        passing prefetch hints to the file system [13].
+The GPFS disk data structures support file systems with      Striping works best when disks have equal size and
+up to 4096 disks of up to 1TB in size each, for a total of   performance. A non-uniform disk configuration
+4 petabytes per file system. The largest single GPFS file    requires a trade-off between throughput and space
+system in production use to date is 75TB (ASCI               utilization: maximizing space utilization means placing
+White [3, 4, 5]). GPFS supports 64-bit file size             more data on larger disks, but this reduces total
+interfaces, allowing a maximum file size of 263-1 bytes.     throughput, because larger disks will then receive a
+While the desire to support large file systems is not        proportionally larger fraction of I/O requests, leaving
+the smaller disks under-utilized. GPFS allows the             For example, creating a new file requires updating a
+administrator to make this trade-off by specifying            directory block as well as the inode of the new file.
+whether to balance data placement for throughput or           After acquiring locks on the directory block and the
+space utilization.                                            inode, both are updated in the buffer cache, and log
+                                                              records are spooled that describe both updates. Before
+2.2 Large Directory Support                                   the modified inode or directory block are allowed to be
+                                                              written back to disk, the corresponding log records
+To support efficient file name lookup in very large           must be forced to disk. Thus, for example, if the node
+directories (millions of files), GPFS uses extensible         fails after writing the directory block but before the
+hashing [6] to organize directory entries within a            inode is written to disk, the node’s log is guaranteed to
+directory. For directories that occupy more than one          contain the log record that is necessary to redo the
+disk block, the block containing the directory entry for      missing inode update.
+a particular name can be found by applying a hash
+function to the name and using the n low-order bits of        Once the updates described by a log record have been
+the hash value as the block number, where n depends           written back to disk, the log record is no longer needed
+on the size of the directory.                                 and can be discarded. Thus, logs can be fixed size,
+                                                              because space in the log can be freed up at any time by
+As a directory grows, extensible hashing adds new             flushing dirty metadata back to disk in the background.
+directory blocks one at a time. When a create operation
+finds no more room in the directory block designated
+                                                              3     Managing Parallelism and Consistency
+by the hash value of the new name, it splits the block in
+two. The logical block number of the new directory                  in a Cluster
+block is derived from the old block number by adding a
+'1' in the n+1st bit position, and directory entries with a   3.1 Distributed Locking vs. Centralized
+'1' in the n+1st bit of their hash value are moved to the         Management
+new block. Other directory blocks remain unchanged. A
+                                                              A cluster file system allows scaling I/O throughput
+large directory is therefore, in general, represented as a
+                                                              beyond what a single node can achieve. To exploit this
+sparse file, with holes in the file representing directory
+                                                              capability requires reading and writing in parallel from
+blocks that have not yet been split. By checking for
+                                                              all nodes in the cluster. On the other hand, preserving
+sparse regions in the directory file, GPFS can determine
+                                                              file system consistency and POSIX semantics requires
+how often a directory block has been split, and thus
+                                                              synchronizing access to data and metadata from
+how many bits of the hash value to use to locate the
+                                                              multiple nodes, which potentially limits parallelism.
+directory block containing a given name. Hence a
+                                                              GPFS guarantees single-node equivalent POSIX
+lookup always requires only a single directory block
+                                                              semantics for file system operations across the cluster.
+access, regardless of the size and structure of the
+                                                              For example if two processes on different nodes access
+directory file [7].
+                                                              the same file, a read on one node will see either all or
+                                                              none of the data written by a concurrent write operation
+2.3 Logging and Recovery                                      on the other node (read/write atomicity). The only
+In a large file system it is not feasible to run a file       exceptions are access time updates, which are not
+system check (fsck) to verify/restore file system             immediately visible on all nodes.1
+consistency each time the file system is mounted or           There are two approaches to achieving the necessary
+every time that one of the nodes in a cluster goes down.      synchronization:
+Instead, GPFS records all metadata updates that affect
+file system consistency in a journal or write-ahead log       1.   Distributed Locking: every file system operation
+[8]. User data are not logged.                                     acquires an appropriate read or write lock to syn-
+                                                                   chronize with conflicting operations on other nodes
+Each node has a separate log for each file system it               before reading or updating any file system data or
+mounts, stored in that file system. Because this log can           metadata.
+be read by all other nodes, any node can perform
+recovery on behalf of a failed node – it is not necessary
+to wait for the failed node to come back to life. After a     1
+failure, file system consistency is restored quickly by          Since read-read sharing is very common, synchronizing
+                                                              atime across multiple nodes would be prohibitively expensive.
+simply re-applying all updates recorded in the failed         Since there are few, if any, applications that require accurate
+node’s log.                                                   atime, we chose to propagate atime updates only periodically.
+2.   Centralized Management: all conflicting operations     object without requiring additional messages. Only
+     are forwarded to a designated node, which per-         when an operation on another node requires a conflict-
+     forms the requested read or update.                    ing lock on the same object are additional messages
+The GPFS architecture is fundamentally based on             necessary to revoke the lock token from the first node
+distributed locking. Distributed locking allows greater     so it can be granted to the other node.
+parallelism than centralized management as long as          Lock tokens also play a role in maintaining cache
+different nodes operate on different pieces of              consistency between nodes. A token allows a node to
+data/metadata. On the other hand, data or metadata that     cache data it has read from disk, because the data
+is frequently accessed and updated from different nodes     cannot be modified elsewhere without revoking the
+may be better managed by a more centralized approach:       token first.
+when lock conflicts are frequent, the overhead for
+distributed locking may exceed the cost of forwarding       3.3 Parallel Data Access
+requests to a central node. Lock granularity also
+impacts performance: a smaller granularity means more       Certain classes of supercomputer applications require
+overhead due to more frequent lock requests, whereas a      writing to the same file from multiple nodes. GPFS
+larger granularity may cause more frequent lock             uses byte-range locking to synchronize reads and writes
+conflicts.                                                  to file data. This approach allows parallel applications
+                                                            to write concurrently to different parts of the same file,
+To efficiently support a wide range of applications no      while maintaining POSIX read/write atomicity
+single approach is sufficient. Access characteristics       semantics. However, were byte-range locks imple-
+vary with workload and are different for different types    mented in a naive manner, acquiring a token for a byte
+of data, such as user data vs. file metadata (e.g.,         range for the duration of the read/write call and
+modified time) vs. file system metadata (e.g., allocation   releasing it afterwards, locking overhead would be
+maps). Consequently, GPFS employs a variety of              unacceptable. Therefore, GPFS uses a more sophisti-
+techniques to manage different kinds of data: byte-         cated byte-range locking protocol that radically reduces
+range locking for updates to user data, dynamically         lock traffic for many common access patterns.
+elected "metanodes" for centralized management of file
+metadata, distributed locking with centralized hints for    Byte-range tokens are negotiated as follows. The first
+disk space allocation, and a central coordinator for        node to write to a file will acquire a byte-range token
+managing configuration changes.                             for the whole file (zero to infinity). As long as no other
+                                                            nodes access the same file, all read and write operations
+In the following sections we first describe the GPFS        are processed locally without further interactions
+distributed lock manager and then discuss how each of       between nodes. When a second node begins writing to
+the techniques listed above improve scalability by          the same file it will need to revoke at least part of the
+optimizing – or in some cases avoiding – the use of         byte-range token held by the first node. When the first
+distributed locking.                                        node receives the revoke request, it checks whether the
+                                                            file is still in use. If the file has since been closed, the
+3.2 The GPFS Distributed Lock Manager                       first node will give up the whole token, and the second
+The GPFS distributed lock manager, like many others         node will then be able to acquire a token covering the
+[2, 9], uses a centralized global lock manager running      whole file. Thus, in the absence of concurrent write
+on one of the nodes in the cluster, in conjunction with     sharing, byte-range locking in GPFS behaves just like
+local lock managers in each file system node. The           whole-file locking and is just as efficient, because a
+global lock manager coordinates locks between local         single token exchange is sufficient to access the whole
+lock managers by handing out lock tokens [9], which         file.
+convey the right to grant distributed locks without the     On the other hand, if the second node starts writing to a
+need for a separate message exchange each time a lock       file before the first node closes the file, the first node
+is acquired or released. Repeated accesses to the same      will relinquish only part of its byte-range token. If the
+disk object from the same node only require a single        first node is writing sequentially at offset o1 and the
+message to obtain the right to acquire a lock on the        second node at offset o2, the first node will relinquish
+object (the lock token). Once a node has obtained the       its token from o2 to infinity (if o2 > o1) or from zero to
+token from the global lock manager (also referred as the    o1 (if o2 < o1). This will allow both nodes to continue
+token manager or token server), subsequent operations       writing forward from their current write offsets without
+issued on the same node can acquire a lock on the same      further token conflicts. In general, when multiple nodes
+                                                                                 file. The graph starts with a single file system node
+                      1600                                                       using four RAIDs on the left, adding four more RAIDs
+                      1400                                                       for each node added to the test, ending with 24 file
+                                                                                 system nodes using all 96 RAIDs on the right. It shows
+                      1200
+
+
+
+
+  Throughput (MB/s)
+                                                                                 nearly linear scaling in all tested configurations for
+                      1000                                                       reads. In the test system, the data throughput was not
+                                                                                 limited by the disks, but by the RAID controller. The
+                       800
+                                                                                 read throughput achieved by GPFS matched the
+                       600                                                       throughput of raw disk reads through the I/O subsys-
+                       400                                                       tem. The write throughput showed similar scalability.
+                                                                                 At 18 nodes the write throughput leveled off due to a
+                       200
+                                                                                 problem in the switch adapter microcode.2 The other
+                        0                                                        point to note in this figure is that writing to a single file
+                             0   2   4    6   8 10 12 14 16 18 20 22 24          from multiple nodes in GPFS was just as fast as each
+                                              Number of Nodes                    node writing to a different file, demonstrating the
+                                                                                 effectiveness of the byte-range token protocol described
+                                         each node reading a different file      above.
+                                         all nodes reading the same file
+                                         each node writing to a different file
+                                                                                 As long as the access pattern allows predicting the
+                                                                                 region of the file being accessed by a particular node in
+                                         all nodes writing to the same file
+                                                                                 the near future, the token negotiation protocol will be
+                                 Figure 2: Read/Write Scaling                    able to minimize conflicts by carving up byte-range
+                                                                                 tokens among nodes accordingly. This applies not only
+                                                                                 to simple sequential access, but also to reverse sequen-
+are writing sequentially to non-overlapping sections of                          tial and forward or backward strided access patterns,
+the same file, each node will be able to acquire the                             provided each node operates in different, relatively
+necessary token with a single token exchange as part of                          large regions of the file (coarse-grain sharing).
+its first write operation.
+                                                                                 As sharing becomes finer grain (each node writing to
+Information about write offsets is communicated during                           multiple, smaller regions), the token state and corre-
+this token negotiation by specifying a required range,                           sponding message traffic will grow. Note that byte-
+which corresponds to the offset and length of the                                range tokens not only guarantee POSIX semantics but
+write() system call currently being processed, and a                             also synchronize I/O to the data blocks of the file. Since
+desired range, which includes likely future accesses.                            the smallest unit of I/O is one sector, the byte-range
+For sequential access, the desired range will be from the                        token granularity can be no smaller than one sector;
+current write offset to infinity. The token protocol will                        otherwise, two nodes could write to the same sector at
+revoke byte ranges only from nodes that conflict with                            the same time, causing lost updates. In fact, GPFS uses
+the required range; the token server will then grant as                          byte-range tokens to synchronize data block allocation
+large a sub-range of the desired range as is possible                            as well (see next section), and therefore rounds byte-
+without conflicting with ranges still held by other                              range tokens to block boundaries. Hence multiple nodes
+nodes.                                                                           writing into the same data block will cause token
+The measurements shown in Figure 2 demonstrate how                               conflicts even if individual write operations do not
+I/O throughput in GPFS scales when adding more file                              overlap (“false sharing”).
+system nodes and more disks to the system. The                                   To optimize fine-grain sharing for applications that do
+measurements were obtained on a 32-node IBM                                      not require POSIX semantics, GPFS allows disabling
+RS/6000 SP system with 480 disks configured as 96                                normal byte-range locking by switching to data
+4+P RAID-5 devices attached to the SP switch through                             shipping mode. File access switches to a method best
+two I/O server nodes. The figure compares reading and
+writing a single large file from multiple nodes in
+parallel against each node reading or writing a different
+                                                                                 2
+file. In the single-file test, the file was partitioned into n                    The test machine had pre-release versions of the RS/6000 SP
+large, contiguous sections, one per node, and each node                          Switch2 adapters. In this early version of the adapter
+was reading or writing sequentially to one of the                                microcode, sending data from many nodes to a single I/O
+                                                                                 server node was not as efficient as sending from an I/O server
+sections. The writes were updates in place to an existing
+                                                                                 node to many nodes.
+                                                                                                                           I/O throughput for these sizes, because they matched
+                                250                                           100%                                         the granularity of the byte-range tokens. Updates with a
+
+
+
+
+                                                                                     Token Activity (%token server busy)
+                                                                                                                           record size smaller than one block (left half of the
+
+
+
+
+    Write Throughput (MB/sec)
+                                200                                           80%                                          figure) required twice as much I/O, because of the
+                                                                                                                           required read-modify-write. The throughput for byte-
+                                150                                           60%                                          range locking, however, dropped off far below the
+                                                                                                                           expected factor of one half due to token conflicts when
+                                100                                           40%                                          multiple nodes wrote into the same data block. The
+                                                                                                                           resulting token revokes caused each data block to be
+                                 50                                           20%                                          read and written multiple times. The line labeled “BR
+                                                                                                                           token activity” plots token activity measured at the
+                                 0                                          0%                                             token server during the test of I/O throughput using
+                                  0.01    0.1          1        10       100                                               byte-range locking. It shows that the drop in throughput
+                                          Granularity in Blocks                                                            was in fact due to the additional I/O activity and not an
+                                                                                                                           overload of the token server. The throughput curve for
+                                                throughput using BR locking
+                                                                                                                           data shipping in Figure 3 shows that data shipping also
+                                                throughput using data shipping
+                                                                                                                           incurred the read-modify-write penalty plus some
+                                                BR token activity
+                                                                                                                           additional overhead for sending data between nodes,
+                                Figure 3: Effect of Sharing Granularity on
+                                                                                                                           but it dramatically outperformed byte-range locking for
+                                             Write Throughput                                                              small record sizes that correspond to fine grain sharing.
+                                                                                                                           The data shipping implementation was intended to
+                                                                                                                           support fine-grain access, and as such does not try to
+described as partitioned, centralized management. File                                                                     avoid the read-modify-write for record sizes larger than
+blocks are assigned to nodes in a round-robin fashion,                                                                     a block. This fact explains why data shipping through-
+so that each data block will be read or written only by                                                                    put stayed flat for larger record sizes.
+one particular node. GPFS forwards read and write
+operations originating from other nodes to the node                                                                        Data shipping is primarily used by the MPI/IO library.
+responsible for a particular data block. For fine-grain                                                                    MPI/IO does not require POSIX semantics, and
+sharing this is more efficient than distributed locking,                                                                   provides a natural mechanism to define the collective
+because it requires fewer messages than a token                                                                            that assigns blocks to nodes. The programming
+exchange, and it avoids the overhead of flushing dirty                                                                     interfaces used by MPI/IO to control data shipping,
+data to disk when revoking a token. The eventual                                                                           however, are also available to other applications that
+flushing of data blocks to disk is still done in parallel,                                                                 desire this type of file access [13].
+since the data blocks of the file are partitioned among
+many nodes.                                                                                                                3.4 Synchronizing Access to File Metadata
+Figure 3 shows the effect of sharing granularity on                                                                        Like other file systems, GPFS uses inodes and indirect
+write throughput, using data shipping and using normal                                                                     blocks to store file attributes and data block addresses.
+byte-range locking. These measurements were done on                                                                        Multiple nodes writing to the same file will result in
+a smaller SP system with eight file system nodes and                                                                       concurrent updates to the inode and indirect blocks of
+two I/O servers, each with eight disks. Total throughput                                                                   the file to change file size and modification time
+to each I/O server was limited by the switch.3 We                                                                          (mtime) and to store the addresses of newly allocated
+measured throughput with eight nodes updating fixed                                                                        data blocks. Synchronizing updates to the metadata on
+size records within the same file. The test used a strided                                                                 disk via exclusive write locks on the inode would result
+access pattern, where the first node wrote records 0, 8,                                                                   in a lock conflict on every write operation.
+16, …, the second node wrote records 1, 9, 17, …, and
+                                                                                                                           Instead, write operations in GPFS use a shared write
+so on. The larger record sizes (right half of the figure)
+                                                                                                                           lock on the inode that allows concurrent writers on
+were multiples of the file system block size. Figure 3
+                                                                                                                           multiple nodes. This shared write lock only conflicts
+shows that byte-range locking achieved nearly the full
+                                                                                                                           with operations that require exact file size and/or mtime
+                                                                                                                           (a stat() system call or a read operation that attempts to
+                                                                                                                           read past end-of-file). One of the nodes accessing the
+3
+  Here, the older RS/6000 SP Switch, with nominal 150                                                                      file is designated as the metanode for the file; only the
+MB/sec throughput. Software overhead reduces this to                                                                       metanode reads or writes the inode from or to disk.
+approximately 125 MB/sec.                                                                                                  Each writer updates a locally cached copy of the inode
+and forwards its inode updates to the metanode               store data for small files, the allocation map contains 32
+periodically or when the shared write token is revoked       bits per disk block as well as linked lists for finding a
+by a stat() or read() operation on another node. The         free disk block or a subblock of a particular size
+metanode merges inode updates from multiple nodes by         efficiently.
+retaining the largest file size and latest mtime values it
+                                                             Allocating disk space requires updates to the allocation
+receives. Operations that update file size or mtime non-
+                                                             map, which must be synchronized between nodes. For
+monotonically (trunc() or utimes()) require an exclusive
+                                                             proper striping, a write operation must allocate space
+inode lock.
+                                                             for a particular data block on a particular disk, but
+Updates to indirect blocks are synchronized in a similar     given the large block size used by GPFS, it is not as
+fashion. When writing a new file, each node independ-        important where on that disk the data block is written.
+ently allocates disk space for the data blocks it writes.    This fact allows organizing the allocation map in a way
+The synchronization provided by byte-range tokens            that minimizes conflicts between nodes by interleaving
+ensures that only one node will allocate storage for any     free space information about different disks in the
+particular data block. This is the reason that GPFS          allocation map as follows. The map is divided into a
+rounds byte-range tokens to block boundaries. Periodi-       large, fixed number n of separately lockable regions,
+cally or on revocation of a byte-range token, the new        and each region contains the allocation status of 1/nth of
+data block addresses are sent to the metanode, which         the disk blocks on every disk in the file system. This
+then updates the cached indirect blocks accordingly.         map layout allows GPFS to allocate disk space properly
+                                                             striped across all disks by accessing only a single
+Thus, GPFS uses distributed locking to guarantee
+                                                             allocation region at a time. This approach minimizes
+POSIX semantics (e.g., a stat() system call sees the file
+                                                             lock conflicts, because different nodes can allocate
+size and mtime of the most recently completed write
+                                                             space from different regions. The total number of
+operation), but I/O to the inode and indirect blocks on
+                                                             regions is determined at file system creation time based
+disk is synchronized using a centralized approach
+                                                             on the expected number of nodes in the cluster.
+(forwarding inode updates to the metanode). This
+allows multiple nodes to write to the same file without      For each GPFS file system, one of the nodes in the
+lock conflicts on metadata updates and without               cluster is responsible for maintaining free space
+requiring messages to the metanode on every write            statistics about all allocation regions. This allocation
+operation.                                                   manager node initializes free space statistics by reading
+                                                             the allocation map when the file system is mounted.
+The metanode for a particular file is elected dynami-
+                                                             The statistics are kept loosely up-to-date via periodic
+cally with the help of the token server. When a node
+                                                             messages in which each node reports the net amount of
+first accesses a file, it tries to acquire the metanode
+                                                             disk space allocated or freed during the last period.
+token for the file. The token is granted to the first node
+                                                             Instead of all nodes individually searching for regions
+to do so; other nodes instead learn the identity of the
+                                                             that still contain free space, nodes ask the allocation
+metanode. Thus, in traditional workloads without
+                                                             manager for a region to try whenever a node runs out of
+concurrent file sharing, each node becomes metanode
+                                                             disk space in the region it is currently using. To the
+for the files it uses and handles all metadata updates
+                                                             extent possible, the allocation manager prevents lock
+locally.
+                                                             conflicts between nodes by directing different nodes to
+When a file is no longer being accessed on the metan-        different regions.
+ode and ages out of the cache on that node, the node
+                                                             Deleting a file also updates the allocation map. A file
+relinquishes its metanode token and stops acting as
+                                                             created by a parallel program running on several
+metanode. When it subsequently receives a metadata
+                                                             hundred nodes might have allocated blocks in several
+request from another node, it sends a negative reply; the
+                                                             hundred regions. Deleting the file requires locking and
+other node will then attempt to take over as metanode
+                                                             updating each of these regions, perhaps stealing them
+by acquiring the metanode token. Thus, the metanode
+                                                             from the nodes currently allocating out of them, which
+for a file tends to stay within the set of nodes actively
+                                                             could have a disastrous impact on performance.
+accessing that file.
+                                                             Therefore, instead of processing all allocation map
+3.5 Allocation Maps                                          updates at the node on which the file was deleted, those
+                                                             that update regions known to be in use by other nodes
+The allocation map records the allocation status (free or    are sent to those nodes for execution. The allocation
+in-use) of all disk blocks in the file system. Since each    manager periodically distributes hints about which
+disk block can be divided into up to 32 subblocks to
+                                                                                           most cases uses more centralized management to
+                            1200                                                           coordinate or collect metadata updates from different
+                                                                                           nodes. For example, a quota manager hands out
+                            1000                                                           relatively large increments of disk space to the individ-
+
+
+
+
+  Write Throughput (MB/s)
+                                                                                           ual nodes writing a file, so quota checking is done
+                            800                                                            locally, with only occasional interaction with the quota
+                                                                                           manager.
+                            600
+
+                            400
+                                                                                           3.7 Token Manager Scaling
+                                                                                           The token manager keeps track of all lock tokens
+                            200                                                            granted to all nodes in the cluster. Acquiring, relin-
+                                                                                           quishing, upgrading, or downgrading a token requires a
+                              0                                                            message to the token manager. One might reasonably
+                                   0    2   4    6   8 10 12 14 16 18 20 22 24             expect that the token manager could become a bottle-
+                                                     Number of Nodes                       neck in a large cluster, or that the size of the token state
+                                       each node writing to a different file               might exceed the token manager’s memory capacity.
+                                       all nodes writing to the same file                  One way to address these issues would be to partition
+                                       each node creating a different file                 the token space and distribute the token state among
+                                       all nodes writing to the same, newly created file   several nodes in the cluster. We found, however, that
+                                                                                           this is not the best way — or at least not the most
+                                       Figure 4: File Create Scaling                       important way — to address token manager scaling
+                                                                                           issues, for the following reasons.
+regions are in use by which nodes to facilitate shipping
+                                                                                           A straightforward way to distribute token state among
+deallocation requests.
+                                                                                           nodes might be to hash on the file inode number.
+To demonstrate the effectiveness of the allocation                                         Unfortunately, this does not address the scaling issues
+manager hints as well as the metanode algorithms                                           arising from parallel access to a single file. In the worst
+described in the previous section we measured write                                        case, concurrent updates to a file from multiple nodes
+throughput for updates in place to an existing file                                        generate a byte-range token for each data block of a
+against creation of a new file (Figure 4). As in Figure 2,                                 file. Because the size of a file is effectively unbounded,
+we measured all nodes writing to a single file (using the                                  the size of the byte-range token state for a single file is
+same access pattern as in Figure 2), as well as each                                       also unbounded. One could conceivably partition byte-
+node writing to a different file. The measurements were                                    range token management for a single file among
+done on the same hardware as Figure 2, and the data                                        multiple nodes, but this would make the frequent case
+points for the write throughput are in fact the same                                       of a single node acquiring a token for a whole file
+points shown in the earlier figure. Due to the extra work                                  prohibitively expensive. Instead, the token manager
+required to allocate disk storage, throughput for file                                     prevents unbounded growth of its token state by
+creation was slightly lower than for update in place.                                      monitoring its memory usage and, if necessary,
+Figure 4 shows, however, that create throughput still                                      revoking tokens to reduce the size of the token state4.
+scaled nearly linearly with the number of nodes, and
+                                                                                           The most likely reason for a high load on the token
+that creating a single file from multiple nodes was just
+                                                                                           manager node is lock conflicts that cause token
+as fast as each node creating a different file.
+                                                                                           revocation. When a node downgrades or relinquishes a
+                                                                                           token, dirty data or metadata covered by that token
+3.6 Other File System Metadata                                                             must be flushed to disk and/or discarded from the
+A GPFS file system contains other global metadata,                                         cache. As explained earlier (see Figure 3), the cost of
+including file system configuration data, space usage                                      disk I/O caused by token conflicts dominates the cost of
+quotas, access control lists, and extended attributes.                                     token manager messages. Therefore, a much more
+Space does not permit a detailed description of how
+each of these types of metadata is managed, but a brief
+mention is in order. As in the cases described in                                          4
+                                                                                             Applications that do not require POSIX semantics can, of
+previous sections, GPFS uses distributed locking to                                        course, use data shipping to bypass byte-range locking and
+protect the consistency of the metadata on disk, but in                                    avoid token state issues.
+effective way to reduce token manager load and                                      NetBench [11] file server benchmark. It ran on eight
+improve overall performance is to avoid lock conflicts                              file system nodes, with each node running a workload
+in the first place. The allocation manager hints de-                                for 10 NetBench clients. Each client ran in a different
+scribed in Section 3.5 are an example of avoiding lock                              subdirectory. The figure shows an initial spike of token
+conflicts.                                                                          activity as the benchmark started up on all of the nodes
+                                                                                    and each node acquired tokens for the files accessed by
+Finally, GPFS uses a number of optimizations in the
+                                                                                    its clients. Even though the benchmark created and
+token protocol that significantly reduce the cost of
+                                                                                    deleted many files throughout the run, each node reused
+token management and improve response time as well.
+                                                                                    a limited number of inodes. Once all nodes had
+When it is necessary to revoke a token, it is the
+                                                                                    obtained a sufficient number of inodes, token activity
+responsibility of the revoking node to send revoke
+                                                                                    quickly dropped to near zero. Measurements of the
+messages to all nodes that are holding the token in a
+                                                                                    CPU load on the token server indicated that it is capable
+conflicting mode, to collect replies from these nodes,
+                                                                                    of supporting between 4000 and 5000 token requests
+and to forward these as a single message to the token
+                                                                                    per second, so the peak request rate shown in Figure 5
+manager. Acquiring a token will never require more
+                                                                                    consumed only a small fraction of the token server
+than two messages to the token manager, regardless of
+                                                                                    capacity. Even the height of the peak was only an
+how many nodes may be holding the token in a
+                                                                                    artifact of starting the benchmark at the same time on
+conflicting mode.
+                                                                                    all of the nodes, which would not be likely to happen
+The protocol also supports token prefetch and token                                 under a real multi-user workload.
+request batching, which allow acquiring multiple tokens
+in a single message to the token manager. For example,                              4    Fault Tolerance
+when a file is accessed for the first time, the necessary
+inode token, metanode token, and byte-range token to                                As a cluster is scaled up to large numbers of nodes and
+read or write the file are acquired with a single token                             disks it becomes increasingly unlikely that all compo-
+manager request.                                                                    nents are working correctly at all times. This implies
+                                                                                    the need to handle component failures gracefully and
+When a file is deleted on a node, the node does not                                 continue operating in the presence of failures.
+immediately relinquish the tokens associated with that
+file. The next file created by the node can then re-use                             4.1 Node Failures
+the old inode and will not need to acquire any new
+tokens. A workload where users on different nodes                                   When a node fails, GPFS must restore metadata being
+create and delete files under their respective home                                 updated by the failed node to a consistent state, must
+directories will generate little or no token traffic.                               release resources held by the failed node (lock tokens),
+                                                                                    and it must appoint replacements for any special roles
+Figure 5 demonstrates the effectiveness of this optimi-                             played by the failed node (e.g., metanode, allocation
+zation. It shows token activity while running a multi-                              manager, or token manager).
+user file server workload on multiple nodes. The
+workload was generated by the dbench program [10],                                  Since GPFS stores recovery logs on shared disks,
+which simulates the file system activity of the                                     metadata inconsistencies due to a node failure are
+                                                                                    quickly repaired by running log recovery from the
+                                                                                    failed node’s log on one of the surviving nodes. After
+                                 Figure 5: Token Activity During Dbench Run         log recovery is complete, the token manager releases
+                                                                                    tokens held by the failed node. The distributed locking
+                                                                                    protocol ensures that the failed node must have held
+
+
+  Token activity (requests per
+                                 400
+                                 350                                                tokens for all metadata it had updated in its cache but
+                                 300                                                had not yet written back to disk at the time of the
+                                 250                                                failure. Since these tokens are only released after log
+                                 200                                                recovery is complete, metadata modified by the failed
+
+
+
+           second)
+                                 150                                                node will not be accessible to other nodes until it is
+                                 100                                                known to be in a consistent state. This observation is
+                                  50                                                true even in cases where GPFS uses a more centralized
+                                   0                                                approach to synchronizing metadata updates, for
+                                       0    100     200      300     400      500   example, the file size and mtime updates that are
+                                               Elapsed time (seconds)               collected by the metanode. Even though the write
+                                                                                    operations causing such updates are not synchronized
+via distributed locking, the updates to the metadata on      no longer members of the majority will be notified and
+disk are still protected by the distributed locking          stop accessing shared disks. Therefore, before starting
+protocol — in this case, through the metanode token.         log recovery in the majority group, GPFS fences nodes
+                                                             that are no longer members of the group from accessing
+After log recovery completes, other nodes can acquire
+                                                             the shared disks, i.e., it invokes primitives available in
+any metanode tokens that had been held by the failed
+                                                             the disk subsystem to stop accepting I/O requests from
+node and thus take over the role of metanode. If another
+                                                             the other nodes.
+node had sent metadata updates to the old metanode
+but, at the time of the failure, had not yet received an     To allow fault-tolerant two-node configurations, a
+acknowledgement that the updates were committed to           communication partition in such a configuration is
+disk, it re-sends the updates to the new metanode.           resolved exclusively through disk fencing instead of
+These updates are idempotent, so the new metanode can        using a majority rule: upon notification of the failure of
+simply re-apply them.                                        the other node, each node will attempt to fence all disks
+                                                             from the other node in a predetermined order. In case of
+Should the token manager fail, another node will take
+                                                             a network partition, only one of the two nodes will be
+over this responsibility and reconstruct the token
+                                                             successful and can continue accessing GPFS file
+manager state by querying all surviving nodes about the
+                                                             systems.
+tokens they currently hold. Since the new token
+manager does not know what tokens were held by
+failed nodes, it will not grant any new tokens until log     4.3 Disk Failures
+recovery is complete. Tokens currently held by the           Since GPFS stripes data and metadata across all disks
+surviving nodes are not affected by this.                    that belong to a file system, the loss of a single disk will
+Similarly, other special functions carried out by a failed   affect a disproportionately large fraction of the files.
+node (e.g., allocation manager) are assigned to another      Therefore, typical GPFS configurations use dual-
+node, which rebuilds the necessary state by reading          attached RAID controllers, which are able to mask the
+information from disk and/or querying other nodes.           failure of a physical disk or the loss of an access path to
+                                                             a disk. Large GPFS file systems are striped across
+                                                             multiple RAID devices. In such configurations, it is
+4.2 Communication Failures
+                                                             important to match the file system block size and
+To detect node failures GPFS relies on a group services      alignment with RAID stripes so that data block writes
+layer that monitors nodes and communication links via        do not incur a write penalty for the parity update.
+periodic heartbeat messages and implements a process
+                                                             As an alternative or a supplement to RAID, GPFS
+group membership protocol [12]. When a node fails, the
+                                                             supports replication, which is implemented in the file
+group services layer informs the remaining nodes of a
+                                                             system. When enabled, GPFS allocates space for two
+group membership change. This triggers the recovery
+                                                             copies of each data or metadata block on two different
+actions described in the previous section.
+                                                             disks and writes them to both locations. When a disk
+A communication failure such as a bad network adapter        becomes unavailable, GPFS keeps track of which files
+or a loose cable may cause a node to become isolated         had updates to a block with a replica on the unavailable
+from the others, or a failure in the switching fabric may    disk. If and when the disk becomes available again,
+cause a network partition. Such a partition is indistin-     GPFS brings stale data on the disk up-to-date by
+guishable from a failure of the unreachable nodes.           copying the data from another replica. If a disk fails
+Nodes in different partitions may still have access to the   permanently, GPFS can instead allocate a new replica
+shared disks and would corrupt the file system if they       for all affected blocks on other disks.
+were allowed to continue operating independently of
+                                                             Replication can be enabled separately for data and
+each other. For this reason, GPFS allows accessing a
+                                                             metadata. In cases where part of a disk becomes
+file system only by the group containing a majority of
+                                                             unreadable (bad blocks), metadata replication in the file
+the nodes in the cluster; the nodes in the minority group
+                                                             system ensures that only a few data blocks will be
+will stop accessing any GPFS disk until they can re-join
+                                                             affected, rather than rendering a whole set of files
+a majority group.
+                                                             inaccessible.
+Unfortunately, the membership protocol cannot
+guarantee how long it will take for each node to receive     5    Scalable Online System Utilities
+and process a failure notification. When a network
+partition occurs, it is not known when the nodes that are    Scalability is important not only for normal file system
+                                                             operations, but also for file system utilities. These
+utilities manipulate significant fractions of the data and     required only while reorganizing higher-level metadata
+metadata in the file system, and therefore benefit from        (allocation maps and the inode file). For example, when
+parallelism as much as parallel applications.                  it is necessary to move a block of inodes from one disk
+                                                               to another, the node doing so acquires a special range
+For example, GPFS allows growing, shrinking, or
+                                                               lock on the inode file, which is more efficient and less
+reorganizing a file system by adding, deleting, or
+                                                               disruptive than acquiring individual locks on all inodes
+replacing disks in an existing file system. After adding
+                                                               within the block.
+new disks, GPFS allows rebalancing the file system by
+moving some of the existing data to the new disks. To
+remove or replace one or more disks in a file system,          6    Experiences
+GPFS must move all data and metadata off the affected          GPFS is installed at several hundred customer sites, on
+disks. All of these operations require reading all inodes      clusters ranging from a few nodes with less than a
+and indirect blocks to find the data that must be moved.       terabyte of disk, up to the 512-node ASCI White system
+Other utilities that need to read all inodes and indirect      with its 140 terabytes of disk space in two file systems.
+blocks include defragmentation, quota-check, and               Much has been learned that has affected the design of
+fsck5 [13]. Also, when replication is enabled and a            GPFS as it has evolved. These lessons would make a
+group of disks that were down becomes available again,         paper in themselves, but a few are of sufficient interest
+GPFS must perform a metadata scan to find files with           to warrant relating here.
+missing updates that need to be applied to these disks.
+                                                               Several of our experiences pointed out the importance
+Finishing such operations in any reasonable amount of          of intra-node as well as inter-node parallelism and for
+time requires exploiting the parallelism available in the      properly balancing load across nodes in a cluster. In the
+system. To this end, GPFS appoints one of the nodes as         initial design of the system management commands, we
+a file system manager for each file system, which is           assumed that distributing work by starting a thread on
+responsible for coordinating such administrative               each node in the cluster would be sufficient to exploit
+activity. The file system manager hands out a small            all available disk bandwidth. When rebalancing a file
+range of inode numbers to each node in the cluster.            system, for example, the strategy of handing out ranges
+Each node processes the files in its assigned range and        of inodes to one thread per node, as described in
+then sends a message to the file system manager                Section 5, was able to generate enough I/O requests to
+requesting more work. Thus, all nodes work on                  keep all disks busy. We found, however, that we had
+different subsets of files in parallel, until all files have   greatly underestimated the amount of skew this strategy
+been processed. During this process, additional                would encounter. Frequently, a node would be handed
+messages may be exchanged between nodes to compile             an inode range containing significantly more files or
+global file system state. While running fsck, for              larger files than other ranges. Long after other nodes
+example, each node collects block references for a             had finished their work, this node was still at work,
+different section of the allocation map. This allows           running single-threaded, issuing one I/O at a time.
+detecting inter-file inconsistencies, such as a single
+block being assigned to two different files.                   The obvious lesson is that the granules of work handed
+                                                               out must be sufficiently small and of approximately
+Even with maximum parallelism, these operations can            equal size (ranges of blocks in a file rather than entire
+take a significant amount of time on a large file system.      files). The other lesson, less obvious, is that even on a
+For example, a complete rebalancing of a multi-terabyte        large cluster, intra-node parallelism is often a more
+file system may take several hours. Since it is unaccept-      efficient road to performance than inter-node parallel-
+able for a file system to be unavailable for such a long       ism. On modern systems, which are often high-degree
+time, GPFS allows all of its file system utilities to run      SMPs with high I/O bandwidth, relatively few nodes
+on-line, i.e., while the file system is mounted and            can saturate the disk system6. Exploiting the available
+accessible to applications. The only exception is a full       bandwidth by running multiple threads per node, for
+file system check for diagnostic purposes (fsck), which        example, greatly reduces the effect of workload skew.
+requires the file system to be unmounted. File system
+utilities use normal distributed locking to synchronize        Another important lesson is that even though the small
+with other file activity. Special synchronization is           amount of CPU consumed by GPFS centralized
+
+
+5                                                              6
+  For diagnostic purposes to verify file system consistency,    Sixteen nodes drive the entire 12 GB/s I/O bandwidth of
+not part of a normal mount.                                    ASCI White.
+management functions (e.g., the token manager)                wanted to replace the bad drives without taking the
+normally does not affect application performance, it can      system down. One might think this could be done by
+have a significant impact on highly parallel applica-         successively replacing each drive and letting the RAID
+tions. Such applications often run in phases with barrier     rebuild, but this would have greatly increased the
+synchronization points. As described in Section 5,            possibility of a dual failure (i.e., a second drive failure
+centralized services are provided by the file system          in a rebuilding RAID parity group) and a consequent
+manager, which is dynamically chosen from the nodes           catastrophic loss of the file system. The customer chose
+in the cluster. If this node also runs part of the parallel   as a solution to delete a small number of disks (here,
+application, the management overhead will cause it to         RAID parity groups) from the file system, during which
+take longer to reach its barrier, leaving the other nodes     GPFS rebalances data from the deleted disks onto the
+idle. If the overhead slows down the application by even      remaining disks. Then new disks (parity groups) were
+one percent, the idle time incurred by other nodes will       created from the new drives and added back to the file
+be equivalent to leaving five nodes unused on the 512-        system (again rebalancing). This tedious process was
+node ASCI White system! To avoid this problem,                repeated until all disks were replaced, without taking
+GPFS allows restricting management functions to a             the file system down and without compromising its
+designated set of administrative nodes. A large cluster       reliability. Lessons include not assuming independent
+can dedicate one or two administrative nodes, avoid           failures in a system design, and the importance of
+running load sensitive, parallel applications on them,        online system management and parallel rebalancing.
+and actually increase the available computing resource.
+Early versions of GPFS had serious performance                7    Related Work
+problems with programs like “ls –l” and incremental           One class of file systems extends the traditional file
+backup, which call stat() for each file in a directory.       server architecture to a storage area network (SAN)
+The stat() call reads the file’s inode, which requires a      environment by allowing the file server clients to access
+read token. If another node holds this token, releasing it    data directly from disk through the SAN. Examples of
+may require dirty data to be written back on that node,       such SAN file systems are IBM/Tivoli SANergy [14],
+so obtaining the token can be expensive. We solved this       and Veritas SANPoint Direct [15]. These file systems
+problem by exploiting parallelism. When GPFS detects          can provide efficient data access for large files, but,
+multiple accesses to inodes in the same directory, it         unlike GPFS, all metadata updates are still handled by a
+uses multiple threads to prefetch inodes for other files      centralized metadata server, which makes this type of
+in the same directory. Inode prefetch speeds up               architecture inherently less scalable. SAN file systems
+directory scans by almost a factor of ten.                    typically do not support concurrent write sharing, or
+Another lesson we learned on large systems is that even       sacrifice POSIX semantics to do so. For example,
+the rarest failures, such as data loss in a RAID, will        SANergy allows multiple clients to read and write to
+occur. One particularly large GPFS system experienced         the same file through a SAN, but provides no consistent
+a microcode failure in a RAID controller caused by an         view of the data unless explicit fcntl locking calls are
+intermittent problem during replacement of a disk. The        added to the application program.
+failure rendered three sectors of an allocation map           SGI’s XFS file system [16] is designed for similar,
+unusable. Unfortunately, an attempt to allocate out of        large-scale, high throughput applications that GPFS
+one of these sectors generated an I/O error, which            excels at. It stores file data in large, variable length
+caused the file system to take itself off line. Running       extents and relies on an underlying logical volume
+log recovery repeated the attempt to write the sector         manager to stripe the data across multiple disks. Unlike
+and the I/O error. Luckily no user data was lost, and the     GPFS however, XFS is not a cluster file system; it runs
+customer had enough free space in other file systems to       on large SMPs. CXFS [17] is a cluster version of XFS
+allow the broken 14 TB file system to be mounted read-        that allows multiple nodes to access data on shared
+only and copied elsewhere. Nevertheless, many large           disks in an XFS file system. However, only one of the
+file systems now use GPFS metadata replication in             nodes handles all metadata updates, like other SAN file
+addition to RAID to provide an extra measure of               systems mentioned above.
+security against dual failures.
+                                                              Frangipani [18] is a shared-disk cluster file system that
+Even more insidious than rare, random failures are            is similar in principle to GPFS. It is based on the same,
+systematic ones. One customer was unfortunate enough          symmetric architecture, and uses similar logging,
+to receive several hundred disk drives from a bad batch       locking and recovery algorithms based on write-ahead
+with an unexpectedly high failure rate. The customer          logging with separate logs for each node stored on
+shared disk. Like GPFS, it uses a token-based distrib-       we found that distributed locking scales quite well.
+uted lock manager. A Frangipani file system resides on       Nevertheless, several significant changes to conven-
+a single, large (264 byte) virtual disk provided by          tional file system data structures and locking algorithms
+Petal [19], which redirects I/O requests to a set of Petal   yielded big gains in performance, both for parallel
+servers and handles physical storage allocation and          access to a single large file and for parallel access to
+striping. This layered architecture simplifies metadata      large numbers of small files. We describe a number of
+management in the file system to some extent. The            techniques that make distributed locking work in a large
+granularity of disk space allocation (64kB) in Petal,        cluster: byte-range token optimizations, dynamic
+however, is too large and its virtual address space is too   selection of meta nodes for managing file metadata,
+small to simply reserve a fixed, contiguous virtual disk     segmented allocation maps, and allocation hints.
+area (e.g., 1TB) for each file in a Frangipani file
+                                                             One might similarly question whether conventional
+system. Therefore, Frangipani still needs its own
+                                                             availability technology scales. Obviously there are
+allocation maps to manage the virtual disk space
+                                                             more components to fail in a large system. Compound-
+provided by Petal. Unlike GPFS, Frangipani is mainly
+                                                             ing the problem, large clusters are so expensive that
+“targeted for environments with program development
+                                                             their owners demand high availability. Add to this the
+and engineering workloads”. It implements whole-file
+                                                             fact that file systems of tens of terabytes are simply too
+locking only and therefore does not allow concurrent
+                                                             large to back up and restore. Again, we found the basic
+writes to the same file from multiple nodes.
+                                                             technology to be sound. The surprises came in the
+Another example of a shared-disk cluster file system is      measures that were necessary to provide data integrity
+the Global File System (GFS) [20], which originated as       and availability. GPFS replication was implemented
+an open source file system for Linux. The newest             because at the time RAID was more expensive than
+version (GFS-4) implements journaling, and uses              replicated conventional disk. RAID has taken over as
+logging, locking, and recovery algorithms similar to         its price has come down, but even its high level of
+those of GPFS and Frangipani. Locking in GFS is              integrity is not sufficient to guard against the loss of a
+closely tied to physical storage. Earlier versions of GFS    hundred terabyte file system.
+[21] required locking to be implemented at the disk
+                                                             Existing GPFS installations show that our design is able
+device via extensions to the SCSI protocol. Newer
+                                                             to scale up to the largest super computers in the world
+versions allow the use of an external distributed lock
+                                                             and to provide the necessary fault tolerance and system
+manager, but still lock individual disk blocks of 4kB or
+                                                             management functions to manage such large systems.
+8kB size. Therefore, accessing large files in GFS entails
+                                                             Nevertheless, we expect the continued evolution of
+significantly more locking overhead than the byte-range
+                                                             technology to demand ever more scalability. The recent
+locks used in GPFS. Similar to Frangipani/Petal,
+                                                             interest in Linux clusters with inexpensive PC nodes
+striping in GFS is handled in a “Network Storage Pool”
+                                                             drives the number of components up still further. The
+layer; once created, however, the stripe width cannot be
+                                                             price of storage has decreased to the point that custom-
+changed (it is possible to add a new “sub-pools”, but
+                                                             ers are seriously interested in petabyte file systems.
+striping is confined to a sub-pool, i.e., GFS will not
+                                                             This trend makes file system scalability an area of
+stripe across sub-pools). Like Frangipani, GFS is
+                                                             interest for research that will continue for the foresee-
+geared more towards applications with little or no intra-
+                                                             able future.
+file sharing.
+                                                             9    Acknowledgements
+8    Summary and Conclusions
+                                                             A large number of people at several IBM locations have
+GPFS was built on many of the ideas that were
+                                                             contributed to the design and implementation of GPFS
+developed in the academic community over the last
+                                                             over the years. Although space does not allow naming
+several years, particularly distributed locking and
+                                                             all of them here, the following people have significantly
+recovery technology. To date it has been a matter of
+                                                             contributed to the work reported here: Jim Wyllie, Dan
+conjecture how well these ideas scale. We have had the
+                                                             McNabb, Tom Engelsiepen, Marc Eshel, Carol
+opportunity to test those limits in the context of a
+                                                             Hartman, Mike Roberts, Wayne Sawdon, Dave Craft,
+product that runs on the largest systems in existence.
+                                                             Brian Dixon, Eugene Johnson, Scott Porter, Bob
+One might question whether distributed locking scales,       Curran, Radha Kandadai, Lyle Gayne, Mike Schouten,
+in particular, whether lock contention for access to         Dave Shapiro, Kuei-Yu Wang Knop, Irit Loy, Benny
+shared metadata might become a bottleneck that limits        Mandler, John Marberg, Itai Nahshon, Sybille Schaller,
+parallelism and scalability. Somewhat to our surprise,       Boaz Shmueli, Roman Talyanski, and Zvi Yehudai.
+References                                                [13] IBM General Parallel File System for AIX:
+                                                               Administration and Programming Reference.
+[1] Roger L. Haskin: Tiger Shark - a scalable file             Document Number SA22-7452-02, Second Edition
+    system for multimedia, IBM Journal of Research             (December 2000), International Business Machines
+    and Development, Volume 42, Number 2, March                Corporation, 2455 South Road, Poughkeepsie, NY
+    1998, pp. 185-197.                                         12601-5400, USA. Also available from http://
+[2] C. Mohan, Inderpal Narang: Recovery and                    www.rs6000.ibm.com/resource/aix_resource/
+    Coherency-Control Protocols for Fast Intersystem           sp_books/gpfs/index.html
+    Page Transfer and Fine-Granularity Locking in a       [14] Charlotte Brooks, Ron Henkhaus, Udo Rauch,
+    Shared Disks Transaction Environment. VLDB                 Daniel Thompson. A Practical Guide to Tivoli
+    1991: 193-207.                                             SANergy. IBM Redbook SG246146, June 2001,
+[3] IBM builds world's fastest supercomputer to                available from http://www.redbooks.ibm.com/
+    simulate nuclear testing for U.S. Energy Depart-      [15] VERITAS SANPoint Direct File Access. White-
+    ment. IBM Press Release, Poughkeepsie, N.Y.,               paper, August 2000. VERITAS Software Corpora-
+    June 29, 2000. http://www.ibm.com/servers/                 tion, Corporate Headquarters, 1600 Plymouth
+    eserver/pseries/news/pressreleases/2000/jun/               Street, Mountain View, CA 94043.
+    asci_white.html
+                                                          [16] A. Sweeney, D. Doucette, W. Hu, C. Anderson, M.
+[4] ASCI White.           http://www.rs6000.ibm.com/           Nishimoto, and G. Peck. Scalability in the XFS File
+    hardware/largescale/supercomputers/asciwhite/              System, Proceedings of the USENIX 1996 Techni-
+[5] ASCI White.     http://www.llnl.gov/asci/platforms/        cal Conference, pages 1-14, San Diego, CA, USA,
+    white/home/                                                1996.
+[6] Ronald Fagin, Jürg Nievergelt, Nicholas Pip-          [17] SGI CXS Clustered File System, Datasheet, Silicon
+    penger, H. Raymond Strong, Extendible hashing -            Graphics, Inc., 1600 Amphitheatre Pkwy. Moun-
+    a fast access method for dynamic files, ACM                tain View, CA 94043.
+    Transactions on Database Systems, New York,           [18] Chandramohan A. Thekkath, Timothy Mann, and
+    NY, Volume 4 Number 3, 1979, pages 315-344.                Edward K. Lee. Frangipani: A Scalable Distrib-
+[7] Frank B. Schmuck, James Christopher Wyllie, and            uted File System. In Proceedings of the Symposium
+    Thomas E. Engelsiepen. Parallel file system and            on Operating Systems Principles, 1997, pages 224-
+    method with extensible hashing. US Patent No.              237.
+    05893086.                                             [19] Edward K. Lee and Chandramohan A. Thekkath.
+[8] J. N. Gray, Notes on database operating systems,          Petal: Distributed Virtual Disks, In Proceedings of
+    in Operating systems, an advanced course, edited          the Seventh International Conference on Architec-
+    by R. Bayer et. al., Springer-Verlag, Berlin, Ger-        tural Support for Programming Languages and
+    many, 1979, pages 393-400.                                Operating Systems, Cambridge, MA, 1996, pages
+                                                              84-92.
+[9] Ajay Mohindra and Murthy Devarakonda,
+    Distributed token management in the Calypso file      [20] Kenneth W. Preslan, Andrew P. Barry, Jonathan
+    system, Proceedings of the IEEE Symposium on              Brassow, Russell Cattelan, Adam Manthei, Erling
+    Parallel and Distributed Processing, New York,            Nygaard, Seth Van Oort, David Teigland, Mike
+    1994.                                                     Tilstra, Matthew O'Keefe, Grant Erickson and
+                                                              Manish Agarwal. Implementing Journaling in a
+[10] Dbench benchmark. Available from
+                                                              Linux Shared Disk File System. Seventeenth IEEE
+     ftp://samba.org/pub/tridge/dbench/
+                                                              Symposium on Mass Storage Systems, March
+[11] NetBench benchmark. http://etestinglabs.com/             2000, pages 351-378.
+     benchmarks/netbench/netbench.asp
+                                                          [21] Kenneth W. Preslan, Andrew P. Barry, Jonathan E.
+[12] Group Services Programming Guide and Refer-               Brassow, Grant M. Erickson, Erling Nygaard,
+     ence, RS/6000 Cluster Technology, Document                Christopher J. Sabol, Steven R. Soltis, David C.
+     Number SA22-7355-01, Second Edition (April                Teigland, and Matthew T. O'Keefe. A 64-bit,
+     2000), International Business Machines Corpora-           Shared Disk File System for Linux. Sixteenth IEEE
+     tion, 2455 South Road, Poughkeepsie, NY 12601-            Mass Storage Systems Symposium, March 15-18,
+     5400, USA. Also available from http://                    1999, San Diego, California, pages 351-378.
+     www.rs6000.ibm.com/resource/aix_resource/
+     sp_books/pssp/index.html
+

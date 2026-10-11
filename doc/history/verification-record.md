@@ -6949,3 +6949,42 @@ references number 19 in `hammer2_chain.c`, 18 in `hammer2_inode.c`, 10 in
 before the deletion and absent after. The lock was the core's lock
 interface, not a coherency-only structure, which is the correction to the
 "no caller" framing that the survey's arrival made worth restating.
+
+## The survey's sources captured and its quotations checked, 2026-10-10
+
+The comparable-systems survey behind `doc/CCMS_REFERENCE.md` cited twelve
+documents, of which three had been kept. The other nine are now captured
+in `doc/research/primary/`, each with its URL and extraction command in
+that directory's `PROVENANCE.txt`, so the survey can be re-read without
+re-fetching: the Lustre internals report, the Ceph, GPFS, Leases and
+Dynamo papers, RFC 8881 and three MS-SMB2 sections. The reference now
+cites every system section by section.
+
+Seventeen of the survey's quotations were checked against the captures
+rather than taken from the agent's report. Thirteen were found at once.
+Four first read as missing (GFS's lease sentence, Spanner's lease-vote
+sentence, GPFS's token-release sentence, Dynamo's slowest-replica
+sentence), and each was present and verbatim, split across lines where
+`pdftotext -layout` extracted a two-column page. A phrase search over
+these captures has to join lines first, which the reference and
+`PROVENANCE.txt` now both say. Section numbers were checked the same way;
+one was wrong (the Leases paper's 10-second result is in 3.2, not 3) and
+is corrected. One figure is marked as the survey's arithmetic rather than
+the paper's: Spanner's Table 3 measures a 14.4 ms write and a 1.4 ms
+read-only transaction, and the split of the write into Paxos and commit
+wait is the survey's.
+
+`test-doc-prose.sh` counted one finding as two. vale's closing summary
+for a single finding reads "1 warning and 0 suggestions", and the gate's
+pattern matched that line as well as the finding. It never let a defect
+through, since any finding still failed the gate, but its number was
+wrong and so was the selftest's ("2 finding(s)" for one planted
+violation). Both counts now drop the summary line; one planted violation
+reads one, a clean probe still fails the selftest, and a single real
+finding planted in the corpus reads one and fails the gate.
+The captures under `doc/research/primary/` include markdown (RFC 8881 and
+the three MS-SMB2 sections), which `git ls-files '*.md'` put in the prose
+gate's population: 246 findings, every one in text the IETF or Microsoft
+wrote. The gate excludes that one directory by path, and the exclusion was
+added only once it was measured to change the outcome; an earlier version
+added before the RFC arrived changed nothing and was removed.
