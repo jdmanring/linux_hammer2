@@ -55,7 +55,9 @@ extract() {
 # must carry the body, not just the signature.
 missing=0
 for fn in ccms_thread_lock ccms_thread_lock_nonblock \
-	  ccms_thread_lock_upgrade ccms_thread_unlock; do
+	  ccms_thread_lock_upgrade ccms_thread_unlock \
+	  ccms_thread_lock_downgrade ccms_thread_lock_temp_release \
+	  ccms_thread_lock_temp_restore ccms_thread_lock_owned; do
 	body=$(extract "$fn")
 	if [ -z "$body" ]; then
 		echo "ccms-lock: COULD-NOT-RUN: $fn not found in $SRC" >&2
@@ -79,7 +81,11 @@ done
 	printf 'void ccms_thread_lock(ccms_cst_t *, ccms_state_t);\n'
 	printf 'int ccms_thread_lock_nonblock(ccms_cst_t *, ccms_state_t);\n'
 	printf 'ccms_state_t ccms_thread_lock_upgrade(ccms_cst_t *);\n'
-	printf 'void ccms_thread_unlock(ccms_cst_t *);\n\n'
+	printf 'void ccms_thread_unlock(ccms_cst_t *);\n'
+	printf 'void ccms_thread_lock_downgrade(ccms_cst_t *, ccms_state_t);\n'
+	printf 'ccms_state_t ccms_thread_lock_temp_release(ccms_cst_t *);\n'
+	printf 'void ccms_thread_lock_temp_restore(ccms_cst_t *, ccms_state_t);\n'
+	printf 'int ccms_thread_lock_owned(ccms_cst_t *);\n\n'
 	cat "$tmp/hammer2-ccms-extracted.h"
 } > "$tmp/extracted.h"
 mv "$tmp/extracted.h" "$tmp/hammer2-ccms-extracted.h"
@@ -95,10 +101,36 @@ then
 	exit 1
 fi
 
-if ! "$tmp/ccmslock"; then
+out=$("$tmp/ccmslock"); rc=$?
+printf '%s\n' "$out"
+# The count is read from the probe's own rows rather than written here, so
+# a row added to the matrix is counted without editing this line.
+checks=$(printf '%s\n' "$out" | grep -cE '^  (ok|FAIL) ')
+[ "$checks" -gt 0 ] || { echo "ccms-lock: FAIL: the probe printed no rows"; exit 1; }
+if [ "$rc" -ne 0 ]; then
 	echo "ccms-lock: FAIL"
 	exit 1
 fi
+
+# The same functions under eight threads, test/hammer2-ccms-concurrent.c,
+# with the spin, the sleep and the wakeup made real.  The transition
+# matrix above is single-threaded; this is what says the transitions
+# hold when threads race for them.
+cp test/hammer2-ccms-concurrent.c "$tmp/"
+if ! $CC -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter -pthread \
+	    -I "$tmp" -o "$tmp/ccmsconc" "$tmp/hammer2-ccms-concurrent.c" 2>"$tmp/cc2.log"
+then
+	echo "ccms-lock: FAIL: the concurrency probe did not compile" >&2
+	sed 's/^/        /' "$tmp/cc2.log" | head -20 >&2
+	exit 1
+fi
+cout=$(timeout 120 "$tmp/ccmsconc"); crc=$?
+printf '%s\n' "$cout"
+[ "$crc" -eq 124 ] && { echo "ccms-lock: FAIL: the concurrency probe hung past 120 s"; exit 1; }
+cchecks=$(printf '%s\n' "$cout" | grep -cE '^  (ok|FAIL) ')
+[ "$cchecks" -gt 0 ] || { echo "ccms-lock: FAIL: the concurrency probe printed no rows"; exit 1; }
+[ "$crc" -eq 0 ] || { echo "ccms-lock: FAIL"; exit 1; }
+checks=$((checks + cchecks))
 
 # The control.  A probe whose extraction silently produced empty
 # functions would compile and report zero releases on every path, which
@@ -114,5 +146,5 @@ if [ "$n" -ne 1 ] || [ "$m" -ne 1 ]; then
 	exit 1
 fi
 
-echo "ccms-lock: 5 check(s), 0 failed"
+echo "ccms-lock: $checks check(s), 0 failed"
 exit 0

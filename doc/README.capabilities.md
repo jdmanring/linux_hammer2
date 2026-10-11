@@ -103,7 +103,9 @@ drift apart:
 | `HAMMER2IOC_BULKFREE_ASYNC` | start a bulkfree scan and return | GC candidates: the port answers the synchronous `HAMMER2IOC_BULKFREE_SCAN`, which `script/bulkfree.sh` measures |
 
 Seven of the eight are the cluster surface, which the rows above declare
-absent and which no BSD port carries either. The eighth is the
+absent today. They are not out of scope: they are P8 on the roadmap,
+behind the transport (P5) and the message core (P6), and DragonFly
+carries all seven. The eighth is the
 asynchronous form of an ioctl this port does carry, so a consumer that
 wants bulkfree without waiting composes it by running the scan on its own
 thread; it is not a missing operation, it is a missing convenience, and

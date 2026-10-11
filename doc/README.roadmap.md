@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0, P1, P2 and P3 are closed and P4 is next.
+dependency order. P0, P1 and P2 are closed; P3 is reopened with one exit criterion left, and P4 follows it.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -306,8 +306,22 @@ dependency order. P0, P1, P2 and P3 are closed and P4 is next.
    the administrative controller may preemptively downgrade a leaf, and
    the cache layer is a dependency of the quorum (P8) rather than of the
    transport. Two of the three positions the note offered were the
-   note's invention and are now recorded as such. P4, local
-   synchronization hardened, is next.
+   note's invention and are now recorded as such.
+
+   P3 is reopened as of 2026-10-11. It was closed on the design note
+   alone, and the work queue's exit criteria for it are a full
+   state-transition matrix, lockdep-clean, concurrent access tests and a
+   provenance record, with the verification plan adding explicit pre-
+   and postconditions and a negative test for every transition. Three of
+   those are now met: `doc/CCMS_TRANSITIONS.md` writes every transition
+   of the carried lock with its precondition and postcondition,
+   `test-ccms-lock.sh` checks each one and the four refused calls against
+   the shipped source, and races the same functions across eight threads
+   with mutual exclusion asserted, controls failing against the source
+   broken two ways. The fourth is open: nothing in the module calls the
+   lock, so lockdep on the guest has nothing to see until an in-kernel
+   path exercises it, and that path is P3's remaining item. P4 waits on
+   it, as the work queue's dependency says.
 
 ## Versioning
 
@@ -775,10 +789,15 @@ here with its provenance note and the refusal recorded beside it.
 ## Beyond 1.0
 
 H7 is advanced storage: multi-device, replication, remote checkpoints,
-clustering. Every BSD port dropped the cluster layer (`hammer2_ccms.c`,
-`hammer2_iocom.c`, `hammer2_msgops.c`, `hammer2_synchro.c`). This one
-dropped it too until 0.9.61, which carried `hammer2_synchro.c`, for the
-reason the paragraphs below give; the other three are still absent.
+clustering. The three BSD ports dropped the cluster layer
+(`hammer2_ccms.c`, `hammer2_iocom.c`, `hammer2_msgops.c`,
+`hammer2_synchro.c`) and this port followed them until 0.9.61, which
+carried `hammer2_synchro.c`, for the reason the paragraphs below give.
+`hammer2_ccms.c` followed at 1.0.6. The other two are not yet carried and
+are P6 on the roadmap below. The ports are a reference for how to map
+DragonFly onto an OS, not a ceiling on what to carry: the mission is
+DragonFly parity and then the original design, and a file is carried or
+not on that, not on what the ports chose for their own trees.
 
 Investigated 2026-10-03, and the answer is that this must
 not wait on upstream. The forge says the four cluster files have had no
@@ -800,17 +819,22 @@ transport was counted rather than assumed. `hammer2_synchro.c`, 1069 lines,
 calls no `kdmsg` function at all: it drives the core this port already
 carries, `hammer2_chain_*` and `hammer2_inode_*` and the XOP cluster arrays,
 over `kprintf`, `KKASSERT`, `tsleep`, `wakeup`, `kmalloc` and `kfree`.
-`hammer2_ccms.c`, 311 lines, needs no transport either, and is not
-cluster code any more. DragonFly took it out of its build in `94491fa098`
+`hammer2_ccms.c`, 311 lines, needs no transport either. It is carried
+at 1.0.6, and it is the state record the coherency half was to sit on as
+well as the lock the core used before the revamp (19 references in
+DragonFly's `hammer2_chain.c` and 18 in `hammer2_inode.c` at
+`94491fa098^`). DragonFly took it out of its build in `94491fa098`
 ("hammer2 - locking revamp", 2015-03-23) and deleted its cache-coherency
 half in the same commit (`ccms_domain`, `ccms_lock_get`,
 `ccms_rstate_get`), saying it would return with cache coherency. What is
 left is a recursive shared/exclusive thread lock with no caller in any
 of the four trees, read on 2026-10-06 against the forge and the clone at
 `250a8b4`; the header's MESI states survive only as its two lock modes.
-Carrying it would compile code upstream does not. Only `hammer2_iocom.c`,
-with 25 `kdmsg` calls, and `hammer2_msgops.c`, with 4, gate the message
-layer. So synchronization, which is what makes a SLAVE converge and is
+Only `hammer2_iocom.c`, which names `kdmsg` on 24 lines and calls 8 of
+its functions 14 times, and `hammer2_msgops.c`, which calls
+`kdmsg_msg_reply()` twice, gate the message layer (counted 2026-10-11 at
+`250a8b4`; an earlier count of 25 and 4 here counted mentions including
+type names and was not reproducible). So synchronization, which is what makes a SLAVE converge and is
 the first step asked for, is smaller than the transport and nearer to
 the capabilities the tables call unavailable.
 
@@ -847,8 +871,8 @@ Rules it adds to the ones this tree already keeps:
 | P0 | the 1.0 baseline: documents agree with the tree, the gates re-run, provenance clean | none | closed 2026-10-06, "Next moves" above |
 | P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass, and so do files held in the inode, negative offsets and a writer racing the seek; xfstests' `seek` group passes, 8 of 8. Closed |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | small-file create and delete times are measured by `million-tree.sh` (1,000,000 files in 248 s with four writers, whole-tree delete in 41 s); low-memory closure reads at 2, 4 and 8 GiB, a single-purpose root boot and one 128 KiB mapped write are recorded, and `latency.sh` reports per-operation fsync rather than a storm. Mixed concurrent read/write with mmap and fsync storms is measured by `script/storm.sh`, which runs mapped writers, write-then-fsync writers, fdatasync batchers and readers on one set of files at once and checks every cell after a remount with the cache dropped; a 24-cycle run passes with the kernel log clean, and 800-cycle soaks ran clean on both the debug build (2 h 39 min) and the KASAN build (6 h 14 min, `kasan 0 ubsan 0`), each with `fsck_hammer2` clean and the kernel log clean. An export is served by `nfsd` under both export modes, 12 checks 0 failed. A sustained soak is the same load over `H2_STORM_CYCLES` cycles rather than one long cycle, since a cycle is bounded by the volume; the readings are in the verification record. `O_DIRECT` is decided, under "Not on the roadmap" |
-| P3 | cache coherency (CCMS): a design note before any code | P2 | closed 2026-10-10. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
-| P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P2 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |
+| P3 | cache coherency (CCMS): a design note before any code | P2 | reopened 2026-10-11: transitions documented, matrix and concurrency tests pass, lockdep on the guest open because nothing in the module exercises the lock yet. Closed 2026-10-10 on the note alone, which did not meet the work queue's exit criteria. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
+| P4 | local synchronization hardened: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | `cluster-sync.sh` and `cluster-quorum.sh` measure the healthy cases |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
 | P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |
 | P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | open |
@@ -878,7 +902,10 @@ Corrections to the plan as it was written, each checked on 2026-10-06:
   `#if 0`, is `/* XXX */` and one assignment. The coherency protocol was
   never written; what upstream kept is the thread lock described above.
   So P3 is new design at the boundary the rules above stop at, and P4 no
-  longer waits on it.
+  longer waits on it. That last clause was wrong and is withdrawn: the
+  work queue makes P4 depend on P3, the carried lock still owed its exit
+  criteria, and the design document turned out to answer the design
+  question this correction thought was open.
 - **The lock it described is the other one.** It called the port's lock
   "deliberately not a plain `rw_semaphore`". `hammer2_spin_t` is a
   wrapper around one; the chain and inode locks are the shim's own
@@ -921,7 +948,15 @@ Each is the maintainer's, and each names what it blocks.
 
 - Porting the DragonFly kernel, or any part of it beyond what the core needs
   from the shim.
-- The cluster layer, before H7.
+- The cluster layer, before H7. This line was written when the ports'
+  deletion of it looked like the answer, and it is wrong. The cluster
+  layer is the original design: the design document lists the network
+  message core as operational and the quorum protocol, synchronization
+  and cache coherency as the clustering core, and the handoff's H2-Linux
+  2.x target names multi-master quorum, MESI, master/slave
+  synchronization and the remote cluster transport. It is P5 to P9 on the
+  roadmap below, and the reason it is not done is that the transport
+  under it is not done, not that it is out of scope.
 - 32-bit or HIGHMEM kernels. `hammer2_io_data()` hands the core a pointer it
   holds across sleeps, so the folio must be permanently mapped, and a
   `static_assert` refuses that build rather than corrupting quietly.

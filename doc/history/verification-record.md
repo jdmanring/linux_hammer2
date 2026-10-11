@@ -7029,3 +7029,59 @@ half: `test-absence.sh` covers a claim naming a function, and
 `test-inventory.sh` covers the origin table and the Makefile together. A
 sentence in prose that a file is not carried is covered by neither, which
 is how all four of these survived a green sweep.
+
+## P3 reopened, and the ports' framing taken out of the scope decisions, 2026-10-11
+
+P3 was closed on 2026-10-10 on its design note. The work queue's exit
+criteria for it are a full state-transition matrix, lockdep-clean,
+concurrent access tests and a provenance record, and the verification plan
+adds explicit pre- and postconditions with a negative test for every
+transition. The note met one of the four. The roadmap had also rewritten
+P4's dependency from P3 to P2 on the ground that P3 had nothing to carry,
+which was wrong once the design document was read and wrong regardless of
+it, since the carried lock owed its criteria either way.
+
+Readings taken against the shipped `hammer2_ccms.c`:
+
+- `doc/CCMS_TRANSITIONS.md` writes every transition the carried lock
+  implements with its precondition and postcondition, and the four calls
+  it refuses.
+- `test-ccms-lock.sh` now extracts eight functions rather than four and
+  checks 29 rows: the five release counts it had, twenty postconditions
+  from that document, and four from a concurrency probe. Each
+  postcondition row reads `count`, `td` and `upgrade` and requires every
+  spin acquire matched by a release. A downgrade broken to leave `count`
+  at 2 fails the two rows that follow it.
+- `test/hammer2-ccms-concurrent.c` races the same functions across eight
+  threads for 20,000 rounds each: 0 violations of mutual exclusion, the
+  lock unlocked with no upgrade pending at the end, 4911 upgrades taken,
+  0 sleeps ended by timeout rather than wakeup. Against the source broken
+  so an exclusive acquire ignores shared holders it stranded seven
+  waiters; broken so a shared acquire ignores a writer it let ten readers
+  into an exclusive section and then stranded eight. The first form of
+  the probe hung on both rather than reporting, so the joins are bounded
+  at 60 s and a hang reports itself with the violations counted to that
+  point.
+
+Open: lockdep. Nothing in the module calls the lock, so a lockdep run on
+the guest has nothing to observe. An in-kernel exercise path is P3's
+remaining item, and P4 waits on it.
+
+The same day the tree's scope decisions were read for the ports' framing.
+`doc/DROPS_AND_DISABLES.md` classifies every behavior this port does not
+carry against DragonFly, by Rule 12's four classes, and records that the
+ports are a reference for mapping DragonFly onto an OS rather than a
+ceiling on what to carry. Corrected where the framing had become a scope
+claim: "Not on the roadmap: the cluster layer, before H7", the
+portability audit's "dropped" rows for `hammer2_synchro.c` (carried since
+0.9.61), `hammer2_iocom.c` and `hammer2_msgops.c` (P6), the capabilities
+note that the seven cluster ioctls are carried by no BSD port, and the
+porting and header notes that inherited the XOP thread pool's removal
+without recording that multi-master needs it. The XOP pool is classified
+deferred-with-trigger, the trigger being multi-master: DragonFly carries
+27 references to it across three files at `250a8b4`, this port none.
+
+One count was not reproducible and is corrected: the roadmap gave
+`hammer2_iocom.c` 25 `kdmsg` calls and `hammer2_msgops.c` 4. The first
+names `kdmsg` on 24 lines and calls 8 of its functions 14 times; the
+second calls `kdmsg_msg_reply()` twice.

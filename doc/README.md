@@ -14,6 +14,8 @@ Which file answers which question.
 | What does the DIO layer do on Linux, and which sizes are the format's? | `IO_MODEL.md` |
 | What was the cache coherency protocol, and what would completing it have to prove? | `CCMS_DESIGN.md` |
 | Where does each CCMS claim come from, and what does the original actually say? | `CCMS_REFERENCE.md` |
+| What are the CCMS thread lock's transitions, with pre- and postconditions? | `CCMS_TRANSITIONS.md` |
+| What does this port drop, disable or defer against DragonFly, and is each one a decision? | `DROPS_AND_DISABLES.md` |
 | What does the port guarantee to something built above it? | `README.capabilities.md` |
 | Why BSD style in a Linux tree, and what would a mainline submission change? | `README.kernel-style.md` |
 | How is the carried core kept in step with upstream after a release? | `README.maintenance.md` |

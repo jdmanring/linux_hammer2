@@ -58,9 +58,9 @@ it overstates the semantic diff; it never understates it.
 | hammer2_lz4_encoder.h | 467 | 467 | 0 | 0 | 0 | 0.0% |
 | hammer2_lz4.h | 93 | 93 | 0 | 0 | 0 | 0.0% |
 | hammer2_ccms.c / .h | 311 / 194 | 323 / 177 | | | | carried 1.0.6, see the note below |
-| hammer2_iocom.c | 387 | absent | | | | dropped |
-| hammer2_msgops.c | 87 | absent | | | | dropped |
-| hammer2_synchro.c | 1069 | absent | | | | dropped |
+| hammer2_iocom.c | 387 | absent | | | | not yet carried, P6 |
+| hammer2_msgops.c | 87 | absent | | | | not yet carried, P6 |
+| hammer2_synchro.c | 1069 | carried | | | | carried 0.9.61, see the note below |
 
 Port-only files: `hammer2_os.h` (FB 552, NB 489, OB 474), `hammer2_compat.h`
 (59, 121, 127), `hammer2_rb.h` (140 in each).
@@ -191,3 +191,12 @@ The line counts in this document are DragonFly's at the time of the
 audit, and the column beside each is the FreeBSD port's. Neither column
 is this port's; the origin table in `doc/README.status.md` is, and it is
 regenerated and gated.
+
+The same correction, made a day later, applies to the three rows beside
+the CCMS one. `hammer2_synchro.c` has been carried since 0.9.61 and its
+row said "absent ... dropped". `hammer2_iocom.c` and `hammer2_msgops.c`
+are absent, but "dropped" names a decision this project never made: they
+are the message layer of the cluster design and are P6 on the roadmap.
+The ports dropped them; whether this port carries a file is decided by
+the mission, which is DragonFly parity and then the original design, not
+by what the ports chose for theirs.

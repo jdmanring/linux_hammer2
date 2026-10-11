@@ -221,6 +221,137 @@ main(void)
 		bad++;
 	}
 
+	/*
+	 * The transition matrix, doc/CCMS_TRANSITIONS.md.  Each row is a
+	 * call from a stated precondition, and the check is the
+	 * postcondition the document claims: count, td and upgrade after
+	 * the call, and every acquire matched by a release.  A row whose
+	 * document claim and code disagreed would fail here, which is the
+	 * point of writing the claims as checks rather than prose.
+	 */
+#define POST(name, c, t, u)	do {					\
+	int ok = cst.count == (c) && cst.td == (t) &&			\
+	    cst.upgrade == (u) && acquires == releases && !fails;	\
+	printf("  %s  %s: count %d, td %s, upgrade %d, %d/%d\n",	\
+	    ok ? "ok   " : "FAIL ", (name), cst.count,			\
+	    cst.td ? "held" : "NULL", cst.upgrade, acquires, releases);	\
+	if (!ok)							\
+		bad++;							\
+} while (0)
+
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_SHARED);
+	POST("unlocked -> shared", 1, NULL, 0);
+
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_SHARED);
+	ccms_thread_lock(&cst, CCMS_STATE_SHARED);
+	POST("shared -> shared, depth 2", 2, NULL, 0);
+	ccms_thread_unlock(&cst);
+	POST("shared depth 2 -> shared depth 1", 1, NULL, 0);
+	ccms_thread_unlock(&cst);
+	POST("shared depth 1 -> unlocked", 0, NULL, 0);
+
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_EXCLUSIVE);
+	POST("unlocked -> exclusive", -1, curthread, 0);
+	ccms_thread_lock(&cst, CCMS_STATE_SHARED);
+	POST("exclusive asks shared, stays exclusive, depth 2", -2, curthread, 0);
+	ccms_thread_lock(&cst, CCMS_STATE_EXCLUSIVE);
+	POST("exclusive recursion, depth 3", -3, curthread, 0);
+	ccms_thread_unlock(&cst);
+	ccms_thread_unlock(&cst);
+	POST("exclusive depth 3 -> depth 1", -1, curthread, 0);
+	ccms_thread_unlock(&cst);
+	POST("exclusive depth 1 -> unlocked", 0, NULL, 0);
+
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_SHARED);
+	{
+		ccms_state_t o = ccms_thread_lock_upgrade(&cst);
+		POST("shared -> upgraded to exclusive", -1, curthread, 1);
+		if (o != CCMS_STATE_SHARED) {
+			printf("  FAIL  upgrade returned %d, expected SHARED\n", o);
+			bad++;
+		}
+		ccms_thread_lock_downgrade(&cst, o);
+		POST("upgraded -> downgraded to shared", 1, NULL, 0);
+	}
+	ccms_thread_unlock(&cst);
+	POST("downgraded shared -> unlocked", 0, NULL, 0);
+
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_EXCLUSIVE);
+	{
+		ccms_state_t o = ccms_thread_lock_upgrade(&cst);
+		POST("exclusive upgrade is a no-op", -1, curthread, 0);
+		if (o != CCMS_STATE_EXCLUSIVE) {
+			printf("  FAIL  upgrade returned %d, expected EXCLUSIVE\n", o);
+			bad++;
+		}
+		ccms_thread_lock_downgrade(&cst, o);
+		POST("exclusive downgrade is a no-op", -1, curthread, 0);
+	}
+	ccms_thread_unlock(&cst);
+
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_EXCLUSIVE);
+	{
+		ccms_state_t o = ccms_thread_lock_temp_release(&cst);
+		POST("exclusive -> temp released", 0, NULL, 0);
+		if (o != CCMS_STATE_EXCLUSIVE) {
+			printf("  FAIL  temp_release returned %d, expected EXCLUSIVE\n", o);
+			bad++;
+		}
+		ccms_thread_lock_temp_restore(&cst, o);
+		POST("temp released -> restored exclusive", -1, curthread, 0);
+	}
+	ccms_thread_unlock(&cst);
+
+	reset(); init(&cst);
+	if (ccms_thread_lock_temp_release(&cst) != CCMS_STATE_INVALID) {
+		printf("  FAIL  temp_release of an unlocked CST did not return INVALID\n");
+		bad++;
+	}
+	POST("unlocked temp release is a no-op", 0, NULL, 0);
+
+	/*
+	 * The nonblock refusals: a would-block returns EBUSY and leaves the
+	 * holder's state as it was.
+	 */
+	reset(); init(&cst);
+	ccms_thread_lock(&cst, CCMS_STATE_SHARED);
+	cst.upgrade = 1;		/* another thread's upgrade pending */
+	if (ccms_thread_lock_nonblock(&cst, CCMS_STATE_SHARED) != EBUSY) {
+		printf("  FAIL  nonblock shared under a pending upgrade was not refused\n");
+		bad++;
+	}
+	cst.upgrade = 0;
+	POST("nonblock shared refused under upgrade, state kept", 1, NULL, 0);
+	if (ccms_thread_lock_nonblock(&cst, CCMS_STATE_EXCLUSIVE) != EBUSY) {
+		printf("  FAIL  nonblock exclusive over a shared holder was not refused\n");
+		bad++;
+	}
+	POST("nonblock exclusive refused over shared, state kept", 1, NULL, 0);
+	ccms_thread_unlock(&cst);
+
+	reset(); init(&cst);
+	if (ccms_thread_lock_nonblock(&cst, CCMS_STATE_EXCLUSIVE) != 0) {
+		printf("  FAIL  nonblock exclusive on an unlocked CST was refused\n");
+		bad++;
+	}
+	POST("nonblock unlocked -> exclusive", -1, curthread, 0);
+	if (!ccms_thread_lock_owned(&cst)) {
+		printf("  FAIL  owned() false for the exclusive holder\n");
+		bad++;
+	}
+	ccms_thread_unlock(&cst);
+	if (ccms_thread_lock_owned(&cst)) {
+		printf("  FAIL  owned() true after the release\n");
+		bad++;
+	}
+#undef POST
+
 	if (fails) {
 		printf("  FAIL  %d KKASSERT failure(s)\n", fails);
 		bad++;
