@@ -255,7 +255,13 @@ supports that, but only after this.
    Each was replaced only by measurement or by reading the kernel.
 
 2. ~~An instrument for dedup.~~ Done 2026-09-25: `test/hammer2-dedup.c`.
-3. `->direct_IO`, if databases or VM images are a target.
+3. ~~`->direct_IO`, if databases or VM images are a target.~~ Decided
+   after this audit: `doc/README.roadmap.md` records it under "Not on the
+   roadmap". DragonFly's HAMMER2 has no direct path either, every block
+   being checksummed and possibly compressed on the way, and this port
+   registers no `->direct_IO`, so the kernel refuses the open with
+   `EINVAL`. `doc/DROPS_AND_DISABLES.md` classifies it
+   unavailable-with-reason. Revisited only if a workload needs it.
 4. ~~Random-4K and fsync latency.~~ Done 2026-09-26: `script/latency.sh` and
    `test/hammer2-latency.c`, on this port and on ext4 and btrfs beside it.
 5. ~~A gate that requires a reference-filesystem control for kernel-facing
