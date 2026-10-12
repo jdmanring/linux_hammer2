@@ -7385,10 +7385,17 @@ exactly.
   holds every one of the 81, so at the moment of that pass the master's
   scan did not see inodes its own media now has.
 - The thread wrote 234 chains in all, every one inside a single second,
-  52831 s. That is far fewer than the large directory's 20000 files, so
-  the slave's copies of most of them did not come from an insert this
-  print saw. How the slave came to hold them before the root pass
-  destroyed 81 is the next question.
+  52831 s, during phase 2's initial copy and before the large directory
+  existed. None of them names a file of that directory, and their keys
+  (`0x0` to `0x5d`) share no range with the destroyed ones. So in this
+  run the thread inserted none of the large directory's inodes at all,
+  yet the slave's media holds 19960 of them, and the 81 the root pass
+  destroyed were among those. The writer that put the directory on the
+  slave is not the synchronization thread's insert path, and that is the
+  next reading. A dirent key's parent cannot be read off the key itself
+  (the parent's inode number is not encoded in it, as one attempt here
+  assumed), so naming the directory the 81 belonged to needs the
+  fingerprint's own walk rather than a key decode.
 - The earlier entries' "copy stops after two inodes" and "the root is
   stamped past its subtree" both describe this from outside. The root's
   tid is the master's because the pass that destroyed the 81 completed
