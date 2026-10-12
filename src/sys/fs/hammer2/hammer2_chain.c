@@ -643,6 +643,7 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 			if ((parent->flags & HAMMER2_CHAIN_COUNTEDBREFS) &&
 			    (chain->flags & HAMMER2_CHAIN_BLKMAPPED) == 0)
 				atomic_add_int(&parent->core.live_count, -1);
+#if defined(HAMMER2_LOCKDEBUG)
 			/*
 			 * XXX Linux: the fault this run reached is here, and
 			 * a print is the only way to name its operands, since
@@ -653,16 +654,23 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 			 * KASAN calling the address vmalloc-out-of-bounds with
 			 * no free stack, and the page fault's CR2 landing in a
 			 * different vmalloc region from RSP.  That is a pointer
-			 * into freed vmalloc memory, not a deep stack, so the
-			 * operand is a chain whose rbe_link leads into a
-			 * structure already freed, or a parent whose core.rbtree
-			 * was freed under it.  Debug builds only, and it does
-			 * not change what happens next.
+			 * into freed vmalloc memory, not a deep stack.
+			 *
+			 * Debug builds only, and for two reasons beyond noise.
+			 * The fields below are exactly the ones that may have
+			 * been freed, so reading them in a shipping build would
+			 * add an out-of-bounds read to the fault it describes;
+			 * under HAMMER2_LOCKDEBUG the build is already the
+			 * instrument for a broken state.  And the addresses go
+			 * through %p, which is hashed, where %px would put raw
+			 * kernel pointers in a log an unprivileged reader can
+			 * reach; the whole chain list is behind the same flag
+			 * for the same reason.
 			 */
 			if (READ_ONCE(hammer2_device_error))
-				hprintf("rbtree remove: parent %px flags %08x "
-				    "count %d | chain %px key %016llx flags %08x "
-				    "refs %d | link %px %px %px\n",
+				hprintf("rbtree remove: parent %p flags %08x "
+				    "count %d | chain %p key %016llx flags %08x "
+				    "refs %d | link %p %p %p\n",
 				    parent, parent->flags,
 				    parent->core.chain_count,
 				    chain, (long long)chain->bref.key,
@@ -670,6 +678,7 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 				    chain->rbnode.rbe_link[0],
 				    chain->rbnode.rbe_link[1],
 				    chain->rbnode.rbe_link[2]);
+#endif
 			RB_REMOVE(hammer2_chain_tree, &parent->core.rbtree,
 			    chain);
 			atomic_clear_int(&chain->flags, HAMMER2_CHAIN_ONRBTREE);
