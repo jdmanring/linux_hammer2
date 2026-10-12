@@ -7298,6 +7298,14 @@ forever.
 - The reading, from the volumes the interrupted run left: master root
   `mod=00000000000273b3 lfcnt=20039`, slave root
   `mod=00000000000273b3 lfcnt=19957`. Equal modify_tid, 82 fewer files.
+  `fsck_hammer2`'s own totals give the shape: master 20041 inodes,
+  20103 data blocks, 20037 dirents; slave 19959 inodes, 20021 data
+  blocks, 20037 dirents. Every directory entry arrived and 82 inodes
+  with their data did not, so the slave holds 82 names pointing at no
+  file. Both volumes pass `fsck_hammer2` with exit 0, so that exit status
+  does not check a dirent against the inode it names and is not evidence
+  of a consistent slave; the fingerprint comparison in `cluster-sync.sh`
+  is what fails on it.
   The thread's decision (`want_update = chain->bref.modify_tid != sync_tid`,
   `hammer2_synchro.c:500`) is correct for the state it reads. The state
   is wrong, and no later pass can see the gap, because the gate compares
