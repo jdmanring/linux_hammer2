@@ -643,6 +643,33 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 			if ((parent->flags & HAMMER2_CHAIN_COUNTEDBREFS) &&
 			    (chain->flags & HAMMER2_CHAIN_BLKMAPPED) == 0)
 				atomic_add_int(&parent->core.live_count, -1);
+			/*
+			 * XXX Linux: the fault this run reached is here, and
+			 * a print is the only way to name its operands, since
+			 * the oops reports the address and the instruction and
+			 * nothing about which chain or parent produced them.
+			 * Measured 2026-10-12: the same run that marks the
+			 * device in error dies 157 s later in this unlink,
+			 * KASAN calling the address vmalloc-out-of-bounds with
+			 * no free stack, and the page fault's CR2 landing in a
+			 * different vmalloc region from RSP.  That is a pointer
+			 * into freed vmalloc memory, not a deep stack, so the
+			 * operand is a chain whose rbe_link leads into a
+			 * structure already freed, or a parent whose core.rbtree
+			 * was freed under it.  Debug builds only, and it does
+			 * not change what happens next.
+			 */
+			if (READ_ONCE(hammer2_device_error))
+				hprintf("rbtree remove: parent %px flags %08x "
+				    "count %d | chain %px key %016llx flags %08x "
+				    "refs %d | link %px %px %px\n",
+				    parent, parent->flags,
+				    parent->core.chain_count,
+				    chain, (long long)chain->bref.key,
+				    chain->flags, chain->refs,
+				    chain->rbnode.rbe_link[0],
+				    chain->rbnode.rbe_link[1],
+				    chain->rbnode.rbe_link[2]);
 			RB_REMOVE(hammer2_chain_tree, &parent->core.rbtree,
 			    chain);
 			atomic_clear_int(&chain->flags, HAMMER2_CHAIN_ONRBTREE);

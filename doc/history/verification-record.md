@@ -7857,10 +7857,49 @@ defect that returns with the next drop site. Instead:
     in every inode's cluster and ccache before it frees the storage, which
     covers the population upstream's root-cluster guard cannot see.
 
-Not yet measured: whether either change alone is sufficient, and whether
-the eviction path can be reached without first marking the device in
-error. The probe is `script/sync-empty-base.sh`, whose run wedged before
-any check below the unmount could be read; its next run is the before and
-after reading for this fix. The `keybits` printer added to the held-chain
-dump is unrelated to this and remains wanted for the separate
-sync-insert topology question.
+MEASURED AFTER THE REPAIR, AND IT DID NOT FIX THE WEDGE. The run at
+`sync-empty-base.sh` with both changes in the module crashed identically:
+`hammer2_chain_drop+0x147e`, the same offset as before, and `umount`
+exited with interrupts disabled at 271.824 s. The attribution below is
+therefore WRONG as the cause of this wedge, and this entry is corrected
+rather than left standing.
+
+The faulting instruction was resolved against the build rather than read
+off the stack: `addr2line` puts `chain_drop+0x147e` at
+`hammer2_chain.c:646`, which is the `RB_REMOVE()` call, not the
+`hammer2_pfs_memory_wakeup(chain->pmp, -1)` at line 568 that this entry
+was written around. KASAN classifies the address as
+`vmalloc-out-of-bounds` and says only that it "belongs to a vmalloc
+virtual mapping": there is no `Allocated by task` and no `Freed by task`
+block, which is not the signature of a freed object. The address sits
+about one 4 KiB frame above RSP in the `umount` task, which had already
+taken a fatal `Oops` earlier in the same run (`Tainted: D`).
+
+What that means for the two changes: they are still correct on their own
+merits, since a chain dropped after its PFS is freed does read a freed
+`pmp` through the wakeup, and `pfsdealloc` does not clear the pointer
+where all four origin trees also do not. They are kept and marked `XXX`.
+They are NOT the fix for this wedge, and the sentence that called them
+the repair was written before the run that tested it.
+
+The next reading is at `RB_REMOVE()`'s own inputs, `parent->core.rbtree`
+and `chain->rbe_link`, instrumented rather than guessed at a fourth time.
+A fourth guess at the cause of this crash is the thing that produced the
+three wrong ones.
+
+Measured since, and it narrows the fault to a dangling pointer rather than
+a deep stack: the second report in the same run is a plain page fault with
+`CR2 ffffc90024ccf600`, which is the same address the KASAN report names,
+and `RSP ffffc9000a02f538` in a DIFFERENT vmalloc region. A stack overrun
+would have CR2 just below RSP in the same region. So the operand really is
+a pointer into freed vmalloc memory, and `RB_REMOVE` is unlinking a chain
+whose `rbe_link` leads into a structure that has already been freed, or a
+parent whose `core.rbtree` was freed under it. That is a chain-lifetime
+violation of the same family as the `pmp` one and not the same member: the
+two changes clear `pmp`, which `RB_REMOVE` never reads, so neither could
+have affected this address.
+
+Unmeasured and wanted: which allocation `ffffc90024ccf600` belongs to, and
+which `chain` is being removed. A probe that prints `parent`, `chain`,
+`chain->rbe_link[0..2]` and `parent->core.rbtree` at entry to the
+`RB_REMOVE` at line 646 would name both, and is the next instrument.
