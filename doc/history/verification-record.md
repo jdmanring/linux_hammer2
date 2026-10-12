@@ -7422,8 +7422,19 @@ DragonFly's does.
 - What remains open is the 81. Those inodes were written by the
   frontend to both elements, then destroyed on the slave by a later
   root-only pass of the thread, which found them absent from the
-  master's view at that moment. The phase unmounts the slave while the
-  write's flush is in flight, so the slave can hold chains the master's
-  media did not yet hold. Whether that is the order of events is the
-  next reading. The check is a per-chain print run with the unmount
-  removed: if the 81 are not destroyed, the unmount is the cause.
+  master's view at that moment.
+- A second per-chain run settles the order, and it rules the unmount
+  out. 89 destroys this time, all inside one root pass at 59830 s, and
+  the phase's unmount of the slave came at 60013 s, three minutes later.
+  The destroying pass ran while the 20000-file write was still going on
+  the master, with the slave mounted throughout. So a synchronization
+  pass that overlaps a frontend write destroys inodes the frontend has
+  already put on the slave and the master's scan does not yet return,
+  and then stamps the root. The interruption is incidental: the
+  defect is a pass racing an ordinary write, which is the plan's
+  "source mutation during convergence" case, reached by accident.
+- The next reading is the master side of that race: what the master's
+  scan returns for the large directory during the write, against what
+  its media holds after it. The interruption phase cannot close until
+  that is understood, because any resumed pass can race a write the
+  same way.
