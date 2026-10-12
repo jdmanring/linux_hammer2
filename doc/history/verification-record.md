@@ -7479,3 +7479,37 @@ Two things follow. The probe's convergence check counts the wrong
 writer and must be replaced by a reading of what the slave holds. And
 the next run must put the write's start and end into the kernel log, so
 a destroying pass can be placed against it.
+
+## The slave's missing inodes are the destroys made during the write, 2026-10-12
+
+The phase now marks the large-directory write in the kernel log
+(`h2probe: bigdir write start` and `end` through `/dev/kmsg`), counts
+the thread's destroys between the marks, and judges the resume by two
+completed passes rather than by the thread's update count, which the
+entry above showed cannot grow with a set the frontend writes itself.
+Run with `KDIR=$HOME/kernels/linux-7.3-rc5-kasan H2_DEBUG=0x8001
+H2_RUN_TIMEOUT=1200`: 33 checks, 6 failed.
+
+- `no pass destroys on the slave while the master is being written`:
+  53 destroys inside the write.
+- `the slave holds what the master holds`: master 20041 inodes, 20103
+  data blocks, 20037 dirents; slave 19988, 20050, 20037. The slave is
+  short 53 inodes and 53 data blocks, the number destroyed inside the
+  write, and keeps every dirent. The fingerprint differs on 106 lines
+  of 60177.
+- `the resumed thread completes two passes`: 2 in 10 s. The remounted
+  thread runs; it does not restore the 53, since nothing it compares
+  says they are missing.
+- `the unmount lands inside an open pass` failed, and with it
+  `the interrupted slave leaves no thread` (1 left) and `the stop is
+  read between deferred directories` (0 lines). Those two say nothing
+  about an interruption until the unmount lands inside a pass, so the
+  interruption itself is still untested.
+- Kernel log clean, kmemleak 0, nothing scrapped, `fsck_hammer2` exit 0
+  on both volumes, which again does not see a dirent whose inode is
+  gone.
+
+So the loss is the source-mutation case alone: a pass that runs during
+a write on the master destroys inodes on the slave. What is still open
+is why the pass sees them as absent on the master, and placing the
+unmount inside a pass so the interruption is tested at all.

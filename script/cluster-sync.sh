@@ -221,9 +221,16 @@ echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
 # 58 for 55 files and their directories), and both volumes' media at the end.
 u0=$(klog 'syncthr: update inode')
 echo "interrupt-base $u0"
+# The write leaves no line of its own in the kernel log, so it is marked
+# there, and a destroying pass can be placed inside or outside it.
 mkdir /mnt/h2c/bigdir
+echo "h2probe: bigdir write start" > /dev/kmsg
 i=0; while [ $i -lt $NBIG ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir/p$i; i=$((i + 1)); done
 sync
+echo "h2probe: bigdir write end" > /dev/kmsg
+# Destroys the thread made while the write ran, and in all. Both read 0
+# unless H2_DEBUG carries 0x0001, which is what prints a destroy.
+echo "write-destroys $(sed -n '/h2probe: bigdir write start/,/h2probe: bigdir write end/p' $K | grep -c 'destroy rec')"
 # The copy has begun once its update lines pass the phase-3 baseline.
 n=0
 while [ $n -lt 600 ]; do
@@ -250,19 +257,22 @@ echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 echo "interrupt-didbreak $(klog didbreak)"
-# 5. Resume: remount the slave volume, the thread starts again, and the copy
-# must finish. Convergence is the update count reaching the full set, one
-# line per inode (phase 2's ratio, with bigdir's own directory beside it),
-# and the media comparison at the end of the run is the off-media proof.
+# 5. Resume: remount the slave volume and let the thread finish. The
+# frontend writes bigdir to the slave itself (hammer2_xop_start_except()
+# queues every element), so the thread's update count does not grow with
+# the set and cannot measure convergence; waiting on it ran out every
+# time. The wait is for two complete passes after the remount, and what
+# the slave holds is decided off the media by the fingerprint at the end.
 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
+c0=$(klog 'sync_slaves error')
 n=0
-while [ $n -lt 300 ]; do
-	[ "$(klog 'syncthr: update inode')" -ge $(( u0 + NBIG + 1 )) ] && break
+while [ $n -lt 120 ]; do
+	[ "$(klog 'sync_slaves error')" -ge $(( c0 + 2 )) ] && break
 	sleep 1; n=$((n + 1))
 done
 echo "resume-seconds $n"
-echo "resume-total $(( $(klog 'syncthr: update inode') - u0 ))"
+echo "resume-passes $(( $(klog 'sync_slaves error') - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
 umount /mnt/h2c && umount /mnt/h2s && umount /mnt/h2m && echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
@@ -336,8 +346,10 @@ ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmo
 a=$(val interrupt-threads); [ "${a:-1}" = 0 ]; check "the interrupted slave leaves no thread" $? "${a:-none} left"
 d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the stop is read between deferred directories" $? "${d:-0} line(s)"
 a=$(val resume-thread); [ "${a:-0}" = 1 ]; check "the remount starts its thread again" $? "${a:-none}"
-f=$(val resume-total); [ "${f:-0}" -ge "$NBIG" ] 2>/dev/null; check "the resumed pass finishes the copy" $? "${f:-0} of $NBIG files"
-s=$(val resume-seconds); [ "${s:-999}" -lt 300 ] 2>/dev/null; check "it converges within the wait" $? "${s:-none} s"
+p=$(val resume-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the resumed thread completes two passes" $? "${p:-0} in $(val resume-seconds) s"
+if [ $(( H2DEBUG & 1 )) = 1 ]; then
+	w=$(val write-destroys); [ "${w:-1}" = 0 ]; check "no pass destroys on the slave while the master is being written" $? "${w:-none} destroy(s) inside the write"
+fi
 e=$(val resume-errors); [ "${e:-1}" = 0 ]; check "no pass reports an error across the interruption" $? "${e:-none}"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
