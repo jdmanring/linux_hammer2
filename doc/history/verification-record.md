@@ -7585,11 +7585,20 @@ no data, because the guest script exited at the remount after the
 host's ssh returned 255 rather than 124, so the host ran its checks,
 the disk detach, with nothing to read.
 
-The kernel log it left is real evidence and is kept at
-`doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt`,
-but it is NOT the run it was first written up as. Corrected here,
-because the first version of this entry said the write to the master
-with the slave's ROOT unmounted caused it, and the log says otherwise:
+The kernel log it left is real evidence. The fault itself is kept whole
+at `doc/history/kernel-reports/hammer2-sync-work-empty-base-20261012.txt`,
+and `doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt`
+is an extract of it. That extract carries the 219 `hammer2_base_delete`
+lines and the ten `chain error during flush` lines after them, and
+nothing else: no call trace, no `WARNING`, no `Workqueue` line, none of
+the nine unmount readings. Everything said below about the producer
+before 2026-10-12 came from frames that are not in it, and the whole log
+says the producer is a different one, which is corrected here. What the
+extract is sound for is the fault message, its repetition and the keys.
+
+The whole log is NOT the run the extract was first written up as. The
+first version of this entry said the write to the master with the
+slave's ROOT unmounted caused it, and the log says otherwise:
 
 - The log carries no `h2probe` line at all, and phase 4 is what writes
   those markers, so this log cannot be from a phase-4 run. Its guest
@@ -7622,11 +7631,32 @@ first symptom follows an unmount rather than a write, and the cascade
 that follows is one fault, not 219: `hpanic` marks the device in error
 module-wide and returns, so every later flush drops its blocks
 unwritten, which is what produces the ENOENT writes and the mount
-hanging in `iterate_dir`. The producer of the first miss is the
-periodic syncer's flush of the PFS cluster root, from the backtrace the
-log carries: `hammer2_vfs_sync_pmp`, `hammer2_inode_chain_flush`,
-`hammer2_xop_inode_flush`, `hammer2_flush`, `hammer2_flush_core`,
-`hammer2_flush_recurse`, `hammer2_base_delete`.
+hanging in `iterate_dir`.
+
+**The producer is the periodic syncer, and this entry's earlier version
+said the teardown.** The committed file above is a 232-line extract and
+it does not carry the fault's call trace, which is what the frames were
+being read from. The whole log is
+`doc/history/kernel-reports/hammer2-sync-work-empty-base-20261012.txt`,
+1784 lines, of which the extract is the `hammer2_base_delete` block plus
+the ten lines after it; the trace is at 732.727 with the frames
+
+    hammer2_base_delete  <- hammer2_flush_core <- hammer2_flush_recurse
+      <- hammer2_chain_tree_RB_SCAN <- hammer2_flush_core
+      <- hammer2_flush <- hammer2_xop_inode_flush
+      <- hammer2_xop_start_except <- hammer2_inode_chain_flush
+      <- hammer2_vfs_sync_pmp <- hammer2_sync_fs <- sync_filesystem
+      <- hammer2_sync_work
+
+and the line above the trace names the workqueue:
+`Workqueue: events hammer2_sync_work`. `hammer2_pfsfree_scan` is not in
+the log at all, so the teardown the frames were attributed to is not on
+this path. What the shape is instead is this port's own syncer,
+`hammer2_sync_work` at `hammer2_vfsops.c:2101`, a delayed work that
+reschedules itself every `HAMMER2_SYNC_INTERVAL` and calls
+`sync_filesystem()` from a workqueue thread. The flush that faults runs
+22 s after an unmount that left 2602 modified chains, on a workqueue
+thread rather than in the unmount that returned.
 
 The keys deleted are block-table and directory keys, not a file range:
 `8100000000000000/56`, `8200000000000000/56`, `8400000000000000/56`,
@@ -7638,6 +7668,30 @@ PFS root's block table inconsistent with its children, and whether
 `hammer2_unmount_scrap` is the path that scraps a chain the root's
 block table still references. Until that is read, the write is not
 implicated and no guard is written on it.
+
+The whole log narrows that further than the extract did. It carries 455
+`sync_slaves pfs CL` lines and no `LONE` line, so it is a two-element
+cluster; the pass runs at 116.6 s and every pass closes with
+`defer 0`; and the fault is at 732.7 s on a thread whose own `sync_fs`
+is the thing that reaches it. The extract's `scrapping unflushed`
+reading at 180.652 s is real but it is a second unmount's, after the
+first at 130.464 s left 2510 modified chains, and the flush that faults
+is 22 s past the third at 711.209 s. So the reading to take is not
+"which unmount corrupts the root" but "what a syncer's `sync_filesystem`
+does to a volume an earlier unmount of the same run left chains on",
+which is what `kill_sb` prints unconditionally and what the counters
+now let a run answer.
+
+The module under test is named by build id, not assumed: the trace
+carries `hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699`, and the
+build of `4d89d8d` against the same kernel tree carries
+`srcversion 484910DDC5D95644E786D54`, so this log is not the current
+tree. It is one run read twice: `stock-kasan.log` and `dbg6-dmesg.txt`
+are two `dmesg` saves of the same ring, 1784 and 1828 lines with the
+same nine unmounts, the same 219 misses and the same `mod 41468` chain,
+the longer one ending 38 s later. Neither is the run `dbg6.klog` holds,
+which is the phase-4 marker run at guest uptime 78526-78775 s and has
+no `from empty base` line at all.
 
 The probe's own defects, found by this run, are fixed in the same
 commit: every mount, unmount and `rmmod` in the guest script is now
@@ -7687,5 +7741,11 @@ path. The scrap reports a failed flush rather than causing one.
 
 Not established: what stops those flushes completing, whether the
 corrupting log's counts and its later empty base are one fault or two,
-and any reproduction on demand. The corrupting log is older than the
-phase-4 markers, so its write and its mount topology are unknown.
+and any reproduction on demand. The corrupting log's mount topology is
+now known, and its write is not: 455 `sync_slaves pfs CL` lines and no
+`LONE` line put a two-element cluster on the guest, and 30728 inode and
+63489 chain at the unmount before the fault put a tree larger than the
+phase's 20000 files. What wrote it is not in the log, since nothing
+marks a write, and the module's own build id says this is not the
+current tree; the guest was rebooted after and its uptime counter
+restarted, so no later log can be placed beside it by time.

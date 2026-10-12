@@ -1,0 +1,1784 @@
+[  106.627208] hammer2: loading out-of-tree module taints kernel.
+[  113.988295] sync_slaves pfs CL clindex 1
+[  113.988806] sync_slaves error 0 defer 0000000000000000
+[  119.274845] sync_slaves pfs CL clindex 1
+[  119.275012] sync_slaves error 0 defer 0000000000000000
+[  124.394781] sync_slaves pfs CL clindex 1
+[  124.402667] START_SCAN IP=b6a9cb23fd8a8001 chain=00000000e2c2b1e4 (800b898c09878001)
+[  124.430632] syncthr: update inode 00000000cd467978 (CL)
+[  124.430859] sync_slaves error 0 defer 0000000000000000
+[  129.514804] sync_slaves pfs CL clindex 1
+[  129.520619] START_SCAN IP=b6a9cb23fd8a8001 chain=00000000b4d1511c (800b898c09878001)
+[  129.573612] syncthr: update inode 00000000cd467978 (CL)
+[  129.573702] sync_slaves error 0 defer 0000000000000000
+[  130.464163] hammer2: hammer2_kill_sb: after unmount: 507 inode, 2515 chain, 2510 modified, 89 dio still allocated
+[  134.634755] sync_slaves pfs CL clindex 1
+[  134.634924] sync_slaves error 0 defer 0000000000000000
+[  139.754763] sync_slaves pfs CL clindex 1
+[  139.781668] START_SCAN IP=b6a9cb23fd8a8001 chain=0000000068fa9592 (800b898c09878001)
+[  139.848533] syncthr: update inode 00000000cd467978 (CL)
+[  139.848626] sync_slaves error 0 defer 0000000000000000
+[  145.386758] sync_slaves pfs CL clindex 1
+[  145.488892] START_SCAN IP=b6a9cb23fd8a8001 chain=000000001e65e4b3 (0000000000000400)
+[  145.778678] syncthr: update inode 00000000cd467978 (CL)
+[  145.778803] sync_slaves error 0 defer 0000000000000000
+[  152.042739] sync_slaves pfs CL clindex 1
+[  152.042906] sync_slaves error 0 defer 0000000000000000
+[  157.163731] sync_slaves pfs CL clindex 1
+[  157.331232] START_SCAN IP=b6a9cb23fd8a8001 chain=000000001e65e4b3 (0000000000000400)
+[  157.590362] sync_slaves error 256 defer 0000000057bdf25c
+[  157.591327] START_SCAN IP=00000000000004ae chain=0000000000000000 (ffffffffffffffff)
+[  157.592983] syncthr: update inode 00000000b4698d73 (0x00000000000004ae)
+[  157.593432] START_SCAN IP=00000000000004ad chain=0000000000000000 (ffffffffffffffff)
+[  157.594135] syncthr: update inode 00000000a6111c98 (0x00000000000004ad)
+[  157.594622] START_SCAN IP=00000000000004ac chain=0000000000000000 (ffffffffffffffff)
+[  157.642327] syncthr: update inode 000000006dc6bd6a (0x00000000000004ac)
+[  157.643223] START_SCAN IP=00000000000004ab chain=0000000000000000 (ffffffffffffffff)
+[  157.643800] syncthr: update inode 00000000613a2f1d (0x00000000000004ab)
+[  157.644159] START_SCAN IP=00000000000004aa chain=0000000000000000 (ffffffffffffffff)
+[  157.644950] syncthr: update inode 0000000090a52fa7 (0x00000000000004aa)
+[  157.645301] START_SCAN IP=00000000000004a9 chain=0000000000000000 (ffffffffffffffff)
+[  157.646373] syncthr: update inode 00000000f7d305a2 (0x00000000000004a9)
+[  157.646807] START_SCAN IP=00000000000004a8 chain=0000000000000000 (ffffffffffffffff)
+[  157.647250] syncthr: update inode 00000000a281208f (0x00000000000004a8)
+[  157.647604] START_SCAN IP=00000000000004a7 chain=0000000000000000 (ffffffffffffffff)
+[  157.647991] syncthr: update inode 0000000091b84b90 (0x00000000000004a7)
+[  157.648332] START_SCAN IP=00000000000004a6 chain=0000000000000000 (ffffffffffffffff)
+[  157.648546] syncthr: update inode 000000006fd48803 (0x00000000000004a6)
+[  157.648913] START_SCAN IP=00000000000004a5 chain=0000000000000000 (ffffffffffffffff)
+[  157.649128] syncthr: update inode 00000000eae2da83 (0x00000000000004a5)
+[  157.649483] START_SCAN IP=00000000000004a4 chain=0000000000000000 (ffffffffffffffff)
+[  157.649693] syncthr: update inode 000000006e53b7e3 (0x00000000000004a4)
+[  157.650231] START_SCAN IP=00000000000004a3 chain=0000000000000000 (ffffffffffffffff)
+[  157.650552] syncthr: update inode 00000000fcc4e415 (0x00000000000004a3)
+[  157.650924] START_SCAN IP=00000000000004a2 chain=0000000000000000 (ffffffffffffffff)
+[  157.651235] syncthr: update inode 00000000bc9778ad (0x00000000000004a2)
+[  157.651587] START_SCAN IP=00000000000004a1 chain=0000000000000000 (ffffffffffffffff)
+[  157.652058] syncthr: update inode 00000000b615a9ee (0x00000000000004a1)
+[  157.652404] START_SCAN IP=00000000000004a0 chain=0000000000000000 (ffffffffffffffff)
+[  157.653376] syncthr: update inode 00000000c7a0ce74 (0x00000000000004a0)
+[  157.653766] START_SCAN IP=000000000000049f chain=0000000000000000 (ffffffffffffffff)
+[  157.654017] syncthr: update inode 0000000007eb10f2 (0x000000000000049f)
+[  157.654365] START_SCAN IP=000000000000049e chain=0000000000000000 (ffffffffffffffff)
+[  157.655053] syncthr: update inode 0000000071c548e9 (0x000000000000049e)
+[  157.655523] START_SCAN IP=000000000000049d chain=0000000000000000 (ffffffffffffffff)
+[  157.656530] syncthr: update inode 00000000117264bd (0x000000000000049d)
+[  157.657287] START_SCAN IP=000000000000049c chain=0000000000000000 (ffffffffffffffff)
+[  157.657691] syncthr: update inode 00000000b381bc00 (0x000000000000049c)
+[  157.658074] START_SCAN IP=000000000000049b chain=0000000000000000 (ffffffffffffffff)
+[  157.658643] syncthr: update inode 00000000a717195a (0x000000000000049b)
+[  157.659017] START_SCAN IP=000000000000049a chain=0000000000000000 (ffffffffffffffff)
+[  157.659439] syncthr: update inode 00000000d79d8c85 (0x000000000000049a)
+[  157.659811] START_SCAN IP=0000000000000499 chain=0000000000000000 (ffffffffffffffff)
+[  157.660482] syncthr: update inode 0000000048df02f3 (0x0000000000000499)
+[  157.662583] START_SCAN IP=0000000000000498 chain=0000000000000000 (ffffffffffffffff)
+[  157.664628] syncthr: update inode 00000000a052a62f (0x0000000000000498)
+[  157.665052] START_SCAN IP=0000000000000497 chain=0000000000000000 (ffffffffffffffff)
+[  157.666350] syncthr: update inode 00000000355e5f73 (0x0000000000000497)
+[  157.666891] START_SCAN IP=0000000000000496 chain=0000000000000000 (ffffffffffffffff)
+[  157.667921] syncthr: update inode 0000000099e10521 (0x0000000000000496)
+[  157.668418] START_SCAN IP=0000000000000495 chain=0000000000000000 (ffffffffffffffff)
+[  157.669324] syncthr: update inode 00000000256fff43 (0x0000000000000495)
+[  157.669845] START_SCAN IP=0000000000000494 chain=0000000000000000 (ffffffffffffffff)
+[  157.670508] syncthr: update inode 00000000c8d54705 (0x0000000000000494)
+[  157.671016] START_SCAN IP=0000000000000493 chain=0000000000000000 (ffffffffffffffff)
+[  157.671794] syncthr: update inode 000000000e53d31e (0x0000000000000493)
+[  157.672439] START_SCAN IP=0000000000000492 chain=0000000000000000 (ffffffffffffffff)
+[  157.673497] syncthr: update inode 00000000ef67b81f (0x0000000000000492)
+[  157.674049] START_SCAN IP=0000000000000491 chain=0000000000000000 (ffffffffffffffff)
+[  157.675030] syncthr: update inode 00000000b120d17c (0x0000000000000491)
+[  157.675537] START_SCAN IP=0000000000000490 chain=0000000000000000 (ffffffffffffffff)
+[  157.676105] syncthr: update inode 0000000096bb65eb (0x0000000000000490)
+[  157.676589] START_SCAN IP=000000000000048f chain=0000000000000000 (ffffffffffffffff)
+[  157.677665] syncthr: update inode 00000000fc663de9 (0x000000000000048f)
+[  157.678379] START_SCAN IP=000000000000048e chain=0000000000000000 (ffffffffffffffff)
+[  157.679283] syncthr: update inode 0000000024586062 (0x000000000000048e)
+[  157.679827] START_SCAN IP=000000000000048d chain=0000000000000000 (ffffffffffffffff)
+[  157.680231] syncthr: update inode 00000000476786f9 (0x000000000000048d)
+[  157.680929] START_SCAN IP=000000000000048c chain=0000000000000000 (ffffffffffffffff)
+[  157.681745] syncthr: update inode 000000002d293fc6 (0x000000000000048c)
+[  157.682247] START_SCAN IP=000000000000048b chain=0000000000000000 (ffffffffffffffff)
+[  157.682916] syncthr: update inode 000000002513873d (0x000000000000048b)
+[  157.683416] START_SCAN IP=000000000000048a chain=0000000000000000 (ffffffffffffffff)
+[  157.684170] syncthr: update inode 00000000b1bdfdea (0x000000000000048a)
+[  157.684523] START_SCAN IP=0000000000000489 chain=0000000000000000 (ffffffffffffffff)
+[  157.685099] syncthr: update inode 00000000fbdf3878 (0x0000000000000489)
+[  157.685454] START_SCAN IP=0000000000000488 chain=0000000000000000 (ffffffffffffffff)
+[  157.686105] syncthr: update inode 00000000e6619a1f (0x0000000000000488)
+[  157.686451] START_SCAN IP=0000000000000487 chain=0000000000000000 (ffffffffffffffff)
+[  157.687111] syncthr: update inode 000000009ce10d9d (0x0000000000000487)
+[  157.687456] START_SCAN IP=0000000000000486 chain=0000000000000000 (ffffffffffffffff)
+[  157.687778] syncthr: update inode 000000009f085ea5 (0x0000000000000486)
+[  157.688130] START_SCAN IP=0000000000000485 chain=0000000000000000 (ffffffffffffffff)
+[  157.689089] syncthr: update inode 00000000a347f91a (0x0000000000000485)
+[  157.689433] START_SCAN IP=0000000000000484 chain=0000000000000000 (ffffffffffffffff)
+[  157.689779] syncthr: update inode 00000000b8514a34 (0x0000000000000484)
+[  157.690132] START_SCAN IP=0000000000000483 chain=0000000000000000 (ffffffffffffffff)
+[  157.690605] syncthr: update inode 00000000ea448373 (0x0000000000000483)
+[  157.690976] START_SCAN IP=0000000000000482 chain=0000000000000000 (ffffffffffffffff)
+[  157.691468] syncthr: update inode 0000000074092206 (0x0000000000000482)
+[  157.691846] START_SCAN IP=0000000000000481 chain=0000000000000000 (ffffffffffffffff)
+[  157.692339] syncthr: update inode 000000005853e611 (0x0000000000000481)
+[  157.692739] START_SCAN IP=0000000000000480 chain=0000000000000000 (ffffffffffffffff)
+[  157.693081] syncthr: update inode 00000000a4ca685a (0x0000000000000480)
+[  157.693437] START_SCAN IP=000000000000047f chain=0000000000000000 (ffffffffffffffff)
+[  157.694187] syncthr: update inode 00000000a991cec8 (0x000000000000047f)
+[  157.694546] START_SCAN IP=000000000000047e chain=0000000000000000 (ffffffffffffffff)
+[  157.694985] syncthr: update inode 000000002f8790b5 (0x000000000000047e)
+[  157.695328] START_SCAN IP=000000000000047d chain=0000000000000000 (ffffffffffffffff)
+[  157.695906] syncthr: update inode 000000002ad3fa53 (0x000000000000047d)
+[  157.696257] START_SCAN IP=000000000000047c chain=0000000000000000 (ffffffffffffffff)
+[  157.696831] syncthr: update inode 00000000f12dadf2 (0x000000000000047c)
+[  157.697175] START_SCAN IP=000000000000047b chain=0000000000000000 (ffffffffffffffff)
+[  157.697811] syncthr: update inode 000000007fef9a38 (0x000000000000047b)
+[  157.698158] START_SCAN IP=000000000000047a chain=0000000000000000 (ffffffffffffffff)
+[  157.698511] syncthr: update inode 00000000d2191556 (0x000000000000047a)
+[  157.698924] START_SCAN IP=0000000000000479 chain=0000000000000000 (ffffffffffffffff)
+[  157.699261] syncthr: update inode 00000000a00eb9bf (0x0000000000000479)
+[  157.699615] START_SCAN IP=0000000000000478 chain=0000000000000000 (ffffffffffffffff)
+[  157.700267] syncthr: update inode 000000005383379c (0x0000000000000478)
+[  157.700635] START_SCAN IP=0000000000000477 chain=0000000000000000 (ffffffffffffffff)
+[  157.701002] syncthr: update inode 000000000f320ad6 (0x0000000000000477)
+[  157.701369] START_SCAN IP=0000000000000476 chain=0000000000000000 (ffffffffffffffff)
+[  157.702284] syncthr: update inode 000000006c86da2e (0x0000000000000476)
+[  157.702914] START_SCAN IP=0000000000000475 chain=0000000000000000 (ffffffffffffffff)
+[  157.703481] syncthr: update inode 00000000c048b79f (0x0000000000000475)
+[  157.703884] START_SCAN IP=0000000000000474 chain=0000000000000000 (ffffffffffffffff)
+[  157.704211] syncthr: update inode 00000000bad73014 (0x0000000000000474)
+[  157.704593] START_SCAN IP=0000000000000473 chain=0000000000000000 (ffffffffffffffff)
+[  157.704962] syncthr: update inode 000000003b561b25 (0x0000000000000473)
+[  157.705313] START_SCAN IP=0000000000000472 chain=0000000000000000 (ffffffffffffffff)
+[  157.705976] syncthr: update inode 00000000ed4a3ab2 (0x0000000000000472)
+[  157.706419] START_SCAN IP=0000000000000471 chain=0000000000000000 (ffffffffffffffff)
+[  157.707866] syncthr: update inode 00000000c0caba55 (0x0000000000000471)
+[  157.708210] START_SCAN IP=0000000000000470 chain=0000000000000000 (ffffffffffffffff)
+[  157.708602] syncthr: update inode 000000007aab4523 (0x0000000000000470)
+[  157.709006] START_SCAN IP=000000000000046f chain=0000000000000000 (ffffffffffffffff)
+[  157.709844] syncthr: update inode 00000000986017ad (0x000000000000046f)
+[  157.710187] START_SCAN IP=000000000000046e chain=0000000000000000 (ffffffffffffffff)
+[  157.710559] syncthr: update inode 00000000ef385399 (0x000000000000046e)
+[  157.710969] START_SCAN IP=000000000000046d chain=0000000000000000 (ffffffffffffffff)
+[  157.711409] syncthr: update inode 000000002e3733d5 (0x000000000000046d)
+[  157.711904] START_SCAN IP=000000000000046c chain=0000000000000000 (ffffffffffffffff)
+[  157.712639] syncthr: update inode 00000000683fc95e (0x000000000000046c)
+[  157.713118] START_SCAN IP=000000000000046b chain=0000000000000000 (ffffffffffffffff)
+[  157.713593] syncthr: update inode 00000000ef535577 (0x000000000000046b)
+[  157.714035] START_SCAN IP=000000000000046a chain=0000000000000000 (ffffffffffffffff)
+[  157.714444] syncthr: update inode 0000000002a564d2 (0x000000000000046a)
+[  157.714817] START_SCAN IP=0000000000000469 chain=0000000000000000 (ffffffffffffffff)
+[  157.715239] syncthr: update inode 00000000e1129428 (0x0000000000000469)
+[  157.715595] START_SCAN IP=0000000000000468 chain=0000000000000000 (ffffffffffffffff)
+[  157.716804] syncthr: update inode 0000000001b5c9af (0x0000000000000468)
+[  157.717163] START_SCAN IP=0000000000000467 chain=0000000000000000 (ffffffffffffffff)
+[  157.717794] syncthr: update inode 00000000875da10c (0x0000000000000467)
+[  157.718146] START_SCAN IP=0000000000000466 chain=0000000000000000 (ffffffffffffffff)
+[  157.718460] syncthr: update inode 00000000684ba72a (0x0000000000000466)
+[  157.718865] START_SCAN IP=0000000000000465 chain=0000000000000000 (ffffffffffffffff)
+[  157.719608] syncthr: update inode 00000000e7993c22 (0x0000000000000465)
+[  157.720052] START_SCAN IP=0000000000000464 chain=0000000000000000 (ffffffffffffffff)
+[  157.720636] syncthr: update inode 00000000bc30ecd0 (0x0000000000000464)
+[  157.721089] START_SCAN IP=0000000000000463 chain=0000000000000000 (ffffffffffffffff)
+[  157.722264] syncthr: update inode 00000000b505fe6c (0x0000000000000463)
+[  157.722656] START_SCAN IP=0000000000000462 chain=0000000000000000 (ffffffffffffffff)
+[  157.723265] syncthr: update inode 00000000f670859d (0x0000000000000462)
+[  157.723635] START_SCAN IP=0000000000000461 chain=0000000000000000 (ffffffffffffffff)
+[  157.724278] syncthr: update inode 000000003e5371d8 (0x0000000000000461)
+[  157.724635] START_SCAN IP=0000000000000460 chain=0000000000000000 (ffffffffffffffff)
+[  157.725319] syncthr: update inode 00000000d5d10949 (0x0000000000000460)
+[  157.725686] START_SCAN IP=000000000000045f chain=0000000000000000 (ffffffffffffffff)
+[  157.726361] syncthr: update inode 00000000a97fe2b7 (0x000000000000045f)
+[  157.726925] START_SCAN IP=000000000000045e chain=0000000000000000 (ffffffffffffffff)
+[  157.727511] syncthr: update inode 00000000ccc214e5 (0x000000000000045e)
+[  157.727933] START_SCAN IP=000000000000045d chain=0000000000000000 (ffffffffffffffff)
+[  157.728280] syncthr: update inode 00000000d92277e6 (0x000000000000045d)
+[  157.728636] START_SCAN IP=000000000000045c chain=0000000000000000 (ffffffffffffffff)
+[  157.730064] syncthr: update inode 00000000fbebd1c6 (0x000000000000045c)
+[  157.730421] START_SCAN IP=000000000000045b chain=0000000000000000 (ffffffffffffffff)
+[  157.730918] syncthr: update inode 000000001460dabf (0x000000000000045b)
+[  157.731315] START_SCAN IP=000000000000045a chain=0000000000000000 (ffffffffffffffff)
+[  157.731646] syncthr: update inode 0000000071249854 (0x000000000000045a)
+[  157.732078] START_SCAN IP=0000000000000459 chain=0000000000000000 (ffffffffffffffff)
+[  157.732422] syncthr: update inode 0000000017dd0c6f (0x0000000000000459)
+[  157.732978] START_SCAN IP=0000000000000458 chain=0000000000000000 (ffffffffffffffff)
+[  157.733596] syncthr: update inode 0000000066d71004 (0x0000000000000458)
+[  157.734045] START_SCAN IP=0000000000000457 chain=0000000000000000 (ffffffffffffffff)
+[  157.734543] syncthr: update inode 00000000a94d8deb (0x0000000000000457)
+[  157.734981] START_SCAN IP=0000000000000456 chain=0000000000000000 (ffffffffffffffff)
+[  157.735324] syncthr: update inode 00000000d715bfb2 (0x0000000000000456)
+[  157.735781] START_SCAN IP=0000000000000455 chain=0000000000000000 (ffffffffffffffff)
+[  157.736314] syncthr: update inode 0000000052f34617 (0x0000000000000455)
+[  157.736845] START_SCAN IP=0000000000000454 chain=0000000000000000 (ffffffffffffffff)
+[  157.737202] syncthr: update inode 00000000f0639a18 (0x0000000000000454)
+[  157.737635] START_SCAN IP=0000000000000453 chain=0000000000000000 (ffffffffffffffff)
+[  157.738650] syncthr: update inode 000000007d3ecdc9 (0x0000000000000453)
+[  157.739170] START_SCAN IP=0000000000000452 chain=0000000000000000 (ffffffffffffffff)
+[  157.739677] syncthr: update inode 00000000afb849d0 (0x0000000000000452)
+[  157.740201] START_SCAN IP=0000000000000451 chain=0000000000000000 (ffffffffffffffff)
+[  157.741038] syncthr: update inode 000000003ccbd323 (0x0000000000000451)
+[  157.741595] START_SCAN IP=0000000000000450 chain=0000000000000000 (ffffffffffffffff)
+[  157.742791] syncthr: update inode 000000009b363844 (0x0000000000000450)
+[  157.743278] START_SCAN IP=000000000000044f chain=0000000000000000 (ffffffffffffffff)
+[  157.744194] syncthr: update inode 0000000033e0094c (0x000000000000044f)
+[  157.744685] START_SCAN IP=000000000000044e chain=0000000000000000 (ffffffffffffffff)
+[  157.745890] syncthr: update inode 000000009276dca7 (0x000000000000044e)
+[  157.746607] START_SCAN IP=000000000000044d chain=0000000000000000 (ffffffffffffffff)
+[  157.748448] syncthr: update inode 00000000da9ce2de (0x000000000000044d)
+[  157.749219] START_SCAN IP=000000000000044c chain=0000000000000000 (ffffffffffffffff)
+[  157.750141] syncthr: update inode 000000001a43cf1c (0x000000000000044c)
+[  157.750659] START_SCAN IP=000000000000044b chain=0000000000000000 (ffffffffffffffff)
+[  157.751134] syncthr: update inode 00000000873f5814 (0x000000000000044b)
+[  157.751980] START_SCAN IP=000000000000044a chain=0000000000000000 (ffffffffffffffff)
+[  157.757132] syncthr: update inode 000000001ec63c92 (0x000000000000044a)
+[  157.757644] START_SCAN IP=0000000000000449 chain=0000000000000000 (ffffffffffffffff)
+[  157.759001] syncthr: update inode 00000000ff385758 (0x0000000000000449)
+[  157.759574] START_SCAN IP=0000000000000448 chain=0000000000000000 (ffffffffffffffff)
+[  157.760473] syncthr: update inode 000000004991edbe (0x0000000000000448)
+[  157.761198] START_SCAN IP=0000000000000447 chain=0000000000000000 (ffffffffffffffff)
+[  157.762313] syncthr: update inode 000000006da4356e (0x0000000000000447)
+[  157.762920] START_SCAN IP=0000000000000446 chain=0000000000000000 (ffffffffffffffff)
+[  157.763890] syncthr: update inode 00000000ccee280f (0x0000000000000446)
+[  157.764341] START_SCAN IP=0000000000000445 chain=0000000000000000 (ffffffffffffffff)
+[  157.765595] syncthr: update inode 000000003d5a3102 (0x0000000000000445)
+[  157.765997] START_SCAN IP=0000000000000444 chain=0000000000000000 (ffffffffffffffff)
+[  157.766495] syncthr: update inode 000000009eb90a72 (0x0000000000000444)
+[  157.766909] START_SCAN IP=0000000000000443 chain=0000000000000000 (ffffffffffffffff)
+[  157.767304] syncthr: update inode 00000000154f2e0e (0x0000000000000443)
+[  157.767660] START_SCAN IP=0000000000000442 chain=0000000000000000 (ffffffffffffffff)
+[  157.768265] syncthr: update inode 000000008d417368 (0x0000000000000442)
+[  157.768619] START_SCAN IP=0000000000000441 chain=0000000000000000 (ffffffffffffffff)
+[  157.769936] syncthr: update inode 0000000027bdeb76 (0x0000000000000441)
+[  157.770280] START_SCAN IP=0000000000000440 chain=0000000000000000 (ffffffffffffffff)
+[  157.770586] syncthr: update inode 0000000043b52a16 (0x0000000000000440)
+[  157.770987] START_SCAN IP=000000000000043f chain=0000000000000000 (ffffffffffffffff)
+[  157.771291] syncthr: update inode 00000000d1a3f3fc (0x000000000000043f)
+[  157.771639] START_SCAN IP=000000000000043e chain=0000000000000000 (ffffffffffffffff)
+[  157.772144] syncthr: update inode 00000000214454bf (0x000000000000043e)
+[  157.772503] START_SCAN IP=000000000000043d chain=0000000000000000 (ffffffffffffffff)
+[  157.773267] syncthr: update inode 00000000fa6a9bd7 (0x000000000000043d)
+[  157.773618] START_SCAN IP=000000000000043c chain=0000000000000000 (ffffffffffffffff)
+[  157.773990] syncthr: update inode 00000000b628cef2 (0x000000000000043c)
+[  157.774329] START_SCAN IP=000000000000043b chain=0000000000000000 (ffffffffffffffff)
+[  157.774634] syncthr: update inode 000000007fe212c2 (0x000000000000043b)
+[  157.775036] START_SCAN IP=000000000000043a chain=0000000000000000 (ffffffffffffffff)
+[  157.775346] syncthr: update inode 000000004277cc90 (0x000000000000043a)
+[  157.775693] START_SCAN IP=0000000000000439 chain=0000000000000000 (ffffffffffffffff)
+[  157.776042] syncthr: update inode 00000000a5651b39 (0x0000000000000439)
+[  157.776392] START_SCAN IP=0000000000000438 chain=0000000000000000 (ffffffffffffffff)
+[  157.777035] syncthr: update inode 000000003c9260f2 (0x0000000000000438)
+[  157.777402] START_SCAN IP=0000000000000437 chain=0000000000000000 (ffffffffffffffff)
+[  157.778213] syncthr: update inode 000000002fcbdc40 (0x0000000000000437)
+[  157.778571] START_SCAN IP=0000000000000436 chain=0000000000000000 (ffffffffffffffff)
+[  157.778995] syncthr: update inode 000000009d2536ff (0x0000000000000436)
+[  157.779405] START_SCAN IP=0000000000000435 chain=0000000000000000 (ffffffffffffffff)
+[  157.780142] syncthr: update inode 00000000e52076ba (0x0000000000000435)
+[  157.780496] START_SCAN IP=0000000000000434 chain=0000000000000000 (ffffffffffffffff)
+[  157.781006] syncthr: update inode 0000000013055f2f (0x0000000000000434)
+[  157.781349] START_SCAN IP=0000000000000433 chain=0000000000000000 (ffffffffffffffff)
+[  157.782024] syncthr: update inode 000000003857763a (0x0000000000000433)
+[  157.782366] START_SCAN IP=0000000000000432 chain=0000000000000000 (ffffffffffffffff)
+[  157.782662] syncthr: update inode 000000009385166a (0x0000000000000432)
+[  157.783038] START_SCAN IP=0000000000000431 chain=0000000000000000 (ffffffffffffffff)
+[  157.783433] syncthr: update inode 000000002b5748f5 (0x0000000000000431)
+[  157.783872] START_SCAN IP=0000000000000430 chain=0000000000000000 (ffffffffffffffff)
+[  157.784483] syncthr: update inode 00000000c8a6485e (0x0000000000000430)
+[  157.784900] START_SCAN IP=000000000000042f chain=0000000000000000 (ffffffffffffffff)
+[  157.785538] syncthr: update inode 0000000018eaff5f (0x000000000000042f)
+[  157.786073] START_SCAN IP=000000000000042e chain=0000000000000000 (ffffffffffffffff)
+[  157.786455] syncthr: update inode 0000000072434b64 (0x000000000000042e)
+[  157.786870] START_SCAN IP=000000000000042d chain=0000000000000000 (ffffffffffffffff)
+[  157.787687] syncthr: update inode 00000000f542493e (0x000000000000042d)
+[  157.788082] START_SCAN IP=000000000000042c chain=0000000000000000 (ffffffffffffffff)
+[  157.788393] syncthr: update inode 00000000ae7524f6 (0x000000000000042c)
+[  157.788847] START_SCAN IP=000000000000042b chain=0000000000000000 (ffffffffffffffff)
+[  157.789393] syncthr: update inode 000000003084a00a (0x000000000000042b)
+[  157.789775] START_SCAN IP=000000000000042a chain=0000000000000000 (ffffffffffffffff)
+[  157.790416] syncthr: update inode 0000000086c74503 (0x000000000000042a)
+[  157.790794] START_SCAN IP=0000000000000429 chain=0000000000000000 (ffffffffffffffff)
+[  157.791394] syncthr: update inode 000000002ec29110 (0x0000000000000429)
+[  157.962300] START_SCAN IP=b6a9cb23fd8a8001 chain=000000001e65e4b3 (0000000000000400)
+[  158.398339] syncthr: update inode 00000000cd467978 (CL)
+[  158.398435] sync_slaves error 0 defer 0000000000000000
+[  164.330758] sync_slaves pfs CL clindex 1
+[  164.330938] sync_slaves error 0 defer 0000000000000000
+[  169.450759] sync_slaves pfs CL clindex 1
+[  169.450932] sync_slaves error 0 defer 0000000000000000
+[  174.570785] sync_slaves pfs CL clindex 1
+[  174.571038] sync_slaves error 0 defer 0000000000000000
+[  179.690747] sync_slaves pfs CL clindex 1
+[  179.690918] sync_slaves error 0 defer 0000000000000000
+[  180.652003] hammer2: hammer2_unmount_scrap: scrapping unflushed data 0000000000000000/16 flags 00004243
+[  180.652049] hammer2: hammer2_unmount_scrap: scrapping unflushed inode 0000000000000429/0 flags 00006243
+[  180.652081] hammer2: hammer2_unmount_scrap: scrapping unflushed data 0000000000000000/16 flags 00004243
+[  180.652104] hammer2: hammer2_unmount_scrap: scrapping unflushed inode 000000000000042a/0 flags 00006243
+[  180.652127] hammer2: hammer2_unmount_scrap: scrapping unflushed data 0000000000000000/16 flags 00004243
+[  180.652150] hammer2: hammer2_unmount_scrap: scrapping unflushed inode 000000000000042b/0 flags 00006243
+[  180.652172] hammer2: hammer2_unmount_scrap: scrapping unflushed data 0000000000000000/16 flags 00004243
+[  180.652195] hammer2: hammer2_unmount_scrap: scrapping unflushed inode 000000000000042c/0 flags 00006243
+[  180.652218] hammer2: hammer2_unmount_scrap: scrapping unflushed data 0000000000000000/16 flags 00004243
+[  180.652240] hammer2: hammer2_unmount_scrap: scrapping unflushed inode 000000000000042d/0 flags 00006243
+[  180.663410] hammer2: hammer2_kill_sb: after unmount: 4 inode, 4 chain, 0 modified, 240 dio still allocated
+[  180.686625] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+[  182.554223] pci 0000:08:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+[  182.554636] pci 0000:08:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+[  182.554686] pci 0000:08:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+[  182.554795] pci 0000:08:00.0: enabling Extended Tags
+[  182.677643] pci 0000:08:00.0: BAR 4 [mem 0x383800000000-0x383800003fff 64bit pref]: assigned
+[  182.677769] pci 0000:08:00.0: BAR 1 [mem 0x81400000-0x81400fff]: assigned
+[  182.678596] virtio-pci 0000:08:00.0: enabling device (0000 -> 0002)
+[  182.747714] virtio_blk virtio7: 12/0/0 default/read/poll queues
+[  182.783267] virtio_blk virtio7: [vdb] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+[  182.821668] pci 0000:09:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+[  182.822121] pci 0000:09:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+[  182.822171] pci 0000:09:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+[  182.822252] pci 0000:09:00.0: enabling Extended Tags
+[  182.920205] pci 0000:09:00.0: BAR 4 [mem 0x384000000000-0x384000003fff 64bit pref]: assigned
+[  182.920288] pci 0000:09:00.0: BAR 1 [mem 0x81200000-0x81200fff]: assigned
+[  182.921154] virtio-pci 0000:09:00.0: enabling device (0000 -> 0002)
+[  182.991768] virtio_blk virtio8: 12/0/0 default/read/poll queues
+[  183.023176] virtio_blk virtio8: [vdc] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+[  196.592646] pci 0000:08:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+[  196.593105] pci 0000:08:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+[  196.593155] pci 0000:08:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+[  196.593236] pci 0000:08:00.0: enabling Extended Tags
+[  196.719367] pci 0000:08:00.0: BAR 4 [mem 0x383800000000-0x383800003fff 64bit pref]: assigned
+[  196.719450] pci 0000:08:00.0: BAR 1 [mem 0x81400000-0x81400fff]: assigned
+[  196.720329] virtio-pci 0000:08:00.0: enabling device (0000 -> 0002)
+[  196.790442] virtio_blk virtio7: 12/0/0 default/read/poll queues
+[  196.822807] virtio_blk virtio7: [vdb] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+[  196.858398] pci 0000:09:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+[  196.858943] pci 0000:09:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+[  196.858993] pci 0000:09:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+[  196.859073] pci 0000:09:00.0: enabling Extended Tags
+[  196.957472] pci 0000:09:00.0: BAR 4 [mem 0x384000000000-0x384000003fff 64bit pref]: assigned
+[  196.957557] pci 0000:09:00.0: BAR 1 [mem 0x81200000-0x81200fff]: assigned
+[  196.958420] virtio-pci 0000:09:00.0: enabling device (0000 -> 0002)
+[  197.029616] virtio_blk virtio8: 12/0/0 default/read/poll queues
+[  197.058585] virtio_blk virtio8: [vdc] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+[  209.681283] sync_slaves pfs CL clindex 1
+[  209.681700] sync_slaves error 0 defer 0000000000000000
+[  215.018778] sync_slaves pfs CL clindex 1
+[  215.019011] sync_slaves error 0 defer 0000000000000000
+[  220.138763] sync_slaves pfs CL clindex 1
+[  220.145283] START_SCAN IP=b6a9cb23fd8a8001 chain=0000000029761065 (800b898c09878001)
+[  220.174064] syncthr: update inode 0000000073621d8e (CL)
+[  220.174783] sync_slaves error 0 defer 0000000000000000
+[  225.258755] sync_slaves pfs CL clindex 1
+[  225.264329] START_SCAN IP=b6a9cb23fd8a8001 chain=00000000f6af5554 (800b898c09878001)
+[  225.320585] syncthr: update inode 0000000073621d8e (CL)
+[  225.320679] sync_slaves error 0 defer 0000000000000000
+[  225.915207] hammer2: hammer2_kill_sb: after unmount: 507 inode, 2515 chain, 2510 modified, 89 dio still allocated
+[  230.378779] sync_slaves pfs CL clindex 1
+[  230.378946] sync_slaves error 0 defer 0000000000000000
+[  235.499786] sync_slaves pfs CL clindex 1
+[  235.526657] START_SCAN IP=b6a9cb23fd8a8001 chain=0000000069411344 (800b898c09878001)
+[  235.594509] syncthr: update inode 0000000073621d8e (CL)
+[  235.594592] sync_slaves error 0 defer 0000000000000000
+[  241.131731] sync_slaves pfs CL clindex 1
+[  241.194749] START_SCAN IP=b6a9cb23fd8a8001 chain=000000000c6e59f0 (0000000000000400)
+[  241.313611] sync_slaves error 2048 defer 0000000000000000
+[  247.275738] sync_slaves pfs CL clindex 1
+[  247.275896] sync_slaves error 0 defer 0000000000000000
+[  252.394771] sync_slaves pfs CL clindex 1
+[  252.395012] sync_slaves error 0 defer 0000000000000000
+[  258.026772] sync_slaves pfs CL clindex 1
+[  258.026940] sync_slaves error 0 defer 0000000000000000
+[  259.296117] hammer2: hammer2_kill_sb: after unmount: 4 inode, 4 chain, 0 modified, 235 dio still allocated
+[  259.321702] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+[  259.979065] sync_slaves pfs CL clindex 0
+[  259.979393] sync_slaves pfs CL clindex 1
+[  259.979631] sync_slaves error 0 defer 0000000000000000
+[  259.979658] sync_slaves error 0 defer 0000000000000000
+[  265.194731] sync_slaves pfs CL clindex 0
+[  265.194751] sync_slaves pfs CL clindex 1
+[  265.194963] sync_slaves error 0 defer 0000000000000000
+[  265.194971] sync_slaves error 0 defer 0000000000000000
+[  270.314761] sync_slaves pfs CL clindex 0
+[  270.314764] sync_slaves pfs CL clindex 1
+[  270.314915] sync_slaves error 0 defer 0000000000000000
+[  270.314931] sync_slaves error 0 defer 0000000000000000
+[  275.434743] sync_slaves pfs CL clindex 0
+[  275.434746] sync_slaves pfs CL clindex 1
+[  275.434895] sync_slaves error 0 defer 0000000000000000
+[  275.434941] sync_slaves error 0 defer 0000000000000000
+[  280.554758] sync_slaves pfs CL clindex 0
+[  280.554761] sync_slaves pfs CL clindex 1
+[  280.554905] sync_slaves error 0 defer 0000000000000000
+[  280.554945] sync_slaves error 0 defer 0000000000000000
+[  285.674740] sync_slaves pfs CL clindex 0
+[  285.674754] sync_slaves pfs CL clindex 1
+[  285.674888] sync_slaves error 0 defer 0000000000000000
+[  285.674897] sync_slaves error 0 defer 0000000000000000
+[  290.794738] sync_slaves pfs CL clindex 0
+[  290.794762] sync_slaves pfs CL clindex 1
+[  290.794936] sync_slaves error 0 defer 0000000000000000
+[  290.794937] sync_slaves error 0 defer 0000000000000000
+[  295.914754] sync_slaves pfs CL clindex 1
+[  295.914901] sync_slaves error 0 defer 0000000000000000
+[  295.915733] sync_slaves pfs CL clindex 0
+[  295.915878] sync_slaves error 0 defer 0000000000000000
+[  301.034745] sync_slaves pfs CL clindex 0
+[  301.034942] sync_slaves error 0 defer 0000000000000000
+[  301.036541] sync_slaves pfs CL clindex 1
+[  301.036765] sync_slaves error 0 defer 0000000000000000
+[  306.154739] sync_slaves pfs CL clindex 1
+[  306.154772] sync_slaves pfs CL clindex 0
+[  306.154889] sync_slaves error 0 defer 0000000000000000
+[  306.154916] sync_slaves error 0 defer 0000000000000000
+[  311.274754] sync_slaves pfs CL clindex 1
+[  311.274841] sync_slaves pfs CL clindex 0
+[  311.274901] sync_slaves error 0 defer 0000000000000000
+[  311.274979] sync_slaves error 0 defer 0000000000000000
+[  316.395735] sync_slaves pfs CL clindex 1
+[  316.395753] sync_slaves pfs CL clindex 0
+[  316.395882] sync_slaves error 0 defer 0000000000000000
+[  316.395904] sync_slaves error 0 defer 0000000000000000
+[  321.515768] sync_slaves pfs CL clindex 0
+[  321.515768] sync_slaves pfs CL clindex 1
+[  321.515927] sync_slaves error 0 defer 0000000000000000
+[  321.515953] sync_slaves error 0 defer 0000000000000000
+[  326.635739] sync_slaves pfs CL clindex 1
+[  326.635752] sync_slaves pfs CL clindex 0
+[  326.635887] sync_slaves error 0 defer 0000000000000000
+[  326.635895] sync_slaves error 0 defer 0000000000000000
+[  333.290833] sync_slaves pfs CL clindex 1
+[  333.290910] sync_slaves pfs CL clindex 0
+[  333.291549] sync_slaves error 0 defer 0000000000000000
+[  333.291580] sync_slaves error 0 defer 0000000000000000
+[  338.410730] sync_slaves pfs CL clindex 1
+[  338.410749] sync_slaves pfs CL clindex 0
+[  338.410879] sync_slaves error 0 defer 0000000000000000
+[  338.410903] sync_slaves error 0 defer 0000000000000000
+[  343.531744] sync_slaves pfs CL clindex 0
+[  343.531765] sync_slaves pfs CL clindex 1
+[  343.531890] sync_slaves error 0 defer 0000000000000000
+[  343.531950] sync_slaves error 0 defer 0000000000000000
+[  348.651754] sync_slaves pfs CL clindex 1
+[  348.651754] sync_slaves pfs CL clindex 0
+[  348.651902] sync_slaves error 0 defer 0000000000000000
+[  348.651958] sync_slaves error 0 defer 0000000000000000
+[  353.770994] sync_slaves pfs CL clindex 1
+[  353.771147] sync_slaves error 0 defer 0000000000000000
+[  353.771761] sync_slaves pfs CL clindex 0
+[  353.771926] sync_slaves error 0 defer 0000000000000000
+[  358.890757] sync_slaves pfs CL clindex 0
+[  358.890955] sync_slaves error 0 defer 0000000000000000
+[  358.891015] sync_slaves pfs CL clindex 1
+[  358.891177] sync_slaves error 0 defer 0000000000000000
+[  364.010760] sync_slaves pfs CL clindex 0
+[  364.010913] sync_slaves error 0 defer 0000000000000000
+[  364.011753] sync_slaves pfs CL clindex 1
+[  364.011944] sync_slaves error 0 defer 0000000000000000
+[  369.130756] sync_slaves pfs CL clindex 1
+[  369.130765] sync_slaves pfs CL clindex 0
+[  369.130921] sync_slaves error 0 defer 0000000000000000
+[  369.130935] sync_slaves error 0 defer 0000000000000000
+[  374.250868] sync_slaves pfs CL clindex 1
+[  374.250868] sync_slaves pfs CL clindex 0
+[  374.251020] sync_slaves error 0 defer 0000000000000000
+[  374.251037] sync_slaves error 0 defer 0000000000000000
+[  379.370773] sync_slaves pfs CL clindex 0
+[  379.371002] sync_slaves error 0 defer 0000000000000000
+[  379.371728] sync_slaves pfs CL clindex 1
+[  379.371868] sync_slaves error 0 defer 0000000000000000
+[  384.491743] sync_slaves pfs CL clindex 1
+[  384.491756] sync_slaves pfs CL clindex 0
+[  384.491893] sync_slaves error 0 defer 0000000000000000
+[  384.491903] sync_slaves error 0 defer 0000000000000000
+[  389.610727] sync_slaves pfs CL clindex 1
+[  389.610753] sync_slaves pfs CL clindex 0
+[  389.610874] sync_slaves error 0 defer 0000000000000000
+[  389.610899] sync_slaves error 0 defer 0000000000000000
+[  394.730797] sync_slaves pfs CL clindex 1
+[  394.730811] sync_slaves pfs CL clindex 0
+[  394.731016] sync_slaves error 0 defer 0000000000000000
+[  394.731091] sync_slaves error 0 defer 0000000000000000
+[  402.410763] sync_slaves pfs CL clindex 0
+[  402.410766] sync_slaves pfs CL clindex 1
+[  402.410916] sync_slaves error 0 defer 0000000000000000
+[  402.410939] sync_slaves error 0 defer 0000000000000000
+[  407.530766] sync_slaves pfs CL clindex 1
+[  407.530919] sync_slaves error 0 defer 0000000000000000
+[  407.531758] sync_slaves pfs CL clindex 0
+[  407.531933] sync_slaves error 0 defer 0000000000000000
+[  412.650775] sync_slaves pfs CL clindex 0
+[  412.650964] sync_slaves error 0 defer 0000000000000000
+[  412.651778] sync_slaves pfs CL clindex 1
+[  412.651950] sync_slaves error 0 defer 0000000000000000
+[  417.771740] sync_slaves pfs CL clindex 1
+[  417.771757] sync_slaves pfs CL clindex 0
+[  417.771890] sync_slaves error 0 defer 0000000000000000
+[  417.771902] sync_slaves error 0 defer 0000000000000000
+[  422.890740] sync_slaves pfs CL clindex 1
+[  422.890757] sync_slaves pfs CL clindex 0
+[  422.890888] sync_slaves error 0 defer 0000000000000000
+[  422.890983] sync_slaves error 0 defer 0000000000000000
+[  428.010742] sync_slaves pfs CL clindex 0
+[  428.010888] sync_slaves pfs CL clindex 1
+[  428.010931] sync_slaves error 0 defer 0000000000000000
+[  428.011100] sync_slaves error 0 defer 0000000000000000
+[  433.130752] sync_slaves pfs CL clindex 0
+[  433.130898] sync_slaves error 0 defer 0000000000000000
+[  433.131759] sync_slaves pfs CL clindex 1
+[  433.131906] sync_slaves error 0 defer 0000000000000000
+[  438.250735] sync_slaves pfs CL clindex 1
+[  438.250879] sync_slaves error 0 defer 0000000000000000
+[  438.251759] sync_slaves pfs CL clindex 0
+[  438.251900] sync_slaves error 0 defer 0000000000000000
+[  443.370739] sync_slaves pfs CL clindex 1
+[  443.370753] sync_slaves pfs CL clindex 0
+[  443.370909] sync_slaves error 0 defer 0000000000000000
+[  443.370926] sync_slaves error 0 defer 0000000000000000
+[  448.490747] sync_slaves pfs CL clindex 0
+[  448.490783] sync_slaves pfs CL clindex 1
+[  448.490904] sync_slaves error 0 defer 0000000000000000
+[  448.491018] sync_slaves error 0 defer 0000000000000000
+[  453.610830] sync_slaves pfs CL clindex 0
+[  453.610848] sync_slaves pfs CL clindex 1
+[  453.610977] sync_slaves error 0 defer 0000000000000000
+[  453.611086] sync_slaves error 0 defer 0000000000000000
+[  458.730768] sync_slaves pfs CL clindex 0
+[  458.730769] sync_slaves pfs CL clindex 1
+[  458.730986] sync_slaves error 0 defer 0000000000000000
+[  458.731010] sync_slaves error 0 defer 0000000000000000
+[  463.850753] sync_slaves pfs CL clindex 1
+[  463.850770] sync_slaves pfs CL clindex 0
+[  463.850940] sync_slaves error 0 defer 0000000000000000
+[  463.850954] sync_slaves error 0 defer 0000000000000000
+[  471.530751] sync_slaves pfs CL clindex 0
+[  471.530906] sync_slaves error 0 defer 0000000000000000
+[  471.531751] sync_slaves pfs CL clindex 1
+[  471.531925] sync_slaves error 0 defer 0000000000000000
+[  476.651772] sync_slaves pfs CL clindex 0
+[  476.651780] sync_slaves pfs CL clindex 1
+[  476.651999] sync_slaves error 0 defer 0000000000000000
+[  476.652019] sync_slaves error 0 defer 0000000000000000
+[  481.771737] sync_slaves pfs CL clindex 0
+[  481.771777] sync_slaves pfs CL clindex 1
+[  481.771894] sync_slaves error 0 defer 0000000000000000
+[  481.771925] sync_slaves error 0 defer 0000000000000000
+[  486.890795] sync_slaves pfs CL clindex 0
+[  486.890800] sync_slaves pfs CL clindex 1
+[  486.891007] sync_slaves error 0 defer 0000000000000000
+[  486.891023] sync_slaves error 0 defer 0000000000000000
+[  492.010785] sync_slaves pfs CL clindex 0
+[  492.010793] sync_slaves pfs CL clindex 1
+[  492.011023] sync_slaves error 0 defer 0000000000000000
+[  492.011054] sync_slaves error 0 defer 0000000000000000
+[  497.131783] sync_slaves pfs CL clindex 1
+[  497.131787] sync_slaves pfs CL clindex 0
+[  497.131938] sync_slaves error 0 defer 0000000000000000
+[  497.131975] sync_slaves error 0 defer 0000000000000000
+[  502.250800] sync_slaves pfs CL clindex 0
+[  502.250806] sync_slaves pfs CL clindex 1
+[  502.250952] sync_slaves error 0 defer 0000000000000000
+[  502.250970] sync_slaves error 0 defer 0000000000000000
+[  507.371746] sync_slaves pfs CL clindex 1
+[  507.371759] sync_slaves pfs CL clindex 0
+[  507.371942] sync_slaves error 0 defer 0000000000000000
+[  507.371954] sync_slaves error 0 defer 0000000000000000
+[  512.490812] sync_slaves pfs CL clindex 0
+[  512.490830] sync_slaves pfs CL clindex 1
+[  512.490991] sync_slaves error 0 defer 0000000000000000
+[  512.491022] sync_slaves error 0 defer 0000000000000000
+[  517.610819] sync_slaves pfs CL clindex 1
+[  517.610828] sync_slaves pfs CL clindex 0
+[  517.610982] sync_slaves error 0 defer 0000000000000000
+[  517.611022] sync_slaves error 0 defer 0000000000000000
+[  522.730753] sync_slaves pfs CL clindex 1
+[  522.730842] sync_slaves pfs CL clindex 0
+[  522.730983] sync_slaves error 0 defer 0000000000000000
+[  522.731042] sync_slaves error 0 defer 0000000000000000
+[  527.850825] sync_slaves pfs CL clindex 0
+[  527.851108] sync_slaves pfs CL clindex 1
+[  527.851284] sync_slaves error 0 defer 0000000000000000
+[  527.851310] sync_slaves error 0 defer 0000000000000000
+[  532.970765] sync_slaves pfs CL clindex 0
+[  532.970777] sync_slaves pfs CL clindex 1
+[  532.972122] sync_slaves error 0 defer 0000000000000000
+[  532.972147] sync_slaves error 0 defer 0000000000000000
+[  539.626782] sync_slaves pfs CL clindex 0
+[  539.626785] sync_slaves pfs CL clindex 1
+[  539.627023] sync_slaves error 0 defer 0000000000000000
+[  539.627045] sync_slaves error 0 defer 0000000000000000
+[  541.915436] hammer2: hammer2_kill_sb: after unmount: 20008 inode, 40331 chain, 0 modified, 497 dio still allocated
+[  544.747773] sync_slaves pfs CL clindex 1
+[  544.747778] sync_slaves pfs CL clindex 0
+[  544.747938] sync_slaves error 0 defer 0000000000000000
+[  544.747973] sync_slaves error 0 defer 0000000000000000
+[  549.866758] sync_slaves pfs CL clindex 0
+[  549.866766] sync_slaves pfs CL clindex 1
+[  549.866968] sync_slaves error 0 defer 0000000000000000
+[  549.866993] sync_slaves error 0 defer 0000000000000000
+[  554.986741] sync_slaves pfs CL clindex 0
+[  554.986914] sync_slaves error 0 defer 0000000000000000
+[  554.987769] sync_slaves pfs CL clindex 1
+[  554.987963] sync_slaves error 0 defer 0000000000000000
+[  560.106759] sync_slaves pfs CL clindex 1
+[  560.106769] sync_slaves pfs CL clindex 0
+[  560.106984] sync_slaves error 0 defer 0000000000000000
+[  560.108438] sync_slaves error 0 defer 0000000000000000
+[  565.226779] sync_slaves pfs CL clindex 1
+[  565.226786] sync_slaves pfs CL clindex 0
+[  565.226995] sync_slaves error 0 defer 0000000000000000
+[  565.227024] sync_slaves error 0 defer 0000000000000000
+[  571.882744] sync_slaves pfs CL clindex 0
+[  571.882759] sync_slaves pfs CL clindex 1
+[  571.882918] sync_slaves error 0 defer 0000000000000000
+[  571.882944] sync_slaves error 0 defer 0000000000000000
+[  577.003733] sync_slaves pfs CL clindex 1
+[  577.003751] sync_slaves pfs CL clindex 0
+[  577.003890] sync_slaves error 0 defer 0000000000000000
+[  577.003903] sync_slaves error 0 defer 0000000000000000
+[  582.123755] sync_slaves pfs CL clindex 0
+[  582.123761] sync_slaves pfs CL clindex 1
+[  582.123927] sync_slaves error 0 defer 0000000000000000
+[  582.123938] sync_slaves error 0 defer 0000000000000000
+[  587.242983] sync_slaves pfs CL clindex 1
+[  587.243208] sync_slaves error 0 defer 0000000000000000
+[  587.243234] sync_slaves pfs CL clindex 0
+[  587.243427] sync_slaves error 0 defer 0000000000000000
+[  592.362772] sync_slaves pfs CL clindex 0
+[  592.362776] sync_slaves pfs CL clindex 1
+[  592.362928] sync_slaves error 0 defer 0000000000000000
+[  592.362966] sync_slaves error 0 defer 0000000000000000
+[  597.482743] sync_slaves pfs CL clindex 0
+[  597.482747] sync_slaves pfs CL clindex 1
+[  597.482925] sync_slaves error 0 defer 0000000000000000
+[  597.482961] sync_slaves error 0 defer 0000000000000000
+[  602.602957] sync_slaves pfs CL clindex 0
+[  602.603139] sync_slaves pfs CL clindex 1
+[  602.603327] sync_slaves error 0 defer 0000000000000000
+[  602.604414] sync_slaves error 0 defer 0000000000000000
+[  607.722764] sync_slaves pfs CL clindex 0
+[  607.722766] sync_slaves pfs CL clindex 1
+[  607.722928] sync_slaves error 0 defer 0000000000000000
+[  607.722939] sync_slaves error 0 defer 0000000000000000
+[  612.842753] sync_slaves pfs CL clindex 1
+[  612.842757] sync_slaves pfs CL clindex 0
+[  612.842915] sync_slaves error 0 defer 0000000000000000
+[  612.842932] sync_slaves error 0 defer 0000000000000000
+[  617.962749] sync_slaves pfs CL clindex 1
+[  617.962851] sync_slaves pfs CL clindex 0
+[  617.962969] sync_slaves error 0 defer 0000000000000000
+[  617.963002] sync_slaves error 0 defer 0000000000000000
+[  623.082758] sync_slaves pfs CL clindex 0
+[  623.082941] sync_slaves error 0 defer 0000000000000000
+[  623.083784] sync_slaves pfs CL clindex 1
+[  623.083963] sync_slaves error 0 defer 0000000000000000
+[  628.202828] sync_slaves pfs CL clindex 0
+[  628.202864] sync_slaves pfs CL clindex 1
+[  628.203052] sync_slaves error 0 defer 0000000000000000
+[  628.203058] sync_slaves error 0 defer 0000000000000000
+[  633.322747] sync_slaves pfs CL clindex 1
+[  633.322775] sync_slaves pfs CL clindex 0
+[  633.322933] sync_slaves error 0 defer 0000000000000000
+[  633.322966] sync_slaves error 0 defer 0000000000000000
+[  639.978766] sync_slaves pfs CL clindex 1
+[  639.978791] sync_slaves pfs CL clindex 0
+[  639.978946] sync_slaves error 0 defer 0000000000000000
+[  639.979008] sync_slaves error 0 defer 0000000000000000
+[  645.098773] sync_slaves pfs CL clindex 0
+[  645.098781] sync_slaves pfs CL clindex 1
+[  645.098999] sync_slaves error 0 defer 0000000000000000
+[  645.099024] sync_slaves error 0 defer 0000000000000000
+[  650.218821] sync_slaves pfs CL clindex 0
+[  650.218940] sync_slaves pfs CL clindex 1
+[  650.219029] sync_slaves error 0 defer 0000000000000000
+[  650.219152] sync_slaves error 0 defer 0000000000000000
+[  655.338777] sync_slaves pfs CL clindex 1
+[  655.338783] sync_slaves pfs CL clindex 0
+[  655.338937] sync_slaves error 0 defer 0000000000000000
+[  655.338985] sync_slaves error 0 defer 0000000000000000
+[  660.459832] sync_slaves pfs CL clindex 0
+[  660.460032] sync_slaves error 0 defer 0000000000000000
+[  660.460125] sync_slaves pfs CL clindex 1
+[  660.460319] sync_slaves error 0 defer 0000000000000000
+[  665.579767] sync_slaves pfs CL clindex 1
+[  665.579790] sync_slaves pfs CL clindex 0
+[  665.579991] sync_slaves error 0 defer 0000000000000000
+[  665.580005] sync_slaves error 0 defer 0000000000000000
+[  670.698769] sync_slaves pfs CL clindex 1
+[  670.698783] sync_slaves pfs CL clindex 0
+[  670.698957] sync_slaves error 0 defer 0000000000000000
+[  670.699000] sync_slaves error 0 defer 0000000000000000
+[  675.818755] sync_slaves pfs CL clindex 1
+[  675.818778] sync_slaves pfs CL clindex 0
+[  675.818962] sync_slaves error 0 defer 0000000000000000
+[  675.819002] sync_slaves error 0 defer 0000000000000000
+[  680.938772] sync_slaves pfs CL clindex 1
+[  680.938770] sync_slaves pfs CL clindex 0
+[  680.938956] sync_slaves error 0 defer 0000000000000000
+[  680.938967] sync_slaves error 0 defer 0000000000000000
+[  686.059803] sync_slaves pfs CL clindex 1
+[  686.059815] sync_slaves pfs CL clindex 0
+[  686.059969] sync_slaves error 0 defer 0000000000000000
+[  686.060030] sync_slaves error 0 defer 0000000000000000
+[  691.178768] sync_slaves pfs CL clindex 0
+[  691.178784] sync_slaves pfs CL clindex 1
+[  691.178957] sync_slaves error 0 defer 0000000000000000
+[  691.178986] sync_slaves error 0 defer 0000000000000000
+[  696.298767] sync_slaves pfs CL clindex 0
+[  696.299007] sync_slaves error 0 defer 0000000000000000
+[  696.299750] sync_slaves pfs CL clindex 1
+[  696.300058] sync_slaves error 0 defer 0000000000000000
+[  701.418759] sync_slaves pfs CL clindex 0
+[  701.418769] sync_slaves pfs CL clindex 1
+[  701.418923] sync_slaves error 0 defer 0000000000000000
+[  701.418963] sync_slaves error 0 defer 0000000000000000
+[  707.050770] sync_slaves pfs CL clindex 1
+[  707.050797] sync_slaves pfs CL clindex 0
+[  707.051006] sync_slaves error 0 defer 0000000000000000
+[  707.051018] sync_slaves error 0 defer 0000000000000000
+[  711.209023] hammer2: hammer2_kill_sb: after unmount: 30728 inode, 63489 chain, 2602 modified, 485 dio still allocated
+[  712.170776] sync_slaves pfs CL clindex 0
+[  712.170777] sync_slaves pfs CL clindex 1
+[  712.171013] sync_slaves error 0 defer 0000000000000000
+[  712.171040] sync_slaves error 0 defer 0000000000000000
+[  718.826873] sync_slaves pfs CL clindex 0
+[  718.827070] sync_slaves error 0 defer 0000000000000000
+[  718.827793] sync_slaves pfs CL clindex 1
+[  718.827963] sync_slaves error 0 defer 0000000000000000
+[  720.436693] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.452875] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.470637] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.488073] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.505528] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.522438] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.538857] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.552530] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.571162] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  720.583436] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  722.650797] pci 0000:08:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+[  722.651222] pci 0000:08:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+[  722.651273] pci 0000:08:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+[  722.651355] pci 0000:08:00.0: enabling Extended Tags
+[  722.782967] pci 0000:08:00.0: BAR 4 [mem 0x383800000000-0x383800003fff 64bit pref]: assigned
+[  722.783056] pci 0000:08:00.0: BAR 1 [mem 0x81400000-0x81400fff]: assigned
+[  722.785147] virtio-pci 0000:08:00.0: enabling device (0000 -> 0002)
+[  722.859527] virtio_blk virtio7: 12/0/0 default/read/poll queues
+[  722.896394] virtio_blk virtio7: [vdd] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+[  722.937764] pci 0000:09:00.0: [1af4:1042] type 00 class 0x010000 PCIe Endpoint
+[  722.938228] pci 0000:09:00.0: BAR 1 [mem 0x00000000-0x00000fff]
+[  722.938285] pci 0000:09:00.0: BAR 4 [mem 0x00000000-0x00003fff 64bit pref]
+[  722.938376] pci 0000:09:00.0: enabling Extended Tags
+[  723.039679] pci 0000:09:00.0: BAR 4 [mem 0x384000000000-0x384000003fff 64bit pref]: assigned
+[  723.039805] pci 0000:09:00.0: BAR 1 [mem 0x81200000-0x81200fff]: assigned
+[  723.040776] virtio-pci 0000:09:00.0: enabling device (0000 -> 0002)
+[  723.118695] virtio_blk virtio8: 12/0/0 default/read/poll queues
+[  723.153196] virtio_blk virtio8: [vde] 4194304 512-byte logical blocks (2.15 GB/2.00 GiB)
+[  723.946789] sync_slaves pfs CL clindex 0
+[  723.946788] sync_slaves pfs CL clindex 1
+[  723.947009] sync_slaves error 0 defer 0000000000000000
+[  723.947037] sync_slaves error 0 defer 0000000000000000
+[  725.445816] hammer2_chain_testcheck: 358 callbacks suppressed
+[  725.445822] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.458489] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.470386] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.484003] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.502037] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.516263] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.528131] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.540589] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.552682] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  725.566932] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  729.066761] sync_slaves pfs CL clindex 0
+[  729.066781] sync_slaves pfs CL clindex 1
+[  729.066989] sync_slaves error 0 defer 0000000000000000
+[  729.067006] sync_slaves error 0 defer 0000000000000000
+[  730.452986] hammer2_chain_testcheck: 374 callbacks suppressed
+[  730.452993] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.464933] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.521645] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.534953] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.548187] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.560437] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.574660] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.588659] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.601238] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  730.613879] hammer2: hammer2_chain_testcheck: failed: chain indirect 000000001709c00e 0000000000008000/15 meth 30 mir 000000000000003b mod 0000000000041468 flags 00144002
+[  732.722172] hammer2: hammer2_base_delete: delete indirect elm 8100000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.722427] ------------[ cut here ]------------
+[  732.722938] hammer2: device in error, see the message above
+[  732.722947] WARNING: hammer2_chain.c:4642 at hammer2_base_delete+0xa73/0xfd0 [hammer2], CPU#5: kworker/5:1/13416
+[  732.725936] Modules linked in: hammer2(OE) 9p(E) zram(E) 842_decompress(E) lz4hc_compress(E) 842_compress(E) vfat(E) fat(E) i2c_dev(E) crypto_user(E) intel_rapl_msr(E) intel_rapl_common(E) kvm_amd(E) ccp(E) snd_hda_codec_generic(E) joydev(E) kvm(E) snd_hda_intel(E) snd_intel_dspcfg(E) mousedev(E) snd_hda_codec(E) irqbypass(E) snd_hwdep(E) aesni_intel(E) snd_hda_core(E) gf128mul(E) aead(E) snd_pcm(E) mac_hid(E) psmouse(E) snd_timer(E) iTCO_wdt(E) pcspkr(E) i2c_i801(E) snd(E) intel_pmc_bxt(E) i2c_smbus(E) soundcore(E) qemu_fw_cfg(E) qrtr(E) bnep(E) bluetooth(E) rfkill(E) dm_mod(E) 9pnet_virtio(E) 9pnet(E) sr_mod(E) serio_raw(E) cdrom(E) netfs(E) virtio_rng(E) virtio_balloon(E) lpc_ich(E) virtio_net(E) net_failover(E) failover(E) virtio_gpu(E) virtio_dma_buf(E) intel_agp(E) intel_gtt(E)
+[  732.726242] Unloaded tainted modules: hammer2(OE):2 [last unloaded: hammer2(OE)]
+[  732.726271] CPU: 5 UID: 0 PID: 13416 Comm: kworker/5:1 Tainted: G           OE       7.3.0-rc5-kasan #1 PREEMPT(full)  1af86c1050c70ca897ed00e12b00266deae865ec
+[  732.726282] Tainted: [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+[  732.726288] Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS unknown 02/02/2022
+[  732.726296] Workqueue: events hammer2_sync_work [hammer2]
+[  732.726322] RIP: 0010:hammer2_base_delete+0xa73/0xfd0 [hammer2]
+[  732.726341] Code: c4 20 48 c1 e9 03 83 c0 03 0f b6 14 11 38 d0 7c 08 84 d2 0f 85 5b 04 00 00 c7 05 b4 a9 b7 ff 01 00 00 00 48 8d 3d 6d 8b b7 ff <67> 48 0f b9 3a e9 1a fc ff ff 48 be 00 00 00 00 00 fc ff df 41 8d
+[  732.726351] RSP: 0018:ffffc9002c17f440 EFLAGS: 00010297
+[  732.726365] RAX: 0000000000000003 RBX: 0000000000000038 RCX: 1ffffffff8275070
+[  732.726371] RDX: 0000000000000004 RSI: 0000000000000008 RDI: ffffffffc13a6540
+[  732.726377] RBP: 0000000000000000 R08: ffffffffaa2a8721 R09: 1ffff9200582fe3c
+[  732.726383] R10: fffff5200582fe3d R11: fffff5200582fe3d R12: 0000000000000080
+[  732.726388] R13: 0000000000000000 R14: 1ffff9200582fe90 R15: ffff88814e963800
+[  732.726416] FS:  0000000000000000(0000) GS:ffff8881aa462000(0000) knlGS:0000000000000000
+[  732.726425] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[  732.726431] CR2: 0000562626c4b530 CR3: 000000013ea9c000 CR4: 0000000000f50ef0
+[  732.726438] PKRU: 55555554
+[  732.726444] Call Trace:
+[  732.726451]  <TASK>
+[  732.726464]  ? __pfx_hammer2_base_delete+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726486]  ? __pfx_down_write+0x10/0x10
+[  732.726518]  hammer2_flush_core+0xd63/0x1d70 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726542]  hammer2_flush_recurse+0x411/0x600 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726559]  ? __pfx_hammer2_chain_tree_SCANCMP_ALL+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726575]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.726590]  hammer2_chain_tree_RB_SCAN+0x2bd/0x640 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726606]  ? __pfx_hammer2_flush_recurse+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726631]  ? __pfx_hammer2_chain_tree_RB_SCAN+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726657]  ? __pfx_hammer2_chain_lock+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726681]  ? __pfx_hammer2_chain_unlock+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.726992]  hammer2_flush_core+0x18c/0x1d70 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727029]  hammer2_flush_recurse+0x411/0x600 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727054]  ? __pfx_hammer2_chain_tree_SCANCMP_ALL+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727078]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727088]  hammer2_chain_tree_RB_SCAN+0x2bd/0x640 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727112]  ? __pfx_hammer2_flush_recurse+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727140]  ? __pfx_hammer2_chain_tree_RB_SCAN+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727177]  hammer2_flush_core+0x18c/0x1d70 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727210]  hammer2_flush+0x185/0x290 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727237]  ? __pfx_hammer2_flush+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727263]  ? __pfx___might_resched+0x10/0x10
+[  732.727290]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727299]  hammer2_xop_inode_flush+0x1a3/0x1310 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727325]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727334]  ? lock_release+0xe8/0x320
+[  732.727349]  ? hammer2_xop_fifo_alloc+0x23b/0x3e0 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727378]  hammer2_xop_start_except+0x481/0x730 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727429]  ? hammer2_xop_alloc+0x2f6/0x410 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727451]  hammer2_inode_chain_flush+0x67/0xb0 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727469]  hammer2_vfs_sync_pmp+0x763/0x16e0 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727497]  ? __pfx_hammer2_vfs_sync_pmp+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727514]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727523]  ? lock_acquire+0x19e/0x310
+[  732.727531]  ? __pfx___writeback_inodes_sb_nr+0x10/0x10
+[  732.727552]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727559]  ? get_nr_inodes+0xd6/0x1d0
+[  732.727574]  ? get_nr_dirty_inodes+0xe7/0x1f0
+[  732.727582]  ? hammer2_sync_work+0xdf/0x1c0 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727603]  hammer2_sync_fs+0x69/0x170 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727619]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727626]  sync_filesystem+0xf0/0x230
+[  732.727635]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727643]  hammer2_sync_work+0x136/0x1c0 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  732.727660]  process_one_work+0x947/0x1780
+[  732.727683]  ? __pfx_process_one_work+0x10/0x10
+[  732.727693]  ? lock_acquire+0x19e/0x310
+[  732.727705]  ? lock_is_held_type+0xb0/0x180
+[  732.727752]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727769]  worker_thread+0x601/0xff0
+[  732.727785]  ? __pfx_worker_thread+0x10/0x10
+[  732.727796]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727808]  ? __kthread_parkme+0xbd/0x210
+[  732.727829]  ? __pfx_worker_thread+0x10/0x10
+[  732.727839]  kthread+0x361/0x460
+[  732.727849]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727859]  ? __pfx_kthread+0x10/0x10
+[  732.727871]  ret_from_fork+0x779/0x9a0
+[  732.727886]  ? __pfx_ret_from_fork+0x10/0x10
+[  732.727898]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  732.727907]  ? __switch_to+0x3aa/0xd60
+[  732.727922]  ? __pfx_kthread+0x10/0x10
+[  732.727934]  ret_from_fork_asm+0x1a/0x30
+[  732.727970]  </TASK>
+[  732.727978] irq event stamp: 100179
+[  732.727986] hardirqs last  enabled at (100187): [<ffffffffa9e9ac7e>] __up_console_sem+0x5e/0x70
+[  732.727998] hardirqs last disabled at (100194): [<ffffffffa9e9ac63>] __up_console_sem+0x43/0x70
+[  732.728005] softirqs last  enabled at (98952): [<ffffffffa9c7e7d4>] __irq_exit_rcu+0x164/0x2a0
+[  732.728016] softirqs last disabled at (98939): [<ffffffffa9c7e7d4>] __irq_exit_rcu+0x164/0x2a0
+[  732.728023] ---[ end trace 0000000000000000 ]---
+[  732.728031] hammer2: device in error, block 0000000016f60000 dropped unwritten
+[  732.728456] hammer2: hammer2_base_delete: delete indirect elm 8200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.728903] hammer2: hammer2_base_delete: delete indirect elm 8200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.729626] hammer2: hammer2_base_delete: delete indirect elm 8400000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.730556] hammer2: hammer2_base_delete: delete indirect elm 8600000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.731365] hammer2: hammer2_base_delete: delete indirect elm 8600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.731577] hammer2: hammer2_base_delete: delete indirect elm 8400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.732313] hammer2: hammer2_base_delete: delete indirect elm 8800000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.733791] hammer2: hammer2_base_delete: delete indirect elm 8a00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.734741] hammer2: hammer2_base_delete: delete indirect elm 8c00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.735661] hammer2: hammer2_base_delete: delete indirect elm 8e00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.736456] hammer2: hammer2_base_delete: delete indirect elm 8e00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.736563] hammer2: hammer2_base_delete: delete indirect elm 8c00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.736915] hammer2: hammer2_base_delete: delete indirect elm 8800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.737449] hammer2: hammer2_base_delete: delete indirect elm 9000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.738558] hammer2: hammer2_base_delete: delete indirect elm 9200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.739011] hammer2: hammer2_base_delete: delete indirect elm 9200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.739838] hammer2: hammer2_base_delete: delete indirect elm 9500000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.740751] hammer2: hammer2_base_delete: delete indirect elm 9600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.740836] hammer2: hammer2_base_delete: delete indirect elm 9400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.741409] hammer2: hammer2_base_delete: delete indirect elm 9000000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.742505] hammer2: hammer2_base_delete: delete indirect elm 9b00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.742585] hammer2: hammer2_base_delete: delete indirect elm 9a00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.743694] hammer2: hammer2_base_delete: delete indirect elm 9d00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.745021] hammer2: hammer2_base_delete: delete indirect elm 9f00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.745305] hammer2: hammer2_base_delete: delete indirect elm 9e00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.745580] hammer2: hammer2_base_delete: delete indirect elm 9c00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.746103] hammer2: hammer2_base_delete: delete indirect elm 9800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.746981] hammer2: hammer2_base_delete: delete indirect elm a000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.748458] hammer2: hammer2_base_delete: delete indirect elm a300000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.748793] hammer2: hammer2_base_delete: delete indirect elm a200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.750397] hammer2: hammer2_base_delete: delete indirect elm a700000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.750799] hammer2: hammer2_base_delete: delete indirect elm a600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.751068] hammer2: hammer2_base_delete: delete indirect elm a400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.753063] hammer2: hammer2_base_delete: delete indirect elm a900000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.754614] hammer2: hammer2_base_delete: delete indirect elm ab00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.754967] hammer2: hammer2_base_delete: delete indirect elm aa00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.756182] hammer2: hammer2_base_delete: delete indirect elm ae00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.756891] hammer2: hammer2_base_delete: delete indirect elm ae00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.757167] hammer2: hammer2_base_delete: delete indirect elm ac00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.757455] hammer2: hammer2_base_delete: delete indirect elm a800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.758522] hammer2: hammer2_base_delete: delete indirect elm b000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.759889] hammer2: hammer2_base_delete: delete indirect elm b200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.760464] hammer2: hammer2_base_delete: delete indirect elm b200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.761233] hammer2: hammer2_base_delete: delete indirect elm b400000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.762354] hammer2: hammer2_base_delete: delete indirect elm b600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.762542] hammer2: hammer2_base_delete: delete indirect elm b400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.763170] hammer2: hammer2_base_delete: delete indirect elm b800000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.764528] hammer2: hammer2_base_delete: delete indirect elm ba00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.765655] hammer2: hammer2_base_delete: delete indirect elm ba00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.766643] hammer2: hammer2_base_delete: delete indirect elm bd00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.767231] hammer2: hammer2_base_delete: delete indirect elm be00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.767770] hammer2: hammer2_base_delete: delete indirect elm be00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.767926] hammer2: hammer2_base_delete: delete indirect elm bc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.768100] hammer2: hammer2_base_delete: delete indirect elm b800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.768685] hammer2: hammer2_base_delete: delete indirect elm c000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.769590] hammer2: hammer2_base_delete: delete indirect elm c200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.770070] hammer2: hammer2_base_delete: delete indirect elm c200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.771078] hammer2: hammer2_base_delete: delete indirect elm c600000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.771624] hammer2: hammer2_base_delete: delete indirect elm c600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.772055] hammer2: hammer2_base_delete: delete indirect elm c400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.772220] hammer2: hammer2_base_delete: delete indirect elm c000000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.773196] hammer2: hammer2_base_delete: delete indirect elm c800000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.774036] hammer2: hammer2_base_delete: delete indirect elm ca00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.774480] hammer2: hammer2_base_delete: delete indirect elm ca00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.775181] hammer2: hammer2_base_delete: delete indirect elm cc00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.776270] hammer2: hammer2_base_delete: delete indirect elm cf00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.776480] hammer2: hammer2_base_delete: delete indirect elm ce00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.776677] hammer2: hammer2_base_delete: delete indirect elm cc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.776897] hammer2: hammer2_base_delete: delete indirect elm c800000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.777921] hammer2: hammer2_base_delete: delete indirect elm d100000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.778492] hammer2: hammer2_base_delete: delete indirect elm d200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.779367] hammer2: hammer2_base_delete: delete indirect elm d200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.780274] hammer2: hammer2_base_delete: delete indirect elm d500000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.781035] hammer2: hammer2_base_delete: delete indirect elm d600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.781214] hammer2: hammer2_base_delete: delete indirect elm d400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.781365] hammer2: hammer2_base_delete: delete indirect elm d000000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.783598] hammer2: hammer2_base_delete: delete indirect elm d900000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.784535] hammer2: hammer2_base_delete: delete indirect elm db00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.784755] hammer2: hammer2_base_delete: delete indirect elm da00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.785280] hammer2: hammer2_base_delete: delete indirect elm dc00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.786422] hammer2: hammer2_base_delete: delete indirect elm dc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.786607] hammer2: hammer2_base_delete: delete indirect elm d800000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.787333] hammer2: hammer2_base_delete: delete indirect elm e000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.788305] hammer2: hammer2_base_delete: delete indirect elm e200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.788696] hammer2: hammer2_base_delete: delete indirect elm e200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.790451] hammer2: hammer2_base_delete: delete indirect elm e700000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.790645] hammer2: hammer2_base_delete: delete indirect elm e600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.790860] hammer2: hammer2_base_delete: delete indirect elm e400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.791020] hammer2: hammer2_base_delete: delete indirect elm e000000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.792102] hammer2: hammer2_base_delete: delete indirect elm e900000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.792836] hammer2: hammer2_base_delete: delete indirect elm ea00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.793878] hammer2: hammer2_base_delete: delete indirect elm ed00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.795076] hammer2: hammer2_base_delete: delete indirect elm ef00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.795255] hammer2: hammer2_base_delete: delete indirect elm ee00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.795467] hammer2: hammer2_base_delete: delete indirect elm ec00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.795631] hammer2: hammer2_base_delete: delete indirect elm e800000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.796248] hammer2: hammer2_base_delete: delete indirect elm f000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.797329] hammer2: hammer2_base_delete: delete indirect elm f300000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.797515] hammer2: hammer2_base_delete: delete indirect elm f200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.799026] hammer2: hammer2_base_delete: delete indirect elm f400000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.800059] hammer2: hammer2_base_delete: delete indirect elm f600000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.800525] hammer2: hammer2_base_delete: delete indirect elm f600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.800693] hammer2: hammer2_base_delete: delete indirect elm f400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.800929] hammer2: hammer2_base_delete: delete indirect elm f000000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.801963] hammer2: hammer2_base_delete: delete indirect elm fa00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.802437] hammer2: hammer2_base_delete: delete indirect elm fa00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.803049] hammer2: hammer2_base_delete: delete indirect elm fc00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.804223] hammer2: hammer2_base_delete: delete indirect elm fe00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.804800] hammer2: hammer2_base_delete: delete indirect elm fe00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.805045] hammer2: hammer2_base_delete: delete indirect elm fc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.805204] hammer2: hammer2_base_delete: delete indirect elm f800000000000000/59 from empty base 0000000000000000/0 not found at 32/32
+[  732.805407] hammer2: hammer2_base_delete: delete inode elm 0000000000005be6/0 from empty base 0000000000000000/0 not found at 128/128
+[  732.807413] hammer2: hammer2_base_delete: delete indirect elm 8100000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.808168] hammer2: hammer2_base_delete: delete indirect elm 8200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.808586] hammer2: hammer2_base_delete: delete indirect elm 8200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.809380] hammer2: hammer2_base_delete: delete indirect elm 8400000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.810360] hammer2: hammer2_base_delete: delete indirect elm 8600000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.811059] hammer2: hammer2_base_delete: delete indirect elm 8600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.811274] hammer2: hammer2_base_delete: delete indirect elm 8400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.811776] hammer2: hammer2_base_delete: delete indirect elm 8800000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.812764] hammer2: hammer2_base_delete: delete indirect elm 8a00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.813398] hammer2: hammer2_base_delete: delete indirect elm 8c00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.814237] hammer2: hammer2_base_delete: delete indirect elm 8e00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.814835] hammer2: hammer2_base_delete: delete indirect elm 8e00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.815019] hammer2: hammer2_base_delete: delete indirect elm 8c00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.815190] hammer2: hammer2_base_delete: delete indirect elm 8800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.815691] hammer2: hammer2_base_delete: delete indirect elm 9000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.816374] hammer2: hammer2_base_delete: delete indirect elm 9200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.816856] hammer2: hammer2_base_delete: delete indirect elm 9200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.818303] hammer2: hammer2_base_delete: delete indirect elm 9500000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.819224] hammer2: hammer2_base_delete: delete indirect elm 9600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.819413] hammer2: hammer2_base_delete: delete indirect elm 9400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.819589] hammer2: hammer2_base_delete: delete indirect elm 9000000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.821164] hammer2: hammer2_base_delete: delete indirect elm 9b00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.821351] hammer2: hammer2_base_delete: delete indirect elm 9a00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.822464] hammer2: hammer2_base_delete: delete indirect elm 9d00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.823459] hammer2: hammer2_base_delete: delete indirect elm 9f00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.823735] hammer2: hammer2_base_delete: delete indirect elm 9e00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.823969] hammer2: hammer2_base_delete: delete indirect elm 9c00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.824196] hammer2: hammer2_base_delete: delete indirect elm 9800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.824946] hammer2: hammer2_base_delete: delete indirect elm a000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.826335] hammer2: hammer2_base_delete: delete indirect elm a300000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.826623] hammer2: hammer2_base_delete: delete indirect elm a200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.828659] hammer2: hammer2_base_delete: delete indirect elm a700000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.828949] hammer2: hammer2_base_delete: delete indirect elm a600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.829217] hammer2: hammer2_base_delete: delete indirect elm a400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.830476] hammer2: hammer2_base_delete: delete indirect elm a900000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.832208] hammer2: hammer2_base_delete: delete indirect elm ab00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.832586] hammer2: hammer2_base_delete: delete indirect elm aa00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.833682] hammer2: hammer2_base_delete: delete indirect elm ad00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.834231] hammer2: hammer2_base_delete: delete indirect elm ae00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.834811] hammer2: hammer2_base_delete: delete indirect elm ae00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.835125] hammer2: hammer2_base_delete: delete indirect elm ac00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.835343] hammer2: hammer2_base_delete: delete indirect elm a800000000000000/59 from empty base 0000000000000000/0 not found at 128/128
+[  732.837317] hammer2: hammer2_base_delete: delete indirect elm b400000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.838327] hammer2: hammer2_base_delete: delete indirect elm b600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.839023] hammer2: hammer2_base_delete: delete indirect elm b800000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.839985] hammer2: hammer2_base_delete: delete indirect elm ba00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.840492] hammer2: hammer2_base_delete: delete indirect elm ba00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.841334] hammer2: hammer2_base_delete: delete indirect elm bd00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.841780] hammer2: hammer2_base_delete: delete indirect elm be00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.842301] hammer2: hammer2_base_delete: delete indirect elm be00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.842460] hammer2: hammer2_base_delete: delete indirect elm bc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.843187] hammer2: hammer2_base_delete: delete indirect elm c000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.844000] hammer2: hammer2_base_delete: delete indirect elm c200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.844438] hammer2: hammer2_base_delete: delete indirect elm c200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.846403] hammer2: hammer2_base_delete: delete indirect elm c600000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.846923] hammer2: hammer2_base_delete: delete indirect elm c600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.847124] hammer2: hammer2_base_delete: delete indirect elm c400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.847954] hammer2: hammer2_base_delete: delete indirect elm c800000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.849137] hammer2: hammer2_base_delete: delete indirect elm ca00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.849583] hammer2: hammer2_base_delete: delete indirect elm ca00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.850119] hammer2: hammer2_base_delete: delete indirect elm cc00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.851238] hammer2: hammer2_base_delete: delete indirect elm cf00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.851409] hammer2: hammer2_base_delete: delete indirect elm ce00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.851561] hammer2: hammer2_base_delete: delete indirect elm cc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.852628] hammer2: hammer2_base_delete: delete indirect elm d100000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.853153] hammer2: hammer2_base_delete: delete indirect elm d200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.853687] hammer2: hammer2_base_delete: delete indirect elm d200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.854464] hammer2: hammer2_base_delete: delete indirect elm d500000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.855182] hammer2: hammer2_base_delete: delete indirect elm d600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.855339] hammer2: hammer2_base_delete: delete indirect elm d400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.856204] hammer2: hammer2_base_delete: delete indirect elm d900000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.857086] hammer2: hammer2_base_delete: delete indirect elm db00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.857238] hammer2: hammer2_base_delete: delete indirect elm da00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.857894] hammer2: hammer2_base_delete: delete indirect elm dc00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.859112] hammer2: hammer2_base_delete: delete indirect elm df00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.859289] hammer2: hammer2_base_delete: delete indirect elm de00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.859445] hammer2: hammer2_base_delete: delete indirect elm dc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.859948] hammer2: hammer2_base_delete: delete indirect elm e000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.860618] hammer2: hammer2_base_delete: delete indirect elm e200000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.861039] hammer2: hammer2_base_delete: delete indirect elm e200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.862664] hammer2: hammer2_base_delete: delete indirect elm e700000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.862843] hammer2: hammer2_base_delete: delete indirect elm e600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.862991] hammer2: hammer2_base_delete: delete indirect elm e400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.863633] hammer2: hammer2_base_delete: delete indirect elm e900000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.864395] hammer2: hammer2_base_delete: delete indirect elm ea00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.865191] hammer2: hammer2_base_delete: delete indirect elm ed00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.866268] hammer2: hammer2_base_delete: delete indirect elm ef00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.866427] hammer2: hammer2_base_delete: delete indirect elm ee00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.866574] hammer2: hammer2_base_delete: delete indirect elm ec00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.867913] hammer2: hammer2_base_delete: delete indirect elm f000000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.868898] hammer2: hammer2_base_delete: delete indirect elm f300000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.869052] hammer2: hammer2_base_delete: delete indirect elm f200000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.869564] hammer2: hammer2_base_delete: delete indirect elm f400000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.870600] hammer2: hammer2_base_delete: delete indirect elm f600000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.871051] hammer2: hammer2_base_delete: delete indirect elm f600000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.871202] hammer2: hammer2_base_delete: delete indirect elm f400000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.872628] hammer2: hammer2_base_delete: delete indirect elm fa00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.873122] hammer2: hammer2_base_delete: delete indirect elm fa00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.873785] hammer2: hammer2_base_delete: delete indirect elm fc00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.874771] hammer2: hammer2_base_delete: delete indirect elm fe00000000000000/56 from empty base 0000000000000000/0 not found at 128/128
+[  732.875168] hammer2: hammer2_base_delete: delete indirect elm fe00000000000000/57 from empty base 0000000000000000/0 not found at 128/128
+[  732.875317] hammer2: hammer2_base_delete: delete indirect elm fc00000000000000/58 from empty base 0000000000000000/0 not found at 128/128
+[  732.876066] hammer2: hammer2_base_delete: delete inode elm 0000000000005be6/0 from empty base 0000000000000000/0 not found at 128/128
+[  732.877841] hammer2: hammer2_flush_core: chain error during flush
+[  732.878874] hammer2: hammer2_flush_core: chain error during flush
+[  732.879490] hammer2: hammer2_flush_core: chain error during flush
+[  732.880531] hammer2: hammer2_flush_core: chain error during flush
+[  732.881339] hammer2: hammer2_flush_core: chain error during flush
+[  732.882205] hammer2: hammer2_flush_core: chain error during flush
+[  732.883026] hammer2: hammer2_flush_core: chain error during flush
+[  732.883836] hammer2: hammer2_flush_core: chain error during flush
+[  732.884497] hammer2: hammer2_flush_core: chain error during flush
+[  732.885240] hammer2: hammer2_flush_core: chain error during flush
+[  732.909580] hammer2: hammer2_chain_testcheck: gave up
+[  733.946373] hammer2: hammer2_base_delete: delete indirect elm 0000000000005b80/7 from empty base 0000000000000000/0 not found at 128/128
+[  733.946622] hammer2: hammer2_base_delete: delete indirect elm 0000000000004000/14 from empty base 0000000000000000/0 not found at 32/32
+[  733.969905] hammer2: hammer2_base_delete: delete indirect elm 0000000000005b80/7 from empty base 0000000000000000/0 not found at 128/128
+[  734.186763] sync_slaves pfs CL clindex 1
+[  734.187771] sync_slaves pfs CL clindex 0
+[  734.187916] sync_slaves error 0 defer 0000000000000000
+[  734.188621] sync_slaves error 0 defer 0000000000000000
+[  739.306784] sync_slaves pfs CL clindex 1
+[  739.306784] sync_slaves pfs CL clindex 0
+[  739.306969] sync_slaves error 0 defer 0000000000000000
+[  739.306988] sync_slaves error 0 defer 0000000000000000
+[  744.426829] sync_slaves pfs CL clindex 0
+[  744.427032] sync_slaves error 0 defer 0000000000000000
+[  744.428758] sync_slaves pfs CL clindex 1
+[  744.428909] sync_slaves error 0 defer 0000000000000000
+[  746.092433] sync_slaves pfs CL clindex 1
+[  746.093075] sync_slaves error 0 defer 0000000000000000
+[  749.548647] sync_slaves pfs CL clindex 1
+[  749.548819] sync_slaves pfs CL clindex 0
+[  749.548905] sync_slaves error 0 defer 0000000000000000
+[  749.549045] sync_slaves error 0 defer 0000000000000000
+[  751.594750] sync_slaves pfs CL clindex 1
+[  751.595004] sync_slaves error 0 defer 0000000000000000
+[  754.666753] sync_slaves pfs CL clindex 0
+[  754.666995] sync_slaves error 0 defer 0000000000000000
+[  754.667747] sync_slaves pfs CL clindex 1
+[  754.667910] sync_slaves error 0 defer 0000000000000000
+[  756.715770] sync_slaves pfs CL clindex 1
+[  756.716024] sync_slaves error 0 defer 0000000000000000
+[  759.786756] sync_slaves pfs CL clindex 0
+[  759.787009] sync_slaves error 0 defer 0000000000000000
+[  759.787271] sync_slaves pfs CL clindex 1
+[  759.787423] sync_slaves error 0 defer 0000000000000000
+[  761.835754] sync_slaves pfs CL clindex 1
+[  761.835999] sync_slaves error 0 defer 0000000000000000
+[  764.906950] sync_slaves pfs CL clindex 1
+[  764.907192] sync_slaves error 0 defer 0000000000000000
+[  764.909254] sync_slaves pfs CL clindex 0
+[  764.911036] sync_slaves error 0 defer 0000000000000000
+[  766.955851] sync_slaves pfs CL clindex 1
+[  766.956029] sync_slaves error 0 defer 0000000000000000
+[  770.027754] sync_slaves pfs CL clindex 0
+[  770.027953] sync_slaves error 0 defer 0000000000000000
+[  770.027964] sync_slaves pfs CL clindex 1
+[  770.028112] sync_slaves error 0 defer 0000000000000000
+[  772.074901] sync_slaves pfs CL clindex 1
+[  772.075109] sync_slaves error 0 defer 0000000000000000
+[  775.147742] sync_slaves pfs CL clindex 1
+[  775.147959] sync_slaves error 0 defer 0000000000000000
+[  775.149217] sync_slaves pfs CL clindex 0
+[  775.149360] sync_slaves error 0 defer 0000000000000000
+[  777.195745] sync_slaves pfs CL clindex 1
+[  777.199072] sync_slaves error 0 defer 0000000000000000
+[  780.266763] sync_slaves pfs CL clindex 0
+[  780.266982] sync_slaves error 0 defer 0000000000000000
+[  780.267223] sync_slaves pfs CL clindex 1
+[  780.267419] sync_slaves error 0 defer 0000000000000000
+[  782.314840] sync_slaves pfs CL clindex 1
+[  782.315101] sync_slaves error 0 defer 0000000000000000
+[  785.386744] sync_slaves pfs CL clindex 1
+[  785.386958] sync_slaves error 0 defer 0000000000000000
+[  785.387775] sync_slaves pfs CL clindex 0
+[  785.387973] sync_slaves error 0 defer 0000000000000000
+[  787.434746] sync_slaves pfs CL clindex 1
+[  787.434965] sync_slaves error 0 defer 0000000000000000
+[  790.506758] sync_slaves pfs CL clindex 1
+[  790.506951] sync_slaves error 0 defer 0000000000000000
+[  790.507841] sync_slaves pfs CL clindex 0
+[  790.507988] sync_slaves error 0 defer 0000000000000000
+[  792.554737] sync_slaves pfs CL clindex 1
+[  792.554906] sync_slaves error 0 defer 0000000000000000
+[  795.626744] sync_slaves pfs CL clindex 1
+[  795.626752] sync_slaves pfs CL clindex 0
+[  795.626905] sync_slaves error 0 defer 0000000000000000
+[  795.626974] sync_slaves error 0 defer 0000000000000000
+[  797.674738] sync_slaves pfs CL clindex 1
+[  797.674907] sync_slaves error 0 defer 0000000000000000
+[  800.746753] sync_slaves pfs CL clindex 0
+[  800.746759] sync_slaves pfs CL clindex 1
+[  800.746925] sync_slaves error 0 defer 0000000000000000
+[  800.746943] sync_slaves error 0 defer 0000000000000000
+[  802.794740] sync_slaves pfs CL clindex 1
+[  802.794921] sync_slaves error 0 defer 0000000000000000
+[  805.866755] sync_slaves pfs CL clindex 0
+[  805.866773] sync_slaves pfs CL clindex 1
+[  805.866926] sync_slaves error 0 defer 0000000000000000
+[  805.866954] sync_slaves error 0 defer 0000000000000000
+[  807.915749] sync_slaves pfs CL clindex 1
+[  807.915920] sync_slaves error 0 defer 0000000000000000
+[  810.986763] sync_slaves pfs CL clindex 1
+[  810.986923] sync_slaves error 0 defer 0000000000000000
+[  810.987752] sync_slaves pfs CL clindex 0
+[  810.987891] sync_slaves error 0 defer 0000000000000000
+[  813.034749] sync_slaves pfs CL clindex 1
+[  813.034918] sync_slaves error 0 defer 0000000000000000
+[  816.106746] sync_slaves pfs CL clindex 1
+[  816.106773] sync_slaves pfs CL clindex 0
+[  816.106907] sync_slaves error 0 defer 0000000000000000
+[  816.106920] sync_slaves error 0 defer 0000000000000000
+[  818.154768] sync_slaves pfs CL clindex 1
+[  818.154936] sync_slaves error 0 defer 0000000000000000
+[  821.227741] sync_slaves pfs CL clindex 0
+[  821.227740] sync_slaves pfs CL clindex 1
+[  821.228442] sync_slaves error 0 defer 0000000000000000
+[  821.228768] sync_slaves error 0 defer 0000000000000000
+[  823.274747] sync_slaves pfs CL clindex 1
+[  823.274920] sync_slaves error 0 defer 0000000000000000
+[  826.347732] sync_slaves pfs CL clindex 0
+[  826.347890] sync_slaves error 0 defer 0000000000000000
+[  826.347919] sync_slaves pfs CL clindex 1
+[  826.348048] sync_slaves error 0 defer 0000000000000000
+[  828.394753] sync_slaves pfs CL clindex 1
+[  828.394928] sync_slaves error 0 defer 0000000000000000
+[  831.467772] sync_slaves pfs CL clindex 0
+[  831.467776] sync_slaves pfs CL clindex 1
+[  831.467934] sync_slaves error 0 defer 0000000000000000
+[  831.467954] sync_slaves error 0 defer 0000000000000000
+[  833.514754] sync_slaves pfs CL clindex 1
+[  833.514927] sync_slaves error 0 defer 0000000000000000
+[  836.586734] sync_slaves pfs CL clindex 1
+[  836.586754] sync_slaves pfs CL clindex 0
+[  836.586906] sync_slaves error 0 defer 0000000000000000
+[  836.586923] sync_slaves error 0 defer 0000000000000000
+[  838.635758] sync_slaves pfs CL clindex 1
+[  838.635934] sync_slaves error 0 defer 0000000000000000
+[  841.706751] sync_slaves pfs CL clindex 0
+[  841.706912] sync_slaves error 0 defer 0000000000000000
+[  841.707748] sync_slaves pfs CL clindex 1
+[  841.707881] sync_slaves error 0 defer 0000000000000000
+[  843.755766] sync_slaves pfs CL clindex 1
+[  843.755972] sync_slaves error 0 defer 0000000000000000
+[  846.826751] sync_slaves pfs CL clindex 1
+[  846.826753] sync_slaves pfs CL clindex 0
+[  846.826921] sync_slaves error 0 defer 0000000000000000
+[  846.826940] sync_slaves error 0 defer 0000000000000000
+[  848.874738] sync_slaves pfs CL clindex 1
+[  848.874917] sync_slaves error 0 defer 0000000000000000
+[  851.946751] sync_slaves pfs CL clindex 0
+[  851.946763] sync_slaves pfs CL clindex 1
+[  851.946916] sync_slaves error 0 defer 0000000000000000
+[  851.946935] sync_slaves error 0 defer 0000000000000000
+[  853.994744] sync_slaves pfs CL clindex 1
+[  853.994969] sync_slaves error 0 defer 0000000000000000
+[  857.066733] sync_slaves pfs CL clindex 1
+[  857.066738] sync_slaves pfs CL clindex 0
+[  857.066898] sync_slaves error 0 defer 0000000000000000
+[  857.066929] sync_slaves error 0 defer 0000000000000000
+[  859.115756] sync_slaves pfs CL clindex 1
+[  859.115979] sync_slaves error 0 defer 0000000000000000
+[  862.186734] sync_slaves pfs CL clindex 1
+[  862.186803] sync_slaves pfs CL clindex 0
+[  862.186891] sync_slaves error 0 defer 0000000000000000
+[  862.186953] sync_slaves error 0 defer 0000000000000000
+[  862.796320] hammer2: hammer2_kill_sb: after unmount: 1112 inode, 2272 chain, 131 modified, 487 dio still allocated
+[  864.234770] sync_slaves pfs CL clindex 1
+[  864.234990] sync_slaves error 0 defer 0000000000000000
+[  867.306736] sync_slaves pfs CL clindex 0
+[  867.306773] sync_slaves pfs CL clindex 1
+[  867.306946] sync_slaves error 0 defer 0000000000000000
+[  867.306949] sync_slaves error 0 defer 0000000000000000
+[  869.354738] sync_slaves pfs CL clindex 1
+[  869.354911] sync_slaves error 0 defer 0000000000000000
+[  872.427739] sync_slaves pfs CL clindex 1
+[  872.427757] sync_slaves pfs CL clindex 0
+[  872.427911] sync_slaves error 0 defer 0000000000000000
+[  872.427931] sync_slaves error 0 defer 0000000000000000
+[  874.475726] sync_slaves pfs CL clindex 1
+[  874.475894] sync_slaves error 0 defer 0000000000000000
+[  877.546730] sync_slaves pfs CL clindex 1
+[  877.546729] sync_slaves pfs CL clindex 0
+[  877.546897] sync_slaves error 0 defer 0000000000000000
+[  877.546921] sync_slaves error 0 defer 0000000000000000
+[  879.594736] sync_slaves pfs CL clindex 1
+[  879.594954] sync_slaves error 0 defer 0000000000000000
+[  882.666755] sync_slaves pfs CL clindex 0
+[  882.666793] sync_slaves pfs CL clindex 1
+[  882.666959] sync_slaves error 0 defer 0000000000000000
+[  882.666975] sync_slaves error 0 defer 0000000000000000
+[  884.715728] sync_slaves pfs CL clindex 1
+[  884.715897] sync_slaves error 0 defer 0000000000000000
+[  887.787767] sync_slaves pfs CL clindex 1
+[  887.787786] sync_slaves pfs CL clindex 0
+[  887.787946] sync_slaves error 0 defer 0000000000000000
+[  887.787962] sync_slaves error 0 defer 0000000000000000
+[  889.834732] sync_slaves pfs CL clindex 1
+[  889.834902] sync_slaves error 0 defer 0000000000000000
+[  892.906754] sync_slaves pfs CL clindex 0
+[  892.906754] sync_slaves pfs CL clindex 1
+[  892.906916] sync_slaves error 0 defer 0000000000000000
+[  892.906939] sync_slaves error 0 defer 0000000000000000
+[  894.954735] sync_slaves pfs CL clindex 1
+[  894.954908] sync_slaves error 0 defer 0000000000000000
+[  898.026732] sync_slaves pfs CL clindex 0
+[  898.026747] sync_slaves pfs CL clindex 1
+[  898.026906] sync_slaves error 0 defer 0000000000000000
+[  898.026926] sync_slaves error 0 defer 0000000000000000
+[  900.074740] sync_slaves pfs CL clindex 1
+[  900.074912] sync_slaves error 0 defer 0000000000000000
+[  903.146749] sync_slaves pfs CL clindex 0
+[  903.146909] sync_slaves error 0 defer 0000000000000000
+[  903.147768] sync_slaves pfs CL clindex 1
+[  903.147930] sync_slaves error 0 defer 0000000000000000
+[  905.195731] sync_slaves pfs CL clindex 1
+[  905.195897] sync_slaves error 0 defer 0000000000000000
+[  908.266728] sync_slaves pfs CL clindex 1
+[  908.266749] sync_slaves pfs CL clindex 0
+[  908.266901] sync_slaves error 0 defer 0000000000000000
+[  908.266919] sync_slaves error 0 defer 0000000000000000
+[  910.314744] sync_slaves pfs CL clindex 1
+[  910.314919] sync_slaves error 0 defer 0000000000000000
+[  913.386739] sync_slaves pfs CL clindex 0
+[  913.386904] sync_slaves error 0 defer 0000000000000000
+[  913.387737] sync_slaves pfs CL clindex 1
+[  913.387879] sync_slaves error 0 defer 0000000000000000
+[  915.435728] sync_slaves pfs CL clindex 1
+[  915.435894] sync_slaves error 0 defer 0000000000000000
+[  918.506747] sync_slaves pfs CL clindex 0
+[  918.506754] sync_slaves pfs CL clindex 1
+[  918.506907] sync_slaves error 0 defer 0000000000000000
+[  918.506927] sync_slaves error 0 defer 0000000000000000
+[  920.555726] sync_slaves pfs CL clindex 1
+[  920.555892] sync_slaves error 0 defer 0000000000000000
+[  923.626751] sync_slaves pfs CL clindex 1
+[  923.626751] sync_slaves pfs CL clindex 0
+[  923.627559] sync_slaves error 0 defer 0000000000000000
+[  923.627578] sync_slaves error 0 defer 0000000000000000
+[  925.674742] sync_slaves pfs CL clindex 1
+[  925.674913] sync_slaves error 0 defer 0000000000000000
+[  928.747728] sync_slaves pfs CL clindex 0
+[  928.747750] sync_slaves pfs CL clindex 1
+[  928.747889] sync_slaves error 0 defer 0000000000000000
+[  928.747901] sync_slaves error 0 defer 0000000000000000
+[  930.795740] sync_slaves pfs CL clindex 1
+[  930.795918] sync_slaves error 0 defer 0000000000000000
+[  933.866737] sync_slaves pfs CL clindex 0
+[  933.866748] sync_slaves pfs CL clindex 1
+[  933.866920] sync_slaves error 0 defer 0000000000000000
+[  933.866933] sync_slaves error 0 defer 0000000000000000
+[  935.914737] sync_slaves pfs CL clindex 1
+[  935.914915] sync_slaves error 0 defer 0000000000000000
+[  938.986753] sync_slaves pfs CL clindex 0
+[  938.986774] sync_slaves pfs CL clindex 1
+[  938.986913] sync_slaves error 0 defer 0000000000000000
+[  938.986990] sync_slaves error 0 defer 0000000000000000
+[  941.034735] sync_slaves pfs CL clindex 1
+[  941.034903] sync_slaves error 0 defer 0000000000000000
+[  944.106751] sync_slaves pfs CL clindex 1
+[  944.106752] sync_slaves pfs CL clindex 0
+[  944.106914] sync_slaves error 0 defer 0000000000000000
+[  944.106936] sync_slaves error 0 defer 0000000000000000
+[  946.154737] sync_slaves pfs CL clindex 1
+[  946.154910] sync_slaves error 0 defer 0000000000000000
+[  949.226754] sync_slaves pfs CL clindex 1
+[  949.226917] sync_slaves error 0 defer 0000000000000000
+[  949.227758] sync_slaves pfs CL clindex 0
+[  949.227942] sync_slaves error 0 defer 0000000000000000
+[  951.275729] sync_slaves pfs CL clindex 1
+[  951.275904] sync_slaves error 0 defer 0000000000000000
+[  954.346744] sync_slaves pfs CL clindex 1
+[  954.346946] sync_slaves error 0 defer 0000000000000000
+[  954.347726] sync_slaves pfs CL clindex 0
+[  954.347867] sync_slaves error 0 defer 0000000000000000
+[  956.395728] sync_slaves pfs CL clindex 1
+[  956.395897] sync_slaves error 0 defer 0000000000000000
+[  959.466737] sync_slaves pfs CL clindex 1
+[  959.466752] sync_slaves pfs CL clindex 0
+[  959.466899] sync_slaves error 0 defer 0000000000000000
+[  959.466915] sync_slaves error 0 defer 0000000000000000
+[  961.514738] sync_slaves pfs CL clindex 1
+[  961.514906] sync_slaves error 0 defer 0000000000000000
+[  964.586736] sync_slaves pfs CL clindex 1
+[  964.586747] sync_slaves pfs CL clindex 0
+[  964.586903] sync_slaves error 0 defer 0000000000000000
+[  964.586943] sync_slaves error 0 defer 0000000000000000
+[  966.634749] sync_slaves pfs CL clindex 1
+[  966.634971] sync_slaves error 0 defer 0000000000000000
+[  969.706750] sync_slaves pfs CL clindex 1
+[  969.706755] sync_slaves pfs CL clindex 0
+[  969.706911] sync_slaves error 0 defer 0000000000000000
+[  969.706928] sync_slaves error 0 defer 0000000000000000
+[  971.755740] sync_slaves pfs CL clindex 1
+[  971.755908] sync_slaves error 0 defer 0000000000000000
+[  974.826758] sync_slaves pfs CL clindex 0
+[  974.826801] sync_slaves pfs CL clindex 1
+[  974.827035] sync_slaves error 0 defer 0000000000000000
+[  974.827502] sync_slaves error 0 defer 0000000000000000
+[  976.874765] sync_slaves pfs CL clindex 1
+[  976.874947] sync_slaves error 0 defer 0000000000000000
+[  977.717405] hammer2: hammer2_get_tree: PFS already mounted!
+[  977.717438] hammer2: hammer2_unmount_helper: 2 PFS mounts still exist
+[  977.717860] hammer2: hammer2_kill_sb: after unmount: 1112 inode, 2272 chain, 131 modified, 487 dio still allocated
+[  977.720454] hammer2: hammer2_get_tree: PFS already mounted!
+[  977.720460] hammer2: hammer2_unmount_helper: 2 PFS mounts still exist
+[  977.720571] hammer2: hammer2_kill_sb: after unmount: 1112 inode, 2272 chain, 131 modified, 487 dio still allocated
+[  977.736623] hammer2: hammer2_is_rdonly: read-only mounted
+[  977.778470] hammer2: hammer2_unmount_helper: 2 PFS mounts still exist
+[  977.778589] hammer2: hammer2_kill_sb: after unmount: 1112 inode, 2272 chain, 131 modified, 487 dio still allocated
+[  977.778642] ==================================================================
+[  977.778650] BUG: KASAN: slab-use-after-free in string+0x4b2/0x5b0
+[  977.778661] Read of size 1 at addr ffff8881111aaa29 by task mount/25989
+
+[  977.778669] CPU: 2 UID: 0 PID: 25989 Comm: mount Tainted: G        W  OE       7.3.0-rc5-kasan #1 PREEMPT(full)  1af86c1050c70ca897ed00e12b00266deae865ec
+[  977.778675] Tainted: [W]=WARN, [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+[  977.778677] Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS unknown 02/02/2022
+[  977.778679] Call Trace:
+[  977.778683]  <TASK>
+[  977.778685]  dump_stack_lvl+0x6e/0xa0
+[  977.778697]  print_report+0x14b/0x4b0
+[  977.778710]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778714]  ? __virt_addr_valid+0x255/0x510
+[  977.778722]  kasan_report+0x108/0x130
+[  977.778729]  ? string+0x4b2/0x5b0
+[  977.778733]  ? string+0x4b2/0x5b0
+[  977.778740]  string+0x4b2/0x5b0
+[  977.778745]  ? __pfx_string+0x10/0x10
+[  977.778748]  ? __pfx_format_decode+0x10/0x10
+[  977.778752]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778757]  vsnprintf+0x3b0/0x1700
+[  977.778766]  ? __pfx_vsnprintf+0x10/0x10
+[  977.778769]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778772]  ? stack_trace_save+0x93/0xd0
+[  977.778778]  ? __pfx_stack_trace_save+0x10/0x10
+[  977.778780]  ? stack_depot_save_flags+0x918/0xbc0
+[  977.778791]  ? vprintk_store+0x5ae/0x930
+[  977.778797]  vprintk_store+0x342/0x930
+[  977.778805]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778810]  ? __pfx_vprintk_store+0x10/0x10
+[  977.778815]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778818]  ? is_module_address+0x72/0x120
+[  977.778829]  ? __lock_acquire+0x58f/0x2780
+[  977.778837]  vprintk_emit+0x20a/0x6f0
+[  977.778841]  ? __pfx_vprintk_emit+0x10/0x10
+[  977.778844]  ? lock_acquire+0x19e/0x310
+[  977.778847]  ? ___ratelimit+0x248/0x9c0
+[  977.778854]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778856]  ? mark_held_locks+0x40/0x70
+[  977.778862]  _printk+0xc7/0x100
+[  977.778869]  ? __pfx__printk+0x10/0x10
+[  977.778872]  ? ___ratelimit+0x4be/0x9c0
+[  977.778878]  ? __pfx____ratelimit+0x10/0x10
+[  977.778882]  ? _raw_spin_unlock_irqrestore+0x45/0x60
+[  977.778887]  hammer2_get_tree.cold+0x18/0x2d6 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  977.778905]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778908]  ? __pfx_hammer2_get_tree+0x10/0x10 [hammer2 3f6a8c17722e58602763a6b32f4504d3bdd9b699]
+[  977.778922]  ? __pfx___might_resched+0x10/0x10
+[  977.778929]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778931]  ? __mutex_lock+0xe11/0x24d0
+[  977.778935]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778938]  ? __do_sys_fsconfig+0x443/0xa60
+[  977.778945]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778949]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778951]  ? kasan_quarantine_put+0xf5/0x250
+[  977.778957]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778959]  ? cap_capable+0x1b1/0x3a0
+[  977.778968]  vfs_get_tree+0x8b/0x2f0
+[  977.778974]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778977]  ? capable+0x58/0xc0
+[  977.778981]  vfs_cmd_create+0xc2/0x280
+[  977.778985]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778988]  __do_sys_fsconfig+0x47e/0xa60
+[  977.778992]  ? __pfx___do_sys_fsconfig+0x10/0x10
+[  977.778995]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.778998]  ? do_syscall_64+0x211/0x690
+[  977.779003]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779005]  ? do_syscall_64+0x22f/0x690
+[  977.779008]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779011]  ? find_held_lock+0x2b/0x80
+[  977.779017]  do_syscall_64+0xfe/0x690
+[  977.779020]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779022]  ? find_held_lock+0x2b/0x80
+[  977.779026]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779029]  ? lock_release+0xe8/0x320
+[  977.779033]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779036]  ? do_user_addr_fault+0x844/0xf40
+[  977.779042]  ? irqentry_exit+0x10a/0x990
+[  977.779045]  ? do_syscall_64+0x2d/0x690
+[  977.779048]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779051]  ? trace_hardirqs_off_finish+0x13d/0x190
+[  977.779060]  ? irqentry_exit+0x10f/0x990
+[  977.779062]  ? srso_alias_return_thunk+0x5/0xfbef5
+[  977.779065]  ? do_syscall_64+0x60/0x690
+[  977.779069]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+[  977.779072] RIP: 0033:0x7fa2f311deee
+[  977.779075] Code: 73 01 c3 48 8b 0d 22 de 0f 00 f7 d8 64 89 01 48 83 c8 ff c3 0f 1f 84 00 00 00 00 00 f3 0f 1e fa 49 89 ca b8 af 01 00 00 0f 05 <48> 3d 01 f0 ff ff 73 01 c3 48 8b 0d f2 dd 0f 00 f7 d8 64 89 01 48
+[  977.779077] RSP: 002b:00007ffedcb98278 EFLAGS: 00000246 ORIG_RAX: 00000000000001af
+[  977.779081] RAX: ffffffffffffffda RBX: 0000559cb397d160 RCX: 00007fa2f311deee
+[  977.779083] RDX: 0000000000000000 RSI: 0000000000000006 RDI: 0000000000000003
+[  977.779085] RBP: 0000000000000003 R08: 0000000000000000 R09: 0000000000000000
+[  977.779087] R10: 0000000000000000 R11: 0000000000000246 R12: 0000559cb397e290
+[  977.779088] R13: 0000000000000065 R14: 00007fa2f33218a0 R15: 00007fa2f32467f0
+[  977.779097]  </TASK>
+
+[  977.779126] Allocated by task 25989:
+[  977.779131]  kasan_save_stack+0x2f/0x50
+[  977.779136]  kasan_save_track+0x14/0x30
+[  977.779139]  __kasan_kmalloc+0x9a/0xb0
+[  977.779143]  __kmalloc_node_track_caller_noprof+0x31f/0x920
+[  977.779149]  kstrdup+0x57/0xf0
+[  977.779156]  hammer2_get_tree+0x1f3/0x37c0 [hammer2]
+[  977.779168]  vfs_get_tree+0x8b/0x2f0
+[  977.779171]  vfs_cmd_create+0xc2/0x280
+[  977.779175]  __do_sys_fsconfig+0x47e/0xa60
+[  977.779179]  do_syscall_64+0xfe/0x690
+[  977.779183]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+
+[  977.779188] Freed by task 25989:
+[  977.779191]  kasan_save_stack+0x2f/0x50
+[  977.779195]  kasan_save_track+0x14/0x30
+[  977.779198]  kasan_save_free_info+0x3b/0x70
+[  977.779202]  __kasan_slab_free+0x6c/0xa0
+[  977.779206]  kfree+0x28a/0x730
+[  977.779211]  hammer2_get_tree+0x18df/0x37c0 [hammer2]
+[  977.779222]  vfs_get_tree+0x8b/0x2f0
+[  977.779226]  vfs_cmd_create+0xc2/0x280
+[  977.779229]  __do_sys_fsconfig+0x47e/0xa60
+[  977.779233]  do_syscall_64+0xfe/0x690
+[  977.779237]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+
+[  977.779242] The buggy address belongs to the object at ffff8881111aaa20
+                which belongs to the cache kmalloc-16 of size 16
+[  977.779246] The buggy address is located 9 bytes inside of
+                freed 16-byte region [ffff8881111aaa20, ffff8881111aaa30)
+
+[  977.779252] The buggy address belongs to the physical page:
+[  977.779255] page: refcount:0 mapcount:0 mapping:0000000000000000 index:0xffff8881111aa3a0 pfn:0x1111aa
+[  977.779261] flags: 0x17ffffc0000200(workingset|node=0|zone=2|lastcpupid=0x1fffff)
+[  977.779270] page_type: f5(slab)
+[  977.779275] raw: 0017ffffc0000200 ffff888100042640 ffffea000418abd0 ffffea0004189f10
+[  977.779280] raw: ffff8881111aa3a0 0000000000800075 00000000f5000000 0000000000000000
+[  977.779283] page dumped because: kasan: bad access detected
+
+[  977.779288] Memory state around the buggy address:
+[  977.779291]  ffff8881111aa900: 00 04 fc fc 00 01 fc fc 00 01 fc fc fa fb fc fc
+[  977.779294]  ffff8881111aa980: 00 04 fc fc fa fb fc fc 00 05 fc fc fa fb fc fc
+[  977.779296] >ffff8881111aaa00: fa fb fc fc fa fb fc fc fa fb fc fc 00 04 fc fc
+[  977.779299]                                   ^
+[  977.779302]  ffff8881111aaa80: fa fb fc fc fa fb fc fc 00 01 fc fc 00 00 fc fc
+[  977.779305]  ffff8881111aab00: fa fb fc fc fa fb fc fc 00 00 fc fc 00 01 fc fc
+[  977.779307] ==================================================================
+[  977.779310] Disabling lock debugging due to kernel taint
+[  977.778642] hammer2: hammer2_get_tree: PFS label "e" not found
+[  977.876230] hammer2: hammer2_get_tree: PFS already mounted!
+[  977.876235] hammer2: hammer2_unmount_helper: 2 PFS mounts still exist
+[  977.876303] hammer2: hammer2_kill_sb: after unmount: 1112 inode, 2272 chain, 131 modified, 487 dio still allocated
+[  979.947726] sync_slaves pfs CL clindex 1
+[  979.947731] sync_slaves pfs CL clindex 0
+[  979.947843] sync_slaves error 0 defer 0000000000000000
+[  979.947867] sync_slaves error 0 defer 0000000000000000
+[  981.995754] sync_slaves pfs CL clindex 1
+[  981.995877] sync_slaves error 0 defer 0000000000000000
+[  985.066729] sync_slaves pfs CL clindex 0
+[  985.066729] sync_slaves pfs CL clindex 1
+[  985.066879] sync_slaves error 0 defer 0000000000000000
+[  985.066890] sync_slaves error 0 defer 0000000000000000
+[  987.114747] sync_slaves pfs CL clindex 1
+[  987.114899] sync_slaves error 0 defer 0000000000000000
+[  990.186730] sync_slaves pfs CL clindex 1
+[  990.186735] sync_slaves pfs CL clindex 0
+[  990.186849] sync_slaves error 0 defer 0000000000000000
+[  990.186864] sync_slaves error 0 defer 0000000000000000
+[  992.234785] sync_slaves pfs CL clindex 1
+[  992.234906] sync_slaves error 0 defer 0000000000000000
+[  995.307729] sync_slaves pfs CL clindex 0
+[  995.307748] sync_slaves pfs CL clindex 1
+[  995.307858] sync_slaves error 0 defer 0000000000000000
+[  995.307882] sync_slaves error 0 defer 0000000000000000
+[  997.355734] sync_slaves pfs CL clindex 1
+[  997.355855] sync_slaves error 0 defer 0000000000000000
+[ 1000.427728] sync_slaves pfs CL clindex 0
+[ 1000.427737] sync_slaves pfs CL clindex 1
+[ 1000.427848] sync_slaves error 0 defer 0000000000000000
+[ 1000.427868] sync_slaves error 0 defer 0000000000000000
+[ 1002.474733] sync_slaves pfs CL clindex 1
+[ 1002.474889] sync_slaves error 0 defer 0000000000000000
+[ 1005.546731] sync_slaves pfs CL clindex 1
+[ 1005.546737] sync_slaves pfs CL clindex 0
+[ 1005.546847] sync_slaves error 0 defer 0000000000000000
+[ 1005.546854] sync_slaves error 0 defer 0000000000000000
+[ 1007.594740] sync_slaves pfs CL clindex 1
+[ 1007.595213] sync_slaves error 0 defer 0000000000000000
+[ 1010.666729] sync_slaves pfs CL clindex 1
+[ 1010.666751] sync_slaves pfs CL clindex 0
+[ 1010.666876] sync_slaves error 0 defer 0000000000000000
+[ 1010.666878] sync_slaves error 0 defer 0000000000000000
+[ 1012.714741] sync_slaves pfs CL clindex 1
+[ 1012.714861] sync_slaves error 0 defer 0000000000000000
+[ 1015.786732] sync_slaves pfs CL clindex 0
+[ 1015.786851] sync_slaves error 0 defer 0000000000000000
+[ 1015.787737] sync_slaves pfs CL clindex 1
+[ 1015.787846] sync_slaves error 0 defer 0000000000000000
+[ 1017.834731] sync_slaves pfs CL clindex 1
+[ 1017.834881] sync_slaves error 0 defer 0000000000000000
+[ 1020.907722] sync_slaves pfs CL clindex 0
+[ 1020.907750] sync_slaves pfs CL clindex 1
+[ 1020.907843] sync_slaves error 0 defer 0000000000000000
+[ 1020.907863] sync_slaves error 0 defer 0000000000000000
+[ 1022.954736] sync_slaves pfs CL clindex 1
+[ 1022.954863] sync_slaves error 0 defer 0000000000000000
+[ 1026.026754] sync_slaves pfs CL clindex 0
+[ 1026.026754] sync_slaves pfs CL clindex 1
+[ 1026.026908] sync_slaves error 0 defer 0000000000000000
+[ 1026.026920] sync_slaves error 0 defer 0000000000000000
+[ 1028.074745] sync_slaves pfs CL clindex 1
+[ 1028.074895] sync_slaves error 0 defer 0000000000000000
+[ 1031.146748] sync_slaves pfs CL clindex 0
+[ 1031.146749] sync_slaves pfs CL clindex 1
+[ 1031.146893] sync_slaves error 0 defer 0000000000000000
+[ 1031.146908] sync_slaves error 0 defer 0000000000000000
+[ 1033.194731] sync_slaves pfs CL clindex 1
+[ 1033.194855] sync_slaves error 0 defer 0000000000000000
+[ 1036.266769] sync_slaves pfs CL clindex 1
+[ 1036.266891] sync_slaves error 0 defer 0000000000000000
+[ 1036.267767] sync_slaves pfs CL clindex 0
+[ 1036.267891] sync_slaves error 0 defer 0000000000000000
+[ 1038.314732] sync_slaves pfs CL clindex 1
+[ 1038.314853] sync_slaves error 0 defer 0000000000000000
+[ 1041.386726] sync_slaves pfs CL clindex 0
+[ 1041.386875] sync_slaves error 0 defer 0000000000000000
+[ 1041.387846] sync_slaves pfs CL clindex 1
+[ 1041.387947] sync_slaves error 0 defer 0000000000000000
+[ 1043.434727] sync_slaves pfs CL clindex 1
+[ 1043.434867] sync_slaves error 0 defer 0000000000000000
+[ 1046.506743] sync_slaves pfs CL clindex 0
+[ 1046.506858] sync_slaves error 0 defer 0000000000000000
+[ 1046.507728] sync_slaves pfs CL clindex 1
+[ 1046.507843] sync_slaves error 0 defer 0000000000000000
+[ 1048.554811] sync_slaves pfs CL clindex 1
+[ 1048.554959] sync_slaves error 0 defer 0000000000000000
+[ 1050.994887] hammer2: hammer2_kill_sb: after unmount: 1112 inode, 2272 chain, 131 modified, 487 dio still allocated
+[ 1051.626732] sync_slaves pfs CL clindex 1
+[ 1051.626732] sync_slaves pfs CL clindex 0
+[ 1051.626850] sync_slaves error 0 defer 0000000000000000
+[ 1051.626865] sync_slaves error 0 defer 0000000000000000
+[ 1053.674731] sync_slaves pfs CL clindex 1
+[ 1053.674881] sync_slaves error 0 defer 0000000000000000
+[ 1056.747729] sync_slaves pfs CL clindex 0
+[ 1056.747730] sync_slaves pfs CL clindex 1
+[ 1056.747849] sync_slaves error 0 defer 0000000000000000
+[ 1056.747865] sync_slaves error 0 defer 0000000000000000
+[ 1058.794799] sync_slaves pfs CL clindex 1
+[ 1058.794918] sync_slaves error 0 defer 0000000000000000
+[ 1061.867723] sync_slaves pfs CL clindex 0
+[ 1061.867742] sync_slaves pfs CL clindex 1
+[ 1061.867840] sync_slaves error 0 defer 0000000000000000
+[ 1061.867847] sync_slaves error 0 defer 0000000000000000
+[ 1063.914729] sync_slaves pfs CL clindex 1
+[ 1063.914852] sync_slaves error 0 defer 0000000000000000
+[ 1066.986728] sync_slaves pfs CL clindex 0
+[ 1066.986728] sync_slaves pfs CL clindex 1
+[ 1066.986847] sync_slaves error 0 defer 0000000000000000
+[ 1066.986865] sync_slaves error 0 defer 0000000000000000
+[ 1069.035739] sync_slaves pfs CL clindex 1
+[ 1069.035854] sync_slaves error 0 defer 0000000000000000
+[ 1072.106727] sync_slaves pfs CL clindex 0
+[ 1072.106873] sync_slaves error 0 defer 0000000000000000
+[ 1072.107722] sync_slaves pfs CL clindex 1
+[ 1072.107854] sync_slaves error 0 defer 0000000000000000
+[ 1074.155725] sync_slaves pfs CL clindex 1
+[ 1074.155843] sync_slaves error 0 defer 0000000000000000
+[ 1077.226725] sync_slaves pfs CL clindex 0
+[ 1077.226733] sync_slaves pfs CL clindex 1
+[ 1077.226840] sync_slaves error 0 defer 0000000000000000
+[ 1077.226864] sync_slaves error 0 defer 0000000000000000
+[ 1079.275721] sync_slaves pfs CL clindex 1
+[ 1079.275838] sync_slaves error 0 defer 0000000000000000
+[ 1082.346735] sync_slaves pfs CL clindex 1
+[ 1082.346747] sync_slaves pfs CL clindex 0
+[ 1082.346858] sync_slaves error 0 defer 0000000000000000
+[ 1082.346876] sync_slaves error 0 defer 0000000000000000
+[ 1084.394727] sync_slaves pfs CL clindex 1
+[ 1084.394848] sync_slaves error 0 defer 0000000000000000
+[ 1087.467727] sync_slaves pfs CL clindex 1
+[ 1087.467737] sync_slaves pfs CL clindex 0
+[ 1087.467877] sync_slaves error 0 defer 0000000000000000
+[ 1087.467891] sync_slaves error 0 defer 0000000000000000
+[ 1089.515732] sync_slaves pfs CL clindex 1
+[ 1089.515849] sync_slaves error 0 defer 0000000000000000
+[ 1092.586728] sync_slaves pfs CL clindex 0
+[ 1092.586733] sync_slaves pfs CL clindex 1
+[ 1092.586845] sync_slaves error 0 defer 0000000000000000
+[ 1092.586859] sync_slaves error 0 defer 0000000000000000
+[ 1094.634725] sync_slaves pfs CL clindex 1
+[ 1094.634844] sync_slaves error 0 defer 0000000000000000
+[ 1097.706732] sync_slaves pfs CL clindex 1
+[ 1097.706819] sync_slaves pfs CL clindex 0
+[ 1097.706847] sync_slaves error 0 defer 0000000000000000
+[ 1097.706919] sync_slaves error 0 defer 0000000000000000
+[ 1099.754731] sync_slaves pfs CL clindex 1
+[ 1099.754853] sync_slaves error 0 defer 0000000000000000
+[ 1102.826734] sync_slaves pfs CL clindex 0
+[ 1102.826734] sync_slaves pfs CL clindex 1
+[ 1102.826845] sync_slaves error 0 defer 0000000000000000
+[ 1102.826869] sync_slaves error 0 defer 0000000000000000
+[ 1104.875733] sync_slaves pfs CL clindex 1
+[ 1104.875852] sync_slaves error 0 defer 0000000000000000
+[ 1107.946725] sync_slaves pfs CL clindex 0
+[ 1107.946874] sync_slaves error 0 defer 0000000000000000
+[ 1107.947725] sync_slaves pfs CL clindex 1
+[ 1107.947843] sync_slaves error 0 defer 0000000000000000
+[ 1109.995722] sync_slaves pfs CL clindex 1
+[ 1109.995844] sync_slaves error 0 defer 0000000000000000
+[ 1113.066748] sync_slaves pfs CL clindex 1
+[ 1113.066870] sync_slaves error 0 defer 0000000000000000
+[ 1113.067729] sync_slaves pfs CL clindex 0
+[ 1113.067862] sync_slaves error 0 defer 0000000000000000
+[ 1115.114731] sync_slaves pfs CL clindex 1
+[ 1115.114850] sync_slaves error 0 defer 0000000000000000
+[ 1118.186745] sync_slaves pfs CL clindex 0
+[ 1118.186903] sync_slaves error 0 defer 0000000000000000
+[ 1118.187745] sync_slaves pfs CL clindex 1
+[ 1118.187851] sync_slaves error 0 defer 0000000000000000
+[ 1120.235727] sync_slaves pfs CL clindex 1
+[ 1120.235847] sync_slaves error 0 defer 0000000000000000
+[ 1123.306722] sync_slaves pfs CL clindex 0
+[ 1123.306741] sync_slaves pfs CL clindex 1
+[ 1123.306836] sync_slaves error 0 defer 0000000000000000
+[ 1123.306872] sync_slaves error 0 defer 0000000000000000
+[ 1125.354756] sync_slaves pfs CL clindex 1
+[ 1125.354888] sync_slaves error 0 defer 0000000000000000
+[ 1128.426763] sync_slaves pfs CL clindex 1
+[ 1128.426772] sync_slaves pfs CL clindex 0
+[ 1128.426899] sync_slaves error 0 defer 0000000000000000
+[ 1128.426914] sync_slaves error 0 defer 0000000000000000
+[ 1130.475723] sync_slaves pfs CL clindex 1
+[ 1130.475838] sync_slaves error 0 defer 0000000000000000
+[ 1133.546770] sync_slaves pfs CL clindex 0
+[ 1133.546790] sync_slaves pfs CL clindex 1
+[ 1133.546892] sync_slaves error 0 defer 0000000000000000
+[ 1133.546951] sync_slaves error 0 defer 0000000000000000
+[ 1135.594795] sync_slaves pfs CL clindex 1
+[ 1135.594984] sync_slaves error 0 defer 0000000000000000
+[ 1138.666790] sync_slaves pfs CL clindex 1
+[ 1138.666797] sync_slaves pfs CL clindex 0
+[ 1138.666912] sync_slaves error 0 defer 0000000000000000
+[ 1138.666951] sync_slaves error 0 defer 0000000000000000
+[ 1140.714775] sync_slaves pfs CL clindex 1
+[ 1140.714947] sync_slaves error 0 defer 0000000000000000
+[ 1143.786779] sync_slaves pfs CL clindex 0
+[ 1143.786778] sync_slaves pfs CL clindex 1
+[ 1143.786907] sync_slaves error 0 defer 0000000000000000
+[ 1143.786939] sync_slaves error 0 defer 0000000000000000
+[ 1145.834734] sync_slaves pfs CL clindex 1
+[ 1145.834852] sync_slaves error 0 defer 0000000000000000
+[ 1148.906757] sync_slaves pfs CL clindex 0
+[ 1148.906772] sync_slaves pfs CL clindex 1
+[ 1148.906942] sync_slaves error 0 defer 0000000000000000
+[ 1148.906956] sync_slaves error 0 defer 0000000000000000
+[ 1150.954756] sync_slaves pfs CL clindex 1
+[ 1150.954887] sync_slaves error 0 defer 0000000000000000
+[ 1154.026798] sync_slaves pfs CL clindex 0
+[ 1154.026808] sync_slaves pfs CL clindex 1
+[ 1154.026980] sync_slaves error 0 defer 0000000000000000
+[ 1154.026998] sync_slaves error 0 defer 0000000000000000
+[ 1156.074797] sync_slaves pfs CL clindex 1
+[ 1156.075324] sync_slaves error 0 defer 0000000000000000
+[ 1159.146757] sync_slaves pfs CL clindex 0
+[ 1159.146777] sync_slaves pfs CL clindex 1
+[ 1159.146879] sync_slaves error 0 defer 0000000000000000
+[ 1159.146933] sync_slaves error 0 defer 0000000000000000
+[ 1161.194779] sync_slaves pfs CL clindex 1
+[ 1161.194958] sync_slaves error 0 defer 0000000000000000
+[ 1164.266787] sync_slaves pfs CL clindex 1
+[ 1164.266792] sync_slaves pfs CL clindex 0
+[ 1164.266967] sync_slaves error 0 defer 0000000000000000
+[ 1164.266988] sync_slaves error 0 defer 0000000000000000
