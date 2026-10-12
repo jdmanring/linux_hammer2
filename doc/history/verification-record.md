@@ -7647,9 +7647,9 @@ lines of their own; and a `mounts-before` line is the first reading of
 each run, so a guest that starts dirty is visible in the output rather
 than only in the final count.
 
-## An unmount that leaves modified chains is the state before the empty base, 2026-10-12
+## Modified chains at unmount correlate with the corrupting log but do not reproduce it, 2026-10-12
 
-The reading that separates the corrupting log from every clean run is
+The reading that separates the corrupting log from the clean runs is
 the count `hammer2_kill_sb` prints after an unmount.
 
 | run | `modified` chains at unmount |
@@ -7657,6 +7657,7 @@ the count `hammer2_kill_sb` prints after an unmount.
 | the corrupting log | 2510 at 130.5 s, 2602 at 711.2 s, 131 at 862.8 s and after |
 | `dbg5` (the destroy guard run) | 0 at all six unmounts |
 | `dbg6` (the marker run) | 0 at all three unmounts |
+| a deliberate run with `sync` concurrent with the write | 751 at its unmount |
 
 | guest time | event in the corrupting log |
 |---|---|
@@ -7667,16 +7668,24 @@ the count `hammer2_kill_sb` prints after an unmount.
 | 720.437 s | `hammer2_chain_testcheck` fails on `indirect 1709c00e` |
 | 732.722 s | the root's flush finds the empty base |
 
-So a flush that does not complete before the unmount returns is the
-state that precedes the corruption, and `hammer2_unmount_scrap` is the
-port's own code at `hammer2_vfsops.c:2520-2530`, run at device
-teardown on the VOLUME and FREEMAP chains: its comment says a chain
-whose flush failed keeps `UPDATE`, that no flush follows the final
-sync, and that such subtrees are scrapped with their contents said to
-be lost. The scrap is the reporter of the failed flush, not its cause.
+The last row of the first table is the control that keeps the rest
+honest: running `sync` every second beside the write left 751 modified
+chains at its unmount, and that run then finished with 20000 files, no
+`from empty base` and no `gave up`. So modified chains at unmount
+correlate with the corrupting log and are neither sufficient nor, on
+this evidence, the cause. The clean runs' zero is still the right
+reading for a correct unmount, and the corrupting log's non-zero
+counts are still unexplained.
 
-Not established: why those flushes did not complete, and whether the
-corrupting log's 2602 modified chains and the later empty base are one
-fault or two. The count is the measurement to drive deliberately next:
-an unmount that reports `modified` greater than zero reproduces the
-state, and the clean runs show a correct unmount reports zero.
+`hammer2_unmount_scrap` is the port's own code at
+`hammer2_vfsops.c:2520-2530`, run at device teardown on the VOLUME and
+FREEMAP chains; the semantic index puts its only caller at
+`hammer2_unmount_helper`, and the graph puts
+`hammer2_pfsfree_scan -> hammer2_vfs_sync_pmp` at
+`hammer2_vfsops.c:671`, so the teardown does flush through the sync
+path. The scrap reports a failed flush rather than causing one.
+
+Not established: what stops those flushes completing, whether the
+corrupting log's counts and its later empty base are one fault or two,
+and any reproduction on demand. The corrupting log is older than the
+phase-4 markers, so its write and its mount topology are unknown.
