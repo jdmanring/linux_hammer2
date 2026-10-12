@@ -7576,45 +7576,68 @@ kmemleak 0, the resumed thread 2 passes in 10 s. The three still
 failing are the unmount landing outside an open pass and the two
 checks that depend on it, so the interruption is still untested.
 
-## A large write to the master with the slave's root unmounted corrupts the flush, 2026-10-12
+## A flush of a PFS root finds an empty base, and the trigger is the unmount, not the write, 2026-10-12
 
-Phase 4 was reworked to give the thread a real backlog: passes over a
-frontend-written directory run 0.2 to 0.8 ms, measured, which a 10 ms
-poll cannot land inside, so a second directory is written with the
-slave's ROOT unmounted and the thread must copy all of it on the
-remount. That run did not reach the interruption. It failed with the
-guest's master mount returning EIO and 16 of 32 checks with no data,
-because the guest script exited at the remount after the host's ssh
-returned 255 rather than 124, so the host ran its checks and the disk
-detach with nothing to read.
+The reworked phase 4 was meant to give the thread a backlog by writing
+a second directory with the slave's ROOT unmounted. That run failed
+with the guest's master mount returning EIO and 16 of 32 checks with
+no data, because the guest script exited at the remount after the
+host's ssh returned 255 rather than 124, so the host ran its checks,
+the disk detach, with nothing to read.
 
-The cause is a defect in the port, reproduced in isolation at three
-settings, all with the module built from the current tree:
+The kernel log it left is real evidence and is kept at
+`doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt`,
+but it is NOT the run it was first written up as. Corrected here,
+because the first version of this entry said the write to the master
+with the slave's ROOT unmounted caused it, and the log says otherwise:
 
-| write, slave's ROOT | 500 + 2000 files | 20000 files |
-|---|---|---|
-| mounted | clean | clean: readable, unmounts exit 0, 0 flush errors |
-| unmounted | clean | corrupt |
+- The log carries no `h2probe` line at all, and phase 4 is what writes
+  those markers, so this log cannot be from a phase-4 run. Its guest
+  uptime runs 106 s to 1202 s; the marker runs run in the 76000s and
+  78000s.
+- No unmount of the slave's ROOT appears in it. The unmounts are at
+  130, 180, 225, 259, 541, 711, 862, 977 and 1050 s, and the run's
+  phases account for them.
+- The run that did carry the markers, at 78526 to 78775 s, produced no
+  `from empty base` at all. The mounted-slave and unmounted-slave
+  controls are likewise clean.
+- Reproductions built on the write (20000 files, slave mounted and
+  unmounted, on both the current module and the one from `7a3c69d`)
+  have not produced it either.
 
-The 20000-file case with the slave unmounted, on the module built from
-`7a3c69d` (before the destroy guard) and on the current one, both
-produced the same thing: writes to the master's `bigdir2` failing with
-ENOENT, the master's mount hanging in `iterate_dir`, and in the kernel
-log 219 `hammer2_base_delete: ... from empty base ... not found at
-128/128`, 10 `hammer2_flush_core: chain error during flush`, one
-`hammer2_chain_testcheck: gave up`, and a KASAN slab-use-after-free in
-`string()` reached from `hammer2_get_tree`, plus `hammer2_get_tree:
-PFS label "e" not found` and `PFS already mounted!`. The block is kept
-at `doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt`.
-The pre-fix module reproduces it, so the destroy guard is not the
-cause; both modules were built against `linux-7.3-rc5-kasan` and
-loaded separately, and the volumes were recreated between them.
+What the log does show, at its own times:
 
-So `interrupt_resume` is blocked behind a flush defect, and the phase
-that reaches for the interruption will keep failing on this until the
-flush does not depend on the slave element being mounted. That is P4's
-own subject rather than a probe artifact, and it is the next thing to
-fix.
+| guest time | event |
+|---|---|
+| 711.209 s | unmount |
+| 720.437 s | `hammer2_chain_testcheck: failed: chain indirect 000000001709c00e ... flags 00144002`, repeating |
+| 722.785, 723.041 s | two virtio-blk devices attached by the harness |
+| 732.722 s | first `hammer2_base_delete: delete indirect elm 8100000000000000/56 from empty base 0000000000000000/0 not found at 128/128` |
+| 733.970 s | last of 219 such lines |
+| 862.796 s | next unmount |
+
+`hammer2_unmount_scrap: scrapping unflushed data` appears at 180.652 s,
+immediately after the unmount at 180.663 s, 10 times in the log. So the
+first symptom follows an unmount rather than a write, and the cascade
+that follows is one fault, not 219: `hpanic` marks the device in error
+module-wide and returns, so every later flush drops its blocks
+unwritten, which is what produces the ENOENT writes and the mount
+hanging in `iterate_dir`. The producer of the first miss is the
+periodic syncer's flush of the PFS cluster root, from the backtrace the
+log carries: `hammer2_vfs_sync_pmp`, `hammer2_inode_chain_flush`,
+`hammer2_xop_inode_flush`, `hammer2_flush`, `hammer2_flush_core`,
+`hammer2_flush_recurse`, `hammer2_base_delete`.
+
+The keys deleted are block-table and directory keys, not a file range:
+`8100000000000000/56`, `8200000000000000/56`, `8400000000000000/56`,
+`0000000000005b80/7`, `0000000000005be6`. The 20000-file write is not
+in evidence anywhere in this log.
+
+What this leaves open, and the next reading: which unmount leaves the
+PFS root's block table inconsistent with its children, and whether
+`hammer2_unmount_scrap` is the path that scraps a chain the root's
+block table still references. Until that is read, the write is not
+implicated and no guard is written on it.
 
 The probe's own defects, found by this run, are fixed in the same
 commit: every mount, unmount and `rmmod` in the guest script is now
