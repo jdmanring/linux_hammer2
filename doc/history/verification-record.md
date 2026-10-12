@@ -7997,3 +7997,31 @@ What is still unmeasured, and now the whole of it: which descent inside
 blockmap, which is what `base_insert: overlapping at 0/32` reports and
 what corrupts the rbtree the unmount later walks. The lock report is not
 evidence about it and can be set aside.
+
+`hammer2_chain_create_indirect()` was then read end to end for that
+duplicate key, and what it yields is not a port defect. The new indirect
+block's radix comes from `nbytes`, chosen by the parent's TYPE:
+`HAMMER2_IND_BYTES_MIN` (4KB, 32 entries, keybits 5) when the parent is a
+directory's inode, `HAMMER2_IND_BYTES_NOM` (16KB, 128 entries, keybits 7)
+otherwise. The failing insert is `insert indirect elm 0x400/7 to indirect
+base 0x400/5`, a keybits-7 child under a keybits-5 parent, and that is
+exactly this selection: `ichain` was created with the keybits of a 16KB
+block and inserted into the 32-entry blockmap of a directory inode. The
+same computation verbatim is in DragonFly's tree, checked with `awk` over
+both, so the shape is CARRIED and the design's, not this port's.
+
+What that means for the rule at `hammer2_chain.c:3416` ("all elements
+underneath it fit within its key space") is not settled here. Either the
+rule holds only within one blockref type and this is a cross-type nesting
+the code intends, or it is a genuine upstream defect reachable when a
+directory inode's blockset splits while a data indirect is being built.
+The `KKASSERT`s that would have said which are compiled out in every build
+this tree ships, since `HAMMER2_INVARIANTS` is off by default, and the one
+at `hammer2_chain.c:3827` (`parent->core.live_count < count`) is precisely
+the precondition of the insertion that faults.
+
+The next reading is a `HAMMER2_INVARIANTS=1` build on the same reproducer:
+if the carried `KKASSERT`s hold, the insert's precondition was met and the
+duplicate key arises later; if one fires, its location IS the answer and
+it is upstream's. That build exists as a supported target
+(`make HAMMER2_INVARIANTS=1`) and has not been run for this.
