@@ -17,7 +17,7 @@ KO=${H2_KO:-}
 export LIBVIRT_DEFAULT_URI=qemu:///system
 command -v virsh >/dev/null 2>&1 || { echo "COULD-NOT-RUN: no virsh"; exit 2; }
 GUEST=artix-s6-kde; GUEST_SSH=root@192.168.122.16
-IMG=/mnt/storage/hammer2-fixtures/hpanic.img
+IMG=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}/hpanic.img
 NEWFS=$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2
 FSCK=$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2
 rm -f "$IMG" "$IMG.pre"; truncate -s 1G "$IMG"; "$NEWFS" -L HP "$IMG" >/dev/null 2>&1 || { echo "COULD-NOT-RUN: newfs"; exit 2; }

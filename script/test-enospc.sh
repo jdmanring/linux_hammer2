@@ -254,7 +254,7 @@ sh "$0" --selftest > /dev/null 2>&1 || {
 	echo "          seeing. Run: sh script/test-enospc.sh --selftest" >&2
 	exit 2; }
 
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=$FIXDIR/enospc.img
 SIZE=${H2_ENOSPC_SIZE:-2G}
 LABEL=ENOSPC

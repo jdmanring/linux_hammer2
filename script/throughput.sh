@@ -38,7 +38,7 @@ if [ -z "${H2_TP_COPY:-}" ]; then
 fi
 trap 'rm -f "$H2_TP_COPY"' EXIT
 
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_TP_IMAGE:-$FIXDIR/throughput.img}
 EXT4=${H2_TP_EXT4:-$FIXDIR/throughput-ext4.img}
 BTRFS=${H2_TP_BTRFS:-$FIXDIR/throughput-btrfs.img}

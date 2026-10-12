@@ -27,7 +27,7 @@ cd "$(dirname "$0")/.." || exit 2
 
 N=${1:-50}
 SEED=${2:-1}
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 SEEDIMG=${H2_FUZZ_SEED:-$FIXDIR/fz-seed.img}
 LABEL=${H2_FUZZ_LABEL:-FUZZ}
 WORK=${H2_FUZZ_WORK:-/var/tmp/hammer2-fuzz}

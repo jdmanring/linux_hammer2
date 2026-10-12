@@ -43,7 +43,7 @@ if [ -z "${H2_NC_COPY:-}" ]; then
 fi
 trap 'rm -f "$H2_NC_COPY"' EXIT
 
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 CLOSURE=${H2_CLOSURE:-}
 SIZE=${H2_NC_SIZE:-48G}
 MODARGS=${H2_NC_MODARGS:-}

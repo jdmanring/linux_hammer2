@@ -44,7 +44,7 @@ rather than a verdict; the readings are in
 | `pfs-domains.sh` | creates PFS roots here, mounts each by label on both sides, and has DragonFly check what was written in each |
 | `million-tree.sh` | writes a million-file tree here and has both sides count it |
 | `throughput.sh` | times one large file against ext4 and reads its allocation order from the image beside DragonFly's |
-| `storm.sh` | mixed load from `test/hammer2-storm.c` on a fresh volume, then an unmount, a cache drop and a remount with every cell checked against its last write, `fsck_hammer2` on the image, and memory available and unreclaimable slab printed before and after so a long run reports growth as a number. A cycle is bounded by the volume and not by the clock: a 4 KiB cell write costs about 80 KiB of allocation, so a cycle that runs for `H2_STORM_SECS` fills any volume in seconds and dies on the allocator's reserve check, which is what a first version did. The first cycle runs for `H2_STORM_PROBE` seconds and its own cost counter, read from the module's `alloc_data_bytes` and `alloc_meta_bytes`, says what a second of the load spends; every cycle after it gets the seconds that half the volume buys at the WORST rate the run has seen, not at the probe alone, because the rate varies by a factor of two between cycles and a length sized from one sample spends twice the budget on a fast one. Each cycle prints what it spent, the most any cycle has spent, and the rate the next length came from. The budget is a target and not a cap: a cycle whose rate rises spends over it before the correction applies, and a later rise can overshoot again, since the correction only ever shrinks the next cycle. `H2_STORM_CYCLES` sets the count, so a soak is many bounded cycles rather than one long one, each checked and reclaimed on its own. The guest's output is written to `H2_STORM_LOG` (`/mnt/storage/hammer2-fixtures/storm.log`) as it arrives rather than captured into a variable printed when ssh returns, so a soak reports progress while it runs and a dropped connection does not take the run's output with it |
+| `storm.sh` | mixed load from `test/hammer2-storm.c` on a fresh volume, then an unmount, a cache drop and a remount with every cell checked against its last write, `fsck_hammer2` on the image, and memory available and unreclaimable slab printed before and after so a long run reports growth as a number. A cycle is bounded by the volume and not by the clock: a 4 KiB cell write costs about 80 KiB of allocation, so a cycle that runs for `H2_STORM_SECS` fills any volume in seconds and dies on the allocator's reserve check, which is what a first version did. The first cycle runs for `H2_STORM_PROBE` seconds and its own cost counter, read from the module's `alloc_data_bytes` and `alloc_meta_bytes`, says what a second of the load spends; every cycle after it gets the seconds that half the volume buys at the WORST rate the run has seen, not at the probe alone, because the rate varies by a factor of two between cycles and a length sized from one sample spends twice the budget on a fast one. Each cycle prints what it spent, the most any cycle has spent, and the rate the next length came from. The budget is a target and not a cap: a cycle whose rate rises spends over it before the correction applies, and a later rise can overshoot again, since the correction only ever shrinks the next cycle. `H2_STORM_CYCLES` sets the count, so a soak is many bounded cycles rather than one long one, each checked and reclaimed on its own. The guest's output is written to `H2_STORM_LOG` (`~/Projects/linux_hammer2-data/fixtures/storm.log`) as it arrives rather than captured into a variable printed when ssh returns, so a soak reports progress while it runs and a dropped connection does not take the run's output with it |
 | `latency.sh` | times random 4 KiB reads and write-then-`fsync` per operation on this port and on ext4 and btrfs in the same guest, from `test/hammer2-latency.c`, with the page cache dropped first |
 | `nix-closure.sh` | copies a real Nix closure in through the port and reads it cold beside squashfs and erofs |
 | `nfsd-export.sh` | a HAMMER2 volume exported by a running `nfsd` and used through the export, which is the one path `test/hammer2-fh.c` cannot reach: the syscalls drive the same table but not nfsd's acceptance callback, and `fh_to_parent` runs only from a subtree-checked export's decode. The guest serves a mount to itself on 127.0.0.1 and works through the client mount under `no_subtree_check` and `subtree_check`, each from a cold server cache so the handle is decoded rather than found in memory, with a stale handle and a renamed file. The decode members are counted by the function tracer. Needs a kernel with `CONFIG_NFSD` and an NFS client, so `KDIR` names a tree built with both and the guest boots it; the pinned trees are untouched. 12 checks 0 failed on 2026-10-08, the first run of the script whose deep file is never read by name, so the cold-cache check is a decode and not a warm hit; `fh_to_dentry` 54 and 51 by the function tracer, `fh_to_parent` twice on the subtree-checked one, `fsck_hammer2` clean, kernel log clean, and the run's output is kept beside its image in `nfsd-export.log` |
@@ -518,6 +518,24 @@ which this check would report as a warning: a real style regression would
 then pass a push. Both directions were driven before it was committed. On
 a clean tree it exits 0; with one category count altered in the baseline
 it names the moved line and exits 1.
+
+## Where the images live
+
+Every guest script reads and writes its disk images under
+`H2_FIXTURE_DIR`, which defaults to `~/Projects/linux_hammer2-data/fixtures`,
+outside the repository and on the workstation's main drive. The
+directory held 111 GiB of allocated blocks when it moved, and nearly all
+of that is images a script rebuilds on its next run. The ones kept
+deliberately are the fixtures whose manifests are committed under
+`test/fixtures/`, among them `f5.img`, written by DragonFly, whose
+manifest records what DragonFly itself reported and cannot be
+regenerated here.
+libvirt reads an image from any path the `libvirt-qemu` user can reach,
+which here is granted on the home directory by an ACL, so the images do
+not have to sit beside the guest's own disk. Until 2026-10-11 the default
+was `/mnt/storage/hammer2-fixtures` on the backup drive, chosen without
+a decision from the owner, and older entries in the verification record
+name that path as it was.
 
 ## Making a fixture to mount
 
@@ -1109,8 +1127,8 @@ carries the figures and which generator each recorded seed reproduces
 from. It is made on the host by hammer2-utils and populated through the write
 path:
 
-    truncate -s 64M /mnt/storage/hammer2-fixtures/fz-seed.img
-    newfs_hammer2 -L FUZZ /mnt/storage/hammer2-fixtures/fz-seed.img
+    truncate -s 64M ~/Projects/linux_hammer2-data/fixtures/fz-seed.img
+    newfs_hammer2 -L FUZZ ~/Projects/linux_hammer2-data/fixtures/fz-seed.img
     # on the guest, with the module loaded and the image attached:
     # mount, create a few directories, files at several
     # sizes, a symlink and a hard link, sync, unmount
@@ -1479,7 +1497,7 @@ the readings.
 
 ## Listing a fixture, and what a clean run does not say
 
-The fixture under `/mnt/storage/hammer2-fixtures/tree` is five paths: a
+The fixture under `~/Projects/linux_hammer2-data/fixtures/tree` is five paths: a
 file, a symlink, a directory, a directory inside it and a file inside
 that. It is deliberately deeper than one level, because the defect that
 `->iterate_shared` found was invisible at the root: the mount root holds a
@@ -1491,7 +1509,7 @@ guest's kernel is configured by `localmodconfig` against its own loaded
 modules, which trims `CONFIG_BLK_DEV_LOOP`, and a virtio disk exercises
 the 7.3 device-open shim as well:
 
-    virsh attach-disk artix-s6-kde /mnt/storage/hammer2-fixtures/f1.img vdb \
+    virsh attach-disk artix-s6-kde ~/Projects/linux_hammer2-data/fixtures/f1.img vdb \
         --targetbus virtio
     mount -t hammer2 -o ro /dev/vdb@TEST /mnt/h2
     find /mnt/h2

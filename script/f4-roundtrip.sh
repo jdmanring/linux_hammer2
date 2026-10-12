@@ -14,7 +14,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_F4_IMAGE:-$FIXDIR/f4-roundtrip.img}
 LABEL=${H2_F4_LABEL:-LINUX}
 GUEST=${H2_GUEST:-artix-s6-kde}

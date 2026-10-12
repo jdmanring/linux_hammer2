@@ -22,7 +22,7 @@ cd "$(dirname "$0")/.." || exit 2
 
 SECONDS_WRITING=${1:-25}
 LAG=${H2_CUT_LAG:-4}
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 BASE=${H2_CUT_BASE:-$FIXDIR/f5.img}
 LABEL=${H2_CUT_LABEL:-DFLY}
 IMG=$FIXDIR/cut-flush.img

@@ -46,7 +46,7 @@ if [ -z "${H2_LAT_COPY:-}" ]; then
 fi
 trap 'rm -f "$H2_LAT_COPY"' EXIT
 
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_LAT_IMAGE:-$FIXDIR/latency.img}
 EXT4=${H2_LAT_EXT4:-$FIXDIR/latency-ext4.img}
 BTRFS=${H2_LAT_BTRFS:-$FIXDIR/latency-btrfs.img}

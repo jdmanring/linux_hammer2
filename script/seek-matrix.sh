@@ -30,7 +30,7 @@
 # Exit 2 without the guest, newfs_hammer2 or a kernel tree, never 1.
 set -u
 cd "$(dirname "$0")/.." || exit 2
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=$FIXDIR/seek-matrix.img
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}

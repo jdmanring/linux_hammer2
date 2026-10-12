@@ -21,7 +21,7 @@ if [ -z "${H2_TREE_COPY:-}" ]; then
 	H2_TREE_COPY=$c exec sh "$c" "$@"
 fi
 trap 'rm -f "$H2_TREE_COPY"' EXIT
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_TREE_IMAGE:-$FIXDIR/million-tree.img}
 SIZE=${H2_TREE_SIZE:-8G}
 N=${H2_TREE_FILES:-1000000}

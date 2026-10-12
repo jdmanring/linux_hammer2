@@ -12,7 +12,7 @@
 # Exit 2 without the two guests, the tools or a kernel tree. One guest at
 # a time: the Linux guest writes and is shut down, then DragonFly reads.
 set -u
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_PFS_IMAGE:-$FIXDIR/pfs-domains.img}
 ROOT=${H2_PFS_ROOT:-ROOT}
 DOMAINS=${H2_PFS_DOMAINS:-"SYSTEM STORE CACHE"}

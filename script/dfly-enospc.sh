@@ -20,7 +20,7 @@ VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 NEWFS=${H2_NEWFS:-$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2}
 FSCK=${H2_FSCK:-$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2}
 W=$(mktemp -d "${TMPDIR:-/tmp}/dfly-enospc.XXXXXX") || exit 2
-IMG=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}/dfly-enospc.img; SIZE=${H2_ENOSPC_SIZE:-2G}; LABEL=ENOSPC
+IMG=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}/dfly-enospc.img; SIZE=${H2_ENOSPC_SIZE:-2G}; LABEL=ENOSPC
 WRITERS=${H2_WRITERS:-4}
 
 rm -f "$IMG"; truncate -s "$SIZE" "$IMG" || exit 2

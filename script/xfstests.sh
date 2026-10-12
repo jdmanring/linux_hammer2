@@ -40,7 +40,7 @@ VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 XFS=${H2_XFSTESTS:-$HOME/Projects/xfstests-dev}
 NEWFS=${H2_NEWFS:-$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2}
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 PATCH=$ROOT/test/xfstests/hammer2.patch
 KO=src/sys/fs/hammer2/hammer2.ko
 # A test that never ends is a finding, not a long run: generic/274 filled

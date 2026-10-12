@@ -21,7 +21,7 @@
 # Exit 2 without the two guests, the tools or a kernel tree. One guest at
 # a time: the Linux guest writes and is shut down, then DragonFly reads.
 set -u
-FIXDIR=${H2_FIXTURE_DIR:-/mnt/storage/hammer2-fixtures}
+FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_BF_IMAGE:-$FIXDIR/bulkfree.img}
 ROOT=${H2_BF_ROOT:-ROOT}
 MB=${H2_BF_MB:-800}	# the set, in 1 MB random files; the volume is 2G
