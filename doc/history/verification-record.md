@@ -7328,12 +7328,36 @@ forever.
   limited field set upstream copies and nothing else, matching
   `sys/vfs/hammer2/hammer2_synchro.c` field for field, so the type change
   the slave's CL shows on media is not the sync overwriting it.
-- What is not yet established: which writer stamped the root's tid past
-  its subtree. The one remaining candidate is the root-level marking with
-  `sync_tid` captured at the top of the call (`hammer2_synchro.c:499`),
-  which is the pre-recursion focus value; whether that value can reach the
-  root while the drain is incomplete is a question for a print at the
-  marking call, not for another workload guess.
+- What is not yet established: why the pass that stamped the root did not
+  descend into the short directory. A second instrument run, with a print
+  at the marking call and at the deferral drop (both reverted, in a
+  carried file), reproduced the defect (slave 92 inodes short, dirents
+  equal) and answered three things. The stop never reached the deferred
+  loop: `didbreak` printed zero times, so no deferral was discarded and
+  the unmount stopped the thread between passes. The root was stamped
+  three times, each with an empty list on the root call
+  (`STAMP inum 1 tid 51cf isroot 1 listcount 0` is the pass that copied
+  the large directory's first inodes), and every non-root stamp drained
+  its list in order. And the outer loop is correct as carried: it drains
+  only on `HAMMER2_ERROR_EAGAIN` from the root call, which `needrescan`
+  produces whenever the root scan deferred anything. The candidate this
+  entry first named, the pre-recursion `sync_tid`, is refuted: the
+  marking ran correctly for the state the scan saw.
+- The log also contradicts this entry's own reading of the copy. After
+  the pass that stamped `tid 382`, the thread scanned no inode but the
+  root: 61 scans and 60 update lines in the whole run, no `START_SCAN`
+  of the large directory, no deferral, no update of anything in it. Yet
+  the slave's media holds 19949 of its inodes. The update line prints
+  only for an inode's final marking, and `START_SCAN` only once per
+  `hammer2_sync_slaves()` call, so neither counts the chains a scan
+  inserts; the phase's "2 inode updates" were the root's own markings,
+  not a measure of the copy. Which call copied the 19949 and why it
+  stops 92 short is the open question. The instrument is already in the
+  carried source: `hammer2_sync_insert()` and `hammer2_sync_replace()`
+  print every chain they write under `hammer2_debug & 1`
+  (`HAMMER2_SYNCHRO_DEBUG`), and the fleet loads the module with
+  `debug=0x8000` alone, so that print has never run. The next run sets
+  `debug=0x8001`.
 - A separate fact the same runs established, and it belongs to the
   testing doc rather than to P4: a SLAVE's cluster PFS cannot be mounted
   by label at all. `hammer2_get_tree()` answers "PFS already mounted!" and
