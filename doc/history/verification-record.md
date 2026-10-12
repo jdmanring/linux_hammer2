@@ -8010,7 +8010,7 @@ block and inserted into the 32-entry blockmap of a directory inode. The
 same computation verbatim is in DragonFly's tree, checked with `awk` over
 both, so the shape is CARRIED and the design's, not this port's.
 
-What that means for the rule at `hammer2_chain.c:3416` ("all elements
+What that means for the rule at `hammer2_chain.c:3453` ("all elements
 underneath it fit within its key space") is not settled here. Either the
 rule holds only within one blockref type and this is a cross-type nesting
 the code intends, or it is a genuine upstream defect reachable when a
@@ -8025,3 +8025,93 @@ if the carried `KKASSERT`s hold, the insert's precondition was met and the
 duplicate key arises later; if one fires, its location IS the answer and
 it is upstream's. That build exists as a supported target
 (`make HAMMER2_INVARIANTS=1`) and has not been run for this.
+
+## The INVARIANTS build fires the carried assert, and it names the collision, 2026-10-12
+
+The reading the entry above asked for has been taken. `sync-empty-base.sh`
+was run with `HAMMER2_INVARIANTS=1 HAMMER2_LOCKDEBUG=1`, so the carried
+`KKASSERT`s are compiled in, and it did not wedge the way the three
+earlier runs did. It reached the fault and the fault announced itself.
+
+    [  209.347182] WARNING: possible recursive locking detected
+    [  209.351533] ffff888134c902a8 (h2core_indirect/2#2){++++}-{4:4}, at: hammer2_sync_insert+0x5b1/0x1150
+    [  209.353972] but task is already holding lock:
+    [  209.353972] ffff8881354e62a8 (h2core_indirect/2#2){++++}-{4:4}, at: hammer2_sync_insert+0x5b1/0x1150
+    [  209.361947] locks held by h2nod-CL/5784: 3, last CPU#5:
+    [  209.363294]  #0: ffff8881354e7090 (h2ch_inode/2){++++}-{4:4}, at: hammer2_sync_insert+0x3a9/0x1150
+    [  209.366729]  #1: ffff8881354e6090 (h2ch_indirect/2#2){++++}-{4:4}, at: hammer2_chain_create_indirect+0x52a/0x1980
+    [  209.368667]  #2: ffff8881354e62a8 (h2core_indirect/2#2){++++}-{4:4}, at: hammer2_sync_insert+0x5b1/0x1150
+    [  212.555356] hammer2_chain_insert: collision 0000000000000400/7
+    [  212.557300] kernel BUG at hammer2_chain.c:297!
+    [  212.557323] Oops: invalid opcode: 0000 [#1] SMP KASAN NOPTI
+
+with the call trace `hammer2_primary_sync_thread()` ->
+`hammer2_sync_slaves()` -> `hammer2_sync_insert()` -> `hammer2_chain_insert()`.
+
+`hammer2_chain.c:297` is the carried `KASSERTMSG(xchain == NULL,
+"collision %016llx/%d", chain->bref.key, chain->bref.keybits)` guarding
+the `RB_INSERT` that places a chain under its parent. It fired, so the
+duplicate key is REAL and is not an artifact of the rbtree walk: two
+chains of the same key were offered to one parent's tree, and the
+assert's own message names them.
+
+Three things this settles.
+
+First, the question the entry above left open is answered in the
+direction that made it a defect rather than a design: the topology rule
+at `hammer2_chain.c:3453` is violated. The collision key is
+`0000000000000400`, keybits 7, and the log shows the indirect blocks
+being flushed around it in the same seconds:
+
+    flush indirect chain 0000000008c0000c 0000000000000400/5
+    flush indirect chain 0000000008c0100c 0000000000000420/5
+    flush indirect chain 0000000008c0200c 0000000000000400/6
+    flush indirect chain 0000000008c0400e 0000000000000400/7
+    flush indirect chain 0000000008c0300c 0000000000000440/6
+    collision 0000000000000400/7
+
+A keybits-7 block spans 128 keys; its neighbors here are keybits 5 and 6,
+spanning 32 and 64. The 7 is the value `create_indirect()` picks for any
+parent that is not a directory inode (`nbytes = HAMMER2_IND_BYTES_NOM`,
+128 blockrefs), and the 5 is the value it picks for a directory inode
+(`HAMMER2_IND_BYTES_MIN`, 32 entries). So a block built at the
+non-directory radix is being placed where a directory's radix owns the
+keyspace, which is the `else` branch's stated intent, "at least as large
+as its parent", not being enforced against the parent's actual size.
+
+Second, the lock report is NOT the cause and the record should stop
+treating it as one. It fires at `hammer2_sync_insert+0x5b1` on
+`h2core_indirect/2#2`, and `0x5b1` is the same offset that appears in the
+BUG's own trace for the inlined `hammer2_spin_sh(&parent->core.spin)`
+inside `hammer2_sync_setflush()`. The nesting `#0 h2ch_inode` ->
+`#1 h2ch_indirect` -> `#2 h2core_indirect` is the ordinary path down to
+the insertion, and the class scheme names both INDIRECT chains in it
+identically because it prints type and level and not keybits, which is
+what the held-chain dump beside it was added to separate. It is a
+reporting artifact of the class scheme, as `b2b8e3a` recorded, and the
+assert is the thing that actually broke.
+
+Third, and this is why the fault presented as silent corruption in a
+shipping kernel rather than as a crash: the `KKASSERT` that catches it is
+compiled out unless `HAMMER2_INVARIANTS` is set, which no shipping build
+sets. A default build offers the duplicate to `RB_INSERT`, which returns
+the chain already in the tree, and the code does not read the return
+value outside the assert, so the second chain is inserted-or-not into a
+tree that has no room for it and the blockmap underneath keeps the two.
+That is the `base_insert: overlapping at 0/32` in the earlier log and the
+corrupt rbtree the unmount later walks.
+
+Provenance: the code that builds the colliding block is carried. The
+`nbytes` selection and the `create_key`/`create_bits` arguments
+`hammer2_sync_insert()` passes are byte-identical to DragonFly's, checked
+by `awk` over both, and `doc/provenance.csv` records `hammer2_chain.c` as
+`derived` from `freebsd-hammer2-upstream` and `hammer2_synchro.c` as
+`derived` from `dragonfly-hammer2-upstream`. So the defect is upstream's
+and is reachable in any tree that runs this sync path; it is not a port
+regression. It is fixed here under `XXX`, staged rather than filed, by
+the maintainer's rule for upstream work.
+
+The reading is 4 runs of `sync-empty-base.sh` under `HAMMER2_INVARIANTS`,
+this one the first to reach the assert rather than hang; the kernel log
+is `sync-empty-hang-20261012-162434.klog` beside the images in
+`~/Projects/linux_hammer2-data/fixtures/`, 424110 bytes.
