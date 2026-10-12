@@ -514,6 +514,18 @@ port's `hpanic()` does return, so the spin was released twice. Both arms
 now return, which is the shape every other carried `hpanic` site has.
 `README.porting.md` has the reasoning.
 
+1,261 to 1,264 on 2026-10-12, all three in `quoted string split across
+lines`: prints added to `hammer2_chain.c` at the lastdrop rbtree unlink,
+`hammer2_synchro.c` at `sync_insert()` and `hammer2_vfsops.c` in the
+held-chain dump, each a long format string split across two lines like
+the other 42 rows in that category. The gate recorded 42 through these
+three additions, so it was failing with rc=1 and the failure went
+unread: the baseline moved in the same commit that added the prints. The
+choice between splitting and joining is settled by the tree rather than
+by the checker, which demotes line length: 41 prints here split and one
+runs to 102 columns, so joining would have made three 130-column lines
+against a tree that does not write them.
+
 1,260 to 1,261 when the CCMS lockdep exercise was added to
 `hammer2_ccms.c` behind `HAMMER2_CCMS_LOCKTEST`: one `return (x);` in
 `ccms_locktest_start()`, the BSD style the rest of the file uses. The

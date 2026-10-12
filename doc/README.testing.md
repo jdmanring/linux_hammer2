@@ -23,6 +23,7 @@ twice.
 | `test-posix.sh` | the gates declaring `#!/bin/sh` parse under dash and busybox ash | dash and busybox |
 | `test-doc-prose.sh` | vale over every tracked `.md`; any finding is a failure | vale |
 | `test-tools.sh` | every `script/*.py` that carries a `--selftest` passes it under `python3 -I`, with the population asserted non-empty. Four: `hammer2-core-diff.py`, `hammer2-provenance.py`, `hammer2-spin-audit.py`, and `h2-voldata.py`, which reads the allocator fields out of a volume header on media rather than from the mounted filesystem, so it answers what the last writer left on the volume and survives an unmount | python3 |
+| `test-report.sh` | every committed kernel report under `doc/history/kernel-reports/` is a whole capture: one holding an `hpanic` message must also carry the `device in error, see the message above` line `hpanic` prints with it, and every report must be named by a document, since a report nothing cites is a file a reader cannot place. Reports COULD-NOT-RUN on an empty population rather than passing. Its four-direction selftest runs before the `chdir` into the tree, since a control that only fires once the gate has found the tree proves nothing about a gate that never got there | sh, grep |
 | `test-fixtures.sh` | every fixture mounted on a guest, every file compared to its manifest | a guest, the fixture images, `KDIR` matching the guest's kernel |
 | `test-enospc.sh` | a volume filled as root or as a user, what it kept and what each writer was told | the same |
 

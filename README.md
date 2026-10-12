@@ -263,7 +263,7 @@ does. Pass them on the `make` line.
 
 ## Test
 
-Fifteen gates. The compile gates need a toolchain and a kernel tree:
+Sixteen gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-ccms-lock.sh   # needs only a C compiler

@@ -5,8 +5,8 @@ The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
 DragonFly itself. The tree is at 1.0.12 in `CHANGELOG.md`; the newest tag is
 `v1.0.4`, which is the last release rather than the tree's version. The
-release shape holds: fifteen gates invoked from a `git
-archive`, twelve run and pass, and the three that report could-not-run do
+release shape holds: sixteen gates invoked from a `git
+archive`, thirteen run and pass, and the three that report could-not-run do
 so for the reasons a tarball has. The staged filings under
 `doc/upstream/` are the maintainer's to file, with their state recorded
 beside each; the throughput reading is taken,
@@ -124,7 +124,7 @@ its name line.
 
 ## What has been verified
 
-Thirteen of the fifteen gates pass with no environment variables set on a
+Thirteen of the sixteen gates pass with no environment variables set on a
 machine that has the kernel of record installed, as they have since
 2026-08-26: the syntax gate finds that tree, and the style gate finds its
 `checkpatch.pl`. The other two, `test-fixtures.sh` and `test-enospc.sh`,

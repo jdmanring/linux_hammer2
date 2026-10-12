@@ -238,20 +238,55 @@ done
 COUNT_DOCS="README.md CONTRIBUTING.md doc/README.testing.md doc/README.status.md"
 ngates=$(ls script/test-*.sh 2>/dev/null | wc -l | tr -d ' ')
 [ "$ngates" -gt 0 ] || { echo "inventory: FAIL: no test-*.sh in script/ at all" >&2; exit 1; }
-word=$(awk -v n="$ngates" 'BEGIN{split("one two three four five six seven eight nine ten",w," "); print (n>=1 && n<=10) ? w[n] : ""}')
+# The number words run past ten because the count does. The list stopped at
+# `ten` while the gate count grew to sixteen, so every claim in every one of
+# these documents sat above the pattern: the matcher found no claims at all
+# and the loop below compared nothing, which read as a clean count. The
+# documents said "Fifteen gates" and "Fourteen" against a tree holding
+# sixteen, and this check reported 0 findings through all of it. A pattern
+# narrower than the population is the same defect as a glob that matches
+# nothing, so the word list is built to a number the gate count cannot pass
+# without the count being noticed, and a claimed word that the list cannot
+# name is a failure rather than a skip.
+word=$(awk -v n="$ngates" 'BEGIN{
+	split("one two three four five six seven eight nine ten",w," ");
+	split("eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty",t," ");
+	for (i = 1; i <= 10; i++) word[i] = w[i];
+	for (i = 1; i <= 10; i++) word[i + 10] = t[i];
+	print (n >= 1 && n <= 20) ? word[n] : ""}')
+# The vocabulary the matcher can name, in the same order, so a document
+# claim above it is caught rather than passed over.
+vocab="one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+pat=$(printf '%s' "$vocab" | tr ' ' '|')
 for d in $COUNT_DOCS; do
 	[ -f "$d" ] || continue
 	# Any number word immediately before "gate"/"gates" is a claim about
 	# this count. Partial counts must not be written in that shape; say
 	# "the compile gates" rather than "three gates".
 	claims=$(tr '\n' ' ' < "$d" | tr -s ' ' |
-		command grep -oiE '(one|two|three|four|five|six|seven|eight|nine|ten) gates?' |
+		command grep -oiE "($pat) gates?" |
 		awk '{print tolower($1)}' | LC_ALL=C sort -u)
 	for c in $claims; do
 		[ "$c" = "$word" ] && continue
 		echo "  FAIL $d: says \"$c gates\" where script/ holds $ngates"
 		fail=$((fail+1))
 	done
+	# The population, asserted. The check above can only see a count whose
+	# word is in the vocabulary, so a document claiming a count outside it
+	# would be invisible in exactly the way `fifteen` was while the list
+	# stopped at ten. Catch that with the number words the language has
+	# past twenty, and with the ordinals and quantifiers that read as a
+	# count. Deliberately NOT `[a-z]+ gates?`: `shim gate`, `style gate`
+	# and `fill gates` are noun phrases, not counts, and a sweep that
+	# broad fails on the prose this family of documents is written in.
+	unnamed=$(tr '\n' ' ' < "$d" | tr -s ' ' |
+		command grep -oiE '\b(twenty-one|twenty-two|twenty-three|twenty-four|thirty|forty|fifty|sixty|dozens of|hundreds of) gates?\b' |
+		LC_ALL=C sort -u)
+	if [ -n "$unnamed" ]; then
+		echo "  FAIL $d: states a gate count above this check's vocabulary:"
+		printf '        %s\n' $unnamed
+		fail=$((fail+1))
+	fi
 done
 
 # Every `DEFER(` in the tree is a row in doc/README.status.md's ledger, and
