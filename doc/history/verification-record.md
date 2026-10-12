@@ -7551,3 +7551,27 @@ What the measurement does settle is a guard the destroy branch lacks:
 it deletes a slave chain whose `modify_tid` exceeds the `sync_tid` its
 own pass synchronizes to, which no ordering of the scans can make
 correct.
+
+## The destroy guard keeps the frontend's chains and the slave converges, 2026-10-12
+
+`hammer2_sync_slaves()` now keeps a slave chain whose `modify_tid`
+exceeds the pass's `sync_tid` instead of destroying it, advances past
+it, and ends the pass with `HAMMER2_ERROR_EINPROGRESS`, so the root is
+not stamped and the next pass compares again. EINPROGRESS rather than
+EAGAIN, because the caller re-enters the root pass at once on EAGAIN
+with nothing deferred. Same command as the two entries above, the
+log kept at
+`~/Projects/linux_hammer2-data/fixtures/cluster-destroyguard-20261012.klog`.
+
+| check | before (destroy probe run) | after |
+|---|---|---|
+| destroys inside the write | 82 | 0 |
+| slave inode, data, dirent | 19959, 20021, 20037 | 20041, 20103, 20037 |
+| master inode, data, dirent | 20041, 20103, 20037 | 20041, 20103, 20037 |
+| fingerprint lines differing | 164 of 60177 | 0 of 60177 |
+| checks failed | 6 of 33 | 3 of 33 |
+
+No destroy at all in the run, no pass error, kernel log clean,
+kmemleak 0, the resumed thread 2 passes in 10 s. The three still
+failing are the unmount landing outside an open pass and the two
+checks that depend on it, so the interruption is still untested.

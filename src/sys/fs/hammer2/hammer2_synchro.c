@@ -595,7 +595,23 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		/*
 		 * Take action based on comparison results.
 		 */
-		if (n < 0) {
+		if (n < 0 && chain->bref.modify_tid > sync_tid) {
+			/*
+			 * XXX Linux: a slave chain newer than the master state
+			 * this pass copies was written there by the frontend
+			 * after the pass began, and the master's scan has not
+			 * reached it.  Destroying it loses it, and the stamp
+			 * below would then call the slave current.  Keep it,
+			 * advance past it, and leave the inode unsynchronized
+			 * so the next pass compares it again.  EINPROGRESS,
+			 * not EAGAIN: EAGAIN with no deferral re-enters the
+			 * root pass at once and spins for as long as the
+			 * write runs, where this ends the pass quietly and
+			 * the thread sleeps its interval.
+			 */
+			advance_local = 1;
+			nerror = HAMMER2_ERROR_EINPROGRESS;
+		} else if (n < 0) {
 			/*
 			 * Delete extranious local data.  This will
 			 * automatically advance the chain.
