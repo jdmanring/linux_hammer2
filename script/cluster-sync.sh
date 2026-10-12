@@ -286,7 +286,21 @@ GUEST
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 $RUN "$GUEST_SSH" "NBIG=$NBIG H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
-[ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
+# A hung guest keeps running after timeout kills the client, holding the
+# module, the mounts and the disks, and $W dies with the trap, so the run's
+# trace is copied off the guest before anything else: a hang is the failure
+# shape a concurrency defect takes, and discarding it wastes the run that
+# would say most. The disks are released the same way the clean path does,
+# or the next run finds its targets taken.
+if [ "$rc" = 124 ]; then
+	scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-hang-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s; its kernel log is kept beside the images as cluster-hang-*.klog"
+	exit 1
+fi
 for d in vdb vdc; do
 	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
 	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1

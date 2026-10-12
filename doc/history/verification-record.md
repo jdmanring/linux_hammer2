@@ -7438,3 +7438,44 @@ DragonFly's does.
   its media holds after it. The interruption phase cannot close until
   that is understood, because any resumed pass can race a write the
   same way.
+
+## A rerun hangs, and its log shows the probe waits on a count that cannot move, 2026-10-11
+
+A rerun of the phase with `KDIR=$HOME/kernels/linux-7.3-rc5-kasan`
+and `H2_DEBUG=0x8001` reported `FAIL the guest run hung past 600s`.
+The guest's own output was lost with the host's work directory, so the
+only record is the guest's follower log, copied off afterwards and kept
+at `~/Projects/linux_hammer2-data/fixtures/cluster-hang-20261011-2320.klog`.
+The script now copies that log and releases the disks itself when the
+run times out.
+
+What the log shows:
+
+- One root pass at 70046 s destroyed 59 inodes on the slave, keys
+  0xcfd through 0xd37, in 1.3 ms, completed with `sync_slaves error 0`,
+  and replaced the slave's CL root with `mod=0000000000005182`. Every
+  pass after it, every 5 s to 70532 s, opens and closes with no scan
+  line. This is the shape of the 81 and 89 in the earlier entries.
+- The thread logged 60 `syncthr: update inode` lines in the whole run.
+  The two after 69955 s, at 70020 s and 70046 s, are both the CL root
+  itself and no file. Phase 4's resume check waits for that count
+  to grow by `NBIG + 1`, 20001. The entry above established that the
+  frontend writes the large directory to the slave itself, so the
+  thread has nothing to log for it and the count cannot reach the
+  target. The wait is therefore its full 300 s on every run, whatever
+  the slave holds.
+- The three unmounts and the module's last lines come at 70534 s, about
+  600 s after the log's first line at 69935 s.
+
+Not established by this log: whether the destroying pass overlapped the
+large-directory write, since the write leaves no line in the kernel log;
+whether keys 0xcfd to 0xd37 are files of the large directory; and what
+the master's scan returned for them. Inference, unmeasured: the hang is
+the run's time budget (phases 1 to 3, a 20000-file write on the KASAN
+guest, and the 300 s wait) exceeding the 600 s timeout, and not a hang
+in the kernel.
+
+Two things follow. The probe's convergence check counts the wrong
+writer and must be replaced by a reading of what the slave holds. And
+the next run must put the write's start and end into the kernel log, so
+a destroying pass can be placed against it.
