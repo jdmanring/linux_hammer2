@@ -55,6 +55,12 @@ RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAlive
 # the drain to outlast the unmount's own bookkeeping, which it does by an
 # order of magnitude at this size.
 NBIG=${H2_NBIG:-20000}
+# The module's debug mask. 0x8000 prints a pass's bracket and an inode's
+# marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
+# _replace() and _destroy(), one line per chain the thread writes, which
+# is the only count of the copy itself. That bit is off by default because
+# a large phase prints tens of thousands of lines.
+H2DEBUG=${H2_DEBUG:-0x8000}
 MASTER=$FIXDIR/cluster-master.img
 SLAVE=$FIXDIR/cluster-slave.img
 W=$(mktemp -d) || exit 2
@@ -142,7 +148,7 @@ rmmod hammer2 2>/dev/null; dmesg -C
 K=/tmp/h2cluster.klog
 dmesg -w > $K 2>&1 &
 KPID=$!
-insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod failed"; exit 1; }
+insmod /tmp/hammer2.ko debug=$H2DEBUG || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
 klog() { grep -c "$1" $K; }
 passes() { klog "sync_slaves pfs $1"; }
@@ -278,7 +284,7 @@ kill $KPID 2>/dev/null
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "NBIG=$NBIG H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 [ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
 for d in vdb vdc; do

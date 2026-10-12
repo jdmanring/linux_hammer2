@@ -7364,3 +7364,32 @@ forever.
   the mount refuses, because the PFS joined a PMP at creation. Every
   reading of a cluster PFS has to come from the media, which is why the
   fingerprint checks exist.
+
+## The missing inodes were copied and then destroyed by a root pass, 2026-10-11
+
+The per-chain prints the carried source has always had, `insert rec`,
+`replace rec` and `destroy rec` under `hammer2_debug & 1`, ran for the
+first time, through `cluster-sync.sh`'s new `H2_DEBUG=0x8001`. No source
+was changed. The defect reproduced (slave 81 inodes and 81 data blocks
+short, 20037 dirents on both sides), and the prints account for the gap
+exactly.
+
+- The thread destroyed 81 inode chains on the slave, keys `0x10bc`
+  through `0x110c`, all in one pass at 52923 s that scanned only the PFS
+  root. Those keys are inode numbers of files in the large directory
+  (`0x10bc` is `p3197` on the master). 81 destroyed is the 81 missing,
+  and no insert of any of those keys follows.
+- The destroy path is `hammer2_sync_destroy()`, which the scan takes when
+  a local chain compares below the master's focus (`n < 0`), meaning the
+  master's scan did not return a chain the slave held. The master's media
+  holds every one of the 81, so at the moment of that pass the master's
+  scan did not see inodes its own media now has.
+- The thread wrote 234 chains in all, every one inside a single second,
+  52831 s. That is far fewer than the large directory's 20000 files, so
+  the slave's copies of most of them did not come from an insert this
+  print saw. How the slave came to hold them before the root pass
+  destroyed 81 is the next question.
+- The earlier entries' "copy stops after two inodes" and "the root is
+  stamped past its subtree" both describe this from outside. The root's
+  tid is the master's because the pass that destroyed the 81 completed
+  without error and stamped it.
