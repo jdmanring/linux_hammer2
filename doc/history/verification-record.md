@@ -7646,3 +7646,37 @@ without readings; the unmount's exit status and the remount's are probe
 lines of their own; and a `mounts-before` line is the first reading of
 each run, so a guest that starts dirty is visible in the output rather
 than only in the final count.
+
+## An unmount that leaves modified chains is the state before the empty base, 2026-10-12
+
+The reading that separates the corrupting log from every clean run is
+the count `hammer2_kill_sb` prints after an unmount.
+
+| run | `modified` chains at unmount |
+|---|---|
+| the corrupting log | 2510 at 130.5 s, 2602 at 711.2 s, 131 at 862.8 s and after |
+| `dbg5` (the destroy guard run) | 0 at all six unmounts |
+| `dbg6` (the marker run) | 0 at all three unmounts |
+
+| guest time | event in the corrupting log |
+|---|---|
+| 130.464 s | unmount, 507 inode, 2515 chain, 2510 modified |
+| 180.652 s | five inodes and their inline data scrapped unflushed |
+| 541.915 s | unmount, 20008 inode, 40331 chain, 0 modified |
+| 711.209 s | unmount, 30728 inode, 63489 chain, 2602 modified |
+| 720.437 s | `hammer2_chain_testcheck` fails on `indirect 1709c00e` |
+| 732.722 s | the root's flush finds the empty base |
+
+So a flush that does not complete before the unmount returns is the
+state that precedes the corruption, and `hammer2_unmount_scrap` is the
+port's own code at `hammer2_vfsops.c:2520-2530`, run at device
+teardown on the VOLUME and FREEMAP chains: its comment says a chain
+whose flush failed keeps `UPDATE`, that no flush follows the final
+sync, and that such subtrees are scrapped with their contents said to
+be lost. The scrap is the reporter of the failed flush, not its cause.
+
+Not established: why those flushes did not complete, and whether the
+corrupting log's 2602 modified chains and the later empty base are one
+fault or two. The count is the measurement to drive deliberately next:
+an unmount that reports `modified` greater than zero reproduces the
+state, and the clean runs show a correct unmount reports zero.
