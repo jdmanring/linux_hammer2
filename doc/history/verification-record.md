@@ -7400,3 +7400,30 @@ exactly.
   stamped past its subtree" both describe this from outside. The root's
   tid is the master's because the pass that destroyed the 81 completed
   without error and stamped it.
+
+## A write through the cluster's mount lands on the slave directly, 2026-10-11
+
+The writer the last entry asked for is the frontend itself. The slave's
+CL is element 1 of the same PFS the master's CL mount serves (the thread
+logs it as `clindex 1`), and `hammer2_xop_start_except()` queues an XOP
+to every element with a chain, with no test of the element's type, as
+DragonFly's does.
+
+- The reading, on fresh volumes with the stock module: a SLAVE created
+  in the cluster, then 300 files written through the master's CL mount
+  and the volumes unmounted within seconds. `fsck_hammer2` totals are
+  identical on both volumes, 305 inodes, 300 data blocks, 301 dirents.
+  With the per-chain prints on, the thread made 1 pass and 0 inserts in
+  that window, so every one of the 300 reached the slave through the
+  frontend's own XOPs.
+- That accounts for the earlier entries' puzzle: the large directory's
+  19960 inodes on the slave came from the write itself, not from the
+  thread, and the thread's 234 inserts were phase 2's initial copy.
+- What remains open is the 81. Those inodes were written by the
+  frontend to both elements, then destroyed on the slave by a later
+  root-only pass of the thread, which found them absent from the
+  master's view at that moment. The phase unmounts the slave while the
+  write's flush is in flight, so the slave can hold chains the master's
+  media did not yet hold. Whether that is the order of events is the
+  next reading. The check is a per-chain print run with the unmount
+  removed: if the 81 are not destroyed, the unmount is the cause.
