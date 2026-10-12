@@ -7963,9 +7963,37 @@ absent answers nothing, and its silence is not a refutation.
 The same run wedged again: 30 `rbtree remove` lines, then the KASAN
 out-of-bounds in `hammer2_chain_drop` and `umount` out with interrupts
 disabled. The tree-corruption finding stands and is unaffected by this
-reading; what is now unmeasured is narrower and stated: WHICH descent
-inside `hammer2_chain_create()` acquires the second same-keybits indirect
-core, and whether that is also what leaves two chains under one key in
-the parent's blockmap. The instrument for it is the held-chain dump called
-from the create descent rather than from `sync_insert` entry, which is one
-edit away and not yet made.
+reading.
+
+RESOLVED, and the lock report is APPARATUS rather than a defect. The
+`+0x5dd` frame resolves on the host, no guest needed, to
+`hammer2_sync_setflush` at `hammer2_synchro.c:121`, reached from
+`hammer2_sync_insert()` at `synchro.c:935`. That walk takes a chain's
+parent's core lock while the caller still holds the chain's, i.e. child
+then parent. `hammer2_spin_t` is not a Linux spinlock: it is this port's
+`struct hammer2_spin_wrapper` around an `rw_semaphore`, and
+`hammer2_spin_sh()` is `down_read()` on it (`hammer2_os.h:885-905`). The
+comment beside it states the discipline it follows: a chain's core lock
+is taken bottom-up, child before parent, which upstream's
+`hammer2_chain_lastdrop()` states as the rule. So the acquisition is the
+documented order being followed, not an inversion.
+
+It is reported anyway because the class scheme keys a class on (family,
+type, keybits, level) and the child and its parent here are both INDIRECT
+at one keybits and one level, so two DISTINCT rwsems carry one class name
+and lockdep cannot see the order between classes. The report is the cost
+of that scheme, and it disables lockdep when it fires, which is why every
+later fault in these runs is reported with no lock checking.
+
+An earlier revision of this entry called that a real defect and a premise
+failing. That was written from the frames alone and is wrong: the premise
+it invoked is about keybits strictly decreasing ALONG one parent-child
+walk, which is about the two locks' being in a nesting relation the tree
+asserts, and the scheme's use of keybits as a class discriminator is a
+separate, weaker thing that cannot distinguish two chains of one keybits.
+
+What is still unmeasured, and now the whole of it: which descent inside
+`hammer2_chain_create()` leaves two chains under one key in the parent's
+blockmap, which is what `base_insert: overlapping at 0/32` reports and
+what corrupts the rbtree the unmount later walks. The lock report is not
+evidence about it and can be set aside.
