@@ -7749,3 +7749,50 @@ phase's 20000 files. What wrote it is not in the log, since nothing
 marks a write, and the module's own build id says this is not the
 current tree; the guest was rebooted after and its uptime counter
 restarted, so no later log can be placed beside it by time.
+
+## A syncer flush over a slave's unmount does not find the empty base, and reaches a sync-insert lock cycle, 2026-10-12
+
+The trace above says the producer is the syncer on a master mount that
+stays up, so the state to build is a cluster whose master is mounted for
+the whole run while the slave's volume is unmounted and left unmounted
+past one `HAMMER2_SYNC_INTERVAL`. `script/sync-empty-base.sh` builds it:
+4000 files written through the master's cluster mount, the slave element
+joined on the other volume, 40 s for the thread to carry the set, then
+unmount the slave and wait 40 s with the master still mounted, four
+times.
+
+The window opened and the empty base did not follow. At the slave's
+unmount `hammer2_kill_sb` prints 3977 inode, 11908 chain and **7798
+modified** chains against the failing log's 2510 and 2602, so the state
+the reading asked for was reached and exceeded, the master's mount was
+up throughout, the thread's syncer period elapsed four times, and
+`from empty base` reads 0. The whole run's log is
+`doc/history/kernel-reports/hammer2-sync-insert-lockcycle-20261012.txt`,
+706 KB, and it carries no `from empty base` line, no `device in error`,
+and no `gave up`.
+
+What it does carry is three faults on the current module, which names
+itself `8e4b641d441d7b9b2831a62ab2b5fe777b31aa28` where the failing log
+names `3f6a8c17722e58602763a6b32f4504d3bdd9b699`, so none of them is the
+log's fault:
+
+| guest time | report |
+|---|---|
+| 25202.064 s | `WARNING: possible recursive locking detected`, `h2nod-CL` acquiring `h2core_indirect/2#2` while already holding it, at `hammer2_sync_insert+0x4f0` |
+| 25206.991 s | `WARNING: hammer2_chain.c:4810 at hammer2_base_insert`, reached from `hammer2_sync_insert` |
+| 25208.476 s | `Oops: general protection fault` in `xxh64`, `RIP: hammer2_chain_setcheck`, reached from `hammer2_flush_core` |
+
+The first is the one to fix: `hammer2_sync_insert()` takes an indirect
+chain's core lock twice. The deadlock scenario lockdep prints is
+`lock(h2core_indirect/2#2)` then `lock(h2core_indirect/2#2)`, and it holds
+`h2ch_inode/2`, `h2ch_indirect/2#2` and `h2core_indirect/2#2` at once,
+with the second acquisition at the same `hammer2_sync_insert+0x4f0` as
+the first. lockdep disabled itself on that report, so the two later
+faults are reported without lock checking and cannot be attributed by
+its silence.
+
+This is a second, independent defect from the empty base, and it is on
+the current tree rather than the log's older one. It is filed here as
+found and not fixed: the guard belongs where the invariant is owned,
+which is the insert path's own lock discipline, and the fix needs a
+probe that fails before it and passes after, which is this script.
