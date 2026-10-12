@@ -7899,7 +7899,47 @@ violation of the same family as the `pmp` one and not the same member: the
 two changes clear `pmp`, which `RB_REMOVE` never reads, so neither could
 have affected this address.
 
-Unmeasured and wanted: which allocation `ffffc90024ccf600` belongs to, and
-which `chain` is being removed. A probe that prints `parent`, `chain`,
-`chain->rbe_link[0..2]` and `parent->core.rbtree` at entry to the
-`RB_REMOVE` at line 646 would name both, and is the next instrument.
+MEASURED, and it moves the defect out of `RB_REMOVE` and into the tree
+it is handed. The probe prints the parent, the chain and its three link
+words at that unlink, under `HAMMER2_LOCKDEBUG`, with the addresses hashed
+through `%p` and the whole block behind the flag, since the fields it
+reads are the ones that may have been freed.
+
+The run that took it crashed exactly as before, and the operands it
+printed are healthy. The last three lines before the fault are chains in
+`ffff8881...`, and the fault address is `ffffc9002376f600`, a different
+vmalloc region from every one of them:
+
+    parent ffff88812e9b3800 count 125 | chain ffff88810d1b7800 key ...0403
+      | link ffff8881135cf001 (null) ffff88810d1b7000
+    parent ffff88812e9b3800 count 124 | chain ffff88810d1b7000 key ...0404
+      | link ffff8881135cf000 (null) (null)
+    BUG: KASAN: vmalloc-out-of-bounds in hammer2_chain_drop+0x1443/0x1a80
+    Read of size 8 at addr ffffc9002376f600
+
+So the operands are valid and the read is inside `RB_REMOVE` itself, which
+takes the rebalance up the parent chain: `name##_RB_REMOVE()` loops on
+`parent = RB_PARENT(parent, field)` at `src/sys/sys/tree.h:826` after
+calling `name##_RB_REMOVE_COLOR()`. One upward step from a valid node
+lands in freed memory only if a parent pointer in the tree is already
+wrong, so THE TREE IS STRUCTURALLY CORRUPT BEFORE THIS UNLINK, not the
+unlink's argument.
+
+What corrupts it is consistent with everything above it in the same run:
+every chain printed here carries `flags 00046102`, which is
+`BLKMAPPED | BLKMAPUPD | UPDATE | COUNTEDBREFS | ONRBTREE | ALLOCATED`, and
+the same run had already hit `hammer2_base_insert: insert indirect elm
+0000000000000400/7 to indirect base 0000000000000400/5 overlapping at
+0/32` at 114 s. Two chains left under one key in one parent's blockmap,
+with one of them then linked into that parent's rbtree, is how an ordered
+tree stops being ordered while every pointer in it still resolves to
+something allocated. The 157 s between the `hpanic` and this fault is the
+unmount walking 4008 inodes before it reached the damaged subtree.
+
+Unmeasured: which insert produced the duplicate key, and whether the
+`base_insert` overlap and this tree corruption are one fault. The
+`keybits` printer on the held-chain dump is the instrument for the first,
+since two INDIRECT chains at equal keybits name identically in the lockdep
+class and were the thing that could not be settled; it needs a build with
+`HAMMER2_LOCKDEBUG=1` to be present at all, which the earlier keybits run
+did not have.
