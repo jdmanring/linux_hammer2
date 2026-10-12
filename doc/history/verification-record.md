@@ -7936,10 +7936,36 @@ tree stops being ordered while every pointer in it still resolves to
 something allocated. The 157 s between the `hpanic` and this fault is the
 unmount walking 4008 inodes before it reached the damaged subtree.
 
-Unmeasured: which insert produced the duplicate key, and whether the
-`base_insert` overlap and this tree corruption are one fault. The
-`keybits` printer on the held-chain dump is the instrument for the first,
-since two INDIRECT chains at equal keybits name identically in the lockdep
-class and were the thing that could not be settled; it needs a build with
-`HAMMER2_LOCKDEBUG=1` to be present at all, which the earlier keybits run
-did not have.
+MEASURED with `HAMMER2_LOCKDEBUG=1`, and it refutes the indirect-pair
+reading. The run held the module with both probes compiled in (verified
+by the format strings being present, 2 of them) and took the reading:
+the held-chain dump fired ten times at `sync_insert` entry, and every one
+is a SINGLE chain, `type 1` (INODE), `kb 0`, `class h2ch_inode/1`,
+`depth 1`, `lockcnt 1`. The parent/focus comparison printed nothing,
+because it only fires when both are INDIRECT and they never both were.
+
+    sync_insert entry: chain type 1 key b6a9cb23fd8a8001 kb 0
+      class h2ch_inode/1 depth 1 lockcnt 1     (ten lines, all alike)
+
+So the `h2core_indirect/2#2` recursive-locking report at 110.169 s is not
+two same-keybits indirect chains held at `sync_insert` ENTRY. The report's
+own frames settle where they are: it names `hammer2_sync_insert+0x5dd`,
+while this entry print is at `+0x4f0`, so the second indirect core is
+acquired LATER in the same function, inside the `hammer2_chain_create()`
+descent at `hammer2_synchro.c:879`, and is not on the stack when the
+function is entered. Measuring at entry was the wrong place to catch it.
+
+That also explains why the comparison was silent rather than negative: it
+was written to fire on a parent/focus INDIRECT pair, and the pair does not
+exist at the point it reads. An instrument placed where the state is
+absent answers nothing, and its silence is not a refutation.
+
+The same run wedged again: 30 `rbtree remove` lines, then the KASAN
+out-of-bounds in `hammer2_chain_drop` and `umount` out with interrupts
+disabled. The tree-corruption finding stands and is unaffected by this
+reading; what is now unmeasured is narrower and stated: WHICH descent
+inside `hammer2_chain_create()` acquires the second same-keybits indirect
+core, and whether that is also what leaves two chains under one key in
+the parent's blockmap. The instrument for it is the held-chain dump called
+from the create descent rather than from `sync_insert` entry, which is one
+edit away and not yet made.
