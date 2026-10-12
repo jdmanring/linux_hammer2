@@ -7513,3 +7513,41 @@ So the loss is the source-mutation case alone: a pass that runs during
 a write on the master destroys inodes on the slave. What is still open
 is why the pass sees them as absent on the master, and placing the
 unmount inside a pass so the interruption is tested at all.
+
+## Every destroy in the race is newer than the pass that made it, 2026-10-12
+
+A temporary print at the `n < 0` branch of `hammer2_sync_slaves()`
+(reverted, not committed) recorded each destroy's key, the destroyed
+chain's `modify_tid`, `merror`, the master's focus key at that moment
+and the pass's `sync_tid`. Run with `KDIR=$HOME/kernels/linux-7.3-rc5-kasan
+H2_DEBUG=0x8001 H2_RUN_TIMEOUT=1200`, 33 checks, 6 failed; the guest's
+log is kept at
+`~/Projects/linux_hammer2-data/fixtures/cluster-destroyprobe-20261012.klog`.
+
+- 82 destroys, all in one pass of the CL root at 75579 s, inside the
+  write marked from 75548 s to 75725 s. 35 passes opened during the
+  write; one destroyed anything.
+- The destroyed keys are contiguous, 0xf2b through 0xf7c.
+- Every line reads `merror=0` and the same focus,
+  `952c5ca9c9858001`. The master's scan had not ended: it was holding
+  a later key, and the slave's chains sorted before it, so the compare
+  read them as extra on the slave.
+- Every destroyed chain's `modify_tid` (0x7139 to 0x723d) is greater
+  than the pass's `sync_tid` (0x4f31). The pass deleted chains written
+  after the master state it set out to copy.
+- The slave ended 82 inodes short: 19959 against the master's 20041,
+  the dirents equal at 20037, the fingerprint 164 lines different.
+
+Inference, not measured: 0x952c5ca9c9858001 has the shape of a
+directory-entry hash key, and the destroyed keys are small sequential
+inode numbers, so in this root the master's iterator was among the
+directory entries while the slave's local iterator was among inodes
+the frontend had just created, and the two sequences are compared
+against each other key by key. Not established: whether these keys are
+present in the master's root when its scan passes them, which the next
+reading has to show.
+
+What the measurement does settle is a guard the destroy branch lacks:
+it deletes a slave chain whose `modify_tid` exceeds the `sync_tid` its
+own pass synchronizes to, which no ordering of the scans can make
+correct.
