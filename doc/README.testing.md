@@ -866,9 +866,9 @@ having returned a failure. `H2_PREPUSH_BUDGET` is the number of seconds
 the whole hook may take, defaulting to 400. A gate past the budget is
 reported COULD-NOT-RUN with the fact that it was not run, which is what
 exit 2 already means, and a gate that outlives the seconds remaining is
-killed and reported the same way. The eleven gates needing only this
-machine take about forty-five seconds together, so a healthy tree never
-reaches it, and `H2_PREPUSH_BUDGET=<seconds>` raises it for a run that
+killed and reported the same way. The gates needing only this
+machine take about 77 seconds together, measured 2026-10-12, so a healthy
+tree never reaches it, and `H2_PREPUSH_BUDGET=<seconds>` raises it for a run that
 means to wait.
 
 Exit 2 is COULD-NOT-RUN and is reported for a missing guest, a stopped one

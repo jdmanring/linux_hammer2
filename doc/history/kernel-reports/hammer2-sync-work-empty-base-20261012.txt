@@ -1,3 +1,11 @@
+# The whole log of the run that found the empty base, 2026-10-12.
+# The 219 hammer2_base_delete lines begin at 732.722172 and the ten
+# hammer2_flush_core "chain error during flush" lines end that block at
+# 732.885240. The fault's call trace is at 732.727 and names the producer.
+# An earlier 232-line file under the superseded name held that block alone,
+# without the trace and without hpanic's companion "device in error" line;
+# script/test-report.sh now refuses a capture shaped that way, so the whole
+# log stands in its place.
 [  106.627208] hammer2: loading out-of-tree module taints kernel.
 [  113.988295] sync_slaves pfs CL clindex 1
 [  113.988806] sync_slaves error 0 defer 0000000000000000

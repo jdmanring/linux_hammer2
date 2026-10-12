@@ -7585,16 +7585,18 @@ no data, because the guest script exited at the remount after the
 host's ssh returned 255 rather than 124, so the host ran its checks,
 the disk detach, with nothing to read.
 
-The kernel log it left is real evidence. The fault itself is kept whole
-at `doc/history/kernel-reports/hammer2-sync-work-empty-base-20261012.txt`,
-and `doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt`
-is an extract of it. That extract carries the 219 `hammer2_base_delete`
-lines and the ten `chain error during flush` lines after them, and
-nothing else: no call trace, no `WARNING`, no `Workqueue` line, none of
-the nine unmount readings. Everything said below about the producer
-before 2026-10-12 came from frames that are not in it, and the whole log
-says the producer is a different one, which is corrected here. What the
-extract is sound for is the fault message, its repetition and the keys.
+The kernel log it left is real evidence. The fault is kept whole at
+`doc/history/kernel-reports/hammer2-sync-work-empty-base-20261012.txt`.
+An earlier file under the name
+`doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt` was a
+232-line extract of it, and that extract is superseded and deleted, not
+kept: it carried the 219 `hammer2_base_delete` lines and the ten `chain
+error during flush` lines after them and nothing else, so it had no call
+trace, no `WARNING`, no `Workqueue` line and none of the nine unmount
+readings. Everything said below about the producer before 2026-10-12
+came from frames that were not in it, and the whole log says the producer
+is a different one, which is corrected here. The extract was sound for
+the fault message, its repetition and the keys, and those readings stand.
 
 The whole log is NOT the run the extract was first written up as. The
 first version of this entry said the write to the master with the
