@@ -205,6 +205,22 @@ GUEST
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "sync-empty: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 $RUN "$GUEST_SSH" "N=$N CYCLES=$CYCLES H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2empty.sh; . /tmp/h2empty.sh'" > "$W/out" 2>&1
 rc=$?
+# A guest half that REFUSED is not a run that failed, and reporting it as
+# thirteen failures is the probe failing at its own job: on 2026-10-12 a run
+# whose guest still held the module (left loaded by an earlier run killed
+# mid-build) printed "the module is loaded: none" and twelve more, and a
+# reader scanning for FAIL lines cannot tell that from the subject failing.
+# The guest half exits 2 and says why on stderr; that is surfaced verbatim
+# and the script reports COULD-NOT-RUN.
+if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
+	command grep -m1 "COULD-NOT-RUN" "$W/out" 2>/dev/null >&2 ||
+		echo "sync-empty: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	exit 2
+fi
 if [ "$rc" = 124 ]; then
 	scp -q "$GUEST_SSH:/tmp/h2empty.klog" "$FIXDIR/sync-empty-hang-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
 	for d in vdb vdc; do

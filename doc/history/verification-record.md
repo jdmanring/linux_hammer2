@@ -7798,3 +7798,69 @@ the current tree rather than the log's older one. It is filed here as
 found and not fixed: the guard belongs where the invariant is owned,
 which is the insert path's own lock discipline, and the fix needs a
 probe that fails before it and passes after, which is this script.
+
+## A chain outliving its PFS, at two drop sites the 0.9.10 fix did not reach, 2026-10-12
+
+The wedge at the end of the reproduction run is a use-after-free, and the
+278 s between the flush that marked the device in error and the crash is
+what hid it: the unmount had 4008 inodes to walk before it reached the
+chain that faults. The KASAN report says exactly what it is.
+
+    hammer2_chain_drop+0x147e   vmalloc-out-of-bounds, Read of size 8
+      hammer2_inode_repoint
+        hammer2_inode_drop
+          evict
+            dispose_list
+              evict_inodes
+                generic_shutdown_super
+                  kill_anon_super
+                    hammer2_kill_sb
+
+`hammer2_chain_drop` reaches zero refs and calls `lastdrop`, which calls
+`hammer2_pfs_memory_wakeup(chain->pmp, -1)` at `hammer2_chain.c:568`, and
+that function dereferences its argument:
+`atomic_fetchadd_int(&pmp->inmem_dirty_chains, count)`. `hammer2_pfs` is
+5.2 MB and vmalloc-backed, which is why the read is reported as
+out-of-bounds on vmalloc memory rather than as a page fault. The chain was
+dropping long after the PFS it names had been freed.
+
+The class is a chain that outlives its PFS while still carrying `->pmp`.
+Every site that drops such a chain and every site that frees the PFS:
+
+| site | drops a chain naming the PFS | clears `pmp` first |
+|---|---|---|
+| `pfsfree_scan()`, the PFS root's cluster (teardown) | yes | yes, 0.9.10 |
+| `pfsdealloc()`, the root's cluster (`pfs-delete` ioctl) | yes | **no** |
+| `inode_repoint(ip, NULL)`, every ordinary inode (eviction) | yes | **no** |
+| `hmp->vchain` / `hmp->fchain` (device teardown) | yes | yes |
+
+Two of four cleared it. The 0.9.10 entry in `full-volume-lock-cycle` fixed
+the teardown path and recorded why: upstream's guard in `hammer2_pfsfree()`
+counts `iroot->cluster.array[i].chain` and nothing else, so a chain dropped
+later by another path is invisible to it. That reasoning was right and the
+repair stopped one population short of it.
+
+The second uncleared site is reachable with no cluster and no full volume:
+`hammer2_ioctl_pfs_delete()` calls `hammer2_pfsdealloc()` at
+`hammer2_ioctl.c:422`, which sets `HAMMER2_CHAIN_RELEASE` and drops the
+root's chain with the pointer intact, and the ioctl then destroys the PFS.
+All four origin trees carry that drop uncleared, so it is a carried defect
+fixed here first and marked `XXX`, which is the maintenance rule.
+
+The repair is at the invariant, not at the callers. `hammer2_chain_drop`
+is reached from 59 sites across nine files, so clearing `pmp` at each is a
+defect that returns with the next drop site. Instead:
+
+  - `pfsdealloc()` clears `chain->pmp` before the drop, as `pfsfree_scan()`
+    already does.
+  - `pfsfree()` walks `pmp->inumhash` and clears the `pmp` of every chain
+    in every inode's cluster and ccache before it frees the storage, which
+    covers the population upstream's root-cluster guard cannot see.
+
+Not yet measured: whether either change alone is sufficient, and whether
+the eviction path can be reached without first marking the device in
+error. The probe is `script/sync-empty-base.sh`, whose run wedged before
+any check below the unmount could be read; its next run is the before and
+after reading for this fix. The `keybits` printer added to the held-chain
+dump is unrelated to this and remains wanted for the separate
+sync-insert topology question.

@@ -840,6 +840,51 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 	hammer2_key_t dummy;
 	int error;
 
+	/*
+	 * XXX Linux: the held-chain dump, at the site the 2026-10-12 lock
+	 * report was taken from.  That report was a recursive-locking
+	 * warning on `h2core_indirect/2#2` acquired twice at one site in
+	 * this function, and the class scheme prints only type and level, so
+	 * two distinct INDIRECT chains of one keybits name identically.  The
+	 * dump beside the class registry prints each held chain's key and
+	 * keybits, which is the value the invariant is stated in: keybits
+	 * strictly decreases from parent to child within a type.  A held
+	 * stack that is not strictly decreasing is a topology defect, and one
+	 * with no repeated keybits is a lock defect; the two want different
+	 * fixes, which is why the value is worth printing.
+	 *
+	 * The acquisition the report named is the inlined
+	 * hammer2_spin_sh(&parent->core.spin) inside hammer2_sync_setflush(),
+	 * reached from the hammer2_chain_create() call further down, so the
+	 * stack is complete only after that.  This prints on entry, where
+	 * *parentp is the chain already held shared, which is the half of the
+	 * stack the report showed as already-held.
+	 */
+	(void)hammer2_dbg_held_chains("sync_insert entry");
+
+	/*
+	 * The decisive reading, and it does not depend on lockdep: the parent
+	 * being inserted into and the focus being copied, side by side, with
+	 * their type and keybits.  The invariant is that keybits strictly
+	 * decreases from parent to child within a type, so if this prints a
+	 * parent whose keybits is not greater than the focus's, the sync path
+	 * is building a topology that the radix descent lookup relies on and
+	 * that the invariant forbids.  Two INDIRECT entries at equal keybits
+	 * is exactly the shape the 2026-10-12 lock report could not settle,
+	 * since the class scheme names both identically.  A false negative is
+	 * possible and is why the dump above is kept beside it: this prints
+	 * only on the insert path, and the report's stack also arises from a
+	 * delete and a reinsert inside one create.
+	 */
+	if ((*parentp)->bref.type == HAMMER2_BREF_TYPE_INDIRECT &&
+	    focus->bref.type == HAMMER2_BREF_TYPE_INDIRECT)
+		hprintf("sync_insert: parent indirect kb %d key %016llx, "
+		    "focus indirect kb %d key %016llx%s\n",
+		    (*parentp)->bref.keybits, (long long)(*parentp)->bref.key,
+		    focus->bref.keybits, (long long)focus->bref.key,
+		    (*parentp)->bref.keybits <= focus->bref.keybits ?
+		    "  <- NOT strictly decreasing" : "");
+
 #if HAMMER2_SYNCHRO_DEBUG
 	if (hammer2_debug & 1)
 	/* XXX Linux: %jx, which printk does not implement */

@@ -521,6 +521,21 @@ hammer2_pfsdealloc(hammer2_pfs_t *pmp, int clindex,
 
 		/* Release the chain. */
 		if (chain) {
+			/*
+			 * XXX Linux: a chain that outlives its PFS keeps a
+			 * pointer to one about to be freed, and the drop below
+			 * reaches hammer2_chain_lastdrop(), which reads
+			 * chain->pmp through hammer2_pfs_memory_wakeup().  That
+			 * dereferences it, so a chain dropped after its PFS is
+			 * freed faults on vmalloc memory.  pfsfree_scan() clears
+			 * the pointer before the same drop for the chains in the
+			 * PFS root's cluster, and this path, reached from the
+			 * pfs-delete ioctl, does not.  All four origin trees
+			 * carry this drop uncleared, so this is a carried defect
+			 * fixed here first; a NULL pmp is a state the chain code
+			 * expects, and every read of chain->pmp tests it.
+			 */
+			chain->pmp = NULL;
 			atomic_set_int(&chain->flags, HAMMER2_CHAIN_RELEASE);
 			hammer2_chain_drop(chain);
 		}
@@ -603,6 +618,47 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 		KKASSERT(pmp->mp);
 		hprintf("PFS still in use\n");
 	} else {
+		/*
+		 * XXX Linux: every chain that still names this PFS must stop
+		 * naming it before the storage goes, or the next drop of that
+		 * chain reads a freed pmp.  hammer2_chain_lastdrop() calls
+		 * hammer2_pfs_memory_wakeup(chain->pmp, -1), which dereferences
+		 * it, and chain_drop is reached from 59 sites, so guarding the
+		 * callers is not a repair.  The guard above counts the chains
+		 * in the PFS root's cluster only, which is upstream's, and it
+		 * is the under-count: the ordinary inodes this PFS still holds
+		 * have clusters too, and eviction has not reached them yet, so
+		 * the pmp was freed with their chains still pointing at it and
+		 * the fault landed wherever those chains were dropped later.
+		 * Measured on the KASAN guest as a vmalloc-out-of-bounds read
+		 * of 8 bytes in hammer2_chain_drop, reached from
+		 * hammer2_inode_repoint() under evict at an unmount, 278 s
+		 * after the flush that had already marked the device in error;
+		 * umount then exits with interrupts disabled and the domain
+		 * wedges.  A NULL pmp is a state the chain code expects, and
+		 * every read of chain->pmp tests it.
+		 */
+		for (i = 0; i < HAMMER2_INUMHASH_SIZE; ++i) {
+			hammer2_inum_hash_t *hash = &pmp->inumhash[i];
+			hammer2_inode_t *ip2;
+			int k;
+
+			hammer2_spin_ex(&hash->spin);
+			for (ip2 = hash->base; ip2; ip2 = ip2->next) {
+				for (k = 0; k < ip2->cluster.nchains; ++k) {
+					chain = ip2->cluster.array[k].chain;
+					if (chain)
+						chain->pmp = NULL;
+				}
+				for (k = 0; k < ip2->ccache_nchains; ++k) {
+					chain = ip2->ccache[k].chain;
+					if (chain)
+						chain->pmp = NULL;
+				}
+			}
+			hammer2_spin_unex(&hash->spin);
+		}
+
 		hammer2_spin_destroy(&pmp->blockset_spin);
 		hammer2_spin_destroy(&pmp->list_spin);
 		for (i = 0; i < HAMMER2_IHASH_SIZE; i++) {
