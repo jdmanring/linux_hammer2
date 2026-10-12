@@ -3310,9 +3310,23 @@ __hammer2_dbg_held_chains(const char *where)
 			continue;
 		mtx = container_of(map, hammer2_mtx_t, dep_map);
 		chain = container_of(mtx, hammer2_chain_t, lock);
-		hprintf("%s: chain type %d key %016llx class %s "
+		/*
+		 * XXX Linux: keybits is printed because it is the one value that
+		 * decides whether a held stack is legal.  The invariant is that
+		 * keybits strictly decreases from parent to child within a type,
+		 * and a report on 2026-10-12 could not be settled without it: two
+		 * INDIRECT chains of the same type and level were held at once,
+		 * which the lockdep class scheme cannot separate, so the class
+		 * name alone says nothing about whether it was one chain twice
+		 * or two distinct chains.  keybits answers that directly, and a
+		 * stack that is not strictly decreasing is a topology defect
+		 * rather than a lock one.  No carried file changes; the printer
+		 * is this port's.
+		 */
+		hprintf("%s: chain type %d key %016llx kb %d class %s "
 		    "depth %d lockcnt %u\n", where, chain->bref.type,
-		    (long long)chain->bref.key, map->name, hammer2_mtx_refs(mtx),
+		    (long long)chain->bref.key, chain->bref.keybits,
+		    map->name, hammer2_mtx_refs(mtx),
 		    chain->lockcnt);
 		n++;
 	}
