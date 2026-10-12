@@ -7575,3 +7575,51 @@ No destroy at all in the run, no pass error, kernel log clean,
 kmemleak 0, the resumed thread 2 passes in 10 s. The three still
 failing are the unmount landing outside an open pass and the two
 checks that depend on it, so the interruption is still untested.
+
+## A large write to the master with the slave's root unmounted corrupts the flush, 2026-10-12
+
+Phase 4 was reworked to give the thread a real backlog: passes over a
+frontend-written directory run 0.2 to 0.8 ms, measured, which a 10 ms
+poll cannot land inside, so a second directory is written with the
+slave's ROOT unmounted and the thread must copy all of it on the
+remount. That run did not reach the interruption. It failed with the
+guest's master mount returning EIO and 16 of 32 checks with no data,
+because the guest script exited at the remount after the host's ssh
+returned 255 rather than 124, so the host ran its checks and the disk
+detach with nothing to read.
+
+The cause is a defect in the port, reproduced in isolation at three
+settings, all with the module built from the current tree:
+
+| write, slave's ROOT | 500 + 2000 files | 20000 files |
+|---|---|---|
+| mounted | clean | clean: readable, unmounts exit 0, 0 flush errors |
+| unmounted | clean | corrupt |
+
+The 20000-file case with the slave unmounted, on the module built from
+`7a3c69d` (before the destroy guard) and on the current one, both
+produced the same thing: writes to the master's `bigdir2` failing with
+ENOENT, the master's mount hanging in `iterate_dir`, and in the kernel
+log 219 `hammer2_base_delete: ... from empty base ... not found at
+128/128`, 10 `hammer2_flush_core: chain error during flush`, one
+`hammer2_chain_testcheck: gave up`, and a KASAN slab-use-after-free in
+`string()` reached from `hammer2_get_tree`, plus `hammer2_get_tree:
+PFS label "e" not found` and `PFS already mounted!`. The block is kept
+at `doc/history/kernel-reports/hammer2-flush-corruption-20261012.txt`.
+The pre-fix module reproduces it, so the destroy guard is not the
+cause; both modules were built against `linux-7.3-rc5-kasan` and
+loaded separately, and the volumes were recreated between them.
+
+So `interrupt_resume` is blocked behind a flush defect, and the phase
+that reaches for the interruption will keep failing on this until the
+flush does not depend on the slave element being mounted. That is P4's
+own subject rather than a probe artifact, and it is the next thing to
+fix.
+
+The probe's own defects, found by this run, are fixed in the same
+commit: every mount, unmount and `rmmod` in the guest script is now
+bounded with `timeout(1)`, so a wedged guest cannot leave the script
+without readings; the unmount's exit status and the remount's are probe
+lines of their own; and a `mounts-before` line is the first reading of
+each run, so a guest that starts dirty is visible in the output rather
+than only in the final count.

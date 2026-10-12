@@ -22,12 +22,16 @@
 #
 # The fourth phase interrupts one. A stop is read only at the top of the
 # thread body and between the deferred directories, so what a stop during
-# synchronization costs is the rest of the pass it landed in. The pass is
-# made long by one large directory, the unmount is issued once a pass
-# bracket is open and a file of that directory is already on the slave, and
-# the remount must finish the copy. The checks below it mean nothing
-# without the bracket check, since an unmount after the pass closed reads
-# as a clean stop that tested nothing.
+# synchronization costs is the rest of the pass it landed in. The window
+# is the pass's own length, and what makes a pass long is a copy the thread
+# must carry: a directory written while the slave is mounted reaches the
+# slave through the frontend and leaves the thread passes of under a
+# millisecond, so a second directory is written with the slave unmounted
+# and the thread copies all of it on the remount. The unmount is issued
+# once a pass bracket is open and the copy has begun, and the remount must
+# finish it. The checks below the bracket check mean nothing without it,
+# since an unmount after the pass closed reads as a clean stop that tested
+# nothing.
 #
 # A second one: the warning check reads dmesg for sanitizer reports, and a
 # module built against a kernel without KASAN emits none however broken it
@@ -55,6 +59,11 @@ RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAlive
 # the drain to outlast the unmount's own bookkeeping, which it does by an
 # order of magnitude at this size.
 NBIG=${H2_NBIG:-20000}
+# Phase 4's backlog, written with the slave unmounted so the thread carries
+# it: this is what makes a pass long enough for the unmount to land inside.
+# A pass over the frontend-written bigdir runs 0.2 to 0.8 ms, measured, which
+# a 10 ms poll cannot hit.
+NBIG2=${H2_NBIG2:-20000}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
@@ -148,13 +157,18 @@ rmmod hammer2 2>/dev/null; dmesg -C
 K=/tmp/h2cluster.klog
 dmesg -w > $K 2>&1 &
 KPID=$!
+echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 insmod /tmp/hammer2.ko debug=$H2DEBUG || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
 klog() { grep -c "$1" $K; }
+# A mount the guest cannot drop leaves its volume held, and the next unmount
+# then blocks instead of returning. Counted on every phase so a wedged guest
+# is visible in the probe output rather than only in the final failure.
+mounts() { mount 2>/dev/null | grep -c ' type hammer2'; }
 passes() { klog "sync_slaves pfs $1"; }
 
 # 1. A lone SLAVE: start, pass, stop.
-mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
+timeout 30 mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
 hammer2 -s /mnt/h2m -t SLAVE pfs-create LONE >/dev/null 2>&1
 echo "lone-thread $(ps -eo stat,comm | awk '$2=="h2nod-LONE"{print $1}')"
 sleep 12
@@ -206,11 +220,21 @@ echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
 # 4. Interrupt a synchronization pass and resume it. A stop is read at the
 # top of the thread body and between the deferred directories (hammer2_admin.c
 # hammer2_thr_break, called once from hammer2_synchro.c), so a stop arriving
-# during a pass waits for the current scan to finish. The scan's length grows
-# with the largest directory it walks: measured on the KASAN guest, a pass
-# over an empty PFS takes 37 ms and one over a 20000-entry directory 418 ms,
-# so the directory below makes the window real rather than a race won by
-# luck. A pass brackets itself in the log: "sync_slaves pfs CL" opens it and
+# during a pass waits for the current scan to finish: what the interruption
+# costs is the rest of the pass it landed in, and the window is the pass's own
+# length.
+#
+# The window is sized by how much the thread has to copy, not by how many
+# entries a directory holds. bigdir's 20000 files are written while the slave
+# is mounted, and the frontend writes them to the slave element itself
+# (hammer2_xop_start_except() queues every element), so the thread has almost
+# nothing to do for them: measured here, passes after that write run 0.2 to
+# 0.8 ms, and a 20 ms poll cannot land inside one. bigdir2 is therefore
+# written with the slave unmounted, so the write reaches the master alone and
+# the thread must copy all of it on the remount, which is the phase-2 case and
+# is what makes a pass long enough to interrupt.
+#
+# A pass brackets itself in the log: "sync_slaves pfs CL" opens it and
 # "sync_slaves error" closes it, so the unmount is issued once a bracket is
 # open and the copy is provably in flight.
 # The slave is never read through a mount of its cluster PFS, because
@@ -231,9 +255,18 @@ echo "h2probe: bigdir write end" > /dev/kmsg
 # Destroys the thread made while the write ran, and in all. Both read 0
 # unless H2_DEBUG carries 0x0001, which is what prints a destroy.
 echo "write-destroys $(sed -n '/h2probe: bigdir write start/,/h2probe: bigdir write end/p' $K | grep -c 'destroy rec')"
-# The copy has begun once its update lines pass the phase-3 baseline.
+# The backlog: written with the slave unmounted, so only the thread can
+# carry it across, and a pass long enough to interrupt follows on the remount.
+umount /mnt/h2s
+echo "h2probe: bigdir2 write start" > /dev/kmsg
+mkdir /mnt/h2c/bigdir2
+i=0; while [ $i -lt $NBIG2 ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir2/q$i; i=$((i + 1)); done
+sync
+echo "h2probe: bigdir2 write end" > /dev/kmsg
+mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+# The copy has begun once its update lines pass the phase-4a baseline.
 n=0
-while [ $n -lt 600 ]; do
+while [ $n -lt 1200 ]; do
 	[ "$(klog 'syncthr: update inode')" -gt "$u0" ] && break
 	sleep 0.1; n=$((n + 1))
 done
@@ -246,35 +279,44 @@ bracket=1
 while [ $n -lt 1200 ]; do
 	o=$(klog 'sync_slaves pfs CL'); c=$(klog 'sync_slaves error')
 	if [ "$o" -gt "$opened" ] && [ "$o" -gt "$c" ]; then bracket=0; break; fi
-	sleep 0.02; n=$((n + 1))
+	sleep 0.01; n=$((n + 1))
 done
 # The bracket state is read here, before the unmount: the pass that is open
 # now completes after the stop is read, so testing the bracket after the
 # unmount would read closed however well the interruption landed.
 echo "interrupt-bracket-open $bracket"
-t0=$(date +%s%N); umount /mnt/h2s; t1=$(date +%s%N)
+t0=$(date +%s%N); timeout 60 umount /mnt/h2s; urc=$?; t1=$(date +%s%N)
+echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
+# The thread stops after the pass it landed in drains, so the count is waited
+# for and the wait is the reading, rather than a fixed sleep guessing at it.
+n=0
+while [ $n -lt 200 ]; do
+	[ "$(ps -eo comm | grep -c '^h2nod-CL')" = 0 ] && break
+	sleep 0.1; n=$((n + 1))
+done
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
+echo "interrupt-stop-tenths $n"
 echo "interrupt-didbreak $(klog didbreak)"
-# 5. Resume: remount the slave volume and let the thread finish. The
-# frontend writes bigdir to the slave itself (hammer2_xop_start_except()
-# queues every element), so the thread's update count does not grow with
-# the set and cannot measure convergence; waiting on it ran out every
-# time. The wait is for two complete passes after the remount, and what
-# the slave holds is decided off the media by the fingerprint at the end.
-mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+# 5. Resume: remount the slave volume and let the thread finish. The wait is
+# for two complete passes after the remount, and what the slave holds is
+# decided off the media by the fingerprint at the end.
+timeout 30 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s; rrc=$?
+echo "resume-remount-rc $rrc"
+echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
 c0=$(klog 'sync_slaves error')
 n=0
-while [ $n -lt 120 ]; do
+while [ $n -lt 300 ]; do
 	[ "$(klog 'sync_slaves error')" -ge $(( c0 + 2 )) ] && break
 	sleep 1; n=$((n + 1))
 done
 echo "resume-seconds $n"
 echo "resume-passes $(( $(klog 'sync_slaves error') - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
-umount /mnt/h2c && umount /mnt/h2s && umount /mnt/h2m && echo "cluster-umount ok"
+timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
+echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
 echo "scrapped $(klog unmount_scrap)"
 echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K)"
@@ -288,7 +330,7 @@ if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
 else
 	echo "kmemleak unusable"
 fi
-rmmod hammer2 && echo "rmmod ok"
+timeout 120 rmmod hammer2 && echo "rmmod ok"
 sync
 kill $KPID 2>/dev/null
 GUEST
@@ -418,7 +460,7 @@ nm=$(grep -c ' FILE$' "$W/fp.master"); ns=$(grep -c ' FILE$' "$W/fp.slave")
 nd=$(grep -c '^data ' "$W/fp.master")
 # The interruption phase leaves its large directory on both volumes, so the
 # fingerprint's expected count is the set's 35 plus bigdir's NBIG.
-want_files=$((35 + NBIG))
+want_files=$((35 + NBIG + NBIG2))
 [ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
 
