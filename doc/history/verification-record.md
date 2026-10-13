@@ -9765,3 +9765,26 @@ place. The deferral count never reaches the 1000 that would break the scan:
 119 deferral events against a threshold of 1000. Upstream's loop is line-for-
 line the same, so this is carried behavior reached by a condition this port
 creates, not a port rewrite of the loop.
+
+## The pass livelock dates from the slave-newer branch, 2026-10-13
+
+The livelock has a commit. The branch `if (n < 0 && chain->bref.modify_tid >
+sync_tid)` was added by `a2804b9` on 2026-10-12, and every log showing the
+livelock postdates it. Counting the keys the sync thread inserts, per log:
+
+| log | distinct focus keys | attempts per key | key range reached |
+| --- | --- | --- | --- |
+| before `a2804b9` | (none kept) | | |
+| the 04:40 hang log | 1001 | 1 | 0x400 .. 0x7e8 |
+| run 2, after it | 180 | 69 | 0x400 .. 0x4ff |
+
+The thread that runs without the branch walks 1001 distinct keys and never
+repeats one; the thread that runs with it repeats 180 keys 69 times and stops
+at 0x4ff. The branch advanced the local scan and not the XOP, where every other
+arm of the same switch advances both, so the master's scan stayed on the same
+focus and the next iteration compared the same pair again.
+
+`4a11bb1` reverts it to upstream's unguarded `n < 0` arm, which destroys the
+stale local chain and lets the scan move on. The run to confirm it is in
+flight; the reading that decides is the distinct-key count and the maximum key
+reached, not the total number of inserts.
