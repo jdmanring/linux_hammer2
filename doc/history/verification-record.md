@@ -10798,3 +10798,37 @@ chains` reads 0 with modified chains because the sync now completes cleanly and
 the window the run was built to open no longer opens, and one kernel warning
 from the ungated `create_indirect:` print remains. Both are the probe's own
 expectations, not the filesystem's.
+
+## The bound's own defect, caught by UBSAN after it had already converged a run, 2026-10-13
+
+Run 17 converged (inode 4801/4801, 0 lines differ) while carrying a defect of
+its own that the KASAN build reported and the shipping build did not:
+
+    UBSAN: shift-out-of-bounds in hammer2_chain.c:3698:26
+    shift exponent 61 is too large for 32-bit type 'unsigned int'
+
+The bound computed `unsigned int pmax = 1U << (parent->bref.keybits - 1)`, and a
+parent at keybits 62 exists in this tree: the master's own media carries blocks
+at keybits 62 and 63. The shipping build does not shift-check, so it computed a
+garbage bound silently and converged anyway; the UBSAN build reported it. The
+shift is on `hammer2_key_t` now.
+
+The first correction written for this was a `pmax < 64` guard, and it was wrong
+in the direction that matters. At keybits 7 pmax is exactly 64, so the guard
+disabled the bound at the very radix the defect was measured at and would have
+silently restored the bug while looking like a safety check. It was caught by
+enumerating the bound at every parent radix before building, which is the
+cheapest form of the check and the one that should happen before the build:
+
+| parent keybits | pmax | ncount bounded to | new keybits | below parent |
+| --- | --- | --- | --- | --- |
+| 2 | 2 | 2 | 1 | yes |
+| 4 | 8 | 8 | 3 | yes |
+| 6 | 32 | 32 | 5 | yes |
+| 7 | 64 | 64 | 6 | yes |
+| 8 | 128 | 128 | 7 | yes |
+| 62 | 128 (clamped) | 128 | 7 | yes |
+
+`pmax` is clamped to 128 rather than guarded, because `ncount` never exceeds 128:
+a parent wide enough to allow 128 slots needs no bound and a narrower one still
+gets one.
