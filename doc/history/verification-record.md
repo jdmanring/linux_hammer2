@@ -10453,3 +10453,26 @@ So forcing the flag is not free: marking the element root every pass drives more
 work through `hammer2_chain_create_indirect()`, and more of that work meets the
 guard. Whether the run still completes and what it converges to is the verdict,
 but the refusal count alone says the forcing costs what it gains.
+
+## The remaining refusals are in upstream's rename path, 2026-10-13
+
+With the sync-path clamp in place the refusal count falls from 340 to 90, and
+the 90 that remain are all one shape:
+
+    does not fit parent 0000000000000440/6 (parent type 2, child type 2,
+    create 0000000000000469/0 for_type 1)
+
+`for_type 1` is INODE and the parent is an INDIRECT at keybits 6, so this is
+`hammer2_chain_create()` being asked for an inode chain under an indirect block
+too narrow to hold it. The caller is `hammer2_chain_rename()`, which re-creates
+a chain under a new parent with `bref->keybits` -- the chain's OWN radix, not
+the receiving parent's -- and `diff` against the upstream tree shows that call
+is carried byte for byte, apart from formatting and a commented-out assert.
+
+So this refusal is not a port invention at either end: the call is upstream's,
+and the guard that refuses the result is this port's. Upstream has the same
+call and no guard, so upstream allows the insertion and relies on the rbtree
+comparison to treat the overlap as a match. Whether that is safe is the question
+the guard exists to ask, and the reading so far says the refusal is what keeps
+the tree walkable: removing the guard earlier produced `no room` and a flush
+depth panic rather than a converged volume.
