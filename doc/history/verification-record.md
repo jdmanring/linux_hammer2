@@ -9924,3 +9924,29 @@ called at all for an `f*` key, or whether the scan reaches the key, finds the
 dirent already present, and advances without creating its inode. The
 `sync_insert:` print counts calls, not keys, and the two have to be separated
 by a print at the insert site naming the key and whether the chain was created.
+
+## The dirents ride in the indirect blocks and the inodes are never inserted, 2026-10-13
+
+The sync thread's own insert calls, classified by the type it passes to
+`hammer2_chain_create()`, from the run that carried both repairs (44 passes):
+
+    type 2 INDIRECT   35576 calls
+    type 1 INODE       3946 calls over 75 DISTINCT keys
+    type 0 DIRENT         0 calls
+
+Two things follow that no earlier reading had. The dirents are never inserted
+one at a time; they arrive inside the INDIRECT blocks the thread copies whole,
+which is why all 4801 of them reach the slave and why their arrival says
+nothing about the inodes. And the inode inserts cover 75 keys, each retried
+about 52 times, which is roughly once per key per pass across 44 passes: the
+same small set of inodes is attempted every pass and never sticks.
+
+The 4000 files that predate the element have inode-number keys well outside
+those 75, and the scan never presents them, so no insert is attempted and no
+inode is created for the dirents that already arrived. That is the loss in the
+terms the media shows it: a dirent present with no inode behind it.
+
+What is not yet measured is why the 75 keys fail and why the rest are never
+presented. Both are scan-coverage questions inside `hammer2_sync_slaves()`,
+and both need a print at the insert site that names the key and whether the
+chain was created, rather than a count of calls.
