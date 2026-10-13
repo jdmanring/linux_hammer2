@@ -9895,3 +9895,32 @@ flush walks it, or have been detached between the stamp and the flush. That is
 the next instrument, and it belongs in `hammer2_sync_flush()` beside the
 existing flag print, counting the element's children against the number the
 pass stamped.
+
+## Every directory entry crosses and no inode behind them does, 2026-10-13
+
+The sharpest reading of the session is the per-name split, taken from the
+images of the run that carried both repairs, and it is the same before and
+after them:
+
+    MASTER:  f* inodes 4000, g* inodes 799
+    SLAVE:   f* inodes    0, g* inodes 799
+    both:    dirents 4801, f* dirents included
+
+The slave holds all 4801 directory entries, the entries naming the 4000 `f*`
+files among them, and holds no inode for any of those 4000 files. A directory
+entry that names an inode the volume does not hold is the shape of the loss:
+the scan creates the dirent in the destination's directory and does not create
+the inode the dirent refers to.
+
+That is why the two repairs move nothing. They both act on the inode copy: the
+scan's advance decides how many inodes are reached, and the write-back decides
+whether a reached inode is written. Neither creates the inode for a dirent that
+arrived without one, and the 799 `g*` files show the path works when the
+frontend creates the pair together on the destination. The failure is specific
+to the pair being created by the synchronization instead.
+
+Unmeasured still, and the next reading: whether `hammer2_sync_insert()` is
+called at all for an `f*` key, or whether the scan reaches the key, finds the
+dirent already present, and advances without creating its inode. The
+`sync_insert:` print counts calls, not keys, and the two have to be separated
+by a print at the insert site naming the key and whether the chain was created.
