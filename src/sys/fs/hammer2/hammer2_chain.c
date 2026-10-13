@@ -3734,6 +3734,48 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	KKASSERT((ichain->flags & HAMMER2_CHAIN_INITIAL) == 0);
 
 	/*
+	 * XXX Linux: the new block has to fit inside the parent it goes
+	 * into, and nothing upstream checks that.  `ichain`'s radix comes
+	 * from the indkey helper above, which sizes the block to hold its
+	 * own contents and has no view of the parent's keyspace, so it can
+	 * be WIDER than the parent: measured 2026-10-12, a keybits-7 block
+	 * under a keybits-6 parent, and separately a keybits-7 block under
+	 * a keybits-7 parent whose range is identical.  The rbtree cannot
+	 * hold either, because hammer2_chain_cmp() counts overlapping ranges
+	 * as a match, so the insert returns an incumbent and the carried
+	 * KASSERTMSG at hammer2_chain.c:297 fires and takes the device into
+	 * error.
+	 *
+	 * The check MUST be here, before the loop below moves the parent's
+	 * blockrefs into `ichain`.  A first version of it sat after that
+	 * loop, next to the insert, and refusing there left every moved
+	 * child pointing at a block that was then freed: the next flush
+	 * took a null-ptr-deref in xxh64 at hammer2_flush.c:754 on a DIRENT
+	 * whose bytes said one thing and whose data said another, which no
+	 * earlier run had seen.  Refusing before anything moves leaves the
+	 * parent exactly as it was, which is the state the caller's error
+	 * path already expects.
+	 */
+	if (parent->bref.keybits > 0 && ichain->bref.keybits > 0) {
+		hammer2_key_t p_end, c_beg, c_end;
+
+		p_end = parent->bref.key +
+		    ((hammer2_key_t)1 << parent->bref.keybits) - 1;
+		c_beg = ichain->bref.key;
+		c_end = c_beg + ((hammer2_key_t)1 << ichain->bref.keybits) - 1;
+		if (c_beg < parent->bref.key || c_end > p_end ||
+		    ichain->bref.keybits >= parent->bref.keybits) {
+			hprintf("create_indirect: new %016llx/%d does not fit parent %016llx/%d\n",
+			    (long long)ichain->bref.key, ichain->bref.keybits,
+			    (long long)parent->bref.key, parent->bref.keybits);
+			hammer2_chain_unlock(ichain);
+			hammer2_chain_drop(ichain);
+			*errorp = HAMMER2_ERROR_EIO;
+			return (NULL);
+		}
+	}
+
+	/*
 	 * Iterate the original parent and move the matching brefs into
 	 * the new indirect block.
 	 *
@@ -3899,43 +3941,6 @@ next_key_spinlocked:
 	 */
 	base = NULL; /* safety, parent modify may change address */
 	KKASSERT((ichain->flags & HAMMER2_CHAIN_ONRBTREE) == 0);
-	KKASSERT(parent->core.live_count < count);
-	/*
-	 * XXX Linux: the new block has to fit inside the parent it goes
-	 * into, and nothing upstream checks that.  `ichain`'s radix comes
-	 * from the indkey helper above, which sizes the block to hold its
-	 * own contents and has no view of the parent's keyspace, so it can
-	 * be WIDER than the parent: measured 2026-10-12, a keybits-7 block
-	 * under a keybits-6 parent, and separately a keybits-7 block under
-	 * a keybits-7 parent.  The rbtree cannot hold either, because
-	 * hammer2_chain_cmp() counts overlapping ranges as a match, so the
-	 * insert below returns the incumbent and the carried KASSERTMSG at
-	 * hammer2_chain.c:297 fires and takes the device into error.
-	 *
-	 * Refusing here rather than at the insert leaves the parent intact
-	 * and the caller's create unanswered with an error it already has a
-	 * path for.  The alternative, letting the block in and hoping no
-	 * lookup crosses the two ranges, is what corrupts the rbtree the
-	 * unmount later walks.
-	 */
-	if (parent->bref.keybits > 0 && ichain->bref.keybits > 0) {
-		hammer2_key_t p_end, c_beg, c_end;
-
-		p_end = parent->bref.key +
-		    ((hammer2_key_t)1 << parent->bref.keybits) - 1;
-		c_beg = ichain->bref.key;
-		c_end = c_beg + ((hammer2_key_t)1 << ichain->bref.keybits) - 1;
-		if (c_beg < parent->bref.key || c_end > p_end ||
-		    ichain->bref.keybits >= parent->bref.keybits) {
-			hprintf("create_indirect: new %016llx/%d does not fit parent %016llx/%d\n",
-			    (long long)ichain->bref.key, ichain->bref.keybits,
-			    (long long)parent->bref.key, parent->bref.keybits);
-			hammer2_chain_unlock(ichain);
-			hammer2_chain_drop(ichain);
-			*errorp = HAMMER2_ERROR_EIO;
-			return (NULL);
-		}
-	}
 	hammer2_chain_insert(parent, ichain,
 	    HAMMER2_CHAIN_INSERT_SPIN | HAMMER2_CHAIN_INSERT_LIVE, 0);
 

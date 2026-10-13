@@ -8725,3 +8725,42 @@ eight times about a quarter second apart, so the waiter is re-entering and
 re-testing rather than sleeping through, which is the shape
 `hammer2_xop_testset_ipdep()`'s `goto again` produces when the retire
 happens but the entry returns. Not yet explained.
+
+## The first guard refused after moving, and that was this session's own defect, 2026-10-12
+
+The xxh64 fault recorded above was not in the port. It was introduced by
+the fit guard added earlier in this session, and removing it is the fix.
+
+That guard sat AFTER the loop that moves the parent's blockrefs into the
+new indirect block, next to the insert it was protecting. Refusing there
+freed `ichain` with every moved child still pointing at it, and the next
+flush dereferenced a DIRENT whose `bytes` and `data` no longer agreed:
+null-ptr-deref in `xxh64` at `hammer2_flush.c:754`. The reading that
+established it is a count across runs, not an argument:
+
+| log | `RIP: xxh64` | guard fires |
+|---|---|---|
+| `inv3`, `inv9`, `inv10` (before the guard) | 0 | 0 |
+| `converge`, `ipdep` (guard after the move loop) | 2 | 1 |
+| `moved` (guard before the move loop) | 0 | 10 |
+
+The guard now stands immediately after `ichain` is allocated and modified
+and before the move loop begins (`hammer2_chain.c:3768`, loop at 3779), so
+a refusal leaves the parent exactly as it was, which is the state the
+caller's error path already expects. With it there the xxh64 fault does
+not occur in any run.
+
+Its own cost is measured and is not yet acceptable: the guard fires ten
+times in 1.7 ms on the same key (`0x400/7` into `0x440/6`) instead of once,
+the caller retries rather than giving up, and `sync_slaves error 256`
+follows -- the EIO from the refusal surfacing as a sync-pass error. A
+general protection fault in `hammer2_inode_chain_and_parent+0xfe`, called
+from `hammer2_sync_slaves`, appears in this run and in no other, so it is
+downstream of the refusal and not yet explained.
+
+So the state is: the collision is stopped, the corruption this session
+introduced is removed, and the refusal's own consequences are open. The
+guard is a candidate fix with a measured cost, not a finished one, and
+the next reading is the caller: why the same create is attempted ten times
+and what `sync_slaves` does with the error, which is a print at the caller
+rather than a reading of it.
