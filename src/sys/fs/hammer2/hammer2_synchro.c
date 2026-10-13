@@ -87,6 +87,12 @@ static int hammer2_sync_replace(hammer2_thread_t *thr,
 /****************************************************************************
  *			    HAMMER2 SYNC THREADS 			    *
  ****************************************************************************/
+static int h2dbg_setflush_walks;	/* XXX Linux */
+static int h2dbg_setflush_inode_tail;	/* XXX Linux */
+
+static int h2dbg_setflush_walks;	/* XXX Linux */
+static int h2dbg_setflush_inode_tail;	/* XXX Linux */
+
 /*
  * XXX Linux: make a change the sync thread made visible to the flusher.
  * hammer2_chain_setflush() stops at the first inode chain, because a
@@ -106,6 +112,9 @@ static int hammer2_sync_replace(hammer2_thread_t *thr,
  * its device is torn down.  A crash before then loses only work the next
  * pass redoes, the slave being compared with its masters by modify_tid.
  */
+static int h2dbg_setflush_walks;	/* XXX Linux */
+static int h2dbg_setflush_inode_tail;	/* XXX Linux */
+
 static void
 hammer2_sync_setflush(hammer2_chain_t *chain)
 {
@@ -115,11 +124,32 @@ hammer2_sync_setflush(hammer2_chain_t *chain)
 	for (;;) {
 		atomic_set_int(&chain->flags, HAMMER2_CHAIN_ONFLUSH);
 		parent = chain->parent;
-		if (parent == NULL)
+		/*
+		 * XXX Linux: how far the walk got, and on which type it stopped.
+		 * Measured 2026-10-13: the element root the flush helper tests
+		 * reads `not flagged (00046102)` on every pass, so this walk is
+		 * not reaching it.  The count says whether it stopped at the
+		 * first inode -- which is what the carried
+		 * hammer2_chain_setflush() does, and why this helper exists --
+		 * or at a NULL parent, which is a different defect.
+		 */
+		if (parent == NULL) {
+			if (hammer2_debug & 0x8000)
+				kprintf("sync_setflush: stopped at %016llx/%d type %d "
+				    "(NULL parent)\n",
+				    (long long)chain->bref.key, chain->bref.keybits,
+				    chain->bref.type);
 			break;
+		}
 		hammer2_spin_sh(&parent->core.spin);
 		hammer2_spin_unsh(&chain->core.spin);
 		chain = parent;
+	}
+	if (hammer2_debug & 0x8000) {
+		atomic_add_int(&h2dbg_setflush_walks, 1);
+		if (chain->bref.type == HAMMER2_BREF_TYPE_INODE &&
+		    chain->parent != NULL)
+			atomic_add_int(&h2dbg_setflush_inode_tail, 1);
 	}
 	hammer2_spin_unsh(&chain->core.spin);
 }
