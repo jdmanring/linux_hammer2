@@ -965,6 +965,22 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 	KKASSERT(chain == NULL);
 
 	chain = NULL;
+	/*
+	 * XXX Linux: the radix this hands chain_create() comes from the FOCUS
+	 * (the other device's chain) and is inserted under whichever parent
+	 * the scan above left in *parentp.  When the two trees differ in
+	 * radix there the new block is born wider than its parent and cannot
+	 * be inserted: measured 2026-10-13 as a radix-7 block for key 0x460
+	 * refused under an INDIRECT parent of 0x440/6, whose keyspace 0x440-0x47f
+	 * DOES contain the create key, so the parent was right and only the
+	 * radix was wrong.  Printed here, where both values exist, because the
+	 * reading that decides whether to fix the radix or the parent
+	 * selection is this pair and nothing else.
+	 */
+	kprintf("sync_insert: focus %016llx/%d into parent %016llx/%d type %d\n",
+	    (long long)focus->bref.key, focus->bref.keybits,
+	    (long long)(*parentp)->bref.key, (*parentp)->bref.keybits,
+	    (*parentp)->bref.type);
 	error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
 				     focus->bref.methods,
 				     focus->bref.key, focus->bref.keybits,

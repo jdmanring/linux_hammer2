@@ -9185,3 +9185,55 @@ can remove once the second stops producing its input; the second is a range
 test in carried code that needs the caller's contract established first,
 since changing it without that would move the failure rather than remove it,
 which four attempts at this site have now demonstrated.
+
+## The new block inherits the master's radix, and that is why it does not fit, 2026-10-13
+
+Printed at the refusal, not reconstructed from another function:
+
+    create_indirect: new 0000000000000400/7 does not fit parent 0000000000000440/6
+      (parent type 2, child type 2, create 0000000000000460/0 for_type 1)
+
+Read as arithmetic:
+
+- `parent type 2` is `HAMMER2_BREF_TYPE_INDIRECT`, so `0x440/6` really is a
+  keyspace: `0x440-0x47f`. The parent is not an inode, and the "inode parent"
+  reading of the previous entry is wrong.
+- `create 0x460/0` is INSIDE that range. The create the caller asked for is
+  legitimate and fits.
+- The block actually built is `0x400/7`, spanning `0x400-0x47f`, which
+  encloses the parent. So the block did not have to be built at radix 7 to
+  satisfy the create; it was built at 7 because its radix came from
+  somewhere other than the parent.
+
+Where it came from is one line in `hammer2_chain_create_indirect()`:
+
+    int maxloops = 300000, keybits = create_bits;
+
+`keybits` is seeded from `create_bits` and is never checked against the
+parent. The caller is `hammer2_sync_insert()` at `hammer2_synchro.c:968`,
+which passes the FOCUS's radix as `create_bits`:
+
+    error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
+                                 focus->bref.methods,
+                                 focus->bref.key, focus->bref.keybits, ...
+
+`focus` is the chain from the other device. So the new block is built at the
+MASTER chain's radix, for insertion under whichever parent the SLAVE's scan
+holds. When the two trees differ in radix at that point, the block is born
+wider than its parent, `hammer2_chain_insert()` cannot hold it, and before
+the guard existed the carried `KASSERTMSG` took the device into error.
+
+This is the first mechanism in this chain to come from values printed at the
+decision point, and it supersedes the two readings before it: the parent is
+INDIRECT, not inode, and the defect is not that `indkey_dir` sizes a block
+badly but that its input radix came from the other tree. `indkey_dir` is
+given the key and the radix and returns both, so it can only be as right as
+its caller.
+
+Not yet measured, and the reason no fix is written here: whether the correct
+radix for the insertion is the parent's, or whether the parent itself is
+wrong because the slave's scan should not have been positioned there. The
+create key `0x460` fits the parent, so the parent is plausibly right and the
+radix plausibly wrong, but "plausibly" is what produced four wrong attempts
+already. The print that separates them is `create_bits` beside the parent's
+`keybits` at the caller, and this record does not yet have it.
