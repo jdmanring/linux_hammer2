@@ -8520,3 +8520,64 @@ exits a returning panic needs), the port's error prints, and the probes
 and guard added by this session. The keybits selection and the create
 arguments are unchanged, so the missing fit check is upstream's. Fixed
 here under `XXX`, staged rather than filed.
+
+## The crash is gone; what it was hiding is a sync-side wait, 2026-10-12
+
+The full-window run of the same reproducer under the `create_indirect` fix
+reaches t=1279 with none of the fault:
+
+| reading | count |
+|---|---|
+| `collision 0000000000000400/7 hits` | 0 |
+| `kernel BUG` | 0 |
+| `device in error` | 0 |
+| `from empty base` | 0 |
+| the fit guard refusing a block | 1 |
+
+and the guest is healthy at the end: three hammer2 mounts up, 4200 files
+written, load 0.09. The guard fires once, the run continues past it, and
+the collision and the device-in-error never happen. On the two earlier
+runs of the same build the collision arrived at t=118 and t=136.
+
+The run does not reach a slave unmount, and the reason is measured rather
+than inferred. `sync(1)` on the guest is blocked 20 minutes in
+`hammer2_trans_init`, and two kernel stacks name a wait:
+
+    kworker/10:1   hammer2_sync_work -> sync_filesystem -> hammer2_vfs_sync_pmp
+                   -> hammer2_inode_chain_flush -> hammer2_xop_testset_ipdep
+    kworker/u48:1  virtblk_remove -> del_gendisk -> blk_report_disk_dead
+                   -> sync_filesystem -> hammer2_vfs_sync_pmp
+                   -> hammer2_trans_init
+
+The first holds the PFS's flush transaction and waits on an inode
+dependency; the second wants that transaction and waits on the first.
+`hammer2_trans_init` with `HAMMER2_TRANS_ISFLUSH` blocks on
+`pmp->trans_cv` while another flush holds `pmp->trans.flags`
+(`hammer2_flush.c:91`).
+
+That reading said `hammer2_trans_init` waits appear in the unguarded runs
+too, which is wrong and is corrected here: the occurrences in `inv3`,
+`inv9` and `inv10` are `__pfx_hammer2_trans_init`, the function-prefix
+symbol a trace prints when it lists a candidate, not a blocked call. The
+blocked `hammer2_trans_init+0x2ab` is unique to this run, which is the
+first to survive long enough to reach the sync path at all; the crashed
+runs died at t=152 with the wait behind the crash.
+
+The second stack is not the port at all. It is the host's own
+detach-disk reaching the guest as an ACPI hotplug:
+
+    virtblk_remove -> del_gendisk -> blk_report_disk_dead
+      -> sync_filesystem -> hammer2_vfs_sync_pmp -> hammer2_trans_init
+
+so the host side was ejecting the volume while the run was still going,
+and the guest's `sync` then blocked behind the flush that eject wanted.
+The run ended at the bound rather than reporting a stall of its own
+because the host had already begun tearing the disks down.
+
+So the state is: the collision and the device-in-error are fixed and
+measured; the next fault is a flush-transaction wait between the syncer
+and a second `sync_filesystem` on the same PFS, and it is the one this
+script was built to reach. The convergence check added to
+`script/sync-empty-base.sh` -- fsck on both images and
+`cluster-sync.sh`'s PFS fingerprint comparison, copied whole -- has not
+yet produced a reading, because no run has reached the end of the cycles.

@@ -54,6 +54,16 @@ GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 VIRSH=${H2_VIRSH:-virsh --connect qemu:///system}
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
+# The convergence reading, taken off the media by the two tools
+# cluster-sync.sh already uses for the same purpose, rather than invented
+# here: fsck_hammer2 for each volume's health and the cluster PFS
+# fingerprint from `hammer2 -v show` for entry-for-entry agreement. This
+# script's guest-side checks are all fault detection -- empty base, gave
+# up, device in error -- and none of them asks whether the slave ended up
+# holding what the master holds, so a run that converges and a run that
+# silently drops the copy both read the same without this.
+HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
+FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 RUN="timeout ${H2_RUN_TIMEOUT:-900} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 # The set written to the master. Big enough that the slave's copy leaves
 # chains behind, small enough to write in seconds.
@@ -287,6 +297,62 @@ p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${
 k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, BUG or UBSAN report" $? "${k:-none}"
 u=$(val mounts-after); [ "${u:-1}" = 0 ]; check "every mount is dropped" $? "${u:-none} left"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
+
+# Convergence, off the media. The guest-side checks above all measure the
+# fault; none of them asks whether the slave ended up holding what the
+# master holds, which is what P4's synchronization step is for. The
+# instrument is cluster-sync.sh's, unchanged: fsck_hammer2 for each
+# volume's own health and the cluster PFS fingerprint from `hammer2 -v
+# show` for entry-for-entry agreement, taken from the images after the run
+# rather than from a mount, since a mounted volume answers from cache.
+if [ -x "$FSCK" ] && [ -x "$HAMMER2" ]; then
+	for b in master slave; do
+		eval "img=\$$(echo "$b" | tr a-z A-Z)"
+		"$FSCK" "$img" > "$W/fsck.$b" 2>&1
+		check "fsck_hammer2 on the $b volume" $? "exit $?"
+	done
+	last() { sed -n '$p' "$1"; }
+	# The last running total fsck prints is the volume's own.
+	fm=$(last "$W/fsck.master"); fs_=$(last "$W/fsck.slave")
+	echo "  note  master: $fm"
+	echo "  note  slave:  $fs_"
+	# The fingerprint of the cluster's PFS, from the line naming it to the
+	# line closing it, which is cluster-sync.sh's function copied whole so
+	# the two scripts read side by side and agree on what convergence is.
+	fingerprint() {	# image
+		"$HAMMER2" -v show "$1" 2>/dev/null | awk '
+		/filename "CL"$/ && !on { on = 1; next }
+		on && /^ *} \(inode\.[0-9]*, "CL"\)/ { exit }
+		!on { next }
+		/^ *inode\.[0-9]/ { mode = "inode"; next }
+		/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
+		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+		/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
+		mode == "dirent" && $1 == "filename" { name = $2 }
+		mode == "dirent" && $1 == "inum" { dinum = $2 }
+		mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
+		mode == "inode" && $1 == "inum" { inum = $2 }
+		mode == "inode" && $1 == "type" { itype = $2 }
+		mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
+		mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
+		' | LC_ALL=C sort
+	}
+	fingerprint "$MASTER" > "$W/fp.master"
+	fingerprint "$SLAVE" > "$W/fp.slave"
+	nm=$(grep -c ' FILE$' "$W/fp.master" || true)
+	ns=$(grep -c ' FILE$' "$W/fp.slave" || true)
+	nm=${nm:-0}; ns=${ns:-0}
+	# The population first: a fingerprint that matched nothing on both
+	# sides would compare equal and read as convergence.
+	[ "$nm" -gt 0 ] 2>/dev/null
+	check "the master's PFS holds files, by its own media" $? "$nm file entr(ies)"
+	cmp -s "$W/fp.master" "$W/fp.slave"
+	check "the slave converged to the master, entry for entry and block for block" $? \
+		"$ns against $nm file entr(ies); $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]' || true) line(s) differ of $(wc -l < "$W/fp.master")"
+else
+	echo "  FAIL  convergence not read: no fsck_hammer2 or hammer2 (H2_FSCK, H2_HAMMER2)"
+	fail=$((fail + 1))
+fi
 
 echo "sync-empty: $checks check(s), $fail failed"
 [ "$fail" = 0 ]
