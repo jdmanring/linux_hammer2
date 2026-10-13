@@ -10209,3 +10209,18 @@ The one reading that has not changed through all five: the slave holds all
 4801 dirents and 801 of the 4801 inodes, and the 4000 files that predate the
 element are the ones missing. Every change above moves a counter that is not
 that number.
+
+## The cap does not prevent the teardown wedge, 2026-10-13
+
+The run carrying the radix cap reached its fourth unmount and then wedged the
+same way run 6 did: the log stops at `hammer2_kill_sb: after unmount: 4008
+inode, 126312 chain, 122179 modified, 499 dio still allocated` at t=447, with
+`umount` in D state, three mounts held and the module busy, until the guest was
+hard-cycled. So the cap removes the refusal storm and the per-key rebuild
+inside a pass and does not remove the wedge at teardown, which is a second
+failure on the same path.
+
+Two runs have now wedged in teardown, both at the fourth unmount, both with the
+same `122179 modified` and `499 dio still allocated` and the same 4008 inodes.
+That number is the master's cluster mount, which holds the whole 4008-inode
+set, and the wedge is in the unmount of the volume whose element the scan uses.
