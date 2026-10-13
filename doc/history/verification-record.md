@@ -9014,3 +9014,35 @@ its "data block" reading. What remains unmeasured is whether skipping the
 inode for the whole window is why the copy never catches up, or whether the
 guard's loss is, and separating them needs a run with the guard's radix fix
 in place and the skip unchanged.
+
+## Capping the block's radix to its parent was tried and does not work, 2026-10-13
+
+The entry two above this one ends by saying the fix belongs at the radix
+choice in `hammer2_chain_indkey_dir()`. That was implemented, run, and
+reverted within the hour, and the run says why in one line of its own
+output.
+
+The cap lowered `keybits` to one below the parent's when the `ncount` loop
+had raised it that far. The refused create is for a KEY outside the parent,
+not for a range merely wider than it. Every one of the run's 210 caps was
+`7->5` against a parent holding `0x440/6`, and the create is at key `0x400`:
+a keybits-5 block at `0x400` covers `0x400-0x41f`, which is still outside
+`0x440-0x47f`. Lowering the radix does not bring the key into the parent's
+range, so the cap does not fix the fit it was written for.
+
+What it does instead is make the capped block shallower than its own parent,
+so when that block becomes a parent its children cap again one radix further
+down, and the tree gains a level per create. The run reached
+`hpanic("flush depth limit")` at `hammer2_flush.c:493` after 210 caps, with
+two oopses behind it in the flush worker: `hammer2_flush_core.cold` and
+`hammer2_chain_lookup`. Upstream panics at the same depth limit, so this is
+not a port defect; it is the cap's own consequence.
+
+The lesson is narrow and worth keeping: the invariant that fails at the
+insert is about the KEY, and `indkey_dir` is given the key as an input and
+returns it unchanged, so no change to the radix can make a key belong to a
+parent it does not belong to. The question is one layer further up, in
+whatever asked `hammer2_chain_create()` for a key outside the parent it named,
+and that is not yet instrumented. `create_indirect`'s fit guard stays as the
+assertion that this held, and it is what made the refusal visible rather than
+leaving a silent rbtree collision.
