@@ -9630,3 +9630,32 @@ The repair is to set ONFLUSH on the element root before the test rather than
 asking whether another path already did, and to keep `FLUSH_ALL`, which is what
 makes the descent pass through PFS roots instead of stopping at them. Whether
 that alone converges is the next run's reading.
+
+## 801 is the baseline the sync thread never added to, 2026-10-13
+
+Two runs with the corrected instrument, read off their own media:
+
+| | run 1 | run 2 |
+| --- | --- | --- |
+| sync passes (`sync_slaves pfs CL`) | 37 | 50 |
+| `not flagged` (the write-back no-op) | 22 of 22 | 50 of 50 |
+| `syncthr: update inode` (stamps) | 3873 | 0 |
+| `sync_insert: focus` (copies attempted) | 102370 | 8837 |
+| `does not fit` (refusals) | 340 | 30 |
+| soft lockups | 5 | 0 |
+| slave file inodes on media | 801 | 801 |
+| master file inodes on media | 4801 | 4801 |
+
+The slave's inode tree is 801 in both, and the master's is 4801 in both, while
+the sync thread's own work differs completely between them: 3873 stamps in one
+run and none in the other, 102370 copies attempted against 8837. The 801 does
+not move with anything the sync thread does, so it is not what the thread
+delivered. It is the set written on the master's cluster mount after the SLAVE
+element was created, which reaches the slave through the normal mount and
+flush path rather than through the synchronization pass; the 4000 that predate
+the element are what the pass was supposed to carry and never did.
+
+The write-back gate is a total no-op in both runs, 22 of 22 and 50 of 50 passes,
+which is the defect itself and does not depend on how much the pass copied.
+The zero soft lockups in run 2 confirm the five in run 1 came from the console
+flood and not from the filesystem.
