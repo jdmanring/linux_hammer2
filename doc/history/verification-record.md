@@ -10476,3 +10476,29 @@ comparison to treat the overlap as a match. Whether that is safe is the question
 the guard exists to ask, and the reading so far says the refusal is what keeps
 the tree walkable: removing the guard earlier produced `no room` and a flush
 depth panic rather than a converged volume.
+
+## The clamp is necessary and not sufficient, 2026-10-13
+
+Two runs of the SAME clamp-only source, `git diff` reporting no difference in
+`src/` between the two commits they were built from:
+
+| run | outcome |
+| --- | --- |
+| run 9 | completes: 4 unmounts, `0 inode, 0 chain, 0 modified` at teardown, module unloads, inodes 834/4801 |
+| run 11 | stalls at the first unmount: t=413, unmounts=1, passes=1, refusals climbing 270 to 320, `D` tasks appearing and clearing |
+
+So the clamp takes the run from "always wedges" to "sometimes completes", and
+the outcome is decided by timing rather than by the source. The refusals that
+climb while it stalls are the `hammer2_chain_rename()` shape, which is upstream's
+call with this port's guard on the result, and the guard is not reached in run 9
+in the same order.
+
+What that means for P4: neither run converges, so the clamp is not the fix even
+where it lets the run finish. It is a real improvement on a real defect, and
+the convergence number is unchanged at 834 of 4801 in the run that completed.
+
+Unmeasured and now the sharpest open question: which of the two arms run 9 took
+that run 11 does not. Both runs offer 4001 file keys and stamp about 4000
+inodes, so the difference is in the flush or the collapse rather than the scan,
+and it is the collapse that refuses (`hammer2_chain_rename()` into a narrower
+indirect parent).
