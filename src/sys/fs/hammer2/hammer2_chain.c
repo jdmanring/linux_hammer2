@@ -171,7 +171,6 @@ hammer2_chain_dump_live(void)
  */
 static unsigned int hammer2_chain_insert_outside;
 static unsigned int hammer2_create_indirect_refused;
-static unsigned int hammer2_create_indirect_radix;
 
 static hammer2_chain_t *
 hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
@@ -3612,43 +3611,17 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	base = hammer2_chain_base_and_count(parent, &count);
 
 	/*
-	 * XXX Linux: the new block must be strictly SMALLER than the parent it
-	 * goes into, on its radix, and this is the only place the radix can be
-	 * bounded before anything else uses it.  The seed at the top of this
-	 * function is the caller's, and the caller is
-	 * hammer2_sync_insert(), which passes the FOCUS's radix: the other
-	 * device's, not this tree's.  Nothing checks it against the parent,
-	 * and the arithmetic does not work out by itself, a child of radix N
-	 * spanning twice what a parent of radix N-1 spans.
-	 *
-	 * Measured 2026-10-13 at the refusal, printed there rather than read
-	 * from another function:
-	 *
-	 *   new 0x400/7 does not fit parent 0x440/6
-	 *     (parent type 2, child type 2, create 0x460/0 for_type 1)
-	 *
-	 * The create key 0x460 is INSIDE the parent's 0x440-0x47f, so the
-	 * parent is right and only the radix is wrong: 7 spans 0x400-0x47f and
-	 * encloses the parent, where the largest radix that fits under a
-	 * radix-6 parent is 5.
-	 *
-	 * This lowers an inherited radix that cannot fit and does nothing
-	 * else, so it cannot raise one the caller chose correctly.  An earlier
-	 * attempt bounded the value AFTER the indkey helper had grown it from
-	 * ncount, which lowered every block rather than only the oversized
-	 * ones; that run drove the tree to the flush depth limit, which is why
-	 * the bound belongs here and not there.  A keybits-0 parent is a
-	 * directory inode holding children of its own radix rather than a
-	 * range, and bounds nothing.
+	 * XXX Linux: bounding the radix HERE does nothing, and that is
+	 * measured rather than reasoned.  The seed is the caller's, and the
+	 * caller passes create_bits 0 -- printed at the helper as
+	 * `create_bits 0` on every line of a run -- so a test of the seed
+	 * against the parent can never be true and a run with it in place
+	 * recorded 0 firings against 220 refusals.  What raises the radix is
+	 * indkey_dir() below, from the keys it scans, and any bound must sit
+	 * where it returns.  Do not replace this note with another bound at
+	 * this point; three have been tried and the run of 2026-10-13 names
+	 * why each was inert or worse.
 	 */
-	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits) {
-		hprintf("create_indirect: radix %d lowered to %d, parent "
-		    "%016llx/%d does not span it (create %016llx/%d)\n",
-		    keybits, parent->bref.keybits - 1,
-		    (long long)parent->bref.key, parent->bref.keybits,
-		    (long long)create_key, create_bits);
-		keybits = parent->bref.keybits - 1;
-	}
 
 	/*
 	 * How big should our new indirect block be?  It has to be at least
@@ -3752,7 +3725,19 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * point is the inputs that produced an oversized radix and those do
 	 * not need reprinting per create.
 	 */
-	if (atomic_fetchadd_int(&hammer2_create_indirect_radix, 1) < 8) {
+	/*
+	 * Printed only for the case the fit guard is about, so the one refusal
+	 * that matters carries its own inputs and does not depend on an earlier
+	 * line surviving a bound.  A bound of eight printed the first creates
+	 * of the run and none of the one at t=5852 that was refused, which is
+	 * the whole reason this line exists.  The test is the same one the guard
+	 * below applies: the parent has a range and the block is not inside it.
+	 */
+	if (parent->bref.keybits > 0 &&
+	    (keybits >= parent->bref.keybits ||
+	     key < parent->bref.key ||
+	     key > parent->bref.key +
+	     ((hammer2_key_t)1 << parent->bref.keybits) - 1)) {
 		kprintf("create_indirect: parent %016llx/%d create_bits %d "
 		    "ncount %d count %d -> keybits %d key %016llx\n",
 		    (long long)parent->bref.key, parent->bref.keybits, create_bits,

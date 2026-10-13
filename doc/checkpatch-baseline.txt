@@ -48,6 +48,11 @@
 # the radix probe, whose message moved from hprintf to a bounded kprintf so it
 # survives pr_info_ratelimited, and from printing ncount beside the returned
 # keybits so the input that raised the radix is visible where it is raised.
+#
+# 1,274 to 1,273: one row BACK, because the radix probe stopped printing every
+# create and now prints only the case the fit guard is about, which halved the
+# rows it adds.  The inert seed-bound it was written beside is gone, with the
+# measurement that it fired 0 times against 220 refusals left in its place.
 # sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
@@ -76,7 +81,7 @@
 14 plain inline is preferred over __inline
 2 please, no space before tabs
 193 please, no spaces at the start of a line
-51 quoted string split across lines
+50 quoted string split across lines
 273 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
