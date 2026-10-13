@@ -10690,3 +10690,32 @@ The order that keeps the evidence: let the harness's `H2_RUN_TIMEOUT` fire first
 guest only after the run reports. A reset is needed when the harness itself
 cannot proceed, which has not been the case -- the harness has always recovered
 on its own once its timeout expires.
+
+## The split bound, and why the clamps alone did not hold, 2026-10-13
+
+The clamps in `hammer2_sync_insert()` and `hammer2_chain_rename()` narrow the
+radix of a chain being copied or moved, and the hang continued in two runs of
+three. The reason is that the hang is not produced by a copied radix: it is
+produced by `hammer2_chain_create_indirect()` choosing the NEW BLOCK's size, and
+that happens after any clamp has done its work.
+
+The bound added there is on `ncount`, the slot count the new block is sized for,
+because the keybits helper raises the radix until the block holds that many
+slots. Bounding `ncount` below `2^(parent keybits - 1)` therefore lands the block
+one radix level below its parent at every level:
+
+| parent keybits | ncount bounded to | keybits floor | narrower than parent |
+| --- | --- | --- | --- |
+| 7 | 64 | 6 | yes |
+| 6 | 32 | 5 | yes |
+| 5 | 16 | 4 | yes |
+| 4 | 8 | 3 | yes |
+
+The capacity requirement still holds, which is the part that has to be checked
+because the block must be able to receive what the split moves into it: the
+helper takes the half with more elements, so at most half the parent's elements
+move, and the block holds `2^(parent-1)` slots. At a keybits-7 parent that is at
+most 64 moved into 64 slots, which fits exactly.
+
+A parent at keybits 0 is a directory inode's blockset rather than a key range and
+is left alone, which is the case the carried helper is normally called for.
