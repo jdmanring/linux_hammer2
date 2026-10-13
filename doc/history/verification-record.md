@@ -8171,7 +8171,7 @@ incumbent is not keybits 6. It is keybits 5, at key `0x420`:
 
 so the overlap is with one narrower sibling that sits strictly inside the
 new block's range, and there is no pair to tile anything. The 0x400/5 and
-0x440/6 lines in the old log are neighbours of the collision, not its
+0x440/6 lines in the old log are neighbors of the collision, not its
 parties, which is what reading them as the parties assumed.
 
 The mechanism is now checked arithmetically rather than reasoned. The new
@@ -8201,3 +8201,30 @@ mis-read from the source: a hypothesis reached by reading
 `create_indirect` end to end was wrong in its central claim, and the
 value that refuted it was one `RB_INSERT` return away from the assert
 that had been printing since the first INVARIANTS run.
+
+### The create_indirect probe: a wrapped ring buffer, not a negative yet
+
+A second run of the same reproducer under the same build reproduced the
+collision exactly, `0x400/7` against the incumbent `0x420/5`, and added
+one thing the first could not: a RIP for the fault,
+`hammer2_chain_insert.cold+0x75/0x1cd`, which is the `KASSERTMSG`'s BUG
+landing rather than a fault inside `RB_INSERT`. It carried no hammer2
+frames, so it does not by itself add a call chain.
+
+The `create_indirect` probe printed nothing. That is tempting to read as
+"the colliding chain was not created there", and the reading is not
+available: `hprintf` is `pr_info_ratelimited` and, more decisively, the
+guest's ring buffer had WRAPPED. Its oldest retained line is `t=136.35`,
+the collision is `t=136.51`, and even the `Linux version` boot line is
+gone from `dmesg`; the whole buffer is 1643 lines. A probe that fired
+before the retained window would be invisible, so zero firings here is
+what a dropped line looks like as much as what a never-called function
+looks like. The `hammer2_flush_core: 3442 callbacks suppressed` lines
+confirm the buffer is under a flood from this path, which is what wrapped
+it.
+
+The measurement that settles it is the run's own capture, which
+`sync-empty-base.sh` copies off the guest beside the images rather than
+reading `dmesg` on it, so it is the full record and not the retained
+window. It had not been written when this was noted; the next entry
+reads it.
