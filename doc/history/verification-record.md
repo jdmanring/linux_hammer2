@@ -10412,3 +10412,27 @@ The 75 distinct inode-insert keys against 4004 stamps says the inserts are the
 DIRECTORY's own inodes and the 4004 stamps are the child inodes reached by the
 deferral walk, which is consistent with the deferral design: a child inode is
 stamped when its subtree is synchronized rather than inserted as a chain.
+
+## Seven changes to the sync path, and which of them hold, 2026-10-13
+
+Recorded together so none is re-tried. Ordered by what each was meant to fix.
+
+| change | fired | outcome |
+| --- | --- | --- |
+| radix cap on `create_bits` | never | the caller passes 0, so the test is dead |
+| radix cap on the computed keybits, in the shared helper | 30/pass | kills the storm, but narrows the MASTER too: 0 of 1001 keys hash-shaped |
+| forced ONFLUSH, before the scan was fixed | every pass | 728 to 801 inodes, too small a move to read |
+| slave-side error rollup | every key | aborts the pass; the next pass retries the same keys |
+| slave-newer branch in the action switch | every pass | advances the local scan and not the XOP: 180 keys instead of 8061 |
+| **radix clamp in `hammer2_sync_insert()`** | every copy | **run completes, teardown clean, all 4001 file keys offered, 4004 stamps** |
+| forced ONFLUSH, on the fixed scan | in flight | the combination never measured |
+
+One holds. The clamp is in the path that copies a chain from another device, so
+it is the only site where a foreign radix can reach a tree that cannot hold it,
+and it is the change that took the run from wedging to completing with
+`0 inode, 0 chain, 0 modified` at teardown.
+
+The other six are in the record with their numbers, and the two that were most
+plausible on a static reading -- the write-back being a no-op, and the scan's
+action switch -- were both real defects that moved the count by less than the
+measurement's noise.
