@@ -9950,3 +9950,33 @@ What is not yet measured is why the 75 keys fail and why the rest are never
 presented. Both are scan-coverage questions inside `hammer2_sync_slaves()`,
 and both need a print at the insert site that names the key and whether the
 chain was created, rather than a count of calls.
+
+## The scan presents 75 inode keys and the set has 4001, 2026-10-13
+
+The inode-type inserts, broken down by the key they carry, in the run with both
+repairs (44 passes):
+
+    key 0000000000000000/16   3872 calls   (once per pass)
+    key 0000000000000400/0       1 call
+    key 0000000000000401/0       1 call
+    ... 73 more, each once ...
+
+75 distinct keys in all, against the 4001 file inodes the set holds. The keys
+present are the low inode numbers, `0x400` upwards through `0x42x`, and the
+3872 calls at key 0 are the same key re-tried on every pass.
+
+So the scan does present inode keys, and it presents a fixed small set of them.
+The 4000 files whose inodes are missing are keyed by inode number in the same
+low range and one directory level down, and the scan does not present them:
+`chain` advances by `hammer2_chain_next()` after each comparison, so it walks
+whatever the local tree holds, and the local tree is the slave's own, which
+holds the inodes it already has. The scan compares local against focus and the
+master's extra inodes never enter it, because the iteration is driven from the
+local side.
+
+That is the last measured fact of the session and it needs no new mechanism to
+state: the scan cannot copy an inode it never iterates, and it iterates the
+slave's tree. Whether the carried loop is meant to iterate the focus instead
+for the create side is the one question left, and it is a question about
+`hammer2_sync_slaves()`'s iteration, not about any of the four mechanisms this
+session tested and refuted.
