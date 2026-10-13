@@ -9080,3 +9080,55 @@ no change at the radix can help, which the reverted cap measured. The guard
 now prints `print_backtrace()` beside the values, and the next run's stack is
 what names the caller. That is the print this entry is waiting on, and until
 it lands the convergence criterion is unmet and stays recorded as unmet.
+
+## The caller that builds the unfit block is named by the stack, 2026-10-13
+
+The guard's backtrace was taken and it names the producer, which is what the
+previous three fixes were trying to reach without:
+
+    hammer2_chain_create_indirect   <-- the refusal
+    hammer2_chain_create
+    hammer2_sync_insert
+    hammer2_sync_slaves
+    hammer2_primary_sync_thread
+
+`hammer2_sync_insert()` at `hammer2_synchro.c:968` is the caller. It creates
+a missing chain with the FOCUS's key and radix:
+
+    error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
+                                 focus->bref.methods,
+                                 focus->bref.key, focus->bref.keybits,
+                                 focus->bref.type, focus->bytes, ...)
+
+`focus` is the chain from the other device, so the key and radix come from the
+MASTER's tree. `parentp` is where the slave's scan currently stands, an
+intermediate block of the SLAVE's tree. In the measured case the master's
+chain is key `0x400` radix 7, spanning `0x400-0x47f`, and the slave's parent
+holds `0x440-0x47f`. The child's range reaches below its parent's: the key
+does not belong under that parent, and `hammer2_chain_lookup()` immediately
+above returns NULL rather than finding it, precisely because it is not there.
+
+So the defect is not the radix (ruled out by the reverted cap) and not the
+guard (which only reports it): it is that `hammer2_sync_insert()` inserts the
+master's key under whichever parent the slave's scan has reached, and those
+two are not the same place once the two trees have diverged. The scan at
+`hammer2_sync_slaves()` compares chains by walking the slave and looking the
+corresponding master chain up by key, so the two trees agreeing on key does
+not mean they agree on the parent that key sits under.
+
+Three candidate remedies, none measured, listed so the next session starts
+from the shape of the problem rather than from a guard:
+
+- Resolve the parent for `focus->bref.key` by looking it up on the slave from
+  the inode, rather than reusing whatever `*parentp` the scan holds.
+- Detect the mismatch before the create and treat the inode as unsynchronized
+  for the pass, the way a slave chain newer than the pass's `sync_tid` already
+  is, leaving it for a later pass with the trees further converged.
+- Establish whether upstream can reach this at all. Its `hammer2_sync_insert()`
+  is the same code, and its `hammer2_chain_create()` would insert the same
+  unfit block, so if the divergence it needs is reachable upstream the panic
+  is upstream's too. That is a reading against the DragonFly clone at
+  `~/Projects/dragonfly-hammer2-upstream`, which has not been done.
+
+The instrument that produced this is `print_backtrace()` at the refusal,
+bounded to the first two firings, and it stays until the caller is fixed.
