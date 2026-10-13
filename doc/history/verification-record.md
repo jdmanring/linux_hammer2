@@ -10179,6 +10179,6 @@ mechanisms tested before it: the destination has to represent a directory of
 session tried either refuses the wide blocks it needs, rebuilds them per key,
 or narrows the tree until the keys fall outside it. What is missing is the
 route upstream takes, and it is not in any of the branches that have been
-edited here. The next reading is upstream's own directory-split behaviour,
+edited here. The next reading is upstream's own directory-split behavior,
 which this port has never exercised because no test before this one drove a
 single directory past 4000 entries.
