@@ -501,24 +501,34 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * XXX Linux: the carried code read
 			 * `chain->bref.modify_tid` on the line above its own
 			 * `if (chain)` test, so a NULL chain was a null-ptr
-			 * deref rather than a skipped update.  On the KASAN
-			 * guest that is the read KASAN reported naming this
-			 * caller: its RIP is in this function and the field is
-			 * one of this frame's, which is the opposite of the
-			 * fault whose offset belonged to
-			 * hammer2_inode_chain_and_parent().
+			 * deref rather than a skipped update.
 			 *
-			 * With the chain tested, a NULL one must still ask for
-			 * the update: `want_update` is what reaches the scan
-			 * below, and that scan is the part that CREATES the
-			 * missing element.  Upstream cannot reach this with a
-			 * NULL chain, so it has no case for one.  Returning 0
-			 * here is the reading that measured 4,000 inodes and
-			 * 4,000 data blocks absent from the slave while every
-			 * dirent was present: the element was skipped instead of
-			 * built.  A missing element is a reason to update.
+			 * Which way the NULL case should go has now been
+			 * measured both ways, and neither is right, because
+			 * neither is where the defect is.  Returning 1 (ask for
+			 * the update) sends the inode into the scan below, which
+			 * does `parent = hammer2_inode_chain()` at
+			 * hammer2_synchro.c:556 and then
+			 * `hammer2_chain_lookup(&parent, ...)` with that NULL,
+			 * faulting at +0x28.  Returning 0 (skip) silently loses
+			 * the element: measured on the 2026-10-13 images as
+			 * 4,000 inodes and 4,000 data blocks absent from the
+			 * slave while all 4,801 dirents arrived.  0 is the state
+			 * this tree ships, because a fault on the sync thread
+			 * never sets HAMMER2_THREAD_FROZEN and the unmount then
+			 * waits for it in a loop with no bound: that run hung
+			 * past 1500 s, which is worse than a copy that does not
+			 * converge.
+			 *
+			 * The empty element is the defect, and it is created by
+			 * hammer2_chain_create_indirect()'s guard refusing a
+			 * block it does not fit, which leaves the destination's
+			 * cluster element unbuilt.  The fix belongs where the
+			 * block's radix is chosen, at the ncount loop in
+			 * hammer2_chain_indkey_dir(), not here.  Until then this
+			 * skips, and the convergence check measures the loss.
 			 */
-			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 1;
+			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0;
 			if (chain) {
 				hammer2_chain_unlock(chain);
 				hammer2_chain_drop(chain);

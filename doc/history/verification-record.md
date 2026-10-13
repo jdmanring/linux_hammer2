@@ -8918,3 +8918,59 @@ itself a defect: 60,672 `printk` calls to the guest's serial console, and
 two soft lockups on the CPU whose hardirq time crossed 50% at the rate
 those calls peaked. An instrument that changes the system it measures is
 not a reading, and the run that produced this table had both.
+
+## The hang is reproduced and the chain behind it is measured end to end, 2026-10-13
+
+One run, `H2_RUN_TIMEOUT=1500` on the KASAN guest, reproduced the fault the
+handoff named and measured the whole chain in it. It hung past its 1500 s
+bound, which is what the first run after the guard did not do, and the
+difference is one line: `want_update` for a NULL chain was 1 in this run and
+0 in the previous one.
+
+The state bit, at last measured:
+
+    thr_wait: thr 2..c44c0 want 0040 td 2..e83bb flags 0020   t=3695
+    thr_wait: thr 2..c44c0 want 0040 td 2..e83bb flags 0024   t=3757  +62s
+    thr_wait: thr 2..c44c0 want 0040 td 2..e83bb flags 0024   t=3819  +62s
+    thr_wait: thr 2..c44c0 want 0040 td 2..e83bb flags 0024   t=3880  +61s
+
+`want 0040` is `HAMMER2_THREAD_FROZEN`; `td` is non-NULL, so the thread is
+still a task; `flags 0024` is `FREEZE|WAITING`, unchanged across three
+sleeps. The bit was never set, and the loop that waits for it has no bound.
+The wait is real, it is on FROZEN, and the thread it waits for is alive and
+not answering.
+
+Why the thread stopped answering, from the same log: an oops at t=3403 in
+`hammer2_chain_lookup+0x15b`, reached `hammer2_sync_slaves+0x3f0` <-
+`hammer2_primary_sync_thread`. `RBP` is 0 and the faulted range is
+`0x28-0x2f`, so the operand is a NULL chain's field. The line is
+`hammer2_sync_slaves()` at `hammer2_synchro.c:556`, which reads
+`parent = hammer2_inode_chain(ip, idx, ...)` and then passes that parent,
+NULL when the element is absent, to `hammer2_chain_lookup()` at
+`hammer2_synchro.c:560`. A fault inside the sync kthread never sets FROZEN
+or STOPPED, so the fault and the hang are one event: the previous entry
+recorded that as a candidate, and this run is the run that sets the fault
+and hangs in the same breath.
+
+The two exits from an empty element are now both measured, and neither is a
+fix:
+
+| `want_update` for a NULL chain | what the run did |
+| --- | --- |
+| 0, skip the element | no fault, no hang, slave loses 4,000 inodes' data (2026-10-13 images) |
+| 1, ask for the update | faults in `hammer2_chain_lookup`, thread dies, unmount hangs (this run) |
+
+The empty element is therefore the defect, and the guard that creates it is
+its producer. `hammer2_chain_create_indirect()` refuses a block that does not
+fit its parent and unwinds, which leaves the destination's cluster element
+unbuilt; upstream never has that state, which is why the core has no case
+for it and why enforcing upstream's invariant here produces a state the rest
+of the carried code cannot hold. The fix belongs where the block's radix is
+chosen, the `ncount` loop in `hammer2_chain_indkey_dir()`
+(`hammer2_chain.c:3631`), so the block is sized to fit rather than built and
+refused. That is a change on carried core and is taken deliberately, not as
+another guard downstream of this one.
+
+The tree ships `want_update` 0: a copy that does not converge and says so in
+its check beats a fault that wedges an unmount, and the convergence check
+measures the loss rather than hiding it.
