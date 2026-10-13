@@ -10224,3 +10224,27 @@ Two runs have now wedged in teardown, both at the fourth unmount, both with the
 same `122179 modified` and `499 dio still allocated` and the same 4008 inodes.
 That number is the master's cluster mount, which holds the whole 4008-inode
 set, and the wedge is in the unmount of the volume whose element the scan uses.
+
+## The scan restarts from key 0 on every deferral and never completes one walk, 2026-10-13
+
+The START_SCAN print names the inode being scanned, and the counts separate the
+two cases completely, from the run with both repairs:
+
+    217  START_SCAN IP=b6a9cb23fd8a8001   <- the CL directory, restarted 217 times
+      1  START_SCAN IP=00000000000013a0   <- each child inode, scanned once
+    ... one each for 000000000000139f down to 0000000000000400 ...
+
+    sync_slaves error 0     50 times   (the passes outside the cycles)
+    sync_slaves error 256  217 times   (EAGAIN, each with a defer pointer)
+
+`HAMMER2_ERROR_EAGAIN` is set at `hammer2_synchro.c:838` whenever a pass defers
+a child inode, and the caller answers EAGAIN by re-entering the drain loop,
+which calls `hammer2_sync_slaves()` on the PFS root again. The root scan
+starts at `HAMMER2_KEY_MIN`, so it restarts the CL directory from key 0 every
+time. 217 deferrals, 217 restarts, and the directory's own walk never reaches
+the 4000 file keys that live above the inode-number range.
+
+The drain loop is upstream's, checked by diff, so this is carried design
+reached by a condition this port creates. The three port additions that could
+have been the trigger have all been removed and the restart count did not
+change, so the condition is not in the scan's own code.
