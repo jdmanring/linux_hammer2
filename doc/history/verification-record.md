@@ -9821,3 +9821,25 @@ not recognize is a defect even when it works, and this one did not work. The
 two remaining port additions in this function are the `want_update` ternary,
 which skips a null chain where the carried code dereferenced it, and the
 slave-side error rollup; neither is in the switch that advances the scan.
+
+## The scan livelock and the write-back no-op are independent, 2026-10-13
+
+The two repairs were tested one at a time, and each moves a different number.
+Reading the slave's file inodes off its own media after each run:
+
+| tree | distinct keys | soft lockups | slave file inodes |
+| --- | --- | --- | --- |
+| the livelock branch, write-back not forced | 180 | 5 | 801 |
+| the branch reverted, write-back not forced | 8061 | 0 | 728 |
+| the branch reverted, write-back forced | 8041 | 0 | 801 |
+
+Reverting the branch repairs the scan: it walks 8061 distinct keys where it
+walked 180, and the watchdog stops complaining. The slave's inode count does
+not follow, 801 to 728, so the scan reaching a key and the inode arriving on
+media remain two different things. Forcing the write-back on the repaired scan
+is the pairing not yet run, and it is the run in flight.
+
+The 3911 inodes the repaired scan stamps against the 728 that arrive is the
+same gap the earlier runs showed, 3873 against 801, which is why the two
+defects have to be read separately: the scan determines how many inodes are
+stamped, and the write-back determines how many of those reach media.
