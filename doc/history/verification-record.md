@@ -10942,3 +10942,30 @@ tree contains before it is believed**, and a gate that covers a different
 subsystem is the cheapest place to find out. This one was found by running a
 gate whose subject is not the cluster, on the reasoning that a change to
 `hammer2_chain.c` is a change to everything that allocates through it.
+
+## The corrected bound restores the baseline allocation, measured, 2026-10-13
+
+`test-enospc.sh` on the corrected build, against the baseline and the broken one:
+
+| tree | file A blocks for 64 of data | duplicate cost | dedup | failures |
+| --- | --- | --- | --- | --- |
+| baseline `4578a7c` | 64 | 3 | shared | 0 |
+| bound writing nbytes too | 387 | 324 | own media | 1 |
+| bound writing ncount alone | 64 | 3 | shared | 0 |
+
+The corrected build is identical to the baseline on this gate, so the bound no
+longer disturbs allocation. The convergence run is in flight and is the check
+that the bound is still doing its job: a fix that restored dedup by disabling
+the bound would be worthless, and the `ncount = (int)pmax` line is verified
+present in the tree before that run was started.
+
+Two things this cost and should not have:
+
+* the bound was written without enumerating what else `nbytes` feeds. It feeds
+  the allocation, through `dummy.data_off = hammer2_getradix(nbytes)`, and the
+  only thing the bound needed to change was `ncount`, which the keybits loop
+  reads on its own line.
+* it was found by a gate whose subject is not the cluster, which is the cheapest
+  place these turn up: a change to `hammer2_chain.c` is a change to everything
+  that allocates through it, and `test-enospc.sh` is the gate that measures
+  allocation under pressure.
