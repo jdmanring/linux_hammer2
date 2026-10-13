@@ -10007,3 +10007,29 @@ compares, and takes an arm of the switch that moves the block rather than the
 for a file inode's index is INDIRECT and for the inode itself is INODE. Which
 arm is taken for the 4001 file inodes is the question, and the `n` it computes
 comes from `hammer2_chain_cmp(chain, focus)` over the local tree.
+
+## Three port additions in the sync path were each a livelock, 2026-10-13
+
+The scan now matches upstream: `diff` between the two trees' bodies from "Take
+action based on comparison results" to the closing brace reports only the
+port's two mechanical shim substitutions, `kmalloc` for the three-argument
+DragonFly call and the FreeBSD port's `chain_next()` without a `key_beg`.
+Everything else in that body, including the arms that advance the scan, is
+DragonFly's again.
+
+Three additions had to come out, and each had the same shape, a pass that
+cannot finish its walk:
+
+- `if (n < 0 && chain->bref.modify_tid > sync_tid)` advanced the local scan and
+  not the XOP, where every other arm advances both. The master's scan stayed on
+  the same focus.
+- The `rerror` rollup latched the first slave-side failure and returned it as
+  `merror`, which aborts the pass at the `merror` test. One failing insert then
+  ended the pass and the next pass retried the same early keys: 75 inode keys
+  attempted about 52 times each across 44 passes.
+- The `want_update` ternary skips a null chain rather than dereferencing it,
+  which is a fault fix rather than a livelock, and stays.
+
+Upstream discards `nerror` and `serror` precisely so that a per-key failure
+stays per-key. Both rollups were attempts to improve on that, and both
+converted a local failure into a whole-pass retry loop.
