@@ -9735,3 +9735,33 @@ stamps at all and one whose flush ran on every pass, which is what says the
 sync thread's copies are not what puts those 801 inodes on the slave. The
 cause of the 4000-inode absence remains unfound, and the earlier notes naming
 the radix guard or the write-back are both refuted as the cause by this run.
+
+## The sync thread livelocks on 180 inodes and never reaches the rest, 2026-10-13
+
+Counting the sync thread's own insert lines by the key it inserts, in the run
+that stamped nothing (run 2, 50 passes, 0 stamps, 801 inodes on the slave):
+
+    distinct focus keys inserted:        180
+    key range of those:                  0x400 .. 0x4ff
+    insert attempts per key:             69
+    distinct defer pointers:             69, each seen once
+    sync_slaves error 256 (EAGAIN):      69
+
+Every one of the 180 keys is attempted 69 times, always into the same parent
+`0x480/7`, and every pass returns EAGAIN. So the thread re-copies the same 180
+inodes over and over and never advances to the remaining 3800 files. That is
+why the slave holds the same 801 inodes in every run: the synchronization pass
+never reaches the rest of the tree, regardless of whether the write-back runs.
+
+The 801 itself is the set written to the master after the element was created,
+which arrives by the normal mount path; the sync pass adds nothing because it
+spins on a key range 256 keys wide out of the whole tree.
+
+The loop that hides this has no progress guard. `hammer2_sync_slaves()` returns
+EAGAIN when it defers an inode, the caller re-runs the scan, and the drain loop
+at `hammer2_synchro.c:295` removes a deferral only when it is still the list
+head, so each iteration defers the next inode and leaves the previous entry in
+place. The deferral count never reaches the 1000 that would break the scan:
+119 deferral events against a threshold of 1000. Upstream's loop is line-for-
+line the same, so this is carried behavior reached by a condition this port
+creates, not a port rewrite of the loop.
