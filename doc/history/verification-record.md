@@ -9810,3 +9810,14 @@ its blocks rather than a cause in their own right.
 
 Convergence is not yet read; this is the reading that says the livelock is
 repaired, and the run is still in its cycles.
+
+## The action switch is upstream's again, checked by diff, 2026-10-13
+
+The revert leaves the port's scan switch byte-identical to DragonFly's, which
+`diff` between the two trees' `hammer2_sync_slaves()` from "Take action based
+on comparison results" to the first `advance_xop = 1` reports as no difference
+at all. That is the port's own rule for a carried file: an edit upstream would
+not recognise is a defect even when it works, and this one did not work. The
+two remaining port additions in this function are the `want_update` ternary,
+which skips a null chain where the carried code dereferenced it, and the
+slave-side error rollup; neither is in the switch that advances the scan.
