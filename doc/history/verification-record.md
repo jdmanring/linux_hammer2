@@ -10849,3 +10849,32 @@ line now. The run clears its four unmounts with no stuck task, which is the
 same shape as the run before it, so widening the shift did not change the
 convergence result -- it only removed the undefined behavior that the shipping
 build was silently computing through.
+
+## P4 closes: 18 checks, 0 failed, 2026-10-13
+
+The final verification run reports every check passing, including the two that
+were cleaned up in this session and the one the fix's own defect had raised:
+
+    ok  an unmount left modified chains: 7 unmount reading(s), 0 with modified chains, expected fixed
+    ok  no kernel warning, BUG or UBSAN report: 0
+    ok  the SLAVE converged to its MASTER, entry for entry and block for block:
+        slave/master by type: inode 4801/4801, data 4800/4800, dirent 4801/4801;
+        0 line(s) differ of 14402
+    ok  MASTER=repro-master.img is the volume the guest mounted as vdb:
+        guest 4c28decc-... image 4c28decc-...
+    sync-empty: 18 check(s), 0 failed
+
+The run's own checks that caught the contaminated verdicts earlier in the day all
+pass here, so the convergence is not the false pass they were: the device tie
+matches, the set reads 4000 file(s) at the correct N, 2 mounted, and the module
+unloads 1 of 1.
+
+The three changes this session ends with:
+
+* the `ncount` bound in `hammer2_chain_create_indirect()`, which is what
+  converges the slave to its master;
+* the bound's shift on `hammer2_key_t` and `pmax` clamped to 128, which removes
+  the UB that the shipping build was computing through silently;
+* the two clamps kept from the refuted work, in `hammer2_sync_insert()` and
+  `hammer2_chain_rename()`, which narrow copied and moved chains to the parent
+  that must hold them.
