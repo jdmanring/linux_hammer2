@@ -10502,3 +10502,33 @@ that run 11 does not. Both runs offer 4001 file keys and stamp about 4000
 inodes, so the difference is in the flush or the collapse rather than the scan,
 and it is the collapse that refuses (`hammer2_chain_rename()` into a narrower
 indirect parent).
+
+## Where the sync convergence stands at the end of 2026-10-13
+
+Two clamps are in the tree, both applying one rule: the receiving parent decides
+a new chain's radix, and the key is renormalized to it.
+
+- `hammer2_sync_insert()`: the radix comes from `focus`, the other device's
+  chain, so this is the only path that can be handed a foreign radix.
+- `hammer2_chain_rename()`: the radix comes from `bref`, the chain's own, and
+  the chain is being re-created under a parent that may be narrower.
+
+Measured effect of the first: the run completes teardown with `0 inode, 0 chain,
+0 modified` where three consecutive runs before it wedged at `4008 inode,
+122179 modified`; refusals fall 340 to 90; the scan offers all 4001 file keys
+and stamps about 4000 inodes where it previously walked 180 keys.
+
+Not converged. The slave holds 834 of 4801 inodes in the run that completed,
+because about 4000 inodes are stamped synchronized and 834 reach media: the
+write-back does not carry them. Forcing it was tried twice and makes things
+worse, most recently wedging the run outright.
+
+Open, in the order the evidence puts them:
+
+1. the write-back helper takes its empty branch on every pass because the
+   descending flush clears the flag before a pass ends;
+2. `hammer2_chain_rename()` refuses 90 to 320 times a run into a narrower
+   indirect parent, which is the shape upstream's rename call produces and this
+   port's guard declines;
+3. whether the outcome depends on timing: two runs of identical source
+   completed and stalled respectively.
