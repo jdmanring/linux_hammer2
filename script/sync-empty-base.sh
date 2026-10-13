@@ -82,11 +82,36 @@ if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
 	exit 2
 fi
 
+# The build knobs are forwarded rather than fixed, because the reading the
+# run exists to take needs one of them: the collision this reproduces is
+# caught only by the carried KASSERTMSG, and every build this tree ships
+# compiles that out.  A run without HAMMER2_INVARIANTS reaches the fault
+# and silently shows nothing, which is the state four earlier runs were
+# read in.  The `make -s clean` below wipes any module built by hand, so a
+# script that does not forward the knob rebuilds a default one and the
+# instrumented reading is lost with no error anywhere.
+MAKEOPTS=
+[ "${HAMMER2_INVARIANTS:-0}" = 1 ] && MAKEOPTS="$MAKEOPTS HAMMER2_INVARIANTS=1"
+[ "${HAMMER2_LOCKDEBUG:-0}" = 1 ] && MAKEOPTS="$MAKEOPTS HAMMER2_LOCKDEBUG=1"
 make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" >/dev/null 2>&1 || {
+make -s KDIR="$KDIR" $MAKEOPTS >/dev/null 2>&1 || {
 	echo "sync-empty: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "sync-empty: COULD-NOT-RUN: no $KO" >&2; exit 2; }
+# The knob is only a claim about the build unless the build is read back,
+# and the two builds differ from one source in a way no timestamp shows.
+# debug_hprintf is the knob's own signature rather than any one probe's:
+# it is hprintf under HAMMER2_INVARIANTS and a discarded do-nothing
+# otherwise, so its format strings are in the module exactly when the
+# knob took.  Read from hammer2_flush.c, which is carried and not the
+# file a running experiment edits, so the check cannot be satisfied or
+# broken by adding a print somewhere.
+if [ "${HAMMER2_INVARIANTS:-0}" = 1 ]; then
+	strings -a "$KO" | command grep -q 'flush %s chain %016llx' || {
+		echo "sync-empty: COULD-NOT-RUN: module carries no" >&2
+		echo "  debug_hprintf string, so HAMMER2_INVARIANTS did not take" >&2
+		exit 2; }
+fi
 
 for d in vdb vdc; do
 	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1

@@ -294,6 +294,21 @@ hammer2_chain_insert(hammer2_chain_t *parent, hammer2_chain_t *chain, int flags,
 
 	/* Insert chain. */
 	xchain = RB_INSERT(hammer2_chain_tree, &parent->core.rbtree, chain);
+	/*
+	 * XXX Linux: the assert below prints only the chain being inserted,
+	 * and the chain it collided with is exactly what `xchain` holds and
+	 * what the message throws away.  hammer2_chain_cmp() matches on key
+	 * RANGE overlap, not on equality, so the incumbent decides which of
+	 * two different faults this is: an incumbent of the same key AND
+	 * keybits is a duplicate insertion, while an incumbent of a wider or
+	 * narrower range is an overlap that the create-indirect move loop
+	 * should have relocated and did not.  Printed only when there is an
+	 * incumbent, so the non-colliding path costs one predictable branch.
+	 */
+	if (xchain)
+		hprintf("collision %016llx/%d hits %016llx/%d\n",
+		    (long long)chain->bref.key, chain->bref.keybits,
+		    (long long)xchain->bref.key, xchain->bref.keybits);
 	KASSERTMSG(xchain == NULL, "collision %016llx/%d",
 	    (long long)chain->bref.key, chain->bref.keybits);
 
