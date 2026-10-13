@@ -9659,3 +9659,29 @@ The write-back gate is a total no-op in both runs, 22 of 22 and 50 of 50 passes,
 which is the defect itself and does not depend on how much the pass copied.
 The zero soft lockups in run 2 confirm the five in run 1 came from the console
 flood and not from the filesystem.
+
+## The probe still floods its own console, and the source is a second print, 2026-10-13
+
+Gating the `sync_insert:` print did not remove the console flood, because the
+guest's debug bit has to stay on for two checks to read their counts. The
+largest producer in the run with the write-back fix is a different print, and
+it is ungated:
+
+    103979  sync_insert:        (gated on 0x8000, and the bit is on)
+     92233  create_indirect:     (NOT gated)
+      3873  syncthr:
+      1170  indirect_maint:
+
+`create_indirect:` reports the inputs of the radix decision, and its condition
+is `parent->bref.keybits > 0 && (keybits >= parent->bref.keybits || key <
+parent->bref.key || key > parent_end)`. Every ordinary create from a parent
+with a nonzero radix satisfies the second clause, so it prints on nearly every
+call rather than on the refusal it was written for: 92233 lines against 440
+refusals. This is the same shape as the 43,106-line mistake the record already
+carries for an earlier version of this print.
+
+So the five soft lockups on irq#4 ttyS0 in the 2026-10-13 runs are the probe
+measuring itself, and the count is not a reading about the filesystem. The
+check that reports them cannot be satisfied until the print is bounded to the
+case it names, which is the next change to this script rather than to the
+driver.
