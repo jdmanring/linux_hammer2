@@ -3923,9 +3923,9 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 	 * since that is the shape that cannot legally collapse.
 	 */
 	if (chain->bref.keybits >= parent->bref.keybits)
-		hprintf("indirect_maint: parent %016llx/%d collapsing %016llx/%d\n",
-		    (long long)parent->bref.key, parent->bref.keybits,
-		    (long long)chain->bref.key, chain->bref.keybits);
+		hprintf("indirect_maint: parent %p %016llx/%d collapsing %p %016llx/%d\n",
+		    parent, (long long)parent->bref.key, parent->bref.keybits,
+		    chain, (long long)chain->bref.key, chain->bref.keybits);
 
 	/* Make sure we have an accurate live_count. */
 	if ((chain->flags &
@@ -4055,6 +4055,21 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 		error = hammer2_chain_delete_obref(chain, sub,
 		    sub->bref.modify_tid, 0, &bsave);
 		KKASSERT(error == 0);
+		/*
+		 * XXX Linux: the moved child and its destination, per
+		 * iteration.  The 2026-10-12 collision reads
+		 * `0x400/7 ... parent 0x400/7`, and two candidates produce
+		 * that: the collapse's moved child already carrying 0x400/7,
+		 * or the new indirect block create_indirect() builds when the
+		 * destination's blockmap is full and chain_create() re-points
+		 * the parent to it.  Printing sub beside parent here separates
+		 * them, and the flag says whether this is a move (SAMEPARENT)
+		 * or the retry that follows a re-pointed parent.
+		 */
+		hprintf("indirect_maint: move sub %p %016llx/%d to parent %p %016llx/%d chain %p\n",
+		    sub, (long long)sub->bref.key, sub->bref.keybits,
+		    parent, (long long)parent->bref.key, parent->bref.keybits,
+		    chain);
 		hammer2_chain_rename_obref(&parent, sub,
 		    sub->bref.modify_tid, HAMMER2_INSERT_SAMEPARENT, &bsave);
 		hammer2_chain_unlock(sub);

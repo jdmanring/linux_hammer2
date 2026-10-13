@@ -8279,3 +8279,147 @@ Two readings were wrong before this one, both reached by reading
 keybits 6, and that the loop should have moved a sibling. The values
 that refuted both were one print each, and each print was cheaper than
 the argument it ended.
+
+## The collapse moves a child into a parent that does not cover it, 2026-10-12
+
+The producer and the shape are both measured now. `print_backtrace()` at
+the rbtree collision gives the call path:
+
+    hammer2_flush_recurse -> hammer2_flush_core
+      -> hammer2_chain_indirect_maintenance
+      -> hammer2_chain_rename_obref -> hammer2_chain_rename
+      -> hammer2_chain_create -> hammer2_chain_insert
+
+and an entry print in `hammer2_chain_indirect_maintenance()` gives the
+two parties. The line immediately before the collision reads:
+
+    indirect_maint: parent 0000000000000440/6 collapsing 0000000000000400/7
+    collision 0000000000000400/7 hits 0000000000000420/5 parent 0000000000000400/7 type 2/2
+
+with the ranges being
+
+    parent 0x440/6  covers [0x440, 0x47f]
+    child  0x400/7  covers [0x400, 0x47f]
+
+The child's keyspace extends to the LEFT of its parent's. The collapse
+deletes the keybits-7 indirect block, marks the parent modified, and
+moves the block's children up into the parent with
+`hammer2_chain_rename_obref(&parent, sub, ..., HAMMER2_INSERT_SAMEPARENT,
+&bsave)`. That rename re-enters each moved child through
+`hammer2_chain_create()` -> `hammer2_chain_insert()`, which places it in
+the parent's rbtree. A child whose key range is not inside the parent's
+range does not belong there, and the rbtree says so: `0x400/7` overlaps
+the `0x420/5` already present.
+
+The guard the function does not have, in the port and at upstream both:
+the collapse is gated only on live_count hysteresis,
+
+    if (parent->core.live_count + chain->core.live_count - 1 > count)
+        return (0);
+    chain_count = chain->bytes / sizeof(hammer2_blockref_t);
+    if (chain->core.live_count > chain_count * 3 / 4)
+        return (0);
+
+Neither test asks whether `chain`'s keyspace is contained in `parent`'s.
+Diffed against DragonFly at `250a8b4928`, `hammer2_chain_indirect_maintenance()`
+is carried: the two differ only in BSD-versus-Linux style (`return (1)`
+against `return 1`, declaration grouping, and the wording of two
+rate-limited error prints). So the missing containment test is upstream's,
+and the port's own comment at `hammer2_chain.c:2121` already names this
+function as the case that makes rename a no-win situation.
+
+This is why the fault is silent on a shipping build and why two rounds of
+reading got it wrong: the assert that catches it is compiled out, the
+function is called from the flusher rather than the sync path the timing
+suggested, and the keybits-7 block that collides is built by an ordinary
+split rather than by `create_indirect`, which is behaving correctly.
+
+### The missing containment test, and where the child is re-parented
+
+`hammer2_chain_indirect_maintenance()` collapses a sparse indirect block
+into its parent by moving the block's children up one level. Each move is
+`hammer2_chain_rename_obref(&parent, sub, ...)`, which reaches
+`hammer2_chain_rename()` and then `hammer2_chain_create(parentp, ...)`,
+passing `sub`'s own `bref->key` and `bref->keybits`.
+
+`hammer2_chain_create()` at `hammer2_chain.c:3110` has a second path that
+the earlier reading did not see. When the parent's blockmap is full
+(`parent->core.live_count == count`) it calls
+`hammer2_chain_create_indirect()` and, if that returns a different
+parent, re-points the caller's pointer:
+
+    if (parent != nparent) {
+            hammer2_chain_unlock(parent);
+            hammer2_chain_drop(parent);
+            parent = *parentp = nparent;
+    }
+    goto again;
+
+So the parent a child is finally inserted into is not necessarily the one
+the collapse chose. That is the whole fault:
+
+1. The flusher collapses `chain = 0x400/7` into `parent = 0x440/6`. The
+   child's range `[0x400, 0x47f]` extends left of the parent's
+   `[0x440, 0x47f]`, which the collapse never checks.
+2. Moving the first child finds the parent's blockmap full, so
+   `create_indirect()` builds a new keybits-7 block and `chain_create`
+   re-points `*parentp` to it. The new parent is `0x400/7`.
+3. The next move inserts a chain of key `0x400` and keybits 7 into that
+   parent, whose key and keybits are also `0x400/7`, and the rbtree finds
+   `0x420/5` already in the range. Measured, both from the collision line:
+   `collision 0000000000000400/7 hits 0000000000000420/5 parent
+   0000000000000400/7`. What is NOT yet measured is which child `sub` at
+   step 3 carries those values, and whether it is the collapse's moved
+   child or the new indirect block itself; the print for that is the
+   loop's `sub` beside `parent` per iteration.
+
+The guard that would prevent step 1 is absent from both this port and
+DragonFly: the collapse tests only `parent->core.live_count +
+chain->core.live_count - 1 > count` and `chain->core.live_count >
+chain_count * 3 / 4`, and neither asks whether `chain`'s keyspace is
+contained in `parent`'s. That is the defect to fix, under `XXX`, in
+carried core, staged rather than filed.
+
+## The root cause: a collapse re-points its own parent to the block it is collapsing, 2026-10-12
+
+The move-loop print settles the last unknown. Three consecutive lines,
+one millisecond apart, from the run's capture:
+
+    indirect_maint: move sub 0000000000000420/5 to parent 0000000000000400/7
+    indirect_maint: parent 0000000000000440/6 collapsing 0000000000000400/7
+    indirect_maint: move sub 0000000000000400/7 to parent 0000000000000400/7
+    collision 0000000000000400/7 hits 0000000000000420/5 parent 0000000000000400/7
+
+Read in order. A collapse put `0x420/5` into the block `0x400/7`. Then a
+second collapse begins with `parent = 0x440/6` and `chain = 0x400/7` --
+the block the first one had just filled. On its FIRST loop iteration the
+destination printed is not `0x440/6` but `0x400/7`: the local `parent`
+the function entered with has been replaced by the block being collapsed.
+The child it is moving is `0x400/7`, so the block's own children are
+being moved into the block, and `0x420/5` is already in there.
+
+`parent` is a value parameter, so it cannot be assigned directly. It is
+changed through the pointer: `hammer2_chain_rename_obref(&parent, sub,
+...)` passes `&parent`, which reaches `hammer2_chain_rename(parentp, ...)`
+and then `hammer2_chain_create(parentp, ...)`, where
+`hammer2_chain.c:3148` runs
+
+    parent = *parentp = nparent;
+
+when the destination's blockmap is full and `create_indirect()` has built
+a replacement. So the collapse's own `parent` variable is re-pointed to
+the new indirect block, and every later iteration of the collapse loop
+uses it. When that new block is the very chain being collapsed, the
+function is filling a block with its own contents.
+
+The missing guard is the one the collapse has never had, in this port and
+at DragonFly: it tests live_count hysteresis only, and never that
+`chain`'s keyspace is contained in `parent`'s. Here they are disjoint on
+the left -- `0x400/7` covers `[0x400,0x47f]` and `0x440/6` covers
+`[0x440,0x47f]` -- so the collapse should not have started at all.
+
+Fix, under `XXX` in carried core, staged rather than filed: refuse the
+collapse unless `chain`'s keyspace fits inside `parent`'s, which is the
+condition the moved children need for the destination's rbtree to accept
+them. The measurement that confirms it is the same reproducer reaching
+`unmount` with no collision and no BUG.
