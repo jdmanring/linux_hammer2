@@ -8764,3 +8764,53 @@ guard is a candidate fix with a measured cost, not a finished one, and
 the next reading is the caller: why the same create is attempted ten times
 and what `sync_slaves` does with the error, which is a print at the caller
 rather than a reading of it.
+
+## The unmount reaches hammer2_thr_wait and never leaves it, 2026-10-12
+
+The relocated guard let the reproducer get further than any run before it:
+the first cycle's slave unmount completed (t=162.65), the master's syncer
+ran on, and the slave was remounted at t=202.7. It then hung on the NEXT
+unmount, and the stack says where:
+
+    hammer2_thr_wait+0x1ea
+    hammer2_pfsfree_scan+0x29e
+    hammer2_unmount_helper+0x2b9
+    hammer2_kill_sb+0xb5
+    deactivate_locked_super -> cleanup_mnt
+
+and the whole population of tasks holding a hammer2 frame is that one
+`umount`. So the unmount waits for a thread-state bit that no live thread
+will set.
+
+`hammer2_thr_wait()` (`hammer2_admin.c:870`) is the wait:
+
+    for (;;) {
+            oflags = thr->flags;
+            if ((oflags & flags) == flags)
+                    break;
+            nflags = oflags | HAMMER2_THREAD_WAITING;
+            if (atomic_cmpset_int(&thr->flags, oflags, nflags))
+                    tsleep_word(&thr->flags, nflags, 0, "h2twait", hz*60);
+    }
+
+The sleep has a 60-second bound and the loop has none, so a bit that never
+arrives is a permanent wait. `hammer2_pfsfree_scan()` reaches it twice:
+directly through `hammer2_thr_freeze()` and `hammer2_thr_freeze_async()` on
+the PFS's sync threads, which wait on `HAMMER2_THREAD_FROZEN`
+(`hammer2_admin.c:1058`), and through the delete path's
+`hammer2_thr_wait(thr, HAMMER2_THREAD_STOPPED)` (`hammer2_admin.c:1015`).
+
+The comment on `hammer2_thr_wait_any()`, the next function, already records
+this class in the port's own words: "Upstream's test is for ETIMEDOUT, and
+DragonFly's tsleep() reports a timeout as EWOULDBLOCK, so as written the
+timeout never ends the wait." That note is scoped to `_any`, whose two
+callers are absent here. `hammer2_thr_wait()` has the same shape, is called
+from the unmount teardown, and is what this run is stuck in.
+
+This is P4's "thread lifetime and stop/join" item arriving as a measured
+hang rather than a reading. It is a candidate defect with a stack, not a
+diagnosis: what is not yet measured is which bit was being waited on and
+why the thread did not set it, and the print for that is the flags
+recorded at entry and on each loop of `hammer2_thr_wait()`. Fixing the
+flush path is not the same fix as making the unmount refuse to wait
+forever, and the second one is worth having on its own.
