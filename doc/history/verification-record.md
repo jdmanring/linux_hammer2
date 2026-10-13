@@ -10248,3 +10248,31 @@ The drain loop is upstream's, checked by diff, so this is carried design
 reached by a condition this port creates. The three port additions that could
 have been the trigger have all been removed and the restart count did not
 change, so the condition is not in the scan's own code.
+
+## Three consecutive runs wedge before a pass completes, 2026-10-13
+
+Runs 6, 7 and 8 all ended the same way: the guest stopped answering ssh, the VM
+stayed running with the module loaded and mounts held, and the harness's guest
+half never returned, so no verdict and no kernel log were produced. Run 8's own
+out file is empty for that reason.
+
+That is the constraint the diagnosis is now under, and it is not a property of
+any one change:
+
+- run 6 removed the error rollup and wedged
+- run 7 carried the radix cap, which removes the refusal storm and the per-key
+  rebuild, and wedged too
+- run 8 carried only the arm-counting instrument, with every port addition
+  reverted, and wedged
+
+The three runs differ in what the sync path does and agree in where they end,
+so the wedge is upstream of all of them. It is also why the arm counter added
+in run 8 printed nothing: it reports at the end of a root scan, and no root
+scan reached its end in a run that wedged.
+
+The reading that has to come before any further change is therefore the wedge
+itself rather than the missing inodes: what blocks the final unmount. Two of
+the wedged logs are kept beside the images and both stop at `hammer2_kill_sb:
+after unmount: 4008 inode, 126312 chain, 122179 modified, 499 dio still
+allocated`, which is the master's cluster mount holding the whole set with
+122179 chains still modified as the volume is being torn down.
