@@ -3624,6 +3624,24 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	}
 
 	/*
+	 * XXX Linux: the radix of the new indirect block and the inputs it
+	 * came from.  The 2026-10-12 reading measured a block created at
+	 * keybits 7 colliding with an incumbent at keybits 5, so the values
+	 * that produced 7 are the ones worth having: create_bits is what the
+	 * caller asked for from the key it wanted to insert, ncount is the
+	 * entry count the chosen block size holds, and the parent's own
+	 * bref.keybits is what the new block has to stay under for the
+	 * parent's keyspace to remain the outer one.  A new keybits above
+	 * the parent's is the inversion, and printing the three together
+	 * says whether it came from nbytes (the block is too big for the
+	 * parent) or from the caller's create_bits (the request was already
+	 * too wide).
+	 */
+	hprintf("create_indirect: parent %016llx/%d create_bits %d ncount %d count %d -> keybits %d key %016llx\n",
+	    (long long)parent->bref.key, parent->bref.keybits, create_bits,
+	    ncount, count, keybits, (long long)key);
+
+	/*
 	 * Normalize the key for the radix being represented, keeping the
 	 * high bits and throwing away the low bits.
 	 */
