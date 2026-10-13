@@ -9980,3 +9980,30 @@ slave's tree. Whether the carried loop is meant to iterate the focus instead
 for the create side is the one question left, and it is a question about
 `hammer2_sync_slaves()`'s iteration, not about any of the four mechanisms this
 session tested and refuted.
+
+## The thread inserts the index and not the inodes, by type, 2026-10-13
+
+Splitting the sync thread's insert calls by the blockref type it passes and by
+the focus key it copies, in the run that carried both repairs:
+
+| insert type | calls | distinct focus keys | of those, hash-shaped |
+| --- | --- | --- | --- |
+| INDIRECT (2) | 35576 | 7928 | 3960 |
+| INODE (1) | 3946 | 75 | 41 |
+| DIRENT (0) | 0 | 0 | 0 |
+
+The file keys are hash-shaped (a `f<n>` name hashes to something like
+`0xa8d14a5762868000`). The thread inserts 3960 of those as INDIRECT blocks and
+41 as INODE records, while the set holds 4001 files. So the structure that
+names the files is copied and the inodes the names refer to are not: 3960
+against 4001, and the 41 that do get an inode insert are re-tried about 52
+times each across the passes, which is why they never settle either.
+
+That is the same statement the media makes from the other end, and now it is
+located in the code: the dirents arrive inside the copied indirect blocks, and
+no INODE insert covers the keys those dirents name. The scan reaches the key,
+compares, and takes an arm of the switch that moves the block rather than the
+`n > 0` arm that calls `hammer2_sync_insert()` with `focus->bref.type`, which
+for a file inode's index is INDIRECT and for the inode itself is INODE. Which
+arm is taken for the 4001 file inodes is the question, and the `n` it computes
+comes from `hammer2_chain_cmp(chain, focus)` over the local tree.
