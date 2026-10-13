@@ -10559,3 +10559,29 @@ That is the shape the port's own comment above `hammer2_sync_setflush()` predict
 and it is why the print was added there: a walk that stops at a NULL parent is a
 different defect from one that stops at an inode, and the two want different
 fixes. The run in flight reads which it is.
+
+## The setflush walk reaches the volume root, and the no-op gate is gone, 2026-10-13
+
+The instrument placed at the end of `hammer2_sync_setflush()`'s walk answers the
+question the earlier `not flagged (00046102)` readings left open, and it answers
+it the opposite way from the first guess:
+
+    stopped at 0000000000000000/0 type 255 (NULL parent)   15619
+    stopped at any type other than 255                         0
+    not-flagged                                                0
+    stamps                                                  3873
+
+`255` is `HAMMER2_BREF_TYPE_VOLUME`, the volume chain, whose parent is NULL
+because it is the top of the tree. So every walk terminates at the volume root
+rather than at an inode or at a detached chain, which means the flag is
+propagated the whole way up and the element root the flush helper tests IS
+flagged. `not-flagged` is 0, so the write-back helper is not taking its empty
+branch.
+
+That is a change from the runs before the sync clamp, where the same print read
+`not flagged (00046102)` on 22 of 22 and 50 of 50 passes. The clamp did not just
+reduce the refusals: it is what makes the copy the scan makes reach the flush
+that writes it.
+
+The count of 15619 walks against 3873 stamps is the deferral walk calling
+`sync_setflush` per copied chain, not per inode.
