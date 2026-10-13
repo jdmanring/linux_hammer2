@@ -10297,7 +10297,7 @@ with INDIRECT blocks, so the sync asks the slave to create an INDIRECT chain at
 the master's key and keybits. The slave's parent there is keybits 6, so the new
 block comes out keybits 7 -- wider than the parent it is inserted into and the
 same width as the parent's own parent. Every such insert therefore has to
-absorb its neighbours, and the next key rebuilds it: 543902 inserts and 536026
+absorb its neighbors, and the next key rebuilds it: 543902 inserts and 536026
 `create_indirect` calls, one full-width block per key, until the run wedges.
 
 That is the whole defect and it explains the four counter readings that have not
