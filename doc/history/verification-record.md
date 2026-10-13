@@ -10744,3 +10744,20 @@ sides. That is required rather than a side effect: the two trees converge entry
 for entry only if both are built by the same sizing rule, and the rule as
 carried produced a 4KB level under a directory inode and a 16KB level under the
 INDIRECT that followed it.
+
+## The bound's run is stable through its cycles, 2026-10-13
+
+The clean run carrying the ncount bound -- one harness, no other process on the
+guest -- reads at t=263, two unmounts into its four:
+
+    create_indirect calls   0
+    does not fit refusals   0
+    D-state tasks           0
+    passes                 27
+    mounts cycling normally
+
+Runs 6 through 13 showed refusals climbing and D tasks appearing at the first
+unmount. This run shows neither at the second, with the same set size and the
+same cycle structure, which is the difference the bound makes: no block is built
+that its parent cannot hold, so no refusal fires and nothing waits on a lock
+held across a rebuild.
