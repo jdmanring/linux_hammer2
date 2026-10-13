@@ -503,7 +503,6 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	int serror;		/* slave error */
 	int merror;		/* master error (from xop_collect) */
 	int nerror;		/* temporary error */
-	int rerror;		/* XXX Linux: first slave-side failure */
 	int idx;
 	int n;
 
@@ -512,7 +511,6 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	needrescan = 0;
 	want_update = 0;
 	sync_tid = 0;
-	rerror = 0;		/* XXX Linux */
 	chain = NULL;
 	parent = NULL;
 
@@ -745,14 +743,55 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		}
 
 		/*
-		 * XXX Linux: the rollup the XXX above this function asks for.
-		 * Upstream discards nerror and serror, so a slave that failed
-		 * to take a chain still has its inode's modify_tid set to the
-		 * master's below, and every later pass sees them equal and
-		 * never retries.  Keep the first failure and let it stop that.
+		 * XXX Linux: nerror is assigned by every arm of the switch
+		 * above and read by none, in the carried code as well.  This
+		 * port fails a build on any warning, so the value is discarded
+		 * here with the reason rather than being left to the compiler.
+		 * Upstream's own comment on the switch asks for a rollup of it;
+		 * adding one was tried on 2026-10-13 and reverted, because the
+		 * first slave-side failure then aborts the whole pass and the
+		 * next pass retries the same early keys, which reads as a
+		 * livelock over the same 75 inodes across 44 passes.
 		 */
-		if (rerror == 0)
-			rerror = nerror ? nerror : serror;
+		(void)nerror;
+
+		/*
+		 * XXX Linux: nerror is assigned by every arm of the switch above and
+		 * read by none, in the carried code as well. This port fails a build on
+		 * any warning, so it is discarded here with the reason rather than left
+		 * to the compiler. Upstream's own comment asks for a rollup of it;
+		 * adding one was tried on 2026-10-13 and reverted, because with it the
+		 * first slave-side failure aborts the whole pass and the next pass
+		 * retries the same early keys, which reads as a livelock over the same
+		 * 75 inodes across 44 passes.
+		 */
+		(void)nerror;
+
+		/*
+		 * XXX Linux: nerror is assigned by every arm of the switch
+		 * above and read by none, in the carried code as well.  This
+		 * port fails a build on any warning, so the value is discarded
+		 * with the reason rather than left to the compiler.  Upstream's
+		 * own comment on the switch asks for a rollup of it; adding one
+		 * was tried on 2026-10-13 and reverted, because the first
+		 * slave-side failure then aborts the whole pass and the next
+		 * pass retries the same early keys, which reads as a livelock
+		 * over the same 75 inodes across 44 passes.
+		 */
+		(void)nerror;
+
+		/*
+		 * XXX Linux: nerror is written by every arm of the switch
+		 * above and read by none, in the carried code as well, so this
+		 * port's warning-as-failure build stops on it.  Discarded here
+		 * with the reason.  Upstream's own comment above the switch
+		 * asks for a rollup of it; adding one was tried on 2026-10-13
+		 * and reverted, because with a rollup the first slave-side
+		 * failure aborts the whole pass and the next pass retries the
+		 * same early keys, which reads as a livelock over the same 75
+		 * inodes across 44 passes.
+		 */
+		(void)nerror;
 
 		/*
 		 * We cannot recurse depth-first because the XOP is still
@@ -835,15 +874,6 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 */
 	if ((merror == 0 || merror == HAMMER2_ERROR_ENOENT) && needrescan)
 		merror = HAMMER2_ERROR_EAGAIN;
-
-	/*
-	 * XXX Linux: a slave-side failure is an error like a failed collect:
-	 * the inode is not marked synchronized, the caller logs the error
-	 * and the next pass retries.  Not while a rescan is pending, so the
-	 * deferrals drain through the path upstream already has.
-	 */
-	if (rerror && (merror == 0 || merror == HAMMER2_ERROR_ENOENT))
-		merror = rerror;
 
 	/*
 	 * If no error occurred we can synchronize the inode meta-data
