@@ -3351,9 +3351,37 @@ hammer2_chain_rename(hammer2_chain_t **parentp, hammer2_chain_t *chain,
 		KKASSERT(parent->refs > 0);
 		KKASSERT(parent->error == 0);
 
-		hammer2_chain_create(parentp, &chain, NULL, chain->pmp,
-		    HAMMER2_METH_DEFAULT, bref->key, bref->keybits, bref->type,
-		    chain->bytes, mtid, 0, flags);
+		/*
+		 * XXX Linux: the radix handed to hammer2_chain_create() is the
+		 * chain's OWN (bref->keybits), and the parent it is being
+		 * re-created under may be narrower.  Measured 2026-10-13: every
+		 * refusal in a completed run is this call, `parent .../6 type 2 |
+		 * child type 2 | for_type 1`, 80 under 0x440/6 and 10 under
+		 * 0x480/7, and in a run that stalls the same shape climbs past
+		 * 300.  The chain is being moved to a parent that cannot hold its
+		 * keyspace, exactly the case the sync path clamps in
+		 * hammer2_sync_insert(); the rule is the same here, the receiving
+		 * parent decides the radix, and the key is renormalized to it.
+		 *
+		 * A parent with keybits 0 is a directory inode's blockset, which
+		 * holds children of their own radix rather than a range, so it is
+		 * left alone.
+		 */
+		{
+			int rbits = bref->keybits;
+			hammer2_key_t rkey = bref->key;
+
+			if (parent->bref.keybits > 0 &&
+			    rbits >= parent->bref.keybits) {
+				rbits = parent->bref.keybits - 1;
+				if (rbits < 0)
+					rbits = 0;
+				rkey &= ~(((hammer2_key_t)1 << rbits) - 1);
+			}
+			hammer2_chain_create(parentp, &chain, NULL, chain->pmp,
+			    HAMMER2_METH_DEFAULT, rkey, rbits, bref->type,
+			    chain->bytes, mtid, 0, flags);
+		}
 		KKASSERT(chain->flags & HAMMER2_CHAIN_UPDATE);
 		hammer2_chain_setflush(*parentp);
 	}
