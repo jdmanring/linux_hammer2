@@ -171,6 +171,7 @@ hammer2_chain_dump_live(void)
  */
 static unsigned int hammer2_chain_insert_outside;
 static unsigned int hammer2_create_indirect_refused;
+static unsigned int hammer2_create_indirect_radix;
 
 static hammer2_chain_t *
 hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
@@ -3611,6 +3612,45 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	base = hammer2_chain_base_and_count(parent, &count);
 
 	/*
+	 * XXX Linux: the new block must be strictly SMALLER than the parent it
+	 * goes into, on its radix, and this is the only place the radix can be
+	 * bounded before anything else uses it.  The seed at the top of this
+	 * function is the caller's, and the caller is
+	 * hammer2_sync_insert(), which passes the FOCUS's radix: the other
+	 * device's, not this tree's.  Nothing checks it against the parent,
+	 * and the arithmetic does not work out by itself, a child of radix N
+	 * spanning twice what a parent of radix N-1 spans.
+	 *
+	 * Measured 2026-10-13 at the refusal, printed there rather than read
+	 * from another function:
+	 *
+	 *   new 0x400/7 does not fit parent 0x440/6
+	 *     (parent type 2, child type 2, create 0x460/0 for_type 1)
+	 *
+	 * The create key 0x460 is INSIDE the parent's 0x440-0x47f, so the
+	 * parent is right and only the radix is wrong: 7 spans 0x400-0x47f and
+	 * encloses the parent, where the largest radix that fits under a
+	 * radix-6 parent is 5.
+	 *
+	 * This lowers an inherited radix that cannot fit and does nothing
+	 * else, so it cannot raise one the caller chose correctly.  An earlier
+	 * attempt bounded the value AFTER the indkey helper had grown it from
+	 * ncount, which lowered every block rather than only the oversized
+	 * ones; that run drove the tree to the flush depth limit, which is why
+	 * the bound belongs here and not there.  A keybits-0 parent is a
+	 * directory inode holding children of its own radix rather than a
+	 * range, and bounds nothing.
+	 */
+	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits) {
+		hprintf("create_indirect: radix %d lowered to %d, parent "
+		    "%016llx/%d does not span it (create %016llx/%d)\n",
+		    keybits, parent->bref.keybits - 1,
+		    (long long)parent->bref.key, parent->bref.keybits,
+		    (long long)create_key, create_bits);
+		keybits = parent->bref.keybits - 1;
+	}
+
+	/*
 	 * How big should our new indirect block be?  It has to be at least
 	 * as large as its parent for splits to work properly.
 	 *
@@ -3705,10 +3745,19 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * says whether it came from nbytes (the block is too big for the
 	 * parent) or from the caller's create_bits (the request was already
 	 * too wide).
+	 *
+	 * kprintf, not hprintf: pr_info_ratelimited suppressed this line in
+	 * the run that first needed it, and the count behind it is not
+	 * otherwise obtainable.  Bounded to the first few, since the whole
+	 * point is the inputs that produced an oversized radix and those do
+	 * not need reprinting per create.
 	 */
-	hprintf("create_indirect: parent %016llx/%d create_bits %d ncount %d count %d -> keybits %d key %016llx\n",
-	    (long long)parent->bref.key, parent->bref.keybits, create_bits,
-	    ncount, count, keybits, (long long)key);
+	if (atomic_fetchadd_int(&hammer2_create_indirect_radix, 1) < 8) {
+		kprintf("create_indirect: parent %016llx/%d create_bits %d "
+		    "ncount %d count %d -> keybits %d key %016llx\n",
+		    (long long)parent->bref.key, parent->bref.keybits, create_bits,
+		    ncount, count, keybits, (long long)key);
+	}
 
 	/*
 	 * Normalize the key for the radix being represented, keeping the

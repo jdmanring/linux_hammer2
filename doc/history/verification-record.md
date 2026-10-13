@@ -9230,10 +9230,30 @@ badly but that its input radix came from the other tree. `indkey_dir` is
 given the key and the radix and returns both, so it can only be as right as
 its caller.
 
-Not yet measured, and the reason no fix is written here: whether the correct
-radix for the insertion is the parent's, or whether the parent itself is
-wrong because the slave's scan should not have been positioned there. The
-create key `0x460` fits the parent, so the parent is plausibly right and the
-radix plausibly wrong, but "plausibly" is what produced four wrong attempts
-already. The print that separates them is `create_bits` beside the parent's
-`keybits` at the caller, and this record does not yet have it.
+That reading was taken, and it FALSIFIES the mechanism above. The print added
+at the caller reports the focus beside the parent, and what it shows is:
+
+    sync_insert: focus 0000000000000400/0 into parent b6a9cb23fd8a8001/0 type 1
+    sync_insert: focus 0000000000000405/0 into parent 0000000000000400/5 type 2
+
+The focus radix is 0, not 7. The new block does not inherit a master radix of
+7, because the master chain's radix at that point is 0. So `create_bits` is 0,
+`keybits` is seeded at 0, and whatever raised it to 7 is the indkey helper
+sizing the block from `ncount` alone. The paragraph above is left in place as
+the fourth mechanism this chain produced and the fourth to be refuted by its
+own instrument, which is the pattern worth recording on its own.
+
+Two things the same lines do establish, because they are printed and not
+inferred. The first pair is a create with a TYPE 1 (INODE) parent whose key is
+`b6a9cb23fd8a8001` and whose radix is 0: a nonzero key, so an inode parent
+carries a key that is not merely a hash of its contents and cannot be assumed
+to bound nothing. The second is a TYPE 2 (INDIRECT) parent at radix 5 for a
+focus whose radix is 0. Both are ordinary `sync_insert` positions, so the
+empty-element and unfit-block paths are reached for inode parents as well as
+indirect ones.
+
+What is NOT yet measured, and is the next print rather than the next guess:
+which input raised `keybits` from 0 to 7 in the block that was refused, since
+neither the caller's `create_bits` nor the focus's radix supplies it. The
+values that would settle it are `ncount` and the `keybits` the helper returned,
+printed together at the point the helper returns.
