@@ -9481,3 +9481,94 @@ SLAVE volume's teardown under the ROOT mount whose element the scan uses,
 so it does not say whether those are the copied inodes. A run that reads the
 slave image before any unmount, with the master mount still up and the sync
 thread quiesced, separates them.
+
+## The refusals cannot account for the loss, and the arithmetic says so, 2026-10-13
+
+The run of 2026-10-13, read with the corrected instrument, reports the two
+sides by role and the shortfall by element class:
+
+    slave/master by type: inode 801/4801, data 800/4800, dirent 4801/4801
+
+Every directory entry arrived; 4000 of the inode tree and 4000 of the data
+tree did not. The count of refused blocks in the same run is 340
+(`create_indirect: new ... does not fit parent ...`, 320 at `0x400/7` under
+`0x440/6` and 20 at `0x480/7` under `0x480/7`). A refusal that loses a block
+can lose at most the copies that block carried, so 340 refusals cannot be the
+source of a 4000-inode absence. The guard is a contributor, not the cause.
+
+What the same log says instead is `syncthr: update inode` 3873 times: 3873
+inodes were reached and marked synchronized, against 801 that exist on the
+slave's media. The copies were made, the stamp was set, and the flush did not
+carry them. The unmount agrees, printing `122239 modified` chains still
+allocated as it leaves. That is a write-back failure in the sync thread's own
+element, which is the path this port's two sync helpers exist to bridge, and
+it is where the reading now points rather than at the radix.
+
+Which files went missing fixes the timing. The short side holds all 400 `g*`
+files, written during the unmount cycles while both elements existed, and none
+of the 4000 `f*` files, written before the SLAVE element was created. The set
+that predates the element is the set that did not cross.
+
+The run also produced five soft lockups, and they are not a filesystem
+reading. All five are on `irq#4 ttyS0`, the serial console, in `swapper` on an
+otherwise idle CPU, and they appear only in the run whose log reached 22 MB,
+against zero in the twelve runs before it. The cause is an ungated `kprintf`
+in `hammer2_sync_insert()`, one line per copied element, 102,370 lines for
+this set; the print is gated on the same bit as `START_SCAN` now. A probe that
+floods its own console and then reports the watchdog's complaint as a
+filesystem defect is measuring itself.
+
+## The copies are stamped done in one pass and never written, 2026-10-13
+
+The sync thread's own counts, per pass, from the 2026-10-13 run:
+
+    passes (sync_slaves pfs CL): 37
+    update inode events:        3873
+    pass 1 updates 3873
+    pass 2 updates 0
+    ... passes 2 through 37: 0
+
+Every inode the thread ever marked synchronized, it marked in the first pass.
+The remaining 36 passes found nothing to do. The volume ends with 801 file
+inodes on media against 4801 on the master, so 3873 stamps were set for a set
+that only partly arrived: the thread copied, stamped, and the flush did not
+carry the copies, after which no later pass had anything left to try. That is
+why the loss is total for the set present when the element was created and
+zero for the set written later: by the time the later files existed the thread
+had already decided the inode was synchronized.
+
+The count of refusals in the same run is 340 and the count of failed passes is
+745. Neither can produce a 4000-inode absence from a 4000-file set, so the
+radix guard is a contributor and the write-back is the defect, in this order:
+the copies do not reach media, and the thread's stamp hides that.
+
+## The whole loss happens in one pass, and the stamp is what stops the retry, 2026-10-13
+
+The pass-resolved counts settle the mechanism the earlier note inferred from
+totals. The sync thread ran 37 passes and emitted 3873 `syncthr: update inode`
+events, and every one of them is in pass 1:
+
+    pass 1 updates 3873
+    pass 2 updates 0
+    pass 3 updates 0
+    ...
+    pass 37 updates 0
+
+`update inode` is emitted once per inode whose modify_tid is set to the
+focus's, so 3873 is a count of distinct inodes stamped synchronized, not a
+count of retries. The slave's media ends with 801 file inodes. 3873 were
+stamped and about 800 arrived, so roughly 3000 stamps were set for inodes
+whose chains were never written, and the 36 passes after the first found
+`want_update == 0` for all of them and did nothing.
+
+That closes the chain. The thread copies and stamps in one pass; the flush
+does not carry the copies to media, and the unmount leaves `122239 modified`
+chains allocated; and because the stamp already equals the focus's
+modify_tid, no later pass retries. A stamp set before the flush proves the
+copy reached media is what converts a write-back failure into a permanent
+absence, and it is why the loss is total rather than partially repaired.
+
+The 340 refusals in the same run are a contributor and not the cause: each
+one can lose at most the copies its block carried, so they cannot produce a
+3000-inode shortfall. The order is the stamp and the write-back first, the
+radix divergence second.
