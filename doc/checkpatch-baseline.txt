@@ -26,10 +26,17 @@
 # atomic_cmpset_int arm grew the flags print.  Nothing was suppressed and
 # nothing new was introduced.  Recorded rather than reverted, because the
 # print is the instrument for the teardown wait, which has no other reading.
-# 1,268 to 1,270 on 2026-10-13, from the radix cap at hammer2_chain.c's
-# indkey_dir: one `quoted string split across lines` for its print and one
-# `return is not a function` for its `return (keybits)`, both the style the
-# surrounding carried code already writes.
+# 1,268 to 1,272 on 2026-10-13, across two commits. The radix cap at
+# hammer2_chain.c's indkey_dir moved 1,268 to 1,270: one `quoted string
+# split across lines` for its print and one `return is not a function` for
+# its `return (keybits)`, the style the surrounding carried code writes.
+# Bounding hammer2_thr_wait() moved 1,270 to 1,272 and moved the braces row
+# BACK, 6 to 7: that function's cmpset arm had grown a second statement and
+# lost the finding, and rewriting the loop as a bounded while left it with
+# one statement again, which is where checkpatch counts the brace. A row
+# that moves in either direction on a rewrite is the one to read by hand.
+# The remaining row is a `quoted string split across lines` for the
+# stuck-wait print's format string.
 # sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
@@ -47,7 +54,7 @@
 4 Prefer using 'X' to using 'X', this function's name, in a string
 1 Statements terminations use 1 semicolon
 2 Using vsprintf specifier 'X' potentially exposes the kernel memory layout, if you don'X'%p'.
-6 braces {} are not necessary for single statement blocks
+7 braces {} are not necessary for single statement blocks
 1 break is not useful after a return
 1 code indent should use tabs where possible
 80 do not add new typedefs
@@ -58,7 +65,7 @@
 14 plain inline is preferred over __inline
 2 please, no space before tabs
 193 please, no spaces at the start of a line
-47 quoted string split across lines
+48 quoted string split across lines
 274 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)

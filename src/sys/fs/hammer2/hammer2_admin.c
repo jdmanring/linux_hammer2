@@ -871,37 +871,51 @@ hammer2_thr_wait(hammer2_thread_t *thr, uint32_t flags)
 {
 	uint32_t oflags;
 	uint32_t nflags;
+	int waited;
 
 	/*
-	 * XXX Linux: the waiting flags and the thread they are being waited
-	 * on, at entry and once per return of the sleep below.  The shape
-	 * worth recording is the wait itself: the sleep has a timeout and
-	 * the loop that contains it has none, so a thread-state bit that no
-	 * live task will ever set is an unbounded wait, and the timeout only
-	 * makes it slow.  The stack that reached it says an unmount was in
-	 * this loop, and the stack cannot say which bit it wanted or whether
-	 * thr->td was still a task that could set it.  Those are what the
-	 * print answers.
+	 * XXX Linux: bounded.  The loop below waits for bits the thread sets
+	 * as it enters the state, and this port measured what an unbounded
+	 * one costs on 2026-10-13: the sync thread oopsed inside its kthread,
+	 * so it never reached the code that sets HAMMER2_THREAD_FROZEN, and
+	 * the unmount sat here printing the same line every 62 seconds at
+	 * t=3695, 3757, 3819 and 3880 with a live td and the bit unset until
+	 * the run was killed at its 1500 s bound.  A fault the port cannot
+	 * prevent must not also become a wedged unmount, so the wait now
+	 * gives up: it marks the device in error, which is how every other
+	 * unrecoverable condition in this module fails, and returns with the
+	 * bits it has.  hpanic's contract is that it returns; see
+	 * doc/README.porting.md.
 	 *
-	 * ponytail: two prints per wait, one at entry and one at most per
-	 * sleep timeout (hz*60) while it is stuck.  Remove the entry print
-	 * once the teardown wait is explained; the stuck-loop print is the
-	 * one that is worth keeping, since it is bounded by the wait itself.
+	 * The bound is generous because the work being waited on is a sync
+	 * thread reaching its next loop, which the same log shows taking well
+	 * under a second when the thread is healthy: both waits that resolved
+	 * did so inside one sleep timeout, and the frozen state is entered
+	 * before the thread sleeps rather than after a pass.
+	 *
+	 * ponytail: 120 tries of hz*60 is two hours, a ceiling rather than a
+	 * budget, so the ordinary path pays one comparison per iteration and
+	 * a genuinely wedged teardown is still two hours. Lower it if a real
+	 * teardown ever approaches it.
 	 */
-	kprintf("thr_wait: thr %p want %04x td %p flags %04x\n",
-	    thr, flags, thr->td, thr->flags);
-
-	for (;;) {
+	waited = 0;
+	while ((thr->flags & flags) != flags) {
 		oflags = thr->flags;
 		cpu_ccfence();
 		if ((oflags & flags) == flags)
 			break;
+		if (++waited > 120) {
+			kprintf("thr_wait: thr %p want %04x td %p flags %04x "
+			    "not set after %d tries, device in error\n",
+			    thr, flags, thr->td, thr->flags, waited - 1);
+			/* XXX Linux: hpanic marks the device in error and returns */
+			hpanic("thread did not reach state %04x", flags);
+			break;
+		}
 		nflags = oflags | HAMMER2_THREAD_WAITING;
 		/* XXX Linux: tsleep_interlock() and PINTERLOCKED, see os.h */
 		if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
 			tsleep_word(&thr->flags, nflags, 0, "h2twait", hz*60);
-			kprintf("thr_wait: thr %p want %04x td %p flags %04x\n",
-			    thr, flags, thr->td, thr->flags);
 		}
 	}
 }
