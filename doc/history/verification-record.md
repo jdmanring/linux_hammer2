@@ -10358,3 +10358,23 @@ MODIFIED, UPDATE, ONFLUSH or DESTROY set. So the two defects are separate and
 both are now measured in one run: the clamp fixes the radix and the refusals,
 and the write-back remains a no-op. The convergence number from this run
 measures the clamp alone, with the write-back still unable to write.
+
+## The clamp clears the teardown wedge, 2026-10-13
+
+The sync-path clamp is the first change of the session to get a run through its
+four unmounts. Runs 6, 7 and 8 all wedged at the fourth, with the log stopping
+at `hammer2_kill_sb: after unmount: 4008 inode, 126312 chain, 122179 modified,
+499 dio still allocated`, `umount` in D state and the guest unanswering. The run
+carrying the clamp reports:
+
+    t=359  unmounts=4  mounts=2  D-state tasks 0  passes=38
+
+Four unmounts, no stuck task, 38 passes, and 90 refusals against 340 without it.
+So the same-width child block was what wedged the teardown as well as inflating
+the refusal count: with the block strictly inside its parent the tree can be
+walked and torn down, and without it the flush and the unmount both spin.
+
+That is the first mechanism of the seven tried that changes the run's ability to
+finish, and it is the one the earlier readings pointed at without naming:
+the destination's radix has to come from the destination's tree, not from the
+chain being copied.
