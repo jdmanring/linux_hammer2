@@ -4698,6 +4698,37 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	 * trades a lost copy for an unflushable volume. The guard in
 	 * create_indirect() stays, and this note stays with it.
 	 */
+	/*
+	 * XXX Linux: a child's radix must be STRICTLY less than its parent's.
+	 * The two rules upstream states elsewhere do not cover it: a block "at
+	 * least as large as its parent" is about SLOT count, and a block may
+	 * "cover a wider keyspace than the current parent" (rule 4) is about a
+	 * keybits SMALLER than the parent's, since a smaller keybits spans more
+	 * keys. Equal keybits is neither: the child's range IS the parent's, so
+	 * hammer2_chain_cmp() returns 0 for the pair and the insert treats them
+	 * as one node.
+	 *
+	 * Measured 2026-10-13 in the hang log: `sync_insert: focus 0x4e7/0 into
+	 * parent 0x480/7` followed by `create_indirect: parent 0x480/7 ... ->
+	 * keybits 7 key 0x4e7`, one full-width block per key from 0x400 to
+	 * 0x4ff, 536026 creations and 547925 inserts before the run wedged. The
+	 * port's guard refuses exactly these blocks and leaves the element
+	 * unbuilt, which is why only 75 of 4001 inodes were ever created.
+	 *
+	 * The cap is placed HERE, on the computed keybits, and the mask below
+	 * realigns the key to the narrowed block. The two earlier attempts
+	 * tested the caller's create_bits, which the caller always passes as 0,
+	 * so they could never fire; the value that decides is this one.
+	 */
+	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits) {
+		hprintf("indkey_dir: capped keybits %d -> %d under parent %016llx/%d\n",
+		    keybits, parent->bref.keybits - 1,
+		    (long long)parent->bref.key, parent->bref.keybits);
+		keybits = parent->bref.keybits - 1;
+		if (keybits < 1)
+			keybits = 1;
+	}
+
 	if (hicount > locount)
 		key |= (hammer2_key_t)1 << keybits;
 	else

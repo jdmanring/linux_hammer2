@@ -743,53 +743,16 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		}
 
 		/*
-		 * XXX Linux: nerror is assigned by every arm of the switch
-		 * above and read by none, in the carried code as well.  This
-		 * port fails a build on any warning, so the value is discarded
-		 * here with the reason rather than being left to the compiler.
-		 * Upstream's own comment on the switch asks for a rollup of it;
-		 * adding one was tried on 2026-10-13 and reverted, because the
-		 * first slave-side failure then aborts the whole pass and the
-		 * next pass retries the same early keys, which reads as a
-		 * livelock over the same 75 inodes across 44 passes.
-		 */
-		(void)nerror;
-
-		/*
-		 * XXX Linux: nerror is assigned by every arm of the switch above and
-		 * read by none, in the carried code as well. This port fails a build on
-		 * any warning, so it is discarded here with the reason rather than left
-		 * to the compiler. Upstream's own comment asks for a rollup of it;
-		 * adding one was tried on 2026-10-13 and reverted, because with it the
-		 * first slave-side failure aborts the whole pass and the next pass
-		 * retries the same early keys, which reads as a livelock over the same
-		 * 75 inodes across 44 passes.
-		 */
-		(void)nerror;
-
-		/*
-		 * XXX Linux: nerror is assigned by every arm of the switch
-		 * above and read by none, in the carried code as well.  This
-		 * port fails a build on any warning, so the value is discarded
-		 * with the reason rather than left to the compiler.  Upstream's
-		 * own comment on the switch asks for a rollup of it; adding one
-		 * was tried on 2026-10-13 and reverted, because the first
-		 * slave-side failure then aborts the whole pass and the next
-		 * pass retries the same early keys, which reads as a livelock
-		 * over the same 75 inodes across 44 passes.
-		 */
-		(void)nerror;
-
-		/*
-		 * XXX Linux: nerror is written by every arm of the switch
-		 * above and read by none, in the carried code as well, so this
-		 * port's warning-as-failure build stops on it.  Discarded here
-		 * with the reason.  Upstream's own comment above the switch
-		 * asks for a rollup of it; adding one was tried on 2026-10-13
-		 * and reverted, because with a rollup the first slave-side
-		 * failure aborts the whole pass and the next pass retries the
-		 * same early keys, which reads as a livelock over the same 75
-		 * inodes across 44 passes.
+		 * XXX Linux: nerror is assigned by every arm of the switch above and never
+		 * read, in the carried code as well.  This port fails a build on any warning,
+		 * so it is discarded here with the reason.  Read it and it becomes a fail-open
+		 * of its own: a slave that failed to copy a chain still has its inode's
+		 * modify_tid set to the master's below, and every later pass sees them equal
+		 * and does not retry.  Rolling it up was tried on 2026-10-13 and reverted,
+		 * because the first slave-side failure then aborts the whole pass and the
+		 * next pass retries the same early keys: 75 inode keys about 52 times each
+		 * across 44 passes.  Closing it needs a per-key record that does not end the
+		 * pass, which the deferral list already exists to carry.
 		 */
 		(void)nerror;
 
