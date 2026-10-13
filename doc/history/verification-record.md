@@ -10676,3 +10676,17 @@ directory inode the first split makes a 4096-byte, 32-slot block; under the
 INDIRECT that results, every later split makes a 16384-byte, 128-slot block. The
 two cannot both be right for the same parent, and the second is wider than the
 parent it must fit under rather than narrower.
+
+## A hung run's log is lost when the guest is reset first, 2026-10-13
+
+Twice a run wedged and the guest was hard-cycled to recover it before the
+harness's own timeout copied `/tmp/h2empty.klog` off the guest. The harness's
+hang path does save it as `sync-empty-hang-<timestamp>.klog` beside the images,
+and nothing else does, so the reset threw away the one artifact the hang
+produced. Runs 11 and 13 are read only through their counters for that reason.
+
+The order that keeps the evidence: let the harness's `H2_RUN_TIMEOUT` fire first
+(it copies the log, detaches the disks and reports `hung past`), and reset the
+guest only after the run reports. A reset is needed when the harness itself
+cannot proceed, which has not been the case -- the harness has always recovered
+on its own once its timeout expires.
