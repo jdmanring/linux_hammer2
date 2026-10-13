@@ -319,12 +319,19 @@ hammer2_chain_insert(hammer2_chain_t *parent, hammer2_chain_t *chain, int flags,
 	 * 2026-10-12: a child of key 0x400 and keybits 7 was inserted into a
 	 * parent of key 0x400 and keybits 7, whose range is IDENTICAL, so a
 	 * containment test passes it and only the keybits test catches it.
-	 * An inode parent carries keybits 0 and holds children of its own
-	 * radix rather than a range, so it is skipped: that is the ordinary
-	 * shape and not a violation.  Guarded on the violation only, so a
-	 * healthy insert costs two comparisons.
+	 *
+	 * The types are restricted to the two that carry a RANGE, which is
+	 * what hammer2_chain_lookup() recurses upward for.  Everything else
+	 * with a nonzero keybits is not a keyspace: an inode holds children
+	 * of its own radix and hammer2_chain_cmp() matches those by exact
+	 * key, and an inode carrying DIRECTDATA uses that field as a type
+	 * discriminator rather than a radix.  Applying the range test to an
+	 * inode parent is what refused an ordinary insert, measured
+	 * 2026-10-13 at `0x440/6`, and it was this check's own defect.
 	 */
-	if (parent->bref.keybits > 0 && chain->bref.keybits > 0) {
+	if ((parent->bref.type == HAMMER2_BREF_TYPE_INDIRECT ||
+	     parent->bref.type == HAMMER2_BREF_TYPE_FREEMAP_NODE) &&
+	    parent->bref.keybits > 0 && chain->bref.keybits > 0) {
 		hammer2_key_t p_end, c_beg, c_end;
 
 		p_end = parent->bref.key +
@@ -3755,16 +3762,23 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 
 	/*
 	 * XXX Linux: the new block has to fit inside the parent it goes
-	 * into, and nothing upstream checks that.  `ichain`'s radix comes
-	 * from the indkey helper above, which sizes the block to hold its
-	 * own contents and has no view of the parent's keyspace, so it can
-	 * be WIDER than the parent: measured 2026-10-12, a keybits-7 block
-	 * under a keybits-6 parent, and separately a keybits-7 block under
-	 * a keybits-7 parent whose range is identical.  The rbtree cannot
-	 * hold either, because hammer2_chain_cmp() counts overlapping ranges
-	 * as a match, so the insert returns an incumbent and the carried
-	 * KASSERTMSG at hammer2_chain.c:297 fires and takes the device into
-	 * error.
+	 * into, and nothing upstream checks that.  The keyspace rule is the
+	 * tree's own, stated at the top of hammer2_chain_lookup(): a parent
+	 * whose type is INDIRECT or FREEMAP_NODE carries a RANGE in key and
+	 * keybits, and the lookup recurses upward while the key does not
+	 * fall inside it.  Only those two types have that meaning.  An inode
+	 * parent carries keybits 0 and holds children of its own radix,
+	 * which hammer2_chain_cmp() matches by exact key, not by range, and
+	 * an inode whose DIRECTDATA flag is set carries that bit in keybits
+	 * as a type discriminator rather than a radix at all.
+	 *
+	 * So the range test belongs on those two types and nowhere else.  A
+	 * first version of this check applied it to any parent with
+	 * keybits > 0, and that is what refused an inode parent measured at
+	 * `0x440/6`: the refusal was the check's own defect, and the
+	 * backtrace it printed showed hammer2_sync_insert() creating a
+	 * master chain under an inode-shaped parent, which is the ordinary
+	 * case this check was misreading.
 	 *
 	 * The check MUST be here, before the loop below moves the parent's
 	 * blockrefs into `ichain`.  A first version of it sat after that
@@ -3776,7 +3790,9 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * parent exactly as it was, which is the state the caller's error
 	 * path already expects.
 	 */
-	if (parent->bref.keybits > 0 && ichain->bref.keybits > 0) {
+	if ((parent->bref.type == HAMMER2_BREF_TYPE_INDIRECT ||
+	     parent->bref.type == HAMMER2_BREF_TYPE_FREEMAP_NODE) &&
+	    parent->bref.keybits > 0 && ichain->bref.keybits > 0) {
 		hammer2_key_t p_end, c_beg, c_end;
 
 		p_end = parent->bref.key +
