@@ -8682,3 +8682,46 @@ records the first shape of this lost wakeup (the `HAMMER2_PMPF_WAITING`
 bit), and this is the second; both want the same decision, and it belongs
 against the FreeBSD text and the staged-filing rule rather than taken here
 from the record alone.
+
+## A DIRENT chain with bytes but no data faults the flush, 2026-10-12
+
+The run that went looking for the ipdep holder found a fault upstream of
+it first. In the sync thread's flush, `h2nod-CL` takes a general
+protection fault in `xxh64`, KASAN reading "null-ptr-deref in range
+[0x0-0x7]" with `RDX` zero, and `addr2line` puts the faulting call at
+
+    hammer2_chain_setcheck+0x2a1
+    -> XXH64(bdata, chain->bytes, XXH_HAMMER2_SEED)
+    hammer2_flush_core+0xe58  ==  hammer2_flush.c:754
+
+Line 754 is the `HAMMER2_BREF_TYPE_DIRENT` arm:
+
+    case HAMMER2_BREF_TYPE_DIRENT:
+            if (chain->bytes)
+                    hammer2_chain_setcheck(chain, chain->data);
+            break;
+
+so `chain->bytes` is non-zero and `chain->data` is NULL. The arm checks
+the one and not the other. The `HAMMER2_BREF_TYPE_INDIRECT` arm just above
+it calls `setcheck(chain, chain->data)` with no guard at all, and the
+`VOLHDR` arm carries `KKASSERT(chain->data != NULL)`, which is compiled out
+of every build this tree ships. So the DIRENT arm's `bytes` test is reading
+as a data test and is not one.
+
+This is a real fault in the flush path, reached by a plain write load, and
+it lands in the same thread whose wait the previous entry describes. It is
+the next thing to fix, ahead of the ipdep question: a fault in `setcheck`
+leaves the flush half-done, and a half-done flush is a candidate explanation
+for why the ipdep entry the syncer waits on is never retired.
+
+The ipdep print added for the other question did fire, and it says the
+waiter holds the entry itself:
+
+    ipdep wait: ip ... inum 0000000000000001 idx 1, list: <same ip>/1
+
+inum 1 is the root directory inode and the list holds exactly that one
+entry, so the task is waiting to add an inode it already added. It printed
+eight times about a quarter second apart, so the waiter is re-entering and
+re-testing rather than sleeping through, which is the shape
+`hammer2_xop_testset_ipdep()`'s `goto again` produces when the retire
+happens but the entry returns. Not yet explained.

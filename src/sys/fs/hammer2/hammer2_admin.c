@@ -288,6 +288,29 @@ hammer2_xop_testset_ipdep(hammer2_inode_t *ip)
 again:
 	if (xop_testset_ipdep(ip, ip->ipdep_idx)) {
 		/*
+		 * XXX Linux: the 2026-10-12 deadlock is a task asleep here
+		 * with no other task holding a hammer2 frame at all, so the
+		 * entry it waits on has no live owner and the run stops.  Two
+		 * readings of the callers produced two different mechanisms
+		 * and neither held up, so the collision is printed with the
+		 * inode and its bucket rather than argued about: the inode
+		 * identifies WHICH task holds the entry when the same inode is
+		 * offered twice, and the bucket says whether the entries in
+		 * the list are the one inode or several.  The list is walked
+		 * under the same lock the test took, so it is stable here.
+		 */
+		{
+			hammer2_ipdep_list_t *dl = &ip->pmp->ipdep_lists[ip->ipdep_idx];
+			hammer2_inode_t *dt;
+
+			kprintf("ipdep wait: ip %p inum %016llx idx %d, list:",
+			    ip, (long long)ip->meta.inum, ip->ipdep_idx);
+			LIST_FOREACH(dt, dl, ientry)
+				kprintf(" %p/%016llx",
+				    dt, (long long)dt->meta.inum);
+			kprintf("\n");
+		}
+		/*
 		 * XXX Linux: HAMMER2_PMPF_WAITING is not set here.  The flag
 		 * is one bit for the whole PFS and the condition variable is
 		 * one per index, so a retire on another index cleared it on
