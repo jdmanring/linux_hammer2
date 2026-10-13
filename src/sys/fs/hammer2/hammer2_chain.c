@@ -160,6 +160,18 @@ hammer2_chain_dump_live(void)
 }
 #endif
 
+/*
+ * XXX Linux: counts behind the two key-fitness diagnostics in this file.
+ * hammer2_chain_insert() increments one when a child is inserted into a
+ * parent whose keyspace does not contain it, hammer2_chain_create_indirect()
+ * the other when it refuses a block that does not fit.  Both are cumulative
+ * and never reset, and both bound the stack behind the message: hprintf is
+ * rate-limited and print_backtrace() is not, so two stacks are printed per
+ * counter and the message carries the count.  Read them beside the messages.
+ */
+static unsigned int hammer2_chain_insert_outside;
+static unsigned int hammer2_create_indirect_refused;
+
 static hammer2_chain_t *
 hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
     hammer2_blockref_t *bref)
@@ -324,7 +336,15 @@ hammer2_chain_insert(hammer2_chain_t *parent, hammer2_chain_t *chain, int flags,
 			hprintf("insert: child %016llx/%d outside parent %016llx/%d\n",
 			    (long long)chain->bref.key, chain->bref.keybits,
 			    (long long)parent->bref.key, parent->bref.keybits);
-			print_backtrace();
+			/*
+			 * XXX Linux: the same bound as the refusal below.
+			 * hprintf is rate-limited and print_backtrace() is
+			 * not, so an unthrottled dump_stack() here bypasses
+			 * the message's own limit and amplifies one line into
+			 * a stack per violation.  Two stacks name the builder.
+			 */
+			if (atomic_fetchadd_int(&hammer2_chain_insert_outside, 1) < 2)
+				print_backtrace();
 		}
 	}
 	xchain = RB_INSERT(hammer2_chain_tree, &parent->core.rbtree, chain);
@@ -3766,23 +3786,33 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		if (c_beg < parent->bref.key || c_end > p_end ||
 		    ichain->bref.keybits >= parent->bref.keybits) {
 			/*
-			 * XXX Linux: the STACK, not just the values.  The
-			 * values say the block does not fit; they cannot say
-			 * who asked for it.  Measured 2026-10-13: every one
-			 * of these is a keybits-7 block for key 0x400 under a
-			 * parent holding 0x440/6, and capping the radix was
-			 * tried and reverted because the KEY is outside the
-			 * parent's range and no radix makes it belong there.
-			 * So the question is the caller that called
-			 * hammer2_chain_create() for that key with that
+			 * XXX Linux: the STACK, not just the values, but
+			 * bounded.  The values say the block does not fit;
+			 * they cannot say who asked for it.  Measured
+			 * 2026-10-13: every one of these is a keybits-7 block
+			 * for key 0x400 under a parent holding 0x440/6, and
+			 * capping the radix was tried and reverted because the
+			 * KEY is outside the parent's range and no radix makes
+			 * it belong there.  So the question is the caller that
+			 * called hammer2_chain_create() for that key with that
 			 * parent, and this backtrace is what names it.
 			 * print_backtrace() is the tree's own dump_stack()
 			 * wrapper and needs nothing new.
+			 *
+			 * Only the first few carry a stack.  hprintf is
+			 * rate-limited and this sits under no bound of its own:
+			 * the guard fired 230 times in one measured run, and an
+			 * unthrottled dump_stack() per fire bypasses the rate
+			 * limit its own message has and amplifies each refusal
+			 * into a printed stack.  The first two stacks name the
+			 * caller, which is all the reading needs; the counter is
+			 * atomic because several threads reach here.
 			 */
 			hprintf("create_indirect: new %016llx/%d does not fit parent %016llx/%d\n",
 			    (long long)ichain->bref.key, ichain->bref.keybits,
 			    (long long)parent->bref.key, parent->bref.keybits);
-			print_backtrace();
+			if (atomic_fetchadd_int(&hammer2_create_indirect_refused, 1) < 2)
+				print_backtrace();
 			hammer2_chain_unlock(ichain);
 			hammer2_chain_drop(ichain);
 			*errorp = HAMMER2_ERROR_EIO;
