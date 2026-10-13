@@ -81,8 +81,8 @@
 14 plain inline is preferred over __inline
 2 please, no space before tabs
 193 please, no spaces at the start of a line
-50 quoted string split across lines
-273 return is not a function, parentheses are not required
+53 quoted string split across lines
+274 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 2 return of an errno should typically be negative (ie: return -EDOM)

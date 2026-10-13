@@ -26,6 +26,16 @@ script on the day it matters.
 
 ## The recorded deviations, and which are convertible
 
+On 2026-10-13 the counts moved by three quoted strings and one
+`return`, both from the split bound added to `hammer2_chain_create_indirect()`
+and from the `create_indirect:` diagnostic it sits beside. `quoted string split
+across lines` 50 to 53 and `return is not a function` 273 to 274. Both are the
+tree's deliberate BSD style in a carried file and not convertible: the file
+carries 105 parenthesized `return`s, and the three strings are one `kprintf`
+format continued on a second line, which is how every other multi-line print in
+the port is written. Every other line of the baseline is byte-identical.
+
+
 Counts below are what `checkpatch.pl` from linux **v7.3-rc5** reports, which is
 the version `doc/checkpatch-baseline.txt` names in its first line and the
 version CI fetches. Its second line records that checker's `sha256`, which
