@@ -10436,3 +10436,20 @@ The other six are in the record with their numbers, and the two that were most
 plausible on a static reading -- the write-back being a no-op, and the scan's
 action switch -- were both real defects that moved the count by less than the
 measurement's noise.
+
+## The forcing makes the flush run and triples the refusals, 2026-10-13
+
+Read from the run carrying the clamp and the forced ONFLUSH together, one pass
+into it:
+
+    passes 1, stamps 4019, not-flagged 0, flush-error 0, refusals 350
+
+`not-flagged 0` is the change the forcing was written for: the write-back helper
+no longer takes its empty branch, so the flush runs on a pass for the first
+time with the scan repaired. In the same reading the refusals go from 90, which
+the clamp alone produced, back to 350.
+
+So forcing the flag is not free: marking the element root every pass drives more
+work through `hammer2_chain_create_indirect()`, and more of that work meets the
+guard. Whether the run still completes and what it converges to is the verdict,
+but the refusal count alone says the forcing costs what it gains.
