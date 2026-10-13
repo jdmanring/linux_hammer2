@@ -8581,3 +8581,51 @@ script was built to reach. The convergence check added to
 `script/sync-empty-base.sh` -- fsck on both images and
 `cluster-sync.sh`'s PFS fingerprint comparison, copied whole -- has not
 yet produced a reading, because no run has reached the end of the cycles.
+
+## The unmount is not reached: sync(1) deadlocks against the port's own syncer, 2026-10-12
+
+The run started from a verified-clean guest -- the new pre-flight guard
+refused the dirty one and the cycle above it cleared the state -- and it
+still does not reach a slave unmount. The cause is not the harness this
+time. A `sync(1)` on the guest blocks in the port, and the two tasks that
+name hammer2 are the whole population, enumerated over every pid:
+
+    pid 268   kworker/10:2+events
+      hammer2_xop_testset_ipdep+0x2a8
+      hammer2_xop_start_except+0x4fe
+      hammer2_inode_chain_flush+0x67
+      hammer2_vfs_sync_pmp+0xf3d
+      hammer2_sync_fs -> sync_filesystem        (the port's own syncer)
+
+    pid 5928  sync
+      hammer2_trans_init+0x2ab
+      hammer2_vfs_sync_pmp+0xb7
+      hammer2_sync_fs -> __iterate_supers -> ksys_sync
+
+So the syncer holds the PFS's flush transaction and sleeps in
+`hammer2_xop_testset_ipdep()` waiting to add an inode whose entry is
+already in `pmp->ipdep_lists[idx]`, while `sync(1)` waits in
+`hammer2_trans_init()` for that same `HAMMER2_TRANS_ISFLUSH` to clear
+(`hammer2_flush.c:91`). The retire that would remove the ipdep entry and
+wake the sleeper belongs to a task that no longer exists: no third thread
+holds a hammer2 frame, at any state, so the inode cannot be retired and
+the flush cannot finish.
+
+This is the lost-wakeup class the `XXX` above `hammer2_xop_testset_ipdep`
+already records, in a second shape. That entry is about
+`HAMMER2_PMPF_WAITING`, one bit for the whole PFS against one condition
+variable per index, where "a retire on another index cleared it on behalf
+of a sleeper it did not wake". Here the sleeper waits on the list itself,
+and the waker has to be a live task holding the inode; when the holder is
+gone the wait is unbounded, and the condition variable has no one left to
+signal it.
+
+Reachable with a plain `sync(1)`, no cluster involved: the deadlock
+reproduces while the reproducer is still writing its set, before any
+slave unmount, and it is what kept every full-window run from reaching
+the cycles. It is not caused by the collision fix; that fix removed the
+crash that ended the earlier runs at t=152 and this is what sat behind it.
+
+Not fixed here. The next measurement is which task added the ipdep entry
+and why it retired without calling `hammer2_xop_unset_ipdep()`, which is a
+print at the insert and at the unset rather than a reading of the caller.

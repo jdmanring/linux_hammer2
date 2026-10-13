@@ -123,9 +123,54 @@ if [ "${HAMMER2_INVARIANTS:-0}" = 1 ]; then
 		exit 2; }
 fi
 
+# The guest must be clean BEFORE anything is detached, and the check has to
+# be here rather than in the guest half below, which runs after this.  A
+# detach-disk of a volume that is still mounted enters the guest as an ACPI
+# hotplug and reaches blk_report_disk_dead -> sync_filesystem ->
+# hammer2_vfs_sync_pmp -> hammer2_trans_init, where it blocks behind the
+# mount's own flush; measured 2026-10-12, a sync left 36 minutes in
+# hammer2_trans_init with the module loaded and three volumes mounted from
+# the run before.  Detaching first and asking afterwards is what put the
+# guest in that state, so the order is inverted and a dirty guest is
+# COULD-NOT-RUN with the reason, not a detach that wedges it.
+if [ "$state" = running ]; then
+	# The status belongs to ssh, and it must be read from ssh alone. The
+	# remote command ends in `grep -c`, which PRINTS 0 and EXITS 1 when it
+	# matches nothing, so `cmd || echo ssh-failed` fires on a perfectly
+	# healthy guest: the first version of this guard refused a clean guest
+	# reading "0 0 ssh-failed".  A marker the remote command prints only on
+	# success separates the two, and the counts are captured with their
+	# status discarded, which is the same shape every other count in this
+	# file uses.
+	dirty=$($RUN "$GUEST_SSH" 'lsmod 2>/dev/null | grep -c "^hammer2" || true
+		mount 2>/dev/null | grep -c " type hammer2" || true
+		echo ssh-alive' 2>/dev/null) || dirty=""
+	case "$dirty" in
+	*ssh-alive)
+		dirty=$(printf '%s\n' "$dirty" | sed '/^ssh-alive$/d' | tr '\n' ' ') ;;
+	*)
+		echo "sync-empty: COULD-NOT-RUN: the guest did not answer ssh, so" >&2
+		echo "  whether it is clean cannot be established before the detach" >&2
+		exit 2 ;;
+	esac
+	case "$dirty" in
+	"0 0 "|"0 0") ;;
+	*)
+		echo "sync-empty: COULD-NOT-RUN: the guest still holds a module or a" >&2
+		echo "  mounted volume ($dirty), and" >&2
+		echo "  detaching a mounted volume deadlocks the guest in the port's" >&2
+		echo "  own sync path. Unload and unmount it first (a hard cycle is" >&2
+		echo "  the documented recovery for this guest)." >&2
+		exit 2 ;;
+	esac
+fi
+
 for d in vdb vdc; do
-	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
-	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	# Bounded, so a wedged eject is a reported failure rather than a hang
+	# of the host side. --config removes the definition so the next start
+	# does not re-attach it; --live is what reaches the guest.
+	timeout 60 $VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+	timeout 60 $VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
 done
 rm -f "$MASTER" "$SLAVE"
 for img in "$MASTER" "$SLAVE"; do
