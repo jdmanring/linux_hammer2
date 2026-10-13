@@ -9418,3 +9418,66 @@ Still unmeasured, and the next reading: `parent->core.live_count` beside
 `count` at the flush's own `hammer2_base_insert()` call, `hammer2_flush.c:962`,
 which is the pair the compiled-out `KASSERTMSG` at `hammer2_chain.c:3157`
 tests and the pair that would name the block `no room` was raised for.
+
+## The convergence reading was measuring the wrong pair, 2026-10-13
+
+P4's synchronization criterion is read by `sync-empty-base.sh`'s own
+`fingerprint()` comparison off the two images. Read against the images kept
+from the run, that comparison had two defects, and both are in the
+instrument rather than the filesystem.
+
+The two sides come from the filenames, and the filenames are swapped.
+`repro-master.img` carries its `CL` element as `pfs_type 3 (SLAVE)` and
+`repro-slave.img` as `pfs_type 6 (MASTER)`. Three readings agree that this
+is not a reading error: the media states it directly; `pfs-create` defaults
+to MASTER with no uuid and to SLAVE with one, and only the vdc volume is
+given `-u` in this harness; and the volume that was unmounted and remounted
+four times is the one carrying 4,008 inodes at teardown, which is the slave
+mount's topology. So the volume the harness writes the set into, and names
+`MASTER`, is the SLAVE element, and every directional reading taken from
+those names was reversed.
+
+The count was also wrong in kind. `nm=$(grep -c ' FILE$' ...)` greps the
+whole fingerprint, and the fingerprint emits dirent lines as
+`print "dirent", name, dinum, $2`, so the pattern matches the dirent lines
+whose type is FILE. On these images it read 4,800 "file entr(ies)" on a
+volume holding 400 file inodes. The population assertion that exists so two
+empty fingerprints cannot read as agreement therefore passed on a tree that
+was 90 percent absent.
+
+Read correctly, with each side taken by the role its own media states:
+
+| element | short side (SLAVE) | full side (MASTER) |
+| --- | --- | --- |
+| file inode | 401 | 4401 |
+| data block | 400 | 4400 |
+| dirent | 4401 | 4401 |
+
+Every directory entry arrived and the inode and data trees did not. Which
+files went missing is not random: the short side holds all 400 `g*` files,
+written during the unmount cycles while both elements existed, and none of
+the 4000 `f*` files, written before the SLAVE element was created. The set
+that predates the element is the set that did not cross; the set written
+while the element was live did.
+
+The remaining comparison is `cmp -s` captured into the check's status where
+three command substitutions now run between it and the check, so the check
+reported the status of a `grep -c`, which is always 0. The convergence check
+passed unconditionally on any pair of images, including a pair that differs
+by 8,000 lines. Fixed to capture the comparison into a variable first.
+
+The trees also differ in radix, not only in coverage: the slave's `CL` root
+is `0x0/12` over a `0x400/5` indirect, 32 slots, where the master's is
+`0x0/63` over `0x400/7`, 128 slots. Both reach the same `0x400/0` inode with
+`f2327` and `f2141` under it, so the content is shared and the shape is not.
+That is the same slot-count divergence the refusals were traced to, seen
+from the other end: the destination builds its indirect blocks narrow.
+
+Unmeasured, and what would separate the two remaining causes: whether the
+copied chains were written and then lost at the unmount, or never written.
+The unmount prints `122239 modified` chains still allocated as it leaves,
+which says the volume held modifications it did not write, but that is the
+SLAVE volume's teardown under the ROOT mount whose element the scan uses,
+so it does not say whether those are the copied inodes. A run that reads the
+slave image before any unmount, with the master mount still up and the sync
+thread quiesced, separates them.
