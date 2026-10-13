@@ -10153,3 +10153,32 @@ were the guard declining such a block, the 536026 recreations were the tree
 rebuilt once per key when it was allowed, and the four mechanisms tested
 earlier were its symptoms. The convergence reading is still pending, and it is
 the one that decides whether the inodes now follow the keys.
+
+## The cap stops the storm and loses the file keys, 2026-10-13
+
+The cap removes the refusals and the per-key rebuilds, and it also changes
+which keys the scan presents. Read from the run carrying it:
+
+| reading | before the cap | with the cap |
+| --- | --- | --- |
+| distinct keys presented | 8080 | 1001 |
+| of those, hash-shaped (file keys) | 4001 | **0** |
+| `does not fit` refusals | 340 | 0 |
+| `create_indirect` calls | 536026 | 1001 |
+
+Zero of the 1001 keys is a file key. The scan no longer reaches the directory
+hash space at all. So the cap is not a fix: it silences the refusal storm and
+the wedging by keeping the tree narrow enough that the same-width block is
+never asked for, and the price is that the file keys are never presented
+either. A narrower tree means fewer keys, and the 4000 files live in the wide
+hash space the narrower tree no longer covers.
+
+That is a cleaner statement of the actual problem than any of the four
+mechanisms tested before it: the destination has to represent a directory of
+4001 entries whose keys span the full 64-bit hash space, and every route this
+session tried either refuses the wide blocks it needs, rebuilds them per key,
+or narrows the tree until the keys fall outside it. What is missing is the
+route upstream takes, and it is not in any of the branches that have been
+edited here. The next reading is upstream's own directory-split behaviour,
+which this port has never exercised because no test before this one drove a
+single directory past 4000 entries.
