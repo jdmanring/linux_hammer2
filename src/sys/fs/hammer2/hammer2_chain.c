@@ -3923,7 +3923,7 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 	 * since that is the shape that cannot legally collapse.
 	 */
 	if (chain->bref.keybits >= parent->bref.keybits)
-		hprintf("indirect_maint: parent %p %016llx/%d collapsing %p %016llx/%d\n",
+		kprintf("indirect_maint: parent %p %016llx/%d collapsing %p %016llx/%d\n",
 		    parent, (long long)parent->bref.key, parent->bref.keybits,
 		    chain, (long long)chain->bref.key, chain->bref.keybits);
 
@@ -3951,6 +3951,44 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 	if ((parent->flags &
 	    (HAMMER2_CHAIN_INITIAL | HAMMER2_CHAIN_COUNTEDBREFS)) == 0)
 		hammer2_chain_countbrefs(parent, base, count);
+
+	/*
+	 * XXX Linux: the collapse is only sound if chain's keyspace is
+	 * contained in parent's, and that condition was never checked, here
+	 * or at upstream.  Both are indirect blocks covering a key range
+	 * `[bref.key, bref.key + (1 << bref.keybits) - 1]`, and the collapse
+	 * below deletes chain and re-enters its children into parent through
+	 * hammer2_chain_create().  A child outside parent's range is one
+	 * parent's rbtree cannot hold: hammer2_chain_cmp() counts overlapping
+	 * ranges as a match, so it collides with whatever is there.
+	 *
+	 * Measured 2026-10-12: the flusher collapsed `0x400/7`
+	 * (`[0x400,0x47f]`) into `0x440/6` (`[0x440,0x47f]`), which does not
+	 * contain it -- the child extends to the left of its parent.  The
+	 * moved block then landed beside an unrelated `0x420/5` in the
+	 * destination's rbtree, the carried KASSERTMSG at the insert fired,
+	 * and the device went into error.  The keyspace is disjoint on the
+	 * left, so the collapse should not have started.
+	 *
+	 * A keybits of 0 is a directory inode's blockset, which stores
+	 * children of its own radix rather than a range of its own; there is
+	 * no interval to test, and that is the case the function is normally
+	 * called for, so it is allowed through.
+	 */
+	if (chain->bref.keybits > 0 && parent->bref.keybits > 0) {
+		hammer2_key_t p_beg, p_end, c_beg, c_end;
+
+		p_beg = parent->bref.key;
+		p_end = p_beg + ((hammer2_key_t)1 << parent->bref.keybits) - 1;
+		c_beg = chain->bref.key;
+		c_end = c_beg + ((hammer2_key_t)1 << chain->bref.keybits) - 1;
+		if (c_beg < p_beg || c_end > p_end) {
+			kprintf("indirect_maint: refusing collapse of %016llx/%d into %016llx/%d, keyspace not contained\n",
+			    (long long)chain->bref.key, chain->bref.keybits,
+			    (long long)parent->bref.key, parent->bref.keybits);
+			return (0);
+		}
+	}
 
 	/*
 	 * Determine if we can collapse chain into parent, calculate
@@ -4066,7 +4104,7 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 		 * them, and the flag says whether this is a move (SAMEPARENT)
 		 * or the retry that follows a re-pointed parent.
 		 */
-		hprintf("indirect_maint: move sub %p %016llx/%d to parent %p %016llx/%d chain %p\n",
+		kprintf("indirect_maint: move sub %p %016llx/%d to parent %p %016llx/%d chain %p\n",
 		    sub, (long long)sub->bref.key, sub->bref.keybits,
 		    parent, (long long)parent->bref.key, parent->bref.keybits,
 		    chain);

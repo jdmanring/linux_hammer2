@@ -8423,3 +8423,43 @@ collapse unless `chain`'s keyspace fits inside `parent`'s, which is the
 condition the moved children need for the destination's rbtree to accept
 them. The measurement that confirms it is the same reproducer reaching
 `unmount` with no collision and no BUG.
+
+### The containment guard fires on the measured case and is not sufficient
+
+The guard above was built and run, and it fires exactly where the
+measurement said it should:
+
+    indirect_maint: refusing collapse of 0000000000000400/7 into 0000000000000440/6, keyspace not contained
+    indirect_maint: move sub 0000000005afeae1 0000000000000400/7 to parent 000000004336fe81 0000000000000400/7 chain 00000000820d4744
+    hammer2_chain_insert: collision 0000000000000400/7 hits 0000000000000420/5 parent 0000000000000400/7 type 2/2
+
+so the collapse it refuses is a real one and the refusal is correctly
+aimed. The run collides anyway, from a second collapse in the same
+window, and the pointers say why. That collapse is
+`parent 0x4336fe81 0x400/7` collapsing `chain 0x820d4744 0x440/6`, and it
+passes the containment test: `[0x440,0x47f]` IS inside `[0x400,0x47f]`.
+But the child it moves, `sub 0x5afeae1 0x400/7`, has a range
+`[0x400,0x47f]` identical to the destination's, and the destination
+already holds `0x420/5` from the earlier move at the top of this log.
+
+Two things follow, and both are readings rather than inference.
+
+First, the malformation is in `chain`, not in the destination or the
+move: `chain 0x440/6` covers `[0x440,0x47f]` and is holding a child
+`0x400/7` covering `[0x400,0x47f]`, which is not inside it. A child
+outside its parent is what the tree's keybits invariant forbids, and the
+move relocates an existing violation rather than creating one.
+
+Second, `create_indirect` did not build that pair. Every transition it
+logged in this run kept the new block's keybits strictly below its
+parent's (60->59, 58->57, 61->60, 12->7, 9->7, 0->62 and so on), and none
+of them has a parent at keybits 6. So the bad parent-child pair is not
+something this run's splits produced through the path that is probed.
+
+What that leaves open, and it is narrower than before: either the pair is
+already on the media the run started from, or a path builds it that no
+probe covers. The check that separates them is `fsck_hammer2` on the
+slave's image before the run and the master's after it, which is a
+read-only reading and the next one to take. The guard here stays in the
+tree: it is correct on its own terms, it refuses a collapse that must not
+happen, and it is not yet the whole fix.
