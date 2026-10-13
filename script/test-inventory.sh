@@ -210,10 +210,14 @@ for k in $knobs; do
 		fail=$((fail+1)); }
 done
 
-# The third population is the gate count itself, stated in prose by five
-# documents and derived by nothing. At 0.1.10 three gates existed that no
-# document mentioned, and adding a seventh on 2026-08-26 falsified the word
-# "six" in five files at once.
+# The third population is the gate count itself, stated in prose by the three
+# documents below that carry such a sentence and derived by nothing. The count
+# is a claim about four candidate documents and the gate asserts the population
+# it actually read, because a wording change can quietly empty it: CONTRIBUTING
+# said "Twelve of the fourteen are cheap" until 2026-10-13, which this matcher
+# never saw, and README.testing.md refuses to state a count at all. At 0.1.10
+# three gates existed that no document mentioned, and adding a seventh on
+# 2026-08-26 falsified the word "six" in five files at once.
 #
 # The documents are read as one line, because prose wraps: "All six" ended a
 # line in CONTRIBUTING.md with "gates are cheap" on the next, where a

@@ -6,8 +6,9 @@ The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 DragonFly itself. The tree is at 1.0.21 in `CHANGELOG.md`; the newest tag is
 `v1.0.4`, which is the last release rather than the tree's version. The
 release shape holds: seventeen gates invoked from a `git
-archive`, thirteen run and pass, and the three that report could-not-run do
-so for the reasons a tarball has. The staged filings under
+archive`, thirteen run and pass, and the four that report could-not-run do
+so for the reasons a tarball has: two need a guest, and two read `git`
+history, which an archive does not carry. The staged filings under
 `doc/upstream/` are the maintainer's to file, with their state recorded
 beside each; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
