@@ -263,7 +263,7 @@ does. Pass them on the `make` line.
 
 ## Test
 
-Sixteen gates. The compile gates need a toolchain and a kernel tree:
+Seventeen gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-ccms-lock.sh   # needs only a C compiler
@@ -280,6 +280,7 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-absence.sh     # every "X() is not carried" resolves against src/
         $ bash script/test-doc-prose.sh   # vale over every tracked document
         $ bash script/test-report.sh      # a committed kernel report is a whole capture
+        $ bash script/test-reverts.sh     # a take-back of recent work carries its reason
 
 `test-provenance.sh` is the one of those six that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
