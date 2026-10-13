@@ -3720,8 +3720,20 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		if (pmax > 128)
 			pmax = 128;
 		if (ncount > (int)pmax) {
+			/*
+			 * ncount ONLY, and nbytes is left as the size rule
+			 * chose it.  nbytes is what the block is ALLOCATED at
+			 * (dummy.data_off = hammer2_getradix(nbytes) below), so
+			 * shrinking it here shrinks the block on media and the
+			 * allocator compensates with more of them: measured
+			 * 2026-10-13, file A allocated 387 blocks for 64 blocks
+			 * of data, the duplicate took 324 of its own instead of
+			 * sharing, and test-enospc.sh went from 0 failures on the
+			 * baseline to 1 with this line.  ncount is what the keybits
+			 * helpers read, so bounding it alone narrows the radix
+			 * without touching the allocation.
+			 */
 			ncount = (int)pmax;
-			nbytes = ncount * sizeof(hammer2_blockref_t);
 		}
 	}
 
