@@ -9599,3 +9599,34 @@ under a keybits-6 parent are all in it. Which of the two is the producer is
 still open; the pass boundary says both are confined to the pass that has to
 copy the pre-existing tree, and no later pass is offered another chance at it
 because the stamp is already set.
+
+## The write-back helper was a no-op on every pass, and the flag proves it, 2026-10-13
+
+`hammer2_sync_flush()` gated its work on `chain->flags & HAMMER2_CHAIN_FLUSH_MASK`
+and did nothing when the test failed. A print added at that gate, in the
+run now in flight, reports which way it went on every pass:
+
+    sync_flush: clindex 1 chain 000000006443b1d2 not flagged (00046102)
+
+Decoding `0x00046102` against the header: ALLOCATED, TESTEDGOOD, COUNTEDBREFS,
+ONRBTREE, BLKMAPPED. None of the four `FLUSH_MASK` bits (MODIFIED 0x00000001,
+UPDATE 0x00000040, ONFLUSH 0x00000200, DESTROY 0x00000004) is set. So the
+helper took its empty branch and returned without calling `hammer2_flush()`.
+
+The pass count and the skip count are equal on every reading: 22 passes and
+22 `not flagged`, then 26 and 26. One skipped write-back per pass, every
+pass, with no exception. That is a total write-back failure matching the
+observed loss, and it is larger than the 340 refusals and consistent with the
+3873 stamps against 801 inodes on media.
+
+The flag is gone because `hammer2_chain_setflush()` stops at the first inode
+chain, the descending flush clears ONFLUSH on its way down, and no inode is on
+the sync queue to bridge this thread's own changes. The port's comment above
+the helper predicted exactly this; what it did not have was the value of the
+flag at the gate, which is what the print supplies. The test could not see the
+state it existed to detect.
+
+The repair is to set ONFLUSH on the element root before the test rather than
+asking whether another path already did, and to keep `FLUSH_ALL`, which is what
+makes the descent pass through PFS roots instead of stopping at them. Whether
+that alone converges is the next run's reading.
