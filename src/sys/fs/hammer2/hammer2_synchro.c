@@ -1068,11 +1068,47 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 		    (long long)focus->bref.key, focus->bref.keybits,
 		    (long long)(*parentp)->bref.key, (*parentp)->bref.keybits,
 		    (*parentp)->bref.type);
-	error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
+	/*
+	 * XXX Linux: the radix handed to hammer2_chain_create() here is the
+	 * SOURCE's, and the source's tree need not be shaped like this one.
+	 * Measured 2026-10-13 in the wedged log: 543902 inserts, every one with
+	 * `focus .../0 ... type 2` and a parent at keybits 5, 6 or 7, and a
+	 * `create_indirect` line for each producing `-> keybits 7`. A keybits-7
+	 * block spans the whole of a keybits-7 parent's keyspace, so it is not
+	 * that parent's child and cannot be represented: the destination either
+	 * refuses it (340 refusals measured) or rebuilds it per key (536026
+	 * create_indirect calls) until the run wedges.
+	 *
+	 * The clamp is HERE and not in hammer2_chain_indkey_dir(), because that
+	 * function is shared with the master's own inserts. Capping it there was
+	 * tried and narrowed BOTH trees, and the slave then covered no file keys
+	 * at all: 0 of 1001 presented, against 4001 of 8080. This path is the
+	 * only one that copies a radix from another device, so it is the only
+	 * one that can hand back a block too wide for the tree receiving it.
+	 */
+	{
+		int cbits = focus->bref.keybits;
+		hammer2_key_t ckey = focus->bref.key;
+
+		if ((*parentp)->bref.keybits > 0 &&
+		    cbits >= (*parentp)->bref.keybits) {
+			cbits = (*parentp)->bref.keybits - 1;
+			if (cbits < 0)
+				cbits = 0;
+			/*
+			 * The key was normalized to the source's radix, so it
+			 * has to be renormalized to the narrower one or the
+			 * block lands on the wrong boundary.  Same mask the
+			 * radix helpers apply.
+			 */
+			ckey &= ~(((hammer2_key_t)1 << cbits) - 1);
+		}
+		error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
 				     focus->bref.methods,
-				     focus->bref.key, focus->bref.keybits,
+				     ckey, cbits,
 				     focus->bref.type, focus->bytes,
 				     mtid, 0, 0);
+	}
 	if (error == 0) {
 		const hammer2_media_data_t *data;
 
