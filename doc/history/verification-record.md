@@ -9572,3 +9572,30 @@ The 340 refusals in the same run are a contributor and not the cause: each
 one can lose at most the copies its block carried, so they cannot produce a
 3000-inode shortfall. The order is the stamp and the write-back first, the
 radix divergence second.
+
+## The initial synchronization of a joined element copies none of the tree that predates it, 2026-10-13
+
+The images from the run that carried the corrected instrument separate by
+file, not by count, and the separation is total. Every file in the set is
+named either `f<n>`, written to the master's cluster mount before the SLAVE
+element was created, or `g<c>-<n>`, written during the unmount cycles while
+both elements existed. Reading each side's inode tree by those two prefixes:
+
+    MASTER:  f* 4000, g* 799
+    SLAVE:   f*    0, g* 799
+
+Zero of the 4000 files that predate the element reached the slave's inode
+tree. All 799 written while the element was live did. The boundary is not the
+key, the radix, the file size or the block type; it is whether the file
+existed at the moment the element joined the cluster.
+
+That is the defect, and it is narrower than the three radix readings and the
+write-back note above taken alone: the INITIAL full synchronization of a
+newly joined element copies nothing of the master's existing tree, while the
+incremental synchronization after it copies everything. The radix guard and
+the stamp both act inside that first pass, which is where all 3873
+`syncthr: update inode` events fall, and the 320 refusals of a keybits-7 block
+under a keybits-6 parent are all in it. Which of the two is the producer is
+still open; the pass boundary says both are confined to the pass that has to
+copy the pre-existing tree, and no later pass is offered another chance at it
+because the stamp is already set.
