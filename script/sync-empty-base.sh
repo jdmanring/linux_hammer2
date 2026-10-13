@@ -335,9 +335,43 @@ nz=$(grep 'after unmount' "$W/klog" 2>/dev/null | grep -vc ', 0 modified' || tru
 [ "${nz:-0}" -ge 1 ] 2>/dev/null
 check "an unmount left modified chains, which is what the window needs" $? \
 	"${left:-0} unmount reading(s), ${nz:-0} with modified chains"
-e=$(val empty-base); [ "${e:-0}" -ge 1 ] 2>/dev/null; check "a flush finds an empty base" $? "${e:-0} miss(es)"
-r=$(val gave-up); [ "${r:-0}" -ge 1 ] 2>/dev/null; check "the chain check gives up, as the original log does" $? "${r:-0}"
-d=$(val device-in-error); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the device is marked in error" $? "${d:-0}"
+# The three checks below read the ORIGINAL fault's signature: a flush that
+# finds an empty base, a chain check that gives up, a device marked in
+# error. They were written when the fault was live and a run that produced
+# none of them had failed to reproduce it. Once the fault is FIXED those
+# same three readings are the result wanted, and a script that still calls
+# them failures cannot tell a fix from a broken probe: the run of
+# 2026-10-13 reported "5 failed" for a tree that neither crashed nor hung.
+# So which way each reading counts is stated rather than assumed, the same
+# shape as test-enospc.sh's H2_ENOSPC_FILES control. H2_SYNC_EXPECT=fault
+# runs the old judgement, for using this script to reproduce the fault in
+# a tree that still has it.
+H2_SYNC_EXPECT=${H2_SYNC_EXPECT:-fixed}
+case "$H2_SYNC_EXPECT" in
+fixed|fault) ;;
+*) echo "sync-empty: COULD-NOT-RUN: H2_SYNC_EXPECT must be fixed or fault" >&2
+   exit 2 ;;
+esac
+# want N: the reading is healthy when it is 0 under `fixed` and when it is
+# at least 1 under `fault`. Passed the value and the label.
+want() { # value label
+	v=${1:-0}
+	if [ "$H2_SYNC_EXPECT" = fault ]; then
+		[ "$v" -ge 1 ] 2>/dev/null
+	else
+		[ "$v" = 0 ] 2>/dev/null
+	fi
+}
+e=$(val empty-base)
+want "$e" "a flush finds an empty base"; check "a flush finds an empty base" $? \
+	"${e:-0} miss(es), expected $H2_SYNC_EXPECT"
+r=$(val gave-up)
+want "$r" "the chain check gives up"
+check "the chain check gives up, as the original log does" $? \
+	"${r:-0}, expected $H2_SYNC_EXPECT"
+d=$(val device-in-error)
+want "$d" "the device is marked in error"
+check "the device is marked in error" $? "${d:-0}, expected $H2_SYNC_EXPECT"
 p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${p:-none}"
 k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, BUG or UBSAN report" $? "${k:-none}"
 u=$(val mounts-after); [ "${u:-1}" = 0 ]; check "every mount is dropped" $? "${u:-none} left"
@@ -392,8 +426,15 @@ if [ -x "$FSCK" ] && [ -x "$HAMMER2" ]; then
 	[ "$nm" -gt 0 ] 2>/dev/null
 	check "the master's PFS holds files, by its own media" $? "$nm file entr(ies)"
 	cmp -s "$W/fp.master" "$W/fp.slave"
+	# The differing-line count is printed as the WHOLE delta, not as a
+	# count of content mismatches, because that is what `diff` computes
+	# and the two are different numbers whenever the two sides hold a
+	# different number of lines: on 2026-10-13 the master's fingerprint
+	# was 14,402 lines and the slave's 6,402, so "8,000 differ" was the
+	# entire absence of 4,000 inode and 4,000 data lines rather than
+	# 8,000 disagreements. Read the per-type counts before the total.
 	check "the slave converged to the master, entry for entry and block for block" $? \
-		"$ns against $nm file entr(ies); $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]' || true) line(s) differ of $(wc -l < "$W/fp.master")"
+		"$ns against $nm file entr(ies); $(diff "$W/fp.slave" "$W/fp.master" | command grep -c '^[<>]' || true) line(s) differ of $(wc -l < "$W/fp.slave")"
 else
 	echo "  FAIL  convergence not read: no fsck_hammer2 or hammer2 (H2_FSCK, H2_HAMMER2)"
 	fail=$((fail + 1))

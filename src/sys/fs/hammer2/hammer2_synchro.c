@@ -505,11 +505,20 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * guest that is the read KASAN reported naming this
 			 * caller: its RIP is in this function and the field is
 			 * one of this frame's, which is the opposite of the
-			 * 2026-10-12 fault whose offset belonged to
-			 * hammer2_inode_chain_and_parent().  Test first, then
-			 * read.
+			 * fault whose offset belonged to
+			 * hammer2_inode_chain_and_parent().
+			 *
+			 * With the chain tested, a NULL one must still ask for
+			 * the update: `want_update` is what reaches the scan
+			 * below, and that scan is the part that CREATES the
+			 * missing element.  Upstream cannot reach this with a
+			 * NULL chain, so it has no case for one.  Returning 0
+			 * here is the reading that measured 4,000 inodes and
+			 * 4,000 data blocks absent from the slave while every
+			 * dirent was present: the element was skipped instead of
+			 * built.  A missing element is a reason to update.
 			 */
-			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0;
+			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 1;
 			if (chain) {
 				hammer2_chain_unlock(chain);
 				hammer2_chain_drop(chain);
