@@ -9332,9 +9332,27 @@ pair is what a later session needs rather than either alone.
         indirect_maint: move sub 0x420/5 to parent 0x400/7
         hammer2_base_insert: no room
 
-  -- and `hpanic("no room")` at `hammer2_chain.c:5258` follows. The move loop
-  is relocating children into the block `create_indirect()` just built and
-  runs out of slots.
+  -- and `hpanic("no room")` at `hammer2_chain.c:5210` follows.
+
+The move lines and the panic are adjacent in the log but they are not the
+same event, and reading them as one names the wrong function. The stack the
+run printed under the panic is
+
+    hammer2_base_insert
+    hammer2_flush_core
+    hammer2_flush_recurse
+
+so the insert that found no room is the FLUSH's own blockmap update, at
+`hammer2_flush.c:962`, not the move loop. The flush derives its entry count
+straight from the block it is writing into --
+
+    count = parent->bytes / sizeof(hammer2_blockref_t);
+
+-- and that count was set when the block was allocated. A block whose entry
+count and whose span disagree is one `hammer2_base_insert()` cannot fill at
+the flush, whatever the move loop did or did not put in it. This is the
+second time this session a stack has corrected a mechanism read off adjacent
+print lines; the first is the pair of readings above it.
 
 `no room` appears in none of the sixteen logs kept before this session and in
 both of the runs above, so it is produced by the sizing and not by the refusal.
@@ -9342,11 +9360,23 @@ One of the two runs also removed the fit guard, and because two changes moved
 together that run could not attribute the result on its own; the second run
 kept the guard and reproduced the same `no room`, which is what settles it.
 
-What the pair leaves as the target is the move loop, not the radix: its
-destination is chosen before anything tests that the destination can hold
-what is moved into it, and the only guard against `create_indirect()` being
-re-entered from there is `KKASSERT((flags & HAMMER2_INSERT_SAMEPARENT) == 0)`
-at `hammer2_chain.c:3172`, which every shipping build compiles out. That
-assert is upstream's and the move loop that trips it is upstream's too, so
-the defect is carried rather than the port's; it is the destination's
-capacity, not the new block's radix, that the next reading should measure.
+What the pair leaves as the target is the block's ENTRY COUNT against the span
+it was allocated with, decided where the block is allocated and read straight
+back by the flush as `parent->bytes / sizeof(hammer2_blockref_t)`. The two runs
+above are the two ways to get that pair wrong: too many entries for the span,
+so the freemap dies and the flush depth limit follows, or a span whose block
+cannot hold what the flush then inserts, so `no room`. The control is the
+master built by this same code: read off its own media every indirect block it
+holds satisfies `2^keybits >= count`, keybits 7 with 128 slots, keybits 6 with
+32, keybits 62 and 63 with 32. The next reading is the one that pairs
+`ichain->bytes` with `ichain->bref.keybits` at the allocation site, on the
+slave where the two trees differ, rather than any further arithmetic at the
+mask.
+
+A separate entry belongs to the move loop and does not get one here. The only
+guard against `create_indirect()` being re-entered from
+`hammer2_chain_indirect_maintenance()`'s move loop is
+`KKASSERT((flags & HAMMER2_INSERT_SAMEPARENT) == 0)` at `hammer2_chain.c:3172`,
+which every shipping build compiles out, and that assert is upstream's. No
+measurement this session reached it; nothing here should be read as evidence
+about it either way.
