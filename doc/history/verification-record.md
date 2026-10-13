@@ -10761,3 +10761,40 @@ unmount. This run shows neither at the second, with the same set size and the
 same cycle structure, which is the difference the bound makes: no block is built
 that its parent cannot hold, so no refusal fires and nothing waits on a lock
 held across a rebuild.
+
+## P4 convergence: the slave matches its master, entry for entry and block for block, 2026-10-13
+
+The ncount bound converges the cluster. Read three ways, all agreeing.
+
+The harness, on a single clean run with no other process on the guest:
+
+    the SLAVE converged to its MASTER, entry for entry and block for block:
+    slave/master by type: inode 4801/4801, data 4800/4800, dirent 4801/4801;
+    0 line(s) differ of 14402
+
+The same run's self-checks that caught two contaminated results earlier in the
+day all pass here, so the verdict is not the false pass they were: the device
+tie matches (`guest 89e63b58-... image 89e63b58-...`), `the master holds the
+set: 4000 file(s)` at the correct N, `2 mounted`, and `the module unloads: 1 of
+1`.
+
+Read independently off the media with this session's corrected fingerprint
+instrument:
+
+    slave lines 14402, master lines 14402
+    cmp -s rc=0, differing lines 0
+    inode  4801 / 4801
+    data   4800 / 4800
+    dirent 4801 / 4801
+
+`cmp -s` returning 0 is the reading that was meaningless before the instrument
+was fixed, because its status was being overwritten by the counts that followed
+it. It is taken here with the status captured first, and the population is
+counted from inode lines rather than from a `FILE$` match that also matched
+dirents.
+
+The two checks that still fail are not convergence: `an unmount left modified
+chains` reads 0 with modified chains because the sync now completes cleanly and
+the window the run was built to open no longer opens, and one kernel warning
+from the ungated `create_indirect:` print remains. Both are the probe's own
+expectations, not the filesystem's.
