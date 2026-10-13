@@ -498,15 +498,16 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 						    HAMMER2_RESOLVE_ALWAYS |
 						    HAMMER2_RESOLVE_SHARED);
 			/*
-			 * XXX Linux: the carried code reads
-			 * chain->bref.modify_tid on the line ABOVE its own
-			 * `if (chain)` test, so a NULL chain is a null-ptr
-			 * deref rather than a skipped update.  Measured
-			 * 2026-10-12: null-ptr-deref at
-			 * hammer2_inode_chain_and_parent+0xfe reached from
-			 * here, on a volume where a create_indirect refusal
-			 * had left the inode's cluster element empty.  Test
-			 * first, then read.
+			 * XXX Linux: the carried code read
+			 * `chain->bref.modify_tid` on the line above its own
+			 * `if (chain)` test, so a NULL chain was a null-ptr
+			 * deref rather than a skipped update.  On the KASAN
+			 * guest that is the read KASAN reported naming this
+			 * caller: its RIP is in this function and the field is
+			 * one of this frame's, which is the opposite of the
+			 * 2026-10-12 fault whose offset belonged to
+			 * hammer2_inode_chain_and_parent().  Test first, then
+			 * read.
 			 */
 			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0;
 			if (chain) {

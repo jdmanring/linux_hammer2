@@ -446,17 +446,25 @@ hammer2_inode_chain_and_parent(hammer2_inode_t *ip, int clindex,
 		} else {
 			hammer2_spin_unsh(&ip->cluster_spin);
 			/*
-			 * XXX Linux: the carried code dereferences the NULL
-			 * chain on the next line, and upstream does too, but
-			 * upstream only reaches it from a panic.  Here a
-			 * missing cluster element is an ordinary outcome of
-			 * the flush path, measured 2026-10-12 as a null-ptr
-			 * deref at +0xfe reading chain->bref.modify_tid.  The
-			 * caller's contract is "chain, or NULL if the inode
-			 * does not have this element", which both call sites
-			 * in hammer2_sync_slaves() already test for... except
-			 * one of them does it a line too late.  Return the
-			 * NULL and let the caller decide.
+			 * XXX Linux: an element with no chain is an ordinary
+			 * outcome on this port's sync path, and the carried
+			 * code immediately dereferences it.  The line below
+			 * is `parent = chain->parent`, and a NULL chain there
+			 * reads the field at offset 0x370, which is what the
+			 * KASAN guest reported on 2026-10-12 as a null-ptr
+			 * deref at hammer2_inode_chain_and_parent+0xfe.  An
+			 * offset inside this function is this function's, so
+			 * the fault is that line; the same run also printed a
+			 * deref naming the caller, which is a different read.
+			 * Upstream carries the identical unguarded line, so
+			 * the deref is DragonFly's.  What this port adds is a
+			 * path that reaches an empty element: a
+			 * create_indirect refusal leaves one where upstream
+			 * panics at the insert instead.
+			 *
+			 * The contract is "the chain, or NULL if the inode has
+			 * no element at clindex".  Return the NULL and let the
+			 * caller test it, rather than faulting here.
 			 */
 			kprintf("chain_and_parent: ip %p clindex %d nchains %d "
 			    "chain NULL\n", ip, clindex, ip->cluster.nchains);

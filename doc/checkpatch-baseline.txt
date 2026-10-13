@@ -20,15 +20,12 @@
 # error, so no shipping build reaches them.
 # `braces {} are not necessary` moved 7 -> 6 on 2026-10-12, the same day.
 # The row counts an `if` whose body is one statement and is nonetheless
-# braced, so a finding LEAVES this set when a print is added to a braced
-# single-statement body and the checkpatch message names the brace rather
-# than the statement.  The instance is hammer2_admin.c's
-# hammer2_thr_wait(), which grew the flags print inside its cmpset arm.
-# Nothing was suppressed and nothing new was introduced: the two prints in
-# that function are inside an `if` the tree braces deliberately, to keep
-# `kprintf` beside `return`, and checkpatch's own preference would unbrace
-# it.  Recorded rather than reverted, because the print is the instrument
-# for the teardown wait and the brace is what the surrounding tree does.
+# braced, so a finding LEAVES this set when a second statement is added to
+# such a body and checkpatch then names the brace rather than the statement.
+# The instance is hammer2_admin.c's hammer2_thr_wait(), whose
+# atomic_cmpset_int arm grew the flags print.  Nothing was suppressed and
+# nothing new was introduced.  Recorded rather than reverted, because the
+# print is the instrument for the teardown wait, which has no other reading.
 # sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible

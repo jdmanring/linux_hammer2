@@ -8814,3 +8814,75 @@ why the thread did not set it, and the print for that is the flags
 recorded at entry and on each loop of `hammer2_thr_wait()`. Fixing the
 flush path is not the same fix as making the unmount refuse to wait
 forever, and the second one is worth having on its own.
+
+## The empty slave column is the whole column, and the unmount stops hanging, 2026-10-12
+
+Three prints were added in one build, because runs here cost twenty
+minutes and the previous three runs each answered one question that the
+next run then invalidated:
+
+- `hammer2_thr_wait()` (`hammer2_admin.c:870`) prints the requested
+  `flags`, the observed `flags` and `thr->td` at entry and once per five
+  seconds of waiting.
+- `hammer2_inode_chain_and_parent()` (`hammer2_inode.c:451`) prints the
+  inode, the cluster index and `nchains` when the selected element has no
+  chain, and returns NULL with `*parentp` NULL rather than dereferencing.
+- `hammer2_sync_slaves()` (`hammer2_synchro.c:500` and `:820`) no longer
+  reads `chain->bref.modify_tid` before testing `chain`, and skips a pass
+  whose parent is NULL instead of asserting.
+
+`script/sync-empty-base.sh` on the KASAN guest, `H2_RUN_TIMEOUT=1500`:
+
+| reading | value |
+| --- | --- |
+| `Oops:` | 0 |
+| `kernel BUG` | 0 |
+| `device in error` | 0 |
+| `thr_wait:` | 0 |
+| `chain_and_parent:` NULL skips | 60,672 |
+| `create_indirect: new ... does not fit` | 230 |
+| unmount/remount cycles completed | 3 of 4, all recorded `after unmount` |
+| `from empty base` | 0 |
+
+Two things this settles and one it does not.
+
+Settled: the crash and the hang travelled together in every earlier run. The
+null-ptr deref that `hammer2_inode_chain_and_parent()` took at `+0xfe` is the
+same empty cluster element that the sync thread now skips 60,672 times, and
+with the deref replaced by a skip the run completed three unmounts where the
+previous run hung on the first, with the `thr_wait` print never firing.
+
+Candidate, NOT yet measured: that the hang was the oops. A sync thread that
+oopses inside a kthread never reaches the code that sets
+`HAMMER2_THREAD_STOPPED`, and `hammer2_pfsfree_scan()` waits for that bit in
+an unbounded loop, so an oops on the sync thread would leave the unmount
+waiting forever. That would make the wait a consequence of the fault rather
+than an independent defect. It is consistent with every run so far, and the
+print that would settle it is `hammer2_thr_wait()`'s own, which has not
+fired because the fault is gone. It stays a candidate until a run sets the
+fault and hangs in the same breath.
+
+Settled: the deref itself is DragonFly's, not this port's. Upstream's
+`hammer2_inode_chain_and_parent()` reads `parent = chain->parent` with no
+NULL test, and upstream's `hammer2_sync_slaves()` reads
+`chain->bref.modify_tid` above its own `if (chain)`, both byte-identical
+here before this commit. What this port added is a path that reaches the
+empty element: a `create_indirect()` refusal now declines to build a block
+that cannot fit its parent, which leaves the destination's cluster element
+empty, where upstream panicked at the insert instead. The port reached the
+same impossible state by a different door.
+
+Not settled: the `clindex 1` column is empty for EVERY inode, not for the
+handful whose parent filled. 230 refusals cannot empty 4,200 inodes'
+second element, so the refusal is not what empties the column, and the
+empty column is why `from empty base` never fires: the copy is compared
+against nothing. Candidate mechanisms, none measured: the element was
+never populated by this port's mount path, or it is cleared before the
+thread's first pass each cycle. The print for that is the same one at
+`hammer2_inode.c:451` moved to `hammer2_mount()`'s cluster setup, or a
+counter of how many elements are populated when the first pass starts.
+
+The convergence reading still has no number, and this run could not have
+produced one: `sync-empty-base.sh` asserts the population before it
+compares, and an empty slave column is a failed population assertion
+rather than a converged copy.

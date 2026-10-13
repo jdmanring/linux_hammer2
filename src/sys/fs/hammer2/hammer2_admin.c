@@ -874,17 +874,19 @@ hammer2_thr_wait(hammer2_thread_t *thr, uint32_t flags)
 
 	/*
 	 * XXX Linux: the waiting flags and the thread they are being waited
-	 * on, at entry and once per five seconds of waiting.  The unmount of
-	 * 2026-10-12 sits in this loop forever with no other task holding a
-	 * hammer2 frame, so the question the stack cannot answer is which
-	 * bit never arrived and whether thr->td is still a live thread that
-	 * could set it, or NULL because the thread already exited without
-	 * setting it.  Printed from inside the wait rather than inferred
-	 * from the callers, which have produced three wrong mechanisms.
+	 * on, at entry and once per return of the sleep below.  The shape
+	 * worth recording is the wait itself: the sleep has a timeout and
+	 * the loop that contains it has none, so a thread-state bit that no
+	 * live task will ever set is an unbounded wait, and the timeout only
+	 * makes it slow.  The stack that reached it says an unmount was in
+	 * this loop, and the stack cannot say which bit it wanted or whether
+	 * thr->td was still a task that could set it.  Those are what the
+	 * print answers.
 	 *
-	 * ponytail: unbounded prints if a wait never ends; that case is
-	 * exactly the one being diagnosed, and one line per five seconds is
-	 * cheaper than a lost run.
+	 * ponytail: two prints per wait, one at entry and one at most per
+	 * sleep timeout (hz*60) while it is stuck.  Remove the entry print
+	 * once the teardown wait is explained; the stuck-loop print is the
+	 * one that is worth keeping, since it is bounded by the wait itself.
 	 */
 	kprintf("thr_wait: thr %p want %04x td %p flags %04x\n",
 	    thr, flags, thr->td, thr->flags);
