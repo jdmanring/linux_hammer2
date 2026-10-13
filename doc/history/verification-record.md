@@ -10832,3 +10832,20 @@ cheapest form of the check and the one that should happen before the build:
 `pmax` is clamped to 128 rather than guarded, because `ncount` never exceeds 128:
 a parent wide enough to allow 128 slots needs no bound and a narrower one still
 gets one.
+
+## The widened shift reports no UBSAN and the run stays healthy, 2026-10-13
+
+One pass into the run carrying the 64-bit shift and the clamped pmax, against
+the run that carried the 32-bit one:
+
+    UBSAN reports     1 -> 0
+    create_indirect   0 -> 0
+    D-state tasks     0 -> 0
+    refusals          0 -> 0
+
+The KASAN/UBSAN build is the one that reported `shift exponent 61 is too large
+for 32-bit type 'unsigned int'` at the bound, and it reports nothing at that
+line now. The run clears its four unmounts with no stuck task, which is the
+same shape as the run before it, so widening the shift did not change the
+convergence result -- it only removed the undefined behavior that the shipping
+build was silently computing through.
