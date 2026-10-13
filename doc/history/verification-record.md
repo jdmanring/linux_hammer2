@@ -10033,3 +10033,46 @@ cannot finish its walk:
 Upstream discards `nerror` and `serror` precisely so that a per-key failure
 stays per-key. Both rollups were attempts to improve on that, and both
 converted a local failure into a whole-pass retry loop.
+
+## A known fail-open in the sync path, restored deliberately, 2026-10-13
+
+Removing the `rerror` rollup restores upstream's behavior, and upstream's
+behavior is fail-open: `hammer2_sync_slaves()` assigns `nerror` from every arm
+of its switch and never reads it, so a slave-side failure to copy a chain is
+discarded, the inode's `modify_tid` is still set to the master's below, and
+every later pass sees the two equal and does not retry. A destination that did
+not receive a chain is reported as synchronized.
+
+That is worth stating plainly rather than leaving implied. The rollup that
+would have closed it was written, run, and reverted, because it converted the
+discarded per-key failure into a whole-pass abort and the next pass re-tried
+the same early keys forever: the livelock signature of 75 inode keys attempted
+about 52 times each across 44 passes. A fix that prevents one silent loss and
+stops the copy entirely is not a fix.
+
+So the tree carries a known fail-open at that site, with the reason it is there
+in a comment beside it and here. It is not a shipping state; it is the state
+the current reading is taken in, and closing it needs the failure to be
+recorded per key without ending the pass, which the deferral list already
+exists to do.
+
+## The rollup was not the cause either, 2026-10-13
+
+Removing the `rerror` rollup and the pass-abort it fed leaves the reading
+unchanged: 75 distinct inode keys, 4023 inode-type inserts, 3950 stamps, 8080
+distinct focus keys presented, against 4001 files in the set. So the third port
+addition in this path is also not the cause of the missing inodes.
+
+Four mechanisms have now been proposed for this defect and four have been
+refuted by a run:
+
+1. the radix guard's refusals (340, too few)
+2. the write-back being a no-op (repaired, count unmoved)
+3. the scan livelocking on 180 keys (repaired, count unmoved)
+4. the slave-side error rollup aborting the pass (removed, count unmoved)
+
+The numbers that have not moved through all four are 75 distinct inode keys and
+4001 files. The scan presents 8080 distinct focus keys, of which 4001 are
+hash-shaped, so the keys are being offered; the insert path creates inode-type
+chains for 75 of them. Where the other 3925 inode keys go, and why the same 75
+recur about 54 times each, is the question none of the four mechanisms answers.
