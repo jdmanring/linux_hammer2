@@ -10109,3 +10109,22 @@ outcomes, and the four mechanisms tested earlier were all symptoms of it: the
 refusals are the guard declining these blocks, the 75 inode keys are the ones
 whose blocks were declined, and the write-back has nothing to write because the
 blocks it would write were never validly placed.
+
+## The cap sits on the computed keybits, under a nonzero-keybits parent only, 2026-10-13
+
+`hammer2_chain_indkey_dir()` returns the radix of the new indirect block, and
+the cap applied to it is scoped by `parent->bref.keybits > 0`. Only an INDIRECT
+or FREEMAP_NODE parent has a nonzero keybits; an inode parent has 0, so the cap
+is skipped for it and a directory inode's children keep their own radix. That
+is the case the invariant does not constrain, and the guard matches it.
+
+The cap is placed between the `ncount` expansion loop and the mask, so the mask
+below realigns the key to the narrowed radix rather than leaving the two out of
+step. That is the piece the two earlier attempts lacked: both tested the
+caller's `create_bits`, which `hammer2_chain_create_indirect()` is passed as 0
+on every call, so neither could ever fire, and both were reverted on that
+reading rather than on the radix being wrong to cap.
+
+A `hprintf` counts the fires, so a run reports whether the cap acted at all
+instead of leaving it to be inferred from the outcome. The run to read it is in
+flight.
