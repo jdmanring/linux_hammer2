@@ -33,3 +33,7 @@ CLAUDE.md
 
 # Local working notes. Not part of the port.
 AGENT-HANDOFF.md
+
+# Working proposals and handoff material: never committed, so a broad
+# `git add -A` cannot sweep them in. Swept in once, on 2026-10-12.
+proposals/
