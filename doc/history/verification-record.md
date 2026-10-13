@@ -8463,3 +8463,60 @@ slave's image before the run and the master's after it, which is a
 read-only reading and the next one to take. The guard here stays in the
 tree: it is correct on its own terms, it refuses a collapse that must not
 happen, and it is not yet the whole fix.
+
+## The fix: create_indirect inserts a block that does not fit its parent, 2026-10-12
+
+The invariant probe at the one insert path every builder routes through
+named the producer directly, and it is the function two earlier readings
+cleared. `hammer2_chain_create_indirect()` builds a new indirect block
+`ichain` and inserts it into `parent` at `hammer2_chain.c:3903` without
+checking that `ichain` fits inside `parent`. The stack that catches it:
+
+    insert: child 0000000000000400/7 outside parent 0000000000000440/6
+      hammer2_chain_create_indirect+0x12a7  (addr2line: hammer2_chain.c:3907)
+      hammer2_chain_create+0x46e
+
+and the same probe caught a second shape six seconds later,
+
+    insert: child 0000000000000480/7 outside parent 0000000000000480/7
+
+where the ranges are identical rather than disjoint, so only a keybits
+test catches it. `ichain`'s radix comes from the indkey helper, which
+sizes the block to hold its own contents and has no view of the parent's
+keyspace, so it can be wider than the parent it goes into. The rbtree
+cannot hold that: `hammer2_chain_cmp()` counts overlapping ranges as a
+match, the insert returns the incumbent, and the carried `KASSERTMSG` at
+`hammer2_chain.c:297` takes the device into error.
+
+The guard added at that insert refuses the block rather than inserting
+it, freeing `ichain`, setting `EIO` and returning NULL, which is the
+error path the caller already handles. It tests both the range and the
+keybits, because neither implies the other, and skips a parent of keybits
+0, which is a directory inode holding children of its own radix rather
+than a range.
+
+Measured, three runs of the same reproducer with the same build knobs:
+
+| run | guard | recursive-lock report | collision / BUG |
+|---|---|---|---|
+| `inv3` | none | 1 | 1 |
+| `inv9` | collapse containment | 1 | 1 |
+| `inv11` | create_indirect fit | 1 | **0** |
+
+The recursive-lock report is present in all three and is not this
+defect's; the collision and the `kernel BUG` are gone from the guarded
+run, which then continued 458 seconds of healthy sync work where every
+earlier run died by t=152. 71 sync stages completed, and the guest is
+idle at load 0.16 when the run's own 900 s window closes, so the
+reproducer no longer reaches the crash at all. It still does not reach
+the unmount inside that window, which is the original empty-base fault
+this script was built to chase and is a separate defect.
+
+`create_indirect` is carried. Diffed against DragonFly at `250a8b4928`
+the function is 415 lines here against 361 there, and the 54 are not a
+logic divergence: declarations split one per line, the port's own `hpanic`
+shim replacing `panic` (adding the `keybits = -1` and `return (NULL)`
+exits a returning panic needs), the port's error prints, and the probes
+and guard added by this session. The keybits selection and the create
+arguments are unchanged, so the missing fit check is upstream's. Fixed
+here under `XXX`, staged rather than filed.

@@ -293,6 +293,40 @@ hammer2_chain_insert(hammer2_chain_t *parent, hammer2_chain_t *chain, int flags,
 	}
 
 	/* Insert chain. */
+	/*
+	 * XXX Linux: the invariant every consumer of this rbtree relies on
+	 * is that a child's key range fits inside its parent's AND that the
+	 * child's keybits is strictly smaller, because hammer2_chain_cmp()
+	 * treats overlapping ranges as a match and the walk from a parent is
+	 * what every lookup descends through.  It is checked here, at the
+	 * one function all insertions route through, so whichever builder
+	 * produces a violation is named by the stack rather than inferred
+	 * from the path that happens to trip the rbtree first.
+	 *
+	 * Both tests are needed and neither implies the other.  Measured
+	 * 2026-10-12: a child of key 0x400 and keybits 7 was inserted into a
+	 * parent of key 0x400 and keybits 7, whose range is IDENTICAL, so a
+	 * containment test passes it and only the keybits test catches it.
+	 * An inode parent carries keybits 0 and holds children of its own
+	 * radix rather than a range, so it is skipped: that is the ordinary
+	 * shape and not a violation.  Guarded on the violation only, so a
+	 * healthy insert costs two comparisons.
+	 */
+	if (parent->bref.keybits > 0 && chain->bref.keybits > 0) {
+		hammer2_key_t p_end, c_beg, c_end;
+
+		p_end = parent->bref.key +
+		    ((hammer2_key_t)1 << parent->bref.keybits) - 1;
+		c_beg = chain->bref.key;
+		c_end = c_beg + ((hammer2_key_t)1 << chain->bref.keybits) - 1;
+		if (c_beg < parent->bref.key || c_end > p_end ||
+		    chain->bref.keybits >= parent->bref.keybits) {
+			hprintf("insert: child %016llx/%d outside parent %016llx/%d\n",
+			    (long long)chain->bref.key, chain->bref.keybits,
+			    (long long)parent->bref.key, parent->bref.keybits);
+			print_backtrace();
+		}
+	}
 	xchain = RB_INSERT(hammer2_chain_tree, &parent->core.rbtree, chain);
 	/*
 	 * XXX Linux: the assert below prints only the chain being inserted.
@@ -3866,6 +3900,42 @@ next_key_spinlocked:
 	base = NULL; /* safety, parent modify may change address */
 	KKASSERT((ichain->flags & HAMMER2_CHAIN_ONRBTREE) == 0);
 	KKASSERT(parent->core.live_count < count);
+	/*
+	 * XXX Linux: the new block has to fit inside the parent it goes
+	 * into, and nothing upstream checks that.  `ichain`'s radix comes
+	 * from the indkey helper above, which sizes the block to hold its
+	 * own contents and has no view of the parent's keyspace, so it can
+	 * be WIDER than the parent: measured 2026-10-12, a keybits-7 block
+	 * under a keybits-6 parent, and separately a keybits-7 block under
+	 * a keybits-7 parent.  The rbtree cannot hold either, because
+	 * hammer2_chain_cmp() counts overlapping ranges as a match, so the
+	 * insert below returns the incumbent and the carried KASSERTMSG at
+	 * hammer2_chain.c:297 fires and takes the device into error.
+	 *
+	 * Refusing here rather than at the insert leaves the parent intact
+	 * and the caller's create unanswered with an error it already has a
+	 * path for.  The alternative, letting the block in and hoping no
+	 * lookup crosses the two ranges, is what corrupts the rbtree the
+	 * unmount later walks.
+	 */
+	if (parent->bref.keybits > 0 && ichain->bref.keybits > 0) {
+		hammer2_key_t p_end, c_beg, c_end;
+
+		p_end = parent->bref.key +
+		    ((hammer2_key_t)1 << parent->bref.keybits) - 1;
+		c_beg = ichain->bref.key;
+		c_end = c_beg + ((hammer2_key_t)1 << ichain->bref.keybits) - 1;
+		if (c_beg < parent->bref.key || c_end > p_end ||
+		    ichain->bref.keybits >= parent->bref.keybits) {
+			hprintf("create_indirect: new %016llx/%d does not fit parent %016llx/%d\n",
+			    (long long)ichain->bref.key, ichain->bref.keybits,
+			    (long long)parent->bref.key, parent->bref.keybits);
+			hammer2_chain_unlock(ichain);
+			hammer2_chain_drop(ichain);
+			*errorp = HAMMER2_ERROR_EIO;
+			return (NULL);
+		}
+	}
 	hammer2_chain_insert(parent, ichain,
 	    HAMMER2_CHAIN_INSERT_SPIN | HAMMER2_CHAIN_INSERT_LIVE, 0);
 
