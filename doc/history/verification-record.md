@@ -9872,3 +9872,26 @@ parent comes from the slave's element, and `hammer2_sync_insert()` passes
 slave's CL tree; whether the flush of that tree reaches vdc's own hmp is the
 next question, and it is the first one this session has been able to state
 without also having to guess which defect it belongs to.
+
+## The chain lands on the right device, checked at the allocation, 2026-10-13
+
+The last place the copies could have gone was the wrong hmp, and that is
+ruled out by reading the two functions rather than by a run.
+`hammer2_chain_create()` overwrites its `hmp` argument with the parent's:
+`if (parent) { ... hmp = parent->hmp; }`. The scan's parent comes from
+`hammer2_inode_chain(ip, idx, ...)`, which returns
+`cluster->array[clindex].chain`, and the sync thread's `idx` is its own cluster
+element, so the parent is the slave's element chain and its hmp is vdc's. The
+created chain, the flush, and the media write are all directed at the slave's
+own device.
+
+So the copies are attached to the slave's element on the slave's device, the
+write-back runs on every pass, the scan walks the whole key space, and 801
+inodes arrive where 3873 are stamped. Every mechanism this session could state
+has been tested and none of them accounts for the gap between the two numbers.
+What is missing is a reading the run does not currently take: whether the
+chains that the scan stamps are still attached to the slave's element when the
+flush walks it, or have been detached between the stamp and the flush. That is
+the next instrument, and it belongs in `hammer2_sync_flush()` beside the
+existing flag print, counting the element's children against the number the
+pass stamped.
