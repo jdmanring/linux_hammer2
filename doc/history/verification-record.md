@@ -8881,17 +8881,37 @@ nothing in a shipping build. What this port adds is a path that can reach
 an empty element: a `create_indirect()` refusal declines to build a block
 that cannot fit its parent, where upstream panicked at the insert instead.
 
-Not settled, and the reading is worse than the entry above it suggests. All
-60,672 skips are `clindex 1` on a 2-chain inode, the slave's element, over
-128 distinct inodes sampled; and the convergence check now has a number,
-because this run reached it for the first time: the two volumes hold the
-same 4,800 entries and differ in 8,000 of 14,402 lines. So the slave holds
-the file entries and not the blocks behind them. Two candidate mechanisms,
-neither measured: the copy is created and then dropped before the pass
-ends, or `sync_replace` fills the entry and fails before the data. The
-print that separates them is the `nerror` returned either side of
-`hammer2_sync_insert()` and `hammer2_sync_replace()` at the
-`hammer2_synchro.c` call sites.
+Superseded, 2026-10-13, by the decomposition below. The two sentences this
+paragraph replaced read the skips as an empty slave column for every inode
+and blamed the two candidate mechanisms it named. The images say otherwise.
+
+What the media actually hold, from `hammer2 -v show`'s cluster fingerprint
+on both images with the population asserted first, taken by hand after the
+run rather than from its cached mount:
+
+| cluster PFS, by type | master | slave |
+| --- | --- | --- |
+| `inode` | 4,801 | 801 |
+| `dirent` | 4,801 | 4,801 |
+| `data` | 4,800 | 800 |
+
+All 4,801 directory entries reached the slave and 4,000 inodes and their
+4,000 data blocks did not. The line count the run printed, "8,000 differ of
+14,402", is the whole `diff` delta between a 14,402-line fingerprint and a
+6,402-line one, not 8,000 disagreements: on two sides holding different
+numbers of lines the two numbers are not the same, and only the per-type
+counts say which. The 60,672 skips are `clindex 1` on a 2-chain inode over
+128 distinct inodes sampled, and they are the 4,000 inodes whose element
+the pass then declined to build, not every inode in the PFS.
+
+The cause is in this port rather than inferred: `hammer2_sync_slaves()`
+returns early when `want_update` is 0, and the commit being recorded here
+set `want_update` to 0 whenever the chain was NULL. `want_update` is what
+reaches the scan that creates the missing element, so testing the NULL
+chain before reading it, and then skipping the update for exactly that
+case, turned a loud fault into a quiet loss of 4,000 inodes' data. A missing
+element is a reason to update. That is now what the code does, and the next
+run is what says whether it converges.
 
 The counter added in this commit replaces an unconditional print that was
 itself a defect: 60,672 `printk` calls to the guest's serial console, and
