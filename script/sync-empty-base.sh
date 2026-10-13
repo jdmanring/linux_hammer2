@@ -368,14 +368,6 @@ m=$(val master-mounted); [ "${m:-0}" -ge 2 ] 2>/dev/null; check "the master's RO
 s=$(val set-written); [ "${s:-0}" = "$N" ]; check "the master holds the set" $? "${s:-none} file(s)"
 t=$(val threads); [ "${t:-0}" -ge 1 ] 2>/dev/null; check "the cluster's thread is running" $? "${t:-none}"
 cp=$(val copied); [ "${cp:-0}" -ge 1 ] 2>/dev/null; check "the thread copied the set to the slave element" $? "${cp:-none} inode update(s)"
-# The population every check below depends on: an unmount that left the
-# master's element marked, or the window never opened. grep -c prints 0 and
-# exits 1 on no match, so each count is captured and the status discarded.
-left=$(grep -c 'after unmount' "$W/klog" 2>/dev/null || true)
-nz=$(grep 'after unmount' "$W/klog" 2>/dev/null | grep -vc ', 0 modified' || true)
-[ "${nz:-0}" -ge 1 ] 2>/dev/null
-check "an unmount left modified chains, which is what the window needs" $? \
-	"${left:-0} unmount reading(s), ${nz:-0} with modified chains"
 # The three checks below read the ORIGINAL fault's signature: a flush that
 # finds an empty base, a chain check that gives up, a device marked in
 # error. They were written when the fault was live and a run that produced
@@ -413,6 +405,17 @@ check "the chain check gives up, as the original log does" $? \
 d=$(val device-in-error)
 want "$d" "the device is marked in error"
 check "the device is marked in error" $? "${d:-0}, expected $H2_SYNC_EXPECT"
+# The window is the fourth reading of the same kind and was left out of the
+# switch when the other three moved into it: this check required the window to
+# OPEN, which is the fault condition. Once the sync completes cleanly no
+# unmount leaves modified chains, so a converged run failed it. It is judged
+# by H2_SYNC_EXPECT now, and the unmount-reading count is still printed so a
+# run that never unmounted reads differently from one whose unmounts were clean.
+left=$(grep -c 'after unmount' "$W/klog" 2>/dev/null || true)
+nz=$(grep 'after unmount' "$W/klog" 2>/dev/null | grep -vc ', 0 modified' || true)
+want "${nz:-0}" "an unmount left modified chains"
+check "an unmount left modified chains" $? \
+	"${left:-0} unmount reading(s), ${nz:-0} with modified chains, expected $H2_SYNC_EXPECT"
 p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${p:-none}"
 k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, BUG or UBSAN report" $? "${k:-none}"
 u=$(val mounts-after); [ "${u:-1}" = 0 ]; check "every mount is dropped" $? "${u:-none} left"
