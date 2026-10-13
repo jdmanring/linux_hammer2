@@ -10585,3 +10585,23 @@ that writes it.
 
 The count of 15619 walks against 3873 stamps is the deferral walk calling
 `sync_setflush` per copied chain, not per inode.
+
+## The clamp alone completes once in three runs, 2026-10-13
+
+Three runs of identical clamp-only source, `git diff` reporting no difference:
+
+| run | outcome |
+| --- | --- |
+| run 9 | completes: 4 unmounts, `0 inode, 0 chain, 0 modified` at teardown, 834 inodes on the slave |
+| run 11 | stalls at the first unmount: refusals climbing 270 to 320, D tasks appearing |
+| run 13 | stalls at the first unmount: t=565, 1 unmount, 1 pass, 11 D tasks |
+
+So the clamp is real and it is not deterministic. It removes the always-wedge
+that ran from run 6 to run 8, and the run then either completes or hangs on the
+same source. The refusal count and the D tasks climb in the runs that hang and
+not in the one that finished, which says the hang is the refusal path taken
+repeatedly rather than a different failure.
+
+Recorded plainly because the previous note called the clamp necessary and not
+sufficient on two runs; three puts the rate at one in three and the hang on the
+same mechanism as the stalling run before it.
