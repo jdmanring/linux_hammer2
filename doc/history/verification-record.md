@@ -10719,3 +10719,28 @@ most 64 moved into 64 slots, which fits exactly.
 
 A parent at keybits 0 is a directory inode's blockset rather than a key range and
 is left alone, which is the case the carried helper is normally called for.
+
+## The ncount bound removes the split loop entirely, 2026-10-13
+
+One pass into the run carrying the bound, against the same counters in the runs
+before it:
+
+| reading | without the bound | with the bound |
+| --- | --- | --- |
+| `create_indirect` calls | 536026 | 0 |
+| `does not fit` refusals | 340 | 0 |
+| `sync_insert` calls | 547925 | 11675 |
+| stamps | 3873 | 3676 |
+
+Zero split calls and zero refusals in the first pass. The inserts fall by a
+factor of 47. The loop that wedged three consecutive runs is the split calling
+`create_indirect` to build a block the same width as its parent; with the block
+bounded one radix level below its parent, no split is needed to place the
+copies, and the refusals that guard those blocks never fire because no such
+block is built.
+
+The master's tree is shaped by the same call, so the bound applies to both
+sides. That is required rather than a side effect: the two trees converge entry
+for entry only if both are built by the same sizing rule, and the rule as
+carried produced a 4KB level under a directory inode and a 16KB level under the
+INDIRECT that followed it.
