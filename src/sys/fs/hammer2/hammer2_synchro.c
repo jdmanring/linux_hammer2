@@ -160,10 +160,10 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 			 * the pass, and the slave's media held 801 of them. With
 			 * the error thrown away there was nothing to read.
 			 *
-			 * Read it, report it, and keep it: the caller treats a
-			 * pass with an error as one that must be retried, and a
-			 * write that did not happen must not be reported as one
-			 * that did.
+			 * Read and report it. The caller prints it and does NOT
+			 * retry the pass, so this alone turns a silent failure
+			 * into a visible one rather than repairing it; whether a
+			 * retry is also needed is what the next run decides.
 			 */
 			error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
 			    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);

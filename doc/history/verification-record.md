@@ -9709,3 +9709,29 @@ instead, so the same tree split under an inode is narrow and split under an
 indirect is wide. The master's own media shows both widths, 128 slots at
 keybits 7 to 12 and 32 slots at keybits 62 and 63, so neither is wrong on its
 own; what differs is which level happened to be full when the split was made.
+
+## Forcing the write-back to run does not converge the slave, 2026-10-13
+
+The no-op was repaired and the repair measured. Setting ONFLUSH on the element
+root before the gate makes `hammer2_sync_flush()` call `hammer2_flush()` on
+every pass instead of on none, and the flag print confirms the change from the
+inside: 22 of 22 and 50 of 50 `not flagged` in the two runs before it, 0 in the
+run with it. The flush runs, reports no error, and the run ends with 0 kernel
+fatal.
+
+Convergence is unchanged, to the digit:
+
+| | before the repair | after it |
+| --- | --- | --- |
+| `not flagged` (skipped write-back) | 22/22 and 50/50 | 0 |
+| flush error | 0 | 0 |
+| slave file inodes on media | 801 | 801 |
+| slave data blocks | 800 | 800 |
+| slave dirents | 4801 | 4801 |
+
+So the write-back helper being a no-op was a real defect and is not the cause
+of the loss. The 801 is invariant across all three runs, including one with no
+stamps at all and one whose flush ran on every pass, which is what says the
+sync thread's copies are not what puts those 801 inodes on the slave. The
+cause of the 4000-inode absence remains unfound, and the earlier notes naming
+the radix guard or the write-back are both refuted as the cause by this run.
