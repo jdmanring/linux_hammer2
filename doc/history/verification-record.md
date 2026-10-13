@@ -10878,3 +10878,36 @@ The three changes this session ends with:
 * the two clamps kept from the refuted work, in `hammer2_sync_insert()` and
   `hammer2_chain_rename()`, which narrow copied and moved chains to the parent
   that must hold them.
+
+## test-enospc.sh reports one dedup failure, and whose it is is being measured, 2026-10-13
+
+The gate run at 15:2x reports `filled 2G, 1 failure(s)`, and the failure is the
+dedup exerciser, which has passed on this tree before (`dedup 3 check(s) 0
+failed` on 2026-09-27, recorded in this file). So it is a regression of
+something and not a known state.
+
+    dedup-ok   free blocks before: 26411
+    dedup-ok   free blocks after file A: 26024
+    dedup-ok   free blocks after file B: 25700
+    dedup-ok   file A allocated 387 blocks for 64 blocks of data
+    dedup-ok   the duplicate cost 324 blocks against file A's 387
+    dedup-fail the duplicate allocated its own media: 324 against 387 blocks for identical content
+
+The bar is a quarter of file A's growth and the duplicate cost 324 against 387,
+which is 84 percent, so the failure is not a threshold artifact: the duplicate
+took its own media.
+
+Two facts say the split bound does not reach this path, and neither is being
+trusted as the answer:
+
+* the dedup exerciser's path is `hammer2_chain_modify()` and the duplicate with a
+  `dedup_off`, not a split, and the split bound sits inside
+  `hammer2_chain_create_indirect()`;
+* the non-comment lines this session added to `hammer2_chain.c` are the bound and
+  one diagnostic condition, with no `dedup`, `nradix`, `modify` or `duplicate`
+  line among them.
+
+The attribution is being measured rather than argued: the session's own starting
+commit `4578a7c` is built in a worktree and the same gate run against it. If the
+baseline fails too, the failure predates this work; if it passes, the bound is
+the cause and the bound is what gets changed.
