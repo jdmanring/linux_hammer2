@@ -3765,9 +3765,24 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		c_end = c_beg + ((hammer2_key_t)1 << ichain->bref.keybits) - 1;
 		if (c_beg < parent->bref.key || c_end > p_end ||
 		    ichain->bref.keybits >= parent->bref.keybits) {
+			/*
+			 * XXX Linux: the STACK, not just the values.  The
+			 * values say the block does not fit; they cannot say
+			 * who asked for it.  Measured 2026-10-13: every one
+			 * of these is a keybits-7 block for key 0x400 under a
+			 * parent holding 0x440/6, and capping the radix was
+			 * tried and reverted because the KEY is outside the
+			 * parent's range and no radix makes it belong there.
+			 * So the question is the caller that called
+			 * hammer2_chain_create() for that key with that
+			 * parent, and this backtrace is what names it.
+			 * print_backtrace() is the tree's own dump_stack()
+			 * wrapper and needs nothing new.
+			 */
 			hprintf("create_indirect: new %016llx/%d does not fit parent %016llx/%d\n",
 			    (long long)ichain->bref.key, ichain->bref.keybits,
 			    (long long)parent->bref.key, parent->bref.keybits);
+			print_backtrace();
 			hammer2_chain_unlock(ichain);
 			hammer2_chain_drop(ichain);
 			*errorp = HAMMER2_ERROR_EIO;
