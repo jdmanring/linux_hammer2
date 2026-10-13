@@ -445,6 +445,23 @@ hammer2_inode_chain_and_parent(hammer2_inode_t *ip, int clindex,
 			hammer2_chain_lock(chain, how);
 		} else {
 			hammer2_spin_unsh(&ip->cluster_spin);
+			/*
+			 * XXX Linux: the carried code dereferences the NULL
+			 * chain on the next line, and upstream does too, but
+			 * upstream only reaches it from a panic.  Here a
+			 * missing cluster element is an ordinary outcome of
+			 * the flush path, measured 2026-10-12 as a null-ptr
+			 * deref at +0xfe reading chain->bref.modify_tid.  The
+			 * caller's contract is "chain, or NULL if the inode
+			 * does not have this element", which both call sites
+			 * in hammer2_sync_slaves() already test for... except
+			 * one of them does it a line too late.  Return the
+			 * NULL and let the caller decide.
+			 */
+			kprintf("chain_and_parent: ip %p clindex %d nchains %d "
+			    "chain NULL\n", ip, clindex, ip->cluster.nchains);
+			*parentp = NULL;
+			return (NULL);
 		}
 
 		/* Get parent, lock order must be (parent, chain). */

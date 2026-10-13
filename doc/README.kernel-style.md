@@ -526,6 +526,21 @@ by the checker, which demotes line length: 41 prints here split and one
 runs to 102 columns, so joining would have made three 130-column lines
 against a tree that does not write them.
 
+1,264 to 1,268 on 2026-10-12, four net hits across three rows, all of
+them the style of the surrounding tree rather than a new class. Two are
+`return is not a function` from the `return (NULL)` at each of the two
+new guard sites, one in `hammer2_inode.c` and one in `hammer2_synchro.c`,
+which is the BSD style the carried file already writes in 271 other
+places. One is a `quoted string split across lines` from the print in
+`hammer2_inode_chain_and_parent()`. The fourth is a hit LEAVING the set,
+which is the shape worth naming: `braces {} are not necessary for a
+single statement block` went 7 to 6, because a print was added inside
+the braced single-statement arm of `hammer2_thr_wait()`'s cmpset and
+checkpatch names the brace rather than the statement. A row that falls
+when a line is added reads as a regression if only the total is watched;
+the total here rose, which is why the four rows were read one at a time
+against HEAD rather than the difference being accepted as a number.
+
 1,260 to 1,261 when the CCMS lockdep exercise was added to
 `hammer2_ccms.c` behind `HAMMER2_CCMS_LOCKTEST`: one `return (x);` in
 `ccms_locktest_start()`, the BSD style the rest of the file uses. The

@@ -497,7 +497,18 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 						    &parent,
 						    HAMMER2_RESOLVE_ALWAYS |
 						    HAMMER2_RESOLVE_SHARED);
-			want_update = (chain->bref.modify_tid != sync_tid);
+			/*
+			 * XXX Linux: the carried code reads
+			 * chain->bref.modify_tid on the line ABOVE its own
+			 * `if (chain)` test, so a NULL chain is a null-ptr
+			 * deref rather than a skipped update.  Measured
+			 * 2026-10-12: null-ptr-deref at
+			 * hammer2_inode_chain_and_parent+0xfe reached from
+			 * here, on a volume where a create_indirect refusal
+			 * had left the inode's cluster element empty.  Test
+			 * first, then read.
+			 */
+			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0;
 			if (chain) {
 				hammer2_chain_unlock(chain);
 				hammer2_chain_drop(chain);
@@ -806,6 +817,19 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 						    HAMMER2_RESOLVE_ALWAYS |
 						    HAMMER2_RESOLVE_SHARED);
 
+			/*
+			 * XXX Linux: this call site already guards on
+			 * parent, and since a NULL chain always comes with a
+			 * NULL parent the pair is one condition.  Upstream
+			 * states it as an assert; here a missing cluster
+			 * element is an ordinary outcome of the flush path,
+			 * so it is a skipped update rather than a fault.
+			 */
+			if (parent == NULL) {
+				hammer2_xop_retire(&xop2->head,
+				    HAMMER2_XOPMASK_VOP);
+				return (merror);
+			}
 			KKASSERT(parent != NULL);
 			nerror = hammer2_sync_replace(
 					thr, parent, chain,

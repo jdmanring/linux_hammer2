@@ -872,6 +872,23 @@ hammer2_thr_wait(hammer2_thread_t *thr, uint32_t flags)
 	uint32_t oflags;
 	uint32_t nflags;
 
+	/*
+	 * XXX Linux: the waiting flags and the thread they are being waited
+	 * on, at entry and once per five seconds of waiting.  The unmount of
+	 * 2026-10-12 sits in this loop forever with no other task holding a
+	 * hammer2 frame, so the question the stack cannot answer is which
+	 * bit never arrived and whether thr->td is still a live thread that
+	 * could set it, or NULL because the thread already exited without
+	 * setting it.  Printed from inside the wait rather than inferred
+	 * from the callers, which have produced three wrong mechanisms.
+	 *
+	 * ponytail: unbounded prints if a wait never ends; that case is
+	 * exactly the one being diagnosed, and one line per five seconds is
+	 * cheaper than a lost run.
+	 */
+	kprintf("thr_wait: thr %p want %04x td %p flags %04x\n",
+	    thr, flags, thr->td, thr->flags);
+
 	for (;;) {
 		oflags = thr->flags;
 		cpu_ccfence();
@@ -881,6 +898,8 @@ hammer2_thr_wait(hammer2_thread_t *thr, uint32_t flags)
 		/* XXX Linux: tsleep_interlock() and PINTERLOCKED, see os.h */
 		if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
 			tsleep_word(&thr->flags, nflags, 0, "h2twait", hz*60);
+			kprintf("thr_wait: thr %p want %04x td %p flags %04x\n",
+			    thr, flags, thr->td, thr->flags);
 		}
 	}
 }
