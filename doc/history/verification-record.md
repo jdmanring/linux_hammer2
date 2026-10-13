@@ -10076,3 +10076,36 @@ The numbers that have not moved through all four are 75 distinct inode keys and
 hash-shaped, so the keys are being offered; the insert path creates inode-type
 chains for 75 of them. Where the other 3925 inode keys go, and why the same 75
 recur about 54 times each, is the question none of the four mechanisms answers.
+
+## The sync builds one full-width indirect per key and wedges, 2026-10-13
+
+The hang log of the run that removed the error rollup is 115 MB and 1,109,698
+lines, and 1,083,951 of them are two prints repeating the same pair:
+
+    sync_insert: focus 00000000000004e7/0 into parent 0000000000000480/7 type 2
+    create_indirect: parent 0000000000000480/7 create_bits 0 ncount 128 count 32 -> keybits 7 key 00000000000004e7
+    sync_insert: focus 00000000000004e8/0 ...
+    create_indirect: parent 0000000000000480/7 ... keybits 7 key 00000000000004e8
+
+A keybits-7 block spans 128 keys, and the parent `0x480/7` spans exactly
+`0x480` to `0x4ff`. So each new indirect block the thread creates at keybits 7
+covers the parent's whole range, has to absorb every other child to be
+representable, and is rebuilt on the next key: 547,925 `sync_insert` calls and
+536,026 `create_indirect` calls, one full-width block per key from `0x400` to
+`0x4ff`, before the run wedged past 1500 s with the guest holding three mounts,
+the module busy, and five tasks in D state.
+
+That is the same defect the refusals and the 75 inode keys have been pointing
+at from three directions. `hammer2_chain_create_indirect()` chooses the new
+block's radix from `ncount`, which is 128 for a 16 KiB block under any
+non-inode parent, and then raises keybits until the block holds them. Under a
+parent that is itself keybits 7, the result is a child the same width as its
+parent, which cannot be its child. The port's guard refuses that block and the
+refusal leaves the element unbuilt; without the refusal the block is built and
+the tree is rebuilt per key until the run wedges.
+
+Which of the two the fix belongs at is now a single question with two measured
+outcomes, and the four mechanisms tested earlier were all symptoms of it: the
+refusals are the guard declining these blocks, the 75 inode keys are the ones
+whose blocks were declined, and the write-back has nothing to write because the
+blocks it would write were never validly placed.
