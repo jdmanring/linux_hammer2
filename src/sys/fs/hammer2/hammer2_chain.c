@@ -295,20 +295,28 @@ hammer2_chain_insert(hammer2_chain_t *parent, hammer2_chain_t *chain, int flags,
 	/* Insert chain. */
 	xchain = RB_INSERT(hammer2_chain_tree, &parent->core.rbtree, chain);
 	/*
-	 * XXX Linux: the assert below prints only the chain being inserted,
-	 * and the chain it collided with is exactly what `xchain` holds and
-	 * what the message throws away.  hammer2_chain_cmp() matches on key
-	 * RANGE overlap, not on equality, so the incumbent decides which of
-	 * two different faults this is: an incumbent of the same key AND
-	 * keybits is a duplicate insertion, while an incumbent of a wider or
-	 * narrower range is an overlap that the create-indirect move loop
-	 * should have relocated and did not.  Printed only when there is an
-	 * incumbent, so the non-colliding path costs one predictable branch.
+	 * XXX Linux: the assert below prints only the chain being inserted.
+	 * Three things it throws away are what the 2026-10-12 fault turns
+	 * on, and all three are in hand at this point: `xchain`, the
+	 * incumbent RB_INSERT returned, whose key and keybits say whether
+	 * this is a duplicate insertion or a range overlap; the parent,
+	 * whose own key and keybits are the keyspace the new chain is
+	 * landing in; and the call stack, which names the producer rather
+	 * than leaving it to be inferred from prints upstream. Two rounds
+	 * of this fault were mis-read from the source, so the stack is
+	 * printed here rather than argued about: print_backtrace() is the
+	 * tree's own dump_stack() wrapper and needs nothing new.
+	 * hprintf is rate-limited and this runs only on a collision, which
+	 * happens once.
 	 */
-	if (xchain)
-		hprintf("collision %016llx/%d hits %016llx/%d\n",
+	if (xchain) {
+		hprintf("collision %016llx/%d hits %016llx/%d parent %016llx/%d type %d/%d\n",
 		    (long long)chain->bref.key, chain->bref.keybits,
-		    (long long)xchain->bref.key, xchain->bref.keybits);
+		    (long long)xchain->bref.key, xchain->bref.keybits,
+		    (long long)parent->bref.key, parent->bref.keybits,
+		    chain->bref.type, xchain->bref.type);
+		print_backtrace();
+	}
 	KASSERTMSG(xchain == NULL, "collision %016llx/%d",
 	    (long long)chain->bref.key, chain->bref.keybits);
 
@@ -3899,6 +3907,25 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 	hammer2_chain_t *sub;
 	int generation, error;
 	unsigned int chain_count, count;
+
+	/*
+	 * XXX Linux: the entry values, because the 2026-10-12 fault is a
+	 * collision raised inside this function.  The stack that caught it
+	 * runs flush_core -> indirect_maintenance -> rename_obref -> rename
+	 * -> chain_create -> chain_insert, and the collision printed
+	 * `0x400/7` inserted where its parent is ALSO `0x400/7`, so the
+	 * collapse appears to be moving a child in above itself.  Whether
+	 * that is what is happening, or the parent here is a different
+	 * chain than the one being collapsed into, is not visible from the
+	 * collision alone: the two must be read together, at entry, where
+	 * `parent` and `chain` are the values the collapse chose.  Printed
+	 * only when the child is not strictly narrower than its parent,
+	 * since that is the shape that cannot legally collapse.
+	 */
+	if (chain->bref.keybits >= parent->bref.keybits)
+		hprintf("indirect_maint: parent %016llx/%d collapsing %016llx/%d\n",
+		    (long long)parent->bref.key, parent->bref.keybits,
+		    (long long)chain->bref.key, chain->bref.keybits);
 
 	/* Make sure we have an accurate live_count. */
 	if ((chain->flags &
