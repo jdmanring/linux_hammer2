@@ -3773,12 +3773,17 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * as a type discriminator rather than a radix at all.
 	 *
 	 * So the range test belongs on those two types and nowhere else.  A
-	 * first version of this check applied it to any parent with
-	 * keybits > 0, and that is what refused an inode parent measured at
-	 * `0x440/6`: the refusal was the check's own defect, and the
-	 * backtrace it printed showed hammer2_sync_insert() creating a
-	 * master chain under an inode-shaped parent, which is the ordinary
-	 * case this check was misreading.
+	 * first version applied it to any parent with keybits > 0, which was
+	 * wrong for the inode case; restricting it is right on its own, and
+	 * it did NOT stop the refusals, which the next run showed: 140 of
+	 * them remained, against a parent at `0x440/6` that is INDIRECT and
+	 * whose range really does not contain the child.  Measured on the
+	 * same run, hammer2_sync_insert() is called with both kinds, 110
+	 * times with an INODE parent of keybits 0 and 90 with an INDIRECT
+	 * parent of keybits 7.  So the refusal is a real mismatch of the two
+	 * trees and not an artifact of this check; what remains is why the
+	 * slave's scan holds a parent that does not contain the master key
+	 * it is about to insert.
 	 *
 	 * The check MUST be here, before the loop below moves the parent's
 	 * blockrefs into `ichain`.  A first version of it sat after that
