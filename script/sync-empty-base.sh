@@ -212,12 +212,31 @@ insmod /tmp/hammer2.ko debug=$H2DEBUG || { echo "insmod-failed"; exit 1; }
 echo "module-loaded $(lsmod | grep -c '^hammer2')"
 mkdir -p /mnt/m /mnt/s /mnt/c
 
+# Which image /dev/vdb and /dev/vdc actually resolve to, read in the guest
+# before anything is mounted. The harness attaches MASTER to vdb and SLAVE
+# to vdc, and on 2026-10-13 the images afterwards showed the CL element of
+# repro-master.img as pfs_type 3 (SLAVE) and of repro-slave.img as 6
+# (MASTER), the reverse of the attach order. Whether that came from the
+# guest's own device ordering or from the images being written back to the
+# wrong files is the one fact every directional reading rests on, and no run
+# had ever read it here. Both are named by serial-less virtio disks whose
+# order is the guest's, so the device is identified by the SIZE and by a
+# marker written and read back through the block device itself, not by its
+# name alone.
+echo "vdb-bytes $(blockdev --getsize64 /dev/vdb 2>/dev/null || echo none)"
+echo "vdc-bytes $(blockdev --getsize64 /dev/vdc 2>/dev/null || echo none)"
+
 # The master mount is the one whose syncer faults, so it is created first
 # and never unmounted until the run is over.
 timeout 30 mount -t hammer2 /dev/vdb@ROOT /mnt/m || { echo "master-root-mount-failed"; exit 1; }
 hammer2 -s /mnt/m pfs-create CL >/dev/null 2>&1 || { echo "master-pfs-create-failed"; exit 1; }
 clid=$(hammer2 -s /mnt/m pfs-list | awk '$3=="CL"{print $2}')
 [ -n "$clid" ] || { echo "no-cluster-id"; exit 1; }
+# The super-root's own fsid, read off the raw block device the master was
+# mounted from. Every image carries a distinct one, so the same field read
+# from the image at rest afterwards names which FILE /dev/vdb is, which is
+# the one fact the master/slave naming of every reading below depends on.
+echo "vdb-superroot-fsid $(hammer2 -v show /dev/vdb 2>/dev/null | awk '/pfs_fsid/{print $2; exit}')"
 timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/c || { echo "master-cluster-mount-failed"; exit 1; }
 echo "master-mounted $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 mkdir -p /mnt/c/set
@@ -323,6 +342,23 @@ check() {
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
 }
 m=$(val module-loaded); [ "${m:-0}" = 1 ]; check "the module is loaded" $? "${m:-none}"
+# The devices the guest actually got, before any directional reading below
+# is taken. Both images are 2 GiB so size cannot separate them; the super-root
+# fsid the guest read off the raw device is compared against the same field
+# on each image at rest, and THAT is what names which file /dev/vdb is. A run
+# where the two do not match has every master/slave reading reversed.
+vb=$(val vdb-bytes); vc=$(val vdc-bytes)
+echo "  note  /dev/vdb=$vb /dev/vdc=$vc byte(s)"
+gfsid=$(val vdb-superroot-fsid)
+ifsid=$("$HAMMER2" -v show "$MASTER" 2>/dev/null | awk '/pfs_fsid/{print $2; exit}')
+if [ -n "$gfsid" ] && [ -n "$ifsid" ]; then
+	[ "$gfsid" = "$ifsid" ]
+	check "MASTER=repro-master.img is the volume the guest mounted as vdb" $? \
+		"guest $gfsid, image $ifsid"
+else
+	echo "  FAIL  the device-to-image tie was not read: guest '${gfsid:-none}' image '${ifsid:-none}'"
+	fail=$((fail + 1))
+fi
 m=$(val master-mounted); [ "${m:-0}" -ge 2 ] 2>/dev/null; check "the master's ROOT and cluster mounts are both up" $? "${m:-none} mounted"
 s=$(val set-written); [ "${s:-0}" = "$N" ]; check "the master holds the set" $? "${s:-none} file(s)"
 t=$(val threads); [ "${t:-0}" -ge 1 ] 2>/dev/null; check "the cluster's thread is running" $? "${t:-none}"
