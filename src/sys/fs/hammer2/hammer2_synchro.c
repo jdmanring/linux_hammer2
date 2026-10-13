@@ -151,23 +151,21 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 	hammer2_inode_unlock(pmp->iroot);
 	if (chain) {
 		/*
-		 * XXX Linux: the element root is NOT flagged by the time a pass
-		 * ends, so the test below is false and this helper returns
-		 * without flushing anything. Measured 2026-10-13 with the flag
-		 * printed here: `clindex 1 chain ... not flagged (00046102)`, a
-		 * word holding none of MODIFIED, UPDATE, ONFLUSH or DESTROY, on
-		 * 22 of 22 and 50 of 50 passes. hammer2_sync_setflush() sets the
-		 * path, and the flush that descends clears ONFLUSH on its way
-		 * down, so by the end of a pass the bit this test looks for is
-		 * already gone and the copies the pass made were never written.
-		 * The test cannot see the state it exists to detect.
+		 * XXX Linux: the gate below is false on every pass, and the
+		 * print that shows it is the one thing this helper has to say.
+		 * Measured 2026-10-13: `clindex 1 chain ... not flagged
+		 * (00046102)`, a word holding none of MODIFIED, UPDATE, ONFLUSH
+		 * or DESTROY, on 22 of 22 and 50 of 50 passes. The path is
+		 * flagged by hammer2_sync_setflush() and the descending flush
+		 * clears ONFLUSH on its way down, so by the end of a pass the bit
+		 * is already gone.
 		 *
-		 * Flag the root here rather than asking whether another path did.
-		 * FLUSH_ALL below recurses everything and each child decides from
-		 * its own flags, so a pass with nothing modified costs one descent
-		 * and writes nothing.
+		 * Setting it here was tried and reverted: the flush then runs on
+		 * every pass and the slave's inode count moves 728 to 801, so it
+		 * is not what the copies are waiting on, and it costs a full tree
+		 * walk per pass. What the gate hides is that this helper never
+		 * writes, which the error below would otherwise report.
 		 */
-		atomic_set_int(&chain->flags, HAMMER2_CHAIN_ONFLUSH);
 		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
 			/*
 			 * XXX Linux: the return value was DISCARDED, so a flush
