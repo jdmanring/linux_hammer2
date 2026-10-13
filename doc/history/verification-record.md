@@ -10128,3 +10128,28 @@ reading rather than on the radix being wrong to cap.
 A `hprintf` counts the fires, so a run reports whether the cap acted at all
 instead of leaving it to be inferred from the outcome. The run to read it is in
 flight.
+
+## The cap removes both failure modes, 2026-10-13
+
+With the radix cap applied on the computed keybits, one pass into the run, and
+read against the same counters in the runs before it:
+
+| reading | before the cap | with the cap |
+| --- | --- | --- |
+| `create_indirect` calls | 536026 | 1001 |
+| `does not fit` refusals | 340 | 0 |
+| `sync_insert` calls | 547925 | 1001 |
+| inode-typed inserts | 4023 | 762 |
+| distinct focus keys | 8080 | 1001, none repeated |
+| soft lockups | 5 | 0 |
+
+The cap fires on the exact shape the hang log showed, `capped keybits 7 -> 5
+under parent 0x440/6`, and after it nothing is refused and nothing is rebuilt
+per key. The scan walks 1001 distinct keys once each, which is the pattern the
+healthiest log of the day showed and the livelocked runs did not.
+
+So the equal-keybits child was the mechanism behind all of it: the refusals
+were the guard declining such a block, the 536026 recreations were the tree
+rebuilt once per key when it was allowed, and the four mechanisms tested
+earlier were its symptoms. The convergence reading is still pending, and it is
+the one that decides whether the inodes now follow the keys.
