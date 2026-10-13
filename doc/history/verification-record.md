@@ -8974,3 +8974,43 @@ another guard downstream of this one.
 The tree ships `want_update` 0: a copy that does not converge and says so in
 its check beats a fault that wedges an unmount, and the convergence check
 measures the loss rather than hiding it.
+
+## Correction to the entry above, same day, 2026-10-13
+
+The entry above says the empty element that faults `hammer2_chain_lookup()`
+is a data block's and that the guard creates it. That is wrong on which tree,
+and the log says so in two lines 0.7 ms apart:
+
+    [ 3403.312863] chain_and_parent: ip a7c845f4 clindex 1 nchains 2 chain NULL, 1 so far
+    [ 3403.313578] Oops: ... KASAN: null-ptr-deref in range [0x28-0x2f]
+
+`hammer2_sync_slaves()` at line 556 calls `hammer2_inode_chain(ip, idx, ...)`,
+which reads `ip->cluster.array[idx].chain` and nothing else, so the NULL it
+hands `hammer2_chain_lookup()` two lines later is the INODE's cluster element,
+not a block in the data tree. The one `chain_and_parent` print in the whole
+log is that inode, `clindex 1`, and it is 0.7 ms before the fault.
+
+An inode's slave element being NULL is ordinary here, which the record
+already says elsewhere: `hammer2_pfsfree_scan()` clears the slave's element
+for every inode when the slave's volume is unmounted, and this script
+unmounts and remounts the slave four times, so a master-side pass that runs
+inside that window sees NULL elements for inodes that are perfectly healthy.
+The correct handling is therefore to SKIP such an inode until the element is
+back, which is what `want_update` 0 does, and what the tree ships. Asking for
+the update is what faults, which is now measured.
+
+So the two defects this session found are separate and only the first is
+understood:
+
+- The inode element is transienly NULL inside the slave's unmount window, and
+  the scan must skip it. The tree does. `want_update` 1 faults.
+- The data tree gets a block whose radix does not fit its parent, which the
+  guard refuses, which is where the 4,000 inodes and 4,000 data blocks the
+  slave is missing come from.
+
+The entry above is left as written, per this file's rule that a dated
+observation is not rewritten in place, and this paragraph is what supersedes
+its "data block" reading. What remains unmeasured is whether skipping the
+inode for the whole window is why the copy never catches up, or whether the
+guard's loss is, and separating them needs a run with the guard's radix fix
+in place and the skip unchanged.

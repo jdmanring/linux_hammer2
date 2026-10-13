@@ -4562,6 +4562,49 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 		}
 	}
 
+	/*
+	 * XXX Linux: the block this sizes must fit inside its parent, and
+	 * nothing above this line has any view of the parent.  `ncount` is
+	 * the entry count that the block's own size holds and `parent` is
+	 * the keyspace it lands in, so when the loop above has raised
+	 * keybits past the parent's own the resulting insert cannot be
+	 * satisfied: hammer2_chain_cmp() reads overlapping ranges as a
+	 * match, hammer2_chain_insert() finds an incumbent and the carried
+	 * assert takes the device into error.  Measured 2026-10-12 and
+	 * -13: a keybits-7 block under a keybits-6 parent, and separately a
+	 * keybits-7 block under a keybits-7 parent whose range is identical,
+	 * which the keybits test catches and a containment test alone does
+	 * not.  Refusing the block at the insert instead leaves the
+	 * destination's cluster element unbuilt, and the copy then loses
+	 * 4,000 inodes' data; it is the same defect one layer down.
+	 *
+	 * So the block is SIZED TO FIT here, where its radix is chosen,
+	 * rather than built and then refused.  The cap is the largest
+	 * keybits that leaves the parent's range strictly larger than the
+	 * child's, which is the invariant its consumers rely on.  A parent
+	 * of keybits 0 is a directory inode holding children of its own
+	 * radix rather than a range, so it caps nothing.
+	 */
+	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits) {
+		hprintf("indkey_dir: keybits %d capped to %d for parent "
+		    "%016llx/%d (ncount %d)\n", keybits,
+		    parent->bref.keybits - 1, (long long)parent->bref.key,
+		    parent->bref.keybits, ncount);
+		keybits = parent->bref.keybits - 1;
+		/*
+		 * The side bit is keyed to the old keybits, so move it to
+		 * the capped one: the high side is (1 << keybits) of the
+		 * range the block now owns.
+		 */
+		if (hicount > locount)
+			key |= (hammer2_key_t)1 << keybits;
+		else
+			key &= ~(hammer2_key_t)1 << keybits;
+		*keyp = key;
+
+		return (keybits);
+	}
+
 	if (hicount > locount)
 		key |= (hammer2_key_t)1 << keybits;
 	else
