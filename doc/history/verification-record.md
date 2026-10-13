@@ -8228,3 +8228,54 @@ The measurement that settles it is the run's own capture, which
 reading `dmesg` on it, so it is the full record and not the retained
 window. It had not been written when this was noted; the next entry
 reads it.
+
+### The move loop did not skip the sibling: it never ran
+
+The question this entry set out to answer was "why did the move loop skip
+those siblings", and the measurement refutes the premise. The loop did
+not skip anything, because `hammer2_chain_create_indirect()` was not
+executing when the collision happened. The probe printed 50 times, which
+is a floor and not a total: `hprintf` is `pr_info_ratelimited`, and the
+capture carries three `hammer2_chain_create_indirect: N callbacks
+suppressed` markers, so firings were dropped. The markers are what makes
+the floor usable: they sit at t=101.37, t=124.87 and t=133.44, all before
+the last observed invocation, and there is none within 100 lines of the
+collision, so the limiter had recovered by then and a firing in that
+window would have printed rather than been suppressed. With that caveat
+the timing splits cleanly:
+
+    the collision         t=136.517
+    last create_indirect  t=133.938   (2.58 s earlier, different keys)
+    next create_indirect  none for the rest of the run
+
+Between `hammer2_vfs_sync_pmp: FILESYSTEM SYNC STAGE 2 BEGIN` at
+t=136.515 and the collision at t=136.517 there are two milliseconds and
+no call to `create_indirect` of any kind. The colliding chain was not
+built by that function in this window.
+
+Every one of the 50 invocations, read for the inversion the question
+assumed, kept the new block's keybits strictly below its parent's:
+parent 60 -> new 59, 58 -> 57, 61 -> 60, 9 -> 8, 8 -> 7, and so on, with
+one shape that is not an inversion at all, `parent 0x400/0 -> keybits
+62`, which is an inode: an inode's bref carries keybits 0 and its
+children are keyed at the inode radix (62 for the ones here, the
+`8000000000000000`-family keys). So `create_indirect` is behaving, and
+the radix-7 block at `0x400` that collided with `0x420/5` came from
+somewhere else on the sync path.
+
+What that leaves, and what the log says about it: the collision is in
+`hammer2_chain_insert`, called from the sync path, on a chain whose
+keybits is 7 over inum keyspace, and the incumbent is `0x420/5` whose
+range `[0x420,0x43f]` sits inside `[0x400,0x47f]`. A keybits-7 chain
+over inode keys arrives from the master's media through
+`hammer2_sync_insert()`, which passes `focus->bref.keybits` straight to
+`hammer2_chain_create()`. So the next measurement is the focus the sync
+thread inserts at that moment: its key, its keybits, its type, and
+which element of the cluster it came from. The probe for that is not yet
+written.
+
+Two readings were wrong before this one, both reached by reading
+`create_indirect` instead of instrumenting it: that the incumbent was
+keybits 6, and that the loop should have moved a sibling. The values
+that refuted both were one print each, and each print was cheaper than
+the argument it ended.
