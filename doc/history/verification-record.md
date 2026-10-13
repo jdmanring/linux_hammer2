@@ -10378,3 +10378,37 @@ That is the first mechanism of the seven tried that changes the run's ability to
 finish, and it is the one the earlier readings pointed at without naming:
 the destination's radix has to come from the destination's tree, not from the
 chain being copied.
+
+## With the clamp the scan reaches every file key and the write-back is the only gap, 2026-10-13
+
+The run carrying the clamp is the first of the session to complete rather than
+wedge, and its log gives the cleanest separation yet:
+
+| reading | value |
+| --- | --- |
+| distinct keys offered | 8134 |
+| of those, hash-shaped (the file keys) | 4001 |
+| distinct inode STAMPS | 4004 |
+| distinct inode-INSERT keys | 75 |
+| inserts INODE / INDIRECT | 4077 / 35963 |
+| refusals | 90 |
+| slave inodes on media | 834 |
+| master inodes on media | 4801 |
+
+The file keys are all offered (4001 of them) and the inode stamps all but match
+them (4004). Before the clamp the scan presented 180 keys and stamped nothing;
+now it walks the whole directory and stamps every inode. So the scan is no
+longer the constraint.
+
+What is left is one number apart from that: 4004 inodes are stamped
+synchronized and 834 are on the slave's media, in a run that completes its
+unmounts cleanly with `0 inode, 0 chain, 0 modified` at teardown. A stamp set
+before the flush proves the copy is on media is the last defect, and it is the
+one the `not flagged (00046102)` print names on every pass: the write-back
+helper finds none of MODIFIED, UPDATE, ONFLUSH or DESTROY set on the element
+root the scan just changed, so it returns without flushing.
+
+The 75 distinct inode-insert keys against 4004 stamps says the inserts are the
+DIRECTORY's own inodes and the 4004 stamps are the child inodes reached by the
+deferral walk, which is consistent with the deferral design: a child inode is
+stamped when its subtree is synchronized rather than inserted as a chain.
