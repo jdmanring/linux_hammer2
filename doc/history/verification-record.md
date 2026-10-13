@@ -9685,3 +9685,27 @@ measuring itself, and the count is not a reading about the filesystem. The
 check that reports them cannot be satisfied until the print is bounded to the
 case it names, which is the next change to this script rather than to the
 driver.
+
+## The radix divergence, counted, 2026-10-13
+
+The diagnostic at the radix decision printed its inputs on every create whose
+result fell outside the parent's own radix, and the two shapes between them
+are the whole of the divergence:
+
+    88393  create_indirect: parent KEY/7 create_bits 0 ncount 128 count 32 -> keybits 7
+    29440  create_indirect: parent KEY/6 create_bits 0 ncount 128 count 32 -> keybits 7
+
+Both produce a keybits-7 block, from `ncount 128` over a parent holding 32
+elements. The first builds a block at the parent's OWN radix, so it cannot be
+that parent's child; the second builds one a level wider than its parent. The
+refusal guard fires on 440 of these 117833, so the great majority are creates
+that are placed somewhere other than the parent they were printed against.
+
+Read together with the size rule, which is upstream's own and unchanged, the
+number is what the rule produces: `nbytes` is `HAMMER2_IND_BYTES_NOM` for any
+non-inode parent and for a file inode, 128 slots, and the keybits loop then
+raises the radix until the block holds them. A directory inode gets 32 slots
+instead, so the same tree split under an inode is narrow and split under an
+indirect is wide. The master's own media shows both widths, 128 slots at
+keybits 7 to 12 and 32 slots at keybits 62 and 63, so neither is wrong on its
+own; what differs is which level happened to be full when the split was made.
