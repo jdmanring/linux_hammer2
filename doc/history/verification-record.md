@@ -10605,3 +10605,38 @@ repeatedly rather than a different failure.
 Recorded plainly because the previous note called the clamp necessary and not
 sufficient on two runs; three puts the rate at one in three and the hang on the
 same mechanism as the stalling run before it.
+
+## The hang is a split that cannot relieve its parent, 2026-10-13
+
+The pre-clamp hang log's insert count, grouped:
+
+    547925 inserts total
+    parent 0000000000000480/7 type 2 : 402059
+    parent 0000000000000440/6 type 2 : 134022
+    distinct focus keys: 8080
+    focus 0000000000000460/0 : 4188 attempts
+    focus 0000000000000461/0 : 4188 attempts
+    focus 0000000000000462/0 : 4188 attempts
+
+Each key is inserted about 4188 times, one key after another, into the same
+parent. The create_indirect line beside each says what happens:
+
+    create_indirect: parent 0000000000000480/7 create_bits 0 ncount 128 count 32 -> keybits 7
+
+Read with the size rule, that is a split which cannot succeed. The parent is
+`0x480/7`, so it spans keys `0x480` to `0x4ff`. Its slot count is 32, which is
+a 4096-byte block -- `HAMMER2_IND_BYTES_MIN`, the size chosen for a DIRECTORY
+INODE parent. The new block is asked for `ncount 128`, a 16384-byte block,
+because its parent is now an INDIRECT rather than an inode, and the keybits loop
+lands it at 7 again.
+
+A keybits-7 child covers exactly its keybits-7 parent's range, so it is not a
+child at all: `hammer2_chain_cmp()` returns 0 for the pair. Splitting therefore
+cannot reduce the parent's occupancy, the parent stays full, and the next insert
+splits again. 4188 times per key, per pass, until the run wedges.
+
+The inconsistency is the size rule's dependence on the parent's TYPE. Under a
+directory inode the first split makes a 32-slot block spanning 128 keys; under
+the INDIRECT that results, the next split makes a 128-slot block spanning the
+same 128 keys. The second cannot hold more than the first, and neither is
+narrower than its parent.
