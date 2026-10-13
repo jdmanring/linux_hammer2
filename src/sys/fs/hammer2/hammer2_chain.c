@@ -3695,8 +3695,30 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * blockset holding children of their own radix, so it is left alone.
 	 */
 	if (parent->bref.keybits > 0) {
-		unsigned int pmax = 1U << (parent->bref.keybits - 1);
+		/*
+		 * 64-bit, and the shift width is why: a parent at keybits 62
+		 * exists in this tree (the master's own media carries blocks at
+		 * keybits 62 and 63), and `1U << 61` on a 32-bit unsigned int is
+		 * undefined.  UBSAN reports `shift exponent 61 is too large for
+		 * 32-bit type 'unsigned int'` at this line on the KASAN build,
+		 * and the build without UBSAN silently computes a garbage bound.
+		 * hammer2_key_t is the type the radix arithmetic uses everywhere
+		 * else in this file.
+		 */
+		hammer2_key_t pmax = (hammer2_key_t)1 <<
+		    (parent->bref.keybits - 1);
 
+		/*
+		 * pmax is clamped to 128, not used raw.  ncount is never above
+		 * 128 (it comes from HAMMER2_IND_BYTES_NOM), so a parent wide
+		 * enough to allow 128 slots needs no bound at all, and the clamp
+		 * keeps a large keybits from overflowing the comparison.  A
+		 * `pmax < 64` guard was written here first and was WRONG: at
+		 * keybits 7 pmax is 64, so it disabled the bound at exactly the
+		 * radix the defect was measured at, silently restoring the bug.
+		 */
+		if (pmax > 128)
+			pmax = 128;
 		if (ncount > (int)pmax) {
 			ncount = (int)pmax;
 			nbytes = ncount * sizeof(hammer2_blockref_t);
