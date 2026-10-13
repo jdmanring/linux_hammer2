@@ -10640,3 +10640,39 @@ directory inode the first split makes a 32-slot block spanning 128 keys; under
 the INDIRECT that results, the next split makes a 128-slot block spanning the
 same 128 keys. The second cannot hold more than the first, and neither is
 narrower than its parent.
+
+## The hang, proven: a same-keybits split that cannot relieve its parent, 2026-10-13
+
+The pre-clamp hang log, counted by what the sync thread inserts:
+
+    547925 inserts
+    focus key 0x460/0 : 4188 attempts
+    focus key 0x461/0 : 4188 attempts
+    focus key 0x462/0 : 4188 attempts      (and so on, keys advancing)
+    parent 0x480/7 type 2 : 402059 of them
+
+Each key is inserted thousands of times into the same parent, and the
+`create_indirect` line beside each says why:
+
+    create_indirect: parent 0x480/7 create_bits 0 ncount 128 count 32 -> keybits 7
+
+The arithmetic closes it. `count 32` is the parent's slot count, and an
+INDIRECT's count is `parent->bytes / sizeof(hammer2_blockref_t)`, so the parent
+is 32 * 128 = 4096 bytes: `HAMMER2_IND_BYTES_MIN`, the size the rule picks for a
+DIRECTORY INODE parent. The new block is asked for `ncount 128`, which is 16384
+bytes, `HAMMER2_IND_BYTES_NOM`, the size for any other parent. The keybits loop
+then raises the new block to keybits 7 -- the parent's own radix.
+
+A keybits-7 child spans exactly a keybits-7 parent's keyspace, so it is not a
+child that can absorb any of the parent's occupancy: the split moves elements
+into a block that covers the same range, the parent is full again, and the next
+insert splits again. 4188 attempts per key, 547925 in the pass, until the run
+wedges. The clamps reduce how often this happens and do not remove it, because
+the block that is asked for is still the wrong WIDTH for the parent it must fit
+under.
+
+The divergence is the size rule's dependence on the parent's TYPE. Under a
+directory inode the first split makes a 4096-byte, 32-slot block; under the
+INDIRECT that results, every later split makes a 16384-byte, 128-slot block. The
+two cannot both be right for the same parent, and the second is wider than the
+parent it must fit under rather than narrower.
