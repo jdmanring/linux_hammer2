@@ -9294,3 +9294,59 @@ the value it must stay under is `parent->bref.keybits`. That is one line, and
 it is not written here: three bounds have been tried at this site and the runs
 have named why each failed, so the fourth is left to a session that starts
 from these three readings rather than from scratch.
+
+## Both directions at the radix site are now measured, and the arithmetic says why, 2026-10-13
+
+Two runs closed the fourth attempt at `hammer2_chain_indkey_dir()`, and the
+arithmetic from the port's own printed values closes the whole avenue. A
+`hammer2_blockref_t` is 128 bytes, so the refusal
+
+    create_indirect: parent 0000000000000440/6 create_bits 0 ncount 128 count 32
+      -> keybits 7 key 0000000000000400
+
+reads as sizes rather than as a message. The parent `0x440/6` is a 4 KiB
+block: 32 slots over a 64-key span. Sparse is legal and the count column
+proves it; over-dense is not, since a block cannot hold more entries than
+the keys its span covers. The block being built is 16 KiB, so `ncount` 128
+drives `keybits` to 7 for 128 slots over a 128-key span. A 128-key block
+cannot fit under a 64-key parent for ANY key, so no mask and no radix can
+make it fit; the key follows the radix out of range rather than leading it
+there. That is why three caps applied at the mask changed nothing, and it
+retires the site: the radix is not the lever.
+
+Both remaining directions were then built and run, and both fail, so the
+pair is what a later session needs rather than either alone.
+
+- Capping `keybits` to one below the parent and leaving `ncount` at 128
+  (`6fcb063`): the block keeps a 16 KiB allocation for a 32-key span, holds
+  32 entries, fills at once, splits again, and the freemap dies --
+  `no block of radix 14 for type 2`, then `no block of radix 10 for type 1`
+  ten times, `modify error 00000020` on `0x440/5` and nine times on `0x4c0/6`,
+  and `hpanic("flush depth limit")` at `hammer2_flush.c:493` at t=131 s.
+- Capping `keybits` and reducing `ncount` with it so the block holds exactly
+  its span: the 16 KiB request is gone and so is the depth panic, but the
+  block is then too small for what the move loop puts in it. The last two
+  lines before the BUG are the same in both runs --
+
+        indirect_maint: move sub 0x400/5 to parent 0x400/7
+        indirect_maint: move sub 0x420/5 to parent 0x400/7
+        hammer2_base_insert: no room
+
+  -- and `hpanic("no room")` at `hammer2_chain.c:5258` follows. The move loop
+  is relocating children into the block `create_indirect()` just built and
+  runs out of slots.
+
+`no room` appears in none of the sixteen logs kept before this session and in
+both of the runs above, so it is produced by the sizing and not by the refusal.
+One of the two runs also removed the fit guard, and because two changes moved
+together that run could not attribute the result on its own; the second run
+kept the guard and reproduced the same `no room`, which is what settles it.
+
+What the pair leaves as the target is the move loop, not the radix: its
+destination is chosen before anything tests that the destination can hold
+what is moved into it, and the only guard against `create_indirect()` being
+re-entered from there is `KKASSERT((flags & HAMMER2_INSERT_SAMEPARENT) == 0)`
+at `hammer2_chain.c:3172`, which every shipping build compiles out. That
+assert is upstream's and the move loop that trips it is upstream's too, so
+the defect is carried rather than the port's; it is the destination's
+capacity, not the new block's radix, that the next reading should measure.
