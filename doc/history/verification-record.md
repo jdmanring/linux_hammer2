@@ -10307,3 +10307,30 @@ restarts), and the write-back has nothing valid to write. The fix belongs where
 the sync chooses the destination radix, and it is not the caller's or the
 computed keybits -- it is that the destination's own tree decides the radix, not
 the source's.
+
+## The clamp belongs in the sync path, not in the shared radix helper, 2026-10-13
+
+The radix cap failed when it was placed in `hammer2_chain_indkey_dir()`, and the
+reason is that the function is shared. Capping there narrowed the MASTER's own
+inserts as well, and the slave's scan then covered no file keys at all: 0 of
+1001 presented against 4001 of 8080 without it. Both trees were shaped by one
+change, and the narrower shape could not hold the set.
+
+The clamp applied instead in `hammer2_sync_insert()`, on the arguments it hands
+`hammer2_chain_create()`, touches only the path that copies a chain FROM another
+device. That is the only path in the tree that can be given a radix belonging to
+a different tree, so it is the only one that needs the destination's parent to
+have a say. The key is renormalized to the narrowed radix with the same mask the
+radix helpers use, or the block would land on a boundary the parent does not
+hold.
+
+Checked against the three shapes the wedged log actually contains:
+
+| parent | focus | clamped | inside parent | child end vs parent end |
+| --- | --- | --- | --- | --- |
+| 0x440/6 | 0x460/7 | 0x460/5 | yes | 0x47f <= 0x47f |
+| 0x480/7 | 0x4e7/7 | 0x4c0/6 | yes | 0x4ff <= 0x4ff |
+| 0x400/5 | 0x405/0 | 0x400/4 | yes | 0x40f <= 0x41f |
+
+In each the narrowed block is strictly inside its parent, which is the property
+the shared-helper cap could not give when it also shrank the source tree.
