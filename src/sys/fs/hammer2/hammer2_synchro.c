@@ -976,11 +976,21 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 	 * radix was wrong.  Printed here, where both values exist, because the
 	 * reading that decides whether to fix the radix or the parent
 	 * selection is this pair and nothing else.
+	 *
+	 * Gated on the debug bit like the START_SCAN print above, and it was
+	 * not when it was added: ungated it is one line per element copied,
+	 * 102,370 lines and 22 MB for a 4,000-file set, straight out the
+	 * guest's serial console.  That starved the CPU irq#4 lands on and
+	 * produced five soft lockups on ttyS0 in the 2026-10-13 run against
+	 * zero in the twelve runs before it, so the probe was manufacturing a
+	 * warning the run then reported.  The values are still wanted, so the
+	 * bit turns them on rather than the line being dropped.
 	 */
-	kprintf("sync_insert: focus %016llx/%d into parent %016llx/%d type %d\n",
-	    (long long)focus->bref.key, focus->bref.keybits,
-	    (long long)(*parentp)->bref.key, (*parentp)->bref.keybits,
-	    (*parentp)->bref.type);
+	if (hammer2_debug & 0x8000)
+		kprintf("sync_insert: focus %016llx/%d into parent %016llx/%d type %d\n",
+		    (long long)focus->bref.key, focus->bref.keybits,
+		    (long long)(*parentp)->bref.key, (*parentp)->bref.keybits,
+		    (*parentp)->bref.type);
 	error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
 				     focus->bref.methods,
 				     focus->bref.key, focus->bref.keybits,

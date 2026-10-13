@@ -72,6 +72,11 @@ N=${H2_N:-4000}
 # arrived 22 s after an unmount, inside one 30 s syncer period, so one
 # cycle can reach it; more cycles widen the window cheaply.
 CYCLES=${H2_CYCLES:-4}
+# The debug bit the checks below depend on: `syncthr: update inode` and
+# `sync_slaves pfs CL` are both gated on 0x8000, so it stays on. What made
+# the run's console flood was a print in the sync path that was NOT gated;
+# that one is gated in the driver now, which is where the 102,370 lines and
+# the five soft lockups on ttyS0 came from.
 H2DEBUG=${H2_DEBUG:-0x8000}
 MASTER=$FIXDIR/repro-master.img
 SLAVE=$FIXDIR/repro-slave.img
