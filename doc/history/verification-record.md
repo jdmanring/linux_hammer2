@@ -9046,3 +9046,37 @@ whatever asked `hammer2_chain_create()` for a key outside the parent it named,
 and that is not yet instrumented. `create_indirect`'s fit guard stays as the
 assertion that this held, and it is what made the refusal visible rather than
 leaving a silent rbtree collision.
+
+## The guard's cost is measured, and the caller is the next print, 2026-10-13
+
+The run on the reverted tree with `hammer2_thr_wait()` bounded reported 17
+checks with 1 failed, against 5 failed for the run before it, and the
+difference is which way the fault's signature counts rather than any change
+in the fault: `H2_SYNC_EXPECT` now reads a flush that finds an empty base, a
+chain check that gives up and a device in error as the readings wanted when
+the fault is fixed, and all three are 0. The kernel-warning check is 0 as
+well, where the previous run's 60,672 prints had caused two soft lockups.
+Both `fsck_hammer2` passes exit 0 on both volumes, all seven unmounts are
+recorded and the module unloads.
+
+The one failure is convergence, and the fingerprints say what it costs:
+
+| cluster PFS, by type | master | slave |
+| --- | --- | --- |
+| `inode` | 4,801 | 801 |
+| `dirent` | 4,801 | 4,801 |
+| `data` | 4,800 | 800 |
+
+4,000 inodes and their 4,000 data blocks do not reach the slave, and every
+directory entry does. That is the price the refusal pays with the guard on.
+With the guard off the same create reaches the insert and the carried
+`KASSERTMSG` takes the device into error, which is the fault `sync-empty-base.sh`
+exists to reproduce.
+
+So the guard converts a fatal, visible failure into a quiet 4,000-inode loss,
+and the fix is neither: it is the caller that asks for a key outside the
+parent it names. `indkey_dir` is handed the key and returns it unchanged, so
+no change at the radix can help, which the reverted cap measured. The guard
+now prints `print_backtrace()` beside the values, and the next run's stack is
+what names the caller. That is the print this entry is waiting on, and until
+it lands the convergence criterion is unmet and stays recorded as unmet.
