@@ -9380,3 +9380,41 @@ guard against `create_indirect()` being re-entered from
 which every shipping build compiles out, and that assert is upstream's. No
 measurement this session reached it; nothing here should be read as evidence
 about it either way.
+
+## The block's size and its radix come from different places, measured at the allocation, 2026-10-13
+
+A probe at `hammer2_chain_create_indirect()`'s allocation, where `nbytes` and
+`keybits` are both in hand for the first time, printed the defect directly:
+
+    create_alloc: parent 0000000000000480/7 bytes 4096 | new 0000000000000480/7
+                  nbytes 16384 ncount 128
+
+The block is built at the PARENT's own key and keybits, `0x480/7` under
+`0x480/7`. It cannot be anyone's child, and `hammer2_chain_insert()`'s carried
+`KASSERTMSG` is what catches it. The two numbers that produced it are in the
+line: the parent is 4096 bytes, 32 slots, while the block is 16384 bytes,
+128 slots.
+
+The size and the radix are decided by different rules and nothing reconciles
+them. `nbytes` is `HAMMER2_IND_BYTES_NOM` for any non-inode parent, fixed
+before the helper runs; the helper then raises `keybits` until the block holds
+`ncount` entries, 128 of them for a 16 KiB block. A keybits-7 block is where
+that lands, and a parent that is itself keybits 7 cannot take it.
+
+The control is the master, built by this same code and read off its own media:
+every one of its indirect blocks has 128 slots at keybits 7 to 12, and 32 slots
+at keybits 62 and 63. The slave differs at exactly this point -- it holds
+keybits 7 blocks with 32 slots, and keybits 5 and 6 blocks the master does not
+have at all -- so the shape divergence the refusals come from is the slot
+count a block is built with, not its keyspace.
+
+The probe as written also proved its own defect: its second condition,
+`keybits >= parent->bref.keybits`, is true for every ordinary inode parent
+whose keybits is 0, so it printed 43,106 lines and buried the four that
+mattered. That is the ring-buffer class the earlier runs were read in, and the
+condition needs the parent's keybits to be nonzero before it means anything.
+
+Still unmeasured, and the next reading: `parent->core.live_count` beside
+`count` at the flush's own `hammer2_base_insert()` call, `hammer2_flush.c:962`,
+which is the pair the compiled-out `KASSERTMSG` at `hammer2_chain.c:3157`
+tests and the pair that would name the block `no room` was raised for.
