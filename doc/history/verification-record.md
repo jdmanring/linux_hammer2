@@ -8630,44 +8630,55 @@ Not fixed here. The next measurement is which task added the ipdep entry
 and why it retired without calling `hammer2_xop_unset_ipdep()`, which is a
 print at the insert and at the unset rather than a reading of the caller.
 
-### The wait is on a hash bucket, not an inode
+### The bucket reading was wrong: the collision is the same inode
 
-The ipdep set/unset pairing is correct: `hammer2_admin.c:407-414` sets an
-entry for `ip1..ip4` under exactly the guards `hammer2_admin.c:561-586`
-uses to unset them (the `HAMMER2_XOP_STRATEGY` skip on ip1, and the
-`ip3 != ip1` / `ip4 != ip2` rename guards), so nothing retires early and
-nothing leaks out of that pair. The unbounded wait comes from what an
-entry MEANS.
+This section said the inode-dependency index, `inum % 32`, made the wait a
+BUCKET wait, and that unrelated inodes sharing a bucket blocked each other.
+That is false and is corrected here. `xop_testset_ipdep()` tests
+`iptmp == ip` -- POINTER equality (`hammer2_admin.c:254`, and the same test
+at 271 in the unset) -- so two different inodes that hash to one bucket
+both go on the list and neither waits. The index selects which LOCK guards
+the list, which is all a hash bucket is for. The same test is in the
+FreeBSD port at its lines 224 and 241.
 
-`nip->ipdep_idx = nip->meta.inum % HAMMER2_IHASH_SIZE`
-(`hammer2_inode.c:1032`, `HAMMER2_IHASH_SIZE` 32) makes the index a hash
-BUCKET, and `hammer2_xop_testset_ipdep()` sleeps while any inode is in
-`pmp->ipdep_lists[idx]` for that bucket. So a waiter waits for whichever
-inode currently occupies its bucket, whether or not it has any stake in
-it. Measured against this reproducer's own keyspace:
+What the measurement does establish is narrower and more useful: the
+collision is the SAME inode offered twice. A task already holding an ipdep
+entry for an inode reaches `hammer2_xop_testset_ipdep()` for that inode
+again and sleeps until the first entry is retired. The syncer's flush is
+in that state, so the dependency it waits on is one it took itself.
 
-    0x400 -> bucket 0
-    0x420 -> bucket 0
-    0x440 -> bucket 0
-    0x480 -> bucket 0
-    0x404 -> bucket 4
-    0x409 -> bucket 9
+### The ipdep entry is held for the XOP's whole life, and the retire is carried
 
-and a set of 4000 inodes spread over the 32 buckets puts 125 in each. The
-four inodes this fault names -- the collision's incumbent, the collapse's
-parent, the block being collapsed and the sibling at 0x480 -- all sit in
-one bucket, which is why the syncer's flush and the frontend's write
-serialize against each other here and not elsewhere.
+The unset side is reached only on the LAST retire. `hammer2_xop_retire()`
+returns early unless the mask it is retiring completes the XOP
+(`hammer2_admin.c:489`):
 
-That also explains the two different waits in the record as one cause: the
-`HAMMER2_PMPF_WAITING` shape the `XXX` above `hammer2_xop_testset_ipdep`
-describes (one bit for the whole PFS against one condition variable per
-index) and this one (the condition variable is per index, but the index is
-shared by construction). Both are lost wakeups caused by a per-bucket
-signal standing in for a per-inode dependency.
+    omask = atomic_fetchadd_32(&xop->run_mask, -mask);
+    if ((omask & HAMMER2_XOPMASK_ALLDONE) != mask)
+            return;
 
-Not fixed. The candidate repairs differ and are not equivalent: make the
-dependency per-inode rather than per-bucket, or bound the wait and treat
-the collision as the serialization the caller already accepts. Which one
-is right is a design call, and it should be made against the FreeBSD
-port's text for this function rather than from this record.
+and the four `hammer2_xop_unset_ipdep()` calls are at lines 564, 569, 575
+and 581, all past that return. So an ipdep entry is held from
+`hammer2_xop_start_except()` until the XOP's last collector retires, and
+any task that hits the same bucket in the meantime sleeps in
+`hammer2_xop_testset_ipdep()` for that whole span. When the last collector
+never arrives, the span is unbounded -- which is the state the run is in:
+the syncer holds the entry, no third task holds a hammer2 frame, so no
+retire is coming.
+
+This is carried, not a port divergence. The FreeBSD port at `3df307f` is
+byte-identical here, early return at its line 370 and the four unsets at
+444, 449, 455 and 461, and this port's provenance row for
+`hammer2_admin.c` records the file as carried. So the shape is upstream's,
+and the two candidate repairs are upstream decisions:
+
+  - hold the dependency per inode rather than per `inum % 32` bucket, so a
+    waiter is never made to wait for a task it has no stake in;
+  - or release the entry at the element's own retire rather than the last
+    one, so the span is one element and not one XOP.
+
+Neither is written. The `XXX` above `hammer2_xop_testset_ipdep` already
+records the first shape of this lost wakeup (the `HAMMER2_PMPF_WAITING`
+bit), and this is the second; both want the same decision, and it belongs
+against the FreeBSD text and the staged-filing rule rather than taken here
+from the record alone.
