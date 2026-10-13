@@ -10182,3 +10182,30 @@ route upstream takes, and it is not in any of the branches that have been
 edited here. The next reading is upstream's own directory-split behavior,
 which this port has never exercised because no test before this one drove a
 single directory past 4000 entries.
+
+## Summary of the P4 synchronization attempts, 2026-10-13
+
+Five changes were made to the cluster synchronization path and five were
+measured and reverted or reduced. Recorded together so none is re-tried:
+
+1. **Radix cap on the caller's create_bits** (pre-existing note). It cannot
+   fire: the caller passes 0 on every call.
+2. **Radix cap on the computed keybits.** It fires, 30 times in one pass, and
+   removes the refusals and the per-key rebuilds, but the narrowed tree covers
+   no file keys: 0 of 1001 presented against 4001 of 8080 without it.
+3. **Forcing ONFLUSH in `hammer2_sync_flush()`.** Makes the write-back run on
+   every pass instead of none, and moves the slave's inode count 728 to 801
+   against 4801. Not the gate the copies wait on.
+4. **The slave-side error rollup.** Converts a per-key failure into a
+   whole-pass abort, and the next pass retries the same keys.
+5. **The slave-newer branch in the scan's action switch.** Advances the local
+   scan and not the XOP; reverting it restores the walk from 180 keys to 8061.
+
+What stands in the tree from the session: only the discarded flush error being
+read, and the notes recording why each of the five is not the fix. The switch
+in `hammer2_sync_slaves()` is upstream's again, verified by diff.
+
+The one reading that has not changed through all five: the slave holds all
+4801 dirents and 801 of the 4801 inodes, and the 4000 files that predate the
+element are the ones missing. Every change above moves a counter that is not
+that number.
