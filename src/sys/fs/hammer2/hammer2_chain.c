@@ -3763,10 +3763,17 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * that matters carries its own inputs and does not depend on an earlier
 	 * line surviving a bound.  A bound of eight printed the first creates
 	 * of the run and none of the one at t=5852 that was refused, which is
-	 * the whole reason this line exists.  The test is the same one the guard
-	 * below applies: the parent has a range and the block is not inside it.
+	 * the whole reason this line exists.
+	 *
+	 * Gated on the debug bit, and it was NOT when it was added: its test is
+	 * wider than the refusal it describes, because every ordinary create
+	 * from a parent with a nonzero radix satisfies the second clause, so it
+	 * printed on nearly every call -- 92233 lines measured in one run
+	 * against 440 refusals.  That is a console flood on the guest's ttyS0
+	 * and the source of the one warning a converged run still reported.
+	 * The values remain available to a run that asks for them.
 	 */
-	if (parent->bref.keybits > 0 &&
+	if ((hammer2_debug & 0x8000) && parent->bref.keybits > 0 &&
 	    (keybits >= parent->bref.keybits ||
 	     key < parent->bref.key ||
 	     key > parent->bref.key +
