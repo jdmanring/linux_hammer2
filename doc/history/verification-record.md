@@ -9843,3 +9843,32 @@ The 3911 inodes the repaired scan stamps against the 728 that arrive is the
 same gap the earlier runs showed, 3873 against 801, which is why the two
 defects have to be read separately: the scan determines how many inodes are
 stamped, and the write-back determines how many of those reach media.
+
+## Three configurations, three different mechanisms, and 801 does not move, 2026-10-13
+
+The repairs were tested one at a time and then together. Reading the slave's
+file inodes off its own media after each run:
+
+| tree | distinct keys | stamps | skipped write-back | slave file inodes |
+| --- | --- | --- | --- | --- |
+| the livelock branch, write-back not forced | 180 | 3873 | 22 of 22 | 801 |
+| the branch reverted, write-back not forced | 8061 | 3911 | 50 of 50 | 728 |
+| the branch reverted, write-back forced | 8003 | 3873 | 0 | 801 |
+
+Each repair does what it was written to do, and the number that decides P4
+does not move. The stamps range over 3873 to 3911 while the inodes that arrive
+range over 728 to 801, so the two are not connected the way the earlier notes
+assumed: if 3873 stamped inodes were reaching the slave's media there would be
+3873, and if the write-back were the gate then forcing it on the repaired scan
+would have moved the count, which is what the third run tests and it does not.
+
+The slave's media also holds LESS data than the master's, 17.1 MB of non-zero
+bytes against 20.9 MB, so it is not carrying written-but-unreferenced copies
+that the tree fails to point at. The copies are not on the media at all.
+
+What remains to be read is where the chain the scan copies lands. The scan's
+parent comes from the slave's element, and `hammer2_sync_insert()` passes
+`thr->pmp` to `hammer2_chain_create()`, so the new chain is built under the
+slave's CL tree; whether the flush of that tree reaches vdc's own hmp is the
+next question, and it is the first one this session has been able to state
+without also having to guess which defect it belongs to.
