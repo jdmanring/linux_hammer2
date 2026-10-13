@@ -3671,6 +3671,39 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	ncount = nbytes / sizeof(hammer2_blockref_t);
 
 	/*
+	 * XXX Linux: a split under an INDIRECT parent must produce a block
+	 * NARROWER than that parent, and the size above decides whether it can.
+	 *
+	 * The keybits helper raises the new block's radix until it holds
+	 * `ncount` elements, so `ncount` sets a floor on the radix: ncount 128
+	 * forces keybits 7.  The parent at 0x480/7 is itself keybits 7, so the
+	 * child comes out the same width as its parent and a keybits-7 child
+	 * spans exactly a keybits-7 parent's keyspace.  The split therefore
+	 * cannot reduce the parent's occupancy, the parent stays full, and the
+	 * next insert splits again:
+	 *
+	 *   measured 2026-10-13, 4188 attempts at each of keys 0x460 to 0x4ec
+	 *   into the same parent 0x480/7, 547925 inserts, before the run wedged
+	 *
+	 * The parent is 4KB (count 32) because the size rule picks
+	 * HAMMER2_IND_BYTES_MIN under a DIRECTORY INODE, and 16KB under any
+	 * other parent.  One tree level therefore holds blocks built by both
+	 * rules, and the wider one cannot be a child of the narrower.
+	 *
+	 * Bound ncount below the parent's slot span so the radix comes out
+	 * strictly smaller.  A parent at keybits 0 is a directory inode's
+	 * blockset holding children of their own radix, so it is left alone.
+	 */
+	if (parent->bref.keybits > 0) {
+		unsigned int pmax = 1U << (parent->bref.keybits - 1);
+
+		if (ncount > (int)pmax) {
+			ncount = (int)pmax;
+			nbytes = ncount * sizeof(hammer2_blockref_t);
+		}
+	}
+
+	/*
 	 * When creating an indirect block for a freemap node or leaf
 	 * the key/keybits must be fitted to static radix levels because
 	 * particular radix levels use particular reserved blocks in the
