@@ -9788,3 +9788,25 @@ focus and the next iteration compared the same pair again.
 stale local chain and lets the scan move on. The run to confirm it is in
 flight; the reading that decides is the distinct-key count and the maximum key
 reached, not the total number of inserts.
+
+## Reverting the branch restores the key advance, 2026-10-13
+
+The revert is measured against the livelock, on the same reading that named
+it, one pass into the run:
+
+| reading | with the branch | reverted |
+| --- | --- | --- |
+| distinct focus keys inserted | 180 | 8041 |
+| maximum key reached | 0x4ff | 0xffedec6993848001 |
+| attempts at the most repeated key | 69 | 1 |
+| refusals (`does not fit`) | 340 in a full run | 120 by the first pass |
+| soft lockups | 5 | 0 |
+
+The scan walks the whole key space now instead of spinning on the first 256
+keys, and the inode stamps follow it: 3911 by the first pass against 0 in the
+run that livelocked. The refusal count falls with it, 340 to 120, which is what
+would be expected if the refusals were a symptom of the scan failing to place
+its blocks rather than a cause in their own right.
+
+Convergence is not yet read; this is the reading that says the livelock is
+repaired, and the run is still in its cycles.
