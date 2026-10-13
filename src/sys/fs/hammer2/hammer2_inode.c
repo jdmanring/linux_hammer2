@@ -427,6 +427,12 @@ hammer2_inode_chain(hammer2_inode_t *ip, int clindex, int how)
 	return (chain);
 }
 
+/*
+ * XXX Linux: calls that found an inode with no chain at the cluster index
+ * asked for.  Cumulative and never reset; see the note in the function.
+ */
+static unsigned int hammer2_chain_and_parent_null;
+
 hammer2_chain_t *
 hammer2_inode_chain_and_parent(hammer2_inode_t *ip, int clindex,
     hammer2_chain_t **parentp, int how)
@@ -448,26 +454,44 @@ hammer2_inode_chain_and_parent(hammer2_inode_t *ip, int clindex,
 			/*
 			 * XXX Linux: an element with no chain is an ordinary
 			 * outcome on this port's sync path, and the carried
-			 * code immediately dereferences it.  The line below
-			 * is `parent = chain->parent`, and a NULL chain there
+			 * code immediately dereferences it.  The next line is
+			 * `parent = chain->parent`, and a NULL chain there
 			 * reads the field at offset 0x370, which is what the
 			 * KASAN guest reported on 2026-10-12 as a null-ptr
 			 * deref at hammer2_inode_chain_and_parent+0xfe.  An
 			 * offset inside this function is this function's, so
-			 * the fault is that line; the same run also printed a
-			 * deref naming the caller, which is a different read.
-			 * Upstream carries the identical unguarded line, so
-			 * the deref is DragonFly's.  What this port adds is a
-			 * path that reaches an empty element: a
-			 * create_indirect refusal leaves one where upstream
-			 * panics at the insert instead.
+			 * that fault is this line, not the bref read in the
+			 * caller, which is a different frame.  Upstream carries
+			 * the identical unguarded line, so the deref is
+			 * DragonFly's; what this port adds is a path that can
+			 * reach an empty element, where upstream panics at the
+			 * insert instead.
 			 *
 			 * The contract is "the chain, or NULL if the inode has
 			 * no element at clindex".  Return the NULL and let the
 			 * caller test it, rather than faulting here.
+			 *
+			 * Counted rather than printed per call: this fires for
+			 * EVERY inode on EVERY sync pass while an element is
+			 * empty, which the same run measured at 60,672 calls,
+			 * and 60,672 printk calls to a serial console are
+			 * themselves a fault.  That run logged two soft lockups
+			 * on the CPU whose hardirq time crossed 50%, matching
+			 * the rate these calls peaked at.  A static counter is
+			 * enough because the reading is cumulative and the log
+			 * is read whole; nothing resets it, so read it as a
+			 * monotonic total across mounts.
+			 *
+			 * ponytail: one static, no per-inode state.  Add a
+			 * per-clindex breakdown if a reading needs to separate
+			 * two columns, which no reading has yet.
 			 */
-			kprintf("chain_and_parent: ip %p clindex %d nchains %d "
-			    "chain NULL\n", ip, clindex, ip->cluster.nchains);
+			if ((++hammer2_chain_and_parent_null & 0x3ff) == 1) {
+				hprintf("chain_and_parent: ip %p clindex %d "
+				    "nchains %d chain NULL, %u so far\n",
+				    ip, clindex, ip->cluster.nchains,
+				    hammer2_chain_and_parent_null);
+			}
 			*parentp = NULL;
 			return (NULL);
 		}

@@ -8822,8 +8822,8 @@ minutes and the previous three runs each answered one question that the
 next run then invalidated:
 
 - `hammer2_thr_wait()` (`hammer2_admin.c:870`) prints the requested
-  `flags`, the observed `flags` and `thr->td` at entry and once per five
-  seconds of waiting.
+  `flags` and `thr->td` at entry and once per return of the sleep, whose
+  timeout is `hz*60`.
 - `hammer2_inode_chain_and_parent()` (`hammer2_inode.c:451`) prints the
   inode, the cluster index and `nchains` when the selected element has no
   chain, and returns NULL with `*parentp` NULL rather than dereferencing.
@@ -8835,54 +8835,66 @@ next run then invalidated:
 
 | reading | value |
 | --- | --- |
+| checks | 17 run, 5 failed |
 | `Oops:` | 0 |
 | `kernel BUG` | 0 |
 | `device in error` | 0 |
-| `thr_wait:` | 0 |
-| `chain_and_parent:` NULL skips | 60,672 |
+| `soft lockup` | 2, both on the sync guest's idle task |
+| `thr_wait:` | 2 |
+| `chain_and_parent:` NULL skips | 60,672, all `clindex 1 nchains 2` |
 | `create_indirect: new ... does not fit` | 230 |
-| unmount/remount cycles completed | 3 of 4, all recorded `after unmount` |
+| unmount/remount cycles recorded | 7 |
 | `from empty base` | 0 |
+| slave against master, by media | 4,800 against 4,800 entries, 8,000 of 14,402 lines differ |
+| `fsck_hammer2`, both volumes | exit 0 |
 
-Two things this settles and one it does not.
+The run completed all four cycles and did not hang. Both `fsck_hammer2`
+passes exit 0, so both volumes are structurally sound; the five failures
+are the fault this script exists to reproduce (no miss, no give-up, no
+device in error), the kernel-warning check, and the convergence check.
 
-Settled: the crash and the hang travelled together in every earlier run. The
-null-ptr deref that `hammer2_inode_chain_and_parent()` took at `+0xfe` is the
-same empty cluster element that the sync thread now skips 60,672 times, and
-with the deref replaced by a skip the run completed three unmounts where the
-previous run hung on the first, with the `thr_wait` print never firing.
+The two `thr_wait:` lines are the print working and they say the ordinary
+teardown is healthy:
 
-Candidate, NOT yet measured: that the hang was the oops. A sync thread that
-oopses inside a kthread never reaches the code that sets
-`HAMMER2_THREAD_STOPPED`, and `hammer2_pfsfree_scan()` waits for that bit in
-an unbounded loop, so an oops on the sync thread would leave the unmount
-waiting forever. That would make the wait a consequence of the fault rather
-than an independent defect. It is consistent with every run so far, and the
-print that would settle it is `hammer2_thr_wait()`'s own, which has not
-fired because the fault is gone. It stays a candidate until a run sets the
-fault and hangs in the same breath.
+    thr_wait: thr 00000000a0424b41 want 0040 td 00000000babd4d3c flags 0060
+    thr_wait: thr 00000000a0424b41 want 0100 td 00000000babd4d3c flags 0050
 
-Settled: the deref itself is DragonFly's, not this port's. Upstream's
-`hammer2_inode_chain_and_parent()` reads `parent = chain->parent` with no
-NULL test, and upstream's `hammer2_sync_slaves()` reads
-`chain->bref.modify_tid` above its own `if (chain)`, both byte-identical
-here before this commit. What this port added is a path that reaches the
-empty element: a `create_indirect()` refusal now declines to build a block
-that cannot fit its parent, which leaves the destination's cluster element
-empty, where upstream panicked at the insert instead. The port reached the
-same impossible state by a different door.
+The first wants `HAMMER2_THREAD_FROZEN` and finds it already set, so it
+breaks at once; the second wants `HAMMER2_THREAD_STOPPED` with a non-NULL
+`td`, so the thread was still a live task, and it resolved without
+spending the full timeout. Neither is the earlier hang, and a NULL `td`
+never appeared. The hang the previous run died in is therefore still
+unreproduced, and the record keeps it as a candidate: a sync thread that
+faults inside a kthread never sets `STOPPED`, and `hammer2_pfsfree_scan()`
+waits for that bit in a loop with no bound, so a fault there and a hang
+there would be one event. Nothing in this run sets the fault, so nothing
+in it can settle that.
 
-Not settled: the `clindex 1` column is empty for EVERY inode, not for the
-handful whose parent filled. 230 refusals cannot empty 4,200 inodes'
-second element, so the refusal is not what empties the column, and the
-empty column is why `from empty base` never fires: the copy is compared
-against nothing. Candidate mechanisms, none measured: the element was
-never populated by this port's mount path, or it is cleared before the
-thread's first pass each cycle. The print for that is the same one at
-`hammer2_inode.c:451` moved to `hammer2_mount()`'s cluster setup, or a
-counter of how many elements are populated when the first pass starts.
+The deref is DragonFly's. Upstream's `hammer2_inode_chain_and_parent()`
+reads `parent = chain->parent` with no NULL test, and the field at that
+offset, 0x370, is `parent` in this build's DWARF, not the
+`bref.modify_tid` the caller reads in its own frame. Upstream's
+`hammer2_sync_slaves()` also reads `chain->bref.modify_tid` above its own
+`if (chain)`; the second call site tests with `KKASSERT(parent != NULL)`,
+which is compiled out unless `HAMMER2_INVARIANTS` is set and so tested
+nothing in a shipping build. What this port adds is a path that can reach
+an empty element: a `create_indirect()` refusal declines to build a block
+that cannot fit its parent, where upstream panicked at the insert instead.
 
-The convergence reading still has no number, and this run could not have
-produced one: `sync-empty-base.sh` asserts the population before it
-compares, and an empty slave column is a failed population assertion
-rather than a converged copy.
+Not settled, and the reading is worse than the entry above it suggests. All
+60,672 skips are `clindex 1` on a 2-chain inode, the slave's element, over
+128 distinct inodes sampled; and the convergence check now has a number,
+because this run reached it for the first time: the two volumes hold the
+same 4,800 entries and differ in 8,000 of 14,402 lines. So the slave holds
+the file entries and not the blocks behind them. Two candidate mechanisms,
+neither measured: the copy is created and then dropped before the pass
+ends, or `sync_replace` fills the entry and fails before the data. The
+print that separates them is the `nerror` returned either side of
+`hammer2_sync_insert()` and `hammer2_sync_replace()` at the
+`hammer2_synchro.c` call sites.
+
+The counter added in this commit replaces an unconditional print that was
+itself a defect: 60,672 `printk` calls to the guest's serial console, and
+two soft lockups on the CPU whose hardirq time crossed 50% at the rate
+those calls peaked. An instrument that changes the system it measures is
+not a reading, and the run that produced this table had both.
