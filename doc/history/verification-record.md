@@ -9132,3 +9132,56 @@ from the shape of the problem rather than from a guard:
 
 The instrument that produced this is `print_backtrace()` at the refusal,
 bounded to the first two firings, and it stays until the caller is fixed.
+
+## The refused block encloses its parent, and the range test cannot see it, 2026-10-13
+
+The guard's values, read as arithmetic rather than as a message, give the
+mechanism without another run.
+
+    create_indirect: new 0000000000000400/7 does not fit parent 0000000000000440/6
+    create_indirect: new 0000000000000480/7 does not fit parent 0000000000000480/7
+
+Take the first. A block of key `0x400` and keybits 7 spans `0x400-0x47f`. The
+parent of key `0x440` and keybits 6 spans `0x440-0x47f`. The block being
+inserted ENCLOSES its parent: it covers everything the parent covers and
+`0x400-0x43f` besides. A child that contains its parent is the insert the
+rbtree cannot express.
+
+Why `create_indirect` builds it is visible in its own tail. Having built the
+block it decides what to return with
+
+    if (rounddown2(create_key ^ key, (hammer2_key_t)1 << keybits) != 0)
+            ... return the original parent ...
+
+which tests `create_key` against the key the block was built AT, not against
+the parent it will be inserted into. When `indkey_dir` has produced a key
+equal to `create_key` the xor is zero, the test reads "in the range", and the
+enclosing block is returned for insertion. The test cannot fail for the case
+that matters, because it never looks at the parent's range at all.
+
+The parent is wrong before any of that. `hammer2_sync_insert()` builds a
+missing chain from the master's key and radix under whichever parent the
+slave's scan holds, and `0x400` is not inside `0x440-0x47f`. Measured on the
+same run, `sync_insert` is called 110 times with an INODE parent of keybits 0
+and 90 times with an INDIRECT parent of keybits 7, so it is reached for both
+shapes. The second refusal above, `0x480/7` under `0x480/7`, is the same key
+and radix on both sides, which is the enclosing case with zero containment.
+
+So there are two defects, and only the second is in carried code:
+
+- The guard refuses a block that `create_indirect` built, and the refusal
+  costs the slave 4,000 inodes' data. This one is the port's.
+- `create_indirect` can hand back a block that encloses its parent, because
+  its range test compares the create key against the built block rather than
+  against the parent. Upstream carries the same test, so this is reachable
+  there too, and its `hammer2_chain_insert()` would take the device into
+  error on the same input. Whether upstream's callers can produce that input
+  is the reading this record still owes: `sync_insert` is byte-identical to
+  upstream's, but the slave's scan position that supplies the parent depends
+  on how this port walks the two trees, and that is the part not yet read.
+
+Neither is a fix to write from here. The first is a guard the port added and
+can remove once the second stops producing its input; the second is a range
+test in carried code that needs the caller's contract established first,
+since changing it without that would move the failure rather than remove it,
+which four attempts at this site have now demonstrated.

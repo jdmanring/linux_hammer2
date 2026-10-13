@@ -3829,9 +3829,25 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 			 * caller, which is all the reading needs; the counter is
 			 * atomic because several threads reach here.
 			 */
-			hprintf("create_indirect: new %016llx/%d does not fit parent %016llx/%d\n",
+			/*
+			 * The types and the create arguments, printed HERE and
+			 * not read from another function at another moment.
+			 * The values alone say a block does not fit; the type
+			 * says which keyspace meaning the parent's key and
+			 * keybits have at the instant of the refusal, and the
+			 * create arguments say what was asked for.  Reading the
+			 * parent's type off hammer2_sync_insert()'s own entry
+			 * print is what produced two wrong mechanisms in a row,
+			 * because that print is taken before this function's
+			 * caller re-locks and re-looks-up the parent.
+			 */
+			hprintf("create_indirect: new %016llx/%d does not fit parent "
+			    "%016llx/%d (parent type %d, child type %d, create "
+			    "%016llx/%d for_type %d)\n",
 			    (long long)ichain->bref.key, ichain->bref.keybits,
-			    (long long)parent->bref.key, parent->bref.keybits);
+			    (long long)parent->bref.key, parent->bref.keybits,
+			    parent->bref.type, ichain->bref.type,
+			    (long long)create_key, create_bits, for_type);
 			if (atomic_fetchadd_int(&hammer2_create_indirect_refused, 1) < 2)
 				print_backtrace();
 			hammer2_chain_unlock(ichain);
