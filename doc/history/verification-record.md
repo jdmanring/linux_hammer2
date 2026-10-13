@@ -8149,3 +8149,55 @@ The reading is 4 runs of `sync-empty-base.sh` under `HAMMER2_INVARIANTS`,
 this one the first to reach the assert rather than hang; the kernel log
 is `sync-empty-hang-20261012-162434.klog` beside the images in
 `~/Projects/linux_hammer2-data/fixtures/`, 424110 bytes.
+
+## The incumbent is keybits 5, and the hypothesis it refutes, 2026-10-12
+
+The assert at `hammer2_chain.c:297` computes the chain it collided with
+and throws it away: `RB_INSERT` returns the incumbent, and the
+`KASSERTMSG` prints only the chain being inserted. A probe now prints
+both, and it fires only on the collision path. It reads:
+
+    hammer2_chain_insert(h2nod-CL|5776): collision 0000000000000400/7 hits 0000000000000420/5
+
+That is the answer to why the move loop skipped a sibling, and it
+refutes the reading this record carried an hour earlier. The entry above
+predicted, from the three `flush indirect chain` lines in the earlier
+log, that the keybits-7 block at `0x400` spanned the keybits-6 pair at
+`0x400` and `0x440` and that both should have been moved into it. The
+incumbent is not keybits 6. It is keybits 5, at key `0x420`:
+
+    new:       0x400/7  covers [0x400, 0x47f]
+    incumbent: 0x420/5  covers [0x420, 0x43f]
+
+so the overlap is with one narrower sibling that sits strictly inside the
+new block's range, and there is no pair to tile anything. The 0x400/5 and
+0x440/6 lines in the old log are neighbours of the collision, not its
+parties, which is what reading them as the parties assumed.
+
+The mechanism is now checked arithmetically rather than reasoned. The new
+block's radix is `keybits`, which `hammer2_chain_indkey_dir()` raises in a
+`while (((hammer2_key_t)1 << keybits) < (hammer2_key_t)ncount) ++keybits`
+loop, so it is at least `ceil(log2(ncount))`. `ncount = nbytes /
+sizeof(hammer2_blockref_t)`, and `nbytes` is `HAMMER2_IND_BYTES_MIN`
+(4096, 32 entries, keybits 5) only when the parent is a directory inode,
+`HAMMER2_IND_BYTES_NOM` (16384, 128 entries, keybits 7) otherwise. The
+move loop's own skip test is
+`rounddown2(key ^ bref->key, (hammer2_key_t)1 << keybits) != 0`, and for
+`key=0x400`, `bref->key=0x420`, `keybits=7` that is
+`rounddown2(0x20, 0x80) == 0`, which does NOT skip: the element is
+within the new block's keyspace by that test and should have been moved.
+
+So the skip test does not explain the miss, and neither does the radix
+being 7 by itself. The remaining distinction is the one the next probe
+takes: whether the parent whose blockmap is being scanned at that moment
+is the directory inode the 4096 path was chosen for, or a *different*
+parent, which is what an `else`-branch `nbytes` of 16384 would produce.
+The value printed is `parent->bref.keybits` beside `nbytes`'s derived
+`ncount` and the caller's `create_bits`, so a new keybits above the
+parent's own is visible directly rather than inferred from the log.
+
+The lesson is recorded because it is the second time this defect was
+mis-read from the source: a hypothesis reached by reading
+`create_indirect` end to end was wrong in its central claim, and the
+value that refuted it was one `RB_INSERT` return away from the assert
+that had been printing since the first INVARIANTS run.
