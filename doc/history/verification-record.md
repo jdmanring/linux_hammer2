@@ -10276,3 +10276,34 @@ the wedged logs are kept beside the images and both stop at `hammer2_kill_sb:
 after unmount: 4008 inode, 126312 chain, 122179 modified, 499 dio still
 allocated`, which is the master's cluster mount holding the whole set with
 122179 chains still modified as the volume is being torn down.
+
+## The sync copies the master's indirect blocks at the master's radix, 2026-10-13
+
+The wedged log's last lines are the sync thread doing this without end:
+
+    sync_insert: focus 00000000000004ec/0 into parent 0000000000000480/7 type 2
+    create_indirect: parent 0000000000000480/7 ... ncount 128 count 32 -> keybits 7 key 00000000000004ec
+
+The insert calls, counted by the type and key they carry:
+
+    type 2 INDIRECT   543902 calls, focus keybits 0, keys 0x405 .. 0xffedec6993848001
+                      into parents 0x440/6 (134022 of them), 0x400/5, 0x420/5
+    type 1 INODE        3946 calls over 75 distinct keys
+    type 0 DIRENT          0
+
+`hammer2_sync_insert()` passes `focus->bref.type` to `hammer2_chain_create()`,
+and focus is the MASTER's chain. For a directory the master indexes its entries
+with INDIRECT blocks, so the sync asks the slave to create an INDIRECT chain at
+the master's key and keybits. The slave's parent there is keybits 6, so the new
+block comes out keybits 7 -- wider than the parent it is inserted into and the
+same width as the parent's own parent. Every such insert therefore has to
+absorb its neighbours, and the next key rebuilds it: 543902 inserts and 536026
+`create_indirect` calls, one full-width block per key, until the run wedges.
+
+That is the whole defect and it explains the four counter readings that have not
+moved: the guards refuse these blocks (340 refusals), the refused keys get no
+inode (75 created of 4001), the tree cannot be walked to completion (217 root
+restarts), and the write-back has nothing valid to write. The fix belongs where
+the sync chooses the destination radix, and it is not the caller's or the
+computed keybits -- it is that the destination's own tree decides the radix, not
+the source's.
