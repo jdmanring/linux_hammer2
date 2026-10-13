@@ -166,17 +166,6 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 		 * walk per pass. What the gate hides is that this helper never
 		 * writes, which the error below would otherwise report.
 		 */
-		/*
-		 * XXX Linux: flag the root before the gate.  Measured with the
-		 * scan repaired the two numbers are 4004 inodes stamped and 834
-		 * on the slave's media, against 4001 file keys offered, and the
-		 * gate below is false on every pass because the descending flush
-		 * clears ONFLUSH before the pass ends.  Forcing the flag was tried
-		 * BEFORE the scan was fixed and moved the count 728 to 801, which
-		 * was too little to read; with the scan now reaching every key it
-		 * is the one combination not yet measured.
-		 */
-		atomic_set_int(&chain->flags, HAMMER2_CHAIN_ONFLUSH);
 		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
 			/*
 			 * XXX Linux: the return value was DISCARDED, so a flush
