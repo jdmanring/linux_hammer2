@@ -385,16 +385,19 @@ grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod o
 # show` for entry-for-entry agreement, taken from the images after the run
 # rather than from a mount, since a mounted volume answers from cache.
 if [ -x "$FSCK" ] && [ -x "$HAMMER2" ]; then
+	# Report each image by the role the media gives it, since the
+	# filenames are what turned out to be wrong on 2026-10-13, so a line
+	# naming "the master volume" was naming the wrong file.
 	for b in master slave; do
 		eval "img=\$$(echo "$b" | tr a-z A-Z)"
 		"$FSCK" "$img" > "$W/fsck.$b" 2>&1
-		check "fsck_hammer2 on the $b volume" $? "exit $?"
+		check "fsck_hammer2 exits 0 on repro-$b.img" $? "exit $?"
 	done
 	last() { sed -n '$p' "$1"; }
 	# The last running total fsck prints is the volume's own.
 	fm=$(last "$W/fsck.master"); fs_=$(last "$W/fsck.slave")
-	echo "  note  master: $fm"
-	echo "  note  slave:  $fs_"
+	echo "  note  repro-master.img: $fm"
+	echo "  note  repro-slave.img:  $fs_"
 	# The fingerprint of the cluster's PFS, from the line naming it to the
 	# line closing it, which is cluster-sync.sh's function copied whole so
 	# the two scripts read side by side and agree on what convergence is.
@@ -416,25 +419,80 @@ if [ -x "$FSCK" ] && [ -x "$HAMMER2" ]; then
 		mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
 		' | LC_ALL=C sort
 	}
-	fingerprint "$MASTER" > "$W/fp.master"
-	fingerprint "$SLAVE" > "$W/fp.slave"
-	nm=$(grep -c ' FILE$' "$W/fp.master" || true)
-	ns=$(grep -c ' FILE$' "$W/fp.slave" || true)
+	# Which image is the MASTER is a fact about the MEDIA, not about the
+	# filename it happens to carry. 2026-10-13: repro-master.img held CL as
+	# pfs_type 3 (SLAVE) and repro-slave.img held it as 6 (MASTER), so
+	# every reading the two variables fed was inverted and the missing-tree
+	# count was attributed to the volume that had it. pfs-create defaults
+	# to MASTER with no uuid and to SLAVE with one, and only the vdc volume
+	# is given -u, so the roles are readable from the invocation as well;
+	# the media is the authority here and the roles decide which file is
+	# compared to which, so a mislabelled pair cannot swap a verdict.
+	role() {		# image -> MASTER | SLAVE | unknown
+		t=$("$HAMMER2" -v show "$1" 2>/dev/null | awk '
+		    /filename "CL"$/ && !on { on = 1; next }
+		    on && /^ *} \(inode\.[0-9]*, "CL"\)/ { exit }
+		    on && /^ *pfs_type / { print $2; exit }')
+		case "$t" in
+		6) echo MASTER ;;
+		3) echo SLAVE ;;
+		*) echo "unknown(type ${t:-none})" ;;
+		esac
+	}
+	mr=$(role "$MASTER"); sr=$(role "$SLAVE")
+	echo "  note  CL role by media: repro-master.img=$mr repro-slave.img=$sr"
+	if [ "$mr $sr" = "MASTER SLAVE" ]; then
+		MF=$MASTER; SF=$SLAVE
+	elif [ "$mr $sr" = "SLAVE MASTER" ]; then
+		MF=$SLAVE; SF=$MASTER
+		# Named, not passed over: the file the run attached as the master
+		# volume is the SLAVE element, so anything read from a device name
+		# in this run's output is reversed. The comparison below is right
+		# anyway, because it is taken by role.
+		echo "  note  the images are the other way round from their names:" \
+		     "the MASTER element is in repro-slave.img"
+	else
+		echo "sync-empty: COULD-NOT-RUN: neither image states a cluster role" >&2
+		echo "  (repro-master.img=$mr repro-slave.img=$sr); the comparison" >&2
+		echo "  would be between two volumes of unknown kind." >&2
+		exit 2
+	fi
+	fingerprint "$MF" > "$W/fp.master"
+	fingerprint "$SF" > "$W/fp.slave"
+	# Counted from the INODE line, not by grepping ' FILE$' over the whole
+	# fingerprint: that pattern matches the dirent lines too, because the
+	# dirent print above ends in the entry's type, so on 2026-10-13 it read
+	# 4,800 "file entr(ies)" on a volume holding 400 file inodes and the
+	# population check passed on a tree that was 90% absent.
+	nf() { command grep -c '^inode .* FILE' "$1" || true; }	# fingerprint
+	nm=$(nf "$W/fp.master"); ns=$(nf "$W/fp.slave")
 	nm=${nm:-0}; ns=${ns:-0}
 	# The population first: a fingerprint that matched nothing on both
 	# sides would compare equal and read as convergence.
 	[ "$nm" -gt 0 ] 2>/dev/null
-	check "the master's PFS holds files, by its own media" $? "$nm file entr(ies)"
-	cmp -s "$W/fp.master" "$W/fp.slave"
+	check "the MASTER volume holds file inodes, by its own media" $? "$nm file inode(s)"
+	# The comparison status is captured HERE, before anything else runs,
+	# because `$?` belongs to the last command and the counts and the delta
+	# below are commands too. Every one of them would otherwise overwrite
+	# it and the convergence check would report the status of a `grep -c`
+	# that always succeeds.
+	cmp -s "$W/fp.master" "$W/fp.slave"; crc=$?
 	# The differing-line count is printed as the WHOLE delta, not as a
 	# count of content mismatches, because that is what `diff` computes
 	# and the two are different numbers whenever the two sides hold a
-	# different number of lines: on 2026-10-13 the master's fingerprint
-	# was 14,402 lines and the slave's 6,402, so "8,000 differ" was the
-	# entire absence of 4,000 inode and 4,000 data lines rather than
-	# 8,000 disagreements. Read the per-type counts before the total.
-	check "the slave converged to the master, entry for entry and block for block" $? \
-		"$ns against $nm file entr(ies); $(diff "$W/fp.slave" "$W/fp.master" | command grep -c '^[<>]' || true) line(s) differ of $(wc -l < "$W/fp.slave")"
+	# different number of lines: on 2026-10-13 the full side's fingerprint
+	# was 13,202 lines and the short side's 5,202, so "8,000 differ" was
+	# the entire absence of 4,000 inode and 4,000 data lines rather than
+	# 8,000 disagreements. The per-type counts are printed beside it so the
+	# shortfall names the element class it is short of, which the single
+	# "file entr(ies)" pair could not: it read 4,400 against 4,400 while
+	# whole inode and data trees were absent.
+	n_in() { command grep -c '^inode ' "$1" || true; }	# fingerprint
+	n_dt() { command grep -c '^data ' "$1" || true; }
+	n_de() { command grep -c '^dirent ' "$1" || true; }
+	delta=$(diff "$W/fp.slave" "$W/fp.master" | command grep -c '^[<>]' || true)
+	check "the SLAVE converged to its MASTER, entry for entry and block for block" $crc \
+		"slave/master by type: inode $(n_in "$W/fp.slave")/$(n_in "$W/fp.master"), data $(n_dt "$W/fp.slave")/$(n_dt "$W/fp.master"), dirent $(n_de "$W/fp.slave")/$(n_de "$W/fp.master"); ${delta:-0} line(s) differ of $(wc -l < "$W/fp.slave")"
 else
 	echo "  FAIL  convergence not read: no fsck_hammer2 or hammer2 (H2_FSCK, H2_HAMMER2)"
 	fail=$((fail + 1))
