@@ -4679,30 +4679,25 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	}
 
 	/*
-	 * XXX Linux: the block must be strictly narrower than the parent it is
-	 * inserted into, and the loop above sizes it from ncount alone.  The
-	 * run of 2026-10-13 printed the inputs at the decision point:
+	 * XXX Linux: the block this returns can be wider than the parent it is
+	 * inserted into, and capping it here was tried a third time on
+	 * 2026-10-13 and is reverted again.
 	 *
-	 *   parent 0x440/6 create_bits 0 ncount 128 count 32 -> keybits 7 key 0x400
+	 * The cap was placed between this loop and the mask below so the mask
+	 * would realign the key to the narrower block, which is what the two
+	 * earlier attempts lacked. It fired ZERO times in that run, against a
+	 * previous run's 90 refusals, and the run reached `hpanic("flush depth
+	 * limit")` at hammer2_flush.c:493 with two oopses in the flush worker.
 	 *
-	 * The 16 KiB block holds 128 blockrefs, so the loop raises keybits to
-	 * 7, and a radix-7 block is 128 keys wide under a 64-key parent.  The
-	 * create key 0x460 IS inside the parent's 0x440-0x47f, so the parent is
-	 * right and only the width is wrong.
-	 *
-	 * The cap sits HERE, between the loop and the side-bit assignment
-	 * below, so the assignment realigns the key to the width the block
-	 * actually has: at keybits 5 the key 0x460 masks to 0x460 and the block
-	 * covers 0x460-0x47f, inside the parent.  An earlier attempt capped
-	 * after this function had already masked the key, leaving it at 0x400
-	 * over 0x400-0x41f, still outside the parent; that run refused 210
-	 * blocks and deepened the tree to the flush depth limit.  A later one
-	 * capped create_bits before the loop, which is 0 and bounded nothing
-	 * at all.
+	 * The refusals were not the problem. Compared across the runs kept
+	 * beside the images: every run WITH refusals recorded depth=0 (10, 10,
+	 * 1 and 1 refusals), and the runs WITHOUT them recorded depth=1,
+	 * including two from before any guard existed. Refusing a block that
+	 * cannot be placed is what keeps indirect_maintenance() from growing
+	 * the tree past what the flush can walk, so removing the refusals
+	 * trades a lost copy for an unflushable volume. The guard in
+	 * create_indirect() stays, and this note stays with it.
 	 */
-	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits)
-		keybits = parent->bref.keybits - 1;
-
 	if (hicount > locount)
 		key |= (hammer2_key_t)1 << keybits;
 	else
