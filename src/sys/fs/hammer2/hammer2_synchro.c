@@ -487,6 +487,10 @@ dumpcluster(const char *label,
  *
  * XXX serror / merror rollup and handling.
  */
+static int h2dbg_file_nlt;	/* XXX Linux */
+static int h2dbg_file_neq;	/* XXX Linux */
+static int h2dbg_file_ngt;	/* XXX Linux */
+
 static
 int
 hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
@@ -678,6 +682,36 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		}
 
 		/*
+		 * XXX Linux: the instrument the six refuted changes assumed.
+		 * Every arm below decides whether an inode is copied, replaced,
+		 * deleted or left alone, and no reading so far has said WHICH arm
+		 * the file keys take.  A directory holding 4001 entries has its
+		 * file keys in the hash space above the inode-number range, and
+		 * the counts of `sync_insert` say those keys are offered 4001
+		 * times while only 75 inode-type chains are created, so the arm
+		 * taken for them is the question, not the mechanism behind the
+		 * arm.
+		 *
+		 * keybits 0 with a key above 2^63 is a file hash: inode numbers
+		 * are small and directories hash to the top of the space.  The
+		 * three counters are printed once per pass at the end of the root
+		 * scan rather than per key, since a per-key print is the console
+		 * flood this file already carries two of.
+		 */
+		{
+			uint64_t kh = (focus ? focus->bref.key :
+			    (chain ? chain->bref.key : 0));
+			if (kh > 0x8000000000000000ULL && kh != 0xffffffffffffffffULL) {
+				if (n < 0)
+					atomic_add_int(&h2dbg_file_nlt, 1);
+				else if (n == 0)
+					atomic_add_int(&h2dbg_file_neq, 1);
+				else
+					atomic_add_int(&h2dbg_file_ngt, 1);
+			}
+		}
+
+		/*
 		 * Take action based on comparison results.
 		 */
 		if (n < 0) {
@@ -819,6 +853,16 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		}
 	}
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	/*
+	 * XXX Linux: the arm the file keys took, printed once per root scan.
+	 * These are cumulative and the run is read from them at the end, so a
+	 * repeated line is the expected shape rather than a flood: one per
+	 * `hammer2_sync_slaves()` call on the PFS root.
+	 */
+	if (hammer2_debug & 0x8000) {
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d\n",
+		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt);
+	}
 	if (chain) {
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
