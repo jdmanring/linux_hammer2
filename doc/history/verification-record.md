@@ -10334,3 +10334,27 @@ Checked against the three shapes the wedged log actually contains:
 
 In each the narrowed block is strictly inside its parent, which is the property
 the shared-helper cap could not give when it also shrank the source tree.
+
+## The clamp works and the write-back defect is separate, 2026-10-13
+
+The run carrying the sync-path clamp reached 23 passes with the counters below,
+the healthiest of the session and the first since run 5 not to wedge:
+
+| reading | before the clamp | with the clamp |
+| --- | --- | --- |
+| passes | 1 | 23 and climbing |
+| `syncthr: update inode` stamps | 3873 | 4004 |
+| `does not fit` refusals | 340 | 90 |
+| `create_indirect` calls | 536026 | 28032 |
+| `sync_insert` calls | 547925 | 40040 |
+| fatal | 0 | 0 |
+
+In the same run, and on every pass, the write-back helper still reports:
+
+    sync_flush: clindex 1 chain 00000000728ee707 not flagged (00046102)
+
+which is the same empty branch measured before the clamp, with none of
+MODIFIED, UPDATE, ONFLUSH or DESTROY set. So the two defects are separate and
+both are now measured in one run: the clamp fixes the radix and the refusals,
+and the write-back remains a no-op. The convergence number from this run
+measures the clamp alone, with the write-back still unable to write.
