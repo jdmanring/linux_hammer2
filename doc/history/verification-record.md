@@ -8629,3 +8629,45 @@ crash that ended the earlier runs at t=152 and this is what sat behind it.
 Not fixed here. The next measurement is which task added the ipdep entry
 and why it retired without calling `hammer2_xop_unset_ipdep()`, which is a
 print at the insert and at the unset rather than a reading of the caller.
+
+### The wait is on a hash bucket, not an inode
+
+The ipdep set/unset pairing is correct: `hammer2_admin.c:407-414` sets an
+entry for `ip1..ip4` under exactly the guards `hammer2_admin.c:561-586`
+uses to unset them (the `HAMMER2_XOP_STRATEGY` skip on ip1, and the
+`ip3 != ip1` / `ip4 != ip2` rename guards), so nothing retires early and
+nothing leaks out of that pair. The unbounded wait comes from what an
+entry MEANS.
+
+`nip->ipdep_idx = nip->meta.inum % HAMMER2_IHASH_SIZE`
+(`hammer2_inode.c:1032`, `HAMMER2_IHASH_SIZE` 32) makes the index a hash
+BUCKET, and `hammer2_xop_testset_ipdep()` sleeps while any inode is in
+`pmp->ipdep_lists[idx]` for that bucket. So a waiter waits for whichever
+inode currently occupies its bucket, whether or not it has any stake in
+it. Measured against this reproducer's own keyspace:
+
+    0x400 -> bucket 0
+    0x420 -> bucket 0
+    0x440 -> bucket 0
+    0x480 -> bucket 0
+    0x404 -> bucket 4
+    0x409 -> bucket 9
+
+and a set of 4000 inodes spread over the 32 buckets puts 125 in each. The
+four inodes this fault names -- the collision's incumbent, the collapse's
+parent, the block being collapsed and the sibling at 0x480 -- all sit in
+one bucket, which is why the syncer's flush and the frontend's write
+serialize against each other here and not elsewhere.
+
+That also explains the two different waits in the record as one cause: the
+`HAMMER2_PMPF_WAITING` shape the `XXX` above `hammer2_xop_testset_ipdep`
+describes (one bit for the whole PFS against one condition variable per
+index) and this one (the condition variable is per index, but the index is
+shared by construction). Both are lost wakeups caused by a per-bucket
+signal standing in for a per-inode dependency.
+
+Not fixed. The candidate repairs differ and are not equivalent: make the
+dependency per-inode rather than per-bucket, or bound the wait and treat
+the collision as the serialization the caller already accepts. Which one
+is right is a design call, and it should be made against the FreeBSD
+port's text for this function rather than from this record.
