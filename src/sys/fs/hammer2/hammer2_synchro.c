@@ -137,11 +137,12 @@ hammer2_sync_setflush(hammer2_chain_t *chain)
  * flush of the device writes the volume header.  A root with nothing
  * flagged returns at once, so an idle pass costs a lock.
  */
-static void
+static int
 hammer2_sync_flush(hammer2_thread_t *thr)
 {
 	hammer2_pfs_t *pmp = thr->pmp;
 	hammer2_chain_t *chain;
+	int error = 0;
 
 	hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
 	hammer2_inode_lock(pmp->iroot, HAMMER2_RESOLVE_SHARED);
@@ -150,15 +151,42 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 	hammer2_inode_unlock(pmp->iroot);
 	if (chain) {
 		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
-			hammer2_flush(chain, HAMMER2_FLUSH_TOP |
+			/*
+			 * XXX Linux: the return value was DISCARDED, so a flush
+			 * that wrote nothing was indistinguishable from one that
+			 * wrote everything. That is the shape of the 2026-10-13
+			 * loss: the thread copied 3873 inodes into the slave's
+			 * element, flagged the path, ran this flush at the end of
+			 * the pass, and the slave's media held 801 of them. With
+			 * the error thrown away there was nothing to read.
+			 *
+			 * Read it, report it, and keep it: the caller treats a
+			 * pass with an error as one that must be retried, and a
+			 * write that did not happen must not be reported as one
+			 * that did.
+			 */
+			error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
 			    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);
+			if (error) {
+				kprintf("sync_flush: clindex %d chain %p "
+				    "flush error %08x\n",
+				    thr->clindex, chain, error);
+			}
 			if (chain->parent)
 				hammer2_sync_setflush(chain->parent);
+		} else if (hammer2_debug & 0x8000) {
+			kprintf("sync_flush: clindex %d chain %p not flagged "
+			    "(%08x)\n", thr->clindex, chain, chain->flags);
 		}
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
+	} else if (hammer2_debug & 0x8000) {
+		kprintf("sync_flush: clindex %d no element chain\n",
+		    thr->clindex);
 	}
 	hammer2_trans_done(pmp, HAMMER2_TRANS_ISFLUSH);
+
+	return (error);
 }
 
 /*
@@ -179,6 +207,7 @@ hammer2_primary_sync_thread(void *arg)
 	hammer2_deferred_list_t list;
 	hammer2_deferred_ip_t *defer;
 	int error;
+	int ferror;		/* XXX Linux: the write-back's own result */
 	uint32_t flags;
 	uint32_t nflags;
 
@@ -317,7 +346,18 @@ hammer2_primary_sync_thread(void *arg)
 
 		hammer2_inode_drop(pmp->iroot);
 		hammer2_trans_done(pmp, 0);
-		hammer2_sync_flush(thr);	/* XXX Linux */
+		/*
+		 * XXX Linux: the write-back's own error was discarded, so a pass
+		 * whose copies never reached media looked exactly like one that
+		 * wrote them. Read it: the flush is what carries what the scan
+		 * copied, and a failure here means the scan's stamps were set
+		 * against a slave that did not receive them. Reported through the
+		 * same path as a scan error, which the loop above treats as a
+		 * pass to retry rather than one that succeeded.
+		 */
+		ferror = hammer2_sync_flush(thr);
+		if (ferror && error == 0)
+			error = ferror;
 
 		if (error && error != HAMMER2_ERROR_EINPROGRESS)
 			kprintf("hammer2_sync_slaves: error %d\n", error);
