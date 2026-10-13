@@ -8055,6 +8055,24 @@ duplicate key is REAL and is not an artifact of the rbtree walk: two
 chains of the same key were offered to one parent's tree, and the
 assert's own message names them.
 
+That sentence said "two chains of one key and one keybits" until it was
+read against the comparator, and the comparator does not say that.
+`hammer2_chain_cmp()` at `hammer2_chain.c:59` compares key RANGES:
+it computes each chain's `[key, key + (1 << keybits) - 1]` and returns 0
+when they overlap, with the comment "Overlaps are not supposed to happen
+and catch any software issues early we count overlaps as a match". So a
+returned non-NULL from `RB_INSERT` proves an overlap with something
+already in the tree; it does not prove the two are equal, and the assert's
+message prints only the NEW chain's key and keybits, not the incumbent's.
+The keybits-7 block named there spans `0x400..0x47f`, and the flush lines
+below show keybits-6 blocks at `0x400` and `0x440` spanning `0x400..0x43f`
+and `0x440..0x47f`: the two exactly tile the 7's range. So the shape the
+assert proves is one block whose range covers two siblings that were NOT
+moved into it, which is rule (3) of the `create-indirect` contract ("any
+elements in the current parent that fit within the new indirect block's
+keyspace must be moved into the new indirect block") not holding, and not
+the equal-key duplicate the earlier reading assumed.
+
 Three things this settles.
 
 First, the question the entry above left open is answered in the
@@ -8103,13 +8121,29 @@ corrupt rbtree the unmount later walks.
 
 Provenance: the code that builds the colliding block is carried. The
 `nbytes` selection and the `create_key`/`create_bits` arguments
-`hammer2_sync_insert()` passes are byte-identical to DragonFly's, checked
-by `awk` over both, and `doc/provenance.csv` records `hammer2_chain.c` as
+`hammer2_sync_insert()` passes are byte-identical to DragonFly's. That
+claim was inherited from the entry above and has now been re-checked
+against the clone on this machine rather than repeated:
+`~/Projects/dragonfly-hammer2-upstream` is at `250a8b4928` and
+`git show HEAD:sys/vfs/hammer2/hammer2_chain.c` holds the same `nbytes`
+selection at its line 3778 (the directory-inode arm taking
+`HAMMER2_IND_BYTES_MIN` and the `else` taking `HAMMER2_IND_BYTES_NOM`),
+and `hammer2_synchro.c` line 761 passes `focus->bref.key,
+focus->bref.keybits, focus->bref.type` to the same `hammer2_chain_create`
+call this port's line 924 does. `doc/provenance.csv` records `hammer2_chain.c` as
 `derived` from `freebsd-hammer2-upstream` and `hammer2_synchro.c` as
 `derived` from `dragonfly-hammer2-upstream`. So the defect is upstream's
 and is reachable in any tree that runs this sync path; it is not a port
-regression. It is fixed here under `XXX`, staged rather than filed, by
-the maintainer's rule for upstream work.
+regression.
+
+No fix is written yet, and the paragraph above said one was for one
+revision of this entry. That was wrong in the direction rule 3 forbids: a
+claim of a fix with nothing in the tree behind it. What exists is a
+measured defect with a location and a message, which is the evidence a
+fix starts from. The repair belongs in carried core under `XXX` and is
+staged rather than filed, since the maintainer files upstream; the
+staging rule in `doc/upstream/README-provenance.md` requires a patch here
+plus a document saying what upstream holds, and neither is written.
 
 The reading is 4 runs of `sync-empty-base.sh` under `HAMMER2_INVARIANTS`,
 this one the first to reach the assert rather than hang; the kernel log
