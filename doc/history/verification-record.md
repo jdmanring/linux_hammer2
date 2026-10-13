@@ -10969,3 +10969,25 @@ Two things this cost and should not have:
   place these turn up: a change to `hammer2_chain.c` is a change to everything
   that allocates through it, and `test-enospc.sh` is the gate that measures
   allocation under pressure.
+
+## The corrected bound converges and leaves allocation alone, 2026-10-13
+
+Both gates pass on the corrected tree, which is the pairing that had to be
+measured rather than argued: a bound that restored dedup by disabling itself
+would pass `test-enospc.sh` and fail convergence.
+
+    test-enospc.sh:        filled 2G, 0 failure(s); dedup 3 checks 0 failed,
+                           file A 64 blocks for 64 of data, duplicate cost 3
+    sync-empty-base.sh:    18 checks 0 failed; slave converged to its master,
+                           inode 4801/4801, data 4800/4800, dirent 4801/4801,
+                           0 lines differ of 14402; UBSAN report 0
+
+The two properties are independent, which is why one line carries both: the new
+block's RADIX comes from `ncount`, which the keybits loop reads on its own line
+(`while ((1<<keybits) < ncount) ++keybits`), and its ALLOCATION comes from
+`nbytes`, through `dummy.data_off = hammer2_getradix(nbytes)`. Bounding `ncount`
+alone narrows the radix and leaves the allocation at the size the rule chose.
+
+The convergence run also confirms the bound is still doing its work: 0
+`create_indirect` calls and 0 refusals across its passes, where the tree without
+it records 536026 and 340.
