@@ -10911,3 +10911,34 @@ The attribution is being measured rather than argued: the session's own starting
 commit `4578a7c` is built in a worktree and the same gate run against it. If the
 baseline fails too, the failure predates this work; if it passes, the bound is
 the cause and the bound is what gets changed.
+
+## The bound's second defect: it shrank the allocation, not just the radix, 2026-10-13
+
+The split bound converged the cluster and broke block allocation, and a gate
+found it. `test-enospc.sh` on the bound reported one failure, the dedup
+exerciser, which passes on this tree. Attributed by measurement rather than
+argument: the session's own starting commit `4578a7c` was built in a worktree
+and the same gate run against it.
+
+    baseline 4578a7c:  file A allocated 64 blocks for 64 blocks of data
+                       the duplicate cost 3 blocks  -> shared   -> 0 failures
+    with the bound:    file A allocated 387 blocks for 64 blocks of data
+                       the duplicate cost 324 blocks -> not shared -> 1 failure
+
+File A taking six times its data says the allocator is compensating for blocks
+that are too small, and the bound was the cause: it wrote `nbytes` as well as
+`ncount`, and `nbytes` is what the new block is ALLOCATED at, through
+`dummy.data_off = hammer2_getradix(nbytes)`. Shrinking it shrank the block on
+media.
+
+`ncount` is what the keybits helpers read, so the bound now writes `ncount`
+alone and leaves `nbytes` at the size the rule chose. Verified at every parent
+radix: the new block's keybits is strictly below its parent's from keybits 4
+through 62.
+
+The lesson is the one the shift defect taught an hour earlier and it has now
+cost two rounds: **the fix's own inputs have to be enumerated at every class the
+tree contains before it is believed**, and a gate that covers a different
+subsystem is the cheapest place to find out. This one was found by running a
+gate whose subject is not the cluster, on the reasoning that a change to
+`hammer2_chain.c` is a change to everything that allocates through it.
