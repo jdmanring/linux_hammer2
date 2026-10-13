@@ -9257,3 +9257,40 @@ which input raised `keybits` from 0 to 7 in the block that was refused, since
 neither the caller's `create_bits` nor the focus's radix supplies it. The
 values that would settle it are `ncount` and the `keybits` the helper returned,
 printed together at the point the helper returns.
+
+## Where the radix is raised and where the insert happens, 2026-10-13
+
+Read from the source and from the printed inputs, not inferred. Three facts,
+each with its line.
+
+The radix is raised in `hammer2_chain_indkey_dir()`. Its last loop expands
+`keybits` until the block is large enough for `ncount`, and its earlier loop
+raises it again over the keys it scans, so a parent whose children span the
+hashed keyspace yields the wide radix the run printed:
+
+    parent 0000000000000400/0 create_bits 0 ncount 32 count 4 -> keybits 62
+    parent c000000000000000/62 create_bits 0 ncount 128 count 32 -> keybits 61
+
+Neither loop consults the parent's own `bref.keybits`, and `create_bits` is 0
+on every line, so the caller is not what supplies the width either. That is
+what the previous entry's falsified mechanism had backwards.
+
+The insert is unconditional. `hammer2_chain_create_indirect()` calls
+
+    hammer2_chain_insert(parent, ichain,
+        HAMMER2_CHAIN_INSERT_SPIN | HAMMER2_CHAIN_INSERT_LIVE, 0);
+
+and only AFTER that decides what to return, returning the original `parent`
+when `create_key` falls outside the range of the block it just built. So the
+new block is inserted under `parent` before anything tests whether it fits,
+which is why the fit guard has to sit before that line rather than at the
+return, and why refusing there leaves the caller without the chain it asked
+for.
+
+The bound the previous run proved inert could not have worked for a third
+reason: it tested `create_bits`, which is 0. The place a bound can hold is
+`indkey_dir`'s return, where the value the two loops produced is in hand, and
+the value it must stay under is `parent->bref.keybits`. That is one line, and
+it is not written here: three bounds have been tried at this site and the runs
+have named why each failed, so the fourth is left to a session that starts
+from these three readings rather than from scratch.
