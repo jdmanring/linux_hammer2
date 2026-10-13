@@ -10532,3 +10532,30 @@ Open, in the order the evidence puts them:
    port's guard declines;
 3. whether the outcome depends on timing: two runs of identical source
    completed and stalled respectively.
+
+## The setflush walk cannot reach the element root, and the code says why, 2026-10-13
+
+`hammer2_sync_flush()` tests the element root's own flags for `FLUSH_MASK` and
+finds none set -- `not flagged (00046102)` on 22 of 22 and 50 of 50 passes. The
+flag is meant to be placed there by walking up from the chain the scan changed,
+through `hammer2_sync_setflush()`, which is this port's own helper because the
+carried `hammer2_chain_setflush()` stops at the first inode:
+
+    if (chain->bref.type == HAMMER2_BREF_TYPE_INODE)
+            break;
+
+Both walks follow `chain->parent`, and `chain->parent` is set to NULL in exactly
+three places, all of them deletion:
+
+    hammer2_chain.c:770, 3451, 3511   chain->parent = NULL;
+
+Every one is inside a delete or a rename's delete half, where the chain is
+removed from its parent's rbtree. So a chain the scan just inserted keeps its
+parent, and the walk should reach the root; a chain that was deleted and
+re-inserted during the same pass loses its parent and the walk terminates at it
+with the root unflagged.
+
+That is the shape the port's own comment above `hammer2_sync_setflush()` predicts
+and it is why the print was added there: a walk that stops at a NULL parent is a
+different defect from one that stops at an inode, and the two want different
+fixes. The run in flight reads which it is.
