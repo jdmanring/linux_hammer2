@@ -4679,21 +4679,29 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	}
 
 	/*
-	 * XXX Linux: capping keybits to the parent's here was tried on
-	 * 2026-10-13 and reverted the same day.  It cannot work: the block
-	 * being refused is for a KEY outside the parent, not merely a range
-	 * wider than it.  The measured case is a create at 0x400 whose parent
-	 * is the keyspace 0x440-0x47f, and a keybits-5 block at 0x400 covers
-	 * 0x400-0x41f, which is still outside that parent, so lowering the
-	 * radix does not bring it in.  What it does instead is make every
-	 * capped block shallower than its own parent, so its children cap
-	 * again one radix down and the tree deepens by one level per create:
-	 * the run recorded 210 caps all 7->5 against a keyspace-6 parent and
-	 * then `hpanic("flush depth limit")` at hammer2_flush.c:493, with two
-	 * oopses behind it in the flush worker.  The block's radix is not what
-	 * is wrong here; the key it is built for is, and that is one layer
-	 * further up, in what asks for the create.  Left as upstream's code.
+	 * XXX Linux: the block must be strictly narrower than the parent it is
+	 * inserted into, and the loop above sizes it from ncount alone.  The
+	 * run of 2026-10-13 printed the inputs at the decision point:
+	 *
+	 *   parent 0x440/6 create_bits 0 ncount 128 count 32 -> keybits 7 key 0x400
+	 *
+	 * The 16 KiB block holds 128 blockrefs, so the loop raises keybits to
+	 * 7, and a radix-7 block is 128 keys wide under a 64-key parent.  The
+	 * create key 0x460 IS inside the parent's 0x440-0x47f, so the parent is
+	 * right and only the width is wrong.
+	 *
+	 * The cap sits HERE, between the loop and the side-bit assignment
+	 * below, so the assignment realigns the key to the width the block
+	 * actually has: at keybits 5 the key 0x460 masks to 0x460 and the block
+	 * covers 0x460-0x47f, inside the parent.  An earlier attempt capped
+	 * after this function had already masked the key, leaving it at 0x400
+	 * over 0x400-0x41f, still outside the parent; that run refused 210
+	 * blocks and deepened the tree to the flush depth limit.  A later one
+	 * capped create_bits before the loop, which is 0 and bounded nothing
+	 * at all.
 	 */
+	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits)
+		keybits = parent->bref.keybits - 1;
 
 	if (hicount > locount)
 		key |= (hammer2_key_t)1 << keybits;
