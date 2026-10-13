@@ -4563,47 +4563,21 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	}
 
 	/*
-	 * XXX Linux: the block this sizes must fit inside its parent, and
-	 * nothing above this line has any view of the parent.  `ncount` is
-	 * the entry count that the block's own size holds and `parent` is
-	 * the keyspace it lands in, so when the loop above has raised
-	 * keybits past the parent's own the resulting insert cannot be
-	 * satisfied: hammer2_chain_cmp() reads overlapping ranges as a
-	 * match, hammer2_chain_insert() finds an incumbent and the carried
-	 * assert takes the device into error.  Measured 2026-10-12 and
-	 * -13: a keybits-7 block under a keybits-6 parent, and separately a
-	 * keybits-7 block under a keybits-7 parent whose range is identical,
-	 * which the keybits test catches and a containment test alone does
-	 * not.  Refusing the block at the insert instead leaves the
-	 * destination's cluster element unbuilt, and the copy then loses
-	 * 4,000 inodes' data; it is the same defect one layer down.
-	 *
-	 * So the block is SIZED TO FIT here, where its radix is chosen,
-	 * rather than built and then refused.  The cap is the largest
-	 * keybits that leaves the parent's range strictly larger than the
-	 * child's, which is the invariant its consumers rely on.  A parent
-	 * of keybits 0 is a directory inode holding children of its own
-	 * radix rather than a range, so it caps nothing.
+	 * XXX Linux: capping keybits to the parent's here was tried on
+	 * 2026-10-13 and reverted the same day.  It cannot work: the block
+	 * being refused is for a KEY outside the parent, not merely a range
+	 * wider than it.  The measured case is a create at 0x400 whose parent
+	 * is the keyspace 0x440-0x47f, and a keybits-5 block at 0x400 covers
+	 * 0x400-0x41f, which is still outside that parent, so lowering the
+	 * radix does not bring it in.  What it does instead is make every
+	 * capped block shallower than its own parent, so its children cap
+	 * again one radix down and the tree deepens by one level per create:
+	 * the run recorded 210 caps all 7->5 against a keyspace-6 parent and
+	 * then `hpanic("flush depth limit")` at hammer2_flush.c:493, with two
+	 * oopses behind it in the flush worker.  The block's radix is not what
+	 * is wrong here; the key it is built for is, and that is one layer
+	 * further up, in what asks for the create.  Left as upstream's code.
 	 */
-	if (parent->bref.keybits > 0 && keybits >= parent->bref.keybits) {
-		hprintf("indkey_dir: keybits %d capped to %d for parent "
-		    "%016llx/%d (ncount %d)\n", keybits,
-		    parent->bref.keybits - 1, (long long)parent->bref.key,
-		    parent->bref.keybits, ncount);
-		keybits = parent->bref.keybits - 1;
-		/*
-		 * The side bit is keyed to the old keybits, so move it to
-		 * the capped one: the high side is (1 << keybits) of the
-		 * range the block now owns.
-		 */
-		if (hicount > locount)
-			key |= (hammer2_key_t)1 << keybits;
-		else
-			key &= ~(hammer2_key_t)1 << keybits;
-		*keyp = key;
-
-		return (keybits);
-	}
 
 	if (hicount > locount)
 		key |= (hammer2_key_t)1 << keybits;

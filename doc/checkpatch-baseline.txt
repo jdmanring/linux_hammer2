@@ -26,17 +26,17 @@
 # atomic_cmpset_int arm grew the flags print.  Nothing was suppressed and
 # nothing new was introduced.  Recorded rather than reverted, because the
 # print is the instrument for the teardown wait, which has no other reading.
-# 1,268 to 1,272 on 2026-10-13, across two commits. The radix cap at
-# hammer2_chain.c's indkey_dir moved 1,268 to 1,270: one `quoted string
-# split across lines` for its print and one `return is not a function` for
-# its `return (keybits)`, the style the surrounding carried code writes.
-# Bounding hammer2_thr_wait() moved 1,270 to 1,272 and moved the braces row
-# BACK, 6 to 7: that function's cmpset arm had grown a second statement and
-# lost the finding, and rewriting the loop as a bounded while left it with
-# one statement again, which is where checkpatch counts the brace. A row
-# that moves in either direction on a rewrite is the one to read by hand.
-# The remaining row is a `quoted string split across lines` for the
-# stuck-wait print's format string.
+# 1,268 to 1,270 on 2026-10-13, from bounding hammer2_thr_wait(). That moved
+# two rows: one `quoted string split across lines` for the stuck-wait
+# print's format string, and the braces row BACK from 6 to 7, because the
+# cmpset arm had grown a second statement when the earlier print was added
+# and the rewrite to a bounded while left it with one, which is where
+# checkpatch counts the brace. A row that moves in either direction on a
+# rewrite is the one to read by hand rather than by the total.
+#
+# The radix cap at hammer2_chain.c's indkey_dir moved 1,268 to 1,270 in
+# between and was reverted the same day, so its two rows are gone: the
+# total never rested at 1,271 or 1,272, and this note is what says so.
 # sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
@@ -65,8 +65,8 @@
 14 plain inline is preferred over __inline
 2 please, no space before tabs
 193 please, no spaces at the start of a line
-48 quoted string split across lines
-274 return is not a function, parentheses are not required
+47 quoted string split across lines
+273 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 2 return of an errno should typically be negative (ie: return -EDOM)
