@@ -9078,7 +9078,7 @@ and the fix is neither: it is the caller that asks for a key outside the
 parent it names. `indkey_dir` is handed the key and returns it unchanged, so
 no change at the radix can help, which the reverted cap measured. The guard
 now prints `print_backtrace()` beside the values, and the next run's stack is
-what names the caller. That is the print this entry is waiting on, and until
+what names the caller. That is the print this entry is waiting on, and until **Superseded on 2026-10-13: convergence is met.** The split bound in `hammer2_chain_create_indirect()` bounds ncount below 2^(parent keybits - 1), and the slave then matches its master entry for entry and block for block, inode 4801/4801, data 4800/4800, dirent 4801/4801, 0 lines differ, 18 checks 0 failed. The sections below and above are the dated record of how it was reached and are left as written.
 it lands the convergence criterion is unmet and stays recorded as unmet.
 
 ## The caller that builds the unfit block is named by the stack, 2026-10-13
