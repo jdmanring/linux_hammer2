@@ -373,7 +373,7 @@ kill $KPID 2>/dev/null
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 # What the guest half actually returned, before anything is inferred from
 # the readings below.  Measured 2026-10-13: a run whose ssh session dropped
