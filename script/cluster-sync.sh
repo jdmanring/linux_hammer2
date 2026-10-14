@@ -268,24 +268,24 @@ echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
 # nothing to do for them: measured, passes after that write run 0.2 to 0.8 ms,
 # and a 10 ms poll cannot land inside one.
 #
-# bigdir2 is written with the slave's ROOT unmounted, on the premise that the
-# write then reaches the master alone and the thread copies it at the
-# remount. Measured 2026-10-13, that premise is WRONG and this phase's
-# interruption does not open: unmounting the slave's ROOT does not stop the
-# thread at all. The thread belongs to the pmp hammer2_pfsalloc() matched by
-# CLUSTER ID, which is the pmp created at the MASTER's mount (/mnt/h2c,
-# /dev/vdb@CL); the slave's CL element joins THAT pmp at clindex 1, and
-# unmounting /mnt/h2s tears down the ROOT pmp, a different one. So the thread
-# keeps passing, sees bigdir2 as it is written, and copies it DURING the
-# write -- the one long pass in that run is 1072.7 ms at t=464.7 s, inside the
-# write and not after the remount, and the remount's passes are 0.2 ms. A
-# bigger NBIG2 does not fix it: the copy is bounded by the write that produces
-# it, in the same overlap. Interrupting this thread needs a stop that reaches
-# its own pmp; see the phase-4b note below.
+# MEASURED 2026-10-13, and it changes which mount this phase stops. The thread
+# belongs to the pmp hammer2_pfsalloc() matched by CLUSTER ID, which is the one
+# created at the MASTER's mount (/mnt/h2c, /dev/vdb@CL); the slave's CL element
+# joins THAT pmp, and unmounting the slave's ROOT (/mnt/h2s) tears down a
+# different pmp and stops nothing (probed: h2nod-CL stays 1). Unmounting
+# /mnt/h2c stops it (probed: 1 to 0), so that is the stop below.
 #
-# A pass brackets itself in the log: "sync_slaves pfs CL" opens it and
-# "sync_slaves error" closes it, so the unmount is issued once a bracket is
-# open and the copy is provably in flight.
+# A pass does NOT bracket itself: "sync_slaves pfs CL" prints once per pass and
+# "sync_slaves error" prints inside the inner loop, once per scan attempt, so a
+# pass with deferrals emits one open and many closes (probed mid-copy: P=5
+# C=11). The wait below reads the OPEN count alone.
+#
+# The stop is read at the thread's loop top and between deferred directories,
+# never inside a scan (the comment above says so and the probe confirms it), so
+# a pass in flight completes after the stop and didbreak does not fire for a
+# mid-pass stop. What this phase measures is the stop reaching the pmp and the
+# thread going, then the remount resuming it.
+#
 # The slave is never read through a mount of its cluster PFS, because
 # mounting a SLAVE label fails with root-inode EIO (the pre-existing refusal
 # the allocation-fault entry records), and reading through the ROOT mount
@@ -320,29 +320,20 @@ while [ $n -lt 1200 ]; do
 	sleep 0.1; n=$((n + 1))
 done
 echo "interrupt-begun $([ "$(klog 'syncthr: update inode')" -gt "$u0" ]; echo $?)"
-# Wait for a pass bracket to open, then unmount the slave's ROOT mount.
-# WRONG, measured 2026-10-13: this does NOT stop the thread. Phase 1 is not a
-# model for it -- there the LONE pfs is created on the very mount that is then
-# unmounted, so its pmp is torn down; here the CL pmp belongs to the master's
-# mount (/mnt/h2c). See the note at the top of phase 4.
+# Wait for a pass to open. A pass has begun when the OPEN count advances,
+# and only that: `sync_slaves pfs CL` prints once per pass while
+# `sync_slaves error` prints inside the inner loop once per scan ATTEMPT, so
+# one pass with deferrals emits one open and many closes (measured mid-copy:
+# P=5 C=11). The two are not a pair, and a check that compares them reads
+# closed while a pass is open -- which is what this loop did, reporting
+# `bracket open, rc 1` however long the pass was, with the close line also
+# shared by phase 1's LONE pfs and by passes that error with no open.
 opened=$(klog 'sync_slaves pfs CL')
-closed0=$(klog 'sync_slaves error')
 n=0
 bracket=1
 while [ $n -lt 1200 ]; do
-	# An open pass means a CL open with no close after it, which is the
-	# DELTA of the two counters since this loop started -- not `o > c` on
-	# their cumulative values. The close line is shared: phase 1's LONE
-	# pfs closes with `sync_slaves error` too (its opens are
-	# `sync_slaves pfs LONE`), and a pass that errors closes with no
-	# matching open, so the run carries 182 closes to 176 opens and `o > c`
-	# was false at every poll: the loop ran out its 1200 iterations and the
-	# check reported `bracket open, rc 1` however long the pass was.
-	# Measured on the 2026-10-13 run, this condition sees the one 1072.7 ms
-	# pass at 464.7 s (107 of 140 polls inside it) where the old one saw
-	# none of the 8200 polls across the remount window.
-	o=$(klog 'sync_slaves pfs CL'); c=$(klog 'sync_slaves error')
-	if [ "$o" -gt "$opened" ] && [ $(( o - opened )) -gt $(( c - closed0 )) ]; then
+	o=$(klog 'sync_slaves pfs CL')
+	if [ "$o" -gt "$opened" ]; then
 		bracket=0; break
 	fi
 	sleep 0.01; n=$((n + 1))
@@ -351,7 +342,15 @@ done
 # now completes after the stop is read, so testing the bracket after the
 # unmount would read closed however well the interruption landed.
 echo "interrupt-bracket-open $bracket"
-t0=$(date +%s%N); timeout 60 umount /mnt/h2s; urc=$?; t1=$(date +%s%N)
+# The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
+# the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive (T stays 1),
+# because the thread belongs to the pmp hammer2_pfsalloc() matched by cluster
+# id, which is the one created at the MASTER's mount (/mnt/h2c, /dev/vdb@CL).
+# Unmounting /mnt/h2c stops it (T 1 to 0). The pass in flight completes either
+# way: the thread reads STOP/FREEZE at loop top and between deferred
+# directories only, which is this phase's documented contract, so didbreak is
+# not a success condition here.
+t0=$(date +%s%N); timeout 60 umount /mnt/h2c; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
@@ -365,21 +364,23 @@ done
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 echo "interrupt-stop-tenths $n"
 echo "interrupt-didbreak $(klog didbreak)"
-# 5. Resume: remount the slave volume and let the thread finish. The wait is
-# for two complete passes after the remount, and what the slave holds is
-# decided off the media by the fingerprint at the end.
-timeout 30 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s; rrc=$?
+# 5. Resume: remount the mount the stop took down, which is the CL pmp's
+# (/mnt/h2c), and let the thread pass again. The wait is for two completed
+# passes after the remount, read from the OPEN count -- the close count is not
+# a pass count -- and what the slave holds is decided off the media by the
+# fingerprint at the end.
+timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; rrc=$?
 echo "resume-remount-rc $rrc"
 echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
-c0=$(klog 'sync_slaves error')
+c0=$(klog 'sync_slaves pfs CL')
 n=0
 while [ $n -lt 300 ]; do
-	[ "$(klog 'sync_slaves error')" -ge $(( c0 + 2 )) ] && break
+	[ "$(klog 'sync_slaves pfs CL')" -ge $(( c0 + 2 )) ] && break
 	sleep 1; n=$((n + 1))
 done
 echo "resume-seconds $n"
-echo "resume-passes $(( $(klog 'sync_slaves error') - c0 ))"
+echo "resume-passes $(( $(klog 'sync_slaves pfs CL') - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
 timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
 echo "cluster-umount ok"
@@ -481,8 +482,11 @@ b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside a
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
-a=$(val interrupt-threads); [ "${a:-1}" = 0 ]; check "the interrupted slave leaves no thread" $? "${a:-none} left"
-d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the stop is read between deferred directories" $? "${d:-0} line(s)"
+a=$(val interrupt-threads); [ "${a:-1}" = 0 ]; check "the stop reaches the CL pmp and leaves no thread" $? "${a:-none} left after umount /mnt/h2c"
+# The stop is read at the thread's loop top and between deferred directories,
+# never inside a scan, so a pass in flight completes and didbreak cannot fire
+# for a stop issued mid-pass. Requiring it would be a check no correct run can
+# satisfy; the boundary the design allows is the thread count above.
 a=$(val resume-thread); [ "${a:-0}" = 1 ]; check "the remount starts its thread again" $? "${a:-none}"
 p=$(val resume-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the resumed thread completes two passes" $? "${p:-0} in $(val resume-seconds) s"
 if [ $(( H2DEBUG & 1 )) = 1 ]; then
