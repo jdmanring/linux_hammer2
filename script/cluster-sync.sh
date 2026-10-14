@@ -354,6 +354,11 @@ t0=$(date +%s%N); timeout 60 umount /mnt/h2c; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
+# The action counters the module prints under 0x8000 (acted/failed over the
+# scan's action switch), read at the interruption so the shortfall this run
+# ends with is paired with the count of copies that returned an error. The
+# last line is the cumulative total, which is the one worth keeping.
+echo "interrupt-actions $(klog 'filekeys' | tail -1 | sed 's/^\[[^]]*\] //')"
 # The thread stops after the pass it landed in drains, so the count is waited
 # for and the wait is the reading, rather than a fixed sleep guessing at it.
 n=0
@@ -482,7 +487,7 @@ grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -
 # carries one number and several of these decide it together (the stop's wait
 # and the thread count behind one verdict), and the guest's output file is
 # removed at exit, so a field not printed here is lost with the run.
-echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes)"
+echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes)"
 b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
