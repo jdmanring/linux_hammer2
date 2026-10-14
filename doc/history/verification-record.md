@@ -10991,3 +10991,36 @@ alone narrows the radix and leaves the allocation at the size the rule chose.
 The convergence run also confirms the bound is still doing its work: 0
 `create_indirect` calls and 0 refusals across its passes, where the tree without
 it records 536026 and 340.
+
+## Four prose citations were stale and the gate reported them all along, 2026-10-13
+
+`test-citations.sh` reads citations in TABLE ROWS. A `file:line` written in
+prose is matched by nothing, and the gate says so: it prints an `unchecked`
+line for each one, with the count beside its pass line. Four of them were stale
+in live documents, and the gate had been listing all four on every run:
+
+    doc/README.testing.md  hammer2_chain.c:646   -> 766   RB_REMOVE, lastdrop
+    doc/README.testing.md  hammer2_chain.c:3903  -> 4134  the insert, create_indirect
+    doc/README.roadmap.md  hammer2_chain.c:297   -> 381   KASSERTMSG collision
+    doc/README.roadmap.md  hammer2_chain.c:3903  -> 4134  the insert, create_indirect
+
+Every one was drifted by this session's own edits to `hammer2_chain.c`, and all
+four are corrected to a SYMBOL and a line, which is the shape `00c554e` used
+when it fixed this same class before: that commit's subject is "A prose citation
+pointed at a function that had moved 150 lines", and it removed the line numbers
+it could not keep true.
+
+The reading was in the output the whole time. `test-citations.sh` prints its
+`unchecked` list and an `uncovered` count deliberately, because a citation
+naming another tree -- `doc/research/` and `doc/upstream/` describe DragonFly
+and the BSD ports -- must not be checked against this one. What was missing was
+not the instrument but reading its report rather than its pass line: every
+fifteen-gate sweep this session ended on the counts and never on the list.
+
+Measured over the documents this tree owns, the prose citations resolve as:
+120 in range, 3 out of range and all three in `doc/research/` or `doc/upstream/`
+where they name another tree's line numbers, and 7 naming a file that does not
+exist here for the same reason. `doc/research/HAMMER2_LINUX_API_MAP.md`'s
+`hammer2_flush.c:1496` was checked against the DragonFly clone and lands on
+`vn_strategy(hmp->devvp, &bp->b_bio1)`, which is the text its sentence
+describes, so it is correct where it was written and stays as it is.
