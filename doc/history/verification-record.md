@@ -12246,7 +12246,7 @@ are the same shape as each other and as the day's probe defects: an
 instrument that fails silently and a subject that did nothing produce the
 same reading.
 
-## crash_during_sync gets its reading, and three checks that threw away evidence, 2026-10-14
+## crash_during_sync gets its reading, and four checks that threw away evidence, 2026-10-14
 
 P4's fifth criterion has no reading until this run. The `sync` cell of
 `script/crash-matrix.sh` cuts power once the guest reports a task blocked in

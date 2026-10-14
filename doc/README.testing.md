@@ -1220,14 +1220,16 @@ things happens: the writing process is killed and the volume unmounted
 (`power`), it destroys the domain and then zeroes the second half of
 the newest valid header, which is a 64 KiB header write that reached
 the media only in part (`torn`), or it waits until the guest reports a
-task in the port's own flush path and then destroys the domain, so the
-crash lands while a flush is outstanding rather than between two
+task blocked in this port's flush path and then destroys the domain, so
+the crash lands while a flush is outstanding rather than between two
 (`sync`, P4's crash-during-sync criterion). The `sync` cell's detector
 is one guest-side `ps` poll; a run whose poll never catches the task
 carries `miss=yes` and is counted as COULD-NOT-RUN rather than as a
 cell that ran, since it did not reach the condition it exists to
-produce. The FreeBSD half missed it once, for a reason not yet
-established. The cut-off image is judged three
+produce. The detector is a Linux-port instrument: this port's flush
+path blocks the writing task, and FreeBSD's runs in kernel threads that
+sit in D state whether or not a flush is outstanding, so its half of
+the cell reports a miss by design. The cut-off image is judged three
 ways: the host's `fsck_hammer2`, this port mounting one copy
 read-write, reading every file, writing one more and syncing, and the
 FreeBSD port doing the same to the other copy and
