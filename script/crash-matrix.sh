@@ -232,6 +232,14 @@ fail=0; torn_zone=
 # port's own synchronization thread h2nod-*. A poll that never catches one
 # leaves sync_missed set, and the run is reported as not a reading rather
 # than as a cell that ran.
+#
+# The detector is a Linux-port instrument. FreeBSD's flush path runs in
+# kernel threads that sit in D state whether or not a flush is outstanding
+# (measured 2026-10-14: `syncer`, `bufdaemon` and the rest are the whole
+# D set on every one of ten samples under a sync-heavy hammer2 workload),
+# so its half of the cell reports a miss and is counted COULD-NOT-RUN.
+# Widening the pattern to `syncer` would match every sample, which is a
+# false positive, not a signal.
 detect='n=0; while [ $n -lt 4000 ]; do s=$(ps -eo stat=,comm= 2>/dev/null | grep -E "^ *D[^ ]* +(sync|h2nod)" | head -1); if [ -n "$s" ]; then echo "in-sync $s"; exit 0; fi; n=$((n+1)); done; echo "no-sync"'
 run_writer() {	# writer cell -> the cut-off image in $IMG; prints the cut line
 	sync_missed=0

@@ -12297,21 +12297,27 @@ command in a pipeline is read as the subject's.
 
 The detector's timeout produced a row. `sync-in-flight no-poll-timeout` cut
 power anyway and the run counted as an agreement. Why the FreeBSD half missed
-is not established and is not asserted. Two candidates are refuted by the
-rerun: the sampling rate, since a guest-side poll of 4000 samples misses the
-same way the old per-ssh poll did, so it is not that samples were too far
-apart; and a full volume, since the second run's FreeBSD recovery read
-`free /dev/vtbd1@CRASH 7.7G 4.4G 3.2G 58%` and wrote without trouble. What
-remains is the condition's name: the detector looks for a D-state task named
-`sync` or `h2nod`, the port's own thread name, and FreeBSD flushes through a
-task the pattern does not cover, or its `sync(1)` is not D-state where this
-poll samples it. The fixed detector prints the task it catches, so on this
-port the evidence is in the run; on the FreeBSD side the miss stands as COULD-
-NOT-RUN. What was wrong regardless of cause is the reporting: a miss is the
-instrument not reaching its condition, which is neither a pass nor a failure,
-so the row carries `miss=yes`, the summary counts it apart from `$fail`, and
-the script exits 2. Where several runs of a cell disagree and some missed, the
-runs that landed are still compared.
+is now measured, and it is the cell's design rather than its timing. The
+candidates are refuted one by one: the sampling rate, since a guest-side poll
+of 4000 samples misses where the old per-ssh poll did too; a full volume,
+since the second run's FreeBSD recovery read `free /dev/vtbd1@CRASH 7.7G 4.4G
+3.2G 58%` and wrote without trouble; and the task name, since a probe of the
+FreeBSD guest under a sync-every-five-files hammer2 workload sampled its
+D-state set every second for ten seconds and found only the permanent kernel
+threads (`crypto`, `cam`, `busdma`, `zfskern`, `rand_harvestq`, `pagedaemon`,
+`vmdaemon`, `audit`, `geom`, `usb`, `bufdaemon`, `vnlru`, `syncer`), the same
+set in every sample with no transient flush task in it. `syncer` and
+`bufdaemon` are in D state whether or not a flush is outstanding, so a
+detector keyed on them would match every sample and be a false positive rather
+than a signal. The cell's detector is a Linux-port instrument: this port's
+flush path blocks the writing task (`in-sync D sync`, this port's `h2nod` when
+the cluster thread flushes), and the FreeBSD port's flush runs in kernel
+threads that are always D. So the FreeBSD half is COULD-NOT-RUN by design, and
+the row says so. What was wrong regardless of cause is the reporting: a miss
+is the instrument not reaching its condition, which is neither a pass nor a
+failure, so the row carries `miss=yes`, the summary counts it apart from
+`$fail`, and the script exits 2. Where several runs of a cell disagree and
+some missed, the runs that landed are still compared.
 
 The detector threw away what it caught and sampled slowly. It took one ssh
 round trip per sample, so its "5 ms poll" was tens of milliseconds and its
