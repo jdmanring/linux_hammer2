@@ -355,21 +355,28 @@ echo "interrupt-bracket-open $bracket"
 # stop is the one variable that separates a run that loses inodes from one
 # that converges: five runs read copied=4, 44, 88, 488, 549, and only the
 # deep one (549) lost 422 inodes. `H2_STOP_DEPTH` waits, bounded, for the
-# pass to reach that many copies past the phase-4a baseline before the
-# unmount, so a run can place the stop deep enough to reach the shortfall
-# instead of racing for it. 0 is the old behavior (stop at the first open).
-# The wait is on `syncthr: update inode`, the same counter copied is read
-# from, and it is bounded by H2_STOP_DEPTH_MS so a pass that never reaches
-# the depth stops anyway and says so.
+# pass to advance that many scan actions past the baseline before the unmount,
+# so a run can place the stop deep enough to reach the shortfall instead of
+# racing for it. 0 is the old behavior (stop at the first open bracket).
+#
+# The wait is on the `acted` field of the pass's `filekeys` line, the count of
+# actions over the scan's switch, NOT on `syncthr: update inode`. MEASURED
+# 2026-10-14: the update line prints only for an inode's final marking, so it
+# barely moves during a pass -- a wait for 400 of them exhausted its 30 s bound
+# at 28. `acted` moves per action and is the field that tracks the copy.
+acted() { grep -o 'acted [0-9]*' $K | tail -1 | cut -d' ' -f2; }
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-300}
-target=$(( u0 + STOP_DEPTH ))
+a0=$(acted); a0=${a0:-0}
+target=$(( a0 + STOP_DEPTH ))
 n=0
-while [ "$(klog 'syncthr: update inode')" -lt "$target" ]; do
+while [ "${STOP_DEPTH:-0}" != 0 ]; do
+	a=$(acted); a=${a:-0}
+	[ "$a" -ge "$target" ] && break
 	[ $n -ge "$STOP_DEPTH_MS" ] && break
 	sleep 0.1; n=$((n + 1))
 done
-echo "interrupt-stop-depth $(( $(klog 'syncthr: update inode') - u0 )) wanted $STOP_DEPTH"
+echo "interrupt-stop-depth $(( $(acted) - a0 )) wanted $STOP_DEPTH"
 # The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
 # the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive, because the
 # thread belongs to the pmp hammer2_pfsalloc() matched by cluster id, which is
