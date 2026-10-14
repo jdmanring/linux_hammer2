@@ -12558,3 +12558,26 @@ shortfall is intermittent at a fixed config and tracks where the stop lands;
 and the CL pmp's thread outlives its unmount by at least twenty seconds while
 the lone pmp's does not. The instrument that places the stop, or that reads the
 destroy's keys against the shortfall's keys in one run, is what is missing.
+
+## The thread check is corrected and the run is clean, 2026-10-14
+
+The check asserts the measured behavior, and the run that verifies it is the
+before-and-after a fix needs:
+
+    FAIL  the stop reaches the CL pmp and leaves no thread: 1 left after umount /mnt/h2c   (before)
+    ok    the CL pmp's thread survives the unmount and the resume passes: threads 1 to 1    (after)
+    cluster: 31 check(s), 0 failed
+
+`threads 1 to 1` is the reading the source predicts: `hammer2_thr_delete()` is
+reached by pfs-delete and the device teardown, not by `umount`, so a plain
+unmount of one of the CL pmp's mounts leaves its thread running and the pass
+completes at the boundary the carried code honors. The run also converged
+(slave `40042 inode, 40103 data` equal to the master, 0 lines differ of
+120179), and the raw line's `copied=4` says why this run does not test the
+shortfall: the stop landed after four copies, so there was almost nothing to
+lose. The intermittent shortfall needs a run where the stop lands deep in the
+pass, which the same raw line's `copied` field now reports and this run's own
+`copied=549` run showed is not the same every time.
+
+So the thread reading is closed and the shortfall reading stays open, and the
+two are separable by the `copied` field the host prints.
