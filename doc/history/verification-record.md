@@ -11378,3 +11378,63 @@ forwarding list does not carry. Three scripts quote their heredoc, so the
 guest evaluates their variables; all three now forward every name their
 guest half reads, and the nine the sweep flagged use unquoted heredocs where
 the host expands them at write time.
+
+## Phase 4 runs and completes for the first time, 2026-10-13
+
+With `NBIG2` forwarded and the run given a timeout that fits its workload,
+`cluster-sync.sh` phase 4 completed. It is the first phase-4 run that has
+reached its interruption and its resume, and it answers the question the
+phase exists for.
+
+    cluster: 32 check(s), 3 failed
+      ok    the unmount waits for the pass rather than returning at once: 50 ms
+      ok    the remount starts its thread again: 1
+      ok    the resumed thread completes two passes: 2 in 7 s
+      ok    no pass reports an error across the interruption: 0
+      ok    nothing the thread copied is scrapped unwritten: 0 chains scrapped
+      ok    the master's PFS holds the 40035 files, by its own media: 40035 entries
+      ok    the slave's PFS matches the master's entry for entry and block for
+            block: 40035 file entries; 0 lines differ of 120179
+
+**The convergence half is met.** After the interruption and the remount the
+slave matches its master entry for entry and block for block, 0 lines differ
+of 120179, read off the media; both volumes `fsck_hammer2` clean; no pass
+reports an error; nothing the thread copied is scrapped unwritten; the module
+unloads with 0 kmemleak and 0 kernel warning. That is the plan's
+interrupted-and-resumed convergence, and it is measured rather than asserted.
+
+**The interruption half is not met, and the three failures are one finding.**
+The phase is built so the unmount lands while a pass is in flight, and it did
+not:
+
+    FAIL  the unmount lands inside an open pass: bracket open, rc 1
+    FAIL  the interrupted slave leaves no thread: 1 left
+    FAIL  the stop is read between deferred directories: 0 line(s)
+
+The brackets in the completing run open and close within the same millisecond
+(`sync_slaves pfs CL` at 895.246878, `sync_slaves error` at 895.247121), so no
+pass was open when the unmount ran; `hammer2_thr_break()`, the one call whose
+reading the third check takes, therefore never ran, and the thread was alive
+to be counted by the second.
+
+Why the pass is short is in the same log and is the phase's own design input.
+The backlog is written with the slave **unmounted**, so the thread must carry
+it on the remount, and the phase sizes that backlog (`NBIG2` = 20000) to make
+a pass long enough to interrupt. The measured `syncthr: update inode` count is
+2 across the whole interruption window, and the print at
+`hammer2_synchro.c:944` is gated on `hammer2_debug & 0x8000` **and on `focus`
+being non-NULL**, so it counts focus inodes rather than every chain the thread
+copies. The count is a probe limit, not a copy count, and the same limit is
+why `write-destroys` reads 0 without the 0x0001 bit.
+
+So the reading is: the phase now runs, its interruption window is not opening
+at the current sizes, and the convergence it measures after the resume is met.
+The window is the thing to widen, and the instrument for it is the phase's own
+sizes against a pass's measured length rather than the debug print.
+
+    bigdir  write:  149.3 -> 456.4 s   (306.9 s)
+    bigdir2 write:  456.5 -> 817.1 s   (360.6 s)
+
+Those are the phase's two writes, and they are also the timeout finding
+beside this: 667 s of work under a 600 s default, which is why the run is
+given `H2_RUN_TIMEOUT=1800`.
