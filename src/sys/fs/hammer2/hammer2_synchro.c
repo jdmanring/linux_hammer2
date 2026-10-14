@@ -608,13 +608,24 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * past 1500 s, which is worse than a copy that does not
 			 * converge.
 			 *
-			 * The empty element is the defect, and it is created by
-			 * hammer2_chain_create_indirect()'s guard refusing a
-			 * block it does not fit, which leaves the destination's
-			 * cluster element unbuilt.  The fix belongs where the
-			 * block's radix is chosen, at the ncount loop in
-			 * hammer2_chain_indkey_dir(), not here.  Until then this
-			 * skips, and the convergence check measures the loss.
+			 * An empty element is created when a chain cannot be
+			 * placed, which left the destination's cluster element
+			 * unbuilt.  Two things fixed that and neither is here.
+			 * The split bound in hammer2_chain_create_indirect()
+			 * sizes the new block one radix level under its parent,
+			 * so no block is built that its parent cannot hold and
+			 * the guard that used to refuse them does not fire: the
+			 * run of 2026-10-13 records 0 refusals and 0 calls to
+			 * create_indirect across its passes, against 340 and
+			 * 536026 before the bound.  The clamp in
+			 * hammer2_sync_insert() narrows a copied radix to the
+			 * receiving parent's.
+			 *
+			 * This ternary is not either of those.  It keeps a copy
+			 * off a NULL element when one still arises, and what it
+			 * avoids is a fault on the sync thread, which never sets
+			 * HAMMER2_THREAD_FROZEN and leaves the unmount waiting
+			 * in a loop with no bound.
 			 */
 			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0;
 			if (chain) {

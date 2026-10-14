@@ -8975,6 +8975,14 @@ The tree ships `want_update` 0: a copy that does not converge and says so in
 its check beats a fault that wedges an unmount, and the convergence check
 measures the loss rather than hiding it.
 
+**Superseded on 2026-10-13 on the second clause only.** The line is still
+`want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0` in
+`hammer2_synchro.c`, so what the tree ships is unchanged; the copy does converge
+now, by the split bound recorded below, and the rationale above is the account of
+a choice made while it did not. The choice was not re-decided on convergence: what
+the ternary avoids is a fault on the sync thread when the element is absent, which
+the bound does not address.
+
 ## Correction to the entry above, same day, 2026-10-13
 
 The entry above says the empty element that faults `hammer2_chain_lookup()`
@@ -9078,8 +9086,9 @@ and the fix is neither: it is the caller that asks for a key outside the
 parent it names. `indkey_dir` is handed the key and returns it unchanged, so
 no change at the radix can help, which the reverted cap measured. The guard
 now prints `print_backtrace()` beside the values, and the next run's stack is
-what names the caller. That is the print this entry is waiting on, and until **Superseded on 2026-10-13: convergence is met.** The split bound in `hammer2_chain_create_indirect()` bounds ncount below 2^(parent keybits - 1), and the slave then matches its master entry for entry and block for block, inode 4801/4801, data 4800/4800, dirent 4801/4801, 0 lines differ, 18 checks 0 failed. The sections below and above are the dated record of how it was reached and are left as written.
-it lands the convergence criterion is unmet and stays recorded as unmet.
+what names the caller. That is the print this entry is waiting on, and until it lands the convergence criterion is unmet and stays recorded as unmet.
+
+**Superseded on 2026-10-13: convergence is met.** The split bound in `hammer2_chain_create_indirect()` bounds `ncount` below `2^(parent keybits - 1)`, and the slave then matches its master entry for entry and block for block, inode 4801/4801, data 4800/4800, dirent 4801/4801, 0 lines differ, 18 checks 0 failed. This entry's own sentence is left as written, since the record is the dated account of how the state was reached.
 
 ## The caller that builds the unfit block is named by the stack, 2026-10-13
 

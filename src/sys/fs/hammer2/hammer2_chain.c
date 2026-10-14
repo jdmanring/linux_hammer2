@@ -4783,9 +4783,13 @@ hammer2_chain_indkey_dir(hammer2_chain_t *parent, hammer2_key_t *keyp,
 	 * presents, ZERO are hash-shaped, against 4001 of 8080 before it.  The
 	 * 4000 files live in the wide directory hash space a narrower tree does
 	 * not span, so the cap trades a storm for a smaller tree that cannot
-	 * hold the set.  The refusal and the storm are both downstream of the
-	 * same question, which is how a 4001-entry directory is meant to be
-	 * represented, and it is not answered by narrowing the block.
+	 * hold the set.  What converged the cluster is a bound at the
+	 * ALLOCATION instead, in hammer2_chain_create_indirect(): ncount is
+	 * capped below 2^(parent keybits - 1), so the new block comes out one
+	 * radix level under its parent while the keys the scan walks are left
+	 * alone.  Narrowing here instead collapses the range the keys are
+	 * placed in, which is why the same bound at this site loses the file
+	 * keys and the one at the allocation does not.
 	 */
 	if (hicount > locount)
 		key |= (hammer2_key_t)1 << keybits;
