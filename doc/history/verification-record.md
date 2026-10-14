@@ -11552,3 +11552,51 @@ would find is at 464.7 s, inside `bigdir2`'s write; the remount's passes are
 0.2 ms, so the corrected probe correctly reports no open pass there too. The
 probe now measures what it claims; what it measures says the phase's premise
 needs revisiting, which is a design decision rather than a defect to patch.
+
+## Why the thread copies during the write: the CL pmp is the master's, 2026-10-13
+
+The trace the previous entry left open is answered, and the answer is that the
+phase's premise is wrong about which pmp owns the thread.
+
+`hammer2_pfsalloc()` locates an existing pmp BY CLUSTER ID, not by the mount it
+is created from:
+
+    TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
+            if (force_local != pmp->force_local)
+                    continue;
+            if (force_local == NULL &&
+                bcmp(&pmp->pfs_clid, &ripdata->meta.pfs_clid,
+                sizeof(pmp->pfs_clid)) == 0)
+                    break;
+    }                                       (hammer2_vfsops.c:301-313)
+
+The master's CL is created first, at the `/mnt/h2c` mount (`/dev/vdb@CL`), and
+gets a cluster id. The slave's CL is created with `-u "$clid"` -- the same id --
+on `/mnt/h2s` (`/dev/vdc@ROOT`), so `hammer2_pfsalloc()` matches the master's
+pmp and joins the SLAVE element to it. The pmp the thread belongs to is the one
+whose mount is `/mnt/h2c`; its `pfs_hmps[1]` is the MASTER's device, and its
+`sync_thrs[1]` -- named `h2nod-CL` from `pfs_names[1]` -- is created there.
+
+That is why unmounting `/mnt/h2s` does not stop it. The per-PFS unmount branch
+of `hammer2_unmount_helper()` clears `pmp->mp` and decrements each element's
+`hmp->mount_count`, and only reaches the thread-deleting
+`hammer2_pfsfree_scan()` when a device's `mount_count` falls to zero; the CL
+pmp's mount is `/mnt/h2c`, which is still mounted. FreeBSD's own
+`hammer2_unmount_helper()` has the identical shape, so the thread surviving a
+per-PFS unmount is carried, not a port defect. Phase 1 differs because there the
+SLAVE is the only element and its mount **is** the volume being unmounted, so
+its `mount_count` does reach zero and the thread is deleted -- which is what the
+phase-4 comment generalized from, wrongly.
+
+Consequence for the phase: the thread runs while `bigdir2` is written, sees the
+new files on its master element, and carries them then. There is no pass on the
+remount to interrupt because the copy is already done. The phase cannot place
+the copy where it intends by writing with the slave unmounted; the unmount does
+not suspend the thread, and the phase's instrument is measuring a window that
+its own action does not open.
+
+Not a fix: enlarging `NBIG2`. The copy is bounded by the write that produces it,
+so a larger directory makes a longer write and a longer copy in the same
+overlap. What would place the copy where the phase wants it is an instrument
+that interrupts the pass the write already produces -- the 1072.7 ms pass at
+464.7 s is reachable, and the corrected bracket condition now sees it.
