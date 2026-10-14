@@ -108,9 +108,15 @@ KO=src/sys/fs/hammer2/hammer2.ko
 nm -u "$KO" 2>/dev/null | grep -q '__asan' || {
 	echo "sync-io: COULD-NOT-RUN: $KDIR is not a KASAN tree, so a memory report here would say nothing" >&2; exit 2; }
 
-# The module's text extent, from its own symbol table.  The fault is bound to
-# this range so it lands only in the port's own I/O, never in the guest's.
-TEXT_OFF=$(nm -S --defined-only "$KO" 2>/dev/null | awk '$3=="T"||$3=="t" {print $1; exit}')
+# The module's text extent, from its .text SECTION and not from a symbol.
+# `nm` prints symbols in ALPHABETICAL order, so "the first T symbol" is an
+# arbitrary address and not the start of the text: measured 2026-10-14, it
+# gave 0x7d6c0 for a module whose .text spans 0x0..0x88405, so the armed range
+# excluded most of the code -- including hammer2_freemap_alloc at 0xfa80 and
+# every other frame below 0x7d6c0, which is why the fault never fired however
+# the other gates read.  objdump -h prints the section's own VMA and size, and
+# for a module it is 0 plus the size.
+TEXT_OFF=$(objdump -h "$KO" 2>/dev/null | awk '$2==".text" {print $4; exit}')
 TEXT_SIZE=$(objdump -h "$KO" 2>/dev/null | awk '$2==".text" {print $3; exit}')
 [ -n "$TEXT_OFF" ] && [ -n "$TEXT_SIZE" ] || {
 	echo "sync-io: COULD-NOT-RUN: no .text extent in $KO" >&2; exit 2; }

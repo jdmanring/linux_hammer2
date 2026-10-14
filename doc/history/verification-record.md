@@ -12166,3 +12166,42 @@ compared at the end. It does not measure repeated cycles *of the
 interruption* -- that is `interrupt_resume`, which has its own reading and
 its own open defect (the 42-inode loss). The two are separate criteria and
 this entry is about the first.
+
+## The io-fault budget was spent by the sync thread, not the writes, 2026-10-14
+
+The instrument reported `times moved 0` on four runs with every gate reading
+open -- probability 100, the device flag set, `require-end` ULONG_MAX, the
+armed range read back exactly. The arm was correct and nothing fired.
+
+The cause is the fixture, not the fault injector. The instrument creates a
+`CL` pfs to have a cluster to synchronize, and that starts a synchronization
+thread which submits its own bios. With `interval 1` and `probability 100`,
+**the first four bios any task submits consume the whole `times` budget**, so
+the thread ate it before the write loop began. A hand probe with no CL pfs
+injected on its first write with the same attributes, which is what separated
+the two.
+
+`task-filter` fixes it: the fault then fires only for a task whose own
+`/proc/<pid>/make-it-fail` is set, and the write loop runs in a child that
+sets it. Verified on the guest, that configuration gives the first write an
+`Input/output error` and the budget reaching zero -- the fault landing on the
+write task rather than the thread. The sibling alloc-fault instrument uses the
+same scoping, and its comment says why.
+
+This is the fifth failure of this one instrument in a day, and the second
+whose cause was the fixture rather than the injector:
+
+| # | what read wrong | cause |
+| --- | --- | --- |
+| 1 | `times` moved, no trace | counted `times`, which moves without `fail_dump` |
+| 2 | 0 injected | `echo Y` on an integer attribute, silent no-op |
+| 3 | 0 injected | `require-end` 0 instead of ULONG_MAX, filter rejects all |
+| 4 | arm state unreadable | the instrument did not print what it armed |
+| 5 | 0 injected, arm correct | the sync thread spent the budget first |
+
+Rows 2 and 3 are described above; row 4 is its own commit. The pattern across
+all five: **each was found by reading back a gate the instrument had written
+and finding it not what was intended.** The readback the instrument now prints
+on every run is what turned row 5 from "the fault does not work" into "the
+budget went somewhere else", and that is the argument for printing the arming
+state unconditionally rather than on failure.
