@@ -11060,3 +11060,72 @@ a narrowing: the count it reaches under the bit is the number of blocks BUILT,
 not the number refused, and a run that splits with the bit on prints one line
 per block. The record's own sentence is left as written, since it is the account
 of a reading taken on 2026-10-13, and this section is the correction.
+
+## An ssh drop read as a failure, and the detach under the live guest hpanics it, 2026-10-13
+
+`cluster-sync.sh`'s phase 4 was run to take P4's `interrupt_resume` reading on
+the fixed tree. It reported 31 checks and 15 failed, and the failures are one
+finding with two halves.
+
+What the log shows. The host's fifteen FAILs all read `none` or `0`, where
+`none` is the value `val()` returns for a key that is not in the guest's
+output. The guest's own kernel log contradicts them: it runs to completion,
+its last lines are the phase-5 unmounts, and its `interrupt-*` and `resume-*`
+keys were printed. So the guest half finished and the host read an output file
+that did not contain what the guest printed. That is an ssh session ending
+before its output arrived, which `cluster-sync.sh` did not handle: it tested
+the guest's exit against 124 and nothing else, so any other non-zero fell
+through to the checks.
+
+What the fall-through then did is the second half, and it is a fault this
+script caused. The unconditional detach released both disks while the guest
+was still running. libvirt reaches the guest as an ACPI eject, and the trace
+is the whole account of it:
+
+    hammer2_base_delete
+      <- hammer2_flush_core <- hammer2_flush_recurse
+      <- hammer2_chain_tree_RB_SCAN <- hammer2_flush_core
+      <- hammer2_flush <- hammer2_xop_inode_flush
+      <- hammer2_xop_start_except <- hammer2_inode_chain_flush
+      <- hammer2_vfs_sync_pmp <- hammer2_sync_fs <- sync_filesystem
+      <- fs_bdev_mark_dead <- bdev_mark_dead <- blk_report_disk_dead
+      <- __del_gendisk <- del_gendisk <- virtblk_remove
+      <- virtio_dev_remove <- ... <- acpiphp_disable_and_eject_slot
+      <- acpiphp_hotplug_notify <- acpi_device_hotplug
+      <- acpi_hotplug_work_fn
+
+with `Workqueue: kacpi_hotplug` above it, and the hpanic message
+`delete indirect elm 0000000000005000/12 from empty base 0000000000000000/0
+not found at 128/128` marks the device in error, after which the flush drops
+its blocks unwritten. The producer is therefore not this port's syncer and not
+the teardown: it is the ejection of the volume itself, whose `sync_filesystem`
+flushes a filesystem whose device is already going away.
+
+The times order it beyond doubt. The fault is at guest-uptime 20151 s; the
+guest's script ran on to 20270 s; the host's log was written at 20:01:43, at
+which point the ssh had already returned and the detach had run. The eject is
+the host's own, under a guest that had not finished.
+
+The record's 2026-10-12 entry already has this frame set, from a run under
+`HAMMER2_INVARIANTS`: `virtblk_remove -> del_gendisk -> blk_report_disk_dead
+-> sync_filesystem -> hammer2_vfs_sync_pmp -> hammer2_trans_init`, read there
+as a flush-transaction wait. The same eject reaches a different sink here,
+the empty-base hpanic, which is what the record's separate entry describes
+from the syncer's side. One trigger, two sinks, and both are this script's
+detach landing during a live run.
+
+The fix is in two commits, `05c51f1` for `cluster-sync.sh` and `c470a94` for
+`cluster-quorum.sh`, which carried the identical `rc=$?` followed by only the
+124 test and then an unconditional detach. Both now read the guest half's exit
+before anything is inferred from its output: exit 2 and a COULD-NOT-RUN line
+are surfaced as COULD-NOT-RUN, a non-zero that is neither 2 nor 124 is the
+same and keeps the kernel log beside the images as `cluster-drop-*.klog`, and
+only rc 0 reaches the checks. `sync-empty-base.sh` has guarded exit 2 since
+2026-10-12; this closes that class in its sibling rather than inventing it.
+The guest's kernel log for this run is kept at
+`cluster-phase4-eject-emptybase-20261013-200714.klog` beside the images.
+
+Not yet established, and left as the next reading rather than guessed: whether
+phase 4 reaches the interrupt and the resume on a run whose session completes.
+The two failures this entry explains were the harness's, so the phase's own
+checks have not yet been read on the fixed tree.
