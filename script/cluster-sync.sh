@@ -103,6 +103,14 @@ NBIG=${H2_NBIG:-20000}
 # A pass over the frontend-written bigdir runs 0.2 to 0.8 ms, measured, which
 # a 10 ms poll cannot hit.
 NBIG2=${H2_NBIG2:-20000}
+# How deep into the pass, in copies past the phase-4a baseline, the unmount
+# that stops the thread is issued. The copy depth at the stop is the one
+# variable that separated the runs that lost inodes from those that
+# converged (copied 4, 44, 88, 488 converged; 549 lost 422), and 0 stops at
+# the first open bracket as before. Declared host-side because the launch
+# line forwards it to the guest half, which runs under set -u.
+STOP_DEPTH=${H2_STOP_DEPTH:-0}
+STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-300}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
