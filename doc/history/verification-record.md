@@ -11648,3 +11648,58 @@ the probe now measures what it claims, and what it reports here is that this
 run's copy did not happen in a pass the probe could bracket. The offline
 replay answered whether the condition can fire; this run answers whether it
 fires in this run's timing, and it does not.
+
+## A two-minute probe answers what the run could not: which unmount stops the thread, 2026-10-13
+
+The phase's interruption had been reasoned about four times and the reasoning
+was wrong twice. A 22-line probe replaces it, on the same guest, mounting the
+same three volumes and running no workload:
+
+    start thread=2
+    --- A: unmount /mnt/h2s   (the phase's action)
+    A thread=2
+    --- B: then unmount /mnt/h2c (the CL pmp's own mount)
+    B thread=1
+    --- C: remount h2c, does the thread come back?
+    C thread=1
+
+Three readings, and each corrects something:
+
+**The first probe saw TWO `h2nod-CL` threads where the run sees one, and the
+difference was the probe's own topology, not the phase's.** A second probe
+printing the thread pids and names shows when they appear:
+
+    after master pfs-create CL: threads=[]
+    after mount h2c@CL:          threads=[]
+    after mount h2s@ROOT:        threads=[22667 h2nod-CL 22668 h2nod-CL ]
+    after slave pfs-create CL:   threads=[22667 h2nod-CL 22668 h2nod-CL ]
+
+Both threads appear when `/mnt/h2s` mounts, not when the CL pmp is created.
+The first probe ran the same three mounts but WITHOUT phase 1's LONE create
+and its `pfs-delete`, so its guest was one pmp richer than the script's. The
+run's `the SLAVE in a cluster starts one thread: 1` is the faithful reading
+for the script's state, and a probe written to a topology the script does not
+have measures something else -- the same defect the port's own notes record
+for a test written to a shape the production data does not use.
+
+**Unmounting the slave's ROOT stops nothing.** Both probes agree: the
+phase's action, `/mnt/h2s`, leaves every `h2nod-CL` thread it found. This is
+the reading the trace predicted from `pmp->mp`, and it is the one that holds
+across both topologies.
+
+**Unmounting the CL pmp's own mount stops a thread.** B reads 1 from 2:
+`/mnt/h2c` is the CL pmp's mount, and its unmount is what reaches
+`sync_thrs[]` for that pmp. Which of the two it removed is not settled here;
+what is settled is that the slave's ROOT unmount removes none and this removes
+one.
+
+**The thread does not come back on remount.** C reads 1 after remounting
+`/mnt/h2c`: a thread stopped by a teardown that removed its element stays
+stopped, where phase 1's thread returns because its pmp was destroyed and
+re-created. So the phase cannot remount to "resume" a thread stopped this way
+-- the resume half of the phase needs the pmp alive.
+
+The probe is kept as `script/` material when the phase is rewritten. What it
+establishes for the rewrite: the interrupt must act on the CL pmp
+(`/mnt/h2c`), not the slave's ROOT; there are two threads to account for, not
+one; and a stop that removes an element is not undone by a remount.
