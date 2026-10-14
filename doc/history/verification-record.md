@@ -12205,3 +12205,43 @@ and finding it not what was intended.** The readback the instrument now prints
 on every run is what turned row 5 from "the fault does not work" into "the
 budget went somewhere else", and that is the argument for printing the arming
 state unconditionally rather than on failure.
+
+## io_faults is met: the freemap guard holds and the run is clean, 2026-10-14
+
+The fix of 2026-10-14 (a freemap leaf whose read failed is dereferenced as if
+it had data) is verified by the instrument that found the defect. Same aimed
+fault, same 4 injections, same write workload:
+
+    ok    the fault was injected: 4 forcing line(s), times moved 4
+    ok    the failure lands in the port's I/O: 46 hammer2 frame(s) in the trace
+    ok    the set written before the fault is still there: 240 file(s), 200 written
+    ok    every file written before the fault still reads: 0 unreadable
+    ok    the volume unmounts after the fault rather than wedging: umount-ok
+    ok    the module unloads: 1 of 1
+    ok    no kernel warning, KASAN or UBSAN report: 0
+    ok    kmemleak reports nothing of hammer2's: 0
+
+    sync-io: 8 check(s), 0 failed
+
+Before the guard: a NULL dereference in `hammer2_freemap_alloc()` and a guest
+left with a kworker in `hammer2_vfs_sync_pmp` and `bash` in `lookup_open`, the
+mount un-unmountable and the module unloadable. After it: every file written
+before the fault reads, the volume unmounts, the module unloads, and the
+kernel log is clean.
+
+**So P4's `io_faults` criterion is met.** What it measures, stated plainly:
+one injected block-I/O failure aimed at the port's own text during a synced
+write, and whether the media already written survives and the port fails
+rather than wedging. It does not measure a fault during the cluster thread's
+own pass (the fault is scoped to the writing task, which is what keeps the
+sync thread's bios from spending the budget) and it does not measure a device
+that fails every bio. Those are separate readings and neither is taken.
+
+The instrument needed six fixes to get here, every one of them in the
+instrument and none in the port: the `Y`/`1` encoding, `require-end` 0 rather
+than ULONG_MAX, counting `times` rather than the trace, printing what it
+armed, scoping the fault to the writing task, and taking the range from the
+`.text` section rather than from an alphabetically-first symbol. The last two
+are the same shape as each other and as the day's probe defects: an
+instrument that fails silently and a subject that did nothing produce the
+same reading.
