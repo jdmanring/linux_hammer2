@@ -12466,31 +12466,36 @@ recorded here so the run is not cited as `interrupt_resume` met. It also means
 the destroy lead the 2026-10-11 entry carries is NOT tested by it: 2 copies
 before the stop is not a pass that reaches the shortfall.
 
-**The thread-left reading is consistent and separates by pmp.** Both
-non-truncated runs read `1 left after umount /mnt/h2c` after the guest's 20 s
-wait, and the unmount itself takes 4.3 to 4.4 s. The lone phase reads the
-opposite: unmounting the lone pmp leaves `0` (`lone-threads-after` passes, and
-the remount brings it back). The CL pmp is not the same shape. **Measured
-2026-10-14 in this phase's own topology: the guest starts ONE `h2nod-CL` thread
-(phase 2's `starts one thread: 1`), and unmounting `/mnt/h2c` leaves it running
-(`threads 1 to 1`, the 20 s wait exhausted, the unmount returning in 4.3 s).**
-The record's 2026-10-13 probe read `2 to 1` for this unmount, but the record
-itself notes that probe ran a topology the script does not (no phase-1 lone
-create and delete), so its two threads are not the script's one; treating that
-`2 to 1` as a one-of-two-element drop produced a second wrong check. Three
-readings of this check were wrong in turn this session (assert zero, assert a
-drop from two, assert one-of-two), which is the reasoning loop the record warns
-about, so the check asserts the port's original contract and reports it unmet
-rather than inventing a fourth invariant. What is settled: one thread exists
-and the unmount of one of the CL pmp's two mounts does not stop it here. What
-is not: whether the port keeps a thread it should stop, or the unmount does not
-reach the pmp's teardown while its other mount is up. The next reading is in
-the teardown path, not in this check.
+**The thread-left reading is resolved: the unmount does not delete a thread,
+and the check asserted an invariant the port does not have.** Both non-truncated
+runs read `threads 1 to 1` across `umount /mnt/h2c`, the unmount returning in
+4.3 s and the guest's post-unmount wait then exhausting its 20 s with the thread
+still named. The 2026-10-13 probe read `2 to 1` for this unmount, but the record
+itself notes that probe ran a topology the script does not, so its two threads
+are not the script's one.
 
-The raw fields behind the verdict (`interrupt-threads`,
-`interrupt-stop-tenths`) are printed by the host now, since it parsed them and
-printed only the check's one-number message before, and the guest's output file
-is removed at exit.
+The source settles it, and no run was needed to see it: `hammer2_thr_delete()`
+has exactly two callers in `src/`, `hammer2_pfsdealloc()` from the pfs-delete
+ioctl and `hammer2_pfsfree()` from `pfsfree_scan()`. A plain `umount` reaches
+neither. `hammer2_unmount_helper()` clears `pmp->mp` and decrements the device's
+`mount_count`, which is the unmount's work; it does not deallocate the pmp. The
+phase keeps the pmp's other mount, `/mnt/h2s`, up through the interruption, so
+the CL pmp is alive and its thread is correct to keep running. This matches the
+carried code, so it is not a port defect. The check that read the thread's
+absence was asserting a stop the unmount is not supposed to perform.
+
+Three readings of that check were wrong in turn this session: assert zero
+(unmet), assert a drop from two (the run read `1 to 1`, and that was read as a
+refutation when the assertion it carried would have held), and then the
+teardown-path hunt for a defect that is not there. The lesson is the record's
+own: the reading moved with the reasoning, and the reasoning was settled by
+reading the two callers, which cost nothing and should have come first.
+
+The check asserts the measured behavior now: the thread exists through the
+interruption and the resume brings passes back. The raw fields behind the
+verdict (`interrupt-threads`, `interrupt-stop-tenths`) are printed by the host,
+since it parsed them and printed only the check's one-number message before, and
+the guest's output file is removed at exit.
 
 What the runs settle: the shortfall reproduces at 422 inodes under the timeout
 phase 4 requires, the 42-inode figure was a truncation artifact, and a verbose
