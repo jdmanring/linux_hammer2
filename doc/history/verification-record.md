@@ -11129,3 +11129,50 @@ Not yet established, and left as the next reading rather than guessed: whether
 phase 4 reaches the interrupt and the resume on a run whose session completes.
 The two failures this entry explains were the harness's, so the phase's own
 checks have not yet been read on the fixed tree.
+
+## The guard against the live detach still detached, 2026-10-13
+
+`05c51f1` read the guest half's exit before inferring failures from its
+output. That half of it worked: the same run shape came back as one
+COULD-NOT-RUN line rather than fifteen FAILs. It also detached the disks in
+the same arm, which is the fault the guard was written to prevent, and the
+run after it shows the cost.
+
+The readings: the run returned
+`COULD-NOT-RUN: the guest session ended rc=127 after 17 line(s) of output`,
+and on the guest `/dev/vdb` and `/dev/vdc` were gone while `/mnt/h2c` and
+`/mnt/h2m` still listed as hammer2 mounts and the sync thread was still
+passing every five seconds. A mount whose device has been ejected is the
+state the guard exists to avoid, and the guard produced it.
+
+Two things were wrong, and both are mine:
+
+* the arm that reads a non-zero exit and reports COULD-NOT-RUN ended with the
+  same unconditional `detach-disk --live` the old code had, so the report was
+  correct and the action under it was not. Suppressing the wrong verdict did
+  nothing about the wrong action.
+* the guest's output was discarded. `rc` and a line count survived; the
+  seventeen lines that say where the guest half stopped did not. `rc=127` is
+  not the 255 an ssh drop returns, so the run stopped for a different reason,
+  and the evidence that would have named it was thrown away by the same
+  commit that was written to preserve evidence.
+
+`801e688` routes every detach in the script through `detach_disks`, which
+asks a running guest to unmount and rmmod and detaches only when the guest
+reports no hammer2 mount left; a guest that will not release them is left
+alone and the helper returns 1. The drop arm keeps the guest's output beside
+the kernel log.
+
+Measured against the real guest, the two states that matter: with no mount
+the helper detaches and returns 0; with a mount it unmounts first, detaches,
+returns 0, and the guest's log carries no `device in error`, no
+`from empty base` and no `cut here`, where the old path produced all three.
+The control is the case that produced the fault, run again through the new
+path, so the guard is checked where the defect occurs rather than where it is
+convenient.
+
+The lesson is the one this session keeps re-learning at this site: the
+sentence describing a fix and the fix are separate artifacts, and a guard
+that reports the right thing while doing the wrong thing is the shape to
+check for. The comment above it said the disks were released only after the
+guest stopped touching them; the code under the comment detached anyway.
