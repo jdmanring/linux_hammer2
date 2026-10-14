@@ -12466,23 +12466,25 @@ recorded here so the run is not cited as `interrupt_resume` met. It also means
 the destroy lead the 2026-10-11 entry carries is NOT tested by it: 2 copies
 before the stop is not a pass that reaches the shortfall.
 
-**The thread-left reading is consistent.** Both non-truncated runs read `1 left
-after umount /mnt/h2c` after the guest's 20 s wait, and the unmount itself
-takes 4.3 to 4.4 s. `hammer2_thr_delete()` signals STOP, waits for STOPPED and
-`kthread_stop_put()`s, so an unmount that returns with the thread still named
-is either a stop that did not join or a check reading before the pmp's teardown
-completes. It is separate from the shortfall and is not yet resolved; two runs
-agree it is 1.
-
-**A small evidence-retention defect in the harness.** The host parses
-`interrupt-threads` and `interrupt-stop-tenths` but prints only the check's
-verdict, so the number of tenths waited and the thread count that produced the
-verdict are not in the saved log. A check that discards the reading behind its
-message is the shape already fixed elsewhere in these scripts; here the fix is
-to print the raw fields beside the checks.
+**The thread-left reading is consistent and separates by pmp.** Both
+non-truncated runs read `1 left after umount /mnt/h2c` after the guest's 20 s
+wait, and the unmount itself takes 4.3 to 4.4 s. The lone phase reads the
+opposite: unmounting the lone pmp leaves `0` (`lone-threads-after` passes, and
+the remount brings it back), so an unmount does stop a thread that belongs to a
+pmp with one element. The CL pmp is the two-element cluster, and unmounting only
+its MASTER's mount leaves the thread named. `hammer2_thr_delete()` signals STOP,
+waits for STOPPED and `kthread_stop_put()`s, so either the stop does not reach
+that pmp while its slave element holds it, or the unmount returns before the
+pmp's teardown and the check reads too early. The two cases differ by the pmp's
+element count, which is P4's thread-lifetime audit item and is not resolved
+here. The raw fields behind the verdict (`interrupt-threads`,
+`interrupt-stop-tenths`) are printed by the host now, since it parsed them and
+printed only the check's one-number message before, and the guest's output file
+is removed at exit.
 
 What the runs settle: the shortfall reproduces at 422 inodes under the timeout
 phase 4 requires, the 42-inode figure was a truncation artifact, and a verbose
 run cannot be read as convergence. What they do not settle: the destroy lead,
 which needs a run that both carries the per-chain prints and reaches the
-shortfall, and the thread-left reading, which is consistent but unexplained.
+shortfall, and why the stop leaves the CL pmp's thread named where the lone
+pmp's unmount clears it.

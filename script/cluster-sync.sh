@@ -478,6 +478,11 @@ grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -
 # Phase 4: the interruption must land inside an open pass bracket, or every
 # check below it tested an idle thread. The bracket check comes first because
 # the others mean nothing without it.
+# The raw phase-4 fields are printed before their checks: a check message
+# carries one number and several of these decide it together (the stop's wait
+# and the thread count behind one verdict), and the guest's output file is
+# removed at exit, so a field not printed here is lost with the run.
+echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes)"
 b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
