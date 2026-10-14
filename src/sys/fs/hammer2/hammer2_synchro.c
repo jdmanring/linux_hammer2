@@ -1285,7 +1285,16 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 	chain = *chainp;
 
 #if HAMMER2_SYNCHRO_DEBUG
-	if (hammer2_debug & 1)
+	/*
+	 * XXX Linux: fires on 0x0001 (as carried, so 0x8001 keeps printing
+	 * destroys) or on 0x4000 alone. The per-chain prints share 0x0001 with
+	 * the insert and replace prints, and enabling it floods the pass with
+	 * one line per insert until the interrupted stop lands after a couple
+	 * of copies, which hides the shortfall the destroy is read against. A
+	 * run at 0x8000|0x4000 carries the destroy keys with the pass running
+	 * at its normal length.
+	 */
+	if (hammer2_debug & (1 | 0x4000))
 	/* XXX Linux: %jx, which printk does not implement */
 	kprintf("destroy rec %p/%p slave %d %d.%016llx\n",
 		*parentp, chain,
