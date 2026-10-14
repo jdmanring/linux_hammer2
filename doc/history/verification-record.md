@@ -11738,7 +11738,7 @@ timing.
 
 **The window is five seconds, not 200 microseconds.** A pass that carries
 6000 files takes seconds; the passes the phase brackets are 0.2 ms. So the
-interrupt the phase wants exists, it is at the join rather than the
+interrupt the phase wants exists, at the join rather than at the
 remount -- and a 10 ms poll lands inside it with room to spare, which is the
 opposite of the premise that the window must be widened.
 
@@ -11758,3 +11758,56 @@ Each was caught by a reading disagreeing with an expectation and traced to the
 probe rather than the subject. The rule that would have caught all three
 sooner: run the probe against the same module knobs and the same guest state
 the harness uses, and state before the run what a zero would mean.
+
+## The bracket is not a pair, and the join pass is one eight-second pass, 2026-10-13
+
+Two readings from the same probe, and both are structural.
+
+**The two log lines are not a bracket.** `sync_slaves pfs CL` is printed once
+per pass, at the top of the outer loop (`hammer2_synchro.c:324`).
+`sync_slaves error` is printed INSIDE the inner `for (;;)` loop
+(`hammer2_synchro.c:335`), which iterates while the scan returns
+`HAMMER2_ERROR_EAGAIN`. So one pass emits one open and MANY closes, and a
+count of the two is not a bracket at all:
+
+    P=5  C=11        (one probe, mid-copy)
+
+The phase's check, and the correction made to it earlier the same day, both
+treat these as a pair. The correction (`o > opened && (o-opened) > (c-closed0)`)
+at least tests the right thing -- an open with no close after it -- but it
+still assumes one close per open, and a pass with deferrals breaks that
+assumption in the direction that makes the check read closed when it is open.
+What the check needs is the OPEN count alone advancing, which is what a
+"pass began" means; the closes carry the error code and the deferral pointer,
+which is a different fact.
+
+**The join pass is one eight-second pass, with seven deferral retries.** The
+raw sequence, from the probe that joined a SLAVE onto a 6000-file backlog:
+
+    7810.289  sync_slaves pfs CL              <- pass opens
+    7810.587  sync_slaves error 256  defer .. <- EAGAIN, retry
+    7812.824  sync_slaves error 256  defer ..
+    7813.888  sync_slaves error 256  defer ..
+    7814.972  sync_slaves error 256  defer ..
+    7816.127  sync_slaves error 256  defer ..
+    7817.324  sync_slaves error 256  defer ..
+    7818.341  sync_slaves error 0            <- pass ends, 8.05 s
+
+`256` is `HAMMER2_ERROR_EAGAIN`: each retry is a deferral, and the pass takes
+8.05 seconds to drain them. That is the window P4's interruption needs, and it
+is at the join.
+
+This also explains every earlier reading. The 0.2 ms passes the phase has been
+bracketing are ordinary idle passes on a converged cluster -- 176 of them in
+the first phase-4 completion, median 0.210 ms. The one long pass that run did
+show (1072.7 ms at t=464.7 s) was the copy of `bigdir2` in progress, and the
+phase's design put its unmount somewhere else entirely. There was never a
+window to widen; there was an eight-second window at a place the phase does
+not look.
+
+**What follows for the rewrite.** Stop watching for a bracket. A pass has
+begun when `sync_slaves pfs CL` increments; the pass that carries the backlog
+is that pass, and it lasts seconds. The interruption is: write the backlog,
+join the SLAVE, wait for the open count to increment, and stop while it is
+still the same open -- with the stop reaching the CL pmp, which unmounting the
+slave's ROOT does not do.
