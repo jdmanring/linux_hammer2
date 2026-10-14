@@ -12470,20 +12470,22 @@ before the stop is not a pass that reaches the shortfall.
 non-truncated runs read `1 left after umount /mnt/h2c` after the guest's 20 s
 wait, and the unmount itself takes 4.3 to 4.4 s. The lone phase reads the
 opposite: unmounting the lone pmp leaves `0` (`lone-threads-after` passes, and
-the remount brings it back), so an unmount does stop a thread that belongs to a
-pmp with one element. The CL pmp is the two-element cluster and it owns TWO
-`h2nod-CL` threads, one per element, which the 2026-10-13 probe of §"A
-two-minute probe" measured directly (`start thread=2` ... after unmounting
-`/mnt/h2c`, `thread=1`). Unmounting only its MASTER's mount removes the one
-element it tears down and leaves the other, whose `sync_thrs[]` entry is still
-held by the cluster's second element (the phase keeps `/mnt/h2s` mounted at
-that point). So `1 left` is the correct reading for this topology and the
-phase's check, which asserts `interrupt-threads = 0`, is asserting an
-invariant the two-element pmp does not support: the message is the port's
-behavior read against a wrong expectation. This is the same class as the
-harness defects already fixed this session, a check whose conclusion does not
-follow from the state it measures. Two runs read `1` (`stop-tenths=200` in one
-of them, the wait exhausted), and that is expected, not a defect.
+the remount brings it back). The CL pmp is not the same shape. **Measured
+2026-10-14 in this phase's own topology: the guest starts ONE `h2nod-CL` thread
+(phase 2's `starts one thread: 1`), and unmounting `/mnt/h2c` leaves it running
+(`threads 1 to 1`, the 20 s wait exhausted, the unmount returning in 4.3 s).**
+The record's 2026-10-13 probe read `2 to 1` for this unmount, but the record
+itself notes that probe ran a topology the script does not (no phase-1 lone
+create and delete), so its two threads are not the script's one; treating that
+`2 to 1` as a one-of-two-element drop produced a second wrong check. Three
+readings of this check were wrong in turn this session (assert zero, assert a
+drop from two, assert one-of-two), which is the reasoning loop the record warns
+about, so the check asserts the port's original contract and reports it unmet
+rather than inventing a fourth invariant. What is settled: one thread exists
+and the unmount of one of the CL pmp's two mounts does not stop it here. What
+is not: whether the port keeps a thread it should stop, or the unmount does not
+reach the pmp's teardown while its other mount is up. The next reading is in
+the teardown path, not in this check.
 
 The raw fields behind the verdict (`interrupt-threads`,
 `interrupt-stop-tenths`) are printed by the host now, since it parsed them and

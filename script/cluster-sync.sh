@@ -505,13 +505,22 @@ b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unm
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads)
-# The CL pmp owns two h2nod-CL threads, one per element, so the unmount of its
-# MASTER's mount removes one and leaves the second (the slave element is still
-# mounted). The check is the drop, not a count of zero, which the two-element
-# pmp never reaches. A run whose guest has the topology the phase builds reads
-# 2 before and 1 after; the assertion is that the count fell.
-[ "${tb:-0}" -ge 1 ] 2>/dev/null && [ "${a:-9}" -lt "${tb:-0}" ] 2>/dev/null
-check "the stop reaches the CL pmp and removes its element's thread" $? "threads ${tb:-none} to ${a:-none} after umount /mnt/h2c"
+# MEASURED 2026-10-14, and the expectation is NOT established. In this phase's
+# topology the guest starts one h2nod-CL thread (phase 2's "starts one thread:
+# 1"), and unmounting /mnt/h2c leaves it running: `threads 1 to 1` with the
+# post-unmount wait exhausted at 20 s, while the unmount itself returns in
+# ~4.3 s. The record's 2026-10-13 probe read `2 to 1` for this unmount, but it
+# ran a different topology and its numbers are not this phase's. Three readings
+# of this check have now been wrong in turn (assert zero, assert a drop from
+# two, assert one-of-two), so the check asserts the port's original contract
+# and this records that it is unmet rather than inventing a fourth invariant.
+# What is settled: one thread exists and the unmount of one of the pmp's two
+# mounts does not stop it here. What is not: whether that is the port keeping a
+# thread it should stop, or an unmount that does not reach the pmp's teardown
+# while its other mount is up. The next reading is in the teardown path, not in
+# this check.
+[ "${a:-1}" = 0 ] 2>/dev/null
+check "the CL pmp's thread is gone after umount /mnt/h2c" $? "threads ${tb:-none} to ${a:-none} (expectation open, see record)"
 # The stop is read at the thread's loop top and between deferred directories,
 # never inside a scan, so a pass in flight completes and didbreak cannot fire
 # for a stop issued mid-pass. Requiring it would be a check no correct run can
