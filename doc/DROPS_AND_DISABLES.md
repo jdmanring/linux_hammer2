@@ -18,7 +18,7 @@ like a scope decision.
 
 | file | state | classification |
 |---|---|---|
-| `hammer2_synchro.c` | carried since 0.9.61, 1176 lines, measured by `cluster-sync.sh` | implemented |
+| `hammer2_synchro.c` | carried since 0.9.61, 1176 lines then, the origin table carrying the current count, measured by `cluster-sync.sh` and by `sync-empty-base.sh`, which reads the slave's cluster PFS against its master's | implemented |
 | `hammer2_ccms.c` / `.h` | carried at 1.0.6, 323 and 177 lines then, the origin table carrying the current count with the lockdep exercise, building as `hammer2_ccms.o` | limited: the thread lock is carried and the coherency half is not written in any tree |
 | `hammer2_iocom.c` | not carried, 387 lines, 14 calls to 8 `kdmsg` functions | deferred-with-trigger: P6, behind the transport (P5) |
 | `hammer2_msgops.c` | not carried, 87 lines, 2 calls to `kdmsg_msg_reply()` | deferred-with-trigger: P6, behind the transport (P5) |

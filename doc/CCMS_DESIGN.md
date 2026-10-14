@@ -216,7 +216,7 @@ What the port does carry, and what a coherency layer would sit on:
   from DragonFly's. It decides a cluster's validity from the PFS's master
   count, and its quorum logic is upstream's rather than the FreeBSD port's
   reduced version.
-- `hammer2_synchro.c`, 1176 lines, carried. It drives the core over
+- `hammer2_synchro.c`, 1176 lines when this was written and 1450 now, carried. It drives the core over
   `kprintf`, `KKASSERT`, `tsleep`, `wakeup`, `kmalloc` and `kfree` and
   calls no `kdmsg` function, so it runs with no transport. Measured by
   `script/cluster-sync.sh`, which keeps a SLAVE on a second local device
