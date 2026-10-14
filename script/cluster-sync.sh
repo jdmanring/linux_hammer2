@@ -338,6 +338,42 @@ GUEST
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 $RUN "$GUEST_SSH" "NBIG=$NBIG H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
+# What the guest half actually returned, before anything is inferred from
+# the readings below.  Measured 2026-10-13: a run whose ssh session dropped
+# mid-flight left $W/out with the phases it had reached and none of the
+# ones after, and the fifteen checks reading those empty values each
+# reported a FAIL against the subject.  An ssh drop is not the subject
+# failing and must not be read as one.
+gout=$(wc -l < "$W/out" 2>/dev/null | tr -d ' ')
+# Exit 2 is the guest half refusing its own setup and it names why on
+# stderr, so it is surfaced and reported as COULD-NOT-RUN.  A non-zero that
+# is neither 2 nor 124 is the guest half or its session ending without
+# finishing, which is also COULD-NOT-RUN and not a failure of the subject.
+# The disks are released only after the guest has stopped touching them: a
+# detach under a live run reaches the guest as an ACPI eject whose flush
+# finds an empty base and hpanics the device into error (measured
+# 2026-10-13, trace acpiphp_disable_and_eject_slot -> virtblk_remove ->
+# del_gendisk -> blk_report_disk_dead -> sync_filesystem -> hammer2_sync_fs
+# -> hammer2_base_delete).  sync-empty-base.sh has guarded exit 2 since
+# 2026-10-12; this script guarded only the hang.
+if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
+	command grep -m1 "COULD-NOT-RUN" "$W/out" 2>/dev/null >&2 ||
+		echo "cluster: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	exit 2
+fi
+if [ "$rc" != 0 ] && [ "$rc" != 124 ]; then
+	scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-drop-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	echo "cluster: COULD-NOT-RUN: the guest session ended rc=$rc after $gout line(s) of output, so the run did not finish; its kernel log is kept beside the images as cluster-drop-*.klog" >&2
+	exit 2
+fi
 # A hung guest keeps running after timeout kills the client, holding the
 # module, the mounts and the disks, and $W dies with the trap, so the run's
 # trace is copied off the guest before anything else: a hang is the failure
