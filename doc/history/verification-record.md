@@ -12398,26 +12398,38 @@ shortfall comes from -- is still open. What the counters settled is only the
 negative: no failed copy. The log is kept whole at
 `cluster-hang-20261014-101039.klog`.
 
-**The open question is not new, and this entry first mis-stated it.** It
+**The open question is not new, and this entry first mis-stated it twice.** It
 belongs to the 2026-10-11 section "The missing inodes were copied and then
-destroyed by a root pass", which reached the mechanism with the carried
-per-chain prints under `HAMMER2_SYNCHRO_DEBUG` (`debug=0x8001`): the thread
-destroyed exactly the missing inodes on the slave, in one pass that scanned
-only the PFS root, through `hammer2_sync_destroy()` and its `n < 0` arm, which
-is taken when the master's scan does not return a chain the slave holds though
-the master's own media has it. In that run the thread inserted none of the
-large directory's inodes at all, and the slave's media held 19960 of them
-anyway, so the writer that put them there is not the sync thread's insert path.
-What the stamp does is conceal the destroy: the pass that destroyed the 81
-completed without error and stamped the root, so no later pass retries. Naming
-the destroy as the mechanism also settles which earlier readings were
-outside-in: "the root is stamped past its subtree" is the consequence, not the
-cause.
+destroyed by a root pass", which reached a mechanism with the carried per-chain
+prints under `HAMMER2_SYNCHRO_DEBUG` (`debug=0x8001`): the thread destroyed
+exactly the missing inodes on the slave, in one pass that scanned only the PFS
+root, through `hammer2_sync_destroy()` and its `n < 0` arm, which is taken when
+the master's scan does not return a chain the slave holds though the master's
+own media has it. In that run the thread inserted none of the large
+directory's inodes at all, and the slave's media held 19960 of them anyway, so
+the writer that put them there is not the sync thread's insert path. If the
+destroy still accounts for the shortfall, the stamp is what conceals it: the
+pass that destroyed the inodes completed without error and stamped the root, so
+no later pass retries, and "the root is stamped past its subtree" is the
+consequence rather than the cause.
 
-So the next instrument is not at the stamp, which this entry first named, but
-at the two things the 2026-10-11 entry left open and did not resolve: the
-`hammer2_sync_insert()` path is not what puts the large directory on the
-slave, and a dirent key does not encode its parent, so the directory the
-destroyed inodes belonged to is read from the fingerprint's own walk. The
-per-chain prints that produced that entry are carried and need only the debug
-mask; the counters added here stay for the negative they establish.
+**But that finding predates the code that changed the insert path, and it does
+not transfer on its own.** The 2026-10-11 run was written before the two clamps
+of 2026-10-13: the `ncount` bound in `hammer2_chain_create_indirect()` that
+made the slave converge, and the clamp in `hammer2_sync_insert()` that narrows
+a copied radix to the receiving parent. Both changed what the insert path does,
+and the 2026-10-11 entry says the insert path copied none of those inodes,
+which is exactly what a clamp on that path could change. So the destroy is a
+lead carried across a code change, not a settled cause: what holds today is
+that a failed copy is out (the counters above) and the destroy path is where
+the 2026-10-11 evidence points, which the next run re-confirms rather than
+assumes.
+
+The instrument for that is in the carried source and needs only the mask: the
+per-chain prints the 2026-10-11 entry used under `debug=0x8001`, which the
+runs above did not carry (they ran at `0x8000`). It answers the two things that
+entry left open. Which call puts the large directory on the slave, since the
+thread's insert path is not it. And which directory the destroyed inodes
+belonged to, read from the fingerprint's own walk, because a dirent key does
+not encode its parent. The counters added here stay for the negative they
+establish: no copy failed.
