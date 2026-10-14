@@ -173,6 +173,7 @@ disarm() {
 	echo 0 > /sys/block/vdb/make-it-fail 2>/dev/null
 	echo 0 > $fs/require-start 2>/dev/null
 	echo 0xffffffffffffffff > $fs/require-end 2>/dev/null
+	echo N > $fs/task-filter 2>/dev/null
 }
 trap disarm 0
 # Start from the reset state, because a previous run (or a previous version of
@@ -194,6 +195,16 @@ hi=$(printf '0x%x' $(( base + 0x$off + 0x$size )) 2>/dev/null)
 # how the first run of this instrument injected 0 and passed its setup.  The
 # failslab attributes take Y/N instead, and this line was copied from that
 # idiom.  Read back, because the failure mode is a silent no-op.
+# The fault is scoped to the WRITE TASK, not to the device.  The CL pfs
+# started above has a sync thread submitting its own bios, and with
+# interval 1 and probability 100 the first four bios ANY task submits consume
+# the whole `times` budget -- measured 2026-10-14, four runs reporting
+# `times moved 0` with every gate reading open, because the thread ate the
+# budget before the write loop began.  task-filter makes the fault fire only
+# for a task whose own /proc/<pid>/make-it-fail is set, and the write loop
+# runs in a child that sets it.  The same scoping is what the sibling
+# alloc-fault instrument uses, for the same reason.
+echo Y > $fs/task-filter || { echo "ctl-failed: task-filter"; exit 0; }
 echo 1 > /sys/block/vdb/make-it-fail 2>/dev/null || { echo "ctl-failed: no make-it-fail on vdb"; exit 0; }
 [ "$(cat /sys/block/vdb/make-it-fail 2>/dev/null)" = 1 ] || {
 	echo "ctl-failed: make-it-fail did not take (it takes an integer, not Y/N)"; exit 0; }
@@ -232,7 +243,14 @@ echo "make-it-fail $(cat /sys/block/vdb/make-it-fail)"
 
 # A write into the set with the fault armed.  This is the port's own I/O path
 # through the page cache writeback and hammer2_io_buf_io.
-i=0; while [ $i -lt 40 ]; do head -c 8192 /dev/urandom > /mnt/h2a/set/g$i 2>/dev/null; i=$((i + 1)); done
+# The writing child sets its own make-it-fail, which is what task-filter
+# reads.  Its stderr is kept: a failed write is the subject, and discarding it
+# would hide a segfaulting writer.
+( echo 1 > /proc/self/make-it-fail
+  i=0; while [ $i -lt 40 ]; do
+	head -c 8192 /dev/urandom > /mnt/h2a/set/g$i || echo "write-failed g$i"
+	i=$((i + 1))
+  done ) 2>&1 | sed 's/^/  writer: /' | head -6
 sync 2>/dev/null
 after=$(cat $fs/times 2>/dev/null)
 
