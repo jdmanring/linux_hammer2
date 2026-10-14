@@ -11846,7 +11846,12 @@ the current phase's unmount does not do.
 
 So the rewrite's target narrows to the honest one:
 
-* the stop reaches the CL pmp (`umount /mnt/h2c`, measured: T 1 to 0);
+* the stop reaches the CL pmp (`umount /mnt/h2c`); the thread reads it at the
+  next pass boundary, so the pass that was running completes and the thread
+  survives the unmount (the probe above reads `after-stop: T=1`; carried code
+  honors STOP at pass boundaries only, and `hammer2_thr_delete()` is reached by
+  pfs-delete and the device teardown, not by `umount`. The earlier `T 1 to 0`
+  written here was wrong and is corrected on 2026-10-14);
 * the thread is observed stopping at the pass boundary the design allows;
 * whatever the pass copied before the boundary is on the slave's media, and
   nothing copied is scrapped unwritten;
