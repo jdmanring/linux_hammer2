@@ -1,13 +1,16 @@
 #!/bin/sh
 # The crash matrix, calibrated against the FreeBSD port.
-# Four ways a write workload stops, two writers, and three verdicts on
+# Five ways a write workload stops, two writers, and three verdicts on
 # what each leaves behind. A writer mounts a copy of a host-made volume
 # read-write and writes small files with a sync every two hundred; after
 # SECONDS the cell happens: the writing process is killed and the volume
 # unmounted (kill), the guest kernel panics (panic), the host destroys the
 # domain (power), or it destroys the domain and then zeroes the second
 # half of the newest volume header, which is a header write that reached
-# the media only in part (torn). The image is then copied and judged:
+# the media only in part (torn), or destroys the domain once the guest
+# reports a task inside the port's own sync path, so the crash lands DURING
+# a synchronization flush rather than between two of them (sync, P4's
+# crash-during-sync criterion). The image is then copied and judged:
 # the host's fsck_hammer2 on the cut-off image, which must be clean, or
 # in the torn cell must report the torn zone and nothing else, since it
 # chooses its zone by mirror_tid before checking the CRC as DragonFly's
@@ -28,7 +31,7 @@ cd "$(dirname "$0")/.." || exit 2
 
 SECONDS_WRITING=${1:-20}
 REPS=${H2_CRASH_REPS:-2}
-CELLS=${H2_CRASH_CELLS:-"kill panic power torn"}
+CELLS=${H2_CRASH_CELLS:-"kill panic power torn sync"}
 WRITERS=${H2_CRASH_WRITERS:-"fbsd linux"}
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 LABEL=${H2_CRASH_LABEL:-CRASH}
@@ -240,6 +243,23 @@ run_writer() {	# writer cell -> the cut-off image in $IMG; prints the cut line
 	panic)	timeout 15 ssh -o ConnectTimeout=5 "$sshto" "$panic" >/dev/null 2>&1; sleep 5; chop "$dom" ;;
 	power)	chop "$dom" ;;
 	torn)	chop "$dom"; torn_zone=$(tear "$IMG"); echo "  torn  $torn_zone" ;;
+	sync)	# P4's crash-during-sync: wait until the writer is INSIDE a sync,
+		# then cut power. The writer syncs every 200 small files; polling
+		# the guest's D-state for a task in the port's flush path is what
+		# says a sync is in flight, rather than cutting at a fixed time
+		# and hoping. Measured window: a sync over a few hundred files
+		# runs tens of milliseconds, so the poll is 5 ms and the cell
+		# gives up after 5 s and says so rather than reporting a crash
+		# that landed between syncs as one that landed during.
+		n=0; insync=1
+		while [ $n -lt 1000 ]; do
+			st=$(timeout 5 ssh -o ConnectTimeout=3 "$sshto" \
+			     'ps -eo stat,comm 2>/dev/null | grep -E "^D.*(sync|h2nod)" | head -1' 2>/dev/null)
+			[ -n "$st" ] && { insync=0; break; }
+			sleep 0.005; n=$((n + 1))
+		done
+		echo "  sync-in-flight $([ $insync = 0 ] && echo yes || echo no-poll-timeout)"
+		chop "$dom" ;;
 	esac
 	kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null	# an ssh to a destroyed guest never returns by itself
 	return 0

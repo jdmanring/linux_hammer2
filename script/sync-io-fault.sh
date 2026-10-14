@@ -155,6 +155,19 @@ dmesg -C
 # attributes; setting only one injects nothing, which is the fake pass this
 # instrument is written against.
 fs=/sys/kernel/debug/fail_make_request
+# Disarm on EVERY exit, including the ctl-failed paths below. The fault is
+# guest-wide while armed (probability 100 plus the device flag), so a run that
+# returned between arming and disarming would leave the next run's I/O failing
+# at random and the reading would be about this run's residue.
+disarm() {
+	echo 0 > $fs/probability 2>/dev/null
+	echo 0 > $fs/times 2>/dev/null
+	echo 0 > $fs/verbose 2>/dev/null
+	echo N > /sys/block/vdb/make-it-fail 2>/dev/null
+	echo 0 > $fs/require-start 2>/dev/null
+	echo 0 > $fs/require-end 2>/dev/null
+}
+trap disarm 0
 off=$1; size=$2
 base=$(cat /sys/module/hammer2/sections/.text 2>/dev/null)
 [ -n "$off" ] && [ -n "$size" ] && [ -n "$base" ] || { echo "ctl-failed: no offset, size or text base"; exit 0; }
@@ -165,13 +178,17 @@ hi=$(printf '0x%x' $(( base + 0x$off + 0x$size )) 2>/dev/null)
 echo Y > /sys/block/vdb/make-it-fail 2>/dev/null || { echo "ctl-failed: no make-it-fail on vdb"; exit 0; }
 echo "$lo" > $fs/require-start  || { echo "ctl-failed"; exit 0; }
 echo "$hi" > $fs/require-end    || { echo "ctl-failed"; exit 0; }
-echo 100 > $fs/probability
-echo 1 > $fs/interval
+echo 100 > $fs/probability || { echo "ctl-failed: probability"; exit 0; }
+echo 1 > $fs/interval    || { echo "ctl-failed: interval"; exit 0; }
 # A few failures, not a flood: the question is how the port takes ONE failed
 # write, and a device that fails every bio measures a dead device instead.
-echo 4 > $fs/times
+echo 4 > $fs/times       || { echo "ctl-failed: times"; exit 0; }
 echo 0 > $fs/space
 echo 2 > $fs/verbose
+# The arm is read back: a control that accepted the write and did not take
+# would inject nothing, and every check below would pass on I/O that never
+# failed.
+[ "$(cat $fs/probability)" = 100 ] || { echo "ctl-failed: probability did not take"; exit 0; }
 before=$(cat $fs/times)
 echo "io-range $lo $hi"
 echo "require-readback $(cat $fs/require-start) $(cat $fs/require-end)"
@@ -184,12 +201,7 @@ sync 2>/dev/null
 after=$(cat $fs/times 2>/dev/null)
 
 # Disarm before anything else is read, so the postmortem is not faulted too.
-echo 0 > $fs/probability
-echo 0 > $fs/times
-echo 0 > $fs/verbose
-echo N > /sys/block/vdb/make-it-fail 2>/dev/null
-echo 0 > $fs/require-start
-echo 0 > $fs/require-end
+disarm
 
 echo "injected $(( ${before:-0} - ${after:-0} ))"
 echo "forcing-lines $(dmesg | grep -c 'FAULT_INJECTION: forcing')"
