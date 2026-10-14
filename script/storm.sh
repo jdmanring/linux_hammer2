@@ -241,6 +241,17 @@ if [ "$rc" -eq 124 ]; then
 	detach
 	exit 1
 fi
+# A non-zero that is not 124 is the guest or its session ending without
+# finishing (an ssh drop returns 255). The checks below would grade empty
+# output as the subject failing, and the detach below would eject a volume
+# the guest may still hold, which is the ACPI hotplug that wedges it in the
+# port's own sync path. Both are avoided: this is COULD-NOT-RUN.
+if [ "$rc" != 0 ]; then
+	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  drop    /'
+	detach
+	echo "storm: COULD-NOT-RUN: the guest session ended rc=$rc without finishing" >&2
+	exit 2
+fi
 detach
 case $out in *SETUP*) echo "storm: COULD-NOT-RUN: $(printf '%s\n' "$out" | command grep -m1 SETUP)" >&2; exit 2 ;; esac
 

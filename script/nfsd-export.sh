@@ -160,8 +160,12 @@ echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) war
 NFSD_LOG=${H2_NFSD_LOG:-$FIXDIR/nfsd-export.log}
 timeout 1200 ssh "$GUEST_SSH" "$run" > "$NFSD_LOG" 2>&1
 rc=$?
+# The status belongs to ssh. A second rc=$? here read cat's status instead,
+# which is 0 whenever the log exists, so the hang test below could never
+# fire and a guest that timed out was graded on the output that preceded
+# it. Measured 2026-10-13: with rc taken twice the [ -eq 124 ] test is
+# dead on a real 124.
 out=$(cat "$NFSD_LOG")
-rc=$?
 printf '%s\n' "$out" | sed 's/^/  /'
 if [ "$rc" -eq 124 ]; then
 	# A hang is read through the agent before the disk is detached, or
@@ -170,6 +174,17 @@ if [ "$rc" -eq 124 ]; then
 	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	detach
 	exit 1
+fi
+# A non-zero that is not 124 is the guest or its session ending without
+# finishing (an ssh drop returns 255). The checks below would grade empty
+# output as the subject failing, and the detach below would eject a volume
+# the guest may still hold, which is the ACPI hotplug that wedges it in the
+# port's own sync path. Both are avoided: this is COULD-NOT-RUN.
+if [ "$rc" != 0 ]; then
+	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  drop    /'
+	detach
+	echo "nfsd: COULD-NOT-RUN: the guest session ended rc=$rc without finishing" >&2
+	exit 2
 fi
 detach
 case $out in *SETUP*) echo "nfsd: COULD-NOT-RUN: $(printf '%s\n' "$out" | command grep -m1 SETUP)" >&2; exit 2 ;; esac
