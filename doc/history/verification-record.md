@@ -12079,3 +12079,50 @@ This is the third silent no-op found at this instrument in one day, after the
 check written for exactly that purpose -- the fake-pass assertion, the
 readback -- which is the argument for writing the check before the run rather
 than after.
+
+## A failed bio crashes the port in freemap_alloc and then wedges the guest, 2026-10-14
+
+P4's `io_faults` criterion has a reading, and the port fails it. The report is
+kept whole at `doc/history/kernel-reports/hammer2-iofault-freemap-wedge-20261014.txt`.
+
+The fault is one failed read of the freemap, aimed at the module's own `.text`:
+
+    Buffer I/O error on dev vdb, logical block 6, async page read
+    hammer2: hammer2_chain_modify: freemap_leaf blockref I/O error 5 at 000000000006000f
+    hammer2: hammer2_chain_load_data: freemap_leaf blockref I/O error 5 at 000000000006000f
+    Oops: general protection fault, probably for non-canonical address 0xdffffc0000000003
+    KASAN: null-ptr-deref in range [0x0000000000000018-0x000000000000001f]
+    RIP: hammer2_freemap_alloc+0xa31
+
+The error is reported correctly at the first two lines -- the port names the
+blockref and the errno -- and then the NULL dereference follows in
+`hammer2_freemap_alloc()`, reached through
+`hammer2_chain_modify -> hammer2_chain_create -> hammer2_xop_inode_create_det
+-> hammer2_inode_create_normal -> hammer2_vop_ncreate`. So the port detects the
+I/O error, reports it, and then dereferences a pointer it should have treated
+as absent once the freemap could not be loaded.
+
+**The guest does not merely crash; it wedges.** Two tasks are left in D state
+afterwards, captured through the guest agent:
+
+    D    kworker/6:2+eve   hammer2_vfs_sync_pmp
+    D    bash              lookup_open
+
+so the mount cannot be unmounted (`umount: /mnt/a: target is busy`) and the
+module cannot be unloaded (`Module hammer2 is in use`), and the guest needs a
+reset. That is the criterion's question answered in the negative: the port
+neither recovers to a verified alternate state nor fails clearly. It fails
+into a state that holds the kernel.
+
+**What was actually run.** The instrument reported `0 injected` on this run and
+four before it, because of three separate defects in the instrument -- the
+`Y`/`1` encoding, a `require-end` of 0 instead of ULONG_MAX, and counting from
+`times` instead of the trace. The fault DID fire on this run (the report is the
+proof) and the guest's own log is where the reading came from. The instrument
+is fixed for all three; a re-run through the fixed instrument is the next step
+so the reading and the instrument agree.
+
+Left open rather than guessed: which pointer in `hammer2_freemap_alloc()` is
+NULL after a failed freemap read, and whether the wedge is a consequence of
+that dereference or a second defect. The report's RIP and the two D-state
+stacks are the evidence for whoever takes it.
