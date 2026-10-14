@@ -125,13 +125,16 @@ its name line.
 
 ## What has been verified
 
-Thirteen of the seventeen gates pass with no environment variables set on a
+Fifteen of the seventeen gates pass with no environment variables set on a
 machine that has the kernel of record installed, as they have since
 2026-08-26: the syntax gate finds that tree, and the style gate finds its
 `checkpatch.pl`. The other two, `test-fixtures.sh` and `test-enospc.sh`,
 report COULD-NOT-RUN there and on every machine without a guest, a set of
 fixture images and a `KDIR` matching the guest's kernel, which is most of
-them and all of CI.
+them and all of CI. Measured on 2026-10-14 on this machine: 15 pass, 2
+COULD-NOT-RUN, and both of those pass once `KDIR` names the guest's kernel
+tree, which is what makes 17 the count of gates rather than of gates that
+happen to run unattended.
 What that unattended style run can say depends on which checker it finds.
 The gate searches for the kernel of record the way the syntax gate does,
 `/lib/modules/$(uname -r)/build` then `H2_KERNEL_TREES` then
