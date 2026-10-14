@@ -323,9 +323,35 @@ hammer2_flush(hammer2_chain_t *chain, int flags)
 		 */
 		if (info.parent != chain->parent) {
 			hprintf("lost child4\n");
-			hammer2_chain_drop(info.parent);
+			/*
+			 * info.parent is NULL on the first iteration when
+			 * chain had no parent at entry (line 309 above), and
+			 * the guard is the same one lines 342 and 368 in this
+			 * function already use.  Without it the first
+			 * iteration of a root chain's re-flush -- or any
+			 * iteration whose held parent was detached mid-pass
+			 * -- dereferences NULL in hammer2_chain_drop()'s
+			 * entry KKASSERT.
+			 */
+			if (info.parent)
+				hammer2_chain_drop(info.parent);
 			info.parent = chain->parent;
-			hammer2_chain_ref(info.parent);
+			/*
+			 * XXX Linux: chain->parent can be NULL here -- the
+			 * entry above guards the same pointer for the same
+			 * reason, and this file states it twice more
+			 * ("chain->parent can be NULL, usually due to
+			 * destroy races or detached inodes", and the
+			 * KKASSERT below).  A parent detached during the
+			 * pass reaches this assignment as NULL and the
+			 * unguarded ref faults; the guest wedged with
+			 * 82718 modified chains left.  Upstream FreeBSD
+			 * has the same unguarded line, so this is the
+			 * guard its own entry already applies, not a new
+			 * shape.
+			 */
+			if (info.parent)
+				hammer2_chain_ref(info.parent);
 		}
 		if (hammer2_flush_core(&info, chain, flags) == 0)
 			break;
