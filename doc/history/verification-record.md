@@ -11321,3 +11321,28 @@ the guest half.
 `c385539` forwards `NBIG2`. The check that would have caught it earlier is
 the one already there: a `set -u` variable used in the guest half and not in
 the `$RUN` argument list is a name the host can compare, and nothing does.
+
+## Phase 4's workload does not fit its own guest timeout, 2026-10-13
+
+With `NBIG2` forwarded, phase 4 ran for the first time and the timing is now
+readable. The klog of the run before it gives one 20000-file write:
+
+    19857.879  h2probe: bigdir write start
+    20150.561  h2probe: bigdir write end        292.7 s
+
+Phase 4 writes two such directories -- `bigdir` with the slave mounted and
+`bigdir2` with it unmounted -- so the writes alone are about 585 s before the
+unmount and the remount are reached. `RUN` is
+`timeout ${H2_RUN_TIMEOUT:-600} ssh ...`, and the default is 600 s, so the
+default expires inside the second write and the run reports the guest hung
+when it is doing exactly what the phase asked.
+
+The run started on 2026-10-13 with `H2_RUN_TIMEOUT=1800` (the two writes, the
+interruption and the remount, with headroom). This was measured rather than
+chosen from the default, and the phase's sizes had never been checked against
+the timeout because the phase had never started: a timeout that is smaller
+than the workload it bounds is indistinguishable from a hang in the reading,
+and the run before this one would have been reported as one.
+
+`NBIG2` and the timeout are the same shape: a host-side value phase 4 depends
+on that nothing compared against what the phase actually does.
