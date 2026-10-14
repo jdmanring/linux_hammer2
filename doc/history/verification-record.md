@@ -12032,3 +12032,50 @@ The rule, which is the same one the day's probe defects produced: when a
 kernel interface is written to configure something, read back what it
 configured, because two interfaces next to each other in the same
 documentation can take different encodings and one of them fails silently.
+
+## require-end resets to ULONG_MAX, and setting it to zero disables the fault, 2026-10-14
+
+The I/O-fault instrument injected 0 across four runs while every gate read
+open, and the cause is one line of `fail_stacktrace()`:
+
+    bool found = (attr->require_start == 0 && attr->require_end == ULONG_MAX);
+    if (depth == 0 || (found && !attr->reject_start && !attr->reject_end))
+            return found;
+    nr_entries = stack_trace_save(entries, depth, 1);
+    for (n = 0; n < nr_entries; n++) {
+            ...
+            if (attr->require_start <= entries[n] &&
+                            entries[n] < attr->require_end)
+                    found = true;
+    }
+    return found;                       (lib/fault-inject.c:88-108)
+
+With `require_end == 0`, `found` starts false and the range test compares
+`entries[n] < 0`, which is never true, so `fail_stacktrace()` returns false and
+**every** bio is rejected. The reset value is `ULONG_MAX`, not zero, and there
+is nothing in the debugfs file or its name that says so.
+
+Measured, on a flagged device with probability 100 and no other gate closed:
+a kprobe counted **82 calls to `should_fail_bio`** and the injected count was
+0; with `require-end` set to `0xffffffffffffffff` the next run injected on the
+first bio and the trace printed.
+
+Two lessons, and the second is the expensive one.
+
+* **A disarm that writes a wrong reset value poisons the guest.** The first
+  version of this instrument disarmed by writing `require-end 0`, which left
+  the fault permanently off for every run after it -- including the runs that
+  were meant to show the fix working. The symptom was four identical "0
+  injected" readings with no indication that the previous run had caused them.
+* **A facility that is configured, present, and called can still do nothing.**
+  `CONFIG_FAIL_MAKE_REQUEST=y` in both the guest and the build tree,
+  `should_fail_bio` in `/proc/kallsyms`, the kprobe showing 82 invocations,
+  and zero failures: the check that would have caught it earlier is reading
+  back the RESET value before arming, which the instrument does now, and
+  reading the arm back after, which it also does now.
+
+This is the third silent no-op found at this instrument in one day, after the
+`Y`-versus-`1` encoding and the missing per-device flag. Each was found by a
+check written for exactly that purpose -- the fake-pass assertion, the
+readback -- which is the argument for writing the check before the run rather
+than after.
