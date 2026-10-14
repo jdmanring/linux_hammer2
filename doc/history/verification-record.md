@@ -11856,3 +11856,29 @@ Whether "the pass completed before the stop was seen" is a defect or the
 documented contract is a question for the criterion's wording, not for this
 run. The plan's step 5 (issue a stop mid-pass) is replaced by this: issue the
 stop, then read the boundary. The design note in `proposals/` carries it.
+
+## The probe defects of 2026-10-13, and the rule that catches each, 2026-10-13
+
+Five probes were written this day for the phase-4 interruption, and four of
+them were wrong in ways that read as readings about the subject. They are
+listed here because each is a distinct shape, and the rule beside each is what
+would have caught it before the run.
+
+| probe defect | what it read | the rule |
+| --- | --- | --- |
+| ran `insmod` without `debug=`; `hammer2_debug` was 0 | every bracket and update count 0, read as "the thread copied nothing" | run the probe against the same module knobs the harness uses; the script's own `insmod` carries `debug=$H2DEBUG` |
+| built the topology without phase 1's LONE create and `pfs-delete` | `h2nod-CL` = 2 where the script reads 1 | reproduce the harness's guest STATE, not just its mounts; a probe on a different state measures a different system |
+| reused stale phase-4 images with a leftover `/mnt/h2c/big`, and joined under a name that did not take | backlog "written" that was already there, and a join that never happened | build the fixture the probe needs; check the join's own exit, not the absence of an error |
+| waited for a SECOND pass (`o > opened` where `opened` was already 1) | timed out at 3 s while a pass was open the whole time | state, before the run, what the first non-zero reading will be, and read the counter's value rather than its delta from a stale baseline |
+
+The common shape: a probe encodes an expectation about the system, and when
+the reading is wrong the expectation is the first suspect, not the subject.
+The two probes that produced this day's real findings were the ones whose
+readings were checked against the source before they were believed -- `P=5
+C=11` sent me to the print sites, and `U` continuing past the stop sent me to
+`hammer2_thr_break`.
+
+The rule that would have caught all four: **state before the run what a zero
+means, and run the probe against the harness's own knobs and state.** A zero
+from a probe that cannot see the subject and a zero from a subject that did
+nothing are the same string.
