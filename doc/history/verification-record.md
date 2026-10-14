@@ -11438,3 +11438,92 @@ sizes against a pass's measured length rather than the debug print.
 Those are the phase's two writes, and they are also the timeout finding
 beside this: 667.7 s of work under a 600 s default, which is why the run is
 given `H2_RUN_TIMEOUT=1800`.
+
+## Phase 4's interruption probe waits on a condition that is never true, 2026-10-13
+
+Phase 4's `interrupt_resume` fails three checks because the probe never
+detects an open pass, and the log says why: the condition it waits on can
+never be true.
+
+    `sync_slaves error` lines: 182      `sync_slaves pfs CL` lines: 176
+
+The probe waits for a bracket with `o > opened && o > c`, where `o` and `c`
+are the CUMULATIVE counts of `sync_slaves pfs CL` and `sync_slaves error`.
+The close line is shared: phase 1's `LONE` pfs emits it too (its own opens
+are `sync_slaves pfs LONE`), and a pass that errors closes with no matching
+open at all. Six such closes exist before phase 4, so `c` leads `o` by six
+for the rest of the run and `o > c` is false at every poll. `bracket` is
+never cleared, the loop runs out its 1200 iterations, and the check reports
+`bracket open, rc 1` -- the two checks below it then fail as its
+consequence, since no stop was read and the thread stayed alive.
+
+That is the reading, and the rest of this entry is the second fact: even if
+the bracket had been seen, the copy the phase means to interrupt is not
+where the phase puts it.
+
+    pass durations, 176 of them:  min 0.160 ms   median 0.210 ms   max 1072.7 ms
+
+One pass in the whole run was long enough to interrupt, and it is the only
+long one:
+
+    at 464.7 s   1072.7 ms
+
+and 464.7 s is inside `bigdir2`'s write (456.5 to 817.1), not after the
+remount. So the phase's premise -- that a directory written with the slave
+unmounted is carried by the thread at the remount, giving a long pass to
+interrupt -- does not hold. The thread carried the backlog **during** the
+write, on the master's side, while the slave's ROOT was unmounted, and the
+remount's passes are 0.2 ms like every other.
+
+The pass counts per window, from the same log, are the second reading:
+
+    bigdir  write (slave mounted)     149-456 s:  59 passes, 5.25 s apart
+    bigdir2 write (slave unmounted)   456-817 s:  68 passes, 5.28 s apart
+    after the remount                 817-895 s:  15 passes, 5.12 s apart
+    after the interrupt unmount       895-998 s:  21 passes, 5.12 s apart
+
+The thread passes every five seconds throughout, and the single 1072 ms pass
+is the one that did the copy in the unmounted window. `syncthr: update inode`
+agrees: one line in phase 4, at 465.727, inside that same pass.
+
+Why the remount is not where the copy happens. The phase-4 comment says the
+frontend writes every element, so `bigdir`'s files reach the slave without the
+thread; `bigdir2` is written with the slave unmounted so the frontend cannot,
+and the thread must. The thread does carry it, but not at the remount: it
+carries it while `bigdir2` is still being written, and the remount's passes are
+0.2 ms like every other.
+
+What is measured about the thread's life: it keeps passing across every unmount
+in the run and stops only at the final teardown. Read as pass counts after each
+unmount's own line:
+
+    unmount at  79.3 s -> 176 passes after, next 3.62 s later
+    unmount at  81.5 s -> 176 passes after, next 1.35 s later
+    unmount at 456.5 s -> 104 passes after, next 3.07 s later   (the slave ROOT)
+    unmount at 895.4 s ->  20 passes after, next 5.00 s later   (the interrupt)
+    unmount at 998.4 s ->   0 passes after
+
+So unmounting the slave's ROOT does NOT stop the CL thread, and the phase's
+comment that it does was written from phase 1, where the pmp IS the volume being
+unmounted: there the lone SLAVE is created on `/mnt/h2m`, the volume that is then
+unmounted, so its teardown reaches the thread and the run's own check reads
+`no thread is left: 0`. In phase 4 the CL pfs is created twice, on the master's
+volume (`/dev/vdb@CL`, `/mnt/h2c`) and on the slave's (`/dev/vdc@ROOT`,
+`/mnt/h2s`), and unmounting one of them leaves the thread passing.
+
+The mechanism -- which pmp owns the CL thread and why the slave's teardown does
+not reach it -- is NOT traced here and is left open rather than asserted. What
+the readings establish is that the thread outlives the slave's ROOT unmount, and
+that the copy it makes of `bigdir2` happens during the write rather than on the
+remount. The instrument that would place the copy where the phase means to
+interrupt it, and the trace of the thread's ownership, are the next readings.
+
+So the window is not too small to hit; it is in the wrong place. The pass that
+carries the backlog runs during `bigdir2`'s write, and the window the probe
+watches for -- a pass after the remount -- is 0.2 ms every time.
+
+The instrument that would place it: bracket the copy the way the log already
+does (one pass over a threshold length, printed with its brackets), or make
+the backlog larger than the write's own window so the copy outlasts it. What
+would not work is a larger `NBIG2` alone: the copy is bounded by the write,
+which is bounded by the same value.
