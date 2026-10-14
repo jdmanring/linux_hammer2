@@ -305,7 +305,14 @@ check "the fault was injected" $? "${fl:-none} forcing line(s), times moved ${in
 h=$(val in-hammer2)
 [ "${h:-0}" -gt 0 ] 2>/dev/null
 check "the failure lands in the port's I/O" $? "${h:-none} hammer2 frame(s) in the trace"
+# The instrument's own arming readings, always printed.  A run that injects
+# nothing has to say WHAT it armed, or the next reader cannot tell an arm that
+# did not take from a fault that did not fire -- which cost this script four
+# runs on 2026-10-14.
 printf '  note  aimed range: %s\n' "$(val io-range)"
+printf '  note  readback:    %s\n' "$(val require-readback)"
+printf '  note  device flag: %s\n' "$(val make-it-fail)"
+printf '  note  times moved: %s\n' "$(val injected)"
 printf '%s\n' "$out" | sed -n 's/^  trace: /  trace: /p'
 
 # The criterion: what the port wrote before the fault is still whole, and the
