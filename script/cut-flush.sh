@@ -136,7 +136,9 @@ mount -t hammer2 \$dev@$LABEL /mnt/c || { echo "rw mount failed"; exit 1; }
 dmesg | grep -i 'recovery' | sed 's/^\[[^]]*\] //'
 n=\$(ls /mnt/c/crash | wc -l); echo "crash entries \$n last \$(cat /mnt/c/crash/last)"
 bad=0; for f in /mnt/c/crash/f*; do cat "\$f" > /dev/null 2>&1 || bad=\$((bad+1)); done; echo "unreadable \$bad"
-echo "after the cut, by linux" > /mnt/c/crash/linux-after; sync; echo "write after recovery exit \$?"
+if echo "after the cut, by linux" > /mnt/c/crash/linux-after; then wst=0; else wst=\$?; fi
+sync; echo "write after recovery exit \$wst"
+df -h /mnt/c | tail -1 | sed 's/^/free /'
 umount /mnt/c
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
 rmmod hammer2
