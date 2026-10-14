@@ -11176,3 +11176,108 @@ sentence describing a fix and the fix are separate artifacts, and a guard
 that reports the right thing while doing the wrong thing is the shape to
 check for. The comment above it said the disks were released only after the
 guest stopped touching them; the code under the comment detached anyway.
+
+## A detached parent NULLs the re-flush loop's ref, and the port faults, 2026-10-13
+
+The guarded `cluster-sync.sh` run reached phase 4 and faulted in the port
+rather than in the harness. The kernel report is kept whole at
+`doc/history/kernel-reports/hammer2-chain-ref-null-sync-20261013.txt`, and the
+fault is on the port's own periodic syncer, not on an eject this time:
+
+    Workqueue: events hammer2_sync_work [hammer2]
+    Oops: general protection fault ... KASAN: null-ptr-deref in range
+      [0x0000000000000378-0x000000000000037f]
+    RIP: hammer2_chain_ref+0x24
+      hammer2_flush+0x175
+      hammer2_xop_inode_flush -> hammer2_xop_start_except
+      -> hammer2_inode_chain_flush -> hammer2_vfs_sync_pmp
+      -> hammer2_sync_fs -> sync_filesystem -> hammer2_sync_work
+
+`RAX=0` and `RDI=0x378`: the argument to `hammer2_chain_ref()` is NULL and the
+first access is `chain->refs` at `0x378`.
+
+The two lines printed immediately before it name the mechanism:
+
+    hammer2: hammer2_flush_core: lost child3
+    hammer2: hammer2_flush: lost child4
+
+`hammer2_flush_core()` reports that the chain's parent changed under it, and
+`hammer2_flush()`'s re-flush loop then does:
+
+    if (info.parent != chain->parent) {
+            hprintf("lost child4\n");
+            hammer2_chain_drop(info.parent);
+            info.parent = chain->parent;
+            hammer2_chain_ref(info.parent);      /* hammer2_flush.c:328 */
+    }
+
+`chain->parent` is set to NULL in three places, all deletion
+(`hammer2_chain.c:770, 3451, 3511`). So the parent the flush is holding was
+detached during the pass, `info.parent` is assigned NULL, and the ref
+dereferences it. The function's own entry guards the same pointer with the
+comment that says it can be NULL:
+
+    if ((info.parent = chain->parent) != NULL)
+            hammer2_chain_ref(info.parent);      /* hammer2_flush.c:309 */
+
+so the loop contradicts the contract the entry states, twenty lines apart in
+one function.
+
+The disassembly confirms the two paths rather than the source's shape alone:
+`hammer2_flush+0x90` tests RDI for the entry ref (`test %rdi,%rdi; je`), and
+`hammer2_flush+0x170` loads the loop's operand with no test before the call
+whose return address is `+0x175`.
+
+**This is carried, not introduced.** FreeBSD's own `hammer2_flush.c:332` is the
+identical unguarded `hammer2_chain_ref(info.parent)`, and its
+`hammer2_chain_ref()` dereferences unconditionally too, so upstream has the
+same latent fault at the same line. What the port supplies is the reachability:
+a chain whose parent is detached while a flush of it is in flight is the plan's
+source-mutated-during-convergence case, and the phase-4 write under the slave's
+unmount is what produced it here.
+
+The consequence is not a wrong number. The guest wedged: ssh stopped
+answering (`guest-dmesg.sh` through the agent read it), and the teardown
+reported `15751 inode left`, `86570 chain left`, `82718 modified chain left`,
+with `kmem_cache_destroy h2xopszone: Slab cache still objects`. The sync
+thread that faulted is the one that flushes the cluster, so a run that takes
+this path leaves its volumes unflushed and its caches undestroyed.
+
+The failing probe is the run: phase 4's own write-then-unmount reaches it, and
+the run is kept as `cluster-chainref-null-20261013.klog` beside the images.
+The fix is the NULL guard the entry already has, applied to the loop, marked
+`XXX` because the file is carried.
+
+## The run that proves the fix is the run the guard let through, 2026-10-13
+
+The fix for the chain_ref NULL fault is in `52311e5`, and the proof run for it
+is the run the concurrent-run guard should have blocked.
+
+Two `cluster-sync.sh` runs started at once: pid 8794 from the monitor's own
+launch and pid 25775 from a foreground run issued to diagnose the first. They
+shared the guest, its volumes and the two image files, which is the
+corruption `~/.claude/hooks/guard_concurrent_run_launch.py` was written for on
+this same day. The guard is a `PreToolUse(Bash)` deny tier and it did not fire.
+
+The pattern matched a command position as `^`, `;`, `&` or `|`, and `^`
+without `re.MULTILINE` matches only the start of the whole string. The
+diagnosing command was
+
+    cd /home/james/Projects/linux_hammer2 || exit 1
+    env KDIR=... bash script/cluster-sync.sh > /tmp/h2-fg.out 2>&1
+
+and `bash` on its own line after the `cd` has no character the pattern can
+anchor on. The guard's own comment names the form it was written against,
+`nohup ... &`, and the form a multi-line Bash command actually takes has a
+newline there.
+
+The command-position class now includes `\n`, and the battery that was missing
+is written: `~/.claude/hooks/test_guard_concurrent_run_launch.py`, whose first
+case is that command verbatim. The hook was untracked and untested until this
+commit, which is why nothing measured its coverage; `.gitignore` now
+allowlists both files the way every other governed hook is allowlisted.
+
+The pair was killed once it was visible, and neither run's readings are kept.
+The lesson is the one the same session already learned twice at this site: a
+guard is checked against the shape its author had in mind, and the shape that
+defeats it is the one a later command happens to use.
