@@ -182,6 +182,32 @@ GUEST
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 $RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
+# The guest half's exit, read before anything is inferred from its output.
+# A non-zero that is not 124 means the guest or its session ended without
+# finishing, and the checks below would read empty values as the subject
+# failing. It is surfaced as COULD-NOT-RUN, and the disks are released
+# only after the guest has stopped touching them: a detach under a live
+# guest reaches it as an ACPI eject, and the flush of the ejected volume
+# hpanics the device into error (measured 2026-10-13 in cluster-sync.sh,
+# trace acpiphp_disable_and_eject_slot -> sync_filesystem ->
+# hammer2_base_delete). cluster-sync.sh carries the same guard.
+if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
+	command grep -m1 "COULD-NOT-RUN" "$W/out" 2>/dev/null >&2 ||
+		echo "quorum: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	exit 2
+fi
+if [ "$rc" != 0 ] && [ "$rc" != 124 ]; then
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	echo "quorum: COULD-NOT-RUN: the guest session ended rc=$rc, so the run did not finish" >&2
+	exit 2
+fi
 [ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
 scp -q "$GUEST_SSH:/tmp/q.sums" "$W/sums" >/dev/null 2>&1
 scp -q "$GUEST_SSH:/tmp/q.want" "$W/want" >/dev/null 2>&1
