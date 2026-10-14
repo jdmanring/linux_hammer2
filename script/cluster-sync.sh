@@ -265,11 +265,23 @@ echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
 # entries a directory holds. bigdir's 20000 files are written while the slave
 # is mounted, and the frontend writes them to the slave element itself
 # (hammer2_xop_start_except() queues every element), so the thread has almost
-# nothing to do for them: measured here, passes after that write run 0.2 to
-# 0.8 ms, and a 20 ms poll cannot land inside one. bigdir2 is therefore
-# written with the slave unmounted, so the write reaches the master alone and
-# the thread must copy all of it on the remount, which is the phase-2 case and
-# is what makes a pass long enough to interrupt.
+# nothing to do for them: measured, passes after that write run 0.2 to 0.8 ms,
+# and a 10 ms poll cannot land inside one.
+#
+# bigdir2 is written with the slave's ROOT unmounted, on the premise that the
+# write then reaches the master alone and the thread copies it at the
+# remount. Measured 2026-10-13, that premise is WRONG and this phase's
+# interruption does not open: unmounting the slave's ROOT does not stop the
+# thread at all. The thread belongs to the pmp hammer2_pfsalloc() matched by
+# CLUSTER ID, which is the pmp created at the MASTER's mount (/mnt/h2c,
+# /dev/vdb@CL); the slave's CL element joins THAT pmp at clindex 1, and
+# unmounting /mnt/h2s tears down the ROOT pmp, a different one. So the thread
+# keeps passing, sees bigdir2 as it is written, and copies it DURING the
+# write -- the one long pass in that run is 1072.7 ms at t=464.7 s, inside the
+# write and not after the remount, and the remount's passes are 0.2 ms. A
+# bigger NBIG2 does not fix it: the copy is bounded by the write that produces
+# it, in the same overlap. Interrupting this thread needs a stop that reaches
+# its own pmp; see the phase-4b note below.
 #
 # A pass brackets itself in the log: "sync_slaves pfs CL" opens it and
 # "sync_slaves error" closes it, so the unmount is issued once a bracket is
@@ -308,8 +320,11 @@ while [ $n -lt 1200 ]; do
 	sleep 0.1; n=$((n + 1))
 done
 echo "interrupt-begun $([ "$(klog 'syncthr: update inode')" -gt "$u0" ]; echo $?)"
-# Wait for a pass bracket to open, then unmount the slave's ROOT mount, the
-# one whose unmount stopped the thread in phase 1.
+# Wait for a pass bracket to open, then unmount the slave's ROOT mount.
+# WRONG, measured 2026-10-13: this does NOT stop the thread. Phase 1 is not a
+# model for it -- there the LONE pfs is created on the very mount that is then
+# unmounted, so its pmp is torn down; here the CL pmp belongs to the master's
+# mount (/mnt/h2c). See the note at the top of phase 4.
 opened=$(klog 'sync_slaves pfs CL')
 closed0=$(klog 'sync_slaves error')
 n=0
