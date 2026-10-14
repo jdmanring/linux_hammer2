@@ -11432,9 +11432,9 @@ at the current sizes, and the convergence it measures after the resume is met.
 The window is the thing to widen, and the instrument for it is the phase's own
 sizes against a pass's measured length rather than the debug print.
 
-    bigdir  write:  149.3 -> 456.4 s   (306.9 s)
+    bigdir  write:  149.3 -> 456.4 s   (307.1 s)
     bigdir2 write:  456.5 -> 817.1 s   (360.6 s)
 
 Those are the phase's two writes, and they are also the timeout finding
-beside this: 667 s of work under a 600 s default, which is why the run is
+beside this: 667.7 s of work under a 600 s default, which is why the run is
 given `H2_RUN_TIMEOUT=1800`.
