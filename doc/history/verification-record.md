@@ -12111,7 +12111,8 @@ afterwards, captured through the guest agent:
 so the mount cannot be unmounted (`umount: /mnt/a: target is busy`) and the
 module cannot be unloaded (`Module hammer2 is in use`), and the guest needs a
 reset. That is the criterion's question answered in the negative: the port
-neither recovers to a verified alternate state nor fails clearly. It fails
+neither recovers to a verified alternate state nor returns an error to the
+caller. It fails
 into a state that holds the kernel.
 
 **What was actually run.** The instrument reported `0 injected` on this run and
