@@ -3799,20 +3799,23 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	key &= ~(((hammer2_key_t)1 << keybits) - 1);
 
 	/*
-	 * Print the inputs of the block about to be built, for the case the
-	 * fit guard below refuses: the guard tests the MASKED key, which is
-	 * what `ichain->bref.key` will hold, and this test is the same one so
-	 * it fires for the refusal and not for every ordinary create.
+	 * The inputs that produced this block, gated on the debug bit.
 	 *
-	 * The test has to be on the masked key and after the mask.  Written
-	 * before it, against the pre-normalization key, every create from a
-	 * parent with a nonzero radix satisfied it once the helper had raised
-	 * `keybits` above the parent's, and one run printed 92233 lines
-	 * against 440 refusals.  Gating that on the debug bit hid it rather
-	 * than fixing it: the harness runs with the bit on, so the next run
-	 * that splits would flood the guest's console again.
+	 * The gate is not hiding a narrow test that could have been written
+	 * instead, and that was measured rather than assumed. Moving the test
+	 * after the mask and onto the masked key, so it is the value the new
+	 * block carries, was tried on 2026-10-13 and changes nothing: applied
+	 * to the hang log's 536026 create_indirect lines, both the pre-mask and
+	 * the post-mask condition fire on all 536026, because every one of them
+	 * is a keybits-7 block and `keybits >= parent->bref.keybits` is the
+	 * clause that fires. The refusal is that same event, so a condition
+	 * that selects refusals selects creates too.
+	 *
+	 * The count this line reaches under the bit is the number of blocks
+	 * built, not the number refused, and a run that splits with the bit on
+	 * prints one line per block. That is why the bit is the control.
 	 */
-	if (parent->bref.keybits > 0 &&
+	if ((hammer2_debug & 0x8000) && parent->bref.keybits > 0 &&
 	    (keybits >= parent->bref.keybits ||
 	     key < parent->bref.key ||
 	     key > parent->bref.key +

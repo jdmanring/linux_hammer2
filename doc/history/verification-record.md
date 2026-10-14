@@ -11033,3 +11033,30 @@ exist here for the same reason. `doc/research/HAMMER2_LINUX_API_MAP.md`'s
 `hammer2_flush.c:1496` was checked against the DragonFly clone and lands on
 `vn_strategy(hmp->devvp, &bp->b_bio1)`, which is the text its sentence
 describes, so it is correct where it was written and stays as it is.
+
+## Narrowing the create-indirect diagnostic was tried and changes nothing, 2026-10-13
+
+The entry above on the console flood says the check "cannot be satisfied until
+the print is bounded to the case it names". That was acted on and it is wrong,
+and the measurement is what refutes it.
+
+The print's condition was moved after the key mask and onto the masked key, so
+it tests the value the new block actually carries rather than the pre-mask one.
+Applied to the hang log's lines:
+
+    create_indirect lines   536026
+    pre-mask condition      536026 fires
+    post-mask condition     536026 fires
+    refusals in that log       480
+
+Both conditions fire on every line, so the move changes nothing. The clause
+that fires is `keybits >= parent->bref.keybits`, and the keybits distribution
+over those 536026 lines is `{7: every line}`: the block being built and the
+block being refused are the same keybits-7 event, so a condition that selects
+refusals selects creates as well.
+
+What is therefore restored is the debug-bit gate, which is a control rather than
+a narrowing: the count it reaches under the bit is the number of blocks BUILT,
+not the number refused, and a run that splits with the bit on prints one line
+per block. The record's own sentence is left as written, since it is the account
+of a reading taken on 2026-10-13, and this section is the correction.
