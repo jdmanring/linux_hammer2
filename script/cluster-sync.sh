@@ -53,6 +53,45 @@ NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# Release the volumes and detach them, safely.
+#
+# `virsh detach-disk --live` reaches a running guest as an ACPI eject:
+# acpiphp_disable_and_eject_slot -> virtblk_remove -> del_gendisk ->
+# blk_report_disk_dead -> sync_filesystem flushes every filesystem still
+# mounted on that device, and a hammer2 flush of the ejected volume finds an
+# empty base and hpanics the device into error.  Measured 2026-10-13, twice,
+# both times because a detach ran while the guest still had the volume
+# mounted: once from an ssh drop falling through to the checks, once from the
+# guard added for it, which suppressed the false failures but detached in the
+# same arm.
+#
+# So a RUNNING guest is asked to unmount and rmmod first, and the detach runs
+# only when it reports no hammer2 mount left.  A guest that will not release
+# them is not ejected under: this returns 1 and the caller says so, leaving
+# the disks for a later run to clear once the guest is cleaned.  A STOPPED
+# guest has nothing live to eject and is detached unconditionally.
+#
+# Every detach in this script goes through here, including the pre-flight,
+# which is where a volume left behind by an unclean earlier run is cleared.
+H2_MOUNTS="/mnt/h2c /mnt/h2s /mnt/h2m"
+detach_disks() {
+	if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" = running ]; then
+		timeout 45 ssh -o ConnectTimeout=5 -o BatchMode=yes "$GUEST_SSH" \
+		    'for m in '"$H2_MOUNTS"'; do umount -f "$m" 2>/dev/null; done
+		     rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
+		held=$(timeout 20 ssh -o ConnectTimeout=5 -o BatchMode=yes "$GUEST_SSH" \
+		    'mount 2>/dev/null | grep -c " type hammer2"' 2>/dev/null | tr -d ' ')
+		if [ "${held:-1}" != 0 ]; then
+			echo "  note  $GUEST still holds ${held:-?} hammer2 mount(s), so its disks are not detached: a live detach would eject a volume it is still using and hpanic it" >&2
+			return 1
+		fi
+	fi
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	return 0
+}
 # Phase 4's interruption copies this many files into one directory on the
 # master, which is what makes the pass long enough to interrupt: 37 ms empty,
 # 418 ms at 20000 entries, measured on the KASAN guest. The check below needs
@@ -107,14 +146,12 @@ have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
 
 # The volumes are detached before they are recreated: a running guest's
 # qemu holds an image open, and a file replaced under it is a file it no
-# longer reads.
-# Both halves: a stopped guest is attached with --config, which --live
-# does not remove, and a persistent attachment left behind by an earlier
-# run makes the next attach fail with the target already taken.
-for d in vdb vdc; do
-	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
-	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
-done
+# longer reads. This is where a volume left behind by an unclean earlier run
+# is cleared, so it is also the detach most likely to run against a guest
+# that still has one mounted, and it goes through the guarded helper.
+detach_disks || {
+	echo "cluster: COULD-NOT-RUN: $GUEST still holds a hammer2 volume, so the volumes cannot be recreated under it; unmount and rmmod on the guest first" >&2
+	exit 2; }
 rm -f "$MASTER" "$SLAVE"
 for img in "$MASTER" "$SLAVE"; do
 	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
@@ -359,18 +396,18 @@ gout=$(wc -l < "$W/out" 2>/dev/null | tr -d ' ')
 if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
 	command grep -m1 "COULD-NOT-RUN" "$W/out" 2>/dev/null >&2 ||
 		echo "cluster: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
-	for d in vdb vdc; do
-		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
-		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
-	done
+	detach_disks
 	exit 2
 fi
 if [ "$rc" != 0 ] && [ "$rc" != 124 ]; then
 	scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-drop-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
-	for d in vdb vdc; do
-		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
-		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
-	done
+	# The guest's output is kept beside the klog: it is what says how far the
+	# run reached, and on 2026-10-13 it was discarded, leaving only a line
+	# count and no way to see where the guest half stopped.
+	cp "$W/out" "$FIXDIR/cluster-drop-$(date +%Y%m%d-%H%M%S).out" 2>/dev/null
+	printf '%s\n' "--- guest output ($gout line(s)) ---" >&2
+	sed 's/^/  guest: /' "$W/out" >&2 2>/dev/null
+	detach_disks
 	echo "cluster: COULD-NOT-RUN: the guest session ended rc=$rc after $gout line(s) of output, so the run did not finish; its kernel log is kept beside the images as cluster-drop-*.klog" >&2
 	exit 2
 fi
@@ -382,17 +419,11 @@ fi
 # or the next run finds its targets taken.
 if [ "$rc" = 124 ]; then
 	scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-hang-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
-	for d in vdb vdc; do
-		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
-		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
-	done
+	detach_disks
 	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s; its kernel log is kept beside the images as cluster-hang-*.klog"
 	exit 1
 fi
-for d in vdb vdc; do
-	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
-	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
-done
+detach_disks
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 fail=0; checks=0
