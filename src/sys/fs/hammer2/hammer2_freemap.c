@@ -360,10 +360,26 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 			 * NOTE: bmap pointer is invalid if n >= FREEMAP_COUNT.
 			 */
 			n = start + count;
-			/* XXX Linux: the pointer after the bound, not before */
-			bmap = n < HAMMER2_FREEMAP_COUNT ?
+			/*
+			 * XXX Linux: the pointer after the bound, not before,
+			 * AND not at all when the chain has no data.  A
+			 * freemap leaf whose I/O failed is returned by
+			 * hammer2_chain_lookup() with error EIO and
+			 * chain->data still NULL -- hammer2_chain_load_data()
+			 * sets the error and returns without assigning data --
+			 * so `&chain->data->bmdata[n]` is a pointer into NULL
+			 * and `bmap->avail` below dereferences it.  Measured
+			 * 2026-10-14 under fail_make_request: a NULL+0x18
+			 * dereference here, RIP hammer2_freemap_alloc+0xa31,
+			 * reached from hammer2_chain_modify() when one freemap
+			 * read failed; the guest then wedged with a kworker in
+			 * hammer2_vfs_sync_pmp and bash in lookup_open.
+			 */
+			bmap = (chain->data != NULL && n < HAMMER2_FREEMAP_COUNT) ?
 			    &chain->data->bmdata[n] : NULL;
-			if (n >= HAMMER2_FREEMAP_COUNT)
+			if (chain->data == NULL)
+				availchk = 0;
+			else if (n >= HAMMER2_FREEMAP_COUNT)
 				availchk = 0;
 			else if (bmap->avail)
 				availchk = 1;
@@ -400,9 +416,17 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 			 * NOTE: bmap pointer is invalid if n < 0.
 			 */
 			n = start - count;
-			/* XXX Linux: the pointer after the bound, not before */
-			bmap = n >= 0 ? &chain->data->bmdata[n] : NULL;
-			if (n < 0)
+			/*
+			 * XXX Linux: the pointer after the bound, not before,
+			 * and not at all without chain->data -- the same NULL
+			 * a failed freemap leaf leaves, guarded at the forward
+			 * site above.
+			 */
+			bmap = (chain->data != NULL && n >= 0) ?
+			    &chain->data->bmdata[n] : NULL;
+			if (chain->data == NULL)
+				availchk = 0;
+			else if (n < 0)
 				availchk = 0;
 			else if (bmap->avail)
 				availchk = 1;
