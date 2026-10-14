@@ -36,6 +36,22 @@ the module itself, exits 2 without the fleet, and produces a reading
 rather than a verdict; the readings are in
 `doc/history/verification-record.md`.
 
+A change to what a harness MEASURES carries the same duty as a change to
+what the driver does: the rows describing that harness are reread in the
+same commit, because a probe's own defects and a wrong premise about the
+filesystem both leave prose that reads as a verdict. Measured 2026-10-13,
+when a probe's bracket wait was found to be waiting on a comparison that
+could never be true and the phase's premise about which pmp owns the sync
+thread was found wrong. By then two live documents carried a cause the
+later measurement refuted -- this file's own `cluster-sync.sh` row and
+`doc/README.roadmap.md`'s P4 row both said the three failures were "no
+pass was in flight when the unmount ran" with the window "the thing to
+widen" -- and neither was wrong when written, the probe bug being found
+after. Nothing in this tree reads those sentences, so both survived every
+gate green. The rows here and in `doc/README.roadmap.md` are the ones that
+move with the probe.
+
+
 | script | does |
 |---|---|
 | `fuzz-mount.sh` | puts mutated images through the mount path and, with `H2_FUZZ_WRITE=1`, the write path |
