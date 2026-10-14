@@ -505,6 +505,16 @@ if [ "$rc" = 124 ]; then
 	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s; its kernel log is kept beside the images as cluster-hang-*.klog"
 	exit 1
 fi
+# The guest's kernel log carries the pass's own records -- the filekeys
+# counters, the destroy keys under H2_DEBUG&0x4000, the update lines -- and it
+# lives only on the guest, which detach_disks below tears down. A run that
+# finished but left the slave short is the one whose destroy keys answer whether
+# the destroy made the shortfall, so the log is copied off before the disks are
+# released, not only on the hang path. MEASURED 2026-10-14: a run that lost 40
+# inodes (n<0 40, slave short by 40) kept no klog because it exited normally,
+# which discarded exactly the evidence the run produced.
+scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null \
+	&& echo "  kept  the guest kernel log beside the images as cluster-run-*.klog"
 detach_disks
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
