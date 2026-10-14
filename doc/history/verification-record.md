@@ -12259,28 +12259,29 @@ hammer2 frame. For this port the detector catches the condition, power is cut
 with the flush outstanding, and the port recovers clean:
 
     == linux sync run 1
-      sync-in-flight yes
-      cut   headers zone2:0x22 zone1:0x21 zone0:0x20 zone3:0x1f
-      linux   entries 3201 last 3199
+      sync-in-flight yes  (in-sync D    sync)
+      cut   headers zone2:0x16 zone1:0x15 zone0:0x14 zone3:0x13
+      linux   entries 1201 last 1199
       linux   unreadable 0
       linux   write after recovery exit 0
+      linux   free /dev/vdb@CRASH  7.7G   61M  7.3G   1% /mnt/c
       linux   umount exit 0
       linux   debug_locks 1
       linux   reports 0
       ok    host fsck_hammer2 after linux
       fbsd    freebsd fsck clean
-      row   linux sync 1 host=ok linux=0 fbsd=0
+      row   linux sync 1 host=ok linux=0 fbsd=0 miss=no
 
-Power removed inside the flush, and every file readable, the volume mounting
-read-write, accepting a write, unmounting, `fsck_hammer2` clean on the host
-and on DragonFly's own port reading the same image.
+Power removed with the flush outstanding, and every file readable, the volume
+mounting read-write, accepting a write, unmounting, `fsck_hammer2` clean on
+the host and on DragonFly's own port reading the same image. That is the rerun,
+after the fixes below; the first run read as this but was weaker than it read.
 
-**The reading is weaker than it reads, and the four defects below are why.**
-The one-run cell reported "0 failure(s)" for a pair of runs whose FreeBSD half
-never reached the condition and whose recovered write failed under a check
-that passed. None of that is the port's verdict; all of it is the instrument
-reporting a condition it did not reach as one it did, which is the reading the
-cell itself exists to refuse.
+**The first run's reading was weaker than it read.** It reported "0 failure(s)"
+for a pair whose FreeBSD half never reached the condition and whose recovered
+write failed under a check that passed. None of that is the port's verdict;
+all of it is the instrument reporting a condition it did not reach as one it
+did, which is the reading the cell itself exists to refuse.
 
 **Four defects, every one in the instrument.**
 
@@ -12296,17 +12297,21 @@ command in a pipeline is read as the subject's.
 
 The detector's timeout produced a row. `sync-in-flight no-poll-timeout` cut
 power anyway and the run counted as an agreement. Why the FreeBSD half missed
-is not established and is not asserted: its writer does call `sync` every 200
-files, so the condition may well be there and the poll may have failed to see
-it. The candidates are the old detector sampling once per ssh (a round trip
-between samples, so a window of tens of milliseconds in a flush of
-milliseconds), FreeBSD's own `ps` keywords and task naming, or a `sync` whose
-D-state is brief. The fixed detector samples guest-side and prints what it
-catches, which settles it on the next run. What was wrong regardless of cause
-is the reporting: a miss is the instrument not reaching its condition, which
-is neither a pass nor a failure, so the row now carries `miss=yes` and the
-summary counts it as COULD-NOT-RUN (exit 2). Where several runs of a cell
-disagree and some missed, the runs that landed are still compared.
+is not established and is not asserted. Two candidates are refuted by the
+rerun: the sampling rate, since a guest-side poll of 4000 samples misses the
+same way the old per-ssh poll did, so it is not that samples were too far
+apart; and a full volume, since the second run's FreeBSD recovery read
+`free /dev/vtbd1@CRASH 7.7G 4.4G 3.2G 58%` and wrote without trouble. What
+remains is the condition's name: the detector looks for a D-state task named
+`sync` or `h2nod`, the port's own thread name, and FreeBSD flushes through a
+task the pattern does not cover, or its `sync(1)` is not D-state where this
+poll samples it. The fixed detector prints the task it catches, so on this
+port the evidence is in the run; on the FreeBSD side the miss stands as COULD-
+NOT-RUN. What was wrong regardless of cause is the reporting: a miss is the
+instrument not reaching its condition, which is neither a pass nor a failure,
+so the row carries `miss=yes`, the summary counts it apart from `$fail`, and
+the script exits 2. Where several runs of a cell disagree and some missed, the
+runs that landed are still compared.
 
 The detector threw away what it caught and sampled slowly. It took one ssh
 round trip per sample, so its "5 ms poll" was tens of milliseconds and its
@@ -12320,19 +12325,23 @@ entries while a later write on the same volume was refused for space. The
 count is not the question in the sync cell; whether what landed is readable is,
 and `unreadable 0` is the check that answers it.
 
-**The finding the masked status was hiding.** Every run of the FreeBSD cell
-read `entries 19181` and its recovered write refused with `No space left on
-device`, reported as exit 0. 19181 files of 3 to 80 KiB is under a gigabyte on
-an 8 GiB volume, so the volume is not full and the refusal is either a
-recovery that mis-accounts the free space or a `crash.img` that is not the
-size it appears. It cannot be adjudicated from this run because the free-space
-reading is exactly what the masked status discarded, and the next run carries
-it. This is left open rather than guessed, and it is the reason the tooling
-was fixed before the P4 row was touched: a check that reports success on a
-failed write is worse than useless.
+**The finding the masked status was hiding, now read.** In the first run every
+FreeBSD-cell recovery printed `No space left on device` and reported exit 0.
+The corrected check prints the write's status beside the free space, and the
+second run's pair reads `free /dev/vdb@CRASH 7.7G 61M 7.3G 1%` and
+`free /dev/vtbd1@CRASH 7.7G 4.4G 3.2G 58%` with both writes at exit 0. So the
+volume was neither full nor mis-accounted: the first run's `entries 19181`,
+against the second's 11401 and 1201, is the difference. A HAMMER2 volume under
+a long copy-on-write write fills with superseded blocks that bulkfree has not
+reclaimed, and 19181 files of 3 to 80 KiB was enough to reach that on this
+image where the lighter runs were not. That is the reading the masked status
+discarded: not a recovery defect, but a workload that fills a volume the cell
+does not size for, and a check that could not tell the difference.
 
-**P4's `crash_during_sync`, stated plainly.** One power cut inside the port's
-flush path, from a run whose detector caught the condition, recovered clean on
-both ports and the host. It is one run of one writer; the criterion is at
-least reached, and the row records it as met-with-this-caveat rather than as a
-sweep.
+**P4's `crash_during_sync`, stated plainly.** One power cut with the port's
+flush outstanding, from a run whose detector caught the condition and printed
+the task, recovered clean on both ports and the host: every file readable, the
+volume mounting read-write, accepting a write, unmounting, `fsck_hammer2`
+clean. It is one run of one writer, and the FreeBSD half of the same cell did
+not reach the condition. The criterion is reached, and the row records it as
+met with those two limits rather than as a sweep.
