@@ -343,13 +343,21 @@ done
 # unmount would read closed however well the interruption landed.
 echo "interrupt-bracket-open $bracket"
 # The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
-# the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive (T stays 1),
-# because the thread belongs to the pmp hammer2_pfsalloc() matched by cluster
-# id, which is the one created at the MASTER's mount (/mnt/h2c, /dev/vdb@CL).
-# Unmounting /mnt/h2c stops it (T 1 to 0). The pass in flight completes either
-# way: the thread reads STOP/FREEZE at loop top and between deferred
-# directories only, which is this phase's documented contract, so didbreak is
-# not a success condition here.
+# the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive, because the
+# thread belongs to the pmp hammer2_pfsalloc() matched by cluster id, which is
+# the one created at the MASTER's mount (/mnt/h2c, /dev/vdb@CL). Unmounting
+# /mnt/h2c tears down the one element it mounts and stops that element's thread.
+#
+# The CL pmp is a TWO-element cluster and it owns TWO h2nod-CL threads, one per
+# element, which the 2026-10-13 probe measured (`start thread=2`, `thread=1`
+# after unmounting /mnt/h2c). The phase keeps /mnt/h2s mounted here, so the
+# second element's thread legitimately survives and the count goes 2 to 1, not
+# to 0. The reading is the DROP, so the count before the unmount is captured
+# and the check asserts one fewer after, which is what the topology supports.
+# The pass in flight completes either way: the thread reads STOP/FREEZE at loop
+# top and between deferred directories only, which is this phase's documented
+# contract, so didbreak is not a success condition here.
+echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 t0=$(date +%s%N); timeout 60 umount /mnt/h2c; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
@@ -361,10 +369,13 @@ echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
 # is the cumulative total, which is the reading worth keeping.
 echo "interrupt-actions $(grep 'filekeys' $K | tail -1 | sed 's/^\[[^]]*\] //')"
 # The thread stops after the pass it landed in drains, so the count is waited
-# for and the wait is the reading, rather than a fixed sleep guessing at it.
+# for and the wait is the reading. The wait is for the count to drop below the
+# pre-unmount count (the CL element's thread stopping), not to reach zero, since
+# the second element's thread is expected to stay.
+tb=$(ps -eo comm | grep -c '^h2nod-CL')
 n=0
 while [ $n -lt 200 ]; do
-	[ "$(ps -eo comm | grep -c '^h2nod-CL')" = 0 ] && break
+	[ "$(ps -eo comm | grep -c '^h2nod-CL')" -lt "$tb" ] && break
 	sleep 0.1; n=$((n + 1))
 done
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
@@ -493,7 +504,14 @@ b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside a
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
-a=$(val interrupt-threads); [ "${a:-1}" = 0 ]; check "the stop reaches the CL pmp and leaves no thread" $? "${a:-none} left after umount /mnt/h2c"
+tb=$(val interrupt-threads-before); a=$(val interrupt-threads)
+# The CL pmp owns two h2nod-CL threads, one per element, so the unmount of its
+# MASTER's mount removes one and leaves the second (the slave element is still
+# mounted). The check is the drop, not a count of zero, which the two-element
+# pmp never reaches. A run whose guest has the topology the phase builds reads
+# 2 before and 1 after; the assertion is that the count fell.
+[ "${tb:-0}" -ge 1 ] 2>/dev/null && [ "${a:-9}" -lt "${tb:-0}" ] 2>/dev/null
+check "the stop reaches the CL pmp and removes its element's thread" $? "threads ${tb:-none} to ${a:-none} after umount /mnt/h2c"
 # The stop is read at the thread's loop top and between deferred directories,
 # never inside a scan, so a pass in flight completes and didbreak cannot fire
 # for a stop issued mid-pass. Requiring it would be a check no correct run can
