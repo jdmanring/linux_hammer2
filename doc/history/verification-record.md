@@ -11281,3 +11281,43 @@ The pair was killed once it was visible, and neither run's readings are kept.
 The lesson is the one the same session already learned twice at this site: a
 guard is checked against the shape its author had in mind, and the shape that
 defeats it is the one a later command happens to use.
+
+## Phase 4 has never run: NBIG2 was not forwarded, 2026-10-13
+
+The run that was meant to prove the chain_ref fix instead answered a
+different question, and it did so because the drop arm began keeping the
+guest's output an hour earlier. The output ends:
+
+    guest: interrupt-base 58
+    guest: write-destroys 0
+    guest: /tmp/h2cluster.sh: line 127: NBIG2: unbound variable
+    cluster: COULD-NOT-RUN: the guest session ended rc=127 after 17 line(s)
+
+`rc=127` is `sh`'s unbound-variable exit under `set -u`, which the guest half
+carries. The host sets `NBIG2=${H2_NBIG2:-20000}` and the guest uses it to
+size phase 4's backlog, but the launch line forwarded
+
+    NBIG=$NBIG H2DEBUG=$H2DEBUG
+
+and not `NBIG2`. So the backlog loop at line 300 was the first use of an
+unset variable and the guest half died there. Every phase-4 run died there.
+
+This is why `interrupt_resume` has no reading, and the record's earlier
+entries read the symptom from the other side. The 2026-10-11 entry says "the
+copy of a new directory made 2 inode updates and stopped" and the correction
+after it says the copy did not stop but the root's tid advanced past its
+subtree; both describe a pass that had copied the first directory. The run
+did reach phase 3 and the `bigdir` write; it never reached the `bigdir2`
+backlog, the unmount, or the remount. The failure was reported as a phase
+that ran and did not converge, when the phase had not started.
+
+The host's own check carried the fingerprint of it and was read as a
+different thing. `want_files=$((35 + NBIG + NBIG2))` is 40035, and the run
+before this one reported `20035 file entries, 20103 data blocks` and failed
+the count. 20035 is 35 plus `bigdir` alone -- `NBIG2`'s 20000 files were
+never written. The count was right and the reason for it was one line up in
+the guest half.
+
+`c385539` forwards `NBIG2`. The check that would have caught it earlier is
+the one already there: a `set -u` variable used in the guest half and not in
+the `$RUN` argument list is a name the host can compare, and nothing does.
