@@ -12245,3 +12245,91 @@ armed, scoping the fault to the writing task, and taking the range from the
 are the same shape as each other and as the day's probe defects: an
 instrument that fails silently and a subject that did nothing produce the
 same reading.
+
+## crash_during_sync gets its reading, and three checks that threw away evidence, 2026-10-14
+
+P4's fifth criterion has no reading until this run. The `sync` cell of
+`script/crash-matrix.sh` cuts power once the guest reports a task inside the
+port's own flush path, rather than at a fixed time, so the crash lands during
+a synchronization flush rather than between two. For this port the detector
+catches the condition, power is cut inside the flush, and the port recovers
+clean:
+
+    == linux sync run 1
+      sync-in-flight yes
+      cut   headers zone2:0x22 zone1:0x21 zone0:0x20 zone3:0x1f
+      linux   entries 3201 last 3199
+      linux   unreadable 0
+      linux   write after recovery exit 0
+      linux   umount exit 0
+      linux   debug_locks 1
+      linux   reports 0
+      ok    host fsck_hammer2 after linux
+      fbsd    freebsd fsck clean
+      row   linux sync 1 host=ok linux=0 fbsd=0
+
+Power removed inside the flush, and every file readable, the volume mounting
+read-write, accepting a write, unmounting, `fsck_hammer2` clean on the host
+and on DragonFly's own port reading the same image.
+
+**The reading is weaker than it reads, and the four defects below are why.**
+The one-run cell reported "0 failure(s)" for a pair of runs whose FreeBSD half
+never reached the condition and whose recovered write failed under a check
+that passed. None of that is the port's verdict; all of it is the instrument
+reporting a condition it did not reach as one it did, which is the reading the
+cell itself exists to refuse.
+
+**Four defects, every one in the instrument.**
+
+The recovered write's status was `sync`'s, not the write's:
+`echo ... > /mnt/c/crash/linux-after; sync; echo "write after recovery exit
+$?"` prints the status of the `sync`, which succeeds even when the write
+before it was refused with `No space left on device`. The check
+`^write after recovery exit 0$` therefore passed beside a write that failed.
+Captured now with `if echo ... > file; then wst=0; else wst=$?; fi`, with the
+free space printed beside it. This affects all five cells and both ports, and
+it is the same shape as the day's other two: a status that belongs to the last
+command in a pipeline is read as the subject's.
+
+The detector's timeout produced a row. `sync-in-flight no-poll-timeout` cut
+power anyway and the run counted as an agreement. Why the FreeBSD half missed
+is not established and is not asserted: its writer does call `sync` every 200
+files, so the condition may well be there and the poll may have failed to see
+it. The candidates are the old detector sampling once per ssh (a round trip
+between samples, so a window of tens of milliseconds in a flush of
+milliseconds), FreeBSD's own `ps` keywords and task naming, or a `sync` whose
+D-state is brief. The fixed detector samples guest-side and prints what it
+catches, which settles it on the next run. What was wrong regardless of cause
+is the reporting: a miss is the instrument not reaching its condition, which
+is neither a pass nor a failure, so the row now carries `miss=yes` and the
+summary counts it as COULD-NOT-RUN (exit 2). Where several runs of a cell
+disagree and some missed, the runs that landed are still compared.
+
+The detector threw away what it caught and sampled slowly. It took one ssh
+round trip per sample, so its "5 ms poll" was tens of milliseconds and its
+window narrow; it printed a bare `yes`/`no` with no task. It is now one
+guest-side ssh of ~4000 samples that prints the task it caught
+(`in-sync D sync`), so the evidence survives the run and a near-miss is
+visible as one.
+
+A count check cannot see a truncated file. `^entries [1-9]` passed on 19181
+entries while a later write on the same volume was refused for space. The
+count is not the question in the sync cell; whether what landed is readable is,
+and `unreadable 0` is the check that answers it.
+
+**The finding the masked status was hiding.** Every run of the FreeBSD cell
+read `entries 19181` and its recovered write refused with `No space left on
+device`, reported as exit 0. 19181 files of 3 to 80 KiB is under a gigabyte on
+an 8 GiB volume, so the volume is not full and the refusal is either a
+recovery that mis-accounts the free space or a `crash.img` that is not the
+size it appears. It cannot be adjudicated from this run because the free-space
+reading is exactly what the masked status discarded, and the next run carries
+it. This is left open rather than guessed, and it is the reason the tooling
+was fixed before the P4 row was touched: a check that reports success on a
+failed write is worse than useless.
+
+**P4's `crash_during_sync`, stated plainly.** One power cut inside the port's
+flush path, from a run whose detector caught the condition, recovered clean on
+both ports and the host. It is one run of one writer; the criterion is at
+least reached, and the row records it as met-with-this-caveat rather than as a
+sweep.

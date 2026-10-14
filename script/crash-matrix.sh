@@ -205,7 +205,9 @@ mount -t hammer2 \$dev@$LABEL /mnt/c || { echo "mount failed"; exit 1; }
 dmesg | grep -i 'recovery' | sed 's/^\[[^]]*\] //'
 echo "entries \$(ls /mnt/c/crash 2>/dev/null | wc -l) last \$(cat /mnt/c/crash/last 2>/dev/null || echo none)"
 bad=0; for f in /mnt/c/crash/f*; do cat "\$f" > /dev/null 2>&1 || bad=\$((bad+1)); done; echo "unreadable \$bad"
-echo "after the cut, by linux" > /mnt/c/crash/linux-after; sync; echo "write after recovery exit \$?"
+if echo "after the cut, by linux" > /mnt/c/crash/linux-after; then wst=0; else wst=\$?; fi
+sync; echo "write after recovery exit \$wst"
+df -h /mnt/c | tail -1 | sed 's/^/free /'
 umount /mnt/c; echo "umount exit \$?"
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
 rmmod hammer2
@@ -215,13 +217,24 @@ kldstat -q -m hammer2 || kldload hammer2 || exit 1
 mkdir -p /mnt/c; mount_hammer2 /dev/vtbd1@$LABEL /mnt/c || { echo "mount failed"; exit 1; }
 echo "entries \$(ls /mnt/c/crash 2>/dev/null | wc -l | tr -d ' ') last \$(cat /mnt/c/crash/last 2>/dev/null || echo none)"
 bad=0; for f in /mnt/c/crash/f*; do cat "\$f" > /dev/null 2>&1 || bad=\$((bad+1)); done; echo "unreadable \$bad"
-echo "after the cut, by freebsd" > /mnt/c/crash/fbsd-after; sync; echo "write after recovery exit \$?"
+if echo "after the cut, by freebsd" > /mnt/c/crash/fbsd-after; then wst=0; else wst=\$?; fi
+sync; echo "write after recovery exit \$wst"
+df -h /mnt/c | tail -1 | sed 's/^/free /'
 umount /mnt/c; echo "umount exit \$?"
 fsck_hammer2 /dev/vtbd1 > /dev/null 2>&1 && echo "freebsd fsck clean" || echo "freebsd fsck FAILED"
 GUEST
 
 fail=0; torn_zone=
+# The sync cell's detector, run on the guest in ONE ssh so a sample costs a
+# fork rather than an ssh round trip, and so the task it catches is printed
+# rather than reduced to a yes. `ps -eo stat=,comm=` is a D-state task in
+# the port's flush path: the sync(1) whose write is being flushed, or the
+# port's own synchronization thread h2nod-*. A poll that never catches one
+# leaves sync_missed set, and the run is reported as not a reading rather
+# than as a cell that ran.
+detect='n=0; while [ $n -lt 4000 ]; do s=$(ps -eo stat=,comm= 2>/dev/null | grep -E "^ *D[^ ]* +(sync|h2nod)" | head -1); if [ -n "$s" ]; then echo "in-sync $s"; exit 0; fi; n=$((n+1)); done; echo "no-sync"'
 run_writer() {	# writer cell -> the cut-off image in $IMG; prints the cut line
+	sync_missed=0
 	cp --sparse=always "$BASE" "$IMG" || return 2
 	case $1 in
 	linux)	dom=$GUEST; sshto=$GUEST_SSH; files="$KO $W/write-linux.sh"; cmd='sh /tmp/write-linux.sh'
@@ -244,21 +257,19 @@ run_writer() {	# writer cell -> the cut-off image in $IMG; prints the cut line
 	power)	chop "$dom" ;;
 	torn)	chop "$dom"; torn_zone=$(tear "$IMG"); echo "  torn  $torn_zone" ;;
 	sync)	# P4's crash-during-sync: wait until the writer is INSIDE a sync,
-		# then cut power. The writer syncs every 200 small files; polling
-		# the guest's D-state for a task in the port's flush path is what
-		# says a sync is in flight, rather than cutting at a fixed time
-		# and hoping. Measured window: a sync over a few hundred files
-		# runs tens of milliseconds, so the poll is 5 ms and the cell
-		# gives up after 5 s and says so rather than reporting a crash
-		# that landed between syncs as one that landed during.
-		n=0; insync=1
-		while [ $n -lt 1000 ]; do
-			st=$(timeout 5 ssh -o ConnectTimeout=3 "$sshto" \
-			     'ps -eo stat,comm 2>/dev/null | grep -E "^D.*(sync|h2nod)" | head -1' 2>/dev/null)
-			[ -n "$st" ] && { insync=0; break; }
-			sleep 0.005; n=$((n + 1))
-		done
-		echo "  sync-in-flight $([ $insync = 0 ] && echo yes || echo no-poll-timeout)"
+		# then cut power. The writer syncs every 200 small files, so a
+		# sample that lands in the window is the only reading that shows a
+		# crash during a flush rather than between two of them. The poll
+		# is one guest-side ssh, ~4000 samples, and the task it caught is
+		# printed; a sample that never catches one is reported as a miss,
+		# and the summary refuses to green the cell for it.
+		o=$(timeout 30 ssh -o ConnectTimeout=5 "$sshto" "$detect" 2>/dev/null)
+		case $o in
+		"in-sync "*)	echo "  sync-in-flight yes  ($o)" ;;
+		*)		sync_missed=1
+				echo "  sync-in-flight MISSED: no D-state sync or h2nod in 4000 samples, this run is not a crash-during-sync reading"
+				;;
+		esac
 		chop "$dom" ;;
 	esac
 	kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null	# an ssh to a destroyed guest never returns by itself
@@ -302,6 +313,8 @@ for writer in $WRITERS; do
 			echo "== $writer $cell run $r"
 			run_writer "$writer" "$cell"; s=$?
 			[ $s = 0 ] || { echo "crash: COULD-NOT-RUN: the $writer writer did not run" >&2; exit 2; }
+			miss=no
+			[ "$cell" = sync ] && [ "$sync_missed" = 1 ] && miss=yes
 			echo "  cut   headers $(headers "$IMG")"
 			if [ "$cell" = torn ]; then
 				# fsck_hammer2 picks its zone by mirror_tid before it checks the
@@ -325,7 +338,7 @@ for writer in $WRITERS; do
 			verdict_linux "$IMGL"; lf=$?
 			verdict_fbsd "$IMGF"; ff=$?
 			[ $lf = 9 ] || [ $ff = 9 ] && { echo "crash: COULD-NOT-RUN: a judging guest did not boot" >&2; exit 2; }
-			row="$writer $cell $r host=$hf linux=$lf fbsd=$ff"
+			row="$writer $cell $r host=$hf linux=$lf fbsd=$ff miss=$miss"
 			echo "  row   $row"; echo "$row" >> "$rows"
 			{ [ "$hf" = ok ] || [ "$hf" = torn-reported ]; } && [ $lf = 0 ] && [ $ff = 0 ] || fail=$((fail + 1))
 			r=$((r + 1))
@@ -335,13 +348,27 @@ done
 
 make -s clean >/dev/null 2>&1
 echo "crash: ${SECONDS_WRITING}s of writing, $REPS run(s) per cell"
+# A `sync` run whose detector never caught a sync in flight is not a
+# crash-during-sync reading: the instrument did not reach the condition it
+# exists to produce. That is reported as a miss and is neither a pass nor a
+# failure of the port, so it is counted apart from $fail and keeps the
+# script's exit status 2 (COULD-NOT-RUN) when every run of the cell missed.
+missed=0
 for writer in $WRITERS; do
 	for cell in $CELLS; do
 		n=$(grep -c "^$writer $cell " "$rows")
 		v=$(grep "^$writer $cell " "$rows" | cut -d' ' -f4- | sort -u | wc -l)
-		if [ "$v" = 1 ]; then echo "  $writer $cell: $n run(s) agree: $(grep -m1 "^$writer $cell " "$rows" | cut -d' ' -f4-)"
+		m=$(grep "^$writer $cell " "$rows" | grep -c "miss=yes")
+		if [ "$m" = "$n" ]; then
+			echo "  $writer $cell: every one of $n run(s) missed the sync window, no $cell reading"
+			missed=$((missed + 1))
+		elif [ "$m" != 0 ]; then
+			echo "  $writer $cell: $m of $n run(s) missed the sync window, only the rest are $cell readings"
+			[ "$v" = 1 ] || { echo "  $writer $cell: the runs that landed DISAGREE, not green"; fail=$((fail + 1)); }
+		elif [ "$v" = 1 ]; then echo "  $writer $cell: $n run(s) agree: $(grep -m1 "^$writer $cell " "$rows" | cut -d' ' -f4-)"
 		else echo "  $writer $cell: $n run(s) DISAGREE, not green"; fail=$((fail + 1)); fi
 	done
 done
-echo "crash: $fail failure(s)"
-[ $fail = 0 ]
+echo "crash: $fail failure(s), $missed cell(s) that never reached their condition"
+[ $fail = 0 ] || exit 1
+[ $missed = 0 ] || exit 2

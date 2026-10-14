@@ -57,7 +57,7 @@ move with the probe.
 | `fuzz-mount.sh` | puts mutated images through the mount path and, with `H2_FUZZ_WRITE=1`, the write path |
 | `f4-roundtrip.sh` | writes a tree here and checks it on DragonFly, then the other way |
 | `cut-flush.sh` | cuts DragonFly off mid-write and mounts the result here |
-| `crash-matrix.sh` | runs the 0.6 crash matrix against the FreeBSD port |
+| `crash-matrix.sh` | runs the crash matrix, a killed writer, a panic, a power cut, a torn header and a power cut inside the port's own flush, against the FreeBSD port and this one |
 | `root-boot.sh` | boots a kernel whose root filesystem is a HAMMER2 volume, with the mapping and exec checks that let it be one |
 | `pfs-domains.sh` | creates PFS roots here, mounts each by label on both sides, and has DragonFly check what was written in each |
 | `million-tree.sh` | writes a million-file tree here and has both sides count it |
@@ -1213,13 +1213,21 @@ that would be refused for the wrong reason.
 Kusumi's FreeBSD port on the `freebsd15` guest. An 8 GiB volume is made
 on the host by `newfs_hammer2`, so all four volume header zones exist, and
 a copy of it is attached to a writer, which mounts it read-write and
-runs the same loop as the cut-flush fixture. After `SECONDS` one of four
+runs the same loop as the cut-flush fixture. After `SECONDS` one of five
 things happens: the writing process is killed and the volume unmounted
 (`kill`), the guest kernel is made to panic through `sysrq` here and
 `debug.kdb.panic` there (`panic`), the host destroys the domain
-(`power`), or it destroys the domain and then zeroes the second half of
+(`power`), it destroys the domain and then zeroes the second half of
 the newest valid header, which is a 64 KiB header write that reached
-the media only in part (`torn`). The cut-off image is judged three
+the media only in part (`torn`), or it waits until the guest reports a
+task in the port's own flush path and then destroys the domain, so the
+crash lands during a synchronization flush rather than between two
+(`sync`, P4's crash-during-sync criterion). The `sync` cell's detector
+is one guest-side `ps` poll; a run whose poll never catches the task
+carries `miss=yes` and is counted as COULD-NOT-RUN rather than as a
+cell that ran, since it did not reach the condition it exists to
+produce. The FreeBSD half missed it once, for a reason not yet
+established. The cut-off image is judged three
 ways: the host's `fsck_hammer2`, this port mounting one copy
 read-write, reading every file, writing one more and syncing, and the
 FreeBSD port doing the same to the other copy and
