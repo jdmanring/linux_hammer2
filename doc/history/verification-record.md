@@ -11882,3 +11882,41 @@ The rule that would have caught all four: **state before the run what a zero
 means, and run the probe against the harness's own knobs and state.** A zero
 from a probe that cannot see the subject and a zero from a subject that did
 nothing are the same string.
+
+## The reasoning loop, and what broke it, 2026-10-13
+
+P4's phase-4 interruption was reasoned about four times across this day and the
+reasoning was wrong on three of them, each time in the same way: a conclusion
+drawn wider than the reading under it.
+
+| what was concluded | the reading under it | what measurement showed |
+| --- | --- | --- |
+| "blocked behind the flush defect" | a kernel log with a flush fault in it | the block was `NBIG2` never forwarded; the guest exited 127 |
+| "no pass was in flight; widen the window" | 0.2 ms passes on a converged cluster | the phase's stop reached the wrong pmp, and the pass it wanted is 8 s at the join |
+| "the copy happens at the remount" | the phase's own comment saying so | the copy happens at the join, during the write |
+| "interrupt-copied is capped at 2 by focus" | one run reading 2 | the next run reads 62; a gated print is noisy, not capped |
+| "a stop issued mid-pass interrupts it" | `hammer2_thr_break`'s existence | the stop is read at loop top and between deferred dirs; the pass completes |
+
+Each row is a real reading and a conclusion it does not support. What broke
+the loop was not more reasoning but a cheaper instrument: a 22-line probe that
+mounted the same volumes, ran no workload, and printed the thread count after
+each action. It answered in two minutes a question four rounds of reading had
+got wrong twice.
+
+Two habits did the rest of the work, and both are worth naming:
+
+* **reading the subject's own comments before deriving from its code.** The
+  script's phase-4 comment already said a stop waits for the scan to finish;
+  two entries here concluded the opposite from the code path, and the probe
+  then confirmed the comment. `hammer2_synchro.c`'s own comment predicts the
+  NULL-parent case the same way.
+* **stating what a zero means before the run.** The probes that failed all
+  failed by returning a reading that was indistinguishable from the subject
+  doing nothing. The ones that worked had a number that only one explanation
+  could produce (P=5 against C=11; U climbing past a stop).
+
+The rule this leaves, for the next person at this phase: when a probe's
+reading disagrees with a derivation, suspect the derivation, then the probe's
+setup, and only then the subject -- and get a reading cheap enough to run
+again, because the expensive run is what made four wrong conclusions look
+final.
