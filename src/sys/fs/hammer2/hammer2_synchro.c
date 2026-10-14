@@ -520,6 +520,19 @@ dumpcluster(const char *label,
 static int h2dbg_file_nlt;	/* XXX Linux */
 static int h2dbg_file_neq;	/* XXX Linux */
 static int h2dbg_file_ngt;	/* XXX Linux */
+/*
+ * XXX Linux: how many copies the action switch below attempted and how many
+ * returned non-zero.  The value of nerror is discarded (see the comment at
+ * the discard), so a copy that fails leaves no trace and the pass still
+ * stamps the element root's modify_tid, after which every later pass reads
+ * want_update == 0 and does not retry.  These separate the two candidates
+ * for the interrupted pass's shortfall: a copy that failed and was masked,
+ * or a pass that never reached the missing inodes.  Debug reads them from
+ * the same print as the file-key counters; not in any shipped path.
+ */
+static int h2dbg_act_tried;	/* XXX Linux */
+static int h2dbg_act_failed;	/* XXX Linux */
+static int h2dbg_act_last;	/* XXX Linux: the most recent non-zero nerror */
 
 static
 int
@@ -829,6 +842,20 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 * across 44 passes.  Closing it needs a per-key record that does not end the
 		 * pass, which the deferral list already exists to carry.
 		 */
+		/*
+		 * XXX Linux: the discarded nerror, counted.  Every arm above sets
+		 * nerror; a non-zero here is a copy that failed, and the pass
+		 * goes on to stamp the element root's modify_tid below, which is
+		 * what makes the failure permanent.  Printed with the file-key
+		 * counters.
+		 */
+		if (advance_local || advance_xop) {
+			atomic_add_int(&h2dbg_act_tried, 1);
+			if (nerror) {
+				atomic_add_int(&h2dbg_act_failed, 1);
+				h2dbg_act_last = nerror;
+			}
+		}
 		(void)nerror;
 
 		/*
@@ -901,8 +928,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * `hammer2_sync_slaves()` call on the PFS root.
 	 */
 	if (hammer2_debug & 0x8000) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d\n",
-		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt);
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d\n",
+		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
+		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);

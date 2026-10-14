@@ -12351,3 +12351,57 @@ volume mounting read-write, accepting a write, unmounting, `fsck_hammer2`
 clean. It is one run of one writer, and the FreeBSD half of the same cell did
 not reach the condition. The criterion is reached, and the row records it as
 met with those two limits rather than as a sweep.
+
+## A failed copy is not what the interrupted pass loses, and the row's rollup claim was stale, 2026-10-14
+
+The record's open question for the interrupted pass was what makes the root's
+`modify_tid` advance past a partial copy. The candidate with the most support
+was that a child copy fails, its `nerror` is discarded at
+`hammer2_synchro.c`'s action switch, and the pass then stamps the element
+root's `modify_tid` to the master's, so every later pass reads
+`want_update == 0` at the gate above the scan and does not retry. Three
+counters were added over the switch (`acted`, the arms that ran; `failed`, the
+non-zero `nerror`; `last`, the most recent value), printed with the file-key
+counters the pass already emits.
+
+**The hypothesis is refuted.** Over one instrumented run:
+
+    filekeys n<0 42  n==0 7  n>0 57  acted 9351 failed 0 last 0
+    ...
+    filekeys n<0 42  n==0 14 n>0 57  acted 44729 failed 0 last 0
+
+44729 actions and zero non-zero `nerror`. No copy the action switch made
+returned an error, so a failed-and-masked copy is not what the interrupted
+pass loses. The gate and the stamp are real -- `want_update` at line 630 does
+end the pass on an equal `modify_tid`, and the inode path does defer through
+`dodefer` -- but the thing the stamp hides is not, in this run, a copy that
+failed.
+
+**A stale claim in a gated document, found on the way.** The origin table in
+`doc/README.status.md` described this file's marks as including "the slave-side
+errors upstream discards rolled up, so a slave that failed to take a chain is
+not marked synchronized and the next pass retries it". The rollup was tried
+and reverted on 2026-10-13 (`6d8bf05`, "The slave-side error rollup aborted the
+pass and is reverted"), because aborting the pass on the first slave-side
+failure retried the same early keys. The row now states the counts and the
+reverted rollup instead. `test-inventory.sh` reads the line count and the mark
+count against the source and cannot see this sentence, so the claim outlived
+the code it described, in the document whose job is to say what the marks mean.
+
+**The run hung, and that is separate.** The instrumented run was stopped at its
+600 s bound still churning in `indirect_maint` (a parent collapsing a child,
+`b6a9cb23fd8a8001/0 collapsing 0000000058aa848b 0000000000000000/63`, with the
+parent re-inserted by the same `create_indirect` bound the 2026-10-13 entry
+records as the convergence fix). It read no shortfall because it never
+finished, so the question the counters were built to answer -- where the
+shortfall comes from -- is still open. What the counters settled is only the
+negative: no failed copy. The log is kept whole at
+`cluster-hang-20261014-101039.klog`.
+
+The open list for the shortfall is now narrower. A failed copy is out. What
+remains is that the pass reaches and stamps the element root's `modify_tid`
+while the slave's media is short, which is either a copy that succeeds into
+memory and does not reach media before the stamp, or a scan that stamps more
+than it copied. The counters for the first would sit at the flush; the second
+is a `modify_tid` write on a chain whose children were not all inserted, which
+is where the next instrument belongs.
