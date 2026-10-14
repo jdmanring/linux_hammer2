@@ -163,7 +163,7 @@ disarm() {
 	echo 0 > $fs/probability 2>/dev/null
 	echo 0 > $fs/times 2>/dev/null
 	echo 0 > $fs/verbose 2>/dev/null
-	echo N > /sys/block/vdb/make-it-fail 2>/dev/null
+	echo 0 > /sys/block/vdb/make-it-fail 2>/dev/null
 	echo 0 > $fs/require-start 2>/dev/null
 	echo 0 > $fs/require-end 2>/dev/null
 }
@@ -175,7 +175,15 @@ lo=$(printf '0x%x' $(( base + 0x$off )) 2>/dev/null)
 hi=$(printf '0x%x' $(( base + 0x$off + 0x$size )) 2>/dev/null)
 [ -n "$lo" ] && [ -n "$hi" ] || { echo "ctl-failed: range arithmetic failed"; exit 0; }
 
-echo Y > /sys/block/vdb/make-it-fail 2>/dev/null || { echo "ctl-failed: no make-it-fail on vdb"; exit 0; }
+# The block layer's make-it-fail takes an INTEGER, not Y/N.  Its store is
+# `sscanf(buf, "%d", &i)`, so `echo Y` parses to nothing, sets no flag, and
+# still returns 0: the write reports success while doing nothing, which is
+# how the first run of this instrument injected 0 and passed its setup.  The
+# failslab attributes take Y/N instead, and this line was copied from that
+# idiom.  Read back, because the failure mode is a silent no-op.
+echo 1 > /sys/block/vdb/make-it-fail 2>/dev/null || { echo "ctl-failed: no make-it-fail on vdb"; exit 0; }
+[ "$(cat /sys/block/vdb/make-it-fail 2>/dev/null)" = 1 ] || {
+	echo "ctl-failed: make-it-fail did not take (it takes an integer, not Y/N)"; exit 0; }
 echo "$lo" > $fs/require-start  || { echo "ctl-failed"; exit 0; }
 echo "$hi" > $fs/require-end    || { echo "ctl-failed"; exit 0; }
 echo 100 > $fs/probability || { echo "ctl-failed: probability"; exit 0; }
