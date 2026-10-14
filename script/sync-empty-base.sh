@@ -334,6 +334,24 @@ if [ "$rc" = 124 ]; then
 	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-900}s; its kernel log is kept beside the images"
 	exit 1
 fi
+# A non-zero that is neither 2 nor 124 is the guest half or its session
+# ending without finishing -- an ssh drop returns 255, and 127 has been seen.
+# It is COULD-NOT-RUN, not a run whose readings may be checked, and it must
+# not fall through to the detach below: that detach of a volume the guest is
+# still using is the ACPI hotplug the pre-flight guard at the top of this
+# script refuses, and it wedges the guest in the port's own sync path. The
+# guest's output and kernel log are kept, since they say how far the run
+# reached. cluster-sync.sh and cluster-quorum.sh carry the same guard.
+if [ "$rc" != 0 ]; then
+	scp -q "$GUEST_SSH:/tmp/h2empty.klog" "$FIXDIR/sync-empty-drop-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
+	cp "$W/out" "$FIXDIR/sync-empty-drop-$(date +%Y%m%d-%H%M%S).out" 2>/dev/null
+	for d in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
+	done
+	echo "sync-empty: COULD-NOT-RUN: the guest session ended rc=$rc without finishing the run; its output and kernel log are kept beside the images as sync-empty-drop-*" >&2
+	exit 2
+fi
 scp -q "$GUEST_SSH:/tmp/h2empty.klog" "$W/klog" 2>/dev/null
 for d in vdb vdc; do
 	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
