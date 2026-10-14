@@ -11346,3 +11346,35 @@ and the run before this one would have been reported as one.
 
 `NBIG2` and the timeout are the same shape: a host-side value phase 4 depends
 on that nothing compared against what the phase actually does.
+
+## The NBIG2 gap is a regression, not a mis-read claim, 2026-10-13
+
+The P4 row in `doc/README.roadmap.md` describes the 2026-10-11 interrupted
+phase as "built and failed on a measured convergence defect", and the NBIG2
+defect found on 2026-10-13 does not make that false. `git log -S"NBIG2"`
+puts the variable's introduction at `05b859f`, 2026-10-12, a day after the
+run the row is about:
+
+    05b859f  2026-10-12  The interrupt probe bounds its mounts and finds a
+                         flush defect
+    c385539  2026-10-13  Phase 4 could never run
+
+`05b859f` added `NBIG2` in three places -- the host default, the guest's
+backlog loop, and the host's own `want_files=$((35 + NBIG + NBIG2))` count --
+and not to the `$RUN` line, which still read `NBIG=$NBIG H2DEBUG=$H2DEBUG`.
+So the phase was reachable before that commit and unreachable from it, for
+one day, until `c385539`.
+
+That is why the two readings of this phase disagree and neither is wrong:
+the 2026-10-11 entries describe a phase that ran and reached the copy, and
+every entry from 2026-10-12 onward describes a phase that never started. The
+row was not corrected for this, because its sentence is about its own run;
+the regression is recorded here instead, which is where a dated observation
+belongs rather than in a live row whose claim is still true.
+
+The class this belongs to is the same one `c385539` and the sweep closed:
+a value the host computes, the guest half evaluates under `set -u`, and the
+forwarding list does not carry. Three scripts quote their heredoc, so the
+guest evaluates their variables; all three now forward every name their
+guest half reads, and the nine the sweep flagged use unquoted heredocs where
+the host expands them at write time.
