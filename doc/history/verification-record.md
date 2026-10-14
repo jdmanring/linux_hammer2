@@ -12433,3 +12433,56 @@ thread's insert path is not it. And which directory the destroyed inodes
 belonged to, read from the fingerprint's own walk, because a dirent key does
 not encode its parent. The counters added here stay for the negative they
 establish: no copy failed.
+
+## The interrupted pass loses 422 inodes at the timeout the phase requires, and a verbose run hides it, 2026-10-14
+
+Three runs of phase 4 this session, and the reading moves with the timeout and
+the debug mask rather than with the port:
+
+| run | `H2_RUN_TIMEOUT` | `H2_DEBUG` | inode updates before the stop | slave short | verdict |
+| --- | --- | --- | --- | --- | --- |
+| earlier | 600 (default) | 0x8000 | 44 | 42 inode | hung at the bound |
+| controlled | 1800 | 0x8000 | 549 | 422 inode, 422 data | `interrupt_resume` fails |
+| verbose | 1800 | 0x8001 | 2 | 0 | reads converged |
+
+**The earlier 42-inode reading was truncated, not the defect's size.** Phase 4's
+two writes are 307.1 s and 360.6 s and the run is 667.7 s of work, so under the
+600 s default the run is cut mid-phase and the shortfall it reads is whatever
+the interrupted pass had reached, not what the pass loses when it runs to its
+stop. At the 1800 s the testing row already says phase 4 is given, the same
+workload loses 422 inodes: master `40042 inode, 40103 data`, slave `39620
+inode, 39681 data`, 10 chains scrapped unwritten, 844 lines differ of 120179.
+Two runs this session used the default and hung, and both readings of 42 and 82
+come from that truncation.
+
+**A verbose run reads as convergence and is not.** At `H2_DEBUG=0x8001` the
+carried per-chain prints run for every insert, replace and destroy, which slows
+the pass until the stop lands after 2 inode updates and the slave converges to
+0 lines differ. That is the near-miss the phase exists to avoid reading as
+success: the window it interrupts is the pass's length, and the prints stretch
+that length past the stop's arrival, so the interruption has almost nothing to
+lose. The convergence is an artifact of the instrument, not the port. It is
+recorded here so the run is not cited as `interrupt_resume` met. It also means
+the destroy lead the 2026-10-11 entry carries is NOT tested by it: 2 copies
+before the stop is not a pass that reaches the shortfall.
+
+**The thread-left reading is consistent.** Both non-truncated runs read `1 left
+after umount /mnt/h2c` after the guest's 20 s wait, and the unmount itself
+takes 4.3 to 4.4 s. `hammer2_thr_delete()` signals STOP, waits for STOPPED and
+`kthread_stop_put()`s, so an unmount that returns with the thread still named
+is either a stop that did not join or a check reading before the pmp's teardown
+completes. It is separate from the shortfall and is not yet resolved; two runs
+agree it is 1.
+
+**A small evidence-retention defect in the harness.** The host parses
+`interrupt-threads` and `interrupt-stop-tenths` but prints only the check's
+verdict, so the number of tenths waited and the thread count that produced the
+verdict are not in the saved log. A check that discards the reading behind its
+message is the shape already fixed elsewhere in these scripts; here the fix is
+to print the raw fields beside the checks.
+
+What the runs settle: the shortfall reproduces at 422 inodes under the timeout
+phase 4 requires, the 42-inode figure was a truncation artifact, and a verbose
+run cannot be read as convergence. What they do not settle: the destroy lead,
+which needs a run that both carries the per-chain prints and reaches the
+shortfall, and the thread-left reading, which is consistent but unexplained.
