@@ -11959,3 +11959,42 @@ that difference is the next thing to measure.
 The run is kept whole at `cluster-interrupt-lands-20261014.log`, with its two
 images beside it, and the script that produced it at hash `fdee0f93`, verified
 unchanged across the run.
+
+## The 2026-10-11 defect is reproduced, which it could not be before, 2026-10-14
+
+The 42 missing inodes above are the defect the entry of 2026-10-11 describes,
+and the identity is exact:
+
+| reading | dirents | inodes | data | short |
+| --- | --- | --- | --- | --- |
+| 2026-10-11, master | 20037 | 20041 | 20103 | |
+| 2026-10-11, slave | 20037 | 19959 | 20021 | -82, -82 |
+| 2026-10-14, master | 40038 | 40042 | 40103 | |
+| 2026-10-14, slave | 40038 | 40000 | 40061 | -42, -42 |
+
+Both readings have the same shape: the directory entries all arrived and the
+inodes and their data did not, by the same count each. The slave holds names
+pointing at inodes that are not there, and the root's `modify_tid` has
+advanced past the subtree it covers, so the thread's gate reads the state as
+synchronized and no later pass repairs it.
+
+What is different is that this run reproduces it ON DEMAND. The 2026-10-11
+entry was written from volumes an interrupted copy happened to leave, and the
+mechanism it describes could not be re-triggered because the phase's stop
+never landed -- every phase-4 run until 2026-10-14 reported convergence met,
+from a pass nobody interrupted. With the stop landing inside an open pass,
+the defect appears on the first run and at a size the phase chooses (42
+inodes against a 40000-file set, 82 against a 20000-file one).
+
+So P4's `interrupt_resume` is not blocked on reaching the interruption any
+more. It reaches it, and what it finds is a known defect, now reproducible,
+with two readings of it from independent runs a day apart.
+
+The next readings this makes possible, named rather than started. The
+shortfall is neither fixed nor a function of the backlog: both runs wrote the
+same `NBIG2` of 20000, and one lost 82 inodes and the other 42. What varies
+between them is when the stop landed, so the next measurement is the shortfall
+against the point in the pass the stop arrives -- the phase can place that
+now, which it could not before. The mechanism is the root's `modify_tid`
+advancing before its subtree is complete, so the question a fix has to answer
+is what makes the root's tid advance past a partial copy.
