@@ -12488,3 +12488,52 @@ run cannot be read as convergence. What they do not settle: the destroy lead,
 which needs a run that both carries the per-chain prints and reaches the
 shortfall, and why the stop leaves the CL pmp's thread named where the lone
 pmp's unmount clears it.
+
+## The shortfall is intermittent at a fixed config, and the destroy arm fires in a converged run, 2026-10-14
+
+A fourth phase-4 run, at the same `H2_DEBUG=0x8000` and `H2_RUN_TIMEOUT=1800`
+as the 422-inode run, converged: slave `40042 inode, 40103 data` equal to the
+master, 0 lines differ of 120179, 0 chains scrapped. Its raw line, which the
+host now prints:
+
+    raw phase4 bracket=0 begun=0 copied=88 umount-ms=4285 threads-left=1
+        stop-tenths=200 didbreak=0 actions=148 resume-rc=0 resume-passes=2
+
+Three readings follow, and one is a defect in the capture itself.
+
+**The shortfall is intermittent at one configuration.** Two runs at
+`0x8000`/1800 differed: one lost 422 inodes with `copied=549`, this one
+converged with `copied=88`. So the shortfall is not a function of the config
+alone; it depends on where in the pass the stop lands, which the phase cannot
+yet place. The record already had this open ("two runs of identical source
+completed and stalled respectively", 2026-10-13); this is a second instance of
+it, now with both runs' copy counts beside their outcomes.
+
+**A destroy count does not by itself cause the shortfall.** The live kernel log
+of this converged run reads `filekeys n<0 83` while its slave converged: the
+destroy arm was taken 83 times and the run still matched. The 2026-10-11 entry
+found a run where the destroyed keys were exactly the missing ones, which is a
+strong correlation on that run, but a destroy count of 83 in a run that
+converged means the count is not sufficient. Whether the 2026-10-11 run's
+destroy was the cause or another symptom of the same race is open.
+
+**The stop's wait is exhausted, not read early.** `stop-tenths=200` is the
+guest's 20 s wait running to its bound with the CL thread still named, and
+`umount /mnt/h2c` itself returned in 4285 ms. So this is not a check sampling
+before the pmp's teardown completes: the unmount returns and the thread is
+still there twenty seconds later. It separates by the pmp's element count, as
+the earlier entry says; here the wait is shown to be exhausted rather than
+short.
+
+**The capture was wrong and is fixed.** `actions=148` was the count of
+`filekeys` lines, not the `acted` field, because `klog()` is `grep -c`. The
+field is taken with a plain `grep | tail -1` now. The counters themselves are
+sound: read live from the kernel log, this run's `acted` climbed past 7667 with
+`failed 0`. The failed-copy hypothesis stays refuted across four runs.
+
+What the four runs settle so far: no copy returns an error (`failed 0`, four
+runs); the destroy arm fires in runs that converge and runs that do not; the
+shortfall is intermittent at a fixed config and tracks where the stop lands;
+and the CL pmp's thread outlives its unmount by at least twenty seconds while
+the lone pmp's does not. The instrument that places the stop, or that reads the
+destroy's keys against the shortfall's keys in one run, is what is missing.

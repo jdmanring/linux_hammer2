@@ -356,9 +356,10 @@ echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
 # The action counters the module prints under 0x8000 (acted/failed over the
 # scan's action switch), read at the interruption so the shortfall this run
-# ends with is paired with the count of copies that returned an error. The
-# last line is the cumulative total, which is the one worth keeping.
-echo "interrupt-actions $(klog 'filekeys' | tail -1 | sed 's/^\[[^]]*\] //')"
+# ends with is paired with the count of copies that returned an error. klog()
+# is grep -c, so the matching LINES are taken with a plain grep; the last one
+# is the cumulative total, which is the reading worth keeping.
+echo "interrupt-actions $(grep 'filekeys' $K | tail -1 | sed 's/^\[[^]]*\] //')"
 # The thread stops after the pass it landed in drains, so the count is waited
 # for and the wait is the reading, rather than a fixed sleep guessing at it.
 n=0
