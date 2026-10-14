@@ -3793,21 +3793,26 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 	 * not need reprinting per create.
 	 */
 	/*
-	 * Printed only for the case the fit guard is about, so the one refusal
-	 * that matters carries its own inputs and does not depend on an earlier
-	 * line surviving a bound.  A bound of eight printed the first creates
-	 * of the run and none of the one at t=5852 that was refused, which is
-	 * the whole reason this line exists.
-	 *
-	 * Gated on the debug bit, and it was NOT when it was added: its test is
-	 * wider than the refusal it describes, because every ordinary create
-	 * from a parent with a nonzero radix satisfies the second clause, so it
-	 * printed on nearly every call -- 92233 lines measured in one run
-	 * against 440 refusals.  That is a console flood on the guest's ttyS0
-	 * and the source of the one warning a converged run still reported.
-	 * The values remain available to a run that asks for them.
+	 * Normalize the key for the radix being represented, keeping the
+	 * high bits and throwing away the low bits.
 	 */
-	if ((hammer2_debug & 0x8000) && parent->bref.keybits > 0 &&
+	key &= ~(((hammer2_key_t)1 << keybits) - 1);
+
+	/*
+	 * Print the inputs of the block about to be built, for the case the
+	 * fit guard below refuses: the guard tests the MASKED key, which is
+	 * what `ichain->bref.key` will hold, and this test is the same one so
+	 * it fires for the refusal and not for every ordinary create.
+	 *
+	 * The test has to be on the masked key and after the mask.  Written
+	 * before it, against the pre-normalization key, every create from a
+	 * parent with a nonzero radix satisfied it once the helper had raised
+	 * `keybits` above the parent's, and one run printed 92233 lines
+	 * against 440 refusals.  Gating that on the debug bit hid it rather
+	 * than fixing it: the harness runs with the bit on, so the next run
+	 * that splits would flood the guest's console again.
+	 */
+	if (parent->bref.keybits > 0 &&
 	    (keybits >= parent->bref.keybits ||
 	     key < parent->bref.key ||
 	     key > parent->bref.key +
@@ -3817,12 +3822,6 @@ hammer2_chain_create_indirect(hammer2_chain_t *parent, hammer2_key_t create_key,
 		    (long long)parent->bref.key, parent->bref.keybits, create_bits,
 		    ncount, count, keybits, (long long)key);
 	}
-
-	/*
-	 * Normalize the key for the radix being represented, keeping the
-	 * high bits and throwing away the low bits.
-	 */
-	key &= ~(((hammer2_key_t)1 << keybits) - 1);
 
 	/* Ok, create our new indirect block. */
 	bzero(&dummy, sizeof(dummy));
