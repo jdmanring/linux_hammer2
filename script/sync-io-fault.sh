@@ -216,6 +216,15 @@ echo 2 > $fs/verbose
 # would inject nothing, and every check below would pass on I/O that never
 # failed.
 [ "$(cat $fs/probability)" = 100 ] || { echo "ctl-failed: probability did not take"; exit 0; }
+# The count of injections comes from the TRACE, not from `times`.  `times`
+# decrements in should_fail_ex before fail_dump, but fail_dump is suppressed
+# for FAULT_NOWARN allocations, and a bio submitted with REQ_NOWAIT carries it,
+# so the counter can move without a line and a line can appear for a call the
+# counter did not charge.  `dmesg -C` clears the ring so the trace below counts
+# only this window.  Measured 2026-08-26 in the sibling: a run that counted an
+# injection without either the trace or the module's own log line had not
+# reached the code it named.
+dmesg -C
 before=$(cat $fs/times)
 echo "io-range $lo $hi"
 echo "require-readback $(cat $fs/require-start) $(cat $fs/require-end)"
@@ -230,8 +239,12 @@ after=$(cat $fs/times 2>/dev/null)
 # Disarm before anything else is read, so the postmortem is not faulted too.
 disarm
 
-echo "injected $(( ${before:-0} - ${after:-0} ))"
-echo "forcing-lines $(dmesg | grep -c 'FAULT_INJECTION: forcing')"
+cnt=$(( ${before:-0} - ${after:-0} ))
+echo "injected $cnt"
+# The trace is the count that matters: a forcing line with a hammer2 frame is
+# an injection in the port, and it is what the checks below read.
+fl=$(dmesg | grep -c 'FAULT_INJECTION: forcing')
+echo "forcing-lines $fl"
 echo "in-hammer2 $(dmesg | grep -A40 'FAULT_INJECTION: forcing' | grep -c 'hammer2')"
 dmesg | grep -A10 'FAULT_INJECTION: forcing' | grep -E 'hammer2' | head -4 | sed 's/^/  trace: /'
 
@@ -281,9 +294,11 @@ check() {
 
 # The injection is the instrument.  Zero injected means the run measured
 # nothing and every check below would pass on I/O that never failed.
-inj=$(val injected)
-[ "${inj:-0}" -gt 0 ] 2>/dev/null
-check "the fault was injected" $? "${inj:-none} bio failure(s); the device flag AND the attributes are both required"
+inj=$(val injected); fl=$(val forcing-lines)
+# The trace is the authority: `times` can move without a line and a line can
+# appear without the counter moving, so the count is the FORCING lines.
+[ "${fl:-0}" -gt 0 ] 2>/dev/null
+check "the fault was injected" $? "${fl:-none} forcing line(s), times moved ${inj:-none}; the device flag, the attributes AND require-end=ULONG_MAX are all required"
 
 # The trace is the landing proof: the count says a bio failed, and only the
 # trace says it failed in the port's own text.
