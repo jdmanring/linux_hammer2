@@ -342,21 +342,41 @@ done
 # now completes after the stop is read, so testing the bracket after the
 # unmount would read closed however well the interruption landed.
 echo "interrupt-bracket-open $bracket"
+# MEASURED 2026-10-14: the unmount is issued the instant a bracket opens, so
+# the stop lands wherever the pass happens to be, and the copy depth at the
+# stop is the one variable that separates a run that loses inodes from one
+# that converges: five runs read copied=4, 44, 88, 488, 549, and only the
+# deep one (549) lost 422 inodes. `H2_STOP_DEPTH` waits, bounded, for the
+# pass to reach that many copies past the phase-4a baseline before the
+# unmount, so a run can place the stop deep enough to reach the shortfall
+# instead of racing for it. 0 is the old behavior (stop at the first open).
+# The wait is on `syncthr: update inode`, the same counter copied is read
+# from, and it is bounded by H2_STOP_DEPTH_MS so a pass that never reaches
+# the depth stops anyway and says so.
+STOP_DEPTH=${H2_STOP_DEPTH:-0}
+STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-300}
+target=$(( u0 + STOP_DEPTH ))
+n=0
+while [ "$(klog 'syncthr: update inode')" -lt "$target" ]; do
+	[ $n -ge "$STOP_DEPTH_MS" ] && break
+	sleep 0.1; n=$((n + 1))
+done
+echo "interrupt-stop-depth $(( $(klog 'syncthr: update inode') - u0 )) wanted $STOP_DEPTH"
 # The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
 # the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive, because the
 # thread belongs to the pmp hammer2_pfsalloc() matched by cluster id, which is
 # the one created at the MASTER's mount (/mnt/h2c, /dev/vdb@CL). Unmounting
-# /mnt/h2c tears down the one element it mounts and stops that element's thread.
-#
-# The CL pmp is a TWO-element cluster and it owns TWO h2nod-CL threads, one per
-# element, which the 2026-10-13 probe measured (`start thread=2`, `thread=1`
-# after unmounting /mnt/h2c). The phase keeps /mnt/h2s mounted here, so the
-# second element's thread legitimately survives and the count goes 2 to 1, not
-# to 0. The reading is the DROP, so the count before the unmount is captured
-# and the check asserts one fewer after, which is what the topology supports.
-# The pass in flight completes either way: the thread reads STOP/FREEZE at loop
-# top and between deferred directories only, which is this phase's documented
-# contract, so didbreak is not a success condition here.
+# /mnt/h2c reaches the pmp's sync_thrs[]. MEASURED 2026-10-14: the guest starts
+# ONE h2nod-CL thread (phase 2's `starts one thread: 1`) and it SURVIVES this
+# unmount (`threads 1 to 1`, the post-unmount wait exhausting its 20 s). The
+# source says why: hammer2_thr_delete() has three callers (pfsdealloc from the
+# pfs-delete ioctl, pfsfree, pfsfree_scan from the device teardown) and umount
+# reaches none -- hammer2_unmount_helper() clears pmp->mp and decrements
+# mount_count. The phase keeps /mnt/h2s mounted, so the pmp is alive and its
+# thread is correct to run. The 2026-10-13 probe's `2 to 1` is a topology the
+# script does not have. The pass in flight completes either way: the thread
+# reads STOP/FREEZE at loop top and between deferred directories only, which is
+# this phase's documented contract, so didbreak is not a success condition.
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 t0=$(date +%s%N); timeout 60 umount /mnt/h2c; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
@@ -420,7 +440,7 @@ kill $KPID 2>/dev/null
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2DEBUG=$H2DEBUG H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 # What the guest half actually returned, before anything is inferred from
 # the readings below.  Measured 2026-10-13: a run whose ssh session dropped
@@ -499,9 +519,18 @@ grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -
 # carries one number and several of these decide it together (the stop's wait
 # and the thread count behind one verdict), and the guest's output file is
 # removed at exit, so a field not printed here is lost with the run.
-echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes)"
+echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-depth=$(val interrupt-stop-depth) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes)"
 b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
+# When the phase is asked to stop at a set depth, a run that stopped short of it
+# did not test the interruption at that depth, so the check reports where the
+# stop landed against what was asked. A run at the default depth 0 has nothing
+# to assert and skips it.
+sd=$(val interrupt-stop-depth)
+if [ "${H2_STOP_DEPTH:-0}" != 0 ]; then
+	want=$(printf '%s\n' "$sd" | sed 's/ wanted .*//')
+	[ "${want:-0}" -ge "${H2_STOP_DEPTH:-0}" ] 2>/dev/null; check "the stop landed at the requested depth" $? "${sd:-none} (wanted ${H2_STOP_DEPTH:-none})"
+fi
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads)
