@@ -11703,3 +11703,58 @@ The probe is kept as `script/` material when the phase is rewritten. What it
 establishes for the rewrite: the interrupt must act on the CL pmp
 (`/mnt/h2c`), not the slave's ROOT; there are two threads to account for, not
 one; and a stop that removes an element is not undone by a remount.
+
+## The join is where the backlog is copied, and it is a five-second window, 2026-10-13
+
+Phase 4's premise is refuted at the mechanism level, and the replacement is
+measured. A probe that joins a SLAVE element onto a master that already holds
+a written backlog, with the mask the script uses (`debug=0x8000`):
+
+    backlog-written updates=0 threads=0
+    === join the SLAVE from the other volume
+    pfs_create(CL): SUCCESS
+    joined  updates=1000 threads=1
+      t+3s  updates=3205
+      t+6s  updates=6002
+      t+9s  updates=6002      <- flat from here
+    final   updates=6002
+
+Three facts, each of which the phase needs:
+
+**The thread is created by the join.** `threads=0` with the backlog written
+and no SLAVE; `threads=1` the moment `pfs-create -t SLAVE` returns. The
+thread belongs to the pmp the joining element lands in, which
+`hammer2_pfsalloc()` matched by cluster id. Nothing before the join has a
+thread to interrupt.
+
+**The backlog is copied AT THE JOIN, in about five seconds.** 6002 update
+lines are emitted by t+6 s and none after. The copy is not deferred to a
+remount and does not depend on one; it is triggered by the element joining,
+and it runs immediately. The phase writes its second directory with the
+slave's ROOT unmounted and then remounts, waiting for the copy on the
+remount, which is why it never sees it: the copy is already over before the
+remount, and the remount's own passes are the 0.2 ms the phase has been
+timing.
+
+**The window is five seconds, not 200 microseconds.** A pass that carries
+6000 files takes seconds; the passes the phase brackets are 0.2 ms. So the
+interrupt the phase wants exists, it is at the join rather than the
+remount -- and a 10 ms poll lands inside it with room to spare, which is the
+opposite of the premise that the window must be widened.
+
+Two probe defects were made and fixed on the way, both the class this port's
+notes already record:
+
+* the first ran without `debug=`, so `hammer2_debug` was 0, every bracket and
+  update print was suppressed, and every count read 0. A probe written to a
+  shape the run does not use measures nothing; the script's own `insmod` line
+  carries `debug=$H2DEBUG` for exactly this reason.
+* before that, a probe reusing stale phase-4 images hit a leftover `/mnt/h2c/big`
+  and joined under a name that did not take, and a probe that skipped phase
+  1's LONE create ran one pmp richer than the script's, so its thread count
+  was 2 where the script reads 1.
+
+Each was caught by a reading disagreeing with an expectation and traced to the
+probe rather than the subject. The rule that would have caught all three
+sooner: run the probe against the same module knobs and the same guest state
+the harness uses, and state before the run what a zero would mean.
