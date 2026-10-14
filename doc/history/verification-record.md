@@ -12249,11 +12249,14 @@ same reading.
 ## crash_during_sync gets its reading, and three checks that threw away evidence, 2026-10-14
 
 P4's fifth criterion has no reading until this run. The `sync` cell of
-`script/crash-matrix.sh` cuts power once the guest reports a task inside the
-port's own flush path, rather than at a fixed time, so the crash lands during
-a synchronization flush rather than between two. For this port the detector
-catches the condition, power is cut inside the flush, and the port recovers
-clean:
+`script/crash-matrix.sh` cuts power once the guest reports a task blocked in
+the flush path (a D-state `sync` or the port's `h2nod` thread), rather than at
+a fixed time, so the crash lands while a flush is outstanding rather than
+between two of them. The task set is the signal, not a stack: the cell does
+not read `/proc/PID/stack`, so what is established is that a task in the
+flush path was blocked when the power went, not that it stood inside a
+hammer2 frame. For this port the detector catches the condition, power is cut
+with the flush outstanding, and the port recovers clean:
 
     == linux sync run 1
       sync-in-flight yes

@@ -1221,7 +1221,7 @@ things happens: the writing process is killed and the volume unmounted
 the newest valid header, which is a 64 KiB header write that reached
 the media only in part (`torn`), or it waits until the guest reports a
 task in the port's own flush path and then destroys the domain, so the
-crash lands during a synchronization flush rather than between two
+crash lands while a flush is outstanding rather than between two
 (`sync`, P4's crash-during-sync criterion). The `sync` cell's detector
 is one guest-side `ps` poll; a run whose poll never catches the task
 carries `miss=yes` and is counted as COULD-NOT-RUN rather than as a
