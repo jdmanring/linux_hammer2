@@ -11597,6 +11597,16 @@ its own action does not open.
 
 Not a fix: enlarging `NBIG2`. The copy is bounded by the write that produces it,
 so a larger directory makes a longer write and a longer copy in the same
-overlap. What would place the copy where the phase wants it is an instrument
-that interrupts the pass the write already produces -- the 1072.7 ms pass at
-464.7 s is reachable, and the corrected bracket condition now sees it.
+overlap, and the remount stays 0.2 ms.
+
+What a working phase 4 needs is a stop that reaches the thread's own pmp. The
+thread reads those flags at two points in its body -- the top-of-loop test at
+`hammer2_synchro.c:270` and the `hammer2_thr_break()` call at `:352`, between
+deferred directories -- and the setters are `hammer2_pfsfree_scan()` (device
+teardown), `hammer2_thr_freeze*()` (the remaster and freeze paths), and
+`pfs-delete`. Unmounting the slave's ROOT sets
+none of them on the master's pmp. `FIFREEZE` does not either: `hammer2_freeze_fs()`
+cancels `pmp->sync_work`, the Linux syncer, and leaves `sync_thrs[]` running.
+So the phase needs `pfs-delete` on the CL pfs, a remaster, or the teardown of the
+volume the CL pmp was created from -- and the pass to land it in is the 1072.7 ms
+one during `bigdir2`'s write, which the corrected bracket condition now sees.
