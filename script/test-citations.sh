@@ -136,6 +136,17 @@ fi
 # among checked ones inherits their credibility. Measured 2026-08-26: 20
 # citation-shaped tokens in doc/, 15 of them in rows this gate reads.
 #
+# DO NOT "fix" a stale-looking citation in doc/history/verification-record.md.
+# That file's header states its contract: a sentence there says what was true
+# at the commit it names and is not rewritten when the tree moves. Measured
+# 2026-10-13, 19 of its prose citations point at lines the tree has since
+# moved, and every one is correct as written because it records what was read
+# at the time -- an `addr2line` resolution against a build, a symbol's line on
+# the day a defect was found. Rewriting one falsifies the record of the
+# measurement the sections around it were reasoned from. A tool that checks
+# prose citations will flag all 19; that is the tool measuring the wrong
+# thing, not the file being wrong.
+#
 # The floor below exists because a broken counting pattern also prints zero
 # uncovered, which reads as "nothing uncovered" instead of "nothing asked".
 allcites=$(command grep -roE '`[A-Za-z0-9_./-]+\.(c|h|sh|md|txt|pl):[0-9]+' doc/ 2>/dev/null | wc -l | tr -d ' ')
