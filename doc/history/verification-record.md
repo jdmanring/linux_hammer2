@@ -12127,3 +12127,42 @@ Left open rather than guessed: which pointer in `hammer2_freemap_alloc()` is
 NULL after a failed freemap read, and whether the wedge is a consequence of
 that dereference or a second defect. The report's RIP and the two D-state
 stacks are the evidence for whoever takes it.
+
+## repeated_sync_cycles is met: eight cycles, 18 checks, 0 failed, 2026-10-14
+
+P4's fifth criterion has a reading. `sync-empty-base.sh` already ran unmount
+and remount cycles with a convergence reading at the end; the reading had
+never been taken at more than the default four, and the criterion asks for
+repeated cycles rather than one. Run with `H2_CYCLES=8`:
+
+    ok    an unmount left modified chains: 11 unmount reading(s), 0 with modified chains, expected fixed
+    ok    the thread copied the set to the slave element: 4002 inode update(s)
+    ok    a flush finds an empty base: 0 miss(es), expected fixed
+    ok    the chain check gives up, as the original log does: 0, expected fixed
+    ok    the device is marked in error: 0, expected fixed
+    ok    no pass reports an error: 0
+    ok    no kernel warning, BUG or UBSAN report: 0
+    ok    every mount is dropped: 0 left
+    ok    the module unloads: 1 of 1
+    ok    fsck_hammer2 exits 0 on repro-master.img: exit 0
+    ok    fsck_hammer2 exits 0 on repro-slave.img: exit 0
+    ok    the SLAVE converged to its MASTER, entry for entry and block for block:
+          slave/master by type: inode 5601/5601, data 5600/5600, dirent 5601/5601;
+          0 line(s) differ of 16802
+
+    sync-empty: 18 check(s), 0 failed
+
+The 11 unmount readings are the cycles: eight of its own plus the run's
+set-up and teardown, every one leaving `0 modified` chains, and the
+convergence read off the media at the end with the population asserted
+first, so an empty fingerprint cannot read as agreement. The device tie
+matches (guest `3af2517b` against the image's own fsid), the set is 4000
+files, both volumes are `fsck_hammer2` clean, and the module unloads.
+
+So `repeated_sync_cycles` is met. What it measures, stated plainly: repeated
+unmount and remount of a slave's volume against a master whose mount stays
+up, with the cluster thread carrying the set each time and the media
+compared at the end. It does not measure repeated cycles *of the
+interruption* -- that is `interrupt_resume`, which has its own reading and
+its own open defect (the 42-inode loss). The two are separate criteria and
+this entry is about the first.
