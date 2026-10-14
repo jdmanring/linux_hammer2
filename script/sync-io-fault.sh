@@ -159,15 +159,28 @@ fs=/sys/kernel/debug/fail_make_request
 # guest-wide while armed (probability 100 plus the device flag), so a run that
 # returned between arming and disarming would leave the next run's I/O failing
 # at random and the reading would be about this run's residue.
+# require-end resets to ULONG_MAX, NOT zero.  fail_stacktrace() seeds
+# `found = (require_start == 0 && require_end == ULONG_MAX)`, so writing 0
+# there makes the stack filter reject every bio and the fault can never fire.
+# Measured 2026-10-14: with require-end 0 and every other gate open, 82 calls
+# to should_fail_bio injected nothing; with ULONG_MAX the next run injected on
+# the first bio.  A disarm that writes 0 therefore poisons the guest for every
+# later run, which is what the first version of this script did.
 disarm() {
 	echo 0 > $fs/probability 2>/dev/null
 	echo 0 > $fs/times 2>/dev/null
 	echo 0 > $fs/verbose 2>/dev/null
 	echo 0 > /sys/block/vdb/make-it-fail 2>/dev/null
 	echo 0 > $fs/require-start 2>/dev/null
-	echo 0 > $fs/require-end 2>/dev/null
+	echo 0xffffffffffffffff > $fs/require-end 2>/dev/null
 }
 trap disarm 0
+# Start from the reset state, because a previous run (or a previous version of
+# this script) can leave require-end 0, which silently disables the fault.
+echo 0 > $fs/probability
+echo 0 > $fs/times
+echo 0 > $fs/require-start
+echo 0xffffffffffffffff > $fs/require-end
 off=$1; size=$2
 base=$(cat /sys/module/hammer2/sections/.text 2>/dev/null)
 [ -n "$off" ] && [ -n "$size" ] && [ -n "$base" ] || { echo "ctl-failed: no offset, size or text base"; exit 0; }
@@ -186,6 +199,12 @@ echo 1 > /sys/block/vdb/make-it-fail 2>/dev/null || { echo "ctl-failed: no make-
 	echo "ctl-failed: make-it-fail did not take (it takes an integer, not Y/N)"; exit 0; }
 echo "$lo" > $fs/require-start  || { echo "ctl-failed"; exit 0; }
 echo "$hi" > $fs/require-end    || { echo "ctl-failed"; exit 0; }
+# The armed range is read back and must be the range intended: require-end 0
+# or a value below require-start makes fail_stacktrace reject every bio, and
+# the run would report injected 0 with the fault seemingly armed.
+rb_lo=$(cat $fs/require-start); rb_hi=$(cat $fs/require-end)
+[ "$rb_lo" = "$lo" ] && [ "$rb_hi" = "$hi" ] && [ "$rb_hi" != "0x0000000000000000" ] || {
+	echo "ctl-failed: range did not take ($rb_lo..$rb_hi, wanted $lo..$hi)"; exit 0; }
 echo 100 > $fs/probability || { echo "ctl-failed: probability"; exit 0; }
 echo 1 > $fs/interval    || { echo "ctl-failed: interval"; exit 0; }
 # A few failures, not a flood: the question is how the port takes ONE failed
