@@ -11920,3 +11920,42 @@ reading disagrees with a derivation, suspect the derivation, then the probe's
 setup, and only then the subject -- and get a reading cheap enough to run
 again, because the expensive run is what made four wrong conclusions look
 final.
+
+## The interruption lands and the slave loses 42 inodes, 2026-10-14
+
+The rewritten phase 4 issues its stop inside an open pass, and the check that
+failed in every previous run passes:
+
+    ok    the unmount lands inside an open pass: bracket open, rc 0
+    ok    the copy had begun before the unmount: rc 0
+    ok    the interrupted pass was copying: 44 inode updates
+    ok    the unmount waits for the pass rather than returning at once: 4707 ms
+
+That is the first reading of P4's interruption at all, and it is 31 checks 4
+failed. The four are not the harness:
+
+    FAIL  the stop reaches the CL pmp and leaves no thread: 1 left after umount /mnt/h2c
+    FAIL  nothing the thread copied is scrapped unwritten: 10 chains scrapped
+    FAIL  the slave holds what the master holds: master (40042 inode, 40103 data,
+          40038 dirent), slave (40000 inode, 40061 data, 40038 dirent)
+    FAIL  the slave's PFS matches the master's entry for entry and block for
+          block: 40035 file entries; 84 lines differ of 120179
+
+**The defect: an interrupted pass loses what it had copied.** The slave is 42
+inodes and 42 data blocks short of its master, 10 chains the thread copied are
+scrapped unwritten, and 84 fingerprint lines differ. Before this rewrite the
+same phase reported convergence met (`0 lines differ of 120179`) -- but that
+reading was from a run whose stop never landed, so the pass it measured was the
+uninterrupted one. The convergence the phase has been reporting all day was the
+convergence of a pass nobody interrupted.
+
+What is not yet established, and is left open rather than guessed: which of the
+10 scrapped chains accounts for the 42 missing inodes, and whether the thread
+count reading 1 is the same defect or the check's 20-second wait expiring
+before a pass drains. The first probe (idle state) read the thread going to 0
+on `umount /mnt/h2c`; this run (mid-pass) reads 1, so the two states differ and
+that difference is the next thing to measure.
+
+The run is kept whole at `cluster-interrupt-lands-20261014.log`, with its two
+images beside it, and the script that produced it at hash `fdee0f93`, verified
+unchanged across the run.
