@@ -11998,3 +11998,37 @@ against the point in the pass the stop arrives -- the phase can place that
 now, which it could not before. The mechanism is the root's `modify_tid`
 advancing before its subtree is complete, so the question a fix has to answer
 is what makes the root's tid advance past a partial copy.
+
+## Two kernel fault injectors, two parsers, and one silent no-op, 2026-10-14
+
+Writing `sync-io-fault.sh` cost one run to a defect the shell cannot see, and
+it is worth recording because the same shape will meet the next person.
+
+`failslab`'s attributes take `Y`/`N`. The block layer's
+`/sys/block/<dev>/make-it-fail` takes an INTEGER:
+
+    ssize_t part_fail_store(struct device *dev, struct device_attribute *attr,
+                            const char *buf, size_t count)
+    {
+            int i;
+            if (count > 0 && sscanf(buf, "%d", &i) > 0) {
+                    if (i)
+                            bdev_set_flag(dev_to_bdev(dev), BD_MAKE_IT_FAIL);
+            ...
+    }                                               (block/genhd.c:1189-1200)
+
+`echo Y > /sys/block/vdb/make-it-fail` therefore parses to nothing, sets no
+flag, and **returns 0**. The write reports success and does nothing. Measured
+on the guest: after `echo Y` the attribute reads back 0; after `echo 1` it
+reads back 1; `failslab`'s `task-filter` takes `Y` and reads back `Y`.
+
+The first run of the instrument wrote `Y`, injected 0 failures, and every
+check after that passed on I/O that never failed. What caught it was the
+instrument's own fake-pass check -- `[ "${inj:-0}" -gt 0 ]` -- which is the
+reason that check exists. The fix writes `1` and reads the flag back, because
+a silent no-op is indistinguishable from a working arm by its exit status.
+
+The rule, which is the same one the day's probe defects produced: when a
+kernel interface is written to configure something, read back what it
+configured, because two interfaces next to each other in the same
+documentation can take different encodings and one of them fails silently.
