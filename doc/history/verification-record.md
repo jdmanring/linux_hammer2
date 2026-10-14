@@ -11527,3 +11527,28 @@ does (one pass over a threshold length, printed with its brackets), or make
 the backlog larger than the write's own window so the copy outlasts it. What
 would not work is a larger `NBIG2` alone: the copy is bounded by the write,
 which is bounded by the same value.
+
+## The interrupt probe's condition is corrected, 2026-10-13
+
+`cluster-sync.sh`'s phase-4 bracket wait now tests the DELTA of the two pass
+counters since the loop began, not their cumulative values:
+
+    opened=$(klog 'sync_slaves pfs CL')
+    closed0=$(klog 'sync_slaves error')
+    ...
+    if [ "$o" -gt "$opened" ] && [ $(( o - opened )) -gt $(( c - closed0 )) ]
+
+The old condition was `o > opened && o > c`, and the second clause compared a
+CL-only open count against a close count that every pfs shares, so it was false
+at every poll (182 closes to 176 opens). It is verified against the run's own
+log rather than argued: replayed over the completing run, the corrected
+condition sees the one 1072.7 ms pass open in 107 of the 140 ten-millisecond
+polls inside it, where the old one saw none in the 8200 polls across the remount
+window.
+
+That correction makes the probe honest, and the honest reading is that the
+window is still not where the phase expects it. The pass the corrected probe
+would find is at 464.7 s, inside `bigdir2`'s write; the remount's passes are
+0.2 ms, so the corrected probe correctly reports no open pass there too. The
+probe now measures what it claims; what it measures says the phase's premise
+needs revisiting, which is a design decision rather than a defect to patch.

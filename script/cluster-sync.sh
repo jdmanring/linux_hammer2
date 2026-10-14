@@ -311,11 +311,25 @@ echo "interrupt-begun $([ "$(klog 'syncthr: update inode')" -gt "$u0" ]; echo $?
 # Wait for a pass bracket to open, then unmount the slave's ROOT mount, the
 # one whose unmount stopped the thread in phase 1.
 opened=$(klog 'sync_slaves pfs CL')
+closed0=$(klog 'sync_slaves error')
 n=0
 bracket=1
 while [ $n -lt 1200 ]; do
+	# An open pass means a CL open with no close after it, which is the
+	# DELTA of the two counters since this loop started -- not `o > c` on
+	# their cumulative values. The close line is shared: phase 1's LONE
+	# pfs closes with `sync_slaves error` too (its opens are
+	# `sync_slaves pfs LONE`), and a pass that errors closes with no
+	# matching open, so the run carries 182 closes to 176 opens and `o > c`
+	# was false at every poll: the loop ran out its 1200 iterations and the
+	# check reported `bracket open, rc 1` however long the pass was.
+	# Measured on the 2026-10-13 run, this condition sees the one 1072.7 ms
+	# pass at 464.7 s (107 of 140 polls inside it) where the old one saw
+	# none of the 8200 polls across the remount window.
 	o=$(klog 'sync_slaves pfs CL'); c=$(klog 'sync_slaves error')
-	if [ "$o" -gt "$opened" ] && [ "$o" -gt "$c" ]; then bracket=0; break; fi
+	if [ "$o" -gt "$opened" ] && [ $(( o - opened )) -gt $(( c - closed0 )) ]; then
+		bracket=0; break
+	fi
 	sleep 0.01; n=$((n + 1))
 done
 # The bracket state is read here, before the unmount: the pass that is open
