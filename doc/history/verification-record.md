@@ -11811,3 +11811,48 @@ is that pass, and it lasts seconds. The interruption is: write the backlog,
 join the SLAVE, wait for the open count to increment, and stop while it is
 still the same open -- with the stop reaching the CL pmp, which unmounting the
 slave's ROOT does not do.
+
+## A stop waits for the pass to drain, so `interrupt_resume` measures something narrower than "mid-pass", 2026-10-13
+
+The rewrite probe issued the stop at the only moment that matters -- inside the
+8-second join pass -- and the copy ran to completion past it:
+
+    backlog: P=0 T=0
+    joined:  P=1 T=1
+    mid-pass: P=1 T=1 U=2068      <- the copy is 1/3 done
+    stop-issued rc=0              <- umount /mnt/h2c, mid-pass
+    after-stop: T=1 didbreak=0 P=1 U=5005
+    late: T=1 didbreak=0 P=1 U=6002   <- finished anyway
+
+`didbreak` never prints and every file is copied. The reading is not a probe
+failure; it is `hammer2_thr_break()` doing what the script's own phase-4
+comment already said -- "a stop arriving during a pass waits for the current
+scan to finish: what the interruption costs is the rest of the pass it landed
+in, and the window is the pass's own length" -- which the probe confirmed
+rather than discovered. The
+thread reads `HAMMER2_THREAD_STOP`/`FREEZE` at two points only: the top of the
+outer loop (`hammer2_synchro.c:270`) and, via `hammer2_thr_break()`, between
+deferred directories (`:352`). Neither is inside `hammer2_sync_slaves()`, so a
+stop arriving during a scan is seen when that scan **finishes**, and the pass
+that was running completes.
+
+What this means for the criterion. P4's `interrupt_resume` cannot mean "stop
+the thread in the middle of a pass" in this tree, because nothing can: the
+stop is honored at pass boundaries, by design, in carried code that upstream
+shares. What the phase can measure, and what the earlier 30-second idle pass
+test already measured, is a stop **observed at the next read point** and the
+resume that follows it -- with the stop reaching the thread's own pmp, which
+the current phase's unmount does not do.
+
+So the rewrite's target narrows to the honest one:
+
+* the stop reaches the CL pmp (`umount /mnt/h2c`, measured: T 1 to 0);
+* the thread is observed stopping at the pass boundary the design allows;
+* whatever the pass copied before the boundary is on the slave's media, and
+  nothing copied is scrapped unwritten;
+* the remount resumes it and the slave converges to its master.
+
+Whether "the pass completed before the stop was seen" is a defect or the
+documented contract is a question for the criterion's wording, not for this
+run. The plan's step 5 (issue a stop mid-pass) is replaced by this: issue the
+stop, then read the boundary. The design note in `proposals/` carries it.
