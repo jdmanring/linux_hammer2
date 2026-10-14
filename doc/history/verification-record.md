@@ -11610,3 +11610,41 @@ cancels `pmp->sync_work`, the Linux syncer, and leaves `sync_thrs[]` running.
 So the phase needs `pfs-delete` on the CL pfs, a remaster, or the teardown of the
 volume the CL pmp was created from -- and the pass to land it in is the 1072.7 ms
 one during `bigdir2`'s write, which the corrected bracket condition now sees.
+
+## The interruption reading moves with the run, so the "2" was not the probe's limit, 2026-10-13
+
+The entry above explains `the interrupted pass was copying: 2 inode updates`
+as a fixed limit of the print -- `syncthr: update inode` gated on `focus`, so
+it counts focus inodes rather than every chain the thread copies. The next run
+refutes that as the whole explanation:
+
+| run | `interrupt-copied` (`interrupt pass was copying`) |
+| --- | --- |
+| the first phase-4 completion | 2 inode updates |
+| the run after the bracket fix | **62 inode updates** |
+
+Same source, same phase, same sizes (`NBIG`/`NBIG2` 20000). The count moved
+by a factor of thirty, so it is not a constant the print imposes; whatever
+`focus` is at the moment of each copy decides how many are counted, and that
+varies run to run. What the entry above says about the gate is true -- the
+print IS gated on `focus` -- and what it concludes from it is not: a gated
+print is a noisy count, not a fixed one, and a reading of 2 in one run is not
+evidence of a count of 2 in another.
+
+The correct statement: `interrupt-copied` is not a copy count in either run,
+and its value carries no fact about how much the thread copied. The copy
+count has to come from somewhere that is not gated, or from the media at the
+end, which is what the fingerprint does. The convergence reading is unaffected
+-- the slave matches the master entry for entry in both runs -- and so is the
+bracket finding, which the same run confirms: `the unmount lands inside an
+open pass: bracket open, rc 1` still fails, for the reason the entry two above
+gives.
+
+That the bracket still reads 1 after the fix is worth stating plainly. The fix
+was verified by replaying the FIRST run's log, and the replay showed the
+corrected condition would see that run's one long pass. This run has no pass
+open when the probe looks, which is a different thing and not a refutation:
+the probe now measures what it claims, and what it reports here is that this
+run's copy did not happen in a pass the probe could bracket. The offline
+replay answered whether the condition can fire; this run answers whether it
+fires in this run's timing, and it does not.
