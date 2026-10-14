@@ -12398,10 +12398,26 @@ shortfall comes from -- is still open. What the counters settled is only the
 negative: no failed copy. The log is kept whole at
 `cluster-hang-20261014-101039.klog`.
 
-The open list for the shortfall is now narrower. A failed copy is out. What
-remains is that the pass reaches and stamps the element root's `modify_tid`
-while the slave's media is short, which is either a copy that succeeds into
-memory and does not reach media before the stamp, or a scan that stamps more
-than it copied. The counters for the first would sit at the flush; the second
-is a `modify_tid` write on a chain whose children were not all inserted, which
-is where the next instrument belongs.
+**The open question is not new, and this entry first mis-stated it.** It
+belongs to the 2026-10-11 section "The missing inodes were copied and then
+destroyed by a root pass", which reached the mechanism with the carried
+per-chain prints under `HAMMER2_SYNCHRO_DEBUG` (`debug=0x8001`): the thread
+destroyed exactly the missing inodes on the slave, in one pass that scanned
+only the PFS root, through `hammer2_sync_destroy()` and its `n < 0` arm, which
+is taken when the master's scan does not return a chain the slave holds though
+the master's own media has it. In that run the thread inserted none of the
+large directory's inodes at all, and the slave's media held 19960 of them
+anyway, so the writer that put them there is not the sync thread's insert path.
+What the stamp does is conceal the destroy: the pass that destroyed the 81
+completed without error and stamped the root, so no later pass retries. Naming
+the destroy as the mechanism also settles which earlier readings were
+outside-in: "the root is stamped past its subtree" is the consequence, not the
+cause.
+
+So the next instrument is not at the stamp, which this entry first named, but
+at the two things the 2026-10-11 entry left open and did not resolve: the
+`hammer2_sync_insert()` path is not what puts the large directory on the
+slave, and a dirent key does not encode its parent, so the directory the
+destroyed inodes belonged to is read from the fingerprint's own walk. The
+per-chain prints that produced that entry are carried and need only the debug
+mask; the counters added here stay for the negative they establish.
