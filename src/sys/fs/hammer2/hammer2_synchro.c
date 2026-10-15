@@ -533,6 +533,8 @@ static int h2dbg_file_ngt;	/* XXX Linux */
 static int h2dbg_act_tried;	/* XXX Linux */
 static int h2dbg_act_failed;	/* XXX Linux */
 static int h2dbg_act_last;	/* XXX Linux: the most recent non-zero nerror */
+static int h2dbg_destroy_newer;	/* XXX Linux: n < 0 where the chain is newer */
+static int h2dbg_destroy_enoent;	/* XXX Linux: the sweep arm's destroys */
 
 static
 int
@@ -772,9 +774,36 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			/*
 			 * Delete extranious local data.  This will
 			 * automatically advance the chain.
+			 *
+			 * XXX Linux: two ways reach this arm and only one is a
+			 * deletion.  The compare arm takes it when the local
+			 * chain sorts before the master's focus, which is a real
+			 * leftover.  The entry above takes it when the XOP scan
+			 * has ended but the local scan has not, and that
+			 * end-of-scan is not always an end: hammer2_xop_scanall()
+			 * feeds NULL with error 0 when hammer2_inode_chain()
+			 * cannot resolve the element, and
+			 * hammer2_xop_collect() reads the all-NULL cluster as
+			 * ENOENT exactly as it reads a completed scan.  The
+			 * pass then deletes every key the element still holds,
+			 * including keys the master holds.
+			 *
+			 * Kept apart on the 2026-10-14 run: `n<0` was 0 for every
+			 * pass up to the one that lost keys, which then read
+			 * `n<0 66` with `n>0` flat at 57, and the 66 destroys
+			 * landed in 3 ms, one per key, with no compare between
+			 * them.  A compare arm cannot produce that shape.
 			 */
-			nerror = hammer2_sync_destroy(thr, &parent, &chain,
-						      0, idx);
+			if (merror == HAMMER2_ERROR_ENOENT) {
+				atomic_add_int(&h2dbg_destroy_enoent, 1);
+			}
+			if (chain->bref.modify_tid > sync_tid) {
+				atomic_add_int(&h2dbg_destroy_newer, 1);
+				nerror = HAMMER2_ERROR_EINPROGRESS;
+			} else {
+				nerror = hammer2_sync_destroy(thr, &parent,
+							      &chain, 0, idx);
+			}
 		} else if (n == 0 && chain->bref.modify_tid !=
 				     focus->bref.modify_tid) {
 			/*
@@ -928,9 +957,10 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * `hammer2_sync_slaves()` call on the PFS root.
 	 */
 	if (hammer2_debug & 0x8000) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d\n",
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d newer %d sweep %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
-		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last);
+		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,
+		    h2dbg_destroy_newer, h2dbg_destroy_enoent);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);
