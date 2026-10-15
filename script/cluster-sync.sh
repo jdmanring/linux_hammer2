@@ -377,16 +377,24 @@ echo "interrupt-bracket-open $bracket"
 copied() { grep -c 'syncthr: update inode' $K; }
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-3000}
+# The target is the ABSOLUTE copy count, not a delta from where the bracket was
+# found. MEASURED 2026-10-15: the bracket wait above already lets the pass copy,
+# so a delta of 2 sampled its baseline at `copied` 3 to 5 and stopped at 5 to 7,
+# which is past the value the failure needs. The runs that fail are the ones
+# interrupted at a copy count of 2, so the count is what is asked for.
 a0=$(copied); a0=${a0:-0}
-target=$(( a0 + STOP_DEPTH ))
+target=${STOP_DEPTH:-0}
 n=0
 while [ "${STOP_DEPTH:-0}" != 0 ]; do
 	a=$(copied); a=${a:-0}
 	[ "$a" -ge "$target" ] && break
+	# A pass that has already copied past the target cannot be held for it; the
+	# unmount would land after the pass, which is a different test.
+	[ "$a" -gt "$target" ] && break
 	[ $n -ge "$STOP_DEPTH_MS" ] && break
-	sleep 0.1; n=$((n + 1))
+	sleep 0.05; n=$((n + 1))
 done
-echo "interrupt-stop-depth $(( $(copied) - a0 )) wanted $STOP_DEPTH"
+echo "interrupt-stop-copied $(copied) from $a0 wanted $STOP_DEPTH"
 echo "interrupt-stop-acted $(acted)"
 # The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
 # the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive, because the
@@ -574,17 +582,19 @@ grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -
 # carries one number and several of these decide it together (the stop's wait
 # and the thread count behind one verdict), and the guest's output file is
 # removed at exit, so a field not printed here is lost with the run.
-echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-depth=$(val interrupt-stop-depth) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes) resume-updates=$(val resume-updates) resume-settled=$(val resume-settled) resume-conv-s=$(val resume-converge-seconds)"
+echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-copied=$(val interrupt-stop-copied) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes) resume-updates=$(val resume-updates) resume-settled=$(val resume-settled) resume-conv-s=$(val resume-converge-seconds)"
 b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 # When the phase is asked to stop at a set depth, a run that stopped short of it
 # did not test the interruption at that depth, so the check reports where the
 # stop landed against what was asked. A run at the default depth 0 has nothing
 # to assert and skips it.
-sd=$(val interrupt-stop-depth)
+sd=$(val interrupt-stop-copied)
 if [ "${H2_STOP_DEPTH:-0}" != 0 ]; then
-	want=$(printf '%s\n' "$sd" | sed 's/ wanted .*//')
-	[ "${want:-0}" -ge "${H2_STOP_DEPTH:-0}" ] 2>/dev/null; check "the stop landed at the requested depth" $? "${sd:-none} (wanted ${H2_STOP_DEPTH:-none})"
+	# The stop landed if the copy count at the unmount reached what was asked.
+	# The value is `N from M wanted W`, so the field before " from" is taken.
+	got=$(printf '%s\n' "$sd" | awk '{print $1}')
+	[ "${got:-0}" -ge "${H2_STOP_DEPTH:-0}" ] 2>/dev/null; check "the stop landed at the requested copy count" $? "${sd:-none} (wanted ${H2_STOP_DEPTH:-none})"
 fi
 c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
