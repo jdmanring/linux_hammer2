@@ -359,24 +359,35 @@ echo "interrupt-bracket-open $bracket"
 # so a run can place the stop deep enough to reach the shortfall instead of
 # racing for it. 0 is the old behavior (stop at the first open bracket).
 #
-# The wait is on the `acted` field of the pass's `filekeys` line, the count of
-# actions over the scan's switch, NOT on `syncthr: update inode`. MEASURED
-# 2026-10-14: the update line prints only for an inode's final marking, so it
-# barely moves during a pass -- a wait for 400 of them exhausted its 30 s bound
-# at 28. `acted` moves per action and is the field that tracks the copy.
-acted() { grep -o 'acted [0-9]*' $K | tail -1 | cut -d' ' -f2; }
+# The wait is on the COPY COUNT, `syncthr: update inode`, and not on `acted`.
+#
+# MEASURED 2026-10-14, two separate findings.
+#
+# First, the failure is deterministic on the copy count at the interruption, and
+# on nothing else. Every run that was interrupted with `copied=2` lost inodes
+# (132, 80 and 2 lines on the three that reached it) and every run at `copied`
+# 5, 12, 28, 44, 47, 51 or 85 converged. The resumed thread made 0 updates in
+# all of them, so the outcome is set by the pass the unmount lands in and can be
+# placed by waiting for that pass to reach a chosen count.
+#
+# Second, `acted` cannot place it. That field is on the pass's `filekeys` line,
+# which prints only when the pass ends, so during the pass it does not move and
+# the wait below exhausted its bound without advancing. The update line prints
+# during the pass, which is what this wait needs.
+copied() { grep -c 'syncthr: update inode' $K; }
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-300}
-a0=$(acted); a0=${a0:-0}
+a0=$(copied); a0=${a0:-0}
 target=$(( a0 + STOP_DEPTH ))
 n=0
 while [ "${STOP_DEPTH:-0}" != 0 ]; do
-	a=$(acted); a=${a:-0}
+	a=$(copied); a=${a:-0}
 	[ "$a" -ge "$target" ] && break
 	[ $n -ge "$STOP_DEPTH_MS" ] && break
 	sleep 0.1; n=$((n + 1))
 done
-echo "interrupt-stop-depth $(( $(acted) - a0 )) wanted $STOP_DEPTH"
+echo "interrupt-stop-depth $(( $(copied) - a0 )) wanted $STOP_DEPTH"
+echo "interrupt-stop-acted $(acted)"
 # The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
 # the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive, because the
 # thread belongs to the pmp hammer2_pfsalloc() matched by cluster id, which is
