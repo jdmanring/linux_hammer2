@@ -195,7 +195,40 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 		 * is not what the copies are waiting on, and it costs a full tree
 		 * walk per pass. What the gate hides is that this helper never
 		 * writes, which the error below would otherwise report.
+		 *
+		 * MEASURED 2026-10-15, and this is the defect the entry above
+		 * could not see. The copies the pass makes ARE flagged, on the
+		 * chains below this one, and the flag on the ELEMENT ROOT is
+		 * cleared by the descending flush before the pass ends. So the
+		 * gate is false while the element still holds unwritten copies,
+		 * the helper returns without flushing, and the unmount scraps
+		 * them: `cluster-run-20261015-014720` lost
+		 * `1.00000000000012fe` and its own log shows
+		 * `scrapping unflushed inode 00000000000012fe/0 flags 00006243`
+		 * (MODIFIED | UPDATE) after
+		 * `sync_flush: clindex 1 chain ... not flagged (00046102)` on
+		 * every pass. The measure that separates the runs is
+		 * `hammer2_unmount_scrap()`'s count: 0 on 38 converged runs, 7
+		 * and 8 on the two that differed.
+		 *
+		 * The fix is upstream's own ordering, from
+		 * hammer2_xop_inode_flush() in the carried hammer2_flush.c: when
+		 * the chain is flagged it re-marks the topology above it BEFORE
+		 * flushing, because "due to flush partitioning the chain topology
+		 * above the inode's chain may no longer be flagged". This port's
+		 * helper only re-marked the parent AFTER a flush it never ran.
+		 * Re-marking first is what makes the gate reachable: the walk
+		 * sets ONFLUSH up to the volume root, and the flush then descends
+		 * from the element root through the inodes to the copies.
+		 *
+		 * The re-mark is unconditional and the flush stays gated, which
+		 * keeps the earlier revert's finding intact: an idle pass has no
+		 * flagged child, so the walk costs a lock and the flush does not
+		 * run. Only a pass whose element still holds unwritten copies
+		 * reaches hammer2_flush().
 		 */
+		if (chain->parent)
+			hammer2_sync_setflush(chain->parent);
 		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
 			/*
 			 * XXX Linux: the return value was DISCARDED, so a flush
@@ -218,13 +251,21 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 				    "flush error %08x\n",
 				    thr->clindex, chain, error);
 			}
-			if (chain->parent)
-				hammer2_sync_setflush(chain->parent);
+			/*
+			 * XXX Linux: the re-mark that stood here moved above the
+			 * gate.  Upstream re-marks the parent BEFORE the flush
+			 * (hammer2_xop_inode_flush()), and doing it only after
+			 * meant the gate was never reachable on the pass that
+			 * needed it: the element root read unflagged, the flush
+			 * was skipped, and the re-mark then ran on a chain that
+			 * had just been written.  Nothing is lost by the move,
+			 * since the walk is idempotent and the flush itself
+			 * re-marks whatever it dirties.
+			 */
 		} else if (hammer2_debug & 0x8000) {
 			kprintf("sync_flush: clindex %d chain %p not flagged "
 			    "(%08x)\n", thr->clindex, chain, chain->flags);
-		}
-		hammer2_chain_unlock(chain);
+		}		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
 	} else if (hammer2_debug & 0x8000) {
 		kprintf("sync_flush: clindex %d no element chain\n",
