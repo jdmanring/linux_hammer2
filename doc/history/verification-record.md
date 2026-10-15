@@ -12704,7 +12704,7 @@ chain->bref.keybits)`, so the local scan does move past a kept chain by key.
 Either the reverted arm's `advance_local` did not reach `chain_next` on the path
 the log shows, or the XOP cursor re-offers a focus the local scan has passed,
 and which it is decides the fix: if the local scan skips the kept chain, the
-change is the neighbour arm's shape; if the XOP re-offers it, the guard needs the
+change is the neighbor arm's shape; if the XOP re-offers it, the guard needs the
 per-key record the deferral list was built to carry. Both readings are in the
 2026-10-13 log (`cluster-hang-20261013-203945.klog`, 180 keys repeated 69 times,
 an EAGAIN every pass), and neither has been read against `chain_next`'s key
