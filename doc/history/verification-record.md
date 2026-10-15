@@ -13766,3 +13766,39 @@ same arm, an advance with a stale XOP stalls, and the deferral push blocks.
 State: the change is reverted (`ee8ec17`), the tree carries only the newer-arm
 keep, and the producer of the sweep -- `hammer2_xop_scanall()` reporting completion
 for an element it could not resolve -- is proven and unfixed.
+
+## The local scan has no element, and that is the producer, 2026-10-15
+
+The per-iteration print found it on its first run, and it is neither of the two
+mechanisms the day argued over. From `cluster-run-20261015-043115.klog`:
+
+    sweepstate it 1 chain 0000000000000000/-1 localp 0000000000000000 masterp 00000000830f2c6b n 1 focus 0000000000000400/1
+    sweepstate it 2 chain 0000000000000000/-1 localp 0000000000000000 masterp 00000000830f2c6b n 1 focus 0000000000000401/1
+    ...
+
+**`localp` is NULL on every turn.** `hammer2_inode_chain(ip, idx, ...)` at
+`hammer2_synchro.c:691` returns NULL for the SLAVE's own element, so the local scan
+is empty for the whole pass: `chain` is NULL every iteration, the loop takes its
+`chain == NULL` insert arm on every key, and the master's focus walks 0x400, 0x401,
+0x402 upward while the pass inserts against a NULL parent.
+
+The line above it is the whole defect:
+
+    parent = hammer2_inode_chain(ip, idx, RESOLVE_ALWAYS | RESOLVE_SHARED);
+    hammer2_inode_unlock(ip);
+    chain = hammer2_chain_lookup(&parent, &key_next, ...);   <- parent may be NULL
+
+Upstream does not test for it. This is the same producer on the other side of the
+scan: an element that cannot be resolved is read as an empty element, and the pass
+then acts on a view with no local side at all -- here inserting every master key,
+on the master side of the earlier finding destroying every local key. Both are the
+same question asked of two different elements.
+
+The guard added returns EINPROGRESS and leaves the element unsynchronized, which is
+the disposition the function's own NULL-chain note already describes, rather than
+acting on a view that has no local side. EINPROGRESS and not EAGAIN, so the pass
+ends and the thread sleeps instead of re-entering on an element that stays
+unresolved.
+
+Run under it: `cluster-run-20261015-043115.klog` itself is the failing reading with
+10 checks failed and 2 lines differing, so the probe has its before.
