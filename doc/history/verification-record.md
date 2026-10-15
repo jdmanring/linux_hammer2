@@ -13585,3 +13585,33 @@ on, which this is.
 
 What the run does give is the arm, on a failure, by key. That is the durable
 result of the day.
+
+## The destroying arm's focus is non-NULL, so n < 0 means the scan jumped a key, 2026-10-15
+
+A narrowing that holds whichever run confirms it, read from the code.
+
+The action switch tests the sweep first:
+
+    if (chain && merror == HAMMER2_ERROR_ENOENT) { n = -1; focus = NULL; }
+    else if (chain == NULL) { n = 1; ... }
+    else { focus = xop->head.cluster.focus; n = hammer2_chain_cmp(chain, focus); }
+
+So the compare arm -- the one that fires when `sweep` reads 0 and `kept` does not
+account for the destroyed keys, which is what a failing run shows -- is reached
+only with `merror != HAMMER2_ERROR_ENOENT`. `merror` there is
+`hammer2_xop_collect()`'s return, and `hammer2_cluster_check()` returns EIO rather
+than leaving the cluster without a focus once its quorum agrees. On that arm,
+therefore, **`focus` is non-NULL**, and `hammer2_chain_cmp(chain, focus)`
+returning -1 means the master's focus key is **higher** than the local chain's
+key. It does not mean the master lacks the key.
+
+That is a third mechanism, distinct from the two the day tested: the sweep is the
+scan *ending* at the local key, the newer guard is a chain *newer* than the
+snapshot, and this is the scan **jumping over** a live key partway through and
+presenting a higher one. The local chain's key was never offered.
+
+The instrument is a print on the destroy, `destroy focus <key>/<type> local
+<key>/<type>` (`fbe67ad`), and it is a reading either way: a focus key above the
+destroyed key confirms the jump, and a focus equal to or overlapping the local
+key refutes this entry and puts the defect back on the compare itself. Both
+outcomes are recorded here so the print is not read as confirming a theory.
