@@ -214,6 +214,17 @@ at the end of each pass the thread flushes its own element from the
 slave's PFS root down through every inode and flags the path above it.
 DragonFly does not need this, its slave being a PFS no one mounts.
 
+The order of those two steps is load-bearing and was wrong until
+2026-10-15. The flush is gated on the element root's own flags, and the
+descending flush clears the root's `ONFLUSH` before the pass ends, so a
+pass whose copies are still unwritten below the root reads the root as
+unflagged. Re-marking the path only after the flush therefore never made
+the gate reachable: the flush was skipped and the unmount scrapped the
+copies. Upstream's `hammer2_xop_inode_flush()` re-marks the topology above
+the inode before flushing, for the same reason, and the port now does the
+same. The flush itself stays gated, so an idle pass costs a lock rather
+than a tree walk.
+
 A file write goes to every element in turn and the folio completes at the
 last. Upstream lets the first element to complete answer for the others,
 which in its parallel threads is a race the slower elements usually still
