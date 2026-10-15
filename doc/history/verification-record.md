@@ -9810,6 +9810,46 @@ the two together and does not attribute the livelock to this branch alone. The
 branch is not exonerated by this; see the entry below, which measures it
 directly and finds it deadly for a different reason.
 
+## The pass runs two turns and ends at the end of both scans, measured 2026-10-14
+
+The `iters` and `exit` fields answer the question the one-action reading left
+open, and the answer is not an error. From the run's own log,
+`cluster-run-20261014-205625.klog`, consecutive passes read:
+
+    filekeys ... acted 9769   ... iters 2 exit 1
+    filekeys ... acted 9770   ... iters 2 exit 1
+    ...
+    filekeys ... acted 9776   ... iters 2 exit 1
+    filekeys ... acted 17532  ... iters 7757  exit 1
+    filekeys ... acted 65368  ... iters 20041 exit 1
+
+`exit 1` is the loop-head break `chain == NULL && merror == HAMMER2_ERROR_ENOENT`,
+which the code comments describe as both scans done. So the one-action passes are
+not an error (exit 2 never appears) and not the deferral threshold (exit 3 never
+appears). They run **two turns**: the first performs one action and advances,
+the second finds the local scan exhausted and the XOP scan exhausted together
+and leaves. One action, then both ends.
+
+That is the shape of the failing run as well: its passes creep `acted` by one and
+its `START_SCAN` carries the NULL sentinel, which is the same thing seen from the
+start of the pass rather than the end.
+
+The same run also contains passes of 7757 and 20041 turns, which walk the tree
+and move `acted` by thousands. So one run holds both shapes, and the pass is not
+uniformly shallow: it starts shallow and deepens as the tree it is offered
+grows. A run that loses inodes is one where the interruption and the two resumed
+passes all land among the two-turn passes, before the deep pass arrives.
+
+Two things follow, and neither is a fix yet:
+
+1. The two-turn pass is the object to explain. Both scans ending together after
+   one action means the two cursors were at the last key each had, so the
+   question is why the slave's element and the master's scan each present one
+   key at that moment -- whether the element genuinely holds one chain then, or
+   the scan is not shown the rest.
+2. `sweep` is 0 again on this run, which converged. It remains 0 on every run
+   that converged and has still never been read on a run that failed.
+
 ## The failing run's passes are one action deep, and its local scan starts empty, 2026-10-14
 
 Read from the failing run's own saved log, `cluster-run-20261014-171347.klog`,
