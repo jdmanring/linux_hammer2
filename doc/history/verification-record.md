@@ -14047,11 +14047,12 @@ Four runs after the flush-gate fix, `scrapped` as the measure:
     attempt 1   scrapped 0   0 lines differ of 120179
     attempt 2   scrapped 0   0 lines differ of 120179
     attempt 3   scrapped 0   4 lines differ of 120179
-    attempt 4   still running
+    attempt 4   scrapped 0   0 lines differ of 120179
 
-The fix does what it was written to do: `scrapped` is 0 in all three, against 7
+The fix does what it was written to do: `scrapped` is 0 in all four, against 7
 and 8 on the two runs that differed before it, and attempt 3 carries 137 passes,
-137 walks, 0 flush errors. **The fingerprint can still differ with nothing
+137 walks, 0 flush errors. The fingerprint converged in three of the four, so the
+defect is reduced and not closed. **The fingerprint can still differ with nothing
 scrapped, so the scrap count was necessary and is not sufficient.** The 1.0.27
 row's claim that the fix is verified is corrected by this entry.
 
