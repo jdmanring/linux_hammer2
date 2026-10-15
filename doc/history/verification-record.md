@@ -12624,3 +12624,41 @@ What the runs settle: copy depth does not decide the shortfall; the destroy arm
 fires 40 to 41 times in both a losing and a converging run; no copy returns an
 error. What the next run adds: the destroyed keys against the missing keys, from
 one run, now that its kernel log survives it.
+
+## The destroyed keys are exactly the missing keys, confirmed from the media, 2026-10-14
+
+The run kept its kernel log and the comparison the previous entry could not
+make is made, from the run's own destroy keys against the images' fingerprints:
+
+    destroy rec ... 1.0000000000000a24      <- first
+    ...
+    destroy rec ... 1.0000000000000a65      <- last, 66 keys in one 3 ms burst
+    filekeys n<0 66 ...
+    slave (39976 inode, 40037 data) against master (40042 inode, 40103 data)
+
+    missing inode keys (on the master, absent on the slave), read from the
+    two saved images with hammer2 -v show:
+    0x0a24 0x0a25 ... 0x0a64 0x0a65         <- the same 66 keys
+
+Sixty-six destroyed, sixty-six missing, and the keys are the same set, read
+independently: the destroy log from the kernel, the fingerprints from the
+media. This is the defect the 2026-10-11 entry named, reproduced with both
+sides' keys, which that entry could not do because no run had kept them
+together.
+
+The mechanism the keys point at: `hammer2_sync_destroy()` is taken on the
+`n < 0` arm, which fires when the master's XOP scan returns a focus the slave's
+chain compares below, meaning the scan did not return a chain the slave holds.
+The master's media holds all 66, so at that moment the master's scan did not
+see inodes its own media now has. The destroy is not spurious on its own terms:
+given a scan that omitted those keys, removing the slave's copies of them is
+what the compare instructs. The defect is upstream of the destroy, in a scan
+that omits keys the master holds -- and the 2026-10-12 entry "the destroy guard
+keeps the frontend's chains" is the guard that was added for exactly this, so
+whether it is still in the tree and still covers this path is the next thing to
+read, from the source rather than a run.
+
+What is now settled, by keys: the destroy arm removes exactly the inodes that
+go missing, so the loss is the destroy, and the destroy follows from a master
+scan that did not return those keys. What is open: why the scan omits them, and
+whether the guard reaches this path.
