@@ -12662,3 +12662,49 @@ What is now settled, by keys: the destroy arm removes exactly the inodes that
 go missing, so the loss is the destroy, and the destroy follows from a master
 scan that did not return those keys. What is open: why the scan omits them, and
 whether the guard reaches this path.
+
+## The shortfall's cause, end to end: the destroy arm, and the guard that fixed it was reverted for a fixable reason, 2026-10-14
+
+The chain is complete and every link is a measurement or a commit:
+
+1. The interrupted pass destroys slave chains on the `n < 0` arm of the action
+   switch, `hammer2_sync_destroy()`, which the record's 2026-10-11 entry reached
+   from the per-chain prints and this session confirmed by keys: 66 destroyed,
+   and the same 66 keys on the master and absent from the slave.
+2. `n < 0` means the master's XOP scan did not return a chain the slave holds,
+   though the master's own media holds it. The destroy is what the compare
+   instructs; the defect is upstream, in a scan that omits keys the master
+   holds.
+3. A guard was written for exactly this: `a2804b9`, 2026-10-12, "A sync pass
+   keeps a slave chain newer than the state it copies",
+   `if (n < 0 && chain->bref.modify_tid > sync_tid)` keep it and leave the inode
+   unstamped. Its own reading: destroys inside the write 82 to 0, the slave's
+   inode, data and dirent equal to the master's, 0 lines differing.
+4. The guard was reverted: `4a11bb1`, 2026-10-13, "The slave-newer branch
+   livelocked the pass and is reverted". The reason is mechanical and specific:
+   it set `advance_local = 1` and not `advance_xop`, where every other arm of
+   the same switch advances both, so the master's scan stayed on the same focus
+   and the next iteration compared the same pair -- 180 keys repeated 69 times
+   against 1001 distinct without it.
+
+So the loss is the destroy, the guard that stops the destroy worked, and it was
+reverted for one line: it advanced one side of the scan and not the other. The
+next change has a shape and two readings already measured -- the 2026-10-12
+guard's (destroys 82 to 0, the slave converged) and the revert's livelock
+(180 keys repeated 69 times against 1001 distinct) -- so a corrected guard is
+tested against both rather than a new number.
+
+**It is not written, and the reason is the one piece not yet settled.** Keeping
+the newer slave chain and advancing both sides is the obvious correction, but
+whether it clears the livelock cannot be read off the diff: the kept chain
+stays in the tree, so the local `chain_next()` may return it again and the same
+pair may compare forever, which is the livelock's own shape reached a different
+way. The reverted arm advanced the local scan only, and the fix must advance the
+XOP past the kept key without re-offering it, which is a statement about
+`hammer2_chain_next()` and the XOP cursor that this session has not read. Writing
+it here would be a seventh mechanism stacked on the six the record already
+refuted in this arm, so it is left as the next piece of reading: how the local
+scan skips a chain it keeps without the XOP re-offering it, which decides whether
+the guard is a two-line change or needs the per-key record the deferral list was
+built to carry.
+
