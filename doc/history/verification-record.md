@@ -13392,3 +13392,47 @@ loss with the guard's condition false: **the compare destroys a chain the master
 holds because the master's own scan did not present its key.** The master's scan
 omitting master-present keys is the mechanism, and it is in the scan, not the
 destroy.
+
+## The sweep counter was blind, and the sweep is the arm after all, 2026-10-14
+
+Two entries above retract the end-of-scan sweep as the key-losing arm, both on
+the strength of a counter reading 0. The counter could not read what it was named
+for, and the geometry of the keys says the sweep is the arm.
+
+The counter was incremented inside the `n < 0` arm on
+`merror == HAMMER2_ERROR_ENOENT`. The sweep is the arm **above** that one:
+
+    if (chain && merror == HAMMER2_ERROR_ENOENT) { n = -1; focus = NULL; }
+    ...
+    if (n < 0) { ... }
+
+The sweep sets `n = -1` and enters the `n < 0` arm with `merror` still ENOENT, so
+the test inside the arm is true -- but only because the sweep put it there. Every
+entry into that arm from the sweep is counted, and the value is the sweep's count,
+not a discriminator. A counter can only separate two paths if its test is true on
+one and false on the other; this one was true on both whenever a sweep had
+occurred, and 0 whenever none had. It is moved to the sweep itself, so it now
+reads 0 only when the sweep does not run.
+
+**The geometry is what settles the arm.** The two dirents the slave lost are the
+root's entries for "set" and "bigdir", and a directory's dirent key is the hash
+of the filename:
+
+    dirent "set"    key 952c5ca9c9858001
+    dirent "bigdir" key b77f7af1cd8e8001
+
+Both are near the top of the 64-bit space, and a scan offers keys in ascending
+order, so they are the **last** keys a scan presents. For the compare to have
+destroyed them as `n < 0`, the master's focus would have to have been at a key
+above them, and there is none: they are the top of the space. The only way the
+arm runs on them with a `-1` is `n` forced to `-1` -- the sweep, which fires when
+the local scan still holds chains and the XOP scan has ended. The compare cannot
+produce it for the highest keys in the tree.
+
+So the original reading was right and both retractions were wrong, and their
+shared cause is one instrument: `sweep` reported 0 because it was placed where it
+could not distinguish, and two entries treated its 0 as a finding about the
+sweep rather than about the counter. Restored: the loss is the end-of-scan sweep
+destroying chains the master holds, and the question is why the XOP scan ends
+while the local scan still holds them -- which is the master-side scan omitting
+master-present keys, as the entry above this one concludes from the same dirents.

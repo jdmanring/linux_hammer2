@@ -534,7 +534,6 @@ static int h2dbg_act_tried;	/* XXX Linux */
 static int h2dbg_act_failed;	/* XXX Linux */
 static int h2dbg_act_last;	/* XXX Linux: the most recent non-zero nerror */
 static int h2dbg_newer_kept;	/* XXX Linux: n < 0 with the chain newer, kept */
-static int h2dbg_destroy_dead;	/* XXX Linux: unreachable, the sweep path sets n = -1, not merror */
 
 static
 int
@@ -736,7 +735,20 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			/*
 			 * If we have local chains but the XOP scan is done,
 			 * the chains need to be deleted.
+			 *
+			 * XXX Linux: this is the sweep, and the counter for it
+			 * belongs here.  It was first placed in the `n < 0` arm
+			 * on `merror == HAMMER2_ERROR_ENOENT`, which this path
+			 * never reaches with: the arm runs with the same merror,
+			 * so the test was true only if the counter was already in
+			 * the arm, and the arm is entered from here with `n` set
+			 * rather than from the compare.  The counter read 0 in
+			 * every run, and two entries were written retracting the
+			 * sweep on the strength of that 0.  Counted here, where
+			 * the sweep decides to delete, it can only be 0 if the
+			 * sweep does not run.
 			 */
+			++swept;
 			n = -1;
 			focus = NULL;
 		} else if (chain == NULL) {
@@ -1014,12 +1026,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * `hammer2_sync_slaves()` call on the PFS root.
 	 */
 	if (hammer2_debug & 0x8000) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d dead %d iters %d exit %d\n",
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d sweep %d iters %d exit %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
 		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,
-		    h2dbg_newer_kept, h2dbg_destroy_dead, iters,
+		    h2dbg_newer_kept, swept, iters,
 		    exit_reason);
-		kprintf("filekeys this pass swept %d\n", swept);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);
