@@ -741,6 +741,16 @@ if [ "${ndiff:-0}" != 0 ]; then
 	cp "$MASTER" "$FIXDIR/cluster-diff-master-$stamp.img" 2>/dev/null
 	cp "$SLAVE" "$FIXDIR/cluster-diff-slave-$stamp.img" 2>/dev/null
 	diff "$W/fp.master" "$W/fp.slave" > "$FIXDIR/cluster-diff-fp-$stamp.txt" 2>/dev/null
+	# The direction is the first thing a differing run is read for, and the two
+	# counts are not in the check's message. `diff master slave` marks a line
+	# only the MASTER holds with `<` and one only the SLAVE holds with `>`, so
+	# the two counts say which side is short without opening the media.
+	# MEASURED 2026-10-15: a differing run's direction had to be inferred from
+	# the inode totals because the counts were not printed and its images were
+	# gone by then.
+	monly=$(diff "$W/fp.master" "$W/fp.slave" | grep -c '^<')
+	snly=$(diff "$W/fp.master" "$W/fp.slave" | grep -c '^>')
+	echo "  diff  $monly line(s) only on the master, $snly only on the slave, of $(wc -l < "$W/fp.master")"
 	echo "  kept  the differing run's images and fingerprint beside the kernel log as cluster-diff-*-$stamp.*"
 fi
 
