@@ -823,14 +823,42 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * hammer2_vfs_sync_pmp 122 s in, where the pass's own
 			 * `START_SCAN` had run 222 s earlier.
 			 */
-			if (merror == HAMMER2_ERROR_ENOENT) {
-				atomic_add_int(&h2dbg_destroy_enoent, 1);
-				++swept;
-			} else if (chain->bref.modify_tid > sync_tid) {
+			if (chain->bref.modify_tid > sync_tid) {
+				/*
+				 * XXX Linux: the chain was written on this element
+				 * after the master state this pass copies, so the
+				 * master's scan, which reflects that state, has no
+				 * focus for its key.  The compare reads the key as
+				 * one the master no longer holds and destroys it,
+				 * and the key is then gone from the slave while the
+				 * master still holds it: measured on
+				 * `cluster-run-20261014-171347`, 66 keys destroyed
+				 * and the same 66 present on the master and absent
+				 * from the slave.
+				 *
+				 * Keep it and advance BOTH cursors.  Every other arm
+				 * of this switch advances both, and this one must
+				 * too: the earlier guard set only `advance_local`,
+				 * which walked the local scan away from a master
+				 * cursor that stayed put, and the change that dropped
+				 * the advance altogether re-entered this arm on the
+				 * same chain forever and hung the pass.  With both
+				 * set the two walk forward together and the loop ends
+				 * when either exhausts.
+				 *
+				 * EINPROGRESS so the pass does not stamp the element:
+				 * the kept chain is not yet known to match the master,
+				 * and a stamp here would call it synchronized against a
+				 * state this pass never compared it to.
+				 */
 				atomic_add_int(&h2dbg_destroy_newer, 1);
+				advance_local = 1;
+				advance_xop = 1;
+				nerror = HAMMER2_ERROR_EINPROGRESS;
+			} else {
+				nerror = hammer2_sync_destroy(thr, &parent,
+							      &chain, 0, idx);
 			}
-			nerror = hammer2_sync_destroy(thr, &parent, &chain,
-						      0, idx);
 		} else if (n == 0 && chain->bref.modify_tid !=
 				     focus->bref.modify_tid) {
 			/*
