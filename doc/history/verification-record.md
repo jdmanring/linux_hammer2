@@ -12696,15 +12696,19 @@ tested against both rather than a new number.
 
 **It is not written, and the reason is the one piece not yet settled.** Keeping
 the newer slave chain and advancing both sides is the obvious correction, but
-whether it clears the livelock cannot be read off the diff: the kept chain
-stays in the tree, so the local `chain_next()` may return it again and the same
-pair may compare forever, which is the livelock's own shape reached a different
-way. The reverted arm advanced the local scan only, and the fix must advance the
-XOP past the kept key without re-offering it, which is a statement about
-`hammer2_chain_next()` and the XOP cursor that this session has not read. Writing
-it here would be a seventh mechanism stacked on the six the record already
-refuted in this arm, so it is left as the next piece of reading: how the local
-scan skips a chain it keeps without the XOP re-offering it, which decides whether
-the guard is a two-line change or needs the per-key record the deferral list was
-built to carry.
+the revert's own stated cause does not survive reading the code, so the livelock
+is not yet explained well enough to fix blind. `4a11bb1` says the guard "advanced
+the local scan alone" and the master's scan "stayed on the same focus"; but
+`hammer2_chain_next()` computes `key_beg = chain->bref.key + (1 <<
+chain->bref.keybits)`, so the local scan does move past a kept chain by key.
+Either the reverted arm's `advance_local` did not reach `chain_next` on the path
+the log shows, or the XOP cursor re-offers a focus the local scan has passed,
+and which it is decides the fix: if the local scan skips the kept chain, the
+change is the neighbour arm's shape; if the XOP re-offers it, the guard needs the
+per-key record the deferral list was built to carry. Both readings are in the
+2026-10-13 log (`cluster-hang-20261013-203945.klog`, 180 keys repeated 69 times,
+an EAGAIN every pass), and neither has been read against `chain_next`'s key
+arithmetic. Writing the guard here would be a seventh mechanism stacked on the
+six the record already refuted in this arm, so it is left as the next piece of
+reading rather than a guess.
 
