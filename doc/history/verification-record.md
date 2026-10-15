@@ -13048,3 +13048,35 @@ again. The list above is the 2026-10-13 edition and is superseded by this one.
 16. The failing pass runs two loop turns and leaves through the loop-head break
     for both scans done (`iters 2 exit 1`), not an error and not the deferral
     threshold. It inserts one key, stamps the inode, and returns.
+
+## The next measurement on `interrupt_resume`, and what each outcome decides, 2026-10-14
+
+Written as a decision procedure so the step after this one is read off a result
+rather than chosen. The subject is the two-turn pass: one key inserted, the
+inode stamped, both scans reported done.
+
+Instrument, one run: count, per pass, how many chains the XOP scan offered
+against how many the local scan held. Two counters and one print, no theory. The
+counters go beside `iters`/`exit` on the `filekeys` line.
+
+- **XOP offers many, local holds one, loop leaves after two turns.** The two
+  cursors are not being compared: the pass is taking the loop-head break while
+  the XOP still has chains, which means `merror` read ENOENT with a focus still
+  pending. That is the end-of-scan arm, and item 9 of the list above is what to
+  read it with.
+- **XOP offers one, local holds one, and the pass returns.** The element
+  genuinely holds one key and the master's scan agrees on it. Then the pass is
+  correct and the defect is *upstream of it*: whatever decides the element has
+  only one key to offer. That is the 4000-file reading (item 15) and the next
+  subject is the element's own construction, not the scan.
+- **XOP offers one and the local scan holds many.** The scan is not walking the
+  local tree; the defect is in `hammer2_chain_lookup`/`chain_next` on this
+  element, and item 5's radix narrowing is the first thing to re-read.
+
+Stop condition: the run converges with the thread settled and 0 lines
+differing. That closes `interrupt_resume`; no further mechanism is needed,
+because the criterion is final-state convergence, not an explanation.
+
+Do not run the deep-stop knob to reach the failure. Item 14: it cannot place a
+shallow stop. The failure is reached by the default (stop at the first open
+bracket) repeated, which is why it is intermittent.
