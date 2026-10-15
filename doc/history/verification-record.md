@@ -13705,3 +13705,35 @@ converged run's swept-and-repaired dirents) rather than against a guess.
 
 This supersedes the earlier `swept`-conditioned stamp, which is not re-added: it
 cannot repair damage already done.
+
+## The scanall fix removes the sweep and hangs the pass, 2026-10-15
+
+The fix at `a673837` (`error = HAMMER2_ERROR_EIO` when
+`hammer2_inode_chain()` cannot resolve the element) does what it says and the run
+shows the cost.
+
+Measured on `cluster-hang-20261015-040639.klog`:
+
+- `hammer2: NULL parent` reads **0**. The hprintf the fix removed is gone, so the
+  path it guards was taken at least once and no longer feeds a NULL at error 0.
+- The pass does not sweep. Every `sync_slaves error` line reads 0 and the run
+  reports no fingerprint at all: it hung past `H2_RUN_TIMEOUT=1800`.
+- The 297 `NULL parent)` lines in the same log are `sync_setflush`'s own message,
+  a different string from the `NULL parent` this fix removed. The harness printed
+  them as the fix's counter and they measure nothing about it; the count is
+  `grep -c 'NULL parent'`, which matches both.
+
+So the sweep is gone and the pass spins instead. With `merror = EIO` the loop
+leaves the sweep and re-enters at the `chain == NULL` insert arm every iteration,
+inserting the key the element did not offer, and never reaches the loop-head break
+because `merror` is neither 0 nor ENOENT. That is upstream's arm, reached by a
+condition this port now creates; the same class as the 2026-10-13 livelock, and the
+same reason it must not ship.
+
+The lesson this run re-proves, twice in one harness: **an empty result is not a
+pass.** Attempts 3 and 4 of the verification produced no `lines differ` line --
+one hung, one was COULD-NOT-RUN on a guest the hung run left dirty -- and the
+harness counted both as converged because its test was `! grep -q '0 lines
+differ'` rather than `grep -q '0 lines differ'`. The fix is reverted; the next
+change has to handle the unresolvable-element case without leaving the loop with a
+live local scan and a non-ENOENT `merror`.
