@@ -9855,11 +9855,14 @@ Two consequences:
    XOP static, and no advance at all hangs outright.
 2. A fix for the sweep path has to move both cursors. The candidate, not yet
    tested, is the guard with `advance_local = 1` and `advance_xop = 1`, plus a
-   re-seed of the XOP to the local scan's key on that path
-   (`xop->collect_key = chain->bref.key`) so the next `hammer2_xop_collect()`
-   returns a focus for a key the local scan is holding and the pair is compared
-   instead of swept. `advance_xop` with no new collect re-reads the same focus,
-   which is the 180-key stall; the re-seed is what gives it a new one.
+   restart of the XOP scan from the local scan's key on that path. The scan's
+   position is `xop->key_beg` (`hammer2_synchro.c:669`, set to
+   `HAMMER2_KEY_MIN` at start), not `collect_key`, which only tells the
+   collector which FIFO entries are behind; so the restart is a retire and a
+   fresh start with `key_beg = chain->bref.key`. That is what returns a focus for
+   a key the local scan is holding and turns the sweep back into the compare it
+   was meant to be. `advance_xop` with no new scan re-reads the same focus, which
+   is the 180-key stall; the restart is what gives it a new one.
 
 ## Reverting the branch restores the key advance, 2026-10-13
 
