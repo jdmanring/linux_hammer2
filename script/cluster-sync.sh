@@ -426,11 +426,30 @@ echo "resume-remount-rc $rrc"
 echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
 c0=$(klog 'sync_slaves pfs CL')
-n=0
-while [ $n -lt 300 ]; do
-	[ "$(klog 'sync_slaves pfs CL')" -ge $(( c0 + 2 )) ] && break
+# The resume has to be given until the thread stops making progress, not a
+# fixed pass count. MEASURED 2026-10-14: a pass handles ONE deferred inode when
+# its local scan is empty (filekeys iters 2 exit 1, acted +1), and the failing
+# run's log shows 58 such passes in 70 ms walking inodes 0x438 down to 0x400,
+# each stamping one. Two passes therefore drains two inodes of a backlog that
+# can be hundreds, and the run then measured a race rather than convergence.
+# The wait below is for the update-inode count to stop advancing across a
+# settle window, bounded, and the observed convergence time is printed.
+u0=$(klog 'syncthr: update inode')
+n=0; last=-1; still=0
+while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
+	u=$(klog 'syncthr: update inode')
+	if [ "$u" = "$last" ]; then
+		still=$(( still + 1 ))
+	else
+		still=0
+		last=$u
+	fi
+	[ "$still" -ge 10 ] && break
 	sleep 1; n=$((n + 1))
 done
+echo "resume-converge-seconds $n"
+echo "resume-updates $(( $(klog 'syncthr: update inode') - u0 ))"
+echo "resume-settled $still"
 echo "resume-seconds $n"
 echo "resume-passes $(( $(klog 'sync_slaves pfs CL') - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
@@ -544,7 +563,7 @@ grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -
 # carries one number and several of these decide it together (the stop's wait
 # and the thread count behind one verdict), and the guest's output file is
 # removed at exit, so a field not printed here is lost with the run.
-echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-depth=$(val interrupt-stop-depth) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes)"
+echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-depth=$(val interrupt-stop-depth) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes) resume-updates=$(val resume-updates) resume-settled=$(val resume-settled) resume-conv-s=$(val resume-converge-seconds)"
 b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 # When the phase is asked to stop at a set depth, a run that stopped short of it
@@ -576,6 +595,12 @@ check "the CL pmp's thread survives the unmount and the resume passes" $? "threa
 # satisfy; the boundary the design allows is the thread count above.
 a=$(val resume-thread); [ "${a:-0}" = 1 ]; check "the remount starts its thread again" $? "${a:-none}"
 p=$(val resume-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the resumed thread completes two passes" $? "${p:-0} in $(val resume-seconds) s"
+# The resume must be given until the thread stops advancing, not a fixed pass
+# count. A pass whose local scan is empty handles one inode, so a backlog of
+# hundreds needs hundreds of passes and a two-pass wait measured a race. The
+# settle counter is 10 consecutive seconds with no new update-inode line; the
+# bound is H2_RESUME_SECS (300) and a run that hits it did not converge.
+s=$(val resume-settled); [ "${s:-0}" -ge 10 ] 2>/dev/null; check "the resumed thread stops advancing rather than being cut off" $? "settled ${s:-none} s after $(( $(val resume-updates) )) updates in $(val resume-converge-seconds) s"
 if [ $(( H2DEBUG & 1 )) = 1 ]; then
 	w=$(val write-destroys); [ "${w:-1}" = 0 ]; check "no pass destroys on the slave while the master is being written" $? "${w:-none} destroy(s) inside the write"
 fi
