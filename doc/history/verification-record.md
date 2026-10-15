@@ -12581,3 +12581,46 @@ pass, which the same raw line's `copied` field now reports and this run's own
 
 So the thread reading is closed and the shortfall reading stays open, and the
 two are separable by the `copied` field the host prints.
+
+## Copy depth is not the lever, and the destroy count tracks the shortfall, 2026-10-14
+
+A run of phase 4 that copied almost nothing lost inodes, which refutes the
+depth theory and puts the destroy arm back at the center:
+
+    raw phase4 copied=2 stop-depth=0 wanted 400 ... actions=filekeys n<0 40
+        n==0 5 n>0 57 acted 1695 failed 0
+    FAIL  the slave holds what the master holds: master (40042 inode, ...),
+          slave (40002 inode, ...)
+    FAIL  the slave's PFS matches the master's ... 80 lines differ of 120179
+
+**Copy depth is refuted.** The five earlier runs read copied=4, 44, 88, 488,
+549 and only the deep one lost inodes, which made depth the candidate. This run
+stopped at copied=2 -- the shallowest of all -- and lost 40 inodes. So the depth
+the pass reached is not what decides the shortfall; the deep run's loss and the
+shallow runs' convergence were coincidence, and the depth knob built for it
+controls nothing about the outcome. The knob and its check stay: they report
+where the stop landed, which is a reading, and the check caught a shallow run
+that would otherwise have passed as a depth test.
+
+**The destroy count tracks the shortfall.** This run reads `n<0 40` and the
+slave is short by exactly 40 (40042 - 40002). The destroy-keys run read `n<0 41`
+and converged. So the count of `hammer2_sync_destroy()` firings is not fixed and
+not by itself a loss: 41 destroys with no loss, 40 destroys with 40 lost. That
+is the shape of a race in the compare the destroy arm is taken on -- `n < 0`
+means the master's scan did not return a chain the slave holds -- and whether
+the keys destroyed this run are the keys missing is the comparison the next run
+makes, which the previous run could not because its kernel log was discarded.
+
+**The harness discarded that evidence, and did it for every completed run.** The
+guest's kernel log is copied off only when the run hangs (`rc=124`); a run that
+finished with the slave short exited and `detach_disks` released the guest with
+its `filekeys`, destroy keys and update lines still on it. The log is copied
+before the disks are released now, on the normal path, so a short-slave run
+keeps what it produced. This is the same defect the session has been fixing in
+its checks -- a run that throws away the reading it exists to collect -- in the
+harness's own teardown.
+
+What the runs settle: copy depth does not decide the shortfall; the destroy arm
+fires 40 to 41 times in both a losing and a converging run; no copy returns an
+error. What the next run adds: the destroyed keys against the missing keys, from
+one run, now that its kernel log survives it.
