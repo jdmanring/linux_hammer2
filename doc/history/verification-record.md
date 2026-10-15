@@ -13861,3 +13861,90 @@ non-NULL focus exists on the compare arm as that entry predicted, and the sweep
 (`focus` NULL) is a separate, later state. Both are reachable, and which one a
 failing run takes is still unread because **four consecutive runs have converged**:
 0 lines differing in all four, no failure to read the print on.
+
+## The loss is the unmount scrapping unwritten copies, and the interruption is not involved, 2026-10-15
+
+`interrupt_resume` has been attributed to the synchronization thread's sweep arm
+for two days. The evidence says the direction is wrong, and it was already in the
+harness output of every run.
+
+**The counter that separates the two classes is `scrapped`, and it separates
+perfectly.** `hammer2_unmount_scrap()` prints one `scrapping unflushed` line per
+chain parked with `UPDATE` or `MODIFIED` after the final unmount sync
+(`hammer2_vfsops.c:835`), and the harness has read it as
+`nothing the thread copied is scrapped unwritten` on every run. Across the 40 runs
+whose harness logs are on this machine:
+
+    scrapped 0   38 runs   0 lines differ
+    scrapped 7    1 run    2 lines differ   cluster-run-20261015-014720
+    scrapped 8    1 run    2 lines differ   cluster-run-20261015-043115
+
+No other reading separates them. `sweep` on the destroying pass runs 0 to 127,
+`destroy rec` 0 to 6, `kept` 0 to 126, and every one of those ranges is spanned by
+runs on both sides of the verdict. `scrapped` is not: it is zero on every
+converged run and non-zero on both failing ones.
+
+**The scrapped chains are the lost keys.** The failing run lost `1.00000000000012fe`
+and two root dirents. Its scrap list in its own kernel log:
+
+    scrapping unflushed data     0000000000000000/16  flags 00004243
+    scrapping unflushed inode    00000000000012fe/0   flags 00006243
+    scrapping unflushed indirect 0000000000001280/7   flags 00046102
+    scrapping unflushed indirect 0000000000001000/12  flags 00046102
+
+`0x6243 & HAMMER2_CHAIN_FLUSH_MASK` is `MODIFIED | UPDATE`: the inode was copied
+into the slave's element, was never written, and the unmount discarded it. The
+second failing run's list is the same shape one inode lower (`0000000000000996`).
+
+**The failing runs did not need the interruption.** `cluster-run-20261015-043115`
+reports `bracket=1 begun=1 copied=0`: the phase-4 checks that require an open pass
+bracket and a copy in flight both FAILED, so nothing was interrupted, and the run
+still differed by two lines. Whatever produces the loss does so on a run the
+interruption never touched. The earlier failing run is the same shape at the other
+end: its stop landed at `copied=6`, 6 updates between the remount and the unmount,
+and the destroy it is blamed on had already happened 30 s earlier inside the bigdir
+write.
+
+**The destroy is not the cause and it is upstream's intended delete.** All 31
+destroys in the 12 runs that printed them carry `destroy focus 0000000000000000/-1`,
+which is the state the sweep arm sets (`focus = NULL; n = -1`,
+`hammer2_synchro.c:741-742`) falling into the shared `n < 0` arm. Zero destroys in
+any kept log carry a non-NULL focus, so the compare arm has never produced one.
+The sweep is reached when the element's own scan ends early while the local scan
+still has chains (`chain && merror == ENOENT`), and a converged run performs it
+too: `cluster-run-20261015-060330` destroys `4.952c5ca9c9858001` and
+`4.b77f7af1cd8e8001`, the same two root dirents, and converges. Those two run 31 of
+31 destroys.
+
+**Where the copies are lost, on the failing run's own log.** The flush this path
+exists to run gates on the element root's flags and reads it unflagged on every
+pass:
+
+    [20170.584663] sync_flush: clindex 1 chain 0000000017bed331 not flagged (00046102)
+    [20175.705029] sync_flush: clindex 1 chain 0000000017bed331 not flagged (00046102)
+    [20180.824827] sync_flush: clindex 1 chain 0000000017bed331 not flagged (00046102)
+    [20185.269363] hammer2_kill_sb: after unmount: 7 inode, 13 chain, 2 modified, 469 dio still allocated
+
+The element root's word holds none of `MODIFIED`, `UPDATE`, `ONFLUSH` or `DESTROY`,
+so `hammer2_sync_flush()` takes its `not flagged` branch and never calls
+`hammer2_flush()`. The chains the pass flagged are its children, not the root, and
+the root's word is cleared by the descending flush on the way down. The copies stay
+in memory, the unmount scraps them, and the next mount reads a slave that is short
+by exactly those keys. This is the defect the helper's own comment at
+`hammer2_synchro.c:134` calls "a different defect" and leaves.
+
+**Three instruments were wrong, and one of them was mine.** The `sweep` counter on
+the `filekeys` line is a local of `hammer2_sync_slaves()` reset per call, so the
+pass's own value is on its own line and `tail -1` reports the next pass's zero; the
+failing run's destroying pass printed `sweep 127` and the last line printed
+`sweep 0`, and five records were written from that zero. `sweepstate` is gated
+`iters < 64` while the destroying pass ran 3816 turns, so it could not print the
+turn that took the sweep arm. And the roadmap row's central claim, that the
+failing run's `sweep` read 0, is the `tail -1` defect written down as a finding.
+
+**What this changes.** The phase-4 stop knob cannot be aimed at the sweep: a destroy
+is emitted only inside the bigdir write, and zero destroys in 31 kept runs fall in
+the phase-4 window, so a stop-on-sweep wait there exhausts its bound and reports a
+timeout as if the sweep had not come. The `H2_STOP_ON_SWEEP` knob written toward that
+was removed rather than relocated, since the sweep is not the cause. The measurement
+that decides this defect is `scrapped`, which every run already carries.

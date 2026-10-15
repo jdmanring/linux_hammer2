@@ -806,10 +806,19 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 * neither could be diagnosed from the pass totals.  This prints the
 		 * values the arm decision was just made from, so the next change is
 		 * written against the state rather than a guess about it.  Gated on
-		 * 0x10000, a bit no other print in this file uses, and capped so a
-		 * long pass cannot flood the console.  Read-only.
+		 * 0x10000, a bit no other print in this file uses.  Read-only.
+		 *
+		 * MEASURED 2026-10-15, and it disposes of the first version of this
+		 * gate: `iters < 64` alone caps the print out of the region the
+		 * defect lives in.  The failing run's destroy pass
+		 * (`cluster-run-20261015-014720`) ran 3816 turns and destroyed at
+		 * the end of them, so the print covered turns 1 to 63 of a pass
+		 * whose damage lands at turn ~3800, and every reading taken from it
+		 * described the head of a healthy pass.  A turn that is about to
+		 * take the `n < 0` arm is the one worth printing and there are few
+		 * of them, so it is printed whatever its turn number is.
 		 */
-		if ((hammer2_debug & 0x10000) && iters < 64) {
+		if ((hammer2_debug & 0x10000) && (iters < 64 || n < 0)) {
 			kprintf("sweepstate it %d n %d merror %08x "
 			    "focus %016llx/%d local %016llx/%d\n",
 			    iters, n, merror,

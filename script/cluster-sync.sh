@@ -305,6 +305,20 @@ echo "interrupt-base $u0"
 # The write leaves no line of its own in the kernel log, so it is marked
 # there, and a destroying pass can be placed inside or outside it.
 mkdir /mnt/h2c/bigdir
+# MEASURED 2026-10-15: the destroying pass is HERE, in the bigdir write, and
+# never in the phase-4 window the unmount below is aimed at. The destroy line
+# was located against the two probes in all thirty-one kept runs: every one of
+# the 300-plus destroys lies between `bigdir write start` and `bigdir write
+# end`, and NONE lies between `bigdir2 write start` and the end of the run, so
+# an arm asked to catch the sweep can only do it here. The stop below this
+# point is a different question (does an interrupted pass resume), and the two
+# were conflated until now.
+#
+# The sweep runs when the element's scan ends early while the local scan still
+# has chains (`chain && merror == ENOENT`), which is what the 20000-file write
+# provokes: the element is written by the frontend, and the thread's own scan
+# of it ends before its local chains are exhausted. That is why the destroy
+# count tracks the write and not the interruption.
 echo "h2probe: bigdir write start" > /dev/kmsg
 i=0; while [ $i -lt $NBIG ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir/p$i; i=$((i + 1)); done
 sync
@@ -419,9 +433,28 @@ echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
 # The action counters the module prints under 0x8000 (acted/failed over the
 # scan's action switch), read at the interruption so the shortfall this run
 # ends with is paired with the count of copies that returned an error. klog()
-# is grep -c, so the matching LINES are taken with a plain grep; the last one
-# is the cumulative total, which is the reading worth keeping.
+# is grep -c, so the matching LINES are taken with a plain grep.
+#
+# MEASURED 2026-10-15: the line is NOT one cumulative record.  `acted`,
+# `failed`, `last` and `kept` are file-scope atomics accumulated over the run,
+# but `sweep` and `iters` are locals of hammer2_sync_slaves() reset on entry
+# (src/sys/fs/hammer2/hammer2_synchro.c:558,590), so each line carries ONE
+# pass's values.  `tail -1` therefore reports the sweep count of the LAST pass,
+# which is almost always a quiet one: on `cluster-run-20261015-014720` the
+# destroying pass printed `sweep 127` on its own line and the last line printed
+# `sweep 0`, and reading the tail is what put a sweep count of 0 into five
+# separate records as a finding.  Both readings are printed: the pass with the
+# most sweeps (the one that did the damage) and the last line (the cumulative
+# action counters).
+maxsweep() {	# the filekeys line carrying the largest `sweep`, or empty
+	sed -n 's/^\[[^]]*\] //p' "$1" | grep '^filekeys' | \
+		awk 'BEGIN { m = -1 }
+		     { for (i = 1; i <= NF; i++) if ($i == "sweep") s = $(i + 1) + 0
+		       if (s > m) { m = s; line = $0 } }
+		     END { if (line) print line }'
+}
 echo "interrupt-actions $(grep 'filekeys' $K | tail -1 | sed 's/^\[[^]]*\] //')"
+echo "interrupt-sweep-max $(maxsweep $K)"
 # The thread stops after the pass it landed in drains, so the count is waited
 # for and the wait is the reading. The wait is for the count to drop below the
 # pre-unmount count (the CL element's thread stopping), not to reach zero, since
@@ -582,7 +615,7 @@ grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -
 # carries one number and several of these decide it together (the stop's wait
 # and the thread count behind one verdict), and the guest's output file is
 # removed at exit, so a field not printed here is lost with the run.
-echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-copied=$(val interrupt-stop-copied) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes) resume-updates=$(val resume-updates) resume-settled=$(val resume-settled) resume-conv-s=$(val resume-converge-seconds)"
+echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-copied=$(val interrupt-stop-copied) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) sweep-max=$(val interrupt-sweep-max) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes) resume-updates=$(val resume-updates) resume-settled=$(val resume-settled) resume-conv-s=$(val resume-converge-seconds)"
 b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
 # When the phase is asked to stop at a set depth, a run that stopped short of it
