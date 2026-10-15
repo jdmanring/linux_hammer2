@@ -13486,3 +13486,47 @@ only about its subject when its test is true on one path and false on the other,
 and a geometry is only an argument after the population it assumes has been
 counted. Both of this entry's retractions were the same error, made twice in
 opposite directions.
+
+## Reproduction attempted and not achieved, and a lockdep report that is not this port's, 2026-10-15
+
+Six runs of the same command were made back to back to reach the failing
+condition on purpose. All six converged, and the condition was not reached:
+
+| attempt | `copied` | slave against master |
+| --- | --- | --- |
+| 1 | 5 | 0 lines differ |
+| 2 | 4 | 0 lines differ |
+| 3 | 4 | 0 lines differ |
+| 4 | 4 | 0 lines differ |
+| 5 | 5 | 0 lines differ |
+| 6 | 3 | 0 lines differ |
+
+Six runs at `copied` 3 to 5, none at 2. Every failing run of the two days was at
+`copied=2`, and this harness, whose stop knob still did not place the unmount
+(the raw lines read `stop-depth=0 wanted 0`), never produced that value. The
+`copied=2` reading therefore remains a correlation across thirteen runs and is
+not yet a controlled result: the failing condition has not been driven, only
+observed when the race happened to land there.
+
+**The sixth attempt's failure is not this port's defect.** It exited 1 on `no
+kernel warning, lockdep, KASAN or UBSAN report: 1`, and the report is:
+
+    BUG: MAX_STACK_TRACE_ENTRIES too low!
+    turning off the locking correctness validator.
+    Workqueue: writeback wb_workfn (flush-hammer2-104)
+     dump_stack_lvl / save_trace / __lock_acquire
+     bad_range / get_page_from_freelist / __alloc_frozen_pages_noprof
+     hammer2_writepages
+
+That is lockdep exhausting its per-lock stack-trace entry budget while recording
+an allocation on the writeback path, not a hAMMER2 fault: no KASAN report, no
+UBSAN report, and the same run's slave matched its master with 0 lines differing.
+A debug kernel under memory pressure turns the validator off and says so; the
+run's data was correct. The check that failed is the one that greps for `BUG:` in
+the log, and it cannot tell this from a filesystem defect. It is recorded here so
+the next session does not read `BUG:` in attempt 6's log as a hammer2 bug.
+
+Two instruments are now known to be unable to place the interruption, and the
+reproduction harness must not be trusted for its `copied` value: the stop knob
+polls a field that does not move in the window, and the default depth 0 stops
+wherever the race lands.
