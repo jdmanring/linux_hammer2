@@ -110,7 +110,7 @@ NBIG2=${H2_NBIG2:-20000}
 # the first open bracket as before. Declared host-side because the launch
 # line forwards it to the guest half, which runs under set -u.
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
-STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-300}
+STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-3000}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
@@ -376,7 +376,7 @@ echo "interrupt-bracket-open $bracket"
 # during the pass, which is what this wait needs.
 copied() { grep -c 'syncthr: update inode' $K; }
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
-STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-300}
+STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-3000}
 a0=$(copied); a0=${a0:-0}
 target=$(( a0 + STOP_DEPTH ))
 n=0
