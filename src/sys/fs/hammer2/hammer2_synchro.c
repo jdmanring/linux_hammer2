@@ -554,6 +554,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	int nerror;		/* temporary error */
 	int idx;
 	int n;
+	int iters;		/* XXX Linux: loop turns, per pass */
+	int exit_reason;	/* XXX Linux: which break left the loop */
 
 	pmp = ip->pmp;
 	idx = thr->clindex;	/* cluster node we are responsible for */
@@ -575,6 +577,16 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 #endif
 
 	merror = 0;
+
+	/*
+	 * XXX Linux: the failing run's passes each take one action and return,
+	 * and nothing records why.  iters counts the loop's turns and
+	 * exit_reason names the break that left it: 1 and 2 are the loop-head
+	 * ends (both scans done, or the XOP errored), 3 is the deferral
+	 * threshold.  Printed with the file-key counters once per pass.
+	 */
+	iters = 0;
+	exit_reason = 0;
 
 	/*
 	 * Resolve the root inode of the PFS and determine if synchronization
@@ -706,10 +718,15 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		int dodefer = 0;
 		hammer2_chain_t *focus;
 
-		if (chain == NULL && merror == HAMMER2_ERROR_ENOENT)
+		++iters;
+		if (chain == NULL && merror == HAMMER2_ERROR_ENOENT) {
+			exit_reason = 1;
 			break;
-		if (merror && merror != HAMMER2_ERROR_ENOENT)
+		}
+		if (merror && merror != HAMMER2_ERROR_ENOENT) {
+			exit_reason = 2;
 			break;
+		}
 
 		/*
 		 * Compare
@@ -938,8 +955,10 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 * list has grown too large, stop adding more.  This
 		 * will trigger an HAMMER2_ERROR_EAGAIN return.
 		 */
-		if (needrescan && list->count > 1000)
+		if (needrescan && list->count > 1000) {
+			exit_reason = 3;
 			break;
+		}
 
 		/*
 		 * Advancements for iteration.
@@ -965,10 +984,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * `hammer2_sync_slaves()` call on the PFS root.
 	 */
 	if (hammer2_debug & 0x8000) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d newer %d sweep %d\n",
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d newer %d sweep %d iters %d exit %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
 		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,
-		    h2dbg_destroy_newer, h2dbg_destroy_enoent);
+		    h2dbg_destroy_newer, h2dbg_destroy_enoent, iters,
+		    exit_reason);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);
