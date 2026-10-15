@@ -12737,28 +12737,35 @@ produces; it is one sweep of a scan that has ended.
 
 That sweep is the arm at the top of the compare, `chain && merror ==
 HAMMER2_ERROR_ENOENT`, which sets `n = -1` for every key still local without
-comparing anything. And the end-of-scan it reads is not always an end:
+comparing anything. It fires whenever the XOP scan ends while the local scan has
+not, and this run cannot say why the scan ended where it did:
 
-- `hammer2_xop_scanall()` (`hammer2_xops.c:871`) prints `NULL parent` and feeds
-  `hammer2_xop_feed(&xop->head, NULL, clindex, error)` with `error` still 0 when
-  `hammer2_inode_chain()` returns NULL. The losing run logs `NULL parent` 364
-  times.
-- `hammer2_xop_collect()` (`hammer2_admin.c:776`) then takes the all-NULL
-  cluster to `hammer2_cluster_check()`, which for `keynull` set and `lokey ==
-  HAMMER2_KEY_MAX` returns ENOENT, the same value a completed scan returns.
-- The frontend reads ENOENT as "the chains need to be deleted" and takes the
-  sweep arm on all of them.
+- A normal end is consistent with the burst. If the scan stopped at a key the
+  master's media holds, the sweep deletes the 66 the master has and the slave
+  does not, which is the measured image diff.
+- An early end is also consistent. `hammer2_xop_scanall()` (`hammer2_xops.c:871`)
+  prints `NULL parent` and feeds NULL with `error` still 0 when
+  `hammer2_inode_chain()` cannot resolve its element, and
+  `hammer2_xop_collect()` reads the all-NULL cluster as ENOENT exactly as it
+  reads a completed scan. **This path is a candidate and not a reading.** The
+  losing log carries no `NULL parent` line from the scanall path at all, and the
+  364 `NULL parent` lines in it are `sync_setflush`'s own message, "stopped at
+  0000000000000000/0 type 255 (NULL parent)". The scanall print is
+  `pr_info_ratelimited` (`hammer2_os.h:114`), so its absence is weak evidence
+  rather than a refutation, and no run so far has distinguished the two.
 
-The keys this deletes are not necessarily stale. They are the keys whose
-element the XOP could not resolve, and the master's media holds all 66 of them,
-which is what the images show.
+What is settled is the arm, not the reason the scan ends: the destroyed keys are
+taken by the end-of-scan sweep, not by the compare, and the sweep does not look
+at what it deletes.
 
-Consequence for the fix: the guard that worked (`a2804b9`) tested `chain->bref.modify_tid > sync_tid`
-at the top of the `n < 0` arm, which covers both paths into it, but the record's
-attribution of the loss to the compare arm named the wrong path. The counters
-added here (`newer`, `sweep` in the `filekeys` line) count each path separately,
-so the next run says which one fired rather than leaving it inferred from the
-burst. Whether the guard is the right fix is a separate question this run does
-not answer: keeping a newer chain leaves it uncopied and the element unstamped
-on the ENOENT path too, which is a retry rather than a convergence.
+Consequence for the fix: the guard that worked (`a2804b9`) tested
+`chain->bref.modify_tid > sync_tid` at the top of the `n < 0` arm, which covers
+both paths into it, but the record's attribution of the loss to the compare arm
+named the wrong path. The counters added here (`newer`, `sweep` in the `filekeys`
+line) count each path separately, so the next run says which one fired rather
+than leaving it inferred from the burst. Whether the guard is the right fix is a
+separate question this run does not answer: keeping a newer chain leaves it
+uncopied and the element unstamped on the sweep path too, which is a retry
+rather than a convergence, and a scan that ends early needs the scan repaired
+rather than the delete guarded.
 
