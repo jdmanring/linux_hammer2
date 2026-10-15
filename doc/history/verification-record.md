@@ -13349,3 +13349,46 @@ Corrected reading of the partial result: the fix took the loss from 132 lines to
 two root dirents, the two were never destroyed, at least one was inserted and did
 not reach the slave's media, and the next instrument is the write-back of an
 inserted chain rather than any arm of the compare.
+
+## The destroyed dirents are the missing dirents, and the refutation was drawn from an instrument that cannot express it, 2026-10-14
+
+The entry above retracts the causal link between the run's two destroys and its
+two missing keys. That retraction is itself wrong, and the raw media says so.
+
+    master: dirent.1  key 952c5ca9c9858001   filename "set"    inum 0x400
+            dirent.2  key b77f7af1cd8e8001   filename "bigdir" inum 0x43e
+    slave:  neither key present
+
+Those are exactly the two keys the run destroyed:
+
+    destroy rec ... slave 1 4.952c5ca9c9858001
+    destroy rec ... slave 1 4.b77f7af1cd8e8001
+
+So the original entry was right: the root's two dirents were destroyed by the
+compare and they are the two the slave is missing. The root's dirents hash their
+filenames into the top of the 64-bit space, which is why their keys look like
+file keys and not like the `0x400`/`0x43e` inode keys of the same entries.
+
+**The retraction's instrument could not have produced its answer.** The
+fingerprint is built by the awk in `script/cluster-sync.sh` and prints dirents as
+`dirent <name> <inum> <type>`: it carries the filename, the inum and the type,
+and never the dirent's own key. A search of that file for `952c5ca9c9858001`
+matches nothing on either side by construction, so "absent from both images"
+was a fact about the fingerprint's columns and not about the media. The
+conclusion drawn from it, that the destroyed chains were transient, is void.
+
+That is the sharper lesson of the two entries: **a negative from an instrument is
+only a reading if the instrument can express the positive.** The fingerprint
+answers "what does this volume hold" in names and inums; it cannot answer "does
+this volume hold key K", and it was used for the second question.
+
+The mechanism, restored and now with keys: the slave held the root's dirents for
+"set" and "bigdir" -- it had copied them, `sync_insert` for `0x400` and the
+dirents' presence in the slave's tree before the destroying pass -- and the
+compare read each as a key the master no longer holds and destroyed it, while the
+master holds both. Their `modify_tid` is at or below the pass's `sync_tid`, so
+the newer guard does not cover them, and this is the same class as the 66-key
+loss with the guard's condition false: **the compare destroys a chain the master
+holds because the master's own scan did not present its key.** The master's scan
+omitting master-present keys is the mechanism, and it is in the scan, not the
+destroy.
