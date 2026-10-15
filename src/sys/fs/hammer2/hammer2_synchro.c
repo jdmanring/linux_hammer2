@@ -793,17 +793,25 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * `n<0 66` with `n>0` flat at 57, and the 66 destroys
 			 * landed in 3 ms, one per key, with no compare between
 			 * them.  A compare arm cannot produce that shape.
+			 *
+			 * The counters below count and nothing else; the delete
+			 * stays on both paths.  Skipping it on the sweep path
+			 * livelocked the pass, measured the same day: that path
+			 * sets `n = -1` on every iteration by construction, so a
+			 * skipped destroy sets neither advance flag and the loop
+			 * re-enters with the same chain forever.  The hung-task
+			 * report names it, kworker/5:1 blocked in
+			 * hammer2_chain_lock under hammer2_inode_chain_flush from
+			 * hammer2_vfs_sync_pmp 122 s in, where the pass's own
+			 * `START_SCAN` had run 222 s earlier.
 			 */
 			if (merror == HAMMER2_ERROR_ENOENT) {
 				atomic_add_int(&h2dbg_destroy_enoent, 1);
-			}
-			if (chain->bref.modify_tid > sync_tid) {
+			} else if (chain->bref.modify_tid > sync_tid) {
 				atomic_add_int(&h2dbg_destroy_newer, 1);
-				nerror = HAMMER2_ERROR_EINPROGRESS;
-			} else {
-				nerror = hammer2_sync_destroy(thr, &parent,
-							      &chain, 0, idx);
 			}
+			nerror = hammer2_sync_destroy(thr, &parent, &chain,
+						      0, idx);
 		} else if (n == 0 && chain->bref.modify_tid !=
 				     focus->bref.modify_tid) {
 			/*
