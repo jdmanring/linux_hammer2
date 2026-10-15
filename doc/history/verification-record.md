@@ -13737,3 +13737,32 @@ harness counted both as converged because its test was `! grep -q '0 lines
 differ'` rather than `grep -q '0 lines differ'`. The fix is reverted; the next
 change has to handle the unresolvable-element case without leaving the loop with a
 live local scan and a non-ENOENT `merror`.
+
+## Where the scanall fix hung, read from its stack, 2026-10-15
+
+The hung run's own stack names the site, so the next change does not have to guess
+it:
+
+    h2nod-CL      state:D
+     __schedule
+     hammer2_inode_get+0x1cca
+     hammer2_sync_slaves+0xafe
+     hammer2_primary_sync_thread+0x24f
+
+`hammer2_sync_slaves+0xafe` with `hammer2_inode_get` above it is the **deferral
+push** -- the `hammer2_inode_get(pmp, &xop->head, -1, idx)` the pass runs to record
+an inode for bottom-up synchronization. Two other tasks (`kworker/4:0`, `sh`)
+blocked behind it, so the thread is not spinning in the insert arm as first
+written here; it is blocked in the deferral push.
+
+The deferral is guarded by `merror == 0`, so the pass that blocked was not the one
+carrying the new EIO. What the change did was alter which passes reach that push
+and how many, and the run then blocked there. The exact interaction is not read,
+and this entry does not claim one: a hang in the deferral machinery reached by a
+timing change is the third distinct way this pass has been made to hang, and the
+next change has to be checked against all three -- no advance and it re-enters the
+same arm, an advance with a stale XOP stalls, and the deferral push blocks.
+
+State: the change is reverted (`ee8ec17`), the tree carries only the newer-arm
+keep, and the producer of the sweep -- `hammer2_xop_scanall()` reporting completion
+for an element it could not resolve -- is proven and unfixed.
