@@ -13990,6 +13990,10 @@ every one had already been published before that check.
    key in the space" was argued without counting; the master held thousands of keys
    above it.
 
+An eighth is recorded below, found while reading a post-fix run: the `n<0`
+counter counts file-hash keys only, while the destroys printed beside it carry
+dirent and inode keys, so the two fields on one line are different populations.
+
 Three more were found while closing this out and are of the same kind: the
 `H2_STOP_ON_SWEEP` knob written toward the sweep was aimed at the phase-4 window
 while every destroy in 31 kept runs falls inside the bigdir write and none falls
@@ -14076,3 +14080,21 @@ the media could be read, so which side holds the differing keys is unread. The
 next run that differs keeps its images: the harness copies the kernel log off the
 guest but the images are recreated at the start of every run, and a fingerprint
 difference is only attributable while they exist.
+
+## The `n<0` counter counts file-hash keys only, 2026-10-15
+
+An eighth reading defect, and it was nearly published. Attempt 3's destroying
+pass printed both `n<0 4` and three `destroy focus .../-1` lines, and the two were
+about to be read as one population with a missing print. They are different
+populations: `h2dbg_file_nlt` is incremented only when the turn's key is a file
+hash (`kh > 0x8000000000000000`, `hammer2_synchro.c:830-835`), so it counts the
+`n < 0` turns among FILE keys. The three printed destroys carry keys `0xa4d`,
+`952c5ca9c9858001` and `b77f7af1cd8e8001`, all below 2^63, so none of them is in
+that counter's population.
+
+The counter's own comment says the three counters are for file keys and prints
+them "once per pass at the end of the root scan", and the pass's other counters on
+the same line (`acted`, `failed`, `kept`) are whole-pass totals. Reading four
+counters off one line as though they shared a population is the defect. The rule
+it joins: a line's fields can have different scopes, so read each field's own
+guard before comparing two of them.
