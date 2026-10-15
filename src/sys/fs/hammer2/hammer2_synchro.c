@@ -868,6 +868,23 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				advance_xop = 1;
 				nerror = HAMMER2_ERROR_EINPROGRESS;
 			} else {
+				/*
+				 * XXX Linux: the focus key and type, printed on the
+				 * destroy.  The sweep arm above is tested first, so
+				 * this arm is reached only with `merror` not ENOENT,
+				 * and `hammer2_cluster_check()` returns EIO rather
+				 * than leaving a NULL focus after a quorum agrees --
+				 * the compare's `n < 0` therefore means the master's
+				 * focus key is HIGHER than the local key, not that
+				 * the master lacks it.  Read here, a focus key above
+				 * the destroyed key is a scan that jumped over a live
+				 * key mid-scan; a focus key equal to or overlapping
+				 * the local key refutes that and reopens the compare.
+				 */
+				kprintf("destroy focus %016llx/%d local %016llx/%d\n",
+					(focus ? focus->bref.key : 0),
+					(focus ? focus->bref.type : -1),
+					chain->bref.key, chain->bref.type);
 				nerror = hammer2_sync_destroy(thr, &parent,
 							      &chain, 0, idx);
 			}
