@@ -533,8 +533,8 @@ static int h2dbg_file_ngt;	/* XXX Linux */
 static int h2dbg_act_tried;	/* XXX Linux */
 static int h2dbg_act_failed;	/* XXX Linux */
 static int h2dbg_act_last;	/* XXX Linux: the most recent non-zero nerror */
-static int h2dbg_destroy_newer;	/* XXX Linux: n < 0 where the chain is newer */
-static int h2dbg_destroy_enoent;	/* XXX Linux: the sweep arm's destroys */
+static int h2dbg_newer_kept;	/* XXX Linux: n < 0 with the chain newer, kept */
+static int h2dbg_destroy_dead;	/* XXX Linux: unreachable, the sweep path sets n = -1, not merror */
 
 static
 int
@@ -851,7 +851,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				 * and a stamp here would call it synchronized against a
 				 * state this pass never compared it to.
 				 */
-				atomic_add_int(&h2dbg_destroy_newer, 1);
+				atomic_add_int(&h2dbg_newer_kept, 1);
 				advance_local = 1;
 				advance_xop = 1;
 				nerror = HAMMER2_ERROR_EINPROGRESS;
@@ -1014,10 +1014,10 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * `hammer2_sync_slaves()` call on the PFS root.
 	 */
 	if (hammer2_debug & 0x8000) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d newer %d sweep %d iters %d exit %d\n",
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d dead %d iters %d exit %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
 		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,
-		    h2dbg_destroy_newer, h2dbg_destroy_enoent, iters,
+		    h2dbg_newer_kept, h2dbg_destroy_dead, iters,
 		    exit_reason);
 		kprintf("filekeys this pass swept %d\n", swept);
 	}

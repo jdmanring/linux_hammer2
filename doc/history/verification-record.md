@@ -13208,3 +13208,42 @@ Consequences:
    the stamp on its own: the failing run's 116 passes without a scan need a cause
    the two runs share but that only stops the passing run from scanning. That
    cause is not yet read.
+
+## The newer arm keeps its key and the shallow interruption converges, 2026-10-14
+
+The fix at `d010096` was run and it fired, which is the before-and-after the
+earlier entries lacked.
+
+| | before the fix | with the fix |
+| --- | --- | --- |
+| `newer` arm on the compare | 46 and 66 chains destroyed | 56 chains kept |
+| `destroy rec` in the run | 46 and 66 | 2 |
+| `copied` at the interruption | 2 (the failing run) | 5 |
+| slave against master | 132 lines differ | 0 lines differ of 120179 |
+| checks | - | 32, 0 failed |
+
+The run's log, `cluster-run-20261014-215937.klog`, reads `kept 56` and two
+destroys, and its phase-4 line reads `copied=5 ... resume-updates=0
+resume-settled=10`. That last pair is the point: it converged with the resumed
+thread doing nothing, because there was nothing left to do.
+
+It is the condition that failed before. The failing run was `copied=2` and lost
+132; this one is `copied=5` and lost none, with the arm that destroyed 46 to 66
+keys in every earlier run now keeping them instead. The interruption is as early
+and the outcome is the opposite, which is the control the earlier runs did not
+have.
+
+Two counters are left in a state the run explains:
+
+- `h2dbg_newer_kept`, printed as `kept`, is the count of chains the arm kept. It
+  was named `destroy_newer` when the arm still destroyed, and the name would now
+  read as its opposite.
+- `h2dbg_destroy_dead`, printed as `dead`, is incremented in the `n < 0` arm when
+  `merror == HAMMER2_ERROR_ENOENT`. The end-of-scan path sets `n = -1` without
+  setting `merror`, so the condition is unreachable and the field is dead. It is
+  kept as a labeled dead counter rather than removed so a later run does not
+  re-add it as live; it reads 0 in every run and says nothing.
+
+What is not yet done: a second run, because the failure was intermittent at a
+fixed configuration and one converged run from the same path is a reading and not
+a rate. The next run is the same command; the two together are the rate.
