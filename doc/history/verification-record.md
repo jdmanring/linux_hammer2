@@ -13530,3 +13530,58 @@ Two instruments are now known to be unable to place the interruption, and the
 reproduction harness must not be trusted for its `copied` value: the stop knob
 polls a field that does not move in the window, and the default depth 0 stops
 wherever the race lands.
+
+## A driven failing run settles the arm: it is the compare, and the destroys are the missing keys, 2026-10-15
+
+A run failed with the counters live, and it answers the question six entries above
+oscillated over. `cluster-run-20261015-014720.klog`:
+
+    raw phase4 stop-copied=64 from 64 wanted 2 copied=6 ... acted 102842
+        failed 126 last 2048 kept 126 sweep 0 iters 35012 exit 1
+    FAIL the slave's PFS matches the master's entry for entry and block for
+         block: 40035 file entries; 2 lines differ of 120179
+
+The two differing keys, read from the images:
+
+    < inode 0x00000000000012fe FILE 4096      (filename "p3775")
+    < data  0x00000000000012fe
+
+The run destroyed three chains:
+
+    destroy rec ... slave 1 1.00000000000012fe
+    destroy rec ... slave 1 4.952c5ca9c9858001
+    destroy rec ... slave 1 4.b77f7af1cd8e8001
+
+**The destroys are the missing keys.** `1.00000000000012fe` is type 1, the
+inode, and it is the inode the slave no longer holds; the two dirents are the
+"set" and "bigdir" entries that were lost in the earlier runs and that this run
+re-copied. So the destroyed set and the lost set are the same chains, read by key
+from both the log and the media, which is what the destroy detour of 2026-10-14
+never established.
+
+**The arm is the compare.** Three counters on this one failing run:
+
+- `sweep 0` -- the end-of-scan arm did not run, so the sweep is ruled out on a
+  failing run rather than on runs that passed.
+- `kept 126` -- the newer arm fired 126 times and these three were not among them;
+  the chains it kept are not the ones lost.
+- `n<0 4`, three destroys -- the plain compare arm, `modify_tid <= sync_tid`.
+
+So the compare read each of the three as a key the master's scan did not present,
+destroyed the slave's copy, and the master's media holds all three. The defect is
+the master-side scan omitting keys its own media holds, and it has been stated
+that way since `32ac198`; what was missing was a failing run with the counters
+on, which this is.
+
+**Two earlier claims are refuted by the same run.**
+
+- The `copied=2` threshold is not the rule. This run failed at `copied=6`, and
+  `copied` 4, 4, 4, 5, 5, 3 in the six-run harness converged, so the separation
+  is not a copy count.
+- The stop knob still did not place the unmount: `stop-copied=64 from 64 wanted
+  2`. The bracket wait let the pass copy 64 inodes before the wait began, past
+  the target, and the wait broke on its own guard immediately. The failure came
+  from the race again, not from the knob, so the reproduction is still not driven.
+
+What the run does give is the arm, on a failure, by key. That is the durable
+result of the day.
