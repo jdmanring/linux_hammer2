@@ -14004,3 +14004,34 @@ The rule the seven share: **before reading a counter's zero, state what a zero
 would have to mean and whether the instrument could produce a non-zero at all.**
 A counter that cannot fire and a knob that cannot place both read 0, and a zero
 from either is indistinguishable from the state never occurring.
+
+## The flush gate's fix, and what it is measured by, 2026-10-15
+
+The fix moves the re-mark of the topology above the element root to BEFORE the
+flush gate, which is upstream's own order in `hammer2_xop_inode_flush()`. The
+gate reads the element root's flags, the descending flush clears the root's
+`ONFLUSH` before a pass ends, and a pass whose copies are still unwritten below
+the root therefore reads the root as unflagged. Re-marking after the flush could
+not make the gate reachable, so the flush was skipped and the unmount scrapped
+the copies.
+
+**The measure is `scrapped`,** the count `hammer2_unmount_scrap()` prints, and it
+is the only reading that separates the two classes across the 40 runs recorded
+here: 0 on the 38 that converged, 7 and 8 on the two that differed. Before the
+fix a run reported `7 chains scrapped` and `2 lines differ of 120179`.
+
+**The fix's first run, read on the guest while it ran,** because the harness
+writes its log only when the guest phase completes:
+
+    126 passes, 126 walks, 126 `not flagged`, 0 `flush error`, 0 `scrapping unflushed`
+
+The walk runs once per pass and the gate still skips the flush on every idle
+pass, which is what the earlier revert of an unconditional flush objected to: it
+moved the slave's inode count 728 to 801 and cost a full tree walk per pass. The
+walk is not that: it takes a lock per chain on the path and stops at the volume
+root, and the flush itself still runs only when the element root is flagged.
+
+`scrapping unflushed` reads 0 at the point in the run where the failing runs had
+already scrapped their 7 and 8, which is the before-and-after the fix needs. The
+harness's own fingerprint verdict is recorded beside this entry when the run
+completes.
