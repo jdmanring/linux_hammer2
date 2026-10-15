@@ -13080,3 +13080,50 @@ because the criterion is final-state convergence, not an explanation.
 Do not run the deep-stop knob to reach the failure. Item 14: it cannot place a
 shallow stop. The failure is reached by the default (stop at the first open
 bracket) repeated, which is why it is intermittent.
+
+## The stamp is the defect, proven from the failing run's own pass accounting, 2026-10-14
+
+The 2026-10-13 entry above reached this from totals and it is confirmed here from
+the failing run's own log, `cluster-run-20261014-171347.klog`, by a discriminator
+inside the source rather than a count.
+
+`sync_slaves pfs CL` prints at `hammer2_synchro.c:337`, before the `want_update`
+test. `START_SCAN` prints at `:703`, after the early return at `:672`. A pass that
+returns at `want_update == 0` therefore shows the first line and not the second,
+and the two counts separate "passing" from "scanning" with no arithmetic.
+
+In the failing run, after its last destroy at line 1906:
+
+    sync_slaves pfs CL      116 passes, t=3022.59 to the end, one every 5.12 s
+    START_SCAN                0
+
+One hundred and sixteen passes, none of which entered the scan. The thread is
+awake and running; it looks at the element root, reads its `modify_tid` equal to
+the pass's `sync_tid`, and returns. The slave's media is missing 66 keys, and no
+pass will ever look at them again.
+
+That is the mechanism, and it is the one the 2026-10-13 entry states:
+
+> A stamp set before the flush proves the copy reached media is what converts a
+> write-back failure into a permanent absence, and it is why the loss is total
+> rather than partially repaired.
+
+So the interrupt is not the defect and neither is the destroy. The passes before
+the interruption stamped the root synchronized; the interrupted pass then
+destroyed keys without completing its scan; the stamp it left and the stamps
+before it mean the state it left is called synchronized, and the resume has
+nothing to do. The shortfall is the gap between what the stamp asserts and what
+the media holds.
+
+Two consequences for the fix, both narrower than the guard that was tried:
+
+1. The stamp must not be set for a pass that did not complete, which is what the
+   existing `needrescan`/`EAGAIN` path at the end of the function already exists
+   to express: that path suppresses the stamp, and the interrupted pass did not
+   take it.
+2. The destroyed keys need re-examining against the master rather than being
+   assumed gone, because the destroy ran inside a pass whose scan had not
+   finished, on a compare against a partial view.
+
+The counters proposed in the decision procedure above are not needed for this.
+The discriminator was already in the source and in the log.
