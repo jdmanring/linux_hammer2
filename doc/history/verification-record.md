@@ -13127,3 +13127,39 @@ Two consequences for the fix, both narrower than the guard that was tried:
 
 The counters proposed in the decision procedure above are not needed for this.
 The discriminator was already in the source and in the log.
+
+## The convergence-wait run is green, and the fix the stamp needs, 2026-10-14
+
+The run that waited for the resumed thread to stop advancing, rather than
+unmounting after two passes:
+
+    raw phase4 copied=47 umount-ms=4180 ... n<0 44 ... iters 2615 exit 1
+        resume-passes=2 resume-updates=0 resume-settled=10 resume-conv-s=10
+    ok the slave's PFS matches the master's entry for entry and block for block:
+       40035 file entries; 0 lines differ of 120179
+    cluster: 32 check(s), 0 failed
+
+The resumed thread made zero update-inode calls and settled after ten seconds,
+and the slave matches the master. That is the correct result for this run: the
+interruption was shallow in action count (copied 47) but the root's stamp was
+true, so there was nothing for the resume to find, and doing nothing converged.
+
+It is not evidence the resume works, because it never had work to do. The run
+that did have work -- the failing one -- had 116 passes that never entered the
+scan. So the two runs read together say the resume is faithful to the stamp, and
+the stamp is what lies when a pass is interrupted before it finishes the tree.
+
+The fix is therefore in the stamp, and the pass already has the shape for it.
+`needrescan` sets `HAMMER2_ERROR_EAGAIN` at the end of `hammer2_sync_slaves()`
+and that path returns before the stamp is set, so a pass that did not finish does
+not claim to have. The interrupted pass reached the end of its loop with no
+deferral and took the stamp. What the interrupted pass has, and the ordinary
+pass does not, is the destroy: it removed 66 chains on a compare against a scan
+it had not finished. So the condition to add is narrow -- a pass that destroyed
+chains and whose scan did not reach the master's end must not stamp -- and it is
+provable by the same discriminator used above, since a pass that does not stamp
+prints `START_SCAN` on its next invocation and one that does does not.
+
+This is not written. It is the next change, and its before-and-after is the
+count of `START_SCAN` after the interruption: 0 before, more than 0 after, on a
+run that reaches the failure.
