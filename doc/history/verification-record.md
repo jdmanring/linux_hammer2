@@ -13661,3 +13661,47 @@ So, settled:
   re-copies what it removed.
 - The open question is unchanged and is the right one: **why the XOP scan reports
   done while the local scan still holds chains the master has.**
+
+## The sweep fires in the converged run too, and the fix has to ask the master, 2026-10-15
+
+Both runs sweep. Read from each run's pass line:
+
+    converged  cluster-run-20261015-030740: kept 97  sweep 97  iters 3778
+    failing    cluster-run-20261015-014720: kept 126 sweep 127 iters 3816
+
+So the sweep is not the difference between converging and not. It fires in both,
+and in the converged run the two root dirents it destroys are re-copied by a later
+pass. The failing run destroys the same two plus the inode `0x12fe`, and that one
+is not re-copied. The defect is the sweep; the intermittency is whether its damage
+is repaired.
+
+**A stamp fix cannot repair it, which rules out the shape tried earlier.** The
+chains are destroyed at destroy time, so by the time the pass reaches the stamp the
+keys are already gone from the slave. Suppressing the stamp changes only whether a
+later pass rescans, and that pass finds the keys absent from the local scan as well
+as the master, so the sweep does not fire and it stamps having converged on a tree
+that is missing them. Not stamping is necessary but not sufficient, and on its own
+it is not a fix.
+
+**The fix has to decide, per swept chain, whether the master holds it.** At the
+sweep the pass cannot tell a genuine leftover from a key the master holds, because
+the authority on the master -- the XOP scan -- ended without presenting the key.
+That is the whole of the defect: the pass destroys on the strength of an absence it
+has no way to check.
+
+The author it can check against is the master's own element, which is exactly what
+`hammer2_xop_scanall()` reads and what is available here. So the design is a direct
+lookup of each swept key on the master element before `hammer2_sync_destroy()`:
+
+- master holds the key -> the scan's absence was wrong; keep the chain and advance,
+  the same disposition the newer guard gives.
+- master does not hold it -> a genuine leftover; destroy as now.
+
+97 lookups in a pass is the cost, and it replaces an inference with a reading of the
+authority itself. It is not written: it needs the master element's chain lock and
+the same `HAMMER2_RESOLVE_*` flags the scan uses, and it should be written with the
+before-and-after already in hand (the failing log's 116 scanless passes and the
+converged run's swept-and-repaired dirents) rather than against a guess.
+
+This supersedes the earlier `swept`-conditioned stamp, which is not re-added: it
+cannot repair damage already done.
