@@ -9842,17 +9842,24 @@ worse than a copy that does not converge.
 
 Two consequences:
 
-1. The guard is not re-addable in the shape it had, on either path. The earlier
-   note that its `advance_local` "did not reach `chain_next`" is answered: it
-   does reach it, and `chain_next` does advance by key, but on the sweep path
-   `advance_local` is never set in the first place because the guard skips
-   before the arm's own advance.
-2. A fix for the sweep path has to move a cursor. The candidate, not yet tested,
-   is to re-seed the XOP to the local scan's key on that path
+1. The guard is not re-addable in the shape it had, and the two measurements
+   separate into a hard hang and a slow stall, distinguished by one line.
+   `a2804b9` set `advance_local = 1` inside the guard. A reproduction of the
+   guard that omitted that line (the shape committed at `9921f2b`) re-entered the
+   same arm on the same chain with the same `n = -1` and never left it: the pass
+   hung in 122 s and the unmount stayed busy until the guest restarted. Restoring
+   the line removes the hang, and does not remove the stall: with it,
+   `a2804b9`'s own reading is 180 distinct keys attempted 69 times, which is the
+   XOP side of the pair never moving. So the two fields are load-bearing and
+   neither is sufficient -- `advance_local` alone stops the hang and leaves the
+   XOP static, and no advance at all hangs outright.
+2. A fix for the sweep path has to move both cursors. The candidate, not yet
+   tested, is the guard with `advance_local = 1` and `advance_xop = 1`, plus a
+   re-seed of the XOP to the local scan's key on that path
    (`xop->collect_key = chain->bref.key`) so the next `hammer2_xop_collect()`
-   returns a focus for a key the local scan is holding, and the pair is compared
-   instead of swept. That turns the sweep back into the compare it was meant to
-   be, and the compare's own arm then advances both cursors.
+   returns a focus for a key the local scan is holding and the pair is compared
+   instead of swept. `advance_xop` with no new collect re-reads the same focus,
+   which is the 180-key stall; the re-seed is what gives it a new one.
 
 ## Reverting the branch restores the key advance, 2026-10-13
 
