@@ -9810,6 +9810,52 @@ the two together and does not attribute the livelock to this branch alone. The
 branch is not exonerated by this; see the entry below, which measures it
 directly and finds it deadly for a different reason.
 
+## The destroy is not the cause, and the shortfall tracks the pass's own progress, 2026-10-14
+
+The counters added earlier in the day were read, and they refute the two entries
+above them. Every phase-4 run of 2026-10-14, correlated:
+
+| run | `n<0` | `sweep` | copied | acted | lines differ |
+| --- | --- | --- | --- | --- | --- |
+| `cluster-keys2` | 66 | - | 2 | 1878 | 132 |
+| `cluster-deepstop2` | 40 | - | 2 | 1695 | 80 |
+| `cluster-deepstop` | 25 | - | 28 | 42663 | 0 |
+| `cluster-destroy-keys` | 41 | - | 44 | 41804 | 0 |
+| `cluster-arm2` (instrumented) | 81 | 0 | 85 | 32610 | 0 |
+
+Two readings follow, and both cut against what is written above.
+
+**The sweep arm never fires.** `cluster-arm2` reads `newer 81 sweep 0`: every
+destroy in that run came from the compare arm. The entry naming the end-of-scan
+`merror == HAMMER2_ERROR_ENOENT` path as the key-losing arm is refuted by the
+counter built to test it. The losing run that motivated it, `cluster-run-20261014-171347`,
+still shows the burst shape a compare cannot make, so the shape is real and the
+arm named for it was wrong; that run carried no `sweep` counter, and the runs
+that do carry one never fire it.
+
+**More destroys converge.** `cluster-arm2` destroyed 81 keys -- more than the 66
+that were lost in the run the earlier entry matched by key -- and its slave
+matches the master entry for entry, 0 lines differ of 120179. So destroyed keys
+are not lost keys: the earlier match was a subset, not an equality. A destroy
+that the same pass re-creates is not a loss, and the compare arm's destroy is
+exactly that.
+
+**What separates the runs is how far the pass got before the interruption.** The
+two failing runs read `copied=2` and `acted` of 1878 and 1695; the three that
+converge read `copied` 28 to 85 and `acted` 32610 to 42663. The pass that is cut
+almost at once leaves the slave behind, and the resume does not close it. The
+`stop-depth` field does not explain it: `cluster-keys2` and `cluster-arm2` both
+read `stop-depth=0 wanted 0` and land on opposite sides, where
+`cluster-deepstop` reads `wanted 400` and lands at 28. The interruption is a race
+on when the unmount reaches the running pass, and it is not currently placed at
+a deterministic point.
+
+So the loss is not a defect in the destroy and not a scan that ends early. It is
+that an interrupted pass, cut before it has done the work, is not repaired by the
+passes that follow it. The next measurement is to place the interruption at a
+deterministic depth -- the depth knob exists but `wanted` is 0 on the runs that
+race -- and read the shortfall against a fixed `copied` rather than a sampled one.
+
 ## The guard livelocks the sweep path by construction, measured 2026-10-14
 
 The guard was restored and run, and the pass hung. The mechanism is structural
@@ -12731,8 +12777,11 @@ whether the guard reaches this path.
 
 ## The shortfall's cause, end to end: the destroy arm, and the guard that fixed it was reverted for a fixable reason, 2026-10-14
 
-The chain is complete and every link is a measurement or a commit. Link 2 is
-corrected by the entry below it; the rest stands.
+The chain is complete and every link is a measurement or a commit. **Links 1 and
+2 are refuted by the counters read on 2026-10-14; the entry below, "The destroy
+is not the cause, and the shortfall tracks the pass's own progress", supersedes
+this one in full.** Kept rather than deleted, because the key-identity reading
+in it is sound and it is what the refutation was measured against.
 
 1. The interrupted pass destroys slave chains on the `n < 0` arm of the action
    switch, `hammer2_sync_destroy()`, which the record's 2026-10-11 entry reached
