@@ -14156,3 +14156,48 @@ flush (`hammer2_vfs_sync_pmp()` and the device teardown), and the chains are
 carry them: either the element's topology is not flagged on the path the unmount
 walks, or the flush stops at a boundary above them. That is the reading the next
 run takes, and the kept images make it attributable.
+
+## Why the unmount's final flush does not carry the element's copies, 2026-10-15
+
+The next fix needs to know why the copies survive to the unmount, and the unmount
+path answers it. `hammer2_vfs_sync_pmp()` (`hammer2_vfsops.c:2686`) flushes the
+inodes on the PFS's **sync queue**: it moves inodes from `depq`/`sideq` to `syncq`
+and flushes those, one inode at a time. The synchronization thread's chains are
+not on that queue and have no inode on it at all, which is the port's own recorded
+reason for `hammer2_sync_flush()` existing (`hammer2_synchro.c:100-108`: "This
+thread changes chains directly and puts no inode on the sync queue, so nothing
+bridged them").
+
+So the unmount's three `hammer2_vfs_sync_pmp()` calls (`hammer2_vfsops.c:3082-3084`)
+walk the inode queue and never reach the element's chains. The device teardown's
+own flush (`:2529-2537`) flushes `hmp->vchain` and `hmp->fchain` only, and it is
+gated on those two static chains' flags. The only thing in the tree that flushes
+the element's chains is the pass-end `hammer2_sync_flush()`, and a pass that is
+interrupted before its end never reaches it.
+
+**That is the whole shape of the remaining defect:** the copies reach media when a
+pass completes, and not when it is interrupted. The flush-gate fix closed the case
+where a completed pass leaves unwritten copies below an unflagged root; it does not
+close the case where the pass never completes.
+
+**The fix has to give the interrupted pass's copies a path to media.** Three
+candidates, and the reading that separates them:
+
+1. **Flush on the way out of the thread's stop.** The thread reads STOP/FREEZE at
+   its loop top and between deferred directories, so a stop that arrives mid-pass
+   is honoured at the next boundary. Running `hammer2_sync_flush()` at that point
+   would carry the copies the interrupted pass made. It is the smallest change and
+   it uses the helper that already exists.
+2. **Flag the element's topology when a pass copies, not only at its end.** The
+   three `hammer2_sync_setflush()` call sites in the insert, replace and destroy
+   paths already flag the path to the volume root per chain, so the question is
+   whether the unmount's teardown flush would then carry them; it flushes vchain
+   and fchain, and the element's chains hang below a PFS root, so what would settle
+   whether this alone is enough is reading whether the teardown's flush reaches a
+   PFS root's subtree at all; `hammer2_flush_core()` skips a PFS boundary when
+   FLUSH_ALL is clear and the PFS is mounted, and this call passes FLUSH_ALL.
+3. **Have the unmount walk the element's chains.** The largest change, and it
+   duplicates what the thread already does.
+
+Candidate 1 is the one to try first: it is the smallest, it uses the existing
+helper, and the stop path already exists and is exercised by phase 4.
