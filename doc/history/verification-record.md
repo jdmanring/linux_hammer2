@@ -9810,6 +9810,39 @@ the two together and does not attribute the livelock to this branch alone. The
 branch is not exonerated by this; see the entry below, which measures it
 directly and finds it deadly for a different reason.
 
+## The failing run's passes are one action deep, and its local scan starts empty, 2026-10-14
+
+Read from the failing run's own saved log, `cluster-run-20261014-171347.klog`,
+which is the input the counters were added for and which carries none of them.
+
+Its 61 passes, by the cumulative `acted` field of each pass's `filekeys` line,
+creep upward one at a time: `acted 58`, `59`, `60`, `61` ... `84` over the first
+twenty passes, with `n>0 1` (one file key inserted) and `n<0 0` on each. One
+action per pass. In 58 of the 61 passes the pass's own `START_SCAN` prints
+`chain=00000000... (0xffffffffffffffff)`, which is the print's NULL sentinel:
+the local scan began with no chain at all, so the slave's element root held
+nothing to iterate.
+
+With the 5-second sleep between passes, one key per pass is a tree of 4000 file
+keys copied at 5 s per key. The pass never gets deep enough to do the bulk
+copy, and the interruption arrives 8 s in. That, and not the destroy, is the
+shape of the failure: the resumed thread completes its two passes (the phase
+check reads `resume-passes=2`), and they are two more one-key passes.
+
+This also explains why the destroy cannot be the whole story and why the
+earlier key match was a subset. The 66 keys destroyed in that run are a
+consequence of a shallow scan meeting an element that changes underneath it,
+not the producer of the shortfall. The producer is that the pass does not
+proceed past its first key per invocation.
+
+What is not yet read: why the pass takes one action and returns. The two exits
+that fit are the deferral threshold (`needrescan && list->count > 1000`, which
+would need 1000 deferrals and does not match one action) and the loop head
+`chain == NULL && merror == HAMMER2_ERROR_ENOENT`, which ends the pass when both
+scans are done and is consistent with a local element that holds one key. The
+next instrument is a per-pass count of loop iterations beside the reason the
+loop left, which is one counter and one print, not a theory.
+
 ## The destroy is not the cause, and the shortfall tracks the pass's own progress, 2026-10-14
 
 The counters added earlier in the day were read, and they refute the two entries
