@@ -13163,3 +13163,48 @@ prints `START_SCAN` on its next invocation and one that does does not.
 This is not written. It is the next change, and its before-and-after is the
 count of `START_SCAN` after the interruption: 0 before, more than 0 after, on a
 run that reaches the failure.
+
+## The sweep counter cannot see the sweep, and both runs' destroys are the newer arm, 2026-10-14
+
+The stamp fix was written against a reading that does not survive its own probe,
+and this entry records the refutation before the fix is reconsidered.
+
+The `sweep` counter is incremented in the `n < 0` arm when `merror ==
+HAMMER2_ERROR_ENOENT`. The end-of-scan path sets `n = -1` **without** setting
+`merror`, so that condition is false on the very path the counter was added to
+count, and no value of the counter can distinguish the compare from the sweep.
+`sweep 0` on a run means the counter's condition never held, which is its normal
+state, not that the sweep did not run. The counter is withdrawn.
+
+What the two runs' full accounting actually shows, and it is the same in both:
+
+| field | failing run | stamp-fix run (converged) |
+| --- | --- | --- |
+| destroy burst | 66 keys in 3 ms | 46 keys in ~2 ms, same shape |
+| `n<0` | 66 | 46 |
+| `newer` | 66 | 46 |
+| `sweep` (withdrawn) | 66 | 46 |
+| `per-pass swept` | - | 111 passes all 0 |
+| lines differing | 132 | 0 |
+
+`n<0` equals the destroy count and equals `newer` in both, and no pass swept. So
+both runs destroyed through the **newer** arm --
+`chain->bref.modify_tid > sync_tid` on the compare -- which is the condition
+`a2804b9` guarded. The failing run's `n<0 66` is 66 compare destroys, not a
+sweep, and the entry that read it as a sweep is refuted here.
+
+That also means the burst shape ("no compare between the destroys") was never
+evidence of the sweep arm: the compare arm destroys a run of consecutive keys
+with nothing printed between them when the master's scan offers no focus for
+them, which is the same appearance.
+
+Consequences:
+
+1. The stamp fix as committed fires on `swept`, a local that counts a path that
+   does not occur. On both runs it is dead code, and the run that "passed" with
+   it did nothing different. It must be reverted or reconditioned on `newer`.
+2. The two runs converge and do not converge with the **same** destroy path and
+   the same stamp. So the destroy path is not what separates them, and neither is
+   the stamp on its own: the failing run's 116 passes without a scan need a cause
+   the two runs share but that only stops the passing run from scanning. That
+   cause is not yet read.

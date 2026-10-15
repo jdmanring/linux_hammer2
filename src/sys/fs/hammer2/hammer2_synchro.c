@@ -1013,34 +1013,6 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		merror = HAMMER2_ERROR_EAGAIN;
 
 	/*
-	 * XXX Linux: a pass that swept local chains did not hold a complete view
-	 * of the master and must not call the element synchronized.
-	 *
-	 * The end-of-scan arm sets `n = -1` for every key still local once the XOP
-	 * scan reports done, and destroys them without comparing.  When that
-	 * report is a real exhaustion the chains were leftovers and destroying
-	 * them is the pass's work; when it is not, the pass has deleted keys the
-	 * master still holds and its own scan has not reached.  The pass cannot
-	 * tell the two apart here, and the cost of guessing wrong is a stamp that
-	 * makes the loss permanent: measured on `cluster-run-20261014-171347`, the
-	 * interrupted pass destroyed 66 keys, was then stamped synchronized, and
-	 * the 116 passes that followed never entered the scan at all
-	 * (`sync_slaves pfs CL` 116, `START_SCAN` 0, since the latter prints only
-	 * after the `want_update` early return).
-	 *
-	 * Not stamping costs one more pass over an element that is already
-	 * correct, which the compare arm reaches and leaves alone.  EINPROGRESS
-	 * rather than EAGAIN: EAGAIN with no deferral re-enters the root pass at
-	 * once and spins for as long as the condition holds, where this ends the
-	 * pass and the thread sleeps its interval.  Returning here is safe in a
-	 * way that skipping the destroy mid-loop was not, because the loop has
-	 * already left: nothing re-enters the same arm.
-	 */
-	if (merror == 0 && swept) {
-		merror = HAMMER2_ERROR_EINPROGRESS;
-	}
-
-	/*
 	 * If no error occurred we can synchronize the inode meta-data
 	 * and modify_tid.  Only limited changes are made to PFSROOTs.
 	 *
