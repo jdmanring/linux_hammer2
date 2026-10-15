@@ -13615,3 +13615,49 @@ The instrument is a print on the destroy, `destroy focus <key>/<type> local
 destroyed key confirms the jump, and a focus equal to or overlapping the local
 key refutes this entry and puts the defect back on the compare itself. Both
 outcomes are recorded here so the print is not read as confirming a theory.
+
+## The sweep is confirmed, and the counters were read off the wrong line, 2026-10-15
+
+The arm question is settled and the answer is the one this file first reached and
+then retracted twice: **the end-of-scan sweep**.
+
+Two readings, both from the same converged run, `cluster-run-20261015-030740.klog`:
+
+    destroy focus 0000000000000000/-1 local 952c5ca9c9858001/4
+    destroy focus 0000000000000000/-1 local b77f7af1cd8e8001/4
+
+`focus` is NULL, and only the sweep arm sets `focus = NULL` with `n = -1`; the
+compare always has a focus. So these destroys are the sweep's.
+
+And the counter does fire -- read from **all** the pass lines rather than the
+last one:
+
+    filekeys n<0 4  n==0 3  n>0 57  acted 4105  failed 97  last 2048  kept 97  sweep 97  iters 3778  exit 1
+
+`sweep 97` on the pass that destroys, against `61 sweep 0` on the idle passes that
+follow it.
+
+**How two entries came to retract the sweep, and it is a reading defect, not a code
+defect.** The counter was incremented in the `n < 0` arm; the earlier reasoning
+called that blind because the sweep enters that arm with `merror` already ENOENT.
+That was wrong -- the counter is incremented on the sweep path itself, and it
+reads 97 there. What went wrong is that every reading of it took `tail -1` of the
+run's `filekeys` lines, which is the **last** pass of the run, an idle one, and
+always 0. The value was on the line for the pass that destroyed, thousands of
+lines earlier. This is the same defect as reading `acted` for the stop knob: the
+instrument was sound and the line it was read from was not the line that carried
+the answer.
+
+So, settled:
+
+- The arm is the **end-of-scan sweep**: the XOP scan reports done while the local
+  scan still holds chains, `n = -1` is forced for each, and they are destroyed
+  without a compare.
+- `sweep 97` and `focus NULL` are the two independent confirmations, a counter and
+  a print.
+- The destroyed keys in a converged run are the same two root dirents a failing run
+  loses. They are re-created in the converged run and not in the failing one, which
+  is why one converges: the sweep's damage is repairable only if a later pass
+  re-copies what it removed.
+- The open question is unchanged and is the right one: **why the XOP scan reports
+  done while the local scan still holds chains the master has.**
