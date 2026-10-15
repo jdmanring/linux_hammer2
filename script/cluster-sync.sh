@@ -729,6 +729,20 @@ nd=$(grep -c '^data ' "$W/fp.master")
 want_files=$((35 + NBIG + NBIG2))
 [ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
+# A fingerprint difference is only attributable while the run's images exist:
+# they are recreated at the start of every run, so the next run destroys the
+# evidence this one produced. MEASURED 2026-10-15: a run differed by 4 lines
+# with nothing scrapped and its images were overwritten before the media could
+# be read, which left the direction of the shortfall unread. A run that differs
+# keeps both images beside its kernel log.
+ndiff=$(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]')
+if [ "${ndiff:-0}" != 0 ]; then
+	stamp=$(date +%Y%m%d-%H%M%S)
+	cp "$MASTER" "$FIXDIR/cluster-diff-master-$stamp.img" 2>/dev/null
+	cp "$SLAVE" "$FIXDIR/cluster-diff-slave-$stamp.img" 2>/dev/null
+	diff "$W/fp.master" "$W/fp.slave" > "$FIXDIR/cluster-diff-fp-$stamp.txt" 2>/dev/null
+	echo "  kept  the differing run's images and fingerprint beside the kernel log as cluster-diff-*-$stamp.*"
+fi
 
 echo "cluster: $checks check(s), $fail failed"
 [ "$fail" = 0 ]

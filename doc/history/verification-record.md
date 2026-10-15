@@ -14035,3 +14035,44 @@ root, and the flush itself still runs only when the element root is flagged.
 already scrapped their 7 and 8, which is the before-and-after the fix needs. The
 harness's own fingerprint verdict is recorded beside this entry when the run
 completes.
+
+## The fix holds its measure and a third run still differs, 2026-10-15
+
+Four runs after the flush-gate fix, `scrapped` as the measure:
+
+    attempt 1   scrapped 0   0 lines differ of 120179
+    attempt 2   scrapped 0   0 lines differ of 120179
+    attempt 3   scrapped 0   4 lines differ of 120179
+    attempt 4   still running
+
+The fix does what it was written to do: `scrapped` is 0 in all three, against 7
+and 8 on the two runs that differed before it, and attempt 3 carries 137 passes,
+137 walks, 0 flush errors. **The fingerprint can still differ with nothing
+scrapped, so the scrap count was necessary and is not sufficient.** The 1.0.27
+row's claim that the fix is verified is corrected by this entry.
+
+**Attempt 3's difference is a different shape from the two that preceded it.**
+The earlier failing runs were short on the slave by the keys they scrapped. This
+one differs by 4 lines of 120179 with the slave short ONE inode (40041 against
+40042) and two dirents (40036 against 40038). Its own kernel log shows the pass
+that did it:
+
+    [40355.608405] START_SCAN IP=b6a9cb23fd8a8001 chain=00000000aff591ab (0000000000000400)
+    [40355.656516] destroy focus 0000000000000000/-1 local 0000000000000a4d/1
+    [40355.656697] destroy focus 0000000000000000/-1 local 952c5ca9c9858001/4
+    [40355.656774] destroy focus 0000000000000000/-1 local b77f7af1cd8e8001/4
+    [40355.656877] filekeys n<0 4  n==0 3  n>0 57  acted 1917 failed 57 last 2048 kept 57 sweep 58 iters 1591 exit 1
+
+All three destroys carry `focus 0000000000000000/-1`, which is the sweep arm's
+own state (`focus = NULL; n = -1`), so this is the sweep and not the compare. The
+sweep deletes local chains when the element's scan ends early, and the run's
+`n<0 4` against `kept 57` says four keys took that arm. The sweep is upstream's
+intended delete of local extras and a converged run performs it, so the question
+this entry leaves open is whether the four keys it took here were genuinely
+extras or were master-present keys the element's scan failed to present.
+
+**What is not yet read.** Attempt 3's images were overwritten by attempt 4 before
+the media could be read, so which side holds the differing keys is unread. The
+next run that differs keeps its images: the harness copies the kernel log off the
+guest but the images are recreated at the start of every run, and a fingerprint
+difference is only attributable while they exist.
