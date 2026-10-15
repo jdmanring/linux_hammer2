@@ -13832,3 +13832,32 @@ written into the record as a finding.
 What survives from the run: it converged (0 lines differing, 32 checks with 7
 failed on the phase's own progress checks, not the fingerprint), so it is a green
 run and says nothing about the failing case either way.
+
+## The instrument, read correctly: the insert arm walks the master with no local chain, 2026-10-15
+
+With the field labels corrected, the per-turn print reads the same in a converged
+run and the state is not an artifact:
+
+    sweepstate it 1  n 1  merror 00000000  focus 0000000000000400/1  local 0000000000000000/-1
+    sweepstate it 2  n 1  merror 00000000  focus 0000000000000401/1  local 0000000000000000/-1
+    sweepstate it 3  n 1  merror 00000000  focus 0000000000000402/1  local 0000000000000000/-1
+
+`focus` prints with a key and a type, so the sweep arm did not run: `focus` is set
+only by the compare, and the sweep NULLs it. `n 1` is the insert arm, `merror` is 0,
+and `local` is 0/-1 because `chain` is NULL. The loop does not set `advance_local`
+on that arm, so `chain` stays NULL and `local` stays 0/-1 for 708 turns while the
+master's focus walks 0x400, 0x401, 0x402 upward.
+
+So in this pass the local scan is exhausted from its first turn and `advance_xop`
+carries the master alone: the loop inserts every focus key against a local scan
+that has nothing left to give, up to the 1000-deferral cap. That is what the insert
+arm is for and it is not by itself a defect. What it does establish is that a pass
+can walk the master's whole key range with no local chain at all, which is the state
+in which a wrong `merror` -- or a focus the local side cannot reach -- has no local
+evidence to contradict it.
+
+It also disposes of the entry two above: `focus` is non-NULL here, so `n < 0` with a
+non-NULL focus exists on the compare arm as that entry predicted, and the sweep
+(`focus` NULL) is a separate, later state. Both are reachable, and which one a
+failing run takes is still unread because **four consecutive runs have converged**:
+0 lines differing in all four, no failure to read the print on.
