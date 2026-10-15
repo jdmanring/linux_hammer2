@@ -13802,3 +13802,33 @@ unresolved.
 
 Run under it: `cluster-run-20261015-043115.klog` itself is the failing reading with
 10 checks failed and 2 lines differing, so the probe has its before.
+
+## The "local scan has no element" reading was my own print, 2026-10-15
+
+The entry above reads `localp 0000000000000000` as the slave's element being
+unresolvable. It is not. The print is:
+
+    kprintf("... localp %p masterp %p ...", ..., chain, parent, ...);
+
+so `localp` prints **`chain`** and `masterp` prints **`parent`**. On the insert arm
+`chain` is NULL by definition and `n` is 1, and `masterp` -- the actual parent,
+`hammer2_inode_chain()`'s result -- is **non-NULL** in both runs (`00000000830f2c6b`,
+`000000002e5f6980`). The element resolves; the local *scan* is exhausted, which is
+the ordinary state the insert arm exists for.
+
+So the guard added at `0f0926e` is dead code: it tests `parent == NULL`, and
+`parent` is never NULL on this path. It is reverted, and the print is corrected to
+label its two fields for what they hold (`focus`, `local`) rather than for the
+pointer that happened to be passed.
+
+**This is the fifth reading defect of the two days and the second of the same
+kind:** a print whose argument order did not match its label, read as a fact about
+the subject. The others were `tail -1` on the wrong pass line for `sweep`, the same
+for `acted`, a counter incremented where its test was always true, and a
+fingerprint searched for a field it does not print. Every one was caught by
+checking the instrument against its own definition, and every one had already been
+written into the record as a finding.
+
+What survives from the run: it converged (0 lines differing, 32 checks with 7
+failed on the phase's own progress checks, not the fingerprint), so it is a green
+run and says nothing about the failing case either way.

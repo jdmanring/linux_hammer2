@@ -692,26 +692,6 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				     HAMMER2_RESOLVE_ALWAYS |
 				     HAMMER2_RESOLVE_SHARED);
 	hammer2_inode_unlock(ip);
-	/*
-	 * XXX Linux: the local scan has no element, and upstream does not test
-	 * for it.  Measured 2026-10-15 with `sweepstate`: every turn of a pass
-	 * prints `localp 0000000000000000` while the master's focus walks
-	 * 0x400, 0x401, 0x402 upward, so the local scan is empty for the whole
-	 * pass and the loop takes its `chain == NULL` insert arm on every
-	 * master key.  Upstream reaches `hammer2_chain_lookup(&parent, ...)`
-	 * with that NULL and then inserts against a NULL parent.
-	 *
-	 * Returning here is the same disposition the function's own NULL-chain
-	 * note describes: an unresolvable element is left unsynchronized and
-	 * the next pass retries, rather than the pass acting on a view that has
-	 * no local side at all.  EINPROGRESS and not EAGAIN: EAGAIN re-enters
-	 * the root pass at once and spins while the element stays unresolved,
-	 * where this ends the pass and the thread sleeps its interval.
-	 */
-	if (parent == NULL) {
-		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
-		return (HAMMER2_ERROR_EINPROGRESS);
-	}
 
 	chain = hammer2_chain_lookup(&parent, &key_next,
 				     HAMMER2_KEY_MIN, HAMMER2_KEY_MAX,
@@ -830,14 +810,13 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 * long pass cannot flood the console.  Read-only.
 		 */
 		if ((hammer2_debug & 0x10000) && iters < 64) {
-			kprintf("sweepstate it %d chain %016llx/%d localp %p "
-			    "masterp %p n %d merror %08x focus %016llx/%d\n",
-			    iters,
-			    (chain ? chain->bref.key : 0),
-			    (chain ? chain->bref.type : -1), chain, parent, n,
-			    merror,
+			kprintf("sweepstate it %d n %d merror %08x "
+			    "focus %016llx/%d local %016llx/%d\n",
+			    iters, n, merror,
 			    (focus ? focus->bref.key : 0),
-			    (focus ? focus->bref.type : -1));
+			    (focus ? focus->bref.type : -1),
+			    (chain ? chain->bref.key : 0),
+			    (chain ? chain->bref.type : -1));
 		}
 		if (n < 0) {
 			/*
