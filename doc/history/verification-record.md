@@ -12665,7 +12665,8 @@ whether the guard reaches this path.
 
 ## The shortfall's cause, end to end: the destroy arm, and the guard that fixed it was reverted for a fixable reason, 2026-10-14
 
-The chain is complete and every link is a measurement or a commit:
+The chain is complete and every link is a measurement or a commit. Link 2 is
+corrected by the entry below it; the rest stands.
 
 1. The interrupted pass destroys slave chains on the `n < 0` arm of the action
    switch, `hammer2_sync_destroy()`, which the record's 2026-10-11 entry reached
@@ -12674,7 +12675,9 @@ The chain is complete and every link is a measurement or a commit:
 2. `n < 0` means the master's XOP scan did not return a chain the slave holds,
    though the master's own media holds it. The destroy is what the compare
    instructs; the defect is upstream, in a scan that omits keys the master
-   holds.
+   holds. **This reads the arm as one condition and it is two.** See "The
+   key-losing destroy has two arms" below: the compare arm is not the arm that
+   lost these keys.
 3. A guard was written for exactly this: `a2804b9`, 2026-10-12, "A sync pass
    keeps a slave chain newer than the state it copies",
    `if (n < 0 && chain->bref.modify_tid > sync_tid)` keep it and leave the inode
@@ -12711,4 +12714,51 @@ an EAGAIN every pass), and neither has been read against `chain_next`'s key
 arithmetic. Writing the guard here would be a seventh mechanism stacked on the
 six the record already refuted in this arm, so it is left as the next piece of
 reading rather than a guess.
+
+## The key-losing destroy has two arms, and the compare arm is not the one that lost the keys, 2026-10-14
+
+The entry above reads `n < 0` as a single condition: the compare found the local
+chain left of the master's focus. It is two conditions reached by two paths, and
+the losing run separates them.
+
+The run that lost the 66 keys is `cluster-run-20261014-171347.klog`, 65649
+lines, and the destroy burst and the pass counters are adjacent in it:
+
+    [ 3016.495968] START_SCAN IP=b6a9cb23fd8a8001 chain=00000000241acf7e (0000000000000400)
+    [ 3016.541646] destroy rec ... slave 1 1.0000000000000a24     <- first
+    [ 3016.544901] destroy rec ... slave 1 1.0000000000000a65     <- last, 66 keys in 3 ms
+    [ 3016.545184] filekeys n<0 66  n==0 5  n>0 57  acted 1878 failed 0 last 0
+
+Every pass before it reads `n<0 0` (the eight `filekeys` lines at 2924.190161,
+2924.195162, 2924.204322, 2924.206185, 2995.969598 and their siblings), and in
+the losing pass `n>0` is flat at 57 and `n==0` moves only 3 to 5. Sixty-six keys
+sorted before the focus with no compare between them is not the shape a compare
+produces; it is one sweep of a scan that has ended.
+
+That sweep is the arm at the top of the compare, `chain && merror ==
+HAMMER2_ERROR_ENOENT`, which sets `n = -1` for every key still local without
+comparing anything. And the end-of-scan it reads is not always an end:
+
+- `hammer2_xop_scanall()` (`hammer2_xops.c:871`) prints `NULL parent` and feeds
+  `hammer2_xop_feed(&xop->head, NULL, clindex, error)` with `error` still 0 when
+  `hammer2_inode_chain()` returns NULL. The losing run logs `NULL parent` 364
+  times.
+- `hammer2_xop_collect()` (`hammer2_admin.c:776`) then takes the all-NULL
+  cluster to `hammer2_cluster_check()`, which for `keynull` set and `lokey ==
+  HAMMER2_KEY_MAX` returns ENOENT, the same value a completed scan returns.
+- The frontend reads ENOENT as "the chains need to be deleted" and takes the
+  sweep arm on all of them.
+
+The keys this deletes are not necessarily stale. They are the keys whose
+element the XOP could not resolve, and the master's media holds all 66 of them,
+which is what the images show.
+
+Consequence for the fix: the guard that worked (`a2804b9`) tested `chain->bref.modify_tid > sync_tid`
+at the top of the `n < 0` arm, which covers both paths into it, but the record's
+attribution of the loss to the compare arm named the wrong path. The counters
+added here (`newer`, `sweep` in the `filekeys` line) count each path separately,
+so the next run says which one fired rather than leaving it inferred from the
+burst. Whether the guard is the right fix is a separate question this run does
+not answer: keeping a newer chain leaves it uncopied and the element unstamped
+on the ENOENT path too, which is a retry rather than a convergence.
 
