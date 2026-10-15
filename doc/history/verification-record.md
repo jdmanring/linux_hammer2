@@ -9798,6 +9798,62 @@ stale local chain and lets the scan move on. The run to confirm it is in
 flight; the reading that decides is the distinct-key count and the maximum key
 reached, not the total number of inserts.
 
+**Corrected 2026-10-14: the 180-key count does not isolate this branch.** The
+same session's summary, a few hundred lines below, lists the slave-side error
+rollup as a mechanism that "converts a per-key failure into a whole-pass abort,
+and the next pass retries the same keys" (`hammer2_synchro.c` summary of
+attempts, item 4). That is the same signature: a pass that aborts early retries
+the same early keys on the next pass, and 180 keys attempted 69 times is 69
+aborted passes. Both changes were in the tree on 2026-10-13 and both were
+reverted within 35 minutes of each other, so the count in the table above reads
+the two together and does not attribute the livelock to this branch alone. The
+branch is not exonerated by this; see the entry below, which measures it
+directly and finds it deadly for a different reason.
+
+## The guard livelocks the sweep path by construction, measured 2026-10-14
+
+The guard was restored and run, and the pass hung. The mechanism is structural
+and does not depend on the 2026-10-13 attribution at all.
+
+The `n < 0` arm is entered from two places. One is the compare, where `n` comes
+from `hammer2_chain_cmp()`. The other is the end-of-scan arm, `chain && merror
+== HAMMER2_ERROR_ENOENT`, which sets `n = -1` on **every** iteration for as long
+as the local scan has chains left and the XOP still reports ENOENT. On that
+path `n` is not a comparison result; it is a constant that selects this arm
+until the local scan empties.
+
+So a guard here that skips the destroy and sets neither `advance_local` nor
+`advance_xop` does not stall one iteration. It re-enters the same arm on the
+same chain with the same `n = -1`, forever. There is no state that changes
+between iterations.
+
+The run's own evidence:
+
+    [  148.229360] START_SCAN IP=b6a9cb23fd8a8001 chain=0000000051b2c542 (0000000000000400)
+    [  370.385810] INFO: task kworker/5:1:115 blocked for more than 122 seconds.
+    [  370.385844] Workqueue: events hammer2_sync_work [hammer2]
+    [  370.386294]  hammer2_flush_core ... hammer2_inode_chain_flush ... hammer2_vfs_sync_pmp
+
+The pass's own `START_SCAN` is 222 s before the hung-task report, the guest load
+never falls below 4, and the unmount never returns: `umount /mnt/h2c` reports
+"target is busy" on every attempt, and only a guest restart clears it. This is
+the "worst case" the NULL-chain note at `hammer2_synchro.c:640` describes as
+worse than a copy that does not converge.
+
+Two consequences:
+
+1. The guard is not re-addable in the shape it had, on either path. The earlier
+   note that its `advance_local` "did not reach `chain_next`" is answered: it
+   does reach it, and `chain_next` does advance by key, but on the sweep path
+   `advance_local` is never set in the first place because the guard skips
+   before the arm's own advance.
+2. A fix for the sweep path has to move a cursor. The candidate, not yet tested,
+   is to re-seed the XOP to the local scan's key on that path
+   (`xop->collect_key = chain->bref.key`) so the next `hammer2_xop_collect()`
+   returns a focus for a key the local scan is holding, and the pair is compared
+   instead of swept. That turns the sweep back into the compare it was meant to
+   be, and the compare's own arm then advances both cursors.
+
 ## Reverting the branch restores the key advance, 2026-10-13
 
 The revert is measured against the livelock, on the same reading that named
