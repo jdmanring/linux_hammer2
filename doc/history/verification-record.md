@@ -14099,3 +14099,60 @@ the same line (`acted`, `failed`, `kept`) are whole-pass totals. Reading four
 counters off one line as though they shared a population is the defect. The rule
 it joins: a line's fields can have different scopes, so read each field's own
 guard before comparing two of them.
+
+## A differing run caught with its media, and the flush fix is incomplete, 2026-10-15
+
+The loop that runs until a fingerprint differs produced one on its second attempt,
+and the harness kept the images, so this is the first differing run whose direction
+is read off the media rather than inferred.
+
+    attempt 1   scrapped 0    0 lines differ of 120179
+    attempt 2   scrapped 10   4 lines differ of 120179
+
+**The direction is master-only, and the keys are the scrapped ones.** The kept
+fingerprint diff is 4 lines, all `<` (master-only), 0 `>`:
+
+    < data  0x0000000000000a54 0000000000000000/16 b3245a7507a24260
+    < data  0x0000000000004535 0000000000000000/16 d44ae2b367673c20
+    < inode 0x0000000000000a54 FILE 4096
+    < inode 0x0000000000004535 FILE 4096
+
+The slave is short two files, inode and data each, and the run's own kernel log
+names both as chains the unmount discarded unwritten:
+
+    scrapping unflushed inode 0000000000000a54/0 flags 00006243
+    scrapping unflushed inode 0000000000004535/0 flags 00006243
+    scrapping unflushed data  0000000000000000/16 flags 00004243
+
+`0x6243 & HAMMER2_CHAIN_FLUSH_MASK` is `MODIFIED | UPDATE`: copied, never written.
+This is the same defect the flush-gate fix targeted, so the fix is incomplete
+rather than wrong.
+
+**Why it is incomplete, read from the same log.** The flush is the last thing a
+pass does, and the pass that made these copies was interrupted before it finished:
+
+    [44187.343905] sync_slaves pfs CL clindex 1
+    [44187.344424] sync_flush: clindex 1 chain 000000001cc9f8e5 not flagged (00046102)
+    [44190.825279] hammer2_kill_sb: after unmount: 7 inode, 18 chain, 4 modified, 493 dio still allocated
+    [44190.891739] scrapping unflushed data 0000000000000000/16 flags 00004243
+
+The pass opened, the flush gate read the element root unflagged half a millisecond
+later, and the unmount landed 3.5 s after that. The re-mark the fix moved above the
+gate runs at the END of a pass, so a pass that never reaches its end never runs it,
+and the copies it made are never flushed. The fix closes the case where a pass
+completes with unwritten copies below an unflagged root; it does not close the case
+where the pass is interrupted before its flush.
+
+**The measure and its limit.** `scrapped` was 0 on four consecutive runs after the
+fix and 10 on this one, so four clean runs did not establish the fix and the
+earlier reading of "reduced and not closed" was the right one to write. The loop's
+stop condition is the fingerprint, and it took two attempts to differ, which is
+consistent with the 2-in-40 rate the defect had before the fix.
+
+**What the next fix has to reach.** The copies must reach media when the pass is
+interrupted, not only when it completes. The unmount path already runs a final
+flush (`hammer2_vfs_sync_pmp()` and the device teardown), and the chains are
+`MODIFIED | UPDATE` with a parent, so the question is why that final flush does not
+carry them: either the element's topology is not flagged on the path the unmount
+walks, or the flush stops at a boundary above them. That is the reading the next
+run takes, and the kept images make it attributable.
