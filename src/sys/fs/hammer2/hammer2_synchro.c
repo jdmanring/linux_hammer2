@@ -800,6 +800,25 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		/*
 		 * Take action based on comparison results.
 		 */
+		/*
+		 * XXX Linux: the per-iteration state of the sweep path.  Two fixes
+		 * to this path have hung the loop in two different places, and
+		 * neither could be diagnosed from the pass totals.  This prints the
+		 * values the arm decision was just made from, so the next change is
+		 * written against the state rather than a guess about it.  Gated on
+		 * 0x10000, a bit no other print in this file uses, and capped so a
+		 * long pass cannot flood the console.  Read-only.
+		 */
+		if ((hammer2_debug & 0x10000) && iters < 64) {
+			kprintf("sweepstate it %d chain %016llx/%d localp %p "
+			    "masterp %p n %d merror %08x focus %016llx/%d\n",
+			    iters,
+			    (chain ? chain->bref.key : 0),
+			    (chain ? chain->bref.type : -1), chain, parent, n,
+			    merror,
+			    (focus ? focus->bref.key : 0),
+			    (focus ? focus->bref.type : -1));
+		}
 		if (n < 0) {
 			/*
 			 * Delete extranious local data.  This will
