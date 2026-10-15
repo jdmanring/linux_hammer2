@@ -13313,3 +13313,39 @@ interrupted before its deferrals drain can destroy the very entries it was about
 to defer. The next reading is whether these two were deferred and the pass left
 before draining them, which the deferral count and the pass's exit reason
 together decide.
+
+## The two missing keys were never destroyed, which refutes the entry above, 2026-10-14
+
+The entry above attributes the two missing root dirents to the run's two
+`destroy rec` lines. That is wrong, and the run's own log refutes it.
+
+The two destroys are at `slave 1 4.952c5ca9c9858001` and
+`slave 1 4.b77f7af1cd8e8001`: type 4 (DIRENT), in the file-hash space at the top
+of the 64-bit range. The two missing entries are at `0x0000000000000400` and
+`0x000000000000043e`, the root's own inode-number space at the bottom. Different
+keys, different space, and neither destroyed key appears in either image's
+fingerprint, so they are chains that were created and removed within the pass
+rather than the loss.
+
+A search of the whole run for a destroy or a delete of either missing key returns
+nothing. So the two root dirents were **never destroyed -- they were never
+copied**. What the run does show for one of them is an insert that did happen:
+
+    [ 6676.630773] sync_insert: focus 0000000000000400/0 into parent b6a9cb23fd8a8001/0 type 1
+
+`0x400` was inserted into the root (`b6a9cb23fd8a8001`) at t=6676, near the start
+of the run. The slave's image does not hold it at the end. So a chain that was
+inserted is absent from the media the run leaves, which is the write-back
+question and not the destroy question.
+
+The pass that holds the two destroys also reads `acted 2006 failed 53 last 2048`,
+and 2048 is `HAMMER2_ERROR_EINPROGRESS` (`hammer2.h:312`), the code this session's
+own newer-arm guard returns when it keeps a chain and advances. So that run's
+`failed` count is 53 of this port's keeps being reported as failures through the
+same discarded `nerror` the file's own comment describes, and the `failed`
+counter is not a count of slave-side errors when the guard is active.
+
+Corrected reading of the partial result: the fix took the loss from 132 lines to
+two root dirents, the two were never destroyed, at least one was inserted and did
+not reach the slave's media, and the next instrument is the write-back of an
+inserted chain rather than any arm of the compare.
