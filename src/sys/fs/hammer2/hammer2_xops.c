@@ -869,30 +869,7 @@ hammer2_xop_scanall(hammer2_xop_t *arg, void *scratch, int clindex)
 	parent = hammer2_inode_chain(xop->head.ip1, clindex,
 	    xop->resolve_flags);
 	if (parent == NULL) {
-		/*
-		 * XXX Linux: the carried code prints and ends the handler with
-		 * `error` still 0, which feeds the collector a NULL chain at
-		 * error 0.  That is the exact shape of a COMPLETED scan, so
-		 * hammer2_xop_collect() reads the all-NULL cluster as ENOENT and
-		 * the frontend believes the master was scanned and holds nothing
-		 * more.  The element was never scanned at all.
-		 *
-		 * The consequence is the sweep: the pass then reaches its
-		 * end-of-scan arm with the local scan still holding chains,
-		 * forces n = -1, and destroys keys the master holds.  Measured
-		 * 2026-10-15: a converged run sweeps 97 keys and repairs them,
-		 * a failing run sweeps 127 and loses inode 0x12fe with two root
-		 * dirents; both runs' destroying pass prints `focus
-		 * 0000000000000000/-1`, which only the sweep sets.
-		 *
-		 * An element that cannot be resolved is an error, not an empty
-		 * scan.  The collector then reports a failure and the frontend
-		 * leaves the loop at its `merror && merror != ENOENT` break
-		 * rather than sweeping.  Upstream does the same thing -- FreeBSD
-		 * and DragonFly both end the handler with the print and a 0 -- so
-		 * this is a port-marked correction, not a divergence in kind.
-		 */
-		error = HAMMER2_ERROR_EIO;
+		hprintf("NULL parent\n");
 		goto done;
 	}
 
