@@ -13286,3 +13286,30 @@ That is the next sub-case, and it is narrower than the last: an old chain, whose
 key the master's scan did not offer, that the master still holds. Whether the scan
 omits the key or the compare mis-associates it is the reading to take, and the
 `kept`/`destroy rec` pair with the two keys is what it needs.
+
+## The two keys that remain are the root's own subdirectory dirents, 2026-10-14
+
+The two lines the partial run differs by are named, read from the saved images by
+the fingerprint:
+
+    < dirent "bigdir" 0x000000000000043e DIR
+    < dirent "set"    0x0000000000000400 DIR
+
+Both are present on the master and absent from the slave. They are the PFS
+root's dirents for its two subdirectories, at the two lowest keys in the root's
+space, and they are the only thing missing: the inode and data counts are equal
+to the master's (40042 inode, 40103 data) and the two directories' inodes exist
+on the slave. What is gone is the parent's naming entries for them.
+
+That accounts for the two `destroy rec` the run recorded. The compare arm read
+each as a leftover the master no longer holds -- `modify_tid <= sync_tid`, so the
+newer guard does not cover it -- and destroyed it, and the master holds it.
+
+Two things this narrows. The loss is not in the file keys, which is where every
+earlier reading looked; it is the root's own child dirents, the first two keys a
+root scan presents. And the two destroyed chains are the ones the deferral
+mechanism exists for: a directory's dirent is deferred and recursed, so a pass
+interrupted before its deferrals drain can destroy the very entries it was about
+to defer. The next reading is whether these two were deferred and the pass left
+before draining them, which the deferral count and the pass's exit reason
+together decide.
