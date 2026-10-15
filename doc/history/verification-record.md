@@ -13948,3 +13948,59 @@ the phase-4 window, so a stop-on-sweep wait there exhausts its bound and reports
 timeout as if the sweep had not come. The `H2_STOP_ON_SWEEP` knob written toward that
 was removed rather than relocated, since the sweep is not the cause. The measurement
 that decides this defect is `scrapped`, which every run already carries.
+
+## The reading defects of P4, consolidated, 2026-10-15
+
+Seven instruments were read as facts about the subject when they were facts about
+the instrument. They are gathered here because they were written into the record
+one at a time, each as a finding, and the pattern is what a later session needs:
+every one was caught by checking the instrument against its own definition, and
+every one had already been published before that check.
+
+1. **`sweep` read with `tail -1`.** `swept` is a local of `hammer2_sync_slaves()`
+   reset on entry, so each `filekeys` line carries ONE pass's count. The last line
+   is almost always a quiet pass. The failing run's destroying pass printed
+   `sweep 127`; the last line printed `sweep 0`. A count of 0 was written into
+   five records as a finding and two of them retracted the sweep on its strength.
+   The counter was also placed inside the `n < 0` arm on `merror == ENOENT`, where
+   its test was true only if the counter was already there, so it read 0 on every
+   run for a second reason.
+
+2. **`acted` polled as a stop knob.** It prints on the pass's `filekeys` line, at
+   pass end, so it does not move during the pass it is asked to interrupt. A
+   request for depth 4 measured 0, three times, and each 0 became a finding.
+
+3. **The fingerprint searched for a field it does not print.** It prints a dirent
+   as `name inum type` and never the dirent's own key, so grepping it for a dirent
+   key matched nothing on either side by construction. A true claim was retracted
+   from that emptiness.
+
+4. **A counter incremented where its test was always true.** The first `sweep`
+   placement, above.
+
+5. **A print whose argument order did not match its label.** `sweepstate` printed
+   `localp/masterp` against arguments that were `chain, parent`, so the two were
+   swapped in every reading taken from it.
+
+6. **`sweepstate` capped out of the region the defect lives in.** The print was
+   gated `iters < 64` while the destroying pass ran 3816 turns, so it covered the
+   head of a healthy pass and could not show the turn that took the arm.
+
+7. **A geometry asserted without counting the population.** "`bigdir` is the last
+   key in the space" was argued without counting; the master held thousands of keys
+   above it.
+
+Three more were found while closing this out and are of the same kind: the
+`H2_STOP_ON_SWEEP` knob written toward the sweep was aimed at the phase-4 window
+while every destroy in 31 kept runs falls inside the bigdir write and none falls
+there, so it would have timed out and reported the timeout as the sweep not
+coming; the `maxsweep` helper first written to replace defect 1 had `m` start
+empty, so a log whose passes all read `sweep 0` returned nothing and collapsed
+"the destroying pass did not run" into "no pass line at all"; and the roadmap
+row's central claim, that the failing run's `sweep` read 0, was defect 1 written
+down as a finding.
+
+The rule the seven share: **before reading a counter's zero, state what a zero
+would have to mean and whether the instrument could produce a non-zero at all.**
+A counter that cannot fire and a knob that cannot place both read 0, and a zero
+from either is indistinguishable from the state never occurring.
