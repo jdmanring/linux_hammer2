@@ -13436,3 +13436,53 @@ sweep rather than about the counter. Restored: the loss is the end-of-scan sweep
 destroying chains the master holds, and the question is why the XOP scan ends
 while the local scan still holds them -- which is the master-side scan omitting
 master-present keys, as the entry above this one concludes from the same dirents.
+
+## The cause is the master's scan, and the arm is not determined, 2026-10-14
+
+Six entries above oscillate over which arm of the `n < 0` switch destroys the
+keys. This one states what the evidence supports and stops there.
+
+**What is proven, by the media:**
+
+- The slave lost the root's dirents for "set" and "bigdir", keys
+  `952c5ca9c9858001` and `b77f7af1cd8e8001`.
+- The master holds both.
+- The pass recorded two `destroy rec` in the slave's element at exactly those two
+  keys (`slave 1 4.952c5ca9c9858001`, `slave 1 4.b77f7af1cd8e8001`), so the slave
+  held them and the pass removed them.
+
+So the pass destroyed slave chains whose keys the master holds. That is the
+defect, it is the same defect the 66-key run showed, and it has been stated the
+same way since `32ac198`: **the master-side scan does not present a key the
+master's media holds, so the pass reads the slave's copy as a key the master no
+longer has and deletes it.**
+
+**What is not proven, and what this entry withdraws:** which arm deletes them.
+Two entries ruled out the end-of-scan sweep by a counter, and the last entry
+reinstated it by a geometry argument. Both are withdrawn:
+
+- The counter was incremented inside the `n < 0` arm on `merror ==
+  HAMMER2_ERROR_ENOENT`, where the sweep arrives with that merror set, so it
+  measured the sweep's entries rather than separating it from the compare. It is
+  now placed on the sweep itself, where it reads 0 -- but only on runs that
+  converged, so it still does not say what a failing run does.
+- The geometry argument claimed `bigdir` is at the top of the key space so no
+  compare focus can sit above it. The master holds thousands of dirent keys above
+  it (`b77facf89b878001`, `b78066b551358001`, ...). A compare focus above `bigdir`
+  exists, so the compare can destroy it and the argument is void.
+
+The arm is therefore undetermined. Both the compare and the sweep are consistent
+with the evidence, and the counter that would separate them has not been read on
+a failing run.
+
+**What does not depend on the arm** is the cause: a master-present key missing
+from the master's scan. That is where the next reading belongs, and it is
+independent of which arm then acts on the absence -- the sweep acts on it when the
+scan ends, the compare when the scan skips it, and both are the scan failing to
+present a key it holds.
+
+The record's own lesson from the day, now stated once: an instrument's reading is
+only about its subject when its test is true on one path and false on the other,
+and a geometry is only an argument after the population it assumes has been
+counted. Both of this entry's retractions were the same error, made twice in
+opposite directions.
