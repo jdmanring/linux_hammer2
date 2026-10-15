@@ -13247,3 +13247,42 @@ Two counters are left in a state the run explains:
 What is not yet done: a second run, because the failure was intermittent at a
 fixed configuration and one converged run from the same path is a reading and not
 a rate. The next run is the same command; the two together are the rate.
+
+## The fix is partial: two dirents are still lost at the shallowest interruption, 2026-10-14
+
+The second run of the same command, `cluster-run-20261014-221402.klog`, reached
+the failing depth and did not converge:
+
+    raw phase4 copied=2 ... kept 53 ... resume-updates=0 resume-settled=10
+    FAIL the slave holds what the master holds: master (... 40038 dirent),
+         slave (... 40036 dirent)
+    FAIL the slave's PFS matches the master's entry for entry and block for
+         block: 40035 file entries; 2 lines differ of 120179
+
+The three runs together, which is the rate the single reading could not give:
+
+| run | `copied` | kept | destroys | slave against master |
+| --- | --- | --- | --- | --- |
+| before the fix (`...171347`) | 2 | - | 66 | 132 lines differ |
+| with the fix (`...215937`) | 5 | 56 | 2 | 0 lines differ |
+| with the fix (`...221402`) | 2 | 53 | 2 | **2 dirents differ** |
+
+So the fix takes the loss from 132 lines to 2 at the same `copied=2`, and 2 is
+not 0. `interrupt_resume` is not met.
+
+What the two lines are: the inode and data counts match the master's exactly
+(40042 inode, 40103 data) and the dirent count is short by two (40036 against
+40038). So the loss is now two directory entries and no inodes, where before it
+was every kind at once.
+
+The two destroys that remain are not the `newer` arm: `kept 53` accounts for the
+newer chains and the dead counter reads 0, so these two went through the plain
+compare arm with `modify_tid <= sync_tid` -- chains the compare read as leftovers
+the master no longer holds, which the master does hold. The `newer` guard does not
+cover them because the condition it tests is false for an old chain whose key the
+master's scan did not present.
+
+That is the next sub-case, and it is narrower than the last: an old chain, whose
+key the master's scan did not offer, that the master still holds. Whether the scan
+omits the key or the compare mis-associates it is the reading to take, and the
+`kept`/`destroy rec` pair with the two keys is what it needs.
