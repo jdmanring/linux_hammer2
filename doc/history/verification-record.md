@@ -10388,6 +10388,9 @@ single directory past 4000 entries.
 
 ## Summary of the P4 synchronization attempts, 2026-10-13
 
+**Superseded by the 2026-10-14 list below, which is the one to read before
+changing this path.** Kept because the 4000-file reading at its end still holds.
+
 Five changes were made to the cluster synchronization path and five were
 measured and reverted or reduced. Recorded together so none is re-tried:
 
@@ -12966,3 +12969,82 @@ uncopied and the element unstamped on the sweep path too, which is a retry
 rather than a convergence, and a scan that ends early needs the scan repaired
 rather than the delete guarded.
 
+
+## Summary of the P4 synchronization attempts, 2026-10-14
+
+Second edition. Each entry is a change that was made to the cluster
+synchronization path, measured, and reverted or reduced, or a mechanism that was
+proposed and then refuted by a reading. Recorded together so none is tried
+again. The list above is the 2026-10-13 edition and is superseded by this one.
+
+### Changes reverted
+
+1. **The slave-newer guard, as written at `a2804b9`.** Kept a chain whose
+   `bref.modify_tid` exceeded the pass's `sync_tid`, set `advance_local = 1`, and
+   returned without destroying. `a2804b9`'s reading: destroys inside the write
+   82 to 0, the slave converged. Later the same day the record blamed it for a
+   livelock; see items 2 and 3.
+2. **The same guard with the advance line dropped** (committed `9921f2b`).
+   Re-enterable on the end-of-scan path, which sets `n = -1` on every iteration,
+   so skipping the destroy with no advance re-enters the same arm on the same
+   chain forever. Measured 2026-10-14: the pass hung, `kworker/5:1 blocked 122 s`
+   in `hammer2_chain_lock` under `hammer2_inode_chain_flush`, the unmount busy
+   until the guest restarted. The advance line is load-bearing; its absence is
+   the difference between a hang and a stall.
+3. **The slave-side error rollup** (`6d8bf05`, tried, reverted). Rolls a slave
+   error up to abort the pass; the next pass retries the same early keys. Also
+   the better candidate for the 2026-10-13 180-keys-69-times count, which was
+   attributed to item 1 alone without isolating the two.
+4. **The deferral of the `n < 0` arm.** Deferring the destroyed directory and
+   returning EINPROGRESS leaves the local scan past the focus with `n > 0` on
+   the next entry, which then *recreates* it. Reverted.
+5. **Radix cap on the computed keybits.** Fires, removes the refusals and the
+   per-key rebuilds, and narrows the tree until no file key is presented: 0 of
+   1001 against 4001 of 8080. Reverted.
+
+### Mechanisms refuted, do not propose again
+
+6. **Masked failed copies.** `nerror` is discarded by upstream and by this port.
+   The counters show `failed 0` across every run of both days, so no copy in
+   these passes returned an error. The rollup was built for this and is not
+   needed.
+7. **Copy depth as the lever.** The shortfall does not follow the depth knob:
+   runs at `copied` 2, 28, 44 and 87 converge or not independently of it, and
+   two runs that both read `stop-depth=0 wanted 0` land on opposite sides.
+8. **The compare arm as the arm that loses the keys.** The keys are not lost by
+   the compare's destroy. A run that destroyed 81 keys converged with 0 lines
+   differing, against the 66-key run that lost 132; destroyed keys are recreated
+   by the same pass, so the earlier key match was a subset, not an equality.
+9. **The end-of-scan sweep as the arm that loses the keys.** The `sweep` counter
+   has run three times and read 0 every time. **It has still never been read on
+   a run that failed**, so the arm is untested rather than refuted; do not
+   record it as either.
+10. **The `xop->collect_key` re-seed** as the sweep-path fix. The scan's position
+    is `xop->key_beg` (`hammer2_synchro.c:669`), not `collect_key`, which only
+    tells the collector which FIFO entries are behind.
+
+### Test-harness defects, which read as subject failures
+
+11. **The 600 s default run timeout** truncating a phase whose writes take
+    307 s + 360 s, which produced a bogus "42 inode" shortfall. Use
+    `H2_RUN_TIMEOUT=1800`.
+12. **A verbose guest log slowing the pass**, which made a losing run read as
+    converged. The failure is reproducible only at the quiet settings.
+13. **Waiting for two resume passes and unmounting.** A pass whose local scan is
+    empty handles one inode, and the failing run's log shows 58 such passes in
+    70 ms walking 0x438 to 0x400. Two passes drains two inodes of a backlog of
+    hundreds, so the check measured a race. Replaced by a wait for the
+    update-inode count to stop advancing.
+14. **`H2_STOP_DEPTH` cannot place the stop at a shallow depth.** It polls the
+    `acted` field of the pass's `filekeys` line, which prints only at the end of
+    a pass, so it does not advance during the pass it is trying to interrupt. A
+    request for depth 4 measured 0.
+
+### What still holds
+
+15. The slave holds all 4801 dirents and 801 of the 4801 inodes; the 4000 files
+    that predate the element are the ones missing. Every change above moves a
+    counter that is not that number. This has not changed through both days.
+16. The failing pass runs two loop turns and leaves through the loop-head break
+    for both scans done (`iters 2 exit 1`), not an error and not the deferral
+    threshold. It inserts one key, stamps the inode, and returns.
