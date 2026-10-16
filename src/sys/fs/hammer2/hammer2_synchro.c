@@ -178,8 +178,19 @@ hammer2_sync_setflush(hammer2_chain_t *chain)
  * flushes its own element instead, from the slave's PFS root down through
  * every inode, in a flush transaction taken in the order
  * hammer2_vfs_sync_pmp() takes it, and flags the root's parent so the next
- * flush of the device writes the volume header.  A root with nothing
- * flagged returns at once, so an idle pass costs a lock.
+ * flush of the device writes the volume header.
+ *
+ * The flush is unconditional.  The root's own flags cannot gate it: a
+ * mounted PFS's sync clears the root's ONFLUSH on its way down, so a test
+ * before the re-mark skipped the flush on the pass that needed it, and a
+ * test after the re-mark reads the bit the walk just set.  Measured on the
+ * kernel of record, an idle pass's flush takes 0.03 ms median, 0.05 ms p90,
+ * from the root-before print to the completed one, against a 5.12 s pass
+ * cadence; an earlier 0.94 ms reading priced two more prints inside that
+ * window.  hammer2_vfs_sync_pmp() spends the same flush every sync interval
+ * for the same reason.  DEFER(an idle pass's flush measured above a tenth of the cadence):
+ * a per-pass count of actions and stamps, read here, proved to cover every
+ * mutation the pass can make.
  */
 static int
 hammer2_sync_flush(hammer2_thread_t *thr)
@@ -194,63 +205,32 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 	    HAMMER2_RESOLVE_ALWAYS);
 	hammer2_inode_unlock(pmp->iroot);
 	if (chain) {
-		/*
-		 * The pass-end flush must reach chains this synchronization thread
-		 * changes; they are not represented by inodes on the VFS syncq.
-		 * The root's prior flags have not proved to be a reliable indication
-		 * that descendants still need flushing.  Measure them before and
-		 * after re-marking; do not treat the post-mark test as an independent
-		 * dirty reading.
-		 */
 		if (hammer2_debug & 0x8000)
 			kprintf("sync_flush: clindex %d root-before %08x\n",
 			    thr->clindex, chain->flags);
 		hammer2_sync_setflush(chain);
+		/*
+		 * XXX Linux: the return value was DISCARDED, so a flush
+		 * that wrote nothing was indistinguishable from one that
+		 * wrote everything. That is the shape of the 2026-10-13
+		 * loss: the thread copied 3873 inodes into the slave's
+		 * element, flagged the path, ran this flush at the end of
+		 * the pass, and the slave's media held 801 of them. With
+		 * the error thrown away there was nothing to read.
+		 *
+		 * Read and report it. The caller prints it and does NOT
+		 * retry the pass, so this alone turns a silent failure
+		 * into a visible one rather than repairing it.
+		 */
+		error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
+		    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);
 		if (hammer2_debug & 0x8000)
-			kprintf("sync_flush: clindex %d root-after-mark %08x\n",
-			    thr->clindex, chain->flags);
-		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
-			if (hammer2_debug & 0x8000)
-				kprintf("sync_flush: clindex %d decision flush flags %08x\n",
-				    thr->clindex, chain->flags);
-			/*
-			 * XXX Linux: the return value was DISCARDED, so a flush
-			 * that wrote nothing was indistinguishable from one that
-			 * wrote everything. That is the shape of the 2026-10-13
-			 * loss: the thread copied 3873 inodes into the slave's
-			 * element, flagged the path, ran this flush at the end of
-			 * the pass, and the slave's media held 801 of them. With
-			 * the error thrown away there was nothing to read.
-			 *
-			 * Read and report it. The caller prints it and does NOT
-			 * retry the pass, so this alone turns a silent failure
-			 * into a visible one rather than repairing it; whether a
-			 * retry is also needed is what the next run decides.
-			 */
-			error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
-			    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);
-			if (hammer2_debug & 0x8000)
-				kprintf("sync_flush: clindex %d completed flags %08x error %08x\n",
-				    thr->clindex, chain->flags, error);
-			if (error) {
-				kprintf("sync_flush: clindex %d chain %p "
-				    "flush error %08x\n",
-				    thr->clindex, chain, error);
-			}
-			/*
-			 * XXX Linux: the re-mark that stood here moved above the
-			 * gate.  Upstream re-marks the parent BEFORE the flush
-			 * (hammer2_xop_inode_flush()), and doing it only after
-			 * meant the gate was never reachable on the pass that
-			 * needed it: the element root read unflagged, the flush
-			 * was skipped, and the re-mark then ran on a chain that
-			 * had just been written.  Nothing is lost by the move,
-			 * since the walk is idempotent and the flush itself
-			 * re-marks whatever it dirties.
-			 */
-		} else if (hammer2_debug & 0x8000) {
-			kprintf("sync_flush: clindex %d decision skip flags %08x\n",
-			    thr->clindex, chain->flags);
+			kprintf("sync_flush: clindex %d completed flags %08x error %08x\n",
+			    thr->clindex, chain->flags, error);
+		if (error) {
+			kprintf("sync_flush: clindex %d chain %p "
+			    "flush error %08x\n",
+			    thr->clindex, chain, error);
 		}
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);

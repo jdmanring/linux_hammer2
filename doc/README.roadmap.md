@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0 to P3 are closed; P4 is reopened and P5 remains blocked.
+dependency order. P0 to P4 are closed on the Linux reading; P5 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -324,20 +324,22 @@ dependency order. P0 to P3 are closed; P4 is reopened and P5 remains blocked.
    spin release, the defect 1.0.6 fixed) reported as a bad unlock
    balance. What P3 does not cover is the coherency half, which no tree
    has written and which runs under the quorum protocol of P8.
-4. P4, local synchronization hardening, was marked closed on 2026-10-16
-   on the Linux reading. An independent review then found the pass-end
-   flush gate tautological: `hammer2_sync_setflush(chain)` sets ONFLUSH on
-   the same root immediately before the gate reads it. The eight interrupted
-   runs' matching fingerprints and zero scrapped chains remain symptom
-   evidence, but the zero `not flagged` readings do not establish that the
-   gate selected dirty passes; the old and new code both require a measured
-   flush decision. The failed-copy stamp path is closed: a refused copy's
-   key is retried by the next pass, measured by a refused allocation that
-   faulted the pre-fix module and converged on the fixed one. P4 stays
-   reopened on the gate, whose idle cost has been measured at about a
-   millisecond and whose disposition is not yet recorded. The crash cell's
-   FreeBSD calibration half remains COULD-NOT-RUN by detector design and
-   is scope, not evidence.
+4. P4, local synchronization hardening, closed 2026-10-16 on the Linux
+   reading, after a reopening the same day. It was first marked closed on
+   eight interrupted runs whose fingerprints matched and whose scrap count
+   was 0; an independent review then found the pass-end flush gate
+   tautological, `hammer2_sync_setflush(chain)` setting ONFLUSH on the root
+   immediately before the gate read it, so those runs were symptom evidence
+   and not evidence that the gate chose. Two things closed it again. The
+   failed-copy stamp: a refused copy's key is retried by the next pass,
+   measured by a refused allocation (`H2_FAULT`) that faulted the pre-fix
+   module and converged on the fixed one, with the livelock the withheld
+   stamp first caused measured and closed in the same change. The gate: it
+   is removed, and the flush runs on every pass, since the root's flags
+   cannot gate it in either order and an idle pass's flush measures 0.03 ms
+   median against a 5.12 s cadence; the upgrade trigger is a `DEFER` in
+   the status document's ledger. The crash cell's FreeBSD calibration half
+   remains COULD-NOT-RUN by detector design and is scope, not evidence.
 
 ## Versioning
 
@@ -892,7 +894,7 @@ Rules it adds to the ones this tree already keeps:
 | P1 | `SEEK_DATA`/`SEEK_HOLE` against upstream's `0d0182bdb4` | P0 | the unsynced window found open and closed; mapped writes, block boundaries and a regrown file pass; compression on the enospc gate, and a dirty snapshot, shared blocks and a hard stop in `script/seek-matrix.sh` pass, and so do files held in the inode, negative offsets and a writer racing the seek; xfstests' `seek` group passes, 8 of 8. Closed |
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | small-file create and delete times are measured by `million-tree.sh` (1,000,000 files in 248 s with four writers, whole-tree delete in 41 s); low-memory closure reads at 2, 4 and 8 GiB, a single-purpose root boot and one 128 KiB mapped write are recorded, and `latency.sh` reports per-operation fsync rather than a storm. Mixed concurrent read/write with mmap and fsync storms is measured by `script/storm.sh`, which runs mapped writers, write-then-fsync writers, fdatasync batchers and readers on one set of files at once and checks every cell after a remount with the cache dropped; a 24-cycle run passes with the kernel log clean, and 800-cycle soaks ran clean on both the debug build (2 h 39 min) and the KASAN build (6 h 14 min, `kasan 0 ubsan 0`), each with `fsck_hammer2` clean and the kernel log clean. An export is served by `nfsd` under both export modes, 12 checks 0 failed. A sustained soak is the same load over `H2_STORM_CYCLES` cycles rather than one long cycle, since a cycle is bounded by the volume; the readings are in the verification record. `O_DIRECT` is decided, under "Not on the roadmap" |
 | P3 | cache coherency (CCMS): a design note before any code | P2 | closed 2026-10-11 on the work queue's four exit criteria: transitions documented with pre- and postconditions (`doc/CCMS_TRANSITIONS.md`), each checked and the four refused calls refused by `test-ccms-lock.sh`, the same functions raced across eight threads, and lockdep clean on the debug and KASAN kernels by `script/ccms-lockdep.sh`, whose control, an unheld spin release, is reported. A first closing on 2026-10-10 on the note alone did not meet those criteria and was reopened. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
-| P4 | local synchronization hardening: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | reopened 2026-10-16. Eight corrected-fix interrupted runs have identical fingerprints and scrap 0, but their claimed gate evidence is invalid: the code sets ONFLUSH on the element root then tests that same bit. The failed-copy/`modify_tid` stamp is closed on 2026-10-16 by a probe that failed before and passed after (`H2_FAULT`, a refused allocation in the thread's first pass). The idle-versus-dirty flush decision remains under investigation, its idle cost measured at about a millisecond. Earlier criterion readings remain observations; none closes P4 until the flush decision is recorded. The crash cell's FreeBSD half is COULD-NOT-RUN by detector design. See `doc/history/verification-record.md`. |
+| P4 | local synchronization hardening: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | closed 2026-10-16 on the Linux reading, item 4 above. Reopened and re-closed the same day: the failed-copy `modify_tid` stamp is withheld for a pass that failed a key and the pass ends after one deferral drain, measured by `H2_FAULT`; the pass-end flush gate is removed and the flush runs every pass, its idle cost measured at 0.03 ms median and its upgrade trigger a `DEFER`. The crash cell's FreeBSD half is COULD-NOT-RUN by detector design. See `doc/history/verification-record.md`. |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
 | P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |
 | P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | open |

@@ -14433,3 +14433,35 @@ KASAN or UBSAN reports. The clean run at the default size on the same tree,
 `cluster-run-20261016-081110.klog`: 32 checks, 0 failed, 0 lines differ of
 120179, scrapped 0, 0 reports, pass errors 0, with `kept 49` passes (the
 `EINPROGRESS` arm) withholding their stamps and converging on the next.
+
+## The pass-end flush is unconditional, by the measured cost of gating it, 2026-10-16
+
+The flush gate P4 was reopened on is removed rather than repaired, and the
+decision is recorded on three readings already in this file. A test of the
+element root's flags before the re-mark skipped the flush on the pass that
+needed it, because a mounted PFS's sync clears the root's `ONFLUSH` on its way
+down and stops at each child inode (the 2026-10-15 entries above: 3873 copied,
+801 on media). A test after the re-mark reads the bit `hammer2_sync_setflush()`
+set a line earlier, which is the tautology the 2026-10-16 review found. And the
+flush the tautological gate let through on every pass costs an idle pass 0.94
+ms median, 1.34 ms p90, 2.62 ms max over 82 idle-classified passes against a
+5.12 s cadence (`8e45335`). A gate that chose would need a per-pass reading of
+every mutation the pass can make, actions and stamps both, and the plan refused
+a parallel dirty bit without that coverage proved; at two orders below the
+cadence the proof is not worth its risk, and `hammer2_vfs_sync_pmp()` spends the
+same flush every sync interval for the same reason. The test and the three
+prints that measured it are gone; `root-before` and `completed` stay, since the
+idle cost is read from their timestamps. The trigger that reopens the question
+is a `DEFER` in the status document's ledger: an idle flush measured above a
+tenth of the cadence.
+
+**After**, `cluster-run-20261016-142120.klog`, the ungated flush with
+`H2_LOCKDEBUG=1` at the default size: 32 checks, 0 failed, 0 lines differ of
+120179, scrapped 0, pass errors 0, 0 kernel warning, lockdep, KASAN or UBSAN
+reports. Re-read from `root-before` to `completed` with the two prints that
+stood between them removed, 153 idle passes (no insert, replace, destroy or
+stamp since the previous flush) take 0.03 ms median, 0.05 ms p90, 25.45 ms
+max; the 4 busy passes 0.17 ms median, 11.45 ms max. The 0.94 ms of `8e45335`
+was the cost of two serial-console prints inside its own window, as that
+entry's last sentence allowed; the decision above was taken on the larger
+number and holds by a wider margin on the smaller.
