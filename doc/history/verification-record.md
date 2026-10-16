@@ -14206,3 +14206,31 @@ candidates, and the reading that separates them:
 
 Candidate 1 is the one to try first: it is the smallest, it uses the existing
 helper, and the stop path already exists and is exercised by phase 4.
+
+## The re-mark flagged the parent and the gate reads the root, 2026-10-15
+
+A ninth finding, and it is in the fix, not an instrument. The previous commit
+moved the re-mark above the flush gate but passed `chain->parent`. The walk
+flags the chain it is given and then walks up, so the element root -- the word
+the gate tests -- was never given the flag. The walk then stopped immediately at
+a NULL parent on every pass, setting ONFLUSH on an orphan and returning.
+
+**The run's own log proves it, in three lines 20 microseconds apart:**
+
+    [44182.224064] sync_slaves error 0 defer 0000000000000000
+    [44182.224078] sync_setflush: stopped at 0000000000000000/0 type 255 (NULL parent)
+    [44182.224084] sync_flush: clindex 1 chain 000000001cc9f8e5 not flagged (00046102)
+
+The pass returns, the walk runs, and the gate reads the root six microseconds
+later as unflagged. The walk's own print says why: it stopped at a NULL parent
+at once, so nothing above the orphan was reached. 131 passes, 131 walks, 131
+unflagged reads, and the flush never ran.
+
+This also refutes the interrupted-pass attribution written beside the differing
+run: the two passes before the unmount both COMPLETED (`sync_slaves error 0`),
+and each ran the gate. The copies were made by a pass that finished, and the gate
+never fired.
+
+The correction is one word: `hammer2_sync_setflush(chain)` instead of
+`hammer2_sync_setflush(chain->parent)`. The gate reads `chain->flags`, so the
+walk must be given `chain`. What this run decides is in the attempt table below.
