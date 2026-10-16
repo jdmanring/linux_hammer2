@@ -14289,6 +14289,26 @@ on 3 and `000c6343` on 4; the `00046302` and `000c6343` passes all sit inside
 the bigdir/indirect-maintenance activity in the log, so none of those is an
 idle pass. The counts, not the samples alone, are the reading.
 
+**Flush cost, read from the same run's own timestamps.** The interval from
+`root-before` to `completed flags` on the 82 passes entering at `00046102`
+(idle-classified: no insert/replace/destroy in their windows) has median
+0.94 ms, p90 1.34 ms, max 2.62 ms. The busy-class passes are the expensive
+ones: the `000c6343` passes reach 18.6 ms, all of it inside `indirect_maint`
+work the flush itself kicked off, and one `clindex 0` pass at a remount read
+16.1 ms. Pass cadence is 5.12 s median. So the unconditional pass-end flush
+costs an idle pass about one millisecond, not the tree walk the reverted
+forcing change measured at 728 to 801 inodes: `hammer2_flush()` on an unflagged
+root returns after its own flags test, and the flush work only exists when
+descendants are dirty. The earlier revert's cost was from the unconditional
+re-mark making every pass a flushing pass on a tree that HAD dirty work
+queued, not from the flush call itself on a clean tree.
+
+This is still one debug-enabled run, so it bounds rather than settles the
+idle cost; a controlled run without `0x8000`'s per-action prints remains the
+cleaner reading. But the millisecond-class idle cost removes the pressure to
+gate the flush at all before the stamp repair: the unconditional flush's
+per-pass price is two orders below the 5 s cadence.
+
 The active pass has insert actions immediately before its flush; idle passes show
 no insert/replace/destroy action in their pass window. This independently shows
 the pre-mark word differs between observed idle and active cases, but the current
