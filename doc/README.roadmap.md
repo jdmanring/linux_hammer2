@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0 to P3 are closed and P4 is next.
+dependency order. P0 to P4 are closed and P5 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -324,6 +324,17 @@ dependency order. P0 to P3 are closed and P4 is next.
    spin release, the defect 1.0.6 fixed) reported as a bad unlock
    balance. What P3 does not cover is the coherency half, which no tree
    has written and which runs under the quorum protocol of P8.
+4. P4, local synchronization hardening, closed 2026-10-16 on the work
+   queue's five exit criteria, on the Linux reading throughout. The defect
+   it closed was the synchronization thread's element flush never running:
+   the copies a pass made sat unwritten until the unmount scrapped them
+   (scrapped 7 and 8 on the two runs that differed), because the flush gate
+   reads the element root's flags and the re-mark flagged the parent. Eight
+   interrupted-and-resumed runs under the corrected fix converge with
+   identical fingerprints and the gate reading flagged on every pass. The
+   crash cell's FreeBSD calibration half never reached its condition by
+   the detector's design and is recorded as the cell's scope rather than
+   as evidence.
 
 ## Versioning
 
