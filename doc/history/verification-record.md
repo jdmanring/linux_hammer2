@@ -14234,3 +14234,21 @@ never fired.
 The correction is one word: `hammer2_sync_setflush(chain)` instead of
 `hammer2_sync_setflush(chain->parent)`. The gate reads `chain->flags`, so the
 walk must be given `chain`. What this run decides is in the attempt table below.
+
+**Attempt table, corrected fix, 2026-10-16.** Eight phase-4 runs, each one
+interrupting an open pass mid-copy and resuming to convergence:
+
+    attempt  scrapped  fingerprint lines differ of 120179
+    1 - 8    0         0
+
+Every run's klog carries the walk's own print (`sync_setflush: stopped at ...
+(NULL parent)`) with zero `not flagged` lines after it, against 136 in the
+failing run's klog: the gate reads flagged on every pass and `hammer2_flush()`
+runs. Before and after on the same instrument: scrapped 7 and 8 on the two
+runs that differed before, 0 on all twelve runs after (four under the first
+fix, eight under the corrected one), and the first round's 4-line sweep differ
+did not recur in the eight. Eight clean runs against a ~5% base rate prove
+little on their own; the weight is the mechanism (the three-line ordering
+above, which the old code could never satisfy) plus the positive firing (the
+gate reads flagged on every pass now). `interrupt_resume` is met on that
+basis, with that arithmetic stated.
