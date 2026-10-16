@@ -14328,3 +14328,108 @@ existing inode deferral list represents recursive inode work, not arbitrary
 failed keys. The measured whole-pass error rollup livelocked; no new retry
 policy is accepted yet. The next change must classify each action's mutation
 and retry semantics before touching the stamp.
+## The failed copy is retried, measured by a refused allocation, 2026-10-16
+
+The second defect the review named is closed with a probe that failed before
+the change and passed after it. `hammer2_sync_slaves()` discarded each key's
+`nerror` and stamped the element root's `modify_tid` whatever the arms had
+returned, so a key whose copy failed compared equal on every later pass. The
+record is now one bit, `failed`, on the `hammer2_deferred_list_t` every call
+of a pass shares, set at the point the carried code discarded the error and
+read at the stamp: a pass with a failed key stamps no inode root after it, so
+the next pass rescans and reaches the key again, and the scan goes on past the
+failure, which is what the reverted whole-pass rollup of 2026-10-13 did not
+do. Reading the three action helpers for what they return found two more
+fail-opens: `hammer2_sync_insert()` assigned `chain->error` at its relock,
+which a refused `hammer2_chain_modify()` does not set, so a refused insert
+returned 0; and `hammer2_sync_destroy()` discarded `hammer2_chain_delete()`'s
+return and returned the cursor re-lookup's. Both now return the first error.
+`EINPROGRESS` from the kept-newer arm sets the bit too, which is what that
+arm's own comment promised and the discard did not deliver. The bit is
+pass-wide, and the cost of that is written as a `DEFER` beside it.
+
+**The probe.** `cluster-sync.sh` gains `H2_FAULT=N`, which arms the debug
+build's `fail_alloc_after` before the SLAVE's `pfs-create` with a new
+`fail_alloc_count=N` that clears the refusal on the Nth, so the first N
+allocations the thread's first pass makes are refused through the freemap
+path a full volume refuses them on, and nothing on the host times the window.
+`H2_KO` loads a module built elsewhere, which is how the control was run: the
+tree at `8e45335` with only the knob added. Two placements of the phase were
+wrong first and are kept in the script's comment: with the files written after
+phase 2, mounted or with the slave's ROOT unmounted, the thread copied nothing
+at all (`cluster-run-20261016-062330`, `-063323`: 0 updates after phase 2 in
+each), because the slave's element has joined the master's pmp and the
+frontend writes every later file to it directly. That is also why phase 4's
+backlog reads `begun rc 1` and 0 updates at `H2_NBIG2=200` on every run here,
+control and fixed alike: the harness has one copy that goes through the sync
+thread, the first pass, and that is where the fault is armed.
+
+**Before**, `cluster-hang-20261016-065003.klog`, pre-fix module, `H2_FAULT=8`:
+`flush_core ... error 00000020` as the window opened, `filekeys ... failed 3`
+on the first pass, then a general protection fault, `KASAN: null-ptr-deref in
+range [0x50-0x57]` in `hammer2_chain_lookup+0x5da` from
+`hammer2_sync_slaves+0x40a`, `h2nod-CL` dead, a second oops in `rm` 45 s
+later, and the run hung past 900 s. The scan recursed into a deferred inode
+whose insert had been refused: `hammer2_inode_chain()` returned NULL for the
+element and the lookup dereferenced it, the fault the comment at the
+`want_update` ternary had predicted for a NULL chain.
+
+**After**, `cluster-run-20261016-070537.klog`, the fixed module built with
+`H2_LOCKDEBUG=1`, same knobs: `failed 7` of 8 refusals, no fault, 0 kernel
+warnings, KASAN or UBSAN reports, kmemleak 0. The deferral is skipped for a
+key whose arm failed, so the recursion that faulted the control is not
+entered; a guard for a scan handed an inode with no element chain returns EIO
+instead of faulting, and did not fire in this run. One
+`hammer2_sync_slaves: error 64` at 395.02 is ENOENT, the scan's own end
+leaking: the stamp block used to absorb it by reissuing the collect, and with
+the stamp withheld it reached the caller, which read it as a failed pass,
+drained the deferrals (`didbreak`) and flushed. The pass at 400.14 scanned the
+root again (`START_SCAN IP=...8001 chain=... (0x407)`) and completed the set
+at 400.21. Both fsck clean; master and slave (442 inode, 503 data, 438 dirent)
+each; the cluster PFS fingerprint 0 lines differ of 1379. The leak is closed
+in the same change (a withheld stamp returns 0 as a completed scan does), and
+a clean run at the default size, `cluster-run-20261016-072144.klog`, read the
+same two leaked ENOENTs on passes whose `kept` count (the EINPROGRESS arm)
+withheld the stamp, with the media converged, 0 lines differ of 120179,
+scrapped 0, 0 kernel reports; before the change those passes returned 0 by
+way of the stamp's collect, so the zero pass-error readings of earlier runs
+did not see them either.
+
+What this does not show: a refusal inside `hammer2_sync_replace()` or
+`_destroy()`, since a first pass is all inserts; the retry under a persistent
+failure, where the pass-wide bit rewrites every inode after the failed one on
+each pass (the `DEFER`); and whether the pre-fix module's stamp would have
+left the slave short had it not faulted first, since it faulted first. The
+fault is the stronger before-reading, and the stamp's fail-open is read from
+the code rather than from a converged-short media here.
+
+**The withheld stamp livelocked the pass.** The second fault run on the
+module with the ENOENT leak closed, `cluster-hang-20261016-074222.klog`,
+hung past 900 s with no kernel report of hammer2's own: 4492 `sync_slaves
+error 256` lines (`EAGAIN`) between 2066.6 and 2828 s, each a root scan that
+pushed one deferral, drained it, and was called again, until `h2nod-CL`, a
+kworker and the harness's `rm` were reported blocked at 2459 s. The pass loop
+in `hammer2_primary_sync_thread()` calls the root scan again after each
+deferral drain and stops only when it returns something other than `EAGAIN`,
+which the carried design reaches by stamping each deferred directory so the
+rescan compares it equal. With `failed` set, no directory is stamped, so every
+rescan defers the same ones. Run 070537 did not meet it because its root scan
+pushed no deferral: the leaked ENOENT ended the loop. The fix is in the loop,
+not the stamp: a failing pass drains its deferrals once and ends, each entry
+scanned at most once (`scanned` on `hammer2_deferred_ip_t`, since a deferred
+directory's rescan has the same shape one level down), and the next pass five
+seconds later retries the key, which is what the withheld stamp is for.
+
+**After the loop fix**, `cluster-run-20261016-075820.klog`, `H2_FAULT=8`,
+`H2_LOCKDEBUG=1`, `H2_NBIG=200`: the fault phase opens at 318.92 s; the pass
+at 318.96 ends on its one `error 256` line with `acted 58 failed 7` and no
+rescan; the pass at 324.08 reads `acted 232 failed 7`, 174 more actions
+with no new failure, stamps the 58 inode roots (`syncthr: update inode`) and
+returns 0 at 324.14; every later pass returns 0 with no deferral. The harness
+reads 34 checks, 2 failed, the two being phase 4's `begun`/`copying` items
+the size limit above explains; pass errors 0 on both counts, 7 of 8 refusals
+failed copies, 0 lines differ of 1379, scrapped 0, 0 kernel warning, lockdep,
+KASAN or UBSAN reports. The clean run at the default size on the same tree,
+`cluster-run-20261016-081110.klog`: 32 checks, 0 failed, 0 lines differ of
+120179, scrapped 0, 0 reports, pass errors 0, with `kept 49` passes (the
+`EINPROGRESS` arm) withholding their stamps and converging on the next.

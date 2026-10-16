@@ -52,11 +52,20 @@
 typedef struct hammer2_deferred_ip {
 	struct hammer2_deferred_ip *next;
 	hammer2_inode_t	*ip;
+	int		scanned;	/* XXX Linux: see list->failed */
 } hammer2_deferred_ip_t;
 
 typedef struct hammer2_deferred_list {
 	hammer2_deferred_ip_t	*base;
 	int			count;
+	/*
+	 * XXX Linux: set when an action on any key of this pass returned
+	 * non-zero, and read at every inode-root stamp.  The list is the one
+	 * object every hammer2_sync_slaves() call of a pass shares, so a
+	 * failure in a deferred child reaches its parent's stamp through it.
+	 * Reset per pass.
+	 */
+	int			failed;
 } hammer2_deferred_list_t;
 
 
@@ -346,6 +355,7 @@ hammer2_primary_sync_thread(void *arg)
 		hammer2_trans_init(pmp, 0);
 
 		hammer2_inode_ref(pmp->iroot);
+		list.failed = 0;	/* XXX Linux */
 
 		for (;;) {
 			int didbreak = 0;
@@ -361,6 +371,21 @@ hammer2_primary_sync_thread(void *arg)
 				hammer2_inode_t *nip;
 
 				nip = defer->ip;
+				/*
+				 * XXX Linux: in a failing pass a deferred directory's
+				 * children stay unstamped, so its rescan would defer
+				 * them again and keep it at the head of the list.
+				 * Each entry is scanned once; see the pass-end break
+				 * below for the root's half of the same loop.
+				 */
+				if (list.failed && defer->scanned) {
+					--list.count;
+					list.base = defer->next;
+					hfree(defer, M_HAMMER2, sizeof(*defer));
+					hammer2_inode_drop(nip);
+					continue;
+				}
+				defer->scanned = 1;
 				error = hammer2_sync_slaves(thr, nip, &list,
 							(nip == pmp->iroot));
 				if (error &&
@@ -405,6 +430,20 @@ hammer2_primary_sync_thread(void *arg)
 				}
 				if (error == 0 || error == HAMMER2_ERROR_EAGAIN)
 					error = HAMMER2_ERROR_EINPROGRESS;
+				break;
+			}
+
+			/*
+			 * XXX Linux: a failed key withheld every stamp of this
+			 * pass, so a root rescan finds the deferred directories
+			 * still differing and defers them again: measured as 4492
+			 * rescans in 760 s before the thread blocked
+			 * (cluster-hang-20261016-074222).  The deferrals were
+			 * drained once above; the pass ends here and the next one
+			 * retries the key, which is what the withheld stamp is for.
+			 */
+			if (list.failed) {
+				error = 0;
 				break;
 			}
 		}
@@ -712,6 +751,18 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				     HAMMER2_RESOLVE_SHARED);
 	hammer2_inode_unlock(ip);
 
+	/*
+	 * XXX Linux: an inode with no chain on this element cannot be
+	 * scanned, and hammer2_chain_lookup() faults on the NULL parent.
+	 * The pass fails and the inode is not stamped, so the next pass
+	 * reaches it again.
+	 */
+	if (parent == NULL) {
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		list->failed = 1;
+		return (HAMMER2_ERROR_EIO);
+	}
+
 	chain = hammer2_chain_lookup(&parent, &key_next,
 				     HAMMER2_KEY_MIN, HAMMER2_KEY_MAX,
 				     &serror,
@@ -990,23 +1041,29 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		}
 
 		/*
-		 * XXX Linux: nerror is assigned by every arm of the switch above and never
-		 * read, in the carried code as well.  This port fails a build on any warning,
-		 * so it is discarded here with the reason.  Read it and it becomes a fail-open
-		 * of its own: a slave that failed to copy a chain still has its inode's
-		 * modify_tid set to the master's below, and every later pass sees them equal
-		 * and does not retry.  Rolling it up was tried on 2026-10-13 and reverted,
-		 * because the first slave-side failure then aborts the whole pass and the
-		 * next pass retries the same early keys: 75 inode keys about 52 times each
-		 * across 44 passes.  Closing it needs a per-key record that does not end the
-		 * pass, which the deferral list already exists to carry.
-		 */
-		/*
-		 * XXX Linux: the discarded nerror, counted.  Every arm above sets
-		 * nerror; a non-zero here is a copy that failed, and the pass
-		 * goes on to stamp the element root's modify_tid below, which is
-		 * what makes the failure permanent.  Printed with the file-key
-		 * counters.
+		 * XXX Linux: every arm above sets nerror and the carried code
+		 * never reads it, so a key whose copy failed was followed by the
+		 * stamp of the element root's modify_tid below, and every later
+		 * pass read the two equal and did not retry.  Rolling the error
+		 * into merror was tried on 2026-10-13 and reverted: the first
+		 * failure then ended the scan, and the next pass retried the
+		 * same early keys, 75 inode keys about 52 times each across 44
+		 * passes, with the keys after them never reached.
+		 *
+		 * The record is one bit on the pass's deferral list instead.  The
+		 * scan goes on past the failed key, so every key that can be
+		 * copied is, and no inode root is stamped for the rest of the
+		 * pass, so the next pass rescans and reaches the failed key again.
+		 * EINPROGRESS from the kept-newer arm is a failure here on
+		 * purpose: that arm's comment promises the element is not
+		 * stamped, and this is what keeps the promise.
+		 *
+		 * DEFER(a failing pass is measured rewriting unrelated inodes):
+		 * the bit is pass-wide, so a failure under one directory
+		 * withholds the stamp from every inode the pass touches after
+		 * it, and the next pass replaces each of those inodes' roots
+		 * again.  Scoping it to the failed inode's ancestry needs the
+		 * deferral entry to name its parent.
 		 */
 		if (advance_local || advance_xop) {
 			atomic_add_int(&h2dbg_act_tried, 1);
@@ -1015,7 +1072,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				h2dbg_act_last = nerror;
 			}
 		}
-		(void)nerror;
+		if (nerror)
+			list->failed = 1;
 
 		/*
 		 * We cannot recurse depth-first because the XOP is still
@@ -1029,7 +1087,17 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 * The deferral is pushed onto a LIFO list for bottom-up
 		 * synchronization.
 		 */
-		if (merror == 0 && dodefer) {
+		/*
+		 * XXX Linux: and only if the arm succeeded.  A deferred inode
+		 * whose insert or replace failed has no element chain to
+		 * recurse into: measured 2026-10-16 with three allocations
+		 * refused in the first pass, the recursion's
+		 * hammer2_inode_chain() returned NULL and the scan's lookup
+		 * faulted on it, taking the sync thread with it.  The failed
+		 * key is reached again by the next pass, since its root is
+		 * not stamped.
+		 */
+		if (merror == 0 && dodefer && nerror == 0) {
 			hammer2_inode_t *nip;
 			hammer2_deferred_ip_t *defer;
 
@@ -1119,8 +1187,10 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * and modify_tid.  Only limited changes are made to PFSROOTs.
 	 *
 	 * XXX inode lock was lost
+	 *
+	 * XXX Linux: and only if no key of this pass failed, see list->failed.
 	 */
-	if (merror == 0 || merror == HAMMER2_ERROR_ENOENT) {
+	if ((merror == 0 || merror == HAMMER2_ERROR_ENOENT) && !list->failed) {
 		hammer2_xop_ipcluster_t *xop2;
 		hammer2_chain_t *focus;
 
@@ -1171,6 +1241,16 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			/* XXX */
 		}
 		hammer2_xop_retire(&xop2->head, HAMMER2_XOPMASK_VOP);
+	} else if (merror == HAMMER2_ERROR_ENOENT) {
+		/*
+		 * XXX Linux: the scan's own end, which the stamp above used
+		 * to absorb by reissuing the collect.  With the stamp
+		 * withheld it reached the caller as a pass error: measured
+		 * 2026-10-16, two `error 64` prints on a run that converged.
+		 * The failure that withheld the stamp is in list->failed, so
+		 * this returns what a completed scan returns.
+		 */
+		merror = 0;
 	}
 
 	return merror;
@@ -1420,7 +1500,14 @@ failed:
 	if (chain) {
 		hammer2_chain_lock(chain, HAMMER2_RESOLVE_SHARED |
 					  HAMMER2_RESOLVE_ALWAYS);
-		error = chain->error;
+		/*
+		 * XXX Linux: the carried line assigned chain->error here, which
+		 * a failed hammer2_chain_modify() does not set, so an insert
+		 * whose allocation was refused returned 0 and its key was
+		 * stamped as copied.  The first error wins.
+		 */
+		if (error == 0)
+			error = chain->error;
 	}
 
 	return error;
@@ -1444,6 +1531,7 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 	hammer2_key_t key_next;
 	hammer2_key_t save_key;
 	int error;
+	int derror;		/* XXX Linux: the delete's own */
 
 	chain = *chainp;
 
@@ -1479,7 +1567,14 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 	hammer2_chain_lock(*parentp, HAMMER2_RESOLVE_ALWAYS);
 	hammer2_chain_lock(chain, HAMMER2_RESOLVE_NEVER);
 
-	hammer2_chain_delete(*parentp, chain, mtid, HAMMER2_DELETE_PERMANENT);
+	/*
+	 * XXX Linux: the carried call discarded the delete's return, and the
+	 * helper behind it modifies the parent, which can fail.  Kept and
+	 * returned ahead of the re-lookup's, which still has to run to
+	 * position *chainp.
+	 */
+	derror = hammer2_chain_delete(*parentp, chain, mtid,
+				      HAMMER2_DELETE_PERMANENT);
 	hammer2_sync_setflush(*parentp);	/* XXX Linux */
 	hammer2_chain_unlock(chain);
 	hammer2_chain_drop(chain);
@@ -1494,7 +1589,7 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 				     HAMMER2_LOOKUP_SHARED |
 				     HAMMER2_LOOKUP_NODIRECT |
 				     HAMMER2_LOOKUP_NODATA);
-	return error;
+	return (derror ? derror : error);
 }
 
 /*

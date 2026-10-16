@@ -211,8 +211,19 @@ hammer2_freemap_alloc(hammer2_chain_t *chain, size_t bytes)
 	 */
 	if (hammer2_fail_alloc_after &&
 	    __atomic_fetch_add(&hammer2_alloc_count, 1, __ATOMIC_RELAXED) >=
-	    hammer2_fail_alloc_after)
+	    hammer2_fail_alloc_after) {
+		/*
+		 * XXX Linux: fail_alloc_count bounds the refusals; the knob
+		 * clears itself on the last one, so a window of failures
+		 * inside one synchronization pass needs no timing from
+		 * outside.  Zero refuses without end, as before.
+		 */
+		if (hammer2_fail_alloc_count &&
+		    __atomic_sub_fetch(&hammer2_fail_alloc_count, 1,
+				       __ATOMIC_RELAXED) == 0)
+			hammer2_fail_alloc_after = 0;
 		return (HAMMER2_ERROR_ENOSPC);
+	}
 #endif
 
 	KKASSERT(bytes >= HAMMER2_ALLOC_MIN && bytes <= HAMMER2_ALLOC_MAX);

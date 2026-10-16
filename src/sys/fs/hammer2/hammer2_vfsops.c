@@ -187,6 +187,12 @@ static int hammer2_debug_syncs;
 int hammer2_fail_alloc_after;
 int hammer2_alloc_count;
 module_param_named(fail_alloc_after, hammer2_fail_alloc_after, int, 0644);
+/*
+ * XXX Linux: how many refusals fail_alloc_after issues before it clears
+ * itself.  Zero, the default, refuses without end.
+ */
+int hammer2_fail_alloc_count;
+module_param_named(fail_alloc_count, hammer2_fail_alloc_count, int, 0644);
 #endif
 
 /*

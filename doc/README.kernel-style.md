@@ -42,6 +42,17 @@ The latter row is not a style conversion; that comment was retracted because
 the gate reads ONFLUSH immediately after the walk sets it. The evidence is in
 `doc/history/verification-record.md`.
 
+Later the same day `return is not a function` moved 274 to 277 with the
+failed-copy record in `hammer2_synchro.c` and `hammer2_freemap.c`. Two are
+new lines, the destroy helper's `return (derror ? derror : error);` and the
+scan's `return (HAMMER2_ERROR_EIO);` for an inode handed to it with no
+element chain, written in the file's style beside its other parenthesized
+returns. The third is
+not a new return at all: `hammer2_freemap_alloc()`'s existing
+`return (HAMMER2_ERROR_ENOSPC);` moved from a braceless `if` body into a
+braced one when the refusal gained its count, and checkpatch counts the
+same statement differently there. None is convertible on its own.
+
 
 Counts below are what `checkpatch.pl` from linux **v7.3-rc5** reports, which is
 the version `doc/checkpatch-baseline.txt` names in its first line and the

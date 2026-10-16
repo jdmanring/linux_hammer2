@@ -111,6 +111,12 @@ NBIG2=${H2_NBIG2:-20000}
 # line forwards it to the guest half, which runs under set -u.
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-3000}
+# Phase 2b, the refused copy: how many allocations the freemap refuses
+# inside the thread's first pass (0 leaves the phase out). Needs
+# H2_LOCKDEBUG=1, which builds the knob. H2_KO names a module built elsewhere to load instead of building one,
+# which is how a run against the tree before a fix is made.
+FAULT=${H2_FAULT:-0}
+LOCKDEBUG=${H2_LOCKDEBUG:-0}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
@@ -138,10 +144,18 @@ if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
 	exit 2
 fi
 
-make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" >/dev/null 2>&1 || {
-	echo "cluster: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
-KO=src/sys/fs/hammer2/hammer2.ko
+if [ -n "${H2_KO:-}" ]; then
+	[ -f "$H2_KO" ] || { echo "cluster: COULD-NOT-RUN: no module at H2_KO=$H2_KO" >&2; exit 2; }
+	KO=$H2_KO
+else
+	make -s clean >/dev/null 2>&1
+	if [ "$LOCKDEBUG" = 1 ]; then
+		HAMMER2_LOCKDEBUG=1 make -s KDIR="$KDIR" >/dev/null 2>&1
+	else
+		make -s KDIR="$KDIR" >/dev/null 2>&1
+	fi || { echo "cluster: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
+	KO=src/sys/fs/hammer2/hammer2.ko
+fi
 
 # What the kernel tree configures against what the module actually carries.
 # grep -c prints its count and exits 1 on no match, so the count is kept and
@@ -200,8 +214,15 @@ rmmod hammer2 2>/dev/null; dmesg -C
 # below reads that file. The follower is killed last, after rmmod has stopped
 # the module's lines, so nothing written after the last count is lost.
 K=/tmp/h2cluster.klog
+# A follower from a run that exited early is still writing, and two of them
+# write the ring twice into one file, which doubles every count below and
+# turns the deltas negative: measured 2026-10-16, three strays from three
+# refused runs and a klog holding the ring four times over. Any earlier one
+# is stopped first, and this one goes when the shell does.
+pkill -x dmesg 2>/dev/null; sleep 0.2
 dmesg -w > $K 2>&1 &
 KPID=$!
+trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 insmod /tmp/hammer2.ko debug=$H2DEBUG || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
@@ -242,11 +263,66 @@ i=0; while [ $i -lt 40 ]; do head -c $(( (i * 7919) % 300000 + 1 )) /dev/urandom
 i=0; while [ $i -lt 15 ]; do head -c $(( i * 4099 + 17 )) /dev/urandom > /mnt/h2c/set/sub/g$i; i=$((i + 1)); done
 sync
 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+# 2b. A copy that fails part-way through the pass, H2_FAULT=N (default 0,
+# phase absent). The thread's first pass after the SLAVE is created is the
+# one copy this harness drives through the sync thread: once the slave's
+# element has joined the master's pmp the frontend writes every later file
+# to it directly, whether or not the slave's ROOT is mounted, which two runs
+# of this phase placed after phase 3 measured (0 updates after phase 2,
+# with the slave unmounted for the write and without). So the freemap
+# allocator is told to refuse the next N allocations HERE, before the
+# pfs-create that starts the thread: the first allocations it sees are the
+# thread's inserts, which fail through the path a full volume fails them
+# on, and the knob clears itself on the Nth refusal. Needs the module built
+# with H2_LOCKDEBUG=1, where the knob exists.
+#
+# What is read: `fault-failed` is the module's own count of actions that
+# returned non-zero, and a zero there means the window never reached a copy,
+# so the convergence read at the end was never in question and the phase
+# fails rather than passes. If the window has not closed when the wait ends
+# the knob is disarmed here, or its refusals land on whatever allocates
+# next. Whether the failed keys are copied by a later pass is the end-of-run
+# fingerprint. The fail-open this phase is for: before 2026-10-16 the scan
+# discarded each key's error and stamped the inode root's modify_tid
+# regardless, so a refused copy compared equal on every later pass and was
+# never retried; that reads here as `fault-failed` above zero and the slave
+# short by those keys at the end, with no pass reporting an error.
+fcount() { grep 'filekeys' $K | tail -1 | sed -n 's/.* failed \([0-9]*\) .*/\1/p'; }
+if [ "${H2_FAULT:-0}" != 0 ]; then
+	[ -e /sys/module/hammer2/parameters/fail_alloc_count ] || {
+		echo "cluster: COULD-NOT-RUN: H2_FAULT needs the fail_alloc_count knob, which only a module built with H2_LOCKDEBUG=1 has" >&2; exit 2; }
+	echo "h2probe: fault phase begin" > /dev/kmsg
+	echo "$H2_FAULT" > /sys/module/hammer2/parameters/fail_alloc_count
+	echo 1 > /sys/module/hammer2/parameters/fail_alloc_after
+fi
 hammer2 -s /mnt/h2s -t SLAVE -u "$clid" pfs-create CL >/dev/null 2>&1 || { echo "slave pfs-create failed"; exit 1; }
 echo "cluster-thread $(ps -eo comm | grep -c '^h2nod-CL')"
+if [ "${H2_FAULT:-0}" != 0 ]; then
+	n=0
+	while [ "$(cat /sys/module/hammer2/parameters/fail_alloc_after)" != 0 ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "fault-window-tenths $n"
+	echo "fault-count-left $(cat /sys/module/hammer2/parameters/fail_alloc_count)"
+	echo 0 > /sys/module/hammer2/parameters/fail_alloc_after
+	echo 0 > /sys/module/hammer2/parameters/fail_alloc_count
+fi
 sleep 30
 echo "cluster-passes $(passes CL)"
 echo "cluster-updates $(klog 'syncthr: update inode')"
+if [ "${H2_FAULT:-0}" != 0 ]; then
+	# Until the copies settle, the same settle the resume uses.
+	n=0; last=-1; still=0
+	while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
+		u=$(klog 'syncthr: update inode')
+		if [ "$u" = "$last" ]; then still=$(( still + 1 )); else still=0; last=$u; fi
+		[ "$still" -ge 15 ] && break
+		sleep 1; n=$((n + 1))
+	done
+	f=$(fcount)
+	echo "fault-failed ${f:-0}"
+	echo "fault-settle-seconds $n"
+	echo "fault-errors $(klog 'hammer2_sync_slaves: error')"
+	echo "h2probe: fault phase end" > /dev/kmsg
+fi
 
 # 3. Change the master with the slave's copy in place.
 rm -f /mnt/h2c/set/f0 /mnt/h2c/set/f1 /mnt/h2c/set/f2 /mnt/h2c/set/f3 /mnt/h2c/set/f4
@@ -525,8 +601,10 @@ sync
 kill $KPID 2>/dev/null
 GUEST
 
-scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2DEBUG=$H2DEBUG H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+# The guest half loads /tmp/hammer2.ko by name, so a module given under
+# another name through H2_KO is copied to that name.
+scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2DEBUG=$H2DEBUG H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 # What the guest half actually returned, before anything is inferred from
 # the readings below.  Measured 2026-10-13: a run whose ssh session dropped
@@ -607,6 +685,21 @@ u=$(val cluster-updates); [ "${u:-0}" -ge 55 ] 2>/dev/null; check "the thread co
 p=$(val change-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the thread keeps passing after the master changes" $? "${p:-0} passes in 30 s"
 p=$(val change-files); [ "${p:-0}" = 35 ]; check "the changes leave 35 files on the master" $? "${p:-none}"
 p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${p:-none}"
+# Phase 3b. The window must have reached a copy, or the convergence read at
+# the end was never in question: a zero here is the phase not driving its
+# condition, and fails. The window must also have closed inside the pass's
+# actions rather than in its flush, which a pass error would show, since a
+# refused flush retries by a different path from the one this phase is for.
+if [ "$FAULT" != 0 ]; then
+	f=$(val fault-failed); [ "${f:-0}" -gt 0 ] 2>/dev/null; check "the refused allocations failed copies inside the first pass" $? "${f:-none} action(s) returned non-zero of $FAULT refusals, window closed in $(val fault-window-tenths) tenths with $(val fault-count-left) left"
+	# A refused copy is not a pass error: the key is withheld from the stamp
+	# and retried, and the pass returns as a completed scan does. The
+	# pre-fix module faulted here instead (measured 2026-10-16: a
+	# null-ptr-deref in hammer2_chain_lookup from hammer2_sync_slaves,
+	# h2nod-CL dead), and the first fixed build leaked the scan's ENOENT
+	# as `error 64` once the stamp no longer absorbed it.
+	e=$(val fault-errors); [ "${e:-1}" = 0 ]; check "the refused copies leave no pass error" $? "${e:-none}"
+fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 # Phase 4: the interruption must land inside an open pass bracket, or every
 # check below it tested an idle thread. The bracket check comes first because

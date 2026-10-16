@@ -1046,6 +1046,7 @@ extern unsigned long hammer2_iohash_waits[2];	/* Linux: [0] waited, [1] total */
 extern int hammer2_fail_alloc_after;	/* Linux */
 extern int hammer2_debug_hpanic;	/* Linux */
 extern int hammer2_alloc_count;		/* Linux */
+extern int hammer2_fail_alloc_count;	/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
 #endif
 extern int hammer2_count_dio_allocated;
