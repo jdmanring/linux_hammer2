@@ -7166,7 +7166,7 @@ With this P3's four exit criteria are met for the carried thread lock:
 transitions with pre- and postconditions in `doc/CCMS_TRANSITIONS.md`,
 each checked with its negative cases by `test-ccms-lock.sh`, the same
 functions raced on the host, and lockdep clean in the kernel on both
-builds. The provenance record was met at 1.0.6. P4 is next.
+builds. The provenance record was met at 1.0.6. At this 2026-10-11 entry, P4 was next.
 
 `doc/readiness-audit-2026-09-25.md` carried `->direct_IO` as an open next
 step after the roadmap had decided it; it is marked decided, with the
@@ -14241,14 +14241,70 @@ interrupting an open pass mid-copy and resuming to convergence:
     attempt  scrapped  fingerprint lines differ of 120179
     1 - 8    0         0
 
-Every run's klog carries the walk's own print (`sync_setflush: stopped at ...
-(NULL parent)`) with zero `not flagged` lines after it, against 136 in the
-failing run's klog: the gate reads flagged on every pass and `hammer2_flush()`
-runs. Before and after on the same instrument: scrapped 7 and 8 on the two
-runs that differed before, 0 on all twelve runs after (four under the first
-fix, eight under the corrected one), and the first round's 4-line sweep differ
-did not recur in the eight. Eight clean runs against a ~5% base rate prove
-little on their own; the weight is the mechanism (the three-line ordering
-above, which the old code could never satisfy) plus the positive firing (the
-gate reads flagged on every pass now). `interrupt_resume` is met on that
-basis, with that arithmetic stated.
+These are symptom readings only. The claimed mechanism confirmation was
+invalid: `hammer2_sync_flush()` called `hammer2_sync_setflush(chain)` and then
+tested `chain->flags & HAMMER2_CHAIN_FLUSH_MASK`. The helper's first loop
+iteration sets `HAMMER2_CHAIN_ONFLUSH` on that same chain, and ONFLUSH is in
+the mask. Thus every non-NULL root passes; zero `not flagged` lines are
+entailed by the code and do not prove a selective dirty gate. The eight runs
+still establish eight interrupted/resumed convergences with zero chains
+scrapped, but do not establish the idle-pass cost or a selective gate. The
+earlier 7 and 8 scrapped chains and the later 4-line fingerprint difference
+remain their original recorded observations. P4 is reopened pending an
+independent flush-decision reading and repair of the failed-copy stamp path.
+
+## The flush-gate diagnostic measures the bit it sets, 2026-10-16
+
+An independent code review found the gate tautological. This entry records the
+instrumentation now in the tree and the first post-instrumentation guest run below. With
+`hammer2_debug & 0x8000`, `hammer2_sync_flush()` prints the element-root flags
+before `hammer2_sync_setflush()`, after the walk, at the flush decision, and
+after `hammer2_flush()` returns. The post-mark flags and decision are not
+independent evidence: the walk sets ONFLUSH on the root, which is included in
+`HAMMER2_CHAIN_FLUSH_MASK`.
+
+The first attempt to identify root clears inside `hammer2_flush_core()` by
+comparing against `sync_thrs[0].clindex` was rejected before testing: that is
+not the active element index and the cluster-array access lacked its
+synchronization. It was removed. A safe, low-volume correlation from the
+recursive flush path to the per-clindex root remains unresolved. Do not infer
+which flush clears the root from timestamp proximity alone.
+
+**Readings from the existing cluster-sync harness with the pass-end diagnostic,
+2026-10-16.** `KDIR=/home/james/kernels/linux-7.3-rc5-kasan`,
+`H2_FIXTURE_START=1`, `H2_RUN_TIMEOUT=1800`, `H2_DEBUG=0x8000`. The run reports
+32 checks, zero failed; phase 4 interrupted after four inode updates, resumed,
+`scrapped 0`, both fsck checks clean, and 0 lines differ of 120179.
+
+The added readings separate two root states before marking:
+
+    idle CL pass:  root-before 00046102; root-after-mark 00046302;
+                   decision flush; completed flags 00046102, error 0
+    active pass:  root-before 000c6343; root-after-mark 000c6343;
+                   decision flush
+
+Counts across the whole run: 94 flush decisions, 0 skips, 89 at `clindex 1`
+and 5 at `clindex 0`. Pre-mark roots read `00046102` on 82 passes but `00046302`
+on 3 and `000c6343` on 4; the `00046302` and `000c6343` passes all sit inside
+the bigdir/indirect-maintenance activity in the log, so none of those is an
+idle pass. The counts, not the samples alone, are the reading.
+
+The active pass has insert actions immediately before its flush; idle passes show
+no insert/replace/destroy action in their pass window. This independently shows
+the pre-mark word differs between observed idle and active cases, but the current
+code marks before deciding, so both take the same flush path. The run therefore
+does not validate selectivity, nor does it prove which flush cleared ONFLUSH.
+Because `0x8000` also enables existing per-action diagnostics, this was not a
+controlled idle-cost measurement. The flush return was zero and the media
+converged in this run; this is a recovery reading, not a repair of the
+tautological gate or the failed-copy stamp path.
+
+The same review confirmed a separate fail-open requiring its own design: the
+per-key `nerror` is counted then discarded before the element-root
+`modify_tid` stamp. However, helper return values do not encode mutation
+reliably: insert creates before its later modify can fail, replace may resize
+before later work, and destroy returns its cursor re-lookup status. The
+existing inode deferral list represents recursive inode work, not arbitrary
+failed keys. The measured whole-pass error rollup livelocked; no new retry
+policy is accepted yet. The next change must classify each action's mutation
+and retry semantics before touching the stamp.

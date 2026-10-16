@@ -59,6 +59,12 @@
 # without moving this file, so the gate failed unnoticed from f3110dc until
 # this row. The string is one kprintf format continued on a second line, which
 # is what the other 53 rows in this category are.
+#
+# 1,278 to 1,277 on 2026-10-16: one quoted-string row removed with the
+# unsupported gate-mechanism comment in hammer2_synchro.c. The comment was
+# retracted after review proved the gate tests the bit the preceding walk
+# unconditionally sets; the evidence and correction are in the verification
+# record. No style deviation remains at that site.
 # sha256 2553cc1a601e70522e03fbce633d4e79fa5936f7f56a66de1899b7ddd247820a
 16 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
@@ -87,7 +93,7 @@
 14 plain inline is preferred over __inline
 2 please, no space before tabs
 193 please, no spaces at the start of a line
-54 quoted string split across lines
+53 quoted string split across lines
 274 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)

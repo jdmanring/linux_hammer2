@@ -90,9 +90,6 @@ static int hammer2_sync_replace(hammer2_thread_t *thr,
 static int h2dbg_setflush_walks;	/* XXX Linux */
 static int h2dbg_setflush_inode_tail;	/* XXX Linux */
 
-static int h2dbg_setflush_walks;	/* XXX Linux */
-static int h2dbg_setflush_inode_tail;	/* XXX Linux */
-
 /*
  * XXX Linux: make a change the sync thread made visible to the flusher.
  * hammer2_chain_setflush() stops at the first inode chain, because a
@@ -111,6 +108,14 @@ static int h2dbg_setflush_inode_tail;	/* XXX Linux */
  * so the slave's changes reach media when the PFS is no longer mounted or
  * its device is torn down.  A crash before then loses only work the next
  * pass redoes, the slave being compared with its masters by modify_tid.
+ *
+ * XXX Linux: idle-pass cost is not established by the old gate readings.
+ * The gate below follows an unconditional re-mark of this same root, so it
+ * cannot distinguish an idle pass from one with dirty descendants.  A
+ * 2026-10-16 KASAN run saw root flags 00046102 before marking on idle
+ * passes, then 00046302 and a flush decision; the active pass read
+ * 000c6343 before marking.  This is a comparison from one debug-enabled
+ * run, not a controlled cost measurement.  See the verification record.
  */
 static int h2dbg_setflush_walks;	/* XXX Linux */
 static int h2dbg_setflush_inode_tail;	/* XXX Linux */
@@ -181,70 +186,24 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 	hammer2_inode_unlock(pmp->iroot);
 	if (chain) {
 		/*
-		 * XXX Linux: the gate below is false on every pass, and the
-		 * print that shows it is the one thing this helper has to say.
-		 * Measured 2026-10-13: `clindex 1 chain ... not flagged
-		 * (00046102)`, a word holding none of MODIFIED, UPDATE, ONFLUSH
-		 * or DESTROY, on 22 of 22 and 50 of 50 passes. The path is
-		 * flagged by hammer2_sync_setflush() and the descending flush
-		 * clears ONFLUSH on its way down, so by the end of a pass the bit
-		 * is already gone.
-		 *
-		 * Setting it here was tried and reverted: the flush then runs on
-		 * every pass and the slave's inode count moves 728 to 801, so it
-		 * is not what the copies are waiting on, and it costs a full tree
-		 * walk per pass. What the gate hides is that this helper never
-		 * writes, which the error below would otherwise report.
-		 *
-		 * MEASURED 2026-10-15, and this is the defect the entry above
-		 * could not see. The copies the pass makes ARE flagged, on the
-		 * chains below this one, and the flag on the ELEMENT ROOT is
-		 * cleared by the descending flush before the pass ends. So the
-		 * gate is false while the element still holds unwritten copies,
-		 * the helper returns without flushing, and the unmount scraps
-		 * them: `cluster-run-20261015-014720` lost
-		 * `1.00000000000012fe` and its own log shows
-		 * `scrapping unflushed inode 00000000000012fe/0 flags 00006243`
-		 * (MODIFIED | UPDATE) after
-		 * `sync_flush: clindex 1 chain ... not flagged (00046102)` on
-		 * every pass. The measure that separates the runs is
-		 * `hammer2_unmount_scrap()`'s count: 0 on 38 converged runs, 7
-		 * and 8 on the two that differed.
-		 *
-		 * The fix is upstream's own ordering, from
-		 * hammer2_xop_inode_flush() in the carried hammer2_flush.c: when
-		 * the chain is flagged it re-marks the topology above it BEFORE
-		 * flushing, because "due to flush partitioning the chain topology
-		 * above the inode's chain may no longer be flagged". This port's
-		 * helper only re-marked the parent AFTER a flush it never ran.
-		 * Re-marking first is what makes the gate reachable: the walk
-		 * sets ONFLUSH up to the volume root, and the flush then descends
-		 * from the element root through the inodes to the copies.
-		 *
-		 * The re-mark is unconditional and the flush stays gated, which
-		 * keeps the earlier revert's finding intact: an idle pass has no
-		 * flagged child, so the walk costs a lock and the flush does not
-		 * run. Only a pass whose element still holds unwritten copies
-		 * reaches hammer2_flush().
-		 *
-		 * MEASURED 2026-10-15, and the first version of this line was
-		 * wrong by one word. It called hammer2_sync_setflush(chain->parent),
-		 * which flags the PARENT and walks up from there, so the element
-		 * root `chain` -- the very word the gate below tests -- was never
-		 * flagged. The run's own log shows the walk running six
-		 * microseconds before the gate and the gate still reading the root
-		 * unflagged:
-		 *
-		 *   [44182.224064] sync_slaves error 0 defer 0000000000000000
-		 *   [44182.224078] sync_setflush: stopped at 0000000000000000/0 type 255 (NULL parent)
-		 *   [44182.224084] sync_flush: clindex 1 chain 000000001cc9f8e5 not flagged (00046102)
-		 *
-		 * and the walk's own print says why: it stopped at a NULL parent
-		 * immediately, so it set ONFLUSH on an orphan and went no further.
-		 * The chain the gate reads must be the chain the walk is given.
+		 * The pass-end flush must reach chains this synchronization thread
+		 * changes; they are not represented by inodes on the VFS syncq.
+		 * The root's prior flags have not proved to be a reliable indication
+		 * that descendants still need flushing.  Measure them before and
+		 * after re-marking; do not treat the post-mark test as an independent
+		 * dirty reading.
 		 */
+		if (hammer2_debug & 0x8000)
+			kprintf("sync_flush: clindex %d root-before %08x\n",
+			    thr->clindex, chain->flags);
 		hammer2_sync_setflush(chain);
+		if (hammer2_debug & 0x8000)
+			kprintf("sync_flush: clindex %d root-after-mark %08x\n",
+			    thr->clindex, chain->flags);
 		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
+			if (hammer2_debug & 0x8000)
+				kprintf("sync_flush: clindex %d decision flush flags %08x\n",
+				    thr->clindex, chain->flags);
 			/*
 			 * XXX Linux: the return value was DISCARDED, so a flush
 			 * that wrote nothing was indistinguishable from one that
@@ -261,6 +220,9 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 			 */
 			error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
 			    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);
+			if (hammer2_debug & 0x8000)
+				kprintf("sync_flush: clindex %d completed flags %08x error %08x\n",
+				    thr->clindex, chain->flags, error);
 			if (error) {
 				kprintf("sync_flush: clindex %d chain %p "
 				    "flush error %08x\n",
@@ -278,9 +240,10 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 			 * re-marks whatever it dirties.
 			 */
 		} else if (hammer2_debug & 0x8000) {
-			kprintf("sync_flush: clindex %d chain %p not flagged "
-			    "(%08x)\n", thr->clindex, chain, chain->flags);
-		}		hammer2_chain_unlock(chain);
+			kprintf("sync_flush: clindex %d decision skip flags %08x\n",
+			    thr->clindex, chain->flags);
+		}
+		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
 	} else if (hammer2_debug & 0x8000) {
 		kprintf("sync_flush: clindex %d no element chain\n",

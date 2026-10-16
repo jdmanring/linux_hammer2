@@ -35,11 +35,12 @@ carries 105 parenthesized `return`s, and the three strings are one `kprintf`
 format continued on a second line, which is how every other multi-line print in
 the port is written. Every other line of the baseline is byte-identical.
 
-On 2026-10-16 `quoted string split across lines` 53 to 54, from the setflush
-walk's stop diagnostic in `hammer2_synchro.c`. P4 added the print without
-moving the baseline, so the gate failed unnoticed from `f3110dc` until this
-row. Not convertible: one `kprintf` format continued on a second line, which
-is how every other multi-line print in the port is written.
+On 2026-10-16 `quoted string split across lines` moved 53 to 54 when the
+setflush walk's stop diagnostic landed in `hammer2_synchro.c`, then 54 to 53
+when the diagnostic was removed with the unsupported gate-mechanism comment.
+The latter row is not a style conversion; that comment was retracted because
+the gate reads ONFLUSH immediately after the walk sets it. The evidence is in
+`doc/history/verification-record.md`.
 
 
 Counts below are what `checkpatch.pl` from linux **v7.3-rc5** reports, which is
