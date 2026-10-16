@@ -226,9 +226,24 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 		 * flagged child, so the walk costs a lock and the flush does not
 		 * run. Only a pass whose element still holds unwritten copies
 		 * reaches hammer2_flush().
+		 *
+		 * MEASURED 2026-10-15, and the first version of this line was
+		 * wrong by one word. It called hammer2_sync_setflush(chain->parent),
+		 * which flags the PARENT and walks up from there, so the element
+		 * root `chain` -- the very word the gate below tests -- was never
+		 * flagged. The run's own log shows the walk running six
+		 * microseconds before the gate and the gate still reading the root
+		 * unflagged:
+		 *
+		 *   [44182.224064] sync_slaves error 0 defer 0000000000000000
+		 *   [44182.224078] sync_setflush: stopped at 0000000000000000/0 type 255 (NULL parent)
+		 *   [44182.224084] sync_flush: clindex 1 chain 000000001cc9f8e5 not flagged (00046102)
+		 *
+		 * and the walk's own print says why: it stopped at a NULL parent
+		 * immediately, so it set ONFLUSH on an orphan and went no further.
+		 * The chain the gate reads must be the chain the walk is given.
 		 */
-		if (chain->parent)
-			hammer2_sync_setflush(chain->parent);
+		hammer2_sync_setflush(chain);
 		if (chain->flags & HAMMER2_CHAIN_FLUSH_MASK) {
 			/*
 			 * XXX Linux: the return value was DISCARDED, so a flush

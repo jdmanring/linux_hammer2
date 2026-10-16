@@ -14128,20 +14128,25 @@ names both as chains the unmount discarded unwritten:
 This is the same defect the flush-gate fix targeted, so the fix is incomplete
 rather than wrong.
 
-**Why it is incomplete, read from the same log.** The flush is the last thing a
-pass does, and the pass that made these copies was interrupted before it finished:
+**Why it is incomplete, read from the same log, and a first attribution refuted
+by it.** The first reading of this run was that the pass making the lost copies was
+interrupted before its flush ran. The log refutes that: the two passes before the
+unmount both COMPLETED, each running the flush gate:
 
+    [44182.223878] sync_slaves pfs CL clindex 1
+    [44182.224064] sync_slaves error 0 defer 0000000000000000
+    [44182.224084] sync_flush: clindex 1 chain 000000001cc9f8e5 not flagged (00046102)
     [44187.343905] sync_slaves pfs CL clindex 1
+    [44187.344394] sync_slaves error 0 defer 0000000000000000
     [44187.344424] sync_flush: clindex 1 chain 000000001cc9f8e5 not flagged (00046102)
     [44190.825279] hammer2_kill_sb: after unmount: 7 inode, 18 chain, 4 modified, 493 dio still allocated
-    [44190.891739] scrapping unflushed data 0000000000000000/16 flags 00004243
 
-The pass opened, the flush gate read the element root unflagged half a millisecond
-later, and the unmount landed 3.5 s after that. The re-mark the fix moved above the
-gate runs at the END of a pass, so a pass that never reaches its end never runs it,
-and the copies it made are never flushed. The fix closes the case where a pass
-completes with unwritten copies below an unflagged root; it does not close the case
-where the pass is interrupted before its flush.
+`sync_slaves error 0` is the pass returning normally, and the flush gate ran after
+each one. So the copies were made by a pass that completed, and the gate read the
+element root unflagged anyway. The re-mark the fix moved above the gate did not make
+the gate reachable on this run, so either the walk does not reach the chain the gate
+reads, or the flag it sets is cleared before the gate runs. That is the reading the
+next run takes.
 
 **The measure and its limit.** `scrapped` was 0 on four consecutive runs after the
 fix and 10 on this one, so four clean runs did not establish the fix and the
