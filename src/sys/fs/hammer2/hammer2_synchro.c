@@ -571,6 +571,8 @@ static int h2dbg_file_ngt;	/* XXX Linux */
 static int h2dbg_act_tried;	/* XXX Linux */
 static int h2dbg_act_failed;	/* XXX Linux */
 static int h2dbg_act_last;	/* XXX Linux: the most recent non-zero nerror */
+static int h2dbg_act_replace;	/* XXX Linux: the two arms a first pass never takes */
+static int h2dbg_act_destroy;	/* XXX Linux */
 static int h2dbg_newer_kept;	/* XXX Linux: n < 0 with the chain newer, kept */
 
 static
@@ -964,9 +966,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 					chain->bref.key, chain->bref.type);
 				nerror = hammer2_sync_destroy(thr, &parent,
 							      &chain, 0, idx);
+				atomic_add_int(&h2dbg_act_destroy, 1);
 			}
 		} else if (n == 0 && chain->bref.modify_tid !=
 				     focus->bref.modify_tid) {
+			atomic_add_int(&h2dbg_act_replace, 1);	/* XXX Linux */
 			/*
 			 * Matching key but local data or meta-data requires
 			 * updating.  If we will recurse, we still need to
@@ -1137,11 +1141,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * `hammer2_sync_slaves()` call on the PFS root.
 	 */
 	if (hammer2_debug & 0x8000) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d sweep %d iters %d exit %d\n",
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d sweep %d iters %d exit %d replaced %d destroyed %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
 		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,
 		    h2dbg_newer_kept, swept, iters,
-		    exit_reason);
+		    exit_reason, h2dbg_act_replace, h2dbg_act_destroy);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);
@@ -1604,7 +1608,16 @@ hammer2_sync_replace(hammer2_thread_t *thr,
 
 		if (chain->bytes != focus->bytes) {
 			/* XXX what if compressed? */
-			nradix = hammer2_getradix(chain->bytes);
+			/*
+			 * XXX Linux: upstream takes the radix of chain->bytes,
+			 * the slave's own size, so the resize changed nothing
+			 * and the copy below ran for the slave's old length out
+			 * of the master's shorter block.  KASAN read 64 KiB
+			 * from a block with 6 KiB left when a rewritten file
+			 * shrank (cluster-run-20261016-152207).  The master's
+			 * size is the one the slave is being brought to.
+			 */
+			nradix = hammer2_getradix(focus->bytes);
 			error = hammer2_chain_resize(chain, mtid, 0, nradix, 0);
 			if (error)
 				goto failed;

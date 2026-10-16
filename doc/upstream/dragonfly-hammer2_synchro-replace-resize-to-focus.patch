@@ -1,0 +1,11 @@
+--- a/sys/vfs/hammer2/hammer2_synchro.c
++++ b/sys/vfs/hammer2/hammer2_synchro.c
+@@ -938,7 +938,7 @@
+ 
+ 		if (chain->bytes != focus->bytes) {
+ 			/* XXX what if compressed? */
+-			nradix = hammer2_getradix(chain->bytes);
++			nradix = hammer2_getradix(focus->bytes);
+ 			error = hammer2_chain_resize(chain, mtid, 0, nradix, 0);
+ 			if (error)
+ 				goto failed;

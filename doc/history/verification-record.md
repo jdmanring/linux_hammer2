@@ -14395,13 +14395,13 @@ scrapped 0, 0 kernel reports; before the change those passes returned 0 by
 way of the stamp's collect, so the zero pass-error readings of earlier runs
 did not see them either.
 
-What this does not show: a refusal inside `hammer2_sync_replace()` or
-`_destroy()`, since a first pass is all inserts; the retry under a persistent
-failure, where the pass-wide bit rewrites every inode after the failed one on
-each pass (the `DEFER`); and whether the pre-fix module's stamp would have
-left the slave short had it not faulted first, since it faulted first. The
-fault is the stronger before-reading, and the stamp's fail-open is read from
-the code rather than from a converged-short media here.
+What this does not show: the retry under a persistent failure, where the
+pass-wide bit rewrites every inode after the failed one on each pass (the
+`DEFER`); and whether the pre-fix module's stamp would have left the slave
+short had it not faulted first, since it faulted first. The fault is the
+stronger before-reading, and the stamp's fail-open is read from the code
+rather than from a converged-short media here. The replace and destroy arms
+were written here as unreachable by this harness; the next entry drives them.
 
 **The withheld stamp livelocked the pass.** The second fault run on the
 module with the ENOENT leak closed, `cluster-hang-20261016-074222.klog`,
@@ -14465,3 +14465,52 @@ max; the 4 busy passes 0.17 ms median, 11.45 ms max. The 0.94 ms of `8e45335`
 was the cost of two serial-console prints inside its own window, as that
 entry's last sentence allowed; the decision above was taken on the larger
 number and holds by a wider margin on the smaller.
+
+## The replace and destroy arms are driven, and the replace arm over-read, 2026-10-16
+
+The failed-copy entry above called a refusal inside `hammer2_sync_replace()`
+or `hammer2_sync_destroy()` out of this harness's reach, because a slave's
+first pass is all inserts and every later write reaches its element by the
+frontend. That was a limit of the script, not of the system, and the script
+is the instrument. Phase 2c of `cluster-sync.sh` now makes the slave stale
+behind the master's back: five files written while clustered, so the slave
+holds them; `/mnt/h2c` and `/mnt/h2s` unmounted, both, since the slave's
+device stays known while its ROOT is mounted and its element stays in the
+pmp; the MASTER mounted alone, the five deleted and five others rewritten
+at a smaller size; the cluster unmounted; `H2_FAULT2=N` armed; the slave's
+device mounted, whose element joining the pmp starts the thread, measured
+by the thread count going 0 to 1. The first pass then finds five keys the
+master lacks and five whose `modify_tid` differs. Two per-arm counters were
+added to the `filekeys` line, and the first run with them read 0 for both
+while the arms demonstrably ran (`destroy focus` printed five times, the
+report below sat inside `hammer2_sync_replace()`): the edits that added
+them had matched nothing and been written unchecked, and were placed again.
+
+**Before**, `cluster-run-20261016-152207.klog`, `H2_FAULT2=8`: 5 of 8
+refusals failed actions and no pass error leaked, both as designed, but
+`KASAN: slab-use-after-free in hammer2_sync_replace`, a read of 65536 bytes
+whose valid region ended 6144 bytes in (the poison begins at `...70000`
+and the read at `...6e800`), from `hammer2_sync_slaves()` on the thread;
+the slave's PFS differed from the master's by 4 lines of 120165. Not a
+stale pointer: an over-read. `hammer2_sync_replace()` on a chain whose size
+differs from the focus's resizes it to `hammer2_getradix(chain->bytes)`,
+the slave's own size, which changes nothing, and the DATA case then copies
+`chain->bytes` out of the master's block. The rewritten files went from
+about 237 KB to about 60 KB, so the slave's 64 KiB block was filled from a
+master block of the same radix but the copy of a last block ran past it.
+DragonFly's `hammer2_synchro.c` has the same three lines at its head on
+this date, read through the mirror, and none of the BSD ports carries the
+file. The fix takes the radix of `focus->bytes`, marked `XXX`, and is
+staged as `doc/upstream/dragonfly-hammer2_synchro-replace-resize-to-focus.patch`
+with its standing in `README-provenance.md`.
+
+**After**, `cluster-run-20261016-153559.klog`, same knobs: 38 checks, 0
+failed. 27 destroys for 5 deleted files (their inodes, their dirents and the
+shrunk files' trailing blocks) and 19 replaces for 5 rewritten, both read
+from the per-arm counters; 5 of 8 refusals failed actions in that pass with
+0 pass errors; threads 0 with the cluster down and 1 on the slave's return;
+0 lines differ of 120165; scrapped 0; 0 kernel warning, lockdep, KASAN or
+UBSAN reports. The clean run without `H2_FAULT2`,
+`cluster-run-20261016-154916.klog`, which every run now carries as its
+phase 2c: 36 checks, 0 failed, 24 destroyed and 13 replaced for the same
+ten files, `failed 0`, 0 lines differ of 120165, scrapped 0, 0 reports.

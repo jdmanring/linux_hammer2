@@ -394,3 +394,36 @@ not disturb a recovery that was working.
 Still present at head on 2026-09-26 in all four trees, read in the local
 clones at each head and confirmed by dry-run applying the patch to each.
 Not searched for on the tracker.
+
+## hammer2_synchro-replace-resize-to-focus
+
+`dragonfly-hammer2_synchro-replace-resize-to-focus.patch`, DragonFly only:
+none of the three BSD ports carries `hammer2_synchro.c`. In
+`hammer2_sync_replace()`, when the slave's chain and the master's focus
+differ in size, the resize takes `hammer2_getradix(chain->bytes)`, the
+slave's own size, so the chain is "resized" to what it already is and the
+`HAMMER2_BREF_TYPE_DATA` copy that follows, `bcopy(data, chain->data,
+chain->bytes)`, reads the slave's old length out of the master's block.
+When the master's block is the smaller the read runs past it. The patch
+takes the radix of `focus->bytes`, the size the slave is being brought to.
+
+Seen on Linux on 2026-10-16 the first time the replace arm was driven on a
+file that had shrunk: a cluster brought down, the MASTER mounted alone, a
+file of 237571 bytes rewritten at 60867, the slave's device returned.
+KASAN reported a 65536-byte read from a block with 6144 bytes left, inside
+`hammer2_sync_replace()` from `hammer2_sync_slaves()`, and the two volumes'
+media differed by four lines afterwards; with the change the same run
+reads equal (`cluster-run-20261016-152207` and `-153559` in the
+verification record). The thread's first pass after a slave joins is all
+inserts, which is why no earlier run here reached the line; whether any
+DragonFly cluster has, nobody has measured.
+
+Still present at DragonFly head on 2026-10-16, read through the GitHub
+mirror's raw `master`: the three lines are as above and `focus->bytes` is
+passed to `hammer2_getradix()` nowhere in the file. The patch applies to
+the local clone at `250a8b4` of 2026-09-04. `bugs.dragonflybsd.org` was
+not searched for this one, for the proof-of-work reason above, so it is
+not claimed unreported. The `/* XXX what if compressed? */` beside it is
+upstream's and is not addressed: a compressed master block is smaller than
+the data it holds, and the copy of such a block is a separate question the
+patch leaves where it found it.

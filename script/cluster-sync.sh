@@ -324,6 +324,74 @@ if [ "${H2_FAULT:-0}" != 0 ]; then
 	echo "h2probe: fault phase end" > /dev/kmsg
 fi
 
+# 2c. The slave goes stale behind the master's back, so the thread's REPLACE
+# and DESTROY arms run. A first pass is all inserts, and every later write
+# reaches the slave element by the frontend (2b above), so nothing else in
+# this harness drives those two arms through hammer2_sync_slaves(). Five
+# files are written while clustered so the slave holds them, then the cluster
+# comes down, the MASTER is mounted alone (its own device only: /mnt/h2s must
+# be unmounted too, or the slave's device stays known and its element stays
+# in the pmp), the five are deleted and five others rewritten, and the slave's
+# device comes back. Its element joining the pmp starts the thread, whose
+# first pass then finds five keys the master lacks (destroy) and five whose
+# modify_tid differs (replace). H2_FAULT2=N refuses the first N allocations
+# that pass makes, armed before the device comes back, so the refusals land
+# in those two arms rather than in inserts; the window and settle are 2b's.
+# The counts are deltas of the module's own per-arm counters on the filekeys
+# line; a zero delta means the arm never ran and the phase fails.
+fieldc() { grep 'filekeys' $K | tail -1 | sed -n "s/.* $1 \([0-9]*\).*/\1/p"; }
+i=0; while [ $i -lt 5 ]; do head -c $(( i * 3001 + 500 )) /dev/urandom > /mnt/h2c/set/d$i; i=$((i + 1)); done
+sync
+n=0; last=-1; still=0
+while [ $n -lt 120 ]; do
+	u=$(klog 'syncthr: update inode')
+	if [ "$u" = "$last" ]; then still=$(( still + 1 )); else still=0; last=$u; fi
+	[ "$still" -ge 10 ] && break
+	sleep 1; n=$((n + 1))
+done
+r0=$(fieldc replaced); d0=$(fieldc destroyed); f0=$(fieldc failed); a0=$(fieldc acted)
+timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s
+echo "diverge-threads-down $(ps -eo comm | grep -c '^h2nod-CL')"
+mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "master-alone mount failed"; exit 1; }
+rm -f /mnt/h2c/set/d0 /mnt/h2c/set/d1 /mnt/h2c/set/d2 /mnt/h2c/set/d3 /mnt/h2c/set/d4
+i=30; while [ $i -lt 35 ]; do head -c $(( i * 2003 + 777 )) /dev/urandom > /mnt/h2c/set/f$i; i=$((i + 1)); done
+sync
+timeout 60 umount /mnt/h2c
+if [ "${H2_FAULT2:-0}" != 0 ]; then
+	[ -e /sys/module/hammer2/parameters/fail_alloc_count ] || {
+		echo "cluster: COULD-NOT-RUN: H2_FAULT2 needs the fail_alloc_count knob, which only a module built with H2_LOCKDEBUG=1 has" >&2; exit 2; }
+	echo "h2probe: diverge fault begin" > /dev/kmsg
+	echo "$H2_FAULT2" > /sys/module/hammer2/parameters/fail_alloc_count
+	echo 1 > /sys/module/hammer2/parameters/fail_alloc_after
+fi
+p0=$(passes CL)
+mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+echo "diverge-threads-up $(ps -eo comm | grep -c '^h2nod-CL')"
+if [ "${H2_FAULT2:-0}" != 0 ]; then
+	n=0
+	while [ "$(cat /sys/module/hammer2/parameters/fail_alloc_after)" != 0 ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "diverge-window-tenths $n"
+	echo "diverge-count-left $(cat /sys/module/hammer2/parameters/fail_alloc_count)"
+	echo 0 > /sys/module/hammer2/parameters/fail_alloc_after
+	echo 0 > /sys/module/hammer2/parameters/fail_alloc_count
+fi
+n=0; last=-1; still=0
+while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
+	u=$(fieldc acted)
+	if [ "$u" = "$last" ]; then still=$(( still + 1 )); else still=0; last=$u; fi
+	[ "$still" -ge 15 ] && [ $(( $(passes CL) - p0 )) -ge 2 ] && break
+	sleep 1; n=$((n + 1))
+done
+echo "diverge-settle-seconds $n"
+echo "diverge-passes $(( $(passes CL) - p0 ))"
+echo "diverge-replaced $(( $(fieldc replaced) - ${r0:-0} ))"
+echo "diverge-destroyed $(( $(fieldc destroyed) - ${d0:-0} ))"
+echo "diverge-failed $(( $(fieldc failed) - ${f0:-0} ))"
+echo "diverge-acted $(( $(fieldc acted) - ${a0:-0} ))"
+echo "diverge-errors $(klog 'hammer2_sync_slaves: error')"
+[ "${H2_FAULT2:-0}" != 0 ] && echo "h2probe: diverge fault end" > /dev/kmsg
+mount -t hammer2 /dev/vdb@CL /mnt/h2c || exit 1
+
 # 3. Change the master with the slave's copy in place.
 rm -f /mnt/h2c/set/f0 /mnt/h2c/set/f1 /mnt/h2c/set/f2 /mnt/h2c/set/f3 /mnt/h2c/set/f4
 rm -f /mnt/h2c/set/f5 /mnt/h2c/set/f6 /mnt/h2c/set/f7 /mnt/h2c/set/f8 /mnt/h2c/set/f9
@@ -604,7 +672,7 @@ GUEST
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2DEBUG=$H2DEBUG H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 # What the guest half actually returned, before anything is inferred from
 # the readings below.  Measured 2026-10-13: a run whose ssh session dropped
@@ -699,6 +767,18 @@ if [ "$FAULT" != 0 ]; then
 	# h2nod-CL dead), and the first fixed build leaked the scan's ENOENT
 	# as `error 64` once the stamp no longer absorbed it.
 	e=$(val fault-errors); [ "${e:-1}" = 0 ]; check "the refused copies leave no pass error" $? "${e:-none}"
+fi
+# Phase 2c: both arms must have run, or the phase measured nothing. Five
+# keys were deleted and five rewritten behind the slave's back; the per-arm
+# counters are the module's own and count file keys and the directories
+# above them, so the floor is five and the reading is printed.
+a=$(val diverge-destroyed); [ "${a:-0}" -ge 5 ]; check "the stale slave's extra keys are destroyed by the thread" $? "${a:-none} destroyed for 5 deleted"
+a=$(val diverge-replaced); [ "${a:-0}" -ge 5 ]; check "the stale slave's changed keys are replaced by the thread" $? "${a:-none} replaced for 5 rewritten"
+a=$(val diverge-threads-down); [ "${a:-1}" = 0 ]; check "the cluster down leaves no thread" $? "${a:-none}"
+a=$(val diverge-threads-up); [ "${a:-0}" = 1 ]; check "the slave's return starts the thread again" $? "${a:-none}"
+if [ "${H2_FAULT2:-0}" != 0 ]; then
+	f=$(val diverge-failed); [ "${f:-0}" -gt 0 ]; check "refused allocations failed actions in the replace or destroy pass" $? "${f:-none} of $H2_FAULT2 refusals, window closed in $(val diverge-window-tenths) tenths with $(val diverge-count-left) left"
+	e=$(val diverge-errors); [ "${e:-1}" = 0 ]; check "the refused replace or destroy leaves no pass error" $? "${e:-none}"
 fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 # Phase 4: the interruption must land inside an open pass bracket, or every
