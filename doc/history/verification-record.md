@@ -9327,7 +9327,7 @@ Both remaining directions were then built and run, and both fail, so the
 pair is what a later session needs rather than either alone.
 
 - Capping `keybits` to one below the parent and leaving `ncount` at 128
-  (`6fcb063`): the block keeps a 16 KiB allocation for a 32-key span, holds
+  (`e25ca9e`): the block keeps a 16 KiB allocation for a 32-key span, holds
   32 entries, fills at once, splits again, and the freemap dies --
   `no block of radix 14 for type 2`, then `no block of radix 10 for type 1`
   ten times, `modify error 00000020` on `0x440/5` and nine times on `0x4c0/6`,
@@ -9793,7 +9793,7 @@ at 0x4ff. The branch advanced the local scan and not the XOP, where every other
 arm of the same switch advances both, so the master's scan stayed on the same
 focus and the next iteration compared the same pair again.
 
-`4a11bb1` reverts it to upstream's unguarded `n < 0` arm, which destroys the
+`36d664b` reverts it to upstream's unguarded `n < 0` arm, which destroys the
 stale local chain and lets the scan move on. The run to confirm it is in
 flight; the reading that decides is the distinct-key count and the maximum key
 reached, not the total number of inserts.
@@ -9973,7 +9973,7 @@ Two consequences:
 1. The guard is not re-addable in the shape it had, and the two measurements
    separate into a hard hang and a slow stall, distinguished by one line.
    `a2804b9` set `advance_local = 1` inside the guard. A reproduction of the
-   guard that omitted that line (the shape committed at `9921f2b`) re-entered the
+   guard that omitted that line (the shape committed at `ccb7b1c`) re-entered the
    same arm on the same chain with the same `n = -1` and never left it: the pass
    hung in 122 s and the unmount stayed busy until the guest restarted. Restoring
    the line removes the hang, and does not remove the stall: with it,
@@ -11114,7 +11114,7 @@ trusted as the answer:
   line among them.
 
 The attribution is being measured rather than argued: the session's own starting
-commit `4578a7c` is built in a worktree and the same gate run against it. If the
+commit `2511e7a` is built in a worktree and the same gate run against it. If the
 baseline fails too, the failure predates this work; if it passes, the bound is
 the cause and the bound is what gets changed.
 
@@ -11123,10 +11123,10 @@ the cause and the bound is what gets changed.
 The split bound converged the cluster and broke block allocation, and a gate
 found it. `test-enospc.sh` on the bound reported one failure, the dedup
 exerciser, which passes on this tree. Attributed by measurement rather than
-argument: the session's own starting commit `4578a7c` was built in a worktree
+argument: the session's own starting commit `2511e7a` was built in a worktree
 and the same gate run against it.
 
-    baseline 4578a7c:  file A allocated 64 blocks for 64 blocks of data
+    baseline 2511e7a:  file A allocated 64 blocks for 64 blocks of data
                        the duplicate cost 3 blocks  -> shared   -> 0 failures
     with the bound:    file A allocated 387 blocks for 64 blocks of data
                        the duplicate cost 324 blocks -> not shared -> 1 failure
@@ -11155,7 +11155,7 @@ gate whose subject is not the cluster, on the reasoning that a change to
 
 | tree | file A blocks for 64 of data | duplicate cost | dedup | failures |
 | --- | --- | --- | --- | --- |
-| baseline `4578a7c` | 64 | 3 | shared | 0 |
+| baseline `2511e7a` | 64 | 3 | shared | 0 |
 | bound writing nbytes too | 387 | 324 | own media | 1 |
 | bound writing ncount alone | 64 | 3 | shared | 0 |
 
@@ -11311,7 +11311,7 @@ the empty-base hpanic, which is what the record's separate entry describes
 from the syncer's side. One trigger, two sinks, and both are this script's
 detach landing during a live run.
 
-The fix is in two commits, `05c51f1` for `cluster-sync.sh` and `c470a94` for
+The fix is in two commits, `8f985ef` for `cluster-sync.sh` and `ae71c74` for
 `cluster-quorum.sh`, which carried the identical `rc=$?` followed by only the
 124 test and then an unconditional detach. Both now read the guest half's exit
 before anything is inferred from its output: exit 2 and a COULD-NOT-RUN line
@@ -11329,7 +11329,7 @@ checks have not yet been read on the fixed tree.
 
 ## The guard against the live detach still detached, 2026-10-13
 
-`05c51f1` read the guest half's exit before inferring failures from its
+`8f985ef` read the guest half's exit before inferring failures from its
 output. That half of it worked: the same run shape came back as one
 COULD-NOT-RUN line rather than fifteen FAILs. It also detached the disks in
 the same arm, which is the fault the guard was written to prevent, and the
@@ -11354,7 +11354,7 @@ Two things were wrong, and both are mine:
   and the evidence that would have named it was thrown away by the same
   commit that was written to preserve evidence.
 
-`801e688` routes every detach in the script through `detach_disks`, which
+`6dfba0c` routes every detach in the script through `detach_disks`, which
 asks a running guest to unmount and rmmod and detaches only when the guest
 reports no hammer2 mount left; a guest that will not release them is left
 alone and the helper returns 1. The drop arm keeps the guest's output beside
@@ -11447,7 +11447,7 @@ The fix is the NULL guard the entry already has, applied to the loop, marked
 
 ## The run that proves the fix is the run the guard let through, 2026-10-13
 
-The fix for the chain_ref NULL fault is in `52311e5`, and the proof run for it
+The fix for the chain_ref NULL fault is in `e3db258`, and the proof run for it
 is the run the concurrent-run guard should have blocked.
 
 Two `cluster-sync.sh` runs started at once: pid 8794 from the monitor's own
@@ -11515,7 +11515,7 @@ the count. 20035 is 35 plus `bigdir` alone -- `NBIG2`'s 20000 files were
 never written. The count was right and the reason for it was one line up in
 the guest half.
 
-`c385539` forwards `NBIG2`. The check that would have caught it earlier is
+`5ab69a0` forwards `NBIG2`. The check that would have caught it earlier is
 the one already there: a `set -u` variable used in the guest half and not in
 the `$RUN` argument list is a name the host can compare, and nothing does.
 
@@ -11554,13 +11554,13 @@ run the row is about:
 
     05b859f  2026-10-12  The interrupt probe bounds its mounts and finds a
                          flush defect
-    c385539  2026-10-13  Phase 4 could never run
+    5ab69a0  2026-10-13  Phase 4 could never run
 
 `05b859f` added `NBIG2` in three places -- the host default, the guest's
 backlog loop, and the host's own `want_files=$((35 + NBIG + NBIG2))` count --
 and not to the `$RUN` line, which still read `NBIG=$NBIG H2DEBUG=$H2DEBUG`.
 So the phase was reachable before that commit and unreachable from it, for
-one day, until `c385539`.
+one day, until `5ab69a0`.
 
 That is why the two readings of this phase disagree and neither is wrong:
 the 2026-10-11 entries describe a phase that ran and reached the copy, and
@@ -11569,7 +11569,7 @@ row was not corrected for this, because its sentence is about its own run;
 the regression is recorded here instead, which is where a dated observation
 belongs rather than in a live row whose claim is still true.
 
-The class this belongs to is the same one `c385539` and the sweep closed:
+The class this belongs to is the same one `5ab69a0` and the sweep closed:
 a value the host computes, the guest half evaluates under `set -u`, and the
 forwarding list does not carry. Three scripts quote their heredoc, so the
 guest evaluates their variables; all three now forward every name their
@@ -12583,7 +12583,7 @@ failed.
 `doc/README.status.md` described this file's marks as including "the slave-side
 errors upstream discards rolled up, so a slave that failed to take a chain is
 not marked synchronized and the next pass retries it". The rollup was tried
-and reverted on 2026-10-13 (`6d8bf05`, "The slave-side error rollup aborted the
+and reverted on 2026-10-13 (`a591c19`, "The slave-side error rollup aborted the
 pass and is reverted"), because aborting the pass on the first slave-side
 failure retried the same early keys. The row now states the counts and the
 reverted rollup instead. `test-inventory.sh` reads the line count and the mark
@@ -12883,7 +12883,7 @@ refutation was measured against.
    `if (n < 0 && chain->bref.modify_tid > sync_tid)` keep it and leave the inode
    unstamped. Its own reading: destroys inside the write 82 to 0, the slave's
    inode, data and dirent equal to the master's, 0 lines differing.
-4. The guard was reverted: `4a11bb1`, 2026-10-13, "The slave-newer branch
+4. The guard was reverted: `36d664b`, 2026-10-13, "The slave-newer branch
    livelocked the pass and is reverted". The reason is mechanical and specific:
    it set `advance_local = 1` and not `advance_xop`, where every other arm of
    the same switch advances both, so the master's scan stayed on the same focus
@@ -12900,7 +12900,7 @@ tested against both rather than a new number.
 **It is not written, and the reason is the one piece not yet settled.** Keeping
 the newer slave chain and advancing both sides is the obvious correction, but
 the revert's own stated cause does not survive reading the code, so the livelock
-is not yet explained well enough to fix blind. `4a11bb1` says the guard "advanced
+is not yet explained well enough to fix blind. `36d664b` says the guard "advanced
 the local scan alone" and the master's scan "stayed on the same focus"; but
 `hammer2_chain_next()` computes `key_beg = chain->bref.key + (1 <<
 chain->bref.keybits)`, so the local scan does move past a kept chain by key.
@@ -12984,14 +12984,14 @@ again. The list above is the 2026-10-13 edition and is superseded by this one.
    returned without destroying. `a2804b9`'s reading: destroys inside the write
    82 to 0, the slave converged. Later the same day the record blamed it for a
    livelock; see items 2 and 3.
-2. **The same guard with the advance line dropped** (committed `9921f2b`).
+2. **The same guard with the advance line dropped** (committed `ccb7b1c`).
    Re-enterable on the end-of-scan path, which sets `n = -1` on every iteration,
    so skipping the destroy with no advance re-enters the same arm on the same
    chain forever. Measured 2026-10-14: the pass hung, `kworker/5:1 blocked 122 s`
    in `hammer2_chain_lock` under `hammer2_inode_chain_flush`, the unmount busy
    until the guest restarted. The advance line is load-bearing; its absence is
    the difference between a hang and a stall.
-3. **The slave-side error rollup** (`6d8bf05`, tried, reverted). Rolls a slave
+3. **The slave-side error rollup** (`a591c19`, tried, reverted). Rolls a slave
    error up to abort the pass; the next pass retries the same early keys. Also
    the better candidate for the 2026-10-13 180-keys-69-times count, which was
    attributed to item 1 alone without isolating the two.
@@ -13211,7 +13211,7 @@ Consequences:
 
 ## The newer arm keeps its key and the shallow interruption converges, 2026-10-14
 
-The fix at `d010096` was run and it fired, which is the before-and-after the
+The fix at `de483a9` was run and it fired, which is the before-and-after the
 earlier entries lacked.
 
 | | before the fix | with the fix |
@@ -13453,7 +13453,7 @@ keys. This one states what the evidence supports and stops there.
 
 So the pass destroyed slave chains whose keys the master holds. That is the
 defect, it is the same defect the 66-key run showed, and it has been stated the
-same way since `32ac198`: **the master-side scan does not present a key the
+same way since `1e18971`: **the master-side scan does not present a key the
 master's media holds, so the pass reads the slave's copy as a key the master no
 longer has and deletes it.**
 
@@ -13570,7 +13570,7 @@ never established.
 So the compare read each of the three as a key the master's scan did not present,
 destroyed the slave's copy, and the master's media holds all three. The defect is
 the master-side scan omitting keys its own media holds, and it has been stated
-that way since `32ac198`; what was missing was a failing run with the counters
+that way since `1e18971`; what was missing was a failing run with the counters
 on, which this is.
 
 **Two earlier claims are refuted by the same run.**
@@ -13611,7 +13611,7 @@ snapshot, and this is the scan **jumping over** a live key partway through and
 presenting a higher one. The local chain's key was never offered.
 
 The instrument is a print on the destroy, `destroy focus <key>/<type> local
-<key>/<type>` (`fbe67ad`), and it is a reading either way: a focus key above the
+<key>/<type>` (`285cc2f`), and it is a reading either way: a focus key above the
 destroyed key confirms the jump, and a focus equal to or overlapping the local
 key refutes this entry and puts the defect back on the compare itself. Both
 outcomes are recorded here so the print is not read as confirming a theory.
@@ -13708,7 +13708,7 @@ cannot repair damage already done.
 
 ## The scanall fix removes the sweep and hangs the pass, 2026-10-15
 
-The fix at `a673837` (`error = HAMMER2_ERROR_EIO` when
+The fix at `e5a6ca7` (`error = HAMMER2_ERROR_EIO` when
 `hammer2_inode_chain()` cannot resolve the element) does what it says and the run
 shows the cost.
 
@@ -13763,7 +13763,7 @@ timing change is the third distinct way this pass has been made to hang, and the
 next change has to be checked against all three -- no advance and it re-enters the
 same arm, an advance with a stale XOP stalls, and the deferral push blocks.
 
-State: the change is reverted (`ee8ec17`), the tree carries only the newer-arm
+State: the change is reverted (`3dec73b`), the tree carries only the newer-arm
 keep, and the producer of the sweep -- `hammer2_xop_scanall()` reporting completion
 for an element it could not resolve -- is proven and unfixed.
 
@@ -13816,7 +13816,7 @@ so `localp` prints **`chain`** and `masterp` prints **`parent`**. On the insert 
 `000000002e5f6980`). The element resolves; the local *scan* is exhausted, which is
 the ordinary state the insert arm exists for.
 
-So the guard added at `0f0926e` is dead code: it tests `parent == NULL`, and
+So the guard added at `becb470` is dead code: it tests `parent == NULL`, and
 `parent` is never NULL on this path. It is reverted, and the print is corrected to
 label its two fields for what they hold (`focus`, `local`) rather than for the
 pointer that happened to be passed.
@@ -14354,7 +14354,7 @@ build's `fail_alloc_after` before the SLAVE's `pfs-create` with a new
 allocations the thread's first pass makes are refused through the freemap
 path a full volume refuses them on, and nothing on the host times the window.
 `H2_KO` loads a module built elsewhere, which is how the control was run: the
-tree at `8e45335` with only the knob added. Two placements of the phase were
+tree at `7f458c2` with only the knob added. Two placements of the phase were
 wrong first and are kept in the script's comment: with the files written after
 phase 2, mounted or with the slave's ROOT unmounted, the thread copied nothing
 at all (`cluster-run-20261016-062330`, `-063323`: 0 updates after phase 2 in
@@ -14445,7 +14445,7 @@ down and stops at each child inode (the 2026-10-15 entries above: 3873 copied,
 set a line earlier, which is the tautology the 2026-10-16 review found. And the
 flush the tautological gate let through on every pass costs an idle pass 0.94
 ms median, 1.34 ms p90, 2.62 ms max over 82 idle-classified passes against a
-5.12 s cadence (`8e45335`). A gate that chose would need a per-pass reading of
+5.12 s cadence (`7f458c2`). A gate that chose would need a per-pass reading of
 every mutation the pass can make, actions and stamps both, and the plan refused
 a parallel dirty bit without that coverage proved; at two orders below the
 cadence the proof is not worth its risk, and `hammer2_vfs_sync_pmp()` spends the
@@ -14461,7 +14461,7 @@ tenth of the cadence.
 reports. Re-read from `root-before` to `completed` with the two prints that
 stood between them removed, 153 idle passes (no insert, replace, destroy or
 stamp since the previous flush) take 0.03 ms median, 0.05 ms p90, 25.45 ms
-max; the 4 busy passes 0.17 ms median, 11.45 ms max. The 0.94 ms of `8e45335`
+max; the 4 busy passes 0.17 ms median, 11.45 ms max. The 0.94 ms of `7f458c2`
 was the cost of two serial-console prints inside its own window, as that
 entry's last sentence allowed; the decision above was taken on the larger
 number and holds by a wider margin on the smaller.

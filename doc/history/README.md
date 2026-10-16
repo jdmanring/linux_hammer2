@@ -34,3 +34,20 @@ Citations inside this repository were swept at the time and resolve
 directly; `script/test-history.sh` fails on any changelog row whose commit
 does not resolve, so a missed one is caught rather than merely unlikely.
 The map is here for readers holding a hash from outside the tree.
+
+## The third rewrite, 2026-10-16
+
+`2026-10-16-rewrite-commit-map.txt` is the map of the third rewrite, same
+format: 1337 entries, of which 321 changed. Only commit messages changed;
+the tree at every commit is the one it was, checked by comparing the
+final tree objects. The cause was the pre-push hook: 89 of 329 unpushed
+commits carried a subject over 72 characters, the commit's own date in
+the body, or a quoted first person, and the branch had not been pushed
+since the first of them. The 89 messages were rewritten (subjects
+shortened, the date phrase replaced by "the same day", the quote
+paraphrased) and every commit after the earliest took a new hash. The 61
+hash citations in `CHANGELOG.md` and `doc/history/verification-record.md`
+were remapped through this file by unique prefix, and `test-history.sh`
+and `test-citations.sh` read 0 bad on the result. A `commit-msg` hook
+now runs the same checks when a commit is made, so the number cannot
+grow again behind the push gate.
