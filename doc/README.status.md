@@ -19,7 +19,11 @@ a SLAVE on a second local device in step with its MASTER, measured by
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; members on other hosts
 need a transport that is not ported, and a quorum that cannot be met is
-unrun. Cache coherency is a design note rather than code:
+unrun. Local synchronization is hardened past its five exit criteria:
+allocation and I/O faults injected and recovered, repeated sync cycles
+converging, eight interrupted-and-resumed runs converging with identical
+fingerprints, and a power cut with the flush outstanding recovering clean;
+the crash cell's FreeBSD half is COULD-NOT-RUN by the detector's design. Cache coherency is a design note rather than code:
 `doc/CCMS_DESIGN.md` records that the coherency half was deleted
 upstream before it was written, and that Dillon's design document puts it
 under the quorum protocol, which no tree has written either. The surviving
