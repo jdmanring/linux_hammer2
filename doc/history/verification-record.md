@@ -14946,3 +14946,15 @@ failed on the dedup overlap alone, `log: bug 0 oops 0 warn 0`.
 0 oops 0 warn 0 kasan 0 ubsan 0 lockdep 0`, exit 0. The check's
 placement is the hand probe above: the byte it reads is the byte the
 unfixed module returned as the old value.
+
+**Audit of the five fixes.** An independent review of `5efbad7..6bb63a3`
+attacked six claims: the lock state of every writeback caller, the
+transaction bracket's exits, the FIBMAP shift against the radix bits,
+the timestamp range against the conversion, the handle decoder's read
+of `ip->vp`, and the adapter's exit status. Five hold with the lines
+cited. The sixth found the decoder's comment wrong about mechanism: it
+said the pointer is stored under the inode lock, and the store runs
+with that lock released. The ordering the check relies on is a
+different one, the clear running inside `evict()` before the old inode
+leaves the hash and `iget5_locked()` returning no new inode until it
+has, and the comment now says so. No code changed.

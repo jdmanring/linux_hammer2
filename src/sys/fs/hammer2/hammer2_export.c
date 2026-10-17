@@ -165,8 +165,11 @@ hammer2_get_inode(struct super_block *sb, hammer2_tid_t inum)
 	 * One a descriptor still holds is not removed yet, and ext4 answers
 	 * it too: its iget finds the inode in the cache and the on-disk link
 	 * count is never consulted.  Here that is ip->vp, which
-	 * hammer2_iget_set() stores and hammer2_evict_inode() clears under
-	 * the inode lock held here.  xfstests generic/467 opens unlinked
+	 * hammer2_evict_inode() clears under the inode lock held here, and
+	 * which hammer2_iget_set() stores with that lock released: the two
+	 * are ordered all the same, since the clear runs inside evict()
+	 * before the old inode leaves the hash and iget5_locked() hands out
+	 * no new inode until it has.  xfstests generic/467 opens unlinked
 	 * files by handle and found the port answering ESTALE.
 	 */
 	if (ip->meta.nlinks == 0 && ip->vp == NULL) {
