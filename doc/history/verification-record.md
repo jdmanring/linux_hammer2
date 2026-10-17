@@ -14762,7 +14762,9 @@ one shape:
 
 All three, and the analyzer's `:1646`, read `msg->state->iocom` at the
 top of a function that later tests `msg->state`. In kdmsg every message
-the reader hands on has a state, `state0` when no transaction is open
-(`kdmsg_state_msgrx()` assigns it before any handler runs), so the later
-test is upstream's belt over that invariant and the dereference cannot
-reach a null. The port keeps the text as DragonFly wrote it.
+is made by `kdmsg_msg_alloc()` with a state argument it stores, and the
+read thread passes `&iocom->state0` for every frame it receives
+(`kern_dmsg.c:353`), which `kdmsg_state_msgrx()` later replaces with the
+open transaction's state or leaves as is, so `msg->state` is never null
+and the later test is upstream's belt over that invariant. The port keeps
+the text as DragonFly wrote it.
