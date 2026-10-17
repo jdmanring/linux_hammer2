@@ -161,8 +161,15 @@ hammer2_get_inode(struct super_block *sb, hammer2_tid_t inum)
 	 * hammer2-fh.c's unlink check still passed, because the removed
 	 * file does not answer a normal name lookup, but the decode warned
 	 * at hammer2_inode.c:801 on the way.
+	 *
+	 * One a descriptor still holds is not removed yet, and ext4 answers
+	 * it too: its iget finds the inode in the cache and the on-disk link
+	 * count is never consulted.  Here that is ip->vp, which
+	 * hammer2_iget_set() stores and hammer2_evict_inode() clears under
+	 * the inode lock held here.  xfstests generic/467 opens unlinked
+	 * files by handle and found the port answering ESTALE.
 	 */
-	if (ip->meta.nlinks == 0) {
+	if (ip->meta.nlinks == 0 && ip->vp == NULL) {
 		hammer2_inode_unlock(ip);
 		return (ERR_PTR(-ESTALE));
 	}
