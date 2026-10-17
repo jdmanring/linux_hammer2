@@ -61,7 +61,7 @@
 #define DMSG_ALIGNMASK	(DMSG_ALIGN - 1)
 #define DMSG_DOALIGN(n)	(((n) + DMSG_ALIGNMASK) & ~DMSG_ALIGNMASK)
 #define DMSGF_SIZE	0x000000FF
-#define AUX_CAP		65536	/* fits one frame in a default socket buffer */
+#define AUX_CAP		65536	/* one frame fits a default socket buffer; see validate() */
 
 struct dmsg_hdr {
 	uint16_t magic;
@@ -148,6 +148,8 @@ usage(void)
 	exit(2);
 }
 
+static void validate(void);
+
 static void
 parse_args(int argc, char **argv)
 {
@@ -171,6 +173,15 @@ parse_args(int argc, char **argv)
 		else usage();
 		i++;
 	}
+	validate();
+}
+
+/* The bounds, applied to the command line and again to a replay header,
+ * which is a file someone may have edited: an aux-max past AUX_CAP writes a
+ * frame nobody reads the far end of and the lockstep hangs. */
+static void
+validate(void)
+{
 	if (opt.frames < 1 || opt.aux_max < 0 || opt.aux_max > AUX_CAP ||
 	    opt.delay_max < 0 || opt.loss < 0 || opt.loss > 1 ||
 	    opt.dup < 0 || opt.dup > 1)
@@ -202,12 +213,14 @@ read_replay_header(const char *path)
 		fprintf(stderr, "h2loop: %s: no run header\n", path);
 		exit(2);
 	}
+	validate();
 }
 
 /* ---- the socket, and the daemon's actions on it ------------------------ */
 
 static int kern_fd = -1;	/* the kernel's end: generator writes, receiver reads */
 static int daemon_fd = -1;	/* the daemon's end: the simulator */
+static int conn_eof;		/* the reader saw this connection end */
 static FILE *tracef;
 static long tick;
 
@@ -235,6 +248,7 @@ connect_pair(void)
 	}
 	kern_fd = sv[0];
 	daemon_fd = sv[1];
+	conn_eof = 0;
 }
 
 static void
@@ -437,7 +451,9 @@ receive_one(void)
 	int r = frame_read(kern_fd, &f, &why);
 
 	if (r == 0) {
+		/* kdmsg_iocom_thread_rd exits on this; nothing reads after */
 		ct.eof++;
+		conn_eof = 1;
 		trace("rx eof t=%ld\n", tick);
 		return;
 	}
@@ -470,6 +486,7 @@ receive_one(void)
 /* ---- the simulator: the daemon ----------------------------------------- */
 
 static struct frame *queue;	/* sorted by due, stable for equal dues */
+static int corrupted;		/* --corrupt-at has fired */
 
 static void
 enqueue(struct frame *f, long due)
@@ -497,12 +514,14 @@ drain(int all)
 			frame_free(f);
 			continue;
 		}
-		if (f->hdr.msgid == (uint64_t)opt.corrupt_at) {
+		if (f->hdr.msgid == (uint64_t)opt.corrupt_at && !corrupted) {
+			corrupted = 1;	/* one bit in one copy: one rejection */
 			f->hdr.aux_crc ^= 1;
 			trace("i=%ld msgid=%" PRIu64 " corrupt t=%ld\n", tick, f->hdr.msgid, tick);
 		}
 		if (frame_write(daemon_fd, f) == 0) {
-			receive_one();
+			if (!conn_eof)
+				receive_one();
 		} else {
 			/* the daemon's send side is shut; the kernel never sees it */
 			ct.lost++;
@@ -588,7 +607,8 @@ run(void)
 	drain(1);
 	if (daemon_fd >= 0) {
 		disconnect();
-		receive_one();		/* the EOF at the end of every run */
+		if (!conn_eof)
+			receive_one();	/* the EOF at the end of every run */
 	}
 	close(kern_fd);
 	printf("h2loop: sent %ld delivered %ld dropped %ld dup %ld reordered %ld"

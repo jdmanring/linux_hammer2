@@ -56,10 +56,19 @@ run() {
 	echo "$?" >"$T/$name.rc"
 }
 # n NAME FIELD: the count after FIELD on the summary line.  A missing line
-# or field yields an empty string, which no numeric test below accepts.
+# or field yields an empty string, which every numeric test below refuses;
+# the one arithmetic check substitutes a value no equality accepts, since
+# bash aborts a command on an empty arithmetic operand and the check would
+# otherwise vanish uncounted.
 n() { sed -n "s/^h2loop: .*\b$2 \([0-9]*\).*/\1/p" "$T/$1.sum" | head -1; }
-# traced NAME PATTERN: how many trace lines match; the count, not the status
-traced() { local c; c=$(grep -c -E "$2" "$T/$1.trace"); echo "${c:-0}"; }
+# traced NAME PATTERN: how many trace lines match; the count, not the status.
+# A missing trace is "missing", not 0: a zero here is a verdict several
+# controls accept, so the fallback has to fail toward fault.
+traced() {
+	local c
+	[ -s "$T/$1.trace" ] || { echo missing; return; }
+	c=$(grep -c -E "$2" "$T/$1.trace"); echo "$c"
+}
 
 run plain
 run delay       --delay-max 50
@@ -76,13 +85,13 @@ run otherseed   --delay-max 50 --seed 8
 # from one.  A run that crashed leaves no line and would read as every count
 # zero, which half the controls below accept.
 for r in plain delay loss dup halfclose disconnect reconnect corrupt again otherseed; do
-	if grep -q '^h2loop: sent' "$T/$r.sum"; then :; else
-		bad "run $r printed a summary (rc $(cat "$T/$r.rc"))"
+	if grep -q '^h2loop: sent' "$T/$r.sum" && grep -q '^h2loop seed=' "$T/$r.trace"; then :; else
+		bad "run $r printed a summary and a trace (rc $(cat "$T/$r.rc"))"
 		sed 's/^/        /' "$T/$r.sum" | head -3
 	fi
 done
 [ "$fail" -eq 0 ] || { echo "transport: $ran check(s), $fail failed"; exit 1; }
-ok "10 runs, 10 summaries"
+ok "10 runs, 10 summaries, 10 traces"
 
 # Every knob off: everything sent arrives once, in order, intact, and the
 # one EOF is the daemon closing at the end of the run.
@@ -102,8 +111,9 @@ check "reorder: control, plain run saw none"  "$(n plain reordered)" = 0
 
 # loss: dropped plus delivered is what was sent, and dropped is non-zero
 # with the knob on and zero with it off.
+d=$(n loss dropped); v=$(n loss delivered)
 check "loss: dropped + delivered = sent" \
-	"$(( $(n loss dropped) + $(n loss delivered) ))" = "$(n loss sent)"
+	"$(( ${d:-900000} + ${v:-900000} ))" = "$(n loss sent)"
 check "loss: dropped > 0 with loss 0.2"      "$(n loss dropped)" -gt 0
 check "loss: receiver and trace agree on the drops" "$(n loss dropped)" = "$(traced loss ' drop ')"
 check "loss: control, 0 dropped with loss 0"  "$(n plain dropped)" = 0
@@ -114,9 +124,10 @@ check "dup: receiver and trace agree"        "$(n dup dup)" = "$(traced dup ' du
 check "dup: control, 0 with dup 0"           "$(n plain dup)" = 0
 
 # half-close: the daemon stops sending after frame 50 but keeps reading, so
-# the kernel's reader sees EOF while its writer never sees EPIPE and every
-# later frame is lost on the daemon's side.
-check "halfclose: 51 delivered then EOF"     "$(n halfclose delivered)" = 51 -a "$(n halfclose eof)" = 2
+# the kernel's reader sees EOF once and exits, as kdmsg_iocom_thread_rd
+# does, while its writer never sees EPIPE and every later frame is lost on
+# the daemon's side.
+check "halfclose: 51 delivered then one EOF" "$(n halfclose delivered)" = 51 -a "$(n halfclose eof)" = 1
 check "halfclose: writer never saw EPIPE"    "$(n halfclose epipe)" = 0 -a "$(n halfclose sent)" = 200
 check "halfclose: the rest lost at the daemon" "$(n halfclose lost)" = 149
 
@@ -157,6 +168,11 @@ sed '5s/d=[0-9]*/d=99/' "$T/delay.trace" >"$T/edited.trace"
 "$T/h2loop" --replay "$T/edited.trace" >"$T/replay2.out" 2>&1; rc=$?
 check "replay: control, an edited trace does not reproduce, exit 1" \
 	"$rc" = 1 -a "$(grep -c DIFFERS "$T/replay2.out")" = 1
+# a header edited past the frame cap would write a frame nobody reads and
+# hang the lockstep; the replay has to refuse it as the command line would.
+sed '1s/aux-max=[0-9]*/aux-max=4000000/' "$T/delay.trace" >"$T/edited2.trace"
+timeout 10 "$T/h2loop" --replay "$T/edited2.trace" >"$T/replay3.out" 2>&1; rc=$?
+check "replay: a header past the frame cap is refused, exit 2" "$rc" = 2
 
 echo "transport: $ran check(s), $fail failed"
 [ "$fail" -eq 0 ]

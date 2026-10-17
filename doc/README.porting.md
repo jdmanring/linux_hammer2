@@ -1074,10 +1074,13 @@ step P6, together with the file-descriptor intake.
 
 The Linux descriptor must therefore be a `SOCK_STREAM` socket, with an
 `AF_UNIX` socketpair for the loopback. A pipe is to be refused at intake with
-`EINVAL` when the intake arrives in P6. A Linux pipe has no shutdown, and a kernel thread blocked in
-`pipe_read()` leaves only when data arrives or a signal is pending
-(`fs/pipe.c:463` in the kernel of record, `wait_event_interruptible_exclusive`).
-`kthread_stop()` sends no signal. A stream socket's reader leaves when
+`EINVAL` when the intake arrives in P6. A Linux pipe is one-directional, and `kern_dmsg.c` reads and writes one
+descriptor, where DragonFly's pipe carries both directions. A Linux pipe
+also has no shutdown: a kernel thread blocked in `pipe_read()` leaves when
+data arrives, when the last writer closes, or when a signal is pending
+(`fs/pipe.c:463` in the kernel of record, waiting on `pipe_readable()` at
+`:305-311`), and the daemon holds the write end while `kthread_stop()`
+sends no signal. A stream socket's reader leaves when
 `RCV_SHUTDOWN` is set (`net/unix/af_unix.c:2731`, the exit test in
 `unix_stream_data_wait()`), which `unix_shutdown()` sets and then wakes through
 `sk_state_change()` (`net/unix/af_unix.c:3219-3224`), reached from the kernel by

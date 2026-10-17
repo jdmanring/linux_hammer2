@@ -14554,11 +14554,11 @@ sleeps and reordering is what differing delays produce. Every decision is
 one trace line from one seeded xorshift64*, and `--replay FILE` reruns the
 header's arguments and requires byte equality.
 
-`test-transport.sh`, first full run: 33 checks, 0 failed, 0.2 s. The
-readings at seed 7, 200 frames: delay-max 50 delivers 200 with 156
-reordered against 0 plain; loss 0.2 drops 41 with 159 delivered, receiver
-and trace agreeing; dup 0.2 duplicates 41; half-close at 50 delivers 51,
-two EOFs, 0 EPIPE, 149 lost at the daemon; disconnect at 50 delivers 51
+`test-transport.sh`, after the audit below: 34 checks, 0 failed, 0.2 s.
+The readings at seed 7, 200 frames: delay-max 50 delivers 200 with 160
+reordered against 0 plain; loss 0.2 drops 43 with 157 delivered, receiver
+and trace agreeing; dup 0.2 duplicates 43; half-close at 50 delivers 51,
+one EOF, 0 EPIPE, 149 lost at the daemon; disconnect at 50 delivers 51
 and the writer sees EPIPE 149 times; reconnect at 60 delivers 191 with 9
 EPIPE; a flipped `aux_crc` bit is one rejection named `hdr_crc`, since the
 header CRC covers that field (the gate first expected `aux_crc` and the
@@ -14575,3 +14575,32 @@ One class finding on the way: the `DEFER` ledger gate's population was
 `src/`, `script/` and `.github/`, so the simulator's marker in `test/` was
 invisible to it in both directions. `test/` joined the population and the
 row was added; the gate reads 7 markers, 7 rows.
+
+An independent adversarial round over `fbcc31e` (one round, 2026-10-16,
+rule 10) refused sign-off with six findings, five fixed here and one
+recorded. The first was this entry's own: it published 156 reordered, 41
+dropped with 159 delivered and 41 duplicated as seed 7 readings, and the
+committed simulator prints 160, 43 with 157, and 43 at seed 7 under every
+compiler tried. The numbers were from exploratory runs at the default
+seed 1, taken before the gate fixed its seed, and the gate had let them
+stand because it asserts only that each is above zero. They are
+corrected above and the changelog row is corrected to match. Second,
+`--replay` applied a trace header's values without the command line's
+bounds, so a header edited to a 4 MB aux wrote a frame nobody read and
+hung the lockstep; the bounds now run after the header read and the gate
+requires exit 2 on such a header. Third, the gate's `traced()` turned a
+missing trace into 0, which is the verdict two controls accept, and the
+population check read only the summaries; it reports "missing" now and
+the population includes every trace. Fourth, the one arithmetic check
+aborted uncounted on an empty operand; it substitutes a value no
+equality accepts. Fifth, the porting section said a pipe reader leaves
+only on data or a signal, where `pipe_readable()` also returns on the
+last writer closing, and omitted that a Linux pipe is one-directional
+where `kern_dmsg.c` reads and writes one descriptor; both corrected.
+Sixth, `--corrupt-at` corrupted every copy under `--dup` and the
+half-close model read a second EOF the kernel's reader, which exits on
+the first, would never see; the bit now flips in one copy and a
+connection reports one EOF, so the half-close reading above is one EOF
+where the first run's was two. Controls for the gate fixes: an emptied
+trace fails the population check, an emptied `dropped` field fails three
+checks and the count stays 34.
