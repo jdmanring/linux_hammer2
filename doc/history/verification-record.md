@@ -14779,5 +14779,8 @@ age rule needs, and read as a check (`a7c4eef`). On `7.3.0-rc5` with
 `PROVE_LOCKING` and kmemleak, module built at `4e20bad` from linux-7.3-rc5,
 kept as `dmsg-run-20261016-223228`: 32 checks, 0 failed, kmemleak 0
 entries naming the module, the held unmount 10827 ms with the shutdown
-line 0 to 1 against a 33 ms control, the module unloading with 0 threads left. The KASAN kernel
-was not rerun; its 31-check reading stands as recorded.
+line 0 to 1 against a 33 ms control, the module unloading with 0 threads left. The KASAN kernel was then rerun with the same script, the guest
+rebooted onto `h2kasan-rc5` and the module built from linux-7.3-rc5-kasan,
+kept as `dmsg-run-20261016-225618`: 32 checks, 0 failed, kmemleak 0, the
+held unmount 10854 ms against a 90 ms control, so both kernels now carry
+the thirty-second check.
