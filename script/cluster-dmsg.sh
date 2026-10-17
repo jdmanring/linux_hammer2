@@ -162,6 +162,17 @@ echo "ctl-threads-after $(threads)"
 echo "log-shitcan-final $(klog shitcanning)"
 
 echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive' $K)"
+# Before rmmod, so the report's %pS resolves the module's own symbols, and
+# after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
+# 5000 ms), as cluster-sync.sh does. The message core allocates a state and
+# a message per frame and frees them from two threads that exit on their
+# own, which is where a leak would sit.
+sleep 6
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
+else
+	echo "kmemleak unusable"
+fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 echo "threads-final $(threads)"
 kill $KPID 2>/dev/null
@@ -242,6 +253,16 @@ cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 [ "$cu" -lt 3000 ] && [ "$sf" = "$sa" ]; check "socket_faults: control, with the daemon closed first the unmount is fast and the line is absent" $? "$cu ms, line count $sa to $sf"
 
 [ "$(num "$(val kernel-warnings)" 1)" = 0 ]; check "no kernel warning, lockdep or sanitizer report" $? "$(val kernel-warnings)"
+# Read as cluster-sync.sh reads it: a count is the reading, "unusable" is a
+# failure on the kernels this runs on, which are built with it, and no
+# value at all means the guest stopped before the scan.
+l=$(val kmemleak)
+case "$l" in
+0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
+"") ;;
+*) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
+esac
 [ "$(val rmmod)" = ok ] && [ "$(num "$(val threads-final)" 9)" = 0 ]; check "the module unloads with no thread left" $? "rmmod $(val rmmod), $(val threads-final) threads"
 
 echo "dmsg: $checks check(s), $fail failed"
