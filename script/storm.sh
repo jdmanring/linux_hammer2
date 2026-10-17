@@ -178,9 +178,18 @@ for cyc in $(seq 1 NCYC); do
 	cycsecs=$((BUDGET / maxrate))
 	[ "$cycsecs" -ge 1 ] || cycsecs=1
 	echo "rate $worst B/s this cycle, worst ${maxrate} B/s, so $cycsecs s per cycle"
+	# A store through a shared mapping with no msync, on a file nothing
+	# wrote through write(2) after its sync: the only thing carrying it to
+	# the media is writeback queueing the inode for the sync.  Nothing
+	# checked that before a mapped write to a synced file read back as the
+	# old bytes after a remount; the exerciser above msyncs every cell.
+	xfs_io -f -c "pwrite -S 0xab 0 1m" /mnt/storm/quiet >/dev/null; sync
+	xfs_io -c "mmap -rw 0 1m" -c "mwrite -S 0xcd 65536 65536" -c munmap /mnt/storm/quiet
 	umount /mnt/storm; echo "umount exit $?"
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	mount -t hammer2 /dev/vdb@STORM /mnt/storm || { echo "SETUP remount failed"; exit 0; }
+	if [ "$(od -A n -t x1 -j 65536 -N 1 /mnt/storm/quiet | tr -d " ")" = cd ]; then
+		echo "quiet-mmap kept 1"; else echo "quiet-mmap kept 0"; fi
 	/tmp/h2storm --verify /mnt/storm FILES | sed "s/^storm-/verify-/"
 	for n in 1 2; do
 		hammer2 -s /mnt/storm bulkfree /mnt/storm >/dev/null 2>&1
@@ -261,7 +270,7 @@ printf '%s\n' "$out" | command grep '^storm-fail worker ' | sed 's/^/  FAIL  /'
 # Each per-cycle line has to appear once per cycle and every one of them
 # has to read clean: a grep for one clean line would pass a run whose
 # first cycle was clean and whose last was not.
-for want in '^storm-failures 0$' '^verify-failures 0$' '^run exit 0$' '^umount exit 0$' \
+for want in '^storm-failures 0$' '^verify-failures 0$' '^quiet-mmap kept 1$' '^run exit 0$' '^umount exit 0$' \
     '^second umount exit 0$' '^bulkfree 1 of cycle [0-9]* exit 0$' \
     '^bulkfree 2 of cycle [0-9]* exit 0$' '^remove of cycle [0-9]* exit 0$'; do
 	n=$(printf '%s\n' "$out" | command grep -c "$want")

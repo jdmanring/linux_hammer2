@@ -214,6 +214,24 @@ at the end of each pass the thread flushes its own element from the
 slave's PFS root down through every inode and flags the path above it.
 DragonFly does not need this, its slave being a PFS no one mounts.
 
+The same boundary decides what Linux must do for a dirty page. On
+DragonFly every path that dirties file data goes through `vop_write()`,
+which marks the inode modified and queues it, or leaves a dirty buffer on
+the vnode, which `hammer2_vfs_sync_pmp()` finds when it scans every vnode
+and requeues the inode behind it (the `vclrisdirty()` branch). Linux has
+no vnode scan and two more ways to dirty a folio: a store through a
+shared mapping, and the zeroing `fallocate(2)` does through the page
+cache. Both reached the strategy with the inode on no queue, the strategy
+wrote or deleted the blocks, and the flush stopped at the inode above
+them: `sync(2)` and unmount both left the new blocks unreferenced, and a
+mapped write to a file that had been synced read back as the old bytes
+after a remount, with the unmount's scrap log naming the inode as
+unflushed. `hammer2_writepages()` now queues the inode after its writes,
+where `write_iter` queues after its write, so the queue sees every folio
+the strategy touched whatever dirtied it. The zero range of `fallocate`
+also takes the modification time a write takes, which is its own
+contract and not the queueing's.
+
 The order of those two steps is load-bearing and was wrong until
 2026-10-15. The flush is gated on the element root's own flags, and the
 descending flush clears the root's `ONFLUSH` before the pass ends, so a
@@ -494,6 +512,22 @@ Linux entry point owns what Linux sees. Measured on `f9`, the fixture
 with one data byte altered: before the translation `cat` reported
 "Numerical argument out of domain"; after it, "Input/output error", with
 `hammer2_chain_testcheck` naming the block in `dmesg` both times.
+
+A timestamp on the media is unsigned microseconds in 64 bits. The super
+block is told that range through `s_time_min` and `s_time_max`, so
+`notify_change()` clamps a time before `hammer2_timespec_to_time()` sees
+it, rather than a negative or far-future time wrapping and reading back
+different after a remount (xfstests generic/634). The top second is left
+out of the range so its microseconds cannot carry past the width.
+
+`FIBMAP` counts in filesystem blocks, as `bmap()` in `fs/inode.c` says,
+and `->bmap` here returns the block offset shifted by the inode's block
+bits; the first version returned 512-byte sectors and `filefrag -B` read
+every block 128 times too far out (xfstests generic/519). Where that test
+goes on to fail is the format's: its three 1 MiB writes of one byte value
+are forty-eight identical blocks, which dedup stores once, so every block
+reports the same physical address and the test's overlap check, written
+for a filesystem without dedup, fires.
 
 `hammer2_xop_strategy` carries a `struct folio *` where the BSD ports carry
 a `struct buf *`. The initial import wrote `struct bio *` there, taken from

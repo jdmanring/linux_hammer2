@@ -14870,3 +14870,79 @@ provenance, absence, posix, doc-prose, report and syntax (81 checks,
 both compilers) all 0 findings. Two things found this pass are not the
 port's: the guest's missing `/var/log/udevd`, cause unknown, and
 Coccinelle, which is not installed here.
+
+## The twenty-four failures read, five fixed, and a mapped write that was lost
+
+The entry above left eleven of the quick group's failures with "the
+test's own reason in the run's output" and no reading. Each `.out.bad`
+was read against its expected output on the guest. Three are the FIEMAP
+disposition already recorded for 009, 255 and 679: `generic/092`, `796`
+and `797` expect an unwritten extent after an allocate and this format
+stores none. `generic/732` mounts one device at two mount points, the
+double-mount surface 409, 410 and 411 already name. The other seven were
+the port's or the harness's, and five are fixed:
+
+- `generic/610` punches every other block of a 100 MiB file, zeroes the
+  whole range with `FALLOC_FL_ZERO_RANGE`, remounts and reads. The
+  blocks that had data came back. Reproduced by hand on the guest: the
+  cached file read all zeros, the remounted file read the alternating
+  bytes, and the unmount logged `scrapping unflushed indirect` twice.
+  The zero range dirtied folios and never queued the inode; the sync
+  reaches an inode's chains through the sync queue alone
+  (`HAMMER2_FLUSH_INODE_STOP`), so the strategy's deletions were never
+  flushed. The sibling was then probed: a store through a shared
+  mapping into a file written and synced earlier, no msync, read after
+  a remount, with and without `sync(2)` before the unmount. Both read
+  the old bytes, and the unmount logged three unflushed inodes. Every
+  mapped write to this filesystem that was not followed by `fsync` or
+  a `write(2)` on the same file was lost at unmount, on every build
+  since the page cache path was written. DragonFly has no such hole:
+  its `hammer2_vfs_sync_pmp()` scans every vnode for dirty buffers and
+  requeues the inode behind them. `hammer2_writepages()` now queues the
+  inode after its writes (`c70862f`); the zero range also takes a
+  write's modification time. After the fix both probes read the new
+  bytes after the remount with no scrap line. `script/storm.sh` gained
+  the quiet mapped write as a per-cycle check, and the check reads the
+  byte the hand probe read on the unfixed module.
+- `generic/634` sets timestamps at the edges of the 64-bit range and
+  compares before and after a remount. The format stores unsigned
+  microseconds and the super block declared no range, so the values
+  wrapped in the conversion. `s_time_min` and `s_time_max` now name
+  the range (`d40bc3f`).
+- `generic/467` opens unlinked but still open files by handle and the
+  decoder answered ESTALE on the zero link count. ext4 answers that
+  case from the inode cache; the refusal now applies only when no
+  struct inode is attached (`eb22cc6`).
+- `generic/738` and `798` failed only on two stderr lines
+  `newfs_hammer2` prints on Linux, where the sysctl it asks for the
+  VFS version does not exist. The adapter's wrapper drops those two
+  lines (`6bb63a3`); 634's output carried them too.
+- `generic/519` reads FIBMAP for every block of a sparse file and
+  checks that no two physical ranges overlap. `->bmap` returned
+  512-byte sectors where the ioctl counts filesystem blocks, so every
+  address was 128 times too large (`d905164`). With the unit right the
+  test still fails, and that is the format's: its three 1 MiB writes
+  of one byte value are forty-eight identical blocks, dedup stores
+  them once, and every block reports physical block 3264. The
+  overlap check is written for a filesystem without dedup.
+
+One stays open as the port's. `generic/604` unmounts in the background
+and mounts the same device ten milliseconds later. The port's
+`get_tree` takes an anonymous super block and opens the device after,
+so the new mount finds the dying super block's claim on the device and
+fails EBUSY where a `get_tree_bdev()` filesystem would wait on the
+dying super block. It is the same shape as the double-mount surface
+and is a design question for the mount path, recorded here and not
+fixed.
+
+**The six on the fixed module**, `h2debug-rc5`, module built from the
+tree at `6bb63a3`, kept as `doc/history/xfstests-6fix-2026-10-17.log`:
+467, 610 and 634 passed in 4 s each, 738 in 29 s, 798 in 3 s, 519
+failed on the dedup overlap alone, `log: bug 0 oops 0 warn 0`.
+
+**The storm check**, `script/storm.sh` with `H2_STORM_CYCLES=2` on
+`h2debug-rc5`, kept as `doc/history/storm-2026-10-17.log`: both cycles
+`quiet-mmap kept 1`, `storm-failures 0`, `verify-failures 0`, `log: bug
+0 oops 0 warn 0 kasan 0 ubsan 0 lockdep 0`, exit 0. The check's
+placement is the hand probe above: the byte it reads is the byte the
+unfixed module returned as the old value.

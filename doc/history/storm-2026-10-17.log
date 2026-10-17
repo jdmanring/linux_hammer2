@@ -1,0 +1,58 @@
+storm: a cycle may spend 4294967296 B of 8589934592 B
+storm: 2 cycles, each at most 300 s, called hung at 1920 s
+storm: guest output follows to /home/james/Projects/linux_hammer2-data/fixtures/storm.log
+  before: mem available 3365300 kB, unreclaimable slab 121200 kB
+  == cycle 1 of 2
+  cost before cycle 1: data 0 meta 0
+  storm-ops mapwrite 8653
+  storm-ops write-fsync 5219
+  storm-ops fdatasync-batch 1040
+  storm-ops read 147922
+  storm-ops mapread 34141
+  storm-ok   every cell whole and in place, 8 files of 256 cells
+  storm-checks 2053
+  storm-failures 0
+  run exit 0
+  cycle spend 1396423680 B, most any cycle spent 1396423680 B of 4294967296 B
+  rate 279284736 B/s this cycle, worst 279284736 B/s, so 15 s per cycle
+  umount exit 0
+  quiet-mmap kept 1
+  verify-ok   every cell whole and in place, 8 files of 256 cells
+  verify-checks 2048
+  verify-failures 0
+  bulkfree 1 of cycle 1 exit 0
+  bulkfree 2 of cycle 1 exit 0
+  remove of cycle 1 exit 0
+  cost after cycle 1: data 1254696960 meta 141812736
+  second umount exit 0
+  == cycle 2 of 2
+  cost before cycle 2: data 1254696960 meta 141812736
+  storm-ops mapwrite 29084
+  storm-ops write-fsync 16362
+  storm-ops fdatasync-batch 3304
+  storm-ops read 287446
+  storm-ops mapread 97732
+  storm-ok   every cell whole and in place, 8 files of 256 cells
+  storm-checks 2053
+  storm-failures 0
+  run exit 0
+  cycle spend 4635149312 B, most any cycle spent 4635149312 B of 4294967296 B
+  rate 309009954 B/s this cycle, worst 309009954 B/s, so 13 s per cycle
+  umount exit 0
+  quiet-mmap kept 1
+  verify-ok   every cell whole and in place, 8 files of 256 cells
+  verify-checks 2048
+  verify-failures 0
+  bulkfree 1 of cycle 2 exit 0
+  bulkfree 2 of cycle 2 exit 0
+  remove of cycle 2 exit 0
+  cost after cycle 2: data 5409026048 meta 622710784
+  second umount exit 0
+  rmmod exit 0
+  after unload: mem available 3426076 kB, unreclaimable slab 147820 kB
+  log: bug 0 oops 0 warn 0 kasan 0 ubsan 0 lockdep 0
+  note  cost after cycle 1: data 1254696960 meta 141812736
+  note  cost after cycle 2: data 5409026048 meta 622710784
+  ok    fsck_hammer2 clean after the run
+storm: 2 cycles over 8 files, 0 failures
+rc=0
