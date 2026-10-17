@@ -14607,3 +14607,5 @@ two paths read the socket unguarded (`--halfclose-at 10 --disconnect-at
 20` read 2); both are guarded and the same run reads 1. Controls for the gate fixes: an emptied
 trace fails the population check, an emptied `dropped` field fails three
 checks and the count stays 35.
+The third round found the two stale counts this paragraph carried and
+returned sign-off at `b375897`.
