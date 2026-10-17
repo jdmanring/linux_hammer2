@@ -75,6 +75,7 @@ hammer2_pfslist_t hammer2_pfslist;
 static hammer2_pfslist_t hammer2_spmplist;
 
 hammer2_lk_t hammer2_mntlk;
+static unsigned int hammer2_unmount_gen;	/* Linux: under hammer2_mntlk */
 
 uma_zone_t hammer2_zone_inode;
 uma_zone_t hammer2_zone_xops;
@@ -1085,6 +1086,9 @@ hammer2_get_tree(struct fs_context *fc)
 	 * because a later reconfigure and every mount error message read
 	 * it back whole.
 	 */
+retry:					/* Linux: see the pmp->mp check */
+	hmp = NULL;
+	pmp = NULL;
 	devstr = hstrdup(fc->source);
 	debug_hprintf("devstr \"%s\"\n", devstr);
 
@@ -1545,13 +1549,36 @@ next_hmp:
 		return (-EINVAL);
 	}
 
+	/*
+	 * XXX Linux: kill_anon_super() evicts every inode before
+	 * ->kill_sb reaches hammer2_unmount(), which is what clears
+	 * pmp->mp, so a mount racing an unmount finds the PFS still
+	 * mounted for that whole eviction.  DragonFly and FreeBSD fail it
+	 * EBUSY; a get_tree_bdev() filesystem waits for the dying super
+	 * block instead, and this does the same.  A super block whose
+	 * s_active is zero is in ->kill_sb and cannot come back, so the
+	 * mount lets go of everything, waits for an unmount to finish and
+	 * starts over.  The wait is on a counter, not on pmp, which the
+	 * unmount may free.  A live mount is still refused.
+	 */
 	if (pmp->mp) {
-		hprintf("PFS already mounted!\n");
+		int dying = atomic_read(&pmp->mp->s_active) == 0;
+		unsigned int gen = hammer2_unmount_gen;
+
+		hprintf("%s\n", dying ? "PFS unmounting, waiting" :
+		    "PFS already mounted!");
 		hammer2_unmount_helper(NULL, NULL, hmp);
 		hammer2_lk_unlock(&hammer2_mntlk);
 		hstrfree(devstr);
 		deactivate_locked_super(sb);
-		return (-EBUSY);
+		if (!dying)
+			return (-EBUSY);
+		error = wait_var_event_killable(&hammer2_unmount_gen,
+		    /* pairs with store_release_wake_up() in hammer2_unmount() */
+		    smp_load_acquire(&hammer2_unmount_gen) != gen);
+		if (error)
+			return (error);	/* Linux: already negative */
+		goto retry;
 	}
 
 	/* Linux fill-super */
@@ -3187,6 +3214,8 @@ hammer2_unmount(struct super_block *sb)
 	}
 
 	hammer2_unmount_helper(sb, pmp, NULL);
+	/* Linux: a mount waiting on this PFS in hammer2_get_tree() */
+	store_release_wake_up(&hammer2_unmount_gen, hammer2_unmount_gen + 1);
 	hammer2_lk_unlock(&hammer2_mntlk);
 
 	if (TAILQ_EMPTY(&hammer2_mntlist))

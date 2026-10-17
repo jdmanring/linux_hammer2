@@ -14927,13 +14927,12 @@ the port's or the harness's, and five are fixed:
   overlap check is written for a filesystem without dedup.
 
 One stays open as the port's. `generic/604` unmounts in the background
-and mounts the same device ten milliseconds later. The port's
-`get_tree` takes an anonymous super block and opens the device after,
-so the new mount finds the dying super block's claim on the device and
-fails EBUSY where a `get_tree_bdev()` filesystem would wait on the
-dying super block. It is the same shape as the double-mount surface
-and is a design question for the mount path, recorded here and not
-fixed.
+and mounts the same device ten milliseconds later, and the mount fails
+EBUSY where a `get_tree_bdev()` filesystem would wait on the dying
+super block. This paragraph named the dying super block's claim on the
+device as the cause; that was a reading of the source and not a
+measurement, and the next entry measured a different one, the PFS
+check under the mount lock.
 
 **The six on the fixed module**, `h2debug-rc5`, module built from the
 tree at `6bb63a3`, kept as `doc/history/xfstests-6fix-2026-10-17.log`:
@@ -14958,3 +14957,58 @@ with that lock released. The ordering the check relies on is a
 different one, the clear running inside `evict()` before the old inode
 leaves the hash and `iget5_locked()` returning no new inode until it
 has, and the comment now says so. No code changed.
+
+## A mount racing an unmount waits for it, 2026-10-17
+
+`generic/604` writes 501 files, unmounts in the background and mounts
+the same device ten milliseconds later. Ten runs on `h2debug-rc5`,
+module built from `b8f2266`, kept as
+`doc/history/xfstests-604-before-2026-10-17.log`: 10 of 10 failed on
+`mount: /mnt/h2xscratch: /dev/vdc already mounted or mount point busy`.
+The guest's log carried 10 `hammer2_get_tree: PFS already mounted!`
+lines and 0 lines from the device open, so the refusal is the PFS check
+under `hammer2_mntlk` and not a claim on the device, which the entry
+before this one had named.
+
+The window is `hammer2_kill_sb()`'s order. `kill_anon_super()` evicts
+every inode first, and only then does `hammer2_unmount()` take the
+mount lock and clear `pmp->mp`. A mount arriving during the eviction
+matches the device, finds the PFS, and finds it still mounted.
+DragonFly and FreeBSD have the same check with no wait. The kernel's
+`get_tree_bdev()` waits on a dying super block in `sget_fc()` instead,
+and the port now does the equivalent: a super block whose `s_active`
+is zero is inside `->kill_sb` and cannot come back, so the mount
+unwinds, waits killably on a counter `hammer2_unmount()` advances under
+the mount lock with `store_release_wake_up()`, and starts over. A live
+mount is still refused. The counter and not `pmp` is waited on, since
+the unmount may free `pmp`.
+
+**After**, the same ten runs on the same guest with the module built
+from `b8f2266` and this change, kept as
+`doc/history/xfstests-604-fixed-2026-10-17.log`: 10 of 10 passed,
+`log: bug 0 oops 0 warn 0`, `rmmod exit 0`. The guest's log carried 10
+`PFS unmounting, waiting` lines and 0 `PFS already mounted!`, so every
+pass went through the wait and none was a run that missed the race; 0
+lockdep reports on the `PROVE_LOCKING` build.
+
+**The control**, a volume attached as a virtio disk, mounted, then
+mounted again at a second mount point while the first was live: the
+second mount failed in 13 ms with `/dev/vdb already mounted on
+/mnt/ca`, one `PFS already mounted!` line and 0 waits, so a live PFS
+is refused as before rather than waited on. Unmount and `rmmod` clean,
+0 warnings.
+
+**Review.** An independent review attacked the wait for a lost wakeup,
+a waiter that could sleep forever on a super block that never reaches
+`hammer2_unmount()`, the lifetime of the super block read under the
+lock, the retry re-running anything once-only, and `s_umount` ordering.
+None held, with the writers of `pmp->mp` and `s_fs_info` paired in
+`hammer2_mount_helper()` and `hammer2_unmount_helper()` as the reason
+the second cannot happen. It reported one leak, the device list not
+freed on the wait path; that was refuted by the order of the code, the
+list being moved into the device mount or freed at the end of the
+`hmp == NULL` branch before the PFS check is reached, as upstream frees
+it.
+
+Syntax 81 checks 0 failed on both compilers, inventory 0 findings,
+checkpatch deviation set unchanged at 1373 hits.
