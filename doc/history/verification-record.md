@@ -15113,3 +15113,55 @@ edited source, disassemble identically with relocations, 16,360
 instructions, and differ only in debug information. After the edit,
 the same script on the working tree: both controls ok, 3 candidates
 from 73 patches, the three carried rows, 0 failed, exit 0 in 32 s.
+
+## Leases and delegations, refused since the kernel of record, 2026-10-17
+
+`generic/131` had been recorded as unable to run because `src/locktest`
+does not build "against the kernel of record's `fcntl.h`". The compile
+error was reproduced on the host: `struct delegation` incomplete at
+`locktest.c:1065`. The cause is the C library, not the kernel: glibc
+2.44's `bits/fcntl-linux.h` defines `F_GETDELEG`, so locktest's
+`#ifndef F_GETDELEG` fallback skips its own copy of the structure, which
+glibc does not define. Upstream fixed it as `a952ecb` ("src/locktest.c:
+fix build failure of struct delegation", for-next, 2026-10-14), and the
+commit message names the glibc change. The clone here was at `3e1ee80`;
+`a952ecb` was cherry-picked onto a local branch, `h2-locktest`, and the
+suite rebuilt with no error. `script/xfstests.sh` now prints the suite's
+commit with every run (`77986ef`).
+
+**Before**, generic/131, 571, 786 and 787 on `h2debug-rc5` with the
+module at `731318e`, kept as
+`doc/history/xfstests-lock-before-2026-10-17.log`: 131, the POSIX lock
+test, passed in 4 s; 571, 786 and 787 were not run, "Require fcntl
+setlease support" and twice "Require fcntl setdeleg support".
+
+Those three are this port's. `kernel_setlease()` returned
+`generic_setlease()` for a filesystem with no `->setlease` until Linux
+commit `2b10994be716` ("filelock: default to returning -EINVAL when
+->setlease operation is NULL"), and 6.15's `fs/locks.c` still falls back
+where 7.2's and 7.3's return `-EINVAL`. `Documentation/filesystems/
+porting.rst` lists it as mandatory: a filesystem that wants the
+kernel's leases sets `->setlease` to `generic_setlease()`. ext4, btrfs,
+xfs, f2fs and erofs set it on their file and directory operations, ten
+tables among them, and 52 tables in 47 files under `fs/` set it in all;
+this port set it on neither, so every lease and every
+delegation on a HAMMER2 file or directory has been refused with `EINVAL`
+since the kernel of record. That includes an NFSv4 export, whose
+delegations go through `kernel_setlease()` (`fs/nfsd/nfs4state.c:6810`).
+The breaks are the VFS's own, in `fs/open.c` and `fs/namei.c`, so the
+generic implementation needs nothing more from the filesystem, which is
+why the five set it bare. DragonFly has no leases to carry. Both of the
+port's tables now set it, marked `/* Linux */`.
+
+**After**, the same four on the same guest with the module carrying the
+change, kept as `doc/history/xfstests-lock-setlease-2026-10-17.log`: 4 of
+4 executed, 0 not run, 0 failed; 131 in 4 s, 571 in 9 s, 786 in 4 s,
+787 in 9 s, `rmmod exit 0`, `log: bug 0 oops 0 warn 0`. During 787 the
+guest ran `locktest -F` against `/mnt/h2xtest/dirdeleg`, so directory
+delegations were granted and broken on this mount. `debug_locks` read 1
+after both runs, so lockdep stayed armed and reported nothing; the
+kernel's taint was 12288, the out-of-tree and unsigned module bits every
+load of this module sets.
+
+The module builds against rc5 with no warning and imports
+`generic_setlease`.

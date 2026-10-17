@@ -70,6 +70,7 @@
 #include <linux/falloc.h>	/* Linux: FALLOC_FL_MODE_MASK, fallocate(2) */
 #include <linux/folio_batch.h>	/* Linux: the siblings of a split block */
 #include <linux/fiemap.h>	/* Linux: fiemap_prep, fiemap_fill_next_extent */
+#include <linux/filelock.h>	/* Linux: generic_setlease */
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
@@ -870,6 +871,7 @@ const struct file_operations hammer2_dir_fops = {
 	.read		= generic_read_dir,
 	.iterate_shared	= hammer2_vop_readdir,
 	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
+	.setlease	= generic_setlease,		/* Linux */
 };
 
 /*
@@ -1858,6 +1860,7 @@ const struct file_operations hammer2_file_fops = {
 	.fsync		= hammer2_vop_fsync,
 	.fallocate	= hammer2_fallocate,		/* Linux: XXX */
 	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
+	.setlease	= generic_setlease,		/* Linux */
 };
 
 /*

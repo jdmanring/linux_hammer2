@@ -1,0 +1,44 @@
+  suite: a6d1f76 src/locktest.c: fix build failure of struct delegation
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/131         4s
+  Ran: generic/131
+  Passed all 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/571        [not run] Require fcntl setlease support
+  Ran: generic/571
+  Not run: generic/571
+  Passed all 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/786        [not run] Require fcntl setdeleg support
+  Ran: generic/786
+  Not run: generic/786
+  Passed all 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/787        [not run] Require fcntl setdeleg support
+  Ran: generic/787
+  Not run: generic/787
+  Passed all 1 tests
+  
+  rmmod exit 0
+  log: bug 0 oops 0 warn 0
+xfstests: 1 of 4 executed, 3 not run (generic/571 generic/786 generic/787 ); failed none
+exit 0
