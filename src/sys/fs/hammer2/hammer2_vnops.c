@@ -1591,7 +1591,12 @@ hammer2_bmap(struct address_space *mapping, sector_t lbn)
 	error = hammer2_bmap_lbn(mapping->host, lbn, &poff);
 	if (error != 0)
 		return (0);		/* a hole, or an error: nothing there */
-	return (poff >> 9);		/* Linux: 512-byte sectors */
+	/*
+	 * Linux: FIBMAP counts in filesystem blocks (bmap() in fs/inode.c),
+	 * not sectors.  The first run returned sectors, and filefrag -B read
+	 * every block 128 times too far out (xfstests generic/519).
+	 */
+	return (poff >> mapping->host->i_blkbits);
 }
 
 /*
