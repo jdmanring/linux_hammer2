@@ -14714,3 +14714,16 @@ history rather than planted: a wrong connected test refused every
 descriptor in the first run, and the reconnect criterion hung the second
 run until the shutdown was added, so a tree without either change fails
 the gate where it should.
+
+Audit provenance: one independent reviewer, three rounds, on the
+changelog row, this entry, the porting sections, the roadmap, the status
+tables and the capabilities row. The first round refused on one wrong
+line count in an origin row no gate read, with two provenance gaps and
+two notes; the gate was widened to those rows with a planted control, the
+fleet script now files the kernel release and the module's vermagic with
+every kept run, and the record dates the pattern change between the third
+and fourth runs. The second round refused on the fix to one of the notes,
+which had recounted two files' upstream marks against DragonFly where the
+rows name the FreeBSD port; the rows went back to the measured 18 and 8.
+The third round returned sign-off at `31e1011`, with every number traced
+to a kept run and the cheap gates clean.
