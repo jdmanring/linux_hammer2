@@ -1774,14 +1774,29 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	 */
 	if (mode & (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE)) {
 		loff_t pos = offset & ~(loff_t)(PAGE_SIZE - 1);
+		uint64_t mtime;
 
+		/*
+		 * This is a write, and is bracketed as write_iter brackets one:
+		 * the content changes, so the modification time moves as a
+		 * write moves it, and the inode is marked modified and queued.
+		 * The queueing alone is also hammer2_writepages()'s, for every
+		 * dirty folio whatever dirtied it; before it was, a zero range
+		 * that extended nothing left the inode on no queue and unmount
+		 * scrapped its deletions as unflushed indirect blocks (xfstests
+		 * generic/610 read the zeroed bytes back after a remount).
+		 */
+		hammer2_trans_init(ip->pmp, 0);
+		error = 0;
 		while (pos < end) {
 			struct folio *folio;
 
 			folio = read_mapping_folio(inode->i_mapping,
 			    pos >> PAGE_SHIFT, file);
-			if (IS_ERR(folio))
-				return (PTR_ERR(folio));
+			if (IS_ERR(folio)) {
+				error = PTR_ERR(folio);
+				break;
+			}
 			folio_lock(folio);
 			folio_wait_stable(folio);
 			{
@@ -1816,6 +1831,14 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 			pos = (loff_t)(folio_next_index(folio)) << PAGE_SHIFT;
 			folio_put(folio);
 		}
+		hammer2_update_time(&mtime);
+		hammer2_mtx_ex(&ip->lock);
+		hammer2_inode_modify(ip);
+		ip->meta.mtime = mtime;
+		hammer2_mtx_unlock(&ip->lock);
+		hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+		if (error)
+			return (error);
 	}
 
 	error = filemap_write_and_wait_range(inode->i_mapping, offset,
@@ -2046,9 +2069,11 @@ hammer2_writepages(struct address_space *mapping,
 	hammer2_xop_strategy_t *xop;
 	struct folio *folio = NULL;
 	struct folio_batch siblings;
+	bool wrote = false;
 	int error = 0;
 
 	while ((folio = writeback_iter(mapping, wbc, folio, &error)) != NULL) {
+		wrote = true;
 		folio_start_writeback(folio);
 		folio_unlock(folio);
 		folio_batch_init(&siblings);
@@ -2067,6 +2092,28 @@ hammer2_writepages(struct address_space *mapping,
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		folio_batch_release(&siblings);
 		error = 0;
+	}
+	/*
+	 * Linux: the sync reaches an inode's chains through the sync queue
+	 * alone, and the flush stops at an inode it does not find there
+	 * (HAMMER2_FLUSH_INODE_STOP), so an inode whose blocks the strategy
+	 * has just written or deleted is queued here, after the writes, as
+	 * write_iter queues after its write.  Upstream needs no such line:
+	 * its sync scans every vnode for dirty buffers and requeues the
+	 * inode behind them (hammer2_vfs_sync_pmp(), the vclrisdirty()
+	 * branch).  Here a folio dirtied through a mapping, or by the zero
+	 * range of fallocate(2), reached the strategy with its inode on no
+	 * queue, and sync(2) and unmount both left the new blocks
+	 * unreferenced: a mapped write to a synced file read back as the old
+	 * bytes after a remount, and xfstests generic/610's zero range came
+	 * back.  No folio lock is held here, and no caller of writeback
+	 * holds ip->lock, which the sync's own writeback moved out from
+	 * under it for the write_end() cycle described there.
+	 */
+	if (wrote) {
+		hammer2_mtx_ex(&ip->lock);
+		hammer2_inode_delayed_sideq(ip);
+		hammer2_mtx_unlock(&ip->lock);
 	}
 	return (error);
 }
