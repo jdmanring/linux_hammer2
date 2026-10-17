@@ -1586,7 +1586,13 @@ next_hmp:
 	sb->s_export_op = &hammer2_export_ops;	/* Linux */
 	sb->s_magic = HAMMER2_VOLUME_ID_HBO;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
-	sb->s_time_gran = 1;
+	/*
+	 * The format's unit is the microsecond, so every time the VFS sets is
+	 * truncated to one, and the time stat shows is the time a remount
+	 * reads back; at a granularity of 1 it kept nanoseconds the media
+	 * cannot hold.
+	 */
+	sb->s_time_gran = NSEC_PER_USEC;
 	/*
 	 * The format stores a timestamp as unsigned microseconds in 64 bits,
 	 * so the VFS is told that range and notify_change() truncates to it,

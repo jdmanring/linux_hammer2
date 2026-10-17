@@ -308,9 +308,13 @@ hammer2_update_time(uint64_t *timep)
 	/* XXX Linux: vfs_timestamp() honours the vfs.timestamp_precision
 	 * sysctl, which Linux has no equivalent of; OpenBSD's port drops
 	 * the same call for a plain gettime(). This keeps the microsecond
-	 * arithmetic, which is HAMMER2's on-disk unit.
+	 * arithmetic, which is HAMMER2's on-disk unit, and the clock is
+	 * DragonFly's default one, getnanotime(), the tick clock: it is
+	 * also the one current_time() reads, so a time stamped here and one
+	 * the VFS stamps afterwards cannot read in the other order, which
+	 * the fine clock let a chmod's ctime do to a create's mtime.
 	 */
-	ktime_get_real_ts64(&ts);
+	ktime_get_coarse_real_ts64(&ts);
 	*timep = (unsigned long)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
