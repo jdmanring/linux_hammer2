@@ -15154,7 +15154,7 @@ why the five set it bare. DragonFly has no leases to carry. Both of the
 port's tables now set it, marked `/* Linux */`.
 
 **After**, the same four on the same guest with the module carrying the
-change, kept as `doc/history/xfstests-lock-setlease-2026-10-17.log`: 4 of
+change, `c63211c`, kept as `doc/history/xfstests-lock-setlease-2026-10-17.log`: 4 of
 4 executed, 0 not run, 0 failed; 131 in 4 s, 571 in 9 s, 786 in 4 s,
 787 in 9 s, `rmmod exit 0`, `log: bug 0 oops 0 warn 0`. During 787 the
 guest ran `locktest -F` against `/mnt/h2xtest/dirdeleg`, so directory
