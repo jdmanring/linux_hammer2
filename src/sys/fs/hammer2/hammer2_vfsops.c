@@ -1560,6 +1560,16 @@ next_hmp:
 	sb->s_magic = HAMMER2_VOLUME_ID_HBO;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_time_gran = 1;
+	/*
+	 * The format stores a timestamp as unsigned microseconds in 64 bits,
+	 * so the VFS is told that range and notify_change() truncates to it,
+	 * rather than a negative or far-future time wrapping in
+	 * hammer2_timespec_to_time(): xfstests generic/634 read a time back
+	 * different from the one it had set.  The top second is left out so
+	 * its microseconds cannot carry past the width.
+	 */
+	sb->s_time_min = 0;
+	sb->s_time_max = (time64_t)(U64_MAX / 1000000) - 1;
 	sb->s_blocksize = HAMMER2_PBUFSIZE;
 	sb->s_blocksize_bits = HAMMER2_PBUFRADIX;
 	snprintf(sb->s_id, sizeof(sb->s_id), "%pg",
