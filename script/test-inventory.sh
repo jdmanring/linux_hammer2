@@ -95,6 +95,30 @@ for f in $srcs $hdrs; do
 	esac
 done
 
+# The vendored headers under src/sys/sys have rows keyed `sys/NAME`, and
+# the loop above never saw them: `sys/dmsg.h` carried 870 against a file
+# of 875 for two commits with every sibling row exact.  Same check, same
+# shape, over that directory.
+for f in src/sys/sys/*.h; do
+	[ -f "$f" ] || continue
+	k=sys/$(basename "$f")
+	# The origin row, not the XXX table's row for the same key: the
+	# origin row's third field is prose, the XXX row's is a number.
+	row=$(command grep "^| \`$k\` |" "$STATUS" |
+		awk -F'|' '$4 !~ /^ *[0-9]+ *$/' | head -1)
+	[ -n "$row" ] || continue	# the combined tree.h/queue.h row is a sum and has no single key
+	want=$(printf '%s' "$row" | sed -n 's/^[^|]*|[^|]*|\([^|]*\)|.*/\1/p' | tr -d ' ')
+	case "$want" in
+	''|*[!0-9]*) ;;
+	*)
+		have=$(wc -l < "$f")
+		[ "$want" = "$have" ] || {
+			echo "  FAIL $k: origin row says $want lines, file has $have"
+			fail=$((fail+1)); }
+		;;
+	esac
+done
+
 for f in $srcs; do
 	o=$(printf '%s' "$f" | sed 's/\.c$/.o/')
 	grep -q "hammer2-y.*$o\|^[[:space:]]*hammer2-y[[:space:]]*+=[[:space:]]*$o" "$MK" || {

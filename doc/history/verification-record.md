@@ -14641,7 +14641,7 @@ kernel-only. `<net/sock.h>` cannot be included by the shim: it brings
 `ssleep()`, a name the carried core owns, so the connected test asks the
 socket through `kernel_getpeername()`. The syntax gate compiles the three
 files with both compilers in both invariants modes at 81 checks; the
-module builds warning-free against the release and KASAN trees; the
+module builds warning-free against the debug and KASAN trees; the
 fixtures gate mounted, read and unmounted eleven images on the KASAN guest
 through the new init and uninit paths, 0 failures, lockdep enabled.
 
@@ -14679,7 +14679,12 @@ through the new init and uninit paths, 0 failures, lockdep enabled.
   open for the ioctl. It closes it once the descriptor is in. The
   cancellation log check also looked for the line a `DELETE` without
   `REPLY` draws; the daemon's half is the reply half, so the line is
-  `no state match for REPLY|DELETE`, read from the kept log.
+  `no state match for REPLY|DELETE`, read from the kept log. The kept
+  pair for this run therefore disagrees with itself by design: its
+  `.out` reads `log-nostate 0` under the old pattern while its `.klog`
+  holds the line once; the pattern changed between this run and the
+  next, and kept outputs from later runs carry the guest's kernel
+  release and the module's vermagic as their first two lines.
 - The fourth: 31 checks, 0 failed. Refusal: a pipe end and an
   unconnected stream socket both EINVAL. Loopback: `CONN` initiated,
   3 spans against 3 PFSs, `DBG_SHELL` error 32, a one-off `PING` 0

@@ -177,7 +177,7 @@ if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
 fi
 stamp=$(date +%Y%m%d-%H%M%S)
 scp -q "$GUEST_SSH:/tmp/h2dmsg.klog" "$FIXDIR/dmsg-run-$stamp.klog" 2>/dev/null && echo "  kept  the guest kernel log beside the images as dmsg-run-$stamp.klog"
-cp "$W/out" "$FIXDIR/dmsg-run-$stamp.out" 2>/dev/null
+{ echo "guest-kernel $guest_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; } > "$FIXDIR/dmsg-run-$stamp.out" 2>/dev/null
 if [ "$rc" != 0 ]; then
 	sed 's/^/  guest: /' "$W/out" >&2
 	detach_disk

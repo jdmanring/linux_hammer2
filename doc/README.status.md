@@ -110,7 +110,7 @@ a defect.
 | `hammer2_compat.h` | 224 | ours, kernel look-alikes; the BSD `vtype` enum and the `MNT_WAIT` pair, which no Linux header has |
 | `hammer2_rb.h` | 207 | FreeBSD port's `RB_SCAN`, carried, with DragonFly's scan bookkeeping over the vendored tree |
 | `sys/tree.h`, `sys/queue.h` | 2165 | vendored from freebsd-src, unchanged but for `__unused` |
-| `sys/dmsg.h` | 870 | DragonFly's `sys/sys/dmsg.h`, the dmsg wire format and the kdmsg kernel structures, carried with eight `XXX` lines: `uuid_t` as `struct uuid` at five fields, the include block, and the two `_KERNEL` guards opened |
+| `sys/dmsg.h` | 875 | DragonFly's `sys/sys/dmsg.h`, the dmsg wire format and the kdmsg kernel structures, carried with eight `XXX` lines: `uuid_t` as `struct uuid` at five fields, the include block, and the two `_KERNEL` guards opened |
 | `sys/cdefs.h` | 36 | ours, three names the two vendored headers need |
 
 ### Upstream heads, as last read
@@ -358,13 +358,13 @@ for the device where DragonFly has one per bucket:
 
 | file | `XXX` | upstream's | this port's |
 |---|---|---|---|
-| `hammer2_chain.c` | 107 | 18 | 86 |
+| `hammer2_chain.c` | 107 | 22 | 85 |
 | `hammer2_freemap.c` | 13 | 6 | 7 |
 | `hammer2_bulkfree.c` | 4 | 4 | 0 |
 | `hammer2_xops.c` | 3 | 1 | 2 |
 | `hammer2_io.c` | 12 | 2 | 10 |
 | `hammer2_os.h` | 3 | 0 | 3 |
-| `hammer2_flush.c` | 20 | 8 | 11 |
+| `hammer2_flush.c` | 20 | 7 | 13 |
 | `hammer2_subr.c` | 7 | 0 | 7 |
 | `hammer2_cluster.c` | 1 | 0 | 1 |
 | `hammer2_ccms.c` | 3 | 1 | 2 |
@@ -391,8 +391,8 @@ for the device where DragonFly has one per bucket:
 | `hammer2_iocom.c` | 6 | 3 | 3 |
 | `hammer2_msgops.c` | 1 | 0 | 1 |
 
-Four hundred and nine are this port's, the right-hand column
-summed, and they fall in twenty-four files: eighty-six in `hammer2_chain.c`, sixty-six in `hammer2_synchro.c`, forty-eight in `hammer2_vfsops.c`, twenty-six in `hammer2_strategy.c`, twenty-five in `hammer2_inode.c`, twenty-four in `kern_dmsg.c`, twenty-one in `hammer2_ioctl.c`, twenty-one in `hammer2_ondisk.c`, sixteen in `hammer2_admin.c`, eleven in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, eight in `sys/dmsg.h`, seven in `hammer2_freemap.c`, seven in `hammer2_subr.c`, five in `hammer2_disk.h`, four in `hammer2_vnops.c`, three in `hammer2_iocom.c`, three in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_ccms.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_msgops.c`. That is the whole of them, and
+Four hundred and ten are this port's, the right-hand column
+summed, and they fall in twenty-four files: eighty-five in `hammer2_chain.c`, sixty-six in `hammer2_synchro.c`, forty-eight in `hammer2_vfsops.c`, twenty-six in `hammer2_strategy.c`, twenty-five in `hammer2_inode.c`, twenty-four in `kern_dmsg.c`, twenty-one in `hammer2_ioctl.c`, twenty-one in `hammer2_ondisk.c`, sixteen in `hammer2_admin.c`, thirteen in `hammer2_flush.c`, ten in `hammer2_io.c`, nine in `hammer2.h`, eight in `sys/dmsg.h`, seven in `hammer2_freemap.c`, seven in `hammer2_subr.c`, five in `hammer2_disk.h`, four in `hammer2_vnops.c`, three in `hammer2_iocom.c`, three in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_ccms.c`, two in `hammer2_xops.c`, one in `hammer2_cluster.c`, and one in `hammer2_msgops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only, and
 the per-file figures here are read off that column rather than
