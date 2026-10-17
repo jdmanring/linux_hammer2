@@ -153,6 +153,18 @@ for g in script/test-*.sh; do
 	run_gate "$g"
 done
 
+# The compile database is untracked, so no gate reads it, and clangd answers
+# a symbol query about a file missing from it with no callers rather than an
+# error: three files carried in one commit sat outside it for two hours and
+# a caller search returned nothing where grep found three. The generator
+# reads the .cmd files a module build leaves, and the fleet gate above is
+# the build on this machine, so the database is remade here, where it can
+# be no older than the module it describes.
+if [ -n "${KDIR:-}" ] && ls src/sys/fs/hammer2/.*.cmd >/dev/null 2>&1; then
+	make -s compile_commands.json || \
+		echo "pre-push: compile_commands.json was not regenerated" >&2
+fi
+
 # Anchored on the implementation and not on the name, the way CI does it:
 # matching the bare flag picks up a gate that only MENTIONS --selftest in
 # a comment.
