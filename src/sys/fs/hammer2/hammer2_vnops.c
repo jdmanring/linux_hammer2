@@ -1630,13 +1630,14 @@ hammer2_bmap(struct address_space *mapping, sector_t lbn)
  *
  * The zeroing goes through the page cache, which is the path that already
  * turns zeros into chain deletion, under the lock order the size change in
- * ->setattr uses: the VFS holds i_rwsem for the call, the page cache is
- * touched before ip->lock, and ->read_folio (which the read of a folio may
- * take) takes ip->lock shared.  The transaction and ip->lock are then taken
- * for the size change alone.
+ * ->setattr uses: i_rwsem for the call, the page cache touched before
+ * ip->lock, and ->read_folio (which the read of a folio may take) taking
+ * ip->lock shared.  The transaction and ip->lock are then taken for the
+ * size change alone.
  */
 static long
-hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
+hammer2_fallocate_locked(struct file *file, int mode, loff_t offset,
+    loff_t len)
 {
 	struct inode *inode = file_inode(file);
 	hammer2_inode_t *ip = VTOI(inode);
@@ -1848,6 +1849,26 @@ hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	if (error)
 		return (error);
 	return (0);
+}
+
+/*
+ * vfs_fallocate() takes no inode lock, so the call takes i_rwsem itself,
+ * as ext4_fallocate() does.  Without it the size the call reads at entry
+ * could be overtaken by a write before truncate_setsize() set the size to
+ * the end of the range, dropping the written pages past it: a writer
+ * extending a file beside a racing allocate lost 575 to 1001 of 2048
+ * writes in three runs, where tmpfs lost none.
+ */
+static long
+hammer2_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
+{
+	struct inode *inode = file_inode(file);
+	long error;
+
+	inode_lock(inode);
+	error = hammer2_fallocate_locked(file, mode, offset, len);
+	inode_unlock(inode);
+	return (error);
 }
 
 const struct file_operations hammer2_file_fops = {

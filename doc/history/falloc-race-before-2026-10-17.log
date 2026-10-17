@@ -1,0 +1,19 @@
+dev /dev/vdb
+== tmpfs
+falloc-ok   2048 writes past a racing allocate kept, 154897 allocates while they ran
+falloc-checks 19
+falloc-failures 0
+== hammer2 run 1
+falloc-fail a racing allocate lost 1001 of 2048 writes past its range (first at step 2), size 8391168
+falloc-checks 23
+falloc-failures 1
+== hammer2 run 2
+falloc-fail a racing allocate lost 765 of 2048 writes past its range (first at step 3), size 8391168
+falloc-checks 23
+falloc-failures 1
+== hammer2 run 3
+falloc-fail a racing allocate lost 575 of 2048 writes past its range (first at step 4), size 8391168
+falloc-checks 23
+falloc-failures 1
+rmmod 0
+log: bug 0 oops 0 warn 0 lockdep 0

@@ -615,6 +615,14 @@ no category of their own.
 every prototype in that header does, so the unnamed-argument row grows by
 one and nothing else moves.
 
+1373 to 1375 when `->fallocate` came to take `i_rwsem`, which
+`vfs_fallocate()` does not take for it: the body became
+`hammer2_fallocate_locked()`, whose signature no longer fits one line and
+wraps with the BSD continuation indent, and the wrapper that takes the
+lock returns `return (error);`. Both are the style of every other function
+in `hammer2_vnops.c`, so they are baselined rather than written in a
+second style beside it, and no category is new.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING

@@ -81,6 +81,9 @@
 # 16-column conditional, two one-line `if (x) y;`, and the braces on both
 # arms of the cluster_fd intake carried verbatim from hammer2_vfsops.c.
 # doc/README.kernel-style.md has the entry.
+# 1,373 to 1,375 on 2026-10-17: ->fallocate takes i_rwsem in a wrapper, and
+# the body it wraps, renamed, wraps its signature with the BSD continuation
+# indent and the wrapper returns `return (error);`, the file's own style.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -110,9 +113,9 @@
 454 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
-196 please, no spaces at the start of a line
+197 please, no spaces at the start of a line
 75 quoted string split across lines
-285 return is not a function, parentheses are not required
+286 return is not a function, parentheses are not required
 3 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 2 return of an errno should typically be negative (ie: return -EDOM)

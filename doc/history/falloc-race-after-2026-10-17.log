@@ -1,0 +1,16 @@
+dev /dev/vdb
+== hammer2 run 1
+falloc-ok   2048 writes past a racing allocate kept, 9385 allocates while they ran
+falloc-checks 23
+falloc-failures 0
+== hammer2 run 2
+falloc-ok   2048 writes past a racing allocate kept, 8986 allocates while they ran
+falloc-checks 23
+falloc-failures 0
+== hammer2 run 3
+falloc-ok   2048 writes past a racing allocate kept, 10713 allocates while they ran
+falloc-checks 23
+falloc-failures 0
+rmmod 0
+log: bug 0 oops 0 warn 0 lockdep 0
+ debug_locks:                             1

@@ -48,8 +48,10 @@
  *     falloc-nosupport <n>      how many modes were refused here
  */
 #define _GNU_SOURCE
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -772,6 +774,105 @@ main(int argc, char **argv)
 			close(fd);
 		}
 		unlink(epath);
+	}
+
+	/*
+	 * A fallocate that extends the file, racing a write that extends it
+	 * further.  vfs_fallocate() takes no inode lock, so the filesystem
+	 * takes i_rwsem itself, as ext4, xfs and btrfs do; one that does not
+	 * reads the size, lets a write land past the end of its own range,
+	 * and then sets the size to that end, dropping what the write put
+	 * beyond it.  A child writes RLEN bytes at ROFF into each RUNIT step,
+	 * each step past the last, and publishes how many it has finished;
+	 * the parent allocates up to ROFF into the step the child is about to
+	 * write.  Every step must read back with its own byte and the size
+	 * must be the child's last end.  The calls the parent made while the
+	 * child was writing are counted and printed, and fewer than a quarter
+	 * of the steps fails the case, since a parent that ran after the child
+	 * would pass without having raced it.
+	 */
+	{
+		enum { RSTEPS = 2048, RUNIT = 4096, ROFF = 2048, RLEN = 512 };
+		char rpath[4096], rb[RLEN], re[RLEN];
+		int *prog, fd, st = 0, i, c, ferr = 0, calls = 0, lost = 0;
+		int first = 0;
+		long rsize;
+		pid_t pid;
+
+		snprintf(rpath, sizeof(rpath), "%s/falloc-race", dir);
+		prog = mmap(NULL, sizeof(*prog), PROT_READ | PROT_WRITE,
+		    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+		fd = open(rpath, O_CREAT | O_TRUNC | O_RDWR, 0644);
+		if (prog == MAP_FAILED || fd < 0 || (pid = fork()) < 0) {
+			printf("falloc-fail the race file could not be set up\n");
+			fails++;
+			checks++;
+			goto race_done;
+		}
+		__atomic_store_n(prog, 0, __ATOMIC_RELEASE);
+		if (pid == 0) {
+			for (i = 1; i <= RSTEPS; ++i) {
+				memset(rb, 'A' + i % 26, RLEN);
+				if (pwrite(fd, rb, RLEN, (off_t)i * RUNIT + ROFF) !=
+				    RLEN)
+					_exit(2);
+				__atomic_store_n(prog, i, __ATOMIC_RELEASE);
+				usleep(100);
+			}
+			_exit(0);
+		}
+		while ((c = __atomic_load_n(prog, __ATOMIC_ACQUIRE)) < RSTEPS) {
+			if (fallocate(fd, 0, (off_t)(c + 1) * RUNIT, ROFF) != 0) {
+				ferr = errno;
+				break;
+			}
+			calls++;
+		}
+		waitpid(pid, &st, 0);
+		if (ferr && unsupported(ferr)) {
+			printf("falloc-skip a racing allocate refused\n");
+			nosupport++;
+			close(fd);
+			goto race_done;
+		}
+		checks++;
+		if (ferr || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+			printf("falloc-fail the racing allocate (errno %d) or its "
+			    "writer (status %d) failed\n", ferr, st);
+			fails++;
+			close(fd);
+			goto race_done;
+		}
+		for (i = 1; i <= RSTEPS; ++i) {
+			memset(re, 'A' + i % 26, RLEN);
+			if (pread(fd, rb, RLEN, (off_t)i * RUNIT + ROFF) != RLEN ||
+			    memcmp(rb, re, RLEN) != 0) {
+				if (lost++ == 0)
+					first = i;
+			}
+		}
+		close(fd);
+		rsize = size_of(rpath);
+		if (lost || rsize != (long)RSTEPS * RUNIT + ROFF + RLEN) {
+			printf("falloc-fail a racing allocate lost %d of %d writes "
+			    "past its range (first at step %d), size %ld, %d "
+			    "allocates while they ran\n", lost, RSTEPS, first,
+			    rsize, calls);
+			fails++;
+		} else {
+			printf("falloc-ok   %d writes past a racing allocate kept, "
+			    "%d allocates while they ran\n", RSTEPS, calls);
+		}
+		checks++;
+		if (calls < RSTEPS / 4) {
+			printf("falloc-fail the allocate overlapped the writer %d "
+			    "times, under %d\n", calls, RSTEPS / 4);
+			fails++;
+		}
+race_done:
+		if (prog != MAP_FAILED)
+			munmap(prog, sizeof(*prog));
+		unlink(rpath);
 	}
 
 	unlink(path);
