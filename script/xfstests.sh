@@ -32,6 +32,13 @@
 # defines F_GETDELEG without the structure, as glibc 2.44 does; without it
 # those four report locktest missing and are not this port's result.
 #
+# The tests this format cannot pass and the refusals it shares with
+# DragonFly are handed to check as -E from test/xfstests/hammer2.exclude,
+# which says why for each. check prints an expunged test with no Ran: line
+# and no failure, so every test expunged is counted and named below, and a
+# batch where every test named is expunged is COULD-NOT-RUN rather than a
+# pass. H2_XFSTESTS_EXCLUDE names another list, or none to run them all.
+#
 # Exit 2 without the guest, the clone, newfs_hammer2 or a kernel tree, and
 # 1 on any test that failed. A test xfstests skips is neither.
 set -u
@@ -53,8 +60,10 @@ KO=src/sys/fs/hammer2/hammer2.ko
 # before this one starts.
 PER=${H2_XFSTESTS_TIMEOUT:-900}
 TESTS=${H2_XFSTESTS_TESTS:-$*}
+EXCL=${H2_XFSTESTS_EXCLUDE:-$ROOT/test/xfstests/hammer2.exclude}
 
 [ -n "$TESTS" ] || { echo "xfstests: COULD-NOT-RUN: no tests named" >&2; exit 2; }
+[ "$EXCL" = none ] || [ -f "$EXCL" ] || { echo "xfstests: COULD-NOT-RUN: no exclude list at $EXCL" >&2; exit 2; }
 [ -x "$XFS/check" ] || { echo "xfstests: COULD-NOT-RUN: no xfstests clone at $XFS" >&2; exit 2; }
 [ -f "$XFS/include/builddefs" ] || { echo "xfstests: COULD-NOT-RUN: $XFS is not configured" >&2; exit 2; }
 [ -x "$NEWFS" ] || { echo "xfstests: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
@@ -132,6 +141,11 @@ printf "%s\n" "export FSTYP=hammer2" "export TEST_DEV=$T" "export TEST_DIR=/mnt/
     "export NEWFS_HAMMER2=/root/h2xfstests/newfs_hammer2" > local.config
 '
 scp -q "$NEWFS" "$GUEST_SSH:/root/h2xfstests/newfs_hammer2" || exit 2
+eopt=
+[ "$EXCL" = none ] || {
+	scp -q "$EXCL" "$GUEST_SSH:/root/h2xfstests/hammer2.exclude" || exit 2
+	eopt='-E hammer2.exclude'
+}
 # A group (-g quick) is expanded on the guest, where check can read the
 # devices local.config names, into the list the loop below runs one test
 # at a time: the loop is what bounds each test, and handed the group's
@@ -141,7 +155,7 @@ out=$(ssh "$GUEST_SSH" "$run
 tests=\"$TESTS\"
 case \"\$tests\" in -g*) tests=\$(./check -n \$tests 2>/dev/null | grep -oE '^[a-z]+/[0-9]+' | tr '\\n' ' ') ;; esac
 [ -n \"\$tests\" ] || echo \"SETUP the test selection $TESTS expanded to no test\"
-for t in \$tests; do timeout -k 30 $PER ./check \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
+for t in \$tests; do timeout -k 30 $PER ./check $eopt \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
@@ -155,11 +169,16 @@ ran=$(printf '%s\n' "$out" | sed -n 's/^Ran: //p' | tr '\n' ' ')
 failed=$(printf '%s\n' "$out" | sed -n 's/^Failures: //p' | tr '\n' ' ')
 notrun=$(printf '%s\n' "$out" | sed -n 's/^Not run: //p' | tr '\n' ' ')
 timedout=$(printf '%s\n' "$out" | sed -n 's/^TIMEOUT \([^ ]*\).*/\1/p' | tr '\n' ' ')
+# check prints an expunged test as its name, spaces and [expunged], with
+# no Ran: line, so the expunged are read from that line and never from Ran.
+expunged=$(printf '%s\n' "$out" | sed -n 's/^\([a-z][a-z]*\/[0-9][0-9]*\)[[:space:]]*\[expunged\].*/\1/p' | tr '\n' ' ')
+expunged=$(printf '%s\n' "$expunged" | sed 's/ *$//')
 failed="$failed$timedout"
 failed=$(printf '%s\n' "$failed" | sed 's/^ *//; s/ *$//')
 # A test killed at its bound wrote no Ran line, and a hang is a failure,
 # so it is counted before the check that nothing ran.
 [ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; echo "xfstests: failed $failed"; exit 1; }
+[ -n "$ran" ] || [ -z "$expunged" ] || { echo "xfstests: COULD-NOT-RUN: every test named is expunged: $expunged" >&2; exit 2; }
 [ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
 # check prints "Passed all N tests" whether or not any of the N executed:
 # a test that skips with _notrun is counted among them. So the pass is
@@ -169,11 +188,12 @@ failed=$(printf '%s\n' "$failed" | sed 's/^ *//; s/ *$//')
 nran=$(printf '%s\n' "$ran" | wc -w)
 nskip=$(printf '%s\n' "$notrun" | wc -w)
 nexec=$((nran - nskip))
+nexp=$(printf '%s\n' "$expunged" | wc -w)
 fail=0
 [ -n "$failed" ] && fail=1
 printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
-echo "xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}); failed ${failed:-none}"
+echo "xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}), $nexp expunged (${expunged:-none}); failed ${failed:-none}"
 [ "$fail" -eq 0 ] || exit 1
 [ "$nexec" -gt 0 ] || { echo "xfstests: COULD-NOT-RUN: every test named was skipped" >&2; exit 2; }
 exit 0

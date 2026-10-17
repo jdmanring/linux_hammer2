@@ -1,0 +1,29 @@
+# Tests this port is not expected to pass, which script/xfstests.sh hands
+# to check as -E.  Each entry is a disposition the verification record
+# makes from the test's own output, and each is one of two kinds: what this
+# format cannot store, and what this port refuses as DragonFly refuses it.
+# A defect of the port's is never listed: it is fixed or it fails, and an
+# open decision fails visibly until it is decided.  The runner counts and
+# names every test this expunges, and H2_XFSTESTS_EXCLUDE=none runs them
+# all, which is how a disposition is rechecked.
+#
+# A write of zeros is not stored, so a preallocated range is a hole, and
+# FIEMAP has no unwritten extent to report where the test expects one.
+generic/009
+generic/092
+generic/255
+generic/679
+generic/796
+generic/797
+# Dedup is on by default, so equal blocks share a physical block, and the
+# test's FIBMAP overlap check is written for a filesystem without it.
+generic/519
+# A time is unsigned microseconds from 1970, so s_time_min is 0 and a time
+# before it cannot be stored.
+generic/258
+# A second mount of a PFS that is already mounted is refused EBUSY, as
+# DragonFly's hammer2_mount() refuses it.
+generic/409
+generic/410
+generic/411
+generic/732
