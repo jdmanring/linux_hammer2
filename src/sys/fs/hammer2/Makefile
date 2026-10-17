@@ -25,6 +25,9 @@ endif
 # this file a line at a time, so a wrapped list hides every object after
 # the first from the check that each .c is compiled into the module.
 hammer2-y += hammer2_io.o
+hammer2-y += kern_dmsg.o
+hammer2-y += hammer2_iocom.o
+hammer2-y += hammer2_msgops.o
 hammer2-y += hammer2_admin.o
 hammer2-y += hammer2_freemap.o
 hammer2-y += hammer2_xops.o

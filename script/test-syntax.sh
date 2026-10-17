@@ -441,6 +441,12 @@ check "hammer2_export.c: invariants on"  pass src/sys/fs/hammer2/hammer2_export.
 check "hammer2_export.c: invariants off" pass src/sys/fs/hammer2/hammer2_export.c
 check "hammer2_synchro.c: invariants on"  pass src/sys/fs/hammer2/hammer2_synchro.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_synchro.c: invariants off" pass src/sys/fs/hammer2/hammer2_synchro.c $CARRIED
+check "kern_dmsg.c: invariants on"        pass src/sys/fs/hammer2/kern_dmsg.c -DHAMMER2_INVARIANTS $CARRIED
+check "kern_dmsg.c: invariants off"       pass src/sys/fs/hammer2/kern_dmsg.c $CARRIED
+check "hammer2_iocom.c: invariants on"    pass src/sys/fs/hammer2/hammer2_iocom.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_iocom.c: invariants off"   pass src/sys/fs/hammer2/hammer2_iocom.c $CARRIED
+check "hammer2_msgops.c: invariants on"   pass src/sys/fs/hammer2/hammer2_msgops.c -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_msgops.c: invariants off"  pass src/sys/fs/hammer2/hammer2_msgops.c $CARRIED
 check "hammer2_bulkfree.c: invariants on"  pass src/sys/fs/hammer2/hammer2_bulkfree.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_bulkfree.c: invariants off" pass src/sys/fs/hammer2/hammer2_bulkfree.c $CARRIED
 check "hammer2_chain.c: invariants on"     pass src/sys/fs/hammer2/hammer2_chain.c -DHAMMER2_INVARIANTS $CARRIED

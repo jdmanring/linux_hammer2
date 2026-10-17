@@ -43,6 +43,7 @@
 #include <linux/jiffies.h>
 #include <linux/processor.h>
 #include <linux/uuid.h>	/* Linux: generate_random_uuid, for kern_uuidgen */
+#include <linux/crc32.h>	/* Linux: crc32c, for iscsi_crc32 */
 
 /* Taken from sys/sys/cdefs.h in FreeBSD. */
 #define __DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
@@ -142,6 +143,17 @@ kern_uuidgen(struct uuid *store, int count)
 /* jiffies is the same clock at the same resolution as DragonFly ticks. */
 #define getticks()	((int)jiffies)
 #define hz		HZ
+
+/*
+ * Three libkern names kern_dmsg.c and hammer2_iocom.c use.  ksnprintf(9)
+ * is the kernel's snprintf.  printf_uuid(9) prints a struct uuid, whose
+ * field layout is the little-endian form %pUl prints.  iscsi_crc32(9) is
+ * CRC-32C with the standard pre- and post-inversion, the expression
+ * hammer2.h's hammer2_icrc32() already uses for the on-disk check.
+ */
+#define ksnprintf		snprintf
+#define printf_uuid(u)		kprintf("%pUl", (const void *)(u))
+#define iscsi_crc32(buf, len)	(~crc32c(~0U, (buf), (len)))
 
 /* Linux has no <strings.h> names in the kernel. */
 #define bzero(d, l)	memset((d), 0, (l))

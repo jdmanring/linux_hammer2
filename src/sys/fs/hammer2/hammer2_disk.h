@@ -39,9 +39,13 @@
 #define _FS_HAMMER2_DISK_H_
 
 /*
- * The on-disk format, carrying the same edits the FreeBSD port made: the
- * dmsg/volconf section deleted, uuid_t written as struct uuid, the
- * #error consistency checks turned into _Static_assert.
+ * The on-disk format, carrying the same edits the FreeBSD port made,
+ * uuid_t written as struct uuid and the #error consistency checks turned
+ * into _Static_assert, with one of them undone: the dmsg/volconf section
+ * the FreeBSD port deleted is carried back from DragonFly for the message
+ * core, since hammer2_iocom.c reads the volume header's copyinfo[] and
+ * sends it as LNK_VOLCONF.  The bytes are the same: the array occupies
+ * the 32768 bytes the port had kept as reserved_volconf.
  *
  * <sys/uuid.h> gives the BSDs the DCE 1.1 struct uuid. The kernel's
  * <linux/uuid.h> defines an unrelated opaque uuid_t and no struct uuid,
@@ -65,6 +69,7 @@ _Static_assert(sizeof(struct uuid) == 16, "struct uuid is not 16 bytes");
 #include <sys/types.h>
 #include <sys/uuid.h>
 #endif
+#include <sys/dmsg.h>	/* upstream's include, for the LNK_VOLCONF message below */
 
 /*
  * The structures below represent the on-disk media structures for the HAMMER2
@@ -465,6 +470,75 @@ typedef uint32_t hammer2_crc32_t;
 
 #define HAMMER2_SROOT_KEY	0x0000000000000000ULL	/* volume to sroot */
 #define HAMMER2_BOOT_KEY	0xd9b36ce135528000ULL	/* sroot to BOOT PFS */
+
+/************************************************************************
+ *				DMSG SUPPORT				*
+ ************************************************************************
+ * LNK_VOLCONF
+ *
+ * All HAMMER2 directories directly under the super-root on your local
+ * media can be mounted separately, even if they share the same physical
+ * device.
+ *
+ * When you do a HAMMER2 mount you are effectively tying into a HAMMER2
+ * cluster via local media.  The local media does not have to participate
+ * in the cluster, other than to provide the hammer2_volconf[] array and
+ * root inode for the mount.
+ *
+ * This is important: The mount device path you specify serves to bootstrap
+ * your entry into the cluster, but your mount will make active connections
+ * to ALL copy elements in the hammer2_volconf[] array which match the
+ * PFSID of the directory in the super-root that you specified.  The local
+ * media path does not have to be mentioned in this array but becomes part
+ * of the cluster based on its type and access rights.  ALL ELEMENTS ARE
+ * TREATED ACCORDING TO TYPE NO MATTER WHICH ONE YOU MOUNT FROM.
+ *
+ * The actual cluster may be far larger than the elements you list in the
+ * hammer2_volconf[] array.  You list only the elements you wish to
+ * directly connect to and you are able to access the rest of the cluster
+ * indirectly through those connections.
+ *
+ * WARNING!  This structure must be exactly 128 bytes long for its config
+ *	     array to fit in the volume header.
+ */
+struct hammer2_volconf {
+	uint8_t	copyid;		/* 00	 copyid 0-255 (must match slot) */
+	uint8_t inprog;		/* 01	 operation in progress, or 0 */
+	uint8_t chain_to;	/* 02	 operation chaining to, or 0 */
+	uint8_t chain_from;	/* 03	 operation chaining from, or 0 */
+	uint16_t flags;		/* 04-05 flags field */
+	uint8_t error;		/* 06	 last operational error */
+	uint8_t priority;	/* 07	 priority and round-robin flag */
+	uint8_t remote_pfs_type;/* 08	 probed direct remote PFS type */
+	uint8_t reserved08[23];	/* 09-1F */
+	struct uuid pfs_clid;	/* 20-2F copy target must match this uuid; XXX uuid_t */
+	uint8_t label[16];	/* 30-3F import/export label */
+	uint8_t path[64];	/* 40-7F target specification string or key */
+} __packed;
+
+typedef struct hammer2_volconf hammer2_volconf_t;
+
+#define DMSG_VOLF_ENABLED	0x0001
+#define DMSG_VOLF_INPROG	0x0002
+#define DMSG_VOLF_CONN_RR	0x80	/* round-robin at same priority */
+#define DMSG_VOLF_CONN_EF	0x40	/* media errors flagged */
+#define DMSG_VOLF_CONN_PRI	0x0F	/* select priority 0-15 (15=best) */
+
+struct dmsg_lnk_hammer2_volconf {
+	dmsg_hdr_t		head;
+	hammer2_volconf_t	copy;	/* copy spec */
+	int32_t			index;
+	int32_t			unused01;
+	struct uuid		mediaid;	/* XXX uuid_t */
+	int64_t			reserved02[32];
+} __packed;
+
+typedef struct dmsg_lnk_hammer2_volconf dmsg_lnk_hammer2_volconf_t;
+
+#define DMSG_LNK_HAMMER2_VOLCONF DMSG_LNK(DMSG_LNK_CMD_HAMMER2_VOLCONF, \
+					  dmsg_lnk_hammer2_volconf)
+
+#define H2_LNK_VOLCONF(msg)	((dmsg_lnk_hammer2_volconf_t *)(msg)->any.buf)
 
 /*
  * HAMMER2 directory entry header (embedded in blockref)  exactly 16 bytes
@@ -945,6 +1019,8 @@ typedef struct hammer2_inode_data hammer2_inode_data_t;
 
 #define HAMMER2_COPYID_LOCAL		((uint8_t)-1)
 
+#define HAMMER2_COPYID_COUNT		256
+
 /*
  * PFS types identify the role of a PFS within a cluster.  The PFS types
  * is stored on media and in LNK_SPAN messages and used in other places.
@@ -1126,9 +1202,15 @@ struct hammer2_volume_data {
 	hammer2_off_t volu_loff[HAMMER2_MAX_VOLUMES];
 
 	/*
-	 * sector #8-71	- 32768 bytes for unused 256 volconf array.
+	 * sector #8-71	- 32768 bytes
+	 *
+	 * Contains the configuration for up to 256 copyinfo targets.  These
+	 * specify local and remote copies operating as masters or slaves.
+	 * copyid's 0 and 255 are reserved (0 indicates an empty slot and 255
+	 * indicates the local media).
 	 */
-	char		reserved_volconf[0x8000]; /* 1000-8FFF reserved */
+						/* 1000-8FFF copyinfo config */
+	hammer2_volconf_t copyinfo[HAMMER2_COPYID_COUNT];
 
 	/*
 	 * Remaining sections are reserved for future use.

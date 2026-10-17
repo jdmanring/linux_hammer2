@@ -39,12 +39,15 @@
  * In-memory structures of HAMMER2 for Linux.
  *
  * Section order, structs and prototypes follow the FreeBSD port, which
- * already deletes the dmsg/iocom/ccms layer and the XOP thread pool. What
- * is OS-facing is marked in place. See doc/README.porting.md.
+ * deletes the dmsg/iocom/ccms layer and the XOP thread pool. What is
+ * OS-facing is marked in place. See doc/README.porting.md.
  *
- * The cluster layer is being carried back, and the XOP thread pool is a
- * decision this port has to make for itself: the ports' synchronous XOPs
- * are a mapping choice, not a ceiling on what this port carries.
+ * The cluster layer is carried back from DragonFly piece by piece, the
+ * synchronization thread, the cache-state machine and now the dmsg
+ * message core with its iocom, each in upstream's position; the XOP
+ * thread pool is a decision this port has to make for itself: the
+ * ports' synchronous XOPs are a mapping choice, not a ceiling on what
+ * this port carries.
  */
 
 #ifndef _FS_HAMMER2_HAMMER2_H_
@@ -896,6 +899,8 @@ struct hammer2_dev {
 	 * doc/IO_MODEL.md.
 	 */
 	hammer2_mtx_t		iohash_lock;	/* XXX Linux: one for the device */
+	struct malloc_type	*mmsg;
+	kdmsg_iocom_t		iocom;		/* volume-level dmsg interface */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */
@@ -1314,6 +1319,16 @@ void hammer2_dedup_clear(hammer2_dev_t *);
 
 /* hammer2_synchro.c */
 void hammer2_primary_sync_thread(void *);
+
+/* hammer2_msgops.c */
+int hammer2_msg_dbg_rcvmsg(kdmsg_msg_t *);
+int hammer2_msg_adhoc_input(kdmsg_msg_t *);
+
+/* hammer2_iocom.c */
+void hammer2_iocom_init(hammer2_dev_t *);
+void hammer2_iocom_uninit(hammer2_dev_t *);
+void hammer2_cluster_reconnect(hammer2_dev_t *, struct file *);
+void hammer2_volconf_update(hammer2_dev_t *, int);
 
 /* hammer2_subr.c */
 int hammer2_get_dtype(uint8_t);

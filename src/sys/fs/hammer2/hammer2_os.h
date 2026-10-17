@@ -55,6 +55,9 @@
 #include <linux/string.h>
 #include <linux/blkdev.h>
 #include <linux/fs.h>	/* Linux: kernel_read, kernel_write, the cluster transport */
+#include <linux/file.h>	/* Linux: fget, fput, the transport descriptor */
+#include <linux/net.h>	/* Linux: sock_from_file, kernel_sock_shutdown */
+#include <linux/utsname.h>	/* Linux: the node name hammer2_iocom.c labels its peer with */
 
 #include "hammer2_compat.h"
 
@@ -250,6 +253,62 @@ hammer2_lkc_sleep(hammer2_lkc_t *c, hammer2_lk_t *p,
 	if (signal_pending(current))
 		return (-EINTR);
 	return ((timo && remain == 0) ? -ETIMEDOUT : 0);
+}
+
+/*
+ * lockmgr(9) under its DragonFly name, for kern_dmsg.c, which is carried
+ * from sys/kern and names its lock as DragonFly does rather than through
+ * hammer2_lk.  Every use is exclusive.  lksleep() is tsleep() with the
+ * lock dropped across the sleep, on the same var-waitqueue pool wakeup()
+ * wakes: enqueue, unlock, schedule, relock, the order hammer2_lkc_sleep()
+ * keeps and for the same reason.  The kernel defines no struct lock.
+ */
+struct lock {
+	hammer2_lk_t	lk;
+};
+#define LK_EXCLUSIVE	0x00000002
+#define LK_RELEASE	0x00000006
+
+/* A lockdep class per call site, which the macro form of hammer2_lk_init gives. */
+#define lockinit(l, name, timo, flags)	hammer2_lk_init(&(l)->lk, (name))
+
+/* Linux */
+static inline void
+lockuninit(struct lock *l)
+{
+	hammer2_lk_destroy(&l->lk);
+}
+
+/* Linux */
+static inline void
+lockmgr(struct lock *l, u_int flags)
+{
+	if (flags == LK_EXCLUSIVE)
+		hammer2_lk_ex(&l->lk);
+	else if (flags == LK_RELEASE)
+		hammer2_lk_unlock(&l->lk);
+	else
+		WARN_ONCE(1, "hammer2: lockmgr flags %x not carried\n", flags);
+}
+
+/* Linux */
+static inline int
+lksleep(const void *ident, struct lock *l, int flags,
+    const char *wmesg __always_unused, int timo)
+{
+	void *chan = (void *)(uintptr_t)ident;
+	struct wait_queue_head *wq = __var_waitqueue(chan);
+	struct wait_bit_queue_entry wbq;
+	long left = timo ? timo : MAX_SCHEDULE_TIMEOUT;
+
+	WARN_ON_ONCE(flags != 0);
+	init_wait_var_entry(&wbq, chan, 0);
+	prepare_to_wait_event(wq, &wbq.wq_entry, TASK_IDLE);
+	hammer2_lk_unlock(&l->lk);
+	left = schedule_timeout(left);
+	finish_wait(wq, &wbq.wq_entry);
+	hammer2_lk_ex(&l->lk);
+	return ((timo && left == 0) ? EWOULDBLOCK : 0);
 }
 
 /*
@@ -979,6 +1038,12 @@ hammer2_spin_destroy(hammer2_spin_t *p __always_unused)
 #define M_HAMMER2	((void *)0)
 #define M_HAMMER2_LZ4	((void *)0)
 #define M_TEMP		((void *)0)
+/*
+ * The message zone is the one token that must not be NULL: upstream's
+ * hammer2_iocom_uninit() reads hmp->iocom.mmsg as "was the iocom
+ * initialized", and a NULL here would make every unmount skip it.
+ */
+#define M_HAMMER2_MSG	((void *)1)
 
 /* Only these flags are used by the core. */
 #define M_WAITOK	0x0001
@@ -1110,11 +1175,13 @@ hfree(void *addr, void *type, size_t freedsize)
  * Second, a kthread that returns from its function has had its
  * task_struct freed unless someone holds a reference, so the create takes
  * one with get_task_struct() and the teardown is kthread_stop_put(), which
- * is the join.  gfs2 does exactly this pair; DragonFly's own
- * kdmsg_iocom_uninit() instead polls a pointer the thread NULLs, which on
- * Linux is a use-after-free.  The poll is not carried.  The sync thread
- * does clear its own identity, as upstream's does, so hammer2_thr_delete()
- * reads it before asking the thread to stop and joins on what it read.
+ * is the join.  gfs2 does exactly this pair.  DragonFly's kdmsg_iocom_uninit()
+ * instead polls the identity the thread stores NULL over under the iocom
+ * lock, and nothing reads the task after that store, so that protocol is
+ * carried as it is, with the thread dropping this reference itself in
+ * lwkt_exit() below.  The sync thread does clear its own identity, as
+ * upstream's does, so hammer2_thr_delete() reads it before asking the
+ * thread to stop and joins on what it read.
  *
  * A cpu of -1 is any cpu, which is kthread_create()'s default and right
  * for a sync worker; a specific cpu is kthread_bind() before the wake.  A
@@ -1192,6 +1259,22 @@ lwkt_create(void (*func)(void *), void *arg, thread_t *tdpp,
 	*tdpp = task;
 	wake_up_process(task);
 	return (0);
+}
+
+/*
+ * lwkt_exit() ends the calling thread.  kern_dmsg.c's two threads call
+ * it after storing NULL over their own identity under the iocom lock and
+ * waking the poller that waits for exactly that, so nothing holds the
+ * identity past this point and the reference lwkt_create() took is
+ * dropped here by the thread itself; the trampoline then returns and the
+ * kthread exits as every Linux kthread does.  A thread that is instead
+ * joined with kthread_stop_put() must not call this.
+ */
+/* Linux */
+static inline void
+lwkt_exit(void)
+{
+	put_task_struct(current);
 }
 /*
  * XXX Linux: FreeBSD's hstrdup() is strdup(9) with M_WAITOK, which is
@@ -1597,6 +1680,51 @@ fp_write(struct file *fp, const void *buf, size_t nbytes, long *res,
 		*res = n;
 	return (error);
 }
+
+/*
+ * holdfp(), fp_shutdown() and fdrop() are the rest of what kern_dmsg.c
+ * asks of its descriptor, and the first is where the port's transport
+ * decision is enforced: the descriptor must be a connected stream
+ * socket, because a pipe cannot be shut down and the read thread blocked
+ * in it could not be unstuck, and a listening or unconnected stream
+ * socket has the right type and no peer.  doc/README.porting.md's cluster
+ * transport section has the kernel citations.  A refused descriptor is a
+ * user error reported by name, not a kernel fault; the carried callers
+ * turn the NULL into EINVAL.  fp_shutdown() is kernel_sock_shutdown(), the
+ * call that sets RCV_SHUTDOWN and wakes the reader; fdrop() is fput().
+ */
+/* Linux */
+static inline struct file *
+holdfp(thread_t td __always_unused, int fd, int flags __always_unused)
+{
+	struct file *fp;
+	struct socket *sock;
+
+	fp = fget(fd);
+	if (fp == NULL)
+		return (NULL);
+	sock = sock_from_file(fp);
+	if (sock == NULL || sock->type != SOCK_STREAM ||
+	    sock->state != SS_CONNECTED) {
+		hprintf("cluster descriptor %d is not a connected stream "
+		    "socket, refused\n", fd);
+		fput(fp);
+		return (NULL);
+	}
+	return (fp);
+}
+
+/* Linux */
+static inline void
+fp_shutdown(struct file *fp, int how)
+{
+	struct socket *sock = sock_from_file(fp);
+
+	if (sock)
+		kernel_sock_shutdown(sock, how);
+}
+
+#define fdrop(fp)	fput(fp)
 
 /*
  * A file mapping whose folios are at most one logical block and by

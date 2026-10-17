@@ -1222,6 +1222,7 @@ next_hmp:
 
 		/* Construct volumes and link with device vnodes. */
 		hmp = hmalloc(sizeof(*hmp), M_HAMMER2, M_WAITOK | M_ZERO);
+		hmp->mmsg = M_HAMMER2_MSG;	/* Linux: was kmalloc_create() */
 		hmp->bdev_file = NULL;
 		error = hammer2_init_volumes(&devvpl, hmp->volumes,
 		    &hmp->voldata, &hmp->volhdrno, &hmp->bdev_file);
@@ -1443,6 +1444,7 @@ next_hmp:
 		 * inode is locked -> hammer2_inode_chain() -> lock chain
 		 */
 		hammer2_update_pmps(hmp);
+		hammer2_iocom_init(hmp);
 		hammer2_bulkfree_init(hmp);
 	} else {
 		/* hmp->devvp_list is already constructed. */
@@ -2519,6 +2521,12 @@ again:
 		hprintf("%d PFS mounts still exist\n", hmp->mount_count);
 		return;
 	}
+
+	/*
+	 * Decomission the network before we start messing with the
+	 * device and PFS.
+	 */
+	hammer2_iocom_uninit(hmp);
 
 	hammer2_bulkfree_uninit(hmp);
 	hammer2_pfsfree_scan(hmp, 0);
