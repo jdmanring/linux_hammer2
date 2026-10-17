@@ -610,6 +610,11 @@ and the port's own additions in this step, the shim's `holdfp()`,
 `lockmgr()` and `lksleep()`, the ioctl case and the option parser, added
 no category of their own.
 
+1372 to 1373 with the device sync: the prototype of
+`hammer2_vfs_sync_devs()` in `hammer2.h` takes its argument unnamed as
+every prototype in that header does, so the unnamed-argument row grows by
+one and nothing else moves.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
