@@ -522,8 +522,11 @@ drain(int all)
 		if (frame_write(daemon_fd, f) == 0) {
 			if (!conn_eof)
 				receive_one();
-			else
-				ct.lost++;	/* written after the reader exited */
+			else {
+				/* written after the reader exited */
+				ct.lost++;
+				trace("i=%ld msgid=%" PRIu64 " lost t=%ld\n", tick, f->hdr.msgid, tick);
+			}
 		} else {
 			/* the daemon's send side is shut; the kernel never sees it */
 			ct.lost++;

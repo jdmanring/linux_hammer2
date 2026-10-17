@@ -14554,7 +14554,7 @@ sleeps and reordering is what differing delays produce. Every decision is
 one trace line from one seeded xorshift64*, and `--replay FILE` reruns the
 header's arguments and requires byte equality.
 
-`test-transport.sh`, after the audit below: 34 checks, 0 failed, 0.2 s.
+`test-transport.sh`, after the two audit rounds below: 35 checks, 0 failed, 0.2 s.
 The readings at seed 7, 200 frames: delay-max 50 delivers 200 with 160
 reordered against 0 plain; loss 0.2 drops 43 with 157 delivered, receiver
 and trace agreeing; dup 0.2 duplicates 43; half-close at 50 delivers 51,
@@ -14606,4 +14606,4 @@ where a half-close and a disconnect land on one connection, since those
 two paths read the socket unguarded (`--halfclose-at 10 --disconnect-at
 20` read 2); both are guarded and the same run reads 1. Controls for the gate fixes: an emptied
 trace fails the population check, an emptied `dropped` field fails three
-checks and the count stays 34.
+checks and the count stays 35.
