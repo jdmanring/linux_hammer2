@@ -645,8 +645,11 @@ Read again on 2026-10-16 at `4e20bad`: `W=1` printed
 did not carry, so the gate had been green across it since the shim was
 written. The shim declares `__printf(7, 8)` and the gate carries the
 flag, which was shown to fail with the attribute removed. `W=1` is
-clean again under both compilers; `W=2` was not reread. sparse over the
-same build reports nothing.
+clean again under both compilers. `W=2` now prints four: the three
+above and `-Wunused-macros` on `kd_printf` in the carried `kern_dmsg.c`,
+whose two uses sit under `#if KDMSG_DEBUG` as DragonFly wrote them, so
+the macro is defined and unused in every build that does not set it.
+sparse over the same build reports nothing.
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module
