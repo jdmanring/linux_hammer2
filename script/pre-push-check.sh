@@ -128,6 +128,20 @@ fi
 # only set when the caller has not set it and the tree of record is where
 # the testing document says it is, so a machine without it behaves as
 # before rather than failing for a new reason.
+# The guest carries three builds of that kernel and the gates refuse a
+# module whose vermagic is not the one running, so the tree is chosen by
+# asking the guest which it booted: a guest on the KASAN build reported
+# both fleet gates COULD-NOT-RUN on two pushes while the rc5 tree sat
+# first in the list. A guest that does not answer in three seconds
+# leaves the list to decide, as before.
+if [ -z "${KDIR:-}" ]; then
+	rel=$(timeout 3 ssh -o ConnectTimeout=2 -o BatchMode=yes \
+		"${H2_GUEST_SSH:-root@192.168.122.16}" uname -r 2>/dev/null)
+	case "$rel" in
+	*-kasan) d="$HOME/kernels/linux-7.3-rc5-kasan"
+		[ -d "$d" ] && { KDIR=$d; export KDIR; } ;;
+	esac
+fi
 if [ -z "${KDIR:-}" ]; then
 	for d in "$HOME/kernels/linux-7.3-rc5" "$HOME/kernels/linux-7.3" \
 		 "$HOME/kernels/linux-7.3-rc4" "$HOME/kernels/linux-7.3-rc1"; do
