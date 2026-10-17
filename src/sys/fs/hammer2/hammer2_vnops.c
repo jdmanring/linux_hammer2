@@ -1744,6 +1744,14 @@ hammer2_fallocate_locked(struct file *file, int mode, loff_t offset,
 	 * aborts on it, so this is what made generic/436 fail.
 	 */
 	if (!keep_size && !(mode & FALLOC_FL_PUNCH_HOLE) && end > isize) {
+		/*
+		 * RLIMIT_FSIZE and s_maxbytes, which a write meets in
+		 * generic_write_checks() and an extending allocate here, as
+		 * ext4 and xfs check them (xfstests generic/228).
+		 */
+		error = inode_newsize_ok(inode, end);
+		if (error)
+			return (error);
 		/* As ->setattr does: the old tail block must not reappear. */
 		error = hammer2_zero_tail(inode, isize);
 		if (error)
