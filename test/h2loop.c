@@ -522,6 +522,8 @@ drain(int all)
 		if (frame_write(daemon_fd, f) == 0) {
 			if (!conn_eof)
 				receive_one();
+			else
+				ct.lost++;	/* written after the reader exited */
 		} else {
 			/* the daemon's send side is shut; the kernel never sees it */
 			ct.lost++;
@@ -594,13 +596,15 @@ run(void)
 			drain(1);
 			shutdown(daemon_fd, SHUT_WR);
 			trace("i=%ld halfclose t=%ld\n", i, tick);
-			receive_one();
+			if (!conn_eof)
+				receive_one();
 		}
 		if (i == opt.disconnect_at && daemon_fd >= 0) {
 			drain(1);
 			disconnect();
 			trace("i=%ld disconnect t=%ld\n", i, tick);
-			receive_one();
+			if (!conn_eof)
+				receive_one();
 		}
 	}
 	tick = opt.frames;

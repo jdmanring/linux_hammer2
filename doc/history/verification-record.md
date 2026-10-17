@@ -14577,8 +14577,8 @@ invisible to it in both directions. `test/` joined the population and the
 row was added; the gate reads 7 markers, 7 rows.
 
 An independent adversarial round over `fbcc31e` (one round, 2026-10-16,
-rule 10) refused sign-off with six findings, five fixed here and one
-recorded. The first was this entry's own: it published 156 reordered, 41
+rule 10) refused sign-off with six findings, all six applied here, the
+first by correcting this entry. The first was this entry's own: it published 156 reordered, 41
 dropped with 159 delivered and 41 duplicated as seed 7 readings, and the
 committed simulator prints 160, 43 with 157, and 43 at seed 7 under every
 compiler tried. The numbers were from exploratory runs at the default
@@ -14601,6 +14601,9 @@ Sixth, `--corrupt-at` corrupted every copy under `--dup` and the
 half-close model read a second EOF the kernel's reader, which exits on
 the first, would never see; the bit now flips in one copy and a
 connection reports one EOF, so the half-close reading above is one EOF
-where the first run's was two. Controls for the gate fixes: an emptied
+where the first run's was two. A second round found that claim false
+where a half-close and a disconnect land on one connection, since those
+two paths read the socket unguarded (`--halfclose-at 10 --disconnect-at
+20` read 2); both are guarded and the same run reads 1. Controls for the gate fixes: an emptied
 trace fails the population check, an emptied `dropped` field fails three
 checks and the count stays 34.

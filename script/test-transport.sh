@@ -78,20 +78,21 @@ run halfclose   --halfclose-at 50
 run disconnect  --disconnect-at 50
 run reconnect   --disconnect-at 50 --reconnect-at 60
 run corrupt     --corrupt-at 7
+run combined    --halfclose-at 10 --disconnect-at 20
 run again       --delay-max 50
 run otherseed   --delay-max 50 --seed 8
 
 # The population: every run printed a summary line, before anything is read
 # from one.  A run that crashed leaves no line and would read as every count
 # zero, which half the controls below accept.
-for r in plain delay loss dup halfclose disconnect reconnect corrupt again otherseed; do
+for r in plain delay loss dup halfclose disconnect reconnect corrupt combined again otherseed; do
 	if grep -q '^h2loop: sent' "$T/$r.sum" && grep -q '^h2loop seed=' "$T/$r.trace"; then :; else
 		bad "run $r printed a summary and a trace (rc $(cat "$T/$r.rc"))"
 		sed 's/^/        /' "$T/$r.sum" | head -3
 	fi
 done
 [ "$fail" -eq 0 ] || { echo "transport: $ran check(s), $fail failed"; exit 1; }
-ok "10 runs, 10 summaries, 10 traces"
+ok "11 runs, 11 summaries, 11 traces"
 
 # Every knob off: everything sent arrives once, in order, intact, and the
 # one EOF is the daemon closing at the end of the run.
@@ -130,6 +131,10 @@ check "dup: control, 0 with dup 0"           "$(n plain dup)" = 0
 check "halfclose: 51 delivered then one EOF" "$(n halfclose delivered)" = 51 -a "$(n halfclose eof)" = 1
 check "halfclose: writer never saw EPIPE"    "$(n halfclose epipe)" = 0 -a "$(n halfclose sent)" = 200
 check "halfclose: the rest lost at the daemon" "$(n halfclose lost)" = 149
+
+# a half-close and then a disconnect on one connection is still one EOF:
+# the kernel's reader exited at the first and nothing reads after it.
+check "combined: half-close then disconnect, one EOF" "$(n combined eof)" = 1 -a "$(n combined disconnects)" = 1
 
 # disconnect: after frame 50 the daemon shuts both directions and closes;
 # the reader sees EOF and the writer EPIPE on every frame after.
