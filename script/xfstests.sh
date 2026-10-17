@@ -107,6 +107,11 @@ scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" || {
 
 # The devices are found by serial, which libvirt passes through unchanged,
 # so the names below are the guest's own and cannot be another disk.
+# dmsetup waits for udev to finish with a new device, so a udev queue that
+# is not draining holds every test on the error, flakey and thin targets at
+# its bound: generic/338 sat eight minutes behind a udevd blocked on a log
+# pipe nobody read. The settle below asks the queue first, and a queue that
+# does not answer is SETUP, since no test can be read against it.
 run='
 set -u
 i=0; while [ ! -e /dev/disk/by-id/virtio-h2xscratch ] && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
@@ -116,6 +121,7 @@ S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
 pkill -f "^/bin/bash ./check " 2>/dev/null; sleep 1
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2 2>/dev/null; insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
+udevadm settle -t 10 || { echo "SETUP udevadm settle did not return in 10 s, so a device-mapper test would wait on udev for its whole bound"; exit 0; }
 mkdir -p /mnt/h2xtest /mnt/h2xscratch
 cd /root/h2xfstests || exit 0
 printf "%s\n" "export FSTYP=hammer2" "export TEST_DEV=$T" "export TEST_DIR=/mnt/h2xtest" \
@@ -123,8 +129,16 @@ printf "%s\n" "export FSTYP=hammer2" "export TEST_DEV=$T" "export TEST_DIR=/mnt/
     "export NEWFS_HAMMER2=/root/h2xfstests/newfs_hammer2" > local.config
 '
 scp -q "$NEWFS" "$GUEST_SSH:/root/h2xfstests/newfs_hammer2" || exit 2
+# A group (-g quick) is expanded on the guest, where check can read the
+# devices local.config names, into the list the loop below runs one test
+# at a time: the loop is what bounds each test, and handed the group's
+# two words it ran "check -g" and "check quick", which the gate read
+# as no test executed. A group that expands to nothing is SETUP.
 out=$(ssh "$GUEST_SSH" "$run
-for t in $TESTS; do timeout -k 30 $PER ./check \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
+tests=\"$TESTS\"
+case \"\$tests\" in -g*) tests=\$(./check -n \$tests 2>/dev/null | grep -oE '^[a-z]+/[0-9]+' | tr '\\n' ' ') ;; esac
+[ -n \"\$tests\" ] || echo \"SETUP the test selection $TESTS expanded to no test\"
+for t in \$tests; do timeout -k 30 $PER ./check \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
