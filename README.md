@@ -52,9 +52,9 @@ At a glance, on a kernel of 7.3 or newer:
   cluster of two MASTERs on two devices is written and read through the
   quorum that requires both to agree, every file reading back what was
   written; both on the debug and the sanitizer kernel. No member on
-  another host: the transport's interface is decided and measured on the
-  host (P5), the kernel's intake of it is the next step (P6), and no run
-  yet of a quorum that cannot be met
+  another host yet: the transport and its message core are carried and
+  measured with the kernel in the loop (P5, P6), the remote PFS layer
+  above them is next (P7), and no run yet of a quorum that cannot be met
 + not yet: a package, a tag, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image

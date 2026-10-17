@@ -42,11 +42,16 @@
  * the kdmsg_state_tree below must be declared with so that kern_dmsg.c's
  * RB_REMOVE finds the scan field it expects.  thread_t comes from
  * hammer2_os.h and struct uuid from hammer2_disk.h, which includes this
- * file after defining it, as upstream's does.
+ * file after defining it, as upstream's does.  The kernel-only half keeps
+ * upstream's guard under the kernel's own name, so a userland program
+ * that includes hammer2_disk.h sees the wire structures and nothing
+ * else, as it does on DragonFly.
  */
 #include <sys/queue.h>
+#ifdef __KERNEL__
 #include <sys/tree.h>
 #include <fs/hammer2/hammer2_rb.h>
+#endif
 
 /*
  * Mesh network protocol structures.
@@ -696,7 +701,7 @@ typedef union dmsg_any dmsg_any_t;
 /*
  * Kernel iocom structures and prototypes for kern/kern_dmsg.c
  */
-#if 1 /* XXX Linux: was _KERNEL || _KERNEL_STRUCTURES */
+#ifdef __KERNEL__ /* XXX Linux: was _KERNEL || _KERNEL_STRUCTURES */
 
 struct hammer2_mount;
 struct xa_softc;
@@ -838,7 +843,7 @@ typedef struct kdmsg_iocom	kdmsg_iocom_t;
 
 #endif	/* _KERNEL || _KERNEL_STRUCTURES */
 
-#if 1 /* XXX Linux: was _KERNEL */
+#ifdef __KERNEL__ /* XXX Linux: was _KERNEL */
 
 /*
  * kern_dmsg.c

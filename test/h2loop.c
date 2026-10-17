@@ -9,8 +9,8 @@
  * where the daemon sits: it holds the daemon's end of one AF_UNIX stream
  * socketpair and decides, frame by frame, what the other end sees.
  *
- * The kernel is not in the loop yet.  Until the message core arrives, the
- * kernel's end is played by two roles in this process: a generator that
+ * The kernel is not in the loop here.  The kernel's end is played by two
+ * roles in this process: a generator that
  * writes frames the way kdmsg_iocom_thread_wr does (header, then aligned
  * aux), and a receiver that reads them the way kdmsg_iocom_thread_rd does
  * (header, extended header, aligned aux) and checks what the kernel checks
@@ -34,9 +34,10 @@
  * and requires it non-zero; a receiver that ignores CRCs passes every
  * frame, so --corrupt-at flips one bit and the gate requires one rejection.
  *
- * DEFER(the P6 kernel intake lands): --attach <mountpoint> hands the
- * kernel's end to a mounted HAMMER2 through HAMMER2IOC_RECLUSTER and
- * retires the generator and receiver roles.
+ * The kernel is in the loop in test/h2attach.c, which hands a pair's end
+ * to a mounted HAMMER2 through HAMMER2IOC_RECLUSTER and plays the daemon
+ * against the carried message core; this program keeps the generator and
+ * receiver so the transport's own behaviour is measured with no kernel.
  *
  * Frame layout and CRC convention are DragonFly's (sys/sys/dmsg.h,
  * sys/libkern/icrc32.c): 64-byte header, magic 0x4832, size field

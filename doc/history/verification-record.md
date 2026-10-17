@@ -14609,3 +14609,103 @@ trace fails the population check, an emptied `dropped` field fails three
 checks and the count stays 35.
 The third round found the two stale counts this paragraph carried and
 returned sign-off at `b375897`.
+
+## The cluster message core, with the kernel in the loop, 2026-10-16
+
+P6 asked for the message core behind the transport, `kern_dmsg.c`,
+`hammer2_iocom.c` and `hammer2_msgops.c`, with five exit criteria:
+loopback message tests, malformed message tests, cancellation, reconnect
+and socket faults. The three files and `sys/sys/dmsg.h` are carried from
+the mirror at `250a8b4`, which the sparse checkout was widened to hold.
+What the core asks of the OS was measured before anything was written:
+`lockmgr` on a `struct lock` at 22 sites with `lksleep`, `wakeup` at 10,
+`kmalloc`/`kfree` at 10, `lwkt_create` and `lwkt_exit` at 2 each,
+`fp_read` 3, `fp_write` 2, `fp_shutdown` 3, `fdrop` 2, `iscsi_crc32` 2,
+one sysctl, 25 `KKASSERT`s. An independent architect review attacked
+thirteen design decisions before code; eleven held, three changed (the
+type evidence for the header, a connected-state test on the descriptor,
+and `ticks`), and its open compile questions were closed against the
+sources. `doc/README.porting.md` has the decisions.
+
+The compile step found what the review had not. The vendored
+`src/sys/sys/tree.h` is FreeBSD's and the port's `hammer2_rb.h` lays
+DragonFly's scan bookkeeping over it, so `dmsg.h`'s `RB_HEAD` had to be
+declared through that header or `kern_dmsg.c`'s `RB_REMOVE` did not
+compile; `dmsg.h` includes it under the kernel guard, and its kernel half
+keeps upstream's guard under `__KERNEL__` so the userland programs that
+include `hammer2_disk.h` still build. `hammer2_iocom.c` reads the volume
+header's `copyinfo[]`, which the FreeBSD port deleted with the whole
+`LNK_VOLCONF` section; the section is carried back, the array taking the
+32768 bytes the port kept as `reserved_volconf`, and the message struct is
+kernel-only. `<net/sock.h>` cannot be included by the shim: it brings
+`ssleep()`, a name the carried core owns, so the connected test asks the
+socket through `kernel_getpeername()`. The syntax gate compiles the three
+files with both compilers in both invariants modes at 81 checks; the
+module builds warning-free against the release and KASAN trees; the
+fixtures gate mounted, read and unmounted eleven images on the KASAN guest
+through the new init and uninit paths, 0 failures, lockdep enabled.
+
+`cluster-dmsg.sh` drives `test/h2attach.c` on the guest. Four runs on
+`7.3.0-rc5-kasan`, each read before the next change:
+
+- The first refused every attach: `holdfp()` tested `socket.state` for
+  `SS_CONNECTED`, and `AF_UNIX` never moves that field off
+  `SS_UNCONNECTED` for a stream socket, paired or not
+  (`net/unix/af_unix.c` derives connectedness from `sk_state` for its own
+  status report). The one log message also named three conditions at
+  once, so it could not say which had failed; it is three messages now
+  and the test is the peer query.
+- The second connected: the kernel initiated `LNK_CONN`, 3 spans for 3
+  PFSs, `DBG_SHELL` answered error 32, the three malformed frames each
+  ended the connection with the log naming the reason, half-close and
+  close left no thread. Two findings. Cancellation read 0 answered with
+  2 frames arriving, because the daemon matched for a `REPLY` flag the
+  kernel does not set on the `DELETE` that closes a transaction it
+  opened (`kdmsg_msg_reply` sets `REPLY` only on the other side's); the
+  matcher was wrong, the kernel was not. Reconnect hung the run to its
+  600 s bound: `kdmsg_iocom_reconnect()` sets `KILLRX` and polls for the
+  threads, and nothing unsticks a reader blocked in `fp_read()` on a
+  descriptor the daemon still holds. The guest's process table before
+  the power-off: `h2attach` in `kdmsg_iocom_reconnect`, `hammer2-msgrd`
+  in `unix_stream_read_generic`. Upstream's daemon closes the pipe
+  before asking again, so upstream never meets it; here the wait is an
+  uninterruptible sleep inside an ioctl under the iocom lock. The one
+  behavioral `XXX` in the carried file shuts the replaced descriptor
+  down before the wait, which is what `kdmsg_iocom_uninit()` does after
+  its retries.
+- The third passed everything through reconnect (new `CONN` on the new
+  pair, EOF on the old, 0 threads after) and failed the held unmount
+  with EBUSY: the daemon program still held the mountpoint directory
+  open for the ioctl. It closes it once the descriptor is in. The
+  cancellation log check also looked for the line a `DELETE` without
+  `REPLY` draws; the daemon's half is the reply half, so the line is
+  `no state match for REPLY|DELETE`, read from the kept log.
+- The fourth: 31 checks, 0 failed. Refusal: a pipe end and an
+  unconnected stream socket both EINVAL. Loopback: `CONN` initiated,
+  3 spans against 3 PFSs, `DBG_SHELL` error 32, a one-off `PING` 0
+  replies (the core builds the dispatch command from the state's
+  `icmd`, and a one-off has none), 0 threads after close. Malformed: bad
+  magic, header size 0 and aux 2097152 each EOF within 1 ms, one log
+  line each, the next attach connecting. Cancellation: `CONN` and one
+  `SPAN` `DELETE` each answered, the second `CONN` `DELETE` 0 answered
+  with 1 `no state match` line. Reconnect: `conn2` 1 with 3 spans, old
+  EOF 1, 0 threads. Socket faults: half-close EOF 1 and 0 threads, close
+  0 threads; the held connection 2 threads before, unmount exit 0 in
+  10860 ms with the `shitcanning unresponsive pipe` line going 0 to 1,
+  the daemon reading EOF at 10754 ms with 1 frame (the `PING` uninit
+  queues), 0 threads after; the control with the daemon closed first
+  unmounted in 89 ms with the line count unchanged at 1. 0 kernel
+  warnings, `rmmod` ok, 0 threads.
+
+The same script on the debug kernel, `7.3.0-rc5` with `PROVE_LOCKING`
+and kmemleak, after the guest's grub default was moved to it and back:
+31 checks, 0 failed, the held unmount 10817 ms with the shutdown line 0
+to 1, the control 30 ms, 0 lock or sanitizer reports in the kept log of
+35 lines. The new lock class, the var-waitqueue sleeps under it and the
+two thread exits were therefore under lockdep for every criterion.
+
+The two negative controls the plan placed in the subject were met by the
+history rather than planted: a wrong connected test refused every
+descriptor in the first run, and the reconnect criterion hung the second
+run until the shutdown was added, so a tree without either change fails
+the gate where it should.

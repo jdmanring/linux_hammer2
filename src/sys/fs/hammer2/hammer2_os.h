@@ -1687,7 +1687,9 @@ fp_write(struct file *fp, const void *buf, size_t nbytes, long *res,
  * decision is enforced: the descriptor must be a connected stream
  * socket, because a pipe cannot be shut down and the read thread blocked
  * in it could not be unstuck, and a listening or unconnected stream
- * socket has the right type and no peer.  doc/README.porting.md's cluster
+ * socket has the right type and no peer.  Three tests, each with its own
+ * message, since a refusal that names the wrong test sent one run of the
+ * fleet script chasing the socketpair's state.  doc/README.porting.md's cluster
  * transport section has the kernel citations.  A refused descriptor is a
  * user error reported by name, not a kernel fault; the carried callers
  * turn the NULL into EINVAL.  fp_shutdown() is kernel_sock_shutdown(), the
@@ -1699,19 +1701,32 @@ holdfp(thread_t td __always_unused, int fd, int flags __always_unused)
 {
 	struct file *fp;
 	struct socket *sock;
+	struct sockaddr_storage peer;
 
 	fp = fget(fd);
 	if (fp == NULL)
 		return (NULL);
 	sock = sock_from_file(fp);
-	if (sock == NULL || sock->type != SOCK_STREAM ||
-	    sock->state != SS_CONNECTED) {
-		hprintf("cluster descriptor %d is not a connected stream "
-		    "socket, refused\n", fd);
-		fput(fp);
-		return (NULL);
+	if (sock == NULL) {
+		hprintf("cluster descriptor %d is not a socket, refused\n", fd);
+	} else if (sock->type != SOCK_STREAM) {
+		hprintf("cluster descriptor %d is not a stream socket, "
+		    "refused\n", fd);
+	} else if (kernel_getpeername(sock, (struct sockaddr *)&peer) < 0) {
+		/*
+		 * Connected means it has a peer, and the socket is asked.
+		 * socket.state is not the reading: AF_UNIX never moves it
+		 * off SS_UNCONNECTED for a stream socket, paired or not, and
+		 * a check on it refused every socketpair the first fleet
+		 * run handed in.  A listening socket has no peer either.
+		 */
+		hprintf("cluster descriptor %d is not connected, refused\n",
+		    fd);
+	} else {
+		return (fp);
 	}
-	return (fp);
+	fput(fp);
+	return (NULL);
 }
 
 /* Linux */

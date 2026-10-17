@@ -56,6 +56,8 @@ hammer2_is_rdonly(const struct super_block *mp)	/* XXX Linux: was struct mount *
 	return (0);
 }
 
+static int hammer2_ioctl_recluster(hammer2_inode_t *ip, void *data);
+
 /*
  * Retrieve ondisk version.
  */
@@ -74,6 +76,46 @@ hammer2_ioctl_version_get(hammer2_inode_t *ip, void *data)
 		v->version = -1;
 
 	return (0);
+}
+
+static int
+hammer2_ioctl_recluster(hammer2_inode_t *ip, void *data)
+{
+	hammer2_ioc_recluster_t *recl = data;
+	struct file *fp;
+	hammer2_cluster_t *cluster;
+	int error;
+
+	fp = holdfp(curthread, recl->fd, -1);
+	if (fp) {
+		/*
+		 * XXX Linux: upstream pins the mount with VFS_ROOT() and
+		 * vput() around the reconnect.  The ioctl runs on an open
+		 * file of this super block, which pins it for the call.
+		 */
+		error = 0;
+		if (error == 0) {
+			cluster = &ip->pmp->iroot->cluster;
+			if (cluster->focus != NULL) {
+				hammer2_cluster_reconnect(cluster->focus->hmp,
+							  fp);
+				error = 0;
+			} else if (cluster->nchains == 1 &&
+				   cluster->array[0].chain != NULL) {
+				hammer2_cluster_reconnect(
+					cluster->array[0].chain->hmp, fp);
+				error = 0;
+			} else {
+				kprintf("hammer2: recluster: "
+					"nchains=%d focus=%p\n",
+					cluster->nchains, cluster->focus);
+				error = EINVAL;
+			}
+		}
+	} else {
+		error = EINVAL;
+	}
+	return error;
 }
 
 /*
@@ -1127,6 +1169,9 @@ hammer2_ioctl_impl(struct inode *vp, unsigned int com, void *data, int fflag,
 	switch (com) {
 	case HAMMER2IOC_VERSION_GET:
 		error = hammer2_ioctl_version_get(ip, data);
+		break;
+	case HAMMER2IOC_RECLUSTER:
+		error = hammer2_ioctl_recluster(ip, data);
 		break;
 	case HAMMER2IOC_PFS_GET:
 		error = hammer2_ioctl_pfs_get(ip, data);

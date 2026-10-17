@@ -201,10 +201,10 @@ changes the filesystem, not the port.
 
 | site | what |
 |---|---|
-| `hammer2_disk.h:116` | `HAMMER2_ALLOC_MAX` 65536 |
-| `hammer2_disk.h:133` | `HAMMER2_PBUFSIZE` 65536 |
-| `hammer2_disk.h:1244` | `HAMMER2_VOLUME_BYTES` 65536 |
-| `hammer2_disk.h:1252` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
+| `hammer2_disk.h:118` | `HAMMER2_ALLOC_MAX` 65536 |
+| `hammer2_disk.h:135` | `HAMMER2_PBUFSIZE` 65536 |
+| `hammer2_disk.h:1254` | `HAMMER2_VOLUME_BYTES` 65536 |
+| `hammer2_disk.h:1262` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
 | `hammer2.h:582` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |

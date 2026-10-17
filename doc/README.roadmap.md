@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0 to P5 are closed on the Linux reading; P6 is next.
+dependency order. P0 to P6 are closed on the Linux reading; P7 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -360,6 +360,26 @@ dependency order. P0 to P5 are closed on the Linux reading; P6 is next.
    from its first line. No kernel code was written: the frame reader
    stays inside `kern_dmsg.c` and arrives with it in P6, and the
    three shim primitives the intake needs would have had no caller.
+6. P6, the message core, closed 2026-10-16 on the work queue's five exit
+   criteria, measured by `cluster-dmsg.sh` on the guest with the kernel
+   in the loop. DragonFly's `kern_dmsg.c`, `hammer2_iocom.c` and
+   `hammer2_msgops.c` are carried whole with `sys/sys/dmsg.h`, behind
+   `HAMMER2IOC_RECLUSTER` and the mount's `cluster_fd=`, and the shim
+   gained what the core names and had no Linux spelling for: `lockmgr`
+   and `lksleep` under their own names, `lwkt_exit`, and `holdfp`,
+   `fp_shutdown` and `fdrop` over the socket calls. `test/h2attach.c`
+   plays the daemon's end: the kernel initiates `LNK_CONN` and
+   advertises one `LNK_SPAN` per PFS, counted against `pfs-list`; a
+   malformed frame ends the connection and the log names why; the
+   daemon's `DELETE` of the kernel's transactions is answered and the
+   same `DELETE` again is not; a second attach replaces the first with
+   no thread left; and an unmount under a held, silent daemon completes
+   in about eleven seconds by the core's own ten-retry shutdown, against
+   under a tenth of a second when the daemon closes first. One line of
+   the carried protocol changed, marked in place: a reconnect shuts the
+   descriptor it replaces down first, since the first run of that
+   criterion sat forever in an uninterruptible sleep inside the ioctl.
+   The remote PFS layer above the core is P7.
 
 ## Versioning
 
@@ -918,7 +938,7 @@ Rules it adds to the ones this tree already keeps:
 | P3 | cache coherency (CCMS): a design note before any code | P2 | closed 2026-10-11 on the work queue's four exit criteria: transitions documented with pre- and postconditions (`doc/CCMS_TRANSITIONS.md`), each checked and the four refused calls refused by `test-ccms-lock.sh`, the same functions raced across eight threads, and lockdep clean on the debug and KASAN kernels by `script/ccms-lockdep.sh`, whose control, an unheld spin release, is reported. A first closing on 2026-10-10 on the note alone did not meet those criteria and was reopened. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
 | P4 | local synchronization hardening: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | closed 2026-10-16 on the Linux reading, item 4 above. Reopened and re-closed the same day: the failed-copy `modify_tid` stamp is withheld for a pass that failed a key and the pass ends after one deferral drain, measured by `H2_FAULT`; the pass-end flush gate is removed and the flush runs every pass, its idle cost measured at 0.03 ms median and its upgrade trigger a `DEFER`. The replace and destroy arms are driven by `cluster-sync.sh`'s phase 2c under `H2_FAULT2`, and the first drive found and fixed a carried over-read in the replace arm, staged under `doc/upstream/`. The crash cell's FreeBSD half is COULD-NOT-RUN by detector design. See `doc/history/verification-record.md`. |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, reconnect, a replayable trace | P4 | closed 2026-10-16 on the work queue's seven exit criteria (delay, loss, duplicate, reorder, disconnect, reconnect, reproducible event trace), item 5 above, by `test-transport.sh` over `test/h2loop.c`: each knob read beside a knob-off control that must read zero, and a replay read beside an edited trace that must not reproduce. The kernel intake and the frame reader are P6's, with `kern_dmsg.c`. |
-| P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |
+| P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | closed 2026-10-16 on the five exit criteria (loopback messages, malformed messages, cancellation, reconnect, socket faults), item 6 above, by `cluster-dmsg.sh` driving `test/h2attach.c` against the mounted volume on the guest: 31 checks, 0 failed on both the KASAN kernel and the lockdep debug kernel, every criterion a count beside a control. The intake is `HAMMER2IOC_RECLUSTER` and `cluster_fd=`, a connected stream socket only. |
 | P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | open |
 | P8 | quorum across masters, and the seven cluster ioctls (`REMOTE_ADD`, `_DEL`, `_REP`, `_SCAN`, `SOCKET_GET`, `_SET`, `RECLUSTER`) | P7 | the local two-master shape measured; a quorum that cannot be met is not |
 | P9 | transaction replay and the reintegration of a stale master | P8 | open |

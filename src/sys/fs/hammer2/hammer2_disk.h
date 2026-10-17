@@ -69,7 +69,9 @@ _Static_assert(sizeof(struct uuid) == 16, "struct uuid is not 16 bytes");
 #include <sys/types.h>
 #include <sys/uuid.h>
 #endif
-#include <sys/dmsg.h>	/* upstream's include, for the LNK_VOLCONF message below */
+#ifdef __KERNEL__
+#include <sys/dmsg.h>	/* XXX Linux: upstream includes it unconditionally; see the LNK_VOLCONF message */
+#endif
 
 /*
  * The structures below represent the on-disk media structures for the HAMMER2
@@ -524,6 +526,13 @@ typedef struct hammer2_volconf hammer2_volconf_t;
 #define DMSG_VOLF_CONN_EF	0x40	/* media errors flagged */
 #define DMSG_VOLF_CONN_PRI	0x0F	/* select priority 0-15 (15=best) */
 
+/*
+ * XXX Linux: the message that carries a volconf needs dmsg_hdr_t, which
+ * on DragonFly every program gets from <sys/dmsg.h> and here only the
+ * module has, so the message is kernel-only and the volconf array above
+ * it, which is the on-disk format, stays visible to userland.
+ */
+#ifdef __KERNEL__
 struct dmsg_lnk_hammer2_volconf {
 	dmsg_hdr_t		head;
 	hammer2_volconf_t	copy;	/* copy spec */
@@ -539,6 +548,7 @@ typedef struct dmsg_lnk_hammer2_volconf dmsg_lnk_hammer2_volconf_t;
 					  dmsg_lnk_hammer2_volconf)
 
 #define H2_LNK_VOLCONF(msg)	((dmsg_lnk_hammer2_volconf_t *)(msg)->any.buf)
+#endif /* __KERNEL__ */
 
 /*
  * HAMMER2 directory entry header (embedded in blockref)  exactly 16 bytes

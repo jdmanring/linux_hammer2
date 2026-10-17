@@ -955,10 +955,12 @@ hammer2_init_limits(void)
  */
 enum hammer2_param {
 	Opt_emerg,
+	Opt_cluster_fd,
 };
 
 static const struct fs_parameter_spec hammer2_fs_parameters[] = {
 	fsparam_flag("emerg", Opt_emerg),
+	fsparam_s32("cluster_fd", Opt_cluster_fd),
 	{}
 };
 
@@ -970,6 +972,7 @@ static const struct fs_parameter_spec hammer2_fs_parameters[] = {
  */
 struct hammer2_fs_context {
 	int	hflags;
+	int	cluster_fd;	/* -1 unless the mount passed one */
 };
 
 static int
@@ -986,6 +989,9 @@ hammer2_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	switch (opt) {
 	case Opt_emerg:
 		ctx->hflags |= HMNT2_EMERG;
+		break;
+	case Opt_cluster_fd:
+		ctx->cluster_fd = result.int_32;
 		break;
 	default:
 		return (-EINVAL);
@@ -1446,6 +1452,23 @@ next_hmp:
 		hammer2_update_pmps(hmp);
 		hammer2_iocom_init(hmp);
 		hammer2_bulkfree_init(hmp);
+
+		/*
+		 * Ref the cluster management messaging descriptor.  The mount
+		 * program deals with the other end of the communications pipe.
+		 *
+		 * Root mounts typically do not supply one.
+		 */
+		if (ctx->cluster_fd >= 0) {
+			struct file *fp;
+
+			fp = holdfp(curthread, ctx->cluster_fd, -1);
+			if (fp) {
+				hammer2_cluster_reconnect(hmp, fp);
+			} else {
+				kprintf("hammer2_mount: bad cluster_fd!\n");
+			}
+		}
 	} else {
 		/* hmp->devvp_list is already constructed. */
 		hammer2_cleanup_devvp(&devvpl);
@@ -2450,6 +2473,7 @@ hammer2_init_fs_context(struct fs_context *fc)
 	ctx = kzalloc_obj(struct hammer2_fs_context);
 	if (ctx == NULL)
 		return (-ENOMEM);
+	ctx->cluster_fd = -1;	/* Linux: as mount_hammer2 leaves it */
 
 	fc->fs_private = ctx;
 	fc->ops = &hammer2_context_ops;

@@ -119,6 +119,16 @@ kdmsg_iocom_reconnect(kdmsg_iocom_t *iocom, struct file *fp,
 	 */
 	lockmgr(&iocom->msglk, LK_EXCLUSIVE);
 	atomic_set_int(&iocom->msg_ctl, KDMSG_CLUSTERCTL_KILLRX);
+	/*
+	 * XXX Linux: the descriptor being replaced is shut down before the
+	 * threads are waited for, as kdmsg_iocom_uninit() does after its
+	 * retries.  The read thread sits in fp_read() on it and leaves only
+	 * on data, EOF or this shutdown; with the daemon still holding its
+	 * end the wait below never ended, and it is an uninterruptible sleep
+	 * inside an ioctl.
+	 */
+	if (iocom->msg_fp)
+		fp_shutdown(iocom->msg_fp, SHUT_RDWR);
 	while (iocom->msgrd_td || iocom->msgwr_td) {
 		wakeup(&iocom->msg_ctl);
 		lksleep(iocom, &iocom->msglk, 0, "clstrkl", hz);

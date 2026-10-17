@@ -70,6 +70,13 @@ struct hammer2_ioc_version {
 
 typedef struct hammer2_ioc_version hammer2_ioc_version_t;
 
+struct hammer2_ioc_recluster {
+	int			fd;
+	char			reserved[256 - 4];
+};
+
+typedef struct hammer2_ioc_recluster hammer2_ioc_recluster_t;
+
 /*
  * Ioctls to manage PFSs.
  *
@@ -203,6 +210,7 @@ typedef struct hammer2_ioc_volume_list2 hammer2_ioc_volume_list2_t;
  * Ioctl list.
  */
 #define HAMMER2IOC_VERSION_GET		_IOWR('h', 64, struct hammer2_ioc_version)
+#define HAMMER2IOC_RECLUSTER	_IOWR('h', 65, struct hammer2_ioc_recluster)
 #define HAMMER2IOC_PFS_GET		_IOWR('h', 80, struct hammer2_ioc_pfs)
 #define HAMMER2IOC_PFS_CREATE		_IOWR('h', 81, struct hammer2_ioc_pfs)
 #define HAMMER2IOC_PFS_DELETE		_IOWR('h', 82, struct hammer2_ioc_pfs)

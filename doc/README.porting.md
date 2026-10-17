@@ -1067,14 +1067,21 @@ the extended header, and the aligned auxiliary data. It calls `fp_write()`
 twice, for the header and then the auxiliary data. At teardown it calls
 `fp_shutdown(fp, SHUT_RDWR)` three times, two of them to unstick a reader
 blocked in a read and one from the reader's own exit to end the far side, and
-calls `fdrop()` twice. Nothing else is called. The shim already
-carries `fp_read()` and `fp_write()` over `kernel_read()` and `kernel_write()`
-(`hammer2_os.h:1477-1599`). The other two arrive with `kern_dmsg.c` as plan
-step P6, together with the file-descriptor intake.
+calls `fdrop()` twice. Nothing else is called. The shim
+carries `fp_read()` and `fp_write()` over `kernel_read()` and `kernel_write()`,
+`fp_shutdown()` over `kernel_sock_shutdown()`, `fdrop()` over `fput()`, and
+`holdfp()` over `fget()`, which is where the intake below is enforced.
 
 The Linux descriptor must therefore be a `SOCK_STREAM` socket, with an
-`AF_UNIX` socketpair for the loopback. A pipe is to be refused at intake with
-`EINVAL` when the intake arrives in P6. A Linux pipe is one-directional, and `kern_dmsg.c` reads and writes one
+`AF_UNIX` socketpair for the loopback. `holdfp()` refuses anything else at
+intake, and the carried callers, `hammer2_ioctl_recluster()` and the mount's
+`cluster_fd=` option, turn that into `EINVAL`: a descriptor that is not a
+socket, a socket that is not a stream, and a stream socket with no peer,
+each named in the log. The peer test asks the socket, through
+`kernel_getpeername()`, because `struct socket`'s own `state` field is not
+the reading: `AF_UNIX` leaves it `SS_UNCONNECTED` for a stream socket paired
+or not, and the first fleet run with a test on that field refused every
+socketpair handed in. A Linux pipe is one-directional, and `kern_dmsg.c` reads and writes one
 descriptor, where DragonFly's pipe carries both directions. A Linux pipe
 also has no shutdown: a kernel thread blocked in `pipe_read()` leaves when
 data arrives, when the last writer closes, or when a signal is pending
@@ -1103,7 +1110,57 @@ therefore a userland program sitting where the daemon sits, `test/h2loop.c`,
 holding the peer ends of the socketpairs. It decides each frame's fate from a
 seed and writes a trace that replays, and `script/test-transport.sh` reads it.
 No kernel code is needed for it. A run that fails replays from its recorded
-seed.
+seed. With the kernel in the loop the daemon's end is `test/h2attach.c`,
+driven by `script/cluster-dmsg.sh` on the guest, which hands a pair's end to
+a mount through `HAMMER2IOC_RECLUSTER` and answers the kernel's `LNK_CONN`
+and `LNK_SPAN`s as `libdmsg` does, with `REVTRANS` set on a reply to a
+transaction the kernel initiated, since `kdmsg_state_msgrx()` looks such a
+frame up among the transactions it opened.
+
+## The message core's threads end themselves, and the shim lets them
+
+`kern_dmsg.c` is carried from DragonFly's `sys/kern`, not from the
+filesystem, and it names its primitives as the kernel does: `lockmgr(9)` on
+a `struct lock`, `lksleep()` to sleep with that lock dropped, `lwkt_create()`
+and `lwkt_exit()`. The shim supplies each under its own name rather than
+rewriting the file to `hammer2_lk`, which would be a divergence upstream
+would not recognize: `struct lock` wraps the port's rwsem, `lockmgr()` takes
+`LK_EXCLUSIVE` and `LK_RELEASE`, and `lksleep()` enqueues on the kernel's
+var-waitqueue pool, drops the lock, schedules and relocks, the order the
+port's `hammer2_lkc_sleep()` keeps so that a `wakeup()` between the test and
+the sleep is not lost. The kernel defines no `struct lock`, checked against
+the kernel of record's `include/` before the carry.
+
+The thread protocol is upstream's and is carried whole. `kdmsg_iocom_reconnect()`
+and `kdmsg_iocom_uninit()` set `KILLRX`, queue a `PING`, and poll
+`while (msgrd_td || msgwr_td)` under the iocom lock, sleeping a tick at a
+time; each thread ends by storing NULL over its own identity under that
+lock, waking the poller and calling `lwkt_exit()`. Nothing reads the task
+after the store, so the poll is not the use-after-free an earlier comment in
+`hammer2_os.h` took it for. What Linux needs is the reference: the port's
+`lwkt_create()` takes one with `get_task_struct()` so that a thread joined by
+`kthread_stop_put()` is safe to join after it has returned, and a kdmsg
+thread is never joined that way, so `lwkt_exit()` is where that reference is
+dropped, by the thread itself. The sync thread keeps the other arrangement.
+
+One line of the carried protocol is changed, marked `XXX` in place:
+`kdmsg_iocom_reconnect()` shuts the descriptor it is replacing down before
+it waits for the two threads. Upstream does not, and does not need to: its
+daemon closes the pipe before asking for a new connection, so the read
+thread has already seen EOF. The first fleet run here asked for a second
+connection while the daemon still held the old one, and the ioctl sat in
+that wait, an uninterruptible sleep taken under the iocom lock, with the
+read thread in `unix_stream_read_generic()` waiting for a frame that would
+never come; the guest's process table is in the record. The shutdown is the
+one `kdmsg_iocom_uninit()` already issues after its retries, taken at once
+because the connection is being replaced either way.
+
+The ten-retry branch of `kdmsg_iocom_uninit()`, which after ten seconds of a
+daemon that neither reads nor writes calls `fp_shutdown(SHUT_RDWR)` on the
+descriptor and logs it, is the reason the descriptor must be a socket, and
+`cluster-dmsg.sh` measures it: an unmount under a held, silent daemon
+completes in about ten seconds with that line in the log, and the control,
+the daemon closing first, completes in under a second with the line absent.
 
 ## The kernel floor is the kernel of record
 

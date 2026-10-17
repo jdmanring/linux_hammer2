@@ -48,6 +48,7 @@
 struct hammer2_mount_info {
 	char		*fspec;
 	int		hflags;		/* extended hammer2 mount flags */
+	int		cluster_fd;	/* cluster management pipe/socket */
 };
 
 #define HMNT2_LOCAL		0x00000002
