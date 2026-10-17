@@ -3252,17 +3252,32 @@ hammer2_kill_sb(struct super_block *sb)
  * class in the tree's order and may report it, which is the failure a
  * debug kernel should show rather than hide.  Without CONFIG_LOCKDEP the
  * calls compile to nothing and none of this is reached.
+ *
+ * The key itself comes from a static pool while the pool lasts.  Every
+ * lockdep_init_map() checks its key with static_obj(), and a key that is
+ * neither kernel nor module data fails every test there before the
+ * dynamic-key hash answers; the last of those tests walks every module's
+ * per-cpu area for every possible CPU.  A chain is classed four times
+ * through this registry between its allocation and its nest, so on the
+ * lockdep kernel xfstests generic/676, which instantiates 1.2 million
+ * directory chains through seekdir, spent 21 percent of its CPU in that
+ * walk and ran past its bound.  A key in the module's own data is
+ * answered by the module address tree instead.  The pool is a page, and
+ * a class past it registers a dynamic key as before.
  */
 #ifdef CONFIG_LOCKDEP
 enum { H2LD_CHAIN, H2LD_CORE, H2LD_DIOLK, H2LD_INODE };
 
 struct hammer2_lockdep_class {
-	struct lock_class_key key;
+	struct lock_class_key *key;	/* a pool slot, or dynkey registered */
+	struct lock_class_key dynkey;
 	int ready;			/* registered, see the lookup */
 	char name[32];
 };
 
 static DEFINE_XARRAY(hammer2_lockdep_classes);
+static struct lock_class_key hammer2_lockdep_keys[256];
+static unsigned int hammer2_lockdep_nkeys;	/* under the xarray lock */
 
 static const char *const hammer2_lockdep_names[4][9] = {
 	{ "h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
@@ -3329,7 +3344,14 @@ hammer2_lockdep_lookup(unsigned int fam, unsigned int t, unsigned int kb,
 		if (c) {
 			snprintf(c->name, sizeof(c->name), "%s/%u",
 			    hammer2_lockdep_names[fam][t], level);
-			lockdep_register_key(&c->key);
+			if (hammer2_lockdep_nkeys <
+			    ARRAY_SIZE(hammer2_lockdep_keys)) {
+				c->key = &hammer2_lockdep_keys[
+				    hammer2_lockdep_nkeys++];
+			} else {
+				c->key = &c->dynkey;
+				lockdep_register_key(c->key);
+			}
 			/* published to lockless readers only once registered */
 			smp_store_release(&c->ready, 1);
 		}
@@ -3348,7 +3370,8 @@ hammer2_lockdep_unregister(void)
 
 	xa_for_each(&hammer2_lockdep_classes, idx, c) {
 		xa_erase(&hammer2_lockdep_classes, idx);
-		lockdep_unregister_key(&c->key);
+		if (c->key == &c->dynkey)
+			lockdep_unregister_key(c->key);
 		kfree(c);
 	}
 	xa_destroy(&hammer2_lockdep_classes);
@@ -3374,10 +3397,10 @@ hammer2_chain_lockdep_set(hammer2_chain_t *chain, unsigned int level)
 
 	c = hammer2_lockdep_lookup(H2LD_CHAIN, t, kb, level);
 	if (c)
-		lockdep_set_class_and_name(&chain->lock, &c->key, c->name);
+		lockdep_set_class_and_name(&chain->lock, c->key, c->name);
 	c = hammer2_lockdep_lookup(H2LD_DIOLK, t, kb, level);
 	if (c)
-		lockdep_set_class_and_name(&chain->diolk, &c->key,
+		lockdep_set_class_and_name(&chain->diolk, c->key,
 		    c->name);
 }
 #else
@@ -3429,7 +3452,7 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 	hammer2_chain_lockdep_set(cchain, level);
 	c = hammer2_lockdep_lookup(H2LD_CORE, t, kb, level);
 	if (c)
-		lockdep_set_class_and_name(&cchain->core.spin.lock, &c->key,
+		lockdep_set_class_and_name(&cchain->core.spin.lock, c->key,
 		    c->name);
 #endif
 }
@@ -3498,7 +3521,7 @@ hammer2_inode_lockdep_level(hammer2_mtx_t *p, const hammer2_mtx_t *chain)
 	p->level = chain ? chain->level : 0;
 	c = hammer2_lockdep_lookup(H2LD_INODE, 0, 0, p->level);
 	if (c)
-		lockdep_set_class_and_name(p, &c->key, c->name);
+		lockdep_set_class_and_name(p, c->key, c->name);
 #endif
 }
 
@@ -3547,7 +3570,7 @@ hammer2_inode_lockdep_nest_under(hammer2_mtx_t *p,
 	p->level = parent->level + 1;
 	c = hammer2_lockdep_lookup(H2LD_INODE, 0, 0, p->level);
 	if (c)
-		lock_set_class(&p->dep_map, c->name, &c->key, 0, _RET_IP_);
+		lock_set_class(&p->dep_map, c->name, c->key, 0, _RET_IP_);
 #endif
 }
 
