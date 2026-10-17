@@ -14784,3 +14784,89 @@ rebooted onto `h2kasan-rc5` and the module built from linux-7.3-rc5-kasan,
 kept as `dmsg-run-20261016-225618`: 32 checks, 0 failed, kmemleak 0, the
 held unmount 10854 ms against a 90 ms control, so both kernels now carry
 the thirty-second check.
+
+## xfstests' quick group reread, three new failures, and two fixed in the port, 2026-10-17
+
+The quick group had not been run since 2026-10-08. The first run of the
+day did not start: `dmsetup` waited on a udev cookie with no timeout
+because the guest's `udevd` sat blocked writing to a log pipe whose
+reader had lost its directory (`/var/log/udevd` was gone under a running
+`s6-log`). That is the guest's fault and not the port's; the directory
+was recreated and the logger killed so `s6` respawned it, and
+`script/xfstests.sh` now runs `udevadm settle -t 10` before the device
+setup and reports SETUP rather than hanging (`e5c990f`). The same commit
+expands a group argument on the guest with `check -n`, since the per-test
+loop had split `-g quick` into two words.
+
+**The group before the fixes**, `h2debug-rc5` (7.3.0-rc5, lockdep), the
+module at `9b3e78e`, kept as `doc/history/xfstests-quick-2026-10-17.log`:
+132 of 646 executed, 514 not run, `log: bug 0 oops 0 warn 0`. The
+runner counts a test among the not-run when `check` lists it under `Not
+run:` in its own batch, and every listed reason was a declared absence
+(reflink 143, dm-flakey 58, O_DIRECT 47 among them). The 2026-10-08
+entry above wrote 30 not run for the same group; its log was not kept,
+so that figure cannot be re-derived here and the two are not compared.
+What is compared is the named failure list, which both entries carry.
+Against the earlier list three tests were new:
+
+- `generic/441` and `generic/484` write over a `dm-error` device and
+  expect `fsync(2)` and `syncfs(2)` to report the failure. Both
+  returned 0. The device's write error sat in the bdev mapping's
+  `wb_err`, which the port never sampled, so the syncer saw the failed
+  write and no descriptor ever heard of it.
+- `generic/676` instantiates about 1.2 million directory chains through
+  `seekdir` and ran past its 600 s bound; alone, with the bound raised,
+  it ran past 900 s. `perf record` on the guest put 21.5 percent of its
+  time in `__is_module_percpu_address` and 7 percent in
+  `__is_kernel_percpu_address`, both under `lockdep_init_map_type`
+  from the port's lockdep class registry. Every class carried a
+  dynamically registered `lock_class_key`, and `static_obj()` fails
+  each of its tests on such a key before the dynamic hash answers, the
+  last of them a walk of every module's per-cpu area for every possible
+  CPU, four times per chain.
+
+**The fixes.** `baf7013`: each `hammer2_devvp` samples its bdev
+mapping's `wb_err` at open; `hammer2_vfs_sync_devs()` flushes every
+device of a PFS and advances the sample, raising an error on the super
+block's `errseq`; `sync_fs` calls it after the PFS sync and `fsync`
+folds it into the inode mapping so the descriptor reports it once.
+`9e4fa44`: the registry takes keys from a static pool of 256 in module
+data, which the module address tree answers at once, and registers a
+dynamic key only past the pool.
+
+**The three tests on the fixed module**, kept as
+`doc/history/xfstests-3fix-2026-10-17.log`: 441 passed in 3 s, 484 in
+3 s, 676 in 674 s, `log: bug 0 oops 0 warn 0`, exit 0.
+
+**The group on the fixed module**, same kernel, kept as
+`doc/history/xfstests-quick2-2026-10-17.log`: 132 of 646 executed, 514
+not run, 24 failed, `log: bug 0 oops 0 warn 0`, 676 in 711 s. The
+failure list is the earlier run's less 441, 484, 676 and 478; 478 had
+failed on a `_check_dmesg` finding in the first run and its dmesg file
+was not kept, so no cause is claimed for it. No test failed that had
+passed. The 24 are the dispositions the 2026-10-08 entry gives, and
+remain the work queue.
+
+**The latency reading the DEFER names.** `hammer2_vfs_sync_devs()` adds
+a `sync_blockdev()` to every `fsync`, and the ledger row defers a
+cheaper path until `randwrite4k_fsync`'s median reads above ext4's.
+`script/latency.sh` on `h2debug-rc5` after the group, 1024 MiB file,
+2000 operations, host load 6.5 to 9.7 (the 2026-10-02 reading above was
+taken at 0.33), kept as `doc/history/latency-2026-10-17.log`:
+
+| filesystem | randread4k p50 | randwrite4k_fsync p50 | fsync_batch8 p50 |
+|---|---|---|---|
+| HAMMER2 | 47 | 484 | 1432 |
+| ext4 | 11 | 2968 | 4215 |
+| btrfs | 24 | 4174 | 5757 |
+
+`lat-failures 0`, `kernel warnings 0`, the host `tmpfs` control at cache
+speed. The median is 357 to 484 us against the idle-host reading, with
+the controls moved by more in the other direction, so the trigger has
+not fired.
+
+Host-side gates on the committed tree: inventory, citations, history,
+provenance, absence, posix, doc-prose, report and syntax (81 checks,
+both compilers) all 0 findings. Two things found this pass are not the
+port's: the guest's missing `/var/log/udevd`, cause unknown, and
+Coccinelle, which is not installed here.
