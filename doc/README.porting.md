@@ -1224,6 +1224,38 @@ descriptor and logs it, is the reason the descriptor must be a socket, and
 completes in about ten seconds with that line in the log, and the control,
 the daemon closing first, completes in under a second with the line absent.
 
+## One clock for every time stamp
+
+The core stamps `meta` through `hammer2_update_time()`, which is
+DragonFly's `vfs_timestamp()` at its default precision: the tick clock,
+truncated to the microsecond the format stores
+(`sys/kern/vfs_subr.c:238-253` upstream). The kernel stamps an inode
+through `current_time()` and `inode_set_ctime_current()`, and in the
+kernel of record those return the later of the coarse clock and a global
+floor that any multigrain filesystem on the machine raises when it needs
+a fine-grained stamp (`fs/inode.c:2430`,
+`kernel/time/timekeeping.c:2728`); ext4, xfs, btrfs and tmpfs all raise
+it. So a stamp the kernel takes can be ahead of one the module takes a
+moment later, which put a rename's ctime before a write's mtime, and the
+reader that would make the two agree, `ktime_get_coarse_real_ts64_mg()`,
+is not exported. The port therefore takes every stamp from
+`hammer2_update_time()`. `->update_time` answers `file_update_time()` in
+place of `generic_update_time()`, so a write(2), a write through a
+mapping and a write into a fifo store their stamp in `meta` under the
+inode lock before the VFS copy is set; without it the last two stamped
+the VFS inode alone, and the file read its old mtime back after a
+remount. `->setattr` replaces the `ia_ctime`, and the `ia_mtime` and
+`ia_atime` the caller did not set, that `notify_change()` filled from
+`current_time()`, as `xfs_setattr_nonsize()` stamps its own. Each vop
+that stamps `meta` sets the VFS copy from that stamp under the lock that
+stored it, so two writers cannot leave `stat` with one writer's stamp and
+the media with the other's. The access time keeps the kernel's reading,
+since it is not stored, and so does the inode an unlink empties, since
+nothing on the media is read against it. `s_time_gran` is a microsecond,
+so a time the caller sets is truncated to what the media can hold before
+anything compares it. `test/hammer2-times.sh` is the instrument, with a
+control that raises the floor from tmpfs and counts the inversions.
+
 ## The kernel floor is the kernel of record
 
 The floor is 7.3, the same kernel `KERNEL_REF` in `script/test-syntax.sh`

@@ -309,10 +309,14 @@ hammer2_update_time(uint64_t *timep)
 	 * sysctl, which Linux has no equivalent of; OpenBSD's port drops
 	 * the same call for a plain gettime(). This keeps the microsecond
 	 * arithmetic, which is HAMMER2's on-disk unit, and the clock is
-	 * DragonFly's default one, getnanotime(), the tick clock: it is
-	 * also the one current_time() reads, so a time stamped here and one
-	 * the VFS stamps afterwards cannot read in the other order, which
-	 * the fine clock let a chmod's ctime do to a create's mtime.
+	 * DragonFly's default one, getnanotime(), the tick clock.  It is
+	 * the only clock an inode here is stamped from: the kernel's own
+	 * readings, current_time() and inode_set_ctime_current(), return
+	 * the coarse clock or the multigrain floor another filesystem on
+	 * the machine raised, whichever is later, so a stamp from them can
+	 * be ahead of one taken here a moment afterwards, which put a
+	 * rename's ctime before a write's mtime; ->update_time and
+	 * ->setattr in hammer2_vnops.c take theirs here instead.
 	 */
 	ktime_get_coarse_real_ts64(&ts);
 	*timep = (unsigned long)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;

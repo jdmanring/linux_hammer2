@@ -1,0 +1,42 @@
+device /dev/vdb
+ debug_locks:                             0
+== old module (75966cf)
+probe: floor race, 1993 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 2 whose mtime or ctime moved across the remount
+< mmapped 1792281099.293000000 1792281099.293000000
+< fifo 1792281099.352000000 1792281099.352000000
+> mmapped 1792281099.238000000 1792281099.238000000
+> fifo 1792281099.296000000 1792281099.296000000
+probe: rmmod 0
+== new module, run 1
+probe: floor race, 0 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 0 whose mtime or ctime moved across the remount
+probe: rmmod 0
+== new module, run 2
+probe: floor race, 0 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 0 whose mtime or ctime moved across the remount
+probe: rmmod 0
+== new module, run 3
+probe: floor race, 0 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 0 whose mtime or ctime moved across the remount
+probe: rmmod 0
+== kernel log after
+0
+ debug_locks:                             0
+device /dev/vdb, after a guest cycle
+ debug_locks:                             1
+== new module, run 4, lockdep live
+probe: floor race, 0 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 0 whose mtime or ctime moved across the remount
+probe: rmmod 0
+== new module, run 5, lockdep live
+probe: floor race, 0 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 0 whose mtime or ctime moved across the remount
+probe: rmmod 0
+== new module, run 6, lockdep live
+probe: floor race, 0 of 2000 renamed files with ctime before mtime
+probe: 14 objects, 0 whose mtime or ctime moved across the remount
+probe: rmmod 0
+== kernel log after
+7
+ debug_locks:                             1

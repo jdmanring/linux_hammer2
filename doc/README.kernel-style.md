@@ -623,6 +623,11 @@ lock returns `return (error);`. Both are the style of every other function
 in `hammer2_vnops.c`, so they are baselined rather than written in a
 second style beside it, and no category is new.
 
+1375 to 1377 the same day, when `->update_time` arrived: its signature
+wraps with the same continuation indent and its returns are `return (x);`
+like every other return in the file, one line in each row. The write tail
+it retires had neither, so nothing left the set.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING

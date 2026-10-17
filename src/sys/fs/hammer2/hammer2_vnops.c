@@ -452,6 +452,19 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 			KKASSERT(ip->vp == inode);
 			hammer2_inode_unlink_finisher(ip, NULL);
 			hammer2_inode_depend(dip, ip); /* after modified */
+			/*
+			 * Linux: the VFS copy of the ctime the finisher
+			 * stored on an inode that keeps a link, set under
+			 * the lock that stored it.  One it emptied has no
+			 * stamp to copy, and nothing on the media will be
+			 * read against the kernel's.
+			 */
+			if (ip->meta.nlinks) {
+				hammer2_time_to_timespec(ip->meta.ctime, &ts);
+				inode_set_ctime_to_ts(inode, ts);
+			} else {
+				inode_set_ctime_current(inode);
+			}
 			hammer2_inode_unlock(ip);
 		}
 	} else {
@@ -468,7 +481,6 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 		/* Linux: the VFS copy of the time just stored. */
 		hammer2_time_to_timespec(mtime, &ts);
 		inode_set_mtime_to_ts(dir, inode_set_ctime_to_ts(dir, ts));
-		inode_set_ctime_current(inode);		/* Linux */
 		if (isdir) {
 			set_nlink(dir, dip->meta.nlinks);	/* Linux */
 			clear_nlink(inode);		/* Linux */
@@ -657,6 +669,13 @@ done:
 	 */
 	if (error == 0 && tip) {
 		hammer2_inode_unlink_finisher(tip, NULL);
+		/* Linux: as the unlink sets the replaced inode's ctime. */
+		if (tip->meta.nlinks) {
+			hammer2_time_to_timespec(tip->meta.ctime, &ts);
+			inode_set_ctime_to_ts(tinode, ts);
+		} else {
+			inode_set_ctime_current(tinode);
+		}
 		if (tip->meta.type == HAMMER2_OBJTYPE_DIRECTORY)
 			clear_nlink(tinode);		/* Linux */
 		else
@@ -691,8 +710,6 @@ done:
 		inode_set_mtime_to_ts(fdir, inode_set_ctime_to_ts(fdir, ts));
 		inode_set_mtime_to_ts(tdir, inode_set_ctime_to_ts(tdir, ts));
 		inode_set_ctime_to_ts(finode, ts);
-		if (tinode)
-			inode_set_ctime_current(tinode);
 		if (S_ISDIR(finode->i_mode) && fdir != tdir) {
 			set_nlink(fdir, fdip->meta.nlinks);
 			set_nlink(tdir, tdip->meta.nlinks);
@@ -769,6 +786,10 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 		hammer2_inode_modify(tdip);
 		tdip->meta.mtime = cmtime;
 		tdip->meta.ctime = cmtime;
+		/* Linux: the VFS copies, set under the locks that stored them. */
+		hammer2_time_to_timespec(cmtime, &ts);
+		inode_set_ctime_to_ts(inode, ts);
+		inode_set_mtime_to_ts(dir, inode_set_ctime_to_ts(dir, ts));
 	}
 	hammer2_inode_unlock(ip);
 	hammer2_inode_unlock(tdip);
@@ -776,10 +797,6 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
 
 	if (error == 0) {
-		/* Linux: the VFS copies of the times stored above. */
-		hammer2_time_to_timespec(cmtime, &ts);
-		inode_set_ctime_to_ts(inode, ts);
-		inode_set_mtime_to_ts(dir, inode_set_ctime_to_ts(dir, ts));
 		inc_nlink(inode);
 		ihold(inode);
 		d_instantiate(dentry, inode);
@@ -796,9 +813,12 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
  */
 static int hammer2_getattr(struct mnt_idmap *, const struct path *,
 	struct kstat *, u32, unsigned int);
+static int hammer2_vfs_update_time(struct inode *, enum fs_update_time,
+	unsigned int);
 
 const struct inode_operations hammer2_dir_iops = {
 	.getattr	= hammer2_getattr,		/* Linux */
+	.update_time	= hammer2_vfs_update_time,	/* Linux */
 	.lookup		= hammer2_vop_lookup,
 	.create		= hammer2_vop_create,
 	.mknod		= hammer2_vop_mknod,
@@ -939,7 +959,6 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct inode *inode = file_inode(iocb->ki_filp);
 	hammer2_inode_t *ip = VTOI(inode);
-	struct timespec64 mts, cts;
 	ssize_t ret;
 
 	if (READ_ONCE(hammer2_device_error))	/* Linux */
@@ -981,7 +1000,9 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * ->setattr and an extending fallocate do.  Otherwise the bytes a
 	 * truncate left past the end in that block come back as file data
 	 * (xfstests generic/112, a truncate then a write past the end).
-	 * The size is read under i_rwsem, which keeps it still.
+	 * The size is read under i_rwsem, which keeps it still.  The times
+	 * are stamped on the way, by file_update_time() through
+	 * hammer2_vfs_update_time().
 	 */
 	inode_lock(inode);
 	ret = generic_write_checks(iocb, from);
@@ -992,21 +1013,6 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	inode_unlock(inode);
 	if (ret > 0)
 		ret = generic_write_sync(iocb, ret);
-	if (ret > 0) {
-		/*
-		 * Linux: __generic_file_write_iter() stamped both times
-		 * through file_update_time(), and the media takes those,
-		 * where a second clock reading here moved the mtime a
-		 * remount showed and left the ctime unstored.
-		 */
-		mts = inode_get_mtime(inode);
-		cts = inode_get_ctime(inode);
-		hammer2_mtx_ex(&ip->lock);
-		hammer2_inode_modify(ip);
-		ip->meta.mtime = hammer2_timespec_to_time(&mts);
-		ip->meta.ctime = hammer2_timespec_to_time(&cts);
-		hammer2_mtx_unlock(&ip->lock);
-	}
 	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
 	return (ret);
 }
@@ -1192,15 +1198,28 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 		/*
 		 * Linux: truncate(2) by path passes ATTR_SIZE alone, and
 		 * ftruncate(2) adds the two times, so a size change that
-		 * names neither takes them here, as xfs_setattr_size() does;
-		 * ctime was otherwise copied back over the core's below
+		 * names neither takes them, as xfs_setattr_size() does
 		 * (xfstests generic/313).
 		 */
-		if (!(attr->ia_valid & (ATTR_CTIME | ATTR_MTIME))) {
-			attr->ia_ctime = attr->ia_mtime = current_time(inode);
+		if (!(attr->ia_valid & (ATTR_CTIME | ATTR_MTIME)))
 			attr->ia_valid |= ATTR_CTIME | ATTR_MTIME;
-		}
 	}
+	/*
+	 * Linux: notify_change() filled ia_ctime, and ia_mtime and ia_atime
+	 * where the caller set neither, from the kernel's clock, which runs
+	 * ahead of the one hammer2_update_time() reads by the multigrain
+	 * floor any other filesystem on the machine raises.  Every stamp the
+	 * media takes is read from that one function, so these are too, as
+	 * xfs_setattr_nonsize() stamps its own ctime; a time the caller set
+	 * is kept.
+	 */
+	hammer2_update_time(&ctime);
+	hammer2_time_to_timespec(ctime, &ts);
+	attr->ia_ctime = ts;
+	if ((attr->ia_valid & (ATTR_MTIME | ATTR_MTIME_SET)) == ATTR_MTIME)
+		attr->ia_mtime = ts;
+	if ((attr->ia_valid & (ATTR_ATIME | ATTR_ATIME_SET)) == ATTR_ATIME)
+		attr->ia_atime = ts;
 
 	hammer2_trans_init(ip->pmp, 0);
 	hammer2_inode_lock(ip, 0);
@@ -1213,10 +1232,6 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 		} else {
 			hammer2_extend_file(ip, attr->ia_size);
 		}
-		hammer2_update_time(&ctime);
-		hammer2_inode_modify(ip);
-		ip->meta.ctime = ctime;
-		ip->meta.mtime = ctime;
 	}
 
 	setattr_copy(idmap, inode, attr);
@@ -1879,10 +1894,13 @@ hammer2_fallocate_locked(struct file *file, int mode, loff_t offset,
 		hammer2_inode_modify(ip);
 		ip->meta.mtime = mtime;
 		ip->meta.ctime = mtime;
-		hammer2_mtx_unlock(&ip->lock);
-		/* The VFS copies, which stat showed stale until a remount. */
+		/*
+		 * The VFS copies, which stat showed stale until a remount,
+		 * set under the lock that stored them.
+		 */
 		hammer2_time_to_timespec(mtime, &ts);
 		inode_set_mtime_to_ts(inode, inode_set_ctime_to_ts(inode, ts));
+		hammer2_mtx_unlock(&ip->lock);
 		hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
 		if (error)
 			return (error);
@@ -2369,9 +2387,56 @@ hammer2_getattr(struct mnt_idmap *idmap, const struct path *path,
 	return (0);
 }
 
+/*
+ * The kernel asks for a modification stamp here, from file_update_time()
+ * under write(2), a write through a mapping (filemap_page_mkwrite()) and
+ * a write into a fifo (pipe_write()), and for an access stamp from
+ * touch_atime().  Without it generic_update_time() stamped the VFS inode
+ * from the kernel's clock and the media never heard of a write through a
+ * mapping, so its file read the old mtime back after a remount, and a
+ * write(2) copied the kernel's stamp to the media after the fact, where
+ * two writers could leave stat with one writer's stamp and the media
+ * with the other's.  The stamp is hammer2_update_time()'s, the clock
+ * every stamp this filesystem stores is read from, and the VFS copy is
+ * set under the lock that stores it.  The access time is not stored (the
+ * mtime-as-atime decision in doc/README.porting.md), so that one stays
+ * the kernel's.  A nowait write cannot take the inode lock, which is the
+ * answer generic_update_time() gives for a filesystem that dirties its
+ * inodes itself.
+ */
+static int
+hammer2_vfs_update_time(struct inode *inode, enum fs_update_time type,
+    unsigned int flags)
+{
+	hammer2_inode_t *ip = VTOI(inode);
+	struct timespec64 ts;
+	uint64_t now;
+
+	if (type != FS_UPD_CMTIME)
+		return (generic_update_time(inode, type, flags));
+	if (flags & IOCB_NOWAIT)
+		return (-EAGAIN);
+	if (READ_ONCE(hammer2_device_error))
+		return (-EIO);
+	if (ip->pmp->rdonly)
+		return (-EROFS);
+	hammer2_trans_init(ip->pmp, 0);
+	hammer2_mtx_ex(&ip->lock);
+	hammer2_update_time(&now);
+	hammer2_inode_modify(ip);
+	ip->meta.mtime = now;
+	ip->meta.ctime = now;
+	hammer2_time_to_timespec(now, &ts);
+	inode_set_mtime_to_ts(inode, inode_set_ctime_to_ts(inode, ts));
+	hammer2_mtx_unlock(&ip->lock);
+	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
+	return (0);
+}
+
 const struct inode_operations hammer2_file_iops = {
 	.setattr	= hammer2_vop_setattr,
 	.getattr	= hammer2_getattr,		/* Linux */
+	.update_time	= hammer2_vfs_update_time,	/* Linux */
 	.fiemap		= hammer2_fiemap,		/* Linux */
 };
 
@@ -2387,6 +2452,7 @@ const struct inode_operations hammer2_file_iops = {
 const struct inode_operations hammer2_symlink_iops = {
 	.get_link	= page_get_link,
 	.getattr	= hammer2_getattr,		/* Linux */
+	.update_time	= hammer2_vfs_update_time,	/* Linux */
 	.setattr	= hammer2_vop_setattr,
 };
 
@@ -2397,5 +2463,6 @@ const struct inode_operations hammer2_symlink_iops = {
  */
 const struct inode_operations hammer2_special_iops = {
 	.getattr	= hammer2_getattr,		/* Linux */
+	.update_time	= hammer2_vfs_update_time,	/* Linux */
 	.setattr	= hammer2_vop_setattr,
 };
