@@ -589,6 +589,27 @@ flags as `externs should be avoided in .c files`; they moved to
 | Prefer using 'X' to using 'X', this function's name, in a string | `hpanic()` messages that name the function they sit in, carried verbatim from upstream. The name is the useful half of the message, so it stays; see the `hammer2_ccms.c` entry above |
 | everything else | carried code |
 
+1280 to 1372 when the message core was carried: `kern_dmsg.c`,
+`hammer2_iocom.c` and `hammer2_msgops.c`, 2655 lines for 92 hits, one
+per 28, together with the `LNK_VOLCONF` section carried back into
+`hammer2_disk.h` and the intake in `hammer2_ioctl.c` and `hammer2_vfsops.c`.
+The large rows grow as a carried file always grows them: `return (x);`,
+the unnamed prototype arguments, the typedefs, the SPDX pair, the BSD
+continuation indent, the split quoted strings. Six categories are new and
+each was attributed to a line before it was baselined, all six being
+upstream's own text in files this port keeps readable as upstream's:
+`kd_printf` and `kdio_printf` are macros that open with `if` and put the
+statement on the same line, which is two `Macros starting with if` and
+two `trailing statements`; `KDMSG_DEBUG_ARGS` is a parameter-list macro
+preceded by a space, which is the `space prohibited before ','`; two
+lines carry trailing whitespace; one conditional sits at sixteen columns;
+and the braces on both arms of the `cluster_fd` intake are the ones
+upstream's `hammer2_vfsops.c` has around the same two statements. Nothing
+was fixed rather than baselined: every one of the six is a carried line,
+and the port's own additions in this step, the shim's `holdfp()`,
+`lockmgr()` and `lksleep()`, the ioctl case and the option parser, added
+no category of their own.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
