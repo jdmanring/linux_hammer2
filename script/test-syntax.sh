@@ -347,6 +347,10 @@ CFLAGS=(-fsyntax-only --target=x86_64-linux-gnu -std=gnu11 $DIALECT
 	# without building, so this is the subset that works under
 	# -fsyntax-only. It is what found the two macro redefinitions.
 	-Wextra -Wmissing-prototypes -Wold-style-definition
+	# Also W=1's, and the one that was missing: a `make W=1` on 2026-10-16
+	# printed it once per inclusion of hammer2_os.h, on lwkt_create()'s
+	# format string, while this gate was green.
+	-Wmissing-format-attribute
 	-Wno-unused-parameter -Wno-sign-compare
 	-I src/sys/fs/hammer2 -I src/sys -I test)
 

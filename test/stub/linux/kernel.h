@@ -38,6 +38,7 @@ typedef unsigned int gfp_t;
 #define ETIMEDOUT	110
 
 #define __always_unused	__attribute__((unused))
+#define __printf(a, b)	__attribute__((format(printf, a, b)))
 
 #define likely(x)	(x)
 #define unlikely(x)	(x)

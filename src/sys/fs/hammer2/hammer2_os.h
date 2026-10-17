@@ -1226,7 +1226,7 @@ hammer2_lwkt_trampoline(void *data)
 }
 
 /* Linux */
-static inline int
+static inline int __printf(7, 8)
 lwkt_create(void (*func)(void *), void *arg, thread_t *tdpp,
     thread_t template __always_unused, int flags __always_unused,
     int cpu, const char *fmt, ...)
