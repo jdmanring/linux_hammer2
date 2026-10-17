@@ -14768,3 +14768,16 @@ read thread passes `&iocom->state0` for every frame it receives
 open transaction's state or leaves as is, so `msg->state` is never null
 and the later test is upstream's belt over that invariant. The port keeps
 the text as DragonFly wrote it.
+
+### A fifth run, with kmemleak read
+
+The debug-kernel run above named kmemleak and read only the kernel log,
+where kmemleak writes nothing: its report is `/sys/kernel/debug/kmemleak`
+after a scan, which `cluster-sync.sh` reads and `cluster-dmsg.sh` did not.
+The scan was added before `rmmod`, with the six-second wait the scanner's
+age rule needs, and read as a check (`a7c4eef`). On `7.3.0-rc5` with
+`PROVE_LOCKING` and kmemleak, module built at `4e20bad` from linux-7.3-rc5,
+kept as `dmsg-run-20261016-223228`: 32 checks, 0 failed, kmemleak 0
+entries naming the module, the held unmount 10827 ms with the shutdown
+line 0 to 1 against a 33 ms control, the module unloading with 0 threads left. The KASAN kernel
+was not rerun; its 31-check reading stands as recorded.

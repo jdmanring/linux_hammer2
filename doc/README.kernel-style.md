@@ -623,7 +623,7 @@ itself is recorded in `doc/README.porting.md`; new OS-half code uses
 `WARN_ONCE` plus recovery, which is what the demoted message asks for.
 
 kbuild's warning levels were read on 2026-09-07 at `ac8690a` against
-the kernel of record's tree: `W=1` builds the module with no warning,
+the kernel of record's tree: `W=1` built the module with no warning,
 and `W=2` prints three, none in this tree's code: `-Wshadow` on
 `cc_mask` in the kernel's own `text-patching.h` and on `__ret` inside
 `wait_event_interruptible_timeout()`, which the kernel marks as an
@@ -638,6 +638,15 @@ with kbuild's flags including `-O2`: without it the kernel's `string.h`
 takes the out-of-line `memset()` and sparse sizes the bulkfree scan's
 6 MiB heap bitmap clear against its stack heuristic, a finding the
 kbuild pass never shows.
+
+Read again on 2026-10-16 at `4e20bad`: `W=1` printed
+`-Wmissing-format-attribute` once per inclusion of `hammer2_os.h`, on
+`lwkt_create()`'s format string, a flag the syntax gate's W=1 subset
+did not carry, so the gate had been green across it since the shim was
+written. The shim declares `__printf(7, 8)` and the gate carries the
+flag, which was shown to fail with the attribute removed. `W=1` is
+clean again under both compilers; `W=2` was not reread. sparse over the
+same build reports nothing.
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module

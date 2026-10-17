@@ -39,8 +39,9 @@ and reads every knob beside a control that must read zero. P6, the message
 core, is closed since 2026-10-16: `kern_dmsg.c`, `hammer2_iocom.c` and
 `hammer2_msgops.c` are carried whole behind `HAMMER2IOC_RECLUSTER` and the
 mount's `cluster_fd=`, and `cluster-dmsg.sh` reads the five exit criteria
-on the guest with `test/h2attach.c` playing the daemon, 31 checks and 0
-failed, an unmount under a held, silent daemon completing by the core's
+on the guest with `test/h2attach.c` playing the daemon, 32 checks and 0
+failed on the lockdep kernel with kmemleak scanned clean before the
+module unloads, an unmount under a held, silent daemon completing by the core's
 own ten-retry shutdown in about eleven seconds against under a tenth of a
 second when the daemon closes first. The remote PFS layer above the core is P7. Cache coherency is a design note rather than code:
 `doc/CCMS_DESIGN.md` records that the coherency half was deleted
