@@ -1246,6 +1246,21 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 		error1 = error2;
 	hammer2_inode_unlock(ip);
 	hammer2_trans_done(ip->pmp, 0);
+	/*
+	 * Linux: vfsync() wrote the vnode's buffers to the device and
+	 * waited; the strategy XOPs above left them in the device's page
+	 * cache.  Write them through now, and give a device's error to
+	 * this file's mapping, so every descriptor on it reads it once,
+	 * the way file_write_and_wait_range() above reports the mapping's
+	 * own.
+	 */
+	if (error1 == 0) {
+		error1 = hammer2_vfs_sync_devs(ip->pmp);
+		if (error1) {
+			mapping_set_error(inode->i_mapping, error1);
+			error1 = file_check_and_advance_wb_err(file);
+		}
+	}
 	return (error1);
 }
 

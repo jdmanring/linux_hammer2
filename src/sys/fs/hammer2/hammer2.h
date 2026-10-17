@@ -832,6 +832,7 @@ struct hammer2_devvp {
 	dev_t			devno;		/* Linux: was devvp->v_rdev */
 	int			open;		/* 1 if bdev_file open */
 	struct file_ra_state	ra;		/* Linux: for the DIO layer's read-ahead */
+	errseq_t		wb_err;		/* Linux: the device mapping's errors already reported */
 };
 
 typedef struct hammer2_devvp hammer2_devvp_t;
@@ -1360,6 +1361,7 @@ void hammer2_pfsfree(hammer2_pfs_t *);
 void hammer2_pfsfree_scan(hammer2_dev_t *, int);
 int hammer2_sync(struct super_block *, int);
 int hammer2_vfs_sync_pmp(hammer2_pfs_t *, int);
+int hammer2_vfs_sync_devs(hammer2_pfs_t *);	/* Linux */
 void hammer2_voldata_lock(hammer2_dev_t *);
 void hammer2_voldata_unlock(hammer2_dev_t *);
 void hammer2_voldata_modify(hammer2_dev_t *);

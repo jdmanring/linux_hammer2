@@ -3044,9 +3044,58 @@ restart:
 }
 
 /*
+ * Linux: what vfsync() does for upstream's fsync and VOP_FSYNC on the
+ * device vnode does for its flush: write the devices' dirty buffers
+ * through and wait, and say whether a device refused.  The buffers are
+ * the block device's own page cache here, so a write that fails is
+ * recorded by the block layer on that mapping and on nothing fsync(2)
+ * or syncfs(2) reads; the core prints the error its flush meets and
+ * drops it, as every tree does.  Each device keeps a cursor on that
+ * mapping's error sequence, sampled when it is opened, so a new error
+ * is reported once, here, and the superblock keeps it for syncfs(2);
+ * fsync adds it to the file's own mapping.  Measured by xfstests
+ * generic/441 and generic/484: before this both read success over a
+ * device returning EIO, since fsync returned before the device was
+ * written and the test had restored it by the time it was.  Returns
+ * the VFS's negative errno.
+ *
+ * DEFER(randwrite4k_fsync's median reads above ext4's in latency.sh):
+ * sync_blockdev() writes every dirty block of the device, where vfsync()
+ * wrote the vnode's own buffers; the DIO layer keeps no per-inode set of
+ * device ranges, and sync_blockdev_range() over one would write less.
+ */
+int
+hammer2_vfs_sync_devs(hammer2_pfs_t *pmp)
+{
+	hammer2_dev_t *hmp;
+	hammer2_devvp_t *e;
+	int i, err, seq, error = 0;
+
+	for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+		hmp = pmp->pfs_hmps[i];
+		if (hmp == NULL)
+			continue;
+		TAILQ_FOREACH(e, &hmp->devvp_list, entry) {
+			if (e->bdev_file == NULL)
+				continue;
+			err = sync_blockdev(file_bdev(e->bdev_file));
+			seq = errseq_check_and_advance(
+			    &e->bdev_file->f_mapping->wb_err, &e->wb_err);
+			if (err == 0)
+				err = seq;
+			if (err)
+				error = err;
+		}
+	}
+	if (error && pmp->mp)
+		errseq_set(&pmp->mp->s_wb_err, error);
+	return (error);
+}
+
+/*
  * Linux: ->sync_fs.  The VFS calls this after writing back every inode,
  * so the syncq walk above is what remains: the chains, the PFS root and
- * the volume header, in that order.
+ * the volume header, in that order, and then the devices beneath them.
  */
 static int
 hammer2_sync_fs(struct super_block *sb, int wait)
@@ -3063,9 +3112,12 @@ hammer2_sync_fs(struct super_block *sb, int wait)
 		hpanic("debug_hpanic is 2, so this second sync stops here");
 #endif
 	/* A device in error writes nothing more, and says so here. */
-	if (!READ_ONCE(hammer2_device_error))
+	if (!READ_ONCE(hammer2_device_error)) {
 		error = hammer2_vfs_sync_pmp(MPTOPMP(sb),
 		    wait ? MNT_WAIT : MNT_NOWAIT);
+		if (error == 0)
+			error = -hammer2_vfs_sync_devs(MPTOPMP(sb));
+	}
 	if (READ_ONCE(hammer2_device_error)) {
 		if (MPTOPMP(sb)->pfs_hmps[0])
 			hammer2_io_discard(MPTOPMP(sb)->pfs_hmps[0]);

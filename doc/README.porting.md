@@ -419,6 +419,34 @@ uuid` spelled out beside the string it equals, and both print paths use
 the kernel's `%pUl` extension, which reads the DCE layout `struct uuid`
 already has.
 
+The device's errors are read by the filesystem, not the block layer's
+caller. Every write this port makes, data and metadata, goes into the
+block device's page cache through the DIO layer, and the block layer
+writes that cache back and records a failed write on the device
+mapping's error sequence. Nothing a file's `fsync(2)` or a `syncfs(2)`
+reads looks there: `file_write_and_wait_range()` reads the file's own
+mapping, which was marked written the moment its folios were copied
+into the device cache, and `syncfs` reads the superblock's. Upstream's
+`fsync` ends in `vfsync()`, which writes the vnode's buffers through to
+the device and returns the device's answer, and its flush does the same
+through `VOP_FSYNC` on the device vnode, printing the error and dropping
+it, as every tree does. `hammer2_vfs_sync_devs()` is the Linux half of
+both: `sync_blockdev()` on each device, which writes the cache back and
+waits, then `errseq_check_and_advance()` on the device mapping against a
+cursor each `hammer2_devvp` sampled when it opened, the shape ext4 keeps
+in `s_bdev_wb_err`. A new error is set on the superblock, so `syncfs`
+reports it once to each descriptor, and `fsync` sets it on the file's
+mapping too, so each descriptor on that file reports it once through
+`file_check_and_advance_wb_err()`. xfstests generic/441 and generic/484
+are the readings: before this both passed over a device returning `EIO`,
+because `fsync` returned with the blocks still in the device cache and
+the test had restored the device before the kernel wrote them. The cost
+is that `fsync` now writes every dirty block of the device, not the
+file's own, since the DIO layer keeps no per-inode set of device ranges;
+the latency reading in `doc/history/verification-record.md` is where that
+shows, and the `DEFER` beside the helper names the number that reopens
+it.
+
 ## Reading the kernel, not guessing at it
 
 The kernel tree of record on this machine is a headers package: the

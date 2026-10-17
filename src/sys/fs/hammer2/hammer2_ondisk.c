@@ -263,6 +263,7 @@ hammer2_open_devvp(struct super_block *sb, const hammer2_devvp_list_t *devvpl)
 
 		e->bdev_file = bdev_file;
 		file_ra_state_init(&e->ra, bdev_file->f_mapping);	/* Linux */
+		e->wb_err = errseq_sample(&bdev_file->f_mapping->wb_err); /* Linux */
 		/*
 		 * Linux: the window the DIO layer's read-ahead can ask for
 		 * is the device's read_ahead_kb, 128 KiB on most devices,
