@@ -512,9 +512,11 @@ paragraph said no instrument here drives a guest, and that every runtime
 criterion from 0.3 on is therefore unverifiable in this repository. It was
 written 2026-08-26, when it was true, and the first fleet gate landed
 2026-09-04, so the sentence outlived the state it described. What holds is
-the shape of the split: eleven gates need no guest, the other two report
-COULD-NOT-RUN without one, and a machine carrying the guests is what turns
-those two from a refusal into a verdict. Two of the eleven can still
+the shape of the split: two gates, `test-fixtures.sh` and
+`test-enospc.sh`, report COULD-NOT-RUN without a guest, every other gate
+needs none, and a machine carrying the guests is what turns those two
+from a refusal into a verdict. The count is `doc/README.status.md`'s, read
+by `test-inventory.sh`, and is not repeated here. Two host gates can still
 decline for something other than a guest, each naming what it could not
 find: `test-checkpatch.sh` a `checkpatch.pl`, which no headers package
 ships, and `test-provenance.sh` an origin clone to re-verify a carry

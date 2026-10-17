@@ -292,6 +292,24 @@ for d in $COUNT_DOCS; do
 		fail=$((fail+1))
 	fi
 done
+# The set above is a hand list, and a counted sentence in a document outside
+# it is checked by nothing: doc/README.maintenance.md said "seventeen gates"
+# for three days after the tree held eighteen, with every listed document
+# correct. So every document that states the present, the top level and
+# doc/, is read for the same phrase, and one carrying it must be in the set.
+# CHANGELOG.md, doc/history/ and doc/README.roadmap.md hold dated readings
+# of past trees and are not the present; doc/README.roadmap.md's live
+# sections state no count for this reason.
+for d in *.md doc/*.md; do
+	[ -f "$d" ] || continue
+	case " $COUNT_DOCS CHANGELOG.md doc/README.roadmap.md " in *" $d "*) continue;; esac
+	stray=$(tr '\n' ' ' < "$d" | tr -s ' ' |
+		command grep -oiE "($pat) gates?" | LC_ALL=C sort -u)
+	[ -z "$stray" ] || {
+		echo "  FAIL $d: states a gate count and is not in the count check's set:"
+		printf '        %s\n' "$stray"
+		fail=$((fail+1)); }
+done
 
 # Every `DEFER(` in the tree is a row in doc/README.status.md's ledger, and
 # every row is a marker that still exists. A deferral is only pragmatism
