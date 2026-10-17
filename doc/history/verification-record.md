@@ -14727,3 +14727,42 @@ which had recounted two files' upstream marks against DragonFly where the
 rows name the FreeBSD port; the rows went back to the measured 18 and 8.
 The third round returned sign-off at `31e1011`, with every number traced
 to a kept run and the cheap gates clean.
+
+### Static readings over the message core
+
+Neither host instrument had read the three carried files, so both were
+run at `db0ee05` against linux-7.3-rc5 on 2026-10-16, each with its
+control reported first: `analyze.sh`'s planted null dereference and
+`smatch.sh`'s planted double free (smatch at `5189e3fb`). Every
+candidate was checked against DragonFly's `sys/kern/kern_dmsg.c` and
+`sys/vfs/hammer2/hammer2_iocom.c` by finding both lines smatch or the
+analyzer named in the upstream file, and none of the fifteen lines named
+below carries an `XXX` or `/* Linux */` mark.
+
+Clang's analyzer, 9 candidates over the three files, all in `kern_dmsg.c`
+and none in `hammer2_iocom.c` or `hammer2_msgops.c`:
+
+| candidate | both lines upstream | disposition |
+|---|---|---|
+| `kern_dmsg.c:40` `RB_GENERATE` `rbe_link` | yes | the vendored tree macro, as read in every file that expands it |
+| `kern_dmsg.c:342`, `:348`, `:365`, `:374`, `:390` `error` never read | yes | the read thread's `error = EINVAL; break` stores, upstream's |
+| `kern_dmsg.c:785`, `:1456` `state` stored and not read | yes | `(state = iocom->free*_state) == NULL` idiom, upstream's |
+| `kern_dmsg.c:1646` `msg->state->iocom` before `state == NULL` test | yes | `kdmsg_state_cleanuptx()`, upstream line 1655; see smatch below |
+
+Smatch, 15 candidates over 21 files. The twelve on files the first run
+read are the first run's rows at their current line numbers, less the
+`hammer2_inode.c` row, which no longer reports. The three new ones are
+one shape:
+
+| candidate | both lines upstream | disposition |
+|---|---|---|
+| `kern_dmsg.c:688` `kdmsg_msg_receive_handling()`, deref at `:660` | yes | carried |
+| `kern_dmsg.c:1117` `kdmsg_autorxmsg()`, deref at `:1105` | yes | carried |
+| `hammer2_iocom.c:231` `hammer2_autodmsg()`, deref at `:190` | yes | carried |
+
+All three, and the analyzer's `:1646`, read `msg->state->iocom` at the
+top of a function that later tests `msg->state`. In kdmsg every message
+the reader hands on has a state, `state0` when no transaction is open
+(`kdmsg_state_msgrx()` assigns it before any handler runs), so the later
+test is upstream's belt over that invariant and the dereference cannot
+reach a null. The port keeps the text as DragonFly wrote it.
