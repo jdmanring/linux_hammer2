@@ -5,8 +5,8 @@ The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 7.3 and newer, and every operation it carries has been read back by
 DragonFly itself. The tree is at 1.0.30 in `CHANGELOG.md`; the newest tag is
 `v1.0.4`, which is the last release rather than the tree's version. The
-release shape holds: seventeen gates invoked from a `git
-archive`, thirteen run and pass, and the four that report could-not-run do
+release shape holds: eighteen gates invoked from a `git
+archive`, fourteen run and pass, and the four that report could-not-run do
 so for the reasons a tarball has: two need a guest, and two read `git`
 history, which an archive does not carry. The staged filings under
 `doc/upstream/` are the maintainer's to file, with their state recorded
@@ -30,7 +30,12 @@ driven by changing the MASTER while the slave's device is away; the first
 drive found the replace arm copying the slave's old length out of a
 smaller master block, DragonFly's own line, fixed here and staged under
 `doc/upstream/`. The crash cell's FreeBSD half is
-COULD-NOT-RUN by the detector's design. Cache coherency is a design note rather than code:
+COULD-NOT-RUN by the detector's design. P5, the cluster transport's
+interface and deterministic loopback, is closed on the host since
+2026-10-16: `test-transport.sh` drives `test/h2loop.c`, which sits where
+DragonFly's service daemon sits and decides each frame's fate from a seed,
+and reads every knob beside a control that must read zero; the message
+core that will read from the kernel's end is P6. Cache coherency is a design note rather than code:
 `doc/CCMS_DESIGN.md` records that the coherency half was deleted
 upstream before it was written, and that Dillon's design document puts it
 under the quorum protocol, which no tree has written either. The surviving
@@ -136,7 +141,7 @@ its name line.
 
 ## What has been verified
 
-Fifteen of the seventeen gates pass with no environment variables set on a
+Sixteen of the eighteen gates pass with no environment variables set on a
 machine that has the kernel of record installed, as they have since
 2026-08-26: the syntax gate finds that tree, and the style gate finds its
 `checkpatch.pl`. The other two, `test-fixtures.sh` and `test-enospc.sh`,
@@ -302,7 +307,7 @@ An `XXX` marks a mapping a reader should distrust. A `DEFER` marks
 something this port chose not to build yet, and the rule the tree follows
 is that a deferral without a named trigger is rot rather than pragmatism,
 so each one carries the condition that lifts it. `test-inventory.sh`
-checks that every `DEFER(` in `src/` appears in this table and that the
+checks that every `DEFER(` in `src/`, `script/`, `test/` and `.github/` appears in this table and that the
 table has no row for a marker that is gone, because a ledger nothing reads
 against the source is the same shape as an empty one.
 
@@ -312,6 +317,7 @@ against the source is the same shape as an empty one.
 | `script/hammer2-provenance.py`, in the scope note | `DEFER(a userland file is imported into the module tree)` | the CSV generator walks the kernel core only. `sbin/hammer2`, makefs, libhammer2 and hammer2-utils are packaged separately and audited in the license audit's own tables, so `TREES` widens the day one of their files is carried into `src/` |
 | `src/sys/fs/hammer2/Makefile`, at `CARRIED_CFLAGS` | `DEFER(the tree is prepared for submission)` | kbuild's `-Wimplicit-fallthrough=5` reads only the `fallthrough` attribute and upstream marks its switches with a `/* fall through */` comment, and kbuild's `-Wunused` sees `hammer2_inode_lock_temp_release()` and `_restore()`, whose only caller in either upstream is `hammer2_igetv()`, the one function this port rewrote on `iget5_locked()`, where the dance they perform has nothing to race against. They have no caller here and are not expected to gain one; they stay because deleting two functions from a carried file is a core edit. Both are suppressed on the carried files rather than edited into Linux spelling, because converting either early splits the core into two dialects. They become edits in the single conversion that also settles BSD style |
 | `hammer2_vfsops.c`, at the module parameters | `DEFER(a second filesystem-wide knob wants a per-mount value)` | the tunables are `module_param_named()` under `/sys/module/hammer2/parameters/`, one value for every mount on the machine, which is what `sysctl` gave upstream too. A per-mount knob needs `/sys/fs/hammer2/`, where ext4 and btrfs put theirs |
+| `test/h2loop.c`, in the file comment | `DEFER(the P6 kernel intake lands)` | the transport simulator plays the kernel's end of the socketpair itself, with a generator and a receiver in the same process, because the port has no `HAMMER2IOC_RECLUSTER` yet; once the message core and its intake are carried, an `--attach <mountpoint>` hands that end to a mounted HAMMER2 and the two roles retire |
 | `hammer2_synchro.c`, where the scan reads each action's return | `DEFER(a failing pass is measured rewriting unrelated inodes)` | the record of a failed copy is one bit on the pass's deferral list, so once a key has failed no inode root is stamped for the rest of that pass, and the next pass replaces every one of those roots again as well as retrying the failed key. Scoping the bit to the failed key's ancestry needs each deferral entry to name its parent, which the carried list does not carry |
 | `hammer2_synchro.c`, above `hammer2_sync_flush()` | `DEFER(an idle pass's flush measured above a tenth of the cadence)` | the pass-end flush runs unconditionally. The root's flags cannot gate it, since a mounted PFS's sync clears the root's `ONFLUSH` on the way down (a pre-mark test skipped the flush that was needed) and a post-mark test reads the bit the walk set; a real gate needs a per-pass count of actions and stamps proved to cover every mutation. Measured 0.03 ms median idle (0.94 ms with two more prints in the window) against a 5.12 s cadence, so the count is not written until that ratio moves |
 

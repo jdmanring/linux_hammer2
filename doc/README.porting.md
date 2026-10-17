@@ -1051,6 +1051,57 @@ mean nothing calls it. The fix is staged in `doc/upstream/` as two patches,
 one against DragonFly and one against the three ports, which is where
 work waiting to be filed upstream goes. They are not applied here.
 
+## The cluster transport is a descriptor, and on Linux it must be a socket
+
+DragonFly's kernel never opens a cluster connection. The userland daemon,
+`hammer2 service`, creates a `pipe()`, passes one end to the kernel through the
+`HAMMER2IOC_RECLUSTER` ioctl, or the mount program passes it as `cluster_fd`,
+and runs `dmsg_master_service` on the other end
+(`sbin/hammer2/cmd_service.c:803-840` in the DragonFly tree). The kernel side,
+`sys/kern/kern_dmsg.c`, reads and writes frames on that descriptor from two
+kernel threads, `hammer2-msgrd` and `hammer2-msgwr`.
+
+The complete set of calls `kern_dmsg.c` makes into its transport is
+`fp_read()` with the read-all flag three times per frame: the 64-byte header,
+the extended header, and the aligned auxiliary data. It calls `fp_write()`
+twice, for the header and then the auxiliary data. At teardown it calls
+`fp_shutdown(fp, SHUT_RDWR)` three times, two of them to unstick a reader
+blocked in a read and one from the reader's own exit to end the far side, and
+calls `fdrop()` twice. Nothing else is called. The shim already
+carries `fp_read()` and `fp_write()` over `kernel_read()` and `kernel_write()`
+(`hammer2_os.h:1477-1599`). The other two arrive with `kern_dmsg.c` as plan
+step P6, together with the file-descriptor intake.
+
+The Linux descriptor must therefore be a `SOCK_STREAM` socket, with an
+`AF_UNIX` socketpair for the loopback. A pipe is to be refused at intake with
+`EINVAL` when the intake arrives in P6. A Linux pipe has no shutdown, and a kernel thread blocked in
+`pipe_read()` leaves only when data arrives or a signal is pending
+(`fs/pipe.c:463` in the kernel of record, `wait_event_interruptible_exclusive`).
+`kthread_stop()` sends no signal. A stream socket's reader leaves when
+`RCV_SHUTDOWN` is set (`net/unix/af_unix.c:2731`, the exit test in
+`unix_stream_data_wait()`), which `unix_shutdown()` sets and then wakes through
+`sk_state_change()` (`net/unix/af_unix.c:3219-3224`), reached from the kernel by
+`kernel_sock_shutdown()`.
+
+The alternative, `allow_signal()` plus `send_sig()` on the reader thread, as
+`fs/lockd/clntlock.c:240` and `fs/jffs2/background.c` do, was rejected. It puts
+signal state on a thread the carried code does not expect to carry one and
+races the stop. This diverges from upstream, whose daemon hands in a pipe, and
+costs nothing today because no Linux `hammer2 service` exists yet.
+
+The kernel does not verify a frame's `hdr_crc` or `aux_crc`. `kern_dmsg.c`'s
+reader checks the magic (`0x4832`), the header size field, and the 1 MiB aux
+bound. The CRCs are verified only by userland `libdmsg`
+(`lib/libdmsg/msg.c`). The port keeps that. Verifying them in the kernel would
+be a protocol change weighed on its own, not a transport change.
+
+The deterministic loopback required by the roadmap for cluster testing is
+therefore a userland program sitting where the daemon sits, `test/h2loop.c`,
+holding the peer ends of the socketpairs. It decides each frame's fate from a
+seed and writes a trace that replays, and `script/test-transport.sh` reads it.
+No kernel code is needed for it. A run that fails replays from its recorded
+seed.
+
 ## The kernel floor is the kernel of record
 
 The floor is 7.3, the same kernel `KERNEL_REF` in `script/test-syntax.sh`

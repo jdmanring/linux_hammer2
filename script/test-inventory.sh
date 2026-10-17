@@ -310,17 +310,18 @@ done
 LEDGER=doc/README.status.md
 dtmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$dtmp"' EXIT
-# The population is src/, script/ and .github/, not src/ alone. A deferral
-# in a gate or a workflow is a deferral: CI grew one on 2026-09-02, where
-# the module build asserts a link failure and has to invert once the module
-# links. Scanning src/ only would have left that trigger written down
-# nowhere the ledger could see, which is the condition DEFER exists to
-# prevent. doc/ is excluded because the ledger itself lives there and would
-# match every row.
+# The population is src/, script/, test/ and .github/, not src/ alone. A
+# deferral in a gate or a workflow is a deferral: CI grew one on 2026-09-02,
+# where the module build asserts a link failure and has to invert once the
+# module links. Scanning src/ only would have left that trigger written
+# down nowhere the ledger could see, which is the condition DEFER exists to
+# prevent. test/ joined on 2026-10-16, when the transport simulator carried
+# the first marker there and this population did not see it. doc/ is
+# excluded because the ledger itself lives there and would match every row.
 # Three or more characters inside the parentheses, because this gate's own
 # summary line ends with "DEFER(s)" and a pattern that can match the command
 # that carries it reports itself. Every real trigger is a phrase.
-defers=$(command grep -rhoE $BUILT 'DEFER\([^)]{3,}\)' src/ script/ .github/ |
+defers=$(command grep -rhoE $BUILT 'DEFER\([^)]{3,}\)' src/ script/ test/ .github/ |
 	LC_ALL=C sort -u)
 ndefer=$(printf '%s' "$defers" | command grep -c . || true)
 if [ "$ndefer" = 0 ]; then
@@ -370,7 +371,7 @@ else
 		fail=$((fail + 1))
 	else
 		printf '%s\n' "$rows" | while IFS= read -r r; do
-			command grep -rqF $BUILT -- "$r" src/ script/ .github/ ||
+			command grep -rqF $BUILT -- "$r" src/ script/ test/ .github/ ||
 				echo "  FAIL $LEDGER: row for $r, which the tree no longer holds"
 		done > "$dtmp/stale"
 		if [ -s "$dtmp/stale" ]; then

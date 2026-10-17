@@ -42,11 +42,11 @@ these repositories passed on 2026-08-26 while testing nothing, each caught
 by running it against the defect rather than by reading it.
 
 **Every change comes with the gate that would have caught it.** There are
-seventeen gates. Thirteen are cheap and need nothing but this checkout;
+eighteen gates. Fourteen are cheap and need nothing but this checkout;
 `test-fixtures.sh` and `test-enospc.sh` need a guest, and `test-syntax.sh`
 and `test-checkpatch.sh` need the kernel of record, and each reports
 COULD-NOT-RUN without what it needs. `test-absence.sh`
-exists because that rule was kept for code and not for prose. `test-shim.sh`, `test-ccms-lock.sh`, `test-syntax.sh` and
+exists because that rule was kept for code and not for prose. `test-shim.sh`, `test-ccms-lock.sh`, `test-transport.sh`, `test-syntax.sh` and
 `test-absence.sh` carry built-in controls that must fail on every run; the others buy the same assurance
 differently, and `doc/README.testing.md` says how for each. A patch that
 changes behavior with no way to observe the change is hard to review and
@@ -61,6 +61,7 @@ harder to keep.
     $ bash script/test-absence.sh
     $ bash script/test-shim.sh
     $ bash script/test-ccms-lock.sh
+    $ bash script/test-transport.sh
     $ bash script/test-syntax.sh
     $ bash script/test-checkpatch.sh
     $ bash script/test-vectors-contract.sh
@@ -77,7 +78,7 @@ harder to keep.
     $ bash script/test-doc-prose.sh --selftest
     $ bash script/test-report.sh --selftest
 
-Fourteen of the seventeen are POSIX sh over grep, sed and git, and most of
+Fourteen of the eighteen are POSIX sh over grep, sed and git, and most of
 those need no kernel and no network and take about a second. They are what a
 documentation-only patch breaks: they check that the lists claiming to cover
 `src/` are complete, that every `file:line` citation in `doc/` resolves to
@@ -85,7 +86,7 @@ the line it names, that every changelog row's commit hash resolves with a
 matching subject, that the version every state document names is the newest
 row's, and that a commit taking back recent work says why.
 
-`test-shim.sh`, `test-syntax.sh` and `test-checkpatch.sh` need a toolchain. `test-syntax.sh` wants the kernel of
+`test-shim.sh`, `test-ccms-lock.sh`, `test-transport.sh`, `test-syntax.sh` and `test-checkpatch.sh` need a toolchain. `test-syntax.sh` wants the kernel of
 record, pinned as `KERNEL_REF` in that
 script; anything else is COULD-NOT-RUN rather than a pass, because a
 result from the wrong kernel is not a result about this code. The floor

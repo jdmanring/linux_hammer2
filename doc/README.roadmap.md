@@ -274,7 +274,7 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0 to P4 are closed on the Linux reading; P5 is next.
+dependency order. P0 to P5 are closed on the Linux reading; P6 is next.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -347,6 +347,19 @@ dependency order. P0 to P4 are closed on the Linux reading; P5 is next.
    under `doc/upstream/`, with `H2_FAULT2` refusing allocations inside
    those arms. The crash cell's FreeBSD calibration half
    remains COULD-NOT-RUN by detector design and is scope, not evidence.
+5. P5, the transport interface and its deterministic loopback, closed
+   2026-10-16 on the work queue's seven exit criteria, measured by
+   `test-transport.sh` on the host with no kernel in the loop. The
+   interface is DragonFly's own: the kernel reads and writes `dmsg`
+   frames on one descriptor its userland daemon hands in, and the
+   whole of what `kern_dmsg.c` asks of that descriptor is read, write,
+   shutdown and release. The Linux decisions, a stream socket rather
+   than a pipe and why, are a section of `doc/README.porting.md`. The
+   loopback is `test/h2loop.c`, sitting where the daemon sits and
+   deciding each frame's fate from a seed, with a trace that replays
+   from its first line. No kernel code was written: the frame reader
+   stays inside `kern_dmsg.c` and arrives with it in P6, and the
+   three shim primitives the intake needs would have had no caller.
 
 ## Versioning
 
@@ -902,7 +915,7 @@ Rules it adds to the ones this tree already keeps:
 | P2 | root filesystem and long-run readiness: mixed load, small-file rates, mmap and fsync storms, low memory, the root boot, an export through a running nfsd | P1 | small-file create and delete times are measured by `million-tree.sh` (1,000,000 files in 248 s with four writers, whole-tree delete in 41 s); low-memory closure reads at 2, 4 and 8 GiB, a single-purpose root boot and one 128 KiB mapped write are recorded, and `latency.sh` reports per-operation fsync rather than a storm. Mixed concurrent read/write with mmap and fsync storms is measured by `script/storm.sh`, which runs mapped writers, write-then-fsync writers, fdatasync batchers and readers on one set of files at once and checks every cell after a remount with the cache dropped; a 24-cycle run passes with the kernel log clean, and 800-cycle soaks ran clean on both the debug build (2 h 39 min) and the KASAN build (6 h 14 min, `kasan 0 ubsan 0`), each with `fsck_hammer2` clean and the kernel log clean. An export is served by `nfsd` under both export modes, 12 checks 0 failed. A sustained soak is the same load over `H2_STORM_CYCLES` cycles rather than one long cycle, since a cycle is bounded by the volume; the readings are in the verification record. `O_DIRECT` is decided, under "Not on the roadmap" |
 | P3 | cache coherency (CCMS): a design note before any code | P2 | closed 2026-10-11 on the work queue's four exit criteria: transitions documented with pre- and postconditions (`doc/CCMS_TRANSITIONS.md`), each checked and the four refused calls refused by `test-ccms-lock.sh`, the same functions raced across eight threads, and lockdep clean on the debug and KASAN kernels by `script/ccms-lockdep.sh`, whose control, an unheld spin release, is reported. A first closing on 2026-10-10 on the note alone did not meet those criteria and was reopened. The note is `doc/CCMS_DESIGN.md`: the MESI state machine the plan asked to port was never written, `ccms_rstate_get()` assigned the requested state to the granted one under `#if 0`, and the front end that calls it, `ccms_lock_get()`, is written but reaches through a `ccms_inode_t` no revision defines and indexes a `data_cst[]` no structure declares, so the block would not compile unguarded. What is reproducible is the four states, the six type flags, the three-way topology/attribute/data split, the front end's lock ordering and its release-and-retry failure contract, and the placements the revision chose (`topo_cst` on the inode, `cst` on the chain core). The remote grant step is not new design after all: the design document puts the cache sub-protocol under the quorum protocol, with the masters keeping cache state and an administrative controller able to downgrade a leaf, and the note's first version, which called the shape open and offered three positions, was corrected on 2026-10-10 against that document. `doc/CCMS_REFERENCE.md` holds the sources and the survey of comparable systems. The thread lock the surviving file holds has no caller in any of the four trees, and 1.0.6 carried it here anyway, so this row said "and is not carried" until 2026-10-10 and no longer does: it builds as `hammer2_ccms.o`, nothing calls it, and the note's alternative A now asks whether it earns the place it has. The correction paragraphs below it still stand: P3 had nothing to carry |
 | P4 | local synchronization hardening: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | closed 2026-10-16 on the Linux reading, item 4 above. Reopened and re-closed the same day: the failed-copy `modify_tid` stamp is withheld for a pass that failed a key and the pass ends after one deferral drain, measured by `H2_FAULT`; the pass-end flush gate is removed and the flush runs every pass, its idle cost measured at 0.03 ms median and its upgrade trigger a `DEFER`. The replace and destroy arms are driven by `cluster-sync.sh`'s phase 2c under `H2_FAULT2`, and the first drive found and fixed a carried over-read in the replace arm, staged under `doc/upstream/`. The crash cell's FreeBSD half is COULD-NOT-RUN by detector design. See `doc/history/verification-record.md`. |
-| P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | open |
+| P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, a replayable trace | P4 | closed 2026-10-16 on the seven exit criteria, item 5 above, by `test-transport.sh` over `test/h2loop.c`: each knob read beside a knob-off control that must read zero, and a replay read beside an edited trace that must not reproduce. The kernel intake and the frame reader are P6's, with `kern_dmsg.c`. |
 | P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | open |
 | P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | open |
 | P8 | quorum across masters, and the seven cluster ioctls (`REMOTE_ADD`, `_DEL`, `_REP`, `_SCAN`, `SOCKET_GET`, `_SET`, `RECLUSTER`) | P7 | the local two-master shape measured; a quorum that cannot be met is not |

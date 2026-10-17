@@ -14514,3 +14514,64 @@ UBSAN reports. The clean run without `H2_FAULT2`,
 `cluster-run-20261016-154916.klog`, which every run now carries as its
 phase 2c: 36 checks, 0 failed, 24 destroyed and 13 replaced for the same
 ten files, `failed 0`, 0 lines differ of 120165, scrapped 0, 0 reports.
+
+## The cluster transport's loopback, measured on the host, 2026-10-16
+
+P5 asked for a transport interface and a deterministic loopback with seven
+exit criteria: delay, loss, duplication, reordering, disconnect, reconnect
+and a reproducible event trace. What the interface is was read from the
+sources before anything was designed. DragonFly's kernel never opens a
+connection: `hammer2 service` makes a `pipe()`, hands one end in through
+`HAMMER2IOC_RECLUSTER` (`sbin/hammer2/cmd_service.c:803-840`), and the
+kernel's `kern_dmsg.c` makes exactly ten calls into that descriptor,
+`fp_read` three times a frame, `fp_write` twice, `fp_shutdown(SHUT_RDWR)`
+three times at teardown and `fdrop` twice (read through
+`git cat-file` on the mirror at `250a8b4`, since the kernel half is not
+checked out). The shim already carries the first two (`hammer2_os.h:1477`).
+The frame is a 64-byte header with magic `0x4832` and 64-byte aligned aux,
+and the kernel checks neither CRC; `lib/libdmsg/msg.c` does.
+
+Two Linux facts were read in the rc5 tree and decide the descriptor's
+type: `pipe_read()` leaves only on data or a signal (`fs/pipe.c:463`) and
+`kthread_stop()` sends none, while a stream socket's reader leaves on
+`RCV_SHUTDOWN` (`net/unix/af_unix.c:2731`), which `unix_shutdown()` sets and
+wakes (`:3219-3224`). So the loopback is an `AF_UNIX` stream socketpair and
+the P6 intake will refuse a pipe. An architect review of the shape before
+code (one round, 2026-10-16) settled three things this entry rests on: the
+frame reader stays in `kern_dmsg.c` and arrives with it, since lifting it
+into the shim is a divergence P6 would undo; the simulator belongs in
+userland, where the daemon is; and no kernel echo scaffolding, since the
+three shim primitives the intake needs would have had no caller, which the
+work queue's `no_compile_equals_done` forbids. P5 therefore ships no file
+under `src/`.
+
+`test/h2loop.c` sits where the daemon sits, holding its end of one
+socketpair; the kernel's end is played by a generator writing frames as
+`kdmsg_iocom_thread_wr` does and a receiver reading them as
+`kdmsg_iocom_thread_rd` does, plus the two CRCs. Delay is virtual (a frame
+sent at tick i is due at i + d, the queue drains in tick order), so nothing
+sleeps and reordering is what differing delays produce. Every decision is
+one trace line from one seeded xorshift64*, and `--replay FILE` reruns the
+header's arguments and requires byte equality.
+
+`test-transport.sh`, first full run: 33 checks, 0 failed, 0.2 s. The
+readings at seed 7, 200 frames: delay-max 50 delivers 200 with 156
+reordered against 0 plain; loss 0.2 drops 41 with 159 delivered, receiver
+and trace agreeing; dup 0.2 duplicates 41; half-close at 50 delivers 51,
+two EOFs, 0 EPIPE, 149 lost at the daemon; disconnect at 50 delivers 51
+and the writer sees EPIPE 149 times; reconnect at 60 delivers 191 with 9
+EPIPE; a flipped `aux_crc` bit is one rejection named `hdr_crc`, since the
+header CRC covers that field (the gate first expected `aux_crc` and the
+receiver was right); same seed gives identical traces, seed 8 differs,
+replay reproduces, and a trace with one delay edited exits 1. Under ASan
+and UBSan with every knob on, including 64 KiB aux: clean. Negative
+controls placed in the subject: the loss branch disabled fails "dropped >
+0" and nothing else; the replay comparison forced true fails its edited
+trace control and nothing else. A first attempt at the second control
+removed the comparison function and failed the compile instead, which
+proved nothing about the replay, so it was placed inside the comparison.
+
+One class finding on the way: the `DEFER` ledger gate's population was
+`src/`, `script/` and `.github/`, so the simulator's marker in `test/` was
+invisible to it in both directions. `test/` joined the population and the
+row was added; the gate reads 7 markers, 7 rows.
