@@ -31,10 +31,13 @@ removes, rewrites, additions and a rename, and `script/cluster-quorum.sh`
 builds the two-MASTER cluster `hammer2_cluster_check()` decides for,
 where `pfs_nmasters` is 2 and both chains must agree before a lookup is
 answered; its two masters agree in every run, so what it reads is
-agreement reached, not a disagreement decided. The transport half is not
-carried: a member on another host needs `kern_dmsg.c`, which no port
-carries, and a quorum that cannot be met is unrun, its expected behavior
-to come from upstream rather than from this port's output.
+agreement reached, not a disagreement decided. The message core is
+carried since 1.0.33 (P6, closed 2026-10-16): `kern_dmsg.c` with its
+socket transport runs the message threads on a connected stream socket,
+and a quorum that cannot be met is unrun, its expected behavior
+to come from upstream rather than from this port's output; what is
+still missing for a member on another host is the remote PFS layer
+(P7).
 
 0.9.52 and 0.9.53 open a capability the port had
 asserted away: `hammer2_assert_cluster()` required `nchains == 1` and
@@ -417,9 +420,10 @@ vendored-library audit the xxHash header cites in place.
 path; in a comment carried from DragonFly it is the filesystem's own
 abbreviation. The stage is only ever written beside a version number.
 
-**Current version: 0.9.x.** 0.3 was met in full when its third criterion
+**Current version: 1.0.x.** 0.3 was met in full when its third criterion
 closed, 0.4 when its sixth did, 0.5 when the interrupted flush recovered
-on both sides at 0.4.19, and 0.6 when the crash matrix ran, so the point
+on both sides at 0.4.19, 0.6 when the crash matrix ran, and 1.0 when its
+qualification reading closed at 1.0.0, so the point
 releases move with them by the rule `CHANGELOG.md` states; the rows
 before each stay where they were, being records, and 0.5 has no rows of
 its own because its last criterion and 0.6's gate closed a session
@@ -857,8 +861,8 @@ clustering. The three BSD ports dropped the cluster layer
 (`hammer2_ccms.c`, `hammer2_iocom.c`, `hammer2_msgops.c`,
 `hammer2_synchro.c`) and this port followed them until 0.9.61, which
 carried `hammer2_synchro.c`, for the reason the paragraphs below give.
-`hammer2_ccms.c` followed at 1.0.6. The other two are not yet carried and
-are P6 on the roadmap below. The ports are a reference for how to map
+`hammer2_ccms.c` followed at 1.0.6. `hammer2_iocom.c` and
+`hammer2_msgops.c` followed at 1.0.33, and P6 closed 2026-10-16. The ports are a reference for how to map
 DragonFly onto an OS, not a ceiling on what to carry: the mission is
 DragonFly parity and then the original design, and a file is carried or
 not on that, not on what the ports chose for their own trees.
@@ -1006,7 +1010,7 @@ Each is the maintainer's, and each names what it blocks.
 | the staged upstream filings | 1.0 | drafted, unfiled. The patches and reports staged in `doc/upstream/`, enumerated by `doc/upstream/README-provenance.md`, which records where each stands at upstream's head and what was searched; the maintainer files them |
 | the `cluster_write` module parameter | nothing; it is inert today | taken 2026-10-04: removed. Found 2026-10-02 while accounting for all seventeen parameters, `hammer2_cluster_write` was declared, exported and registered `0644`, so it was settable at runtime, and no code read it. The tree treats a setting accepted whether or not it takes effect as a defect, and this was one. Wiring it would have been wrong rather than deferred: DragonFly's `cluster_write()` asks the buffer layer to write the cluster as well as the buffer, and the port's block layer already merges adjacent dirty folios before the device sees them, measured at 171 KiB average device write for 64 KiB blocks, so there was nothing for the parameter to change. Removal changes the module's parameter list, which is the maintainer's call, and the call was taken: the definition, the registration and the declaration are gone and the list is sixteen, counted from the source's own `module_param_named` lines rather than from `modinfo`, which hides the three behind `#ifdef`. The reading that decided it and the removal are both in `doc/history/verification-record.md` |
 | in-tree submission | nothing before 1.0 | deferred past qualification |
-| porting the cluster subsystem | Replication, IncrementalReplication and RemoteCheckpoint | Replication is `limited`, to devices attached to one host, since 2026-10-03: `hammer2_synchro.c` is carried, its thread starts for a SLAVE or soft PFS, and `script/cluster-sync.sh` measured a SLAVE created after its MASTER's files, then the master removed, rewritten, added to and renamed with both mounted, ending block for block identical to the master, 22 checks 0 failed on the debug kernel and on the KASAN kernel. Getting there found the thread machinery written but never run (a `tsleep` that ignored its channel, a wait no wakeup ended, a join nothing called), the synchronous XOP start waiting on itself with a second cluster element, the thread's copies never written, and with a changed master three more: a folio's writeback ended once per element, a slave never written by the frontend, and a FIFO grown for one element and written past for the other, which the verification record describes. `script/cluster-quorum.sh` added the two-MASTER shape the quorum code decides for, 22 checks 0 failed on both kernels at 0.9.67, where 0.9.66's 20 counted the sums read back rather than comparing them: `pfs_nmasters` 2, a support thread on each master element, a set read back through the quorum after an unmount and a cache drop, every file's sum equal to the one taken before it was written, and both volumes' media identical entry for entry and block for block. Remaining: a quorum that cannot be met, with a master absent, and the other two rows, which need `kern_dmsg.c` and its socket transport |
+| porting the cluster subsystem | Replication, IncrementalReplication and RemoteCheckpoint | Replication is `limited`, to devices attached to one host, since 2026-10-03: `hammer2_synchro.c` is carried, its thread starts for a SLAVE or soft PFS, and `script/cluster-sync.sh` measured a SLAVE created after its MASTER's files, then the master removed, rewritten, added to and renamed with both mounted, ending block for block identical to the master, 22 checks 0 failed on the debug kernel and on the KASAN kernel. Getting there found the thread machinery written but never run (a `tsleep` that ignored its channel, a wait no wakeup ended, a join nothing called), the synchronous XOP start waiting on itself with a second cluster element, the thread's copies never written, and with a changed master three more: a folio's writeback ended once per element, a slave never written by the frontend, and a FIFO grown for one element and written past for the other, which the verification record describes. `script/cluster-quorum.sh` added the two-MASTER shape the quorum code decides for, 22 checks 0 failed on both kernels at 0.9.67, where 0.9.66's 20 counted the sums read back rather than comparing them: `pfs_nmasters` 2, a support thread on each master element, a set read back through the quorum after an unmount and a cache drop, every file's sum equal to the one taken before it was written, and both volumes' media identical entry for entry and block for block. Remaining: a quorum that cannot be met, with a master absent, and the other two rows, which need the remote PFS layer above the carried message core (P7) |
 
 ## Not on the roadmap
 

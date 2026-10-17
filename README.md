@@ -55,7 +55,7 @@ At a glance, on a kernel of 7.3 or newer:
   another host yet: the transport and its message core are carried and
   measured with the kernel in the loop (P5, P6), the remote PFS layer
   above them is next (P7), and no run yet of a quorum that cannot be met
-+ not yet: a package, a tag, a run of that closure
++ not yet: a package, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image
 + not verified or not built: `O_DIRECT`, which is refused; and what
@@ -216,9 +216,10 @@ than about a shared bug.
   fails on exactly those, recorded in `doc/history/verification-record.md`. Older
   kernels are not blocked by anything deeper: measured from below, 6.18
   would need two compatibility conditionals and 6.15 is where the block
-  layer first holds a 64 KiB folio. The decision is to stay on the kernel
-  of record until 1.0 and then consider 6.18 alone, the one longterm
-  kernel in that range; `doc/README.roadmap.md` records it
+  layer first holds a 64 KiB folio. The ruling keeps the kernel of record
+  as the floor, and backward compatibility, if it is ever provided, goes
+  to 6.18 alone, the one longterm kernel in that range, revisited after
+  1.0.0; `doc/README.roadmap.md` records it
 
 + kernel headers for the running kernel
 

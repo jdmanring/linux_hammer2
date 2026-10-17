@@ -522,8 +522,8 @@ the way CI enumerates them. Install it:
     $ ln -sf ../../script/pre-push-check.sh .git/hooks/pre-push
 
 It is not named `test-*.sh` and does not live among the gates as an equal:
-the thirteen are run individually on purpose, and one exit status for
-thirteen questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
+the eighteen are run individually on purpose, and one exit status for
+eighteen questions is the thing this repository does not want. `H2_SKIP_PREPUSH=1`
 overrides it for a push that is deliberately ahead of a green tree.
 
 It runs what CI runs, and CI's result still has to be read on the forge
@@ -1604,8 +1604,8 @@ Makefile reads `CONFIG_CC_IS_CLANG` from the tree's config and adds it,
 so the line above is enough. The result carries vermagic
 `7.3.0-rc1-saxum` and loads on nothing else. No guest boots that kernel
 yet; the Saxum server edition, which will, was not built when this was
-written, so the fixture gate still runs on `artix-s6-kde` at plain
-`7.3.0-rc1`. The store's `7.3.0-rc1-cachyos` figures are a superseded
+written, so the fixture gate runs on `artix-s6-kde` at `7.3.0-rc5`,
+the tree `KDIR` names. The store's `7.3.0-rc1-cachyos` figures are a superseded
 measurement rather than a standing requirement.
 
 Both the header line and the summary line carry the release string and
