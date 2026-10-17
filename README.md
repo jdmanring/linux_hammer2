@@ -52,8 +52,9 @@ At a glance, on a kernel of 7.3 or newer:
   cluster of two MASTERs on two devices is written and read through the
   quorum that requires both to agree, every file reading back what was
   written; both on the debug and the sanitizer kernel. No member on
-  another host, since the cluster transport is not ported, and no run yet
-  of a quorum that cannot be met
+  another host: the transport's interface is decided and measured on the
+  host (P5), the kernel's intake of it is the next step (P6), and no run
+  yet of a quorum that cannot be met
 + not yet: a package, a tag, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image

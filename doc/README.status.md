@@ -18,8 +18,9 @@ a SLAVE on a second local device in step with its MASTER, measured by
 `script/cluster-sync.sh`, and the quorum a two-MASTER cluster is decided
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; members on other hosts
-need a transport that is not ported, and a quorum that cannot be met is
-unrun. P4, local synchronization hardening, is closed on the Linux
+wait on the kernel's intake of the cluster transport, whose interface
+and loopback P5 closed on the host and whose message core is P6, and a
+quorum that cannot be met is unrun. P4, local synchronization hardening, is closed on the Linux
 reading since 2026-10-16: a refused copy's key is retried by the next pass,
 measured by a refused allocation that faulted the module before the change
 and converged after it, and the pass-end flush runs on every pass, since the
