@@ -25,9 +25,12 @@
 #   bash script/xfstests.sh generic/001 generic/013 ...
 #   H2_XFSTESTS_TESTS="-g quick" bash script/xfstests.sh
 #
-# src/locktest does not build against the kernel of record's headers, whose
-# fcntl.h now defines struct delegation; the four generic tests that use it
-# (131, 571, 786, 787) report it missing and are not this port's result.
+# A result is about the suite's version as well as the port's, so the
+# clone's commit is printed with every run. src/locktest, which generic/131,
+# 571, 786 and 787 run, needs upstream's a952ecb ("src/locktest.c: fix
+# build failure of struct delegation") against a C library whose fcntl.h
+# defines F_GETDELEG without the structure, as glibc 2.44 does; without it
+# those four report locktest missing and are not this port's result.
 #
 # Exit 2 without the guest, the clone, newfs_hammer2 or a kernel tree, and
 # 1 on any test that failed. A test xfstests skips is neither.
@@ -142,6 +145,7 @@ for t in \$tests; do timeout -k 30 $PER ./check \$t 2>&1 || [ \$? -ne 124 ] || {
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
+echo "  suite: $(git -C "$XFS" log -1 --format='%h %s' 2>/dev/null)"
 printf '%s\n' "$out" | sed 's/^/  /'
 
 case $out in *SETUP*) echo "xfstests: COULD-NOT-RUN: $(printf '%s\n' "$out" | command grep -m1 SETUP)" >&2; exit 2 ;; esac
