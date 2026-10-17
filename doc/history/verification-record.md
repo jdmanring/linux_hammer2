@@ -15012,3 +15012,104 @@ it.
 
 Syntax 81 checks 0 failed on both compilers, inventory 0 findings,
 checkpatch deviation set unchanged at 1373 hits.
+
+## Coccinelle, first run, with each candidate triaged, 2026-10-17
+
+`script/cocci.sh` (`1a083d4`) runs the kernel's semantic patches over
+the module through `make coccicheck MODE=report`, one patch per run,
+against linux-7.3-rc5 with `spatch` 1.3.3. The quick group's reread
+above recorded Coccinelle as not installed. Installed, it read nothing
+on its first three attempts, and each failed in a way a clean report
+would hide:
+
+- The first `make coccicheck` exited 2 in 0.14 s at its first patch,
+  `Python error: No module named 'coccilib'`. The `coccinelle-bin`
+  package installs a `spatch` built with python scripting and not the
+  library its python rules import, and 73 of the kernel's 76 patches
+  have one. The library came from the same release tarball, its
+  `b2sum` matching the package recipe's, through `COCCINELLE_HOME`.
+- With it, the sweep ended at the fifth patch, `No OCaml compiler
+  found!`: two patches carry OCaml rules, and `coccicheck` stops at the
+  first patch that cannot run. Hence one patch per run.
+- The script's first version read 0 candidates from 75 patches in 4 s.
+  `coccicheck` exits 0 having run nothing when its `DEBUG_FILE`
+  exists, and the run counter was advanced inside a command
+  substitution, so every run after the control reused one file name.
+  The control passed because it ran first. A run now counts only when
+  its own debug file holds the `spatch` command line, and the same
+  tree then read 7 candidates from 73 patches in 30 s, the count a
+  hand loop over the same patches had given.
+
+An independent review of the script for silent failures then found two
+more ways a short reading could pass as whole, and each was measured
+before it was fixed. `spatch` exits 0 when a rule raises on one file
+and drops that file's reports, writing only an `EXN ... in ./boom.c`
+line to the debug file: a planted rule raising on one of two files
+read exactly that, exit 0 with the other file still reported. The
+script read the exit status alone, and it exited 0 whatever had failed
+to run. It now reads every run's debug file for `EXN`, fails on a patch
+not run for any reason but a missing OCaml compiler or `coccicheck`'s
+own version skip, and exits 2 when nothing ran. One of the review's
+probes did not reproduce: under `--dir`, which `coccicheck` uses,
+`spatch` passes over an unreadable file with no `EXN` line and exit 0,
+so the census names its files instead, where an unreadable one is a
+fatal error, and must read as many as it named. None of the 75 debug
+files the earlier hand loop kept has an `EXN` line, so its 7
+candidates lost no file this way.
+
+The controls are a planted `if (p) kfree(p);`, which
+`free/ifnullfree.cocci` must report through the same `make` target, and
+the raising rule above, which must be read as raised. The parse census
+first read the 21 sources alone. Given the 9 headers too, since 59 of
+the 75 report patches read them, it found 333 lines `spatch` could not
+parse, among them the declarations of `hammer2_chain`,
+`hammer2_inode`, `hammer2_dev`, `hammer2_pfs`, `hammer2_devvp` and
+`hammer2_depend`, whose members are the vendored queue macros. A
+structure that does not parse leaves its fields' types unknown to any
+patch that matches on a type. The script hands `spatch` the member
+forms of those macros as a macro file, and the census then reads
+36,779 lines of the 30 files and not 126, at nine sites, every one a
+macro definition: `H2XOPDESCRIPTOR` (`hammer2_admin.c:44`), the scan
+macros of `hammer2_rb.h` (`:65`, `:74`, `:91`, `:108`, `:133`), and
+three in `kern_dmsg.c` (`:48` and `:51`, the two print macros, and
+`:67`, the `KDMSG_DEBUG` hold macro). The two OCaml patches,
+`api/check_bq27xxx_data` and `null/badzero`, are listed as not run.
+
+The final script on a worktree at `6ec0430`, before the edit below:
+both controls ok, 7 candidates from 73 patches, 2 not run, 0 failed,
+exit 0 in 33 s at `J=4`, the same seven the hand loop read, so the
+macro file added no candidate.
+
+| candidate | patch | origin | disposition |
+|---|---|---|---|
+| `hammer2_vfsops.c:2306` `hammer2_statfs()` | `misc/minmax` | this port, `5d59669` | fixed, `min()` |
+| `hammer2_strategy.c:1394` `hammer2_strategy_assemble()` | `misc/minmax` | this port, `b6bd2c8` | fixed, `min_t(size_t, ...)` |
+| `hammer2_vnops.c:1576`, `:1578` `hammer2_llseek()` | `misc/minmax` | this port, `1eda038` | fixed, `max()` |
+| `hammer2_flush.c:110` `hammer2_trans_init()` | `misc/cond_no_effect` | DragonFly `hammer2_flush.c:139` | carried |
+| `hammer2_bulkfree.c:803` `h2_bulkfree_callback()` | `misc/orplus` | DragonFly `hammer2_bulkfree.c:936` | carried |
+| `hammer2_subr.c:356` `hammer2_inc_iostat()` | `misc/semicolon` | FreeBSD port `hammer2_subr.c:349` | carried |
+
+The three carried rows stay as their origin wrote them. The
+`cond_no_effect` branch is the `HAMMER2_TRANS_BUFCACHE` case, whose
+body equals the normal case's and is kept apart for its comment, which
+says such a transaction must be allowed in all situations to avoid
+deadlocks. The `orplus` sum is
+`HAMMER2_FREEMAP_BLOCK_RADIX + HAMMER2_BMAP_INDEX_RADIX`, 14 and 5,
+two shift counts and not bitmasks. The doubled semicolon is in all
+three BSD ports, and DragonFly has no `hammer2_inc_iostat()`; the checkpatch
+baseline already carries it as `Statements terminations use 1
+semicolon`.
+
+The four `minmax` sites are this port's text, each from a commit that
+wrote it, and a checker's complaint about this port's own text is fixed
+rather than kept, as `doc/README.kernel-style.md` says of the comment
+blocks; the port already writes `min_t` and `max_t` in six places. Both
+`hammer2_llseek()` operands are `loff_t` and both `hammer2_statfs()`
+operands `hammer2_off_t`; the assemble pair is a `size_t` against an
+`int` block size, so `min_t(size_t, ...)` keeps the cast the old line
+spelled twice. The change compiles to the same code: the three objects
+built against rc5 before and after the edit, each recompiled from the
+edited source, disassemble identically with relocations, 16,360
+instructions, and differ only in debug information. After the edit,
+the same script on the working tree: both controls ok, 3 candidates
+from 73 patches, the three carried rows, 0 failed, exit 0 in 32 s.

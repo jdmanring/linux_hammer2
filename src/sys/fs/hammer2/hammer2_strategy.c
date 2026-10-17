@@ -1391,7 +1391,7 @@ hammer2_strategy_assemble(struct inode *inode, hammer2_chain_t **parentp,
 		error = HAMMER2_ERROR_EIO;
 		goto out;
 	}
-	len = dsize < (size_t)lblksize ? dsize : (size_t)lblksize;
+	len = min_t(size_t, dsize, lblksize);
 	memcpy(bio_data, src, len);
 	if (len < (size_t)lblksize)
 		memset(bio_data + len, 0, lblksize - len);

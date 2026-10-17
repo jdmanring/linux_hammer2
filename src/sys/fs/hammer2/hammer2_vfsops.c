@@ -2303,7 +2303,7 @@ hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bfree = hmp->voldata.allocator_free / HAMMER2_PBUFSIZE;
 
 	avail = hmp->voldata.allocator_free;
-	avail -= avail < hmp->free_reserved ? avail : hmp->free_reserved;
+	avail -= min(avail, hmp->free_reserved);
 	buf->f_bavail = avail / HAMMER2_PBUFSIZE;
 
 	buf->f_files = hammer2_inode_inode_count(pmp->iroot);

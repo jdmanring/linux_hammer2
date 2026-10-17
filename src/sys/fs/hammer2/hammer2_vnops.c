@@ -1573,9 +1573,9 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 		 * it.
 		 */
 		if (error == ENOENT)
-			return (base > offset ? base : offset);
+			return (max(base, offset));
 		if (got > (hammer2_key_t)base)
-			return (base > offset ? base : offset);
+			return (max(base, offset));
 		pos = base + bsize;
 		if (pos >= isize)
 			return (isize);
