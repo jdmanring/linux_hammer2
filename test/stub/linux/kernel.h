@@ -105,6 +105,8 @@ struct task_struct *kthread_create(int (*threadfn)(void *data), void *data,
     const char *namefmt, ...);
 void kthread_bind(struct task_struct *k, unsigned int cpu);
 struct task_struct *get_task_struct(struct task_struct *t);
+void put_task_struct(struct task_struct *t);	/* include/linux/sched/task.h:129 */
+extern struct task_struct *current;
 int wake_up_process(struct task_struct *p);
 int kthread_should_stop(void);
 void kthread_stop_put(struct task_struct *k);

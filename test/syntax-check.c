@@ -156,6 +156,30 @@ hammer2_syntax_check_all(void)
 	(void)lwkt_create(NULL, NULL, &td, NULL, 0, -1, "h2test");
 	(void)ncpus;
 	/*
+	 * The message core's own names: lockmgr(9) on a struct lock with
+	 * lksleep() dropping it across the sleep, the thread's own exit,
+	 * and the descriptor intake and release.
+	 */
+	{
+		struct lock lk;
+
+		lockinit(&lk, "h2msg", 0, 0);
+		lockmgr(&lk, LK_EXCLUSIVE);
+		(void)lksleep(&lk, &lk, 0, "clstrkl", 1);
+		lockmgr(&lk, LK_RELEASE);
+		lockuninit(&lk);
+	}
+	if (0)
+		lwkt_exit();
+	{
+		struct file *fp = holdfp(curthread, 0, -1);
+
+		if (fp) {
+			fp_shutdown(fp, SHUT_RDWR);
+			fdrop(fp);
+		}
+	}
+	/*
 	 * The sleep on an address and its wake, and the flag-word sleep the
 	 * thread API and the sync thread use where DragonFly interlocks.
 	 */

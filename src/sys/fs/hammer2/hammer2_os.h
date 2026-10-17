@@ -281,7 +281,7 @@ lockuninit(struct lock *l)
 
 /* Linux */
 static inline void
-lockmgr(struct lock *l, u_int flags)
+lockmgr(struct lock *l, unsigned int flags)
 {
 	if (flags == LK_EXCLUSIVE)
 		hammer2_lk_ex(&l->lk);
