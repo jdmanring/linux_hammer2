@@ -24,10 +24,10 @@ index 69e5d83..6ad02a1 100644
  	ubifs)
 diff --git a/common/hammer2 b/common/hammer2
 new file mode 100644
-index 0000000..25948e0
+index 0000000..fabef53
 --- /dev/null
 +++ b/common/hammer2
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,50 @@
 +#!/bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +#
@@ -46,9 +46,14 @@ index 0000000..25948e0
 +
 +NEWFS_HAMMER2=${NEWFS_HAMMER2:-$(type -P newfs_hammer2)}
 +
++# newfs_hammer2 asks the VFS its supported version through a sysctl that
++# DragonFly has and Linux does not, and warns on stderr when the ask
++# fails. A test that keeps only stdout in its .full gets the two lines in
++# its output and fails on them (generic/634, 738, 798), so those two are
++# dropped here and everything else on stderr is kept.
 +_hammer2_newfs()
 +{
-+	$NEWFS_HAMMER2 "$@"
++	$NEWFS_HAMMER2 "$@" 2> >(grep -vE "cannot get version info|Using default version" >&2)
 +}
 +
 +# The generic _scratch_mkfs() case falls through to `mkfs -t $FSTYP` for an
@@ -74,7 +79,7 @@ index 0000000..25948e0
 +# reports `hammer2`; it is consumed here, not redefined, since redefining
 +# it would replace the generic one for every filesystem.
 diff --git a/common/rc b/common/rc
-index 8add0ee..9447f69 100644
+index 8add0ee..4ab0468 100644
 --- a/common/rc
 +++ b/common/rc
 @@ -1022,6 +1022,10 @@ _scratch_mkfs()
@@ -82,7 +87,7 @@ index 8add0ee..9447f69 100644
  		return $?
  		;;
 +	hammer2)
-+		mkfs_cmd="$NEWFS_HAMMER2"
++		mkfs_cmd="_hammer2_newfs"
 +		mkfs_filter="cat"
 +		;;
  	udf)
@@ -98,7 +103,7 @@ index 8add0ee..9447f69 100644
 +		# on this filesystem rather than a format failure.
 +		[ "$fssize" -lt 1073741824 ] && \
 +			_notrun "newfs_hammer2 makes no volume below 1 GiB, asked for $fssize"
-+		$NEWFS_HAMMER2 $MKFS_OPTIONS -s $((fssize / 1048576))m "$@" $SCRATCH_DEV
++		_hammer2_newfs $MKFS_OPTIONS -s $((fssize / 1048576))m "$@" $SCRATCH_DEV
 +		;;
  	*)
  		_notrun "Filesystem $FSTYP not supported in _scratch_mkfs_sized"
