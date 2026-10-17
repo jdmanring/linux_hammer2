@@ -1,0 +1,36 @@
+  suite: a6d1f76 src/locktest.c: fix build failure of struct delegation
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/306         5s
+  Ran: generic/306
+  Passed all 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/423        - output mismatch (see /root/h2xfstests/results//generic/423.out.bad)
+      --- tests/generic/423.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/423.out.bad	2026-10-17 15:23:38.882000000 -0700
+      @@ -1,8 +1,17 @@
+       QA output created by 423
+       Test statx on a fifo
+      +[!] ctime.nsec is before mtime.nsec (255000000 < 256508000)
+      +Failed
+      +stat_test failed
+       Test statx on a chardev
+      +[!] ctime.nsec is before mtime.nsec (265000000 < 266286000)
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/423.out /root/h2xfstests/results//generic/423.out.bad'  to see the entire diff)
+  Ran: generic/423
+  Failures: generic/423
+  Failed 1 of 1 tests
+  
+  rmmod exit 0
+  log: bug 0 oops 0 warn 0
+xfstests: 2 of 2 executed, 0 not run (none); failed generic/423
+exit 1

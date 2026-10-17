@@ -2324,3 +2324,13 @@ const struct inode_operations hammer2_symlink_iops = {
 	.getattr	= hammer2_getattr,		/* Linux */
 	.setattr	= hammer2_vop_setattr,
 };
+
+/*
+ * A device node, fifo or socket: its file operations are the kernel's,
+ * from init_special_inode(), and only its attributes are this
+ * filesystem's.
+ */
+const struct inode_operations hammer2_special_iops = {
+	.getattr	= hammer2_getattr,		/* Linux */
+	.setattr	= hammer2_vop_setattr,
+};

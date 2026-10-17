@@ -946,6 +946,18 @@ hammer2_igetv(hammer2_inode_t *ip, int flags __maybe_unused,
 		    mapping_gfp_mask(inode->i_mapping) & ~__GFP_HIGHMEM);
 		hammer2_mapping_set_block_folios(inode->i_mapping,
 		    HAMMER2_PBUFRADIX);	/* Linux */
+	} else if (!S_ISREG(inode->i_mode)) {
+		/*
+		 * Linux: a device node, fifo or socket.  DragonFly gives a
+		 * device node the spec vnode ops and its device through
+		 * addaliasu(), a fifo the fifo ops and a socket its type
+		 * alone; init_special_inode() is the same thing here.  Opened as a regular file instead,
+		 * a device node read as an empty file and refused a write
+		 * on a read-only mount, and stat showed every one as 0:0.
+		 */
+		inode->i_op = &hammer2_special_iops;	/* Linux */
+		init_special_inode(inode, inode->i_mode,
+		    MKDEV(ip->meta.rmajor, ip->meta.rminor));	/* Linux */
 	} else {
 		inode->i_op = &hammer2_file_iops;	/* Linux */
 		inode->i_fop = &hammer2_file_fops;	/* Linux */
