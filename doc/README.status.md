@@ -24,7 +24,12 @@ reading since 2026-10-16: a refused copy's key is retried by the next pass,
 measured by a refused allocation that faulted the module before the change
 and converged after it, and the pass-end flush runs on every pass, since the
 root's flags cannot gate it and an idle pass's flush measures a few
-hundredths of a millisecond against a five-second cadence. The crash cell's FreeBSD half is
+hundredths of a millisecond against a five-second cadence. The thread's
+replace and destroy arms, which a slave's first pass never takes, are
+driven by changing the MASTER while the slave's device is away; the first
+drive found the replace arm copying the slave's old length out of a
+smaller master block, DragonFly's own line, fixed here and staged under
+`doc/upstream/`. The crash cell's FreeBSD half is
 COULD-NOT-RUN by the detector's design. Cache coherency is a design note rather than code:
 `doc/CCMS_DESIGN.md` records that the coherency half was deleted
 upstream before it was written, and that Dillon's design document puts it
