@@ -175,11 +175,6 @@ expunged=$(printf '%s\n' "$out" | sed -n 's/^\([a-z][a-z]*\/[0-9][0-9]*\)[[:spac
 expunged=$(printf '%s\n' "$expunged" | sed 's/ *$//')
 failed="$failed$timedout"
 failed=$(printf '%s\n' "$failed" | sed 's/^ *//; s/ *$//')
-# A test killed at its bound wrote no Ran line, and a hang is a failure,
-# so it is counted before the check that nothing ran.
-[ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; echo "xfstests: failed $failed"; exit 1; }
-[ -n "$ran" ] || [ -z "$expunged" ] || { echo "xfstests: COULD-NOT-RUN: every test named is expunged: $expunged" >&2; exit 2; }
-[ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
 # check prints "Passed all N tests" whether or not any of the N executed:
 # a test that skips with _notrun is counted among them. So the pass is
 # what ran less what was not run, and a batch where nothing executed is
@@ -189,11 +184,19 @@ nran=$(printf '%s\n' "$ran" | wc -w)
 nskip=$(printf '%s\n' "$notrun" | wc -w)
 nexec=$((nran - nskip))
 nexp=$(printf '%s\n' "$expunged" | wc -w)
+summary="xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}), $nexp expunged (${expunged:-none}); failed ${failed:-none}"
+# A test killed at its bound wrote no Ran line, and a hang is a failure,
+# so it is counted before the check that nothing ran. The summary is
+# printed on this path too: the quick group's second run ended on one
+# timeout and left no line counting the 646 it had run.
+[ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; echo "$summary"; exit 1; }
+[ -n "$ran" ] || [ -z "$expunged" ] || { echo "xfstests: COULD-NOT-RUN: every test named is expunged: $expunged" >&2; exit 2; }
+[ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
 fail=0
 [ -n "$failed" ] && fail=1
 printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
-echo "xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}), $nexp expunged (${expunged:-none}); failed ${failed:-none}"
+echo "$summary"
 [ "$fail" -eq 0 ] || exit 1
 [ "$nexec" -gt 0 ] || { echo "xfstests: COULD-NOT-RUN: every test named was skipped" >&2; exit 2; }
 exit 0
