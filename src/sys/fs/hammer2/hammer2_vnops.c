@@ -226,9 +226,10 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 	 * 1365 of the smallest entries and holds a third as many real ones,
 	 * and every entry fed past the buffer's end is a chain allocated for
 	 * nothing.  A caller that passes no hint gets a FIFO's worth,
-	 * doubled each time its buffer outlasts a chunk.  An entry at or past
-	 * rkey is one some element has not fed, so it waits for that next
-	 * XOP rather than being emitted from the elements that did.
+	 * doubled each time its buffer outlasts a chunk; the hint's third
+	 * value, INT_MAX for unlimited, is answered by the cap.  An entry at
+	 * or past rkey is one some element has not fed, so it waits for that
+	 * next XOP rather than being emitted from the elements that did.
 	 * hammer2_xop_readdir() has the cost this replaces.
 	 */
 	room = ctx->count;	/* 0 when the caller says nothing */
