@@ -15345,8 +15345,14 @@ day's earlier runs and the 263 tests of the group listed before it, 60
 of them executed. Lockdep turned itself off there, at 16:13, so the 382
 listed after it, 74 of them executed, ran without it. The same report shows the
 unmount under dm-error leaving `3 inode, 3 chain, 0 modified, 2 dio
-still allocated`, where the clean unmount a moment later reports zeros:
-a leak on the error path, found here and not fixed. Both are kept in
+still allocated`, where the clean unmount a moment later reports zeros.
+This entry first read that as a leak on the error path, and it is not:
+the counters are module-wide, the test volume was mounted at the first
+line and unmounted by the second, and a clean unmount of a scratch
+volume beside a mounted test volume prints `3 inode, 3 chain, 0
+modified, 1 dio` on the same module
+(`doc/history/lockdep-unmount-probe-2026-10-17.log`, read later the same
+day; the entry below has it). Both are kept in
 `doc/history/xfstests-338-2026-10-17.log`. The runner's own log line
 counts `kernel BUG`, `Oops` and `WARNING:` and could not see either;
 that line is read beside `_check_dmesg`'s verdict, not instead of it.

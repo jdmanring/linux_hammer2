@@ -1,0 +1,301 @@
+== probe on artix-s6-kde, h2debug-rc5, module b64ec28, 2026-10-17: the lockdep dependency table at boot, after the module, after two mounts and after a seek workload, with the port's classes counted from /proc/lockdep; a clean unmount of the scratch volume beside the mounted test volume, which is the control for generic/338's counter line; t_readdir_3 at 500 and 1000 under perf. Driver /tmp/h2-cocci/drive1.sh, probe /tmp/h2-cocci/probe1.sh, both kept in the entry below the log
+
+== uptime 152.60 s, 7.3.0-rc5, debug_locks ?
+== lockdep before insmod
+    lock-classes:                         1746 [max: 8192]
+    dynamic-keys:                          235
+    direct dependencies:                 19352 [max: 32768]
+    indirect dependencies:               96077
+    all direct dependencies:            337166
+    dependency chains:                   31614 [max: 1048576]
+== lockdep after insmod
+    lock-classes:                         1746 [max: 8192]
+    dynamic-keys:                          236
+    direct dependencies:                 19358 [max: 32768]
+    indirect dependencies:               96078
+    all direct dependencies:            337172
+    dependency chains:                   31625 [max: 1048576]
+== lockdep after two mounts
+    lock-classes:                         1770 [max: 8192]
+    dynamic-keys:                          236
+    direct dependencies:                 19704 [max: 32768]
+    indirect dependencies:               98026
+    all direct dependencies:            343158
+    dependency chains:                   31974 [max: 1048576]
+== control: a clean unmount of scratch while test stays mounted
+[  152.808775] hammer2: hammer2_kill_sb: after unmount: 3 inode, 3 chain, 0 modified, 1 dio still allocated
+== t_readdir_3 n=250 seed 7
+   /tmp/probe.sh: line 25: /usr/bin/time: No such file or directory
+== t_readdir_3 n=500 seed 7
+   /tmp/probe.sh: line 25: /usr/bin/time: No such file or directory
+== t_readdir_3 n=1000 seed 7
+   /tmp/probe.sh: line 25: /usr/bin/time: No such file or directory
+== perf stat t_readdir_3 n=500
+                   69      context-switches                                                      
+              6917.58 msec task-clock                                                            
+          6.923203548 seconds time elapsed
+          0.002915000 seconds user
+          6.830081000 seconds sys
+== perf record t_readdir_3 n=1000, no-children, >=1.5%
+       20.78%  t_readdir_3  [kernel.kallsyms]  [k] lock_is_held_type
+               |
+               ---lock_is_held_type
+                  |          
+                  |--13.75%--xas_load
+                  |          |          
+                  |          |--8.94%--filemap_get_entry
+                  |          |          __filemap_get_folio_mpol
+                  |          |          |          
+                  |          |          |--4.48%--do_read_cache_folio
+                  |          |          |          hammer2_bread
+                  |          |          |          hammer2_io_getblk
+                  |          |          |          hammer2_io_bread
+                  |          |          |          hammer2_chain_load_data.part.0
+                  |          |          |          hammer2_chain_lock
+                  |          |          |          |          
+                  |          |          |          |--2.25%--hammer2_chain_lookup
+                  |          |          |          |          |          
+                  |          |          |          |           --2.25%--hammer2_xop_readdir
+                  |          |          |          |                     hammer2_xop_start_except
+                  |          |          |          |                     hammer2_vop_readdir
+                  |          |          |          |                     iterate_dir
+                  |          |          |          |                     __x64_sys_getdents64
+                  |          |          |          |                     do_syscall_64
+                  |          |          |          |                     entry_SYSCALL_64_after_hwframe
+                  |          |          |          |          
+                  |          |          |           --2.21%--hammer2_chain_repparent
+                  |          |          |                     hammer2_chain_lookup
+                  |          |          |                     hammer2_xop_readdir
+                  |          |          |                     hammer2_xop_start_except
+                  |          |          |                     hammer2_vop_readdir
+                  |          |          |                     iterate_dir
+                  |          |          |                     __x64_sys_getdents64
+                  |          |          |                     do_syscall_64
+                  |          |          |                     entry_SYSCALL_64_after_hwframe
+                  |          |          |          
+                  |          |           --4.46%--hammer2_bread
+                  |          |                     hammer2_io_getblk
+                  |          |                     |          
+                  |          |                      --4.46%--hammer2_io_bread
+                  |          |                                hammer2_chain_load_data.part.0
+                  |          |                                hammer2_chain_lock
+                  |          |                                |          
+                  |          |                                |--2.23%--hammer2_chain_repparent
+                  |          |                                |          hammer2_chain_lookup
+                  |          |                                |          hammer2_xop_readdir
+                  |          |                                |          hammer2_xop_start_except
+                  |          |                                |          hammer2_vop_readdir
+                  |          |                                |          iterate_dir
+                  |          |                                |          __x64_sys_getdents64
+                  |          |                                |          do_syscall_64
+                  |          |                                |          entry_SYSCALL_64_after_hwframe
+                  |          |                                |          
+                  |          |                                 --2.22%--hammer2_chain_lookup
+                  |          |                                           |          
+                  |          |                                            --2.21%--hammer2_xop_readdir
+                  |          |                                                      hammer2_xop_start_except
+                  |          |                                                      hammer2_vop_readdir
+                  |          |                                                      iterate_dir
+                  |          |                                                      __x64_sys_getdents64
+                  |          |                                                      do_syscall_64
+                  |          |                                                      entry_SYSCALL_64_after_hwframe
+                  |          |          
+                  |           --4.81%--xa_load
+                  |                     hammer2_lockdep_lookup
+                  |                     |          
+                  |                      --3.57%--hammer2_chain_lockdep_set
+                  |                                |          
+                  |                                 --2.48%--hammer2_chain_lockdep_nest
+                  |          
+                  |--4.02%--xas_start
+                  |          xas_load
+                  |          |          
+                  |          |--2.35%--filemap_get_entry
+                  |          |          __filemap_get_folio_mpol
+                  |          |          
+                  |           --1.67%--xa_load
+                  |                     |          
+                  |                      --1.67%--hammer2_lockdep_lookup
+                  |          
+                   --2.29%--filemap_get_entry
+                             __filemap_get_folio_mpol
+       20.42%  t_readdir_3  [kernel.kallsyms]  [k] __lock_acquire
+               |
+               ---__lock_acquire
+                  |          
+                  |--18.88%--lock_acquire
+                  |          |          
+                  |          |--3.96%--down_write
+                  |          |          |          
+== perf report, children, top symbols
+       99.99%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] entry_SYSCALL_64_after_hwframe
+       99.99%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] do_syscall_64
+       99.64%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] __x64_sys_getdents64
+       99.63%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] iterate_dir
+       99.62%     0.06%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_vop_readdir
+       93.96%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_start_except
+       93.84%     0.05%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_readdir
+       92.71%     0.45%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_lookup
+       67.59%     0.00%  t_readdir_3  t_readdir_3           [.] kernel_setpos
+       67.59%     0.00%  t_readdir_3  [unknown]             [k] 0xf92ee9f631000000
+       67.58%     0.00%  t_readdir_3  libc.so.6             [.] syscall
+       43.84%     0.08%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_get
+       35.25%     0.74%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_lock
+       32.85%     0.62%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_load_data.part.0
+       32.06%     0.00%  t_readdir_3  libc.so.6             [.] getdents64
+       28.92%     0.06%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_io_bread
+       28.87%     0.82%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_io_getblk
+       28.32%     0.07%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_alloc
+       25.86%     4.49%  t_readdir_3  [kernel.kallsyms]     [k] lock_acquire
+       25.82%     2.31%  t_readdir_3  [kernel.kallsyms]     [.] xas_load
+       23.68%     0.47%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_bread
+       22.96%     0.18%  t_readdir_3  [kernel.kallsyms]     [.] __filemap_get_folio_mpol
+       22.85%    20.78%  t_readdir_3  [kernel.kallsyms]     [k] lock_is_held_type
+       22.77%     0.71%  t_readdir_3  [kernel.kallsyms]     [.] filemap_get_entry
+       22.33%     0.11%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_repparent
+       21.86%    20.42%  t_readdir_3  [kernel.kallsyms]     [k] __lock_acquire
+       19.34%     0.00%  t_readdir_3  [unknown]             [k] 0x001a91dd91c78001
+       18.64%     0.20%  t_readdir_3  [kernel.kallsyms]     [.] __kvmalloc_node_noprof
+       18.26%     0.06%  t_readdir_3  [kernel.kallsyms]     [.] __create_object
+       16.74%     0.10%  t_readdir_3  [kernel.kallsyms]     [.] __alloc_object
+       14.46%     0.03%  t_readdir_3  [kernel.kallsyms]     [.] set_track_prepare
+       14.23%     0.01%  t_readdir_3  [kernel.kallsyms]     [.] stack_trace_save
+       14.22%     0.36%  t_readdir_3  [kernel.kallsyms]     [.] arch_stack_walk
+       13.52%     0.09%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_lockdep_nest
+       13.42%     0.17%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_lockdep_set
+       12.50%     0.13%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_lockdep_lookup
+       12.37%     0.25%  t_readdir_3  [kernel.kallsyms]     [.] xa_load
+       11.63%     7.56%  t_readdir_3  [kernel.kallsyms]     [k] lock_release
+       11.56%     0.15%  t_readdir_3  [kernel.kallsyms]     [.] do_read_cache_folio
+        9.93%     0.40%  t_readdir_3  [kernel.kallsyms]     [.] lockdep_init_map_type
+== lockdep after the workload
+    lock-classes:                         1880 [max: 8192]
+    dynamic-keys:                          236
+    direct dependencies:                 22050 [max: 32768]
+    indirect dependencies:              114174
+    all direct dependencies:            389886
+    dependency chains:                   38498 [max: 1048576]
+== hammer2 lock classes in /proc/lockdep: class count, direct deps from them, direct deps into them from other classes
+   77 classes, 784 direct deps from them, 19 into them from other classes
+== hammer2 class names, first 40 distinct prefixes
+         4 h2ip
+         3 h2dio_inode
+         3 h2core_inode
+         3 h2ch_inode
+         2 h2dio_indirect
+         2 h2dio_dirent
+         2 h2core_indirect
+         2 h2core_dirent
+         2 h2ch_indirect
+         2 h2ch_dirent
+         1 hammer2_lockdep_classes.xa_lock
+         1 h2msg
+         1 h2mp_xop
+         1 h2mp_tx
+         1 h2mp_list
+         1 h2mp_inum
+         1 h2mp_bset
+         1 h2ip_cl
+         1 h2io
+         1 h2dio_volume
+         1 h2dio_indirect/3#4
+         1 h2dio_indirect/3#3
+         1 h2dio_indirect/3#2
+         1 h2dio_indirect/2#6
+         1 h2dio_indirect/2#5
+         1 h2dio_indirect/2#4
+         1 h2dio_indirect/2#3
+         1 h2dio_indirect/2#2
+         1 h2dio_freemap_leaf
+         1 h2dio_freemap
+         1 h2dev_vol
+         1 h2dev_iohash
+         1 h2core_indirect/3#4
+         1 h2core_indirect/3#3
+         1 h2core_indirect/3#2
+         1 h2core_indirect/2#6
+         1 h2core_indirect/2#5
+         1 h2core_indirect/2#4
+         1 h2core_indirect/2#3
+         1 h2core_indirect/2#2
+== classes with most direct deps, top 12 (any owner)
+   79 &type->s_umount_key#28/1
+   68 rtnl_mutex
+   66 h2_mnt
+   64 btrfs_trans_num_extwriters
+   63 &type->s_umount_key#29
+   58 (work_completion)(&(&wb->dwork)->work)
+   57 acpi_scan_lock
+   57 (work_completion)(&(&hda->probe_work)->work)
+   57 &sb->s_type->i_mutex_key#14
+   56 &type->i_mutex_dir_key#6
+   55 &disk->open_mutex
+   54 registration_lock
+   [  255.556135] hammer2: hammer2_kill_sb: after unmount: 3 inode, 3 chain, 0 modified, 1 dio still allocated
+   [  255.573783] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+rmmod exit 0
+== lockdep after rmmod
+    lock-classes:                         1797 [max: 8192]
+    dynamic-keys:                          235
+    direct dependencies:                 20030 [max: 32768]
+    indirect dependencies:              105247
+    all direct dependencies:            367198
+    dependency chains:                   32909 [max: 1048576]
+cat: /proc/sys/kernel/debug_locks: No such file or directory
+debug_locks 
+log: bug 0 oops 0 warn 0 lockdep 0
+== driver done 19:48:23, module b64ec28
+exit 0
+
+== probe1.sh
+#!/bin/sh
+# Guest-side probe, 2026-10-17: lockdep share, unmount-counter control,
+# directory-seek scaling.  Output is the record.
+set -u
+T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
+S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
+[ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+ld() { grep -E "lock-classes|dynamic-keys|direct dependencies|dependency chains:" /proc/lockdep_stats | sed "s/^/   /"; }
+dmesg -C
+echo "== uptime $(cut -d' ' -f1 /proc/uptime) s, $(uname -r), debug_locks $(cat /proc/sys/kernel/debug_locks 2>/dev/null || echo ?)"
+echo "== lockdep before insmod"; ld
+insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
+echo "== lockdep after insmod"; ld
+mkdir -p /mnt/h2xtest /mnt/h2xscratch
+mount -t hammer2 "$T" /mnt/h2xtest || { echo "SETUP mount test"; exit 0; }
+mount -t hammer2 "$S" /mnt/h2xscratch || { echo "SETUP mount scratch"; exit 0; }
+echo "== lockdep after two mounts"; ld
+echo "== control: a clean unmount of scratch while test stays mounted"
+umount /mnt/h2xscratch && dmesg | grep "after unmount" | tail -1
+mount -t hammer2 "$S" /mnt/h2xscratch || { echo "SETUP remount scratch"; exit 0; }
+TR=/root/h2xfstests/src/t_readdir_3
+for n in 250 500 1000; do
+	rm -rf "/mnt/h2xscratch/d$n"; mkdir "/mnt/h2xscratch/d$n"
+	echo "== t_readdir_3 n=$n seed 7"
+	/usr/bin/time -f "   n=$n wall %e s user %U s sys %S s" "$TR" "/mnt/h2xscratch/d$n" "$n" 7 2>&1 | tail -4 | sed "s/^/   /"
+done
+echo "== perf stat t_readdir_3 n=500"
+rm -rf /mnt/h2xscratch/ds; mkdir /mnt/h2xscratch/ds
+perf stat -e context-switches,cpu-migrations,task-clock -- "$TR" /mnt/h2xscratch/ds 500 7 2>&1 | grep -E "context-switches|task-clock|elapsed|sys|user" | sed "s/^/   /"
+echo "== perf record t_readdir_3 n=1000, no-children, >=1.5%"
+rm -rf /mnt/h2xscratch/dp; mkdir /mnt/h2xscratch/dp
+perf record -q -g -o /tmp/perf.data -- "$TR" /mnt/h2xscratch/dp 1000 7 >/dev/null 2>&1
+perf report -i /tmp/perf.data --stdio --no-children --percent-limit 1.5 2>/dev/null | grep -v "^$" | grep -v "^#" | head -90 | sed "s/^/   /"
+echo "== perf report, children, top symbols"
+perf report -i /tmp/perf.data --stdio --children -g none --percent-limit 3 2>/dev/null | grep -v "^$" | grep -v "^#" | head -40 | sed "s/^/   /"
+echo "== lockdep after the workload"; ld
+echo "== hammer2 lock classes in /proc/lockdep: class count, direct deps from them, direct deps into them from other classes"
+awk '
+/^[0-9a-f]/ { inh2 = ($0 ~ /h2|hammer2/); if (inh2) ncls++; next }
+/^ -> / { if (inh2) from++; else if ($0 ~ /h2|hammer2/) into++ }
+END { print "   " ncls " classes, " from " direct deps from them, " into " into them from other classes" }' /proc/lockdep
+echo "== hammer2 class names, first 40 distinct prefixes"
+grep -E "^[0-9a-f].*(h2|hammer2)" /proc/lockdep | sed "s/.*: //" | sed "s/\/[0-9]*$//" | sort | uniq -c | sort -rn | head -40 | sed "s/^/   /"
+echo "== classes with most direct deps, top 12 (any owner)"
+awk '/^[0-9a-f]/ { if (name != "") print n, name; name=$0; sub(/.*: /, "", name); n=0; next } /^ -> / { n++ } END { print n, name }' /proc/lockdep | sort -rn | head -12 | sed "s/^/   /"
+umount /mnt/h2xscratch /mnt/h2xtest
+dmesg | grep "after unmount" | tail -2 | sed "s/^/   /"
+rmmod hammer2; echo "rmmod exit $?"
+echo "== lockdep after rmmod"; ld
+echo "debug_locks $(cat /proc/sys/kernel/debug_locks)"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") lockdep $(dmesg | grep -ci "lockdep\|possible.*deadlock\|too low")"
