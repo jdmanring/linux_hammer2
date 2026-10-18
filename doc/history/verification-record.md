@@ -15165,3 +15165,250 @@ load of this module sets.
 
 The module builds against rc5 with no warning and imports
 `generic_setlease`.
+
+## The ten failures reread one at a time, five defects fixed, 2026-10-17
+
+The 2026-10-08 entry above gave ten of the quick group's failures a
+one-clause disposition each, written before the twenty-four were read
+one by one, and nothing had read them since: `003`, `313`, `423` and
+`258` as timestamps "this port does not store as the tests expect",
+`228`, `306` and `409`/`410`/`411` as surfaces this port "does not carry
+or declares", and `732` with the double mounts. Each was rerun alone on
+`h2debug-rc5` with the 1.0.36 module (`3b71246`), kept as
+`doc/history/xfstests-ten-before-2026-10-17.log`: 10 of 10 failed, `log:
+bug 0 oops 0 warn 0`. Read against its expected output, each failure is
+one of these:
+
+| test | what it showed | whose |
+|---|---|---|
+| `306` | a write to the null device made by `mknod` on a read-only mount refused `EROFS`, where the test expects 512 bytes written | the port's |
+| `423` | a fifo and a character device each with a ctime before its mtime, `880000000 < 881483000`, before `check` cuts the diff; the device numbers are the second defect, read from the source below | the port's, two defects |
+| `313` | ctime and mtime unchanged by `truncate(2)` down and up | the port's |
+| `228` | a 101 MB allocate under a 100 MB `RLIMIT_FSIZE` succeeded | the port's |
+| `003` | mtime and ctime changed across a remount, beside the access-time lines | the port's, and the access-time decision |
+| `258` | a time before 1970 read back as 0 | the format |
+| `409`, `410`, `411`, `732` | a second mount of the mounted device refused, `already mounted` | refused as DragonFly refuses it |
+
+So five of the ten were the port's, and the old clause had read each of
+the five as the format's or as a surface not carried.
+
+**Device nodes, fifos and sockets** (`ccd62e8`). `hammer2_igetv()` gave
+every inode that is not a directory or a symlink the regular-file
+operations. A device node opened as an empty regular file, so `306`'s
+write met the file write path's `EROFS`, a read of it would have met end
+of file, and a fifo never blocked. The create stored the device in `rmajor` and
+`rminor` and nothing read it back. DragonFly gives a device node the spec
+vnode ops and its device through `addaliasu()`, a fifo the fifo ops and a
+socket its type alone (`hammer2_inode.c:773-790` upstream);
+`init_special_inode()` is that here. `306` and `423` on that module alone,
+`doc/history/xfstests-special-2026-10-17.log`: `306` passed in 5 s, and
+`423` reported the ctime ordering alone, the device numbers right.
+
+**An extending allocate racing a write** (`ce98b3c`), found while
+reading `->fallocate` for `228`: its comment said the VFS holds `i_rwsem`
+for the call, and `vfs_fallocate()` takes no inode lock at 6.15 or 7.3
+(`fs/open.c:337-338`). ext4 takes `inode_lock()` and
+`filemap_invalidate_lock()` in its own `->fallocate`
+(`fs/ext4/extents.c:4978`, `:5000`). The call read the size at entry
+and later set it to the end of its range with `truncate_setsize()`, so a
+write that passed that end in between was cut off. The fallocate
+exerciser gained the race: a child extends a file with one 512-byte
+write per 4 KiB step and publishes its progress, the parent allocates up
+to 2048 bytes into the step the child is about to write, every write
+must read back, and the overlapping allocates are counted. On a scratch
+volume on `h2debug-rc5`, kept as
+`doc/history/falloc-race-before-2026-10-17.log` and `-after-`: the module
+at `ccd62e8` lost 1001, 765 and 575 of 2048 writes in three runs, every
+one reading zeros, with the size still right because later writes
+re-extended the file; with `i_rwsem` taken around the call, 2048 of 2048
+in three runs over 9,385, 8,986 and 10,713 overlapping allocates, 23
+checks and 0 failures, `debug_locks` 1 and no lockdep report. `tmpfs` on
+the same guest kept all 2048 over 154,897.
+
+**The file-size limit** (`02737b4`). An extending allocate now calls
+`inode_newsize_ok()`, as ext4 (`extents.c:4801`, `:4921`) and xfs
+(`xfs_file.c:1228`) do. `228` alone, `doc/history/xfstests-228-2026-10-17.log`:
+passed in 3 s.
+
+**Timestamps, first pass** (`75966cf`). The core stamped `meta` from
+`hammer2_update_time()`, which read `ktime_get_real_ts64()`, and the
+port's Linux lines then stamped the VFS inode with
+`inode_set_ctime_current()`, which reads the coarse clock through
+`current_time()`. The coarse clock trails the fine one by up to a tick,
+so the two copies of a time disagreed, and the super block declared a
+granularity of one nanosecond to a format that stores microseconds.
+`423`'s ordering is that: `mkfifo -m` and `mknod -m` `chmod` the new
+node, `notify_change()` stamps its ctime from the coarse clock, and the
+create's mtime came from the fine one a moment earlier. `313` is the
+path `truncate(2)`, which passes `ATTR_SIZE` alone where `ftruncate(2)`
+adds both times (`fs/open.c:118`, `:194-195`), so `setattr` copied the
+stale VFS ctime over the core's fresh one. DragonFly's `vfs_timestamp()`
+at its default precision is `getnanotime()` truncated to microseconds
+(`sys/kern/vfs_subr.c:238-253`), the tick clock, which is what
+`hammer2_update_time()` reads now, and the granularity is a microsecond.
+The instrument is `test/hammer2-times.sh`: objects each stamped by a
+different operation, `stat` at nanosecond resolution, a remount, and the
+same `stat` again, with any ctime earlier than its mtime reported before
+the remount. Kept as `doc/history/times-probe-2026-10-17.log`: on the
+module at `02737b4`, 10 of 13 objects showed a different time after the
+remount and the fifo and the device node read ctime before mtime; on
+the module with the change, committed as `75966cf`, 0 of 13 in each of
+three runs, kernel log clean.
+
+**Timestamps, second pass** (`287e8c0`). An independent review of the four
+commits against the kernel of record refused the first pass's claim that
+the coarse clock is "the one `current_time()` reads". It is not:
+`current_time()` and `inode_set_ctime_current()` read
+`ktime_get_coarse_real_ts64_mg()` (`fs/inode.c:2430`, `:2885`), the later
+of the coarse clock and a global floor that any multigrain filesystem
+raises when a stat and a change land in one tick
+(`kernel/time/timekeeping.c:2728-2745`), and ext4, xfs, btrfs and tmpfs
+are all multigrain (`FS_MGTIME` in each one's `file_system_type`). The
+test guest's root is btrfs and its `/tmp` tmpfs. So a write(2), whose
+stamp came from `file_update_time()`, could carry a time ahead of the
+one a rename took from the module's clock a moment later, and the
+headline inversion stood open. The `_mg` reader is not exported
+(`timekeeping.c:2717` exports the plain one). Three more findings from
+the same reading: the write tail read the VFS times after dropping
+`i_rwsem` and before taking `ip->lock`, so two writers could leave `stat`
+with one stamp and the media with the other; the unlink and rename paths
+stamped the unlinked inode's VFS ctime from a second clock reading after
+`hammer2_inode_unlink_finisher()` had stored its own; and with no
+`->update_time`, `file_update_time()` from `filemap_page_mkwrite()` and
+`pipe_write()` stamped the VFS inode alone, so a file changed only
+through a mapping, or a fifo written into, read its old mtime back after
+a remount. One change answers all four: every stamp is taken from
+`hammer2_update_time()`. `->update_time` on the four inode-operations
+tables stores the stamp in `meta` under `ip->lock` and sets the VFS copy
+there, and the write tail is gone; `->setattr` replaces what
+`notify_change()` filled from `current_time()`, keeping a time the
+caller set; unlink and rename copy the finisher's stamp; link and
+fallocate set the VFS copies before unlocking. `doc/README.porting.md` has the decision.
+
+The probe gained a write through a mapping (`xfs_io mwrite`), a write
+into the fifo, and a control that drives the floor: two thousand rounds
+of a tmpfs stat and append, a write on the volume and a rename, as
+system calls from one perl process so most rounds land inside a tick,
+counting every renamed file whose ctime is behind its mtime. A fake pass
+is a control that never fired, so the module before the fix is run
+first. Kept as `doc/history/times-probe2-2026-10-17.log`: on `75966cf`,
+2 of 14 objects moved across the remount, the mapping and the fifo, and
+1993 of 2000 renamed files read ctime before mtime; on the module with
+the change, committed as `287e8c0`, 0 of 14 and 0 of 2000 in each of
+three runs, kernel log clean. Those three ran with lockdep off, since the
+group run below had exhausted it, so the guest was cycled and the probe
+run three times more on that module with
+`debug_locks` 1 before: 0 of 14 and 0 of 2000 in each, `debug_locks` 1
+after, and no lockdep, `WARNING` or `BUG` line in the kernel log, which
+holds only the module's own load and unmount lines. The lock order the
+change adds,
+`ip->lock` under `mmap_lock` from `filemap_page_mkwrite()`, is the one
+`->read_folio` already takes under a fault.
+
+**Candidate, not measured.** `hammer2_vop_link()` increments
+`ip->meta.nlinks` and stamps its ctime before it tests
+`hammer2_dirent_create()`'s error, so a link that failed to make its
+entry would leave the media's link count one high, and the inode would
+never be freed. DragonFly and the FreeBSD port have the same order.
+The VFS count rises only on success here, so the two would disagree
+after a remount. No run has made `hammer2_dirent_create()` fail under a
+link, and until one does this is a reading of the source.
+
+**Fenced.** The tests this format cannot pass and the refusals it shares
+with DragonFly are now handed to `check` as `-E` from
+`test/xfstests/hammer2.exclude`, which names each with its reason, and
+the runner counts and names every test it expunges. A fake pass is a
+batch of nothing but expunged tests, which `check` reports as "Passed
+all 0 tests" with no `Ran:` line, so the runner reads that as
+COULD-NOT-RUN. Both read on `287e8c0`,
+`doc/history/xfstests-exclude-2026-10-17.log`: `258` beside `001`, "1 of
+1 executed, 1 expunged (generic/258)", exit 0; `258` alone, "every test
+named is expunged", exit 2.
+
+**The quick group on `75966cf`**, `doc/history/xfstests-quick3-2026-10-17.log`:
+135 of 646 executed, 511 not run, 14 failed, `rmmod exit 0`, `log: bug 0
+oops 0 warn 0`, the suite at `a6d1f76`. Against the twenty-four of
+`xfstests-quick2-2026-10-17.log`: the five this entry aimed at pass
+(`131` with the locktest build fix, `228`, `306`, `313`, `423`), and six
+that the 2026-10-08 entry fenced by reason pass as well, `467`, `604`,
+`610`, `634`, `738` and `798`, which no change here aimed at; which of
+the four changes moved each is not traced, so those six fences are
+withdrawn by this reading and not by a mechanism. Of the fourteen left,
+`003` is the access-time decision, twelve are the exclude list's (`009`,
+`092`, `255`, `679`, `796` and `797` for the unwritten extent, `519` for
+dedup, `258` for the epoch, `409`, `410`, `411` and `732` for the second
+mount), and one is new, `338`. Its own checks passed and `_check_dmesg`
+failed on `BUG: MAX_LOCKDEP_ENTRIES too low!` in `dmsetup`'s
+`dev_remove()`: the lockdep dependency table, `CONFIG_LOCKDEP_BITS=15`
+for 32768 entries, filled 78 minutes into the guest's uptime, after the
+day's earlier runs and the 263 tests of the group listed before it, 60
+of them executed. Lockdep turned itself off there, at 16:13, so the 382
+listed after it, 74 of them executed, ran without it. The same report shows the
+unmount under dm-error leaving `3 inode, 3 chain, 0 modified, 2 dio
+still allocated`, where the clean unmount a moment later reports zeros:
+a leak on the error path, found here and not fixed. Both are kept in
+`doc/history/xfstests-338-2026-10-17.log`. The runner's own log line
+counts `kernel BUG`, `Oops` and `WARNING:` and could not see either;
+that line is read beside `_check_dmesg`'s verdict, not instead of it.
+
+**Audit.** An independent adversarial reading of this entry, the 1.0.37
+row, the porting section and the two newest commit messages, before any
+of them was published, refused sign-off on six counts, each checked
+against the source before it was taken: five of the ten were the port's
+where the draft said six; the exclude list has twelve entries where the
+draft and the exclude commit's message said eleven; the count of tests
+after `338` was an estimate, and is now read from the log; an analogy
+crediting `xfs_setattr_nonsize()` with its own stamp was false, since
+xfs stamps in `xfs_vn_update_time()` from `current_time()`, the kernel
+clock, which makes it the counter-example; "the access time is not
+stored" contradicted `->setattr`, which stores one the caller sets; and
+two counts still said three inode tables where there are four. Four
+readings it could not trace to a kept log were cut back to what the
+logs show. The two messages were reworded before the push (`287e8c0`,
+`0821569`, source trees unchanged), the comment and document sentences
+corrected in `4656c13`, and the figures retraced. Four more rounds
+followed. The second found the times-probe module hashes named in the
+entry absent from the logs it cited; the third found the ring buffer
+described as read "a minute after the run" where the extract's header
+reads 18:12:59 against `736`'s 18:06:37, and the runner's summary
+suppressed on its timeout path; the fourth found the buffer's interval
+given as 86 s where its first line is 89 s after `736`'s report and the
+read 382 s after it, and the 34 `run fstests` lines credited to the
+extract's contents when they are the guest buffer's, counted by the
+extract. The summary moved ahead of the timeout exit in `d367ab2`, the
+sentences were rewritten, and the fifth round was clean.
+
+**The quick group on `0821569`**, the exclude list active,
+`doc/history/xfstests-quick4-2026-10-17.log`: 646 listed, 12 expunged,
+the set `check` named equal to the list's, 511 not run, 122 executed,
+and one more, `676`, killed at the runner's 900 s bound before it wrote
+a `Ran:` line; `rmmod exit 0`, the suite at `a6d1f76`. Those counts are
+read from the per-test lines, since the runner's summary line came after
+its timeout exit and this run ended on one; the summary is printed on
+that path since `d367ab2`, driven with the bound at 5 s over `676`,
+`doc/history/xfstests-timeout-2026-10-17.log`: TIMEOUT, the FAIL line,
+"0 of 0 executed, 0 not run (none), 0 expunged (none); failed
+generic/676", exit 1. Three failed.
+`003` is the access-time decision. `736` passed its own checks and
+`_check_dmesg` found `BUG: MAX_LOCKDEP_ENTRIES too low!` once more, 72
+minutes into the guest's uptime, this time in a `kfence` allocation under
+a rename's `hammer2_xop_setname2()`, kept as
+`doc/history/xfstests-736-2026-10-17.log`: `338`'s table-capacity finding
+at another test and another allocation, which places it with the guest's
+`CONFIG_LOCKDEP_BITS` and not with either test, and `338` itself passed
+in 3 s here. `676` runs `t_readdir_3` over 4000 files, seeking in a
+directory to valid and invalid positions; it passed in 711 s in quick2
+and in 696 s in quick3, where lockdep had turned itself off at `338`
+before it ran, and here, with lockdep live through the whole of it, it
+reached the bound. The cost of seeking in a directory on this port is a
+finding of its own, read here and not measured. The runner's `log:` line
+read `bug 0 oops 0 warn 0` at the end, and the guest's ring buffer, read
+382 s after `736`'s report, began 89 s after that report and held 34 of
+the run's `run fstests` lines; the extract kept as
+`doc/history/xfstests-quick4-dmesg-2026-10-17.log` records that count,
+the buffer's first line, its first `run fstests` line and `debug_locks`
+0. Over a run this long the runner's line is evidence about the buffer's
+tail, and `_check_dmesg`, which reads per test, is the reader that saw
+`338` and `736`. Against quick3's
+fourteen: the twelve expunged are the list's, `338` passed, and `736`
+and `676` are new.

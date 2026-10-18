@@ -1,0 +1,226 @@
+  suite: a6d1f76 src/locktest.c: fix build failure of struct delegation
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/003        - output mismatch (see /root/h2xfstests/results//generic/003.out.bad)
+      --- tests/generic/003.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/003.out.bad	2026-10-17 15:13:00.865666176 -0700
+      @@ -1,2 +1,9 @@
+       QA output created by 003
+      +ERROR: access time has changed for file1 after remount
+      +ERROR: modify time has changed for file1 after remount
+      +ERROR: change time has changed for file1 after remount
+      +ERROR: access time has not been updated after accessing file2
+      +ERROR: modify time has changed after accessing file3 second time
+      +ERROR: change time has changed after accessing file3 second time
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/003.out /root/h2xfstests/results//generic/003.out.bad'  to see the entire diff)
+  Ran: generic/003
+  Failures: generic/003
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/228        - output mismatch (see /root/h2xfstests/results//generic/228.out.bad)
+      --- tests/generic/228.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/228.out.bad	2026-10-17 15:13:08.341731449 -0700
+      @@ -1,6 +1,5 @@
+       QA output created by 228
+       File size limit is now set to 100 MB.
+       Let us try to preallocate 101 MB. This should fail.
+      -fallocate: File too large
+       Let us now try to preallocate 50 MB. This should succeed.
+       Test over.
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/228.out /root/h2xfstests/results//generic/228.out.bad'  to see the entire diff)
+  Ran: generic/228
+  Failures: generic/228
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/258        [failed, exit status 1]- output mismatch (see /root/h2xfstests/results//generic/258.out.bad)
+      --- tests/generic/258.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/258.out.bad	2026-10-17 15:13:15.417045546 -0700
+      @@ -1,5 +1,6 @@
+       QA output created by 258
+       Creating file with timestamp of Jan 1, 1960
+       Testing for negative seconds since epoch
+      -Remounting to flush cache
+      -Testing for negative seconds since epoch
+      +Timestamp wrapped: 0
+      +Timestamp wrapped
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/258.out /root/h2xfstests/results//generic/258.out.bad'  to see the entire diff)
+  Ran: generic/258
+  Failures: generic/258
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/306        - output mismatch (see /root/h2xfstests/results//generic/306.out.bad)
+      --- tests/generic/306.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/306.out.bad	2026-10-17 15:13:24.222701647 -0700
+      @@ -2,10 +2,9 @@
+       == try to create new file
+       touch: cannot touch 'SCRATCH_MNT/this_should_fail': Read-only file system
+       == pwrite to null device
+      -wrote 512/512 bytes at offset 0
+      -XXX Bytes, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
+      +pwrite: Read-only file system
+       == pread from zero device
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/306.out /root/h2xfstests/results//generic/306.out.bad'  to see the entire diff)
+  Ran: generic/306
+  Failures: generic/306
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/313        - output mismatch (see /root/h2xfstests/results//generic/313.out.bad)
+      --- tests/generic/313.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/313.out.bad	2026-10-17 15:13:35.775000000 -0700
+      @@ -1,2 +1,6 @@
+       QA output created by 313
+       Silence is golden
+      +ctime not updated after truncate down
+      +mtime not updated after truncate down
+      +ctime not updated after truncate up
+      +mtime not updated after truncate up
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/313.out /root/h2xfstests/results//generic/313.out.bad'  to see the entire diff)
+  Ran: generic/313
+  Failures: generic/313
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/409        - output mismatch (see /root/h2xfstests/results//generic/409.out.bad)
+      --- tests/generic/409.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/409.out.bad	2026-10-17 15:14:03.648689124 -0700
+      @@ -1,365 +1,316 @@
+       QA output created by 409
+       bind shared on shared
+      +mount: /mnt/h2xtest/409/13417_mpA: /dev/vdc already mounted on /mnt/h2xtest/409.
+      +       dmesg(1) may have more information after failed mount system call.
+      +mount: /mnt/h2xtest/409/13417_mpA: not mount point or bad option.
+      +       dmesg(1) may have more information after failed mount system call.
+      +mount: /mnt/h2xtest/409/13417_mpA/dir: /dev/vdc already mounted on /mnt/h2xtest/409.
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/409.out /root/h2xfstests/results//generic/409.out.bad'  to see the entire diff)
+  check: possible mount failures (see /root/h2xfstests/results//generic/409.mountfail)
+  Ran: generic/409
+  Failures: generic/409
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/410        - output mismatch (see /root/h2xfstests/results//generic/410.out.bad)
+      --- tests/generic/410.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/410.out.bad	2026-10-17 15:14:48.892000000 -0700
+      @@ -1,813 +1,589 @@
+       QA output created by 410
+       make-shared a shared mount
+      +mount: /mnt/h2xtest/410/15683_mpA: /dev/vdc already mounted on /mnt/h2xtest/410.
+      +       dmesg(1) may have more information after failed mount system call.
+      +mount: /mnt/h2xtest/410/15683_mpA: not mount point or bad option.
+      +       dmesg(1) may have more information after failed mount system call.
+       before make-shared run on shared
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/410.out /root/h2xfstests/results//generic/410.out.bad'  to see the entire diff)
+  check: possible mount failures (see /root/h2xfstests/results//generic/410.mountfail)
+  Ran: generic/410
+  Failures: generic/410
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/411        - output mismatch (see /root/h2xfstests/results//generic/411.out.bad)
+      --- tests/generic/411.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/411.out.bad	2026-10-17 15:14:59.554376436 -0700
+      @@ -1,12 +1,15 @@
+       QA output created by 411
+      +mount: /mnt/h2xtest/411/19462_mpA: /dev/vdc already mounted on /mnt/h2xtest/411.
+      +       dmesg(1) may have more information after failed mount system call.
+      +mount: /mnt/h2xtest/411/19462_mpA: not mount point or bad option.
+      +       dmesg(1) may have more information after failed mount system call.
+      +mount: /mnt/h2xtest/411/19462_mpA/mnt1: /dev/vdc already mounted on /mnt/h2xtest/411.
+      +       dmesg(1) may have more information after failed mount system call.
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/411.out /root/h2xfstests/results//generic/411.out.bad'  to see the entire diff)
+  check: possible mount failures (see /root/h2xfstests/results//generic/411.mountfail)
+  Ran: generic/411
+  Failures: generic/411
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/423        - output mismatch (see /root/h2xfstests/results//generic/423.out.bad)
+      --- tests/generic/423.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/423.out.bad	2026-10-17 15:15:07.736040405 -0700
+      @@ -1,8 +1,21 @@
+       QA output created by 423
+       Test statx on a fifo
+      +[!] ctime.nsec is before mtime.nsec (880000000 < 881483000)
+      +Failed
+      +stat_test failed
+       Test statx on a chardev
+      +[!] ctime.nsec is before mtime.nsec (891000000 < 891579000)
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/423.out /root/h2xfstests/results//generic/423.out.bad'  to see the entire diff)
+  Ran: generic/423
+  Failures: generic/423
+  Failed 1 of 1 tests
+  
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #1 SMP PREEMPT_DYNAMIC Tue Sep 29 19:37:32 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/732        [failed, exit status 1]- output mismatch (see /root/h2xfstests/results//generic/732.out.bad)
+      --- tests/generic/732.out	2026-09-26 15:01:12.000000000 -0700
+      +++ /root/h2xfstests/results//generic/732.out.bad	2026-10-17 15:15:16.763723596 -0700
+      @@ -1,2 +1,6 @@
+       QA output created by 732
+       Silence is golden
+      +mount: /mnt/h2xtest/mountpoint2-732: /dev/vdc already mounted on /mnt/h2xtest/mountpoint1-732.
+      +       dmesg(1) may have more information after failed mount system call.
+      +mount /dev/vdc /mnt/h2xtest/mountpoint2-732 failed
+      +(see /root/h2xfstests/results//generic/732.full for details)
+      ...
+      (Run 'diff -u /root/h2xfstests/tests/generic/732.out /root/h2xfstests/results//generic/732.out.bad'  to see the entire diff)
+  check: possible mount failures (see /root/h2xfstests/results//generic/732.mountfail)
+  Ran: generic/732
+  Failures: generic/732
+  Failed 1 of 1 tests
+  
+  rmmod exit 0
+  log: bug 0 oops 0 warn 0
+xfstests: 10 of 10 executed, 0 not run (none); failed generic/003 generic/228 generic/258 generic/306 generic/313 generic/409 generic/410 generic/411 generic/423 generic/732
+exit 1

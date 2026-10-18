@@ -1,0 +1,94 @@
+[ 4344.475764] run fstests generic/736 at 2026-10-17 18:06:37
+[ 4347.472857] BUG: MAX_LOCKDEP_ENTRIES too low!
+[ 4347.473354] turning off the locking correctness validator.
+[ 4347.473954] CPU: 4 UID: 0 PID: 25040 Comm: readdir-while-r Tainted: G           OE       7.3.0-rc5 #1 PREEMPT(full)  a7bae9c826550a2db746b5a81a9d4701a180b794
+[ 4347.475395] Tainted: [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+[ 4347.475957] Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS unknown 02/02/2022
+[ 4347.476782] Call Trace:
+[ 4347.477060]  <TASK>
+[ 4347.477302]  dump_stack_lvl+0x6e/0xa0
+[ 4347.477711]  add_lock_to_list+0xde/0xf0
+[ 4347.478131]  __lock_acquire+0x1676/0x2490
+[ 4347.478569]  lock_acquire+0xda/0x2f0
+[ 4347.478956]  ? get_random_u8+0x7a/0x250
+[ 4347.479374]  get_random_u8+0x83/0x250
+[ 4347.479770]  ? get_random_u8+0x7a/0x250
+[ 4347.480183]  __kfence_alloc+0x319/0x7d0
+[ 4347.480607]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.481122]  ? __kfence_alloc+0xca/0x7d0
+[ 4347.481547]  ? __kvmalloc_node_noprof+0x90b/0xa10
+[ 4347.482052]  ? hammer2_xop_setname2+0x3d/0x70 [hammer2 563dc2e54f933105fea53a5656d8d84f265e15ed]
+[ 4347.482972]  ? hammer2_vop_rename+0x379/0xa10 [hammer2 563dc2e54f933105fea53a5656d8d84f265e15ed]
+[ 4347.483890]  ? vfs_rename+0x69b/0xe80
+[ 4347.484292]  ? filename_renameat2+0x2da/0x540
+[ 4347.484760]  ? __x64_sys_rename+0x48/0x70
+[ 4347.485185]  ? do_syscall_64+0xfe/0x690
+[ 4347.485609]  ? entry_SYSCALL_64_after_hwframe+0x76/0x7e
+[ 4347.486170]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.486676]  __kvmalloc_node_noprof+0x90b/0xa10
+[ 4347.487158]  ? hammer2_xop_setname2+0x3d/0x70 [hammer2 563dc2e54f933105fea53a5656d8d84f265e15ed]
+[ 4347.488068]  hammer2_xop_setname2+0x3d/0x70 [hammer2 563dc2e54f933105fea53a5656d8d84f265e15ed]
+[ 4347.488958]  hammer2_vop_rename+0x379/0xa10 [hammer2 563dc2e54f933105fea53a5656d8d84f265e15ed]
+[ 4347.489861]  vfs_rename+0x69b/0xe80
+[ 4347.490242]  filename_renameat2+0x2da/0x540
+[ 4347.490694]  __x64_sys_rename+0x48/0x70
+[ 4347.491106]  do_syscall_64+0xfe/0x690
+[ 4347.491507]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.492012]  ? find_held_lock+0x2b/0x80
+[ 4347.492424]  ? __x64_sys_rename+0x5a/0x70
+[ 4347.492857]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.493360]  ? lock_release+0xe8/0x320
+[ 4347.493768]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.494274]  ? kmem_cache_free+0x317/0x560
+[ 4347.494717]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.495224]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.495741]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.496251]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.496763]  ? do_syscall_64+0x22f/0x690
+[ 4347.497186]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.497695]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.498201]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.498709]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.499216]  ? do_syscall_64+0x22f/0x690
+[ 4347.499641]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.500149]  ? __lock_acquire+0x53f/0x2490
+[ 4347.500597]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.501101]  ? lock_acquire+0xda/0x2f0
+[ 4347.501505]  ? kmem_cache_free+0x283/0x560
+[ 4347.501941]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.502446]  ? find_held_lock+0x2b/0x80
+[ 4347.502880]  ? __x64_sys_rename+0x5a/0x70
+[ 4347.503304]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.503819]  ? lock_release+0xe8/0x320
+[ 4347.504218]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.504723]  ? kmem_cache_free+0x317/0x560
+[ 4347.505160]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.505685]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.506190]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.506696]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.507201]  ? do_syscall_64+0x22f/0x690
+[ 4347.507619]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.508124]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.508629]  ? do_syscall_64+0x22f/0x690
+[ 4347.509047]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.509553]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.510057]  ? do_syscall_64+0x22f/0x690
+[ 4347.510475]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.510980]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.511487]  ? trace_hardirqs_off_finish+0xc6/0xe0
+[ 4347.511997]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.512502]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4347.513006]  ? do_syscall_64+0x60/0x690
+[ 4347.513418]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+[ 4347.513948] RIP: 0033:0x7f8ed1c6139b
+[ 4347.514332] Code: e8 8a db 0a 00 f7 d8 19 c0 5b c3 0f 1f 40 00 b8 ff ff ff ff 5b c3 66 0f 1f 84 00 00 00 00 00 f3 0f 1e fa b8 52 00 00 00 0f 05 <48> 3d 00 f0 ff ff 77 05 c3 0f 1f 40 00 48 8b 15 41 a9 1b 00 f7 d8
+[ 4347.516220] RSP: 002b:00007ffc36963718 EFLAGS: 00000202 ORIG_RAX: 0000000000000052
+[ 4347.517005] RAX: ffffffffffffffda RBX: 0000000000000886 RCX: 00007f8ed1c6139b
+[ 4347.517741] RDX: 0000000000000018 RSI: 0000558c5798f1db RDI: 0000558c2056204f
+[ 4347.518483] RBP: 0000000000000000 R08: 0000558c57982524 R09: 0000000000010040
+[ 4347.519215] R10: 0000000000000000 R11: 0000000000000202 R12: 0000558c57982010
+[ 4347.519950] R13: 0000558c57982520 R14: 0000558c5798f1db R15: 00007f8ed1f6b108
+[ 4347.520688]  </TASK>
+[ 4348.164163] indirect_maint: parent 00000000c9e394a8 000000000000e4f4/0 collapsing 0000000041092d71 8000000000000000/62
+[ 4348.164549] indirect_maint: parent 00000000c9e394a8 000000000000e4f4/0 collapsing 0000000086f6a080 c000000000000000/62
+[ 4348.381453] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated

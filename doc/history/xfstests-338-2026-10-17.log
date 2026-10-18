@@ -1,0 +1,126 @@
+== generic/338 on 75966cf, h2debug-rc5, quick group of 2026-10-17 (xfstests-quick3): the test's own checks passed and _check_dmesg failed on the lockdep capacity line below; 338.full then 338.dmesg as xfstests kept them
+== 338.full
+Volume /dev/vdc        size   3.00GB
+checkvolu header 0 00000000c0000000/00000000c0000000
+---------------------------------------------
+version:          2
+total-size:         3.00GB (3221225472 bytes)
+boot-area-size:    64.00MB (67108864 bytes)
+aux-area-size:    128.00MB (134217728 bytes)
+topo-reserved:     12.00MB (12582912 bytes)
+free-size:          2.80GB (3007315968 bytes)
+vol-fsid:         34e38888-5867-4c3e-90f5-9f241ce9a8da
+sup-clid:         b31f7ab1-bd68-40f9-b6e0-e1b3481eec1a
+sup-fsid:         bc5015f2-74e5-4915-a033-2a0a33d48369
+PFS "LOCAL"
+    clid 3d97024d-f948-4009-b5d4-4c9634cd00a9
+    fsid 360123bf-63a6-4b1d-99aa-a239b75e9458
+PFS "DATA"
+    clid 81956c62-1b0e-4678-a24f-65c7ba7fac2f
+    fsid ce661d7a-33de-4545-94e2-6ab6ab959fb2
+device-mapper: remove ioctl on error-test.338  failed: No such device or address
+Command failed.
+ls: reading directory '/mnt/h2xscratch': Input/output error
+total 0
+stat: Input/output error
+umount: /dev/vdc: not mounted.
+== 338.dmesg
+[ 4683.030237] run fstests generic/338 at 2026-10-17 16:13:48
+[ 4684.550558] Buffer I/O error on dev dm-0, logical block 49151, async page read
+[ 4684.813127] 338 (7297): drop_caches: 3
+[ 4684.836397] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.836458] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.836533] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.836537] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.867114] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.867127] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.900173] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.900186] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.900365] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.900372] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40000a
+[ 4684.900451] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.900454] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.900478] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.900481] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40000a
+[ 4684.901125] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.901133] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.901290] Buffer I/O error on dev dm-0, logical block 3136, async page read
+[ 4684.901297] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40000a
+[ 4684.901350] hammer2: hammer2_chain_load_data: inode blockref I/O error 5 at 000000000c40080a
+[ 4684.916048] hammer2: hammer2_kill_sb: after unmount: 3 inode, 3 chain, 0 modified, 2 dio still allocated
+[ 4684.925179] BUG: MAX_LOCKDEP_ENTRIES too low!
+[ 4684.925910] turning off the locking correctness validator.
+[ 4684.926607] CPU: 2 UID: 0 PID: 7535 Comm: dmsetup Tainted: G           OE       7.3.0-rc5 #1 PREEMPT(full)  a7bae9c826550a2db746b5a81a9d4701a180b794
+[ 4684.927979] Tainted: [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+[ 4684.928543] Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS unknown 02/02/2022
+[ 4684.929380] Call Trace:
+[ 4684.929662]  <TASK>
+[ 4684.929902]  dump_stack_lvl+0x6e/0xa0
+[ 4684.930367]  add_lock_to_list+0xde/0xf0
+[ 4684.930813]  __lock_acquire+0x1676/0x2490
+[ 4684.931250]  lock_acquire+0xda/0x2f0
+[ 4684.931646]  ? event_callback+0x3f/0x120 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.932549]  ? dm_get_live_table+0x57/0xd0 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.933448]  ? dm_table_event+0x1b/0x40 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.934304]  _raw_spin_lock_irqsave+0x46/0x60
+[ 4684.934816]  ? event_callback+0x3f/0x120 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.935683]  event_callback+0x3f/0x120 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.936533]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.937063]  dm_table_event+0x33/0x40 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.937908]  __hash_remove+0x85/0x140 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.938753]  dev_remove+0xdc/0x1d0 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.939569]  ? __pfx_dev_remove+0x10/0x10 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.940448]  ctl_ioctl+0x200/0x6c0 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.941271]  dm_ctl_ioctl+0xe/0x20 [dm_mod 26b73c2eabed7a3d9d6a9ac4a7029b29a912e709]
+[ 4684.942083]  __x64_sys_ioctl+0xb9/0x100
+[ 4684.942528]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.943040]  do_syscall_64+0xfe/0x690
+[ 4684.943450]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.943960]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.944477]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.944987]  ? do_syscall_64+0x22f/0x690
+[ 4684.945415]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.945953]  ? lock_acquire+0xda/0x2f0
+[ 4684.946360]  ? kmem_cache_free+0x283/0x560
+[ 4684.946828]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.947340]  ? find_held_lock+0x2b/0x80
+[ 4684.947764]  ? __x64_sys_close+0x47/0xa0
+[ 4684.948199]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.948713]  ? lock_release+0xe8/0x320
+[ 4684.949119]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.949632]  ? kmem_cache_free+0x317/0x560
+[ 4684.950072]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.950586]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.951096]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.951609]  ? do_syscall_64+0x22f/0x690
+[ 4684.952032]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.952545]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.953055]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.953568]  ? do_syscall_64+0x22f/0x690
+[ 4684.953989]  ? find_held_lock+0x2b/0x80
+[ 4684.954403]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.954915]  ? lock_release+0xe8/0x320
+[ 4684.955319]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.955832]  ? find_held_lock+0x2b/0x80
+[ 4684.956245]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.956758]  ? lock_release+0xe8/0x320
+[ 4684.957163]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.957676]  ? do_user_addr_fault+0x359/0x750
+[ 4684.958162]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.958675]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.959184]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.959697]  ? trace_hardirqs_off_finish+0xc6/0xe0
+[ 4684.960225]  ? irqentry_exit+0x10f/0x990
+[ 4684.960656]  ? srso_alias_return_thunk+0x5/0xfbef5
+[ 4684.961164]  ? do_syscall_64+0x60/0x690
+[ 4684.961586]  entry_SYSCALL_64_after_hwframe+0x76/0x7e
+[ 4684.962118] RIP: 0033:0x7f2b2c318cdf
+[ 4684.962515] Code: 00 48 89 44 24 18 31 c0 48 8d 44 24 60 c7 04 24 10 00 00 00 48 89 44 24 08 48 8d 44 24 20 48 89 44 24 10 b8 10 00 00 00 0f 05 <89> c2 3d 00 f0 ff ff 77 18 48 8b 44 24 18 64 48 2b 04 25 28 00 00
+[ 4684.964410] RSP: 002b:00007ffe72515010 EFLAGS: 00000246 ORIG_RAX: 0000000000000010
+[ 4684.965199] RAX: ffffffffffffffda RBX: 0000000000000000 RCX: 00007f2b2c318cdf
+[ 4684.965943] RDX: 0000564233842c50 RSI: 00000000c138fd04 RDI: 0000000000000003
+[ 4684.966689] RBP: 00007f2b2c576a5d R08: 00007f2b2c57f238 R09: 00007ffe72514ed0
+[ 4684.967432] R10: 00007f2b2c576a5d R11: 0000000000000246 R12: 0000564233842c50
+[ 4684.968174] R13: 00007f2b2c57531f R14: 00005642338423e0 R15: 0000000000000003
+[ 4684.968925]  </TASK>
+[ 4685.170429] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated

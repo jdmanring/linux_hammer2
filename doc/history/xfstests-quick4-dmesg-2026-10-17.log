@@ -1,0 +1,8 @@
+== guest ring buffer after the quick4 run, read 18:12:59
+ 18:12:59 up  1:18,  1 user,  load average: 0.12, 0.74, 1.04
+lines: 1052  MAX_LOCKDEP lines: 0  run-fstests lines: 34
+first line:
+[ 4433.659132] indirect_maint: parent 0000000092e76a09 0000000000010496/0 collapsing 0000000051d0bea1 0000000000000000/2
+first run fstests line:
+[ 4439.366693] run fstests generic/760 at 2026-10-17 18:08:12
+ debug_locks:                             0
