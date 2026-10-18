@@ -1038,6 +1038,7 @@ extern struct hammer2_pfslist hammer2_pfslist;
 extern hammer2_lk_t hammer2_mntlk;
 
 extern int hammer2_debug;
+extern int hammer2_sync_snapshot;	/* XXX Linux: see hammer2_synchro.c */
 extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
 extern int hammer2_cluster_data_read;
@@ -1282,6 +1283,16 @@ void hammer2_io_dedup_assert(hammer2_dev_t *, hammer2_off_t, unsigned int);
 /* hammer2_ioctl.c */
 int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
     const struct cred *);
+/*
+ * XXX Linux: the snapshot and delete ioctl bodies, callable by the
+ * synchronization thread.  HAMMER2_PFSSNAP_PMPSYNC is a flag of
+ * hammer2_pfs_snapshot() beside the ioctl's HAMMER2_PFSFLAGS_* bits.
+ */
+#define HAMMER2_PFSSNAP_PMPSYNC		0x40000000
+#define HAMMER2_PFSDEL_TRYLOCK		0x00000001
+int hammer2_pfs_snapshot(hammer2_pfs_t *, int, const char *, int,
+    hammer2_tid_t *, hammer2_pfs_t **);
+int hammer2_pfs_delete_byname(hammer2_dev_t *, const char *, int);
 
 /* hammer2_ondisk.c */
 int hammer2_open_devvp(struct super_block *, const hammer2_devvp_list_t *);

@@ -410,6 +410,32 @@ hammer2_ioctl_pfs_delete(hammer2_inode_t *ip, void *data)
 {
 	hammer2_ioc_pfs_t *pfs = data;
 	hammer2_dev_t *hmp;
+
+	hmp = ip->pmp->pfs_hmps[0];
+	if (hmp == NULL)
+		return (EINVAL);
+
+	if (pfs->name[0] == 0)
+		return (EINVAL);
+	pfs->name[sizeof(pfs->name) - 1] = 0;
+
+	if (hammer2_is_rdonly(ip->pmp->mp))
+		return (EROFS);
+
+	return (hammer2_pfs_delete_byname(hmp, pfs->name, 0));
+}
+
+/*
+ * XXX Linux: the body of the pfs-delete ioctl, callable from the
+ * synchronization thread, which deletes the snapshots it took.  The
+ * caller has checked the name and the mount's writability.
+ * HAMMER2_PFSDEL_TRYLOCK returns EAGAIN rather than waiting for
+ * hammer2_mntlk, since an unmount holds that lock while it waits for the
+ * thread to stop.
+ */
+int
+hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
+{
 	hammer2_pfs_t *spmp, *pmp;
 	hammer2_xop_unlink_t *xop;
 	hammer2_inode_t *dip;
@@ -422,25 +448,19 @@ hammer2_ioctl_pfs_delete(hammer2_inode_t *ip, void *data)
 	 * them.  We must remove the PFS from the cluster
 	 * before we can destroy it.
 	 */
-	hmp = ip->pmp->pfs_hmps[0];
-	if (hmp == NULL)
-		return (EINVAL);
-
-	if (pfs->name[0] == 0)
-		return (EINVAL);
-	pfs->name[sizeof(pfs->name) - 1] = 0;
-
-	if (hammer2_is_rdonly(ip->pmp->mp))
-		return (EROFS);
-
-	hammer2_lk_ex(&hammer2_mntlk);
+	if (flags & HAMMER2_PFSDEL_TRYLOCK) {
+		if (!hammer2_lk_tryex(&hammer2_mntlk))
+			return (EAGAIN);
+	} else {
+		hammer2_lk_ex(&hammer2_mntlk);
+	}
 
 	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
 		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
 			if (pmp->pfs_hmps[i] != hmp)
 				continue;
 			if (pmp->pfs_names[i] &&
-			    strcmp(pmp->pfs_names[i], pfs->name) == 0)
+			    strcmp(pmp->pfs_names[i], name) == 0)
 				break;
 		}
 		if (i != HAMMER2_MAXCLUSTER)
@@ -460,8 +480,26 @@ hammer2_ioctl_pfs_delete(hammer2_inode_t *ip, void *data)
 	 * Ok, we found the pmp and we have the index.  Permanently remove
 	 * the PFS from the cluster.
 	 */
-	debug_hprintf("FOUND PFS %s CLINDEX %d\n", pfs->name, i);
+	debug_hprintf("FOUND PFS %s CLINDEX %d\n", name, i);
 	hammer2_pfsdealloc(pmp, i, 1);
+
+	/*
+	 * XXX Linux: a PFS whose last element was just removed stayed on
+	 * hammer2_pfslist until its device was torn down, since only
+	 * hammer2_pfsfree_scan() frees a PFS at zero elements.  One such
+	 * structure per pfs-delete was a slow accumulation; the
+	 * synchronization thread deleting a snapshot every pass would make
+	 * it a fast one.  An unmounted PFS left with no chain in any slot is
+	 * freed here, under the same lock pfsfree_scan() holds for it.
+	 */
+	if (pmp->mp == NULL && pmp->iroot) {
+		for (i = 0; i < pmp->iroot->cluster.nchains; ++i) {
+			if (pmp->iroot->cluster.array[i].chain)
+				break;
+		}
+		if (i == pmp->iroot->cluster.nchains)
+			hammer2_pfsfree(pmp);
+	}
 
 	hammer2_lk_unlock(&hammer2_mntlk);
 
@@ -475,7 +513,7 @@ hammer2_ioctl_pfs_delete(hammer2_inode_t *ip, void *data)
 	hammer2_inode_lock(dip, 0);
 
 	xop = hammer2_xop_alloc(dip, HAMMER2_XOP_MODIFYING);
-	hammer2_xop_setname(&xop->head, pfs->name, strlen(pfs->name));
+	hammer2_xop_setname(&xop->head, name, strlen(name));
 	xop->isdir = 2;
 	xop->dopermanent = H2DOPERM_PERMANENT | H2DOPERM_FORCE;
 	hammer2_xop_start(&xop->head, &hammer2_unlink_desc);
@@ -493,19 +531,8 @@ static int
 hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 {
 	hammer2_ioc_pfs_t *pfs = data;
-	hammer2_dev_t *hmp, *force_local;
-	hammer2_pfs_t *pmp;
-	hammer2_chain_t *chain, *nchain;
-	hammer2_inode_t *nip;
-	hammer2_inode_data_t *wipdata;
-	hammer2_tid_t mtid, starting_inum;
-	int error;
 
-	pmp = ip->pmp;
-	ip = pmp->iroot;
-
-	hmp = pmp->pfs_hmps[0];
-	if (hmp == NULL)
+	if (ip->pmp->pfs_hmps[0] == NULL)
 		return (EINVAL);
 
 	if (pfs->name[0] == 0)
@@ -514,6 +541,45 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 
 	if (hammer2_is_rdonly(ip->pmp->mp))
 		return (EROFS);
+
+	return (hammer2_pfs_snapshot(ip->pmp, 0, pfs->name, pfs->pfs_flags,
+	    NULL, NULL));
+}
+
+/*
+ * XXX Linux: the body of the snapshot ioctl, callable from the
+ * synchronization thread, which snapshots the master element it reads
+ * from and the slave element it writes.  Upstream snapshots element 0;
+ * clindex names the element here.  HAMMER2_PFSSNAP_PMPSYNC flushes the
+ * PFS through hammer2_vfs_sync_pmp() rather than hammer2_sync(), whose
+ * read of s_umount a thread that an unmount is waiting to stop must not
+ * take.  *root_tidp receives the source root chain's modify_tid as read
+ * under the locks the copy is made under, and *pmpp the PFS the snapshot
+ * was registered as, so the thread need not walk hammer2_pfslist for it.
+ * The caller has checked the name and the mount's writability; the thread
+ * holds hammer2_mntlk across the call, since hammer2_pfsalloc() inserts
+ * into a list the unmount walks under it, and the ioctl does not, which is
+ * upstream's own exposure left as it stands.
+ */
+int
+hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
+    int flags, hammer2_tid_t *root_tidp, hammer2_pfs_t **pmpp)
+{
+	hammer2_dev_t *hmp, *force_local;
+	hammer2_inode_t *ip;
+	hammer2_chain_t *chain, *nchain;
+	hammer2_inode_t *nip;
+	hammer2_inode_data_t *wipdata;
+	hammer2_tid_t mtid, starting_inum;
+	int error;
+
+	ip = pmp->iroot;
+	if (ip == NULL || pmp->mp == NULL)
+		return (EINVAL);
+
+	hmp = pmp->pfs_hmps[clindex];
+	if (hmp == NULL)
+		return (EINVAL);
 
 	hammer2_lk_ex(&hmp->bulklk);
 
@@ -524,10 +590,13 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 	 *
 	 * In normal mode we sync the filesystem and use a flush transaction.
 	 */
-	if (pfs->pfs_flags & HAMMER2_PFSFLAGS_NOSYNC) {
+	if (flags & HAMMER2_PFSFLAGS_NOSYNC) {
 		hammer2_trans_init(pmp, 0);
 	} else {
-		hammer2_sync(pmp->mp, MNT_WAIT);
+		if (flags & HAMMER2_PFSSNAP_PMPSYNC)	/* Linux */
+			hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
+		else
+			hammer2_sync(pmp->mp, MNT_WAIT);
 		hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
 	}
 	mtid = hammer2_trans_sub(pmp);
@@ -535,7 +604,23 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 	hammer2_inode_modify(ip);
 	ip->meta.pfs_lsnap_tid = mtid;
 
-	chain = hammer2_inode_chain(ip, 0, HAMMER2_RESOLVE_ALWAYS);
+	chain = hammer2_inode_chain(ip, clindex, HAMMER2_RESOLVE_ALWAYS);
+	if (chain == NULL) {
+		/*
+		 * XXX Linux: an element with no chain, which pfs-delete leaves
+		 * behind in a slot; upstream dereferences it.
+		 */
+		hammer2_inode_unlock(ip);
+		if (flags & HAMMER2_PFSFLAGS_NOSYNC)
+			hammer2_trans_done(pmp, 0);
+		else
+			hammer2_trans_done(pmp,
+			    HAMMER2_TRANS_ISFLUSH | HAMMER2_TRANS_SIDEQ);
+		hammer2_lk_unlock(&hmp->bulklk);
+		return (ENOENT);
+	}
+	if (root_tidp)		/* Linux */
+		*root_tidp = chain->bref.modify_tid;
 	hmp = chain->hmp;
 
 	/*
@@ -555,8 +640,7 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 	 * the shared core so for now just brute-force it.
 	 */
 	hammer2_chain_unlock(chain);
-	nip = hammer2_inode_create_pfs(hmp->spmp, pfs->name, strlen(pfs->name),
-	    &error);
+	nip = hammer2_inode_create_pfs(hmp->spmp, name, strlen(name), &error);
 	hammer2_chain_lock(chain, HAMMER2_RESOLVE_ALWAYS);
 
 	if (nip) {
@@ -589,9 +673,14 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 
 		/* XXX hack blockset copy */
 		/* XXX doesn't work with real cluster */
+		/*
+		 * XXX Linux: it works for one named element, which is what the
+		 * synchronization thread asks for: the blockset copied is that
+		 * element's flushed root, and the snapshot is of that element.
+		 */
 		wipdata->meta = nip->meta;
 		hammer2_spin_ex(&pmp->blockset_spin);
-		wipdata->u.blockset = pmp->pfs_iroot_blocksets[0];
+		wipdata->u.blockset = pmp->pfs_iroot_blocksets[clindex];
 		hammer2_spin_unex(&pmp->blockset_spin);
 
 		KKASSERT(wipdata == &nchain->data->ipdata);
@@ -623,6 +712,8 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 		    wipdata->filename);
 		hammer2_pfsalloc(nchain, wipdata, force_local);
 		nchain->pmp->inode_tid = starting_inum;
+		if (pmpp)		/* Linux */
+			*pmpp = nchain->pmp;
 
 		hammer2_chain_unlock(nchain);
 		hammer2_chain_drop(nchain);
@@ -633,7 +724,7 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 	hammer2_chain_drop(chain);
 
 	hammer2_inode_unlock(ip);
-	if (pfs->pfs_flags & HAMMER2_PFSFLAGS_NOSYNC)
+	if (flags & HAMMER2_PFSFLAGS_NOSYNC)
 		hammer2_trans_done(pmp, 0);
 	else
 		hammer2_trans_done(pmp,

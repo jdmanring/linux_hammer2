@@ -628,6 +628,16 @@ wraps with the same continuation indent and its returns are `return (x);`
 like every other return in the file, one line in each row. The write tail
 it retires had neither, so nothing left the set.
 
+1377 to 1395 on 2026-10-18, when the snapshot and delete ioctl bodies
+became helpers the synchronization thread can call: their two prototypes
+in `hammer2.h`, nine arguments between them, take those arguments unnamed
+as every prototype in that header does and wrap with the continuation
+indent; the two wrappers return their helper's result as `return (x);`
+and the delete helper's try-lock refusal is a third such return; and the
+helpers' four refusals, an unmounted PFS, an element with no device, an
+element with no chain and a lock that would have waited, return positive
+errnos as the module does throughout. No category is new.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING

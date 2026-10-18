@@ -190,6 +190,17 @@ hammer2_lk_ex(hammer2_lk_t *p)
 	down_write(p);
 }
 
+/*
+ * Linux: the try form, for the one taker that must not block on
+ * hammer2_mntlk: the synchronization thread, which an unmount stops while
+ * holding that lock.  Nonzero on success, as down_write_trylock() is.
+ */
+static inline int
+hammer2_lk_tryex(hammer2_lk_t *p)
+{
+	return (down_write_trylock(p));
+}
+
 static inline void
 hammer2_lk_unlock(hammer2_lk_t *p)
 {
