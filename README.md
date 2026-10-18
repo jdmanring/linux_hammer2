@@ -340,6 +340,8 @@ including what each gate cannot catch.
 | [doc/README.roadmap.md](doc/README.roadmap.md) | the order, with the check that ends each step |
 | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | the layering, the shim boundary, the object and locking model |
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
+| [doc/CCMS_DESIGN.md](doc/CCMS_DESIGN.md) | the P3 design note: what cache coherency was, and what completing it has to prove |
+| [doc/SYNC_DESIGN.md](doc/SYNC_DESIGN.md) | the P7 design note: what remote synchronization is in the design, and what reaching a master on another host has to prove |
 | [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
 | [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares it provides, each row on a measurement |
