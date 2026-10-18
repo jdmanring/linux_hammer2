@@ -806,7 +806,7 @@ hammer2_vop_link(struct dentry *odentry, struct inode *dir,
 
 /*
  * Linux: ->getattr is defined below with the other read-side entries, and
- * the directory table is the first of the three to name it.  A static
+ * the directory table is the first of the four to name it.  A static
  * function called before its definition is an error in clang
  * (-Wundefined-internal) and in gcc ("used but never defined"), which
  * script/test-syntax.sh does not suppress, so it is declared here.
@@ -1209,9 +1209,8 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 	 * where the caller set neither, from the kernel's clock, which runs
 	 * ahead of the one hammer2_update_time() reads by the multigrain
 	 * floor any other filesystem on the machine raises.  Every stamp the
-	 * media takes is read from that one function, so these are too, as
-	 * xfs_setattr_nonsize() stamps its own ctime; a time the caller set
-	 * is kept.
+	 * media takes is read from that one function, so these are too; a
+	 * time the caller set is kept.
 	 */
 	hammer2_update_time(&ctime);
 	hammer2_time_to_timespec(ctime, &ts);

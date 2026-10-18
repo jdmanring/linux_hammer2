@@ -1246,12 +1246,14 @@ inode lock before the VFS copy is set; without it the last two stamped
 the VFS inode alone, and the file read its old mtime back after a
 remount. `->setattr` replaces the `ia_ctime`, and the `ia_mtime` and
 `ia_atime` the caller did not set, that `notify_change()` filled from
-`current_time()`, as `xfs_setattr_nonsize()` stamps its own. Each vop
+`current_time()`. Each vop
 that stamps `meta` sets the VFS copy from that stamp under the lock that
 stored it, so two writers cannot leave `stat` with one writer's stamp and
-the media with the other's. The access time keeps the kernel's reading,
-since it is not stored, and so does the inode an unlink empties, since
-nothing on the media is read against it. `s_time_gran` is a microsecond,
+the media with the other's. The access time a read stamps keeps the
+kernel's reading, since `touch_atime()` does not reach the media, while
+one the caller sets is stored with the rest; the inode an unlink empties
+keeps the kernel's reading too, since nothing on the media is read
+against it. `s_time_gran` is a microsecond,
 so a time the caller sets is truncated to what the media can hold before
 anything compares it. `test/hammer2-times.sh` is the instrument, with a
 control that raises the floor from tmpfs and counts the inversions.
