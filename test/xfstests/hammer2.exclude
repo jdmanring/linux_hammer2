@@ -1,11 +1,12 @@
 # Tests this port is not expected to pass, which script/xfstests.sh hands
 # to check as -E.  Each entry is a disposition the verification record
 # makes from the test's own output, and each is one of two kinds: what this
-# format cannot store, and what this port refuses as DragonFly refuses it.
-# A defect of the port's is never listed: it is fixed or it fails, and an
-# open decision fails visibly until it is decided.  The runner counts and
-# names every test this expunges, and H2_XFSTESTS_EXCLUDE=none runs them
-# all, which is how a disposition is rechecked.
+# format cannot store, and what this port does as DragonFly does it, a
+# refusal or a substitution.  A defect of the port's is never listed: it is
+# fixed or it fails, and an open decision fails visibly until it is decided.
+# The runner counts and names every test this expunges, and
+# H2_XFSTESTS_EXCLUDE=none runs them all, which is how a disposition is
+# rechecked.
 #
 # A write of zeros is not stored, so a preallocated range is a hole, and
 # FIEMAP has no unwritten extent to report where the test expects one.
@@ -27,3 +28,9 @@ generic/409
 generic/410
 generic/411
 generic/732
+# The access time is the modification time, as DragonFly reports it and as
+# the three BSD ports report it unless built with HAMMER2_ATIME: a read's
+# atime is not stored, since on a copy-on-write format every atime update
+# rewrites the inode.  A module built with HAMMER2_ATIME=1 stores it, and
+# H2_XFSTESTS_EXCLUDE=none runs this test against that reading.
+generic/003

@@ -32,7 +32,7 @@
 # defines F_GETDELEG without the structure, as glibc 2.44 does; without it
 # those four report locktest missing and are not this port's result.
 #
-# The tests this format cannot pass and the refusals it shares with
+# The tests this format cannot pass and the behavior it shares with
 # DragonFly are handed to check as -E from test/xfstests/hammer2.exclude,
 # which says why for each. check prints an expunged test with no Ran: line
 # and no failure, so every test expunged is counted and named below, and a

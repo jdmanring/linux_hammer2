@@ -2456,11 +2456,13 @@ hammer2_getattr(struct mnt_idmap *idmap, const struct path *path,
  * two writers could leave stat with one writer's stamp and the media
  * with the other's.  The stamp is hammer2_update_time()'s, the clock
  * every stamp this filesystem stores is read from, and the VFS copy is
- * set under the lock that stores it.  The access time is not stored (the
- * mtime-as-atime decision in doc/README.porting.md), so that one stays
- * the kernel's.  A nowait write cannot take the inode lock, which is the
- * answer generic_update_time() gives for a filesystem that dirties its
- * inodes itself.
+ * set under the lock that stores it.  The access time a read stamps is
+ * not stored (the mtime-as-atime decision in doc/README.porting.md), so
+ * that one stays the kernel's; under HAMMER2_ATIME it is stored like the
+ * others, since a build that reports the stored atime and never stores a
+ * read's reads the create's back after every remount.  A nowait write
+ * cannot take the inode lock, which is the answer generic_update_time()
+ * gives for a filesystem that dirties its inodes itself.
  */
 static int
 hammer2_vfs_update_time(struct inode *inode, enum fs_update_time type,
@@ -2470,8 +2472,10 @@ hammer2_vfs_update_time(struct inode *inode, enum fs_update_time type,
 	struct timespec64 ts;
 	uint64_t now;
 
+#ifndef HAMMER2_ATIME
 	if (type != FS_UPD_CMTIME)
 		return (generic_update_time(inode, type, flags));
+#endif
 	if (flags & IOCB_NOWAIT)
 		return (-EAGAIN);
 	if (READ_ONCE(hammer2_device_error))
@@ -2482,10 +2486,15 @@ hammer2_vfs_update_time(struct inode *inode, enum fs_update_time type,
 	hammer2_mtx_ex(&ip->lock);
 	hammer2_update_time(&now);
 	hammer2_inode_modify(ip);
-	ip->meta.mtime = now;
-	ip->meta.ctime = now;
 	hammer2_time_to_timespec(now, &ts);
-	inode_set_mtime_to_ts(inode, inode_set_ctime_to_ts(inode, ts));
+	if (type == FS_UPD_ATIME) {
+		ip->meta.atime = now;
+		inode_set_atime_to_ts(inode, ts);
+	} else {
+		ip->meta.mtime = now;
+		ip->meta.ctime = now;
+		inode_set_mtime_to_ts(inode, inode_set_ctime_to_ts(inode, ts));
+	}
 	hammer2_mtx_unlock(&ip->lock);
 	hammer2_trans_done(ip->pmp, HAMMER2_TRANS_SIDEQ);
 	return (0);

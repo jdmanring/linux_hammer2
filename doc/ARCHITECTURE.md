@@ -97,10 +97,13 @@ under an I/O completion.
 
 `HAMMER2_INVARIANTS` turns on `KKASSERT` and `KASSERTMSG`.
 `HAMMER2_MALLOC` turns on the allocation leak counters.
-`HAMMER2_ATIME` reports the stored atime rather than the mtime in its
-place. HAMMER2 does not maintain atime, DragonFly returns mtime for it and
-has its set path disabled, and all three BSD ports return mtime unless this
-knob is set, which is why the default here does the same.
+`HAMMER2_ATIME` stores the atime a read stamps and reports it, rather than
+the mtime in its place. HAMMER2 does not maintain atime, DragonFly returns
+mtime for it and has its set path disabled, and all three BSD ports return
+mtime unless this knob is set, which is why the default here does the same;
+the knob here goes one step past theirs, since a build that reported the
+stored atime without storing a read's read the create's back after every
+remount.
 
 All three are Kusumi's names from the other ports. Do not add a knob that
 none of them has without saying why in the same commit.

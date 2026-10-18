@@ -1250,8 +1250,13 @@ remount. `->setattr` replaces the `ia_ctime`, and the `ia_mtime` and
 that stamps `meta` sets the VFS copy from that stamp under the lock that
 stored it, so two writers cannot leave `stat` with one writer's stamp and
 the media with the other's. The access time a read stamps keeps the
-kernel's reading, since `touch_atime()` does not reach the media, while
-one the caller sets is stored with the rest; the inode an unlink empties
+kernel's reading in the default build, which reports the modification
+time in its place and stores nothing for a read, as DragonFly and the
+three BSD ports do; xfstests generic/003 fails on that and
+`test/xfstests/hammer2.exclude` says so. Under `HAMMER2_ATIME` the read's
+stamp is stored like the others, since reporting a stored atime that no
+read ever stored read the create's back after every remount. One the
+caller sets is stored either way; the inode an unlink empties
 keeps the kernel's reading too, since nothing on the media is read
 against it. `s_time_gran` is a microsecond,
 so a time the caller sets is truncated to what the media can hold before
