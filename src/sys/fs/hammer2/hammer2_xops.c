@@ -162,6 +162,7 @@ hammer2_xop_readdir(hammer2_xop_t *arg, void *scratch, int clindex)
 	hammer2_chain_t *chain, *parent;
 	hammer2_key_t lkey, key_next;
 	int error = 0;
+	int fed = 0;	/* XXX Linux: chains fed, see the bound below */
 
 	lkey = xop->lkey;
 
@@ -190,6 +191,27 @@ hammer2_xop_readdir(hammer2_xop_t *arg, void *scratch, int clindex)
 		error = hammer2_xop_feed(&xop->head, chain, clindex, 0);
 		if (error)
 			goto break2;
+		/*
+		 * XXX Linux: this runs in the frontend's thread, so nothing
+		 * drains the FIFO while it feeds, and a scan to the end made
+		 * every getdents(2) on a directory of n entries walk n chains
+		 * and grow the FIFO to hold them: xfstests generic/676, which
+		 * seeks in a directory of 4000, took 700 s.  DragonFly's
+		 * backend thread blocks on a full FIFO and is aborted when the
+		 * frontend retires.  Here the scan stops after the nmax
+		 * entries the frontend asked for, sized from the caller's
+		 * buffer so one descent from the inode serves one getdents(2),
+		 * and leaves in rkey the key the frontend's next XOP starts
+		 * from, the lowest of the elements' so that no entry a slower
+		 * element has not fed is emitted.  rkey stays HAMMER2_KEY_MAX
+		 * at the end.
+		 */
+		if (++fed == xop->nmax) {
+			if (chain->bref.key < HAMMER2_KEY_MAX &&
+			    chain->bref.key + 1 < xop->rkey)
+				xop->rkey = chain->bref.key + 1;
+			goto break2;
+		}
 		chain = hammer2_chain_next(&parent, chain, &key_next,
 		    HAMMER2_KEY_MAX, &error,
 		    HAMMER2_LOOKUP_ALWAYS | HAMMER2_LOOKUP_SHARED);

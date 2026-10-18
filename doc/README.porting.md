@@ -1258,6 +1258,47 @@ so a time the caller sets is truncated to what the media can hold before
 anything compares it. `test/hammer2-times.sh` is the instrument, with a
 control that raises the floor from tmpfs and counts the inversions.
 
+## A directory is read a FIFO at a time
+
+DragonFly runs an XOP's backend on a worker thread while its frontend
+collects from a FIFO as the backend feeds it, so a readdir whose caller
+stops early retires the XOP and the backend's next feed is refused. This
+port runs the backend in the caller's thread, inside
+`hammer2_xop_start()`, so the frontend cannot collect until the backend
+has returned, and a backend that scanned to the end of the directory on
+every call made each `getdents(2)` walk every entry past its position and
+grow the FIFO to hold them. xfstests generic/676, which seeks in a
+directory of 4000 entries one entry at a time, ran 696 and 711 s with
+lockdep off and past the runner's 900 s bound with it on, 94 percent of
+its time under the readdir XOP's chain walk; the FreeBSD port scans the
+same way. The backend now feeds the `nmax` entries the frontend asked
+for and leaves in `rkey` the key the frontend's next XOP starts from, the
+lowest across the cluster's elements so no entry a slower element has not
+fed is emitted ahead of it; `HAMMER2_KEY_MAX` there is the end. `nmax` is
+sized from the caller's buffer: the kernel of record passes the space
+left in it as `dir_context.count`, with the comment that a filesystem may
+read it as a hint, and draws it down as entries are emitted. The first
+chunk assumes the smallest entry `getdents64(2)` writes, 24 bytes, and
+each later chunk the mean size of the entries the call has emitted so
+far, both capped at 255, which with the end marker fills a 256-slot FIFO.
+A first cut stopped at a fixed fifteen instead and made a 32 KiB `ls`
+buffer pay fifty-four descents, each reloading the directory's indirect
+blocks, so it bought back in the common case what it saved in the
+seeking one; a second cut fed the whole 24-byte estimate at once, and
+glibc's `readdir()` after `seekdir()`, a 32 KiB buffer that holds about
+540 of the test's entries and is thrown away after one, had 1365 chains
+instantiated for each, at some 30 µs apiece on the lockdep and kmemleak
+kernel. A caller that passes no hint, `exportfs` naming an inode among
+them, gets a FIFO's worth and double that each time its buffer outlasts
+a chunk, to the same cap. The
+frontend loops until the caller's buffer is full or the end is reached,
+and `ctx->pos` keeps its meaning, the key of the entry last emitted, so a
+position handed back to a later call resumes where it did before. The
+stop is marked `XXX` in the carried backend; `test/getdents-resume.c`'s
+sweep reads a directory at five buffer sizes and requires the same
+entries from each, and the readings before and after are in the
+verification record.
+
 ## The kernel floor is the kernel of record
 
 The floor is 7.3, the same kernel `KERNEL_REF` in `script/test-syntax.sh`

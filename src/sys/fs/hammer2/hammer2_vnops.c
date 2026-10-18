@@ -71,6 +71,19 @@
 #include <linux/folio_batch.h>	/* Linux: the siblings of a split block */
 #include <linux/fiemap.h>	/* Linux: fiemap_prep, fiemap_fill_next_extent */
 #include <linux/filelock.h>	/* Linux: generic_setlease */
+#include <linux/dirent.h>	/* Linux: linux_dirent64, the readdir budget */
+
+/*
+ * Linux: the smallest entry getdents64(2) writes, the header up to the
+ * name plus a one-byte name and its NUL, rounded as the kernel rounds it,
+ * so a buffer of n bytes holds at most n / HAMMER2_DIRENT64_MIN entries;
+ * and the most entries one readdir XOP feeds, which with the end marker
+ * fills a 256-slot FIFO and bounds what is fed past the buffer's end.
+ * See hammer2_vop_readdir().
+ */
+#define HAMMER2_DIRENT64_MIN \
+	ALIGN(offsetof(struct linux_dirent64, d_name) + 2, sizeof(u64))
+#define HAMMER2_READDIR_NMAX	255
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
@@ -188,30 +201,62 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 	hammer2_xop_readdir_t *xop;
 	hammer2_blockref_t bref;
 	hammer2_inode_t *ip = VTOI(file_inode(file));
-	hammer2_key_t lkey;
-	int dtype, error;
+	hammer2_key_t lkey, rkey;
+	size_t room, per;
+	int dtype, error, nmax, emitted = 0;
+	bool more;
 
 	if (!dir_emit_dots(file, ctx))
 		return (0);	/* Linux: not an error, the buffer is full */
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 
+	/*
+	 * Linux: one XOP per chunk of what the caller's buffer holds, rather
+	 * than one per directory.  The backend runs in this thread, so
+	 * nothing drains its FIFO while it feeds, and a scan to the end
+	 * walked every entry past the position on every call; it now feeds
+	 * nmax entries and leaves in rkey the key it stopped before,
+	 * HAMMER2_KEY_MAX when it reached the end, and the next XOP starts
+	 * there.  nmax comes from ctx->count, the space left in the caller's
+	 * buffer, which the kernel of record offers as a hint and the actor
+	 * draws down as it emits: the first chunk assumes the smallest entry
+	 * there is, each later one the mean size of the entries this call
+	 * has emitted, and both are capped, since a 32 KiB buffer asks for
+	 * 1365 of the smallest entries and holds a third as many real ones,
+	 * and every entry fed past the buffer's end is a chain allocated for
+	 * nothing.  A caller that passes no hint gets a FIFO's worth,
+	 * doubled each time its buffer outlasts a chunk.  An entry at or past
+	 * rkey is one some element has not fed, so it waits for that next
+	 * XOP rather than being emitted from the elements that did.
+	 * hammer2_xop_readdir() has the cost this replaces.
+	 */
+	room = ctx->count;	/* 0 when the caller says nothing */
+	nmax = room ? clamp_t(size_t, room / HAMMER2_DIRENT64_MIN, 1,
+	    HAMMER2_READDIR_NMAX) : HAMMER2_XOPFIFO - 1;
 	lkey = ctx->pos | HAMMER2_DIRHASH_VISIBLE;
+	do {
 	xop = hammer2_xop_alloc(ip, 0);
 	xop->lkey = lkey;
+	xop->rkey = HAMMER2_KEY_MAX;
+	xop->nmax = nmax;
 	hammer2_xop_start(&xop->head, &hammer2_readdir_desc);
+	rkey = xop->rkey;
+	more = true;
 
 	for (;;) {
 		const hammer2_inode_data_t *ripdata;
 		const char *dname;
 		uint16_t namlen;
-		bool ok;
+		bool ok = true;
 
 		error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head,
 		    0));
 		if (error)
 			break;
 		hammer2_cluster_bref(&xop->head.cluster, &bref);
+		if (rkey != HAMMER2_KEY_MAX && bref.key >= rkey)
+			break;
 		ctx->pos = bref.key & HAMMER2_DIRHASH_USERMSK;
 
 		if (bref.type == HAMMER2_BREF_TYPE_INODE) {
@@ -229,8 +274,6 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 			    ripdata->meta.inum & HAMMER2_DIRHASH_USERMSK,
 			    dtype);
 			hammer2_xop_pdata(&xop->head);
-			if (!ok)
-				break;
 		} else if (bref.type == HAMMER2_BREF_TYPE_DIRENT) {
 			/*
 			 * A name that fits the blockref's check area is
@@ -248,8 +291,6 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 			    bref.embed.dirent.inum, dtype);
 			if (namlen > sizeof(bref.check.buf))
 				hammer2_xop_pdata(&xop->head);
-			if (!ok)
-				break;
 		} else {
 			/*
 			 * Upstream prints and continues.  A type that
@@ -260,9 +301,27 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 			WARN_ONCE(1, "hammer2: bad chain type %d in readdir\n",
 			    bref.type);	/* Linux */
 		}
+		if (!ok) {
+			more = false;	/* the buffer is full */
+			break;
+		}
+		emitted++;
 	}
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	lkey = rkey;
+	if (room == 0) {
+		nmax = min(nmax * 2, HAMMER2_READDIR_NMAX);
+	} else {
+		per = emitted ? (room - ctx->count) / emitted : 0;
+		if (per < HAMMER2_DIRENT64_MIN)
+			per = HAMMER2_DIRENT64_MIN;
+		nmax = clamp_t(size_t, ctx->count / per, 1,
+		    HAMMER2_READDIR_NMAX);
+	}
+	} while (more && rkey != HAMMER2_KEY_MAX &&
+	    (error == 0 || error == ENOENT));
 
+	/* ENOENT here is the end: the loop went round on every other one. */
 	if (error == ENOENT) {
 		error = 0;
 		ctx->pos = HAMMER2_DIRHASH_USERMSK;

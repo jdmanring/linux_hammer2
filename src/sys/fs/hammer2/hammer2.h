@@ -659,6 +659,8 @@ struct hammer2_xop_ipcluster {
 struct hammer2_xop_readdir {
 	hammer2_xop_head_t	head;
 	hammer2_key_t		lkey;
+	hammer2_key_t		rkey;	/* XXX Linux: resume, see hammer2_xop_readdir() */
+	int			nmax;	/* XXX Linux: entries to feed before stopping */
 };
 
 struct hammer2_xop_nresolve {

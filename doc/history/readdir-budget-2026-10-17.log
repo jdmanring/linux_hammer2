@@ -1,0 +1,745 @@
+== readings on artix-s6-kde, h2debug-rc5, 2026-10-17, for the readdir budget; each probe's script follows its output. Modules: b64ec28 is 1.0.37; 'new' is the first cut (a fixed stop at fifteen entries); 'new2' the second (the whole 24-byte estimate at once); the third, capped at 255 with the mean-size estimate, is read in the log named by the record entry
+
+#### probe2: listing and seeking, b64ec28 against the first cut
+== uptime 976.80 s, 7.3.0-rc5
+== 4000 creates in 1.111 s
+== old module b64ec28: listing
+   ls -f big: 4002 entries in 0.190 s
+   ls -f big: 4002 entries in 0.181 s
+   ls -f big: 4002 entries in 0.178 s
+   big sorted listing md5 4e81f706296071b8
+   b14: 16 entries, 0 duplicated
+   b15: 17 entries, 0 duplicated
+   b16: 18 entries, 0 duplicated
+   b17: 19 entries, 0 duplicated
+   b30: 32 entries, 0 duplicated
+   b31: 33 entries, 0 duplicated
+   b32: 34 entries, 0 duplicated
+   b33: 35 entries, 0 duplicated
+== old module: perf stat t_readdir_3 n=500 seed 7
+   All tests passed
+   Reading valid entries passed.
+   Reading random positions passed.
+   Reading valid entries passed.
+   Reading random positions passed.
+              8137.67 msec task-clock                                                            
+          8.143926258 seconds time elapsed
+== new module: listing
+   ls -f big: 4002 entries in 0.198 s
+   ls -f big: 4002 entries in 0.175 s
+   ls -f big: 4002 entries in 0.174 s
+   big sorted listing md5 4e81f706296071b8
+   b14: 16 entries, 0 duplicated
+   b15: 17 entries, 0 duplicated
+   b16: 18 entries, 0 duplicated
+   b17: 19 entries, 0 duplicated
+   b30: 32 entries, 0 duplicated
+   b31: 33 entries, 0 duplicated
+   b32: 34 entries, 0 duplicated
+   b33: 35 entries, 0 duplicated
+== new module: perf stat t_readdir_3 n=500 seed 7
+   All tests passed
+   Reading valid entries passed.
+   Reading random positions passed.
+   Reading valid entries passed.
+   Reading random positions passed.
+              5045.94 msec task-clock                                                            
+          5.063071617 seconds time elapsed
+== new module: t_readdir_3 n=4000 seed 7, generic/676's workload
+   All tests passed
+   Testing readdir...
+   Reading valid entries passed.
+   Reading random positions passed.
+   Testing getdents...
+   Reading valid entries passed.
+   Reading random positions passed.
+   exit 0
+   n=4000 in 496.658 s
+== lockdep
+    lock-classes:                         1971 [max: 8192]
+    direct dependencies:                 24162 [max: 32768]
+    indirect dependencies:              124961
+    all direct dependencies:            434670
+    stack-trace entries:                269093 [max: 524288]
+   [ 1491.213777] hammer2: hammer2_kill_sb: after unmount: 3 inode, 3 chain, 0 modified, 1 dio still allocated
+   [ 1491.232167] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+rmmod exit 0
+log: bug 0 oops 0 warn 0 lockdep 0
+== driver done 20:08:59, tree b64ec28+dirty
+exit 0
+
+#### probe3: where a one-entry getdents spends its time on the first cut
+== slab: hammer2 chains before
+== perf record t_readdir_3 n=1000
+== slab: hammer2 chains after n=1000 (directory still mounted)
+== children, top symbols >= 2%
+       99.96%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] entry_SYSCALL_64_after_hwframe
+       99.96%     0.01%  t_readdir_3  [kernel.kallsyms]     [.] do_syscall_64
+       98.87%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] __x64_sys_getdents64
+       98.85%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] iterate_dir
+       98.82%     0.16%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_vop_readdir
+       93.58%     0.00%  t_readdir_3  libc.so.6             [.] getdents64
+       85.29%     0.03%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_start_except
+       84.71%     0.06%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_readdir
+       82.51%     0.75%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_lookup
+       52.33%     0.00%  t_readdir_3  [unknown]             [k] 0x001a91dd91c78001
+       51.86%     1.03%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_lock
+       48.29%     1.14%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_load_data.part.0
+       41.44%     0.07%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_io_bread
+       41.39%     1.29%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_io_getblk
+       32.17%     0.53%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_bread
+       31.40%     0.17%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_repparent
+       31.32%     0.26%  t_readdir_3  [kernel.kallsyms]     [.] __filemap_get_folio_mpol
+       31.04%     1.02%  t_readdir_3  [kernel.kallsyms]     [k] filemap_get_entry
+       28.35%     3.82%  t_readdir_3  [kernel.kallsyms]     [.] lock_acquire
+       26.33%    23.74%  t_readdir_3  [kernel.kallsyms]     [k] __lock_acquire
+       23.16%     2.06%  t_readdir_3  [kernel.kallsyms]     [.] xas_load
+       21.81%    19.45%  t_readdir_3  [kernel.kallsyms]     [k] lock_is_held_type
+       20.77%     0.00%  t_readdir_3  [unknown]             [k] 0000000000000000
+       15.72%     0.19%  t_readdir_3  [kernel.kallsyms]     [.] do_read_cache_folio
+       13.44%     7.46%  t_readdir_3  [kernel.kallsyms]     [k] lock_release
+       11.85%     1.12%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_unlock
+        9.43%     0.77%  t_readdir_3  [kernel.kallsyms]     [.] down_write
+        9.16%     0.03%  t_readdir_3  [kernel.kallsyms]     [.] __create_object
+        8.49%     0.05%  t_readdir_3  [kernel.kallsyms]     [.] __alloc_object
+        8.08%     1.77%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_drop
+        7.98%     6.28%  t_readdir_3  [kernel.kallsyms]     [k] hammer2_combined_find
+        7.95%     0.01%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_alloc
+        7.12%     0.02%  t_readdir_3  [kernel.kallsyms]     [.] set_track_prepare
+        6.99%     0.02%  t_readdir_3  [kernel.kallsyms]     [.] stack_trace_save
+        6.98%     0.17%  t_readdir_3  [kernel.kallsyms]     [.] arch_stack_walk
+        6.79%     0.06%  t_readdir_3  [kernel.kallsyms]     [.] __kvmalloc_node_noprof
+        5.51%     1.39%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_io_putblk
+        5.32%     0.00%  t_readdir_3  t_readdir_3           [.] kernel_setpos
+        5.32%     0.00%  t_readdir_3  [unknown]             [k] 0xf92ee9f631000000
+        5.30%     0.00%  t_readdir_3  libc.so.6             [.] syscall
+        5.22%     0.01%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_fifo_alloc
+        4.90%     0.53%  t_readdir_3  [kernel.kallsyms]     [.] xas_start
+        4.30%     0.68%  t_readdir_3  [kernel.kallsyms]     [k] unwind_next_frame
+        3.65%     0.12%  t_readdir_3  [kernel.kallsyms]     [.] kmem_cache_alloc_noprof
+        3.57%     0.01%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_get
+        3.32%     0.29%  t_readdir_3  [kernel.kallsyms]     [.] reacquire_held_locks
+        3.29%     0.39%  t_readdir_3  [kernel.kallsyms]     [.] asm_sysvec_apic_timer_interrupt
+        3.26%     0.98%  t_readdir_3  [kernel.kallsyms]     [.] up_write
+        3.12%     0.73%  t_readdir_3  [kernel.kallsyms]     [.] rcu_read_lock_held
+        3.12%     0.09%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_xop_collect
+        3.00%     2.90%  t_readdir_3  [kernel.kallsyms]     [.] rcu_is_watching
+        2.50%     0.77%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_io_alloc
+        2.30%     0.00%  t_readdir_3  [kernel.kallsyms]     [.] hammer2_chain_alloc
+        2.25%     0.14%  t_readdir_3  [kernel.kallsyms]     [.] unwind_get_return_address
+        2.24%     2.24%  t_readdir_3  [kernel.kallsyms]     [k] match_held_lock
+        2.18%     0.01%  t_readdir_3  [kernel.kallsyms]     [.] sysvec_apic_timer_interrupt
+        2.10%     0.10%  t_readdir_3  [kernel.kallsyms]     [.] __kernel_text_address
+        2.10%     2.10%  t_readdir_3  [kernel.kallsyms]     [.] mark_lock.part.0
+        2.00%     0.12%  t_readdir_3  [kernel.kallsyms]     [.] kernel_text_address
+== self, top symbols >= 1.5%
+       23.74%  t_readdir_3  [kernel.kallsyms]  [k] __lock_acquire
+       19.45%  t_readdir_3  [kernel.kallsyms]  [k] lock_is_held_type
+        7.46%  t_readdir_3  [kernel.kallsyms]  [k] lock_release
+        6.28%  t_readdir_3  [kernel.kallsyms]  [k] hammer2_combined_find
+        3.82%  t_readdir_3  [kernel.kallsyms]  [k] lock_acquire
+        2.90%  t_readdir_3  [kernel.kallsyms]  [k] rcu_is_watching
+        2.24%  t_readdir_3  [kernel.kallsyms]  [k] match_held_lock
+        2.10%  t_readdir_3  [kernel.kallsyms]  [k] mark_lock.part.0
+        2.06%  t_readdir_3  [kernel.kallsyms]  [k] xas_load
+        1.77%  t_readdir_3  [kernel.kallsyms]  [k] hammer2_chain_drop
+== callers of the top self symbol, caller view
+   top self symbol: __lock_acquire
+       23.74%  t_readdir_3  [kernel.kallsyms]
+               |          
+               |--12.55%--0x1a91dd91c78001
+               |          getdents64
+               |          entry_SYSCALL_64_after_hwframe
+               |          do_syscall_64
+               |          __x64_sys_getdents64
+               |          |          
+               |           --12.55%--iterate_dir
+               |                     hammer2_vop_readdir
+               |                     |          
+               |                      --10.85%--hammer2_xop_start_except
+               |                                |          
+               |                                 --10.81%--hammer2_xop_readdir
+               |                                           |          
+               |                                            --10.63%--hammer2_chain_lookup
+               |                                                      |          
+               |                                                      |--4.51%--hammer2_chain_repparent
+               |                                                      |          |          
+               |                                                      |           --2.43%--hammer2_chain_lock
+               |                                                      |                     |          
+               |                                                      |                      --2.21%--hammer2_chain_load_data.part.0
+               |                                                      |          
+               |                                                       --3.15%--hammer2_chain_lock
+               |                                                                 |          
+               |                                                                  --2.59%--hammer2_chain_load_data.part.0
+               |          
+                --4.96%--0
+                          |          
+                           --4.96%--getdents64
+                                     entry_SYSCALL_64_after_hwframe
+                                     do_syscall_64
+                                     __x64_sys_getdents64
+                                     iterate_dir
+                                     |          
+                                      --4.96%--hammer2_vop_readdir
+                                                |          
+                                                 --4.11%--hammer2_xop_start_except
+                                                           |          
+                                                            --4.09%--hammer2_xop_readdir
+                                                                      |          
+                                                                       --3.99%--hammer2_chain_lookup
+== timing n=3000 one phase: create, then one seek pass timed by strace -c? no: time the whole
+   n=3000 in 336.1 s
+== slab after n=3000
+rmmod exit 0
+log: bug 0 oops 0 warn 0
+== driver done 20:18:25, tree b64ec28+dirty
+exit 0
+
+#### probe4: b64ec28 against the second cut, with the getdents sweep
+== uptime 2144.69 s, 7.3.0-rc5
+== 4000 creates in 1.221 s
+== old module b64ec28: listing
+   ls -f big: 4002 entries in 0.195 s
+   ls -f big: 4002 entries in 0.209 s
+   ls -f big: 4002 entries in 0.191 s
+   big sorted listing md5 4e81f706296071b8
+   b14: 16 entries, 0 duplicated
+   b15: 17 entries, 0 duplicated
+   b16: 18 entries, 0 duplicated
+   b17: 19 entries, 0 duplicated
+   b30: 32 entries, 0 duplicated
+   b31: 33 entries, 0 duplicated
+   b32: 34 entries, 0 duplicated
+   b33: 35 entries, 0 duplicated
+== old module: getdents sweep
+   sweep big:
+      size=128 entries=4002 calls=999 reference
+      size=280 entries=4002 calls=448 same
+      size=1024 entries=4002 calls=119 same
+      size=4096 entries=4002 calls=30 same
+      size=32768 entries=4002 calls=4 same
+      sweep: sizes=5 entries=4002 mismatches=0
+      exit 0
+   sweep b15:
+      size=128 entries=17 calls=4 reference
+      size=280 entries=17 calls=2 same
+      size=1024 entries=17 calls=1 same
+      size=4096 entries=17 calls=1 same
+      size=32768 entries=17 calls=1 same
+      sweep: sizes=5 entries=17 mismatches=0
+      exit 0
+   sweep b16:
+      size=128 entries=18 calls=4 reference
+      size=280 entries=18 calls=2 same
+      size=1024 entries=18 calls=1 same
+      size=4096 entries=18 calls=1 same
+      size=32768 entries=18 calls=1 same
+      sweep: sizes=5 entries=18 mismatches=0
+      exit 0
+   sweep b17:
+      size=128 entries=19 calls=4 reference
+      size=280 entries=19 calls=2 same
+      size=1024 entries=19 calls=1 same
+      size=4096 entries=19 calls=1 same
+      size=32768 entries=19 calls=1 same
+      sweep: sizes=5 entries=19 mismatches=0
+      exit 0
+   sweep b33:
+      size=128 entries=35 calls=7 reference
+      size=280 entries=35 calls=4 same
+      size=1024 entries=35 calls=1 same
+      size=4096 entries=35 calls=1 same
+      size=32768 entries=35 calls=1 same
+      sweep: sizes=5 entries=35 mismatches=0
+      exit 0
+== old module: perf stat t_readdir_3 n=500 seed 7
+   All tests passed
+   Reading valid entries passed.
+   Reading random positions passed.
+   Reading valid entries passed.
+   Reading random positions passed.
+              8296.57 msec task-clock                                                            
+          8.302905953 seconds time elapsed
+== new module: listing
+   ls -f big: 4002 entries in 0.165 s
+   ls -f big: 4002 entries in 0.155 s
+   ls -f big: 4002 entries in 0.158 s
+   big sorted listing md5 4e81f706296071b8
+   b14: 16 entries, 0 duplicated
+   b15: 17 entries, 0 duplicated
+   b16: 18 entries, 0 duplicated
+   b17: 19 entries, 0 duplicated
+   b30: 32 entries, 0 duplicated
+   b31: 33 entries, 0 duplicated
+   b32: 34 entries, 0 duplicated
+   b33: 35 entries, 0 duplicated
+== new module: getdents sweep
+   sweep big:
+      size=128 entries=4002 calls=999 reference
+      size=280 entries=4002 calls=448 same
+      size=1024 entries=4002 calls=119 same
+      size=4096 entries=4002 calls=30 same
+      size=32768 entries=4002 calls=4 same
+      sweep: sizes=5 entries=4002 mismatches=0
+      exit 0
+   sweep b15:
+      size=128 entries=17 calls=4 reference
+      size=280 entries=17 calls=2 same
+      size=1024 entries=17 calls=1 same
+      size=4096 entries=17 calls=1 same
+      size=32768 entries=17 calls=1 same
+      sweep: sizes=5 entries=17 mismatches=0
+      exit 0
+   sweep b16:
+      size=128 entries=18 calls=4 reference
+      size=280 entries=18 calls=2 same
+      size=1024 entries=18 calls=1 same
+      size=4096 entries=18 calls=1 same
+      size=32768 entries=18 calls=1 same
+      sweep: sizes=5 entries=18 mismatches=0
+      exit 0
+   sweep b17:
+      size=128 entries=19 calls=4 reference
+      size=280 entries=19 calls=2 same
+      size=1024 entries=19 calls=1 same
+      size=4096 entries=19 calls=1 same
+      size=32768 entries=19 calls=1 same
+      sweep: sizes=5 entries=19 mismatches=0
+      exit 0
+   sweep b33:
+      size=128 entries=35 calls=7 reference
+      size=280 entries=35 calls=4 same
+      size=1024 entries=35 calls=1 same
+      size=4096 entries=35 calls=1 same
+      size=32768 entries=35 calls=1 same
+      sweep: sizes=5 entries=35 mismatches=0
+      exit 0
+== new module: perf stat t_readdir_3 n=500 seed 7
+   All tests passed
+   Reading valid entries passed.
+   Reading random positions passed.
+   Reading valid entries passed.
+   Reading random positions passed.
+              3975.87 msec task-clock                                                            
+          3.982421099 seconds time elapsed
+== new module: t_readdir_3 n=4000 seed 7, generic/676's workload
+   All tests passed
+   Testing readdir...
+   Reading valid entries passed.
+   Reading random positions passed.
+   Testing getdents...
+   Reading valid entries passed.
+   Reading random positions passed.
+   exit 0
+   n=4000 in 773.987 s
+== new module: sweep on the 4000-entry directory t_readdir_3 made, names 8 to 70 bytes
+   size=128 entries=4002 calls=2607 reference
+   size=280 entries=4002 calls=987 same
+   size=1024 entries=4002 calls=250 same
+   size=4096 entries=4002 calls=61 same
+   size=32768 entries=4002 calls=8 same
+   sweep: sizes=5 entries=4002 mismatches=0
+   exit 0
+== lockdep
+    lock-classes:                         1975 [max: 8192]
+    direct dependencies:                 24580 [max: 32768]
+    indirect dependencies:              126151
+    all direct dependencies:            437005
+    stack-trace entries:                298098 [max: 524288]
+   [ 3034.668755] hammer2: hammer2_kill_sb: after unmount: 3 inode, 3 chain, 0 modified, 1 dio still allocated
+   [ 3034.685460] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+rmmod exit 0
+log: bug 0 oops 0 warn 0 lockdep 0
+== driver done 20:34:42, tree b64ec28+dirty
+exit 0
+
+#### probe5: one seek-and-read against directory size, unflushed and flushed, second cut
+== slab names with h2 or hammer
+   h2xopszone active 56
+   h2inozone active 24
+== n=500 unflushed:  positions=502 calls=1000 fails=0 us_per_call=196
+== n=500 after sync: positions=502 calls=1000 fails=0 us_per_call=574
+   chains allocated now: 
+== n=1000 unflushed:  positions=1002 calls=1000 fails=0 us_per_call=269
+== n=1000 after sync: positions=1002 calls=1000 fails=0 us_per_call=634
+   chains allocated now: 
+== n=2000 unflushed:  positions=2002 calls=1000 fails=0 us_per_call=219
+== n=2000 after sync: positions=2002 calls=1000 fails=0 us_per_call=409
+   chains allocated now: 
+== n=4000 unflushed:  positions=4002 calls=1000 fails=0 us_per_call=281
+== n=4000 after sync: positions=4002 calls=1000 fails=0 us_per_call=408
+   chains allocated now: 
+== n=4000 after sync, 3000 calls, perf: self >= 2%
+positions=4002 calls=3000 fails=0 us_per_call=443
+       20.62%  seekcost  [kernel.kallsyms]  [k] lock_is_held_type
+       19.02%  seekcost  [kernel.kallsyms]  [k] __lock_acquire
+        6.93%  seekcost  [kernel.kallsyms]  [k] lock_release
+        4.79%  seekcost  [kernel.kallsyms]  [k] lock_acquire
+        3.66%  seekcost  [kernel.kallsyms]  [k] rcu_is_watching
+        2.55%  seekcost  [kernel.kallsyms]  [k] xas_load
+        2.22%  seekcost  [kernel.kallsyms]  [k] __is_kernel_percpu_address
+== children >= 4%
+       99.82%     0.05%  seekcost  [kernel.kallsyms]  [.] do_syscall_64
+       99.82%     0.00%  seekcost  [kernel.kallsyms]  [.] entry_SYSCALL_64_after_hwframe
+       99.60%     0.00%  seekcost  seekcost           [.] syscall
+       99.46%     0.00%  seekcost  [kernel.kallsyms]  [.] __x64_sys_getdents64
+       99.41%     0.00%  seekcost  [kernel.kallsyms]  [.] iterate_dir
+       99.19%     0.08%  seekcost  [kernel.kallsyms]  [.] hammer2_vop_readdir
+       90.21%     0.03%  seekcost  [kernel.kallsyms]  [.] hammer2_xop_start_except
+       90.15%     0.07%  seekcost  [kernel.kallsyms]  [.] hammer2_xop_readdir
+       89.27%     0.42%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_lookup
+       51.77%     0.03%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_get
+       31.70%     0.12%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_alloc
+       30.10%     0.66%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_lock
+       27.96%     0.54%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_load_data.part.0
+       26.26%     4.79%  seekcost  [kernel.kallsyms]  [.] lock_acquire
+       24.84%     2.55%  seekcost  [kernel.kallsyms]  [k] xas_load
+       24.56%     0.07%  seekcost  [kernel.kallsyms]  [.] hammer2_io_bread
+       24.48%     0.42%  seekcost  [kernel.kallsyms]  [.] hammer2_io_getblk
+       22.66%     0.17%  seekcost  [kernel.kallsyms]  [.] __kvmalloc_node_noprof
+       22.57%     0.02%  seekcost  [kernel.kallsyms]  [.] __create_object
+       22.52%    20.62%  seekcost  [kernel.kallsyms]  [k] lock_is_held_type
+       21.72%    19.02%  seekcost  [kernel.kallsyms]  [k] __lock_acquire
+       20.93%     0.15%  seekcost  [kernel.kallsyms]  [.] __alloc_object
+       20.33%     0.23%  seekcost  [kernel.kallsyms]  [.] hammer2_bread
+       19.78%     0.13%  seekcost  [kernel.kallsyms]  [.] __filemap_get_folio_mpol
+       19.63%     0.62%  seekcost  [kernel.kallsyms]  [.] filemap_get_entry
+       18.08%     0.03%  seekcost  [kernel.kallsyms]  [.] set_track_prepare
+       17.78%     0.02%  seekcost  [kernel.kallsyms]  [.] stack_trace_save
+       17.77%     0.52%  seekcost  [kernel.kallsyms]  [.] arch_stack_walk
+       17.44%     0.07%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_repparent
+       16.33%     0.08%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_lockdep_nest
+       15.59%     0.22%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_lockdep_set
+       14.99%     0.20%  seekcost  [kernel.kallsyms]  [.] hammer2_lockdep_lookup
+       14.76%     0.38%  seekcost  [kernel.kallsyms]  [.] xa_load
+       11.33%     0.50%  seekcost  [kernel.kallsyms]  [.] lockdep_init_map_type
+       11.07%     6.93%  seekcost  [kernel.kallsyms]  [k] lock_release
+       10.78%     0.29%  seekcost  [kernel.kallsyms]  [.] static_obj
+       10.11%     1.56%  seekcost  [kernel.kallsyms]  [k] unwind_next_frame
+       10.05%     0.10%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_init
+        9.40%     0.17%  seekcost  [kernel.kallsyms]  [.] do_read_cache_folio
+        9.12%     0.20%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_insert
+        7.32%     1.00%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_drop
+        7.19%     0.82%  seekcost  [kernel.kallsyms]  [.] is_module_address
+        6.38%     0.37%  seekcost  [kernel.kallsyms]  [.] unwind_get_return_address
+        6.18%     0.57%  seekcost  [kernel.kallsyms]  [.] hammer2_chain_unlock
+        6.00%     0.30%  seekcost  [kernel.kallsyms]  [.] __kernel_text_address
+== n=4000 fresh unflushed directory, 1000 calls, perf: self >= 2%
+positions=4002 calls=1000 fails=0 us_per_call=293
+       27.21%  seekcost  [kernel.kallsyms]  [k] lock_is_held_type
+       22.30%  seekcost  [kernel.kallsyms]  [k] __lock_acquire
+        7.39%  seekcost  [kernel.kallsyms]  [k] lock_release
+        3.83%  seekcost  [kernel.kallsyms]  [k] lock_acquire
+        3.46%  seekcost  [kernel.kallsyms]  [k] rcu_is_watching
+        3.41%  seekcost  [kernel.kallsyms]  [k] xas_load
+        3.03%  seekcost  [kernel.kallsyms]  [k] hammer2_combined_find
+        2.03%  seekcost  [kernel.kallsyms]  [k] match_held_lock
+== hammer2 self symbols in the flushed profile
+        1.00%  seekcost  [kernel.kallsyms]  [k] hammer2_chain_drop
+        0.79%  seekcost  [kernel.kallsyms]  [k] hammer2_io_putblk
+        0.66%  seekcost  [kernel.kallsyms]  [k] hammer2_chain_lock
+        0.57%  seekcost  [kernel.kallsyms]  [k] hammer2_chain_unlock
+        0.54%  seekcost  [kernel.kallsyms]  [k] hammer2_chain_load_data.part.0
+        0.42%  seekcost  [kernel.kallsyms]  [k] hammer2_io_getblk
+        0.42%  seekcost  [kernel.kallsyms]  [k] hammer2_chain_lookup
+        0.30%  seekcost  [kernel.kallsyms]  [k] hammer2_io_alloc
+rmmod exit 0
+log: bug 0 oops 0 warn 0
+== driver done 20:46:45, tree b64ec28+dirty
+exit 0
+
+#### probe2.sh
+#!/bin/sh
+# Guest-side probe, 2026-10-17: directory listing and seeking before and
+# after the readdir bound, module b64ec28 (/tmp/h2-old.ko) against the
+# working tree (/tmp/h2-new.ko).  Output is the record.
+set -u
+T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
+S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
+[ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+D=/mnt/h2xscratch
+TR=/root/h2xfstests/src/t_readdir_3
+ld() { grep -E "lock-classes|direct dependencies|stack-trace entries" /proc/lockdep_stats | sed "s/^/   /"; }
+now() { date +%s.%N; }
+el() { awk "BEGIN { printf \"%.3f\", $2 - $1 }"; }
+listing() {
+	k=0; while [ $k -lt 3 ]; do
+		s=$(now); c=$(ls -f $D/big | wc -l); e=$(now)
+		echo "   ls -f big: $c entries in $(el "$s" "$e") s"; k=$((k+1))
+	done
+	echo "   big sorted listing md5 $(ls -f $D/big | sort | md5sum | cut -c1-16)"
+	for n in 14 15 16 17 30 31 32 33; do
+		printf "   b%s: %s entries, %s duplicated\n" "$n" "$(ls -f $D/b$n | wc -l)" "$(ls -f $D/b$n | sort | uniq -d | wc -l)"
+	done
+}
+seek500() {
+	rm -rf "$D/$1"; mkdir "$D/$1"
+	perf stat -e context-switches,task-clock -- "$TR" "$D/$1" 500 7 2>&1 | grep -E "passed|task-clock|elapsed" | sed "s/^/   /"
+}
+dmesg -C
+echo "== uptime $(cut -d' ' -f1 /proc/uptime) s, $(uname -r)"
+insmod /tmp/h2-old.ko || { echo "SETUP insmod old failed"; exit 0; }
+mkdir -p /mnt/h2xtest $D
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP mount"; exit 0; }
+for n in 14 15 16 17 30 31 32 33; do
+	mkdir $D/b$n; i=0; while [ $i -lt $n ]; do : > $D/b$n/f$i; i=$((i+1)); done
+done
+mkdir $D/big; i=0; s=$(now); while [ $i -lt 4000 ]; do : > $D/big/f$i; i=$((i+1)); done; e=$(now)
+sync
+echo "== 4000 creates in $(el "$s" "$e") s"
+echo "== old module b64ec28: listing"; listing
+echo "== old module: perf stat t_readdir_3 n=500 seed 7"; seek500 o500
+umount $D /mnt/h2xtest && rmmod hammer2 || { echo "SETUP old unload"; exit 0; }
+insmod /tmp/h2-new.ko || { echo "SETUP insmod new failed"; exit 0; }
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP remount"; exit 0; }
+echo "== new module: listing"; listing
+echo "== new module: perf stat t_readdir_3 n=500 seed 7"; seek500 n500
+echo "== new module: t_readdir_3 n=4000 seed 7, generic/676's workload"
+rm -rf $D/n4000; mkdir $D/n4000
+s=$(now); "$TR" $D/n4000 4000 7 2>&1 | sed "s/^/   /"; echo "   exit $?"; e=$(now)
+echo "   n=4000 in $(el "$s" "$e") s"
+echo "== lockdep"; ld
+umount $D /mnt/h2xtest
+dmesg | grep "after unmount" | tail -2 | sed "s/^/   /"
+rmmod hammer2; echo "rmmod exit $?"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") lockdep $(dmesg | grep -ci "lockdep\|possible.*deadlock\|too low")"
+
+#### probe3.sh
+#!/bin/sh
+# Guest-side probe, 2026-10-17: where a one-entry getdents spends its time
+# on the bounded module, at 1000 and 3000 entries.
+set -u
+T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
+S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
+[ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+D=/mnt/h2xscratch
+TR=/root/h2xfstests/src/t_readdir_3
+dmesg -C
+insmod /tmp/h2-new.ko || { echo "SETUP insmod failed"; exit 0; }
+mkdir -p /mnt/h2xtest $D
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP mount"; exit 0; }
+echo "== slab: hammer2 chains before"; grep -E "hammer2_chain|hammer2_xop" /proc/slabinfo | awk '{print "   " $1, "active", $2, "num", $3}'
+echo "== perf record t_readdir_3 n=1000"
+rm -rf $D/p1000; mkdir $D/p1000
+perf record -q -g -o /tmp/perf3.data -- "$TR" $D/p1000 1000 7 >/dev/null 2>&1
+echo "== slab: hammer2 chains after n=1000 (directory still mounted)"; grep -E "hammer2_chain|hammer2_xop" /proc/slabinfo | awk '{print "   " $1, "active", $2, "num", $3}'
+echo "== children, top symbols >= 2%"
+perf report -i /tmp/perf3.data --stdio --children -g none --percent-limit 2 2>/dev/null | grep -v "^$" | grep -v "^#" | head -60 | sed "s/^/   /"
+echo "== self, top symbols >= 1.5%"
+perf report -i /tmp/perf3.data --stdio --no-children -g none --percent-limit 1.5 2>/dev/null | grep -v "^$" | grep -v "^#" | head -40 | sed "s/^/   /"
+echo "== callers of the top self symbol, caller view"
+top=$(perf report -i /tmp/perf3.data --stdio --no-children -g none --percent-limit 1.5 2>/dev/null | grep -v "^#" | grep -v "^$" | head -1 | awk '{print $NF}')
+echo "   top self symbol: $top"
+perf report -i /tmp/perf3.data --stdio --no-children -G -S "$top" --percent-limit 2 2>/dev/null | grep -v "^$" | grep -v "^#" | head -70 | sed "s/^/   /"
+echo "== timing n=3000 one phase: create, then one seek pass timed by strace -c? no: time the whole"
+rm -rf $D/p3000; mkdir $D/p3000
+s=$(date +%s.%N); "$TR" $D/p3000 3000 7 >/dev/null 2>&1; e=$(date +%s.%N)
+echo "   n=3000 in $(awk "BEGIN { printf \"%.1f\", $e - $s }") s"
+echo "== slab after n=3000"; grep -E "hammer2_chain|hammer2_xop" /proc/slabinfo | awk '{print "   " $1, "active", $2, "num", $3}'
+umount $D /mnt/h2xtest
+rmmod hammer2; echo "rmmod exit $?"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+
+#### probe4.sh
+#!/bin/sh
+# Guest-side probe, 2026-10-17: directory listing and seeking before and
+# after the readdir budget, module b64ec28 (/tmp/h2-old.ko) against the
+# working tree (/tmp/h2-new2.ko), and the getdents sweep at five buffer
+# sizes on the same directories.  Output is the record.
+set -u
+T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
+S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
+[ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+D=/mnt/h2xscratch
+TR=/root/h2xfstests/src/t_readdir_3
+GD=/tmp/h2getdents; chmod 755 $GD
+now() { date +%s.%N; }
+el() { awk "BEGIN { printf \"%.3f\", $2 - $1 }"; }
+listing() {
+	k=0; while [ $k -lt 3 ]; do
+		s=$(now); c=$(ls -f $D/big | wc -l); e=$(now)
+		echo "   ls -f big: $c entries in $(el "$s" "$e") s"; k=$((k+1))
+	done
+	echo "   big sorted listing md5 $(ls -f $D/big | sort | md5sum | cut -c1-16)"
+	for n in 14 15 16 17 30 31 32 33; do
+		printf "   b%s: %s entries, %s duplicated\n" "$n" "$(ls -f $D/b$n | wc -l)" "$(ls -f $D/b$n | sort | uniq -d | wc -l)"
+	done
+}
+sweep() {
+	for d in big b15 b16 b17 b33; do
+		echo "   sweep $d:"; $GD $D/$d sweep 2>&1 | sed "s/^/      /"; echo "      exit $?"
+	done
+}
+seek500() {
+	rm -rf "$D/$1"; mkdir "$D/$1"
+	perf stat -e context-switches,task-clock -- "$TR" "$D/$1" 500 7 2>&1 | grep -E "passed|task-clock|elapsed" | sed "s/^/   /"
+}
+dmesg -C
+echo "== uptime $(cut -d' ' -f1 /proc/uptime) s, $(uname -r)"
+insmod /tmp/h2-old.ko || { echo "SETUP insmod old failed"; exit 0; }
+mkdir -p /mnt/h2xtest $D
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP mount"; exit 0; }
+for n in 14 15 16 17 30 31 32 33; do
+	mkdir $D/b$n; i=0; while [ $i -lt $n ]; do : > $D/b$n/f$i; i=$((i+1)); done
+done
+mkdir $D/big; i=0; s=$(now); while [ $i -lt 4000 ]; do : > $D/big/f$i; i=$((i+1)); done; e=$(now)
+sync
+echo "== 4000 creates in $(el "$s" "$e") s"
+echo "== old module b64ec28: listing"; listing
+echo "== old module: getdents sweep"; sweep
+echo "== old module: perf stat t_readdir_3 n=500 seed 7"; seek500 o500
+umount $D /mnt/h2xtest && rmmod hammer2 || { echo "SETUP old unload"; exit 0; }
+insmod /tmp/h2-new2.ko || { echo "SETUP insmod new failed"; exit 0; }
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP remount"; exit 0; }
+echo "== new module: listing"; listing
+echo "== new module: getdents sweep"; sweep
+echo "== new module: perf stat t_readdir_3 n=500 seed 7"; seek500 n500
+echo "== new module: t_readdir_3 n=4000 seed 7, generic/676's workload"
+rm -rf $D/n4000; mkdir $D/n4000
+s=$(now); "$TR" $D/n4000 4000 7 2>&1 | sed "s/^/   /"; echo "   exit $?"; e=$(now)
+echo "   n=4000 in $(el "$s" "$e") s"
+echo "== new module: sweep on the 4000-entry directory t_readdir_3 made, names 8 to 70 bytes"; $GD $D/n4000 sweep 2>&1 | sed "s/^/   /"; echo "   exit $?"
+echo "== lockdep"; grep -E "lock-classes|direct dependencies|stack-trace entries" /proc/lockdep_stats | sed "s/^/   /"
+umount $D /mnt/h2xtest
+dmesg | grep "after unmount" | tail -2 | sed "s/^/   /"
+rmmod hammer2; echo "rmmod exit $?"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") lockdep $(dmesg | grep -ci "lockdep\|possible.*deadlock\|too low")"
+
+#### probe5.sh
+#!/bin/sh
+# Guest-side probe, 2026-10-17: the cost of one seek-and-read-one-entry
+# against directory size, unflushed and flushed, on the budgeted module,
+# and where a call spends its time at 4000 entries.
+set -u
+T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
+S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
+[ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+D=/mnt/h2xscratch
+SC=/tmp/seekcost; chmod 755 $SC
+mk() { mkdir "$1"; i=0; while [ $i -lt "$2" ]; do : > "$1/f$i"; i=$((i+1)); done; }
+dmesg -C
+insmod /tmp/h2-new2.ko || { echo "SETUP insmod failed"; exit 0; }
+mkdir -p /mnt/h2xtest $D
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP mount"; exit 0; }
+echo "== slab names with h2 or hammer"; grep -iE "h2|hammer" /proc/slabinfo | awk '{print "   " $1, "active", $2}'
+for n in 500 1000 2000 4000; do
+	mk $D/u$n $n
+	echo "== n=$n unflushed:  $($SC $D/u$n 1000 7)"
+	sync; sleep 1
+	echo "== n=$n after sync: $($SC $D/u$n 1000 7)"
+	echo "   chains allocated now: $(grep -iE "h2chain|hammer2_chain" /proc/slabinfo | awk '{print $2}' | head -1)"
+done
+echo "== n=4000 after sync, 3000 calls, perf: self >= 2%"
+perf record -q -g -o /tmp/perf5.data -- $SC $D/u4000 3000 7
+perf report -i /tmp/perf5.data --stdio --no-children -g none --percent-limit 2 2>/dev/null | grep -v "^$" | grep -v "^#" | head -30 | sed "s/^/   /"
+echo "== children >= 4%"
+perf report -i /tmp/perf5.data --stdio --children -g none --percent-limit 4 2>/dev/null | grep -v "^$" | grep -v "^#" | head -45 | sed "s/^/   /"
+echo "== n=4000 fresh unflushed directory, 1000 calls, perf: self >= 2%"
+mk $D/v4000 4000
+perf record -q -g -o /tmp/perf5b.data -- $SC $D/v4000 1000 7
+perf report -i /tmp/perf5b.data --stdio --no-children -g none --percent-limit 2 2>/dev/null | grep -v "^$" | grep -v "^#" | head -30 | sed "s/^/   /"
+echo "== hammer2 self symbols in the flushed profile"
+perf report -i /tmp/perf5.data --stdio --no-children -g none --percent-limit 0.3 2>/dev/null | grep "hammer2_" | head -25 | sed "s/^/   /"
+umount $D /mnt/h2xtest
+rmmod hammer2; echo "rmmod exit $?"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+
+#### seekcost.c
+/*
+ * seekcost <dir> <calls> <seed>: read every position once with a 32 KiB
+ * buffer, then <calls> times seek to a random recorded position and read
+ * one entry into a 280-byte buffer.  Prints the mean microseconds per
+ * seek-and-read.  Instrumentation for the 2026-10-17 readdir reading.
+ */
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+struct linux_dirent64 {
+	unsigned long long d_ino;
+	long long d_off;
+	unsigned short d_reclen;
+	unsigned char d_type;
+	char d_name[];
+};
+
+static double
+now(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (ts.tv_sec + ts.tv_nsec / 1e9);
+}
+
+int
+main(int argc, char **argv)
+{
+	static char big[32768], small[280];
+	long long *pos;
+	int fd, n, npos = 0, cap = 1 << 16, calls, i, fails = 0;
+	double t0, t1;
+
+	if (argc != 4)
+		return (2);
+	calls = atoi(argv[2]);
+	srandom(atol(argv[3]));
+	pos = calloc(cap, sizeof(*pos));
+	fd = open(argv[1], O_RDONLY | O_DIRECTORY);
+	if (fd < 0 || !pos) {
+		perror("open");
+		return (2);
+	}
+	/* The position before each entry is the d_off of the one before. */
+	pos[npos++] = 0;
+	while ((n = syscall(SYS_getdents64, fd, big, sizeof(big))) > 0) {
+		int off = 0;
+		while (off < n) {
+			struct linux_dirent64 *d = (void *)(big + off);
+			if (npos < cap)
+				pos[npos++] = d->d_off;
+			off += d->d_reclen;
+		}
+	}
+	npos--;	/* the last d_off is the end */
+	t0 = now();
+	for (i = 0; i < calls; i++) {
+		long long p = pos[random() % npos];
+		if (lseek(fd, p, SEEK_SET) < 0 ||
+		    syscall(SYS_getdents64, fd, small, sizeof(small)) <= 0)
+			fails++;
+	}
+	t1 = now();
+	printf("positions=%d calls=%d fails=%d us_per_call=%.0f\n", npos,
+	    calls, fails, (t1 - t0) * 1e6 / calls);
+	return (fails ? 1 : 0);
+}
+
+#### drive.sh
+#!/bin/sh
+# Host driver: drive.sh <probe.sh> <ko>...  Two 3G sparse volumes in the
+# fixture dir, attached as the xfstests runner attaches them, removed
+# after; each ko lands on the guest as /tmp/<basename>.
+set -u
+cd /home/james/Projects/linux_hammer2 || exit 2
+G=artix-s6-kde; SSH=root@192.168.122.16
+V="virsh --connect qemu:///system"
+NEWFS=$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2
+FIX=$HOME/Projects/linux_hammer2-data/fixtures
+TV=$FIX/xfstests-test.img; SV=$FIX/xfstests-scratch.img
+probe=$1; shift
+detach() { for t in vdx vdy; do $V detach-disk $G $t --live >/dev/null 2>&1; $V detach-disk $G $t --config >/dev/null 2>&1; done; }
+trap 'detach; rm -f "$TV" "$SV"' EXIT
+for img in "$TV" "$SV"; do rm -f "$img"; truncate -s 3G "$img"; "$NEWFS" "$img" >/dev/null 2>&1 || { echo "newfs failed $img"; exit 2; }; done
+detach
+$V attach-disk $G "$TV" vdx --targetbus virtio --serial h2xtest >/dev/null 2>&1 &&
+$V attach-disk $G "$SV" vdy --targetbus virtio --serial h2xscratch >/dev/null 2>&1 || { echo "attach failed"; exit 2; }
+for ko in "$@"; do scp -q "$ko" "$SSH:/tmp/$(basename "$ko")" || { echo "copy failed $ko"; exit 2; }; done
+scp -q "$probe" $SSH:/tmp/probe.sh || { echo "copy failed"; exit 2; }
+ssh $SSH 'i=0; while [ ! -e /dev/disk/by-id/virtio-h2xscratch ] && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done; udevadm settle -t 10; sh /tmp/probe.sh' 2>&1
+echo "== driver done $(date +%T), tree $(git rev-parse --short HEAD)$(git diff --quiet || echo +dirty)"

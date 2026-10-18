@@ -1,0 +1,223 @@
+== readings on artix-s6-kde, h2debug-rc5, 2026-10-17: the third cut of the readdir budget (a chunk capped at 255 entries, each later chunk sized from the mean entry emitted) against 1.0.37, module b64ec28; the first two cuts and the probes that led here are doc/history/readdir-budget-2026-10-17.log
+
+== uptime 3987.07 s, 7.3.0-rc5
+== 4000 creates in 1.164 s
+== old module b64ec28: listing
+   ls -f big: 4002 entries in 0.199 s
+   ls -f big: 4002 entries in 0.187 s
+   ls -f big: 4002 entries in 0.189 s
+   big sorted listing md5 4e81f706296071b8
+   b14: 16 entries, 0 duplicated
+   b15: 17 entries, 0 duplicated
+   b16: 18 entries, 0 duplicated
+   b17: 19 entries, 0 duplicated
+   b30: 32 entries, 0 duplicated
+   b31: 33 entries, 0 duplicated
+   b32: 34 entries, 0 duplicated
+   b33: 35 entries, 0 duplicated
+== old module: getdents sweep
+   sweep big:
+      size=128 entries=4002 calls=999 reference
+      size=280 entries=4002 calls=448 same
+      size=1024 entries=4002 calls=119 same
+      size=4096 entries=4002 calls=30 same
+      size=32768 entries=4002 calls=4 same
+      sweep: sizes=5 entries=4002 mismatches=0
+      exit 0
+   sweep b15:
+      size=128 entries=17 calls=4 reference
+      size=280 entries=17 calls=2 same
+      size=1024 entries=17 calls=1 same
+      size=4096 entries=17 calls=1 same
+      size=32768 entries=17 calls=1 same
+      sweep: sizes=5 entries=17 mismatches=0
+      exit 0
+   sweep b16:
+      size=128 entries=18 calls=4 reference
+      size=280 entries=18 calls=2 same
+      size=1024 entries=18 calls=1 same
+      size=4096 entries=18 calls=1 same
+      size=32768 entries=18 calls=1 same
+      sweep: sizes=5 entries=18 mismatches=0
+      exit 0
+   sweep b17:
+      size=128 entries=19 calls=4 reference
+      size=280 entries=19 calls=2 same
+      size=1024 entries=19 calls=1 same
+      size=4096 entries=19 calls=1 same
+      size=32768 entries=19 calls=1 same
+      sweep: sizes=5 entries=19 mismatches=0
+      exit 0
+   sweep b33:
+      size=128 entries=35 calls=7 reference
+      size=280 entries=35 calls=4 same
+      size=1024 entries=35 calls=1 same
+      size=4096 entries=35 calls=1 same
+      size=32768 entries=35 calls=1 same
+      sweep: sizes=5 entries=35 mismatches=0
+      exit 0
+== old module: perf stat t_readdir_3 n=500 seed 7
+   All tests passed
+   Reading valid entries passed.
+   Reading random positions passed.
+   Reading valid entries passed.
+   Reading random positions passed.
+              8396.49 msec task-clock                                                            
+          8.403408149 seconds time elapsed
+== new module: listing
+   ls -f big: 4002 entries in 0.155 s
+   ls -f big: 4002 entries in 0.143 s
+   ls -f big: 4002 entries in 0.146 s
+   big sorted listing md5 4e81f706296071b8
+   b14: 16 entries, 0 duplicated
+   b15: 17 entries, 0 duplicated
+   b16: 18 entries, 0 duplicated
+   b17: 19 entries, 0 duplicated
+   b30: 32 entries, 0 duplicated
+   b31: 33 entries, 0 duplicated
+   b32: 34 entries, 0 duplicated
+   b33: 35 entries, 0 duplicated
+== new module: getdents sweep
+   sweep big:
+      size=128 entries=4002 calls=999 reference
+      size=280 entries=4002 calls=448 same
+      size=1024 entries=4002 calls=119 same
+      size=4096 entries=4002 calls=30 same
+      size=32768 entries=4002 calls=4 same
+      sweep: sizes=5 entries=4002 mismatches=0
+      exit 0
+   sweep b15:
+      size=128 entries=17 calls=4 reference
+      size=280 entries=17 calls=2 same
+      size=1024 entries=17 calls=1 same
+      size=4096 entries=17 calls=1 same
+      size=32768 entries=17 calls=1 same
+      sweep: sizes=5 entries=17 mismatches=0
+      exit 0
+   sweep b16:
+      size=128 entries=18 calls=4 reference
+      size=280 entries=18 calls=2 same
+      size=1024 entries=18 calls=1 same
+      size=4096 entries=18 calls=1 same
+      size=32768 entries=18 calls=1 same
+      sweep: sizes=5 entries=18 mismatches=0
+      exit 0
+   sweep b17:
+      size=128 entries=19 calls=4 reference
+      size=280 entries=19 calls=2 same
+      size=1024 entries=19 calls=1 same
+      size=4096 entries=19 calls=1 same
+      size=32768 entries=19 calls=1 same
+      sweep: sizes=5 entries=19 mismatches=0
+      exit 0
+   sweep b33:
+      size=128 entries=35 calls=7 reference
+      size=280 entries=35 calls=4 same
+      size=1024 entries=35 calls=1 same
+      size=4096 entries=35 calls=1 same
+      size=32768 entries=35 calls=1 same
+      sweep: sizes=5 entries=35 mismatches=0
+      exit 0
+== new module: perf stat t_readdir_3 n=500 seed 7
+   All tests passed
+   Reading valid entries passed.
+   Reading random positions passed.
+   Reading valid entries passed.
+   Reading random positions passed.
+              4218.73 msec task-clock                                                            
+          4.231882796 seconds time elapsed
+== new module: t_readdir_3 n=4000 seed 7, generic/676's workload
+   All tests passed
+   Testing readdir...
+   Reading valid entries passed.
+   Reading random positions passed.
+   Testing getdents...
+   Reading valid entries passed.
+   Reading random positions passed.
+   exit 0
+   n=4000 in 374.337 s
+== new module: sweep on the 4000-entry directory t_readdir_3 made, names 8 to 70 bytes
+   size=128 entries=4002 calls=2607 reference
+   size=280 entries=4002 calls=987 same
+   size=1024 entries=4002 calls=250 same
+   size=4096 entries=4002 calls=61 same
+   size=32768 entries=4002 calls=8 same
+   sweep: sizes=5 entries=4002 mismatches=0
+   exit 0
+== lockdep
+    lock-classes:                         1976 [max: 8192]
+    direct dependencies:                 24716 [max: 32768]
+    indirect dependencies:              126395
+    all direct dependencies:            437466
+    stack-trace entries:                324155 [max: 524288]
+   [ 4476.234490] hammer2: hammer2_kill_sb: after unmount: 3 inode, 3 chain, 0 modified, 1 dio still allocated
+   [ 4476.295026] hammer2: hammer2_kill_sb: after unmount: 0 inode, 0 chain, 0 modified, 0 dio still allocated
+rmmod exit 0
+log: bug 0 oops 0 warn 0 lockdep 0
+== driver done 20:58:44, tree b64ec28+dirty
+exit 0
+
+#### probe6.sh
+#!/bin/sh
+# Guest-side probe, 2026-10-17: directory listing and seeking before and
+# after the readdir budget, module b64ec28 (/tmp/h2-old.ko) against the
+# working tree (/tmp/h2-new3.ko), and the getdents sweep at five buffer
+# sizes on the same directories.  Output is the record.
+set -u
+T=$(readlink -f /dev/disk/by-id/virtio-h2xtest)
+S=$(readlink -f /dev/disk/by-id/virtio-h2xscratch)
+[ -b "$T" ] && [ -b "$S" ] && [ "$T" != "$S" ] || { echo "SETUP the volumes are not both present"; exit 0; }
+D=/mnt/h2xscratch
+TR=/root/h2xfstests/src/t_readdir_3
+GD=/tmp/h2getdents; chmod 755 $GD
+now() { date +%s.%N; }
+el() { awk "BEGIN { printf \"%.3f\", $2 - $1 }"; }
+listing() {
+	k=0; while [ $k -lt 3 ]; do
+		s=$(now); c=$(ls -f $D/big | wc -l); e=$(now)
+		echo "   ls -f big: $c entries in $(el "$s" "$e") s"; k=$((k+1))
+	done
+	echo "   big sorted listing md5 $(ls -f $D/big | sort | md5sum | cut -c1-16)"
+	for n in 14 15 16 17 30 31 32 33; do
+		printf "   b%s: %s entries, %s duplicated\n" "$n" "$(ls -f $D/b$n | wc -l)" "$(ls -f $D/b$n | sort | uniq -d | wc -l)"
+	done
+}
+sweep() {
+	for d in big b15 b16 b17 b33; do
+		echo "   sweep $d:"; $GD $D/$d sweep 2>&1 | sed "s/^/      /"; echo "      exit $?"
+	done
+}
+seek500() {
+	rm -rf "$D/$1"; mkdir "$D/$1"
+	perf stat -e context-switches,task-clock -- "$TR" "$D/$1" 500 7 2>&1 | grep -E "passed|task-clock|elapsed" | sed "s/^/   /"
+}
+dmesg -C
+echo "== uptime $(cut -d' ' -f1 /proc/uptime) s, $(uname -r)"
+insmod /tmp/h2-old.ko || { echo "SETUP insmod old failed"; exit 0; }
+mkdir -p /mnt/h2xtest $D
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP mount"; exit 0; }
+for n in 14 15 16 17 30 31 32 33; do
+	mkdir $D/b$n; i=0; while [ $i -lt $n ]; do : > $D/b$n/f$i; i=$((i+1)); done
+done
+mkdir $D/big; i=0; s=$(now); while [ $i -lt 4000 ]; do : > $D/big/f$i; i=$((i+1)); done; e=$(now)
+sync
+echo "== 4000 creates in $(el "$s" "$e") s"
+echo "== old module b64ec28: listing"; listing
+echo "== old module: getdents sweep"; sweep
+echo "== old module: perf stat t_readdir_3 n=500 seed 7"; seek500 o500
+umount $D /mnt/h2xtest && rmmod hammer2 || { echo "SETUP old unload"; exit 0; }
+insmod /tmp/h2-new3.ko || { echo "SETUP insmod new failed"; exit 0; }
+mount -t hammer2 "$T" /mnt/h2xtest && mount -t hammer2 "$S" $D || { echo "SETUP remount"; exit 0; }
+echo "== new module: listing"; listing
+echo "== new module: getdents sweep"; sweep
+echo "== new module: perf stat t_readdir_3 n=500 seed 7"; seek500 n500
+echo "== new module: t_readdir_3 n=4000 seed 7, generic/676's workload"
+rm -rf $D/n4000; mkdir $D/n4000
+s=$(now); "$TR" $D/n4000 4000 7 2>&1 | sed "s/^/   /"; echo "   exit $?"; e=$(now)
+echo "   n=4000 in $(el "$s" "$e") s"
+echo "== new module: sweep on the 4000-entry directory t_readdir_3 made, names 8 to 70 bytes"; $GD $D/n4000 sweep 2>&1 | sed "s/^/   /"; echo "   exit $?"
+echo "== lockdep"; grep -E "lock-classes|direct dependencies|stack-trace entries" /proc/lockdep_stats | sed "s/^/   /"
+umount $D /mnt/h2xtest
+dmesg | grep "after unmount" | tail -2 | sed "s/^/   /"
+rmmod hammer2; echo "rmmod exit $?"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") lockdep $(dmesg | grep -ci "lockdep\|possible.*deadlock\|too low")"

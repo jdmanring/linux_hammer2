@@ -491,6 +491,24 @@ for m in $manifests; do
 				echo "        each name once"
 				getdents=$gdent
 			fi
+			# The same directory at five buffer sizes, 128 bytes to
+			# 32 KiB, must give the same entries: the driver sizes
+			# its read from the caller's buffer since 1.0.38, so a
+			# chunk boundary falls at a different entry for each
+			# size, and the exerciser compares every pass to the
+			# first by count and by an order-independent name hash.
+			gdsw=$(ssh "$GUEST_SSH" "/tmp/h2getdents $mnt sweep" 2>&1)
+			swrc=$?
+			swline=$(printf '%s\n' "$gdsw" | sed -n 's/^sweep: //p')
+			case "$swrc:$swline" in
+			0:*" mismatches=0")
+				echo "  ok   $base: the sweep read the same entries at five"
+				echo "        buffer sizes, $swline" ;;
+			*)
+				echo "  FAIL $base: the getdents sweep differed or did not run:"
+				printf '%s\n' "$gdsw" | sed 's/^/        /' | head -8
+				fail=$((fail + 1)) ;;
+			esac
 		fi
 		# Set on both paths, so a build that failed is reported once and
 		# not eleven times on the images that follow.
