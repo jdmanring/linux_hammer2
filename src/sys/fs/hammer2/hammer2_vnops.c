@@ -237,88 +237,88 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 	    HAMMER2_READDIR_NMAX) : HAMMER2_XOPFIFO - 1;
 	lkey = ctx->pos | HAMMER2_DIRHASH_VISIBLE;
 	do {
-	xop = hammer2_xop_alloc(ip, 0);
-	xop->lkey = lkey;
-	xop->rkey = HAMMER2_KEY_MAX;
-	xop->nmax = nmax;
-	hammer2_xop_start(&xop->head, &hammer2_readdir_desc);
-	rkey = xop->rkey;
-	more = true;
+		xop = hammer2_xop_alloc(ip, 0);
+		xop->lkey = lkey;
+		xop->rkey = HAMMER2_KEY_MAX;
+		xop->nmax = nmax;
+		hammer2_xop_start(&xop->head, &hammer2_readdir_desc);
+		rkey = xop->rkey;
+		more = true;
 
-	for (;;) {
-		const hammer2_inode_data_t *ripdata;
-		const char *dname;
-		uint16_t namlen;
-		bool ok = true;
+		for (;;) {
+			const hammer2_inode_data_t *ripdata;
+			const char *dname;
+			uint16_t namlen;
+			bool ok = true;
 
-		error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head,
-		    0));
-		if (error)
-			break;
-		hammer2_cluster_bref(&xop->head.cluster, &bref);
-		if (rkey != HAMMER2_KEY_MAX && bref.key >= rkey)
-			break;
-		ctx->pos = bref.key & HAMMER2_DIRHASH_USERMSK;
+			error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head,
+			    0));
+			if (error)
+				break;
+			hammer2_cluster_bref(&xop->head.cluster, &bref);
+			if (rkey != HAMMER2_KEY_MAX && bref.key >= rkey)
+				break;
+			ctx->pos = bref.key & HAMMER2_DIRHASH_USERMSK;
 
-		if (bref.type == HAMMER2_BREF_TYPE_INODE) {
-			ripdata = &hammer2_xop_gdata(&xop->head)->ipdata;
-			dtype = hammer2_get_dtype(ripdata->meta.type);
-			/*
-			 * The cast is the sign difference and nothing
-			 * else, as at the setname call in ->lookup:
-			 * filename is unsigned char[] on the media and
-			 * dir_emit() takes const char *.  clang reports
-			 * it under -Wpointer-sign and gcc does not.
-			 */
-			ok = dir_emit(ctx, (const char *)ripdata->filename,
-			    ripdata->meta.name_len,
-			    ripdata->meta.inum & HAMMER2_DIRHASH_USERMSK,
-			    dtype);
-			hammer2_xop_pdata(&xop->head);
-		} else if (bref.type == HAMMER2_BREF_TYPE_DIRENT) {
-			/*
-			 * A name that fits the blockref's check area is
-			 * stored there and the entry has no data block,
-			 * which is why the get is conditional and the put
-			 * has to match it.
-			 */
-			dtype = hammer2_get_dtype(bref.embed.dirent.type);
-			namlen = bref.embed.dirent.namlen;
-			if (namlen <= sizeof(bref.check.buf))
-				dname = bref.check.buf;
-			else
-				dname = hammer2_xop_gdata(&xop->head)->buf;
-			ok = dir_emit(ctx, dname, namlen,
-			    bref.embed.dirent.inum, dtype);
-			if (namlen > sizeof(bref.check.buf))
+			if (bref.type == HAMMER2_BREF_TYPE_INODE) {
+				ripdata = &hammer2_xop_gdata(&xop->head)->ipdata;
+				dtype = hammer2_get_dtype(ripdata->meta.type);
+				/*
+				 * The cast is the sign difference and nothing
+				 * else, as at the setname call in ->lookup:
+				 * filename is unsigned char[] on the media and
+				 * dir_emit() takes const char *.  clang reports
+				 * it under -Wpointer-sign and gcc does not.
+				 */
+				ok = dir_emit(ctx, (const char *)ripdata->filename,
+				    ripdata->meta.name_len,
+				    ripdata->meta.inum & HAMMER2_DIRHASH_USERMSK,
+				    dtype);
 				hammer2_xop_pdata(&xop->head);
+			} else if (bref.type == HAMMER2_BREF_TYPE_DIRENT) {
+				/*
+				 * A name that fits the blockref's check area is
+				 * stored there and the entry has no data block,
+				 * which is why the get is conditional and the put
+				 * has to match it.
+				 */
+				dtype = hammer2_get_dtype(bref.embed.dirent.type);
+				namlen = bref.embed.dirent.namlen;
+				if (namlen <= sizeof(bref.check.buf))
+					dname = bref.check.buf;
+				else
+					dname = hammer2_xop_gdata(&xop->head)->buf;
+				ok = dir_emit(ctx, dname, namlen,
+				    bref.embed.dirent.inum, dtype);
+				if (namlen > sizeof(bref.check.buf))
+					hammer2_xop_pdata(&xop->head);
+			} else {
+				/*
+				 * Upstream prints and continues.  A type that
+				 * cannot be named is media this module does not
+				 * understand, so it is reported once and the
+				 * listing goes on rather than truncating.
+				 */
+				WARN_ONCE(1, "hammer2: bad chain type %d in readdir\n",
+				    bref.type);	/* Linux */
+			}
+			if (!ok) {
+				more = false;	/* the buffer is full */
+				break;
+			}
+			emitted++;
+		}
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		lkey = rkey;
+		if (room == 0) {
+			nmax = min(nmax * 2, HAMMER2_READDIR_NMAX);
 		} else {
-			/*
-			 * Upstream prints and continues.  A type that
-			 * cannot be named is media this module does not
-			 * understand, so it is reported once and the
-			 * listing goes on rather than truncating.
-			 */
-			WARN_ONCE(1, "hammer2: bad chain type %d in readdir\n",
-			    bref.type);	/* Linux */
+			per = emitted ? (room - ctx->count) / emitted : 0;
+			if (per < HAMMER2_DIRENT64_MIN)
+				per = HAMMER2_DIRENT64_MIN;
+			nmax = clamp_t(size_t, ctx->count / per, 1,
+			    HAMMER2_READDIR_NMAX);
 		}
-		if (!ok) {
-			more = false;	/* the buffer is full */
-			break;
-		}
-		emitted++;
-	}
-	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
-	lkey = rkey;
-	if (room == 0) {
-		nmax = min(nmax * 2, HAMMER2_READDIR_NMAX);
-	} else {
-		per = emitted ? (room - ctx->count) / emitted : 0;
-		if (per < HAMMER2_DIRENT64_MIN)
-			per = HAMMER2_DIRENT64_MIN;
-		nmax = clamp_t(size_t, ctx->count / per, 1,
-		    HAMMER2_READDIR_NMAX);
-	}
 	} while (more && rkey != HAMMER2_KEY_MAX &&
 	    (error == 0 || error == ENOENT));
 
