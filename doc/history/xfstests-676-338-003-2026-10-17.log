@@ -1,0 +1,51 @@
+== generic/676, generic/338 and generic/003 on the rebuilt h2debug-rc5 (CONFIG_LOCKDEP_BITS=17), 2026-10-17, module 32cc081 (the tree then named 4553b5a; its message was reworded before the push and the tree is unchanged): 676 and 338 on the default build, 003 on a HAMMER2_ATIME=1 build with the exclude list off; script/xfstests.sh output as printed
+
+#### generic/676 21:04:09
+  suite: a6d1f76 src/locktest.c: fix build failure of struct delegation
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #2 SMP PREEMPT_DYNAMIC Sat Oct 17 20:47:14 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/676         405s
+  Ran: generic/676
+  Passed all 1 tests
+  
+  rmmod exit 0
+  log: bug 0 oops 0 warn 0
+xfstests: 1 of 1 executed, 0 not run (none), 0 expunged (none); failed none
+exit 0
+
+#### generic/338 21:11:08
+  suite: a6d1f76 src/locktest.c: fix build failure of struct delegation
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #2 SMP PREEMPT_DYNAMIC Sat Oct 17 20:47:14 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/338         4s
+  Ran: generic/338
+  Passed all 1 tests
+  
+  rmmod exit 0
+  log: bug 0 oops 0 warn 0
+xfstests: 1 of 1 executed, 0 not run (none), 0 expunged (none); failed none
+exit 0
+
+#### generic/003 with HAMMER2_ATIME=1 and the exclude list off 21:11:23
+  suite: a6d1f76 src/locktest.c: fix build failure of struct delegation
+  FSTYP         -- hammer2
+  PLATFORM      -- Linux/x86_64 james-standardpc 7.3.0-rc5 #2 SMP PREEMPT_DYNAMIC Sat Oct 17 20:47:14 PDT 2026
+  MKFS_OPTIONS  -- /dev/vdc
+  MOUNT_OPTIONS -- /dev/vdc /mnt/h2xscratch
+  
+  generic/003         13s
+  Ran: generic/003
+  Passed all 1 tests
+  
+  rmmod exit 0
+  log: bug 0 oops 0 warn 0
+xfstests: 1 of 1 executed, 0 not run (none), 0 expunged (none); failed none
+exit 0
+
+#### done 21:11:58

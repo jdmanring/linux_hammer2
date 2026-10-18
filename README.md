@@ -215,11 +215,12 @@ than about a shared bug.
   mounted, and the `create` operation's signature. A build against 7.2
   fails on exactly those, recorded in `doc/history/verification-record.md`. Older
   kernels are not blocked by anything deeper: measured from below, 6.18
-  would need two compatibility conditionals and 6.15 is where the block
-  layer first holds a 64 KiB folio. The ruling keeps the kernel of record
-  as the floor, and backward compatibility, if it is ever provided, goes
-  to 6.18 alone, the one longterm kernel in that range, revisited after
-  1.0.0; `doc/README.roadmap.md` records it
+  needed two compatibility conditionals in September and seven in
+  October, as the port took up what 6.19 to 7.3 added, and 6.15 is where
+  the block layer first holds a 64 KiB folio. The ruling keeps the kernel
+  of record as the floor, and backward compatibility, if it is ever
+  provided, goes to 6.18 alone, the one longterm kernel in that range,
+  revisited after 1.0.0; `doc/README.roadmap.md` records the list
 
 + kernel headers for the running kernel
 

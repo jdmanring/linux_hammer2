@@ -1273,10 +1273,11 @@ port runs the backend in the caller's thread, inside
 has returned, and a backend that scanned to the end of the directory on
 every call made each `getdents(2)` walk every entry past its position and
 grow the FIFO to hold them. xfstests generic/676, which seeks in a
-directory of 4000 entries one entry at a time, ran 696 and 711 s with
-lockdep off and past the runner's 900 s bound with it on, 94 percent of
-its time under the readdir XOP's chain walk; the FreeBSD port scans the
-same way. The backend now feeds the `nmax` entries the frontend asked
+directory of 4000 entries one entry at a time, ran 711 s in one quick
+run with lockdep live, 696 s in another where lockdep had already died,
+and past the runner's 900 s bound in a third with lockdep live, 94
+percent of its time under the readdir XOP's chain walk; the FreeBSD port
+scans the same way. The backend now feeds the `nmax` entries the frontend asked
 for and leaves in `rkey` the key the frontend's next XOP starts from, the
 lowest across the cluster's elements so no entry a slower element has not
 fed is emitted ahead of it; `HAMMER2_KEY_MAX` there is the end. `nmax` is
@@ -1287,15 +1288,17 @@ chunk assumes the smallest entry `getdents64(2)` writes, 24 bytes, and
 each later chunk the mean size of the entries the call has emitted so
 far, both capped at 255, which with the end marker fills a 256-slot FIFO.
 A first cut stopped at a fixed fifteen instead and made a 32 KiB `ls`
-buffer pay fifty-four descents, each reloading the directory's indirect
-blocks, so it bought back in the common case what it saved in the
-seeking one; a second cut fed the whole 24-byte estimate at once, and
-glibc's `readdir()` after `seekdir()`, a 32 KiB buffer that holds about
-540 of the test's entries and is thrown away after one, had 1365 chains
-instantiated for each, at some 30 µs apiece on the lockdep and kmemleak
-kernel. A caller that passes no hint, `exportfs` naming an inode among
-them, gets a FIFO's worth and double that each time its buffer outlasts
-a chunk, to the same cap. The
+buffer pay a descent per fifteen entries it holds, each reloading the
+directory's indirect blocks, so it bought back in the common case what it
+saved in the seeking one; a second cut fed the whole 24-byte estimate at
+once, 1365 entries for a 32 KiB buffer that holds about 500 of generic/676's
+entries and about 1000 short names, and glibc's `readdir()` after
+`seekdir()` asks for that buffer and keeps one entry of it, so each call
+instantiated hundreds of chains for nothing, at tens of microseconds
+apiece on the lockdep and kmemleak kernel. A caller that passes no hint,
+`nfsd`'s readdir among them, gets a FIFO's worth and double that each
+time its buffer outlasts a chunk, to the same cap; `exportfs` passes the
+hint's unlimited value, which the cap answers. The
 frontend loops until the caller's buffer is full or the end is reached,
 and `ctx->pos` keeps its meaning, the key of the entry last emitted, so a
 position handed back to a later call resumes where it did before. The

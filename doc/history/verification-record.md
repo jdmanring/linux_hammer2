@@ -15352,7 +15352,8 @@ line and unmounted by the second, and a clean unmount of a scratch
 volume beside a mounted test volume prints `3 inode, 3 chain, 0
 modified, 1 dio` on the same module
 (`doc/history/lockdep-unmount-probe-2026-10-17.log`, read later the same
-day; the entry below has it). Both are kept in
+day; the entry below has it). The second dio of the error-path line is
+not in that control, and both counts read zero 250 ms later. Both are kept in
 `doc/history/xfstests-338-2026-10-17.log`. The runner's own log line
 counts `kernel BUG`, `Oops` and `WARNING:` and could not see either;
 that line is read beside `_check_dmesg`'s verdict, not instead of it.
@@ -15418,3 +15419,200 @@ tail, and `_check_dmesg`, which reads per test, is the reader that saw
 `338` and `736`. Against quick3's
 fourteen: the twelve expunged are the list's, `338` passed, and `736`
 and `676` are new.
+
+## The directory read sized to its caller, the lockdep table to its guest, and a leak that was not one, 2026-10-17
+
+The entry above left four findings standing and two decisions open. Each
+was instrumented before anything was changed; the probes and their
+output are `doc/history/lockdep-unmount-probe-2026-10-17.log` and
+`doc/history/readdir-budget-2026-10-17.log`, every script kept beside
+its reading.
+
+**The leak that was not one.** The entry above read generic/338's
+`after unmount: 3 inode, 3 chain, 0 modified, 2 dio still allocated` as
+a leak on the error path, because the test volume's own unmount for the
+post-test check printed zeros 250 ms later. The counters are module-wide,
+as `hammer2_kill_sb()`'s comment says, and the control is a clean
+unmount of a scratch volume beside the mounted test volume: `3 inode, 3
+chain, 0 modified, 1 dio` on the same module, the test mount's own
+objects. The inodes and chains are accounted for; the error-path line's
+second dio is not, since the control shows one, and both counts read
+zero at the test volume's unmount 250 ms later, so whatever held it was
+released with the module still loaded. The sentence is corrected in
+place above and the leak claim is withdrawn, with that one dio noted.
+
+**The lockdep table is the guest's.** The 2026-10-17 entries place the
+two `MAX_LOCKDEP_ENTRIES too low!` reports with the guest's
+`CONFIG_LOCKDEP_BITS=15` and not with the port; that was an inference,
+and `/proc/lockdep_stats` makes it a reading. At boot, before the module
+loads, the desktop guest already holds 19352 of the 32768 direct
+dependencies, 59 percent. Loading the module adds 6, two mounts 346, and
+a seek workload over 2000 files brings the table to 22050; the port's
+classes, read from `/proc/lockdep`, are 77 of 1880, with 784 direct
+dependencies from them and 19 into them, and unloading the module takes
+the table back to 20030. So the port holds under a tenth of the table
+and the guest's boot holds six tenths. The debug kernel is rebuilt with
+`CONFIG_LOCKDEP_BITS=17` (131072 entries) and
+`CONFIG_LOCKDEP_STACK_TRACE_BITS=20`, the stack-trace table having read
+298098 of 524288 after the same work, and the config diff beside it is
+the two values and the toolchain's rustc detection; the same tree,
+version string unchanged, so the module needs no change. Installed and
+booted, `/proc/lockdep_stats` reads `[max: 131072]` and `[max:
+1048576]` at 18204 and 188962 used, which is the effect and not the
+build's timestamp (`doc/history/lockdep-rebuild-2026-10-17.log`).
+
+**generic/003 and the access time.** The decision the entry above left to
+the maintainer was whether to fence the test as the format's behavior or
+store the access time by default, and the knob that would have made it a
+two-way choice did not work: a module built with `HAMMER2_ATIME=1`, which
+reports the stored atime, still failed the test on both of its access-time
+lines, "access time has changed for file1 after remount" and "for file in
+read-only filesystem" (`doc/history/xfstests-003-atime-2026-10-17.log`),
+since `->update_time` handed a read's `FS_UPD_ATIME` to
+`generic_update_time()`, which stamps the VFS inode alone, so every
+remount read the create's atime back from the media. The knob now stores
+a read's stamp in `meta.atime` under the inode lock, the way the
+modification stamps are stored, and the default build is unchanged: the
+modification time is reported as the access time, which is DragonFly's
+reading (`hammer2_vop_getattr()` and a `vop_markatime` that returns 0
+upstream) and the three BSD ports' default, each under the same
+`HAMMER2_ATIME` conditional, since every atime update rewrites the inode
+on a copy-on-write format. The maintainer has not ruled on this; the
+session took it under the delegated-work rule because it is reversible
+in one build flag, and a ruling the other way replaces it. generic/003
+goes to `test/xfstests/hammer2.exclude` with that reason, under a widened
+second kind, what this port does as DragonFly does it, and
+`H2_XFSTESTS_EXCLUDE=none` against a knob build is how the other reading
+is checked: on the module at `32cc081` built with the knob,
+generic/003 passed once, in 13 s, with the list off
+(`doc/history/xfstests-676-338-003-2026-10-17.log`).
+
+**The directory read.** generic/676 seeks in a directory of 4000 entries
+and reads one entry at each position, and the entry above left its three
+readings as a finding: 711 s in the second quick run, with lockdep live
+through it; 696 s in the third, where lockdep had died at generic/338
+before it ran; and a kill at the runner's 900 s bound in the fourth, with
+lockdep live. The mechanism is the synchronous XOP: the port runs a
+backend in the caller's thread, so `hammer2_xop_readdir()` fed every
+entry from the position to the end of the directory into a FIFO that
+grew to hold them before the frontend emitted one, and every `getdents(2)`
+walked the rest of the directory. The FreeBSD port scans the same way;
+DragonFly's backend thread blocks on a full FIFO and is aborted when the
+frontend retires. `perf` on the 1.0.37 module reading one entry at a
+time in a directory of 1000: 94 percent under `hammer2_xop_readdir()`,
+93 under `hammer2_chain_lookup()`.
+
+Three cuts, each measured before the next. The first stopped the backend
+one short of a full FIFO, fifteen entries, and resumed from the key it
+stopped before: `t_readdir_3` at 500 entries went from 8.14 to 5.06 s and
+at 4000 from the bound to 497 s, a third rather than an order of
+magnitude, and `perf` on the bounded module showed why: 82 percent of
+the time under `hammer2_chain_lookup()` and 31 under
+`hammer2_chain_repparent()`, the descent from the inode through the
+directory's indirect blocks, each reloaded from the page cache under
+lockdep's assertions, paid once per chunk, so a 32 KiB buffer paid one
+descent per fifteen entries it holds, thirty-three to sixty-seven of
+them by the fills measured below. The second read the budget from
+`dir_context.count`, the space left in the caller's buffer, which the
+kernel of record offers as a hint, dividing by the 24-byte smallest
+entry: 8.30 to 3.98 s at 500, every listing the same at five buffer
+sizes, and 774 s at 4000, worse than the first cut. The arithmetic says
+why: 32768 over 24 is 1365 entries asked for, and the sweep at 32 KiB
+reads 4002 entries in 8 calls on the directory `t_readdir_3` makes, about
+500 a buffer, and in 4 calls on a directory of 4000 short names, about
+1000, so each call fed hundreds of chains past the buffer's end, and
+glibc's `readdir()` after `seekdir()` asks for that buffer and keeps one
+entry of it. A one-entry seek-and-read on that module costs 196 to 634 µs
+whether the directory holds 500 or 4000 entries, which over its eleven
+chains and one descent is tens of microseconds a chain on this kernel;
+the profile of that read puts lockdep's own functions at 51 percent of
+the samples by self time (`lock_is_held_type`, `__lock_acquire`,
+`lock_release`, `lock_acquire`) and kmemleak's
+object creation at 23 by children, with `hammer2_chain_alloc()` at 32,
+lockdep's map initialization and `static_obj()` at 22 and the port's own
+class lookups at 15, by children. The third cut
+caps a chunk at 255 entries and sizes each later chunk from the mean size
+of the entries the call has emitted, so the overshoot is bounded by the
+cap and converges on the buffer: 8.40 to 4.23 s at 500 entries, 374 s at
+4000 with lockdep live, and a 4000-entry `ls -f` in 0.15 s against 0.19,
+every sweep the same (`doc/history/readdir-budget-cut3-2026-10-17.log`,
+the first two cuts and the profiles in
+`doc/history/readdir-budget-2026-10-17.log`). What the 374 s still buys
+is glibc's pattern at that per-chain cost, most of it lockdep's and
+kmemleak's bookkeeping on a chain's life by the profile above, and that
+cost is read here and left where it is. A caller that passes no hint,
+`nfsd`'s readdir among them, gets a FIFO's worth doubled per chunk to the
+same cap; `exportfs` and `overlayfs` pass `INT_MAX`, the hint's unlimited
+value, which the cap answers. The backend's stop is two `XXX` lines in the carried file and the
+two fields it reads are two more in `hammer2.h`; `ctx->pos` keeps its
+meaning. `test/getdents-resume.c` gained a `sweep` mode, the same
+directory read at 128, 280, 1024, 4096 and 32768 bytes with every pass
+required to match the first by count and by an order-independent hash of
+the names, and `test-fixtures.sh` runs it beside the one-entry read; on
+both 4000-entry directories every size agrees, 999 calls at 128 bytes to
+4 at 32 KiB on the short names and 2607 to 8 on `t_readdir_3`'s. Through
+the runner on the rebuilt kernel, module `32cc081`, the first test
+after the boot so lockdep was live: generic/676 passes in 405 s, and
+generic/338, whose only failure was the lockdep table, passes in 4 s
+(`doc/history/xfstests-676-338-003-2026-10-17.log`).
+
+**The 6.18 revisit.** The roadmap's rule deferred the one compatibility
+question, a tier at the 6.18 longterm kernel, until after 1.0.0, and the
+September reading was two conditionals. Re-measured by compiling a copy
+of the module at `32cc081` against a prepared v6.18 tree with `make -k`,
+so every file reports (`doc/history/compat-6.18-2026-10-17.log`): seven
+things, the four `fs_bdev_*` calls of the per-mount device claim,
+`->update_time`'s signature with its enum and `generic_update_time()`'s
+third argument, `->create` without `excl`, `filemap_alloc_folio()`'s
+third argument, `kzalloc_obj()` and `kmalloc_obj()`,
+`inode_state_read_once()`, and the `linux/folio_batch.h` header, which
+one line of `pagevec.h` stands in for. Everything else compiles against
+6.18 as it stands, `dir_context.count` among it. The tree's rule is that
+there are no version guards, so a tier is seven guards at the least,
+since fixing one can surface errors hidden behind it, or a maintained
+branch; the list is written into the roadmap row and the
+decision stays where the rule put it, with the maintainer.
+
+**The quick group on `32cc081`**, on the rebuilt kernel with the exclude
+list of thirteen active, `doc/history/xfstests-quick5-2026-10-17.log`:
+646 listed, 13 expunged, 633 with a `Ran:` line, 511 not run, 122
+executed, none failed; `rmmod exit 0`, `log: bug 0 oops 0 warn 0`, the
+suite at `a6d1f76`, exit 0. generic/676 passed in 390 s, generic/736 in
+7 s and generic/338 in 4 s, and generic/003 is among the expunged. Read on
+the guest after the run, 79 minutes into its uptime: 24380 of 131072
+direct dependencies, no "turning off the locking correctness validator"
+line and no `MAX_LOCKDEP` line in the ring buffer, so lockdep was live
+from the boot through the whole group, which the third group, dead at
+`338`, and the fourth, dead at `736`, had not; the buffer held 34 of the run's `run fstests` lines, so the
+runner's `log:` line is, as before, evidence about its tail and
+`_check_dmesg`, which read per test, is the reader that saw each. Against
+the fourth group's three failures: `003` is expunged with its reason,
+`736`'s and `338`'s failure was the table that no longer fills, and
+`676` is the budget's. The first quick group with no failure of the
+port's; its thirteen expunged are, like the fourth group's twelve,
+every one a test the list names.
+
+**Audit.** An independent adversarial reading of this entry, the 1.0.38
+row, the four commit messages and the changed documents, before any was
+published, refused sign-off on three counts and asked for seven more
+changes, each checked against the logs before it was taken. The 711 s
+reading of generic/676 had been written as taken with lockdep off, and
+the second quick run's log shows lockdep live through it; two numbers in
+the readdir paragraph, the descents a 32 KiB buffer paid and the entries
+it holds, were estimates written as measurements, and are replaced by
+the sweep's own fills; the per-chain cost is now derived from the logged
+one-entry read rather than stated; the lockdep table's growth is split
+between the module and the mounts; the access-time decision is written
+as the session's under the delegated-work rule, where it had read as
+the maintainer's; the second dio in the generic/338 line is named rather
+than passed over; the status table's inode row still described the knob
+as reporting only; a knob pass is a pass, not a working reading; and the
+caller that passes no hint is `nfsd`, where the draft had named
+`exportfs`, which passes the unlimited value. The two commit messages
+carrying the same figures were replayed on byte-identical trees before
+the push. The second round found two defects the fixes had introduced,
+`rcu_is_watching` counted among lockdep's functions and a false account
+of how `make -k` reports, and the third was clean. The paragraph on the
+quick group above was read in a fourth round of its own, which refused
+once, on a first claimed for the expunged set that the fourth group
+already had, and a fifth signed off on the correction.

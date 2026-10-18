@@ -1,0 +1,109 @@
+== the guest's debug kernel of record rebuilt with CONFIG_LOCKDEP_BITS=17 and CONFIG_LOCKDEP_STACK_TRACE_BITS=20, 2026-10-17; the host rebuild, then the install and cycle, then the first reading of /proc/lockdep_stats on the new kernel; the module needs no change since the version string is unchanged
+
+#### kernel-rebuild.sh output
+== before: CONFIG_LOCKDEP_BITS=15 CONFIG_LOCKDEP_STACK_TRACE_BITS=19 
+== after:  CONFIG_LOCKDEP_BITS=17 CONFIG_LOCKDEP_STACK_TRACE_BITS=20 
+14,16c14,16
+< CONFIG_RUSTC_VERSION=109801
+< CONFIG_RUSTC_LLVM_VERSION=220108
+< CONFIG_RUSTC_LLVM_MAJOR_VERSION=22
+---
+> CONFIG_RUSTC_VERSION=109900
+> CONFIG_RUSTC_LLVM_VERSION=230103
+> CONFIG_RUSTC_LLVM_MAJOR_VERSION=23
+6447c6447
+< CONFIG_LOCKDEP_BITS=15
+---
+> CONFIG_LOCKDEP_BITS=17
+6449c6449
+< CONFIG_LOCKDEP_STACK_TRACE_BITS=19
+---
+> CONFIG_LOCKDEP_STACK_TRACE_BITS=20
+== built in 107 s: 296 log lines, warnings 0
+-rw-r--r-- 1 james james 15958528 Oct 17 20:48 arch/x86/boot/bzImage
+-rw-r--r-- 1 james james 43520000 Oct 17 20:48 /home/james/kernels/modules-7.3.0-rc5-lockdep17.tar
+== kernel rebuild done 20:48:42
+exit 0
+
+#### kernel-install.sh output
+7.3.0-rc5
+ direct dependencies:                 22114 [max: 32768]
+ indirect dependencies:              113530
+ all direct dependencies:            402490
+==> WARNING: No module containing the symbol 'drm_privacy_screen_register' found in: 'drivers/platform'
+==> WARNING: consolefont: no font found in configuration
+1
+GRUB_DEFAULT="gnulinux-advanced-34e1a4bf-a7e7-479b-a78a-73a126974292>gnulinux-linux-h2debug-rc5-advanced-34e1a4bf-a7e7-479b-a78a-73a126974292"
+== installed, cycling 20:59:34
+Domain 'artix-s6-kde' destroyed
+
+Domain 'artix-s6-kde' started
+
+== up after ~12 s
+7.3.0-rc5
+#2 SMP PREEMPT_DYNAMIC Sat Oct 17 20:47:14 PDT 2026
+ lock-classes:                         1705 [max: 8192]
+ direct dependencies:                 18204 [max: 131072]
+ indirect dependencies:               84672
+ all direct dependencies:            302004
+ stack-trace entries:                188962 [max: 1048576]
+debug_locks: no procfs knob
+0
+== done 21:00:04
+exit 0
+
+#### kernel-rebuild.sh
+#!/bin/sh
+# Rebuild the guest's debug kernel of record with a larger lockdep
+# dependency table, 2026-10-17.  Host side only; the install is a second
+# step.  Never run while a module build uses the same tree.
+set -eu
+T=$HOME/kernels/linux-7.3-rc5
+STAGE=$HOME/kernels/stage-7.3-rc5
+cd "$T"
+pgrep -af "make" | grep -v pgrep && { echo "a make is running"; exit 2; }
+echo "== before: $(grep -E '^CONFIG_LOCKDEP_BITS|^CONFIG_LOCKDEP_STACK_TRACE_BITS' .config | tr '\n' ' ')"
+cp .config /tmp/h2-cocci/config-rc5-before
+scripts/config --set-val LOCKDEP_BITS 17 --set-val LOCKDEP_STACK_TRACE_BITS 20
+make olddefconfig >/dev/null
+echo "== after:  $(grep -E '^CONFIG_LOCKDEP_BITS|^CONFIG_LOCKDEP_STACK_TRACE_BITS' .config | tr '\n' ' ')"
+diff /tmp/h2-cocci/config-rc5-before .config || true
+s=$(date +%s)
+make -j20 > /tmp/h2-cocci/kernel-build.log 2>&1 || { echo "BUILD FAILED, see /tmp/h2-cocci/kernel-build.log"; tail -20 /tmp/h2-cocci/kernel-build.log; exit 1; }
+echo "== built in $(( $(date +%s) - s )) s: $(grep -c . /tmp/h2-cocci/kernel-build.log) log lines, warnings $(grep -c 'warning:' /tmp/h2-cocci/kernel-build.log)"
+rm -rf "$STAGE/lib/modules/7.3.0-rc5"
+make INSTALL_MOD_PATH="$STAGE" modules_install > /tmp/h2-cocci/modules-install.log 2>&1
+tar -C "$STAGE" -cf "$HOME/kernels/modules-7.3.0-rc5-lockdep17.tar" lib
+ls -la arch/x86/boot/bzImage "$HOME/kernels/modules-7.3.0-rc5-lockdep17.tar"
+echo "== kernel rebuild done $(date +%T)"
+
+#### kernel-install.sh
+#!/bin/sh
+# Install the rebuilt h2debug-rc5 kernel on the guest and cycle it.
+# The version string is unchanged, so the modules directory is replaced,
+# the initramfs regenerated from it, and grub re-pinned; sync before the
+# destroy, since a destroy a few seconds after grub-mkconfig loses the
+# write (switching-the-guest-kernel).
+set -eu
+SSH=root@192.168.122.16
+V="virsh --connect qemu:///system"
+T=$HOME/kernels/linux-7.3-rc5
+TAR=$HOME/kernels/modules-7.3.0-rc5-lockdep17.tar
+ssh $SSH 'uname -r; grep -E "direct dependencies" /proc/lockdep_stats'
+scp -q "$T/arch/x86/boot/bzImage" $SSH:/boot/vmlinuz-linux-h2debug-rc5
+scp -q "$TAR" $SSH:/tmp/modules.tar
+ssh $SSH 'set -e
+rm -rf /lib/modules/7.3.0-rc5
+tar -C / -xf /tmp/modules.tar && rm /tmp/modules.tar
+ls /lib/modules/7.3.0-rc5/kernel >/dev/null
+mkinitcpio -p linux-h2debug-rc5 2>&1 | grep -E "Image generation|ERROR|WARNING" || true
+sh /root/setkernel.sh h2debug-rc5
+sync; sync'
+echo "== installed, cycling $(date +%T)"
+$V destroy artix-s6-kde
+sleep 3
+$V start artix-s6-kde
+i=0; while ! ssh -o ConnectTimeout=3 -o BatchMode=yes $SSH true 2>/dev/null; do sleep 3; i=$((i+1)); [ $i -gt 100 ] && { echo "no ssh after 300 s"; exit 1; }; done
+echo "== up after ~$((i*3)) s"
+ssh $SSH 'uname -r; uname -v; grep -E "lock-classes|direct dependencies|stack-trace entries" /proc/lockdep_stats; cat /proc/sys/kernel/debug_locks 2>/dev/null || echo "debug_locks: no procfs knob"; ls /dev/disk/by-id/ | grep -c virtio || true'
+echo "== done $(date +%T)"

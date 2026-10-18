@@ -1,0 +1,72 @@
+== a copy of the module at 32cc081 (the tree then named 4553b5a; its message was reworded before the push and the tree is unchanged) compiled against a prepared linux-6.18 tree (v6.18 from torvalds/linux, the rc5 .config through olddefconfig, make prepare modules_prepare), 2026-10-17, to re-measure what a 6.18 tier would need. make -k so every file reports; the first pass stopped two files at a missing header, the second pass supplies linux/folio_batch.h as one line, '#include <linux/pagevec.h>', in a compat include dir so those two report their own. The 21 '#error' lines are the floor speaking once per file.
+
+#### pass 1: errors by message
+     21 error: #error "HAMMER2 requires Linux 7.3 or newer"
+      2 fatal error: linux/folio_batch.h: No such file or directory
+      2 error: assignment to ‘struct file *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+      1 error: implicit declaration of function ‘kzalloc_obj’; did you mean ‘kzalloc_node’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘inode_state_read_once’ [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_unregister’; did you mean ‘bdi_unregister’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_file_release’; did you mean ‘fs_reclaim_release’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_file_open_by_path’; did you mean ‘bdev_file_open_by_path’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_file_open_by_dev’; did you mean ‘bdev_file_open_by_dev’? [-Wimplicit-function-declaration]
+      1 error: expected expression before ‘struct’
+      1 error: assignment to ‘struct hammer2_lockdep_class *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+
+#### pass 2, with the folio_batch.h shim: errors by message
+     21 error: #error "HAMMER2 requires Linux 7.3 or newer"
+      4 error: initialization of ‘int (*)(struct inode *, int)’ from incompatible pointer type ‘int (*)(struct inode *, enum fs_update_time,  unsigned int)’ [-Wincompatible-pointer-types]
+      3 error: too many arguments to function ‘filemap_alloc_folio_noprof’; expected 2, have 3
+      2 error: assignment to ‘struct file *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+      1 error: too many arguments to function ‘generic_update_time’; expected 2, have 3
+      1 error: parameter 2 (‘type’) has incomplete type
+      1 error: initialization of ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, umode_t,  bool)’ {aka ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, short unsigned int,  _Bool)’} from incompatible pointer type ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, umode_t)’ {aka ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, short unsigned int)’} [-Wincompatible-pointer-types]
+      1 error: implicit declaration of function ‘kzalloc_obj’; did you mean ‘kzalloc_node’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘kmalloc_obj’; did you mean ‘kmalloc_node’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘inode_state_read_once’ [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_unregister’; did you mean ‘bdi_unregister’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_file_release’; did you mean ‘fs_reclaim_release’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_file_open_by_path’; did you mean ‘bdev_file_open_by_path’? [-Wimplicit-function-declaration]
+      1 error: implicit declaration of function ‘fs_bdev_file_open_by_dev’; did you mean ‘bdev_file_open_by_dev’? [-Wimplicit-function-declaration]
+      1 error: ‘FS_UPD_CMTIME’ undeclared (first use in this function); did you mean ‘IS_NOCMTIME’?
+      1 error: ‘FS_UPD_ATIME’ undeclared (first use in this function)
+      1 error: expected expression before ‘struct’
+      1 error: assignment to ‘struct hammer2_ra_work *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+      1 error: assignment to ‘struct hammer2_lockdep_class *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+
+#### pass 2: errors by file, the #error excluded
+      1 hammer2_inode.c
+      6 hammer2_ondisk.c
+      2 hammer2_strategy.c
+      3 hammer2_vfsops.c
+      9 hammer2_vnops.c
+      3 /home/james/kernels/linux-6.18-sparse/include/linux/pagemap.h
+
+#### pass 2: every error line
+hammer2_ondisk.c:111:21: error: implicit declaration of function ‘fs_bdev_file_open_by_path’; did you mean ‘bdev_file_open_by_path’? [-Wimplicit-function-declaration]
+hammer2_ondisk.c:111:19: error: assignment to ‘struct file *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+hammer2_ondisk.c:113:17: error: implicit declaration of function ‘fs_bdev_unregister’; did you mean ‘bdi_unregister’? [-Wimplicit-function-declaration]
+hammer2_ondisk.c:146:37: error: implicit declaration of function ‘fs_bdev_file_open_by_dev’; did you mean ‘bdev_file_open_by_dev’? [-Wimplicit-function-declaration]
+hammer2_ondisk.c:146:35: error: assignment to ‘struct file *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+hammer2_ondisk.c:172:17: error: implicit declaration of function ‘fs_bdev_file_release’; did you mean ‘fs_reclaim_release’? [-Wimplicit-function-declaration]
+hammer2_inode.c:796:14: error: implicit declaration of function ‘inode_state_read_once’ [-Wimplicit-function-declaration]
+hammer2_vfsops.c:2516:15: error: implicit declaration of function ‘kzalloc_obj’; did you mean ‘kzalloc_node’? [-Wimplicit-function-declaration]
+hammer2_vfsops.c:2516:27: error: expected expression before ‘struct’
+hammer2_vfsops.c:3383:19: error: assignment to ‘struct hammer2_lockdep_class *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+hammer2_strategy.c:547:21: error: implicit declaration of function ‘kmalloc_obj’; did you mean ‘kmalloc_node’? [-Wimplicit-function-declaration]
+hammer2_strategy.c:547:19: error: assignment to ‘struct hammer2_ra_work *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+hammer2_vnops.c:880:27: error: initialization of ‘int (*)(struct inode *, int)’ from incompatible pointer type ‘int (*)(struct inode *, enum fs_update_time,  unsigned int)’ [-Wincompatible-pointer-types]
+hammer2_vnops.c:882:27: error: initialization of ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, umode_t,  bool)’ {aka ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, short unsigned int,  _Bool)’} from incompatible pointer type ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, umode_t)’ {aka ‘int (*)(struct mnt_idmap *, struct inode *, struct dentry *, short unsigned int)’} [-Wincompatible-pointer-types]
+/home/james/kernels/linux-6.18-sparse/include/linux/pagemap.h:666:21: error: too many arguments to function ‘filemap_alloc_folio_noprof’; expected 2, have 3
+/home/james/kernels/linux-6.18-sparse/include/linux/pagemap.h:666:21: error: too many arguments to function ‘filemap_alloc_folio_noprof’; expected 2, have 3
+/home/james/kernels/linux-6.18-sparse/include/linux/pagemap.h:666:21: error: too many arguments to function ‘filemap_alloc_folio_noprof’; expected 2, have 3
+hammer2_vnops.c:2468:66: error: parameter 2 (‘type’) has incomplete type
+hammer2_vnops.c:2476:21: error: ‘FS_UPD_CMTIME’ undeclared (first use in this function); did you mean ‘IS_NOCMTIME’?
+hammer2_vnops.c:2477:25: error: too many arguments to function ‘generic_update_time’; expected 2, have 3
+hammer2_vnops.c:2490:21: error: ‘FS_UPD_ATIME’ undeclared (first use in this function)
+hammer2_vnops.c:2506:27: error: initialization of ‘int (*)(struct inode *, int)’ from incompatible pointer type ‘int (*)(struct inode *, enum fs_update_time,  unsigned int)’ [-Wincompatible-pointer-types]
+hammer2_vnops.c:2522:27: error: initialization of ‘int (*)(struct inode *, int)’ from incompatible pointer type ‘int (*)(struct inode *, enum fs_update_time,  unsigned int)’ [-Wincompatible-pointer-types]
+hammer2_vnops.c:2533:27: error: initialization of ‘int (*)(struct inode *, int)’ from incompatible pointer type ‘int (*)(struct inode *, enum fs_update_time,  unsigned int)’ [-Wincompatible-pointer-types]
+
+#### 6.18 tree
+7d0a66e4b Linux 6.18
