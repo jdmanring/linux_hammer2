@@ -1219,8 +1219,15 @@ bigmask_get(hammer2_bmap_data_t *bmap)
 				 */
 				if ((scan & mask) == 0)
 					bigmask |= radix_mask;
-				scan <<= iter;
 				j += iter;
+				/*
+				 * XXX Linux: the element's last shift is by its
+				 * own width once iter reaches it, which UBSAN
+				 * reports (exponent 64 for a 64-bit type); the
+				 * value is not read after it, so it is skipped.
+				 */
+				if (j < HAMMER2_BMAP_BITS_PER_ELEMENT)
+					scan <<= iter;
 			}
 			iter <<= 1;
 			radix_mask = (radix_mask << 1) | 1;
