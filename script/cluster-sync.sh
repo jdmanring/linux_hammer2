@@ -582,6 +582,11 @@ t0=$(date +%s%N); timeout 60 umount /mnt/h2c; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
+# The target snapshot, the slave as it was before the interrupted pass, is a
+# PFS root on the slave's device, listed through its ROOT mount, which this
+# phase keeps up. Read here, inside the interruption; the media walk at the
+# end of the run reads that the resume's verified pass deleted it.
+echo "interrupt-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
 # The action counters the module prints under 0x8000 (acted/failed over the
 # scan's action switch), read at the interruption so the shortfall this run
 # ends with is paired with the count of copies that returned an error. klog()
@@ -664,6 +669,26 @@ echo "resume-settled $still"
 echo "resume-seconds $n"
 echo "resume-passes $(( $(klog 'sync_slaves pfs CL') - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
+# The snapshot pass's own records, read once the resume has settled. The
+# idle window reads 12 s more, two of the thread's five-second wakeups: an
+# idle master must cost idle passes and no snapshot pass, and the last idle
+# line carries both root tids, which must agree for hammer2_cluster_check()
+# to serve the slave; how many live passes it took to get there is the
+# idlestamp count, printed and not asserted.
+p1=$(klog 'syncsnap: pass clindex'); i1=$(klog 'syncsnap: idle clindex')
+sleep 12
+echo "idle-window-passes $(( $(klog 'syncsnap: pass clindex') - p1 ))"
+echo "idle-window-idles $(( $(klog 'syncsnap: idle clindex') - i1 ))"
+echo "snap-passes $(klog 'syncsnap: pass clindex')"
+echo "snap-idle $(klog 'syncsnap: idle clindex')"
+echo "snap-idlestamp $(klog 'syncsnap: idlestamp')"
+echo "snap-verified $(klog 'syncsnap: verified')"
+echo "snap-unverified $(klog 'syncsnap: unverified')"
+echo "snap-target-taken $(klog 'syncsnap: target .* taken')"
+echo "snap-target-kept $(klog 'syncsnap: target .* kept')"
+echo "snap-target-errors $(klog 'syncsnap: target .* error')"
+echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
+echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
 timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
 echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
@@ -858,6 +883,20 @@ p=$(val resume-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the resumed thre
 # settle counter is 10 consecutive seconds with no new update-inode line; the
 # bound is H2_RESUME_SECS (300) and a run that hits it did not converge.
 s=$(val resume-settled); [ "${s:-0}" -ge 10 ] 2>/dev/null; check "the resumed thread stops advancing rather than being cut off" $? "settled ${s:-none} s after $(( $(val resume-updates) )) updates in $(val resume-converge-seconds) s"
+# The snapshot pass: every pass that took a snapshot verified against it,
+# the target snapshot was on the slave's device while the pass was
+# interrupted, an idle master costs idle passes and no snapshot, and once
+# idle the two root tids agree. Each is a count the live pass cannot
+# produce, so a thread that never took a snapshot fails here.
+if [ "$H2SNAP" = 1 ]; then
+	a=$(val snap-verified); p=$(val snap-passes); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "a snapshot pass verified against its own snapshot" $? "${a:-none} verified of ${p:-none} snapshot pass(es), at most $(val snap-verify-rounds) round(s)"
+	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified"
+	a=$(val interrupt-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the last known-good target snapshot is on the slave's device while a pass is interrupted" $? "${a:-none} .h2sync-tgt listed, $(val snap-target-taken) taken and $(val snap-target-kept) kept over the run"
+	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
+	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in 12 s after the resume settled"
+	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
+	[ -n "$mt" ] && [ "$mt" = "$st" ]; check "the slave root's tid agrees with the master's once idle" $? "master ${mt:-none} slave ${st:-none}, after $(val snap-idlestamp) idle stamp(s)"
+fi
 if [ $(( H2DEBUG & 1 )) = 1 ]; then
 	w=$(val write-destroys); [ "${w:-1}" = 0 ]; check "no pass destroys on the slave while the master is being written" $? "${w:-none} destroy(s) inside the write"
 fi

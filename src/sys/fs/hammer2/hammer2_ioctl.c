@@ -679,6 +679,18 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		nip->meta.pfs_subtype = HAMMER2_PFSSUBTYPE_SNAPSHOT;
 		nip->meta.op_flags |= HAMMER2_OPFLAG_PFSROOT;
 		nip->meta.pfs_lsnap_tid = mtid;
+		/*
+		 * XXX Linux: the synchronization thread's snapshot carries the
+		 * source root's own fields, the ones hammer2_sync_replace()
+		 * copies onto a PFS root, so a slave root brought to the
+		 * snapshot's is brought to the master's and not to a new PFS's
+		 * defaults (mode 0755, the creation time, the super-root's
+		 * algorithms); the thread's idle test reads the same fields
+		 * back.  The ioctl's snapshots keep upstream's shape.
+		 */
+		if (flags & HAMMER2_PFSSNAP_PMPSYNC)
+			hammer2_sync_root_meta_copy(&nip->meta,
+			    &chain->data->ipdata.meta);
 		nchain->bref.embed.stats = chain->bref.embed.stats;
 
 		kern_uuidgen(&nip->meta.pfs_fsid, 1);

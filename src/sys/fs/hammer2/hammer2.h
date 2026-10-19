@@ -1007,6 +1007,29 @@ struct hammer2_thread {
 	 * none.  The unmount deletes it, see hammer2_sync_snap_cleanup().
 	 */
 	int			snap_left;
+	/*
+	 * XXX Linux: the idle test of hammer2_sync_pass_snap(): the master
+	 * element's root blockset and the root meta fields the PFSROOT arm
+	 * copies, as the snapshot of the last verified pass held them.  The
+	 * flush rewrites that blockset for any change it writes back under
+	 * the root (hammer2_flush.c, pfs_iroot_blocksets) and nothing else
+	 * does, so an equal blockset and equal fields mean no snapshot and no
+	 * scan.  The root's own modify_tid cannot be the test: every snapshot
+	 * writes pfs_lsnap_tid on the master root, and the next inode sync
+	 * stamps the root chain anew.
+	 */
+	hammer2_blockset_t	last_blockset;
+	hammer2_inode_meta_t	last_meta;
+	/*
+	 * XXX Linux: the target snapshot, <name>.h2sync-tgt on this element's
+	 * device: the slave as it was before the first pass after a verified
+	 * one, kept until a pass verifies and deleted then, kept across a
+	 * failed or interrupted pass, a crash and an unmount.  tgt_left is a
+	 * delete of it that an unmount's lock refused, for
+	 * hammer2_sync_snap_cleanup().
+	 */
+	int			tgt_valid;
+	int			tgt_left;
 };
 typedef struct hammer2_thread	hammer2_thread_t;
 
@@ -1380,6 +1403,8 @@ void hammer2_dedup_clear(hammer2_dev_t *);
 /* hammer2_synchro.c */
 void hammer2_primary_sync_thread(void *);
 int hammer2_sync_snap_cleanup(hammer2_thread_t *);	/* XXX Linux */
+void hammer2_sync_root_meta_copy(hammer2_inode_meta_t *,
+    const hammer2_inode_meta_t *);			/* XXX Linux */
 
 /* hammer2_msgops.c */
 int hammer2_msg_dbg_rcvmsg(kdmsg_msg_t *);

@@ -76,6 +76,13 @@ typedef struct hammer2_deferred_list {
 	 * Reset per pass.
 	 */
 	int			failed;
+	/*
+	 * XXX Linux: the keys this pass inserted, replaced or destroyed, read
+	 * by the snapshot pass's verify rounds: a round that compares every
+	 * inode the root holds and counts none has brought the slave to the
+	 * snapshot.  Reset per pass.
+	 */
+	int			acted;
 } hammer2_deferred_list_t;
 
 
@@ -201,6 +208,46 @@ hammer2_sync_slave_chain(hammer2_thread_t *thr, hammer2_key_t inum,
 		list->failed = 1;
 	}
 	return (chain);
+}
+
+/*
+ * XXX Linux: the fields hammer2_sync_replace() copies onto a PFS root, as
+ * one list for the two other places that need the same set: the snapshot
+ * the thread takes (hammer2_pfs_snapshot(), so the snapshot's root carries
+ * the master's fields and not a new PFS's defaults, which a slave root was
+ * being brought to) and the idle test of hammer2_sync_pass_snap().
+ * pfs_lsnap_tid is not among them: the arm max-merges it and every snapshot
+ * moves it.
+ */
+void
+hammer2_sync_root_meta_copy(hammer2_inode_meta_t *dst,
+    const hammer2_inode_meta_t *src)
+{
+	dst->uflags = src->uflags;
+	dst->rmajor = src->rmajor;
+	dst->rminor = src->rminor;
+	dst->ctime = src->ctime;
+	dst->mtime = src->mtime;
+	dst->atime = src->atime;
+	dst->uid = src->uid;
+	dst->gid = src->gid;
+	dst->mode = src->mode;
+	dst->ncopies = src->ncopies;
+	dst->comp_algo = src->comp_algo;
+	dst->check_algo = src->check_algo;
+	dst->data_quota = src->data_quota;
+	dst->inode_quota = src->inode_quota;
+}
+
+/* XXX Linux: whether the fields above differ between two root metas. */
+static int
+hammer2_sync_root_meta_differs(const hammer2_inode_meta_t *a,
+    const hammer2_inode_meta_t *b)
+{
+	hammer2_inode_meta_t t = *a;
+
+	hammer2_sync_root_meta_copy(&t, b);
+	return (bcmp(&t, a, sizeof(t)) != 0);
 }
 
 /* Release a deferral of either kind. */
@@ -389,6 +436,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 
 	hammer2_inode_ref(pmp->iroot);
 	list->failed = 0;	/* XXX Linux */
+	list->acted = 0;	/* XXX Linux */
 	/*
 	 * XXX Linux: a rescan set that overflowed asks this pass to compare
 	 * every inode; see hammer2_thread.rescan.
@@ -515,7 +563,29 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
  * defers, an inode of the snapshot PFS made from the scan's cluster, so the
  * source side is upstream's ipcluster and scanall XOPs unchanged and only
  * the slave side is found differently.  See doc/SYNC_DESIGN.md.
+ *
+ * The pass is skipped while the master has not changed since the last
+ * verified one: the master root's flushed blockset and the root fields the
+ * PFSROOT arm copies are compared with the snapshot's that verified
+ * (hammer2_thread.last_blockset).  An idle master whose root tid still
+ * differs from the slave root's, which is every master once after a
+ * snapshot, since the snapshot writes its root, gets the live pass once:
+ * its root scan is one level, inode by inode and by tid, and its PFSROOT
+ * arm copies the live root's fields and stamps the slave root with the live
+ * tid, which is the condition under which hammer2_cluster_check() serves
+ * the slave.
+ *
+ * A pass that acted is run again against the same snapshot, the root pushed
+ * onto the rescan set so the tid gate cannot pass it, until a round acts on
+ * nothing or HAMMER2_SYNC_VERIFY_ROUNDS have run; a pass whose last round
+ * acted on nothing and failed nothing is verified.  Before the first pass
+ * after a verified one the slave element is snapshotted too,
+ * <name>.h2sync-tgt on its own device, deleted when a pass verifies and
+ * kept across a failed or interrupted pass, a crash and an unmount: the
+ * last known-good slave, by the primitives the port has.
  */
+#define HAMMER2_SYNC_VERIFY_ROUNDS	3
+
 static int
 hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 {
@@ -523,14 +593,20 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	hammer2_pfs_t *snap_pmp = NULL;
 	hammer2_xop_ipcluster_t *xop2;
 	hammer2_chain_t *focus;
+	hammer2_chain_t *chain;
+	hammer2_inode_meta_t mmeta;	/* the master root's, as flushed */
 	hammer2_tid_t root_tid = 0;
+	hammer2_tid_t mtid = 0;		/* the master root chain's tid */
+	hammer2_tid_t stid = 0;		/* the slave root chain's tid */
 	char name[HAMMER2_INODE_MAXNAME];
-	int idx, m, n, error, derror;
+	char tname[HAMMER2_INODE_MAXNAME];
+	int idx, m, n, error, derror, round, verified, idle;
 
 	idx = thr->clindex;
 
 	/*
-	 * Elect the source element.
+	 * Elect the source element, and read its root's tid and meta for the
+	 * idle test below.
 	 */
 	hammer2_inode_lock(pmp->iroot, HAMMER2_RESOLVE_SHARED);
 	xop2 = hammer2_xop_alloc(pmp->iroot, HAMMER2_XOP_MODIFYING);
@@ -538,6 +614,7 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	hammer2_inode_unlock(pmp->iroot);
 	error = hammer2_xop_collect(&xop2->head, 0);
 	m = -1;
+	bzero(&mmeta, sizeof(mmeta));
 	if (error == 0 && (focus = xop2->head.cluster.focus) != NULL) {
 		for (n = 0; n < xop2->head.cluster.nchains; ++n) {
 			if (xop2->head.cluster.array[n].chain == focus) {
@@ -545,6 +622,9 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 				break;
 			}
 		}
+		mtid = focus->bref.modify_tid;
+		mmeta = hammer2_xop_gdata(&xop2->head)->ipdata.meta;
+		hammer2_xop_pdata(&xop2->head);
 	}
 	hammer2_xop_retire(&xop2->head, HAMMER2_XOPMASK_VOP);
 	if (m < 0 || m == idx || pmp->pfs_hmps[m] == NULL ||
@@ -569,6 +649,48 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		    pmp->pfs_names[idx]);
 		return (hammer2_sync_pass(thr, NULL, list));
 	}
+	snprintf(tname, sizeof(tname), "%s.h2sync-tgt", pmp->pfs_names[idx]);
+
+	/*
+	 * The idle test.  The blockset is read as the flush left it, so a
+	 * change still dirty in memory is seen one flush later, which the
+	 * snapshot's own flush then carries; the live pass compared in-memory
+	 * chains and saw it at once.
+	 */
+	hammer2_spin_sh(&pmp->blockset_spin);
+	idle = (bcmp(&pmp->pfs_iroot_blocksets[m], &thr->last_blockset,
+	    sizeof(thr->last_blockset)) == 0);
+	hammer2_spin_unsh(&pmp->blockset_spin);
+	if (idle && hammer2_sync_root_meta_differs(&mmeta, &thr->last_meta))
+		idle = 0;
+	if (idle) {
+		hammer2_inode_lock(pmp->iroot, HAMMER2_RESOLVE_SHARED);
+		chain = hammer2_inode_chain(pmp->iroot, idx,
+		    HAMMER2_RESOLVE_NEVER);
+		hammer2_inode_unlock(pmp->iroot);
+		if (chain) {
+			stid = chain->bref.modify_tid;
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+		}
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: idle clindex %d master %016llx "
+			    "slave %016llx\n",
+			    idx, (long long)mtid, (long long)stid);
+		if (chain == NULL || stid == mtid)
+			return (0);
+		/*
+		 * The idle stamp is the live pass: with the master idle its
+		 * root scan finds every inode's tid equal and acts on none,
+		 * and its PFSROOT arm copies the live root's fields and
+		 * stamps the slave root with the live tid.  How many of these
+		 * a quiet master costs is the `idlestamp` count.
+		 */
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: idlestamp clindex %d tid %016llx\n",
+			    idx, (long long)mtid);
+		return (hammer2_sync_pass(thr, NULL, list));
+	}
 
 	/*
 	 * A snapshot a crash left behind.
@@ -591,6 +713,24 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	}
 	error = hammer2_pfs_snapshot(pmp, m, name, HAMMER2_PFSSNAP_PMPSYNC,
 	    &root_tid, &snap_pmp);
+	if (error == 0 && snap_pmp != NULL && thr->tgt_valid == 0) {
+		/*
+		 * The slave as it is before this pass writes it.  One a crash
+		 * or an unmount left is the same thing, the slave before the
+		 * last pass that did not verify, and is kept.
+		 */
+		derror = hammer2_pfs_snapshot(pmp, idx, tname,
+		    HAMMER2_PFSSNAP_PMPSYNC, NULL, NULL);
+		if (derror == 0 || derror == EEXIST) {
+			thr->tgt_valid = 1;
+			if (hammer2_debug & 0x8000)
+				kprintf("syncsnap: target %s %s\n", tname,
+				    derror ? "kept" : "taken");
+		} else {
+			kprintf("syncsnap: target %s error %d\n", tname,
+			    derror);
+		}
+	}
 	hammer2_lk_unlock(&hammer2_mntlk);
 	if (error || snap_pmp == NULL) {
 		kprintf("syncsnap: snapshot %s error %d\n", name, error);
@@ -600,8 +740,65 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		kprintf("syncsnap: pass clindex %d src %d tid %016llx\n",
 		    idx, m, (long long)root_tid);
 
-	error = hammer2_sync_pass(thr, snap_pmp, list);
+	/*
+	 * The pass, and the rounds that verify it against the same snapshot.
+	 * A round that acts on nothing ends them whether or not it failed: a
+	 * key kept as newer than the snapshot, or an inode the frontend has
+	 * replaced since, is the next snapshot's to settle, not this one's.
+	 * The cut stays the previous snapshot's for every round.
+	 */
+	for (round = 1;; ++round) {
+		error = hammer2_sync_pass(thr, snap_pmp, list);
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: verify clindex %d round %d acted %d "
+			    "failed %d error %d\n",
+			    idx, round, list->acted, list->failed, error);
+		if (error || list->acted == 0 ||
+		    round >= HAMMER2_SYNC_VERIFY_ROUNDS)
+			break;
+		/*
+		 * The next round scans the root whatever its tid; see
+		 * hammer2_thread.rescan.
+		 */
+		hammer2_sync_rescan_note(thr, snap_pmp->iroot->meta.inum, 1);
+	}
+	verified = (error == 0 && list->acted == 0 && list->failed == 0);
 	thr->snap_cut = root_tid;	/* the next pass's cut, see hammer2.h */
+
+	if (verified) {
+		/*
+		 * What the snapshot held is what the slave holds; the next
+		 * idle test reads against it.  The snapshot PFS was registered
+		 * from its root's data by hammer2_pfsalloc(), and nothing else
+		 * holds it.
+		 */
+		hammer2_spin_sh(&snap_pmp->blockset_spin);
+		thr->last_blockset = snap_pmp->pfs_iroot_blocksets[0];
+		hammer2_spin_unsh(&snap_pmp->blockset_spin);
+		hammer2_inode_lock(snap_pmp->iroot, HAMMER2_RESOLVE_SHARED);
+		thr->last_meta = snap_pmp->iroot->meta;
+		hammer2_inode_unlock(snap_pmp->iroot);
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: verified clindex %d rounds %d\n",
+			    idx, round);
+		if (thr->tgt_valid) {
+			derror = hammer2_pfs_delete_byname(pmp->pfs_hmps[idx],
+			    tname, HAMMER2_PFSDEL_TRYLOCK);
+			if (derror == 0 || derror == ENOENT) {
+				thr->tgt_valid = 0;
+				thr->tgt_left = 0;
+			} else {
+				thr->tgt_left = 1;
+				if (hammer2_debug & 0x8000)
+					kprintf("syncsnap: delete %s error %d\n",
+					    tname, derror);
+			}
+		}
+	} else {
+		kprintf("syncsnap: unverified clindex %d rounds %d acted %d "
+		    "failed %d error %d\n",
+		    idx, round, list->acted, list->failed, error);
+	}
 
 	/*
 	 * Every chain of the snapshot was dropped with the scan and the
@@ -625,28 +822,26 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 }
 
 /*
- * XXX Linux: delete the snapshot a frozen thread's last pass left behind,
- * see hammer2_sync_pass_snap().  Called by hammer2_pfsfree_scan() under
- * hammer2_mntlk, with the thread frozen and the element names intact.
- * Returns 1 when a PFS was removed from hammer2_pfslist, so the caller
- * can restart its walk of that list.
+ * XXX Linux: delete the snapshots a frozen thread's last pass left behind
+ * for want of the lock, see hammer2_sync_pass_snap(): the source snapshot,
+ * and the target snapshot only when the pass had verified, since an
+ * unverified pass keeps it on purpose.  Called by hammer2_pfsfree_scan()
+ * under hammer2_mntlk, with the thread frozen and the element names
+ * intact.  Returns 1 when a PFS was removed from hammer2_pfslist, so the
+ * caller can restart its walk of that list.
  */
-int
-hammer2_sync_snap_cleanup(hammer2_thread_t *thr)
+static int
+hammer2_sync_snap_cleanup_one(hammer2_thread_t *thr, int m,
+    const char *suffix)
 {
 	hammer2_pfs_t *pmp = thr->pmp;
 	char name[HAMMER2_INODE_MAXNAME];
-	int m, n, error;
+	int n, error;
 
-	if (thr->snap_left == 0)
+	if (pmp->pfs_hmps[m] == NULL)
 		return (0);
-	m = thr->snap_left - 1;
-	thr->snap_left = 0;
-	if (pmp == NULL || pmp->pfs_names[thr->clindex] == NULL ||
-	    pmp->pfs_hmps[m] == NULL)
-		return (0);
-	n = snprintf(name, sizeof(name), "%s.h2sync-src",
-	    pmp->pfs_names[thr->clindex]);
+	n = snprintf(name, sizeof(name), "%s%s", pmp->pfs_names[thr->clindex],
+	    suffix);
 	if (n < 0 || n >= (int)sizeof(name))
 		return (0);
 	error = hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
@@ -654,6 +849,30 @@ hammer2_sync_snap_cleanup(hammer2_thread_t *thr)
 	if (hammer2_debug & 0x8000)
 		kprintf("syncsnap: unmount deleted %s error %d\n", name, error);
 	return (error == 0);
+}
+
+int
+hammer2_sync_snap_cleanup(hammer2_thread_t *thr)
+{
+	hammer2_pfs_t *pmp = thr->pmp;
+	int freed = 0;
+
+	if (pmp == NULL || pmp->pfs_names[thr->clindex] == NULL)
+		return (0);
+	if (thr->snap_left) {
+		freed |= hammer2_sync_snap_cleanup_one(thr, thr->snap_left - 1,
+		    ".h2sync-src");
+		thr->snap_left = 0;
+	}
+	if (thr->tgt_left) {
+		if (hammer2_sync_snap_cleanup_one(thr, thr->clindex,
+		    ".h2sync-tgt")) {
+			freed = 1;
+			thr->tgt_valid = 0;
+		}
+		thr->tgt_left = 0;
+	}
+	return (freed);
 }
 
 /*
@@ -676,7 +895,17 @@ hammer2_primary_sync_thread(void *arg)
 	uint32_t nflags;
 
 	bzero(&list, sizeof(list));
-	thr->snap_cut = 0;	/* XXX Linux: a recreated thread's is stale */
+	/*
+	 * XXX Linux: a recreated thread's are stale.  hammer2_thr_create()
+	 * does not zero the structure, and an element that left and rejoined
+	 * is compared with its master once before the idle test is trusted;
+	 * a target snapshot it left on media is found by name.
+	 */
+	thr->snap_cut = 0;
+	bzero(&thr->last_blockset, sizeof(thr->last_blockset));
+	bzero(&thr->last_meta, sizeof(thr->last_meta));
+	thr->tgt_valid = 0;
+	thr->tgt_left = 0;
 
 	for (;;) {
 		flags = thr->flags;
@@ -1349,6 +1578,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				nerror = hammer2_sync_destroy(thr, &parent,
 							      &chain, 0, idx);
 				atomic_add_int(&h2dbg_act_destroy, 1);
+				++list->acted;	/* XXX Linux */
 			}
 		} else if (n == 0 && snap &&
 			   chain->bref.modify_tid > focus->bref.modify_tid) {
@@ -1369,6 +1599,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		} else if (n == 0 && chain->bref.modify_tid !=
 				     focus->bref.modify_tid) {
 			atomic_add_int(&h2dbg_act_replace, 1);	/* XXX Linux */
+			++list->acted;	/* XXX Linux */
 			/*
 			 * Matching key but local data or meta-data requires
 			 * updating.  If we will recurse, we still need to
@@ -1416,6 +1647,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * modify_tid until the entire recursion has
 			 * completed successfully.
 			 */
+			++list->acted;	/* XXX Linux */
 			if (focus->bref.type == HAMMER2_BREF_TYPE_INODE) {
 				nerror = hammer2_sync_insert(
 						thr, &parent, &chain,

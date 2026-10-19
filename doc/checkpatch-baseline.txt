@@ -120,6 +120,16 @@
 # tree rested at 1,413 for a few hours with a source cursor typedef and
 # five more returns, which a guest run retired the same day; see
 # doc/README.kernel-style.md.
+# 1,410 to 1,420 later on 2026-10-18: the snapshot pass's idle test, verify
+# rounds and target snapshot in hammer2_synchro.c, and the copy of a PFS
+# root's fields it shares with hammer2_pfs_snapshot(). The copy's prototype
+# in hammer2.h leaves its two arguments unnamed as every prototype there
+# does (464 -> 466); the copy, its compare, the unmount cleanup's per-name
+# helper and that prototype wrap with the continuation indent (203 -> 207);
+# three prints of the idle test and the verify rounds are one format split
+# across lines like the file's other prints (76 -> 79); and the returns of
+# the compare and the cleanup's helper net one more `return (x);`
+# (297 -> 298). No category is new.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -146,12 +156,12 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-464 function definition argument 'X' should also have an identifier name
+466 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
-203 please, no spaces at the start of a line
-76 quoted string split across lines
-297 return is not a function, parentheses are not required
+207 please, no spaces at the start of a line
+79 quoted string split across lines
+298 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)

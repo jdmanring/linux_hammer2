@@ -668,6 +668,17 @@ snapshot pass now reads its source through the carried XOPs over an
 inode of the snapshot PFS instead, which is where the typedef and the
 returns went.
 
+1410 to 1420 later the same day, with the snapshot pass's idle test,
+verify rounds and target snapshot in `hammer2_synchro.c` and the copy
+of a PFS root's fields it shares with `hammer2_pfs_snapshot()`. The
+copy's prototype in `hammer2.h` leaves its two arguments unnamed as
+every prototype there does; the copy, its compare, the unmount
+cleanup's per-name helper and that prototype wrap their signatures with
+the continuation indent; three prints of the idle test and the verify
+rounds are one format split across lines as the file's other prints
+are; and the returns of the compare and the cleanup's helper net one
+more `return (x);`. No category is new.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
