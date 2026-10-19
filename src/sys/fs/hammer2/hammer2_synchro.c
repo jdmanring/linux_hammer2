@@ -91,6 +91,23 @@ typedef struct hammer2_deferred_list {
 	 * snapshot holds what the slave holds.  Reset per pass.
 	 */
 	int			kept;
+	/*
+	 * XXX Linux: the entries this pass has scanned, kept until the
+	 * pass-end flush with their slave inode chains referenced.  A
+	 * mounted PFS's sync descends with FLUSH_INODE_STOP, skips each inode
+	 * child it meets and leaves that inode's ONFLUSH set, but pre-clears
+	 * ONFLUSH on the indirect blocks and root above it without re-flagging
+	 * them (hammer2_flush_core), since upstream's dirty inodes each flush
+	 * themselves from the inode down.  This thread's copies have no inode
+	 * on the sync queue, so a sync landing mid-pass broke the path from
+	 * the root to every subtree copied before it, and the pass-end flush
+	 * from the root reached none of them: measured 2026-10-18, 22354
+	 * modified chains left after the cluster unmount's sync, the flush
+	 * complete in 15 ms with error 0, 22201 chains scrapped unflushed at
+	 * the device teardown and the slave 16000 inodes short.  The path
+	 * above each kept chain is re-flagged before the flush.
+	 */
+	hammer2_deferred_ip_t	*done;
 } hammer2_deferred_list_t;
 
 
@@ -270,6 +287,51 @@ hammer2_sync_defer_free(hammer2_deferred_ip_t *defer)
 	hfree(defer, M_HAMMER2, sizeof(*defer));
 }
 
+/*
+ * XXX Linux: a deferral this pass is finished with moves to the done list
+ * for the pass-end flush's re-flag, its inode dropped and its slave chain
+ * kept referenced; see hammer2_deferred_list.done.
+ */
+static void
+hammer2_sync_defer_done(hammer2_deferred_list_t *list,
+    hammer2_deferred_ip_t *defer)
+{
+	if (defer->ip) {
+		hammer2_inode_drop(defer->ip);
+		defer->ip = NULL;
+	}
+	defer->next = list->done;
+	list->done = defer;
+}
+
+static void hammer2_sync_setflush(hammer2_chain_t *);
+
+/*
+ * XXX Linux: re-flag the path from each kept slave inode chain to the volume
+ * root and release the done list; run before the pass-end flush.  The chain
+ * is locked so its parent pointer is stable for the walk, as the arms hold
+ * theirs.
+ */
+static void
+hammer2_sync_reflag(hammer2_deferred_list_t *list)
+{
+	hammer2_deferred_ip_t *defer;
+	int n = 0;
+
+	while ((defer = list->done) != NULL) {
+		list->done = defer->next;
+		if (defer->pin) {
+			hammer2_chain_lock(defer->pin, HAMMER2_RESOLVE_NEVER);
+			hammer2_sync_setflush(defer->pin);
+			hammer2_chain_unlock(defer->pin);
+			++n;
+		}
+		hammer2_sync_defer_free(defer);
+	}
+	if (n && (hammer2_debug & 0x8000))
+		kprintf("sync_flush: reflagged %d inode path(s)\n", n);
+}
+
 /****************************************************************************
  *			    HAMMER2 SYNC THREADS 			    *
  ****************************************************************************/
@@ -325,7 +387,14 @@ hammer2_sync_setflush(hammer2_chain_t *chain)
 		 * or at a NULL parent, which is a different defect.
 		 */
 		if (parent == NULL) {
-			if (hammer2_debug & 0x8000)
+			/*
+			 * XXX Linux: the volume chain is the walk's proper end
+			 * and not a stop worth a line: printed for every copied
+			 * chain it made 104272 lines in one run, a console
+			 * flood that measured itself (2026-10-18).
+			 */
+			if ((hammer2_debug & 0x8000) &&
+			    chain->bref.type != HAMMER2_BREF_TYPE_VOLUME)
 				kprintf("sync_setflush: stopped at %016llx/%d type %d "
 				    "(NULL parent)\n",
 				    (long long)chain->bref.key, chain->bref.keybits,
@@ -477,7 +546,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 			if (list->failed && defer->scanned) {
 				--list->count;
 				list->base = defer->next;
-				hammer2_sync_defer_free(defer);
+				hammer2_sync_defer_done(list, defer);
 				continue;
 			}
 			defer->scanned = 1;
@@ -503,7 +572,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 			if (defer == list->base) {
 				--list->count;
 				list->base = defer->next;
-				hammer2_sync_defer_free(defer);
+				hammer2_sync_defer_done(list, defer);
 				defer = NULL;	/* safety */
 			}
 		}
@@ -518,7 +587,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 			while ((defer = list->base) != NULL) {
 				--list->count;
 				list->base = defer->next;
-				hammer2_sync_defer_free(defer);
+				hammer2_sync_defer_done(list, defer);
 			}
 			if (error == 0 || error == HAMMER2_ERROR_EAGAIN)
 				error = HAMMER2_ERROR_EINPROGRESS;
@@ -551,6 +620,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	 * same path as a scan error, which the loop above treats as a
 	 * pass to retry rather than one that succeeded.
 	 */
+	hammer2_sync_reflag(list);	/* XXX Linux: see hammer2_deferred_list.done */
 	ferror = hammer2_sync_flush(thr);
 	if (ferror && error == 0)
 		error = ferror;
@@ -855,6 +925,16 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			kprintf("syncsnap: newer clindex %d rounds %d kept %d "
 			    "acted %d\n",
 			    idx, round, list->kept, list->acted);
+	} else if (error == HAMMER2_ERROR_EINPROGRESS) {
+		/*
+		 * The thread was asked to stop mid-pass (an unmount of its
+		 * device, a remaster); the target stands and the next thread
+		 * finds it.  Read apart from a pass that ran out of rounds.
+		 */
+		thr->tgt_left = 0;
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: interrupted clindex %d rounds %d "
+			    "acted %d\n", idx, round, list->acted);
 	} else {
 		thr->tgt_left = 0;	/* the target stands */
 		kprintf("syncsnap: unverified clindex %d rounds %d acted %d "
@@ -1425,7 +1505,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				     HAMMER2_LOOKUP_NODIRECT |
 				     HAMMER2_LOOKUP_NODATA);
 	merror = hammer2_xop_collect(&xop->head, 0);
-	if (hammer2_debug & 0x8000) {
+	/*
+	 * XXX Linux: the root scan's line; one per deferred inode was 20000
+	 * lines a copy pass on a serial console (2026-10-18).
+	 */
+	if ((hammer2_debug & 0x8000) && isroot) {
 		/* XXX Linux: %jx, which printk does not implement */
 		kprintf("START_SCAN IP=%016llx chain=%p (%016llx)\n",
 			ip->meta.name_key, chain,
@@ -1848,6 +1932,13 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				nip = hammer2_inode_get(pmp, &xop->head, -1,
 				    idx);
 				xop->head.cluster.array[idx].chain = NULL;
+				/*
+				 * XXX Linux: the slave's chain is kept for the
+				 * pass-end flush's re-flag on this path too; see
+				 * hammer2_deferred_list.done.
+				 */
+				defer->pin = chain;
+				hammer2_chain_ref(chain);
 			}
 
 			hammer2_inode_ref(nip);
@@ -1891,9 +1982,12 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * XXX Linux: the arm the file keys took, printed once per root scan.
 	 * These are cumulative and the run is read from them at the end, so a
 	 * repeated line is the expected shape rather than a flood: one per
-	 * `hammer2_sync_slaves()` call on the PFS root.
+	 * `hammer2_sync_slaves()` call on the PFS root.  On the root alone
+	 * since 2026-10-18: one per deferred inode was 20000 lines a copy
+	 * pass, and the harness reads the last root line and the largest
+	 * sweep, which a directory scan's local counters never carried.
 	 */
-	if (hammer2_debug & 0x8000) {
+	if ((hammer2_debug & 0x8000) && isroot) {
 		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d sweep %d iters %d exit %d replaced %d destroyed %d rescan %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
 		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,

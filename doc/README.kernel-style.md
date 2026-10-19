@@ -696,6 +696,12 @@ which prints a key the frontend deleted after the snapshot was taken
 when the insert arm puts it back, is one more print format split across
 lines.
 
+1427 to 1429 later the same day, with the pass-end flush's re-flag of
+the paths a mounted PFS's sync clears above the thread's copies: the
+helper that moves a finished deferral to the done list wraps its
+signature with the continuation indent, and the `interrupted` verdict
+of the verify rounds is one more print format split across lines.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
