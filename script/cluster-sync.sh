@@ -797,7 +797,11 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# restarted and its second half run. The fake pass this guards: a cut
 	# that landed after the pass had ended tests nothing, so the armed line
 	# carries whether the pass was still open.
-	$RUN "$GUEST_SSH" "$GUEST_ENV sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; mv /tmp/tail.sh /tmp/h2cluster-tail.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1 &
+	# The session and this shell both write $W/out: the session's file
+	# position is its own, so it is opened for append, or the message ssh
+	# prints when the guest dies under it lands over the line appended here.
+	: > "$W/out"
+	$RUN "$GUEST_SSH" "$GUEST_ENV sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; mv /tmp/tail.sh /tmp/h2cluster-tail.sh; . /tmp/h2cluster.sh'" >> "$W/out" 2>&1 &
 	apid=$!
 	n=0
 	until grep -q '^crash-armed' "$W/out" 2>/dev/null || [ $n -ge 2400 ]; do sleep 1; n=$((n + 1)); done
