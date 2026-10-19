@@ -456,8 +456,10 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * subclasses would hold a level up to eight and a directory tree is
  * deeper than that, so the level is part of the class, one registered
  * key per (type, keybits, level) made as the tree is walked, and every
- * ordinary acquire is at subclass 0.  Three acquisitions sit outside
- * that.  A chain deleted from its parent and held across the acquisition
+ * ordinary acquire is at subclass 0.  Four acquisitions sit outside
+ * that, three of chain locks and one of a core lock, the last at
+ * hammer2_spin_ex_nested() below.  A chain deleted from its parent and
+ * held across the acquisition
  * of the parent it is about to be inserted under, the rename XOP's move
  * of a directory entry, has its held acquisition moved to the last
  * subclass by hammer2_chain_lockdep_detached(); nothing else can reach a
@@ -968,6 +970,24 @@ static inline void
 hammer2_spin_ex(hammer2_spin_t *p)
 {
 	down_write(&p->lock);
+}
+
+/*
+ * Linux: the one acquisition of a core lock parent before child, in
+ * hammer2_chain_repchange(), which moves the reptracks of an emptied
+ * indirect block to its parent under both cores.  Every other holder of
+ * two cores takes the child's first, so lockdep read the pair as a cycle
+ * on 2026-10-18 between a writeback flush's repchange and the sync
+ * thread's snapshot flush deleting an emptied block.  The chain there
+ * has no children and is held exclusively by the caller, so nothing can
+ * stand beneath it and walk up through its core, and the walk that
+ * plants a reptrack holds one core at a time; the order is safe and is
+ * upstream's.  Told to lockdep as a subclass on the child's core.
+ */
+static inline void
+hammer2_spin_ex_nested(hammer2_spin_t *p, unsigned int subclass)
+{
+	down_write_nested(&p->lock, subclass);
 }
 
 static inline void

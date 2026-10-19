@@ -2259,7 +2259,8 @@ hammer2_chain_repchange(hammer2_chain_t *parent, hammer2_chain_t *chain)
 	KKASSERT(chain->core.live_count == 0 && RB_EMPTY(&chain->core.rbtree));
 	while (chain->core.reptrack) {
 		hammer2_spin_ex(&parent->core.spin);
-		hammer2_spin_ex(&chain->core.spin);
+		/* XXX Linux: parent before child, see hammer2_spin_ex_nested() */
+		hammer2_spin_ex_nested(&chain->core.spin, 1);
 		reptrack = chain->core.reptrack;
 		if (reptrack == NULL) {
 			hammer2_spin_unex(&chain->core.spin);

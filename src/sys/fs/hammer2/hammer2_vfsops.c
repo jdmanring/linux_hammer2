@@ -167,6 +167,14 @@ module_param_named(bulkfree_tps, hammer2_bulkfree_tps, int, 0644);
 module_param_named(limit_scan_depth, hammer2_limit_scan_depth, int, 0644);
 module_param_named(limit_saved_chains, hammer2_limit_saved_chains, int, 0644);
 module_param_named(always_compress, hammer2_always_compress, int, 0644);
+/*
+ * XXX Linux: the synchronization thread reads a snapshot of the master
+ * element taken at the start of each pass, rather than the live master
+ * through the quorum's focus.  Zero is the carried live-to-live pass,
+ * kept as the fallback; see doc/SYNC_DESIGN.md.
+ */
+int hammer2_sync_snapshot;
+module_param_named(sync_snapshot, hammer2_sync_snapshot, int, 0644);
 module_param_named(alloc_data_bytes, hammer2_alloc_data_bytes, ulong, 0444);
 module_param_named(alloc_meta_bytes, hammer2_alloc_meta_bytes, ulong, 0444);
 module_param_named(data_rewrites, hammer2_data_rewrites, ulong, 0444);
@@ -741,6 +749,20 @@ again:
 			if (pmp->pfs_hmps[i] == NULL)
 				continue;
 			hammer2_thr_freeze(&pmp->sync_thrs[i]);
+		}
+
+		/*
+		 * XXX Linux: a snapshot a thread's last pass could not delete,
+		 * its try-lock refused by the hammer2_mntlk this teardown
+		 * holds, is deleted here under that lock, while the device it
+		 * is on is alive and the element names are.  The delete frees
+		 * a PFS on this list, so the walk restarts.
+		 */
+		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+			if (pmp->pfs_hmps[i] == NULL)
+				continue;
+			if (hammer2_sync_snap_cleanup(&pmp->sync_thrs[i]))
+				goto again;
 		}
 
 		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);

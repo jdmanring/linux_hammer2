@@ -964,6 +964,7 @@ struct hammer2_dev {
  * value.  The flag word is also the wait channel, as it is upstream;
  * tsleep() and wakeup() in hammer2_os.h make any address one.
  */
+#define HAMMER2_SYNC_RESCAN_MAX	64	/* XXX Linux: see rescan below */
 struct hammer2_thread {
 	struct hammer2_pfs	*pmp;
 	struct hammer2_dev	*hmp;
@@ -973,6 +974,39 @@ struct hammer2_thread {
 	int			clindex;	/* cluster element index */
 	int			repidx;
 	char			*scratch;	/* MAXPHYS */
+	/*
+	 * XXX Linux: the snapshot pass's previous cut, the transaction id of
+	 * the snapshot the pass before this one read, 0 before the first.  A
+	 * slave key absent from this pass's snapshot is destroyed only if it
+	 * predates that cut: writers are not interlocked against a flush
+	 * here, so a key written while a snapshot's flush walked its tree can
+	 * be missing from it with an id below the flushed maximum, and would
+	 * have been flushed into the next.  See hammer2_sync_slaves().
+	 */
+	hammer2_tid_t		snap_cut;
+	/*
+	 * XXX Linux: the inodes whose last scan kept or failed a key, which
+	 * the next pass scans whether or not their tids agree.  The pass
+	 * stamps an inode's tid only after a clean scan, but the flush raises
+	 * a parent's tid to the newest child it writes back (hammer2_flush.c,
+	 * the blockref update), so a block replaced beside one kept left the
+	 * slave's inode at the master's tid with the kept block still under
+	 * it, and no later pass looked: measured 2026-10-18, three blocks of a
+	 * file rewritten shorter kept on the slave for good.  A set that
+	 * overflows asks the next pass to compare every inode.  Kept across
+	 * the thread's restarts, since a stale entry costs one scan.  See
+	 * hammer2_sync_slaves().
+	 */
+	hammer2_key_t		rescan[HAMMER2_SYNC_RESCAN_MAX];
+	int			nrescan;
+	int			rescan_all;	/* the set overflowed */
+	int			rescan_now;	/* this pass compares every inode */
+	/*
+	 * XXX Linux: the source element, plus one, whose snapshot the last
+	 * pass could not delete because an unmount held hammer2_mntlk; 0 when
+	 * none.  The unmount deletes it, see hammer2_sync_snap_cleanup().
+	 */
+	int			snap_left;
 };
 typedef struct hammer2_thread	hammer2_thread_t;
 
@@ -1299,6 +1333,8 @@ int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
  */
 #define HAMMER2_PFSSNAP_PMPSYNC		0x40000000
 #define HAMMER2_PFSDEL_TRYLOCK		0x00000001
+#define HAMMER2_PFSDEL_LOCKED		0x00000002
+
 int hammer2_pfs_snapshot(hammer2_pfs_t *, int, const char *, int,
     hammer2_tid_t *, hammer2_pfs_t **);
 int hammer2_pfs_delete_byname(hammer2_dev_t *, const char *, int);
@@ -1343,6 +1379,7 @@ void hammer2_dedup_clear(hammer2_dev_t *);
 
 /* hammer2_synchro.c */
 void hammer2_primary_sync_thread(void *);
+int hammer2_sync_snap_cleanup(hammer2_thread_t *);	/* XXX Linux */
 
 /* hammer2_msgops.c */
 int hammer2_msg_dbg_rcvmsg(kdmsg_msg_t *);

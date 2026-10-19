@@ -650,6 +650,24 @@ it. Its one `return (error);` moved below those two skips, where the
 checker no longer counts it under "return is not a function" (290 to
 289); the return is the file's style and is unchanged.
 
+1396 to 1410 later the same day, with the synchronization thread's
+snapshot pass in `hammer2_synchro.c`: the election of the source element
+assigns the collect's focus inside its `if`, which is the shape of the
+gate at the top of `hammer2_sync_slaves()` upstream wrote; the helper
+that finds the slave's chain by inode number and the pass driver wrap
+their signatures with the continuation indent; the helper's refusal of a
+replaced inode is one print format split across lines as the file's
+other prints are; and the eight returns of the helper and the snapshot
+pass are `return (x);` like every return in the file; and the prototype
+of the unmount's snapshot cleanup, `hammer2_sync_snap_cleanup()`, leaves
+its one argument unnamed as every prototype in `hammer2.h` does. No
+category is new. The count stood at 1413 for a few hours of the same day with a
+source cursor typedef and five more returns; the first guest run showed
+the cursor's walk left its parent pointer on an indirect block, and the
+snapshot pass now reads its source through the carried XOPs over an
+inode of the snapshot PFS instead, which is where the typedef and the
+returns went.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING

@@ -448,7 +448,9 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 	 * them.  We must remove the PFS from the cluster
 	 * before we can destroy it.
 	 */
-	if (flags & HAMMER2_PFSDEL_TRYLOCK) {
+	if (flags & HAMMER2_PFSDEL_LOCKED) {
+		/* the caller holds it; see hammer2_sync_snap_cleanup() */
+	} else if (flags & HAMMER2_PFSDEL_TRYLOCK) {
 		if (!hammer2_lk_tryex(&hammer2_mntlk))
 			return (EAGAIN);
 	} else {
@@ -468,11 +470,13 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 	}
 
 	if (pmp == NULL) {
-		hammer2_lk_unlock(&hammer2_mntlk);
+		if ((flags & HAMMER2_PFSDEL_LOCKED) == 0)
+			hammer2_lk_unlock(&hammer2_mntlk);
 		return (ENOENT);
 	}
 	if (pmp->mp) {
-		hammer2_lk_unlock(&hammer2_mntlk);
+		if ((flags & HAMMER2_PFSDEL_LOCKED) == 0)
+			hammer2_lk_unlock(&hammer2_mntlk);
 		return (EBUSY);
 	}
 
@@ -501,7 +505,8 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 			hammer2_pfsfree(pmp);
 	}
 
-	hammer2_lk_unlock(&hammer2_mntlk);
+	if ((flags & HAMMER2_PFSDEL_LOCKED) == 0)
+		hammer2_lk_unlock(&hammer2_mntlk);
 
 	/*
 	 * Now destroy the PFS under its device using the per-device
@@ -553,8 +558,8 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
  * clindex names the element here.  HAMMER2_PFSSNAP_PMPSYNC flushes the
  * PFS through hammer2_vfs_sync_pmp() rather than hammer2_sync(), whose
  * read of s_umount a thread that an unmount is waiting to stop must not
- * take.  *root_tidp receives the source root chain's modify_tid as read
- * under the locks the copy is made under, and *pmpp the PFS the snapshot
+ * take.  *mtidp receives the snapshot transaction's id, the point in time
+ * the snapshot represents, and *pmpp the PFS the snapshot
  * was registered as, so the thread need not walk hammer2_pfslist for it.
  * The caller has checked the name and the mount's writability; the thread
  * holds hammer2_mntlk across the call, since hammer2_pfsalloc() inserts
@@ -563,7 +568,7 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
  */
 int
 hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
-    int flags, hammer2_tid_t *root_tidp, hammer2_pfs_t **pmpp)
+    int flags, hammer2_tid_t *mtidp, hammer2_pfs_t **pmpp)
 {
 	hammer2_dev_t *hmp, *force_local;
 	hammer2_inode_t *ip;
@@ -573,8 +578,17 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 	hammer2_tid_t mtid, starting_inum;
 	int error;
 
+	/*
+	 * XXX Linux: hammer2_sync() needs the mount; the PFS sync does not,
+	 * and the synchronization thread runs on a PFS whose cluster is not
+	 * mounted whenever only a device of it is, which is the harness's
+	 * divergence phase and every pass between a cluster unmount and the
+	 * device's own.  Measured 2026-10-18: 14 passes refused with EINVAL
+	 * while the live path in the same phase destroyed and replaced keys.
+	 */
 	ip = pmp->iroot;
-	if (ip == NULL || pmp->mp == NULL)
+	if (ip == NULL ||
+	    (pmp->mp == NULL && (flags & HAMMER2_PFSSNAP_PMPSYNC) == 0))
 		return (EINVAL);
 
 	hmp = pmp->pfs_hmps[clindex];
@@ -600,6 +614,8 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
 	}
 	mtid = hammer2_trans_sub(pmp);
+	if (mtidp)		/* Linux */
+		*mtidp = mtid;
 	hammer2_inode_lock(ip, 0);
 	hammer2_inode_modify(ip);
 	ip->meta.pfs_lsnap_tid = mtid;
@@ -619,8 +635,6 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		hammer2_lk_unlock(&hmp->bulklk);
 		return (ENOENT);
 	}
-	if (root_tidp)		/* Linux */
-		*root_tidp = chain->bref.modify_tid;
 	hmp = chain->hmp;
 
 	/*

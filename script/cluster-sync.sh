@@ -123,6 +123,11 @@ LOCKDEBUG=${H2_LOCKDEBUG:-0}
 # is the only count of the copy itself. That bit is off by default because
 # a large phase prints tens of thousands of lines.
 H2DEBUG=${H2_DEBUG:-0x8000}
+# The module's sync_snapshot parameter: 1 reads each pass from a snapshot
+# of the master element, 0 is the carried live-to-live pass. The default
+# follows the module's own, so a run that sets neither reads what a user
+# gets; H2_SYNC_SNAPSHOT=0 is the negative control for the snapshot phase.
+H2SNAP=${H2_SYNC_SNAPSHOT:-1}
 MASTER=$FIXDIR/cluster-master.img
 SLAVE=$FIXDIR/cluster-slave.img
 W=$(mktemp -d) || exit 2
@@ -224,7 +229,8 @@ dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
-insmod /tmp/hammer2.ko debug=$H2DEBUG || { echo "insmod failed"; exit 1; }
+insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
+echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
 klog() { grep -c "$1" $K; }
 # A mount the guest cannot drop leaves its volume held, and the next unmount
@@ -350,6 +356,7 @@ while [ $n -lt 120 ]; do
 	sleep 1; n=$((n + 1))
 done
 r0=$(fieldc replaced); d0=$(fieldc destroyed); f0=$(fieldc failed); a0=$(fieldc acted)
+rs0=$(fieldc rescan)
 timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s
 echo "diverge-threads-down $(ps -eo comm | grep -c '^h2nod-CL')"
 mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "master-alone mount failed"; exit 1; }
@@ -388,6 +395,7 @@ echo "diverge-replaced $(( $(fieldc replaced) - ${r0:-0} ))"
 echo "diverge-destroyed $(( $(fieldc destroyed) - ${d0:-0} ))"
 echo "diverge-failed $(( $(fieldc failed) - ${f0:-0} ))"
 echo "diverge-acted $(( $(fieldc acted) - ${a0:-0} ))"
+echo "diverge-rescanned $(( $(fieldc rescan) - ${rs0:-0} ))"
 echo "diverge-errors $(klog 'hammer2_sync_slaves: error')"
 [ "${H2_FAULT2:-0}" != 0 ] && echo "h2probe: diverge fault end" > /dev/kmsg
 mount -t hammer2 /dev/vdb@CL /mnt/h2c || exit 1
@@ -653,7 +661,13 @@ timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h
 echo "cluster-umount ok"
 echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
 echo "scrapped $(klog unmount_scrap)"
-echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K)"
+# The guest's virtual GPU times out waiting for a vblank under a heavy
+# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
+# 2026-10-18), which is the guest's and not the port's. Those lines name
+# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
+# the port's nor fail the run on their own.
+echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
+echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
 # Before rmmod, so the report's %pS resolves the module's own symbols. The
 # scan used to follow rmmod, where those symbols print as addresses and only
 # a process named hammer2 could match, and to run without the wait the
@@ -672,7 +686,7 @@ GUEST
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
 rc=$?
 # What the guest half actually returned, before anything is inferred from
 # the readings below.  Measured 2026-10-13: a run whose ssh session dropped
@@ -774,6 +788,15 @@ fi
 # above them, so the floor is five and the reading is printed.
 a=$(val diverge-destroyed); [ "${a:-0}" -ge 5 ]; check "the stale slave's extra keys are destroyed by the thread" $? "${a:-none} destroyed for 5 deleted"
 a=$(val diverge-replaced); [ "${a:-0}" -ge 5 ]; check "the stale slave's changed keys are replaced by the thread" $? "${a:-none} replaced for 5 rewritten"
+# On a snapshot pass the thread's first pass after the slave's return has no
+# previous snapshot cut, so the rewritten files' stale tail blocks are kept
+# rather than destroyed and their inodes go on the rescan set; the next pass
+# must scan them again although the flush left their tids equal to the
+# master's. The floor is one; the ceiling catches a set stuck at "every
+# inode", which would also converge but rescan the whole tree every pass.
+if [ "$H2SNAP" = 1 ]; then
+	a=$(val diverge-rescanned); [ "${a:-0}" -ge 1 ] && [ "${a:-0}" -le 64 ]; check "inodes whose keys were kept are scanned again on the next pass" $? "${a:-none} rescan(s) for the kept tails of 5 rewritten files"
+fi
 a=$(val diverge-threads-down); [ "${a:-1}" = 0 ]; check "the cluster down leaves no thread" $? "${a:-none}"
 a=$(val diverge-threads-up); [ "${a:-0}" = 1 ]; check "the slave's return starts the thread again" $? "${a:-none}"
 if [ "${H2_FAULT2:-0}" != 0 ]; then
@@ -842,6 +865,7 @@ else
 	check "the module carries no instrumentation, its kernel tree configuring none" $? "${have_asan:-0} __asan import(s); the KASAN and UBSAN patterns below cannot report on this kernel, and say nothing here"
 fi
 k=$(val kernel-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${k:-none}"
+g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned $g time(s) (drivers/gpu/drm/), counted apart from the port's"
 # A scan that refused is not an empty report. An earlier control run can
 # switch kmemleak off, after which it reports nothing and stays off until a
 # reboot, so a refusal fails here rather than reading as a clean scan. A
@@ -876,9 +900,16 @@ v=$(last "$W/fsck.cluster-slave.img" | sed 's/ [0-9]* indirect,//')
 # line closing it. Inode check codes are left out: they cover timestamps
 # and transaction ids, which a slave does not share with its master.
 fingerprint() {	# image
-	"$HAMMER2" -v show "$1" 2>/dev/null | awk '
-	/filename "CL"$/ && !on { on = 1; next }
-	on && /^ *} \(inode\.[0-9]*, "CL"\)/ { exit }
+	# The synchronization thread's snapshots are PFS roots named
+	# <pfs>.h2sync-src and .h2sync-tgt beside CL under the super-root,
+	# listed after CL's subtree, so the walk reads to the end rather than
+	# stopping at CL's close, and counts them into snaps.<image>. One left
+	# after a clean unmount was found by the volume count on 2026-10-18.
+	"$HAMMER2" -v show "$1" 2>/dev/null | awk -v snapout="$W/snaps.$(basename "$1")" '
+	/filename "[^"]*\.h2sync-(src|tgt)"$/ { snaps++ }
+	END { print snaps + 0 > snapout }
+	/filename "CL"$/ && !on && !past { on = 1; next }
+	on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
 	!on { next }
 	/^ *inode\.[0-9]/ { mode = "inode"; next }
 	/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
@@ -902,6 +933,13 @@ nd=$(grep -c '^data ' "$W/fp.master")
 want_files=$((35 + NBIG + NBIG2))
 [ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
+# The thread's per-pass snapshot must be gone from both devices after a clean
+# unmount; one left is a PFS root the fingerprint's walk counts. MEASURED
+# 2026-10-18: the final unmount held hammer2_mntlk while the thread's delete
+# tried for it, and CL.h2sync-src stayed on the master, read first as the
+# volume holding twice the inodes of its PFS.
+sm=$(cat "$W/snaps.$(basename "$MASTER")" 2>/dev/null); ss=$(cat "$W/snaps.$(basename "$SLAVE")" 2>/dev/null)
+[ "${sm:-1}" = 0 ] && [ "${ss:-1}" = 0 ]; check "no synchronization snapshot is left on either device" $? "master ${sm:-unread}, slave ${ss:-unread} .h2sync-* PFS root(s)"
 # A fingerprint difference is only attributable while the run's images exist:
 # they are recreated at the start of every run, so the next run destroys the
 # evidence this one produced. MEASURED 2026-10-15: a run differed by 4 lines

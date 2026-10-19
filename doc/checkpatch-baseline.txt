@@ -105,6 +105,21 @@
 # hammer2_xop_collect() took upstream's handling of the two codes, and its
 # one `return (error);` moved below the two skips, where the checker no
 # longer counts it (290 -> 289); the return itself is unchanged.
+# 1,396 to 1,410 later on 2026-10-18: the synchronization thread's snapshot
+# pass in hammer2_synchro.c. Its election of the source element tests the
+# collect's focus in the `if`, the shape upstream's own gate at the top of
+# hammer2_sync_slaves() has (24 -> 25); the slave-side lookup helper and
+# the pass driver wrap their signatures with the continuation indent
+# (200 -> 203); the helper's refusal of a replaced inode is one kprintf
+# format split across lines like the file's other prints (75 -> 76); and
+# the eight returns of the helper and the snapshot pass are `return (x);`
+# as every return in the file is (289 -> 297); and the prototype of the
+# unmount's snapshot cleanup, hammer2_sync_snap_cleanup() in hammer2.h,
+# leaves its one argument unnamed as every prototype in that file does
+# (463 -> 464). No category is new. The
+# tree rested at 1,413 for a few hours with a source cursor typedef and
+# five more returns, which a guest run retired the same day; see
+# doc/README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -129,14 +144,14 @@
 4 code indent should use tabs where possible
 83 do not add new typedefs
 1 do not initialise statics to 0
-24 do not use assignment in if condition
+25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-463 function definition argument 'X' should also have an identifier name
+464 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
-200 please, no spaces at the start of a line
-75 quoted string split across lines
-289 return is not a function, parentheses are not required
+203 please, no spaces at the start of a line
+76 quoted string split across lines
+297 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
