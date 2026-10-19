@@ -130,6 +130,14 @@
 # across lines like the file's other prints (76 -> 79); and the returns of
 # the compare and the cleanup's helper net one more `return (x);`
 # (297 -> 298). No category is new.
+# 1,420 to 1,421 later on 2026-10-18: the verify rounds' `newer` verdict,
+# one more print format split across lines (79 -> 80), for a pass that
+# kept a key the frontend wrote after the snapshot was taken.
+# 1,421 to 1,426 later on 2026-10-18: hammer2_pfs_find_byname(), the lookup
+# the delete helper had inline, now also the thread's check that a target
+# snapshot stands. Its prototype in hammer2.h leaves its three arguments
+# unnamed as every prototype there does (466 -> 469), and its two returns
+# are `return (x);` as the file's are (298 -> 300). No category is new.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -156,12 +164,12 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-466 function definition argument 'X' should also have an identifier name
+469 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 207 please, no spaces at the start of a line
-79 quoted string split across lines
-298 return is not a function, parentheses are not required
+80 quoted string split across lines
+300 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)

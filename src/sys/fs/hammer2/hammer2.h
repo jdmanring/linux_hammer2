@@ -1361,6 +1361,7 @@ int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
 int hammer2_pfs_snapshot(hammer2_pfs_t *, int, const char *, int,
     hammer2_tid_t *, hammer2_pfs_t **);
 int hammer2_pfs_delete_byname(hammer2_dev_t *, const char *, int);
+hammer2_pfs_t *hammer2_pfs_find_byname(hammer2_dev_t *, const char *, int *);
 
 /* hammer2_ondisk.c */
 int hammer2_open_devvp(struct super_block *, const hammer2_devvp_list_t *);

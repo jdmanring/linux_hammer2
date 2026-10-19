@@ -237,7 +237,12 @@ klog() { grep -c "$1" $K; }
 # then blocks instead of returning. Counted on every phase so a wedged guest
 # is visible in the probe output rather than only in the final failure.
 mounts() { mount 2>/dev/null | grep -c ' type hammer2'; }
-passes() { klog "sync_slaves pfs $1"; }
+# A pass is a scan line, or an idle line the snapshot pass prints in place
+# of one when the master has not changed; an idle pass that stamps the root
+# prints both and is counted once. MEASURED 2026-10-18: the resume wait read
+# 0 passes in 300 s from the scan lines alone against a thread that had
+# converged and was passing idle every five seconds.
+passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
 
 # 1. A lone SLAVE: start, pass, stop.
 timeout 30 mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
@@ -634,7 +639,7 @@ timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; rrc=$?
 echo "resume-remount-rc $rrc"
 echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
-c0=$(klog 'sync_slaves pfs CL')
+c0=$(passes CL)
 # The resume has to be given until the thread stops making progress, not a
 # fixed pass count. MEASURED 2026-10-14: a pass handles ONE deferred inode when
 # its local scan is empty (filekeys iters 2 exit 1, acted +1), and the failing
@@ -660,14 +665,14 @@ while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
 		still=0
 		last=$u
 	fi
-	[ "$still" -ge 10 ] && [ $(( $(klog 'sync_slaves pfs CL') - c0 )) -ge 2 ] && break
+	[ "$still" -ge 10 ] && [ $(( $(passes CL) - c0 )) -ge 2 ] && break
 	sleep 1; n=$((n + 1))
 done
 echo "resume-converge-seconds $n"
 echo "resume-updates $(( $(klog 'syncthr: update inode') - u0 ))"
 echo "resume-settled $still"
 echo "resume-seconds $n"
-echo "resume-passes $(( $(klog 'sync_slaves pfs CL') - c0 ))"
+echo "resume-passes $(( $(passes CL) - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
 # The snapshot pass's own records, read once the resume has settled. The
 # idle window reads 12 s more, two of the thread's five-second wakeups: an
@@ -684,6 +689,7 @@ echo "snap-idle $(klog 'syncsnap: idle clindex')"
 echo "snap-idlestamp $(klog 'syncsnap: idlestamp')"
 echo "snap-verified $(klog 'syncsnap: verified')"
 echo "snap-unverified $(klog 'syncsnap: unverified')"
+echo "snap-newer $(klog 'syncsnap: newer')"
 echo "snap-target-taken $(klog 'syncsnap: target .* taken')"
 echo "snap-target-kept $(klog 'syncsnap: target .* kept')"
 echo "snap-target-errors $(klog 'syncsnap: target .* error')"
@@ -890,7 +896,11 @@ s=$(val resume-settled); [ "${s:-0}" -ge 10 ] 2>/dev/null; check "the resumed th
 # produce, so a thread that never took a snapshot fails here.
 if [ "$H2SNAP" = 1 ]; then
 	a=$(val snap-verified); p=$(val snap-passes); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "a snapshot pass verified against its own snapshot" $? "${a:-none} verified of ${p:-none} snapshot pass(es), at most $(val snap-verify-rounds) round(s)"
-	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified"
+	# A pass raced by a frontend write keeps the newer key and waits for the
+	# next snapshot; that is printed as `newer` and is not a pass that ran
+	# out of rounds. MEASURED 2026-10-18: 5 such passes in a run, every one
+	# with 0 actions and 1 kept key, 4 of them under the 20000-file write.
+	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write"
 	a=$(val interrupt-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the last known-good target snapshot is on the slave's device while a pass is interrupted" $? "${a:-none} .h2sync-tgt listed, $(val snap-target-taken) taken and $(val snap-target-kept) kept over the run"
 	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
 	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in 12 s after the resume settled"

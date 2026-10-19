@@ -679,6 +679,18 @@ rounds are one format split across lines as the file's other prints
 are; and the returns of the compare and the cleanup's helper net one
 more `return (x);`. No category is new.
 
+1420 to 1421 later the same day: the verify rounds gained a third
+verdict, `newer`, for a pass that kept a key the frontend wrote to the
+slave after the snapshot was taken, and its print is one more format
+split across lines.
+
+1421 to 1426 later the same day: `hammer2_pfs_find_byname()`, the
+by-name lookup the delete helper carried inline, now also what the
+synchronization thread asks before taking a target snapshot, since the
+snapshot's create cannot return `EEXIST`. Its prototype in `hammer2.h`
+leaves its three arguments unnamed and its two returns are
+`return (x);`, the file's style on both counts. No category is new.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING

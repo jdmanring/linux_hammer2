@@ -426,6 +426,34 @@ hammer2_ioctl_pfs_delete(hammer2_inode_t *ip, void *data)
 }
 
 /*
+ * XXX Linux: the PFS registered on hmp under name, with its element index
+ * in *idxp, or NULL.  The caller holds hammer2_mntlk.  The delete below
+ * finds its target this way, and the synchronization thread asks whether
+ * a target snapshot a crash or an unmount left stands before it takes one:
+ * the snapshot's create walks the hash collision space to an unused key
+ * without comparing names (hammer2_inode_create_pfs()), so a second PFS of
+ * the same name would be made beside the first, and EEXIST never returns.
+ */
+hammer2_pfs_t *
+hammer2_pfs_find_byname(hammer2_dev_t *hmp, const char *name, int *idxp)
+{
+	hammer2_pfs_t *pmp;
+	int i;
+
+	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
+		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+			if (pmp->pfs_hmps[i] == hmp && pmp->pfs_names[i] &&
+			    strcmp(pmp->pfs_names[i], name) == 0) {
+				if (idxp)
+					*idxp = i;
+				return (pmp);
+			}
+		}
+	}
+	return (NULL);
+}
+
+/*
  * XXX Linux: the body of the pfs-delete ioctl, callable from the
  * synchronization thread, which deletes the snapshots it took.  The
  * caller has checked the name and the mount's writability.
@@ -457,17 +485,7 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 		hammer2_lk_ex(&hammer2_mntlk);
 	}
 
-	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
-		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
-			if (pmp->pfs_hmps[i] != hmp)
-				continue;
-			if (pmp->pfs_names[i] &&
-			    strcmp(pmp->pfs_names[i], name) == 0)
-				break;
-		}
-		if (i != HAMMER2_MAXCLUSTER)
-			break;
-	}
+	pmp = hammer2_pfs_find_byname(hmp, name, &i);
 
 	if (pmp == NULL) {
 		if ((flags & HAMMER2_PFSDEL_LOCKED) == 0)
