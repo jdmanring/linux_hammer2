@@ -721,6 +721,7 @@ hammer2_xop_collect(hammer2_xop_head_t *xop, int flags)
 	 * First loop tries to advance pieces of the cluster which
 	 * are out of sync.
 	 */
+again:
 	lokey = HAMMER2_KEY_MAX;
 	keynull = HAMMER2_CHECK_NULL;
 
@@ -769,9 +770,25 @@ hammer2_xop_collect(hammer2_xop_head_t *xop, int flags)
 	 * Determine whether the lowest collected key meets clustering
 	 * requirements.  Returns HAMMER2_ERROR_*:
 	 *
-	 * 0	  - key valid, cluster can be returned.
-	 * ENOENT - normal end of scan, return ENOENT.
-	 * EIO	  - IO error or CRC check error from hammer2_cluster_check().
+	 * 0		 - key valid, cluster can be returned.
+	 *
+	 * ENOENT	 - normal end of scan, return ENOENT.
+	 *
+	 * ESRCH	 - sufficient elements collected, quorum agreement
+	 *		   that lokey is not a valid element and should be
+	 *		   skipped.
+	 *
+	 * EDEADLK	 - sufficient elements collected, no quorum agreement
+	 *		   (and no agreement possible).  In this situation a
+	 *		   repair is needed, for now we loop.
+	 *
+	 * EIO		 - IO error or CRC check error from hammer2_cluster_check()
+	 *
+	 * XXX Linux: the two skips were dropped with the codes when the port
+	 * collapsed the check's result to EIO, and came back on 2026-10-18
+	 * with a listing that returned the entry before a slave-only key on
+	 * every getdents(2).  The elements run to completion before the
+	 * collect, so upstream's EINPROGRESS wait has nothing to wait for.
 	 */
 	error = hammer2_cluster_check(&xop->cluster, lokey, keynull);
 
@@ -779,6 +796,20 @@ hammer2_xop_collect(hammer2_xop_head_t *xop, int flags)
 		xop->collect_key = lokey;
 	else
 		xop->collect_key = lokey + 1;
+
+	if (error == HAMMER2_ERROR_ESRCH) {
+		if (lokey != HAMMER2_KEY_MAX)
+			goto again;
+		error = HAMMER2_ERROR_ENOENT;
+	}
+	if (error == HAMMER2_ERROR_EDEADLK) {
+		/* XXX Linux: %jx, which printk does not implement */
+		kprintf("hammer2: no quorum possible lokey %016llx\n",
+			(unsigned long long)lokey);
+		if (lokey != HAMMER2_KEY_MAX)
+			goto again;
+		error = HAMMER2_ERROR_ENOENT;
+	}
 
 	return (error);
 }

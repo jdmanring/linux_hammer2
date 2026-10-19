@@ -306,6 +306,18 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 				more = false;	/* the buffer is full */
 				break;
 			}
+			/*
+			 * Linux: the position is the next entry's, not this
+			 * one's, once it has been emitted; dir_context has it
+			 * so, and upstream's offset is where a full buffer stops
+			 * the scan, which is always an entry not yet written.  A
+			 * scan that ends on an error after this entry would
+			 * otherwise hand the next getdents(2) this entry again,
+			 * measured 2026-10-18 as a listing of one name without
+			 * end once the kernel returned the entries written
+			 * before the error.
+			 */
+			ctx->pos = (bref.key & HAMMER2_DIRHASH_USERMSK) + 1;
 			emitted++;
 		}
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);

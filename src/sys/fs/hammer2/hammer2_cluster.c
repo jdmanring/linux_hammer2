@@ -319,20 +319,28 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	 * Early return if we do not have enough masters.  Upstream splits
 	 * this three ways, EINPROGRESS when more replies may still arrive,
 	 * ESRCH when the quorum does not even agree on the key, and EDEADLK
-	 * when it agrees on the key but not on the transaction id.  The
-	 * port has no bit for ESRCH or EDEADLK, so those two collapse to
-	 * EIO.
+	 * when it agrees on the key but not on the transaction id.
 	 *
 	 * XXX Linux: this returned EAGAIN for the first until the port had an
 	 * EINPROGRESS bit.  EAGAIN is what hammer2_sync_slaves() returns to
 	 * ask its thread to drain deferrals and go again, so a collect still
 	 * waiting on a master read as that request, and with no deferrals
 	 * queued the thread went round without sleeping.
+	 *
+	 * XXX Linux: and the other two collapsed to EIO until 2026-10-18,
+	 * when a directory listing through a cluster whose slave held five
+	 * entries the master had removed stopped at the first of them and
+	 * never advanced: the slave's key was the lowest collected, no master
+	 * held it, EIO ended the listing with the position left on the entry
+	 * before, and the next getdents(2) began there again.  The split is
+	 * upstream's, and so is what hammer2_xop_collect() does with it.
 	 */
 	if (nmasters < nquorum) {
 		if (nmasters + umasters >= nquorum)
 			return (HAMMER2_ERROR_EINPROGRESS);
-		return (HAMMER2_ERROR_EIO);
+		if (nmasters_keymatch < nquorum)
+			return (HAMMER2_ERROR_ESRCH);
+		return (HAMMER2_ERROR_EDEADLK);
 	}
 
 	/*

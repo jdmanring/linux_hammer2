@@ -638,6 +638,18 @@ helpers' four refusals, an unmounted PFS, an element with no device, an
 element with no chain and a lock that would have waited, return positive
 errnos as the module does throughout. No category is new.
 
+1395 to 1396 later the same day, two rows new to the list and one hit
+fewer on an old one: DragonFly's quorum codes `HAMMER2_ERROR_EDEADLK`
+and `HAMMER2_ERROR_ESRCH`, which the FreeBSD port had dropped with the
+cluster code it did not carry, return positive from
+`hammer2_error_to_errno()` as every errno in that function does. They
+were restored for the listing that stopped at a slave-only key;
+`hammer2_xop_collect()` skips an `ESRCH` or `EDEADLK` key as upstream's
+does, and reads either at the end of the scan as the `ENOENT` that ends
+it. Its one `return (error);` moved below those two skips, where the
+checker no longer counts it under "return is not a function" (290 to
+289); the return is the file's style and is unchanged.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING

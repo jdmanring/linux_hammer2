@@ -317,6 +317,15 @@ struct hammer2_chain {
 #define HAMMER2_ERROR_EOF		0x00002000	/* end of scan */
 #define HAMMER2_ERROR_EINVAL		0x00004000	/* catch-all */
 #define HAMMER2_ERROR_EEXIST		0x00008000	/* entry exists */
+/*
+ * XXX Linux: DragonFly's two quorum codes, which the FreeBSD port dropped
+ * with the cluster code it did not carry.  hammer2_cluster_check() tells a
+ * quorum that does not hold the key apart from one that holds it at
+ * differing transaction ids, and hammer2_xop_collect() skips both as
+ * upstream's does; see there.
+ */
+#define HAMMER2_ERROR_EDEADLK		0x00010000	/* quorum disagrees on tid */
+#define HAMMER2_ERROR_ESRCH		0x00020000	/* quorum lacks the key */
 #define HAMMER2_ERROR_EOPNOTSUPP	0x10000000	/* unsupported */
 
 /*
@@ -1448,6 +1457,10 @@ hammer2_error_to_errno(int error)
 		return (EINVAL);
 	else if (error & HAMMER2_ERROR_EEXIST)
 		return (EEXIST);
+	else if (error & HAMMER2_ERROR_EDEADLK)
+		return (EDEADLK);	/* XXX Linux: upstream's, see the bits */
+	else if (error & HAMMER2_ERROR_ESRCH)
+		return (ESRCH);
 	else if (error & HAMMER2_ERROR_EOPNOTSUPP)
 		return (EOPNOTSUPP);
 	else

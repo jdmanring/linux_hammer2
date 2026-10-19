@@ -97,6 +97,14 @@
 # element with no device (54 -> 56) and an element with no chain, which
 # upstream dereferences (ENOENT 2 -> 3). Every row is the tree's BSD style
 # or its positive errno convention; no category is new.
+# 1,395 to 1,396 later on 2026-10-18: hammer2_error_to_errno() in hammer2.h
+# gains DragonFly's two quorum codes, EDEADLK and ESRCH, each returned
+# positive as every errno in that function is (two rows new to the list,
+# one hit each). They are upstream's own codes, which the FreeBSD port had
+# dropped; doc/README.kernel-style.md has the entry. In the same change
+# hammer2_xop_collect() took upstream's handling of the two codes, and its
+# one `return (error);` moved below the two skips, where the checker no
+# longer counts it (290 -> 289); the return itself is unchanged.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -128,9 +136,10 @@
 4 please, no space before tabs
 200 please, no spaces at the start of a line
 75 quoted string split across lines
-290 return is not a function, parentheses are not required
+289 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
+1 return of an errno should typically be negative (ie: return -EDEADLK)
 2 return of an errno should typically be negative (ie: return -EDOM)
 2 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
@@ -145,6 +154,7 @@
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
 5 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
 9 return of an errno should typically be negative (ie: return -EROFS)
+1 return of an errno should typically be negative (ie: return -ESRCH)
 1 return of an errno should typically be negative (ie: return -ETIMEDOUT)
 1 space prohibited before that 'X' (ctx:WxW)
 2 space required after that 'X' (ctx:VxB)
