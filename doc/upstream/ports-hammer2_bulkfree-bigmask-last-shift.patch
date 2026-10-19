@@ -1,0 +1,19 @@
+--- a/src/sys/fs/hammer2/hammer2_bulkfree.c
++++ b/src/sys/fs/hammer2/hammer2_bulkfree.c
+@@ -1219,8 +1219,15 @@
+ 				 */
+ 				if ((scan & mask) == 0)
+ 					bigmask |= radix_mask;
+-				scan <<= iter;
+ 				j += iter;
++				/*
++				 * The last shift of each element is by the
++				 * element's own width, which C leaves undefined
++				 * (UBSAN: shift exponent 64), and the value is
++				 * not read after it.
++				 */
++				if (j < HAMMER2_BMAP_BITS_PER_ELEMENT)
++					scan <<= iter;
+ 			}
+ 			iter <<= 1;
+ 			radix_mask = (radix_mask << 1) | 1;

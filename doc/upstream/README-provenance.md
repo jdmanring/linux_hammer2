@@ -468,3 +468,35 @@ and at `3df307f`, `64095c3` and `a3747df` of 2025-08-22.
 above, so it is not claimed unreported. Whether a DragonFly cluster of two
 elements has ever had its slave's root rewritten this way, nobody has
 measured; the field layout makes the rewrite silent until the next mount.
+
+## hammer2_bulkfree-bigmask-last-shift
+
+`dragonfly-hammer2_bulkfree-bigmask-last-shift.patch` and
+`ports-hammer2_bulkfree-bigmask-last-shift.patch`, the second applying
+to all three BSD ports. `bigmask_get()` tests each 64-bit element of a
+freemap bitmap at radices from 2 to 64 and after every test shifts its
+scan mask by the radix; at radix 64 the one shift is by the element's
+own width, which C leaves undefined for the type. The value is not read
+after it, since the inner loop ends on it, so the patch skips the last
+shift of every radix and the mask returned is unchanged. On x86-64 the
+shift count is masked to six bits, so every build without the sanitizer
+computes the same mask and nothing has ever shown it; UBSAN is what sees
+it.
+
+Measured on Linux on 2026-10-19, the first bulkfree run under UBSAN
+here: `UBSAN: shift-out-of-bounds in hammer2_bulkfree.c:1222:10`, `shift
+exponent 64 is too large for 64-bit type 'long long unsigned int'`, at
+953.75 s of `cluster-run-20261019-024742.klog` in the fixtures tree,
+under the `hammer2` process running `hammer2 bulkfree` on a mounted
+volume with two PFS roots; the run after the change scanned the same
+media twice with no report (`cluster-run-20261019-031052.klog`).
+
+Still present at DragonFly head on 2026-10-19 (`f82e06c`), read through
+the forge API: `sys/vfs/hammer2/hammer2_bulkfree.c:1430` shifts by
+`iter` unconditionally inside a loop bounded by
+`HAMMER2_BMAP_BITS_PER_ELEMENT`; the same line at `:1222` of Kusumi's
+FreeBSD, NetBSD and OpenBSD heads (`3df307f`, `64095c3`, `a3747df`),
+which are the local clones' commits. The patches apply to the local
+clones at `250a8b4` and those three. `bugs.dragonflybsd.org` was not
+searched, for the proof-of-work reason above, so it is not claimed
+unreported.
