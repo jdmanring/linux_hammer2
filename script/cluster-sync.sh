@@ -270,6 +270,16 @@ finish() {
 	echo "snap-target-errors $(klog 'syncsnap: target .* error')"
 	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
 	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
+	# The master device's free blocks at the end and after two bulkfree
+	# scans (a delete frees nothing until the second, script/bulkfree.sh),
+	# beside the count at the first mount: every snapshot pass creates and
+	# deletes a PFS root, garbage until a scan, and the run that keeps the
+	# live pass (H2_SYNC_SNAPSHOT=0) over the same work is the control the
+	# difference is read against. The scans run with the thread up, which
+	# is the interaction the thread's try-lock on hammer2_mntlk is for.
+	echo "space-end $(stat -f -c %f /mnt/h2m)"
+	for bf in 1 2; do hammer2 -s /mnt/h2m bulkfree /mnt/h2m > /tmp/h2bf.$bf 2>&1; echo "space-bulkfree-rc-$bf $?"; sync; done
+	echo "space-after-bulkfree $(stat -f -c %f /mnt/h2m)"
 	timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
 	echo "cluster-umount ok"
 	echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
@@ -349,6 +359,7 @@ passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clinde
 
 # 1. A lone SLAVE: start, pass, stop.
 timeout 30 mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
+echo "space-start $(stat -f -c %f /mnt/h2m)"
 hammer2 -s /mnt/h2m -t SLAVE pfs-create LONE >/dev/null 2>&1
 echo "lone-thread $(ps -eo stat,comm | awk '$2=="h2nod-LONE"{print $1}')"
 sleep 12
@@ -786,6 +797,32 @@ settle_wait
 finish
 GUESTB
 
+fingerprint() {	# image
+	# The synchronization thread's snapshots are PFS roots named
+	# <pfs>.h2sync-src and .h2sync-tgt beside CL under the super-root,
+	# listed after CL's subtree, so the walk reads to the end rather than
+	# stopping at CL's close, and counts them into snaps.<image>. One left
+	# after a clean unmount was found by the volume count on 2026-10-18.
+	"$HAMMER2" -v show "$1" 2>/dev/null | awk -v snapout="$W/snaps.$(basename "$1")" '
+	/filename "[^"]*\.h2sync-(src|tgt)"$/ { snaps++ }
+	END { print snaps + 0 > snapout }
+	/filename "CL"$/ && !on && !past { on = 1; next }
+	on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
+	!on { next }
+	/^ *inode\.[0-9]/ { mode = "inode"; next }
+	/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
+	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+	/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
+	mode == "dirent" && $1 == "filename" { name = $2 }
+	mode == "dirent" && $1 == "inum" { dinum = $2 }
+	mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
+	mode == "inode" && $1 == "inum" { inum = $2 }
+	mode == "inode" && $1 == "type" { itype = $2 }
+	mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
+	mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
+	' | LC_ALL=C sort
+}
+
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
@@ -820,6 +857,11 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# "kept" line is a claim about this count, not about a listing taken
 	# after that pass.
 	echo "crash-tgt-on-media $("$HAMMER2" -v show "$SLAVE" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')" >> "$W/out"
+	# How much of the pass the cut left on the slave's media. The thread
+	# flushes once per pass, after its scan, and the volume header follows
+	# with a mounted PFS's sync, so the slave's media holds all of a pass or
+	# none of it; a count between the two would be a copy written piecemeal.
+	echo "crash-backlog-on-media $(fingerprint "$SLAVE" | grep -c '^dirent "q[0-9]*" ')" >> "$W/out"
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "cluster: COULD-NOT-RUN: $GUEST did not restart after the cut" >&2; detach_disks; exit 2; }
 	n=0
 	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; do
@@ -983,10 +1025,11 @@ fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
 else
-	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
+	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) backlog-media=$(val crash-backlog-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
 	c=$(val crash-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val crash-in-pass)" = 0 ]; check "the power is cut inside the copy" $? "${c:-none} updates into the pass, in-pass rc $(val crash-in-pass)"
 	a=$(val crash-destroyed); [ "${a:-9}" = 0 ]; check "the guest is destroyed at the armed line" $? "virsh destroy rc ${a:-none}, session rc $(val crash-session-rc)"
 	a=$(val crash-fsck-cluster-master.img); b=$(val crash-fsck-cluster-slave.img); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "both media are consistent as the cut left them" $? "fsck_hammer2 exit ${a:-none} and ${b:-none} before recovery"
+	n=$(val crash-backlog-on-media); [ "${n:-x}" = 0 ] || [ "${n:-x}" = "$NBIG2" ]; check "the cut leaves the slave's media at a whole pass's state" $? "${n:-none} of $NBIG2 backlog files on the slave's media at the cut; the pass's copies reach the media in one flush after its scan"
 	a=$(val recover-threads); [ "${a:-0}" = 1 ]; check "the two devices returning start the thread" $? "${a:-none}"
 	a=$(val recover-stale); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot the cut left is deleted by the first pass" $? "${a:-none} stale delete(s)"
 	# Three readings make one claim: the target is on the slave's media as
@@ -1029,6 +1072,7 @@ if [ $(( H2DEBUG & 1 )) = 1 ]; then
 	w=$(val write-destroys); [ "${w:-1}" = 0 ]; check "no pass destroys on the slave while the master is being written" $? "${w:-none} destroy(s) inside the write"
 fi
 e=$(val resume-errors); [ "${e:-1}" = 0 ]; check "no pass reports an error across the interruption" $? "${e:-none}"
+echo "  raw   space start=$(val space-start) end=$(val space-end) after-bulkfree=$(val space-after-bulkfree) bulkfree-rc=$(val space-bulkfree-rc-1)/$(val space-bulkfree-rc-2) free blocks of the master's device, snapshot passes $(val snap-passes)"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
 if [ "$want_asan" = y ]; then
@@ -1073,31 +1117,6 @@ v=$(last "$W/fsck.cluster-slave.img" | sed 's/ [0-9]* indirect,//')
 # The fingerprint of the cluster's PFS, from the line naming it to the
 # line closing it. Inode check codes are left out: they cover timestamps
 # and transaction ids, which a slave does not share with its master.
-fingerprint() {	# image
-	# The synchronization thread's snapshots are PFS roots named
-	# <pfs>.h2sync-src and .h2sync-tgt beside CL under the super-root,
-	# listed after CL's subtree, so the walk reads to the end rather than
-	# stopping at CL's close, and counts them into snaps.<image>. One left
-	# after a clean unmount was found by the volume count on 2026-10-18.
-	"$HAMMER2" -v show "$1" 2>/dev/null | awk -v snapout="$W/snaps.$(basename "$1")" '
-	/filename "[^"]*\.h2sync-(src|tgt)"$/ { snaps++ }
-	END { print snaps + 0 > snapout }
-	/filename "CL"$/ && !on && !past { on = 1; next }
-	on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
-	!on { next }
-	/^ *inode\.[0-9]/ { mode = "inode"; next }
-	/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
-	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
-	/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
-	mode == "dirent" && $1 == "filename" { name = $2 }
-	mode == "dirent" && $1 == "inum" { dinum = $2 }
-	mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
-	mode == "inode" && $1 == "inum" { inum = $2 }
-	mode == "inode" && $1 == "type" { itype = $2 }
-	mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
-	mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
-	' | LC_ALL=C sort
-}
 fingerprint "$MASTER" > "$W/fp.master"
 fingerprint "$SLAVE" > "$W/fp.slave"
 nm=$(grep -c ' FILE$' "$W/fp.master"); ns=$(grep -c ' FILE$' "$W/fp.slave")
