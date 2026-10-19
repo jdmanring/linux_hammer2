@@ -483,131 +483,107 @@ echo "h2probe: bigdir write end" > /dev/kmsg
 # Destroys the thread made while the write ran, and in all. Both read 0
 # unless H2_DEBUG carries 0x0001, which is what prints a destroy.
 echo "write-destroys $(sed -n '/h2probe: bigdir write start/,/h2probe: bigdir write end/p' $K | grep -c 'destroy rec')"
-# The backlog: written with the slave unmounted, so only the thread can
-# carry it across, and a pass long enough to interrupt follows on the remount.
-umount /mnt/h2s
+# 4b. A backlog the thread must copy: the one pass of the run long enough to
+# mutate the master inside (3b), to interrupt (4c) and, under H2_CRASH=1, to
+# crash (6). MEASURED 2026-10-18: with the cluster mounted the slave's device
+# keeps a mount count from the cluster (hammer2_vfsops.c, the mount's and
+# hammer2_pfsalloc()'s increments), so `umount /mnt/h2s` alone leaves the
+# slave element in the cluster, the frontend writes the backlog to it, and the
+# thread's pass after the remount is a root scan of 40042 inodes that acts on
+# nothing (iters 40042, acted 0, 4.8 s; 70 inserts over the whole run, 64 in
+# the step-2 run): the interruption of every run up to then landed inside
+# such a scan. Phase 2c's topology is what makes the element leave: both
+# mounts down, the master written alone, the slave's device returned to an
+# UNMOUNTED cluster pmp, whose thread then copies at its own rate; `umount
+# /mnt/h2s` in that state is a device teardown, which freezes the thread
+# between deferrals: a real stop.
+u1=$(klog 'syncthr: update inode')
+timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s
+echo "backlog-threads-down $(ps -eo comm | grep -c '^h2nod-CL')"
+mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "backlog master-alone mount failed"; exit 1; }
 echo "h2probe: bigdir2 write start" > /dev/kmsg
 mkdir /mnt/h2c/bigdir2
 i=0; while [ $i -lt $NBIG2 ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir2/q$i; i=$((i + 1)); done
+# The marked set the mutation below works on, created last so the
+# inum-ordered root scan reaches it last.
+mkdir /mnt/h2c/mark
+i=0; while [ $i -lt 20 ]; do head -c $(( 700 + i * 37 )) /dev/urandom > /mnt/h2c/mark/m$i; i=$((i + 1)); done
 sync
 echo "h2probe: bigdir2 write end" > /dev/kmsg
+timeout 60 umount /mnt/h2c
+verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer') + $(klog 'syncsnap: unverified') )); }
+copied() { grep -c 'syncthr: update inode' $K; }
+p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode')
 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
-# The copy has begun once its update lines pass the phase-4a baseline.
+echo "backlog-threads-up $(ps -eo comm | grep -c '^h2nod-CL')"
+# The copy has begun once its update lines pass the baseline by more than a
+# root stamp or two: each inode the thread inserts and recurses into is
+# stamped and printed, so here the count is the copy's own, unlike the
+# frontend-written directory above.
 n=0
 while [ $n -lt 1200 ]; do
-	[ "$(klog 'syncthr: update inode')" -gt "$u0" ] && break
+	[ "$(copied)" -gt "$(( u1 + 5 ))" ] && break
 	sleep 0.1; n=$((n + 1))
 done
-echo "interrupt-begun $([ "$(klog 'syncthr: update inode')" -gt "$u0" ]; echo $?)"
-# Wait for a pass to open. A pass has begun when the OPEN count advances,
-# and only that: `sync_slaves pfs CL` prints once per pass while
-# `sync_slaves error` prints inside the inner loop once per scan ATTEMPT, so
-# one pass with deferrals emits one open and many closes (measured mid-copy:
-# P=5 C=11). The two are not a pair, and a check that compares them reads
-# closed while a pass is open -- which is what this loop did, reporting
-# `bracket open, rc 1` however long the pass was, with the close line also
-# shared by phase 1's LONE pfs and by passes that error with no open.
-opened=$(klog 'sync_slaves pfs CL')
-n=0
-bracket=1
-while [ $n -lt 1200 ]; do
-	o=$(klog 'sync_slaves pfs CL')
-	if [ "$o" -gt "$opened" ]; then
-		bracket=0; break
-	fi
-	sleep 0.01; n=$((n + 1))
-done
-# The bracket state is read here, before the unmount: the pass that is open
-# now completes after the stop is read, so testing the bracket after the
-# unmount would read closed however well the interruption landed.
-echo "interrupt-bracket-open $bracket"
-# MEASURED 2026-10-14: the unmount is issued the instant a bracket opens, so
-# the stop lands wherever the pass happens to be, and the copy depth at the
-# stop is the one variable that separates a run that loses inodes from one
-# that converges: five runs read copied=4, 44, 88, 488, 549, and only the
-# deep one (549) lost 422 inodes. `H2_STOP_DEPTH` waits, bounded, for the
-# pass to advance that many scan actions past the baseline before the unmount,
-# so a run can place the stop deep enough to reach the shortfall instead of
-# racing for it. 0 is the old behavior (stop at the first open bracket).
-#
-# The wait is on the COPY COUNT, `syncthr: update inode`, and not on `acted`.
-#
-# MEASURED 2026-10-14, two separate findings.
-#
-# First, the failure is deterministic on the copy count at the interruption, and
-# on nothing else. Every run that was interrupted with `copied=2` lost inodes
-# (132, 80 and 2 lines on the three that reached it) and every run at `copied`
-# 5, 12, 28, 44, 47, 51 or 85 converged. The resumed thread made 0 updates in
-# all of them, so the outcome is set by the pass the unmount lands in and can be
-# placed by waiting for that pass to reach a chosen count.
-#
-# Second, `acted` cannot place it. That field is on the pass's `filekeys` line,
-# which prints only when the pass ends, so during the pass it does not move and
-# the wait below exhausted its bound without advancing. The update line prints
-# during the pass, which is what this wait needs.
-copied() { grep -c 'syncthr: update inode' $K; }
-STOP_DEPTH=${H2_STOP_DEPTH:-0}
-STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-3000}
-# The target is the ABSOLUTE copy count, not a delta from where the bracket was
-# found. MEASURED 2026-10-15: the bracket wait above already lets the pass copy,
-# so a delta of 2 sampled its baseline at `copied` 3 to 5 and stopped at 5 to 7,
-# which is past the value the failure needs. The runs that fail are the ones
-# interrupted at a copy count of 2, so the count is what is asked for.
+echo "interrupt-begun $([ "$(copied)" -gt "$(( u1 + 5 ))" ]; echo $?)"
+echo "interrupt-bracket-open $([ $(( $(klog 'sync_slaves pfs CL') - p0 )) -ge 1 ]; echo $?)"
+# The source snapshot is a PFS on the master's device while the pass runs
+# and the target one a PFS on the slave's, each listed through its device's
+# ROOT mount: the mechanism read as a PFS, not inferred. H2_SYNC_SNAPSHOT=0
+# must read 0 and 0 here.
+echo "pass-src-listed $(hammer2 -s /mnt/h2m pfs-list 2>/dev/null | grep -c 'h2sync-src')"
+echo "pass-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
+# 3b. Source mutation during convergence, and a media flush during it. The
+# cluster is mounted while the pass runs, which brings the frontend to both
+# elements: ten of the marked files are deleted and ten new ones written,
+# then the media flushed twice. The snapshot the pass reads predates all of
+# it. The ten new files are on the slave (the frontend put them there) and
+# not in the snapshot, so the pass keeps them as newer and ends `newer`; the
+# ten deleted are in the snapshot and not on the slave, and what the pass
+# does with those is the `reinserts` and `newer-inodes` readings below. The
+# negative control is H2_SYNC_SNAPSHOT=0: the live pass sees the mutation
+# and keeps nothing.
+timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; mrc=$?
+echo "mutate-mount-rc $mrc"
+echo "mutate-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
+rm -f /mnt/h2c/mark/m0 /mnt/h2c/mark/m1 /mnt/h2c/mark/m2 /mnt/h2c/mark/m3 /mnt/h2c/mark/m4 /mnt/h2c/mark/m5 /mnt/h2c/mark/m6 /mnt/h2c/mark/m7 /mnt/h2c/mark/m8 /mnt/h2c/mark/m9
+i=0; while [ $i -lt 10 ]; do head -c $(( 900 + i * 41 )) /dev/urandom > /mnt/h2c/mark/new$i; i=$((i + 1)); done
+sync; sleep 1; sync
+echo "mutate-updates $(( $(copied) - u1 ))"
+# 4c. The stop: once the copy has gone H2_STOP_DEPTH updates past the
+# mutation, or the pass has ended, the cluster is unmounted (the thread
+# survives that, measured) and then the slave's device, whose count reaches
+# zero now and tears it down. The stop landed inside the pass if no verdict
+# has printed since the device came up.
+STOP_DEPTH=${H2_STOP_DEPTH:-2000}
 a0=$(copied); a0=${a0:-0}
-target=${STOP_DEPTH:-0}
 n=0
-while [ "${STOP_DEPTH:-0}" != 0 ]; do
-	a=$(copied); a=${a:-0}
-	[ "$a" -ge "$target" ] && break
-	# A pass that has already copied past the target cannot be held for it; the
-	# unmount would land after the pass, which is a different test.
-	[ "$a" -gt "$target" ] && break
-	[ $n -ge "$STOP_DEPTH_MS" ] && break
+while [ $n -lt "${H2_STOP_DEPTH_MS:-120000}" ]; do
+	[ $(( $(copied) - a0 )) -ge "$STOP_DEPTH" ] && break
+	[ "$(verdicts)" != "$v0" ] && break
 	sleep 0.05; n=$((n + 1))
 done
-echo "interrupt-stop-copied $(copied) from $a0 wanted $STOP_DEPTH"
-echo "interrupt-stop-acted $(acted)"
-# The stop must reach the CL pmp's own mount. Measured 2026-10-13: unmounting
-# the slave's ROOT (/mnt/h2s) leaves the h2nod-CL thread alive, because the
-# thread belongs to the pmp hammer2_pfsalloc() matched by cluster id, which is
-# the one created at the MASTER's mount (/mnt/h2c, /dev/vdb@CL). Unmounting
-# /mnt/h2c reaches the pmp's sync_thrs[]. MEASURED 2026-10-14: the guest starts
-# ONE h2nod-CL thread (phase 2's `starts one thread: 1`) and it SURVIVES this
-# unmount (`threads 1 to 1`, the post-unmount wait exhausting its 20 s). The
-# source says why: hammer2_thr_delete() has three callers (pfsdealloc from the
-# pfs-delete ioctl, pfsfree, pfsfree_scan from the device teardown) and umount
-# reaches none -- hammer2_unmount_helper() clears pmp->mp and decrements
-# mount_count. The phase keeps /mnt/h2s mounted, so the pmp is alive and its
-# thread is correct to run. The 2026-10-13 probe's `2 to 1` is a topology the
-# script does not have. The pass in flight completes either way: the thread
-# reads STOP/FREEZE at loop top and between deferred directories only, which is
-# this phase's documented contract, so didbreak is not a success condition.
+echo "interrupt-stop-copied $(( $(copied) - a0 )) wanted $STOP_DEPTH"
+echo "interrupt-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
-t0=$(date +%s%N); timeout 60 umount /mnt/h2c; urc=$?; t1=$(date +%s%N)
+timeout 60 umount /mnt/h2c
+t0=$(date +%s%N); timeout 180 umount /mnt/h2s; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
-echo "interrupt-copied $(( $(klog 'syncthr: update inode') - u0 ))"
-# The target snapshot, the slave as it was before the interrupted pass, is a
-# PFS root on the slave's device, listed through its ROOT mount, which this
-# phase keeps up. Read here, inside the interruption; the media walk at the
-# end of the run reads that the resume's verified pass deleted it.
-echo "interrupt-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
-# The action counters the module prints under 0x8000 (acted/failed over the
-# scan's action switch), read at the interruption so the shortfall this run
-# ends with is paired with the count of copies that returned an error. klog()
-# is grep -c, so the matching LINES are taken with a plain grep.
-#
-# MEASURED 2026-10-15: the line is NOT one cumulative record.  `acted`,
-# `failed`, `last` and `kept` are file-scope atomics accumulated over the run,
-# but `sweep` and `iters` are locals of hammer2_sync_slaves() reset on entry
-# (src/sys/fs/hammer2/hammer2_synchro.c:558,590), so each line carries ONE
-# pass's values.  `tail -1` therefore reports the sweep count of the LAST pass,
-# which is almost always a quiet one: on `cluster-run-20261015-014720` the
-# destroying pass printed `sweep 127` on its own line and the last line printed
-# `sweep 0`, and reading the tail is what put a sweep count of 0 into five
-# separate records as a finding.  Both readings are printed: the pass with the
-# most sweeps (the one that did the damage) and the last line (the cumulative
-# action counters).
+echo "interrupt-copied $(( $(copied) - u1 ))"
+echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
+echo "interrupt-didbreak $(klog didbreak)"
+echo "interrupt-src-cleaned $(klog 'syncsnap: unmount deleted CL.h2sync-src error 0')"
+# The target the interrupted pass meant to keep is on the slave's media, read
+# on the device the teardown closed.
+echo "interrupt-tgt-on-media $(hammer2 -v show /dev/vdc 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')"
+# The filekeys line is NOT one cumulative record: `acted`, `failed`, `last`
+# and `kept` are file-scope atomics accumulated over the run, but `sweep` and
+# `iters` are locals of hammer2_sync_slaves() reset on entry, so each line
+# carries ONE pass's values and `tail -1` reports the LAST pass's sweep.
+# MEASURED 2026-10-15: the destroying pass printed `sweep 127` on its own
+# line and the last line `sweep 0`, and reading the tail put a sweep count
+# of 0 into five records as a finding. Both readings are printed.
 maxsweep() {	# the filekeys line carrying the largest `sweep`, or empty
 	sed -n 's/^\[[^]]*\] //p' "$1" | grep '^filekeys' | \
 		awk 'BEGIN { m = -1 }
@@ -617,24 +593,11 @@ maxsweep() {	# the filekeys line carrying the largest `sweep`, or empty
 }
 echo "interrupt-actions $(grep 'filekeys' $K | tail -1 | sed 's/^\[[^]]*\] //')"
 echo "interrupt-sweep-max $(maxsweep $K)"
-# The thread stops after the pass it landed in drains, so the count is waited
-# for and the wait is the reading. The wait is for the count to drop below the
-# pre-unmount count (the CL element's thread stopping), not to reach zero, since
-# the second element's thread is expected to stay.
-tb=$(ps -eo comm | grep -c '^h2nod-CL')
-n=0
-while [ $n -lt 200 ]; do
-	[ "$(ps -eo comm | grep -c '^h2nod-CL')" -lt "$tb" ] && break
-	sleep 0.1; n=$((n + 1))
-done
-echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
-echo "interrupt-stop-tenths $n"
-echo "interrupt-didbreak $(klog didbreak)"
-# 5. Resume: remount the mount the stop took down, which is the CL pmp's
-# (/mnt/h2c), and let the thread pass again. The wait is for two completed
-# passes after the remount, read from the OPEN count -- the close count is not
-# a pass count -- and what the slave holds is decided off the media by the
-# fingerprint at the end.
+# 5. Resume: the slave's device returns, its thread starts, finds the target
+# by name and copies the rest; the cluster is mounted on top for the run's
+# end, which is the same mount-during-a-pass the mutation made.
+mount -t hammer2 /dev/vdc@ROOT /mnt/h2s; drc=$?
+echo "resume-device-rc $drc"
 timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; rrc=$?
 echo "resume-remount-rc $rrc"
 echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
@@ -674,6 +637,13 @@ echo "resume-settled $still"
 echo "resume-seconds $n"
 echo "resume-passes $(( $(passes CL) - c0 ))"
 echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
+echo "resume-tgt-kept $(klog 'syncsnap: target .* kept')"
+echo "resume-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
+echo "backlog-inserts $(( $(fieldc 'n>0') - ${ins0:-0} ))"
+echo "mutate-kept $(( $(fieldc kept) - ${k0:-0} ))"
+echo "mutate-reinserts $(( $(klog 'syncsnap: reinsert') - ${ri0:-0} ))"
+echo "mutate-newer-inodes $(( $(klog 'syncsnap: newer inode') - ${nd0:-0} ))"
+echo "mark-files $(ls /mnt/h2c/mark | wc -l)"
 # The snapshot pass's own records, read once the resume has settled. The
 # idle window reads 12 s more, two of the thread's five-second wakeups: an
 # idle master must cost idle passes and no snapshot pass, and the last idle
@@ -842,41 +812,37 @@ if [ "${H2_FAULT2:-0}" != 0 ]; then
 	e=$(val diverge-errors); [ "${e:-1}" = 0 ]; check "the refused replace or destroy leaves no pass error" $? "${e:-none}"
 fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
-# Phase 4: the interruption must land inside an open pass bracket, or every
-# check below it tested an idle thread. The bracket check comes first because
-# the others mean nothing without it.
-# The raw phase-4 fields are printed before their checks: a check message
-# carries one number and several of these decide it together (the stop's wait
-# and the thread count behind one verdict), and the guest's output file is
-# removed at exit, so a field not printed here is lost with the run.
-echo "  raw   phase4 bracket=$(val interrupt-bracket-open) begun=$(val interrupt-begun) stop-copied=$(val interrupt-stop-copied) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads-left=$(val interrupt-threads) stop-tenths=$(val interrupt-stop-tenths) didbreak=$(val interrupt-didbreak) actions=$(val interrupt-actions) sweep-max=$(val interrupt-sweep-max) resume-rc=$(val resume-remount-rc) resume-passes=$(val resume-passes) resume-updates=$(val resume-updates) resume-settled=$(val resume-settled) resume-conv-s=$(val resume-converge-seconds)"
-b=$(val interrupt-bracket-open); [ "$b" = 0 ]; check "the unmount lands inside an open pass" $? "bracket open, rc ${b:-none}"
-b=$(val interrupt-begun); [ "$b" = 0 ]; check "the copy had begun before the unmount" $? "rc ${b:-none}"
-# When the phase is asked to stop at a set depth, a run that stopped short of it
-# did not test the interruption at that depth, so the check reports where the
-# stop landed against what was asked. A run at the default depth 0 has nothing
-# to assert and skips it.
-sd=$(val interrupt-stop-copied)
-if [ "${H2_STOP_DEPTH:-0}" != 0 ]; then
-	# The stop landed if the copy count at the unmount reached what was asked.
-	# The value is `N from M wanted W`, so the field before " from" is taken.
-	got=$(printf '%s\n' "$sd" | awk '{print $1}')
-	[ "${got:-0}" -ge "${H2_STOP_DEPTH:-0}" ] 2>/dev/null; check "the stop landed at the requested copy count" $? "${sd:-none} (wanted ${H2_STOP_DEPTH:-none})"
+# Phase 4b/4c: the backlog must be the thread's copy, the stop must land
+# inside that copy, and the device teardown must stop the thread mid-pass.
+# Without the first, every check below tested a root scan, which is what
+# runs 8 to 11 measured. The raw fields are printed before their checks
+# because several decide one verdict and the guest's output file is removed
+# at exit.
+echo "  raw   phase4 begun=$(val interrupt-begun) bracket=$(val interrupt-bracket-open) src-listed=$(val pass-src-listed) tgt-listed=$(val pass-tgt-listed) mutate-rc=$(val mutate-mount-rc) mutate-in-pass=$(val mutate-in-pass) stop-copied=$(val interrupt-stop-copied) in-pass=$(val interrupt-in-pass) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads=$(val interrupt-threads-before)-$(val interrupt-threads) didbreak=$(val interrupt-didbreak) src-cleaned=$(val interrupt-src-cleaned) tgt-on-media=$(val interrupt-tgt-on-media) resume-dev=$(val resume-device-rc) resume-rc=$(val resume-remount-rc) tgt-kept=$(val resume-tgt-kept) tgt-left=$(val resume-tgt-listed) inserts=$(val backlog-inserts) kept=$(val mutate-kept) reinserts=$(val mutate-reinserts) newer-inodes=$(val mutate-newer-inodes) passes=$(val resume-passes) updates=$(val resume-updates) settled=$(val resume-settled) conv-s=$(val resume-converge-seconds)"
+echo "  raw   phase4 actions=$(val interrupt-actions) sweep-max=$(val interrupt-sweep-max)"
+a=$(val backlog-threads-down); [ "${a:-1}" = 0 ]; check "both mounts down leave no thread, so the slave element has left" $? "${a:-none}"
+a=$(val backlog-threads-up); [ "${a:-0}" = 1 ]; check "the slave's device returning starts the thread on the unmounted cluster" $? "${a:-none}"
+b=$(val interrupt-begun); [ "$b" = 0 ]; check "the thread's copy of the backlog had begun" $? "rc ${b:-none}"
+i=$(val backlog-inserts); [ "${i:-0}" -ge "$NBIG2" ] 2>/dev/null; check "the backlog is the thread's copy, not the frontend's" $? "${i:-none} file-key inserts for $NBIG2 files; the step-2 runs read 64 to 70 over a whole run"
+m=$(val mutate-mount-rc); [ "${m:-1}" = 0 ] && [ "$(val mutate-in-pass)" = 0 ]; check "the master is mutated while the pass runs" $? "mount rc ${m:-none}, in-pass rc $(val mutate-in-pass)"
+c=$(val interrupt-stop-copied | awk '{print $1}'); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ]; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass)"
+ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
+d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread reads the stop between deferrals" $? "${d:-none} didbreak"
+tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
+if [ "$H2SNAP" = 1 ]; then
+	a=$(val pass-src-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot is a listed PFS on the master's device while the pass runs" $? "${a:-none} .h2sync-src listed"
+	a=$(val pass-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot is a listed PFS on the slave's device while the pass runs" $? "${a:-none} .h2sync-tgt listed"
+	a=$(val interrupt-src-cleaned); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass's source snapshot is deleted by the teardown" $? "${a:-none}"
+	a=$(val interrupt-tgt-on-media); [ "${a:-0}" = 1 ]; check "the interrupted pass's target snapshot survives on the slave's media" $? "${a:-none} .h2sync-tgt root(s) on /dev/vdc"
+	a=$(val resume-tgt-kept); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the resumed thread finds the kept target by name" $? "${a:-none} kept"
+	a=$(val resume-tgt-listed); [ "${a:-1}" = 0 ]; check "the target is deleted once the resumed pass verifies" $? "${a:-none} listed after the settle"
+	k=$(val mutate-kept); [ "${k:-0}" -ge 10 ] 2>/dev/null; check "the files written during the pass are kept as newer than the snapshot" $? "${k:-none} kept for 10 new files"
+else
+	a=$(val pass-src-listed); b=$(val pass-tgt-listed); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "the live pass takes no snapshot" $? "${a:-none} src, ${b:-none} tgt listed"
+	k=$(val mutate-kept); [ "${k:-1}" = 0 ]; check "the live pass keeps nothing against a mutation it sees" $? "${k:-none} kept"
 fi
-c=$(val interrupt-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass was copying" $? "${c:-0} inode updates"
-ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the unmount waits for the pass rather than returning at once" $? "${ms:-0} ms"
-tb=$(val interrupt-threads-before); a=$(val interrupt-threads)
-# The thread is deleted only by hammer2_pfsdealloc() (the pfs-delete ioctl)
-# and hammer2_pfsfree() (pfsfree_scan): grep of src/ shows no other caller of
-# hammer2_thr_delete(). A plain umount tears the mount down but does not
-# dealloc the pmp, and the phase keeps the pmp's other mount (/mnt/h2s) up, so
-# the h2nod-CL thread legitimately survives umount /mnt/h2c. MEASURED
-# 2026-10-14: `threads 1 to 1`, the unmount returning in 4.3 s. The check that
-# asserted the thread stops here was asserting an invariant the port does not
-# have, and the reading is that the thread exists through the interruption and
-# the resume brings passes, which the checks below read.
-[ "${tb:-0}" -ge 1 ] 2>/dev/null && [ "${a:-0}" -ge 1 ] 2>/dev/null
-check "the CL pmp's thread survives the unmount and the resume passes" $? "threads ${tb:-none} to ${a:-none} across umount /mnt/h2c"
+f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
+a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
 # The stop is read at the thread's loop top and between deferred directories,
 # never inside a scan, so a pass in flight completes and didbreak cannot fire
 # for a stop issued mid-pass. Requiring it would be a check no correct run can
@@ -901,7 +867,6 @@ if [ "$H2SNAP" = 1 ]; then
 	# out of rounds. MEASURED 2026-10-18: 5 such passes in a run, every one
 	# with 0 actions and 1 kept key, 4 of them under the 20000-file write.
 	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write"
-	a=$(val interrupt-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the last known-good target snapshot is on the slave's device while a pass is interrupted" $? "${a:-none} .h2sync-tgt listed, $(val snap-target-taken) taken and $(val snap-target-kept) kept over the run"
 	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
 	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in 12 s after the resume settled"
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
@@ -985,8 +950,9 @@ fingerprint "$SLAVE" > "$W/fp.slave"
 nm=$(grep -c ' FILE$' "$W/fp.master"); ns=$(grep -c ' FILE$' "$W/fp.slave")
 nd=$(grep -c '^data ' "$W/fp.master")
 # The interruption phase leaves its large directory on both volumes, so the
-# fingerprint's expected count is the set's 35 plus bigdir's NBIG.
-want_files=$((35 + NBIG + NBIG2))
+# fingerprint's expected count is the set's 35, bigdir's NBIG, bigdir2's NBIG2 and
+# the marked set's 20 (20 made, 10 deleted and 10 new during the pass).
+want_files=$((35 + NBIG + NBIG2 + 20))
 [ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
 # The thread's per-pass snapshot must be gone from both devices after a clean

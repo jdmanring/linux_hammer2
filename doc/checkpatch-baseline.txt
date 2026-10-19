@@ -138,6 +138,9 @@
 # snapshot stands. Its prototype in hammer2.h leaves its three arguments
 # unnamed as every prototype there does (466 -> 469), and its two returns
 # are `return (x);` as the file's are (298 -> 300). No category is new.
+# 1,426 to 1,427 later on 2026-10-18: the snapshot pass's `reinsert` probe,
+# one print format split across lines (80 -> 81), which counts a key the
+# frontend deleted after the snapshot that the insert arm puts back.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -168,7 +171,7 @@
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 207 please, no spaces at the start of a line
-80 quoted string split across lines
+81 quoted string split across lines
 300 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)

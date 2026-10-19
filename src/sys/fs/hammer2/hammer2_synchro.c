@@ -1192,6 +1192,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	hammer2_pfs_t *pmp;
 	hammer2_key_t key_next;
 	hammer2_tid_t sync_tid;
+	hammer2_tid_t slave_tid;	/* XXX Linux: this element's inode chain tid */
 	int needrescan;
 	int want_update;
 	int serror;		/* slave error */
@@ -1220,6 +1221,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	needrescan = 0;
 	want_update = 0;
 	sync_tid = 0;
+	slave_tid = 0;		/* XXX Linux */
 	chain = NULL;
 	parent = NULL;
 	nfail = 0;		/* XXX Linux */
@@ -1331,6 +1333,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * HAMMER2_THREAD_FROZEN and leaves the unmount waiting
 			 * in a loop with no bound.
 			 */
+			slave_tid = chain ? chain->bref.modify_tid : 0;
 			want_update = chain ? (chain->bref.modify_tid != sync_tid) : 0;
 			/*
 			 * XXX Linux: or the rescan set asks for it, the tids
@@ -1724,6 +1727,20 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * modify_tid until the entire recursion has
 			 * completed successfully.
 			 */
+			/*
+			 * XXX Linux: on a snapshot pass a key the snapshot holds
+			 * and the slave lacks, under an inode the frontend wrote
+			 * after the snapshot was taken, is one the frontend has
+			 * deleted since, and this arm has nothing to compare it
+			 * against: it puts the deleted key back for a pass.
+			 * Counted first, so the rule that follows is written
+			 * against a number; see the verification record.
+			 */
+			if (snap && !isroot && slave_tid > sync_tid &&
+			    (hammer2_debug & 0x8000))
+				kprintf("syncsnap: reinsert %016llx/%d under newer "
+				    "inode %016llx\n", (long long)focus->bref.key,
+				    focus->bref.type, (long long)rinum);
 			++list->acted;	/* XXX Linux */
 			if (focus->bref.type == HAMMER2_BREF_TYPE_INODE) {
 				nerror = hammer2_sync_insert(

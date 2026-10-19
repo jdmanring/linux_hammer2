@@ -691,6 +691,11 @@ snapshot's create cannot return `EEXIST`. Its prototype in `hammer2.h`
 leaves its three arguments unnamed and its two returns are
 `return (x);`, the file's style on both counts. No category is new.
 
+1426 to 1427 later the same day: the snapshot pass's `reinsert` probe,
+which prints a key the frontend deleted after the snapshot was taken
+when the insert arm puts it back, is one more print format split across
+lines.
+
 ## What this gate does not see
 
 `checkpatch.pl` demotes AVOID_BUG, "do not crash the kernel", from WARNING
