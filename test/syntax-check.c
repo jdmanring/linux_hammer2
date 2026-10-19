@@ -31,6 +31,8 @@ hammer2_syntax_check_all(void)
 	hammer2_lk_init(&lk, "lk");
 	hammer2_lk_ex(&lk);
 	hammer2_lk_unlock(&lk);
+	if (hammer2_lk_tryex(&lk))
+		hammer2_lk_unlock(&lk);
 	hammer2_lk_destroy(&lk);
 	hammer2_lk_assert_ex(&lk);
 	hammer2_lk_assert_unlocked(&lk);
@@ -79,6 +81,8 @@ hammer2_syntax_check_all(void)
 
 	hammer2_spin_init(&spin, "spin");
 	hammer2_spin_ex(&spin);
+	hammer2_spin_unex(&spin);
+	hammer2_spin_ex_nested(&spin, 1);
 	hammer2_spin_unex(&spin);
 	hammer2_spin_sh(&spin);
 	hammer2_spin_unsh(&spin);
