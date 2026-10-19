@@ -996,9 +996,19 @@ struct hammer2_thread {
 	 * overflows asks the next pass to compare every inode.  Kept across
 	 * the thread's restarts, since a stale entry costs one scan.  See
 	 * hammer2_sync_slaves().
+	 *
+	 * An entry speaks to the passes after the one that noted it, never to
+	 * that pass's own root rescan: the pass holds one snapshot, so a scan
+	 * of the inode within it keeps the same key again.  Measured 2026-10-19
+	 * without the pass number: a kept key deferred its directory on every
+	 * root rescan of its pass, 176763 root rescans and 1060910 stamps of
+	 * the directory in one run, and no pass ended
+	 * (cluster-run-20261019-011005).
 	 */
 	hammer2_key_t		rescan[HAMMER2_SYNC_RESCAN_MAX];
+	int			rescan_noted[HAMMER2_SYNC_RESCAN_MAX]; /* pass */
 	int			nrescan;
+	int			rescan_pass;	/* counts hammer2_sync_pass() */
 	int			rescan_all;	/* the set overflowed */
 	int			rescan_now;	/* this pass compares every inode */
 	/*

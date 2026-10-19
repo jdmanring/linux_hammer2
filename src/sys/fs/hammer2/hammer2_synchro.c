@@ -154,15 +154,25 @@ hammer2_sync_rescan_find(hammer2_thread_t *thr, hammer2_key_t inum)
 	return (-1);
 }
 
+/*
+ * An entry noted by this pass is the next pass's to act on; see
+ * hammer2_thread.rescan_noted.
+ */
 static int
 hammer2_sync_rescan_wanted(hammer2_thread_t *thr, hammer2_key_t inum)
 {
-	return (thr->rescan_now || hammer2_sync_rescan_find(thr, inum) >= 0);
+	int i;
+
+	if (thr->rescan_now)
+		return (1);
+	i = hammer2_sync_rescan_find(thr, inum);
+	return (i >= 0 && thr->rescan_noted[i] != thr->rescan_pass);
 }
 
 /*
- * A scan that kept or failed a key puts its inode on the set; a clean scan
- * takes it off.  A full set asks the next pass to compare every inode.
+ * A scan that kept or failed a key puts its inode on the set, or renews
+ * its entry with this pass's number; a clean scan takes it off.  A full set
+ * asks the next pass to compare every inode.
  */
 static void
 hammer2_sync_rescan_note(hammer2_thread_t *thr, hammer2_key_t inum, int nfail)
@@ -171,14 +181,20 @@ hammer2_sync_rescan_note(hammer2_thread_t *thr, hammer2_key_t inum, int nfail)
 
 	i = hammer2_sync_rescan_find(thr, inum);
 	if (nfail) {
-		if (i >= 0)
+		if (i >= 0) {
+			thr->rescan_noted[i] = thr->rescan_pass;
 			return;
-		if (thr->nrescan < HAMMER2_SYNC_RESCAN_MAX)
+		}
+		if (thr->nrescan < HAMMER2_SYNC_RESCAN_MAX) {
+			thr->rescan_noted[thr->nrescan] = thr->rescan_pass;
 			thr->rescan[thr->nrescan++] = inum;
-		else
+		} else {
 			thr->rescan_all = 1;
+		}
 	} else if (i >= 0) {
-		thr->rescan[i] = thr->rescan[--thr->nrescan];
+		--thr->nrescan;
+		thr->rescan[i] = thr->rescan[thr->nrescan];
+		thr->rescan_noted[i] = thr->rescan_noted[thr->nrescan];
 	}
 }
 
@@ -517,8 +533,10 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	list->kept = 0;		/* XXX Linux */
 	/*
 	 * XXX Linux: a rescan set that overflowed asks this pass to compare
-	 * every inode; see hammer2_thread.rescan.
+	 * every inode, and an entry this pass notes is the next one's; see
+	 * hammer2_thread.rescan.
 	 */
+	++thr->rescan_pass;
 	thr->rescan_now = thr->rescan_all;
 	thr->rescan_all = 0;
 	if (thr->rescan_now && (hammer2_debug & 0x8000))
@@ -1904,7 +1922,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * ended each pass after a single deferral drain with no
 			 * inode stamped, a thousand inodes handled and replaced
 			 * again per pass, and no update line for the harness to
-			 * read progress by.
+			 * read progress by.  The entry waits for the next pass; one
+			 * read by this pass's own root rescan deferred the
+			 * directory without end, see hammer2_thread.rescan_noted.
 			 */
 			++nfail;	/* XXX Linux: see hammer2_thread.rescan */
 		} else if (nerror) {
