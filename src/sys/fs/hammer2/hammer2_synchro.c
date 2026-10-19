@@ -1425,6 +1425,25 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				want_update = 1;
 				atomic_add_int(&h2dbg_rescan, 1);
 			}
+			/*
+			 * XXX Linux: on a snapshot pass an inode the frontend
+			 * wrote after the snapshot was taken is ahead of it.  A
+			 * scan would keep each newer key and put back each one
+			 * the frontend deleted, since the insert arm has nothing
+			 * to compare a missing key against; the inode is left to
+			 * the next snapshot, which holds what the slave holds,
+			 * and counted as kept so the pass reads `newer`.  The
+			 * same rule the kept-newer arms apply to a key, one
+			 * level up.  The root is not tested: its snapshot tid is
+			 * a fresh one on another counter.
+			 */
+			if (snap && !isroot && chain && slave_tid > sync_tid) {
+				want_update = 0;
+				++list->kept;
+				if (hammer2_debug & 0x8000)
+					kprintf("syncsnap: newer inode %016llx\n",
+					    (long long)rinum);
+			}
 			if (chain) {
 				hammer2_chain_unlock(chain);
 				hammer2_chain_drop(chain);
@@ -1874,7 +1893,21 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				h2dbg_act_last = nerror;
 			}
 		}
-		if (nerror) {
+		if (nerror == HAMMER2_ERROR_EINPROGRESS) {
+			/*
+			 * XXX Linux: a key kept as newer than the source is not
+			 * a failure: nothing is retried for it, and its inode
+			 * goes on the rescan set so the next pass, with its cut
+			 * advanced, destroys a stale one or finds the next
+			 * snapshot agreeing with it.  Withholding the stamp for it
+			 * was measured 2026-10-18 on a resumed copy: one kept key
+			 * ended each pass after a single deferral drain with no
+			 * inode stamped, a thousand inodes handled and replaced
+			 * again per pass, and no update line for the harness to
+			 * read progress by.
+			 */
+			++nfail;	/* XXX Linux: see hammer2_thread.rescan */
+		} else if (nerror) {
 			list->failed = 1;
 			++nfail;	/* XXX Linux: see hammer2_thread.rescan */
 		}
