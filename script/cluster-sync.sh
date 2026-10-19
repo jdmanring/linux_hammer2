@@ -234,7 +234,13 @@ settle_wait() {
 			still=0
 			last=$u
 		fi
-		[ "$still" -ge 10 ] && [ $(( $(passes CL) - c0 )) -ge 2 ] && break
+		# And only between passes: a verify round prints no update, so on
+		# the KASAN kernel a round over 20000 entries outlasted the window
+		# and the target was listed, and the idle window read, while the
+		# pass that would delete it was still open. A pass is open while
+		# its line has no verdict.
+		[ "$still" -ge 10 ] && [ $(( $(passes CL) - c0 )) -ge 2 ] &&
+		    [ "$(klog 'syncsnap: pass clindex')" = "$(( $(klog 'syncsnap: verified clindex') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified clindex') + $(klog 'syncsnap: interrupted clindex') ))" ] && break
 		sleep 1; n=$((n + 1))
 	done
 	echo "resume-converge-seconds $n"
