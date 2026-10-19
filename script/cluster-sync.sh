@@ -707,6 +707,17 @@ echo "interrupt-src-cleaned $(klog 'syncsnap: unmount deleted CL.h2sync-src erro
 # The target the interrupted pass meant to keep is on the slave's media, read
 # on the device the teardown closed.
 echo "interrupt-tgt-on-media $(hammer2 -v show /dev/vdc 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')"
+# What the interrupted pass wrote of the marked set, read on the slave's media:
+# the pass reached it after the mutation, from a snapshot taken before it.
+# The frontend's writes could not land on the slave, which held no such
+# directory then, so the slave's marked set is the snapshot's state (the
+# ten deleted files present, the ten new ones absent) under
+# H2_SYNC_SNAPSHOT=1, and the live master's under 0, which read the master
+# as it was when the pass reached the set. Both inode and dirent lines carry
+# the filename, so a present file reads as 2.
+echo "interrupt-mark-old $(hammer2 -v show /dev/vdc 2>/dev/null | grep -c 'filename "m[0-9]"$')"
+echo "interrupt-mark-new $(hammer2 -v show /dev/vdc 2>/dev/null | grep -c 'filename "new[0-9]"$')"
+echo "mutate-kept $(( $(fieldc kept) - ${k0:-0} ))"
 # The filekeys line is NOT one cumulative record: `acted`, `failed`, `last`
 # and `kept` are file-scope atomics accumulated over the run, but `sweep` and
 # `iters` are locals of hammer2_sync_slaves() reset on entry, so each line
@@ -734,7 +745,6 @@ echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
 settle_wait
 echo "backlog-inserts $(( $(fieldc 'n>0') - ${ins0:-0} ))"
-echo "mutate-kept $(( $(fieldc kept) - ${k0:-0} ))"
 echo "mutate-reinserts $(( $(klog 'syncsnap: reinsert') - ${ri0:-0} ))"
 echo "mutate-newer-inodes $(( $(klog 'syncsnap: newer inode') - ${nd0:-0} ))"
 finish
@@ -938,7 +948,7 @@ if [ "${H2_CRASH:-0}" = 0 ]; then
 # runs 8 to 11 measured. The raw fields are printed before their checks
 # because several decide one verdict and the guest's output file is removed
 # at exit.
-echo "  raw   phase4 begun=$(val interrupt-begun) bracket=$(val interrupt-bracket-open) src-listed=$(val pass-src-listed) tgt-listed=$(val pass-tgt-listed) mutate-rc=$(val mutate-mount-rc) mutate-in-pass=$(val mutate-in-pass) stop-copied=$(val interrupt-stop-copied) in-pass=$(val interrupt-in-pass) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads=$(val interrupt-threads-before)-$(val interrupt-threads) didbreak=$(val interrupt-didbreak) src-cleaned=$(val interrupt-src-cleaned) tgt-on-media=$(val interrupt-tgt-on-media) resume-dev=$(val resume-device-rc) resume-rc=$(val resume-remount-rc) tgt-kept=$(val resume-tgt-kept) tgt-left=$(val resume-tgt-listed) inserts=$(val backlog-inserts) kept=$(val mutate-kept) reinserts=$(val mutate-reinserts) newer-inodes=$(val mutate-newer-inodes) passes=$(val resume-passes) updates=$(val resume-updates) settled=$(val resume-settled) conv-s=$(val resume-converge-seconds)"
+echo "  raw   phase4 begun=$(val interrupt-begun) bracket=$(val interrupt-bracket-open) src-listed=$(val pass-src-listed) tgt-listed=$(val pass-tgt-listed) mutate-rc=$(val mutate-mount-rc) mutate-in-pass=$(val mutate-in-pass) stop-copied=$(val interrupt-stop-copied) in-pass=$(val interrupt-in-pass) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads=$(val interrupt-threads-before)-$(val interrupt-threads) didbreak=$(val interrupt-didbreak) src-cleaned=$(val interrupt-src-cleaned) tgt-on-media=$(val interrupt-tgt-on-media) resume-dev=$(val resume-device-rc) resume-rc=$(val resume-remount-rc) tgt-kept=$(val resume-tgt-kept) tgt-left=$(val resume-tgt-listed) inserts=$(val backlog-inserts) kept=$(val mutate-kept) mark-old=$(val interrupt-mark-old) mark-new=$(val interrupt-mark-new) reinserts=$(val mutate-reinserts) newer-inodes=$(val mutate-newer-inodes) passes=$(val resume-passes) updates=$(val resume-updates) settled=$(val resume-settled) conv-s=$(val resume-converge-seconds)"
 echo "  raw   phase4 actions=$(val interrupt-actions) sweep-max=$(val interrupt-sweep-max)"
 a=$(val backlog-threads-down); [ "${a:-1}" = 0 ]; check "both mounts down leave no thread, so the slave element has left" $? "${a:-none}"
 a=$(val backlog-threads-up); [ "${a:-0}" = 1 ]; check "the slave's device returning starts the thread on the unmounted cluster" $? "${a:-none}"
@@ -956,10 +966,10 @@ if [ "$H2SNAP" = 1 ]; then
 	[ "${H2_CRASH:-0}" = 1 ] || { a=$(val interrupt-tgt-on-media); [ "${a:-0}" = 1 ]; check "the interrupted pass's target snapshot survives on the slave's media" $? "${a:-none} .h2sync-tgt root(s) on /dev/vdc" ; }
 	a=$(val resume-tgt-kept); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the resumed thread finds the kept target by name" $? "${a:-none} kept"
 	a=$(val resume-tgt-listed); [ "${a:-1}" = 0 ]; check "the target is deleted once the resumed pass verifies" $? "${a:-none} listed after the settle"
-	[ "${H2_CRASH:-0}" = 1 ] || { k=$(val mutate-kept); [ "${k:-0}" -ge 10 ] 2>/dev/null; check "the files written during the pass are kept as newer than the snapshot" $? "${k:-none} kept for 10 new files" ; }
+	[ "${H2_CRASH:-0}" = 1 ] || { o=$(val interrupt-mark-old); w=$(val interrupt-mark-new); [ "${o:-0}" -ge 10 ] 2>/dev/null && [ "${w:-1}" = 0 ]; check "the interrupted pass wrote the snapshot's state of the marked set, not the live master's" $? "${o:-none} line(s) of the ten deleted files on the slave's media, ${w:-none} of the ten written; kept $(val mutate-kept)" ; }
 else
 	a=$(val pass-src-listed); b=$(val pass-tgt-listed); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "the live pass takes no snapshot" $? "${a:-none} src, ${b:-none} tgt listed"
-	[ "${H2_CRASH:-0}" = 1 ] || { k=$(val mutate-kept); [ "${k:-1}" = 0 ]; check "the live pass keeps nothing against a mutation it sees" $? "${k:-none} kept" ; }
+	[ "${H2_CRASH:-0}" = 1 ] || { o=$(val interrupt-mark-old); w=$(val interrupt-mark-new); [ "${o:-1}" = 0 ] && [ "${w:-0}" -ge 10 ] 2>/dev/null; check "the live pass wrote the master's state of the marked set as it found it" $? "${o:-none} line(s) of the ten deleted files on the slave's media, ${w:-none} of the ten written" ; }
 fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
