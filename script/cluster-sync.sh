@@ -110,7 +110,7 @@ NBIG2=${H2_NBIG2:-20000}
 # the first open bracket as before. Declared host-side because the launch
 # line forwards it to the guest half, which runs under set -u.
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
-STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-3000}
+STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
 # Phase 2b, the refused copy: how many allocations the freemap refuses
 # inside the thread's first pass (0 leaves the phase out). Needs
 # H2_LOCKDEBUG=1, which builds the knob. H2_KO names a module built elsewhere to load instead of building one,
@@ -184,7 +184,10 @@ for img in "$MASTER" "$SLAVE"; do
 	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
 		echo "cluster: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
-if [ "$state" = running ]; then how=--live; else how=--config; fi
+# Under H2_CRASH=1 the guest is destroyed and restarted mid-run, and a disk
+# attached live alone does not survive that, so both forms are given.
+if [ "$state" = running ] && [ "${H2_CRASH:-0}" = 1 ]; then how=--persistent
+elif [ "$state" = running ]; then how=--live; else how=--config; fi
 err=$($VIRSH attach-disk "$GUEST" "$MASTER" vdb --targetbus virtio $how 2>&1) &&
 err=$($VIRSH attach-disk "$GUEST" "$SLAVE" vdc --targetbus virtio $how 2>&1) || {
 	echo "cluster: COULD-NOT-RUN: could not attach the volumes: $err" >&2; exit 2; }
@@ -196,6 +199,105 @@ until ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; do
 	sleep 5; n=$((n + 1))
 	[ $n -gt 60 ] && { echo "cluster: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2; exit 2; }
 done
+
+cat > "$W/tail.sh" <<'TAIL'
+# The shared tail of the guest half and, under H2_CRASH=1, of its second half
+# after the restart: the settle wait on the resumed thread and the readings
+# that close a run. Sourced by both, so one definition serves two scripts.
+# The settle bound is H2_RESUME_SECS, 900 by default since the resumed thread
+# copies the backlog's remainder at the thread's own rate (measured about
+# 15 ms a file on the debug kernel).
+settle_wait() {
+	c0=$(passes CL)
+	# The resume has to be given until the thread stops making progress, not a
+	# fixed pass count. MEASURED 2026-10-14: a pass handles ONE deferred inode when
+	# its local scan is empty (filekeys iters 2 exit 1, acted +1), and the failing
+	# run's log shows 58 such passes in 70 ms walking inodes 0x438 down to 0x400,
+	# each stamping one. Two passes therefore drains two inodes of a backlog that
+	# can be hundreds, and the run then measured a race rather than convergence.
+	# The wait below is for the update-inode count to stop advancing across a
+	# settle window, bounded, and the observed convergence time is printed.
+	# The quiet window alone is not settling: a pass that copies nothing prints
+	# no update, so a kernel slow enough that the resumed thread's first pass
+	# over the tree outlasts the window read "settled 10 s after 0 updates" and
+	# 0 passes. MEASURED 2026-10-18 on h2kasan-rc5, where a pass over 40000
+	# inodes takes longer than the window. The wait ends on a quiet window
+	# only once two passes have completed, so the two-pass check below reads
+	# a wait and not a race, and a thread that never ran cannot read settled.
+	u0=$(klog 'syncthr: update inode')
+	n=0; last=-1; still=0
+	while [ $n -lt ${H2_RESUME_SECS:-900} ]; do
+		u=$(klog 'syncthr: update inode')
+		if [ "$u" = "$last" ]; then
+			still=$(( still + 1 ))
+		else
+			still=0
+			last=$u
+		fi
+		[ "$still" -ge 10 ] && [ $(( $(passes CL) - c0 )) -ge 2 ] && break
+		sleep 1; n=$((n + 1))
+	done
+	echo "resume-converge-seconds $n"
+	echo "resume-updates $(( $(klog 'syncthr: update inode') - u0 ))"
+	echo "resume-settled $still"
+	echo "resume-seconds $n"
+	echo "resume-passes $(( $(passes CL) - c0 ))"
+	echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
+	echo "resume-tgt-kept $(klog 'syncsnap: target .* kept')"
+	echo "resume-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
+	echo "mark-files $(ls /mnt/h2c/mark | wc -l)"
+}
+finish() {
+	# The snapshot pass's own records, read once the resume has settled. The
+	# idle window reads 12 s more, two of the thread's five-second wakeups: an
+	# idle master must cost idle passes and no snapshot pass, and the last idle
+	# line carries both root tids, which must agree for hammer2_cluster_check()
+	# to serve the slave; how many live passes it took to get there is the
+	# idlestamp count, printed and not asserted.
+	p1=$(klog 'syncsnap: pass clindex'); i1=$(klog 'syncsnap: idle clindex')
+	sleep 12
+	echo "idle-window-passes $(( $(klog 'syncsnap: pass clindex') - p1 ))"
+	echo "idle-window-idles $(( $(klog 'syncsnap: idle clindex') - i1 ))"
+	echo "snap-passes $(klog 'syncsnap: pass clindex')"
+	echo "snap-idle $(klog 'syncsnap: idle clindex')"
+	echo "snap-idlestamp $(klog 'syncsnap: idlestamp')"
+	echo "snap-verified $(klog 'syncsnap: verified')"
+	echo "snap-unverified $(klog 'syncsnap: unverified')"
+	echo "snap-newer $(klog 'syncsnap: newer')"
+	echo "snap-interrupted $(klog 'syncsnap: interrupted')"
+	echo "snap-target-taken $(klog 'syncsnap: target .* taken')"
+	echo "snap-target-kept $(klog 'syncsnap: target .* kept')"
+	echo "snap-target-errors $(klog 'syncsnap: target .* error')"
+	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
+	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
+	timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
+	echo "cluster-umount ok"
+	echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
+	# The scrap print is rate-limited, so the lines under-read it: one run
+	# printed 20 and "22201 callbacks suppressed" (2026-10-18). Both counted.
+	echo "scrapped $(( $(grep -c 'unmount_scrap: scrapping' $K) + $(grep 'unmount_scrap: [0-9]* callbacks suppressed' $K | awk '{s += $(NF-2)} END {print s + 0}') ))"
+	# The guest's virtual GPU times out waiting for a vblank under a heavy
+	# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
+	# 2026-10-18), which is the guest's and not the port's. Those lines name
+	# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
+	# the port's nor fail the run on their own.
+	echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
+	echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
+	# Before rmmod, so the report's %pS resolves the module's own symbols. The
+	# scan used to follow rmmod, where those symbols print as addresses and only
+	# a process named hammer2 could match, and to run without the wait the
+	# scanner's age rule needs (kmemleak.c MSECS_MIN_AGE, 5000 ms).
+	sleep 6
+	if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+		echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
+	else
+		echo "kmemleak unusable"
+	fi
+	timeout 120 rmmod hammer2 && echo "rmmod ok"
+	sync
+	kill $KPID 2>/dev/null
+}
+TAIL
 
 cat > "$W/guest.sh" <<'GUEST'
 set -u
@@ -243,6 +345,7 @@ mounts() { mount 2>/dev/null | grep -c ' type hammer2'; }
 # 0 passes in 300 s from the scan lines alone against a thread that had
 # converged and was passing idle every five seconds.
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
+. /tmp/h2cluster-tail.sh
 
 # 1. A lone SLAVE: start, pass, stop.
 timeout 30 mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
@@ -503,11 +606,15 @@ echo "backlog-threads-down $(ps -eo comm | grep -c '^h2nod-CL')"
 mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "backlog master-alone mount failed"; exit 1; }
 echo "h2probe: bigdir2 write start" > /dev/kmsg
 mkdir /mnt/h2c/bigdir2
-i=0; while [ $i -lt $NBIG2 ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir2/q$i; i=$((i + 1)); done
-# The marked set the mutation below works on, created last so the
-# inum-ordered root scan reaches it last.
+# The marked set the mutation below works on is created between the two
+# halves of the backlog: inode numbers are given in creation order and the
+# root scan walks them in that order, so the pass reaches the marked set
+# after the first half, long after the mutation, and the stop below lands
+# in the second half, after the pass has read the marked set.
+i=0; while [ $i -lt $(( NBIG2 / 2 )) ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir2/q$i; i=$((i + 1)); done
 mkdir /mnt/h2c/mark
 i=0; while [ $i -lt 20 ]; do head -c $(( 700 + i * 37 )) /dev/urandom > /mnt/h2c/mark/m$i; i=$((i + 1)); done
+i=$(( NBIG2 / 2 )); while [ $i -lt $NBIG2 ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir2/q$i; i=$((i + 1)); done
 sync
 echo "h2probe: bigdir2 write end" > /dev/kmsg
 timeout 60 umount /mnt/h2c
@@ -533,6 +640,26 @@ echo "interrupt-bracket-open $([ $(( $(klog 'sync_slaves pfs CL') - p0 )) -ge 1 
 # must read 0 and 0 here.
 echo "pass-src-listed $(hammer2 -s /mnt/h2m pfs-list 2>/dev/null | grep -c 'h2sync-src')"
 echo "pass-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
+# 6. Crash recovery, under H2_CRASH=1 from the host. The copy is left running
+# and the host cuts the guest's power once the copy has gone H2_CRASH_DEPTH
+# updates past its start, which no command on the guest can do; the session
+# ends with the guest. What the cut left on both media is read by the host
+# while the guest is down and by the guest's second half after the restart.
+# Nothing is synced first: the pass's copies are in memory until its end,
+# and that is the state a cut must leave.
+if [ "${H2_CRASH:-0}" = 1 ]; then
+	n=0
+	while [ $n -lt 6000 ]; do
+		[ $(( $(copied) - u1 )) -ge "${H2_CRASH_DEPTH:-2000}" ] && break
+		[ "$(verdicts)" != "$v0" ] && break
+		sleep 0.05; n=$((n + 1))
+	done
+	echo "crash-copied $(( $(copied) - u1 ))"
+	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
+	echo "crash-armed"
+	sleep 600
+	exit 0
+fi
 # 3b. Source mutation during convergence, and a media flush during it. The
 # cluster is mounted while the pass runs, which brings the frontend to both
 # elements: ten of the marked files are deleted and ten new ones written,
@@ -550,20 +677,23 @@ rm -f /mnt/h2c/mark/m0 /mnt/h2c/mark/m1 /mnt/h2c/mark/m2 /mnt/h2c/mark/m3 /mnt/h
 i=0; while [ $i -lt 10 ]; do head -c $(( 900 + i * 41 )) /dev/urandom > /mnt/h2c/mark/new$i; i=$((i + 1)); done
 sync; sleep 1; sync
 echo "mutate-updates $(( $(copied) - u1 ))"
-# 4c. The stop: once the copy has gone H2_STOP_DEPTH updates past the
-# mutation, or the pass has ended, the cluster is unmounted (the thread
-# survives that, measured) and then the slave's device, whose count reaches
-# zero now and tears it down. The stop landed inside the pass if no verdict
-# has printed since the device came up.
-STOP_DEPTH=${H2_STOP_DEPTH:-2000}
-a0=$(copied); a0=${a0:-0}
+# 4c. The stop: once the copy has gone H2_STOP_DEPTH updates from its start,
+# half the backlog and a thousand more by default, so the marked set has been
+# read, or the pass has ended, the cluster is unmounted (the thread survives
+# that, measured) and then the slave's device, whose count reaches zero now
+# and tears it down. The stop landed inside the pass if no verdict has
+# printed since the device came up. MEASURED 2026-10-18: a depth forwarded
+# as 0 stopped the pass 0 updates after the mutation, before it reached the
+# marked set, and the mutation's readings were of the next snapshot.
+STOP_DEPTH=${H2_STOP_DEPTH:-0}
+[ "$STOP_DEPTH" = 0 ] && STOP_DEPTH=$(( NBIG2 / 2 + 1000 ))
 n=0
-while [ $n -lt "${H2_STOP_DEPTH_MS:-120000}" ]; do
-	[ $(( $(copied) - a0 )) -ge "$STOP_DEPTH" ] && break
+while [ $n -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
+	[ $(( $(copied) - u1 )) -ge "$STOP_DEPTH" ] && break
 	[ "$(verdicts)" != "$v0" ] && break
 	sleep 0.05; n=$((n + 1))
 done
-echo "interrupt-stop-copied $(( $(copied) - a0 )) wanted $STOP_DEPTH"
+echo "interrupt-stop-copied $(( $(copied) - u1 )) wanted $STOP_DEPTH"
 echo "interrupt-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 timeout 60 umount /mnt/h2c
@@ -602,100 +732,89 @@ timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; rrc=$?
 echo "resume-remount-rc $rrc"
 echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
-c0=$(passes CL)
-# The resume has to be given until the thread stops making progress, not a
-# fixed pass count. MEASURED 2026-10-14: a pass handles ONE deferred inode when
-# its local scan is empty (filekeys iters 2 exit 1, acted +1), and the failing
-# run's log shows 58 such passes in 70 ms walking inodes 0x438 down to 0x400,
-# each stamping one. Two passes therefore drains two inodes of a backlog that
-# can be hundreds, and the run then measured a race rather than convergence.
-# The wait below is for the update-inode count to stop advancing across a
-# settle window, bounded, and the observed convergence time is printed.
-# The quiet window alone is not settling: a pass that copies nothing prints
-# no update, so a kernel slow enough that the resumed thread's first pass
-# over the tree outlasts the window read "settled 10 s after 0 updates" and
-# 0 passes. MEASURED 2026-10-18 on h2kasan-rc5, where a pass over 40000
-# inodes takes longer than the window. The wait ends on a quiet window
-# only once two passes have completed, so the two-pass check below reads
-# a wait and not a race, and a thread that never ran cannot read settled.
-u0=$(klog 'syncthr: update inode')
-n=0; last=-1; still=0
-while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
-	u=$(klog 'syncthr: update inode')
-	if [ "$u" = "$last" ]; then
-		still=$(( still + 1 ))
-	else
-		still=0
-		last=$u
-	fi
-	[ "$still" -ge 10 ] && [ $(( $(passes CL) - c0 )) -ge 2 ] && break
-	sleep 1; n=$((n + 1))
-done
-echo "resume-converge-seconds $n"
-echo "resume-updates $(( $(klog 'syncthr: update inode') - u0 ))"
-echo "resume-settled $still"
-echo "resume-seconds $n"
-echo "resume-passes $(( $(passes CL) - c0 ))"
-echo "resume-errors $(klog 'hammer2_sync_slaves: error')"
-echo "resume-tgt-kept $(klog 'syncsnap: target .* kept')"
-echo "resume-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
+settle_wait
 echo "backlog-inserts $(( $(fieldc 'n>0') - ${ins0:-0} ))"
 echo "mutate-kept $(( $(fieldc kept) - ${k0:-0} ))"
 echo "mutate-reinserts $(( $(klog 'syncsnap: reinsert') - ${ri0:-0} ))"
 echo "mutate-newer-inodes $(( $(klog 'syncsnap: newer inode') - ${nd0:-0} ))"
-echo "mark-files $(ls /mnt/h2c/mark | wc -l)"
-# The snapshot pass's own records, read once the resume has settled. The
-# idle window reads 12 s more, two of the thread's five-second wakeups: an
-# idle master must cost idle passes and no snapshot pass, and the last idle
-# line carries both root tids, which must agree for hammer2_cluster_check()
-# to serve the slave; how many live passes it took to get there is the
-# idlestamp count, printed and not asserted.
-p1=$(klog 'syncsnap: pass clindex'); i1=$(klog 'syncsnap: idle clindex')
-sleep 12
-echo "idle-window-passes $(( $(klog 'syncsnap: pass clindex') - p1 ))"
-echo "idle-window-idles $(( $(klog 'syncsnap: idle clindex') - i1 ))"
-echo "snap-passes $(klog 'syncsnap: pass clindex')"
-echo "snap-idle $(klog 'syncsnap: idle clindex')"
-echo "snap-idlestamp $(klog 'syncsnap: idlestamp')"
-echo "snap-verified $(klog 'syncsnap: verified')"
-echo "snap-unverified $(klog 'syncsnap: unverified')"
-echo "snap-newer $(klog 'syncsnap: newer')"
-echo "snap-target-taken $(klog 'syncsnap: target .* taken')"
-echo "snap-target-kept $(klog 'syncsnap: target .* kept')"
-echo "snap-target-errors $(klog 'syncsnap: target .* error')"
-echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
-echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
-timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
-echo "cluster-umount ok"
-echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
-echo "scrapped $(klog unmount_scrap)"
-# The guest's virtual GPU times out waiting for a vblank under a heavy
-# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
-# 2026-10-18), which is the guest's and not the port's. Those lines name
-# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
-# the port's nor fail the run on their own.
-echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
-echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
-# Before rmmod, so the report's %pS resolves the module's own symbols. The
-# scan used to follow rmmod, where those symbols print as addresses and only
-# a process named hammer2 could match, and to run without the wait the
-# scanner's age rule needs (kmemleak.c MSECS_MIN_AGE, 5000 ms).
-sleep 6
-if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
-	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
-else
-	echo "kmemleak unusable"
-fi
-timeout 120 rmmod hammer2 && echo "rmmod ok"
-sync
-kill $KPID 2>/dev/null
+finish
 GUEST
+
+cat > "$W/guestb.sh" <<'GUESTB'
+set -u
+# The second half of a crash run: the guest has restarted and holds nothing,
+# and the kernel log before the cut is gone with it; the readings before the
+# cut are the first half's own lines.
+K=/tmp/h2cluster.klog
+pkill -x dmesg 2>/dev/null; sleep 0.2
+dmesg -C
+dmesg -w > $K 2>&1 &
+KPID=$!
+trap 'kill $KPID 2>/dev/null' EXIT
+insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
+klog() { grep -c "$1" $K; }
+passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
+. /tmp/h2cluster-tail.sh
+mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c
+mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "recover master mount failed"; exit 1; }
+mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || { echo "recover slave mount failed"; exit 1; }
+echo "recover-threads $(ps -eo comm | grep -c '^h2nod-CL')"
+# The first pass deletes the source snapshot the cut left on the master and
+# finds the target the interrupted pass left on the slave, by name.
+n=0
+while [ $n -lt 600 ]; do
+	[ "$(klog 'syncsnap: pass clindex')" -ge 1 ] && break
+	sleep 0.5; n=$((n + 1))
+done
+echo "recover-stale $(klog 'syncsnap: stale CL.h2sync-src deleted')"
+echo "recover-tgt-kept $(klog 'syncsnap: target .* kept')"
+echo "recover-tgt-listed $(hammer2 -s /mnt/h2s pfs-list 2>/dev/null | grep -c 'h2sync-tgt')"
+timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; rrc=$?
+echo "resume-remount-rc $rrc"
+echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
+settle_wait
+finish
+GUESTB
 
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
-scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
-rc=$?
+scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900}"
+if [ "${H2_CRASH:-0}" = 1 ]; then
+	# 6. The crash. The guest half runs to its armed line, the guest is
+	# destroyed under it (a power cut, so the session ends with it), both
+	# media are read by fsck here while the guest is down, the guest is
+	# restarted and its second half run. The fake pass this guards: a cut
+	# that landed after the pass had ended tests nothing, so the armed line
+	# carries whether the pass was still open.
+	$RUN "$GUEST_SSH" "$GUEST_ENV sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; mv /tmp/tail.sh /tmp/h2cluster-tail.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1 &
+	apid=$!
+	n=0
+	until grep -q '^crash-armed' "$W/out" 2>/dev/null || [ $n -ge 2400 ]; do sleep 1; n=$((n + 1)); done
+	if grep -q '^crash-armed' "$W/out" 2>/dev/null; then
+		$VIRSH destroy "$GUEST" >/dev/null 2>&1; echo "crash-destroyed $?" >> "$W/out"
+	else
+		echo "crash-destroyed 9" >> "$W/out"
+	fi
+	wait $apid; arc=$?
+	echo "crash-session-rc $arc" >> "$W/out"
+	for img in "$MASTER" "$SLAVE"; do
+		b=$(basename "$img"); "$FSCK" "$img" > "$W/crashfsck.$b" 2>&1; echo "crash-fsck-$b $?" >> "$W/out"
+	done
+	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "cluster: COULD-NOT-RUN: $GUEST did not restart after the cut" >&2; detach_disks; exit 2; }
+	n=0
+	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; do
+		sleep 5; n=$((n + 1))
+		[ $n -gt 60 ] && { echo "cluster: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes after the cut" >&2; detach_disks; exit 2; }
+	done
+	echo "crash-restart-seconds $((n * 5))" >> "$W/out"
+	scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guestb.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed after the cut" >&2; detach_disks; exit 2; }
+	$RUN "$GUEST_SSH" "$GUEST_ENV sh -c 'mv /tmp/guestb.sh /tmp/h2cluster-b.sh; mv /tmp/tail.sh /tmp/h2cluster-tail.sh; . /tmp/h2cluster-b.sh'" >> "$W/out" 2>&1
+	rc=$?
+else
+	$RUN "$GUEST_SSH" "$GUEST_ENV sh -c 'mv /tmp/guest.sh /tmp/h2cluster.sh; mv /tmp/tail.sh /tmp/h2cluster-tail.sh; . /tmp/h2cluster.sh'" > "$W/out" 2>&1
+	rc=$?
+fi
 # What the guest half actually returned, before anything is inferred from
 # the readings below.  Measured 2026-10-13: a run whose ssh session dropped
 # mid-flight left $W/out with the phases it had reached and none of the
@@ -812,6 +931,7 @@ if [ "${H2_FAULT2:-0}" != 0 ]; then
 	e=$(val diverge-errors); [ "${e:-1}" = 0 ]; check "the refused replace or destroy leaves no pass error" $? "${e:-none}"
 fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
+if [ "${H2_CRASH:-0}" = 0 ]; then
 # Phase 4b/4c: the backlog must be the thread's copy, the stop must land
 # inside that copy, and the device teardown must stop the thread mid-pass.
 # Without the first, every check below tested a root scan, which is what
@@ -832,17 +952,26 @@ tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1
 if [ "$H2SNAP" = 1 ]; then
 	a=$(val pass-src-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot is a listed PFS on the master's device while the pass runs" $? "${a:-none} .h2sync-src listed"
 	a=$(val pass-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot is a listed PFS on the slave's device while the pass runs" $? "${a:-none} .h2sync-tgt listed"
-	a=$(val interrupt-src-cleaned); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass's source snapshot is deleted by the teardown" $? "${a:-none}"
-	a=$(val interrupt-tgt-on-media); [ "${a:-0}" = 1 ]; check "the interrupted pass's target snapshot survives on the slave's media" $? "${a:-none} .h2sync-tgt root(s) on /dev/vdc"
+	[ "${H2_CRASH:-0}" = 1 ] || { a=$(val interrupt-src-cleaned); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the interrupted pass's source snapshot is deleted by the teardown" $? "${a:-none}" ; }
+	[ "${H2_CRASH:-0}" = 1 ] || { a=$(val interrupt-tgt-on-media); [ "${a:-0}" = 1 ]; check "the interrupted pass's target snapshot survives on the slave's media" $? "${a:-none} .h2sync-tgt root(s) on /dev/vdc" ; }
 	a=$(val resume-tgt-kept); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the resumed thread finds the kept target by name" $? "${a:-none} kept"
 	a=$(val resume-tgt-listed); [ "${a:-1}" = 0 ]; check "the target is deleted once the resumed pass verifies" $? "${a:-none} listed after the settle"
-	k=$(val mutate-kept); [ "${k:-0}" -ge 10 ] 2>/dev/null; check "the files written during the pass are kept as newer than the snapshot" $? "${k:-none} kept for 10 new files"
+	[ "${H2_CRASH:-0}" = 1 ] || { k=$(val mutate-kept); [ "${k:-0}" -ge 10 ] 2>/dev/null; check "the files written during the pass are kept as newer than the snapshot" $? "${k:-none} kept for 10 new files" ; }
 else
 	a=$(val pass-src-listed); b=$(val pass-tgt-listed); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "the live pass takes no snapshot" $? "${a:-none} src, ${b:-none} tgt listed"
-	k=$(val mutate-kept); [ "${k:-1}" = 0 ]; check "the live pass keeps nothing against a mutation it sees" $? "${k:-none} kept"
+	[ "${H2_CRASH:-0}" = 1 ] || { k=$(val mutate-kept); [ "${k:-1}" = 0 ]; check "the live pass keeps nothing against a mutation it sees" $? "${k:-none} kept" ; }
 fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
+else
+	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
+	c=$(val crash-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val crash-in-pass)" = 0 ]; check "the power is cut inside the copy" $? "${c:-none} updates into the pass, in-pass rc $(val crash-in-pass)"
+	a=$(val crash-destroyed); [ "${a:-9}" = 0 ]; check "the guest is destroyed at the armed line" $? "virsh destroy rc ${a:-none}, session rc $(val crash-session-rc)"
+	a=$(val crash-fsck-cluster-master.img); b=$(val crash-fsck-cluster-slave.img); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "both media are consistent as the cut left them" $? "fsck_hammer2 exit ${a:-none} and ${b:-none} before recovery"
+	a=$(val recover-threads); [ "${a:-0}" = 1 ]; check "the two devices returning start the thread" $? "${a:-none}"
+	a=$(val recover-stale); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot the cut left is deleted by the first pass" $? "${a:-none} stale delete(s)"
+	a=$(val recover-tgt-kept); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot the cut left is found by name" $? "${a:-none} kept, $(val recover-tgt-listed) listed before the cluster mount"
+fi
 # The stop is read at the thread's loop top and between deferred directories,
 # never inside a scan, so a pass in flight completes and didbreak cannot fire
 # for a stop issued mid-pass. Requiring it would be a check no correct run can
@@ -866,7 +995,7 @@ if [ "$H2SNAP" = 1 ]; then
 	# next snapshot; that is printed as `newer` and is not a pass that ran
 	# out of rounds. MEASURED 2026-10-18: 5 such passes in a run, every one
 	# with 0 actions and 1 kept key, 4 of them under the 20000-file write.
-	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write"
+	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write, $(val snap-interrupted) stopped by an unmount"
 	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
 	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in 12 s after the resume settled"
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
