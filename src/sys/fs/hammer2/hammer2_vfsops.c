@@ -170,10 +170,14 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
 /*
  * XXX Linux: the synchronization thread reads a snapshot of the master
  * element taken at the start of each pass, rather than the live master
- * through the quorum's focus.  Zero is the carried live-to-live pass,
- * kept as the fallback; see doc/SYNC_DESIGN.md.
+ * through the quorum's focus.  One since the debug and KASAN kernels
+ * each read the snapshot pass clean on the cluster harness; zero is the
+ * carried live-to-live pass, kept as the fallback and as the harness's
+ * negative control.  See doc/SYNC_DESIGN.md.
+ * DEFER(a release read through the snapshot pass alone for a stated period):
+ * the live pass goes.
  */
-int hammer2_sync_snapshot;
+int hammer2_sync_snapshot = 1;
 module_param_named(sync_snapshot, hammer2_sync_snapshot, int, 0644);
 module_param_named(alloc_data_bytes, hammer2_alloc_data_bytes, ulong, 0444);
 module_param_named(alloc_meta_bytes, hammer2_alloc_meta_bytes, ulong, 0444);
