@@ -4,7 +4,7 @@
 #include <linux/fs.h>
 /*
  * The two declarations holdfp() and fdrop() need, transcribed from
- * include/linux/file.h at v7.3-rc5 (:66 and :18): the reference a
+ * include/linux/file.h at v7.3 (:66 and :18): the reference a
  * descriptor number resolves to, and its release.
  */
 extern struct file *fget(unsigned int fd);

@@ -54,7 +54,7 @@ braced one when the refusal gained its count, and checkpatch counts the
 same statement differently there. None is convertible on its own.
 
 
-Counts below are what `checkpatch.pl` from linux **v7.3-rc5** reports, which is
+Counts below are what `checkpatch.pl` from linux **v7.3** reports, which is
 the version `doc/checkpatch-baseline.txt` names in its first line and the
 version CI fetches. Its second line records that checker's `sha256`, which
 is the identity the file answers for itself: a version read off the tree a

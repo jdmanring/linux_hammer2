@@ -916,7 +916,7 @@ compares the module's vermagic with the guest's release and reports
 COULD-NOT-RUN naming both. A verdict reached against the wrong kernel is
 an artifact of the setup and not a finding about the code.
 
-    KDIR=~/kernels/linux-7.3-rc5 H2_FIXTURE_START=1 \
+    KDIR=~/kernels/linux-7.3 H2_FIXTURE_START=1 \
         bash script/test-fixtures.sh
 
 Measured on 2026-09-04: eleven images, 43 files, 34 stat rows, 5 statfs
@@ -994,8 +994,9 @@ DragonFly writes, then is shut down, then Linux reads.
 The Linux guest's kernel is plain mainline 7.3 at the candidate the
 kernel of record names, built on the host and copied into the guest by
 hand: 7.3.0-rc1 from `~/kernels/linux-7.3-rc1` until 2026-09-26, then
-7.3.0-rc4 from `~/kernels/linux-7.3-rc4`, and 7.3.0-rc5 from
-`~/kernels/linux-7.3-rc5`, the tree `KDIR` names, since 2026-09-29.
+7.3.0-rc4 from `~/kernels/linux-7.3-rc4`, 7.3.0-rc5 from
+`~/kernels/linux-7.3-rc5` since 2026-09-29, and 7.3.0 from
+`~/kernels/linux-7.3`, the tree `KDIR` names, since 2026-10-19.
 All stay installed and the grub default chooses between them, so a
 reading in `doc/history/verification-record.md` taken on that guest
 names the build it ran on, and one dated before 2026-09-26 was taken on
@@ -1016,10 +1017,12 @@ A second build of the same source sits beside it in the guest since
 `~/kernels/linux-7.3-rc1-release`, `7.3.0-rc4-release` from
 `~/kernels/linux-7.3-rc4-release` since 2026-09-26, and
 `7.3.0-rc5-release` from `~/kernels/linux-7.3-rc5-release` since
-2026-09-29, the same
+2026-09-29, and `7.3.0-release` from `~/kernels/linux-7.3-release` since
+2026-10-19, the same
 configuration with every debug option off, chosen at boot by the grub
 default, which `setkernel.sh` on the guest rewrites. A third build,
-`7.3.0-rc5-kasan` from `~/kernels/linux-7.3-rc5-kasan`, sits beside
+`7.3.0-rc5-kasan` from `~/kernels/linux-7.3-rc5-kasan`, and `7.3.0-kasan`
+from `~/kernels/linux-7.3-kasan` since 2026-10-19, sits beside
 them: the debug configuration plus `KASAN` inline with
 `KASAN_VMALLOC`, `UBSAN` with the bounds, shift, bool and enum checks,
 `DEBUG_ATOMIC_SLEEP`, `DEBUG_LIST`, `DEBUG_VM`, `DEBUG_OBJECTS` and the
@@ -1605,7 +1608,7 @@ Makefile reads `CONFIG_CC_IS_CLANG` from the tree's config and adds it,
 so the line above is enough. The result carries vermagic
 `7.3.0-rc1-saxum` and loads on nothing else. No guest boots that kernel
 yet; the Saxum server edition, which will, was not built when this was
-written, so the fixture gate runs on `artix-s6-kde` at `7.3.0-rc5`,
+written, so the fixture gate runs on `artix-s6-kde` at `7.3.0`,
 the tree `KDIR` names. The store's `7.3.0-rc1-cachyos` figures are a superseded
 measurement rather than a standing requirement.
 

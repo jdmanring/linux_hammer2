@@ -5,7 +5,7 @@
 
 /*
  * The two declarations hammer2_os.h needs from the kernel's
- * include/linux/fs.h, transcribed from v7.3-rc5 where they read:
+ * include/linux/fs.h, transcribed from v7.3 where they read:
  *
  *     extern ssize_t kernel_read(struct file *, void *, size_t, loff_t *);
  *     extern ssize_t kernel_write(struct file *, const void *, size_t, loff_t *);

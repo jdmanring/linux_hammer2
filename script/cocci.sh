@@ -6,7 +6,7 @@
 # lines, so a report is a candidate list to triage against the origin tree
 # in doc/history/verification-record.md.
 #
-#   KDIR=~/kernels/linux-7.3-rc5 bash script/cocci.sh
+#   KDIR=~/kernels/linux-7.3 bash script/cocci.sh
 #
 # 73 of the kernel's 76 patches report through python rules, which import
 # coccilib, and the coccinelle-bin package does not install it: point

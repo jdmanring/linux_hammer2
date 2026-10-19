@@ -15616,3 +15616,70 @@ of how `make -k` reports, and the third was clean. The paragraph on the
 quick group above was read in a fourth round of its own, which refused
 once, on a first claimed for the expunged set that the fourth group
 already had, and a fifth signed off on the correction.
+
+## The kernel of record is the 7.3 release, 2026-10-19
+
+Linux 7.3 shipped on 2026-10-18: kernel.org's `releases.json`, read on
+2026-10-19, names 7.3 as `latest_stable` with that date, and the tag
+`v7.3` resolves to `c03c1a145`, "Linux 7.3". The pin followed it the same
+day, by the rule the floor was written under: the kernel of record and
+the floor move together when a release ships rather than being left to
+age. `KERNEL_REF=7.3` in `script/test-syntax.sh` already named the
+family, so what moved was the candidate tree and every statement that
+named rc5 as current.
+
+**The trees.** A shallow clone at `v7.3` into `~/kernels/linux-7.3`,
+copied to `linux-7.3-kasan` and `linux-7.3-release`, each `.config` taken
+from the rc5 tree of the same kind through `make olddefconfig`, so the
+three builds keep the three questions they answer: lockdep and kmemleak
+with `LOCKDEP_BITS=17` in the debug tree, KASAN and UBSAN with fault
+injection in the second, every debug option off in the third. Built at
+`-j16` in sequence (`~/kernels/build-7.3.log`, `build-7.3-kasan.log`,
+`build-7.3-release.log`): 15:38:24 to 15:42:09, 15:42:09 to 15:50:22 and
+15:50:22 to 15:54:01, each `make`, `modules_install` and `tar` exiting 0,
+the staged module sets 42M, 49M and 3.7M by `du -sh`, the same three
+sizes as rc5's.
+
+**What moved and what did not.** `scripts/checkpatch.pl` at `v7.3` is
+byte-identical to rc5's (`sha256sum` on both trees agrees, leading
+`2553cc1a601e7052`), so `doc/checkpatch-baseline.txt` moved its name line
+a third time and no count: `test-checkpatch.sh` against the release tree
+prints "deviation set unchanged (1429 hits, baseline: checkpatch.pl from
+linux v7.3)". The eleven kernel headers the stubs under `test/stub/linux/`
+transcribe were compared with `cmp` between the two trees: ten are
+identical and `include/linux/fs.h` gains two defines, `FOP_IMMUTABLE` at
+1981 and `FS_DISALLOW_NOTIFY` at 2301, neither among the two declarations
+the stub carries, so every stub citation now reads `v7.3` and no cited
+line moved. `git grep rc5` outside `CHANGELOG.md` and this record named
+30 tracked files before the move. The two that change behavior,
+`script/pre-push-check.sh`'s tree search and `.github/workflows/ci.yml`'s
+checker tag, moved first, as the rc5 entry said they must; the usage
+comments in `analyze.sh`, `cocci.sh`, `smatch.sh` and `storm.sh`, the
+baseline's name line, `README.kernel-style.md`, `README.capabilities.md`,
+`README.porting.md`, `README.status.md`, `README.testing.md`,
+`SYNC_DESIGN.md` and the ten stubs followed. Eleven files still say rc5,
+each a dated measurement or a sentence about a past move, and are left as
+written.
+
+**Host readings on the release tree.** `test-syntax.sh`: 81 checks, 0
+failed, "against the kernel of record (7.3), 7.3.0, mainline". `make`
+against each of the three trees: exit 0, no warning, `hammer2.ko` with
+vermagic `7.3.0 SMP preempt mod_unload`. After the edits, with no
+environment set: `test-inventory.sh` 0 findings, `test-citations.sh` exit
+0, `test-history.sh` exit 0, `test-provenance.sh` 38 checks 0 findings,
+`test-absence.sh` exit 0, `test-shim.sh` 6/0, `test-ccms-lock.sh` 29/0,
+`test-vectors-contract.sh` 10/0, `test-posix.sh` 109/0,
+`test-doc-prose.sh` 39 documents 0 findings, `test-tools.sh` 4/0,
+`test-report.sh` 5 files 0 findings, `test-reverts.sh` 60 commits 0
+without a reason, `test-transport.sh` 35/0.
+
+**The guest.** `vmlinuz-linux-h2debug-7.3`, `-h2kasan-7.3` and
+`-h2release-7.3` installed beside the rc5 kernels, each initramfs a copy
+of its rc5 counterpart, the recipe the rc4 move recorded, the module sets
+unpacked into `/lib/modules/7.3.0`, `7.3.0-kasan` and `7.3.0-release`,
+and `/usr/local/bin/setkernel-7.3.sh` pinning the grub default. The
+first boot of `7.3.0` answered ssh after 45 s with
+`BOOT_IMAGE=/@/boot/vmlinuz-linux-h2debug-7.3`, lockdep holding 1709 of
+8192 lock classes at the desktop, kmemleak empty, and the QEMU core count
+1 before and after the power cut. The first fleet readings on these
+kernels are the synchronization pass's runs in the entry that follows.

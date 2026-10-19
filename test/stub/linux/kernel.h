@@ -73,7 +73,7 @@ void cpu_relax(void);
 void dump_stack(void);
 
 /*
- * Transcribed from include/vdso/limits.h at v7.3-rc5, which is where the
+ * Transcribed from include/vdso/limits.h at v7.3, which is where the
  * kernel defines it and where <linux/kernel.h> reaches it.  fp_read() and
  * fp_write() compare against it the way upstream's do, so the stub needs
  * it or the shim compiles only in the module build.

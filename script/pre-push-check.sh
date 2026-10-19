@@ -138,12 +138,12 @@ if [ -z "${KDIR:-}" ]; then
 	rel=$(timeout 3 ssh -o ConnectTimeout=2 -o BatchMode=yes \
 		"${H2_GUEST_SSH:-root@192.168.122.16}" uname -r 2>/dev/null)
 	case "$rel" in
-	*-kasan) d="$HOME/kernels/linux-7.3-rc5-kasan"
+	*-kasan) d="$HOME/kernels/linux-7.3-kasan"
 		[ -d "$d" ] && { KDIR=$d; export KDIR; } ;;
 	esac
 fi
 if [ -z "${KDIR:-}" ]; then
-	for d in "$HOME/kernels/linux-7.3-rc5" "$HOME/kernels/linux-7.3" \
+	for d in "$HOME/kernels/linux-7.3" "$HOME/kernels/linux-7.3-rc5" \
 		 "$HOME/kernels/linux-7.3-rc4" "$HOME/kernels/linux-7.3-rc1"; do
 		[ -d "$d" ] && { KDIR=$d; export KDIR; break; }
 	done

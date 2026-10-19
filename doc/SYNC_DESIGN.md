@@ -434,7 +434,8 @@ and no protocol and changes the mount's semantics instead.
 - **This tree at `5078090`**: `hammer2_synchro.c`, `hammer2_vfsops.c`,
   `hammer2_ioctl.c` and `hammer2_disk.h` at the lines cited, and
   `command grep -rn pfs_subtype src/` for the reader count.
-- **The kernel of record**, `~/kernels/linux-7.3-rc5`: `drivers/block/nbd.c`
+- **The kernel of record**, `~/kernels/linux-7.3` (read at rc5, unchanged at the
+  release): `drivers/block/nbd.c`
   2806 lines by `wc -l`, and `CONFIG_BLK_DEV_NBD` unset in its `.config`.
 - **The handoff**, `proposals/hammer2-completion-handoff/`: the P7 entry
   and its five exit criteria in `HAMMER2_AGENT_WORK_QUEUE.yaml`, section 9

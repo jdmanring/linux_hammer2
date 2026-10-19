@@ -1,7 +1,7 @@
-# checkpatch.pl from linux v7.3-rc5
+# checkpatch.pl from linux v7.3
 # Byte-identical to the v7.3-rc1 copy this baseline was first recorded against
 # (same sha256), so the counts below did not move when the kernel of record
-# advanced from rc1 to rc4 and then to rc5. Line 1 above is what the gate
+# advanced from rc1 to rc4, to rc5 and to the 7.3 release. Line 1 above is what the gate
 # prints as its baseline name, so it stays short; this is a note for a reader.
 # Two lines moved when hammer2_export.c landed: `return is not a function`
 # 239 -> 250 and `no spaces at the start of a line` 176 -> 180. Both are the

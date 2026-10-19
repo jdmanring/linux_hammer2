@@ -1336,9 +1336,9 @@ ruling on 2026-09-05: a floor two releases below the features the code
 uses is not worth a second tree, so raise it when a newer facility is
 needed and stop carrying the range. 7.3 was at rc1 when this was written
 and at rc4 on 2026-09-26 and rc5 on 2026-09-29, the pin following each
-candidate, and is
-expected to be longterm; if kernel.org's release table says otherwise
-when it ships, that changes which release the pin names, not the rule.
+candidate; 7.3 shipped on 2026-10-18 and the pin followed it on
+2026-10-19. It is expected to be longterm; if kernel.org's release table
+says otherwise, that changes which release the pin names, not the rule.
 
 What the move deleted: the second CI job that fetched, configured and
 built a 6.15 tree on every cache miss, `script/floor-symbols.py`, which

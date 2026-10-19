@@ -149,7 +149,14 @@ links warning-clean against the tree, so rc5 is a build-clean candidate;
 the fixture and fill gates were then run on an rc5 guest kernel, whose
 readings are in `doc/history/verification-record.md`. The two tags carry
 the same `checkpatch.pl` byte for byte, so the style baseline moved only
-its name line.
+its name line. 7.3 shipped on 2026-10-18 and the pin followed it on
+2026-10-19: `KDIR=~/kernels/linux-7.3`, with the release and KASAN trees
+beside it and the guest booting `7.3.0`, `7.3.0-release` and
+`7.3.0-kasan` built from them. The release carries rc5's `checkpatch.pl`
+byte for byte as well, so the baseline's name line moved a third time and
+its counts did not; the syntax gate's reading against the release tree and
+the first fleet runs on its kernels are in
+`doc/history/verification-record.md`.
 
 ## What has been verified
 

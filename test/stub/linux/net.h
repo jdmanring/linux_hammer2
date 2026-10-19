@@ -4,7 +4,7 @@
 #include <linux/fs.h>
 /*
  * What holdfp() and fp_shutdown() touch of the kernel's socket layer,
- * transcribed from v7.3-rc5: struct socket's first two members
+ * transcribed from v7.3: struct socket's first two members
  * (include/linux/net.h:160-164, the state and the type), SOCK_STREAM
  * (:108), enum sock_shutdown_cmd (:135-139), sockaddr_storage
  * (include/uapi/linux/socket.h), and the three calls (:310, :403, :404).

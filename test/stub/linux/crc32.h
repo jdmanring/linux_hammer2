@@ -4,7 +4,7 @@
 #include <linux/kernel.h>
 /*
  * The CRC-32C update iscsi_crc32() wraps, transcribed from
- * include/linux/crc32.h:82 at v7.3-rc5.
+ * include/linux/crc32.h:82 at v7.3.
  */
 uint32_t crc32c(uint32_t crc, const void *p, size_t len);	/* u32 in the kernel */
 #endif

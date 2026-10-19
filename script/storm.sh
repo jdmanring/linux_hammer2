@@ -11,7 +11,7 @@
 # a long run reports growth as a number.  It is P2's mixed-load and
 # storm reading, and with H2_STORM_CYCLES in the hundreds its soak.
 #
-#   KDIR=~/kernels/linux-7.3-rc5 bash script/storm.sh
+#   KDIR=~/kernels/linux-7.3 bash script/storm.sh
 #   H2_STORM_CYCLES=800 KDIR=... bash script/storm.sh    a soak, hours long
 #
 # Not a gate.  Exit 2 without the guest, the tools or a kernel tree.

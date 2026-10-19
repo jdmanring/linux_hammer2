@@ -11,7 +11,7 @@ void wake_up_all(wait_queue_head_t *wq);
 int waitqueue_active(wait_queue_head_t *wq);
 void might_sleep(void);
 #define wait_event(wq, cond) do { while (!(cond)) ; } while (0)
-/* include/linux/wait.h:1227 at v7.3-rc5; tsleep() queues itself with it. */
+/* include/linux/wait.h:1227 at v7.3; tsleep() queues itself with it. */
 long prepare_to_wait_event(struct wait_queue_head *wq,
     struct wait_queue_entry *e, int state);
 void prepare_to_wait(wait_queue_head_t *wq, struct wait_queue_entry *e, int state);

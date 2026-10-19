@@ -10,7 +10,7 @@
 # them, so the reading is a candidate list to triage against the origin
 # tree, and the triage is what doc/history/verification-record.md keeps.
 #
-#   KDIR=~/kernels/linux-7.3-rc5 bash script/smatch.sh
+#   KDIR=~/kernels/linux-7.3 bash script/smatch.sh
 #
 # A clean reading is believed only if the negative control fires first: a
 # scratch module with a double free must be reported, or smatch is not
