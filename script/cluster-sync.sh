@@ -255,15 +255,22 @@ settle_wait() {
 }
 finish() {
 	# The snapshot pass's own records, read once the resume has settled. The
-	# idle window reads 12 s more, two of the thread's five-second wakeups: an
-	# idle master must cost idle passes and no snapshot pass, and the last idle
-	# line carries both root tids, which must agree for hammer2_cluster_check()
-	# to serve the slave; how many live passes it took to get there is the
-	# idlestamp count, printed and not asserted.
-	p1=$(klog 'syncsnap: pass clindex'); i1=$(klog 'syncsnap: idle clindex')
-	sleep 12
+	# idle window runs until two idle lines follow the last idle stamp,
+	# bounded at 60 s: an idle master must cost idle passes and no snapshot
+	# pass, and the last idle line carries both root tids, which must agree
+	# for hammer2_cluster_check() to serve the slave; how many live passes it
+	# took to get there is the idlestamp count, printed and not asserted. The
+	# stamp is the live pass over the root, one level, and a fixed window of
+	# 12 s begun before it read one idle line and the tids it had not yet
+	# written: MEASURED 2026-10-19 on the KASAN kernel, 9.3 s for the stamp
+	# over 20107 root entries after the resume, 0.4 s at most on the debug
+	# kernel.
+	p1=$(klog 'syncsnap: pass clindex'); l1=$(wc -l < $K); n=0
+	idles() { tail -n +$((l1 + 1)) $K | awk '/syncsnap: idlestamp/ { n = 0 } /syncsnap: idle clindex/ { n++ } END { print n + 0 }'; }
+	until [ "$(idles)" -ge 2 ] || [ $n -ge 60 ]; do sleep 1; n=$((n + 1)); done
+	echo "idle-window-seconds $n"
 	echo "idle-window-passes $(( $(klog 'syncsnap: pass clindex') - p1 ))"
-	echo "idle-window-idles $(( $(klog 'syncsnap: idle clindex') - i1 ))"
+	echo "idle-window-idles $(idles)"
 	echo "snap-passes $(klog 'syncsnap: pass clindex')"
 	echo "snap-idle $(klog 'syncsnap: idle clindex')"
 	echo "snap-idlestamp $(klog 'syncsnap: idlestamp')"
@@ -1070,7 +1077,7 @@ if [ "$H2SNAP" = 1 ]; then
 	# with 0 actions and 1 kept key, 4 of them under the 20000-file write.
 	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write, $(val snap-interrupted) stopped by an unmount"
 	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
-	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in 12 s after the resume settled"
+	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in $(val idle-window-seconds) s after the resume settled"
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
 	[ -n "$mt" ] && [ "$mt" = "$st" ]; check "the slave root's tid agrees with the master's once idle" $? "master ${mt:-none} slave ${st:-none}, after $(val snap-idlestamp) idle stamp(s)"
 fi
