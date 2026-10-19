@@ -638,6 +638,13 @@ c0=$(klog 'sync_slaves pfs CL')
 # can be hundreds, and the run then measured a race rather than convergence.
 # The wait below is for the update-inode count to stop advancing across a
 # settle window, bounded, and the observed convergence time is printed.
+# The quiet window alone is not settling: a pass that copies nothing prints
+# no update, so a kernel slow enough that the resumed thread's first pass
+# over the tree outlasts the window read "settled 10 s after 0 updates" and
+# 0 passes. MEASURED 2026-10-18 on h2kasan-rc5, where a pass over 40000
+# inodes takes longer than the window. The wait ends on a quiet window
+# only once two passes have completed, so the two-pass check below reads
+# a wait and not a race, and a thread that never ran cannot read settled.
 u0=$(klog 'syncthr: update inode')
 n=0; last=-1; still=0
 while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
@@ -648,7 +655,7 @@ while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
 		still=0
 		last=$u
 	fi
-	[ "$still" -ge 10 ] && break
+	[ "$still" -ge 10 ] && [ $(( $(klog 'sync_slaves pfs CL') - c0 )) -ge 2 ] && break
 	sleep 1; n=$((n + 1))
 done
 echo "resume-converge-seconds $n"
