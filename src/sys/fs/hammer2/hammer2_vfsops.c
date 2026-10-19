@@ -524,6 +524,18 @@ hammer2_pfsdealloc(hammer2_pfs_t *pmp, int clindex,
 		chain = iroot->cluster.array[clindex].chain;
 		iroot->cluster.array[clindex].chain = NULL;
 		pmp->pfs_types[clindex] = HAMMER2_PFSTYPE_NONE;
+		/*
+		 * XXX Linux: the name too.  Upstream leaves it for
+		 * hammer2_pfsfree_scan() at the device's teardown, which never
+		 * runs for a PFS that hammer2_pfs_delete_byname() frees at its
+		 * last element: kmemleak read one string per snapshot pass, 30
+		 * of 30 on 2026-10-18, and one for a deleted lone PFS.  A freed
+		 * name also keeps a lookup by label from matching the slot.
+		 */
+		if (pmp->pfs_names[clindex]) {
+			hstrfree(pmp->pfs_names[clindex]);
+			pmp->pfs_names[clindex] = NULL;
+		}
 		hammer2_mtx_unlock(&iroot->lock);
 
 		/* Release the chain. */
