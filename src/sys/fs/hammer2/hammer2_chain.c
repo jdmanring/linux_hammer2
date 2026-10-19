@@ -4189,8 +4189,15 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 	 * `parent` and `chain` are the values the collapse chose.  Printed
 	 * only when the child is not strictly narrower than its parent,
 	 * since that is the shape that cannot legally collapse.
+	 *
+	 * XXX Linux: an inode parent has keybits 0, so under one the test is
+	 * true for every block collapsed, and a 20000-file directory printed
+	 * some 27000 of these lines on a serial console (measured 2026-10-18).
+	 * Gated on the bit the destroy print uses, since a flooding console
+	 * measures itself: see doc/history/verification-record.md.
 	 */
-	if (chain->bref.keybits >= parent->bref.keybits)
+	if ((hammer2_debug & 0x4000) &&
+	    chain->bref.keybits >= parent->bref.keybits)
 		kprintf("indirect_maint: parent %p %016llx/%d collapsing %p %016llx/%d\n",
 		    parent, (long long)parent->bref.key, parent->bref.keybits,
 		    chain, (long long)chain->bref.key, chain->bref.keybits);
