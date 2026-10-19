@@ -815,6 +815,11 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	for img in "$MASTER" "$SLAVE"; do
 		b=$(basename "$img"); "$FSCK" "$img" > "$W/crashfsck.$b" 2>&1; echo "crash-fsck-$b $?" >> "$W/out"
 	done
+	# What the cut left on the slave's media, read here before any pass of
+	# the restarted thread can take a target of its own: the recovery's
+	# "kept" line is a claim about this count, not about a listing taken
+	# after that pass.
+	echo "crash-tgt-on-media $("$HAMMER2" -v show "$SLAVE" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')" >> "$W/out"
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "cluster: COULD-NOT-RUN: $GUEST did not restart after the cut" >&2; detach_disks; exit 2; }
 	n=0
 	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; do
@@ -978,13 +983,18 @@ fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
 else
-	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
+	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
 	c=$(val crash-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val crash-in-pass)" = 0 ]; check "the power is cut inside the copy" $? "${c:-none} updates into the pass, in-pass rc $(val crash-in-pass)"
 	a=$(val crash-destroyed); [ "${a:-9}" = 0 ]; check "the guest is destroyed at the armed line" $? "virsh destroy rc ${a:-none}, session rc $(val crash-session-rc)"
 	a=$(val crash-fsck-cluster-master.img); b=$(val crash-fsck-cluster-slave.img); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "both media are consistent as the cut left them" $? "fsck_hammer2 exit ${a:-none} and ${b:-none} before recovery"
 	a=$(val recover-threads); [ "${a:-0}" = 1 ]; check "the two devices returning start the thread" $? "${a:-none}"
 	a=$(val recover-stale); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot the cut left is deleted by the first pass" $? "${a:-none} stale delete(s)"
-	a=$(val recover-tgt-kept); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot the cut left is found by name" $? "${a:-none} kept, $(val recover-tgt-listed) listed before the cluster mount"
+	# Three readings make one claim: the target is on the slave's media as
+	# the cut left it (read host-side while the guest was down), the first
+	# pass finds it by name rather than taking one, and one is listed after
+	# that pass, since a second beside it would be the create walking past
+	# the name (hammer2_pfs_find_byname()).
+	m=$(val crash-tgt-on-media); a=$(val recover-tgt-kept); l=$(val recover-tgt-listed); [ "${m:-0}" -ge 1 ] 2>/dev/null && [ "${a:-0}" -ge 1 ] 2>/dev/null && [ "${l:-0}" = 1 ]; check "the target snapshot the cut left is found by name" $? "${m:-none} on the media at the cut, ${a:-none} kept, ${l:-none} listed before the cluster mount"
 fi
 # The stop is read at the thread's loop top and between deferred directories,
 # never inside a scan, so a pass in flight completes and didbreak cannot fire

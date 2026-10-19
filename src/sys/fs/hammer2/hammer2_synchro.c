@@ -851,6 +851,20 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			if (hammer2_debug & 0x8000)
 				kprintf("syncsnap: target %s %s\n", tname,
 				    derror ? "kept" : "taken");
+			/*
+			 * The snapshot's own flush stops at its inode and
+			 * leaves the volume header to the next sync of a
+			 * mounted PFS, so a cut before that sync finds no
+			 * target by name on the slave's media, only the
+			 * blocks of one; the source snapshot survives the
+			 * same cut because the target's sync wrote the
+			 * master's header after it.  A target is the last
+			 * known-good slave only if it is on the media before
+			 * the pass's first write, so the header is written
+			 * here by the sync the snapshot itself ran.
+			 */
+			if (derror == 0)
+				hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
 		} else {
 			if (hammer2_debug & 0x8000)
 				kprintf("syncsnap: target %s error %d\n",
