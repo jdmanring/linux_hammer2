@@ -149,6 +149,18 @@ if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
 	exit 2
 fi
 
+# The run's own report is kept beside the klog it copies off at the end,
+# under one stamp, so the numbers a record cites live where the images do.
+# MEASURED 2026-10-19: the reports of twenty-five runs, written to /tmp by
+# the launcher's redirect, were lost to a host reboot; the klogs, kept here
+# by the script itself, were not. A fifo and tee keep the launcher's
+# redirect working as before.
+STAMP=$(date +%Y%m%d-%H%M%S)
+mkfifo "$W/report" || exit 2
+tee "$FIXDIR/cluster-run-$STAMP.log" < "$W/report" &
+exec > "$W/report" 2>&1
+echo "  kept  this report beside the images as cluster-run-$STAMP.log"
+
 if [ -n "${H2_KO:-}" ]; then
 	[ -f "$H2_KO" ] || { echo "cluster: COULD-NOT-RUN: no module at H2_KO=$H2_KO" >&2; exit 2; }
 	KO=$H2_KO
@@ -945,7 +957,7 @@ fi
 # released, not only on the hang path. MEASURED 2026-10-14: a run that lost 40
 # inodes (n<0 40, slave short by 40) kept no klog because it exited normally,
 # which discarded exactly the evidence the run produced.
-scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null \
+scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$STAMP.klog" 2>/dev/null \
 	&& echo "  kept  the guest kernel log beside the images as cluster-run-*.klog"
 detach_disks
 
