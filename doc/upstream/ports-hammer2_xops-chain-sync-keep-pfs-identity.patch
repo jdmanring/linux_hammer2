@@ -1,0 +1,25 @@
+--- a/src/sys/fs/hammer2/hammer2_xops.c
++++ b/src/sys/fs/hammer2/hammer2_xops.c
+@@ -1384,7 +1384,21 @@
+ 	if (error == 0) {
+ 		error = hammer2_chain_modify(parent, xop->head.mtid, 0, 0);
+ 		if (error == 0) {
+-			parent->data->ipdata.meta = xop->meta;
++			hammer2_inode_meta_t *wmeta = &parent->data->ipdata.meta;
++			hammer2_inode_meta_t ometa = *wmeta;
++
++			*wmeta = xop->meta;
++			/*
++			 * A PFS root's cluster elements differ in type,
++			 * sub-type and ids, and xop->meta is the focus
++			 * element's; the element keeps its own.
++			 */
++			if (ometa.op_flags & HAMMER2_OPFLAG_PFSROOT) {
++				wmeta->pfs_type = ometa.pfs_type;
++				wmeta->pfs_subtype = ometa.pfs_subtype;
++				wmeta->pfs_clid = ometa.pfs_clid;
++				wmeta->pfs_fsid = ometa.pfs_fsid;
++			}
+ 			if (xop->clear_directdata)
+ 				bzero(&parent->data->ipdata.u.blockset,
+ 				    sizeof(parent->data->ipdata.u.blockset));

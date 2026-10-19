@@ -427,3 +427,44 @@ not claimed unreported. The `/* XXX what if compressed? */` beside it is
 upstream's and is not addressed: a compressed master block is smaller than
 the data it holds, and the copy of such a block is a separate question the
 patch leaves where it found it.
+
+## hammer2_xops-chain-sync-keep-pfs-identity
+
+`dragonfly-hammer2_xops-chain-sync-keep-pfs-identity.patch` and
+`ports-hammer2_xops-chain-sync-keep-pfs-identity.patch`, the second
+applying to all three BSD ports. `hammer2_xop_inode_chain_sync()` writes
+the inode's in-core meta into the chain of every cluster element with one
+assignment, `parent->data->ipdata.meta = xop->meta`. For a PFS root inode
+that meta is the focus element's, so the sync gives every other element
+the master's `pfs_type`, `pfs_subtype`, `pfs_clid` and `pfs_fsid`. A
+cluster root is dirtied by a mkdir in the root directory, or by the
+`pfs_lsnap_tid` a snapshot writes, and the next sync rewrites the slave's
+root with the master's identity. The patch keeps those four fields of the
+element's own when the inode is a PFS root and copies the rest as before.
+
+Measured on Linux on 2026-10-18: a PFS created `SLAVE` on the second device
+read `pfs_type 6 (MASTER)` with `pfs_fsid ce0466a0-c6b1-5d40-ad96-aa2e873f7caf`,
+the master's own, in `hammer2 -v show` of the kept slave image
+`cluster-diff-slave-20261018-041632.img`, once the synchronization thread's
+snapshot pass had dirtied the cluster root and the PFS sync had run; the
+device's next mount counted two masters, found no quorum between them,
+started a thread for the master's own element and returned EIO from every
+read through the cluster. The slave images kept from the live-path runs of
+2026-10-15 and 10-16 read the same, each with its master's fsid
+(`25decca1-c0ad-ac45-8a23-ac84c1151d15`, `957f581b-7ff2-5d4c-8540-14d858c91a8a`),
+so the live path flips the slave too, after the root mkdir of its last
+phase, too late for the harness's checks to see. The run after the change
+read one thread after the slave's device returned where the run before
+read two.
+
+Still present at DragonFly head on 2026-10-18, read through the GitHub
+mirror's raw `master`: the assignment in `hammer2_xop_inode_chain_sync()`
+is unguarded, with no test of `op_flags`, `pfs_type` or either id in the
+function; the same reading at the heads of Kusumi's FreeBSD, NetBSD and
+OpenBSD repositories, where the function is byte-identical across the
+three. The patches apply to the local clones at `250a8b4` of 2026-09-04
+and at `3df307f`, `64095c3` and `a3747df` of 2025-08-22.
+`bugs.dragonflybsd.org` was not searched, for the proof-of-work reason
+above, so it is not claimed unreported. Whether a DragonFly cluster of two
+elements has ever had its slave's root rewritten this way, nobody has
+measured; the field layout makes the rewrite silent until the next mount.

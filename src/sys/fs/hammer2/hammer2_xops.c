@@ -1410,7 +1410,30 @@ hammer2_xop_inode_chain_sync(hammer2_xop_t *arg, void *scratch, int clindex)
 	if (error == 0) {
 		error = hammer2_chain_modify(parent, xop->head.mtid, 0, 0);
 		if (error == 0) {
-			parent->data->ipdata.meta = xop->meta;
+			hammer2_inode_meta_t *wmeta = &parent->data->ipdata.meta;
+			hammer2_inode_meta_t ometa = *wmeta;
+
+			*wmeta = xop->meta;
+			/*
+			 * XXX Linux: a PFS root's cluster elements differ in
+			 * type, sub-type and fsid, and xop->meta is the focus
+			 * element's, so the carried assignment wrote the
+			 * master's identity over every other element's root.
+			 * Measured on the kept slave images of 2026-10-15,
+			 * 10-16 and 10-18: a root created SLAVE reads MASTER
+			 * with the master's pfs_fsid once the cluster's root
+			 * inode has been dirtied and synced, and the slave's
+			 * next mount then counts two masters and finds no
+			 * quorum.  The element keeps its own identity; the rest
+			 * of the meta is the cluster's.  All four origin trees
+			 * carry the assignment unguarded.
+			 */
+			if (ometa.op_flags & HAMMER2_OPFLAG_PFSROOT) {
+				wmeta->pfs_type = ometa.pfs_type;
+				wmeta->pfs_subtype = ometa.pfs_subtype;
+				wmeta->pfs_clid = ometa.pfs_clid;
+				wmeta->pfs_fsid = ometa.pfs_fsid;
+			}
 			if (xop->clear_directdata)
 				bzero(&parent->data->ipdata.u.blockset,
 				    sizeof(parent->data->ipdata.u.blockset));
