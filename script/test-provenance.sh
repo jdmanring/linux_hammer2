@@ -46,10 +46,47 @@ if [ "${1:-}" = "--selftest" ]; then
 	[ "$rc" = 1 ] && echo "  ok    selftest: exits 1 on findings" || {
 		echo "  FAIL  selftest: exited $rc, wanted 1"; sfail=$((sfail + 1)); }
 
-	# The cmp branch, in both directions, against this tree's real CSV:
-	# a clone directory that does not exist must be COULD-NOT-RUN, and a
-	# row whose file was swapped must be a finding rather than a pass.
-	out=$(H2_CLONE_DIR=/nonexistent sh "$0" 2>&1); rc=$?
+	# The cmp branch needs a carry and an origin clone to compare it
+	# against, and the live table supplies neither reliably: a tree whose
+	# every carry has been edited holds no `identical` row, which is a
+	# true state of the table, and three checks built on the live table
+	# went vacuous when it reached that state. The fixture is the
+	# selftest's own, a one-file origin clone under the temp directory
+	# committed by git, so the branch runs the same way on every machine
+	# and in CI. The gate composes the clone path as clone/origin/file
+	# with the row's file path, which is absolute here, so the clone
+	# mirrors that path under itself.
+	command -v git >/dev/null 2>&1 || {
+		echo "selftest: COULD-NOT-RUN: no git to commit the origin clone"
+		exit 2; }
+	o="$t/clones/fakeorigin"
+	mkdir -p "$o/${t#/}/tree/src" "$t/tree/src" || exit 2
+	printf 'carried line\n' > "$o/${t#/}/tree/src/carry.c"
+	cp "$o/${t#/}/tree/src/carry.c" "$t/tree/src/carry.c"
+	git -C "$o" init -q && git -C "$o" add -A && \
+		git -C "$o" -c user.name=selftest -c user.email=selftest@localhost \
+			commit -q -m fixture || exit 2
+	fc=$(git -C "$o" rev-parse HEAD) || exit 2
+	printf 'file,origin,origin_commit,license,carry,note\n' > "$t/ok.csv"
+	printf '%s/tree/src/carry.c,fakeorigin,%s,BSD-3-Clause,identical,\n' \
+		"$t" "$fc" >> "$t/ok.csv"
+	run() { H2_PROVENANCE_CSV="$1" H2_SRC_DIR="$t/tree/src" \
+		H2_CLONE_DIR="$2" sh "$0" 2>&1; }
+
+	# The positive control comes first. The three refusals below must
+	# come from the branch under test, and a fixture whose clone path
+	# never resolved would produce the first two of them for a reason
+	# that is not the one being checked.
+	out=$(run "$t/ok.csv" "$t/clones"); rc=$?
+	if [ "$rc" = 0 ] && printf '%s\n' "$out" | command grep -q 'identical to fakeorigin'; then
+		echo "  ok    selftest: a true identical claim is re-verified by cmp"
+	else
+		echo "  FAIL  selftest: the fixture's carry exited $rc, not re-verified"
+		sfail=$((sfail + 1))
+	fi
+
+	# A clone directory that does not exist must be COULD-NOT-RUN.
+	out=$(run "$t/ok.csv" /nonexistent); rc=$?
 	[ "$rc" = 2 ] && echo "  ok    selftest: COULD-NOT-RUN with no clone present" || {
 		echo "  FAIL  selftest: exited $rc with no clone, wanted 2"; sfail=$((sfail + 1)); }
 
@@ -57,44 +94,26 @@ if [ "${1:-}" = "--selftest" ]; then
 	# meaning anything, the clone being a working tree somebody pulls. It
 	# must read UNVER, never FAIL: a carry compared against a commit the
 	# row does not name answers a question nobody asked.
-	sed 's/,3df307f7db9d5106b857afeb877613fd12a19101,/,0000000deadbeef0000000000000000000000000,/' \
-		doc/provenance.csv > "$t/wrongc.csv"
-	out=$(H2_PROVENANCE_CSV="$t/wrongc.csv" sh "$0" 2>&1)
-	if printf '%s\n' "$out" | command grep -q 'not the 0000000... this row names'; then
+	sed "s/,$fc,/,0000000deadbeef0000000000000000000000000,/" "$t/ok.csv" > "$t/wrongc.csv"
+	out=$(run "$t/wrongc.csv" "$t/clones"); rc=$?
+	if [ "$rc" = 2 ] && printf '%s\n' "$out" | command grep -q 'not the 0000000... this row names'; then
 		echo "  ok    selftest: a clone at the wrong commit reads UNVER"
-	elif printf '%s\n' "$out" | command grep -q '^  UNVER'; then
-		echo "  ok    selftest: no clone here, so the wrong-commit branch is moot"
 	else
 		echo "  FAIL  selftest: a wrong-commit clone was treated as a carry"
 		sfail=$((sfail + 1))
 	fi
-	#
-	# The last check needs an origin clone and says so when it has none.
-	# It swaps one row's filename so a row claiming a carry points at a
-	# file that is not that carry, and requires cmp to catch it. With no
-	# clone on the machine there is nothing to compare against, and the
-	# honest report is COULD-NOT-RUN for the selftest as a whole. Passing
-	# on the strength of the four checks that did run would put this
-	# gate's own could-not-run defect in the instrument that exists to
-	# prove the gate works.
-	sfran=5
-	ident=$(command grep -m1 ',identical,' doc/provenance.csv | cut -d, -f1)
-	sed "s#^$ident,#src/sys/fs/hammer2/hammer2_io.c,#" \
-		doc/provenance.csv > "$t/swap.csv"
-	out=$(H2_PROVENANCE_CSV="$t/swap.csv" sh "$0" 2>&1)
-	if printf '%s\n' "$out" | command grep -q 'says identical but differs'; then
+
+	# A row claiming a carry over a file that is not that carry must be a
+	# finding, and the run must fail on it.
+	printf 'edited here\n' > "$t/tree/src/carry.c"
+	out=$(run "$t/ok.csv" "$t/clones"); rc=$?
+	if [ "$rc" = 1 ] && printf '%s\n' "$out" | command grep -q 'says identical but differs'; then
 		echo "  ok    selftest: cmp catches a wrong identical claim"
-		sfran=6
-	elif printf '%s\n' "$out" | command grep -q '^  UNVER'; then
-		echo "selftest: $sfran check(s), $sfail failed; COULD-NOT-RUN: no"
-		echo "          origin clone here, so cmp was never exercised"
-		[ "$sfail" = 0 ] || exit 1
-		exit 2
 	else
-		echo "  FAIL  selftest: a wrong identical claim passed cmp"; sfail=$((sfail + 1))
-		sfran=6
+		echo "  FAIL  selftest: a wrong identical claim passed cmp"
+		sfail=$((sfail + 1))
 	fi
-	echo "selftest: $sfran check(s), $sfail failed"
+	echo "selftest: 7 check(s), $sfail failed"
 	[ "$sfail" = 0 ] || exit 1
 	exit 0
 fi
