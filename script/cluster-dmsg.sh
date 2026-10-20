@@ -75,7 +75,10 @@ detach_disk() {
 }
 
 make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
+# H2_CRC_CONTROL=1 builds the module with its PROTO_2 CRC check compiled out,
+# the negative control: the bad frame must then be accepted, and every
+# other check must still hold.  Never install that module.
+make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1} >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2attach" test/h2attach.c 2>"$W/cc.err" || {
 	echo "dmsg: COULD-NOT-RUN: test/h2attach.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
@@ -117,6 +120,8 @@ threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 A=/tmp/h2attach
 M=/mnt/h2d
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
+echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
+echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
 mkdir -p $M
 mount -t hammer2 /dev/vdb@ROOT $M || { echo "mount failed"; exit 1; }
 hammer2 -s $M pfs-create SP >/dev/null 2>&1
@@ -125,7 +130,7 @@ echo "threads-before $(threads)"
 
 # the refusal, then each action; a second after each for the threads to go
 out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $out"
-for act in conn cancel badmagic badsize badaux halfclose close reconnect; do
+for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 spanlist; do
 	out=$($A --attach $M --action $act --trace /tmp/h2attach-$act.trace 2>&1); rc=$?
 	echo "$act-rc $rc"; echo "$act $out"
 	sleep 1
@@ -134,6 +139,10 @@ done
 echo "log-badmagic $(klog 'bad magic')"
 echo "log-badsize $(klog 'bad header size')"
 echo "log-badaux $(klog 'illegal msg payload size')"
+echo "log-badcrc $(klog 'bad crc')"
+echo "log-proto2 $(klog 'peer speaks DMSG_SPAN_PROTO_2')"
+echo "log-spantab3 $(klog 'H2 SPANTAB 3')"
+echo "log-spantab0 $(klog 'H2 SPANTAB 0')"
 echo "log-nostate $(klog 'no state match for REPLY|DELETE')"
 echo "log-shitcan-before $(klog shitcanning)"
 
@@ -225,6 +234,31 @@ for act in badmagic badsize badaux; do
 	m=$(val $act)
 	[ "$(num "$(field "$m" eof)" 0)" = 1 ]; check "malformed: $act ends the connection, the daemon reads EOF" $? "eof $(field "$m" eof) after $(field "$m" ms) ms"
 	[ "$(num "$(val $act-threads)" 9)" = 0 ]; check "malformed: $act leaves no thread" $? "$(val $act-threads)"
+done
+
+# Stage 1 of the cluster protocol note: the peer's LNK_CONN announcing
+# DMSG_SPAN_PROTO_2 turns the kernel's CRC check on for that connection and
+# lists the peer's PROTO_2 spans; a PROTO_1 connection keeps upstream's
+# behavior.  Under H2_CRC_CONTROL=1 the check is compiled out and the bad
+# frame must pass, which is what proves the check is what ends it.
+m=$(val proto2)
+[ "$(num "$(field "$m" conn2_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_error)" 0)" = 32 ]; check "PROTO_2: the peer's LNK_CONN is answered and a verified frame is served" $? "conn2_reply $(field "$m" conn2_reply), shell_error $(field "$m" shell_error)"
+[ "$(num "$(val log-proto2)" 0)" -ge 1 ]; check "PROTO_2: the kernel names the peer's protocol in its log" $? "$(val log-proto2) line(s)"
+m=$(val badcrc)
+if [ -n "${H2_CRC_CONTROL:-}" ]; then
+	[ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(val log-badcrc)" 1)" = 0 ]; check "control: with the CRC check compiled out the bad frame is accepted" $? "eof $(field "$m" eof), $(val log-badcrc) log line(s)"
+else
+	[ "$(num "$(field "$m" eof)" 0)" = 1 ]; check "PROTO_2: a flipped header CRC ends the connection" $? "eof $(field "$m" eof) after $(field "$m" ms) ms"
+	[ "$(num "$(val log-badcrc)" 0)" -ge 1 ]; check "PROTO_2: the log names the bad CRC" $? "$(val log-badcrc) line(s)"
+fi
+m=$(val badcrc1)
+[ "$(num "$(field "$m" eof)" 1)" = 0 ]; check "PROTO_1: the same bad CRC is ignored, as upstream's core checks none" $? "eof $(field "$m" eof) after $(field "$m" ms) ms"
+m=$(val spanlist)
+[ "$(num "$(field "$m" spans_acked)" 0)" = 3 ]; check "PROTO_2: three spans from the peer are each answered" $? "$(field "$m" spans_acked) of 3"
+[ "$(num "$(val log-spantab3)" 0)" -ge 1 ]; check "PROTO_2: the span table lists the three" $? "$(val log-spantab3) line(s) at three"
+[ "$(num "$(val log-spantab0)" 0)" -ge 1 ]; check "PROTO_2: the table empties when the connection closes" $? "$(val log-spantab0) line(s) at zero"
+for act in proto2 badcrc badcrc1 spanlist; do
+	[ "$(num "$(val $act-threads)" 9)" = 0 ]; check "stage 1: $act leaves no thread" $? "$(val $act-threads)"
 done
 [ "$(num "$(val log-badmagic)" 0)" -ge 1 ] && [ "$(num "$(val log-badsize)" 0)" -ge 1 ] && [ "$(num "$(val log-badaux)" 0)" -ge 1 ]; check "malformed: the kernel log names each reason" $? "bad magic $(val log-badmagic), bad header size $(val log-badsize), illegal payload $(val log-badaux)"
 [ "$(num "$(field "$(val halfclose)" conn)" 0)" = 1 ]; check "malformed: the attach after the three connects again" $? "halfclose run conn=$(field "$(val halfclose)" conn)"

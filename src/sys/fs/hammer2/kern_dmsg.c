@@ -149,6 +149,8 @@ kdmsg_iocom_reconnect(kdmsg_iocom_t *iocom, struct file *fp,
 	iocom->msg_fp = fp;
 	iocom->msg_seq = 0;
 	iocom->flags &= ~KDMSG_IOCOMF_EXITNOACC;
+	/* XXX Linux: the peer's protocol is a property of the connection. */
+	iocom->flags &= ~KDMSG_IOCOMF_PROTO2;
 
 	lwkt_create(kdmsg_iocom_thread_rd, iocom, &iocom->msgrd_td,
 		    NULL, 0, -1, "%s-msgrd", subsysname);
@@ -386,6 +388,38 @@ kdmsg_iocom_thread_rd(void *arg)
 				break;
 			}
 		}
+
+		/*
+		 * XXX Linux: on a connection whose peer announced
+		 * DMSG_SPAN_PROTO_2 the kernel acts on the frames it receives,
+		 * so it verifies both CRCs as libdmsg does, over the header
+		 * with hdr_crc zeroed and over the aligned aux, the way the
+		 * writer computes them below.  A PROTO_1 connection keeps
+		 * upstream's behavior and checks neither.  HAMMER2_NOCRC
+		 * builds the negative control, which must pass the bad frame.
+		 */
+#ifndef HAMMER2_NOCRC
+		if (iocom->flags & KDMSG_IOCOMF_PROTO2) {
+			uint32_t hcrc = msg->any.head.hdr_crc;
+			uint32_t acrc = 0, hwant, awant = 0;
+
+			msg->any.head.hdr_crc = 0;
+			hwant = iscsi_crc32(msg->any.buf, msg->hdr_size);
+			msg->any.head.hdr_crc = hcrc;
+			if (msg->aux_size) {
+				acrc = msg->any.head.aux_crc;
+				awant = iscsi_crc32(msg->aux_data,
+						    DMSG_DOALIGN(msg->aux_size));
+			}
+			if (hcrc != hwant || acrc != awant) {
+				kdio_printf(iocom, 1,
+					    "bad crc hdr %08x/%08x aux %08x/%08x\n",
+					    hcrc, hwant, acrc, awant);
+				error = EINVAL;
+				break;
+			}
+		}
+#endif
 
 		error = kdmsg_msg_receive_handling(msg);
 		msg = NULL;

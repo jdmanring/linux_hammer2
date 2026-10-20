@@ -892,6 +892,21 @@ typedef struct hammer2_iostat hammer2_iostat_t;
  * per-cluster-id, not per-block-device, and a single hard mount might contain
  * many PFSs.
  */
+/*
+ * XXX Linux: a DMSG_SPAN_PROTO_2 span received from the peer, listed
+ * while its LNK_SPAN transaction is open; stage 1 of the cluster
+ * protocol note, which stage 2 registers as a remote element.
+ */
+struct hammer2_span {
+	TAILQ_ENTRY(hammer2_span) entry;
+	struct kdmsg_state	*state;
+	struct uuid		pfs_id;
+	uint8_t			pfs_type;
+	char			pfs_label[DMSG_LABEL_SIZE];
+};
+
+TAILQ_HEAD(hammer2_span_list, hammer2_span);
+
 struct hammer2_dev {
 	TAILQ_ENTRY(hammer2_dev) mntentry;	/* hammer2_mntlist */
 	hammer2_devvp_list_t	devvp_list;	/* list of devices including *bdev_file */
@@ -913,6 +928,8 @@ struct hammer2_dev {
 	hammer2_mtx_t		iohash_lock;	/* XXX Linux: one for the device */
 	struct malloc_type	*mmsg;
 	kdmsg_iocom_t		iocom;		/* volume-level dmsg interface */
+	struct hammer2_span_list spanq;	/* XXX Linux: the peer's PROTO_2 spans */
+	int			nspans;		/* XXX Linux: entries on spanq */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */

@@ -38,6 +38,62 @@ static int hammer2_rcvdmsg(kdmsg_msg_t *msg);
 static void hammer2_autodmsg(kdmsg_msg_t *msg);
 static int hammer2_lnk_span_reply(kdmsg_state_t *state, kdmsg_msg_t *msg);
 
+/*
+ * XXX Linux: the span table, one entry per open DMSG_SPAN_PROTO_2
+ * LNK_SPAN from the peer, printed under hammer2_debug 0x0100 as the
+ * harness reads it (doc/CLUSTER_PROTOCOL_DESIGN.md, stage 1).  The
+ * entry is found by its state, so kern_dmsg's fields are not borrowed.
+ */
+static void
+hammer2_span_dump(hammer2_dev_t *hmp)
+{
+	struct hammer2_span *span;
+
+	if ((hammer2_debug & 0x0100) == 0)
+		return;
+	kprintf("H2 SPANTAB %d\n", hmp->nspans);
+	TAILQ_FOREACH(span, &hmp->spanq, entry) {
+		kprintf("H2 SPAN type=%d label=%s pfs=", span->pfs_type,
+			span->pfs_label);
+		printf_uuid(&span->pfs_id);
+		kprintf("\n");
+	}
+}
+
+static void
+hammer2_span_add(hammer2_dev_t *hmp, kdmsg_msg_t *msg)
+{
+	struct hammer2_span *span;
+
+	span = hmalloc(sizeof(*span), hmp->mmsg, M_WAITOK | M_ZERO);
+	span->state = msg->state;
+	span->pfs_id = msg->any.lnk_span.pfs_id;
+	span->pfs_type = msg->any.lnk_span.pfs_type;
+	DMSG_TERMINATE_STRING(msg->any.lnk_span.pfs_label);
+	bcopy(msg->any.lnk_span.pfs_label, span->pfs_label,
+	      sizeof(span->pfs_label));
+	TAILQ_INSERT_TAIL(&hmp->spanq, span, entry);
+	++hmp->nspans;
+	hammer2_span_dump(hmp);
+}
+
+static void
+hammer2_span_del(hammer2_dev_t *hmp, kdmsg_state_t *state)
+{
+	struct hammer2_span *span;
+
+	TAILQ_FOREACH(span, &hmp->spanq, entry) {
+		if (span->state == state)
+			break;
+	}
+	if (span == NULL)
+		return;
+	TAILQ_REMOVE(&hmp->spanq, span, entry);
+	--hmp->nspans;
+	hfree(span, hmp->mmsg, sizeof(*span));
+	hammer2_span_dump(hmp);
+}
+
 void
 hammer2_iocom_init(hammer2_dev_t *hmp)
 {
@@ -51,11 +107,18 @@ hammer2_iocom_init(hammer2_dev_t *hmp)
 			 KDMSG_IOCOMF_AUTOCONN |
 			 KDMSG_IOCOMF_AUTORXSPAN,
 			 hmp->mmsg, hammer2_rcvdmsg);
+	TAILQ_INIT(&hmp->spanq);	/* XXX Linux */
+	hmp->nspans = 0;
 }
 
 void
 hammer2_iocom_uninit(hammer2_dev_t *hmp)
 {
+	struct hammer2_span *span;
+
+	/* XXX Linux: the span table goes with the connection. */
+	while ((span = TAILQ_FIRST(&hmp->spanq)) != NULL)
+		hammer2_span_del(hmp, span->state);
 	/* XXX chain depend deadlck? */
 	if (hmp->iocom.mmsg)
 		kdmsg_iocom_uninit(&hmp->iocom);
@@ -200,6 +263,17 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 		 *	 and will automatically issue a terminating reply
 		 *	 for DELETEs.
 		 */
+		/*
+		 * XXX Linux: the peer's LNK_CONN names the protocol it
+		 * speaks.  PROTO_2 means the frames after it carry CRCs the
+		 * kernel verifies and its spans are listed; this runs on the
+		 * reader thread, which is the one that reads the flag.
+		 */
+		if ((msg->any.head.cmd & DMSGF_CREATE) &&
+		    msg->any.lnk_conn.proto_version == DMSG_SPAN_PROTO_2) {
+			msg->state->iocom->flags |= KDMSG_IOCOMF_PROTO2;
+			kprintf("HAMMER2: peer speaks DMSG_SPAN_PROTO_2\n");
+		}
 		break;
 	case DMSG_LNK_CONN | DMSGF_CREATE | DMSGF_REPLY:
 	case DMSG_LNK_CONN | DMSGF_CREATE | DMSGF_DELETE | DMSGF_REPLY:
@@ -241,7 +315,13 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 			kdmsg_msg_reply(msg, 0);
 			break;
 		}
-		if (msg->any.lnk_span.proto_version != DMSG_SPAN_PROTO_1) {
+		/*
+		 * XXX Linux: a PROTO_2 span is admitted beside PROTO_1 and
+		 * listed; a version the kernel does not know is closed, as
+		 * upstream closes every span that is not PROTO_1.
+		 */
+		if (msg->any.lnk_span.proto_version != DMSG_SPAN_PROTO_1 &&
+		    msg->any.lnk_span.proto_version != DMSG_SPAN_PROTO_2) {
 			kdmsg_msg_reply(msg, 0);
 			break;
 		}
@@ -255,6 +335,8 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 			printf_uuid(&msg->any.lnk_span.pfs_id);
 			kprintf(" type=%d\n", msg->any.lnk_span.pfs_type);
 		}
+		if (msg->any.lnk_span.proto_version == DMSG_SPAN_PROTO_2)
+			hammer2_span_add(hmp, msg);	/* XXX Linux */
 		kdmsg_msg_result(msg, 0);
 		break;
 	case DMSG_LNK_SPAN | DMSGF_DELETE:
@@ -263,6 +345,7 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 		 */
 		if (hammer2_debug & 0x0100)
 			kprintf("H2 -RXSPAN\n");
+		hammer2_span_del(hmp, msg->state);	/* XXX Linux */
 		break;
 	default:
 		break;

@@ -533,6 +533,7 @@ struct dmsg_lnk_span {
 typedef struct dmsg_lnk_span dmsg_lnk_span_t;
 
 #define DMSG_SPAN_PROTO_1	1
+#define DMSG_SPAN_PROTO_2	2	/* XXX Linux: HM2 XOP API, CRCs verified */
 
 /*
  * Debug layer ops operate on any link
@@ -836,6 +837,7 @@ typedef struct kdmsg_iocom	kdmsg_iocom_t;
 #define KDMSG_IOCOMF_AUTORXSPAN	0x0002	/* handle RX LNK_SPAN */
 #define KDMSG_IOCOMF_AUTOTXSPAN	0x0008	/* handle TX LNK_SPAN */
 #define KDMSG_IOCOMF_EXITNOACC	0x8000	/* cannot accept writes */
+#define KDMSG_IOCOMF_PROTO2	0x0010	/* XXX Linux: peer announced DMSG_SPAN_PROTO_2 */
 
 #define KDMSG_IOCOMF_AUTOANY	(KDMSG_IOCOMF_AUTOCONN |	\
 				 KDMSG_IOCOMF_AUTORXSPAN |	\

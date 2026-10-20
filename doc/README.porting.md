@@ -1171,7 +1171,13 @@ connection negotiated at `DMSG_SPAN_PROTO_2` carries frames the kernel
 acts on, so the kernel verifies both CRCs on every frame of one and a
 mismatch ends the connection as a bad magic does, while a `PROTO_1`
 connection keeps this behavior and `cluster-dmsg.sh`'s readings with it
-(`doc/CLUSTER_PROTOCOL_DESIGN.md`, the wire format). Not yet built.
+(`doc/CLUSTER_PROTOCOL_DESIGN.md`, the wire format). Built as stage 1 of
+that note: the peer's `LNK_CONN` carrying `DMSG_SPAN_PROTO_2` sets a flag
+on the connection, cleared at the next reconnect, under which the reader
+verifies both CRCs before the state machine sees the frame and ends the
+connection on a mismatch with a `bad crc` line; `cluster-dmsg.sh` reads
+the refusal, the `PROTO_1` connection ignoring the same frame, and the
+control built with `HAMMER2_NOCRC` accepting it.
 
 The deterministic loopback required by the roadmap for cluster testing is
 therefore a userland program sitting where the daemon sits, `test/h2loop.c`,

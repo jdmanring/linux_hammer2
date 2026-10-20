@@ -98,6 +98,12 @@ endif
 ifdef HAMMER2_FOLIO_CONTROL
 ccflags-y += -DHAMMER2_FOLIO_CONTROL
 endif
+# The negative control for the CRC check on a DMSG_SPAN_PROTO_2 connection:
+# a module built with this verifies no CRC, so the bad frame must pass.
+# Never install it; script/cluster-dmsg.sh builds it under H2_CRC_CONTROL=1.
+ifdef HAMMER2_NOCRC
+ccflags-y += -DHAMMER2_NOCRC
+endif
 
 .PHONY: all clean
 
