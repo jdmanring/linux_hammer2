@@ -16690,4 +16690,5 @@ changes are `f392057`, where the row's pin moved, and the third
 control above is theirs. A second round, over `f26c6e7`, held the
 applied text and found this paragraph crediting the first round with
 two numbers written after it, the third control's and the second
-pre-push run's; the sentence now reads as above.
+pre-push run's; the sentence now reads as above, and a third signed
+off on the correction.
