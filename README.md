@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-1.0.44-blue.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-1.0.45-blue.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -57,7 +57,9 @@ At a glance, on a kernel of 7.3 or newer:
   pass above them copies from a per-pass snapshot of the master and
   keeps a snapshot of the slave as its last known-good copy (P7's local
   half; the remote reach is ruled B and designed with P8's quorum
-  protocol at `doc/CLUSTER_PROTOCOL_DESIGN.md`, not yet built), and no run
+  protocol at `doc/CLUSTER_PROTOCOL_DESIGN.md`, whose first two stages
+  are built, the kernel verifying a `PROTO_2` peer's frames and serving
+  its read requests, and whose remote element is not), and no run
   yet of a quorum that cannot be met
 + not yet: a package, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a

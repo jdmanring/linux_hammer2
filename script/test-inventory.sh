@@ -497,12 +497,20 @@ else
 		# hand-added and read one low twice: a file with one mark was
 		# left out of the per-file list both times. The row has no
 		# backticks, so the per-file parse above never sees it.
+		# The sum sees the same rows the per-file check parsed, and says
+		# so by count: a row the filter drops is caught above as a file
+		# with no row, not here, and a sum over fewer rows than were
+		# parsed would be a second filter disagreeing with the first.
 		sums=$(sed -n '/^| file | `XXX` | upstream.s | this port.s |$/,/^$/p' "$LEDGER" |
-			awk -F'|' '$2 ~ /`/ && $3 ~ /^ *[0-9]+ *$/ { a += $3; b += $4; c += $5 }
-				END { printf "%d %d %d\n", a, b, c }')
+			awk -F'|' '$2 ~ /`/ && $3 ~ /^ *[0-9]+ *$/ { a += $3; b += $4; c += $5; n++ }
+				END { printf "%d %d %d %d\n", n, a, b, c }')
+		nsum=${sums%% *}; sums=${sums#* }
 		trow=$(sed -n 's/^| total | \([0-9][0-9]*\) | \([0-9][0-9]*\) | \([0-9][0-9]*\) |$/\1 \2 \3/p' "$LEDGER" | head -1)
 		if [ -z "$trow" ]; then
 			echo "  FAIL $LEDGER: the XXX table has no total row"
+			fail=$((fail + 1))
+		elif [ "$nsum" != "$nxrow" ]; then
+			echo "  FAIL $LEDGER: the XXX table's sum covered $nsum row(s) of the $nxrow parsed"
 			fail=$((fail + 1))
 		elif [ "$trow" != "$sums" ]; then
 			echo "  FAIL $LEDGER: the XXX table's total row says $trow, its rows sum to $sums"

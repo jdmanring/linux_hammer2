@@ -530,8 +530,8 @@ drain and a blocking take there would wait on the unmount waiting on it;
 a bulkfree scan holds it for its whole run, so a request started under
 one fails at the bound. The cost runs the other way too: a request holds
 the lock through its window wait, so a peer that stops continuing holds
-`hammer2_mntlk` for the bound, during which a mount, unmount, pfs-create,
-pfs-delete or bulkfree on the host waits and the synchronization
+`hammer2_mntlk` for the bound, during which a mount, unmount, pfs-delete
+or bulkfree on the host waits and the synchronization
 thread's try-lock fails and its pass is skipped to its next cadence; the
 bound is the host's protection against that peer, and stage 2b's
 measured default is what sets it. A request for

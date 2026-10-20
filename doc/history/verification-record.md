@@ -16693,6 +16693,225 @@ two numbers written after it, the third control's and the second
 pre-push run's; the sentence now reads as above, and a third signed
 off on the correction.
 
+## The kernel serves a PROTO_2 peer's read requests from the XOP descriptors, 2026-10-20
+
+Stage 2a of `doc/CLUSTER_PROTOCOL_DESIGN.md`, the server side of the HM2
+XOP API, built at `25f0b37` after a first hostile audit of the working
+tree and corrected at `508c9de` after a second (both below). No BSD tree
+has a remote element, so the server is the port's own file,
+`hammer2_remote.c`, and the carried `hammer2_rcvdmsg()` hands it every
+frame in the HM2 space and nothing else. The wire is the note's: one
+request structure for the 21 XOP descriptors, `dmsg_hm2_xop`, 128
+bytes, numbered 0x010 plus the descriptor's index, carrying the cluster
+id, the inode number and the XOP's keys with the name as aux; one reply
+structure, `dmsg_hm2_feed`, 256 bytes under its own command 0x030 since
+a frame's size is the one its command encodes, one fed chain's
+blockref, bytes and error with the data as aux; the transaction's
+DELETE a feed frame with no chain whose error is the element's final
+`HAMMER2_ERROR_*` code, and a refusal the message core's own `LNK_ERROR`
+reply with `DMSG_ERR_NOSUPP`, so the two error spaces, which collide at
+0x20, are told apart by the closing frame's command and never by the
+value. A request is `CREATE` without `DELETE`, since the window's
+continuation needs the peer's direction open; a one-shot request is
+refused.
+
+The reader thread never runs chain code. `hammer2_remote_rcvmsg()` copies
+a request, detaches its name from the frame with
+`kdmsg_detach_aux_data()`, and queues it to the device's ordered
+workqueue, Linux's own form of the one service thread the note
+described: one request at a time per connection, and the connection's
+end a drain of the queue. Admission and queueing run under one spinlock
+against a three-valued state: a quiesce that closes the state under it
+refuses every later request and its flush covers every earlier one; a
+reconnect closes the queue before the message core replaces the
+connection, and the new connection's peer reopens it by announcing
+`PROTO_2`, on the reader that admits, since no request is legal before
+that announcement and a reopen on the ioctl's thread could follow a
+valid first request; the device's teardown closes it for good and
+drains it before the message threads are stopped, frees it after they
+are gone, since the reader may deliver a frame until then, and an
+announcement read during the teardown reopens nothing. A continuation
+widens the request's window by one FIFO and the peer's DELETE, real or
+simulated at the connection's end, cancels it. The request record is
+held by the transaction's open reply direction, since
+`kdmsg_state_hold()` and `kdmsg_state_drop()` are static in
+`kern_dmsg.c`; it hangs off the field the core leaves to devices,
+`state->any.any`, and is unhooked under the server's lock before the
+closing frame is queued, because the writer thread frees the state the
+moment both directions are closed. The work item finds the request's
+PFS among the mounted ones with an element on the connection's device,
+on `hammer2_pfslist` under `hammer2_mntlk`, and holds that lock until
+the request is answered: `struct hammer2_pfs` carries no reference
+count and `hammer2_pfsfree()` asserts the root inode's, so the lock
+every mount, unmount and pfs-delete takes is what holds the PFS. It is
+taken by try-lock within `remote_timeout_ms`, since the unmount holds it
+while `hammer2_iocom_uninit()` drains the queue and a blocking take
+there would wait on the unmount waiting on it; a bulkfree scan holds it
+for its whole run, so a request started under one fails at the bound.
+The cost runs the other way too: the lock is held through the window
+wait, so a peer that stops continuing holds `hammer2_mntlk` for the
+bound, during which a mount, unmount, pfs-delete or bulkfree on the
+host waits and the synchronization thread's try-lock fails and
+its pass is skipped to its next cadence; the bound is the host's
+protection against that peer. The item resolves the inode by number with
+`hammer2_chain_inode_find()`, the nresolve hardlink arm's path, builds a
+`hammer2_inode_t` outside the inode hash holding that chain in this
+device's slot, and runs the descriptor's own storage function on it with
+`HAMMER2_XOP_STRATEGY` set so that `hammer2_xop_retire()` unsets no
+dependency the server never took; the lock modes a scan runs under are
+the server's, shared and resolving data, and the request's flags
+contribute `HAMMER2_LOOKUP_NODATA` alone. Each chain in the element's
+FIFO is one reply frame, its blockref and data copied under a shared
+lock so a local writer cannot change the block under the copy, and
+released with `hammer2_chain_drop_unhold()`; after sixteen the item
+waits for a continuation to the bound and closes with `ETIMEDOUT` if
+none comes. The kernel's own `LNK_CONN` and spans announce `PROTO_2` now
+that it serves the space: `lib/libdmsg` reads neither `proto_version`
+field (no occurrence under `lib/libdmsg/` at the DragonFly clone's
+head), and a DragonFly kernel reading the span closes it, the
+compatibility plan the note states. The per-frame `RCVMSG` print is
+debug-gated.
+
+`test/h2attach.c` is the client: after announcing `PROTO_2` it picks the
+kernel's span by label, which `hammer2_update_spans()` puts in
+`peer_label` and not in `pfs_label` as a libdmsg span does, sends one
+request per action, reads every reply frame on the transaction until
+its DELETE, sends a continuation after each sixteen feeds unless told
+not to, and closes its own direction after. `script/cluster-dmsg.sh`
+writes a tree on the volume first, forty small files and one of three
+blocks of random bytes, sets `remote_timeout_ms` to 3000 so the window
+reading waits three seconds and not the ten of the default, and reads
+every reply beside the guest's own reading of the same volume, never
+beside the kernel alone. On the guest at `508c9de`, 7.3.0-kasan
+(`~/Projects/linux_hammer2-data/fixtures/cluster-dmsg-stage2a-r4-kasan-20261020.log`,
+kernel log `dmsg-run-20261020-152110.klog` beside it): 79 checks, 0 failed. The kernel's
+CONN and span announce PROTO_2 (conn_proto 2, span_proto 2) and an
+`ipcluster` of the PFS root returns the inode whose `pfs_fsid` is the
+span's (found 1, fsid_match 1); a `readdir` lists the forty entries
+whose inode numbers and names are `stat`'s (40 of 40, match 1) in
+windows of sixteen (maxrun 16, 2 continuations); the same request with
+no continuation stops at sixteen and closes at the bound (frames 16,
+error 0x40000, bound 3000 ms, after 3034 ms); `scanlhc` on one
+entry's hash returns that entry (1 of 1); `nresolve` returns the inode
+`stat` names at its size and a name that does not exist as no chain and
+no refusal (found 0, closed 1, refused 0, error 0); three
+`strategy_read`s return the file's blocks uncompressed and whole (3, 3,
+3) and the digest of their concatenation is `sha256sum`'s of the file;
+`scanall` under the file returns its three data chains in key order
+(keys 0, 0x10000, 0x20000); `lookup` of the second block's key and
+`bmap` of logical block one return the chain at the same data offset,
+and `hammer2 -v show` on the unmounted media reads that block at that
+offset, the utility's line kept whole in the reading; a modifying
+command and a cluster this device has no mounted PFS of are refused
+(1/32, 1/32), an inode that does not exist is served as an error with
+no chain (error 64, 0 frames), and the connection outlives all three
+(eof 0, shell_reply 1); the log's `H2 SERVE` lines number fourteen, the
+cluster refusal among them, beside the one command refusal and the one
+cluster refusal named as such; each of the eleven actions leaves 0
+threads; no kernel warning, lockdep or sanitizer report, kmemleak 0, the
+module unloads with 0 threads. The same on 7.3.0, the lockdep kernel
+(`cluster-dmsg-stage2a-r4-debug-20261020.log`, `dmsg-run-20261020-152543.klog`): 79 checks,
+0 failed, and the two logs differ only in the kernel's name once
+timings, the kept log's name, the file's digest and the other
+run-specific values are stripped. The control, `H2_CRC_CONTROL=1`
+building `HAMMER2_NOCRC` and `HAMMER2_NOWINDOW` on 7.3.0-kasan
+(`cluster-dmsg-stage2a-r4-control-20261020.log`, `dmsg-run-20261020-152317.klog`): 78
+checks, 0 failed, both bad frames served and the readdir with no
+continuation delivering all forty entries (frames 40 of 40, error 0),
+which is what proves the window is what stops it. The runs at `25f0b37`
+(`cluster-dmsg-stage2a-r3-{debug,kasan,control}-20261020.log`) and before
+the first audit's fixes (`r2`) read the same counts on the same kernels;
+the first run of the stage, `cluster-dmsg-stage2a-r1-kasan-20261020.log`,
+failed two checks on two defects of the harness and none of the kernel,
+the stage 2a control branch reading `H2_CRC_CONTROL` unguarded under
+`set -u` and the client looking for the PFS label in the span's
+`pfs_label`, where `hammer2_update_spans()` writes `peer_label`, and is
+the kept first-pass record. The gates at `508c9de`: syntax 85 checks 0
+failed with both compilers over the new file; checkpatch at the moved
+baseline, 1,444, the three rows that moved being the tree's BSD style in
+a file this port wrote, with two `kzalloc_obj()` hits fixed rather than
+baselined (`doc/README.kernel-style.md`, the 1,444 paragraph); inventory
+0 findings over 22 source files, 33 `XXX` rows, a total row the gate now
+sums the table against (and, since the row commit, counts the rows it
+summed against the rows it parsed, the per-file check being what catches
+a row dropped from the table), and 9 `DEFER`s; provenance 39 checks 0 findings;
+citations 38 rows 35 symbol-anchored 0 failures, with the note's eight
+prose citations into `kern_dmsg.c` (five) and `hammer2.h` (three) that
+stage 1's insertions had left stale mapped through the diff from the
+commit that wrote them, the eight being what `git show 25f0b37` moves; posix, doc prose, history, absence, shim, ccms-lock,
+vectors, tools, report, reverts and transport clean; the `XXX` table
+counts `hammer2.h` at 30, `hammer2_iocom.c` at 22 and `sys/dmsg.h` at
+15, `hammer2_remote.c` at 0, the port's column 525 in twenty-five files.
+
+The first hostile audit, of the working tree before any commit
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-1-33286a1-wt-20261020.txt`,
+the opus slot, 42 tool uses, 8.7 minutes), returned NO SIGN-OFF with two
+blocking findings, one fixable and three low. The first blocking finding
+held: the server's teardown flushed its queue, then destroyed and freed
+it while the message core's reader thread was still alive and could
+deliver a request that queued work on the freed queue, so admission now
+closes under the same lock the reader queues under and the queue is
+freed only after `kdmsg_iocom_uninit()` has stopped the threads. The
+fixable finding held: a PFS found under `hammer2_mntlk` and then held
+by nothing could be freed by an unmount and a pfs-delete inside one
+request's run, which the first build recorded as a `DEFER`; the lock is
+now held for the request and the deferral is gone. The second blocking
+finding, that the request's window count is read by the work item
+without the lock the reader writes it under, is refuted on the kernel's
+own contract: the count only grows, the unlocked read before the wait is
+a hint whose stale value can only send the item into the wait, and
+`wait_event_timeout()` re-reads the count after `wake_up()`, whose
+ordering against the reader's increment is the barrier `wait_event` is
+built on; the read is marked `READ_ONCE()` for the reader of the code.
+The three low findings: the lockdep log was empty at the audit's moment
+and is cited above from its finished run; the readdir comparison splits
+on whitespace and the `hammer2 -v show` grep is pinned to the utility's
+line shape, which the harness now says in place and keeps the matched
+line whole in its reading; and the status opener's count, now moved.
+The second audit, of `25f0b37` with the record entry and the row
+uncommitted
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-2-25f0b37-20261020.txt`,
+the opus slot, 68 tool uses, 4.9 minutes), returned NO SIGN-OFF with two
+blocking findings, two fixable and seven low, and confirmed the first
+round's refutation against `include/linux/wait.h` and the lock order
+of `hammer2_mntlk` before the chain locks at every other taker. Its
+first blocking finding held in part: the reconnect reopened admission on
+the ioctl's thread after `kdmsg_iocom_reconnect()` returned, so the new
+connection's first valid request could arrive before the reopen and be
+refused, which is now impossible since the reopen is the peer's
+`PROTO_2` announcement on the admitting reader; its reading that the old
+reader could deliver a frame in that window does not hold, since
+`kdmsg_iocom_reconnect()` waits for both old threads under `msglk`
+before it installs the new descriptor. Its second blocking finding held:
+the port's `XXX` count in prose read 524 where the table's column sums
+to 525, the hand-written list beneath the table omitting
+`hammer2_bulkfree.c`'s one mark, a defect the file's own note says had
+been corrected once before; the table now ends in a total row that
+`test-inventory.sh` sums the rows against, and the list is rewritten
+from the table. Its fixable findings: the cost of holding `hammer2_mntlk`
+through a window wait, now stated above and in the note; and the same
+list, the same fix. Its low findings are the checkpatch clause now
+cited to its paragraph, the window bound now named as the harness's
+override, and the `H2 SERVE` count now stated as it reads. The third
+audit, of `508c9de` with the entry and the row uncommitted
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-3-508c9de-20261020.txt`,
+the opus slot, 99 tool uses, 10.7 minutes, sixteen gates run), returned
+NO SIGN-OFF with one blocking finding, two fixable and eleven low or
+confirming, and closed both of the second round's blocking findings on
+the code and the table. Its blocking finding held: this entry counted
+the remapped citations as six where the commit moves eight, a
+hand-written figure beside a checkable one, now the diff's count. Its
+fixable findings held: the cost sentence named pfs-create among the
+takers of `hammer2_mntlk` and the create ioctl takes no lock, now
+removed from the note and from here; and the total-row check summed
+only the rows its own filter saw, now counted against the rows parsed,
+with the per-file check named as what catches a dropped row.
+
+What stage 2a does not do, for stage 2b: no slot registers from a span,
+no proxy chain exists, no request leaves this kernel. The ghost span
+entry stage 1 recorded, one span opened in two transactions and closed
+once, is untouched by this stage and still waits on registration.
+
 ## The kernel verifies a PROTO_2 peer's frames and lists its spans, 2026-10-20
 
 Stage 1 of `doc/CLUSTER_PROTOCOL_DESIGN.md`, built at `a821b4e` and
