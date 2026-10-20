@@ -16610,4 +16610,5 @@ that carried the same credit to a plan was reworded before the push
 trees unchanged). The fourth round, over `ebc8364`, held the correction
 and the replay, and was clean. A fifth round read this paragraph
 against the hand-backs it summarizes and refused on seven of its claims
-about them, each corrected here.
+about them, each corrected here, and a sixth signed off on the
+correction.
