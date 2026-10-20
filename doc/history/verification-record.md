@@ -16561,41 +16561,45 @@ on. No candidate was changed.
 
 **Audit.** An independent adversarial reading of this entry, the kernel
 of record entry above it, the 1.0.40 row, the porting section, the design
-note's new section and the four commit messages, before any was
-published, began by reading every per-run number for runs 26 to 30
-against its kept report line for line, the klog counts for runs 25 to
-29, the build logs, the checker's checksum on both trees, every
-repository hash in both entries and fourteen host gates re-run, and
-found them as written; it then refused sign-off on twelve counts and
-three notes, each checked against the kept files before it was taken.
-Two line numbers quoted from the analyzer and smatch logs were in the
-numbering of `01f82fe` and the record's own commit adds six lines above
-them, so both now carry both numbers; the host-gate paragraph had placed
-the two analysis runs after runs 28 and 29 when their logs are stamped
-before either; the smatch partition summed to fourteen over a log of
-fifteen, the three indent notes being on the port's own lines rather
-than carried ones; `FOP_IMMUTABLE` sits one line below the comment the
+note's new section and, from the third round, the correction commits'
+messages, before any was published, began by reading every per-run
+number for runs 26 to 30 against its kept report line for line, the
+klog counts for runs 25 to 29, the build logs, the checker's checksum on
+both trees, every repository hash in both entries and fourteen host
+gates re-run, and found them as written; it then refused sign-off on
+twelve findings, each checked against the kept files before it was
+taken, with three notes beside them that did not count against the
+entry. Two line numbers in the smatch triage, one the log's and one the
+record's own, were in the numbering of `01f82fe` and the record's own
+commit adds six lines above them, so both now carry both numbers; the
+host-gate paragraph had placed the two analysis runs after runs 28 and
+29 when their logs are stamped before either; the smatch partition
+summed to fourteen over a log of fifteen, two indent notes counted where
+the log holds three; `FOP_IMMUTABLE` sits one line below the comment the
 draft cited; no exclusion of `git grep rc5` yields the thirty files the
 draft named, and the count outside the changelog and the history
 directory is twenty-six, with the pre-push check's rc5 fallback named
 as what it is; a baseline reading of 1409 is in no ledger row and is
 now said so; "0 held chains" counted lockdep's `locks held by` lines,
-since no module print says held; idle stamps come one per burst in all
-eighteen klogs that carry one, not two; the lone-slave mount's kernel
-line survives only in the recovered draft and is marked so; the
+since the one module print containing the word, a `pr_debug` in
+`hammer2_io.c`, fired in none of them; idle stamps come one per burst in
+all eighteen klogs that carry one, not two; the lone-slave mount's
+kernel line survives only in the recovered draft and is marked so; the
 lost-report caveat covered check counts and fingerprints where every
 harness-side reading of runs 1 to 24 was lost with them, and the porting
 section's space reading now says it comes from notes; the design note's
 "29 kept klogs" counted twelve that predate the re-insert print and five
-crash-shape runs that drive no mutation, and reads seventeen and ten;
-and run 15's "three soft lockups" are thirty reports on one CPU over
-940 s. The second round, over the applied text at `d283d54`, found the
-smatch split reversed by the first round's own reading at the wrong
-numbering, the held count surviving in two run paragraphs, the design
-note's default-shape population one too many and its live-pass sentence
-describing a phase that control runs, and two defects in the sentence
-the first round asked for: run 23's KASAN kernel was not silent, its
-one UBSAN report being the bulkfree shift fixed at `b77d30f`, and the
+crash-shape runs that drive no mutation, and the round asked for
+seventeen and ten, the ten an over-count of its own; and run 15's
+"three soft lockups" are thirty reports on one CPU over 940 s. The
+second round, over the applied text at `d283d54`, found the smatch
+split reversed by the first round's own reading at the wrong numbering,
+the held count surviving in two run paragraphs, the design note's
+default-shape population one too many, so that it has read seventeen
+and eight since, and its live-pass sentence describing a phase that
+control runs, and two defects in a sentence added beside the first
+round's corrections: run 23's KASAN kernel was not silent, its one UBSAN
+report being the bulkfree shift fixed at `b77d30f`, and the
 reference-count check was credited to a plan no reader of the
 repository can find. The third round, over the second's corrections,
 held every one and found one sentence older than both rounds naming
@@ -16604,4 +16608,6 @@ in `hammer2_sync_slaves()`'s insert arm ahead of that call. The message
 that carried the same credit to a plan was reworded before the push
 (`d283d54`, the round-two commit replayed behind it as `1398da2`, both
 trees unchanged). The fourth round, over `ebc8364`, held the correction
-and the replay, and was clean.
+and the replay, and was clean. A fifth round read this paragraph
+against the hand-backs it summarizes and refused on seven of its claims
+about them, each corrected here.
