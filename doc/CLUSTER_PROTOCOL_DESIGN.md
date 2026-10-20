@@ -513,10 +513,16 @@ the round trip; a remote master registered after a local slave runs last
 by construction. That cost is measured in stage 2b against the local
 pass.
 
-**In stage 2 a PFS with a remote element mounts read-only**, and `rw` or
-a remount to it is refused with `EROFS` before any XOP runs. A write
-through a slave beside a read-only remote master would run the local
-slave's storage function first and modify its chain, the remote's
+**In stage 2 a PFS with a remote element refuses every modifying XOP
+from the frontend with `EROFS` before any storage function runs**, at the
+same pre-dispatch site decision C's quorum gate uses
+(`hammer2_admin.c:468`), and the mount's own flags are untouched: the
+harness mounts B's `CL` read-write, so the device is opened writable
+(`sb_open_mode()`, `hammer2_ondisk.c:147`, `:197`) and the slave's pass,
+which writes its element through chain calls and its own flush
+(`hammer2_synchro.c:464-503`, `:873`) and never through a VOP, is not
+refused by the gate. A write let through would run the local slave's
+storage function first and modify its chain, the remote's
 `(NULL, EOPNOTSUPP)` feed would set `CITEM_NULL`, the check would return
 `ESRCH` and then, on the `CHECK_NULL` end of scan, the element's
 `EOPNOTSUPP`, and the slave's created chain would flush with no master
@@ -566,16 +572,19 @@ rather than from the design document alone.
   its blockmap alone, on a schedule the host's flush sets.**
   `_hammer2_chain_delete_helper()` (`hammer2_chain.c:3437`) and
   `hammer2_chain_rename_obref()` (`:3398`) take that branch when the
-  child is `BLKMAPPED` (`:5226`, `:2013`), that is, already flushed into
-  the parent on that host; `hammer2_chain_create_indirect()` modifies
+  child is, or was before the rename's delete, `BLKMAPPED` (`:5226`,
+  `:2013`; the rename's `obref` is filled only by the delete helper's
+  blockmapped arm, `:3494`, and `:3397` asserts the flag is already
+  clear), that is, already flushed into the parent on that host; `hammer2_chain_create_indirect()` modifies
   the parent at the transaction's tid when it splits a full blockset
   (`:3602`), and whether two hosts split at the same transaction depends
   on the parent's block table as each host's flush has laid it out,
   which no round measured. So any stamp taken at
   `hammer2_chain_modify()` moves with the flush schedule too, and
   `update_tid`, the field the format reserves for the cluster
-  (`:597`, `:638`, written by no tree), would need those sites excluded
-  and still meets C8 and C9. The caller set is the semantic index's
+  (`hammer2_disk.h:597`, `:638`, written by no tree), would need those
+  sites excluded and, stamped at creation as a protocol would, still
+  meets C8 and C9. The caller set is the semantic index's
   (`find_referencing_symbols` on `hammer2_chain_modify`, repeated until
   its count stopped moving at the per-file counts `grep` gives): nine
   sites in `hammer2_xops.c`, two each in `hammer2_ioctl.c`,
@@ -594,7 +603,7 @@ rather than from the design document alone.
   (`hammer2_vnops.c:387`); the flush writes it into the root's
   `pfs_inum` (`hammer2_flush.c:798`). Two coordinators issue the same
   inode numbers, and `hammer2_xop_inode_create()` answers the second
-  `EEXIST` on every host (`hammer2_xops.c:1070-1077`).
+  `EEXIST` on every host (`hammer2_xops.c:1073-1077`).
 - **C5. The frontend's inode is not refreshed by a chain commit.** A
   participant's `ip->meta` is written by its own VOPs and written back
   whole by `inode_chain_sync` (`hammer2_xops.c:1416`), so a commit that
@@ -602,24 +611,32 @@ rather than from the design document alone.
   in-memory size, mode and times stale and its next sync overwrites the
   other's. `hammer2_inode_repoint()` moves chains, not meta.
 - **C6. Elements run to completion before the collect, which waits on
-  nothing and re-feeds nothing** (`hammer2_admin.c:785-791`); a proxy's
-  fields are its feed frame's. A visibility rule that asks the collect
+  nothing and re-feeds nothing** (`hammer2_xop_start_except()` runs each
+  storage function and retires it in the caller, `hammer2_admin.c:474-476`;
+  the collect's comment at `:785-791` says so); a proxy's fields are its
+  feed frame's. A visibility rule that asks the collect
   to wait for a peer's apply has no feed to wait on.
 - **C7. The collect skips a key the check returns `ESRCH` or `EDEADLK`
   for and ends the scan in `ENOENT`** (`hammer2_admin.c:800-812`,
   carried), and `readdir` ends on any collect error at the position it
-  reached (`hammer2_vnops.c:254-257`), so a disputed key either vanishes
-  from a listing or fails the whole listing from that position on.
+  reached (`hammer2_vnops.c:254-257`) and maps the scan's final `ENOENT`
+  to success (`:337-339`), so a disputed key vanishes from a listing that
+  otherwise succeeds, and any other collect error ends the listing from
+  that position on.
 - **C8. PFS roots are stamped from each host's super-root counter at
-  creation** (`hammer2_ioctl.c:341`, `:349`) and a mount-time repair
-  re-stamps one on one host (`hammer2_vfsops.c:1973`), so two roots of
-  one cluster differ on every tid field from birth.
+  creation** (`hammer2_ioctl.c:341`, `:349`), and a mount-time repair of
+  a mis-flagged root re-stamps its `mirror_tid` on one host, keeping
+  `modify_tid` (`hammer2_vfsops.c:1970-1973`), so two roots of one
+  cluster differ on `modify_tid` and `mirror_tid` from birth, and a
+  stamp a protocol took at `hammer2_chain_modify()` would differ there
+  too.
 - **C9. The slave's pass re-stamps an inode copy at the replace with the
   master's propagated tid** (`hammer2_synchro.c:1402`, `:2149`, `:2563`),
   and it snapshots its source on the source element's own device
   (`:801`, `:817`; `hammer2_ioctl.c:612`, `:690-691`), which for a
   remote source is the connection device, where a create is refused.
-- **C10. A span carries no status update** (`hammer2_iocom.c:362`), so a
+- **C10. A span carries no status update** (the only `LNK_SPAN` arms
+  are `CREATE` and `DELETE`, `hammer2_iocom.c:235`, `:260`), so a
   connected master learns nothing the protocol does not send it, and a
   fence or an outcome one coordinator holds is held by that coordinator
   alone until it is carried.
@@ -679,14 +696,52 @@ Four candidates, with what each met.
    the media rule. Fails: it is more than P8 and P9 as the roadmap splits
    them, and none of it can be read until stage 2's remote element runs.
 
-**Recommendation: none of the four is accepted in this note.** Three were
-refuted on the code and the fourth is a design its own note has to carry,
-written over stage 2's running remote element, where C5, C6 and C11 can
-be measured instead of read, and weighing P9's durable record as a
-prerequisite of P8's write cells rather than a step after them. Stages 1
-and 2 need no part of it and proceed. This changes the sequence the plan
-set, which put the protocol in this note and P9 behind P8, so it is put
-to the maintainer with the alternatives above rather than taken here.
+5. **One writer per PFS under a lease, replicated by P7's pass.** Per
+   PFS one master holds a write lease with a term; only its host mounts
+   the PFS writable, every other master's host is read-only unless it
+   holds the lease, which is stage 2's gate generalized, and a modifying
+   request arriving at a replica is forwarded to the holder over the
+   wire, Dillon's "a client can submit modifying operations to a single
+   master" (`DILLON_HAMMER2_DESIGN_2015.md:729-731`). The other masters
+   run P7's pass against the holder over stage 2b's snapshot command, in
+   the slave direction, which reverses decision B's "no thread for a
+   MASTER" for that direction only; every compared tid then comes from
+   one host's counter and the pass stamps the replica from the source
+   (`hammer2_synchro.c:671-673`, `:2149`, `:2563`), so C1, C2 and C8 do
+   not arise, and one frontend means C3, C4, C5 and C11 do not arise;
+   replicas serve no current reads of their own, or route them to the
+   holder through the read-only remote element, so C6 does not arise. An
+   `fsync` on the holder returns when a majority including the holder
+   has stamped at or above that flush's tid, Dillon's phase-2 mode.
+   Failover: a majority persists term plus one durably, one field in
+   `copyinfo`'s reserved space (`hammer2_disk.h:515`), a change of
+   stated meaning under the first rule as `remote_pfs_type`'s is; the
+   new holder is the highest-stamped member of that majority; a replica
+   refuses a source with a lower term; the old holder's unacknowledged
+   writes are discarded by demoting it and letting the pass overwrite
+   it. With two masters the majority is both, so losing either halts
+   writes: fail closed (S1), and C10's two-master case is unavailability
+   rather than a pretended fence. Must prove: the pass deletes chains
+   the source lacks; C2's three sites stamp the source's tid on the
+   replica, and the indirect split falls where the source's did; the
+   lease's term is durable and read before any write after a mount; a
+   forwarded write's errno is the holder's. Fails: it is one writer and
+   not Dillon's concurrent multi-master commit; an `fsync` costs one
+   pass; a format field changes meaning; and it needs the snapshot
+   command and a write-capable wire pass before its first reading.
+
+**Recommendation: none of the five is accepted in this note, and the
+protocol note starts from 5.** Three were refuted on the code; 4 needs
+P9's record ahead of P8 and a reworked write path; 5 needs one durable
+field, reuses P7's pass and stage 2's element as its instruments, and
+is a line of Dillon's design, at the price of giving up his concurrent
+multi-master commit, which the mission's "the full design" may not
+accept. Both are put to the maintainer here, 5 recommended, and either
+is designed in its own note over stage 2's running remote element, where
+C5, C6 and C11 can be measured instead of read. Stages 1 and 2 need no
+part of either and proceed. This changes the sequence the plan set,
+which put the protocol in this note, so it is presented rather than
+taken.
 
 ### B. Membership, epoch and stale rejection (S1 to S3)
 
@@ -756,7 +811,7 @@ issues it twice.
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1521-1535`), and the collect turns `ESRCH` and `EDEADLK` at
+(`hammer2.h:1521-1536`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:338-344`, before pass 3,
 and `RDHARD` is set for a MASTER only in pass 3 (`:387-388`), so there is
@@ -779,10 +834,23 @@ returns a new `HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
 `ESRCH`/`EDEADLK` split, so a read under quorum loss is `ENOTCONN` and
 not "no such file"; the end-of-scan path that counts a `(NULL, error)`
 master as agreeing (`hammer2_cluster.c:286-291`) excludes an unreachable
-one. Must prove: the value is the same from every VOP for the same
+one. The errno alone does not keep the media unchanged: the check runs in
+the collect after every element's storage function has run (C6), so
+the local master's chain would be modified before `ENOTCONN` was
+computed. So the settled half has two parts, and the second is **a gate
+before dispatch**: `hammer2_xop_start_except()` counts the reachable
+masters before it runs any storage function of a modifying descriptor
+on a PFS with a remote element, and with fewer than `nquorum` feeds
+`ENOTCONN` to every slot and runs none, one marked test at the top of
+the element loop (`hammer2_admin.c:468`). That closes the static cells,
+where the quorum is already lost when the write arrives, on the media as
+well as the errno; a master lost in the middle of an XOP is the protocol
+note's. Must prove: the value is the same from every VOP for the same
 cluster state, read in the `quorum_loss` cell from `touch`, `mkdir`,
 `write`, `unlink`, `cat` and `ls`, which stage 2's read-only remote
-element can already read for the read half. The `EIO` of disagreement
+element can already read for the read half, and the media unchanged by
+fingerprint under the gate, with the gate off as the control that must
+leave the local master's chain modified. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
 errno map has no `pmp` (`hammer2.h:1533-1534`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
@@ -838,18 +906,18 @@ and transport rows are stage 2's and are read there.
 
 | cell | topology | invariant and what is known | instrument |
 |---|---|---|---|
-| A dies during prepare | 2 masters | S1, S9: neither media changes and the client reads one errno; under candidate 1 the local master's chain is already modified before the check (fork, the baseline's known result) | `fail_quorum_at=preparing` on A, both fingerprints against the pre-run, `fsck_hammer2` clean |
-| A dies after prepare | 2 masters | S1, S5: no commit becomes visible on one side alone; the cell is the one that refuted candidate 2 (C3) and tests candidate 3's in-doubt holding | `fail_quorum_at=prepared`, the kernel log's state line on B after `remote_timeout_ms`, fingerprints |
+| A dies during prepare | 2 masters | S1, S9: neither media changes and the client reads one errno; under candidate 1 the local master's chain is already modified before the check (fork, the baseline's expected result) | `fail_quorum_at=preparing` on A, both fingerprints against the pre-run, `fsck_hammer2` clean |
+| A dies after prepare | 2 masters | S1, S5: no commit becomes visible on one side alone; the cell is the one that refuted candidate 2 (C3), and what B does with a half-finished transaction is the protocol note's | `fail_quorum_at=prepared`, B's kernel log after `remote_timeout_ms`, fingerprints |
 | A dies before commit | 2 masters | as above, with the coordinator never sending commit | `fail_quorum_at=committing`, fingerprints |
 | A dies after commit acknowledgment | 2 masters | S5, S9: the acknowledged write survives on B; A's state at restart is what the protocol note's level test must read, and C1 says it cannot be A's root tid | B's media holding the write, A's registration line, writes after it |
-| B loses connectivity to A | 2 masters | S1: with the row present neither side commits; every write and every read returns `ENOTCONN` (decision C, settled) and not the `ENOENT` the carried check gives today; the log names the transition once | relay partition for frames i..j, `touch` and `cat` on both mounts, the errno and the log line, fingerprints unchanged |
+| B loses connectivity to A | 2 masters | S1: with the row present a write arriving after the loss is refused at decision C's pre-dispatch gate with `ENOTCONN` and runs no storage function, and a read returns `ENOTCONN` rather than the `ENOENT` the carried check gives today; the log names the transition once; a write in flight at the moment of loss is the protocol note's | relay partition for frames i..j, `touch` and `cat` on both mounts after the partition, the errno and the log line, fingerprints unchanged |
 | A/B partition while C is reachable to one side | 3 masters | S1, S3: the side with two of three may commit, the lone side fails closed, and the lone master must not regain write authority on heal by reconnecting; the three-master interleave of round six is the schedule this cell runs | relay partition, writes on both sides, fingerprints: two equal and one behind, the lone master's registration line |
-| all but one master disappear | 3 masters | S1: the survivor fails every write and every read closed with `ENOTCONN`; no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's | relay disconnect of two, `touch` and `cat` errno, fingerprints unchanged |
-| stale master reconnects | 2 masters, then 3 | S3, L1: with two masters nothing committed while B was away and liveness returns; with three, B returns behind and must neither vote nor be written through; what reads "behind" is the protocol note's | `stale_rejoin`: writes failing then succeeding on both sides; the three-master run's registration line on B, B's media unchanged, A's and C's unchanged by B |
+| all but one master disappear | 3 masters | S1: the survivor refuses every write at the pre-dispatch gate and every read at the check with `ENOTCONN`; no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's | relay disconnect of two, `touch` and `cat` errno after the loss, fingerprints unchanged |
+| stale master reconnects | 2 masters, then 3 | S3, L1: with two masters a write arriving while B was away was refused at the gate, so nothing committed and liveness returns on reconnect; with three, B returns behind and must neither vote nor be written through; what reads "behind" is the protocol note's | `stale_rejoin`: writes failing then succeeding on both sides; the three-master run's registration line on B, B's media unchanged, A's and C's unchanged by B |
 | master storage is stale but reachable | 3 masters | S3, S8: a volume restored from an older image must not win a vote or be written through, and must not be the source of a repair | the restored image's registration line, its fingerprint unchanged, the two current masters continuing |
-| client disappears during a transaction | 2 masters and a mount | S1, S5: the masters complete or abort among themselves; the client's remount sees one outcome on both | the client guest's power cut between prepare and commit, both masters' fingerprints equal after settle |
+| client disappears during a transaction | 2 masters and a mount | S1, S5: the client's remount sees one outcome on both masters; under the baseline the client drives both and the cell is expected to show the half-done write the protocol note must prevent | the client guest's power cut between prepare and commit, both masters' fingerprints equal after settle |
 | client reconnects after MESI state expiration | deferred with D | not in P8; the trigger is named | the row records the deferral and its trigger |
-| transport reconnect during synchronization | a master and a slave on two hosts (stage 2b) | S10, L3: the slave's pass fails its in-flight copies, withholds its stamp, and the next pass after reconnect completes them; the source is served by the master (C9) | relay disconnect mid-pass, the `H2_FAULT`-shaped reading `cluster-sync.sh` already has, under `H2_WIRE=1` |
+| transport reconnect during synchronization | a master and a slave on two hosts (stage 2b) | S10, L3: the slave's pass fails its in-flight copies, withholds its stamp, and the next pass after reconnect completes them; the source is the master's live root until the snapshot command exists, then its snapshot (C9) | relay disconnect mid-pass, the `H2_FAULT`-shaped reading `cluster-sync.sh` already has, under `H2_WIRE=1` |
 | healthy | 2 and 3 masters | L1: every write commits on all, fingerprints equal, `fsck_hammer2` clean, no warning; the two-mount write race is the cell that reads C4 and C5 | the `2_master_matrix` and `3_master_matrix` baselines |
 
 The `partition` cell's negative control is the row removed on one side,
@@ -898,7 +966,8 @@ in `hammer2_chain.c`, the connection device's reference in
 `hammer2_cluster.c`, the reachability bit before the `ESRCH`/`EDEADLK`
 split (`:338-344`) and the end-of-scan count excluding an unreachable
 master (`:286-291`), decision C's settled half; in `hammer2_admin.c`, the
-XOP-level dispatch (`:474`); in `hammer2_iocom.c`, the span test
+XOP-level dispatch (`:474`) and the pre-dispatch gate at the top of the
+element loop (`:468`), stage 2's `EROFS` and decision C's `ENOTCONN`; in `hammer2_iocom.c`, the span test
 admitting `PROTO_2` (`:244-247`); in `hammer2_synchro.c`, the guard at
 `:733` refusing a local snapshot of a remote focus; in
 `hammer2_vfsops.c`, the MASTER slot's skipped thread (`:489`, the
@@ -941,11 +1010,13 @@ reads no focus.
 ## What this note does not settle
 
 - Decision A, the commit protocol, which this note presents open with
-  four candidates, three refuted on the code and the fourth carried by
-  its own note over stage 2's running remote element, and with the
-  resequencing of P9's durable record ahead of P8's write cells put to
-  the maintainer. Decisions B (membership) and C (`ENOTCONN`) are
-  recommended and D is deferred; stages 1 and 2 proceed on none of A.
+  five candidates, three refuted on the code and two carried by their
+  own note over stage 2's running remote element: a single writer under
+  a durable lease replicated by P7's pass, recommended as the start, and
+  P9's durable record ahead of P8's write cells; both are put to the
+  maintainer. Decisions B (membership) and C (`ENOTCONN` and the gate
+  before dispatch) are recommended and D is deferred; stages 1 and 2
+  proceed on none of A.
 - Level, epoch and the stale master (S1 to S3), which the protocol note
   carries with the record; this note records what they cannot be read
   from (C1, C2, C8, C9, C10).
@@ -1111,5 +1182,23 @@ element with P9's record weighed as a prerequisite, and puts that
 resequencing to the maintainer; membership and `ENOTCONN` stay
 recommended, the matrix states each cell's invariant and instrument,
 the slave's pass takes its source from the master by a command, and the
-device count leaves dios out. The eighth audit's result is recorded here
-when it has run.
+device count leaves dios out. The eighth audit (Claude Opus 5.5, 21 tool uses, 10.1 min) verified
+the eleven constraints on their lines, eight holding as written, two
+overstated (the rename helper's condition is "was blockmapped before
+the rename's delete", `:3397` asserting the flag clear; the mount-time
+repair keeps `modify_tid`) and one cited at the wrong line (`C10` at
+`hammer2_iocom.c:362`, which is the volume configuration; the span arms
+are `:235` and `:260`), each corrected, and returned NO SIGN-OFF on
+seven findings, one blocking: three matrix rows promised unchanged
+media under partition and quorum loss that an errno computed after the
+storage functions have run cannot deliver. The fix is the audit's own:
+a gate before dispatch that refuses a modifying XOP when the reachable
+masters are below quorum, settled under decision C, and the stage-2
+read-only gate moved to the same site so the slave's pass can still
+write its element under a writable device. The round also put a fifth
+candidate in front of decision A, one writer per PFS under a durable
+lease replicated by P7's pass, which answers C1 to C11 at the price of
+Dillon's concurrent commit; it is recorded with its obligations and
+costs and recommended as where the protocol note starts, beside the
+resequencing of P9. The finding count fell from eleven to seven. The
+ninth audit's result is recorded here when it has run.
