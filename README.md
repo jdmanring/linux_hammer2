@@ -56,7 +56,8 @@ At a glance, on a kernel of 7.3 or newer:
   measured with the kernel in the loop (P5, P6), the synchronization
   pass above them copies from a per-pass snapshot of the master and
   keeps a snapshot of the slave as its last known-good copy (P7's local
-  half; the remote reach is open at `doc/SYNC_DESIGN.md`), and no run
+  half; the remote reach is ruled B at `doc/SYNC_DESIGN.md` and not yet
+  built), and no run
   yet of a quorum that cannot be met
 + not yet: a package, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a

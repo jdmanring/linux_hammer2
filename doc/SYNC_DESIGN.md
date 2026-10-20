@@ -372,16 +372,25 @@ than A, because A's second and third obligations lead back to the same
 snapshot and the same protocol question, and A's read-only device mode
 is new semantics the original never had either.
 
-What this note asks the maintainer to rule on is the remote reach, which
-of A, B or C, since each is a decision the plan's rules stop at a note:
-A changes what a mount does with a device another host writes, B is a
-new wire protocol and so an extension under the first rule, and either
-puts a trust boundary in the kernel that no Linux daemon holds yet, which
-is the security model the third rule names. The local half of D meets
-none of those rules, changing no media meaning, no trust boundary and no
-commit semantics, so it is inside the delegated work and is the next
-code, and the roadmap's P7 row says the same; a ruling for C would stop
-it, since a userland copy needs no fork in the kernel.
+The remote reach stopped at this note under the plan's rules, since each
+of A, B and C is a decision they reserve: A changes what a mount does
+with a device another host writes, B is a new wire protocol and so an
+extension under the first rule, and either puts a trust boundary in the
+kernel that no Linux daemon holds yet, which is the security model the
+third rule names. The local half of D meets none of those rules, changing
+no media meaning, no trust boundary and no commit semantics, and was
+built first.
+
+**Ruling, 2026-10-19: B.** A chain-level protocol in the reserved space,
+designed together with P8's quorum protocol as one wire format and one
+design note, with the daemon that holds the keys specified in that note
+before any kernel code. A was refused because its obligations lead back
+to the snapshot and to the protocol question B answers directly, and it
+adds a read-only device mode the original never had, so it would follow
+the network block device only to add work. C was refused because it is
+P16 arriving early: a userland copy leans on nothing in the distributed
+state machine the plan exists to get right, and it would have stopped
+the local half's target-side work.
 
 ## The compatibility and versioning position
 
@@ -401,8 +410,8 @@ and no protocol and changes the mount's semantics instead.
 The local half of the fork, verify and replace protocol is built on two
 devices, behind the `sync_snapshot` module parameter, and these are the
 decisions the code took where this note left a choice or where the
-trace of the carried code closed one. The remote reach, A, B or C
-above, stays at this note.
+trace of the carried code closed one. The remote reach was ruled B on
+2026-10-19; the ruling follows the alternatives above.
 
 **The source is a per-pass snapshot of the master element, addressed by
 chain.** The thread snapshots the element the root's quorum focus names
@@ -502,8 +511,9 @@ only on a snapshot pass.
 
 ## What this note does not settle
 
-- Which of A, B or C reaches the other host. D defers it on purpose and
-  names the measurement that decides it.
+- B's design: the commands, the frame check, the flow control and the
+  daemon. The ruling of 2026-10-19 chose B; the joint note with P8's
+  quorum protocol is where it is designed.
 - The live-mount handoff. Where the chains of an open file go when the
   root under it is swapped is unanswered in every tree. The local half
   did not build the swap: the slave is written in place and a snapshot
