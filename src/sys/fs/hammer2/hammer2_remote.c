@@ -41,8 +41,12 @@ struct hammer2_remote {
 	struct workqueue_struct	*wq;		/* ordered: one request at a time */
 	spinlock_t		lock;		/* reqq, req->window, req->cancelled */
 	struct list_head	reqq;		/* queued or running */
-	int			stopping;	/* the connection is going */
+	int			state;		/* HAMMER2_REMOTE_* */
 };
+
+#define HAMMER2_REMOTE_OPEN	0	/* requests admitted */
+#define HAMMER2_REMOTE_QUIESCED	1	/* refused until the next announcement */
+#define HAMMER2_REMOTE_CLOSED	2	/* refused for good, the device is going */
 
 struct hammer2_remote_req {
 	struct work_struct	work;
@@ -101,17 +105,20 @@ hammer2_remote_init(hammer2_dev_t *hmp)
 
 /*
  * Close the queue to the connection being replaced or torn down and fail
- * every request on it: once stopping is set under the lock no CREATE is
- * admitted, a queued request closes as it runs, a running one at its next
- * wait, and the flush returns when the queue is empty.  The reader thread
- * is still alive here and may deliver frames, which is why admission
- * closes under the same lock the reader queues under, and why the queue
- * itself is freed only by hammer2_remote_uninit(), after the message
- * threads are gone.  A reconnect reopens the queue with
- * hammer2_remote_resume() once the new connection's threads run.
+ * every request on it: once the state leaves OPEN under the lock no
+ * CREATE is admitted, a queued request closes as it runs, a running one
+ * at its next wait, and the flush returns when the queue is empty.  The
+ * reader thread is still alive here and may deliver frames, which is why
+ * admission closes under the same lock the reader queues under, and why
+ * the queue itself is freed only by hammer2_remote_uninit(), after the
+ * message threads are gone.  A reconnect's close is QUIESCED, which the
+ * new connection's peer lifts by announcing PROTO_2, on the reader that
+ * admits (hammer2_remote_resume()); a teardown's close is CLOSED and
+ * nothing lifts it, so an announcement read during the teardown admits
+ * nothing.
  */
 void
-hammer2_remote_quiesce(hammer2_dev_t *hmp)
+hammer2_remote_quiesce(hammer2_dev_t *hmp, int final)
 {
 	struct hammer2_remote *rm = hmp->remote;
 	struct hammer2_remote_req *req;
@@ -119,7 +126,7 @@ hammer2_remote_quiesce(hammer2_dev_t *hmp)
 	if (rm == NULL)
 		return;
 	spin_lock(&rm->lock);
-	rm->stopping = 1;
+	rm->state = final ? HAMMER2_REMOTE_CLOSED : HAMMER2_REMOTE_QUIESCED;
 	list_for_each_entry(req, &rm->reqq, entry)
 		wake_up(&req->waitq);
 	spin_unlock(&rm->lock);
@@ -131,8 +138,12 @@ hammer2_remote_resume(hammer2_dev_t *hmp)
 {
 	struct hammer2_remote *rm = hmp->remote;
 
-	if (rm)
-		WRITE_ONCE(rm->stopping, 0);
+	if (rm == NULL)
+		return;
+	spin_lock(&rm->lock);
+	if (rm->state == HAMMER2_REMOTE_QUIESCED)
+		rm->state = HAMMER2_REMOTE_OPEN;
+	spin_unlock(&rm->lock);
 }
 
 /*
@@ -146,7 +157,7 @@ hammer2_remote_uninit(hammer2_dev_t *hmp)
 
 	if (rm == NULL)
 		return;
-	WARN_ON(!rm->stopping);
+	WARN_ON(rm->state != HAMMER2_REMOTE_CLOSED);
 	destroy_workqueue(rm->wq);
 	WARN_ON(!list_empty(&rm->reqq));
 	kfree(rm);
@@ -203,11 +214,11 @@ hammer2_remote_rcvmsg(kdmsg_msg_t *msg)
 		INIT_WORK(&req->work, hammer2_remote_serve);
 		/*
 		 * Admission and the queue under one lock, so a quiesce that
-		 * set stopping before this point sees the request in its
-		 * flush and one that sets it after refuses the next request.
+		 * closed the state before this point sees the request in its
+		 * flush and one that closes it after refuses the next request.
 		 */
 		spin_lock(&rm->lock);
-		if (rm->stopping) {
+		if (rm->state != HAMMER2_REMOTE_OPEN) {
 			spin_unlock(&rm->lock);
 			kdmsg_free_aux_data(&req->aux);
 			kfree(req);
@@ -340,10 +351,10 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
 	long left;
 
 	left = wait_event_timeout(req->waitq,
-	    READ_ONCE(req->cancelled) || READ_ONCE(rm->stopping) ||
+	    READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN ||
 	    READ_ONCE(req->window) > fed,
 	    msecs_to_jiffies(hammer2_remote_timeout_ms));
-	if (READ_ONCE(req->cancelled) || READ_ONCE(rm->stopping))
+	if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN)
 		return (HAMMER2_ERROR_ABORTED);
 	if (left == 0 && READ_ONCE(req->window) <= fed)
 		return (HAMMER2_ERROR_ETIMEDOUT);
@@ -358,7 +369,7 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
  * carries no reference count and that lock is what every mount, unmount
  * and pfs-delete takes.  It is taken by try-lock to the bound, because the
  * unmount holds it while it waits for this queue to drain, so a blocking
- * take here would wait on the unmount waiting on it; stopping ends the
+ * take here would wait on the unmount waiting on it; a closed state ends the
  * wait.  A bulkfree scan holds the lock for its whole run and a request
  * started under one fails at the bound.  Returns with the lock held when
  * a PFS is found and released otherwise.
@@ -374,7 +385,7 @@ hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp)
 
 	deadline = jiffies + msecs_to_jiffies(hammer2_remote_timeout_ms);
 	while (!hammer2_lk_tryex(&hammer2_mntlk)) {
-		if (READ_ONCE(req->cancelled) || READ_ONCE(rm->stopping) ||
+		if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN ||
 		    time_after(jiffies, deadline))
 			return (NULL);
 		schedule_timeout_uninterruptible(msecs_to_jiffies(10));
@@ -415,7 +426,7 @@ hammer2_remote_serve(struct work_struct *work)
 	uint32_t error = 0;
 	int clindex = 0, fed = 0, nerror, refused = 0;
 
-	if (READ_ONCE(req->cancelled) || READ_ONCE(rm->stopping)) {
+	if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN) {
 		error = HAMMER2_ERROR_ABORTED;
 		goto out;
 	}

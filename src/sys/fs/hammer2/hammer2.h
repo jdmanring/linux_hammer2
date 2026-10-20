@@ -1450,7 +1450,7 @@ void hammer2_volconf_update(hammer2_dev_t *, int);
  * hammer2_remote.c (Linux: the HM2 XOP API server, doc/CLUSTER_PROTOCOL_DESIGN.md)
  */
 void hammer2_remote_init(hammer2_dev_t *);
-void hammer2_remote_quiesce(hammer2_dev_t *);
+void hammer2_remote_quiesce(hammer2_dev_t *, int);
 void hammer2_remote_resume(hammer2_dev_t *);
 void hammer2_remote_uninit(hammer2_dev_t *);
 int hammer2_remote_rcvmsg(kdmsg_msg_t *);

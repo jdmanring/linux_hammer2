@@ -143,12 +143,12 @@ and two assignments in an `if` condition, both of the last inside
 `hammer2_pfsalloc()` as upstream wrote it. No category is new and nothing
 was fixed rather than baselined.
 
-1,429 to 1,443 when `hammer2_remote.c` landed, the HM2 XOP API server of
-the cluster protocol note, 571 lines of this port's own for fourteen hits,
+1,429 to 1,444 when `hammer2_remote.c` landed, the HM2 XOP API server of
+the cluster protocol note, 582 lines of this port's own for fifteen hits,
 with five prototypes added to `hammer2.h`: seven `return (x);`, two BSD
 continuation indents, each on a function's second parameter line, and
-the five unnamed prototype arguments every function this tree declares
-in `hammer2.h` has. No category is new. Two hits were fixed rather than
+the six unnamed prototype arguments, one of them the quiesce's `int`,
+that every function this tree declares in `hammer2.h` has. No category is new. Two hits were fixed rather than
 baselined: the checker's `kzalloc_obj()` over `kzalloc(sizeof(*p))`, which
 the kernel of record has and the port's other files already use.
 

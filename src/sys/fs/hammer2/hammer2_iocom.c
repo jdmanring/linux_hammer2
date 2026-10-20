@@ -118,7 +118,7 @@ hammer2_iocom_uninit(hammer2_dev_t *hmp)
 	struct hammer2_span *span;
 
 	/* XXX chain depend deadlck? */
-	hammer2_remote_quiesce(hmp);	/* XXX Linux: no request admitted or left */
+	hammer2_remote_quiesce(hmp, 1);	/* XXX Linux: no request admitted or left */
 	if (hmp->iocom.mmsg)
 		kdmsg_iocom_uninit(&hmp->iocom);
 	hammer2_remote_uninit(hmp);	/* XXX Linux: after the reader is gone */
@@ -148,9 +148,8 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 	 * states, then installs the new descriptor and creates
 	 * new threads.
 	 */
-	hammer2_remote_quiesce(hmp);	/* XXX Linux: the old connection's requests */
+	hammer2_remote_quiesce(hmp, 0);	/* XXX Linux: the old connection's requests */
 	kdmsg_iocom_reconnect(&hmp->iocom, fp, "hammer2");
-	hammer2_remote_resume(hmp);	/* XXX Linux */
 
 	/*
 	 * Setup LNK_CONN fields for autoinitiated state machine.  LNK_CONN
@@ -303,6 +302,7 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 		    msg->any.lnk_conn.proto_version == DMSG_SPAN_PROTO_2) {
 			msg->state->iocom->flags |= KDMSG_IOCOMF_PROTO2;
 			kprintf("HAMMER2: peer speaks DMSG_SPAN_PROTO_2\n");
+			hammer2_remote_resume(hmp);	/* XXX Linux: admits from here */
 		}
 		break;
 	case DMSG_LNK_CONN | DMSGF_CREATE | DMSGF_REPLY:

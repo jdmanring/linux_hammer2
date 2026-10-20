@@ -491,6 +491,23 @@ else
 				{ echo "  FAIL $LEDGER: XXX table row for $k, which src/ no longer holds"
 				  fail=$((fail + 1)); }
 		done < "$xtmp/rows"
+
+		# The table's last row is its three sums, and the prose beneath
+		# the table reads its port's figure off that row. The sums were
+		# hand-added and read one low twice: a file with one mark was
+		# left out of the per-file list both times. The row has no
+		# backticks, so the per-file parse above never sees it.
+		sums=$(sed -n '/^| file | `XXX` | upstream.s | this port.s |$/,/^$/p' "$LEDGER" |
+			awk -F'|' '$2 ~ /`/ && $3 ~ /^ *[0-9]+ *$/ { a += $3; b += $4; c += $5 }
+				END { printf "%d %d %d\n", a, b, c }')
+		trow=$(sed -n 's/^| total | \([0-9][0-9]*\) | \([0-9][0-9]*\) | \([0-9][0-9]*\) |$/\1 \2 \3/p' "$LEDGER" | head -1)
+		if [ -z "$trow" ]; then
+			echo "  FAIL $LEDGER: the XXX table has no total row"
+			fail=$((fail + 1))
+		elif [ "$trow" != "$sums" ]; then
+			echo "  FAIL $LEDGER: the XXX table's total row says $trow, its rows sum to $sums"
+			fail=$((fail + 1))
+		fi
 	fi
 fi
 

@@ -528,7 +528,13 @@ runs in milliseconds. The lock is taken by try-lock within the bound,
 since the unmount holds it while it waits for the server's queue to
 drain and a blocking take there would wait on the unmount waiting on it;
 a bulkfree scan holds it for its whole run, so a request started under
-one fails at the bound. A request for
+one fails at the bound. The cost runs the other way too: a request holds
+the lock through its window wait, so a peer that stops continuing holds
+`hammer2_mntlk` for the bound, during which a mount, unmount, pfs-create,
+pfs-delete or bulkfree on the host waits and the synchronization
+thread's try-lock fails and its pass is skipped to its next cadence; the
+bound is the host's protection against that peer, and stage 2b's
+measured default is what sets it. A request for
 any other PFS is answered
 `DMSG_ERR_NOSUPP` and logged. A request for a command outside the stage's
 set is answered the same way; the set is a property of the descriptor,
@@ -542,9 +548,13 @@ bound below. The queue closes with the connection: admission and
 queueing run under one lock, so a quiesce that sets the closing flag
 under it refuses every later request and its flush covers every earlier
 one; a reconnect closes and drains the queue before the message core
-replaces the connection and reopens it after, and the device's teardown
-closes and drains it before the message threads are stopped and frees it
-after they are gone, since the reader may deliver a frame until then. A
+replaces the connection, and the new connection's peer reopens it by
+announcing `PROTO_2`, on the reader that admits, since no request is
+legal before that announcement and a reopen on the ioctl's thread could
+follow a valid first request; the device's teardown closes it for good
+and drains it before the message threads are stopped and frees it after
+they are gone, since the reader may deliver a frame until then, and an
+announcement read during the teardown reopens nothing. A
 request in flight at an unmount closes its transaction before the
 simulated `DELETE`s run, and
 an unmount with a remote peer silent completes through the ten-retry

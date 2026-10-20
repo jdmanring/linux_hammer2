@@ -1216,7 +1216,12 @@ arriving while the connection closes) is closed by the
 message core's own `DMSG_ERR_NOSUPP` reply. The transaction's state is
 held by that open reply direction alone, since the core does not export
 its state references, and the request record is unhooked from the state
-before the closing frame is queued. `cluster-dmsg.sh` reads each of the
+before the closing frame is queued. The queue closes under its own lock
+at a reconnect and at the teardown, reopens when the new connection's
+peer announces `PROTO_2`, on the reader that admits, and is freed only
+after the message threads are gone; a request holds `hammer2_mntlk` for
+its run, so a peer that stops continuing holds it for the bound, which
+is the cost of a PFS structure with no reference count. `cluster-dmsg.sh` reads each of the
 eight read commands beside the guest's own reading of the same volume,
 and the control built with `HAMMER2_NOWINDOW` must deliver a forty-entry
 directory with no continuation sent.

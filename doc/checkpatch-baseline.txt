@@ -146,10 +146,10 @@
 # helper that moves a finished deferral to the done list wraps its signature
 # with the continuation indent (207 -> 208), and the `interrupted` verdict is
 # one more print format split across lines (81 -> 82). No category is new.
-# 1,429 to 1,443 when hammer2_remote.c landed with its five prototypes in
+# 1,429 to 1,444 when hammer2_remote.c landed with its five prototypes in
 # hammer2.h: `return is not a function` 300 -> 307, `no spaces at the start
 # of a line` 208 -> 210, `function definition argument should also have an
-# identifier name` 469 -> 474. The tree's BSD style in a file this port
+# identifier name` 469 -> 475. The tree's BSD style in a file this port
 # wrote; no category is new, see README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
@@ -177,7 +177,7 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-474 function definition argument 'X' should also have an identifier name
+475 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 210 please, no spaces at the start of a line
