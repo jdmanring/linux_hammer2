@@ -187,7 +187,8 @@ hm2 hm2lookup --action hm2lookup --inum $BI --key 0x10000
 hm2 hm2bmap --action hm2bmap --inum $BI --key 1
 hm2 hm2refuse --action hm2refuse --inum $RI
 echo "log-serve $(klog 'H2 SERVE')"
-echo "log-refused $(klog 'HM2 request .* refused')"
+echo "log-refused $(klog 'HM2 request .* refused: a modifying')"
+echo "log-oneshot $(klog 'HM2 request .* refused: one-shot')"
 echo "log-nopfs $(klog 'no mounted PFS of that cluster')"
 echo "log-badmagic $(klog 'bad magic')"
 echo "log-badsize $(klog 'bad header size')"
@@ -370,8 +371,8 @@ m=$(val hm2bmap)
 [ -n "$off1" ] && [ "$(num "$(field "$m" found)" 0)" = 1 ] && [ "$(hexfield "$m" data_off)" = "$off1" ]; check "stage 2a: bmap of logical block one returns the same data offset" $? "found $(field "$m" found), data_off $(hexfield "$m" data_off)"
 [ -n "$off1" ] && [ "$(val show-off1)" = "$off1" ]; check "stage 2a: the hammer2 utility reads that block at the same offset on the media" $? "show $(val show-off1) vs wire $off1, from the line \"$(val show-line)\""
 m=$(val hm2refuse)
-[ "$(num "$(field "$m" mod_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" mod_error)" 0)" = 32 ] && [ "$(num "$(field "$m" nopfs_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" nopfs_error)" 0)" = 32 ] && [ "$(num "$(field "$m" noino_closed)" 0)" = 1 ] && [ "$(num "$(field "$m" noino_refused)" 1)" = 0 ] && [ "$(num "$(field "$m" noino_error)" 0)" != 0 ] && [ "$(num "$(field "$m" noino_frames)" 1)" = 0 ] && [ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(field "$m" shell_reply)" 0)" = 1 ]; check "stage 2a: a modifying command and an unknown cluster are refused NOSUPP, an unknown inode is served as an error, and the connection outlives all three" $? "modifying $(field "$m" mod_refused)/$(field "$m" mod_error), cluster $(field "$m" nopfs_refused)/$(field "$m" nopfs_error), inode error $(field "$m" noino_error) with $(field "$m" noino_frames) frame(s), eof $(field "$m" eof), shell_reply $(field "$m" shell_reply)"
-[ "$(num "$(val log-serve)" 0)" = 14 ] && [ "$(num "$(val log-refused)" 0)" = 1 ] && [ "$(num "$(val log-nopfs)" 0)" = 1 ]; check "stage 2a: the log names the fourteen served requests, the one command refusal and the one cluster refusal" $? "$(val log-serve) served, $(val log-refused) command refusal(s), $(val log-nopfs) cluster refusal(s)"
+[ "$(num "$(field "$m" mod_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" mod_error)" 0)" = 32 ] && [ "$(num "$(field "$m" nopfs_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" nopfs_error)" 0)" = 32 ] && [ "$(num "$(field "$m" oneshot_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" oneshot_error)" 0)" = 32 ] && [ "$(num "$(field "$m" noino_closed)" 0)" = 1 ] && [ "$(num "$(field "$m" noino_refused)" 1)" = 0 ] && [ "$(num "$(field "$m" noino_error)" 0)" != 0 ] && [ "$(num "$(field "$m" noino_frames)" 1)" = 0 ] && [ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(field "$m" shell_reply)" 0)" = 1 ]; check "stage 2a: a modifying command, an unknown cluster and a one-shot request are refused NOSUPP, an unknown inode is served as an error, and the connection outlives all four" $? "modifying $(field "$m" mod_refused)/$(field "$m" mod_error), cluster $(field "$m" nopfs_refused)/$(field "$m" nopfs_error), one-shot $(field "$m" oneshot_refused)/$(field "$m" oneshot_error), inode error $(field "$m" noino_error) with $(field "$m" noino_frames) frame(s), eof $(field "$m" eof), shell_reply $(field "$m" shell_reply)"
+[ "$(num "$(val log-serve)" 0)" = 14 ] && [ "$(num "$(val log-refused)" 0)" = 1 ] && [ "$(num "$(val log-oneshot)" 0)" = 1 ] && [ "$(num "$(val log-nopfs)" 0)" = 1 ]; check "stage 2a: the log names the fourteen served requests, the one command refusal, the one one-shot refusal and the one cluster refusal" $? "$(val log-serve) served, $(val log-refused) command refusal(s), $(val log-oneshot) one-shot refusal(s), $(val log-nopfs) cluster refusal(s)"
 for act in hm2root hm2readdir hm2nowindow hm2scanlhc hm2nresolve hm2nresolve-missing hm2read hm2scanall hm2lookup hm2bmap hm2refuse; do
 	[ "$(num "$(val $act-threads)" 9)" = 0 ]; check "stage 2a: $act leaves no thread" $? "$(val $act-threads)"
 done

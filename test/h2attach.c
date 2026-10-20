@@ -156,6 +156,7 @@ static int old_dfd = -1;	/* the pair a reconnect replaced */
 static long wait_ms = 2000;
 static long settle_ms = 1000;
 static int nocont;		/* hm2: send no continuation, so the window is read */
+static int oneshot;		/* hm2: CREATE|DELETE, which the server refuses */
 
 static void
 trace(const char *fmt, ...)
@@ -700,7 +701,8 @@ hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
 	q.key_beg = key_beg;
 	q.key_end = key_end;
 	q.nmax = nmax;
-	frame_write_full(fd, DMSG_HM2_XOP(idx) | DMSGF_CREATE, id, 0,
+	frame_write_full(fd, DMSG_HM2_XOP(idx) | DMSGF_CREATE |
+	    (oneshot ? DMSGF_DELETE : 0), id, 0,
 	    (const uint8_t *)&q + sizeof(h), sizeof(q) - sizeof(h),
 	    (const uint8_t *)name, name ? strlen(name) : 0, 0);
 	while (frame_read(fd, &h, deadline) == 1) {
@@ -733,7 +735,8 @@ hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
 		}
 	}
 	r->ms = now_ms() - t0;
-	frame_write(fd, DMSG_HM2_XOP(idx) | DMSGF_DELETE, id, 0);
+	if (!oneshot)
+		frame_write(fd, DMSG_HM2_XOP(idx) | DMSGF_DELETE, id, 0);
 	return (r->closed ? 0 : -1);
 }
 
@@ -1075,27 +1078,33 @@ main(int argc, char **argv)
 			rc = (r.closed && !r.refused && r.error == 0) ? 0 : 1;
 		} else if (!strcmp(action, "hm2refuse")) {
 			/* A modifying command, a cluster this device has no
-			 * mounted PFS of, and an inode that does not exist:
-			 * the first two refused by LNK_ERROR NOSUPP, the
-			 * third served and closed with an error and no
-			 * chain; none of them ends the connection. */
+			 * mounted PFS of, a one-shot request and an inode that
+			 * does not exist: the first three refused by LNK_ERROR
+			 * NOSUPP, the fourth served and closed with an error
+			 * and no chain; none of them ends the connection. */
 			static const uint8_t noclid[16] = { 0xde, 0xad, 0xbe, 0xef };
-			struct hm2reply r1, r2, r3;
+			struct hm2reply r1, r2, r3, r4;
 			hm2_request(dfd, 3, clid, inum, 0, 0, 0, NULL, NULL, &r1);
 			hm2_request(dfd, 0, noclid, inum, 0, 0, 0, NULL, NULL, &r2);
+			oneshot = 1;
+			hm2_request(dfd, 0, clid, inum, 0, 0, 0, NULL, NULL, &r4);
+			oneshot = 0;
 			hm2_request(dfd, 0, clid, 0xfffffffULL, 0, 0, 0, NULL, NULL,
 			    &r3);
 			eof = probe_alive(dfd, settle_ms, &shell, &serr, &f);
 			printf("h2attach hm2refuse: conn=1 mod_closed=%d"
 			    " mod_refused=%d mod_error=%u nopfs_closed=%d"
-			    " nopfs_refused=%d nopfs_error=%u noino_closed=%d"
+			    " nopfs_refused=%d nopfs_error=%u oneshot_closed=%d"
+			    " oneshot_refused=%d oneshot_error=%u noino_closed=%d"
 			    " noino_refused=%d noino_error=%u noino_frames=%d"
 			    " eof=%d shell_reply=%d shell_error=%u\n",
 			    r1.closed, r1.refused, r1.error, r2.closed,
-			    r2.refused, r2.error, r3.closed, r3.refused,
-			    r3.error, r3.frames, eof, shell, serr);
+			    r2.refused, r2.error, r4.closed, r4.refused, r4.error,
+			    r3.closed, r3.refused, r3.error, r3.frames, eof,
+			    shell, serr);
 			rc = (r1.closed && r1.refused && r1.error == DMSG_ERR_NOSUPP &&
 			    r2.closed && r2.refused && r2.error == DMSG_ERR_NOSUPP &&
+			    r4.closed && r4.refused && r4.error == DMSG_ERR_NOSUPP &&
 			    r3.closed && !r3.refused && r3.error != 0 &&
 			    r3.frames == 0 && !eof && shell &&
 			    serr == DMSG_ERR_NOSUPP) ? 0 : 1;
