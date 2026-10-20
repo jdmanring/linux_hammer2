@@ -331,10 +331,16 @@ it by the same test, its `devvp_list` is initialized empty because
 (`hammer2_ondisk.c:139-143`), and it is freed by a reference count the connection device alone
 carries (`struct hammer2_dev` has none, `hammer2.h:895-930`, only
 `mount_count` and `iofree_count`): one reference per chain allocated on
-it and per dio, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`)
-and dropped at `hammer2_chain_lastdrop()` (`:562`), two marked lines, and
-one per queued work item, dropped when the item completes or when
-`disable_work_sync()` returns true for an item that will never run.
+it, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`) and dropped
+where the chain is freed (`:833`, not at `hammer2_chain_lastdrop()`'s
+entry, which returns early for a chain that keeps children), two marked
+lines, and one per queued work item, dropped when the item completes or
+when `disable_work_sync()` returns true for an item that will never run.
+The device's dios are not counted: a dio stays in the hash at its last
+release (`hammer2_io.c:722-735`) and is freed by
+`hammer2_io_hash_cleanup_all()` in the device's own free, as the block
+device's are at `hammer2_vfsops.c:2720`, so a count on them would hold
+the device forever.
 
 **Replies become ordinary chains of a media-less device, and
 `hammer2_chain.c` is not edited for them.** The note's marked lines in
@@ -348,8 +354,7 @@ to what the peer needs to find the chain again: the key of the parent
 inode the request named (for the root chain and every inode chain
 `ipcluster` fed, the inode's own parent, since `hammer2_xop_lookup()`
 looks beneath its inode and never returns the inode's own chain), the
-chain's key, keybits and type, its `modify_tid` and its `update_tid`,
-and the in-flight flag of decision A. Only leaves are
+chain's key, keybits and type, and its `modify_tid`. Only leaves are
 fed, since `chain_lookup` and `chain_next` return leaves, so no indirect
 block is ever a proxy. The reply's data lives in a
 `hammer2_io_t` whose `buf` field, the form the port already has for "the
@@ -369,14 +374,14 @@ handle, never for an existing dio that is not GOOD. The wait runs under
 `dio->lock` exclusive, which `hammer2_io_alloc()` takes and
 `hammer2_io_getblk()`'s read path holds (`hammer2_io.c:576-595`), with
 `iohash_lock` released, so nothing the reader or the service kthread
-needs is held across the round trip. A handle the peer no longer
-resolves, or that resolves to a chain whose `update_tid` differs from
-the proxy's (not `modify_tid`, which the peer's flush raises on an inode
-chain; and the refetch takes the peer's whole `bref`, since an inode's
-embedded blockset is rewritten by the peer's flush and the old check
-code would fail its own content), reads `EIO` through the path `load_data`
-already has (`hammer2_chain.c:1075-1081`) and the element is errored,
-never a fault; the next XOP feeds a fresh proxy. **The round trip holds
+needs is held across the round trip. The refetch takes the peer's
+whole `bref` with the data, since an inode's embedded blockset is
+rewritten by the peer's flush and the proxy's old check code would fail
+the peer's current content; a changed `modify_tid` is the chain having
+moved on, as a local chain does under another thread, not an error. A
+handle the peer no longer resolves reads `EIO` through the path
+`load_data` already has (`hammer2_chain.c:1075-1081`) and the element is
+errored, never a fault; the next XOP feeds a fresh proxy. **The round trip holds
 no dio lock and no hash lock.** `hammer2_io_alloc()` runs under
 `iohash_lock` exclusive (`hammer2_io.c:196`) and
 `hammer2_io_hash_lookup()` takes `dio->lock` under it (`:926-934`), so a
@@ -416,7 +421,7 @@ precedes the local ones, so it takes the first block device by the same
 test. Two
 paths are refused on the device with `WARN_ONCE` and `EIO`: a chain
 being created (`hammer2_io_new()`, the `INITIAL` path), since proxies
-are never created locally and stage 3's writes travel as XOP commands,
+are never created locally and no write is sent to it in stage 2,
 and a dirty dio, since `hammer2_io_buf_put()` would write through a
 `bdev_file` the device does not have. One dispatch sits above the DIO
 layer: `hammer2_xop_start_except()` calls the descriptor's storage
@@ -426,7 +431,7 @@ marked test there. A chain with data and no `dio` was
 the first shape considered and is not one the core allows:
 `hammer2_chain_drop_data()` panics on it at the first last unlock, which
 the collect's advance reaches on the first two-entry `readdir`. The
-device is counted by its chains, dios and queued items and freed after the last,
+device is counted by its chains and queued items and freed after the last,
 not at disconnect, because the ccache and `ip->cluster` hold proxies
 past the XOP and past the connection.
 
@@ -473,11 +478,9 @@ both connections queues behind them until the bound breaks the cycle
 and reports a healthy cluster as unreachable. The read commands of
 stage 2 run under the chain locks the storage function takes itself,
 shared, which is what a strategy XOP already runs under with no
-dependency (`:414-419`). The modifying commands of stage 3 are
-serialized by the two-phase protocol's own rule, in decision A: the
-coordinator holds its local dependency for the transaction, a prepare on
-another master runs under exclusive chain locks, and a prepare that
-meets a chain already prepared by another transaction is refused.
+dependency (`:414-419`). A modifying command is outside stage
+2's set and is answered `DMSG_ERR_NOSUPP`; how the protocol note
+serializes them against the inode dependency is that note's.
 A request for a PFS the connection's peer is not admitted to is answered
 `DMSG_ERR_NOSUPP` and logged. A request for a command outside the stage's
 set is answered the same way. The thread stops with the connection, and
@@ -518,15 +521,101 @@ slave's storage function first and modify its chain, the remote's
 `ESRCH` and then, on the `CHECK_NULL` end of scan, the element's
 `EOPNOTSUPP`, and the slave's created chain would flush with no master
 agreeing. `EIO` at `hammer2_cluster.c:360` is reachable only with a
-quorum. Stage 3 lifts the gate under the ruled protocol.
+quorum. The gate lifts only under the protocol a later note settles.
 
-## The quorum protocol: four decisions presented
+**The slave's pass over a remote master takes its source from the
+master.** The default pass snapshots its source on the source element's
+device (`hammer2_synchro.c:801`, `:817`), and `hammer2_pfs_snapshot()`
+takes `hmp` from `pfs_hmps[clindex]` (`hammer2_ioctl.c:612`) and asserts
+its modify succeeded (`:690-691`): on the connection device, where a
+create is refused, that is at best a pass that copies nothing and at
+worst the assertion. So the guard at `hammer2_synchro.c:733` refuses a
+local snapshot when the focus slot's device is a connection device, and
+stage 2b adds one command outside the 21 descriptors, a request for the
+master to take the snapshot on its own device and serve the pass from
+its root, which is P7's immutable source over the wire; its deletion at
+the pass's end is a second command, and a snapshot left by a dropped
+connection is deleted by the master at the next request, as the local
+pass deletes a crash's. Until that command is built the wire pass runs
+in the live form `sync_snapshot=0` already names, and the
+`snapshot_source` criterion is read only once it is.
 
-Each decision below changes distributed commit semantics or the security
-model and stops here with its alternatives, what each must prove, a
-precedent, a failure mode and a recommendation. None is the maintainer's
-ruling until he gives it. Stages 1 and 2 need none of them; stages 3 to 5
-need all four.
+## The quorum protocol: what the carried core imposes, and a decision presented open
+
+The completion plan's rule stops a decision that changes distributed
+commit semantics at a design note with alternatives and what each would
+have to prove. Seven audit rounds of this note tried four shapes of
+that decision against the carried code and refuted each on cited lines,
+and what they established is not a fifth shape but the set of facts any
+cross-host commit on this core has to respect. They are listed first,
+each with the line that holds it, because every candidate below is
+judged against them and because the next design starts from them
+rather than from the design document alone.
+
+- **C1. The flush propagates `modify_tid` by maximum, per host.** A
+  parent's `modify_tid` is raised to the largest child written back and
+  never lowered (`hammer2_flush.c:885-887, 932-933`, upstream's `:1018`,
+  `:1066`); two hosts flush on their own schedules, so an inode chain,
+  an indirect block or the root reads two tids on a healthy cluster
+  between one host's flush and the other's, and a maximum cannot show a
+  missed transaction below it. The format's own comment calls
+  `modify_tid` a cluster-level identifier that is "not propagated"
+  (`hammer2_disk.h:595-601`), and the carried synchronizer depends on
+  the propagation the code does anyway.
+- **C2. Two carried helpers modify a parent at the transaction's tid
+  for its blockmap alone, and only on the host whose flush has run.**
+  `_hammer2_chain_delete_helper()` (`hammer2_chain.c:3437`) and
+  `hammer2_chain_rename_obref()` (`:3398`) take that branch when the
+  child is `BLKMAPPED` (`:5226`, `:2013`), so any stamp taken at
+  `hammer2_chain_modify()` moves with the flush schedule too, and
+  `update_tid`, the field the format reserves for the cluster
+  (`:597`, `:638`, written by no tree), would need those sites excluded
+  and still meets C8 and C9.
+- **C3. The core has no undo.** A modify copies the chain in place
+  (`hammer2_chain.c:1608-1668`); a delete has modified the parent and
+  removed the blockref before any protocol step could refuse it; only a
+  create can be dropped. A commit protocol that applies at prepare
+  cannot abort a modify or a delete with the media and the memory as
+  they were.
+- **C4. Inode numbers are a per-host counter.** `pmp->inode_tid` is
+  seeded at mount (`hammer2_vfsops.c:1707-1710`) and advanced by
+  `hammer2_trans_newinum()` (`hammer2_flush.c:239-243`) from the VOP
+  (`hammer2_vnops.c:387`); the flush writes it into the root's
+  `pfs_inum` (`hammer2_flush.c:798`). Two coordinators issue the same
+  inode numbers, and `hammer2_xop_inode_create()` answers the second
+  `EEXIST` on every host (`hammer2_xops.c:1070-1077`).
+- **C5. The frontend's inode is not refreshed by a chain commit.** A
+  participant's `ip->meta` is written by its own VOPs and written back
+  whole by `inode_chain_sync` (`hammer2_xops.c:1416`), so a commit that
+  changed the chains under an inode on another host leaves this host's
+  in-memory size, mode and times stale and its next sync overwrites the
+  other's. `hammer2_inode_repoint()` moves chains, not meta.
+- **C6. Elements run to completion before the collect, which waits on
+  nothing and re-feeds nothing** (`hammer2_admin.c:785-791`); a proxy's
+  fields are its feed frame's. A visibility rule that asks the collect
+  to wait for a peer's apply has no feed to wait on.
+- **C7. The collect skips a key the check returns `ESRCH` or `EDEADLK`
+  for and ends the scan in `ENOENT`** (`hammer2_admin.c:800-812`,
+  carried), and `readdir` ends on any collect error at the position it
+  reached (`hammer2_vnops.c:254-257`), so a disputed key either vanishes
+  from a listing or fails the whole listing from that position on.
+- **C8. PFS roots are stamped from each host's super-root counter at
+  creation** (`hammer2_ioctl.c:341`, `:349`) and a mount-time repair
+  re-stamps one on one host (`hammer2_vfsops.c:1973`), so two roots of
+  one cluster differ on every tid field from birth.
+- **C9. The slave's pass re-stamps an inode copy at the replace with the
+  master's propagated tid** (`hammer2_synchro.c:1402`, `:2149`, `:2563`),
+  and it snapshots its source on the source element's own device
+  (`:801`, `:817`; `hammer2_ioctl.c:612`, `:690-691`), which for a
+  remote source is the connection device, where a create is refused.
+- **C10. A span carries no status update** (`hammer2_iocom.c:362`), so a
+  connected master learns nothing the protocol does not send it, and a
+  fence or an outcome one coordinator holds is held by that coordinator
+  alone until it is carried.
+- **C11. Storage functions read host-local inode state**:
+  `hammer2_xop_inode_create()` takes the parent's compression and check
+  methods from the in-memory inode (`hammer2_xops.c:1086-1087`), so the
+  same request can produce different chains on two hosts.
 
 ### A. What PREPARE and COMMIT are in chain terms, and who coordinates
 
@@ -534,370 +623,162 @@ The state model asks for explicit transaction states, `NEW`, `PREPARING`,
 `PREPARED`, `COMMITTING`, `COMMITTED`, `FLUSHING`, `DURABLE`, with
 `ABORTED`, `FAILED`, `REQUIRES_REPLAY` and `REQUIRES_RESYNC` beside them,
 and says a transaction's final state is not inferred from one packet.
+Four candidates, with what each met.
 
 1. **The client drives every master through XOPs and
    `hammer2_cluster_check()` decides**, the carried hard-block form over
    the wire. Precedent: the local two-master shape `cluster-quorum.sh`
    measures. Must prove: nothing, it is what exists. Fails: Dillon rules
-   it out for networks because a client that loses a master mid-transaction
-   leaves masters out of sync without their knowing; and the local
-   master's storage function modifies its chain before the check runs, so
-   with the peer gone the created chain stays and flushes whichever code
-   the check returns. This is the fork `partition` must not show.
-2. **The master that receives the modifying XOP coordinates a two-phase
-   commit with the other masters, prepare being the modification applied
-   to a chain flagged off the flush until commit.** Precedent: Dillon's
-   "masters will run a 2-phase commit amongst themselves". Must prove: a
-   prepared chain never reaches the media before commit, and an abort
-   leaves the memory as it was. Fails on the second: the carried core has
-   no undo. A delete prepare has already modified the parent at the
-   transaction's tid and removed the blockref
-   (`_hammer2_chain_delete_helper()`, `hammer2_chain.c:3437` onward), a
-   modify prepare has copied the chain in place (`:1608-1668`), and only
-   a create can be dropped; the "dies during prepare" cell could not
-   hold both media unchanged, and the aborted tid would flush into the
-   root. A prepared chain is also visible to a reader on its host before
-   commit, which the check cannot tell from a committed one.
-3. **Prepare as an intent record and apply at commit.** The prepare
-   carries the XOP's request, the same frame stage 2 defines, and every
-   connected, unfenced master holds it as an intent: validated against
-   the intents it already holds (another intent on the same inode is a
-   conflict), against the coordinator's epoch and level (decision B), and
-   against the tid order below, and acknowledged without touching a
-   chain. Commit runs the XOP's storage function from the intent at the
-   carried tid on each master, in tid order; abort drops the intent and
-   nothing was modified. Dillon separated a durable log and its replay
-   into their own task, and that is P9's: in P8 the record is the
-   in-memory intent, lost with the host, and the loss is handled by the
-   level test below rather than by replay. Precedent: the state model's
-   `PREPARED` as a state no chain has entered, and its `REQUIRES_REPLAY`
-   for the durable form. Must prove: no chain of a PFS with a remote
-   element is modified outside a commit, read by the "dies during
-   prepare" and "dies after prepare" cells with both fingerprints equal
-   to the pre-run; the intent's validation refuses the two-coordinator
-   write race one way (the healthy cell); the memory an intent pins is
-   the request alone. Fails: a commit that runs the storage function on
-   one host before another leaves a window in which the two hold
-   different content, which is the in-flight rule below.
+   it out for networks because a client that loses a master
+   mid-transaction leaves masters out of sync without their knowing; the
+   local master's storage function modifies its chain before the check
+   runs, so with the peer gone the created chain stays and flushes
+   whichever code the check returns, the fork `partition` must not show;
+   and C1 makes the check itself disagree on inode chains between two
+   hosts' flushes. It stays the measured baseline of stage 3's first run.
+2. **The receiving master coordinates a two-phase commit, prepare being
+   the modification applied to a chain flagged off the flush.**
+   Precedent: Dillon's "masters will run a 2-phase commit amongst
+   themselves". Refuted by C3: no abort for a modify or a delete, the
+   "dies during prepare" cell could not hold both media unchanged, and
+   the aborted tid would flush into the root; a prepared chain is also
+   visible to a reader on its host.
+3. **The receiving master coordinates, prepare being an intent held in
+   memory and applied at commit in tid order.** Precedent: the state
+   model's `PREPARED` as a state no chain has entered. It removes the
+   undo problem and was refuted on the rest: C4 (two coordinators
+   collide on inode numbers), C5 (a commit on one host leaves the other
+   host's inode stale and its next sync overwrites the commit), C6 (no
+   way to make a commit visible on every host at once, since the collect
+   cannot wait for a peer's apply), C11 (the same intent applies
+   differently), and C10 for the fence it needed, which one coordinator
+   held and the others did not; in a two-master cluster that fence is
+   always held alone.
+4. **P9's durable record and a write path that applies commits to the
+   frontend.** The prepare is a record with a media home (a format
+   extension, designed under the first rule), the coordinator allocates
+   inode numbers for the cluster or each master owns a disjoint range
+   written into the root, a commit applied on a host refreshes that
+   host's in-memory inode from the committed chain, every master applies
+   in the same order, a committed transaction becomes visible on a host
+   only when the record says every master has applied it, and the stamp
+   compared by the check is written by the protocol's own apply, not by
+   `hammer2_chain_modify()`. Must prove: each of C1 to C11 by a control
+   that turns the answering mechanism off, and the record's home against
+   the media rule. Fails: it is more than P8 and P9 as the roadmap splits
+   them, and none of it can be read until stage 2's remote element runs.
 
-**Recommendation: 3**, with 1 kept as the measured baseline of stage 3's
-first run, labeled as such, and never the shipped default; 2 is
-recorded as the shape the first five audits refined and the sixth
-refuted on the core's lack of an undo.
-
-**The rules of the recommended protocol.** A quorum is the least number
-of connected, unfenced masters under which the PFS is writable at all
-(`nquorum`, `hammer2_cluster.c:178`), not the number of acknowledgments
-a commit needs: a commit needs every connected, unfenced master's
-acknowledgment of the prepare. A master that does not acknowledge within
-the bound is not left out and forgotten: the coordinator first runs a
-membership transaction that fences it (decision B), prepared on and
-acknowledged by every other connected, unfenced master, and commits the
-original transaction only once that has committed, so every master that
-applies a commit knows the same fence set and a fenced master is never
-sent a later prepare. Prepares are ordered by tid on every master: a
-prepare whose tid is below a tid the participant has already applied is
-refused as stale, the refusal carries the participant's applied tid, and
-the coordinator reissues the intent above it; a commit is applied only
-after every intent with a lower tid on that participant has resolved; so
-every unfenced master applies the same transactions in the same order,
-and the flush can never raise a parent past a commit it has not seen. A
-reissue can lose again to a faster coordinator, so the obligation is a
-bound on reissues read by the healthy cell's two-mount write race, and
-the lower `pfs_fsid` wins a conflict of intents on one inode as before,
-so two coordinators cannot refuse each other forever. **Commit is
-visible only when every master has applied it.** The storage function
-run at commit flags the chains it modified in flight; the coordinator
-sends a release when every participant has acknowledged its apply and
-the flag clears; the quorum check counts a flagged chain as it counts a
-slot not yet fed (`umasters`, `hammer2_cluster.c:280-284`, one marked
-test in pass 2), the feed frame carries the flag so a proxy shows it,
-and the collect, which today has nothing to wait for on `EINPROGRESS`
-(`hammer2_admin.c:790-791`), waits on a PFS with a remote element on
-the connection's release wait queue, bounded by `remote_timeout_ms`, and
-re-checks (one marked path beside the carried skips), so a read racing
-a commit returns the committed content or the bound's errno, never one
-host's content against the other's. **An intent whose outcome has not
-arrived** by the bound, or whose coordinator's connection dropped, is in
-doubt: the participant keeps it, fails every XOP on the PFS closed with
-decision C's no-quorum errno, and resolves it at the next registration
-by level alone: an intent whose tid is the level the registration
-reads is applied, one just below that level is dropped (nothing applied
-it anywhere), and a wider gap means the participant is behind and
-registers fenced. No chain is read to resolve it, so a committed delete
-and a lost create are not confused and a transaction touching several
-keys needs no naming.
-3. **Prepare as an intent record and apply at commit**, the transaction
-   log Dillon separated into its own task. Precedent: the state model's
-   `REQUIRES_REPLAY`. Must prove: the record's media home, which is a
-   format extension. Fails: it is P9 arriving early, and the first rule
-   stops it at an extension design.
-
-**Recommendation: 2**, with 1 kept as the measured baseline of stage 3's
-first run, labeled as such, and never the shipped default.
+**Recommendation: none of the four is accepted in this note.** Three were
+refuted on the code and the fourth is a design its own note has to carry,
+written over stage 2's running remote element, where C5, C6 and C11 can
+be measured instead of read, and weighing P9's durable record as a
+prerequisite of P8's write cells rather than a step after them. Stages 1
+and 2 need no part of it and proceed. This changes the sequence the plan
+set, which put the protocol in this note and P9 behind P8, so it is put
+to the maintainer with the alternatives above rather than taken here.
 
 ### B. Membership, epoch and stale rejection (S1 to S3)
 
-Two linked questions. **Membership: who counts in `pfs_nmasters`.**
-
-1. **The masters visible**, as carried. Precedent: every tree. Fails: a
-   master that mounts without ever seeing its peer has a quorum of one
-   and decides alone, and with A's protocol meets its quorum by itself.
-   A master that saw its peer and lost it keeps `pfs_nmasters` 2, since
-   the count is only ever raised (`hammer2_vfsops.c:451-461`) and slot
-   teardown never lowers it, so it fails closed by the accident of a
-   counter that forgets nothing until the next mount.
-2. **The `copyinfo[]` rows whose `pfs_clid` matches the PFS and whose
-   `remote_pfs_type` is MASTER.** A configured peer that is unreachable
-   raises the quorum rather than leaving it, which is what gives A a
-   quorum to miss. Precedent: `copyinfo[]` is the array the original
-   kept for exactly the cluster's membership, on the media in the volume
-   header already, so no format change. Must prove: the `pfs_clid`
-   filter, without which ROOT and every snapshot on the volume would read
-   quorum 2 with one master visible and the harness's ROOT mounts would
-   stop working; and the sync thread a lone MASTER then gets, since
-   `hammer2_vfsops.c:489` skips it only at `pfs_nmasters <= 1`, whose
-   collect excluding itself reads an all-NULL cluster as `ENOENT`, the
-   shape `hammer2_synchro.c` records as "deletes every key the element
-   still holds", so a master's sync pass runs only with a second element
-   present. Fails: the field `remote_pfs_type` is documented as "probed
-   direct remote PFS type", and this reads it as configured membership,
-   a change of on-disk meaning that is why the question stops here.
-3. **A written on-disk `pfs_nmasters`** set by the administrator at
-   `pfs-create` or by a new ioctl. Precedent: the field exists and
-   upstream's comment says MASTERs "are authoritative" for it. Must
-   prove: who writes it and when, and what a DragonFly reader does with
-   a value above its visible count (it raises its quorum, as the port
-   does). Fails: it is a second place for the same fact.
-
-**One transaction id across hosts.** `hammer2_trans_sub()` allocates
-`modify_tid` from a per-PFS counter (`hammer2_flush.c:159-166`), seeded
-at mount from the local root (`hammer2_vfsops.c:1711-1712`); the local
-two-master shape shares one `pmp` and so one counter, which is why its
-quorum pass agrees. Across hosts two counters would differ on every
-write, the equal-tid test of pass 2 (`hammer2_cluster.c:298-311`) would
-never agree, and "behind" would mean nothing. So **the prepare carries
-the coordinator's `mtid`, every participant applies the transaction at
-that tid, and a participant first raises its own counter past it**
-(`pmp->modify_tid` raised to the carried tid plus one when it is not
-already above it, by a compare-and-exchange loop in one marked function
-beside `hammer2_trans_sub()`, because the counter holds the next tid to
-issue: `atomic_fetchadd_64` returns the value before the add
-(`hammer2_flush.c:163`) and the mount seeds it to the root's tid plus
-one (`hammer2_vfsops.c:1711-1712`), so a raise to the carried tid itself
-would issue that tid twice), which makes the counter
-a Lamport clock: a transaction that saw an earlier one carries a higher
-tid, two writes to one key are strictly ordered because the second
-coordinator took part in the first, and the flush's propagation of a
-child's tid to its parents (the sync pass's gate) works as it does
-locally, because decision A applies commits in tid order on every
-master and refuses a stale prepare, so no commit is ever applied under
-a parent the flush has already raised past its tid; the SLAVE thread's
-rescan set (`hammer2_synchro.c:140-144`) is the thread's own and cannot
-be reached from a commit on another host, so the order is a rule of the
-protocol and not a repair after the fact. Every modifying storage function already writes
-`xop->head.mtid` (`hammer2_xops.c:381, 408, 579, 604`), so the request
-structure carries it.
-
-**Catch-up is P9's, not P8's.** The roadmap puts "transaction replay and
-the reintegration of a stale master" in P9 and its exit
-`stale_master_reintegration` there; P8's `stale_rejoin` exit and S3 ask
-that a stale master not regain authority by reconnecting, and L2's
-"eventually converges" is P9's. Three readings put bringing a master
-level outside P8: the carried pass for a MASTER target excludes its own
-slot (`hammer2_synchro.c:1517-1518`), which the check counts as in
-progress, so with two masters it returns `EINPROGRESS` and the pass
-exits (`:1592-1594`), copying nothing today in any tree
+**Membership is settled where the research settles it.** Today
+`pfs_nmasters` is the masters a mount can see plus an on-disk field no
+tree writes at creation (`hammer2_vfsops.c:440-462`), so a master cut off
+from its peer has a quorum of one and the `partition` cell forks.
+Candidates: (1) the masters visible, as carried; (2) the `copyinfo[]`
+rows whose `pfs_clid` matches the PFS and whose `remote_pfs_type` is
+MASTER, so a configured peer that is unreachable raises the quorum rather
+than leaving it; (3) a written on-disk `pfs_nmasters` set by the
+administrator. (2) reads an on-disk field documented as "probed direct
+remote PFS type" (`hammer2_disk.h:514`) as configured membership, a change
+of stated meaning recorded under the first rule. Its proof obligations:
+the `pfs_clid` filter, without which ROOT and every snapshot on the
+volume would read quorum 2 with one master visible; and that a master's
+own synchronization pass never runs against a quorum it cannot meet,
+since `hammer2_vfsops.c:489` skips the thread only at `pfs_nmasters <=
+1`, and the pass for a MASTER target excludes its own slot
+(`hammer2_synchro.c:1517-1518`), reads `EINPROGRESS` with two masters
+and exits (`:1592-1594`), copying nothing today in any tree
 (`cluster-quorum.sh` counts threads at `:126-130` and has never measured
-a pass); the default snapshot pass snapshots the source on the source
-element's own device (`:801`, `:817`), which for a remote source is the
-connection device, where a create is refused; and a master whose PFS is
-not mounted on its host registers nothing and runs no pass. **In P8 a
-MASTER element gets no synchronization thread**: the creation at
-`hammer2_vfsops.c:489` is skipped for MASTER slots whatever
+a pass). **In P8 a MASTER element gets no synchronization thread**: the
+creation at `hammer2_vfsops.c:489` is skipped for MASTER slots whatever
 `pfs_nmasters` says, one marked line with `DEFER(P9: reintegration of a
-stale master)`, and `cluster-quorum.sh`'s check at `:230`, which asserts two support
-threads as its only witness that `pfs_nmasters` is 2, inverts to assert
-none and takes a new witness: a `hammer2_debug` print of
-`pfs_nmasters` after `hammer2_pfsalloc()`'s count
-(`hammer2_vfsops.c:460-461`), read from the klog as the harness reads
-its other counts. A SLAVE's thread is unchanged.
+stale master)`, and `cluster-quorum.sh`'s check at `:230`, which asserts
+two support threads as its only witness that `pfs_nmasters` is 2,
+inverts to assert none and takes a new witness, a `hammer2_debug` print
+of `pfs_nmasters` after `hammer2_pfsalloc()`'s count
+(`hammer2_vfsops.c:460-461`), read from the klog as the harness reads its
+other counts. A SLAVE's thread is unchanged on its host. **Recommendation:
+(2) with both obligations.** Membership alone does not make a partition
+fail closed: it gives the protocol a quorum to miss, and the protocol is
+decision A's.
 
-**No propagated tid can say whether two masters agree, so the port
-compares the one DragonFly reserved for it.** The flush raises a
-parent's `modify_tid` to the largest child it writes back and never
-lowers it (`hammer2_flush.c:885-887, 932-933`, carried from upstream's
-`:1018` and `:1066`), on each host's own schedule, so between two hosts'
-flushes an inode chain or a parent reads two tids on a healthy cluster,
-and a snapshot modifies the root inode at a tid of its own
-(`hammer2_ioctl.c:634-640`). A test on the root's tid and a test on the
-modified chain's parent both fail for this reason, and the format's own
-comment says why: `mirror_tid` is per cluster node and propagated by
-the flush, `modify_tid` is a cluster-level identifier the design meant
-not to propagate, and `update_tid` is the cluster-level field
-"identical within the topology across all cluster nodes when fully
-synchronized" (`hammer2_disk.h:595-601, 636-638`), which the flush does
-not propagate (`hammer2_flush.c:270-271`) and no tree writes. **The port
-writes `update_tid` and compares it.** `hammer2_chain_modify()` sets
-`bref.update_tid` to the transaction's tid wherever it sets `modify_tid`
-from one (`hammer2_chain.c:1667-1668`), except where the caller passes a
-new `HAMMER2_MODIFY_NOCLC` flag, which the two carried sites that modify
-a parent at the transaction's tid for its blockmap alone pass:
-`_hammer2_chain_delete_helper()` (`:3437`) and
-`hammer2_chain_rename_obref()` (`:3398`), both reached only when the
-child is `BLKMAPPED`, that is, already flushed into the parent on that
-host, so without the flag a directory's or the root's stamp would move
-on the hosts whose flush had run and not on the others. Three marked
-lines in `hammer2_chain.c` and one define; the stamp at the one site
-with an exclusion was chosen over a stamp at each of the eleven
-`chain_modify` and `chain_resize` calls in `hammer2_xops.c` and the two
-in `hammer2_strategy.c` because a content site missed there is a chain
-the check never compares, a safety hole, while a bookkeeping site missed
-here is a stamp that moves with a flush, a liveness defect the control
-below reproduces on purpose. The quorum check reads `update_tid` where
-it reads `modify_tid`: the four expressions of pass 2
-(`hammer2_cluster.c:300-305`) and pass 3's comparison (`:381`). A leaf's
-`update_tid` equals its `modify_tid`, since a leaf is modified only under
-a tid; an inode chain's is the tid of its last `inode_chain_sync`,
-create or rename of its own meta on every host, whatever each host's
-flush has since done to its `modify_tid`; the root's moves only with its
-own meta; an indirect block is never fed. The two local elements of
-`cluster-quorum.sh` are modified by one storage function at one tid and
-agree as they do today, which that script reads unchanged. The slave's
-pass inserts an inode copy with mtid 0 (`hammer2_synchro.c:1887-1889`)
-and a leaf copy with the focus's `modify_tid` (`:1893-1895`), so a leaf
-copy is stamped by `chain_modify` and an inode copy is stamped from the
-focus's `update_tid` by one marked line there, since pass 3 validates a
-slave on the same field (`hammer2_cluster.c:398-406`). The field is on
-the media, in every blockref, non-zero where it was zero, and the format
-comment gives it as "propagated upward on verification"
-(`hammer2_disk.h:597`, `:638`) where the port uses it as an unpropagated
-stamp of the record's last cluster-level change: a use of a reserved
-cluster field and a change of its stated meaning, both under the first
-rule, recorded here as `remote_pfs_type`'s was, with the alternative, a
-tid held on `hammer2_chain_t` only, which a master returning from a
-restart would read as zero against its peer's value and fail every inode
-closed for good. DragonFly's `fsck_hammer2`, `hammer2`, `newfs_hammer2`
-and `mount_hammer2` in the clone's sparse checkout read the field
-nowhere; stage 1 reads a volume written with it under `fsck_hammer2` and
-on the DragonFly guest. The slave's own pass keeps comparing
-`modify_tid` as P7 built it (`:1455`, `:1746`), and a slave never votes.
+**`REMOTE_DEL` is a membership change made on one host**, which lowers
+that host's quorum; it is the act the `partition` control uses to make a
+fork, so under (2) it is a protocol operation the protocol note makes a
+transaction, and until then the harness uses it only as that control.
 
-**Level is a per-PFS measure the protocol alone raises, and a fence is
-a transaction.** Each master keeps `quorum_tid`, the highest tid it has
-committed through the protocol, raised at every commit it applies and
-seeded at mount from its MASTER element's root `modify_tid` (its own
-line: the seed at `hammer2_vfsops.c:1711-1712` reads the collect's focus,
-which may be any element), which after a flush is the largest committed
-tid on its media, since under decision A nothing is applied outside a
-commit; nothing else moves it, not the flush, not a slave's pass on the
-same host, whose tids land on the slave element alone, not bulkfree,
-which touches the freemap. Each master also keeps the fence set and the
-**epoch**, the count of membership transactions, both agreed: a fence is
-prepared on and acknowledged by every other connected, unfenced master
-before any commit excludes the fenced one, so every master that applies
-a commit holds the same fence set and the same epoch, and a master's
-fence is never a fact one coordinator alone knows. Under decision A's
-ordering every unfenced master applies the same transactions in tid
-order, so two masters with equal epoch and `quorum_tid` have applied the
-same set, and a lower `quorum_tid` is a prefix of the other's.
-**Registration is a transaction** on the PFS, coordinated by the lower
-`pfs_fsid` of the two sides when both receive a span at once, prepared
-on every connected, unfenced master, each of which answers after every
-commit it holds has been applied; a held registration is not a held
-commit and does not wait on one. The coordinator's epoch and
-`quorum_tid` are the cluster's: if a connected, unfenced master answers
-with other values the coordinator fences the lower side first, so the
-value compared is always one every unfenced master agrees on. Equal
-means level and the slot votes; lower means the registering master is
-behind and registers fenced; higher means it wrote alone with its row
-removed and the cluster it rejoins is behind, so both sides fence the
-other and the PFS fails closed until P9's record says which side is
-current, which is S1, and the `partition` cell's negative control reads
-it. An in-doubt intent on either side is resolved by the same reading,
-as decision A says. After every master has restarted, epoch and fence
-set are empty on all and the media seeds decide, which is sound because
-a fenced master applied nothing after its fence. A fenced slot is
-counted in `pfs_nmasters` and never in `nmasters`, takes part in no
-prepare, is never written through, and every XOP against its own mount
-returns decision C's no-quorum errno; the fence is a slot state in
-memory on every master, named once in the kernel log with both values
-and readable through a `hammer2_debug` print, since `hammer2 -v show`
-reads media and cannot see it. A fenced master is not caught up in P8:
-reintegration is P9's, a durable record of the last quorum commit, the
-catch-up pass over a remote source, and the final blocked pass. A
-snapshot's modification of the root inode flushes through
-`inode_chain_sync`, one of the 21 descriptors (`hammer2_inode.c:1828`),
-so it is prepared and committed at the coordinator's tid on every master
-like any other write, raises `quorum_tid` on each, and `pfs_lsnap_tid` is
-a value carried, not a tid of its own; the snapshot's own tid goes to
-the super-root's new chain (`hammer2_ioctl.c:634-690`). A behind master
-whose PFS is unmounted on its host is offline: the server answers
-requests against an unmounted PFS `DMSG_ERR_NOSUPP`, the registering
-side treats that as not available, and with membership counting it the
-quorum fails closed until it is mounted and, in P9, brought level.
-
-**Epoch.** A media field, an extension under the first rule; or derived.
-The derived form is the pair above, the count of membership transactions
-and `quorum_tid`, both raised only by commits, equal across unfenced
-masters by decision A's ordering, and compared at the registration
-transaction; the durable record that says which of two forked sides is
-current is P9's extension.
-
-**Recommendation: membership 2 with both obligations, one Lamport clock
-carried in the prepare, no synchronization thread for a MASTER element
-in P8, `update_tid` stamped at the core's one modify site with the two
-blockmap sites excluded and compared by the check, level as epoch and
-`quorum_tid` compared at a registration transaction, a fence as a
-membership transaction every unfenced master applies, epoch derived,
-and the reserved field's use the only media change.**
+**Level, epoch and the stale master are the protocol note's**, and this
+note records what they cannot be. A master's level cannot be read from
+any tid the flush moves (C1, C2, C8, C9): the root's `modify_tid`, the
+modified chain's or its parent's, and a stamp taken at
+`hammer2_chain_modify()` were each tried and each read two values on a
+healthy cluster. A fence held in one coordinator's memory is not a
+fence (C10): a three-master interleave with one restart left two masters
+equal on a per-PFS commit measure with different applied sets, and in a
+two-master cluster the only other master is the one being fenced. An
+epoch derived from in-memory state is lost with every host, and the
+all-restart case then falls back on media tids, which C1 excludes. So S1
+to S3 need a durable record of membership and of the last agreed commit,
+which is the record candidate 4 names and P9's extension provides, and
+the port's `update_tid` on the media, written by the protocol's apply and
+excluded at C2's two sites, is the comparison field that record would
+make sound. Until that note, a master whose PFS is unmounted on its host
+is offline: the server answers requests against an unmounted PFS
+`DMSG_ERR_NOSUPP` and the registering side treats that as not available.
+The Lamport raise the earlier rounds designed stands as a fact about any
+future protocol: `pmp->modify_tid` is a per-PFS counter whose
+`hammer2_trans_sub()` returns the value before the add
+(`hammer2_flush.c:163`) and is seeded to the root's tid plus one
+(`hammer2_vfsops.c:1711-1712`), so a participant that applies a carried
+tid raises its counter to that tid plus one by compare-and-exchange, or
+issues it twice.
 
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
 (`hammer2.h:1521-1535`), and the collect turns `ESRCH` and `EDEADLK` at
-the end of a scan into `ENOENT` (`hammer2_admin.c:800-812`). With fewer
-than `nquorum` masters agreeing the check returns at
-`hammer2_cluster.c:338-344`, before pass 3, and `RDHARD` is set for a
-MASTER only in pass 3 (`:387-388`), so there is no carried read of a
-local focus under quorum loss: today a `lookup` under it reads
-`ENOENT`, "no such file", and a `readdir` reads empty. Reads are
-already closed, with the wrong errno, and the state model allows a
-local read only where the original semantics allow it and stale data
-cannot be presented as current, which is Dillon's soft-master mode and
-not a P8 mode. The handoff asks for one deterministic user-visible value
-when a quorum cannot be formed. Candidates: the carried codes as they
-fall out, which is `ENOENT` for reads and `ENOENT` or `EDEADLK` for
+the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
+agreeing the check returns at `hammer2_cluster.c:338-344`, before pass 3,
+and `RDHARD` is set for a MASTER only in pass 3 (`:387-388`), so there is
+no carried read of a local focus under quorum loss: today a `lookup`
+under it reads `ENOENT`, "no such file", and a `readdir` reads empty.
+Reads are already closed, with the wrong errno, and the state model
+allows a local read only where the original semantics allow it and stale
+data cannot be presented as current, which is Dillon's soft-master mode
+and not a P8 mode. The handoff asks for one deterministic user-visible
+value when a quorum cannot be formed. Candidates: the carried codes as
+they fall out, which is `ENOENT` for reads and `ENOENT` or `EDEADLK` for
 writes; `ENOTCONN` for no quorum reachable and `EIO` for a reachable
 quorum that disagrees on media; `EAGAIN`, which the sync thread already
 uses for its own retry and would be read as that. Precedent: NFS returns
 `EIO` for a server it cannot reach by default and `ETIMEDOUT` under
-`soft`. The design for the recommended pair: the check counts masters
-whose slot is absent or errored with the connection class
-(`ETIMEDOUT`, the closed-connection code) and returns a new
-`HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
+`soft`. The design for `ENOTCONN` is independent of decision A and is
+settled here: the check counts masters whose slot is absent or errored
+with the connection class (`ETIMEDOUT`, the closed-connection code) and
+returns a new `HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
 `ESRCH`/`EDEADLK` split, so a read under quorum loss is `ENOTCONN` and
 not "no such file"; the end-of-scan path that counts a `(NULL, error)`
-master as agreeing (`hammer2_cluster.c:286-291`) excludes an
-unreachable one. The `EIO` of disagreement needs a mechanism of its
-own: the collect skips a key the check returns `EDEADLK` for and ends
-the scan in `ENOENT` (`hammer2_admin.c:805-812`, carried from upstream),
-so a disputed key would vanish from a `readdir` and read as absent to a
-`lookup`; on a PFS with a remote element the collect returns `EIO` to the
-XOP in place of the skip (the errno map at `hammer2.h:1533-1534` has no
-`pmp` and returns `EDEADLK` as it is, so the mapping is the collect's),
-one marked test beside the carried skip, while `ESRCH`, a key the quorum
-does not hold, keeps the skip the port restored for `getdents`. Under
-decision A's ordering and visibility rule unfenced masters never
-disagree, so `EIO` is the mapping of a state the design says cannot
-occur: no cell reads it, its appearance in a kernel log is a finding,
-and the control that reverts the check to `modify_tid` must produce it
-between two hosts' flushes. Must prove: the value is the same from every VOP for
-the same cluster state, read in the `quorum_loss` cell from `touch`,
-`mkdir`, `write`, `unlink`, `cat` and `ls`. **Recommendation:
-`ENOTCONN` for no quorum reachable, for reads and writes alike, `EIO`
-for a reachable quorum that disagrees on media**, each named in the
-kernel log once per transition.
+master as agreeing (`hammer2_cluster.c:286-291`) excludes an unreachable
+one. Must prove: the value is the same from every VOP for the same
+cluster state, read in the `quorum_loss` cell from `touch`, `mkdir`,
+`write`, `unlink`, `cat` and `ls`, which stage 2's read-only remote
+element can already read for the read half. The `EIO` of disagreement
+depends on what disagreement is, which is decision A's protocol: the
+errno map has no `pmp` (`hammer2.h:1533-1534`), the collect's skip (C7)
+would hide a disputed key and `readdir` would end at it, so where the
+mapping lives and what it must never fire on is the protocol note's.
+**Recommendation: `ENOTCONN` for no quorum reachable, for reads and
+writes alike, settled now; `EIO` for a reachable quorum that disagrees
+on media, with its mechanism deferred to the protocol note.**
 
 ### D. The acknowledgment modes and MESI over the wire
 
@@ -928,47 +809,46 @@ functionality is exposed. Each item, and where the answer lives:
 | cluster id validation | a span registers only against a local `pmp` whose `pfs_clid` the span's `peer_id` names and a `copyinfo[]` row with that `pfs_clid` admits, and only after the fetched root inode's `pfs_clid`, `pfs_fsid` and `pfs_type` match the span's `peer_id`, `pfs_id` and `pfs_type`; a reply frame carries no id, and binds to the element by the connection and the open request |
 | replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1801`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
 | message freshness | the request's bound, `remote_timeout_ms`; a reply after its request aborted matches the abandoned state and is dropped there |
-| authorization by node type | a MASTER accepts modifying requests only from a MASTER of the same cluster id; a SLAVE's requests are read commands only and a modifying command from one is `DMSG_ERR_NOSUPP`; the check is the requesting peer's `pfs_type` as the fetched root inode states it, cross-checked against its span at registration |
+| authorization by node type | a MASTER accepts modifying requests only from a MASTER of the same cluster id; a SLAVE's requests are read commands only and a modifying command from one is `DMSG_ERR_NOSUPP`; for a MASTER the check is its `pfs_type` as the fetched root inode states it, cross-checked against its span at registration; a SLAVE's span registers no slot and fetches no root, so a slave requester is admitted by its `copyinfo[]` row and its span alone, and the commands it may send are the read set in either case |
 | connection admission | closed by default: `h2service` dials only a peer with a `.pub` key or an explicit `.none` marker in its directory, as `libdmsg` refuses "unknown host"; the kernel registers a span only with a matching `copyinfo[]` row; everything else is monitored and logged, not registered |
-| removal and revocation | `REMOTE_DEL` clears the row and tears the slot down by the unmount's loop; the daemon drops the dial; a `.pub` removed revokes at the next handshake |
+| removal and revocation | `REMOTE_DEL` clears the row, which under membership (2) is a membership change on one host (decision B); the slot is detached as the remote element section defines; the daemon drops the dial; a `.pub` removed revokes at the next handshake |
 | key storage | `tlshd`'s, outside the kernel and outside this tree; `h2service`'s key directory is the harness's for stages before 5 |
 | encrypted transport | kernel TLS, stage 5; `tcpdump` on the relay port must show no `0x4832` magic in the clear with TLS on and must show it with TLS off |
-| a stale node rejoining as current | decision B: its `quorum_tid` reads below the cluster's at the registration transaction, it registers fenced, takes part in no prepare and is never written through; bringing it level is P9's |
+| a stale node rejoining as current | decision B: what reads "behind" on a reconnecting master is the protocol note's, with the durable record it carries; this note records that no tid the flush moves can read it (C1, C2, C8, C9) and that a fence one coordinator holds is not one (C10); until then a master whose PFS is unmounted on its host is offline and registers nothing |
 
 ## The failure matrix
 
-The handoff's thirteen cells, each with its expected result under the
-recommended decisions and the instrument that reads it. The expected
-result is written before the run, and the run compares against it.
+The handoff's thirteen cells. Each row names the invariant the cell
+holds the cluster to, from the state model, what this note can say about
+it today, and the instrument that reads it; the expected result of a
+write cell under a commit protocol is the protocol note's to write
+before its run, since decision A accepted no protocol here. The read
+and transport rows are stage 2's and are read there.
 
-| cell | topology | expected result | instrument |
+| cell | topology | invariant and what is known | instrument |
 |---|---|---|---|
-| A dies during prepare | 2 masters | B holds the intent in doubt and fails closed; at A's return the registration reads both level (nothing committed) and B drops the intent; neither media changed, the client read the ruled errno | `fail_quorum_at=preparing` on A, both fingerprints equal to the pre-run, `fsck_hammer2` clean, B's in-doubt line and its drop at registration |
-| A dies after prepare | 2 masters | B holds the intent in doubt past the bound and fails closed, no chain modified on either; A's intent is lost with A; at A's return both read level and B drops the intent | `fail_quorum_at=prepared`, the in-doubt line on B after `remote_timeout_ms`, writes on B failing closed until A returns, fingerprints equal to the pre-run |
-| A dies before commit | 2 masters | as above; the coordinator never sent commit, so no storage function ran anywhere | `fail_quorum_at=committing` on the coordinator, fingerprints equal to the pre-run |
-| A dies after commit acknowledgment | 2 masters | B commits and flushes; the client's write succeeded; if A's media lacks the commit at restart (it died before its flush) A's `quorum_tid`, seeded from its root, reads below B's at the registration transaction, A registers fenced, and the cluster of two fails closed until P9 brings A level; if A's flush completed first the two read equal and the cluster continues | B's media holding the write; A's registration read as the fence line with both values or as level; writes after it failing closed or succeeding to match |
-| B loses connectivity to A | 2 masters | with the row present, every write and every read on either side returns the ruled errno (decision C: `ENOTCONN`, not the `ENOENT` the carried check gives today); the log names the transition once | relay partition for frames i..j, `touch` and `cat` on both mounts, the errno and the log line, fingerprints unchanged |
-| A/B partition while C is reachable to one side | 3 masters | the side with two of three commits, the lone master owing each commit it could not acknowledge; the lone side fails closed; on heal the lone master's `quorum_tid` reads below at registration, it registers fenced, the two continue, and bringing it level is P9's | relay partition, writes on both sides, fingerprints: two equal and one behind, the fence line on the lone master, writes continuing on the two |
-| all but one master disappear | 3 masters | the survivor fails every write and every read closed with the ruled errno; no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's | relay disconnect of two, `touch` and `cat` errno, fingerprints unchanged |
-| stale master reconnects | 2 masters, then 3 | with two masters nothing committed while B was away, since A alone is below quorum; a transaction B held prepared at the drop is in doubt on B and resolves against A's chain at reconnect, and the registration then reads both level and restores liveness (L1); with three, A and C commit while B is away, B reads below at registration, registers fenced, never votes and is never written through (S3), and the two continue; B is brought level in P9 | `stale_rejoin`: the two-master reconnect read as writes failing then succeeding on both sides, with the in-doubt line and its resolution on B when the drop falls between prepare and commit; the three-master run read as the fence line on B, B's media unchanged, A's and C's unchanged by B, writes continuing on the two |
-| master storage is stale but reachable | 3 masters | a volume restored from an older image registers with a `quorum_tid` below the cluster's and is fenced; its stale chains never win a vote and it is never written through; bringing it level is P9's | the restored image's value below the cluster's in the fence line, its fingerprint unchanged, the two current masters continuing |
-| client disappears during a transaction | 2 masters and a mount | the masters complete or abort among themselves; the client's remount sees one outcome on both | the client guest's power cut between prepare and commit, both masters' fingerprints equal after settle |
+| A dies during prepare | 2 masters | S1, S9: neither media changes and the client reads one errno; under candidate 1 the local master's chain is already modified before the check (fork, the baseline's known result) | `fail_quorum_at=preparing` on A, both fingerprints against the pre-run, `fsck_hammer2` clean |
+| A dies after prepare | 2 masters | S1, S5: no commit becomes visible on one side alone; the cell is the one that refuted candidate 2 (C3) and tests candidate 3's in-doubt holding | `fail_quorum_at=prepared`, the kernel log's state line on B after `remote_timeout_ms`, fingerprints |
+| A dies before commit | 2 masters | as above, with the coordinator never sending commit | `fail_quorum_at=committing`, fingerprints |
+| A dies after commit acknowledgment | 2 masters | S5, S9: the acknowledged write survives on B; A's state at restart is what the protocol note's level test must read, and C1 says it cannot be A's root tid | B's media holding the write, A's registration line, writes after it |
+| B loses connectivity to A | 2 masters | S1: with the row present neither side commits; every write and every read returns `ENOTCONN` (decision C, settled) and not the `ENOENT` the carried check gives today; the log names the transition once | relay partition for frames i..j, `touch` and `cat` on both mounts, the errno and the log line, fingerprints unchanged |
+| A/B partition while C is reachable to one side | 3 masters | S1, S3: the side with two of three may commit, the lone side fails closed, and the lone master must not regain write authority on heal by reconnecting; the three-master interleave of round six is the schedule this cell runs | relay partition, writes on both sides, fingerprints: two equal and one behind, the lone master's registration line |
+| all but one master disappear | 3 masters | S1: the survivor fails every write and every read closed with `ENOTCONN`; no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's | relay disconnect of two, `touch` and `cat` errno, fingerprints unchanged |
+| stale master reconnects | 2 masters, then 3 | S3, L1: with two masters nothing committed while B was away and liveness returns; with three, B returns behind and must neither vote nor be written through; what reads "behind" is the protocol note's | `stale_rejoin`: writes failing then succeeding on both sides; the three-master run's registration line on B, B's media unchanged, A's and C's unchanged by B |
+| master storage is stale but reachable | 3 masters | S3, S8: a volume restored from an older image must not win a vote or be written through, and must not be the source of a repair | the restored image's registration line, its fingerprint unchanged, the two current masters continuing |
+| client disappears during a transaction | 2 masters and a mount | S1, S5: the masters complete or abort among themselves; the client's remount sees one outcome on both | the client guest's power cut between prepare and commit, both masters' fingerprints equal after settle |
 | client reconnects after MESI state expiration | deferred with D | not in P8; the trigger is named | the row records the deferral and its trigger |
-| transport reconnect during synchronization | a master and a slave on two hosts (stage 2b) | the slave's pass fails its in-flight copies, withholds its stamp, and the next pass after reconnect completes them | relay disconnect mid-pass, the `H2_FAULT`-shaped reading `cluster-sync.sh` already has, under `H2_WIRE=1` |
-| healthy | 2 and 3 masters | every write commits on all, fingerprints equal, `fsck_hammer2` clean, no warning | the `2_master_matrix` and `3_master_matrix` baselines |
+| transport reconnect during synchronization | a master and a slave on two hosts (stage 2b) | S10, L3: the slave's pass fails its in-flight copies, withholds its stamp, and the next pass after reconnect completes them; the source is served by the master (C9) | relay disconnect mid-pass, the `H2_FAULT`-shaped reading `cluster-sync.sh` already has, under `H2_WIRE=1` |
+| healthy | 2 and 3 masters | L1: every write commits on all, fingerprints equal, `fsck_hammer2` clean, no warning; the two-mount write race is the cell that reads C4 and C5 | the `2_master_matrix` and `3_master_matrix` baselines |
 
-The `partition` cell's negative control runs under the ruled protocol:
-the row removed on one side gives that side a quorum of one, and its
-write then commits locally through the partition, which is the fork the
-control exists to show; on heal the other side, which committed nothing,
-reads below at the registration transaction and registers fenced, and
-bringing it level is P9's. A second arm removes both rows and writes on
-both sides, the two-sided fork: on heal each side reads the other as
-behind while being itself the one that advanced, both fence, every XOP
-on either mount returns decision C's no-quorum errno, and neither media
-is changed by the other (decision B).
-Under the baseline (A's candidate 1) the cell is expected to fork on both
-arms, since the local master modifies before the check.
+The `partition` cell's negative control is the row removed on one side,
+which gives that side a quorum of one under membership (2), so its write
+commits locally through the partition: the fork the control exists to
+show, and under the baseline (candidate 1) the cell is expected to fork
+on both arms, since the local master modifies before the check. A second
+arm removes both rows and writes on both sides; what the two sides read
+of each other on heal is the protocol note's, and this note only requires
+that neither media is changed by the other.
 
 ## The test topology
 
@@ -992,41 +872,33 @@ Negative controls in the subject at every stage: the CRC check off in a
 scratch build must pass the bad frame; the client's window count off must
 accept a server scripted past the window; admission off must register a
 peer with no `.none` and no key; the stage 2 read-only gate off must land
-a write on the slave alone; `fail_quorum_at` with the protocol's abort
-path disabled must leave the two masters' media different; the stale
-prepare refusal off must apply a commit under a parent already raised
-past it, read as the slave's missed key in stage 2b's wire shape; the
-tid-ordered application off must let the three-master interleave leave
-one master short of a transaction with `quorum_tid` equal; the
-in-flight test off must let a read racing a commit return one host's
-content against the other's, read as `EIO` in the healthy cell; the
-check reverted to `modify_tid` must return `EIO` between two hosts'
-flushes on a healthy cluster; and the fence applied on the coordinator
-alone must let a fenced master accept a later prepare and read level at
-registration with a transaction missing.
+a write on the slave alone; the snapshot guard at
+`hammer2_synchro.c:733` off must make the wire pass attempt a create on
+the connection device and read the refusal, never the assertion;
+`fail_quorum_at` with the protocol's abort path disabled must leave the
+two masters' media different, under whatever protocol the later note
+settles, and the controls for that protocol's mechanisms are that
+note's to name.
 
-**The marked lines the design implies in carried files**, so the XXX
-table in `doc/README.status.md` can be read against them when they land,
-each stage adding its own: in `hammer2_chain.c`, the `update_tid` stamp
-in `hammer2_chain_modify()` (`:1667-1668`), the `HAMMER2_MODIFY_NOCLC`
-flag at the two blockmap sites (`:3398`, `:3437`), and the connection
-device's reference in `hammer2_chain_alloc()` and
-`hammer2_chain_lastdrop()` (`:176`, `:562`); in `hammer2_cluster.c`, the
-four expressions of pass 2 and the one of pass 3 reading `update_tid`
-(`:300-305`, `:381`), the in-flight flag counted with `umasters`
-(`:280-284`), the reachability bit before the `ESRCH`/`EDEADLK` split
-(`:338-344`) and the end-of-scan count excluding an unreachable master
-(`:286-291`); in `hammer2_admin.c`, the collect's `EIO` in place of the
-`EDEADLK` skip (`:805-812`), its wait on `EINPROGRESS` for a PFS with a
-remote element (`:790-791`) and the XOP-level dispatch (`:474`); in
-`hammer2_iocom.c`, the span test admitting `PROTO_2` (`:244-247`); in
-`hammer2_synchro.c`, the inode copy's stamp (`:1887-1889`); in
+**The marked lines stages 1 and 2 imply in carried files**, so the XXX
+table in `doc/README.status.md` can be read against them when they land:
+in `hammer2_chain.c`, the connection device's reference in
+`hammer2_chain_alloc()` and at the chain's free (`:176`, `:833`); in
+`hammer2_cluster.c`, the reachability bit before the `ESRCH`/`EDEADLK`
+split (`:338-344`) and the end-of-scan count excluding an unreachable
+master (`:286-291`), decision C's settled half; in `hammer2_admin.c`, the
+XOP-level dispatch (`:474`); in `hammer2_iocom.c`, the span test
+admitting `PROTO_2` (`:244-247`); in `hammer2_synchro.c`, the guard at
+`:733` refusing a local snapshot of a remote focus; in
 `hammer2_vfsops.c`, the MASTER slot's skipped thread (`:489`, the
-`DEFER`), the `quorum_tid` seed beside `:1711-1712`, the `statfs` loop
-taking the first block device (`:2328-2332`) and `RECLUSTER`'s binding;
-and in `hammer2.h`, the flag's define beside `HAMMER2_MODIFY_OPTDATA`
-(`:369`). The dispatch sites in `hammer2_io.c` are `/* Linux */` and not
-`XXX`, since that file's split is the port's.
+`DEFER`), the `pfs_nmasters` print after `:460-461`, the `statfs` loop
+taking the first block device (`:2328-2332`), the unmount helper's
+detach of remote slots, the mount-time `mount_count` tests
+(`:2068-2074`, `:2603-2608`) and `RECLUSTER`'s binding; and in
+`hammer2.h`, the `ENOTCONN` bit and its errno-map entry
+(`:1521-1535`). The protocol note lists its own. The dispatch sites in
+`hammer2_io.c` are `/* Linux */` and not `XXX`, since that file's split
+is the port's.
 
 ## The seven ioctls
 
@@ -1057,12 +929,17 @@ reads no focus.
 
 ## What this note does not settle
 
-- The four decisions A to D, presented above with recommendations and
-  waiting on the maintainer. Stages 1 and 2 proceed without them.
-- P9's durable intent log and replay, and the final blocked
-  synchronization pass of reintegration; the matrix's "dies after
-  prepare" cell leans on the in-memory intent and the level test in P8,
-  and on replay in P9.
+- Decision A, the commit protocol, which this note presents open with
+  four candidates, three refuted on the code and the fourth carried by
+  its own note over stage 2's running remote element, and with the
+  resequencing of P9's durable record ahead of P8's write cells put to
+  the maintainer. Decisions B (membership) and C (`ENOTCONN`) are
+  recommended and D is deferred; stages 1 and 2 proceed on none of A.
+- Level, epoch and the stale master (S1 to S3), which the protocol note
+  carries with the record; this note records what they cannot be read
+  from (C1, C2, C8, C9, C10).
+- P9's durable record and replay, and the final blocked synchronization
+  pass of reintegration.
 - MESI over the wire, deferred under D with its trigger.
 - The production daemon's packaging; `h2service` is the harness's
   program, and the consumer's package is the consumer's question.
@@ -1201,4 +1078,27 @@ round: the `EIO` mapping is the collect's, since the errno map has no
 `pmp`; five negative controls for the new mechanisms; the marked lines
 the design implies, listed per file; and the format's stated meaning
 for `update_tid` recorded as changed under the first rule. The seventh
-audit's result is recorded here when it has run.
+audit (Claude Opus 5.5, 21 tool uses, 7.5 min) found one half of one of
+the six round-six mechanisms holding and returned NO SIGN-OFF on eleven
+findings, four blocking: the intent model collides on per-host inode
+numbers, leaves the other host's in-memory inode stale for its next
+sync to overwrite, cannot be made visible on every host at once because
+the collect re-feeds nothing, and applies the same request differently
+where a storage function reads host-local state; the agreed fence
+degenerates to one coordinator's memory in a two-master cluster and
+admits an out-of-order prepare before it commits; the `update_tid`
+stamp is moved by the slave's replace and differs on PFS roots from
+birth; the slave's pass would snapshot on the connection device; and a
+leftover candidate text presented two recommendations. The finding
+count had risen four rounds running (6, 6, 10, 11), which the working
+rules read as divergence, so this round's changes are not an eighth
+mechanism: the quorum section now lists the eleven constraints the
+carried core imposes, each with its line, records the four candidates
+with the evidence against each, accepts none, recommends that the
+protocol be designed in its own note over stage 2's running remote
+element with P9's record weighed as a prerequisite, and puts that
+resequencing to the maintainer; membership and `ENOTCONN` stay
+recommended, the matrix states each cell's invariant and instrument,
+the slave's pass takes its source from the master by a command, and the
+device count leaves dios out. The eighth audit's result is recorded here
+when it has run.
