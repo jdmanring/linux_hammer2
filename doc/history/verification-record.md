@@ -16612,3 +16612,56 @@ and the replay, and was clean. A fifth round read this paragraph
 against the hand-backs it summarizes and refused on seven of its claims
 about them, each corrected here, and a sixth signed off on the
 correction.
+
+## The provenance selftest read its clone checks off the live table, 2026-10-19
+
+The push of the 1.0.40 tree, at `d46e818`, was refused by the pre-push
+check: `script/test-provenance.sh --selftest` failed three of its six
+checks, "exited 0 with no clone, wanted 2", "a wrong-commit clone was
+treated as a carry" and "a wrong identical claim passed cmp", with the
+gate itself passing on the same tree (38 checks, 0 findings; 0 carries
+re-verified by cmp, 0 unverified, 37 rows derived or ours). The push's
+log is `~/Projects/linux_hammer2-data/p7-notes/push-20261019.log`.
+
+The three checks ran the gate over the live `doc/provenance.csv`: the
+clone directory pointed at a path that does not exist, a copy of the
+table with the FreeBSD commit `3df307f7` rewritten, and a copy with the
+first `identical` row's file swapped for another. All three held only
+while the table carried an `identical` row. The last one,
+`hammer2_bulkfree.c`, became `derived` at `b77d30f`, when the bulkfree
+shift fix marked its line with an `XXX`, and the table has read 37 rows
+derived or ours since. That is a true state of the tree, and under it
+the gate exits 0 without a clone because no row asks for one, the
+rewritten commit sits on a row the cmp loop skips, and the swap finds
+no row to edit. The gate readings this record takes after `b77d30f`, at
+`303968e` in the entry above and at `da37ae7` in the 1.0.40 row, cannot
+have included `--selftest`, which fails on every tree from `b77d30f` to
+`d46e818`; `CONTRIBUTING.md` lists it as an invocation of its own, and
+the pre-push check and CI run it as a step of their own, which is where
+it was caught.
+
+The fix at `3fdbdba` gives the selftest a fixture of its own: a
+one-file origin clone committed by git under its temp directory, laid
+out under the path the gate composes from the clone directory, the
+origin name and the row's absolute file path, and a one-row table
+claiming the file identical to it at the clone's commit. A positive
+control runs first, the carry re-verified and exit 0, so that the three
+refusals after it cannot come from a fixture that never reached the
+clone; then the clone directory pointed at nothing (exit 2), the row
+naming a commit the clone is not at (`UNVER`, exit 2) and the file
+edited (`FAIL`, exit 1). Seven checks, 0 failed, on this machine. Two
+negative controls on the selftest itself, each a copy of the gate with
+one branch neutered: `cmp` replaced by `true` fails only "a wrong
+identical claim passed cmp", and the commit comparison replaced by
+`false` fails only "a wrong-commit clone was treated as a carry", each
+7 checks, 1 failed. `test-posix.sh` over the edited script 109 checks
+0 failed; `test-inventory.sh` 0 findings. The pre-push check run by
+hand on the tree at `3fdbdba`
+(`~/Projects/linux_hammer2-data/p7-notes/prepush-3fdbdba.log`): gates
+and selftests pass, 2 could not run, the two fleet gates
+`test-enospc.sh` and `test-fixtures.sh` with the guest shut off, in
+2 min 45 s. The sentences in `doc/README.testing.md` and `README.md`
+that had the no-clone exit unconditional now say it applies where a row
+claims a carry. CI's clone step reads the FreeBSD row's commit whatever
+its carry column says, so it clones at `3df307f7` as before and is
+unchanged.

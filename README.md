@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-1.0.40-blue.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-1.0.41-blue.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -291,9 +291,9 @@ POSIX sh over grep, sed and git, so they run anywhere:
 
 `test-provenance.sh` is the one of those six that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
-re-run with `cmp` against the origin clone, and where that clone is not on
-the machine it reports COULD-NOT-RUN rather than passing on a table that
-only agrees with itself.
+re-run with `cmp` against the origin clone, and where a row makes that
+claim and the clone is not on the machine it reports COULD-NOT-RUN
+rather than passing on a table that only agrees with itself.
 
 One is neither. `script/test-vectors-contract.sh` freezes the output and
 the constant spelling of the two files in `test/` that a gate in another
