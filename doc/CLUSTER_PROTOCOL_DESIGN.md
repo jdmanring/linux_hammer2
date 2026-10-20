@@ -941,8 +941,13 @@ returns a new `HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
 `ESRCH`/`EDEADLK` split, so a read under quorum loss is `ENOTCONN` and
 not "no such file"; the end-of-scan path that counts a `(NULL, error)`
 master as agreeing (`hammer2_cluster.c:286-291`) excludes an unreachable
-one. The errno is settled for the reads that reach the check and for
-nothing else. A read served from the caches never reaches it (C14), so
+one. An absent master is counted against `pfs_nmasters`, which nothing
+lowers (`hammer2_vfsops.c:451-461` only raise it) and which the detach
+keeps: a detached slot is NONE and the check's passes never see it
+(`hammer2_cluster.c:211-224`, `:257-264`), so a detach that lowered the
+count would send the read back to today's `ESRCH` and `ENOENT`. The
+errno is settled for the reads that reach the check and for nothing
+else. A read served from the caches never reaches it (C14), so
 the deterministic value is the uncached lookup's and `readdir`'s, and
 the cell reads those with the caches dropped. Writes under a lost quorum
 are the protocol note's: the check runs in the collect after every
