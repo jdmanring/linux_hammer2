@@ -133,6 +133,7 @@ static int mfd = -1;		/* the mountpoint */
 static int dfd = -1;		/* the daemon's end of the live pair */
 static int old_dfd = -1;	/* the pair a reconnect replaced */
 static long wait_ms = 2000;
+static long settle_ms = 1000;
 
 static void
 trace(const char *fmt, ...)
@@ -521,6 +522,39 @@ open_spans(int fd, int n, uint32_t *serr)
 	return (open);
 }
 
+/* The shape of every refusal reading: an optional PROTO_2 prelude, one
+ * header-only frame, then probe_alive().  ended says what the kernel must
+ * do with it: 1, end the connection, EOF with the DBG_SHELL unanswered; 0,
+ * serve it, no EOF and the DBG_SHELL answered NOSUPP.  flipcrc spoils
+ * hdr_crc by one bit, which a PROTO_2 kernel reads and a PROTO_1 kernel
+ * never does.  Returns the action's exit status. */
+static int
+refusal(int fd, const char *action, int p2, int ended, uint32_t cmd,
+    uint64_t msgid, int flipcrc)
+{
+	struct dmsg_hdr h;
+	uint32_t cerr = 0, serr;
+	int o1 = 0, c2 = 1, f, eof, shell;
+	long t0;
+
+	if (p2)
+		c2 = proto2_prelude(fd, &cerr, &o1);
+	memset(&h, 0, sizeof(h));
+	h.magic = DMSG_HDR_MAGIC;
+	h.cmd = cmd;
+	h.msgid = msgid;
+	h.hdr_crc = iscsi_crc32(&h, sizeof(h)) ^ (flipcrc ? 1u : 0u);
+	t0 = now_ms();
+	raw_write(fd, &h);
+	eof = probe_alive(fd, ended ? wait_ms : settle_ms, &shell, &serr, &f);
+	printf("h2attach %s: conn=1 conn2_reply=%d eof=%d shell_reply=%d"
+	    " shell_error=%u frames=%d ms=%ld\n",
+	    action, c2, eof, shell, serr, f, now_ms() - t0);
+	if (ended)
+		return ((c2 && eof && !shell) ? 0 : 1);
+	return ((c2 && !eof && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1);
+}
+
 /* ---- the actions ------------------------------------------------------- */
 
 static void
@@ -539,7 +573,7 @@ main(int argc, char **argv)
 {
 	crc_init();
 	const char *mnt = NULL, *action = NULL, *tr = NULL;
-	long settle_ms = 1000, hold_max_ms = 30000;
+	long hold_max_ms = 30000;
 	struct hs hs;
 	int rc = 1;
 
@@ -667,27 +701,8 @@ main(int argc, char **argv)
 		 * connection and the DBG_SHELL after it goes unanswered.
 		 * badcrc1: PROTO_1 as today, the same frame is consumed and the
 		 * DBG_SHELL answered, since upstream's core checks no CRC. */
-		struct dmsg_hdr h;
-		uint32_t cerr = 0, serr;
-		int o1 = 0, c2 = 1, f, eof, shell, p2 = !strcmp(action, "badcrc");
-		long t0;
-		if (p2)
-			c2 = proto2_prelude(dfd, &cerr, &o1);
-		memset(&h, 0, sizeof(h));
-		h.magic = DMSG_HDR_MAGIC;
-		h.cmd = DMSG_LNK_PING;
-		h.msgid = 0x1002;
-		h.hdr_crc = iscsi_crc32(&h, sizeof(h)) ^ 1;
-		t0 = now_ms();
-		raw_write(dfd, &h);
-		eof = probe_alive(dfd, p2 ? wait_ms : settle_ms, &shell, &serr, &f);
-		printf("h2attach %s: conn=1 conn2_reply=%d eof=%d shell_reply=%d"
-		    " shell_error=%u frames=%d ms=%ld\n",
-		    action, c2, eof, shell, serr, f, now_ms() - t0);
-		if (p2)
-			rc = (c2 && eof && !shell) ? 0 : 1;
-		else
-			rc = (!eof && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1;
+		int p2 = !strcmp(action, "badcrc");
+		rc = refusal(dfd, action, p2, p2, DMSG_LNK_PING, 0x1002, 1);
 	} else if (!strcmp(action, "auxok") || !strcmp(action, "auxbad")) {
 		/* A DBG_SHELL carrying an aux on a PROTO_2 connection: with its
 		 * CRC right the kernel answers it NOSUPP as it answers one with
@@ -738,21 +753,8 @@ main(int argc, char **argv)
 		 * which ignores a one-off, and the DBG_SHELL after it is served;
 		 * on one that announced nothing the reader ends the connection,
 		 * the space being PROTO_2's vocabulary. */
-		uint32_t cerr = 0, serr;
-		int o1 = 0, c2 = 1, f, eof, shell, p2 = !strcmp(action, "hm2proto2");
-		long t0;
-		if (p2)
-			c2 = proto2_prelude(dfd, &cerr, &o1);
-		t0 = now_ms();
-		frame_write(dfd, DMSG_HM2_PROBE, 0x1005, 0);
-		eof = probe_alive(dfd, p2 ? settle_ms : wait_ms, &shell, &serr, &f);
-		printf("h2attach %s: conn=1 conn2_reply=%d eof=%d shell_reply=%d"
-		    " shell_error=%u frames=%d ms=%ld\n",
-		    action, c2, eof, shell, serr, f, now_ms() - t0);
-		if (p2)
-			rc = (c2 && !eof && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1;
-		else
-			rc = (eof && !shell) ? 0 : 1;
+		int p2 = !strcmp(action, "hm2proto2");
+		rc = refusal(dfd, action, p2, !p2, DMSG_HM2_PROBE, 0x1005, 0);
 	} else if (!strcmp(action, "halfclose")) {
 		int f, eof;
 		long t0 = now_ms();
