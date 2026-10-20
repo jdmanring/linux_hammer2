@@ -520,18 +520,23 @@ request.** `kern_dmsg` has no keepalive: `LNK_PING` is sent only to
 unstick the reader at teardown (`kern_dmsg.c:263-271`) and is otherwise
 only answered (`:1127-1135`), and a span carries no status (C10), so a
 partition that drops frames and keeps the socket would be seen only
-when a request timed out. A `PROTO_2` connection's service kthread sends
+when a request timed out. A `PROTO_2` connection's work item, run as
+delayed work so a server busy in a request does not delay it, sends
 `LNK_PING` every half of `remote_timeout_ms` and ends the connection
-when one goes unanswered for the bound, so "reachable" below means
-"answered within the bound", and a write that arrives between the loss
-and its detection is the protocol note's, named as such in the matrix.
+when one goes unanswered for the bound. The carried kernel answers no
+one-way `PING` (C15), so the ping is sent as a transaction and the
+reader's `DMSG_ERR_NOSUPP` reply is the answer, with no edit to the
+carried receive path; "reachable" below means "answered within the
+bound", and a write that arrives between the loss and its detection is
+the protocol note's, named as such in the matrix.
 
 **In stage 2 a PFS with a remote element is mounted read-only at the
 VFS**, `SB_RDONLY` set at mount whatever the options say, and a remount
 to `rw` refused through `->reconfigure`, the path the port already gates
 (`hammer2_vfsops.c:2455-2492`). That is Linux's own refusal: `write(2)`,
-`chmod`, `truncate`, `page_mkwrite` and every create return `EROFS`
-before a folio is dirtied or an XOP is built, so nothing reaches
+`chmod`, `truncate` and every create return `EROFS` before a folio is
+dirtied or an XOP is built (a mapped write cannot reach `page_mkwrite`
+on a mount opened read-only), so nothing reaches
 `writepages` and no page is left under writeback. A dispatch-time
 refusal in the XOP layer was the first shape and is not the design: a
 strategy write ends its folios only inside its storage function
@@ -548,15 +553,21 @@ flush (`hammer2_synchro.c:2344`, `:2349`, `:2498`, `:2563`, `:464-503`,
 device open for writing: the open mode is the first mount's
 (`sb_open_mode()`, `hammer2_ondisk.c:147`, `:197`), so stage 2b mounts
 B's `ROOT` read-write before its `CL`, as `cluster-sync.sh` mounts
-`ROOT` today, and a `CL` mounted alone must make the pass's first
-buffer write fail with `EIO` in the log, never silently, which stage 2b
-reads as a control. A write let through by a failed gate would run the
-local slave's storage function first and modify its chain, the remote's
-`(NULL, EOPNOTSUPP)` feed would set `CITEM_NULL`, the check would return
-`ESRCH` and then, on the `CHECK_NULL` end of scan, the element's
-`EOPNOTSUPP`, and the slave's created chain would flush with no master
-agreeing. `EIO` at `hammer2_cluster.c:360` is reachable only with a
-quorum. The gate lifts only under the protocol a later note settles.
+`ROOT` today. A `CL` mounted alone opens its device read-only, and the
+port's bios do not consult the file's mode (`hammer2_ondisk.c:1029-1037`;
+the block layer only warns, `block/blk-core.c:566-583`), so a pass on it
+would write silently to a volume whose mount-time recovery never ran
+(`hammer2_vfsops.c:1481`); the pass therefore refuses to run while
+`hmp->rdonly` is set, with a log line, and that line is stage 2b's
+control. The refusal of `rw` through `->reconfigure` is new code, since
+today's remount accepts ro to rw (`:2506-2537`). A write let through by
+a failed mount flag would run the local slave's storage function first
+and modify its chain, the remote's `(NULL, EOPNOTSUPP)` feed would set
+`CITEM_NULL`, the check would return `ESRCH` and then, on the
+`CHECK_NULL` end of scan, the element's `EOPNOTSUPP`, and the slave's
+created chain would flush with no master agreeing. `EIO` at
+`hammer2_cluster.c:360` is reachable only with a quorum. The mount
+becomes writable only under the protocol a later note settles.
 
 **The slave's pass over a remote master takes its source from the
 master.** The default pass snapshots its source on the source element's
@@ -673,6 +684,40 @@ rather than from the design document alone.
   `hammer2_xop_inode_create()` takes the parent's compression and check
   methods from the in-memory inode (`hammer2_xops.c:1086-1087`), so the
   same request can produce different chains on two hosts.
+- **C12. A read-only state set at run time does not stop a writer
+  already holding a descriptor.** The kernel tests `sb_rdonly` at
+  `open` and in the path calls through `mnt_want_write`, not on the
+  `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
+  `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
+  (`hammer2_vnops.c:376`, `:502`, `:621`, `:830`, `:1038`, `:1236`,
+  `:1429`, `:1812`), which a mount sets once (`hammer2_vfsops.c:1678`);
+  with it set, `fsync` returns 0 before the sync without reading the
+  mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
+  `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
+  no `SB_RDONLY` at run time for this reason, keeping its own flag
+  (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
+  `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3206`).
+- **C13. Dirty data at the moment of a loss reaches the local master's
+  media.** A strategy write runs the local storage function before the
+  collect (`hammer2_strategy.c:1560-1563`), an inode sync clears
+  `MODIFIED` and on error only prints (`hammer2_inode.c:1825-1835`), and
+  the unmount's three syncs run on any superblock
+  (`hammer2_vfsops.c:3253-3255`), so what was dirty when the quorum was
+  lost is flushed to the local media with no peer agreeing, and C3 says
+  it cannot be taken back. Fail-closed on the media under a loss is a
+  property of the write path's design, not of a flag.
+- **C14. A read served from the caches never reaches the quorum
+  check.** Cached folios, the dentry cache and the in-memory inode
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2436`) with no
+  XOP; only an uncached lookup and `readdir`, which is an XOP per call
+  (`:199`), reach the check. "A read under quorum loss" means those.
+- **C15. The carried kernel answers no one-way `LNK_PING`.** The
+  receive path builds its switch from `msg->state->icmd`
+  (`kern_dmsg.c:1118`), which is zero on `state0`, so a bare `PING`
+  falls through to `hammer2_rcvdmsg()`, which ignores a one-way message
+  and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:145-158`).
+  A keepalive is either a transaction whose refusal is the answer, or
+  one marked arm there.
 
 ### A. What PREPARE and COMMIT are in chain terms, and who coordinates
 
@@ -878,43 +923,32 @@ returns a new `HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
 `ESRCH`/`EDEADLK` split, so a read under quorum loss is `ENOTCONN` and
 not "no such file"; the end-of-scan path that counts a `(NULL, error)`
 master as agreeing (`hammer2_cluster.c:286-291`) excludes an unreachable
-one. The errno alone does not keep the media unchanged: the check runs in
-the collect after every element's storage function has run (C6), so
-the local master's chain would be modified before `ENOTCONN` was
-computed, and a refusal in the XOP layer cannot be the answer either,
-for the two reasons the stage-2 gate records (a strategy write ends its
-folios only in its storage function; buffered writes dispatch no XOP).
-So the settled half has two parts, and the second is **Linux's own
-read-only state**: when the reachable masters fall below `nquorum` the
-PFS's superblock is set `SB_RDONLY`, as a filesystem mounted
-`errors=remount-ro` does, so every modifying syscall is refused with
-`EROFS` before a folio dirties or an XOP is built, and the writeback
-already queued when the quorum was lost completes through the strategy
-path's existing error arm, which sets the mapping's error and ends the
-folio (`hammer2_strategy.c:1607-1612`), so `fsync` and `close` report
-`EIO` for that data as every Linux filesystem reports a failed
-writeback. Three values, each deterministic by class: `ENOTCONN` for a
-read, `EROFS` for a write refused, `EIO` for data dirtied before the
-loss. The state is cleared by a remount through `->reconfigure` once a
-quorum is reachable, never by the kernel alone. That closes the static
-cells, where the quorum is already lost and detected when the write
-arrives, on the media as well as the errno; a master lost in the middle
-of an XOP, or between the loss and the keepalive's detection, is the
-protocol note's. Must prove: each value is the same from every VOP of
-its class for the same cluster state, read in the `quorum_loss` cell
-from `touch`, `mkdir`, `write`, `chmod`, `truncate`, `unlink`, `cat`,
-`ls` and an `fsync` of data written before the loss, which stage 2's
-read-only remote element can already read for the read half; the media
-unchanged by fingerprint; and, as the control, the read-only state not
-set, which must leave the local master's chain modified by the first
-write after the loss. The `EIO` of disagreement
+one. The errno is settled for the reads that reach the check and for
+nothing else. A read served from the caches never reaches it (C14), so
+the deterministic value is the uncached lookup's and `readdir`'s, and
+the cell reads those with the caches dropped. Writes under a lost quorum
+are the protocol note's: the check runs in the collect after every
+element's storage function has run (C6), a refusal at XOP dispatch would
+leave a strategy write's folios under writeback for good and would miss
+the buffered writes that dispatch no XOP (the stage-2 paragraph records
+both), a read-only state set at run time stops no writer already holding
+a descriptor and makes `fsync` return 0 (C12), and what was dirty at the
+loss reaches the local media regardless (C13). Each of those was a
+design in an earlier round of this note and each was refuted on its
+line, so this note records them as the facts the write half has to
+answer and designs nothing for it. Must prove, for the settled half:
+the value is the same from every uncached read for the same cluster
+state, read in the `quorum_loss` cell from `cat` and `ls` after the
+caches are dropped and from a `stat` of an uncached inode, which stage
+2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
 errno map has no `pmp` (`hammer2.h:1533-1534`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
-**Recommendation: `ENOTCONN` for no quorum reachable, for reads and
-writes alike, settled now; `EIO` for a reachable quorum that disagrees
-on media, with its mechanism deferred to the protocol note.**
+**Recommendation: `ENOTCONN` for an uncached read with no quorum
+reachable, settled now; the write half, and `EIO` for a reachable
+quorum that disagrees on media, with their mechanisms deferred to the
+protocol note under C12 and C13.**
 
 ### D. The acknowledgment modes and MESI over the wire
 
@@ -967,17 +1001,20 @@ and transport rows are stage 2's and are read there.
 | A dies after prepare | 2 masters | S1, S5: no commit becomes visible on one side alone; the cell is the one that refuted candidate 2 (C3), and what B does with a half-finished transaction is the protocol note's | `fail_quorum_at=prepared`, B's kernel log after `remote_timeout_ms`, fingerprints |
 | A dies before commit | 2 masters | as above, with the coordinator never sending commit | `fail_quorum_at=committing`, fingerprints |
 | A dies after commit acknowledgment | 2 masters | S5, S9: the acknowledged write survives on B; A's state at restart is what the protocol note's level test must read, and C1 says it cannot be A's root tid | B's media holding the write, A's registration line, writes after it |
-| B loses connectivity to A | 2 masters | S1: with the row present a write arriving after the loss is detected is refused `EROFS` by the read-only state and dirties nothing, data dirtied before it reports `EIO` at `fsync`, and a read returns `ENOTCONN` rather than the `ENOENT` the carried check gives today; the log names the transition once; a write between the loss and the keepalive's detection, or in flight at the loss, is the protocol note's | relay partition for frames i..j, `touch`, `write`, `fsync` and `cat` on both mounts after the keepalive's line, the errnos and the log line, fingerprints unchanged |
+| B loses connectivity to A | 2 masters | S1: with the row present an uncached read returns `ENOTCONN` rather than the `ENOENT` the carried check gives today and the log names the transition once; what a write does after the loss, before and after the keepalive's detection, is the protocol note's (C12, C13) | relay partition for frames i..j, `cat` and `ls` with the caches dropped on both mounts after the keepalive's line, the errno and the log line; the write half's instruments are the protocol note's |
 | A/B partition while C is reachable to one side | 3 masters | S1, S3: the side with two of three may commit, the lone side fails closed, and the lone master must not regain write authority on heal by reconnecting; the three-master interleave of round six is the schedule this cell runs | relay partition, writes on both sides, fingerprints: two equal and one behind, the lone master's registration line |
-| all but one master disappear | 3 masters | S1: the survivor goes read-only, refusing every write `EROFS`, and every read returns `ENOTCONN` from the check; no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's | relay disconnect of two, `touch` and `cat` errno after the loss, fingerprints unchanged |
-| stale master reconnects | 2 masters, then 3 | S3, L1: with two masters A was read-only while B was away, so nothing committed and liveness returns with the remount after reconnect; with three, B returns behind and must neither vote nor be written through; what reads "behind" is the protocol note's | `stale_rejoin`: writes failing then succeeding on both sides; the three-master run's registration line on B, B's media unchanged, A's and C's unchanged by B |
+| all but one master disappear | 3 masters | S1: the survivor's uncached reads return `ENOTCONN` from the check and no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's; its writes are the protocol note's | relay disconnect of two, `cat` and `ls` with the caches dropped after the loss, the errno; the write half's instruments are the protocol note's |
+| stale master reconnects | 2 masters, then 3 | S3, L1: with two masters nothing may commit while B is away and liveness must return on reconnect, both the protocol note's to deliver; with three, B returns behind and must neither vote nor be written through; what reads "behind" is the protocol note's | `stale_rejoin`: writes failing then succeeding on both sides; the three-master run's registration line on B, B's media unchanged, A's and C's unchanged by B |
 | master storage is stale but reachable | 3 masters | S3, S8: a volume restored from an older image must not win a vote or be written through, and must not be the source of a repair | the restored image's registration line, its fingerprint unchanged, the two current masters continuing |
 | client disappears during a transaction | 2 masters and a mount | S1, S5: the client's remount sees one outcome on both masters; under the baseline the client drives both and the cell is expected to show the half-done write the protocol note must prevent | the client guest's power cut between prepare and commit, both masters' fingerprints equal after settle |
 | client reconnects after MESI state expiration | deferred with D | not in P8; the trigger is named | the row records the deferral and its trigger |
 | transport reconnect during synchronization | a master and a slave on two hosts (stage 2b) | S10, L3: the slave's pass fails its in-flight copies, withholds its stamp, and the next pass after reconnect completes them; the source is the master's live root until the snapshot command exists, then its snapshot (C9) | relay disconnect mid-pass, the `H2_FAULT`-shaped reading `cluster-sync.sh` already has, under `H2_WIRE=1` |
 | healthy | 2 and 3 masters | L1: every write commits on all, fingerprints equal, `fsck_hammer2` clean, no warning; the two-mount write race is the cell that reads C4 and C5 | the `2_master_matrix` and `3_master_matrix` baselines |
 
-The `partition` cell's negative control is the row removed on one side,
+The instruments above are written for writes through every master's
+mount; under candidate 5 the write cells run through the holder's mount
+alone and the protocol note rewrites them. The `partition` cell's
+negative control is the row removed on one side,
 which gives that side a quorum of one under membership (2), so its write
 commits locally through the partition: the fork the control exists to
 show, and under the baseline (candidate 1) the cell is expected to fork
@@ -1007,8 +1044,10 @@ the relay's trace beside the images under
 Negative controls in the subject at every stage: the CRC check off in a
 scratch build must pass the bad frame; the client's window count off must
 accept a server scripted past the window; admission off must register a
-peer with no `.none` and no key; the stage 2 read-only gate off must land
-a write on the slave alone; the snapshot guard at
+peer with no `.none` and no key; the stage 2 read-only mount off must land
+a write on the slave alone; the pass's refusal under `hmp->rdonly` off
+must write a `CL`-alone volume silently, read by its fingerprint; the
+snapshot guard at
 `hammer2_synchro.c:733` off must make the wire pass attempt a create on
 the connection device and read the refusal, never the assertion;
 `fail_quorum_at` with the protocol's abort path disabled must leave the
@@ -1023,15 +1062,13 @@ in `hammer2_chain.c`, the connection device's reference in
 `hammer2_cluster.c`, the reachability bit before the `ESRCH`/`EDEADLK`
 split (`:338-344`) and the end-of-scan count excluding an unreachable
 master (`:286-291`), decision C's settled half; in `hammer2_admin.c`, the
-XOP-level dispatch (`:474`); in `hammer2_strategy.c`, nothing, since the
-error arm that ends writeback with the mapping's error (`:1607-1612`) is
-reused as it stands; in `hammer2_iocom.c`, the span test
+XOP-level dispatch (`:474`); in `hammer2_iocom.c`, the span test
 admitting `PROTO_2` (`:244-247`); in `hammer2_synchro.c`, the guard at
-`:733` refusing a local snapshot of a remote focus; in
+`:733` refusing a local snapshot of a remote focus and the pass's
+refusal under `hmp->rdonly`; in
 `hammer2_vfsops.c`, the read-only mount of a PFS with a remote element
-and the read-only state under quorum loss, cleared through
-`->reconfigure` (`:2455-2492`), the MASTER slot's skipped thread
-(`:489`, the `DEFER`), the `pfs_nmasters` print after `:460-461`, the `statfs` loop
+and the refusal of `rw` through `->reconfigure` (`:2506-2537`), the
+MASTER slot's skipped thread (`:489`, the `DEFER`), the `pfs_nmasters` print after `:460-461`, the `statfs` loop
 taking the first block device (`:2328-2332`), the unmount helper's
 detach of remote slots, the mount-time `mount_count` tests
 (`:2068-2074`, `:2603-2608`) and `RECLUSTER`'s binding; and in
@@ -1074,8 +1111,8 @@ reads no focus.
   own note over stage 2's running remote element: a single writer under
   a durable lease replicated by P7's pass, recommended as the start, and
   P9's durable record ahead of P8's write cells; both are put to the
-  maintainer. Decisions B (membership) and C (`ENOTCONN` for reads, the
-  read-only state for writes) are recommended and D is deferred; stages 1 and 2
+  maintainer. Decisions B (membership) and C (`ENOTCONN` for an uncached
+  read; the write half deferred) are recommended and D is deferred; stages 1 and 2
   proceed on none of A.
 - Level, epoch and the stale master (S1 to S3), which the protocol note
   carries with the record; this note records what they cannot be read
@@ -1277,5 +1314,22 @@ slave's own scans carry; candidate 5 amended so that replicas serve no
 reads of their own in P8's term and forwarding is named as a VOP-level
 command the wire lacks, with the pass's mtid-0 arms as its first
 obligation; the `update_tid` sentence in decision B reduced to a
-candidate field; and three wording corrections. The tenth audit's
-result is recorded here when it has run.
+candidate field; and three wording corrections. The tenth audit (Claude Opus 5.5, 22 tool uses, 7.6 min) verified the
+stage-2 read-only mount on the kernel of record and the port's own arms,
+and returned NO SIGN-OFF on nine findings, two blocking, both in the
+run-time read-only state the ninth round's changes gave decision C: a
+writer holding a descriptor is not stopped by `SB_RDONLY`, the port's
+arms test a mount-time flag that makes `fsync` return 0 without the
+mapping's error, ext4 keeps its own flag for the same reason, and what
+was dirty at the loss is flushed to the local media by the unmount's
+unconditional syncs. The write half under quorum loss is therefore
+recorded as four more constraints, C12 to C15, and designed nowhere in
+this note; decision C settles the uncached read's errno alone, since a
+cached read never reaches the check. Also from that round: the carried
+kernel answers no one-way `LNK_PING`, so the keepalive is a transaction
+whose refusal is the answer, sent as delayed work; the `CL`-alone
+control could not fire because the port's bios do not consult the
+file's mode, so the pass refuses to run on a read-only device instead;
+the matrix instruments are noted as the holder's alone under candidate
+5; and the leftover word "gate" is gone. The eleventh audit's result is
+recorded here when it has run.
