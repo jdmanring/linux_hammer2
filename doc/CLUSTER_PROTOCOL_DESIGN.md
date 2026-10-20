@@ -812,9 +812,15 @@ Five candidates, with what each met.
    replaces, so C1 and C8 do not arise within a term, and one frontend
    with no forwarding means C3, C4, C5 and C11 do not arise while that
    frontend is the only one; replicas serve no reads of their own in
-   P8's term, so C6 does not arise. The holder's own mount holds its
-   element alone for the per-key check, so a read at the holder never
-   compares against a lagging replica; the quorum under 5 is the
+   P8's term, so C6 does not arise. The holder's own mount must hold its
+   element alone for the per-key check, so that a read at the holder
+   never compares against a lagging replica, and nothing in stage 2's
+   registration keeps it so: registration admits any span whose
+   `pfs_clid` matches, and `pfs_nmasters` raised to the on-disk count
+   starts a thread on the holder's own slot with three masters
+   (`hammer2_vfsops.c:451`, `:480-495`), so the holder's refusal of
+   elements in its term, and the membership change a demotion makes on a
+   live mount, are obligations below; the quorum under 5 is the
    majority that acknowledges a pass, and decision C's `ENOTCONN` is
    what the stage-2 shape reads, a read-only mount whose cluster holds a
    remote master element, not what the holder's mount reads. C2 remains: the pass's inode
@@ -829,10 +835,11 @@ Five candidates, with what each met.
    stated meaning under the first rule as `remote_pfs_type`'s is; the
    new holder is the member of that majority that is furthest along,
    which cannot be read from a tid the flush moves (C1 applies on a
-   replica alone after an interrupted pass, the status record's row on
-   the kept block under a raised inode), so the election reads a stamp
-   the pass writes and the flush does not, `update_tid` being the
-   format's candidate (decision B); a replica refuses a source with a
+   replica alone after a pass that kept a block, the status record's
+   row on the kept block under a raised inode), so the election reads a stamp
+   the pass would write on verification and the flush does not,
+   `update_tid` being the format's candidate (decision B), which no tree
+   writes today and whose stamping must first answer C2, C8 and C9; a replica refuses a source with a
    lower term; the old holder's unacknowledged writes are discarded by
    demoting it and letting the pass overwrite it. With two masters the majority is both, so losing either halts
    writes: fail closed (S1), and C10's two-master case is unavailability
@@ -848,20 +855,26 @@ Five candidates, with what each met.
    own host with the PFS still mounted (the thread is per mount and per
    slot, `hammer2_vfsops.c:480-495`), that mount's frontend outlives
    the term while descriptors are open, its `MODIFIED` inodes are
-   written back whole by the carried sync (`hammer2_inode.c:1820-1838`,
-   `hammer2_vfsops.c:3253-3255`), which is C5 on that host and moves a
-   carried line to stop, and the snapshot pass keeps a slave chain it
+   written back whole by the carried sync the pass itself calls on its
+   mount (`hammer2_synchro.c:873`, `hammer2_inode.c:1825-1835`), which is
+   C5 on that host and moves a carried line to stop, and the snapshot pass keeps a slave chain it
    reads as newer at three arms (`hammer2_synchro.c:1477`, `:1803-1816`,
    `:1746`), which a demoted holder's writes, stamped from its own
-   counter, will be unless the new term orders the counters, the raise
-   decision B records; the pass's insert and
+   counter, will be whenever that counter ran ahead, and decision B's
+   raise cannot order them, since tids never carried to the majority are
+   never raised past: the ordering across a term, by term or by a
+   demotion pass that disables the keep arms, is an open obligation; the pass's insert and
    destroy arms carry the source's tid so C2's three sites stamp the
    replica as the source was stamped, which today's pass does not do;
    the pass deletes chains the source lacks, its guarded arm under a
    snapshot (`:1755-1775`) included; which `copyinfo[]` row of a
    three-master PFS holds the term and how the election's messages
    travel (C10) and reach the volume header before the acknowledgment;
-   the term is read before any write after a mount. Fails: it is one writer and
+   the term is read before any write after a mount; the holder's mount
+   admits no element in its term and the demotion adds the new holder's
+   as a membership change on a live mount; the pass stamps `update_tid`
+   on verification, after C2, C8 and C9 are answered for it, so the
+   election has a stamp to read. Fails: it is one writer and
    not Dillon's concurrent multi-master commit; an `fsync` costs one
    pass; a format field changes meaning; and it needs the snapshot
    command and a write-capable wire pass before its first reading.
@@ -935,7 +948,7 @@ two support threads as its only witness that `pfs_nmasters` is 2,
 inverts to assert none and takes a new witness, a `hammer2_debug` print
 of `pfs_nmasters` after `hammer2_pfsalloc()`'s count
 (`hammer2_vfsops.c:460-461`), read from the klog as the harness reads its
-other counts. A SLAVE's thread is unchanged on its host. **Recommendation:
+other counts. A SLAVE's thread is unchanged on its host. **Taken:
 (2) with both obligations.** Membership alone does not make a partition
 fail closed: it gives the protocol a quorum to miss, and the protocol is
 decision A's.
@@ -1021,12 +1034,15 @@ keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
 `fs/xfs/xfs_fsops.c:451-475`), a flag of the port's own tested where
 those two test theirs: every VOP that modifies, since the port's
 create, unlink, rename, link, setattr, fallocate and time update modify
-local chains before the collect (C6), `open` and `mmap` for writing,
-`write_iter`, `page_mkwrite`, `writepages`, and the reads, which both
-refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
+local chains before the collect (C6), `open` and `mmap` for writing (the port has no `.open` and its
+`.read_iter` is the generic one, `hammer2_vnops.c:2009`, so those two are
+new wrappers, and the mmap hook on the kernel of record is
+`.mmap_prepare`, `:2013`), `write_iter`, `page_mkwrite`, `writepages`,
+and the reads, which both refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
 so that a cut-off holder never serves cached data as current; `fsync`
-returns `EIO` unconditionally, as both do (`fs/ext4/fsync.c:134`,
-`fs/xfs/xfs_file.c:141-142`), never the mapping's error, since a mapping
+never returns 0 after the shutdown, as neither does (`fs/ext4/fsync.c:134`
+returns `EIO`; `fs/xfs/xfs_file.c:137-142` returns the writeback's error
+or `EIO`), and never the mapping's error alone, since a mapping
 written locally before the loss is clean and would answer 0 for a write
 no majority holds. The entries are in `hammer2_vnops.c` and
 `hammer2_strategy.c`, which are the port's files and not carried
@@ -1047,7 +1063,7 @@ depends on what disagreement is, which is decision A's protocol: the
 errno map has no `pmp` (`hammer2.h:1533-1534`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
-**Recommendation: `ENOTCONN` for an uncached read with no quorum
+**Taken: `ENOTCONN` for an uncached read with no quorum
 reachable, settled now; the write half, and `EIO` for a reachable
 quorum that disagrees on media, with their mechanisms deferred to the
 protocol note under C12 and C13.**
@@ -1225,7 +1241,8 @@ reads no focus.
   over stage 2's running remote element, where the cost of one pass over
   the relay is read rather than estimated. Decisions B (membership) and
   C (`ENOTCONN` for an uncached read in the stage-2 shape; the write
-  half deferred) are taken, D is deferred with its trigger; stages 1
+  half deferred) are taken, D's phase-2 acknowledgment is taken for P8
+  and re-read by the protocol note; stages 1
   and 2 proceed on none of A.
 - Level, epoch and the stale master (S1 to S3), which the protocol note
   carries with the record; this note records what they cannot be read
@@ -1489,4 +1506,17 @@ stamp" met C1 on a replica alone; what 4 discards of 5 is its shape and
 not one rule; the holder's mount and the check under 5 were unstated;
 the measurement named a script that does not time a pass and a volume
 it does not use; and two sentences still called A open. Each is applied
-in the commit that records this; the thirteenth audit reads that text.
+in the commit that records this. The thirteenth audit (Claude Opus 5.5,
+16 tool uses, 4.5 min) verified every change of the twelfth on its
+lines and returned **SIGN-OFF** with five non-blocking findings, all
+inside the demotion and failover obligations the note calls unsolved,
+applied in the commit that records this: decision B's raise cannot
+order a demoted holder's tids, which were never carried, so the
+ordering across a term is an open obligation; nothing in stage 2 keeps
+the holder's mount to its own element, so that refusal and the
+demotion's membership change are obligations; the frontend write-back
+is the pass's own sync call and not the unmount's; the election's stamp
+is one the pass would write and no tree writes today; and D's phase-2
+acknowledgment is taken, not deferred. The counts over thirteen rounds
+were 9, 5, 6, 6, 6, 10, 11, 7, 10, 9, 7, 9, 5, with the eleventh and
+the thirteenth signed off.
