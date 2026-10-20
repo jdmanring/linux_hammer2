@@ -346,7 +346,7 @@ including what each gate cannot catch.
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
 | [doc/CCMS_DESIGN.md](doc/CCMS_DESIGN.md) | the P3 design note: what cache coherency was, and what completing it has to prove |
 | [doc/SYNC_DESIGN.md](doc/SYNC_DESIGN.md) | the P7 design note: what remote synchronization is in the design, and what reaching a master on another host has to prove |
-| [doc/CLUSTER_PROTOCOL_DESIGN.md](doc/CLUSTER_PROTOCOL_DESIGN.md) | the P8 design note, joint with P7's remote reach: the wire format, a master on another host as an element, the quorum between masters, and the four decisions that stop at the note |
+| [doc/CLUSTER_PROTOCOL_DESIGN.md](doc/CLUSTER_PROTOCOL_DESIGN.md) | the P8 design note, joint with P7's remote reach: the wire format, a master on another host as an element, the constraints the carried core puts on a quorum between masters, and the decisions that stop at the note |
 | [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
 | [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares it provides, each row on a measurement |
