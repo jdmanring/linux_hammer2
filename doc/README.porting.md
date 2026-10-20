@@ -1164,8 +1164,14 @@ costs nothing today because no Linux `hammer2 service` exists yet.
 The kernel does not verify a frame's `hdr_crc` or `aux_crc`. `kern_dmsg.c`'s
 reader checks the magic (`0x4832`), the header size field, and the 1 MiB aux
 bound. The CRCs are verified only by userland `libdmsg`
-(`lib/libdmsg/msg.c`). The port keeps that. Verifying them in the kernel would
-be a protocol change weighed on its own, not a transport change.
+(`lib/libdmsg/msg.c`). The port keeps that for every connection the
+transport makes today. Verifying them in the kernel is a protocol change,
+not a transport change, and the cluster protocol note weighs it: a
+connection negotiated at `DMSG_SPAN_PROTO_2` carries frames the kernel
+acts on, so the kernel verifies both CRCs on every frame of one and a
+mismatch ends the connection as a bad magic does, while a `PROTO_1`
+connection keeps this behavior and `cluster-dmsg.sh`'s readings with it
+(`doc/CLUSTER_PROTOCOL_DESIGN.md`, the wire format). Not yet built.
 
 The deterministic loopback required by the roadmap for cluster testing is
 therefore a userland program sitting where the daemon sits, `test/h2loop.c`,

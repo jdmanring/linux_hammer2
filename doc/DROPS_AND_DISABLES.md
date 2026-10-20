@@ -23,7 +23,7 @@ like a scope decision.
 | `hammer2_iocom.c` | not carried, 387 lines, 14 calls to 8 `kdmsg` functions | deferred-with-trigger: P6, behind the transport (P5) |
 | `hammer2_msgops.c` | not carried, 87 lines, 2 calls to `kdmsg_msg_reply()` | deferred-with-trigger: P6, behind the transport (P5) |
 | `kern_dmsg.c` | not carried, 2202 lines | deferred-with-trigger: P5, the transport interface with a deterministic loopback |
-| the seven cluster ioctls | not implemented | deferred-with-trigger: P8, behind remote synchronization (P7) |
+| the seven cluster ioctls | not implemented | deferred-with-trigger: P8, behind remote synchronization (P7); designed at `doc/CLUSTER_PROTOCOL_DESIGN.md` |
 | `HAMMER2IOC_BULKFREE_ASYNC` | not implemented | deferred-with-trigger: its cancellation is unspecified; the synchronous scan is carried and measured |
 
 The coherency half is the one place where "not written" is a fact about

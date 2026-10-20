@@ -43,7 +43,7 @@ on the guest with `test/h2attach.c` playing the daemon, 32 checks and 0
 failed on the KASAN and lockdep kernels with kmemleak scanned clean
 before the module unloads, an unmount under a held, silent daemon completing by the core's
 own ten-retry shutdown in about eleven seconds against under a tenth of a
-second when the daemon closes first. The remote PFS layer above the core is P7's remote reach, ruled B at its design note and not yet built; P7's local half, the synchronization pass reading a snapshot of the master element and keeping a snapshot of the slave as the last known-good copy, is built and read by `cluster-sync.sh` since 1.0.40 (`doc/README.porting.md`, the snapshot section). Cache coherency is a design note rather than code:
+second when the daemon closes first. The remote PFS layer above the core is P7's remote reach, ruled B and designed with P8's quorum protocol at `doc/CLUSTER_PROTOCOL_DESIGN.md`, not yet built; P7's local half, the synchronization pass reading a snapshot of the master element and keeping a snapshot of the slave as the last known-good copy, is built and read by `cluster-sync.sh` since 1.0.40 (`doc/README.porting.md`, the snapshot section). Cache coherency is a design note rather than code:
 `doc/CCMS_DESIGN.md` records that the coherency half was deleted
 upstream before it was written, and that Dillon's design document puts it
 under the quorum protocol, which no tree has written either. The surviving

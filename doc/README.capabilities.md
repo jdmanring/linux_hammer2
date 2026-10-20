@@ -104,8 +104,9 @@ drift apart:
 
 Seven of the eight are the cluster surface, which the rows above declare
 absent today. They are not out of scope: they are P8 on the roadmap,
-behind the transport (P5) and the message core (P6), and DragonFly
-carries all seven. The eighth is the
+behind the transport (P5) and the message core (P6), designed before any
+code at `doc/CLUSTER_PROTOCOL_DESIGN.md`, and DragonFly carries all
+seven. The eighth is the
 asynchronous form of an ioctl this port does carry, so a consumer that
 wants bulkfree without waiting composes it by running the scan on its own
 thread; it is not a missing operation, it is a missing convenience, and

@@ -56,8 +56,8 @@ At a glance, on a kernel of 7.3 or newer:
   measured with the kernel in the loop (P5, P6), the synchronization
   pass above them copies from a per-pass snapshot of the master and
   keeps a snapshot of the slave as its last known-good copy (P7's local
-  half; the remote reach is ruled B at `doc/SYNC_DESIGN.md` and not yet
-  built), and no run
+  half; the remote reach is ruled B and designed with P8's quorum
+  protocol at `doc/CLUSTER_PROTOCOL_DESIGN.md`, not yet built), and no run
   yet of a quorum that cannot be met
 + not yet: a package, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
@@ -346,6 +346,7 @@ including what each gate cannot catch.
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
 | [doc/CCMS_DESIGN.md](doc/CCMS_DESIGN.md) | the P3 design note: what cache coherency was, and what completing it has to prove |
 | [doc/SYNC_DESIGN.md](doc/SYNC_DESIGN.md) | the P7 design note: what remote synchronization is in the design, and what reaching a master on another host has to prove |
+| [doc/CLUSTER_PROTOCOL_DESIGN.md](doc/CLUSTER_PROTOCOL_DESIGN.md) | the P8 design note, joint with P7's remote reach: the wire format, a master on another host as an element, the quorum between masters, and the four decisions that stop at the note |
 | [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
 | [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
 | [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares it provides, each row on a measurement |
