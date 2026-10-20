@@ -84,7 +84,7 @@ to be used as part of the same cluster" (`:544-547`); the code below the
 comment does not do that, in this tree or upstream, where the branch that
 would is under `#if 0` with the sentence "As a snapshot no further
 synchronization with the original cluster will be done." The cluster is
-assembled by `pfs_clid` (`src/sys/fs/hammer2/hammer2_vfsops.c:313-314`),
+assembled by `pfs_clid` (`src/sys/fs/hammer2/hammer2_vfsops.c:321-322`),
 so a snapshot is not an element of the cluster it was taken from, and no
 line of the assembly, the thread, the cluster code or the admin code reads
 `pfs_subtype` (`command grep` over `src/`, 2026-10-17: the field appears
@@ -175,7 +175,7 @@ remote. The 2015 status table lists "Network blk device - operational"
 ## What the port carries today
 
 - `hammer2_synchro.c` since 0.9.61, hardened by P4: the thread starts for
-  every element that is not a lone MASTER (`hammer2_vfsops.c:468-490`),
+  every element that is not a lone MASTER (`hammer2_vfsops.c:476-498`),
   passes every five seconds or on wakeup, and converges a SLAVE on a
   second local device with the master changed under it, interrupted,
   with allocations refused in its insert, replace and destroy arms
@@ -193,8 +193,9 @@ remote. The 2015 status table lists "Network blk device - operational"
   initiates `LNK_CONN`, advertises one `LNK_SPAN` per PFS, sends the
   `VOLCONF`s, answers `PING`, and runs DragonFly's two message threads;
   32 checks 0 failed on both kernels by `script/cluster-dmsg.sh` against
-  `test/h2attach.c`, which plays the daemon's end, and 55 since 1.0.44
-  added the stage 1 checks of `doc/CLUSTER_PROTOCOL_DESIGN.md`.
+  `test/h2attach.c`, which plays the daemon's end, 55 since 1.0.44
+  added the stage 1 checks of `doc/CLUSTER_PROTOCOL_DESIGN.md`, and 79
+  since its stage 2a added the HM2 XOP API's read side.
 - The snapshot ioctl, with the identity described above, and the PFS
   ioctls that create, list and delete roots, exercised by `pfs-domains.sh`
   on both sides.
@@ -257,7 +258,7 @@ plan's first rule it is an extension with a written design, and the
 compatibility question is sharp, since every reader that exists today,
 DragonFly and the three BSD ports, would mount such a snapshot as a second
 MASTER element and count it toward `pfs_nmasters`
-(`hammer2_vfsops.c:439-449` here, the same logic upstream). Or leave the
+(`hammer2_vfsops.c:447-457` here, the same logic upstream). Or leave the
 snapshot's identity alone and give the thread a source that is not the
 focus: the snapshot is a PFS root under the super-root of the same
 `hammer2_dev` as the master element, reachable by name through the

@@ -40,7 +40,7 @@ kernel handles `LNK_CONN`, `LNK_SPAN`, `LNK_HAMMER2_VOLCONF` and
 `DBG_SHELL` and nothing else. Kusumi's three ports carry none of it.
 
 The original's own design for a remote element is written in a comment
-the port carries, `hammer2_iocom.c:171-184`: remote PFSs "look similar to
+the port carries, `hammer2_iocom.c:264-274`: remote PFSs "look similar to
 local (direct storage) PFSs", "are merged with local PFSs", and "are
 object-based and operate using an (inode,key) DMSG API instead of
 hammer2_chain's + direct I/O. A high level XOP API is employed to retain
@@ -76,13 +76,13 @@ property the remote element depends on was read:
 | `hammer2_io.c:722` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
 | `hammer2_synchro.c:1517` | `hammer2_xop_start_except()` with the pass's own index excludes the target element from the source scan |
 | `hammer2_synchro.c:1592` | a pass ends on any collect error but `ENOENT` |
-| `hammer2_vfsops.c:306` | `hammer2_pfsalloc()` merges every PFS root sharing a `pfs_clid` into one `pmp`, and a later mount joins an existing one |
-| `hammer2_vfsops.c:451` | `pfs_nmasters` is raised to the on-disk field and then to the count of visible masters |
-| `hammer2_vfsops.c:489` | `pfs_nmasters` at one or below is the only case in which a MASTER element gets no sync thread |
-| `hammer2_vfsops.c:785` | `pfs_hmps` selects the slots the unmount removes, those of the device going away; each slot's thread is deleted and the `pmp` freed when no slot remains |
+| `hammer2_vfsops.c:314` | `hammer2_pfsalloc()` merges every PFS root sharing a `pfs_clid` into one `pmp`, and a later mount joins an existing one |
+| `hammer2_vfsops.c:459` | `pfs_nmasters` is raised to the on-disk field and then to the count of visible masters |
+| `hammer2_vfsops.c:497` | `pfs_nmasters` at one or below is the only case in which a MASTER element gets no sync thread |
+| `hammer2_vfsops.c:793` | `pfs_hmps` selects the slots the unmount removes, those of the device going away; each slot's thread is deleted and the `pmp` freed when no slot remains |
 
 No tree writes the on-disk `pfs_nmasters` at creation. Upstream reads it
-at mount and decrements it on destroy (`hammer2_vfsops.c:527-542`,
+at mount and decrements it on destroy (`hammer2_vfsops.c:535-550`,
 `:635-636` upstream); the port writes it nowhere. So a master today counts
 the masters it can see, and a master cut off from its peer has a quorum of
 one. Dillon's quorum section (`DILLON_HAMMER2_DESIGN_2015.md:683-781`)
@@ -96,19 +96,19 @@ task", which is P9.
 
 The kernel verifies no CRC and keeps no span table. `kdmsg_iocom_thread_rd()`
 checks the magic, the header size and the 1 MiB aux bound
-(`kern_dmsg.c:340-376`); the CRCs are generated on transmit over the
+(`kern_dmsg.c:342-378`); the CRCs are generated on transmit over the
 aligned header with `hdr_crc` zeroed and over the aligned aux
 (`:2005-2012`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
 `iscsi_crc32`, the port's CRC-32C mapping (`hammer2_compat.h:156`).
 Received spans are open transactions under `state0`, and
-`hammer2_autodmsg()` monitors them (`hammer2_iocom.c:188`): a span whose
+`hammer2_autodmsg()` monitors them (`hammer2_iocom.c:279`): a span whose
 `peer_type` is not HAMMER2 or whose `proto_version` is not
 `DMSG_SPAN_PROTO_1` is closed with a reply, and only a `PROTO_1` HAMMER2
 span is left open with a result (`:240-258`). The kernel fills its own
 spans with `peer_id` set to the PFS's `pfs_clid`, `pfs_id` to its
 `pfs_fsid`, `pfs_type` from the root inode and `proto_version` 1
 (`:316-320`); a span carries no root inode. `msgid` is the kernel
-address of the transaction's state (`kern_dmsg.c:1801`), and
+address of the transaction's state (`kern_dmsg.c:1849`), and
 `link_verifier` is read nowhere in `kern_dmsg.c`.
 
 Two kernels are needed to test remoteness, since `hammer2_pfsalloc()`
@@ -160,30 +160,45 @@ declaration order:
 | 18 | `strategy_read` | `DMSG_HM2(0x022, dmsg_hm2_strategy)` | 2 |
 | 19 | `strategy_write` | `DMSG_HM2(0x023, dmsg_hm2_strategy)` | 3 |
 | 20 | `bmap` | `DMSG_HM2(0x024, dmsg_hm2_bmap)` | 2 |
+| reply | `dmsg_hm2_feed` | `DMSG_HM2(0x030, dmsg_hm2_feed)` | 2 |
 
 `DMSG_HM2_OPENPFS` at `0x001` stays reserved and unused. `DMSG_HM2()`
 encodes the structure's size into the command, so every command names
 its structure: the request structure is one for all 21, `dmsg_hm2_xop`,
-the header followed by the union of the XOP arguments below, and the
-reply structure is `dmsg_hm2_feed`, the header followed by a
-`hammer2_blockref_t`, `bytes` and `error`. A request frame is the
-command with `DMSGF_CREATE`, carrying the XOP's arguments that are not
+128 bytes, the header followed by the cluster id of the PFS the request
+is for, the inode number the XOP runs under, two keys, two flag words
+and a count, which the XOP arguments below reduce to; the reply
+structure is `dmsg_hm2_feed`, 256 bytes, the header followed by a
+`hammer2_blockref_t`, `bytes` and `error`, under its own command
+`DMSG_HM2_FEED` at `0x030`, since a frame's size is the one its command
+encodes and a feed is larger than a request. A request frame is the
+command with `DMSGF_CREATE` and without `DELETE`, since the continuation
+below needs the peer's direction open and a one-shot request is refused,
+carrying the XOP's arguments that are not
 pointers: the inode's key, the directory's key, `lkey` and `rkey` and
 `nmax` for `readdir`, `lhc` for `scanlhc` and `lookup`, `key_beg`,
 `key_end`, `resolve_flags` and `lookup_flags` for `scanall`, `lbase` for
 `strategy_read`, `lbn` for `bmap`, the name as aux where the XOP carries
-one. The reply is a transaction of frames on the same `msgid`: each
+one. The lock modes a scan runs under come from no frame: `scanall` runs
+shared, resolving data, as the slave's own source scans do, and the
+request's `lookup_flags` contribute `HAMMER2_LOOKUP_NODATA` alone. The
+reply is a transaction of frames on the same `msgid`: each
 `DMSGF_REPLY` frame is a `dmsg_hm2_feed`, one chain's `hammer2_blockref_t`
 and its `bytes` and `error`, with the chain's data as aux when the XOP
 returns data, at most one logical block of 64 KiB;
-the transaction's `DELETE` carries the element's final error, the one
-`hammer2_xop_feed()` would have been given with a `NULL` chain. A reply
+the transaction's `DELETE` is a feed frame with no chain whose `error` is
+the element's final one, the one `hammer2_xop_feed()` would have been
+given with a `NULL` chain. A request the server will not serve is closed
+by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
+peer tells a served request from a refused one by the closing frame's
+command, and a served scan that found nothing reads as zero feeds and
+error zero rather than as a refusal. A reply
 frame with no data for a type that has data is a protocol error and ends
 the connection.
 
 **Versioning rides `proto_version`.** `DMSG_SPAN_PROTO_2` means "HM2 XOP
 API version 1, CRCs verified". Today the carried test at
-`hammer2_iocom.c:244-247` closes every span that is not `PROTO_1`, so
+`hammer2_iocom.c:357-362` closes every span that is not `PROTO_1`, so
 admitting `PROTO_2` edits that test, marked `XXX` as a core edit the
 port could not avoid; a `PROTO_1` span stays open as today and never
 becomes an element, and a span at a version the kernel does not know is
@@ -195,11 +210,14 @@ is the peer's `LNK_CONN`, read once: the flag it sets is the
 connection's for its life, cleared by a reconnect and not by a `CONN`
 `DELETE`, so a later `CONN` on the same connection can turn it on and
 nothing turns it off. In stage 1 the kernel's own `LNK_CONN` and spans
-stay at `PROTO_1`, since it has no HM2 vocabulary yet to announce;
-stage 2 moves them when it does, and until then the announcement is
-one-sided. That is the compatibility plan the extension rule asks for:
-an old reader sees spans and nothing else, as it does now, and a
-`PROTO_1` kernel reading a `PROTO_2` span closes it.
+stayed at `PROTO_1`, since it had no HM2 vocabulary to announce; since
+stage 2a gave it the server side both announce `PROTO_2`
+(`hammer2_iocom.c:173`, `:437`). `libdmsg` reads neither field
+(no occurrence of `proto_version` under `lib/libdmsg/` at the DragonFly
+clone's head), so the daemon relays them unchanged, and a DragonFly
+kernel reading the span closes it. That is the compatibility plan the
+extension rule asks for: an old reader sees spans and nothing else, as
+it does now, and a `PROTO_1` kernel reading a `PROTO_2` span closes it.
 
 **The kernel verifies `hdr_crc` and `aux_crc` on every frame of a
 `PROTO_2` connection**, because it acts on those frames. A mismatch ends
@@ -229,11 +247,11 @@ local `pmp` carries and is admitted by a `copyinfo[]` row with that
 span is monitored and never registered, since the only consumer of a
 remote element in P8 is a quorum vote or a synchronization source and a
 remote slave is neither. A per-connection registration work item, never the
-service kthread, then fetches the remote PFS root (one `ipcluster`
+server's queue, then fetches the remote PFS root (one `ipcluster`
 request, the same frame shape as every reply) and registers the slot
 with the root chain in hand, through
 the steps a later local mount takes in `hammer2_pfsalloc()`
-(`hammer2_vfsops.c:409-437`): `chain->pmp`, the reference, `array[j]`,
+(`hammer2_vfsops.c:417-445`): `chain->pmp`, the reference, `array[j]`,
 `pfs_types[j]` and `pfs_names[j]` from the root inode's data as that
 path reads them from `ripdata`, with the span's `pfs_type` and `pfs_id`
 checked against the root's `pfs_type` and `pfs_fsid` and a mismatch
@@ -254,31 +272,31 @@ would never run and would hold every collect on the PFS at
 `EINPROGRESS`, so a span whose root cannot be read registers nothing,
 logs once, and is retried when the connection is re-established, which
 is the only retry the protocol offers: `hammer2_autodmsg()` has arms for
-a span's `CREATE` and `DELETE` only (`hammer2_iocom.c:235, 260`) and
+a span's `CREATE` and `DELETE` only (`hammer2_iocom.c:339, 377`) and
 `libdmsg` sends `LNK_SPAN` only with `CREATE`, so there is no status
 update to retry on. A span that arrived while the local PFS was
 unmounted is registered when `RECLUSTER` next hands in a connection,
 which `h2service` does after a mount of that PFS as it does after a
-dial. The fetch runs off the service kthread because two masters
+dial. The fetch runs off the server's queue because two masters
 span each other at once (the kernel spans every PFS,
-`hammer2_iocom.c:316-320`), and a registration that waited on the one
+`hammer2_iocom.c:422-426`), and a registration that waited on the one
 thread that also serves the peer's requests would wait on a peer
 waiting on it, both registrations failing at the bound. A span registers only against a `pmp` that is mounted
 (`pmp->mp` set): an unmounted `pmp` runs no XOP that could use the
 element, and a remote slot on one would hold the `pmp` on
 `hammer2_pfslist` after its last local device left, since
 `hammer2_pfsfree_scan()` removes only the departing device's slots and
-leaves gaps (`hammer2_vfsops.c:801-826`). In stage 2 a span against a
+leaves gaps (`hammer2_vfsops.c:809-834`). In stage 2 a span against a
 PFS mounted read-write is monitored and not registered, so the read-only
 requirement holds at registration, and `->reconfigure` holds it after,
 both under `hammer2_mntlk` (the client side section). The mount-time
-`mount_count` increment for every slot (`hammer2_vfsops.c:2068-2074`)
+`mount_count` increment for every slot (`hammer2_vfsops.c:2076-2082`)
 skips a connection device by the same test as the other two sites.
 
 Teardown is a port function, `hammer2_remote_detach(pmp, j)`, marked
 `/* Linux */`: under `iroot->lock` it drops the slot's chain, clears
 `iroot->cluster.focus` when that chain was the focus, as
-`hammer2_pfsfree_scan()` does (`hammer2_vfsops.c:815-816`), clears
+`hammer2_pfsfree_scan()` does (`hammer2_vfsops.c:823-824`), clears
 `array[j]`, sets `pfs_types[j]` to NONE, frees the name and the
 `pfs_hmps` entry and recomputes `nchains` from the highest remaining
 slot, the steps that function takes for a local device's slots
@@ -287,20 +305,20 @@ snapshots under `hammer2_mntlk`, syncs the PFS and remasters, and cannot
 be called for one slot. It never frees a `pmp`: registration requires a
 mounted PFS, whose local slot outlives every remote one, so a detach
 cannot empty a cluster, and `hammer2_pfsfree()` would in any case
-assert `iroot->refs == 1` (`hammer2_vfsops.c:640-642`) on a mounted one;
+assert `iroot->refs == 1` (`hammer2_vfsops.c:648-650`) on a mounted one;
 the detach asserts that a slot remains. It runs under `hammer2_mntlk`,
 the lock every walker of `hammer2_pfslist` holds (`:321`, `:722`,
 `:3241`), and therefore never on the connection's reader thread: the
 device unmount holds that lock through `hammer2_iocom_uninit()`
 (`:2634`), which waits for the reader and writer threads to exit
-(`kern_dmsg.c:255`), so a reader blocked on the lock would hang the
+(`kern_dmsg.c:257`), so a reader blocked on the lock would hang the
 unmount with no bound. The reader queues the detach to the connection's
 work item (the one registration uses). The work item takes the lock by
 try-lock and requeues itself after a delay when refused, as the sync
 pass retries on its next cadence (`hammer2_synchro.c:811`), so a refusal
 does not spin a worker through a bulkfree scan's hold, because every
 caller of
-`hammer2_unmount_helper()` holds `hammer2_mntlk` (`hammer2_vfsops.c:1187`,
+`hammer2_unmount_helper()` holds `hammer2_mntlk` (`hammer2_vfsops.c:1195`,
 `:3241`) and that helper both tears the connection down
 (`hammer2_iocom_uninit()` at `:2634`) and may drop a slot's last chain,
 so a wait there on an item blocked in `hammer2_lk_ex()` would hold the
@@ -329,7 +347,7 @@ equals the device being unmounted and the `pmp` would otherwise keep a
 slot and outlive the mount. Registration pins nothing across its round
 trip: the work item fetches the root holding only the connection, then
 takes `hammer2_mntlk`, finds the `pmp` again by `pfs_clid` on
-`hammer2_pfslist` as the mount's own walk does (`hammer2_vfsops.c:321`),
+`hammer2_pfslist` as the mount's own walk does (`hammer2_vfsops.c:329`),
 checks `pmp->mp` under the lock, and registers; a `pmp` that was
 unmounted between the fetch and the lock is not found and nothing
 registers. Every inode's `ip->cluster.focus` is a copy
@@ -337,11 +355,11 @@ of the root cluster's taken without a reference
 (`hammer2_inode.c:1579`); it is refreshed by the next collect and read
 by no consumer between, and `RECLUSTER` no longer reads any focus (the
 ioctls section). The connection's device is on no mount list: the
-helper's `mount_count` accounting (`hammer2_vfsops.c:2603-2608`) skips
+helper's `mount_count` accounting (`hammer2_vfsops.c:2611-2616`) skips
 it by the same test, its `devvp_list` is initialized empty because
 `hammer2_register_sb()` walks every slot's list
 (`hammer2_ondisk.c:139-143`), and it is freed by a reference count the connection device alone
-carries (`struct hammer2_dev` has none, `hammer2.h:895-930`, only
+carries (`struct hammer2_dev` has none, `hammer2.h:910-948`, only
 `mount_count` and `iofree_count`): one reference per chain allocated on
 it, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`) and dropped
 where the chain is freed (`:833`, not at `hammer2_chain_lastdrop()`'s
@@ -351,7 +369,7 @@ when `disable_work_sync()` returns true for an item that will never run.
 The device's dios are not counted: a dio stays in the hash at its last
 release (`hammer2_io.c:722-735`) and is freed by
 `hammer2_io_hash_cleanup_all()` in the device's own free, as the block
-device's are at `hammer2_vfsops.c:2720`, so a count on them would hold
+device's are at `hammer2_vfsops.c:2728`, so a count on them would hold
 the device forever.
 
 **Replies become ordinary chains of a media-less device, and
@@ -385,7 +403,7 @@ takes no dio lock and the feed's hash entry is created only for a fresh
 handle, never for an existing dio that is not GOOD. The wait runs under
 `dio->lock` exclusive, which `hammer2_io_alloc()` takes and
 `hammer2_io_getblk()`'s read path holds (`hammer2_io.c:576-595`), with
-`iohash_lock` released, so nothing the reader or the service kthread
+`iohash_lock` released, so nothing the reader or the server's queue
 needs is held across the round trip. The refetch takes the peer's
 whole `bref` with the data, since an inode's embedded blockset is
 rewritten by the peer's flush and the proxy's old check code would fail
@@ -427,7 +445,7 @@ above before any lock; `hammer2_io_alloc()` before `hammer2_get_volume()`
 (`:218-226`), where a miss on the media-less device must never reach
 the volume lookup's panic; and the first fetch's entry of a new dio
 with `buf` into the hash. A fourth site is outside the DIO layer: the
-loop `hammer2_vfsops.c:2328-2332` takes the first non-NULL `pfs_hmps`
+loop `hammer2_vfsops.c:2336-2340` takes the first non-NULL `pfs_hmps`
 for `statfs`, and reads the connection device if a remote slot ever
 precedes the local ones, so it takes the first block device by the same
 test. Two
@@ -456,21 +474,28 @@ work, and both were refuted on the cited lines before any code.
 
 ## The server side
 
-The reader thread never runs chain code. A `PROTO_2` connection has one
-service kthread; the reader queues each HM2 request to it, and it runs
-the local backend for the local element the request names (the XOP's
-storage function on the local chain for that slot alone), feeding one
-reply frame per chain, honoring the window, and closing the transaction
+The reader thread never runs chain code. Each device has one ordered
+workqueue, `hammer2_remote.c`, which is the design's service thread in
+Linux's own form: one request runs at a time per connection, the reader
+queues each HM2 request to it as a work item, and the connection's end
+is a drain of that queue rather than a thread's lifecycle. A request
+runs the local backend for the local element it names (the XOP's
+storage function on the local chain for that slot alone), feeds one
+reply frame per chain, honoring the window, and closes the transaction
 with the element's final error. **The server resolves the request's
 inode without an XOP.** The request names the inode by number; the
-server first tries `hammer2_inode_lookup()` (`hammer2_inode.c:556`),
+server resolves it with `hammer2_chain_inode_find()`
+(`hammer2_chain.c:5508`), the nresolve hardlink arm's own path: it tries
+`hammer2_inode_lookup()` (`hammer2_inode.c:556`),
 which finds an inode already in memory and takes no dependency, and on
 a miss finds the inode's chain by `hammer2_chain_lookup()` under the
-local root, the PFS's inode tree keyed by inode number, and runs the
-storage function on a server-side inode handle, a `hammer2_inode_t`
-outside the inode hash holding that chain in the slot, which
+local root, the PFS's inode tree keyed by inode number. The storage
+function then runs on a server-side inode handle, a `hammer2_inode_t`
+outside the inode hash holding that chain in the slot, its cluster set
+in place since `hammer2_inode_repoint()` is the inode file's own, which
 `hammer2_inode_chain()` reads under `cluster_spin` (`:404-428`, "The
-inode does not have to be locked"). `hammer2_inode_get()` is not used,
+inode does not have to be locked"), and the handle is dropped as any
+inode is. `hammer2_inode_get()` is not used,
 since it needs a collected XOP on the parent and that XOP takes the
 dependency. The proof obligation, listed function by function in stage
 2a's record, is that each read storage function reads nothing of `ip1`
@@ -485,7 +510,7 @@ dependency.** `hammer2_xop_testset_ipdep()` sleeps with no bound on any
 XOP in flight on the inode (`hammer2_admin.c:278-300`), and a server
 that took it would form a cycle across hosts: A's XOP on inode X holds
 A's dependency while it waits on B, B's on X holds B's while it waits on
-A, each service kthread sleeps in the test, and every other request on
+A, each server's queue sleeps in the test, and every other request on
 both connections queues behind them until the bound breaks the cycle
 and reports a healthy cluster as unreachable. The read commands of
 stage 2 run under the chain locks the storage function takes itself,
@@ -493,13 +518,35 @@ shared, which is what a strategy XOP already runs under with no
 dependency (`:414-419`). A modifying command is outside stage
 2's set and is answered `DMSG_ERR_NOSUPP`; how the protocol note
 serializes them against the inode dependency is that note's.
-A request for a PFS the connection's peer is not admitted to is answered
+A request names its PFS by cluster id, and the server serves a mounted
+PFS with an element on the connection's device, found on
+`hammer2_pfslist` under `hammer2_mntlk`, which the request then holds
+until it is answered: `struct hammer2_pfs` carries no reference count
+and `hammer2_pfsfree()` asserts the root inode's, so the lock every
+mount, unmount and pfs-delete takes is what holds the PFS, and a request
+runs in milliseconds. The lock is taken by try-lock within the bound,
+since the unmount holds it while it waits for the server's queue to
+drain and a blocking take there would wait on the unmount waiting on it;
+a bulkfree scan holds it for its whole run, so a request started under
+one fails at the bound. A request for
+any other PFS is answered
 `DMSG_ERR_NOSUPP` and logged. A request for a command outside the stage's
 set is answered the same way; the set is a property of the descriptor,
 the eight read descriptors of the command table in stage 2 and never
 the call's `HAMMER2_XOP_MODIFYING` flag, which the slave's pass sets on
 its own source scans (`hammer2_synchro.c:715`, `:1384`, `:1509`,
-`:2103`) and which would refuse them. The thread stops with the connection, and
+`:2103`) and which would refuse them. A peer that stops continuing holds
+the connection's queue only to `remote_timeout_ms`, which the server's
+window wait and its try for `hammer2_mntlk` share with the client side's
+bound below. The queue closes with the connection: admission and
+queueing run under one lock, so a quiesce that sets the closing flag
+under it refuses every later request and its flush covers every earlier
+one; a reconnect closes and drains the queue before the message core
+replaces the connection and reopens it after, and the device's teardown
+closes and drains it before the message threads are stopped and frees it
+after they are gone, since the reader may deliver a frame until then. A
+request in flight at an unmount closes its transaction before the
+simulated `DELETE`s run, and
 an unmount with a remote peer silent completes through the ten-retry
 shutdown `cluster-dmsg.sh` already reads.
 
@@ -507,8 +554,9 @@ shutdown `cluster-dmsg.sh` already reads.
 
 The remote storage function sends the request and waits on its state with
 a bound, since a wait with no exit wedges an unmount. The bound is the
-module parameter `remote_timeout_ms` beside `sync_snapshot`, its default
-set from the round trip stage 2b measures. It covers the whole reply
+module parameter `remote_timeout_ms` beside `sync_snapshot`, ten seconds
+since stage 2a built it as the server's bound, its default set from the
+round trip stage 2b measures. It covers the whole reply
 transaction from request to its `DELETE` and is not re-armed per frame: a
 peer trickling one frame inside each bound would otherwise hold a sync
 pass, whose freeze is acknowledged only at the top of the thread loop
@@ -529,7 +577,7 @@ the round trip; a remote master registered after a local slave runs last
 by construction. That cost is measured in stage 2b against the local
 pass. **A silent loss is detected within the bound, not at the next
 request.** `kern_dmsg` has no keepalive: `LNK_PING` is sent only to
-unstick the reader at teardown (`kern_dmsg.c:263-271`) and is otherwise
+unstick the reader at teardown (`kern_dmsg.c:265-273`) and is otherwise
 only answered (`:1127-1135`), and a span carries no status (C10), so a
 partition that drops frames and keeps the socket would be seen only
 when a request timed out. A `PROTO_2` connection carries a second work item for the
@@ -542,7 +590,7 @@ takes the reader's `DMSG_ERR_NOSUPP` reply as the answer, and when one
 goes unanswered for the bound ends the connection by the reader's own
 shutdown path (`KILLRX`, `kern_dmsg.c:121-133`), never by the teardown,
 which disables the items and would wait on itself. The reply prints
-`RCVMSG` on every frame today (`hammer2_iocom.c:126`), so that print is
+`RCVMSG` on every frame today (`hammer2_iocom.c:209`), so that print is
 debug-gated, one marked line; "reachable" below means "answered within the
 bound", and a write that arrives between the loss and its detection is
 the protocol note's, named as such in the matrix.
@@ -553,7 +601,7 @@ a mounted `pmp`, so the property rests on two checks under one lock:
 registration refuses a PFS whose `pmp->rdonly` is clear, and
 `->reconfigure` refuses `rw` while a remote slot exists, taking
 `hammer2_mntlk` around its test and its write of `pmp->rdonly`
-(`hammer2_vfsops.c:2506-2537` write it under `s_umount` alone today; the
+(`hammer2_vfsops.c:2514-2545` write it under `s_umount` alone today; the
 order `s_umount` then `hammer2_mntlk` is the unmount's at `:3241`),
 since without the lock a remount could pass its test, registration
 install a slot, and the remount then clear the flag. That is Linux's
@@ -583,7 +631,7 @@ the block layer tests the device's own read-only flag and not the open
 mode, `block/blk-core.c:566-583`, so a writable disk opened read-only
 draws no warning at all), so a pass on it
 would write silently to a volume whose mount-time recovery never ran
-(`hammer2_vfsops.c:1481`); the pass therefore refuses to run while
+(`hammer2_vfsops.c:1489`); the pass therefore refuses to run while
 `hmp->rdonly` is set, with a log line, and that line is stage 2b's
 control. The refusal of `rw` through `->reconfigure` is new code, since
 today's remount accepts ro to rw (`:2506-2537`). A write let through by
@@ -664,7 +712,7 @@ rather than from the design document alone.
   cannot abort a modify or a delete with the media and the memory as
   they were.
 - **C4. Inode numbers are a per-host counter.** `pmp->inode_tid` is
-  seeded at mount (`hammer2_vfsops.c:1707-1710`) and advanced by
+  seeded at mount (`hammer2_vfsops.c:1715-1718`) and advanced by
   `hammer2_trans_newinum()` (`hammer2_flush.c:239-243`) from the VOP
   (`hammer2_vnops.c:387`); the flush writes it into the root's
   `pfs_inum` (`hammer2_flush.c:798`). Two coordinators issue the same
@@ -692,7 +740,7 @@ rather than from the design document alone.
 - **C8. PFS roots are stamped from each host's super-root counter at
   creation** (`hammer2_ioctl.c:341`, `:349`), and a mount-time repair of
   a mis-flagged root re-stamps its `mirror_tid` on one host, keeping
-  `modify_tid` (`hammer2_vfsops.c:1970-1973`), so two roots of one
+  `modify_tid` (`hammer2_vfsops.c:1978-1981`), so two roots of one
   cluster differ on `modify_tid` and `mirror_tid` from birth, and a
   stamp a protocol took at `hammer2_chain_modify()` would differ there
   too.
@@ -702,7 +750,7 @@ rather than from the design document alone.
   (`:801`, `:817`; `hammer2_ioctl.c:612`, `:690-691`), which for a
   remote source is the connection device, where a create is refused.
 - **C10. A span carries no status update** (the only `LNK_SPAN` arms
-  are `CREATE` and `DELETE`, `hammer2_iocom.c:235`, `:260`), so a
+  are `CREATE` and `DELETE`, `hammer2_iocom.c:339`, `:377`), so a
   connected master learns nothing the protocol does not send it, and a
   fence or an outcome one coordinator holds is held by that coordinator
   alone until it is carried.
@@ -717,19 +765,19 @@ rather than from the design document alone.
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:376`, `:502`, `:621`, `:830`, `:1038`, `:1236`,
   `:1429`, `:1812`, `:2496`), which a mount sets and only a remount
-  rewrites (`hammer2_vfsops.c:1678`, `:2522`, `:2537`);
+  rewrites (`hammer2_vfsops.c:1686`, `:2522`, `:2537`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
   `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
   no `SB_RDONLY` at run time for this reason, keeping its own flag
   (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
-  `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3206`).
+  `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3214`).
 - **C13. Dirty data at the moment of a loss reaches the local master's
   media.** A strategy write runs the local storage function before the
   collect (`hammer2_strategy.c:1560-1563`), an inode sync clears
   `MODIFIED` and on error only prints (`hammer2_inode.c:1825-1835`), and
   the unmount's three syncs run on any superblock
-  (`hammer2_vfsops.c:3253-3255`), so what was dirty when the quorum was
+  (`hammer2_vfsops.c:3261-3263`), so what was dirty when the quorum was
   lost is flushed to the local media with no peer agreeing, and C3 says
   it cannot be taken back. Fail-closed on the media under a loss is a
   property of the write path's design, not of a flag.
@@ -740,9 +788,9 @@ rather than from the design document alone.
   (`:199`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
   receive path builds its switch from `msg->state->icmd`
-  (`kern_dmsg.c:1118`), which is zero on `state0`, so a bare `PING`
+  (`kern_dmsg.c:1166`), which is zero on `state0`, so a bare `PING`
   falls through to `hammer2_rcvdmsg()`, which ignores a one-way message
-  and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:145-158`).
+  and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:236-249`).
   A keepalive is either a transaction whose refusal is the answer, or
   one marked arm there.
 
@@ -826,7 +874,7 @@ Five candidates, with what each met.
    registration keeps it so: registration admits any span whose
    `pfs_clid` matches, and `pfs_nmasters` raised to the on-disk count
    starts a thread on the holder's own slot with three masters
-   (`hammer2_vfsops.c:451`, `:480-495`), so the holder's refusal of
+   (`hammer2_vfsops.c:459`, `:480-495`), so the holder's refusal of
    elements in its term, and the membership change a demotion makes on a
    live mount, are obligations below; the quorum under 5 is the
    majority that acknowledges a pass, and decision C's `ENOTCONN` is
@@ -861,7 +909,7 @@ Five candidates, with what each met.
    pass then overwrites, and which the carried pass cannot do yet: the
    pass that overwrites the demoted holder runs on the demoted holder's
    own host with the PFS still mounted (the thread is per mount and per
-   slot, `hammer2_vfsops.c:480-495`), that mount's frontend outlives
+   slot, `hammer2_vfsops.c:488-503`), that mount's frontend outlives
    the term while descriptors are open, its `MODIFIED` inodes are
    written back whole by the carried sync the pass itself calls on its
    mount (`hammer2_synchro.c:873`, `hammer2_inode.c:1825-1835`), which is
@@ -931,7 +979,7 @@ latency question rather than the wire. Stages 1 and 2 need no part of this and p
 
 **Membership is settled where the research settles it.** Today
 `pfs_nmasters` is the masters a mount can see plus an on-disk field no
-tree writes at creation (`hammer2_vfsops.c:440-462`), so a master cut off
+tree writes at creation (`hammer2_vfsops.c:448-470`), so a master cut off
 from its peer has a quorum of one and the `partition` cell forks.
 Candidates: (1) the masters visible, as carried; (2) the `copyinfo[]`
 rows whose `pfs_clid` matches the PFS and whose `remote_pfs_type` is
@@ -943,19 +991,19 @@ of stated meaning recorded under the first rule. Its proof obligations:
 the `pfs_clid` filter, without which ROOT and every snapshot on the
 volume would read quorum 2 with one master visible; and that a master's
 own synchronization pass never runs against a quorum it cannot meet,
-since `hammer2_vfsops.c:489` skips the thread only at `pfs_nmasters <=
+since `hammer2_vfsops.c:497` skips the thread only at `pfs_nmasters <=
 1`, and the pass for a MASTER target excludes its own slot
 (`hammer2_synchro.c:1517-1518`), reads `EINPROGRESS` with two masters
 and exits (`:1592-1594`), copying nothing today in any tree
 (`cluster-quorum.sh` counts threads at `:126-130` and has never measured
 a pass). **In P8 a MASTER element gets no synchronization thread**: the
-creation at `hammer2_vfsops.c:489` is skipped for MASTER slots whatever
+creation at `hammer2_vfsops.c:497` is skipped for MASTER slots whatever
 `pfs_nmasters` says, one marked line with `DEFER(P9: reintegration of a
 stale master)`, and `cluster-quorum.sh`'s check at `:230`, which asserts
 two support threads as its only witness that `pfs_nmasters` is 2,
 inverts to assert none and takes a new witness, a `hammer2_debug` print
 of `pfs_nmasters` after `hammer2_pfsalloc()`'s count
-(`hammer2_vfsops.c:460-461`), read from the klog as the harness reads its
+(`hammer2_vfsops.c:468-469`), read from the klog as the harness reads its
 other counts. A SLAVE's thread is unchanged on its host. **Taken:
 (2) with both obligations.** Membership alone does not make a partition
 fail closed: it gives the protocol a quorum to miss, and the protocol is
@@ -988,14 +1036,14 @@ The Lamport raise the earlier rounds designed stands as a fact about any
 future protocol: `pmp->modify_tid` is a per-PFS counter whose
 `hammer2_trans_sub()` returns the value before the add
 (`hammer2_flush.c:163`) and is seeded to the root's tid plus one
-(`hammer2_vfsops.c:1711-1712`), so a participant that applies a carried
+(`hammer2_vfsops.c:1719-1720`), so a participant that applies a carried
 tid raises its counter to that tid plus one by compare-and-exchange, or
 issues it twice.
 
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1521-1536`), and the collect turns `ESRCH` and `EDEADLK` at
+(`hammer2.h:1527-1569`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:338-344`, before pass 3,
 and `RDHARD` is set for a MASTER only in pass 3 (`:387-388`), so there is
@@ -1019,7 +1067,7 @@ returns a new `HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
 not "no such file"; the end-of-scan path that counts a `(NULL, error)`
 master as agreeing (`hammer2_cluster.c:286-291`) excludes an unreachable
 one. An absent master is counted against `pfs_nmasters`, which nothing
-lowers (`hammer2_vfsops.c:451-461` only raise it) and which the detach
+lowers (`hammer2_vfsops.c:459-469` only raise it) and which the detach
 keeps: a detached slot is NONE and the check's passes never see it
 (`hammer2_cluster.c:211-224`, `:257-264`), so a detach that lowered the
 count would send the read back to today's `ESRCH` and `ENOENT`. The
@@ -1068,7 +1116,7 @@ state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
 2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
-errno map has no `pmp` (`hammer2.h:1533-1534`), the collect's skip (C7)
+errno map has no `pmp` (`hammer2.h:1527-1528`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
 **Taken: `ENOTCONN` for an uncached read with no quorum
@@ -1225,7 +1273,7 @@ field validated, unknown enum values and bad lengths refused, stable
 errnos, malformed buffers under KASAN, races with unmount. `REMOTE_SCAN`,
 `REMOTE_ADD` and `REMOTE_DEL` are the `copyinfo[]` bookkeeping through
 `hammer2_volconf_update()`, which the port already has at
-`hammer2_iocom.c:362`. `REMOTE_REP` and `SOCKET_SET` stay upstream's
+`hammer2_iocom.c:480`. `REMOTE_REP` and `SOCKET_SET` stay upstream's
 returns of nothing and `SOCKET_GET` stays `EOPNOTSUPP`, each recorded in
 the capabilities table with the upstream line, since inventing semantics
 for them is an extension no document asks for. `REMOTE_ADD`'s `path` is
@@ -1237,7 +1285,7 @@ device, and after a detach on a lost connection, which is when
 `h2service` re-dials, the focus is cleared and the ioctl returns
 `EINVAL` for a cluster of more than one element (`:103-112`). It hands
 the descriptor to the first slot whose `pfs_hmps` is a block device,
-the loop `hammer2_vfsops.c:2328-2332` already uses to pick a device, and
+the loop `hammer2_vfsops.c:2336-2340` already uses to pick a device, and
 reads no focus.
 
 ## What this note does not settle
@@ -1422,7 +1470,7 @@ the eleven constraints on their lines, eight holding as written, two
 overstated (the rename helper's condition is "was blockmapped before
 the rename's delete", `:3397` asserting the flag clear; the mount-time
 repair keeps `modify_tid`) and one cited at the wrong line (`C10` at
-`hammer2_iocom.c:362`, which is the volume configuration; the span arms
+`hammer2_iocom.c:480`, which is the volume configuration; the span arms
 are `:235` and `:260`), each corrected, and returned NO SIGN-OFF on
 seven findings, one blocking: three matrix rows promised unchanged
 media under partition and quorum loss that an errno computed after the

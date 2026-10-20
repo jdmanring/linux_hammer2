@@ -27,6 +27,7 @@ endif
 hammer2-y += hammer2_io.o
 hammer2-y += kern_dmsg.o
 hammer2-y += hammer2_iocom.o
+hammer2-y += hammer2_remote.o
 hammer2-y += hammer2_msgops.o
 hammer2-y += hammer2_admin.o
 hammer2-y += hammer2_freemap.o
@@ -103,6 +104,11 @@ endif
 # Never install it; script/cluster-dmsg.sh builds it under H2_CRC_CONTROL=1.
 ifdef HAMMER2_NOCRC
 ccflags-y += -DHAMMER2_NOCRC
+endif
+# The HM2 server sends past its window, the negative control of the same
+# harness; never install it either.
+ifdef HAMMER2_NOWINDOW
+ccflags-y += -DHAMMER2_NOWINDOW
 endif
 
 .PHONY: all clean

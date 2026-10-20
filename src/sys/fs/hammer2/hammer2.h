@@ -930,6 +930,7 @@ struct hammer2_dev {
 	kdmsg_iocom_t		iocom;		/* volume-level dmsg interface */
 	struct hammer2_span_list spanq;	/* XXX Linux: the peer's PROTO_2 spans */
 	int			nspans;		/* XXX Linux: entries on spanq */
+	struct hammer2_remote	*remote;	/* XXX Linux: the HM2 XOP API server */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */
@@ -1132,6 +1133,7 @@ extern hammer2_lk_t hammer2_mntlk;
 
 extern int hammer2_debug;
 extern int hammer2_sync_snapshot;	/* XXX Linux: see hammer2_synchro.c */
+extern int hammer2_remote_timeout_ms;	/* Linux: see hammer2_remote.c */
 extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
 extern int hammer2_cluster_data_read;
@@ -1443,6 +1445,15 @@ void hammer2_iocom_init(hammer2_dev_t *);
 void hammer2_iocom_uninit(hammer2_dev_t *);
 void hammer2_cluster_reconnect(hammer2_dev_t *, struct file *);
 void hammer2_volconf_update(hammer2_dev_t *, int);
+
+/*
+ * hammer2_remote.c (Linux: the HM2 XOP API server, doc/CLUSTER_PROTOCOL_DESIGN.md)
+ */
+void hammer2_remote_init(hammer2_dev_t *);
+void hammer2_remote_quiesce(hammer2_dev_t *);
+void hammer2_remote_resume(hammer2_dev_t *);
+void hammer2_remote_uninit(hammer2_dev_t *);
+int hammer2_remote_rcvmsg(kdmsg_msg_t *);
 
 /* hammer2_subr.c */
 int hammer2_get_dtype(uint8_t);

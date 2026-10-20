@@ -75,10 +75,12 @@ detach_disk() {
 }
 
 make -s clean >/dev/null 2>&1
-# H2_CRC_CONTROL=1 builds the module with its PROTO_2 CRC check compiled out,
-# the negative control: the bad frame must then be accepted, and every
-# other check must still hold.  Never install that module.
-make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1} >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
+# H2_CRC_CONTROL=1 builds the module with its PROTO_2 CRC check and the HM2
+# server's window compiled out, the negative controls: the bad frame must
+# then be accepted and a reply must run past sixteen frames with no
+# continuation, and every other check must still hold.  Never install that
+# module.
+make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1 HAMMER2_NOWINDOW=1} >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2attach" test/h2attach.c 2>"$W/cc.err" || {
 	echo "dmsg: COULD-NOT-RUN: test/h2attach.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
@@ -128,6 +130,25 @@ hammer2 -s $M pfs-create SP >/dev/null 2>&1
 echo "pfs-count $(hammer2 -s $M pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
 echo "threads-before $(threads)"
 
+# stage 2a: a tree the HM2 client reads back beside what the guest itself
+# sees of it: forty entries so a readdir crosses the window twice, three
+# blocks of random bytes so the data is stored as written and its digest
+# is the file's.  The server's bound is shortened so the window reading
+# does not wait ten seconds.
+mkdir -p $M/d
+i=1; while [ $i -le 40 ]; do echo "$i" > $M/d/f$i; i=$((i + 1)); done
+dd if=/dev/urandom of=$M/big bs=65536 count=3 2>/dev/null
+sync
+echo 3000 > /sys/module/hammer2/parameters/remote_timeout_ms 2>/dev/null
+echo "remote-timeout $(cat /sys/module/hammer2/parameters/remote_timeout_ms 2>/dev/null)"
+RI=$(stat -c %i $M); DI=$(stat -c %i $M/d); BI=$(stat -c %i $M/big)
+echo "root-inum $RI"; echo "dir-inum $DI"; echo "big-inum $BI"
+echo "big-sha $(sha256sum $M/big | cut -d' ' -f1)"
+echo "f7-inum $(stat -c %i $M/d/f7)"
+echo "f7-size $(stat -c %s $M/d/f7)"
+stat -c '%i %n' $M/d/* | sed 's| .*/| |' | sort > /tmp/stat-d.txt
+echo "dir-entries $(wc -l < /tmp/stat-d.txt)"
+
 # the refusal, then each action; a second after each for the threads to go
 out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $out"
 for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
@@ -136,6 +157,38 @@ for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 
 	sleep 1
 	echo "$act-threads $(threads)"
 done
+
+# stage 2a: the HM2 XOP API, each reply beside the guest's own reading
+hm2() {	# hm2 <name> <h2attach args>: the summary line, the output kept, the threads after
+	n=$1; shift
+	out=$($A --attach $M "$@" 2>&1); echo "$n-rc $?"
+	printf '%s\n' "$out" > /tmp/$n.out
+	echo "$n $(grep '^h2attach' /tmp/$n.out | head -1)"
+	sleep 1; echo "$n-threads $(threads)"
+}
+hm2 hm2root --action hm2root --inum $RI
+hm2 hm2readdir --action hm2readdir --inum $DI
+sed -n 's/^ent inum=\([0-9]*\) .* name=\(.*\)$/\1 \2/p' /tmp/hm2readdir.out | sort > /tmp/hm2-d.txt
+echo "hm2readdir-entries $(wc -l < /tmp/hm2-d.txt)"
+if cmp -s /tmp/stat-d.txt /tmp/hm2-d.txt; then echo "hm2readdir-match 1"; else echo "hm2readdir-match 0"; fi
+hm2 hm2nowindow --action hm2readdir --inum $DI --nocont 1 --wait-ms 8000
+k=$(sed -n 's/^ent .* key=\([0-9a-f]*\) name=f7$/\1/p' /tmp/hm2readdir.out | head -1)
+echo "f7-key $k"
+hm2 hm2scanlhc --action hm2scanlhc --inum $DI --key 0x${k:-0}
+echo "hm2scanlhc-f7 $(grep -c '^ent .* name=f7$' /tmp/hm2scanlhc.out)"
+hm2 hm2nresolve --action hm2nresolve --inum $DI --name f7
+hm2 hm2nresolve-missing --action hm2nresolve --inum $DI --name nosuch
+hm2 hm2read --action hm2read --inum $BI --count 3 --out /tmp/hm2read.bin
+echo "hm2read-sha $(sha256sum /tmp/hm2read.bin 2>/dev/null | cut -d' ' -f1)"
+hm2 hm2scanall --action hm2scanall --inum $BI
+echo "hm2scanall-keys $(sed -n 's/^blk key=\([0-9a-f]*\) .*/\1/p' /tmp/hm2scanall.out | tr '\n' ' ')"
+echo "hm2scanall-off1 $(sed -n 's/^blk key=0000000000010000 .* data_off=\([0-9a-f]*\).*/\1/p' /tmp/hm2scanall.out | head -1)"
+hm2 hm2lookup --action hm2lookup --inum $BI --key 0x10000
+hm2 hm2bmap --action hm2bmap --inum $BI --key 1
+hm2 hm2refuse --action hm2refuse --inum $RI
+echo "log-serve $(klog 'H2 SERVE')"
+echo "log-refused $(klog 'HM2 request .* refused')"
+echo "log-nopfs $(klog 'no mounted PFS of that cluster')"
 echo "log-badmagic $(klog 'bad magic')"
 echo "log-badsize $(klog 'bad header size')"
 echo "log-badaux $(klog 'illegal msg payload size')"
@@ -165,6 +218,11 @@ echo "hold-threads-after $(threads)"
 echo "log-shitcan-after $(klog shitcanning)"
 echo "log-spantab0-after-hold $(klog 'H2 SPANTAB 0')"
 echo "log-spanleft $(klog 'left after the connection closed')"
+# the utility's own reading of the second block's offset, off the unmounted media
+# the line is pinned to the utility's own shape (type.index data_off key/keybits)
+# and kept whole beside the value read from it, so a changed shape is visible
+echo "show-line $(hammer2 -v show /dev/vdb 2>/dev/null | grep -E '^ *data\.[0-9]+ +[0-9a-f]{16} +0000000000010000/' | head -1)"
+echo "show-off1 $(hammer2 -v show /dev/vdb 2>/dev/null | grep -E '^ *data\.[0-9]+ +[0-9a-f]{16} +0000000000010000/' | head -1 | awk '{print $2}')"
 
 # the control: the daemon closes first, and the unmount has nothing to wait for
 mount -t hammer2 /dev/vdb@ROOT $M || { echo "remount failed"; exit 1; }
@@ -279,6 +337,43 @@ m=$(val span2on1)
 [ "$(num "$(field "$m" closed)" 0)" = 1 ] && [ "$(num "$(val log-span9)" 1)" = 0 ]; check "PROTO_1: a PROTO_2 span on an unannounced connection is closed and never listed" $? "closed $(field "$m" closed), $(val log-span9) table line(s) with its label"
 for act in proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	[ "$(num "$(val $act-threads)" 9)" = 0 ]; check "stage 1: $act leaves no thread" $? "$(val $act-threads)"
+done
+
+# Stage 2a of the design note: the HM2 XOP API's read side, every reply read
+# beside the guest's own reading of the same volume (stat, sha256sum and
+# the hammer2 utility), never beside the kernel alone.
+hexfield() { printf '%s\n' "$1" | sed -n "s/.*[ :]$2=\([0-9a-f]*\).*/\1/p" | head -1; }
+m=$(val hm2root)
+[ "$(num "$(field "$m" conn_proto)" 0)" = 2 ] && [ "$(num "$(field "$m" span_proto)" 0)" = 2 ] && [ "$(num "$(field "$m" found)" 0)" = 1 ] && [ "$(num "$(field "$m" fsid_match)" 0)" = 1 ] && [ "$(num "$(field "$m" error)" 1)" = 0 ]; check "stage 2a: the kernel announces PROTO_2 and serves the PFS root inode, whose pfs_fsid is the span's" $? "conn_proto $(field "$m" conn_proto), span_proto $(field "$m" span_proto), found $(field "$m" found), fsid_match $(field "$m" fsid_match), error $(field "$m" error)"
+m=$(val hm2readdir)
+[ "$(num "$(field "$m" entries)" 0)" = "$(num "$(val dir-entries)" -1)" ] && [ "$(num "$(val hm2readdir-match)" 0)" = 1 ] && [ "$(num "$(field "$m" maxrun)" 99)" -le 16 ] && [ "$(num "$(field "$m" runs)" 0)" -ge 2 ] && [ "$(num "$(field "$m" error)" 1)" = 0 ]; check "stage 2a: readdir over the wire lists the directory as stat does, in windows of sixteen" $? "$(field "$m" entries) of $(val dir-entries) entries, inum and name match $(val hm2readdir-match), maxrun $(field "$m" maxrun), $(field "$m" runs) continuation(s)"
+m=$(val hm2nowindow)
+if [ -n "${H2_CRC_CONTROL:-}" ]; then
+	[ "$(num "$(field "$m" frames)" 0)" = "$(num "$(val dir-entries)" -1)" ] && [ "$(num "$(field "$m" error)" 1)" = 0 ]; check "control: with the window compiled out every entry arrives with no continuation sent" $? "frames $(field "$m" frames) of $(val dir-entries), error $(field "$m" error)"
+else
+	[ "$(num "$(val remote-timeout)" 0)" = 3000 ] && [ "$(num "$(field "$m" frames)" 0)" = 16 ] && [ "$(num "$(field "$m" error)" 0)" = 262144 ]; check "stage 2a: with no continuation sent the server stops at the window and times out at its bound" $? "frames $(field "$m" frames), error $(field "$m" error) (0x40000 is ETIMEDOUT), bound $(val remote-timeout) ms, after $(field "$m" ms) ms"
+fi
+m=$(val hm2scanlhc)
+[ "$(num "$(val hm2scanlhc-f7)" 0)" = 1 ] && [ "$(num "$(field "$m" error)" 1)" = 0 ]; check "stage 2a: scanlhc on a dirent's hash returns that dirent" $? "f7 listed $(val hm2scanlhc-f7) time(s) among $(field "$m" ents), key $(val f7-key)"
+m=$(val hm2nresolve)
+[ "$(num "$(field "$m" found)" 0)" = 1 ] && [ "$(num "$(field "$m" inum)" 0)" = "$(num "$(val f7-inum)" -1)" ] && [ "$(num "$(field "$m" size)" -1)" = "$(num "$(val f7-size)" -2)" ]; check "stage 2a: nresolve returns the inode stat names, at its size" $? "inum $(field "$m" inum) vs $(val f7-inum), size $(field "$m" size) vs $(val f7-size)"
+m=$(val hm2nresolve-missing)
+[ "$(num "$(field "$m" found)" 1)" = 0 ] && [ "$(num "$(field "$m" closed)" 0)" = 1 ] && [ "$(num "$(field "$m" refused)" 1)" = 0 ]; check "stage 2a: a name that does not exist is served as no chain, not refused" $? "found $(field "$m" found), closed $(field "$m" closed), refused $(field "$m" refused), error $(field "$m" error)"
+m=$(val hm2read)
+[ "$(num "$(field "$m" datas)" 0)" = 3 ] && [ "$(num "$(field "$m" comp_none)" 0)" = 3 ] && [ "$(num "$(field "$m" full)" 0)" = 3 ] && [ -n "$(val hm2read-sha)" ] && [ "$(val hm2read-sha)" = "$(val big-sha)" ]; check "stage 2a: three strategy reads return the file's blocks, their digest the file's" $? "$(field "$m" datas) blocks, uncompressed $(field "$m" comp_none), full $(field "$m" full), sha $(val hm2read-sha | cut -c1-12) vs $(val big-sha | cut -c1-12)"
+m=$(val hm2scanall)
+[ "$(num "$(field "$m" datas)" 0)" = 3 ] && [ "$(val hm2scanall-keys)" = "0000000000000000 0000000000010000 0000000000020000 " ]; check "stage 2a: scanall under the file returns its three data chains in key order" $? "$(field "$m" datas) chains, keys $(val hm2scanall-keys)"
+off1=$(val hm2scanall-off1)
+m=$(val hm2lookup)
+[ -n "$off1" ] && [ "$(num "$(field "$m" found)" 0)" = 1 ] && [ "$(hexfield "$m" data_off)" = "$off1" ]; check "stage 2a: lookup of the second block's key returns the chain scanall listed" $? "found $(field "$m" found), data_off $(hexfield "$m" data_off) vs $off1"
+m=$(val hm2bmap)
+[ -n "$off1" ] && [ "$(num "$(field "$m" found)" 0)" = 1 ] && [ "$(hexfield "$m" data_off)" = "$off1" ]; check "stage 2a: bmap of logical block one returns the same data offset" $? "found $(field "$m" found), data_off $(hexfield "$m" data_off)"
+[ -n "$off1" ] && [ "$(val show-off1)" = "$off1" ]; check "stage 2a: the hammer2 utility reads that block at the same offset on the media" $? "show $(val show-off1) vs wire $off1, from the line \"$(val show-line)\""
+m=$(val hm2refuse)
+[ "$(num "$(field "$m" mod_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" mod_error)" 0)" = 32 ] && [ "$(num "$(field "$m" nopfs_refused)" 0)" = 1 ] && [ "$(num "$(field "$m" nopfs_error)" 0)" = 32 ] && [ "$(num "$(field "$m" noino_closed)" 0)" = 1 ] && [ "$(num "$(field "$m" noino_refused)" 1)" = 0 ] && [ "$(num "$(field "$m" noino_error)" 0)" != 0 ] && [ "$(num "$(field "$m" noino_frames)" 1)" = 0 ] && [ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(field "$m" shell_reply)" 0)" = 1 ]; check "stage 2a: a modifying command and an unknown cluster are refused NOSUPP, an unknown inode is served as an error, and the connection outlives all three" $? "modifying $(field "$m" mod_refused)/$(field "$m" mod_error), cluster $(field "$m" nopfs_refused)/$(field "$m" nopfs_error), inode error $(field "$m" noino_error) with $(field "$m" noino_frames) frame(s), eof $(field "$m" eof), shell_reply $(field "$m" shell_reply)"
+[ "$(num "$(val log-serve)" 0)" = 14 ] && [ "$(num "$(val log-refused)" 0)" = 1 ] && [ "$(num "$(val log-nopfs)" 0)" = 1 ]; check "stage 2a: the log names the fourteen served requests, the one command refusal and the one cluster refusal" $? "$(val log-serve) served, $(val log-refused) command refusal(s), $(val log-nopfs) cluster refusal(s)"
+for act in hm2root hm2readdir hm2nowindow hm2scanlhc hm2nresolve hm2nresolve-missing hm2read hm2scanall hm2lookup hm2bmap hm2refuse; do
+	[ "$(num "$(val $act-threads)" 9)" = 0 ]; check "stage 2a: $act leaves no thread" $? "$(val $act-threads)"
 done
 [ "$(num "$(val log-badmagic)" 0)" -ge 1 ] && [ "$(num "$(val log-badsize)" 0)" -ge 1 ] && [ "$(num "$(val log-badaux)" 0)" -ge 1 ]; check "malformed: the kernel log names each reason" $? "bad magic $(val log-badmagic), bad header size $(val log-badsize), illegal payload $(val log-badaux)"
 [ "$(num "$(field "$(val halfclose)" conn)" 0)" = 1 ]; check "malformed: the attach after the three connects again" $? "halfclose run conn=$(field "$(val halfclose)" conn)"

@@ -126,6 +126,27 @@ _Static_assert(sizeof(struct dmsg_hdr) == 64, "dmsg_hdr");
 #define DMSG_LNK_VOLCONF_BASE	(DMSG_PROTO_LNK | (0x20 << 8))
 #define DMSG_DBG_SHELL	DMSG_DBG(0x001, struct dmsg_hdr)
 #define DMSG_HM2_PROBE	(DMSG_PROTO_HM2 | (0x010 << 8) | ENC(struct dmsg_hdr))
+/* The HM2 XOP API, as src/sys/sys/dmsg.h lays it out; the on-media types
+ * a reply carries come through hammer2_ioctl.h from hammer2_disk.h. */
+struct dmsg_hm2_xop {
+	struct dmsg_hdr head;
+	uint8_t pfs_clid[16];
+	uint64_t inum, key_beg, key_end;
+	uint32_t resolve_flags, lookup_flags;
+	int32_t nmax;
+	uint32_t reserved[3];
+};
+struct dmsg_hm2_feed {
+	struct dmsg_hdr head;
+	hammer2_blockref_t bref;
+	uint32_t bytes, error;
+	uint8_t reserved[56];
+};
+_Static_assert(sizeof(struct dmsg_hm2_xop) == 128, "dmsg_hm2_xop");
+_Static_assert(sizeof(struct dmsg_hm2_feed) == 256, "dmsg_hm2_feed");
+#define DMSG_HM2_XOP(i)	(DMSG_PROTO_HM2 | ((0x010 + (i)) << 8) | ENC(struct dmsg_hm2_xop))
+#define DMSG_HM2_FEED	(DMSG_PROTO_HM2 | (0x030 << 8) | ENC(struct dmsg_hm2_feed))
+#define HM2_WINDOW	16	/* HAMMER2_XOPFIFO, feeds per continuation */
 #define BASE(cmd)	((cmd) & ~DMSGF_FLAGS)
 
 static FILE *tracef;
@@ -134,6 +155,7 @@ static int dfd = -1;		/* the daemon's end of the live pair */
 static int old_dfd = -1;	/* the pair a reconnect replaced */
 static long wait_ms = 2000;
 static long settle_ms = 1000;
+static int nocont;		/* hm2: send no continuation, so the window is read */
 
 static void
 trace(const char *fmt, ...)
@@ -236,6 +258,14 @@ readable(int fd, long deadline)
 /* Read a whole frame as kdmsg_iocom_thread_rd does: header, extended
  * header, aligned aux (the aux is read and dropped).  1 frame, 0 EOF,
  * -1 timeout or error. */
+/* The last frame frame_read() returned, header included, and its aux. */
+static struct {
+	uint8_t body[8192];
+	size_t bodylen;
+	uint8_t aux[65536 + 64];	/* one block at most, the design's bound */
+	size_t auxlen;
+} rx;
+
 static int
 frame_read(int fd, struct dmsg_hdr *h, long deadline)
 {
@@ -263,17 +293,23 @@ frame_read(int fd, struct dmsg_hdr *h, long deadline)
 				return (-1);
 		}
 	}
+	memcpy(rx.body, buf, need);
+	rx.bodylen = need;
+	rx.auxlen = 0;
 	if (h->aux_bytes) {
 		size_t aux = (h->aux_bytes + DMSG_ALIGN - 1) & ~(size_t)(DMSG_ALIGN - 1);
-		while (aux) {
-			size_t chunk = aux < sizeof(buf) ? aux : sizeof(buf);
+		size_t agot = 0;
+		if (aux > sizeof(rx.aux))
+			return (-1);
+		while (agot < aux) {
 			if (!readable(fd, deadline))
 				return (-1);
-			n = read(fd, buf, chunk);
+			n = read(fd, rx.aux + agot, aux - agot);
 			if (n <= 0)
 				return (-1);
-			aux -= n;
+			agot += n;
 		}
+		rx.auxlen = h->aux_bytes;
 	}
 	trace("rx cmd=%08x msgid=%016" PRIx64 " error=%u\n", h->cmd, h->msgid, h->error);
 	return (1);
@@ -401,8 +437,15 @@ raw_write(int fd, const struct dmsg_hdr *h)
 struct hs {
 	int conn;		/* CONN|CREATE received and answered */
 	uint64_t conn_msgid;
+	int conn_proto;		/* the kernel's LNK_CONN proto_version */
 	int volconf, spans, other;
 	uint64_t span_msgid;	/* one open span, for cancel */
+	int nspan;		/* the kernel's HAMMER2 spans kept below */
+	struct {
+		uint8_t clid[16], fsid[16];
+		int type, proto;
+		char label[128];
+	} span[8];
 };
 
 /* Wait for the kernel's CONN|CREATE on fd, answer it, then collect what
@@ -420,6 +463,7 @@ handshake(int fd, struct hs *hs, long settle_ms)
 		    !(h.cmd & DMSGF_REPLY)) {
 			hs->conn = 1;
 			hs->conn_msgid = h.msgid;
+			hs->conn_proto = rx.body[122] | (rx.body[123] << 8);
 			frame_write(fd, DMSG_LNK_CONN | DMSGF_CREATE | DMSGF_REPLY |
 			    DMSGF_REVTRANS, h.msgid, 0);
 			break;
@@ -436,6 +480,17 @@ handshake(int fd, struct hs *hs, long settle_ms)
 		    !(h.cmd & DMSGF_REPLY)) {
 			hs->spans++;
 			hs->span_msgid = h.msgid;
+			if (rx.body[97] == 3 && hs->nspan < 8) {	/* DMSG_PEER_HAMMER2 */
+				memcpy(hs->span[hs->nspan].clid, rx.body + 64, 16);
+				memcpy(hs->span[hs->nspan].fsid, rx.body + 80, 16);
+				hs->span[hs->nspan].type = rx.body[96];
+				hs->span[hs->nspan].proto = rx.body[98] | (rx.body[99] << 8);
+				/* hammer2_update_spans() puts the PFS name in
+				 * peer_label; a libdmsg span names it in pfs_label */
+				memcpy(hs->span[hs->nspan].label,
+				    rx.body[304] ? rx.body + 304 : rx.body + 176, 127);
+				hs->nspan++;
+			}
 			frame_write(fd, DMSG_LNK_SPAN | DMSGF_CREATE | DMSGF_REPLY |
 			    DMSGF_REVTRANS, h.msgid, 0);
 		} else {
@@ -555,6 +610,133 @@ refusal(int fd, const char *action, int p2, int ended, uint32_t cmd,
 	return ((c2 && !eof && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1);
 }
 
+/* ---- the HM2 XOP API client, stage 2a ---------------------------------- */
+
+/* What one request's reply looked like on the wire. */
+struct hm2reply {
+	int frames;		/* feed frames carrying a chain */
+	int runs;		/* continuations sent */
+	int maxrun;		/* most feed frames between two continuations */
+	int closed;		/* the transaction's DELETE arrived */
+	int refused;		/* closed by LNK_ERROR, never served */
+	uint32_t error;		/* the close's error */
+	long ms;
+};
+
+/* What the fed chains held, decoded by type. */
+struct hm2ctx {
+	FILE *out;		/* where data blocks go, for the digest */
+	int print;		/* one line per chain on stdout */
+	int inodes, dirents, datas, others, comp_none, full;
+	hammer2_inode_meta_t meta;	/* the last inode fed */
+	hammer2_blockref_t bref;	/* the last chain fed */
+};
+
+static void
+hm2_feed(const struct dmsg_hm2_feed *f, const uint8_t *aux, size_t auxlen,
+    struct hm2ctx *c)
+{
+	const hammer2_blockref_t *b = &f->bref;
+	const char *name;
+
+	c->bref = *b;
+	switch (b->type) {
+	case HAMMER2_BREF_TYPE_INODE:
+		c->inodes++;
+		if (auxlen >= sizeof(hammer2_inode_data_t))
+			memcpy(&c->meta, aux, sizeof(c->meta));
+		break;
+	case HAMMER2_BREF_TYPE_DIRENT:
+		c->dirents++;
+		name = b->embed.dirent.namlen <= sizeof(b->check.buf) ?
+		    b->check.buf : (const char *)aux;
+		if (c->print)
+			printf("ent inum=%llu type=%d key=%016llx name=%.*s\n",
+			    (unsigned long long)b->embed.dirent.inum,
+			    b->embed.dirent.type, (unsigned long long)b->key,
+			    (int)b->embed.dirent.namlen, name);
+		break;
+	case HAMMER2_BREF_TYPE_DATA:
+		c->datas++;
+		if (HAMMER2_DEC_COMP(b->methods) == HAMMER2_COMP_NONE)
+			c->comp_none++;
+		if (auxlen == f->bytes)
+			c->full++;
+		if (c->out)
+			fwrite(aux, 1, auxlen, c->out);
+		/* FALLTHROUGH */
+	default:
+		if (b->type != HAMMER2_BREF_TYPE_DATA)
+			c->others++;
+		if (c->print)
+			printf("blk key=%016llx type=%d bytes=%u data_off=%016llx\n",
+			    (unsigned long long)b->key, b->type, f->bytes,
+			    (unsigned long long)b->data_off);
+		break;
+	}
+}
+
+/* One request: the command with CREATE, the arguments in the body and the
+ * name as aux; then every reply frame on the transaction until its DELETE,
+ * a continuation after each window of HM2_WINDOW feeds, and our own DELETE
+ * after the close.  A feed frame closing the transaction is a served
+ * request's final error, LNK_ERROR a refusal. */
+static int
+hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
+    uint64_t key_beg, uint64_t key_end, int nmax, const char *name,
+    struct hm2ctx *c, struct hm2reply *r)
+{
+	static uint64_t next_msgid = 0x4000;
+	struct dmsg_hm2_xop q;
+	struct dmsg_hdr h;
+	uint64_t id = ++next_msgid;
+	long t0 = now_ms(), deadline = t0 + wait_ms;
+	int run = 0;
+
+	memset(r, 0, sizeof(*r));
+	memset(&q, 0, sizeof(q));
+	memcpy(q.pfs_clid, clid, 16);
+	q.inum = inum;
+	q.key_beg = key_beg;
+	q.key_end = key_end;
+	q.nmax = nmax;
+	frame_write_full(fd, DMSG_HM2_XOP(idx) | DMSGF_CREATE, id, 0,
+	    (const uint8_t *)&q + sizeof(h), sizeof(q) - sizeof(h),
+	    (const uint8_t *)name, name ? strlen(name) : 0, 0);
+	while (frame_read(fd, &h, deadline) == 1) {
+		if (h.msgid != id || !(h.cmd & DMSGF_REPLY))
+			continue;
+		if (BASE(h.cmd) == DMSG_HM2_FEED && !(h.cmd & DMSGF_DELETE)) {
+			r->frames++;
+			if (++run > r->maxrun)
+				r->maxrun = run;
+			if (c)
+				hm2_feed((const struct dmsg_hm2_feed *)rx.body,
+				    rx.aux, rx.auxlen, c);
+			if (run == HM2_WINDOW && !nocont) {
+				frame_write(fd, DMSG_HM2_XOP(idx), id, 0);
+				r->runs++;
+				run = 0;
+				deadline = now_ms() + wait_ms;
+			}
+			continue;
+		}
+		if (h.cmd & DMSGF_DELETE) {
+			r->closed = 1;
+			if (BASE(h.cmd) == DMSG_HM2_FEED)
+				r->error = ((const struct dmsg_hm2_feed *)rx.body)->error;
+			else {
+				r->refused = 1;
+				r->error = h.error;
+			}
+			break;
+		}
+	}
+	r->ms = now_ms() - t0;
+	frame_write(fd, DMSG_HM2_XOP(idx) | DMSGF_DELETE, id, 0);
+	return (r->closed ? 0 : -1);
+}
+
 /* ---- the actions ------------------------------------------------------- */
 
 static void
@@ -564,7 +746,10 @@ usage(void)
 	    " [--wait-ms N] [--settle-ms N] [--hold-max-ms N] [--trace FILE]\n"
 	    "       actions: conn cancel badmagic badsize badaux halfclose close"
 	    " reconnect hold refuse proto2 badcrc badcrc1 auxok auxbad spanlist"
-	    " span2on1 hm2proto1 hm2proto2\n");
+	    " span2on1 hm2proto1 hm2proto2 hm2root hm2readdir hm2nresolve"
+	    " hm2read hm2scanall hm2lookup hm2bmap hm2scanlhc hm2refuse\n"
+	    "       hm2 options: [--pfs LABEL] [--inum N] [--key K] [--name S]"
+	    " [--count N] [--nmax N] [--out FILE] [--nocont 1]\n");
 	exit(2);
 }
 
@@ -573,6 +758,9 @@ main(int argc, char **argv)
 {
 	crc_init();
 	const char *mnt = NULL, *action = NULL, *tr = NULL;
+	const char *pfs = "ROOT", *name = NULL, *out = NULL;
+	uint64_t inum = 1, key = 0;
+	int count = 1, nmax = 0;
 	long hold_max_ms = 30000;
 	struct hs hs;
 	int rc = 1;
@@ -584,6 +772,14 @@ main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--settle-ms")) settle_ms = atol(argv[i + 1]);
 		else if (!strcmp(argv[i], "--hold-max-ms")) hold_max_ms = atol(argv[i + 1]);
 		else if (!strcmp(argv[i], "--trace")) tr = argv[i + 1];
+		else if (!strcmp(argv[i], "--pfs")) pfs = argv[i + 1];
+		else if (!strcmp(argv[i], "--name")) name = argv[i + 1];
+		else if (!strcmp(argv[i], "--out")) out = argv[i + 1];
+		else if (!strcmp(argv[i], "--inum")) inum = strtoull(argv[i + 1], NULL, 0);
+		else if (!strcmp(argv[i], "--key")) key = strtoull(argv[i + 1], NULL, 0);
+		else if (!strcmp(argv[i], "--count")) count = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--nmax")) nmax = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--nocont")) nocont = atoi(argv[i + 1]);
 		else usage();
 	}
 	if (mnt == NULL || action == NULL)
@@ -755,6 +951,159 @@ main(int argc, char **argv)
 		 * the space being PROTO_2's vocabulary. */
 		int p2 = !strcmp(action, "hm2proto2");
 		rc = refusal(dfd, action, p2, !p2, DMSG_HM2_PROBE, 0x1005, 0);
+	} else if (!strncmp(action, "hm2", 3)) {	/* hm2proto[12] matched above */
+		/* Stage 2a: the HM2 XOP API against the mounted PFS the kernel
+		 * spanned, every reply read beside what the guest itself
+		 * sees of the same volume.  The kernel's CONN must announce
+		 * PROTO_2 now that it serves the space. */
+		uint32_t cerr = 0, serr;
+		int o1, c2, i, sp = -1, f, eof, shell;
+		struct hm2ctx c;
+		struct hm2reply r;
+		const uint8_t *clid;
+
+		memset(&c, 0, sizeof(c));
+		c2 = proto2_prelude(dfd, &cerr, &o1);
+		for (i = 0; i < hs.nspan; i++)
+			if (!strcmp(hs.span[i].label, pfs))
+				sp = i;
+		if (!c2 || sp < 0) {
+			printf("h2attach %s: conn=1 conn_proto=%d conn2_reply=%d"
+			    " spans=%d pfs_found=%d labels=", action, hs.conn_proto,
+			    c2, hs.nspan, sp >= 0);
+			for (i = 0; i < hs.nspan; i++)
+				printf("%s%s", i ? "," : "", hs.span[i].label);
+			printf("\n");
+			rc = 1;
+			goto hm2done;
+		}
+		clid = hs.span[sp].clid;
+		if (!strcmp(action, "hm2root")) {
+			int match;
+			hm2_request(dfd, 0, clid, inum, 0, 0, 0, NULL, &c, &r);
+			match = c.inodes == 1 &&
+			    memcmp(&c.meta.pfs_fsid, hs.span[sp].fsid, 16) == 0;
+			printf("h2attach hm2root: conn=1 conn_proto=%d span_proto=%d"
+			    " span_type=%d found=%d frames=%d inum=%llu type=%d"
+			    " pfs_type=%d fsid_match=%d closed=%d refused=%d"
+			    " error=%u ms=%ld\n", hs.conn_proto, hs.span[sp].proto,
+			    hs.span[sp].type, c.inodes, r.frames,
+			    (unsigned long long)c.meta.inum, c.meta.type,
+			    c.meta.pfs_type, match, r.closed, r.refused, r.error,
+			    r.ms);
+			rc = (hs.conn_proto == 2 && hs.span[sp].proto == 2 &&
+			    match && r.closed && !r.refused && r.error == 0) ? 0 : 1;
+		} else if (!strcmp(action, "hm2readdir")) {
+			c.print = 1;
+			hm2_request(dfd, 1, clid, inum, HAMMER2_DIRHASH_VISIBLE,
+			    HAMMER2_KEY_MAX, nmax, NULL, &c, &r);
+			printf("h2attach hm2readdir: conn=1 entries=%d frames=%d"
+			    " runs=%d maxrun=%d closed=%d refused=%d error=%u"
+			    " ms=%ld\n", c.dirents, r.frames, r.runs, r.maxrun,
+			    r.closed, r.refused, r.error, r.ms);
+			rc = (r.closed && !r.refused && r.error == 0) ? 0 : 1;
+		} else if (!strcmp(action, "hm2nresolve")) {
+			hm2_request(dfd, 2, clid, inum, 0, 0, 0, name, &c, &r);
+			printf("h2attach hm2nresolve: conn=1 name=%s found=%d"
+			    " inum=%llu size=%llu type=%d closed=%d refused=%d"
+			    " error=%u ms=%ld\n", name ? name : "", c.inodes,
+			    (unsigned long long)c.meta.inum,
+			    (unsigned long long)c.meta.size, c.meta.type,
+			    r.closed, r.refused, r.error, r.ms);
+			rc = (r.closed && !r.refused) ? 0 : 1;
+		} else if (!strcmp(action, "hm2read")) {
+			long bytes = 0, ms = 0;
+			if (out && (c.out = fopen(out, "w")) == NULL) {
+				perror(out);
+				rc = 2;
+				goto hm2done;
+			}
+			memset(&r, 0, sizeof(r));
+			for (i = 0; i < count; i++) {
+				hm2_request(dfd, 18, clid, inum,
+				    (uint64_t)i * HAMMER2_PBUFSIZE, 0, 0, NULL,
+				    &c, &r);
+				bytes += rx.auxlen;
+				ms += r.ms;
+				if (!r.closed || r.refused || r.error)
+					break;
+			}
+			if (c.out)
+				fclose(c.out);
+			printf("h2attach hm2read: conn=1 blocks=%d datas=%d"
+			    " comp_none=%d full=%d bytes=%ld closed=%d refused=%d"
+			    " error=%u ms=%ld\n", count, c.datas, c.comp_none, c.full,
+			    bytes, r.closed, r.refused, r.error, ms);
+			rc = (c.datas == count && c.comp_none == count &&
+			    c.full == count && r.closed && !r.refused &&
+			    r.error == 0) ? 0 : 1;
+		} else if (!strcmp(action, "hm2scanall")) {
+			c.print = 1;
+			hm2_request(dfd, 6, clid, inum, 0, HAMMER2_KEY_MAX, 0,
+			    NULL, &c, &r);
+			printf("h2attach hm2scanall: conn=1 chains=%d datas=%d"
+			    " runs=%d maxrun=%d closed=%d refused=%d error=%u"
+			    " ms=%ld\n", r.frames, c.datas, r.runs, r.maxrun,
+			    r.closed, r.refused, r.error, r.ms);
+			rc = (r.closed && !r.refused && r.error == 0) ? 0 : 1;
+		} else if (!strcmp(action, "hm2lookup")) {
+			hm2_request(dfd, 7, clid, inum, key, 0, 0, NULL, &c, &r);
+			printf("h2attach hm2lookup: conn=1 found=%d key=%016llx"
+			    " type=%d bytes=%u data_off=%016llx closed=%d"
+			    " refused=%d error=%u ms=%ld\n", r.frames,
+			    (unsigned long long)c.bref.key, c.bref.type,
+			    c.datas || c.inodes || c.dirents || c.others ?
+			    (unsigned)c.bref.vradix : 0,
+			    (unsigned long long)c.bref.data_off, r.closed,
+			    r.refused, r.error, r.ms);
+			rc = (r.closed && !r.refused) ? 0 : 1;
+		} else if (!strcmp(action, "hm2bmap")) {
+			hm2_request(dfd, 20, clid, inum, key, 0, 0, NULL, &c, &r);
+			printf("h2attach hm2bmap: conn=1 found=%d key=%016llx"
+			    " data_off=%016llx closed=%d refused=%d error=%u"
+			    " ms=%ld\n", r.frames, (unsigned long long)c.bref.key,
+			    (unsigned long long)c.bref.data_off, r.closed,
+			    r.refused, r.error, r.ms);
+			rc = (r.closed && !r.refused) ? 0 : 1;
+		} else if (!strcmp(action, "hm2scanlhc")) {
+			c.print = 1;
+			hm2_request(dfd, 5, clid, inum,
+			    key & ~HAMMER2_DIRHASH_LOMASK, 0, 0, NULL, &c, &r);
+			printf("h2attach hm2scanlhc: conn=1 ents=%d closed=%d"
+			    " refused=%d error=%u ms=%ld\n", c.dirents, r.closed,
+			    r.refused, r.error, r.ms);
+			rc = (r.closed && !r.refused && r.error == 0) ? 0 : 1;
+		} else if (!strcmp(action, "hm2refuse")) {
+			/* A modifying command, a cluster this device has no
+			 * mounted PFS of, and an inode that does not exist:
+			 * the first two refused by LNK_ERROR NOSUPP, the
+			 * third served and closed with an error and no
+			 * chain; none of them ends the connection. */
+			static const uint8_t noclid[16] = { 0xde, 0xad, 0xbe, 0xef };
+			struct hm2reply r1, r2, r3;
+			hm2_request(dfd, 3, clid, inum, 0, 0, 0, NULL, NULL, &r1);
+			hm2_request(dfd, 0, noclid, inum, 0, 0, 0, NULL, NULL, &r2);
+			hm2_request(dfd, 0, clid, 0xfffffffULL, 0, 0, 0, NULL, NULL,
+			    &r3);
+			eof = probe_alive(dfd, settle_ms, &shell, &serr, &f);
+			printf("h2attach hm2refuse: conn=1 mod_closed=%d"
+			    " mod_refused=%d mod_error=%u nopfs_closed=%d"
+			    " nopfs_refused=%d nopfs_error=%u noino_closed=%d"
+			    " noino_refused=%d noino_error=%u noino_frames=%d"
+			    " eof=%d shell_reply=%d shell_error=%u\n",
+			    r1.closed, r1.refused, r1.error, r2.closed,
+			    r2.refused, r2.error, r3.closed, r3.refused,
+			    r3.error, r3.frames, eof, shell, serr);
+			rc = (r1.closed && r1.refused && r1.error == DMSG_ERR_NOSUPP &&
+			    r2.closed && r2.refused && r2.error == DMSG_ERR_NOSUPP &&
+			    r3.closed && !r3.refused && r3.error != 0 &&
+			    r3.frames == 0 && !eof && shell &&
+			    serr == DMSG_ERR_NOSUPP) ? 0 : 1;
+		} else {
+			usage();
+		}
+hm2done:
+		;
 	} else if (!strcmp(action, "halfclose")) {
 		int f, eof;
 		long t0 = now_ms();

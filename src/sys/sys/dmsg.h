@@ -571,6 +571,44 @@ typedef struct dmsg_dbg_shell dmsg_dbg_shell_t;
 #define DMSG_HM2_OPENPFS	DMSG_HM2(0x001, dmsg_hm2_openpfs)
 
 /*
+ * XXX Linux: the HM2 XOP API of doc/CLUSTER_PROTOCOL_DESIGN.md, which no
+ * upstream tree defines a structure for.  A request is one structure for
+ * the 21 XOP descriptors of hammer2_admin.c, numbered 0x010 plus the
+ * descriptor's index, carrying the XOP's arguments that are not pointers
+ * with the name as aux; a reply frame is one fed chain's blockref with
+ * its bytes and error, the chain's data as aux, and the transaction's
+ * DELETE carries the element's final error.
+ */
+struct dmsg_hm2_xop {
+	dmsg_hdr_t	head;
+	struct uuid	pfs_clid;	/* the cluster whose local element answers */
+	uint64_t	inum;		/* the inode the XOP runs under */
+	uint64_t	key_beg;	/* lkey, lhc, key_beg, lbase or lbn */
+	uint64_t	key_end;	/* rkey or key_end */
+	uint32_t	resolve_flags;
+	uint32_t	lookup_flags;
+	int32_t		nmax;
+	uint32_t	reserved[3];	/* 128 bytes, the size the command encodes */
+};
+
+typedef struct dmsg_hm2_xop dmsg_hm2_xop_t;
+
+struct dmsg_hm2_feed {
+	dmsg_hdr_t	head;
+	uint8_t		bref[128];	/* hammer2_blockref_t, asserted where it is filled */
+	uint32_t	bytes;
+	uint32_t	error;
+	uint8_t		reserved[56];
+};
+
+typedef struct dmsg_hm2_feed dmsg_hm2_feed_t;
+
+#define DMSG_HM2_XOP_BASE	0x010
+#define DMSG_HM2_XOP_COUNT	21
+#define DMSG_HM2_XOP(idx)	DMSG_HM2(DMSG_HM2_XOP_BASE + (idx), dmsg_hm2_xop)
+#define DMSG_HM2_FEED		DMSG_HM2(0x030, dmsg_hm2_feed)
+
+/*
  * DMSG_PROTO_BLK Protocol
  *
  * BLK_OPEN	- Open device.  This transaction must be left open for the
@@ -688,6 +726,8 @@ union dmsg_any {
 
 	dmsg_lnk_conn_t		lnk_conn;
 	dmsg_lnk_span_t		lnk_span;
+	dmsg_hm2_xop_t		hm2_xop;	/* XXX Linux */
+	dmsg_hm2_feed_t		hm2_feed;	/* XXX Linux */
 
 	dmsg_blk_open_t		blk_open;
 	dmsg_blk_error_t	blk_error;

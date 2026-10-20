@@ -179,6 +179,14 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
  */
 int hammer2_sync_snapshot = 1;
 module_param_named(sync_snapshot, hammer2_sync_snapshot, int, 0644);
+/*
+ * Linux: the HM2 XOP API server's bound on a wait for the peer: the window
+ * continuation a request stops at, and the try for hammer2_mntlk a request
+ * starts with.  See hammer2_remote.c; the client's bound of the design note
+ * is stage 2b's and shares the parameter.
+ */
+int hammer2_remote_timeout_ms = 10000;
+module_param_named(remote_timeout_ms, hammer2_remote_timeout_ms, int, 0644);
 module_param_named(alloc_data_bytes, hammer2_alloc_data_bytes, ulong, 0444);
 module_param_named(alloc_meta_bytes, hammer2_alloc_meta_bytes, ulong, 0444);
 module_param_named(data_rewrites, hammer2_data_rewrites, ulong, 0444);

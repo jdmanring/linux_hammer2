@@ -1178,15 +1178,48 @@ reconnect, under which the reader verifies both CRCs before the state
 machine sees the frame and ends the connection on a mismatch with a `bad
 crc` line; a frame in the HM2 space on a connection without the flag ends
 it the same way, that space being `PROTO_2`'s vocabulary, and only such a
-connection's `PROTO_2` spans enter the span table. The announcement is
-the peer's alone in stage 1: the kernel's own `LNK_CONN` and spans stay
-at `DMSG_SPAN_PROTO_1` until stage 2 gives it the HM2 vocabulary to
-announce, and nothing in `lib/libdmsg` reads either `proto_version`
+connection's `PROTO_2` spans enter the span table. The announcement was
+the peer's alone in stage 1; since stage 2a gave the kernel the HM2
+vocabulary its own `LNK_CONN` and spans announce `DMSG_SPAN_PROTO_2` too,
+and nothing in `lib/libdmsg` reads either `proto_version`
 field, so a DragonFly peer is unaffected either way. `cluster-dmsg.sh`
 reads the header and the aux refusal each by the `DBG_SHELL` sent after
 the bad frame going unanswered, the `PROTO_1` connection consuming the
 same frame and answering that `DBG_SHELL`, and the control built with
 `HAMMER2_NOCRC` consuming both bad frames and answering it too.
+
+Stage 2a of the same note is the server side of the HM2 XOP API, and it
+is the port's own file, `hammer2_remote.c`, since no BSD tree has a
+remote element. The carried `hammer2_rcvdmsg()` hands it every frame in
+the HM2 space and nothing else. The reader thread never runs chain code:
+a request is copied, its name detached from the frame, and queued to a
+per-device ordered workqueue, Linux's own form of the one service thread
+the note describes, and the work item runs the descriptor's own storage
+function, the one the local frontend runs, on a handle whose single
+element is this device's chain in this device's slot, so the carried
+`hammer2_xops.c` and `hammer2_strategy.c` are not edited and the
+`clindex` they index by is the server's own. The inode is found by
+number through `hammer2_chain_inode_find()`, the nresolve hardlink arm's
+path, so no frontend inode is locked and no inode dependency is taken;
+the request's PFS is found on `hammer2_pfslist` under `hammer2_mntlk`,
+taken by try-lock within `remote_timeout_ms` because the unmount holds
+that lock while it drains the server's queue, and held for the request,
+since the PFS structure carries no reference count and that lock is what
+every mount, unmount and pfs-delete takes. Each fed chain is one reply frame,
+its blockref and bytes with the data as aux, copied under a shared lock
+so a local writer cannot change the block under the copy; the reply
+direction stops at sixteen frames until the peer's continuation, and
+closes with a feed frame carrying the element's final error, where a
+request the server will not serve (a modifying command, a one-shot
+request, a cluster this device has no mounted PFS of, a request
+arriving while the connection closes) is closed by the
+message core's own `DMSG_ERR_NOSUPP` reply. The transaction's state is
+held by that open reply direction alone, since the core does not export
+its state references, and the request record is unhooked from the state
+before the closing frame is queued. `cluster-dmsg.sh` reads each of the
+eight read commands beside the guest's own reading of the same volume,
+and the control built with `HAMMER2_NOWINDOW` must deliver a forty-entry
+directory with no continuation sent.
 
 The deterministic loopback required by the roadmap for cluster testing is
 therefore a userland program sitting where the daemon sits, `test/h2loop.c`,

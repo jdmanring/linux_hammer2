@@ -109,6 +109,7 @@ hammer2_iocom_init(hammer2_dev_t *hmp)
 			 hmp->mmsg, hammer2_rcvdmsg);
 	TAILQ_INIT(&hmp->spanq);	/* XXX Linux */
 	hmp->nspans = 0;
+	hammer2_remote_init(hmp);	/* XXX Linux: the HM2 XOP API server */
 }
 
 void
@@ -117,8 +118,10 @@ hammer2_iocom_uninit(hammer2_dev_t *hmp)
 	struct hammer2_span *span;
 
 	/* XXX chain depend deadlck? */
+	hammer2_remote_quiesce(hmp);	/* XXX Linux: no request admitted or left */
 	if (hmp->iocom.mmsg)
 		kdmsg_iocom_uninit(&hmp->iocom);
+	hammer2_remote_uninit(hmp);	/* XXX Linux: after the reader is gone */
 	/*
 	 * XXX Linux: the teardown above delivers a simulated DELETE for
 	 * every open span on the writer thread, which empties the table
@@ -145,7 +148,9 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 	 * states, then installs the new descriptor and creates
 	 * new threads.
 	 */
+	hammer2_remote_quiesce(hmp);	/* XXX Linux: the old connection's requests */
 	kdmsg_iocom_reconnect(&hmp->iocom, fp, "hammer2");
+	hammer2_remote_resume(hmp);	/* XXX Linux */
 
 	/*
 	 * Setup LNK_CONN fields for autoinitiated state machine.  LNK_CONN
@@ -160,7 +165,12 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 	bzero(&hmp->iocom.auto_lnk_conn.peer_id,
 	      sizeof(hmp->iocom.auto_lnk_conn.peer_id));
 	/* hmp->iocom.auto_lnk_conn.peer_id = hmp->voldata.fsid; */
-	hmp->iocom.auto_lnk_conn.proto_version = DMSG_SPAN_PROTO_1;
+	/*
+	 * XXX Linux: the kernel speaks the HM2 XOP API since stage 2 of
+	 * doc/CLUSTER_PROTOCOL_DESIGN.md, so its LNK_CONN and its spans say
+	 * so; libdmsg reads neither field, a DragonFly kernel closes the span.
+	 */
+	hmp->iocom.auto_lnk_conn.proto_version = DMSG_SPAN_PROTO_2;
 #if 0
 	hmp->iocom.auto_lnk_conn.peer_type = hmp->voldata.peer_type;
 #endif
@@ -195,7 +205,16 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 static int
 hammer2_rcvdmsg(kdmsg_msg_t *msg)
 {
-	kprintf("RCVMSG %08x\n", msg->tcmd);
+	if (hammer2_debug & 0x0100)	/* XXX Linux: one line per frame */
+		kprintf("RCVMSG %08x\n", msg->tcmd);
+
+	/*
+	 * XXX Linux: the HM2 space is the XOP API server's, hammer2_remote.c
+	 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the server side).  The reader only
+	 * queues; a frame it cannot place is answered there, never fatal.
+	 */
+	if ((msg->any.head.cmd & DMSGF_PROTOS) == DMSG_PROTO_HM2)
+		return (hammer2_remote_rcvmsg(msg));
 
 	switch(msg->tcmd) {
 	case DMSG_DBG_SHELL:
@@ -415,7 +434,7 @@ hammer2_update_spans(hammer2_dev_t *hmp, kdmsg_state_t *state)
 		rmsg->any.lnk_span.pfs_id = ripdata->meta.pfs_fsid;
 		rmsg->any.lnk_span.pfs_type = ripdata->meta.pfs_type;
 		rmsg->any.lnk_span.peer_type = DMSG_PEER_HAMMER2;
-		rmsg->any.lnk_span.proto_version = DMSG_SPAN_PROTO_1;
+		rmsg->any.lnk_span.proto_version = DMSG_SPAN_PROTO_2; /* XXX Linux */
 		name_len = ripdata->meta.name_len;
 		if (name_len >= sizeof(rmsg->any.lnk_span.peer_label))
 			name_len = sizeof(rmsg->any.lnk_span.peer_label) - 1;

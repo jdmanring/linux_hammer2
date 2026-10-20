@@ -443,6 +443,8 @@ check "hammer2_ioctl.c: invariants on"  pass src/sys/fs/hammer2/hammer2_ioctl.c 
 check "hammer2_ioctl.c: invariants off" pass src/sys/fs/hammer2/hammer2_ioctl.c $CARRIED
 check "hammer2_export.c: invariants on"  pass src/sys/fs/hammer2/hammer2_export.c -DHAMMER2_INVARIANTS
 check "hammer2_export.c: invariants off" pass src/sys/fs/hammer2/hammer2_export.c
+check "hammer2_remote.c: invariants on"  pass src/sys/fs/hammer2/hammer2_remote.c -DHAMMER2_INVARIANTS
+check "hammer2_remote.c: invariants off" pass src/sys/fs/hammer2/hammer2_remote.c
 check "hammer2_synchro.c: invariants on"  pass src/sys/fs/hammer2/hammer2_synchro.c -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_synchro.c: invariants off" pass src/sys/fs/hammer2/hammer2_synchro.c $CARRIED
 check "kern_dmsg.c: invariants on"        pass src/sys/fs/hammer2/kern_dmsg.c -DHAMMER2_INVARIANTS $CARRIED
@@ -517,6 +519,7 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_vnops.c \
 		src/sys/fs/hammer2/hammer2_ioctl.c \
 		src/sys/fs/hammer2/hammer2_export.c \
+		src/sys/fs/hammer2/hammer2_remote.c \
 		src/sys/fs/hammer2/hammer2_synchro.c \
 		src/sys/fs/hammer2/hammer2_ccms.c; do
 		ran=$((ran + 1))
@@ -525,7 +528,7 @@ if [ -n "$CC2" ]; then
 		# hammer2_io.c and the header TU are held to the full set,
 		# and the header TU is where the alignment is asserted.
 		case "$f" in
-		*/hammer2_io.c|*/hammer2_strategy.c|*/hammer2_export.c|test/*) carried= ;;
+		*/hammer2_io.c|*/hammer2_strategy.c|*/hammer2_export.c|*/hammer2_remote.c|test/*) carried= ;;
 		*) carried=$CARRIED ;;
 		esac
 		"$CC2" "${CFLAGS2[@]}" $carried "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
@@ -592,6 +595,7 @@ if command -v sparse >/dev/null 2>&1; then
 		src/sys/fs/hammer2/hammer2_vnops.c \
 		src/sys/fs/hammer2/hammer2_ioctl.c \
 		src/sys/fs/hammer2/hammer2_export.c \
+		src/sys/fs/hammer2/hammer2_remote.c \
 		src/sys/fs/hammer2/hammer2_synchro.c \
 		src/sys/fs/hammer2/hammer2_ccms.c; do
 		ran=$((ran + 1))
