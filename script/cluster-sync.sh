@@ -40,6 +40,18 @@
 # say what it has, and the two are compared, which fails in both
 # directions rather than only on an absent report.
 #
+# The snapshot pass added its own readings: the source and target
+# snapshots listed as PFSes while a pass runs, the mutation phase reading
+# the slave's media against the snapshot's state rather than the live
+# master's, the verify rounds, the idle window after the resume settles,
+# which waits for two idle lines after the last idle stamp rather than a
+# fixed number of seconds, and the two root tids once idle. H2_CRASH=1
+# cuts the guest's power inside the backlog copy and reads both media as
+# the cut left them before the restart. H2_SYNC_SNAPSHOT=0 is the negative
+# control: the live pass, which must list no snapshot and must write the
+# master's state of the mutated set. The run's own report is kept beside
+# the klog it copies off, under one stamp, in the fixtures directory.
+#
 # Exit 2 without the guest, the tools or a kernel tree. H2_FIXTURE_SHARE=1
 # starts the guest beside another running domain, as test-fixtures.sh
 # does; otherwise another domain is a reason not to.

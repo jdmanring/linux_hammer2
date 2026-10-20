@@ -53,8 +53,11 @@ At a glance, on a kernel of 7.3 or newer:
   quorum that requires both to agree, every file reading back what was
   written; both on the debug and the sanitizer kernel. No member on
   another host yet: the transport and its message core are carried and
-  measured with the kernel in the loop (P5, P6), the remote PFS layer
-  above them is next (P7), and no run yet of a quorum that cannot be met
+  measured with the kernel in the loop (P5, P6), the synchronization
+  pass above them copies from a per-pass snapshot of the master and
+  keeps a snapshot of the slave as its last known-good copy (P7's local
+  half; the remote reach is open at `doc/SYNC_DESIGN.md`), and no run
+  yet of a quorum that cannot be met
 + not yet: a package, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image

@@ -8,10 +8,14 @@ semantics stops at a design note with alternatives and what each would
 have to prove. P7 touches two of the three: a master on another host puts
 a network peer behind the synchronization thread, and the immutable source
 the row asks for is a snapshot the format already defines but the code does
-not treat as one. This document is that stop. It carries no code and
-proposes no patch: it fixes what the original design specifies, what the
-wire protocol actually defines, what the port carries today, and what each
-way of reaching a master on another host would have to prove before it is
+not treat as one. This document is that stop for the remote reach. The
+local half of the fork, verify and replace protocol has since been built
+on two devices of one host, behind the `sync_snapshot` module parameter,
+and the section "What the implementation decided" below records the
+decisions the code took; the rest of the note fixes what the original
+design specifies, what the wire protocol actually defines, what the port
+carried before that half, and what each way of reaching a master on
+another host would have to prove before it is
 written.
 
 Read against the DragonFly clone at `250a8b4`, with `sys/dev/disk/xdisk`,
@@ -392,13 +396,118 @@ taken. B is a protocol extension and would carry a version in its frames
 from the first one; the `dmsg` header has the room. A changes no media
 and no protocol and changes the mount's semantics instead.
 
+## What the implementation decided (2026-10-18)
+
+The local half of the fork, verify and replace protocol is built on two
+devices, behind the `sync_snapshot` module parameter, and these are the
+decisions the code took where this note left a choice or where the
+trace of the carried code closed one. The remote reach, A, B or C
+above, stays at this note.
+
+**The source is a per-pass snapshot of the master element, addressed by
+chain.** The thread snapshots the element the root's quorum focus names
+into `<name>.h2sync-src` under the super-root of that element's device,
+reads it through the carried `ipcluster` and `scanall` XOPs over an inode
+of the snapshot PFS, and deletes it after the pass. The snapshot keeps
+its private `pfs_clid` and SNAPSHOT subtype; no media meaning changes.
+The first form held a chain cursor locked across the arms and failed in
+its first run on the lock classes, which carry a chain's type and level
+and not its tree. The slave side is found by inode number under this
+element, since the snapshot's inode holds no element of the cluster.
+
+**The target is written in place, and a snapshot of it taken before the
+first pass after a verified one is the last known-good copy.**
+`<name>.h2sync-tgt` on the slave's own device, deleted when a pass
+verifies, kept across a failed or interrupted pass, a crash and an
+unmount, and found by name on the next mount; the thread runs the PFS
+sync once more after taking it, since the snapshot helper's own flush
+stops at the new inode and a cut before the next volume header would
+leave the blocks of a target and no name. This meets the handoff's
+"a failed transfer does not destroy the last known-good destination"
+with the primitives the port has. The fork-and-swap of a live target
+this note describes is not built: no tree can swap a cluster element's
+root under a live mount (`hammer2_pfsalloc` appends, `hammer2_pfsdealloc`
+leaves a hole, the inode cache has no repoint walk, there is no PFS
+rename), and the reader-visible property it protects has no reader here.
+A lone SLAVE label is refused at mount with ENOENT at the root inode,
+beside a control mount of the same device's ROOT label that succeeds;
+the cluster mount serves reads from the master, and `hammer2_cluster_check()`
+serves a slave only when its root tid agrees with the quorum. `DEFER(a
+consumer that reads a slave element directly, a static mount or a
+standalone slave mount)`, the marker standing in `hammer2_synchro.c`
+above the pass driver and in the ledger of `doc/README.status.md`.
+
+**Verify is the pass re-run against the same snapshot at the root
+level.** A pass that acted is run again with the root pushed onto the
+thread's rescan set, so the tid gate cannot pass it, until a round acts
+on nothing or three have run; a pass whose last round acted on nothing
+and failed nothing is verified. A round that keeps a key as newer than
+the snapshot ends the rounds with the verdict `newer`: the frontend
+wrote the slave element after the snapshot was taken, and the next
+snapshot holds what the slave holds. A re-run that compared every inode
+would have deferred and re-stamped the whole slave tree per round; the
+root-level compare by tid is what the rescan set already makes sound.
+
+**The idle test is the master root's flushed blockset and copied
+fields, not its tid.** The flush rewrites `pfs_iroot_blocksets[m]` for
+any change it writes back under the root and nothing else does; the
+fourteen root fields the PFSROOT arm copies are compared beside it, from
+the snapshot that last verified, which carries the source root's fields
+rather than a new PFS's defaults. The root's own `modify_tid` moves with
+every snapshot's `pfs_lsnap_tid` write. An idle master whose root tid
+still differs from the slave's gets the carried live pass once: its
+root scan is one level by tid and its PFSROOT arm stamps the slave root
+with the live tid. Measured over the eighteen kept klogs of the step
+that carry an idle stamp, on the rc5 and 7.3 debug and KASAN kernels:
+one such pass per burst in every one, the two root tids equal on the idle line after it, and an
+idle pass costing no snapshot. The stamp's one-level scan is the cost
+of an idle master after a change: 0.4 s at most on the debug kernel,
+9.3 s over 20107 root entries on the KASAN kernel.
+
+**Sync inside the snapshot is the PFS flush, not `hammer2_sync()`.**
+`hammer2_sync()` takes `s_umount` for read, which an unmount holds for
+write while it waits for the thread; the thread's snapshot flushes
+through `hammer2_vfs_sync_pmp()`, which also lets the pass run on a
+cluster whose devices are mounted and whose cluster is not. The
+snapshot's own flush is what rewrites the master's blockset before the
+copy, and the thread's pass-end flush writes the slave element alone.
+
+**Two masters: no quorum, no snapshot pass.** The source element is the
+one the root `ipcluster` focus names; without one the live pass runs
+and copies nothing. The snapshot covers that element only, which is what
+a snapshot is in both trees. Two-master convergence stays
+`cluster-quorum.sh`'s and P8's, and one reading there is owed to the
+idle test: the thread's own flush of an element root does not refresh
+that element's blockset slot, so a second master's thread writing the
+source element would leave the idle test reading stale for up to the
+syncer's interval.
+
+**The frontend writes the slave element too.** A frontend write on the
+mounted cluster lands on both elements at once, so a pass whose snapshot
+predates one meets its own staleness: a key the frontend wrote is kept
+as newer and the pass waits for the next snapshot; a key the frontend
+deleted is absent on the slave and present in the snapshot, and the
+insert arm has nothing to compare. That last case is closed one level
+up (`6d43038`): an inode whose slave chain is newer than the snapshot's
+is skipped whole and put on the rescan set, so a directory the frontend
+changed after the snapshot is neither scanned nor refilled, and the
+insert arm counts the residue as `syncsnap: reinsert` lines in
+`hammer2_sync_insert()`, which the harness reads as `reinserts`, 0
+wanted: 0 in every one of the 29 kept klogs at this writing, with the
+mutation phase driving ten deletions and ten writes into an open pass
+in each run since the rule landed.
+
 ## What this note does not settle
 
 - Which of A, B or C reaches the other host. D defers it on purpose and
   names the measurement that decides it.
 - The live-mount handoff. Where the chains of an open file go when the
-  root under it is swapped is unanswered in every tree and is a design
-  question of its own before it is code.
+  root under it is swapped is unanswered in every tree. The local half
+  did not build the swap: the slave is written in place and a snapshot
+  of it is the last known-good copy, and the property the swap protects
+  has no reader here, so it stands as `DEFER(a consumer that reads a
+  slave element directly, a static mount or a standalone slave mount)`
+  in the section above.
 - Whether the snapshot's blockset copy, one element's at `:594` under
   upstream's "doesn't work with real cluster", is enough for a snapshot
   taken as a source. For a single-element master it is; for a two-master

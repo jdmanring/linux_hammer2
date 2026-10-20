@@ -680,6 +680,12 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
  * <name>.h2sync-tgt on its own device, deleted when a pass verifies and
  * kept across a failed or interrupted pass, a crash and an unmount: the
  * last known-good slave, by the primitives the port has.
+ * DEFER(a consumer that reads a slave element directly, a static mount or a standalone slave mount):
+ * the design note's fork-and-swap of a live target is not built.  No tree
+ * swaps a cluster element's root under a live mount, and nothing in this
+ * port reads a slave element's mixed state: the cluster mount serves reads
+ * from the master and a lone SLAVE label is refused at mount, so the slave
+ * is written in place and this snapshot is what a failed pass leaves intact.
  */
 #define HAMMER2_SYNC_VERIFY_ROUNDS	3
 

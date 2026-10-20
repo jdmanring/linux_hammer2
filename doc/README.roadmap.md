@@ -277,9 +277,9 @@ invokes the kernel's build system, so running `make` is that act.
 ### Next moves
 
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
-dependency order. P0 to P6 are closed on the Linux reading; P7 has its
-design note, item 7 below, and the local half the note recommends is the
-next code.
+dependency order. P0 to P6 are closed on the Linux reading; P7's local
+half is built and read, item 7 below, and its remote reach stays at the
+design note.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
@@ -385,25 +385,35 @@ next code.
    descriptor it replaces down first, since the first run of that
    criterion sat forever in an uninterruptible sleep inside the ioctl.
    The remote PFS layer above the core is P7.
-7. P7, remote synchronization, has its design note as of 2026-10-18,
-   `doc/SYNC_DESIGN.md`, and no code. The note found that the chain-level
+7. P7, remote synchronization: the local half is built and read as of
+   2026-10-19, and the remote reach stays at the design note of
+   2026-10-18, `doc/SYNC_DESIGN.md`. The note found that the chain-level
    network protocols the design document calls for were never written in
    any tree, the wire protocol defining one HAMMER2 command above the
    block device; that the carried thread synchronizes a live slave from
    a live master with no fork of either; and that a snapshot leaves its
    cluster by taking a new cluster id, so the immutable source the row
-   asks for is not reachable by the thread as carried. It lays out where
+   asks for was not reachable by the thread as carried. It lays out where
    a remote master's bytes could come from, what makes a source
    immutable, how a target is forked and replaced, and who authenticates
    the link, with four alternatives and the measurements that would
    decide between them. Reaching another host stops at the note under
    the plan's rule, since it is a protocol or a mount semantics the
    original never had and a trust boundary no Linux daemon holds yet.
-   The note's recommendation is the fork, verify and replace protocol on
-   local devices first, with the snapshot reached by name through the
+   The half the note recommended, on local devices and as Dillon's own
+   2015 roadmap ordered the work, is the code: the thread's pass takes a
+   snapshot of the master element, reached by name through the
    super-root rather than by changing what a shared cluster id means on
-   media, as Dillon's own 2015 roadmap ordered the work; that half
-   changes no media meaning and no trust boundary and is the next code.
+   media, reads it through the carried XOPs, verifies against it at the
+   root, skips an idle master by its flushed blockset and copied root
+   fields, and keeps a snapshot of the slave as the last known-good copy
+   across a failed or interrupted pass, a crash and an unmount, written
+   to the media before the pass's first write. `script/cluster-sync.sh`
+   reads the five criteria as counts; the P7 row below has the runs.
+   The note's "What the implementation decided" section records the
+   fork-and-swap of a live target as a `DEFER`, there being no reader of
+   a slave element's mixed state here. The remote reach, A, B or C in
+   the note, is the maintainer's ruling.
 
 ## Versioning
 
@@ -964,7 +974,7 @@ Rules it adds to the ones this tree already keeps:
 | P4 | local synchronization hardening: thread lifetime, allocation and I/O faults, a crash during a sync, convergence after restart | P3 | closed 2026-10-16 on the Linux reading, item 4 above. Reopened and re-closed the same day: the failed-copy `modify_tid` stamp is withheld for a pass that failed a key and the pass ends after one deferral drain, measured by `H2_FAULT`; the pass-end flush gate is removed and the flush runs every pass, its idle cost measured at 0.03 ms median and its upgrade trigger a `DEFER`. The replace and destroy arms are driven by `cluster-sync.sh`'s phase 2c under `H2_FAULT2`, and the first drive found and fixed a carried over-read in the replace arm, staged under `doc/upstream/`. The crash cell's FreeBSD half is COULD-NOT-RUN by detector design. See `doc/history/verification-record.md`. |
 | P5 | a transport interface with a deterministic loopback: delay, loss, duplication, reordering, disconnect, reconnect, a replayable trace | P4 | closed 2026-10-16 on the work queue's seven exit criteria (delay, loss, duplicate, reorder, disconnect, reconnect, reproducible event trace), item 5 above, by `test-transport.sh` over `test/h2loop.c`: each knob read beside a knob-off control that must read zero, and a replay read beside an edited trace that must not reproduce. The kernel intake and the frame reader are P6's, with `kern_dmsg.c`. |
 | P6 | the message core behind it: `kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_msgops.c` | P5 | closed 2026-10-16 on the five exit criteria (loopback messages, malformed messages, cancellation, reconnect, socket faults), item 6 above, by `cluster-dmsg.sh` driving `test/h2attach.c` against the mounted volume on the guest: 32 checks, 0 failed on both the KASAN kernel and the lockdep debug kernel, the thirty-second a kmemleak scan before the module unloads, every criterion a count beside a control. The intake is `HAMMER2IOC_RECLUSTER` and `cluster_fd=`, a connected stream socket only. |
-| P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | a design note before code, `doc/SYNC_DESIGN.md`, 2026-10-18, item 7 above: the wire protocol defines one HAMMER2 command and no chain-level operation, so there is no original remote protocol to reproduce above the block device; the carried thread synchronizes live to live from the quorum's focus; and a snapshot takes a private `pfs_clid`, so the thread cannot read one. Four decisions and four alternatives with what each must prove; the remote reach stops at the note, and the local fork, verify and replace protocol it recommends, with the snapshot reached by name through the super-root, is the next code. Code not begun |
+| P7 | remote synchronization from an immutable source snapshot into a forked target, replaced only once verified | P6 | the local half is built and read, 2026-10-19: the synchronization pass takes a per-pass snapshot of the master element, reads it through the carried XOPs, verifies against it at the root, skips an idle master by its flushed blockset and copied root fields, and keeps a snapshot of the slave as the last known-good copy across a failed or interrupted pass, a crash and an unmount, written to the media before the pass's first write; `script/cluster-sync.sh` reads the five criteria (`initial_convergence`, `incremental_convergence`, `snapshot_source`, `interrupted_resume`, `crash_recovery` under `H2_CRASH=1`) as counts on the 7.3 debug and KASAN kernels, 56 checks each in the default shape, with lockdep, KASAN, UBSAN and kmemleak silent, and `H2_SYNC_SNAPSHOT=0` is its negative control, the live pass that must list no snapshot and write the master's state as it finds it. The design note `doc/SYNC_DESIGN.md` has the findings of 2026-10-18 (one HAMMER2 command on the wire and no chain-level operation, the carried thread live to live, a snapshot's private `pfs_clid`), what the implementation decided, and the fork-and-swap of a live target as a `DEFER`. The remote reach, A, B or C in the note, stays there for the maintainer's ruling; C would stop this half's target-side work only |
 | P8 | quorum across masters, and the seven cluster ioctls (`REMOTE_ADD`, `_DEL`, `_REP`, `_SCAN`, `SOCKET_GET`, `_SET`, `RECLUSTER`) | P7 | the local two-master shape measured; a quorum that cannot be met is not |
 | P9 | transaction replay and the reintegration of a stale master | P8 | open |
 | P10 | physical copies: read fallback, write replication, rebuild | P9 | open |
@@ -1031,7 +1041,7 @@ Each is the maintainer's, and each names what it blocks.
 | the staged upstream filings | 1.0 | drafted, unfiled. The patches and reports staged in `doc/upstream/`, enumerated by `doc/upstream/README-provenance.md`, which records where each stands at upstream's head and what was searched; the maintainer files them |
 | the `cluster_write` module parameter | nothing; it is inert today | taken 2026-10-04: removed. Found 2026-10-02 while accounting for all seventeen parameters, `hammer2_cluster_write` was declared, exported and registered `0644`, so it was settable at runtime, and no code read it. The tree treats a setting accepted whether or not it takes effect as a defect, and this was one. Wiring it would have been wrong rather than deferred: DragonFly's `cluster_write()` asks the buffer layer to write the cluster as well as the buffer, and the port's block layer already merges adjacent dirty folios before the device sees them, measured at 171 KiB average device write for 64 KiB blocks, so there was nothing for the parameter to change. Removal changes the module's parameter list, which is the maintainer's call, and the call was taken: the definition, the registration and the declaration are gone and the list is sixteen, counted from the source's own `module_param_named` lines rather than from `modinfo`, which hides the three behind `#ifdef`. The reading that decided it and the removal are both in `doc/history/verification-record.md` |
 | in-tree submission | nothing before 1.0 | deferred past qualification |
-| porting the cluster subsystem | Replication, IncrementalReplication and RemoteCheckpoint | Replication is `limited`, to devices attached to one host, since 2026-10-03: `hammer2_synchro.c` is carried, its thread starts for a SLAVE or soft PFS, and `script/cluster-sync.sh` measured a SLAVE created after its MASTER's files, then the master removed, rewritten, added to and renamed with both mounted, ending block for block identical to the master, 22 checks 0 failed on the debug kernel and on the KASAN kernel. Getting there found the thread machinery written but never run (a `tsleep` that ignored its channel, a wait no wakeup ended, a join nothing called), the synchronous XOP start waiting on itself with a second cluster element, the thread's copies never written, and with a changed master three more: a folio's writeback ended once per element, a slave never written by the frontend, and a FIFO grown for one element and written past for the other, which the verification record describes. `script/cluster-quorum.sh` added the two-MASTER shape the quorum code decides for, 22 checks 0 failed on both kernels at 0.9.67, where 0.9.66's 20 counted the sums read back rather than comparing them: `pfs_nmasters` 2, a support thread on each master element, a set read back through the quorum after an unmount and a cache drop, every file's sum equal to the one taken before it was written, and both volumes' media identical entry for entry and block for block. Remaining: a quorum that cannot be met, with a master absent, and the other two rows, which need the remote PFS layer above the carried message core (P7) |
+| porting the cluster subsystem | Replication, IncrementalReplication and RemoteCheckpoint | Replication is `limited`, to devices attached to one host, since 2026-10-03: `hammer2_synchro.c` is carried, its thread starts for a SLAVE or soft PFS, and `script/cluster-sync.sh` measured a SLAVE created after its MASTER's files, then the master removed, rewritten, added to and renamed with both mounted, ending block for block identical to the master, 22 checks 0 failed on the debug kernel and on the KASAN kernel. Getting there found the thread machinery written but never run (a `tsleep` that ignored its channel, a wait no wakeup ended, a join nothing called), the synchronous XOP start waiting on itself with a second cluster element, the thread's copies never written, and with a changed master three more: a folio's writeback ended once per element, a slave never written by the frontend, and a FIFO grown for one element and written past for the other, which the verification record describes. `script/cluster-quorum.sh` added the two-MASTER shape the quorum code decides for, 22 checks 0 failed on both kernels at 0.9.67, where 0.9.66's 20 counted the sums read back rather than comparing them: `pfs_nmasters` 2, a support thread on each master element, a set read back through the quorum after an unmount and a cache drop, every file's sum equal to the one taken before it was written, and both volumes' media identical entry for entry and block for block. Since 1.0.40 the thread's pass reads a snapshot of the master element and keeps a snapshot of the slave as the last known-good copy, `cluster-sync.sh` reading P7's five local criteria as counts (the P7 row above). Remaining: a quorum that cannot be met, with a master absent, and the other two rows, which need the remote PFS layer above the carried message core, P7's remote reach |
 
 ## Not on the roadmap
 

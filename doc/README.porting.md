@@ -1349,3 +1349,129 @@ which is about the running kernel's page cache and not its version, and
 the `CONFIG_TRANSPARENT_HUGEPAGE` requirement, which every release above
 6.15 shares.
 
+## The synchronization pass reads a snapshot
+
+Upstream's synchronization thread copies a slave element from the live
+master, key by key, through the `ipcluster` and `scanall` XOPs over the
+cluster's inodes. The port keeps that pass as the fallback behind the
+`sync_snapshot` module parameter and, with the parameter set, reads
+each pass from a snapshot of the master element instead: a PFS named
+`<pfs>.h2sync-src` under the super-root of the master's device, taken by
+the snapshot ioctl's own body made callable from the thread, read
+through the same two XOPs over an inode of the snapshot PFS, and
+deleted after the pass. Dillon's 2015 roadmap ordered the fork, verify
+and replace protocol before the remote reach, and this is its local
+half; `doc/SYNC_DESIGN.md` has the decisions and what each refused.
+
+**Naming.** The source snapshot is `<pfs>.h2sync-src` on the master's
+device and the target `<pfs>.h2sync-tgt` on the slave's. A name that
+would not fit the inode name field falls back to the live pass with a
+print. One a crash left is deleted before a new source is taken, and a
+target is found by name before one is taken: `hammer2_inode_create_pfs()`
+walks the hash collision space to an unused key without comparing
+names, so the create cannot return `EEXIST` and a second PFS of the name
+would be made beside the first. The lookup the pfs-delete body carried
+inline is a function, `hammer2_pfs_find_byname()`.
+
+**The sync inside the snapshot.** The ioctl flushes through
+`hammer2_sync()`, which takes the superblock's `s_umount` for read; an
+unmount holds it for write while it waits for the thread to stop, so a
+thread sleeping in that read would hang the unmount. The thread's
+snapshot flushes through `hammer2_vfs_sync_pmp()`, the PFS flush, under
+a flag of the helper, which also lets a pass run on a cluster whose
+devices are mounted and whose cluster is not; the helper's refusal of an
+unmounted PFS stays for the ioctl.
+
+**The idle test.** A pass is skipped while the master's flushed root
+blockset and the fourteen root fields the PFSROOT arm copies equal the
+snapshot's that last verified. The flush rewrites that blockset for any
+change it writes back under the root and nothing else does; the root's
+own `modify_tid` cannot serve, since every snapshot writes
+`pfs_lsnap_tid` on the master root and the next inode sync stamps the
+root chain anew. The thread's snapshot carries the source root's fields,
+where the ioctl's carries a new PFS's defaults, so the arm copies the
+master's and the test reads them back. An idle master whose root tid
+still differs from the slave root's gets the carried live pass once: its
+root scan is one level by tid and its PFSROOT arm stamps the slave root
+with the live tid, which is the condition under which
+`hammer2_cluster_check()` serves a slave.
+
+**The cost.** Every snapshot pass creates a PFS root under the master's
+super-root and deletes it, and a deleted root's blocks are garbage until
+bulkfree scans them, so a busy master pays a snapshot's space per pass
+and a quiet one, by the idle test, pays none. Measured on the debug
+kernel over the harness's default shape, the same work with the live
+pass as the control: twelve snapshot passes held 214 blocks of 64 KiB
+more at the end of the run, 13 MiB and about 18 blocks a pass, and two
+bulkfree scans run with the thread up returned both runs to the same
+free count, 27178 blocks, so what a deleted snapshot holds is what the
+scan frees (`doc/history/verification-record.md`, runs 20 and 21 of
+the 2026-10-19 entry). A scan holds `hammer2_mntlk` for its whole run;
+the thread's try-lock on it skips the pass and a target whose delete the
+lock refused is deleted by the next pass or the unmount.
+
+**Verify.** A pass that acted is run again against the same snapshot
+with the root pushed onto the thread's rescan set, so the tid gate
+cannot pass it, until a round acts on nothing or three have run; the
+pass is verified when its last round acted on nothing and failed
+nothing. A round that kept a key as newer than the snapshot ends the
+rounds with the verdict `newer`: a frontend write on the mounted cluster
+lands on both elements at once, so a pass whose snapshot predates one
+finds the slave ahead of it, and the next snapshot holds what the slave
+holds. A kept key is not a failed copy: nothing is retried for it, its
+inode goes on the rescan set for the next pass, and no stamp is withheld,
+where a refused copy withholds every stamp of the rest of the pass and
+ends it after one deferral drain. Treating the two alike was measured on
+a resumed copy as a thousand inodes handled and replaced again per pass
+with none stamped. The set carries the number of the pass that noted each
+entry and speaks only to later passes: the pass that kept a key holds the
+one snapshot it was kept against, and a set read by that pass's own root
+rescan deferred the directory without end, measured as 176763 root
+rescans in one run.
+The same rule holds one level up: an inode whose slave chain is newer
+than the snapshot's is skipped whole, since a scan would keep each newer
+key and put back each key the frontend deleted after the snapshot. A
+re-run that compared every inode was rejected: it would defer and
+re-stamp the whole slave tree per round, where the root-level compare by
+tid is what the rescan set already makes sound.
+
+**The flush path.** The thread's copies have no inode on the sync
+queue, so the pass-end flush of the slave element is what writes them,
+and that flush recurses from the element root into children flagged
+`ONFLUSH`. A mounted PFS's sync descends the same root with
+`FLUSH_INODE_STOP`: at an inode child it stops without recursing and
+leaves the inode's flag set, but it has pre-cleared the flag on the
+blocks above and does not re-flag them, which upstream never needs
+since every dirty inode there flushes itself from the inode down. A
+sync landing mid-pass, the cluster's unmount or its syncer, therefore
+cut the path to every subtree copied before it, and the first copy long
+enough to meet one lost 22201 chains at the device teardown with the
+flush reporting completion in 15 ms. Every deferral the pass finishes
+is kept with its slave inode chain referenced until the pass-end flush,
+which re-flags the path from each to the volume root first.
+
+**The target.** Before the first pass after a verified one the slave
+element is snapshotted on its own device; the target is deleted when a
+pass verifies and kept across a failed or interrupted pass, a crash and
+an unmount, and found by name on the next mount. The snapshot helper's
+own flush stops at the new PFS inode and leaves the volume header to
+the next sync of a mounted PFS, so the thread runs the PFS sync once
+more after taking a target: a cut before that header would leave the
+blocks of a target and no name, and the restarted thread would take a
+fresh target of the slave as the cut left it. This is the handoff's
+"a failed transfer does not destroy the last known-good destination",
+met with the primitives the port has. The lazier alternative, no target
+at all, was rejected because the property is explicit. The design
+note's fork-and-swap of a live target is not built: no tree can swap a
+cluster element's root under a live mount, and the property it protects
+has no reader here, a lone SLAVE label being refused at mount. A pass
+whose target snapshot fails does not run, since the next pass would
+otherwise snapshot the half-written slave as the last known-good one.
+
+**What the snapshot pass is not.** It is not a remote protocol: both
+devices are attached to one host, as every reading of the carried
+thread has been. It is not two-master convergence: the source element
+is the one the root's quorum focus names, and without one the live pass
+runs and copies nothing. And it is not a reader of the slave: the
+cluster mount serves reads from the master, and a slave element's
+mixed state is visible to nothing in this port.
