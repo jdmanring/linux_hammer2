@@ -604,7 +604,7 @@ pass deletes a crash's. Until that command is built the wire pass runs
 in the live form `sync_snapshot=0` already names, and the
 `snapshot_source` criterion is read only once it is.
 
-## The quorum protocol: what the carried core imposes, and a decision presented open
+## The quorum protocol: what the carried core imposes, and the decision taken on it
 
 The completion plan's rule stops a decision that changes distributed
 commit semantics at a design note with alternatives and what each would
@@ -806,12 +806,18 @@ Five candidates, with what each met.
    note's to add, with their cost. The other masters
    run P7's pass against the holder over stage 2b's snapshot command, in
    the slave direction, which reverses decision B's "no thread for a
-   MASTER" for that direction only; every compared tid then comes from
-   one host's counter and the pass stamps the replica from the source
-   (`hammer2_synchro.c:671-673`, `:2149`, `:2563`) where it replaces,
-   so C1 and C8 do not arise, and one frontend with no forwarding means
-   C3, C4, C5 and C11 do not arise; replicas serve no reads of their
-   own in P8's term, so C6 does not arise. C2 remains: the pass's inode
+   MASTER" for that direction only; within one term every compared tid
+   comes from the holder's counter and the pass stamps the replica from
+   the source (`hammer2_synchro.c:671-673`, `:2149`, `:2563`) where it
+   replaces, so C1 and C8 do not arise within a term, and one frontend
+   with no forwarding means C3, C4, C5 and C11 do not arise while that
+   frontend is the only one; replicas serve no reads of their own in
+   P8's term, so C6 does not arise. The holder's own mount holds its
+   element alone for the per-key check, so a read at the holder never
+   compares against a lagging replica; the quorum under 5 is the
+   majority that acknowledges a pass, and decision C's `ENOTCONN` is
+   what the stage-2 shape reads, a read-only mount whose cluster holds a
+   remote master element, not what the holder's mount reads. C2 remains: the pass's inode
    insert and its destroy arm run at mtid 0 (`:1887-1889`, `:1798`,
    `:2344-2363`), so the delete helper's and the split's stamps on a
    replica carry no source tid today, which is the first obligation
@@ -821,10 +827,14 @@ Five candidates, with what each met.
    Failover: a majority persists term plus one durably, one field in
    `copyinfo`'s reserved space (`hammer2_disk.h:515`), a change of
    stated meaning under the first rule as `remote_pfs_type`'s is; the
-   new holder is the highest-stamped member of that majority; a replica
-   refuses a source with a lower term; the old holder's unacknowledged
-   writes are discarded by demoting it and letting the pass overwrite
-   it. With two masters the majority is both, so losing either halts
+   new holder is the member of that majority that is furthest along,
+   which cannot be read from a tid the flush moves (C1 applies on a
+   replica alone after an interrupted pass, the status record's row on
+   the kept block under a raised inode), so the election reads a stamp
+   the pass writes and the flush does not, `update_tid` being the
+   format's candidate (decision B); a replica refuses a source with a
+   lower term; the old holder's unacknowledged writes are discarded by
+   demoting it and letting the pass overwrite it. With two masters the majority is both, so losing either halts
    writes: fail closed (S1), and C10's two-master case is unavailability
    rather than a pretended fence. The demotion of a live holder is its
    hardest obligation and is unsolved here: a holder that lost its lease
@@ -833,7 +843,18 @@ Five candidates, with what each met.
    overwritten it, and the mechanism that stops it is the shutdown
    state decision C names, raised by the loss of the term. Must prove:
    that demotion, read by a holder cut off mid-write whose media the
-   pass then overwrites; the pass's insert and
+   pass then overwrites, and which the carried pass cannot do yet: the
+   pass that overwrites the demoted holder runs on the demoted holder's
+   own host with the PFS still mounted (the thread is per mount and per
+   slot, `hammer2_vfsops.c:480-495`), that mount's frontend outlives
+   the term while descriptors are open, its `MODIFIED` inodes are
+   written back whole by the carried sync (`hammer2_inode.c:1820-1838`,
+   `hammer2_vfsops.c:3253-3255`), which is C5 on that host and moves a
+   carried line to stop, and the snapshot pass keeps a slave chain it
+   reads as newer at three arms (`hammer2_synchro.c:1477`, `:1803-1816`,
+   `:1746`), which a demoted holder's writes, stamped from its own
+   counter, will be unless the new term orders the counters, the raise
+   decision B records; the pass's insert and
    destroy arms carry the source's tid so C2's three sites stamp the
    replica as the source was stamped, which today's pass does not do;
    the pass deletes chains the source lacks, its guarded arm under a
@@ -855,27 +876,35 @@ frontend refreshed by a remote commit (C5), none of which can be built
 or measured before a remote element runs. 5 needs one durable field,
 reuses P7's pass and stage 2's element as its instruments, is a line of
 Dillon's design, and everything it builds is a prerequisite of 4: the
-durable term is the epoch S1 to S3 need, the write-capable pass against
+durable term is one field of the record of membership and last agreed
+commit that S1 to S3 need (decision B), the write-capable pass against
 a master is what P9's reintegration of a stale master needs, and the
-snapshot command over the wire is P7's in any case. The one rule 4 later
-discards is that replicas serve no reads of their own. So 5 is not an
-alternative to 4 but its first stage, and it is taken here as the next
+snapshot command over the wire is P7's in any case. What 4 later
+discards is 5's shape and not its parts: the single writer and the
+lease, replication by the pass, clients mounting at the holder alone,
+the acknowledgment that costs a pass, and the election by stamp. So 5
+is the first stage of 4 as far as its parts go, and it is taken here as
+the next
 step with 4 as the row after it, inside the delegated work, since an
 order of work is not a choice between ends. A sixth shape, closing P8 on
 stage 2 with a read-only remote master and a remote slave and moving
 the write quorum to a row of its own, was weighed and declined: it ships
 replication sooner and builds nothing of the quorum, a shim rather than
 a stage. The detailed protocol of 5 is designed in its own note over
-stage 2's running remote element, where C5, C6 and C11 are measured
-instead of read and where the number 5 stands or falls on, the cost of
-one incremental pass over the relay, is a reading rather than an
-estimate; stage 2b builds its snapshot command and its write-capable
-pass in that order because 5 is the direction. One measurement can
-change the order before any code and needs only the local fleet: on the
-million-tree volume, one file changed and one pass of
-`cluster-sync.sh` timed; a pass of seconds makes a phase-2 `fsync` under
-5 unusable as a default, and the next step is then the latency question
-rather than the wire. Stages 1 and 2 need no part of this and proceed.
+stage 2's running remote element, where C5, C6 and C11 are measured to
+confirm they do not arise under it and where the number 5 stands or
+falls on, the cost of one incremental pass over the relay, is a reading
+rather than an estimate; stage 2b builds its snapshot command and its
+write-capable pass in that order because 5 is the direction. One
+measurement can change the order before any code and needs only the
+local fleet, as a new arm of `cluster-sync.sh`, since today it times a
+convergence and an idle window and not one pass (`:270`, `:295`) and
+builds volumes of its own: a volume of the million-tree size, one file
+changed, and one snapshot-form pass (the create, the verify rounds and
+the delete) timed against the thread's cadence of 5.12 s, which a
+phase-2 `fsync` already waits out; a pass longer than the cadence makes
+that `fsync` unusable as a default, and the next step is then the
+latency question rather than the wire. Stages 1 and 2 need no part of this and proceed.
 
 ### B. Membership, epoch and stale rejection (S1 to S3)
 
@@ -988,14 +1017,26 @@ design in an earlier round of this note and each was refuted on its
 line, so this note records them as the facts the write half has to
 answer. Linux has the mechanism those facts leave room for, and it is
 not a flag on the superblock: a shutdown state of the kind ext4 and XFS
-keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`), a flag of the port's own
-tested in `write_iter`, `page_mkwrite`, `writepages` and `fsync`, with
-`fsync` returning the mapping's error, all in `hammer2_vnops.c` and
+keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
+`fs/xfs/xfs_fsops.c:451-475`), a flag of the port's own tested where
+those two test theirs: every VOP that modifies, since the port's
+create, unlink, rename, link, setattr, fallocate and time update modify
+local chains before the collect (C6), `open` and `mmap` for writing,
+`write_iter`, `page_mkwrite`, `writepages`, and the reads, which both
+refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
+so that a cut-off holder never serves cached data as current; `fsync`
+returns `EIO` unconditionally, as both do (`fs/ext4/fsync.c:134`,
+`fs/xfs/xfs_file.c:141-142`), never the mapping's error, since a mapping
+written locally before the loss is clean and would answer 0 for a write
+no majority holds. The entries are in `hammer2_vnops.c` and
 `hammer2_strategy.c`, which are the port's files and not carried
-(`doc/README.status.md`, the origin table), so no carried line moves.
-What it cannot do is take back what was dirty at the loss (C13); under
-candidate 5 that is answered by the pass overwriting the demoted holder,
-and it stays hard only under 4. The shutdown state is therefore the
+(`doc/README.status.md`, the origin table), so the refusals move no
+carried line. What the state cannot do is take back what was dirty at
+the loss (C13), nor stop the carried sync writing a `MODIFIED` inode's
+meta back whole (`hammer2_inode.c:1825-1835`, a carried file); under
+candidate 5 both are the demotion's problem, answered by the pass
+overwriting the demoted holder once that sync is stopped, which does
+move a carried line, and it stays hard in full only under 4. The shutdown state is therefore the
 protocol note's to design as part of 5's demotion, with the constraints
 above as its acceptance list, and this note designs nothing of it. Must prove, for the settled half:
 the value is the same from every uncached read for the same cluster
@@ -1027,7 +1068,7 @@ S6 and S7) is named by one matrix cell and by no exit criterion.
 async and phase-1 refused with `EINVAL` on a PFS with a remote element
 until the mode is measured, the `async` option the port parses untouched
 on every other mount, and the mode itself re-read by the protocol note,
-since it fixes a write acknowledgment while decision A is open, and
+since it fixes a write acknowledgment that candidate 5's pass implies, and
 MESI over the wire deferred to its own step with its trigger named: the
 first two-mount workload that reads stale data the quorum allowed.
 
@@ -1182,9 +1223,10 @@ reads no focus.
   stage that builds candidate 4, Dillon's concurrent commit with its
   durable record, and leaves the detailed protocol of 5 to its own note
   over stage 2's running remote element, where the cost of one pass over
-  the relay is read rather than estimated. Decisions B (membership) and C (`ENOTCONN` for an uncached
-  read; the write half deferred) are recommended and D is deferred; stages 1 and 2
-  proceed on none of A.
+  the relay is read rather than estimated. Decisions B (membership) and
+  C (`ENOTCONN` for an uncached read in the stage-2 shape; the write
+  half deferred) are taken, D is deferred with its trigger; stages 1
+  and 2 proceed on none of A.
 - Level, epoch and the stale master (S1 to S3), which the protocol note
   carries with the record; this note records what they cannot be read
   from (C1, C2, C8, C9, C10).
@@ -1432,5 +1474,19 @@ mechanism in Linux's shutdown state the note had stopped short of, and
 that the matrix's thirteen two-phase cells read as evidence for 5 when
 they are the handoff's; and the maintainer, shown the decisions, read
 A as an order of work and not a choice, which it is. The four defects
-are fixed in the commit that records this and A is taken as 5 then 4;
-the twelfth audit reads that text.
+are fixed in the commit that records this and A is taken as 5 then 4.
+The twelfth audit (Claude Opus 5.5, 17 tool uses, 4.3 min) read that
+text and returned NO SIGN-OFF on nine findings, one blocking, each a
+sentence or two and none touching stages 1 and 2: the shutdown
+paragraph's `fsync` rule had reinstated the fsync-returns-0 defect
+against the very precedent it cited, which returns `EIO`
+unconditionally; the demotion's two supports were false on carried
+lines, since the pass that overwrites a demoted holder runs on that
+holder's own host under a frontend that outlives the term and whose
+inodes the carried sync writes back whole, and the snapshot pass keeps
+a chain it reads as newer at three arms; the election by "highest
+stamp" met C1 on a replica alone; what 4 discards of 5 is its shape and
+not one rule; the holder's mount and the check under 5 were unstated;
+the measurement named a script that does not time a pass and a volume
+it does not use; and two sentences still called A open. Each is applied
+in the commit that records this; the thirteenth audit reads that text.
