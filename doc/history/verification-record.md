@@ -16402,7 +16402,7 @@ fingerprint lines differing, no `.h2sync-*` left; free blocks 30592 at
 the first mount, 26574 at the end and 27179 after the two bulkfree
 scans (rc 0/0). The klog counts 1 pass, 1 verified, 8 idle lines, 1
 idle stamp, 2 stale deletes (the cut's and the teardown's), 0 skipped
-for want of a quorum, 0 held, and 0 sanitizer, warning or lockdep lines.
+for want of a quorum, and 0 sanitizer, warning or lockdep lines.
 The QEMU core count stayed at 1 across the cut.
 
 **The two-master shape on the 7.3 debug kernel.** `script/cluster-quorum.sh`
@@ -16479,14 +16479,15 @@ after 1 idle stamp; no warning, lockdep or sanitizer line, kmemleak
 nothing, fsck exit 0 on both images at the end, the fingerprints equal
 with 0 of 120227 lines differing, no `.h2sync-*` left; free blocks
 30592, 25596 and 27177 (rc 0/0). The klog counts 1 pass, 1 verified, 6
-idle lines, 1 idle stamp, 2 stale deletes, 0 skipped, 0 held, 0
-re-inserts, 0 sanitizer, warning or lockdep lines. The QEMU core count
+idle lines, 1 idle stamp, 2 stale deletes, 0 skipped, 0 re-inserts,
+0 sanitizer, warning or lockdep lines. The QEMU core count
 stayed at 1 across the cut and the two kernel switches of the day.
 
-**What closes the local half.** The five criteria, each read as a count by `script/cluster-sync.sh` on the 7.3 release kernels and kept beside the images: `initial_convergence`, the first pass copying 55 files in 60 updates and the end-of-run fingerprint matching entry for entry (runs 26 and 28); `incremental_convergence`, the master changed under a converged slave with 24 keys destroyed for 5 deleted files and 13 replaced for 5 rewritten, the idle master costing idle passes and no snapshot, and the root tids equal once idle (runs 26 and 28); `snapshot_source`, the source and target snapshots listed as PFSes while the pass runs and the interrupted pass writing the snapshot's state of the marked set, ten deleted files present and none of the ten written, with `H2_SYNC_SNAPSHOT=0` listing none (runs 26 and 28, run 30); `interrupted_resume`, the device teardown stopping the thread between deferrals, the target surviving the cut on the slave's media, found by name and deleted once the resumed pass verified (runs 26 and 28); `crash_recovery`, the power cut 2003 and 2003 updates into the copy, both media consistent as the cut left them, the stale source deleted and the target found on restart, convergence to a matching fingerprint (runs 27 and 29). The two-master shape reads 22 checks unchanged. Lockdep, kmemleak, KASAN and UBSAN were silent in every one of these runs; the reports and klogs are `cluster-run-20261019-161509`, `-162504`, `-163530`, `-164444` and `-170434` in the fixtures tree. The plan's reference-count check before the source snapshot's delete,
-with its `syncsnap: held` line, was not built: the delete runs with every
-cursor dropped, and the KASAN kernel's silence across runs 9, 12, 23, 24,
-25, 28 and 29 is what stands in for it. What stays open is the remote
+**What closes the local half.** The five criteria, each read as a count by `script/cluster-sync.sh` on the 7.3 release kernels and kept beside the images: `initial_convergence`, the first pass copying 55 files in 60 updates and the end-of-run fingerprint matching entry for entry (runs 26 and 28); `incremental_convergence`, the master changed under a converged slave with 24 keys destroyed for 5 deleted files and 13 replaced for 5 rewritten, the idle master costing idle passes and no snapshot, and the root tids equal once idle (runs 26 and 28); `snapshot_source`, the source and target snapshots listed as PFSes while the pass runs and the interrupted pass writing the snapshot's state of the marked set, ten deleted files present and none of the ten written, with `H2_SYNC_SNAPSHOT=0` listing none (runs 26 and 28, run 30); `interrupted_resume`, the device teardown stopping the thread between deferrals, the target surviving the cut on the slave's media, found by name and deleted once the resumed pass verified (runs 26 and 28); `crash_recovery`, the power cut 2003 and 2003 updates into the copy, both media consistent as the cut left them, the stale source deleted and the target found on restart, convergence to a matching fingerprint (runs 27 and 29). The two-master shape reads 22 checks unchanged. Lockdep, kmemleak, KASAN and UBSAN were silent in every one of these runs; the reports and klogs are `cluster-run-20261019-161509`, `-162504`, `-163530`, `-164444` and `-170434` in the fixtures tree. A reference-count check before the source snapshot's delete, printing a
+`syncsnap: held` line, was considered and not built: the delete runs with
+every cursor dropped, and the KASAN kernel's silence on the pass across
+runs 9, 12, 23, 24, 25, 28 and 29 (run 23's one report was UBSAN's in the
+bulkfree scan, fixed at `b77d30f`) is what stands in for it. What stays open is the remote
 reach, A, B or C, at `doc/SYNC_DESIGN.md`.
 
 **What the step fixed, by origin.** Of the carried core's, two, both
@@ -16546,8 +16547,8 @@ carries of 2026-08-26, 2026-10-03 and 2026-10-16 brought in that read
 the same in DragonFly's source (`hammer2_chain.c`, `hammer2_flush.c`,
 `hammer2_freemap.c`, `hammer2_xops.c`, `hammer2_vfsops.c`,
 `hammer2_iocom.c` and `kern_dmsg.c`), three indent notes on the arms'
-debug prints (one on a carried line, two on the port's own of
-2026-10-12 and 2026-10-14), one on the quorum code's `pfs_types` switch
+debug prints (two on carried lines of 2026-10-03, one on the port's
+own of 2026-10-14), one on the quorum code's `pfs_types` switch
 of 2026-10-02 in `hammer2_cluster.c`, and one on a
 line this step wrote, `hammer2_synchro.c:1798` in the log's numbering at
 `01f82fe` (1804 at `da37ae7`, the `DEFER` comment above the pass driver

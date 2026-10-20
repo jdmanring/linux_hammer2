@@ -495,8 +495,10 @@ insert arm counts the residue as `syncsnap: reinsert` lines in
 `hammer2_sync_insert()`, which the harness reads as `reinserts`, 0
 wanted: 0 in each of the 17 klogs kept since the print landed at
 `6344999`, the mutation phase driving ten deletions and ten writes into
-an open pass in the nine default-shape runs since it landed at `615c29c`;
-the crash shape and the live-pass control stop before that phase.
+an open pass in the eight default-shape runs since it landed at `615c29c`;
+the crash shape stops before that phase, and the live-pass control drives
+it through a live pass, which the print does not count, since it fires
+only on a snapshot pass.
 
 ## What this note does not settle
 
