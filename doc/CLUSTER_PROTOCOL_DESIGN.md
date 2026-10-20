@@ -9,10 +9,11 @@ The remote reach was ruled B on 2026-10-19, a chain-level protocol in the
 reserved `dmsg` space designed together with P8's quorum protocol as one
 wire format, the daemon that holds the keys specified before any kernel
 code (`doc/SYNC_DESIGN.md`, "Ruling, 2026-10-19"). This note is that
-design. It settles what the research settles, and it stops at four
+design. It settles what the research settles, and it records four
 decisions that change commit semantics or the security model, each with
-its alternatives, its proof obligations and a recommendation, presented
-rather than parked.
+its alternatives and its proof obligations; where a decision turned out
+to be an order of work rather than a choice between ends it is taken
+inside the delegated work and said to be, and nothing is parked.
 
 Read against the DragonFly clone at `250a8b4` with `lib/libdmsg` and
 `sbin/hammer2` in its sparse checkout, Dillon's 2015 design document in
@@ -825,7 +826,14 @@ Five candidates, with what each met.
    writes are discarded by demoting it and letting the pass overwrite
    it. With two masters the majority is both, so losing either halts
    writes: fail closed (S1), and C10's two-master case is unavailability
-   rather than a pretended fence. Must prove: the pass's insert and
+   rather than a pretended fence. The demotion of a live holder is its
+   hardest obligation and is unsolved here: a holder that lost its lease
+   still has open descriptors and dirty folios (C12, C13), so "one
+   frontend" holds only once it has stopped writing and the pass has
+   overwritten it, and the mechanism that stops it is the shutdown
+   state decision C names, raised by the loss of the term. Must prove:
+   that demotion, read by a holder cut off mid-write whose media the
+   pass then overwrites; the pass's insert and
    destroy arms carry the source's tid so C2's three sites stamp the
    replica as the source was stamped, which today's pass does not do;
    the pass deletes chains the source lacks, its guarded arm under a
@@ -837,18 +845,37 @@ Five candidates, with what each met.
    pass; a format field changes meaning; and it needs the snapshot
    command and a write-capable wire pass before its first reading.
 
-**Recommendation: none of the five is accepted in this note, and the
-protocol note starts from 5.** Three were refuted on the code; 4 needs
-P9's record ahead of P8 and a reworked write path; 5 needs one durable
-field, reuses P7's pass and stage 2's element as its instruments, and
-is a line of Dillon's design, at the price of giving up his concurrent
-multi-master commit, which the mission's "the full design" may not
-accept. Both are put to the maintainer here, 5 recommended, and either
-is designed in its own note over stage 2's running remote element, where
-C5, C6 and C11 can be measured instead of read. Stages 1 and 2 need no
-part of either and proceed. This changes the sequence the plan set,
-which put the protocol in this note, so it is presented rather than
-taken.
+**Decision: 5, as the stage that builds 4.** Three candidates were
+refuted on the code. 4 is where Dillon's design ends and where this
+port's ends too, and it cannot exist without the transaction log Dillon
+himself made "a separate development task"
+(`DILLON_HAMMER2_DESIGN_2015.md:779-781`), a media-format record, an
+inode allocation that is the cluster's and not the host's (C4), and a
+frontend refreshed by a remote commit (C5), none of which can be built
+or measured before a remote element runs. 5 needs one durable field,
+reuses P7's pass and stage 2's element as its instruments, is a line of
+Dillon's design, and everything it builds is a prerequisite of 4: the
+durable term is the epoch S1 to S3 need, the write-capable pass against
+a master is what P9's reintegration of a stale master needs, and the
+snapshot command over the wire is P7's in any case. The one rule 4 later
+discards is that replicas serve no reads of their own. So 5 is not an
+alternative to 4 but its first stage, and it is taken here as the next
+step with 4 as the row after it, inside the delegated work, since an
+order of work is not a choice between ends. A sixth shape, closing P8 on
+stage 2 with a read-only remote master and a remote slave and moving
+the write quorum to a row of its own, was weighed and declined: it ships
+replication sooner and builds nothing of the quorum, a shim rather than
+a stage. The detailed protocol of 5 is designed in its own note over
+stage 2's running remote element, where C5, C6 and C11 are measured
+instead of read and where the number 5 stands or falls on, the cost of
+one incremental pass over the relay, is a reading rather than an
+estimate; stage 2b builds its snapshot command and its write-capable
+pass in that order because 5 is the direction. One measurement can
+change the order before any code and needs only the local fleet: on the
+million-tree volume, one file changed and one pass of
+`cluster-sync.sh` timed; a pass of seconds makes a phase-2 `fsync` under
+5 unusable as a default, and the next step is then the latency question
+rather than the wire. Stages 1 and 2 need no part of this and proceed.
 
 ### B. Membership, epoch and stale rejection (S1 to S3)
 
@@ -959,7 +986,18 @@ a descriptor and makes `fsync` return 0 (C12), and what was dirty at the
 loss reaches the local media regardless (C13). Each of those was a
 design in an earlier round of this note and each was refuted on its
 line, so this note records them as the facts the write half has to
-answer and designs nothing for it. Must prove, for the settled half:
+answer. Linux has the mechanism those facts leave room for, and it is
+not a flag on the superblock: a shutdown state of the kind ext4 and XFS
+keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`), a flag of the port's own
+tested in `write_iter`, `page_mkwrite`, `writepages` and `fsync`, with
+`fsync` returning the mapping's error, all in `hammer2_vnops.c` and
+`hammer2_strategy.c`, which are the port's files and not carried
+(`doc/README.status.md`, the origin table), so no carried line moves.
+What it cannot do is take back what was dirty at the loss (C13); under
+candidate 5 that is answered by the pass overwriting the demoted holder,
+and it stays hard only under 4. The shutdown state is therefore the
+protocol note's to design as part of 5's demotion, with the constraints
+above as its acceptance list, and this note designs nothing of it. Must prove, for the settled half:
 the value is the same from every uncached read for the same cluster
 state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
@@ -1014,11 +1052,16 @@ functionality is exposed. Each item, and where the answer lives:
 
 ## The failure matrix
 
-The handoff's thirteen cells. Each row names the invariant the cell
-holds the cluster to, from the state model, what this note can say about
-it today, and the instrument that reads it; the expected result of a
-write cell under a commit protocol is the protocol note's to write
-before its run, since decision A accepted no protocol here. The read
+The handoff's thirteen cells, written in the handoff's own terms, which
+are those of a two-phase commit between masters. Under decision A's
+choice of 5 most of the write cells change shape: there is no prepare
+and no commit between masters, a transaction is a pass, and the cells
+are rewritten around the lease's term changing hands and a holder being
+demoted. The protocol note rewrites them before its first run, and the
+count of thirteen is the handoff's and not evidence for 5. Each row here
+names the invariant the cell holds the cluster to, from the state
+model, what this note can say about it today, and the instrument that
+reads it. The read
 and transport rows are stage 2's and are read there.
 
 | cell | topology | invariant and what is known | instrument |
@@ -1134,12 +1177,12 @@ reads no focus.
 
 ## What this note does not settle
 
-- Decision A, the commit protocol, which this note presents open with
-  five candidates, three refuted on the code and two carried by their
-  own note over stage 2's running remote element: a single writer under
-  a durable lease replicated by P7's pass, recommended as the start, and
-  P9's durable record ahead of P8's write cells; both are put to the
-  maintainer. Decisions B (membership) and C (`ENOTCONN` for an uncached
+- Decision A's protocol in detail: the note takes candidate 5, a
+  single writer under a durable lease replicated by P7's pass, as the
+  stage that builds candidate 4, Dillon's concurrent commit with its
+  durable record, and leaves the detailed protocol of 5 to its own note
+  over stage 2's running remote element, where the cost of one pass over
+  the relay is read rather than estimated. Decisions B (membership) and C (`ENOTCONN` for an uncached
   read; the write half deferred) are recommended and D is deferred; stages 1 and 2
   proceed on none of A.
 - Level, epoch and the stale master (S1 to S3), which the protocol note
@@ -1377,4 +1420,17 @@ keeping `pfs_nmasters`, without which the read's errno would fall back
 to today's. The text those seven changed was not audited again; it is
 local to stage 2 and each change names its line. The finding counts
 over the eleven rounds were 9, 5, 6, 6, 6, 10, 11, 7, 10, 9, 7, the
-last with no blocking finding.
+last with no blocking finding. After the sign-off a design review of
+the decisions themselves (the architect role on Claude Opus 5.5, 6 tool
+uses, 2.1 min), asked to weigh the choices as a senior developer rather
+than to check citations, found that decision A's text carried two
+recommendations at once, that candidate 5 was framed as possibly
+against the mission when it is the stage that builds candidate 4 and
+discards one rule, that the demotion of a live holder was 5's unsolved
+obligation and unnamed, that the write half of fail-closed had a
+mechanism in Linux's shutdown state the note had stopped short of, and
+that the matrix's thirteen two-phase cells read as evidence for 5 when
+they are the handoff's; and the maintainer, shown the decisions, read
+A as an order of work and not a choice, which it is. The four defects
+are fixed in the commit that records this and A is taken as 5 then 4;
+the twelfth audit reads that text.
