@@ -98,16 +98,17 @@ The kernel verifies no CRC and keeps no span table. `kdmsg_iocom_thread_rd()`
 checks the magic, the header size and the 1 MiB aux bound
 (`kern_dmsg.c:342-378`); the CRCs are generated on transmit over the
 aligned header with `hdr_crc` zeroed and over the aligned aux
-(`:2005-2012`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
+(`:2053-2060`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
 `iscsi_crc32`, the port's CRC-32C mapping (`hammer2_compat.h:156`).
 Received spans are open transactions under `state0`, and
-`hammer2_autodmsg()` monitors them (`hammer2_iocom.c:279`): a span whose
+`hammer2_autodmsg()` monitors them (`hammer2_iocom.c:278`): a span whose
 `peer_type` is not HAMMER2 or whose `proto_version` is not
 `DMSG_SPAN_PROTO_1` is closed with a reply, and only a `PROTO_1` HAMMER2
-span is left open with a result (`:240-258`). The kernel fills its own
+span, since stage 1 also a `PROTO_2` span from a connection that
+announced it, is left open with a result (`:339-375`). The kernel fills its own
 spans with `peer_id` set to the PFS's `pfs_clid`, `pfs_id` to its
 `pfs_fsid`, `pfs_type` from the root inode and `proto_version` 1
-(`:316-320`); a span carries no root inode. `msgid` is the kernel
+before stage 2a, `PROTO_2` since (`:433-437`); a span carries no root inode. `msgid` is the kernel
 address of the transaction's state (`kern_dmsg.c:1849`), and
 `link_verifier` is read nowhere in `kern_dmsg.c`.
 
@@ -212,7 +213,7 @@ connection's for its life, cleared by a reconnect and not by a `CONN`
 nothing turns it off. In stage 1 the kernel's own `LNK_CONN` and spans
 stayed at `PROTO_1`, since it had no HM2 vocabulary to announce; since
 stage 2a gave it the server side both announce `PROTO_2`
-(`hammer2_iocom.c:173`, `:437`). `libdmsg` reads neither field
+(`hammer2_iocom.c:172`, `:437`). `libdmsg` reads neither field
 (no occurrence of `proto_version` under `lib/libdmsg/` at the DragonFly
 clone's head), so the daemon relays them unchanged, and a DragonFly
 kernel reading the span closes it. That is the compatibility plan the
@@ -300,17 +301,17 @@ Teardown is a port function, `hammer2_remote_detach(pmp, j)`, marked
 `array[j]`, sets `pfs_types[j]` to NONE, frees the name and the
 `pfs_hmps` entry and recomputes `nchains` from the highest remaining
 slot, the steps that function takes for a local device's slots
-(`:783-826`) and nothing else of it, which freezes every thread, cleans
+(`:791-834`) and nothing else of it, which freezes every thread, cleans
 snapshots under `hammer2_mntlk`, syncs the PFS and remasters, and cannot
 be called for one slot. It never frees a `pmp`: registration requires a
 mounted PFS, whose local slot outlives every remote one, so a detach
 cannot empty a cluster, and `hammer2_pfsfree()` would in any case
 assert `iroot->refs == 1` (`hammer2_vfsops.c:648-650`) on a mounted one;
 the detach asserts that a slot remains. It runs under `hammer2_mntlk`,
-the lock every walker of `hammer2_pfslist` holds (`:321`, `:722`,
-`:3241`), and therefore never on the connection's reader thread: the
+the lock every walker of `hammer2_pfslist` holds (`:329`, `:730`,
+`:3249`), and therefore never on the connection's reader thread: the
 device unmount holds that lock through `hammer2_iocom_uninit()`
-(`:2634`), which waits for the reader and writer threads to exit
+(`:2642`), which waits for the reader and writer threads to exit
 (`kern_dmsg.c:257`), so a reader blocked on the lock would hang the
 unmount with no bound. The reader queues the detach to the connection's
 work item (the one registration uses). The work item takes the lock by
@@ -319,8 +320,8 @@ pass retries on its next cadence (`hammer2_synchro.c:811`), so a refusal
 does not spin a worker through a bulkfree scan's hold, because every
 caller of
 `hammer2_unmount_helper()` holds `hammer2_mntlk` (`hammer2_vfsops.c:1195`,
-`:3241`) and that helper both tears the connection down
-(`hammer2_iocom_uninit()` at `:2634`) and may drop a slot's last chain,
+`:3249`) and that helper both tears the connection down
+(`hammer2_iocom_uninit()` at `:2642`) and may drop a slot's last chain,
 so a wait there on an item blocked in `hammer2_lk_ex()` would hold the
 lock the item needs. Once in, the item re-validates that the slot still
 holds the chain it was queued for, since the unmount may have detached
@@ -573,7 +574,7 @@ pass, whose freeze is acknowledged only at the top of the thread loop
 through a `thr_wait` that sleeps in `hz*60` steps with no exit, and the
 unmount with it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1523`), and retires normally; a connection that closes fails every
+(`:1551-1552`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:478` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
@@ -588,7 +589,7 @@ by construction. That cost is measured in stage 2b against the local
 pass. **A silent loss is detected within the bound, not at the next
 request.** `kern_dmsg` has no keepalive: `LNK_PING` is sent only to
 unstick the reader at teardown (`kern_dmsg.c:265-273`) and is otherwise
-only answered (`:1127-1135`), and a span carries no status (C10), so a
+only answered (`:1175-1183`), and a span carries no status (C10), so a
 partition that drops frames and keeps the socket would be seen only
 when a request timed out. A `PROTO_2` connection carries a second work item for the
 keepalive alone, delayed work that neither the registration and detach
@@ -600,7 +601,7 @@ takes the reader's `DMSG_ERR_NOSUPP` reply as the answer, and when one
 goes unanswered for the bound ends the connection by the reader's own
 shutdown path (`KILLRX`, `kern_dmsg.c:121-133`), never by the teardown,
 which disables the items and would wait on itself. The reply prints
-`RCVMSG` on every frame today (`hammer2_iocom.c:209`), so that print is
+`RCVMSG` on every frame today (`hammer2_iocom.c:207-208`), so that print is
 debug-gated, one marked line; "reachable" below means "answered within the
 bound", and a write that arrives between the loss and its detection is
 the protocol note's, named as such in the matrix.
@@ -612,7 +613,7 @@ registration refuses a PFS whose `pmp->rdonly` is clear, and
 `->reconfigure` refuses `rw` while a remote slot exists, taking
 `hammer2_mntlk` around its test and its write of `pmp->rdonly`
 (`hammer2_vfsops.c:2514-2545` write it under `s_umount` alone today; the
-order `s_umount` then `hammer2_mntlk` is the unmount's at `:3241`),
+order `s_umount` then `hammer2_mntlk` is the unmount's at `:3249`),
 since without the lock a remount could pass its test, registration
 install a slot, and the remount then clear the flag. That is Linux's
 own refusal: `write(2)`,
@@ -644,7 +645,7 @@ would write silently to a volume whose mount-time recovery never ran
 (`hammer2_vfsops.c:1489`); the pass therefore refuses to run while
 `hmp->rdonly` is set, with a log line, and that line is stage 2b's
 control. The refusal of `rw` through `->reconfigure` is new code, since
-today's remount accepts ro to rw (`:2506-2537`). A write let through by
+today's remount accepts ro to rw (`:2514-2545`). A write let through by
 a failed mount flag would run the local slave's storage function first
 and modify its chain, the remote's `(NULL, EOPNOTSUPP)` feed would set
 `CITEM_NULL`, the check would return `ESRCH` and then, on the
@@ -775,7 +776,7 @@ rather than from the design document alone.
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:376`, `:502`, `:621`, `:830`, `:1038`, `:1236`,
   `:1429`, `:1812`, `:2496`), which a mount sets and only a remount
-  rewrites (`hammer2_vfsops.c:1686`, `:2522`, `:2537`);
+  rewrites (`hammer2_vfsops.c:1686`, `:2530`, `:2545`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
   `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
@@ -884,7 +885,7 @@ Five candidates, with what each met.
    registration keeps it so: registration admits any span whose
    `pfs_clid` matches, and `pfs_nmasters` raised to the on-disk count
    starts a thread on the holder's own slot with three masters
-   (`hammer2_vfsops.c:459`, `:480-495`), so the holder's refusal of
+   (`hammer2_vfsops.c:459`, `:488-503`), so the holder's refusal of
    elements in its term, and the membership change a demotion makes on a
    live mount, are obligations below; the quorum under 5 is the
    majority that acknowledges a pass, and decision C's `ENOTCONN` is
@@ -1255,19 +1256,19 @@ in `hammer2_chain.c`, the connection device's reference in
 split (`:338-344`) and the end-of-scan count excluding an unreachable
 master (`:286-291`), decision C's settled half; in `hammer2_admin.c`, the
 XOP-level dispatch (`:474`); in `hammer2_iocom.c`, the span test
-admitting `PROTO_2` (`:244-247`) and the debug gate on the `RCVMSG`
-print (`:126`); in `hammer2_synchro.c`, the guard at
+admitting `PROTO_2` (`:357-362`) and the debug gate on the `RCVMSG`
+print (`:207`); in `hammer2_synchro.c`, the guard at
 `:733` refusing a local snapshot of a remote focus and the pass's
 refusal under `hmp->rdonly`; in
 `hammer2_vfsops.c`, the registration's refusal of a writable PFS and the
 refusal of `rw` through `->reconfigure`, both under `hammer2_mntlk`
-(`:2506-2537`), the
-MASTER slot's skipped thread (`:489`, the `DEFER`), the `pfs_nmasters` print after `:460-461`, the `statfs` loop
-taking the first block device (`:2328-2332`), the unmount helper's
+(`:2514-2545`), the
+MASTER slot's skipped thread (`:497`, the `DEFER`), the `pfs_nmasters` print after `:468-469`, the `statfs` loop
+taking the first block device (`:2336-2340`), the unmount helper's
 detach of remote slots, the mount-time `mount_count` tests
-(`:2068-2074`, `:2603-2608`) and `RECLUSTER`'s binding; and in
+(`:2076-2082`, `:2611-2616`) and `RECLUSTER`'s binding; and in
 `hammer2.h`, the `ENOTCONN` bit and its errno-map entry
-(`:1521-1535`). The protocol note lists its own. The dispatch sites in
+(`:1527-1569`). The protocol note lists its own. The dispatch sites in
 `hammer2_io.c` are `/* Linux */` and not `XXX`, since that file's split
 is the port's.
 
