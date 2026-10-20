@@ -512,8 +512,12 @@ only on a snapshot pass.
 ## What this note does not settle
 
 - B's design: the commands, the frame check, the flow control and the
-  daemon. The ruling of 2026-10-19 chose B; the joint note with P8's
-  quorum protocol is where it is designed.
+  daemon. The ruling of 2026-10-19 chose B, and the joint note with P8's
+  quorum protocol, `doc/CLUSTER_PROTOCOL_DESIGN.md`, is where it is
+  designed: the XOP API as the HM2 commands, `DMSG_SPAN_PROTO_2`, CRCs
+  verified by the kernel, a span-derived element whose replies are
+  chains of a media-less device, and the quorum protocol's four open
+  decisions presented with recommendations.
 - The live-mount handoff. Where the chains of an open file go when the
   root under it is swapped is unanswered in every tree. The local half
   did not build the swap: the slave is written in place and a snapshot
