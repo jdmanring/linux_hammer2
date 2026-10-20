@@ -261,7 +261,8 @@ element, and a remote slot on one would hold the `pmp` on
 `hammer2_pfsfree_scan()` removes only the departing device's slots and
 leaves gaps (`hammer2_vfsops.c:801-826`). In stage 2 a span against a
 PFS mounted read-write is monitored and not registered, so the read-only
-gate holds at registration as well as at mount. The mount-time
+requirement holds at registration, and `->reconfigure` holds it after,
+both under `hammer2_mntlk` (the client side section). The mount-time
 `mount_count` increment for every slot (`hammer2_vfsops.c:2068-2074`)
 skips a connection device by the same test as the other two sites.
 
@@ -286,8 +287,10 @@ device unmount holds that lock through `hammer2_iocom_uninit()`
 (`kern_dmsg.c:255`), so a reader blocked on the lock would hang the
 unmount with no bound. The reader queues the detach to the connection's
 work item (the one registration uses). The work item takes the lock by
-try-lock and requeues itself when refused, as the sync pass does
-(`hammer2_synchro.c:811`), because every caller of
+try-lock and requeues itself after a delay when refused, as the sync
+pass retries on its next cadence (`hammer2_synchro.c:811`), so a refusal
+does not spin a worker through a bulkfree scan's hold, because every
+caller of
 `hammer2_unmount_helper()` holds `hammer2_mntlk` (`hammer2_vfsops.c:1187`,
 `:3241`) and that helper both tears the connection down
 (`hammer2_iocom_uninit()` at `:2634`) and may drop a slot's last chain,
@@ -520,20 +523,32 @@ request.** `kern_dmsg` has no keepalive: `LNK_PING` is sent only to
 unstick the reader at teardown (`kern_dmsg.c:263-271`) and is otherwise
 only answered (`:1127-1135`), and a span carries no status (C10), so a
 partition that drops frames and keeps the socket would be seen only
-when a request timed out. A `PROTO_2` connection's work item, run as
-delayed work so a server busy in a request does not delay it, sends
-`LNK_PING` every half of `remote_timeout_ms` and ends the connection
-when one goes unanswered for the bound. The carried kernel answers no
-one-way `PING` (C15), so the ping is sent as a transaction and the
-reader's `DMSG_ERR_NOSUPP` reply is the answer, with no edit to the
-carried receive path; "reachable" below means "answered within the
+when a request timed out. A `PROTO_2` connection carries a second work item for the
+keepalive alone, delayed work that neither the registration and detach
+item nor a server busy in a request can hold up; it sends `LNK_PING`
+every half of `remote_timeout_ms` as a `CREATE|DELETE` transaction with
+a state callback, since the carried kernel answers no one-way `PING`
+(C15) and a transaction without `DELETE` would leak a state per ping,
+takes the reader's `DMSG_ERR_NOSUPP` reply as the answer, and when one
+goes unanswered for the bound ends the connection by the reader's own
+shutdown path (`KILLRX`, `kern_dmsg.c:121-133`), never by the teardown,
+which disables the items and would wait on itself. The reply prints
+`RCVMSG` on every frame today (`hammer2_iocom.c:126`), so that print is
+debug-gated, one marked line; "reachable" below means "answered within the
 bound", and a write that arrives between the loss and its detection is
 the protocol note's, named as such in the matrix.
 
-**In stage 2 a PFS with a remote element is mounted read-only at the
-VFS**, `SB_RDONLY` set at mount whatever the options say, and a remount
-to `rw` refused through `->reconfigure`, the path the port already gates
-(`hammer2_vfsops.c:2455-2492`). That is Linux's own refusal: `write(2)`,
+**In stage 2 a PFS with a remote element is read-only at the VFS.** A
+PFS has no remote element when it is mounted, since registration needs
+a mounted `pmp`, so the property rests on two checks under one lock:
+registration refuses a PFS whose `pmp->rdonly` is clear, and
+`->reconfigure` refuses `rw` while a remote slot exists, taking
+`hammer2_mntlk` around its test and its write of `pmp->rdonly`
+(`hammer2_vfsops.c:2506-2537` write it under `s_umount` alone today; the
+order `s_umount` then `hammer2_mntlk` is the unmount's at `:3241`),
+since without the lock a remount could pass its test, registration
+install a slot, and the remount then clear the flag. That is Linux's
+own refusal: `write(2)`,
 `chmod`, `truncate` and every create return `EROFS` before a folio is
 dirtied or an XOP is built (a mapped write cannot reach `page_mkwrite`
 on a mount opened read-only), so nothing reaches
@@ -555,7 +570,9 @@ device open for writing: the open mode is the first mount's
 B's `ROOT` read-write before its `CL`, as `cluster-sync.sh` mounts
 `ROOT` today. A `CL` mounted alone opens its device read-only, and the
 port's bios do not consult the file's mode (`hammer2_ondisk.c:1029-1037`;
-the block layer only warns, `block/blk-core.c:566-583`), so a pass on it
+the block layer tests the device's own read-only flag and not the open
+mode, `block/blk-core.c:566-583`, so a writable disk opened read-only
+draws no warning at all), so a pass on it
 would write silently to a volume whose mount-time recovery never ran
 (`hammer2_vfsops.c:1481`); the pass therefore refuses to run while
 `hmp->rdonly` is set, with a log line, and that line is stage 2b's
@@ -690,7 +707,8 @@ rather than from the design document alone.
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:376`, `:502`, `:621`, `:830`, `:1038`, `:1236`,
-  `:1429`, `:1812`), which a mount sets once (`hammer2_vfsops.c:1678`);
+  `:1429`, `:1812`, `:2496`), which a mount sets and only a remount
+  rewrites (`hammer2_vfsops.c:1678`, `:2522`, `:2537`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
   `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
@@ -963,7 +981,10 @@ inconsistently with the mode it mounted with, read by a write and a
 power cut between the phases. The cache sub-protocol over the wire (MESI,
 S6 and S7) is named by one matrix cell and by no exit criterion.
 **Recommendation: phase-2 ack as the default and the only mode in P8**,
-async and phase-1 refused with `EINVAL` until the mode is measured, and
+async and phase-1 refused with `EINVAL` on a PFS with a remote element
+until the mode is measured, the `async` option the port parses untouched
+on every other mount, and the mode itself re-read by the protocol note,
+since it fixes a write acknowledgment while decision A is open, and
 MESI over the wire deferred to its own step with its trigger named: the
 first two-mount workload that reads stale data the quorum allowed.
 
@@ -1063,11 +1084,13 @@ in `hammer2_chain.c`, the connection device's reference in
 split (`:338-344`) and the end-of-scan count excluding an unreachable
 master (`:286-291`), decision C's settled half; in `hammer2_admin.c`, the
 XOP-level dispatch (`:474`); in `hammer2_iocom.c`, the span test
-admitting `PROTO_2` (`:244-247`); in `hammer2_synchro.c`, the guard at
+admitting `PROTO_2` (`:244-247`) and the debug gate on the `RCVMSG`
+print (`:126`); in `hammer2_synchro.c`, the guard at
 `:733` refusing a local snapshot of a remote focus and the pass's
 refusal under `hmp->rdonly`; in
-`hammer2_vfsops.c`, the read-only mount of a PFS with a remote element
-and the refusal of `rw` through `->reconfigure` (`:2506-2537`), the
+`hammer2_vfsops.c`, the registration's refusal of a writable PFS and the
+refusal of `rw` through `->reconfigure`, both under `hammer2_mntlk`
+(`:2506-2537`), the
 MASTER slot's skipped thread (`:489`, the `DEFER`), the `pfs_nmasters` print after `:460-461`, the `statfs` loop
 taking the first block device (`:2328-2332`), the unmount helper's
 detach of remote slots, the mount-time `mount_count` tests
@@ -1331,5 +1354,22 @@ whose refusal is the answer, sent as delayed work; the `CL`-alone
 control could not fire because the port's bios do not consult the
 file's mode, so the pass refuses to run on a read-only device instead;
 the matrix instruments are noted as the holder's alone under candidate
-5; and the leftover word "gate" is gone. The eleventh audit's result is
-recorded here when it has run.
+5; and the leftover word "gate" is gone. The eleventh audit (Claude Opus 5.5, 22 tool uses, 6.8 min) verified
+C12 to C15 on their lines, the stage-2 read-only mount, the keepalive's
+transaction shape and decision C's placement, and returned **SIGN-OFF**
+with seven non-blocking findings, two medium and five low, which it
+asked to be folded in before stage 2's code and which are applied in
+the commit that records this: the remount's write of `pmp->rdonly` and
+registration's test of it under one lock, since without it a remount
+could pass its test while a slot was installed; the keepalive on a work
+item of its own, as a `CREATE|DELETE` transaction with a state callback,
+ending the connection by the reader's shutdown path and never by the
+teardown; the detach's requeue after a delay; the `RCVMSG` print
+debug-gated; C12's arm list and its remount sites completed; the one
+remaining "gate" reworded; decision D's refusal scoped to a PFS with a
+remote element and its mode left to the protocol note; and the detach
+keeping `pfs_nmasters`, without which the read's errno would fall back
+to today's. The text those seven changed was not audited again; it is
+local to stage 2 and each change names its line. The finding counts
+over the eleven rounds were 9, 5, 6, 6, 6, 10, 11, 7, 10, 9, 7, the
+last with no blocking finding.
