@@ -252,8 +252,9 @@ clone rather than read. Where a row claims a carry and no clone is on
 the machine, nothing was verified that this tree could not verify about
 itself, and the gate exits 2 rather than passing on a table that only
 agrees with itself; a table with no such row asks nothing of a clone,
-and the summary line says so. CI clones the origin at the commit the
-CSV names so that check runs on every push.
+and the summary line counts 0 carries re-verified and 0 unverified. CI
+clones the origin at the commit the CSV names so that check runs on
+every push.
 What it cannot do is in its own header: `derived` and `ours` rows have no
 mechanical test, so they are counted in the summary rather than checked.
 

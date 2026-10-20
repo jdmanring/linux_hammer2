@@ -16645,23 +16645,44 @@ one-file origin clone committed by git under its temp directory, laid
 out under the path the gate composes from the clone directory, the
 origin name and the row's absolute file path, and a one-row table
 claiming the file identical to it at the clone's commit. A positive
-control runs first, the carry re-verified and exit 0, so that the three
+control runs first, the carry re-verified and exit 0, so that the
 refusals after it cannot come from a fixture that never reached the
-clone; then the clone directory pointed at nothing (exit 2), the row
-naming a commit the clone is not at (`UNVER`, exit 2) and the file
-edited (`FAIL`, exit 1). Seven checks, 0 failed, on this machine. Two
+clone; then the clone directory pointed at nothing (its `UNVER` line
+and exit 2, the line required since `f392057`), the row naming a
+commit the clone is not at (`UNVER`, exit 2) and the file edited
+(`FAIL`, exit 1). Seven checks, 0 failed, on this machine. Three
 negative controls on the selftest itself, each a copy of the gate with
 one branch neutered: `cmp` replaced by `true` fails only "a wrong
-identical claim passed cmp", and the commit comparison replaced by
-`false` fails only "a wrong-commit clone was treated as a carry", each
-7 checks, 1 failed. `test-posix.sh` over the edited script 109 checks
-0 failed; `test-inventory.sh` 0 findings. The pre-push check run by
-hand on the tree at `3fdbdba`
+identical claim passed cmp", the commit comparison replaced by `false`
+fails only "a wrong-commit clone was treated as a carry", and the
+clone-file test replaced by `false` fails only the no-clone check,
+exiting 1 by way of `cmp` where 2 was wanted; each 7 checks, 1 failed.
+`test-posix.sh` over the edited script 109 checks 0 failed;
+`test-inventory.sh` 0 findings. The pre-push check run by hand on the
+tree at `3fdbdba`
 (`~/Projects/linux_hammer2-data/p7-notes/prepush-3fdbdba.log`): gates
 and selftests pass, 2 could not run, the two fleet gates
 `test-enospc.sh` and `test-fixtures.sh` with the guest shut off, in
+2 min 45 s; on the tree at `f392057` (`prepush-f392057.log` beside
+it): gates and selftests pass, the same two could not run, again in
 2 min 45 s. The sentences in `doc/README.testing.md` and `README.md`
-that had the no-clone exit unconditional now say it applies where a row
-claims a carry. CI's clone step reads the FreeBSD row's commit whatever
-its carry column says, so it clones at `3df307f7` as before and is
-unchanged.
+that had the no-clone exit unconditional now say it
+applies where a row claims a carry. CI's clone step reads the FreeBSD
+row's commit whatever its carry column says, so it clones at
+`3df307f7` as before and is unchanged.
+
+**Audit.** An independent adversarial reading of this entry, the 1.0.41
+row, the two reworded sentences, the selftest block and the two commit
+messages, before any was published, traced every number above to the
+push log, the kept pre-push log, the table's history and the selftest's
+output at HEAD, reproduced both negative controls in scratch copies,
+read the old selftest at 6 checks 0 failed in a scratch archive of
+`01b2254` and 3 of 6 failed at `b77d30f`, `303968e` and `d46e818`, and
+refused on one count: the comment above the positive control credited
+a fixture whose clone path never resolved with two of the three
+refusals, where the gate tests the clone file before the commit and
+such a fixture yields only the first. Two notes beside it were taken as
+well, the no-clone check pinned to its line and the testing document's
+"says so" replaced by the counts the summary line states. The script
+changes are `f392057`, where the row's pin moved, and the third
+control above is theirs.
