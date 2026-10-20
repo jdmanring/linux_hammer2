@@ -420,6 +420,20 @@ kdmsg_iocom_thread_rd(void *arg)
 			}
 		}
 #endif
+		/*
+		 * XXX Linux: the HM2 space is PROTO_2's vocabulary, so a
+		 * frame in it on a connection whose peer did not announce
+		 * PROTO_2 ends the connection as a bad magic does
+		 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the wire format).
+		 */
+		if ((msg->any.head.cmd & DMSGF_PROTOS) == DMSG_PROTO_HM2 &&
+		    (iocom->flags & KDMSG_IOCOMF_PROTO2) == 0) {
+			kdio_printf(iocom, 1,
+				    "HM2 frame %08x on a PROTO_1 connection\n",
+				    msg->any.head.cmd);
+			error = EINVAL;
+			break;
+		}
 
 		error = kdmsg_msg_receive_handling(msg);
 		msg = NULL;

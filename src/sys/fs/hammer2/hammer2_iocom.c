@@ -116,12 +116,21 @@ hammer2_iocom_uninit(hammer2_dev_t *hmp)
 {
 	struct hammer2_span *span;
 
-	/* XXX Linux: the span table goes with the connection. */
-	while ((span = TAILQ_FIRST(&hmp->spanq)) != NULL)
-		hammer2_span_del(hmp, span->state);
 	/* XXX chain depend deadlck? */
 	if (hmp->iocom.mmsg)
 		kdmsg_iocom_uninit(&hmp->iocom);
+	/*
+	 * XXX Linux: the teardown above delivers a simulated DELETE for
+	 * every open span on the writer thread, which empties the table
+	 * through hammer2_span_del(); both threads are gone when it
+	 * returns, so this sweep runs unlocked and finds nothing unless
+	 * the teardown missed an entry, which the line names.
+	 */
+	if (hmp->nspans)
+		kprintf("HAMMER2: %d span(s) left after the connection closed\n",
+			hmp->nspans);
+	while ((span = TAILQ_FIRST(&hmp->spanq)) != NULL)
+		hammer2_span_del(hmp, span->state);
 }
 
 /*
@@ -267,7 +276,9 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 		 * XXX Linux: the peer's LNK_CONN names the protocol it
 		 * speaks.  PROTO_2 means the frames after it carry CRCs the
 		 * kernel verifies and its spans are listed; this runs on the
-		 * reader thread, which is the one that reads the flag.
+		 * reader thread, which is the one that reads the flag.  The
+		 * flag is the connection's for its life: a CONN DELETE does
+		 * not clear it, kdmsg_iocom_reconnect() does.
 		 */
 		if ((msg->any.head.cmd & DMSGF_CREATE) &&
 		    msg->any.lnk_conn.proto_version == DMSG_SPAN_PROTO_2) {
@@ -317,11 +328,16 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 		}
 		/*
 		 * XXX Linux: a PROTO_2 span is admitted beside PROTO_1 and
-		 * listed; a version the kernel does not know is closed, as
-		 * upstream closes every span that is not PROTO_1.
+		 * listed, but only on a connection whose peer announced
+		 * PROTO_2, so that nothing enters the table from a
+		 * connection whose frames are not verified; on any other
+		 * connection it is closed, as is a version the kernel does
+		 * not know, which is what upstream does to every span that
+		 * is not PROTO_1.
 		 */
 		if (msg->any.lnk_span.proto_version != DMSG_SPAN_PROTO_1 &&
-		    msg->any.lnk_span.proto_version != DMSG_SPAN_PROTO_2) {
+		    (msg->any.lnk_span.proto_version != DMSG_SPAN_PROTO_2 ||
+		     (msg->state->iocom->flags & KDMSG_IOCOMF_PROTO2) == 0)) {
 			kdmsg_msg_reply(msg, 0);
 			break;
 		}

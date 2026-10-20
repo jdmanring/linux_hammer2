@@ -47,6 +47,25 @@
  *   refuse    a pipe end and an unconnected stream socket are each handed
  *             to RECLUSTER and each must be refused EINVAL by holdfp()
  *
+ * Stage 1 of doc/CLUSTER_PROTOCOL_DESIGN.md: every frame this end sends
+ * carries both CRCs, and these actions play a DMSG_SPAN_PROTO_2 peer,
+ * whose frames the kernel verifies.  After a frame the kernel may refuse,
+ * a DBG_SHELL is sent and its NOSUPP result awaited, since "no EOF yet"
+ * and "ignored and still serving" read the same until the next frame is
+ * answered.
+ *   proto2    this end's own LNK_CONN announcing PROTO_2, then DBG_SHELL
+ *   badcrc    PROTO_2, then a PING with one header CRC bit flipped: EOF,
+ *             and the DBG_SHELL after it unanswered
+ *   badcrc1   PROTO_1, the same PING: consumed, the DBG_SHELL answered
+ *   auxok     PROTO_2, DBG_SHELL carrying an aux with its CRC right: answered
+ *   auxbad    PROTO_2, the same with one aux CRC bit flipped: EOF
+ *   spanlist  PROTO_2, three PROTO_2 spans: each answered and left open
+ *   span2on1  PROTO_1, one PROTO_2 span: closed, the reply carrying DELETE
+ *   hm2proto1 PROTO_1, a one-off frame in the HM2 space: EOF
+ *   hm2proto2 PROTO_2, the same frame: ignored, the DBG_SHELL answered
+ *   hold      announces PROTO_2 and opens three spans before holding, so
+ *             the unmount under it tears a populated span table down
+ *
  * Every frame in or out is one trace line when --trace is given.  Nothing
  * here sleeps except the bounded waits, each a poll() with a deadline.
  */
@@ -82,6 +101,7 @@
 #define DMSGF_SIZE	0x000000FFU
 #define DMSG_PROTO_LNK	0x00000000U
 #define DMSG_PROTO_DBG	0x00100000U
+#define DMSG_PROTO_HM2	0x00200000U
 #define DMSG_ERR_NOSUPP	0x20
 
 struct dmsg_hdr {
@@ -105,6 +125,7 @@ _Static_assert(sizeof(struct dmsg_hdr) == 64, "dmsg_hdr");
 #define DMSG_LNK_ERROR	DMSG_LNK(0xFFF, struct dmsg_hdr)
 #define DMSG_LNK_VOLCONF_BASE	(DMSG_PROTO_LNK | (0x20 << 8))
 #define DMSG_DBG_SHELL	DMSG_DBG(0x001, struct dmsg_hdr)
+#define DMSG_HM2_PROBE	(DMSG_PROTO_HM2 | (0x010 << 8) | ENC(struct dmsg_hdr))
 #define BASE(cmd)	((cmd) & ~DMSGF_FLAGS)
 
 static FILE *tracef;
@@ -258,29 +279,42 @@ frame_read(int fd, struct dmsg_hdr *h, long deadline)
 }
 
 /* Write a frame of the size its command encodes, the body given or zero,
- * with both CRCs computed as libdmsg computes them: a PROTO_1 kernel checks
- * neither, a PROTO_2 one checks both. */
+ * then the aux padded to 64 bytes, with both CRCs computed as libdmsg
+ * computes them (lib/libdmsg/msg.c, aux_crc over the aligned aux, then
+ * hdr_crc over the header with the field zeroed): a PROTO_1 kernel checks
+ * neither, a PROTO_2 one checks both.  flipaux spoils aux_crc by one bit. */
 static int
-frame_write_body(int fd, uint32_t cmd, uint64_t msgid, uint32_t error,
-    const uint8_t *body, size_t bodylen)
+frame_write_full(int fd, uint32_t cmd, uint64_t msgid, uint32_t error,
+    const uint8_t *body, size_t bodylen, const uint8_t *aux, size_t auxlen,
+    int flipaux)
 {
 	uint8_t buf[8192];
 	size_t len = (cmd & DMSGF_SIZE) * DMSG_ALIGN;
+	size_t alen = (auxlen + DMSG_ALIGN - 1) & ~(size_t)(DMSG_ALIGN - 1);
 	struct dmsg_hdr *h = (struct dmsg_hdr *)buf;
 	size_t off = 0;
 
 	if (len < sizeof(*h) || len > sizeof(buf))
 		len = sizeof(*h);
-	memset(buf, 0, len);
+	if (len + alen > sizeof(buf))
+		return (-1);
+	memset(buf, 0, len + alen);
 	h->magic = DMSG_HDR_MAGIC;
 	h->cmd = cmd;
 	h->msgid = msgid;
 	h->error = error;
 	if (body && bodylen && sizeof(*h) + bodylen <= len)
 		memcpy(buf + sizeof(*h), body, bodylen);
+	if (aux && auxlen) {
+		memcpy(buf + len, aux, auxlen);
+		h->aux_bytes = (uint32_t)auxlen;
+		h->aux_crc = iscsi_crc32(buf + len, alen) ^ (flipaux ? 1u : 0u);
+	}
 	h->hdr_crc = 0;
 	h->hdr_crc = iscsi_crc32(buf, len);
-	trace("tx cmd=%08x msgid=%016" PRIx64 " error=%u\n", cmd, msgid, error);
+	len += alen;
+	trace("tx cmd=%08x msgid=%016" PRIx64 " error=%u aux=%zu\n", cmd, msgid,
+	    error, auxlen);
 	while (off < len) {
 		ssize_t n = write(fd, buf + off, len - off);
 		if (n < 0) {
@@ -294,6 +328,13 @@ frame_write_body(int fd, uint32_t cmd, uint64_t msgid, uint32_t error,
 }
 
 static int
+frame_write_body(int fd, uint32_t cmd, uint64_t msgid, uint32_t error,
+    const uint8_t *body, size_t bodylen)
+{
+	return (frame_write_full(fd, cmd, msgid, error, body, bodylen, NULL, 0, 0));
+}
+
+static int
 frame_write(int fd, uint32_t cmd, uint64_t msgid, uint32_t error)
 {
 	return (frame_write_body(fd, cmd, msgid, error, NULL, 0));
@@ -303,7 +344,10 @@ frame_write(int fd, uint32_t cmd, uint64_t msgid, uint32_t error)
  * span, laid out as sys/sys/dmsg.h lays them: in the CONN body peer_type
  * is at header+56 and proto_version at +58; in the SPAN body pfs_id is
  * at +16, pfs_type at +32, peer_type at +33, proto_version at +34 and
- * pfs_label at +240.  Offsets from the struct text, totals asserted. */
+ * pfs_label at +240.  Offsets from the struct text; the header's size is
+ * asserted above and the two body totals are the sizes the commands
+ * encode in 64-byte units (the kernel's sizeof(dmsg_lnk_conn) is 328 with
+ * padding, which rounds to the same six units as 324). */
 #define DMSG_PEER_HAMMER2	3
 #define DMSG_SPAN_PROTO_2	2
 
@@ -323,7 +367,7 @@ span2_body(uint8_t *b, int n)
 	memset(b, 0, 432 - 64);
 	memset(b + 16, 0x5a, 16);	/* pfs_id: distinct per span */
 	b[16 + 15] = (uint8_t)n;
-	b[32] = 1;			/* pfs_type: a MASTER, listed only */
+	b[32] = HAMMER2_PFSTYPE_MASTER;	/* hammer2_disk.h, by hammer2_ioctl.h */
 	b[33] = DMSG_PEER_HAMMER2;
 	b[34] = DMSG_SPAN_PROTO_2; b[35] = 0;
 	snprintf((char *)b + 240, 128, "h2attach-span-%d", n);
@@ -413,7 +457,11 @@ wait_eof(int fd, long ms, int *frames)
 	return (r == 0);
 }
 
-/* Wait for one frame with the given msgid and flags set; 1 if it came. */
+/* Wait for one frame with the given msgid and flags set; 1 if it came, and
+ * its command is left in last_cmd, where DELETE tells a closing reply from
+ * a result that leaves the transaction open. */
+static uint32_t last_cmd;
+
 static int
 wait_frame(int fd, uint64_t msgid, uint32_t flags, uint32_t *error, int *others)
 {
@@ -424,11 +472,53 @@ wait_frame(int fd, uint64_t msgid, uint32_t flags, uint32_t *error, int *others)
 		if (h.msgid == msgid && (h.cmd & flags) == flags) {
 			if (error)
 				*error = h.error;
+			last_cmd = h.cmd;
 			return (1);
 		}
 		(*others)++;
 	}
 	return (0);
+}
+
+/* After a frame the kernel may refuse: send DBG_SHELL and read until EOF
+ * or the deadline.  Returns 1 on EOF; *shell is 1 when a result came, with
+ * its error in *err (NOSUPP is the kernel still serving), *frames counts
+ * everything read. */
+static int
+probe_alive(int fd, long ms, int *shell, uint32_t *err, int *frames)
+{
+	struct dmsg_hdr h;
+	long deadline = now_ms() + ms;
+	int r;
+
+	*shell = 0; *err = 0; *frames = 0;
+	frame_write(fd, DMSG_DBG_SHELL, 0x1003, 0);
+	while ((r = frame_read(fd, &h, deadline)) == 1) {
+		(*frames)++;
+		if (h.msgid == 0 && (h.cmd & DMSGF_REPLY)) {
+			*shell = 1;
+			*err = h.error;
+		}
+	}
+	return (r == 0);
+}
+
+/* The PROTO_2 prelude and three spans, for hold and spanlist. */
+static int
+open_spans(int fd, int n, uint32_t *serr)
+{
+	uint8_t body[432 - 64];
+	int o, i, open = 0;
+
+	for (i = 1; i <= n; i++) {
+		span2_body(body, i);
+		frame_write_body(fd, DMSG_LNK_SPAN | DMSGF_CREATE, 0x3000 + i,
+		    0, body, sizeof(body));
+		if (wait_frame(fd, 0x3000 + i, DMSGF_REPLY, serr, &o) &&
+		    *serr == 0 && (last_cmd & DMSGF_DELETE) == 0)
+			open++;
+	}
+	return (open);
 }
 
 /* ---- the actions ------------------------------------------------------- */
@@ -439,7 +529,8 @@ usage(void)
 	fprintf(stderr, "usage: h2attach --attach MOUNTPOINT --action ACTION"
 	    " [--wait-ms N] [--settle-ms N] [--hold-max-ms N] [--trace FILE]\n"
 	    "       actions: conn cancel badmagic badsize badaux halfclose close"
-	    " reconnect hold refuse proto2 badcrc badcrc1 spanlist\n");
+	    " reconnect hold refuse proto2 badcrc badcrc1 auxok auxbad spanlist"
+	    " span2on1 hm2proto1 hm2proto2\n");
 	exit(2);
 }
 
@@ -573,13 +664,14 @@ main(int argc, char **argv)
 		rc = (c2 && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1;
 	} else if (!strcmp(action, "badcrc") || !strcmp(action, "badcrc1")) {
 		/* badcrc: PROTO_2 announced, a flipped header CRC must end the
-		 * connection.  badcrc1: PROTO_1 as today, the same frame must be
-		 * ignored, since upstream's core checks no CRC. */
+		 * connection and the DBG_SHELL after it goes unanswered.
+		 * badcrc1: PROTO_1 as today, the same frame is consumed and the
+		 * DBG_SHELL answered, since upstream's core checks no CRC. */
 		struct dmsg_hdr h;
-		uint32_t cerr = 0;
-		int o1 = 0, c2 = 1, f, eof;
+		uint32_t cerr = 0, serr;
+		int o1 = 0, c2 = 1, f, eof, shell, p2 = !strcmp(action, "badcrc");
 		long t0;
-		if (!strcmp(action, "badcrc"))
+		if (p2)
 			c2 = proto2_prelude(dfd, &cerr, &o1);
 		memset(&h, 0, sizeof(h));
 		h.magic = DMSG_HDR_MAGIC;
@@ -588,29 +680,79 @@ main(int argc, char **argv)
 		h.hdr_crc = iscsi_crc32(&h, sizeof(h)) ^ 1;
 		t0 = now_ms();
 		raw_write(dfd, &h);
-		eof = wait_eof(dfd, !strcmp(action, "badcrc") ? wait_ms : settle_ms, &f);
-		printf("h2attach %s: conn=1 conn2_reply=%d eof=%d frames=%d ms=%ld\n",
-		    action, c2, eof, f, now_ms() - t0);
-		if (!strcmp(action, "badcrc"))
-			rc = (c2 && eof) ? 0 : 1;
+		eof = probe_alive(dfd, p2 ? wait_ms : settle_ms, &shell, &serr, &f);
+		printf("h2attach %s: conn=1 conn2_reply=%d eof=%d shell_reply=%d"
+		    " shell_error=%u frames=%d ms=%ld\n",
+		    action, c2, eof, shell, serr, f, now_ms() - t0);
+		if (p2)
+			rc = (c2 && eof && !shell) ? 0 : 1;
 		else
-			rc = eof ? 1 : 0;
+			rc = (!eof && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1;
+	} else if (!strcmp(action, "auxok") || !strcmp(action, "auxbad")) {
+		/* A DBG_SHELL carrying an aux on a PROTO_2 connection: with its
+		 * CRC right the kernel answers it NOSUPP as it answers one with
+		 * no aux; with one bit flipped the connection ends. */
+		static const uint8_t aux[] = "h2attach aux payload, 64-byte padded";
+		uint32_t cerr = 0, aerr = 0, serr;
+		int o1, o2, c2, f, eof, shell, areply, bad = !strcmp(action, "auxbad");
+		long t0;
+		c2 = proto2_prelude(dfd, &cerr, &o1);
+		t0 = now_ms();
+		frame_write_full(dfd, DMSG_DBG_SHELL, 0x1004, 0, NULL, 0, aux,
+		    sizeof(aux), bad);
+		areply = wait_frame(dfd, 0, DMSGF_REPLY, &aerr, &o2);
+		eof = probe_alive(dfd, bad ? wait_ms : settle_ms, &shell, &serr, &f);
+		printf("h2attach %s: conn=1 conn2_reply=%d aux_reply=%d aux_error=%u"
+		    " eof=%d shell_reply=%d frames=%d ms=%ld\n",
+		    action, c2, areply, aerr, eof, shell, f + o2, now_ms() - t0);
+		if (bad)
+			rc = (c2 && !areply && eof) ? 0 : 1;
+		else
+			rc = (c2 && areply && aerr == DMSG_ERR_NOSUPP && !eof) ? 0 : 1;
 	} else if (!strcmp(action, "spanlist")) {
-		uint8_t body[432 - 64];
-		uint32_t cerr = 0, serr;
-		int o, c2, acked = 0, i;
+		uint32_t cerr = 0, serr = 0;
+		int o, c2, open;
 		c2 = proto2_prelude(dfd, &cerr, &o);
-		for (i = 1; i <= 3; i++) {
-			span2_body(body, i);
-			frame_write_body(dfd, DMSG_LNK_SPAN | DMSGF_CREATE, 0x3000 + i,
-			    0, body, sizeof(body));
-			if (wait_frame(dfd, 0x3000 + i, DMSGF_REPLY, &serr, &o) &&
-			    serr == 0)
-				acked++;
-		}
+		open = open_spans(dfd, 3, &serr);
 		printf("h2attach spanlist: conn=1 conn2_reply=%d spans_sent=3"
-		    " spans_acked=%d\n", c2, acked);
-		rc = (c2 && acked == 3) ? 0 : 1;
+		    " spans_open=%d\n", c2, open);
+		rc = (c2 && open == 3) ? 0 : 1;
+	} else if (!strcmp(action, "span2on1")) {
+		/* A PROTO_2 span on a connection whose peer announced nothing:
+		 * the kernel closes it, which the reply's DELETE shows, and the
+		 * table never lists its label. */
+		uint8_t body[432 - 64];
+		uint32_t serr = 0;
+		int o, answered, closed;
+		span2_body(body, 9);
+		frame_write_body(dfd, DMSG_LNK_SPAN | DMSGF_CREATE, 0x3009, 0, body,
+		    sizeof(body));
+		answered = wait_frame(dfd, 0x3009, DMSGF_REPLY, &serr, &o);
+		closed = answered && (last_cmd & DMSGF_DELETE) != 0;
+		printf("h2attach span2on1: conn=1 answered=%d closed=%d error=%u\n",
+		    answered, closed, serr);
+		rc = closed ? 0 : 1;
+	} else if (!strcmp(action, "hm2proto1") || !strcmp(action, "hm2proto2")) {
+		/* A one-off frame in the HM2 space.  On a connection whose peer
+		 * announced PROTO_2 it falls to hammer2_rcvdmsg's default arm,
+		 * which ignores a one-off, and the DBG_SHELL after it is served;
+		 * on one that announced nothing the reader ends the connection,
+		 * the space being PROTO_2's vocabulary. */
+		uint32_t cerr = 0, serr;
+		int o1 = 0, c2 = 1, f, eof, shell, p2 = !strcmp(action, "hm2proto2");
+		long t0;
+		if (p2)
+			c2 = proto2_prelude(dfd, &cerr, &o1);
+		t0 = now_ms();
+		frame_write(dfd, DMSG_HM2_PROBE, 0x1005, 0);
+		eof = probe_alive(dfd, p2 ? settle_ms : wait_ms, &shell, &serr, &f);
+		printf("h2attach %s: conn=1 conn2_reply=%d eof=%d shell_reply=%d"
+		    " shell_error=%u frames=%d ms=%ld\n",
+		    action, c2, eof, shell, serr, f, now_ms() - t0);
+		if (p2)
+			rc = (c2 && !eof && shell && serr == DMSG_ERR_NOSUPP) ? 0 : 1;
+		else
+			rc = (eof && !shell) ? 0 : 1;
 	} else if (!strcmp(action, "halfclose")) {
 		int f, eof;
 		long t0 = now_ms();
@@ -633,9 +775,13 @@ main(int argc, char **argv)
 		    hs.spans, c2, hs2.spans, old_eof, f);
 		rc = (c2 && old_eof) ? 0 : 1;
 	} else if (!strcmp(action, "hold")) {
-		int f, eof;
+		uint32_t cerr = 0, serr = 0;
+		int o, c2, open, f, eof;
 		long t0 = now_ms();
-		printf("h2attach hold: conn=1 spans=%d holding\n", hs.spans);
+		c2 = proto2_prelude(dfd, &cerr, &o);
+		open = open_spans(dfd, 3, &serr);
+		printf("h2attach hold: conn=1 spans=%d conn2_reply=%d spans_open=%d"
+		    " holding\n", hs.spans, c2, open);
 		fflush(stdout);
 		eof = wait_eof(dfd, hold_max_ms, &f);
 		printf("h2attach hold: eof=%d frames=%d ms=%ld\n", eof, f, now_ms() - t0);

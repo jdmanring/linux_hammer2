@@ -130,7 +130,7 @@ echo "threads-before $(threads)"
 
 # the refusal, then each action; a second after each for the threads to go
 out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $out"
-for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 spanlist; do
+for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	out=$($A --attach $M --action $act --trace /tmp/h2attach-$act.trace 2>&1); rc=$?
 	echo "$act-rc $rc"; echo "$act $out"
 	sleep 1
@@ -143,6 +143,11 @@ echo "log-badcrc $(klog 'bad crc')"
 echo "log-proto2 $(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 echo "log-spantab3 $(klog 'H2 SPANTAB 3')"
 echo "log-spantab0 $(klog 'H2 SPANTAB 0')"
+echo "log-span1 $(klog 'H2 SPAN type=6 label=h2attach-span-1 pfs')"
+echo "log-span2 $(klog 'H2 SPAN type=6 label=h2attach-span-2 pfs')"
+echo "log-span3 $(klog 'H2 SPAN type=6 label=h2attach-span-3 pfs')"
+echo "log-span9 $(klog 'label=h2attach-span-9 ')"
+echo "log-hm2proto1 $(klog 'on a PROTO_1 connection')"
 echo "log-nostate $(klog 'no state match for REPLY|DELETE')"
 echo "log-shitcan-before $(klog shitcanning)"
 
@@ -157,8 +162,11 @@ echo "hold-umount-rc $urc"
 echo "hold-umount-ms $(( (t1 - t0) / 1000000 ))"
 wait $HPID; echo "hold-rc $?"
 echo "hold $(grep 'eof=' /tmp/hold.out | head -1)"
+echo "hold-start $(grep 'holding' /tmp/hold.out | head -1)"
 echo "hold-threads-after $(threads)"
 echo "log-shitcan-after $(klog shitcanning)"
+echo "log-spantab0-after-hold $(klog 'H2 SPANTAB 0')"
+echo "log-spanleft $(klog 'left after the connection closed')"
 
 # the control: the daemon closes first, and the unmount has nothing to wait for
 mount -t hammer2 /dev/vdb@ROOT $M || { echo "remount failed"; exit 1; }
@@ -239,25 +247,39 @@ done
 # Stage 1 of the cluster protocol note: the peer's LNK_CONN announcing
 # DMSG_SPAN_PROTO_2 turns the kernel's CRC check on for that connection and
 # lists the peer's PROTO_2 spans; a PROTO_1 connection keeps upstream's
-# behavior.  Under H2_CRC_CONTROL=1 the check is compiled out and the bad
-# frame must pass, which is what proves the check is what ends it.
+# behavior, and a frame in the HM2 space on one ends it.  After a frame the
+# kernel may refuse, h2attach sends a DBG_SHELL and reads whether its NOSUPP
+# result comes, since "no EOF yet" and "consumed and still serving" read the
+# same until the next frame is answered.  Under H2_CRC_CONTROL=1 the CRC
+# check is compiled out and both bad frames must pass and the DBG_SHELL be
+# served, which is what proves the check is what ends them.
 m=$(val proto2)
-[ "$(num "$(field "$m" conn2_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_error)" 0)" = 32 ]; check "PROTO_2: the peer's LNK_CONN is answered and a verified frame is served" $? "conn2_reply $(field "$m" conn2_reply), shell_error $(field "$m" shell_error)"
+[ "$(num "$(field "$m" conn2_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_error)" 0)" = 32 ]; check "PROTO_2: the peer's LNK_CONN is answered and the frame after it is served" $? "conn2_reply $(field "$m" conn2_reply), shell_error $(field "$m" shell_error)"
 [ "$(num "$(val log-proto2)" 0)" -ge 1 ]; check "PROTO_2: the kernel names the peer's protocol in its log" $? "$(val log-proto2) line(s)"
-m=$(val badcrc)
+m=$(val badcrc); a=$(val auxbad)
 if [ -n "${H2_CRC_CONTROL:-}" ]; then
-	[ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(val log-badcrc)" 1)" = 0 ]; check "control: with the CRC check compiled out the bad frame is accepted" $? "eof $(field "$m" eof), $(val log-badcrc) log line(s)"
+	[ "$(num "$(field "$m" conn2_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(field "$m" shell_reply)" 0)" = 1 ] && [ "$(num "$(val log-badcrc)" 1)" = 0 ]; check "control: with the CRC check compiled out the bad header CRC is consumed and the next frame served" $? "conn2_reply $(field "$m" conn2_reply), eof $(field "$m" eof), shell_reply $(field "$m" shell_reply), $(val log-badcrc) log line(s)"
+	[ "$(num "$(field "$a" aux_reply)" 0)" = 1 ] && [ "$(num "$(field "$a" eof)" 1)" = 0 ]; check "control: the bad aux CRC is served too" $? "aux_reply $(field "$a" aux_reply), eof $(field "$a" eof)"
 else
-	[ "$(num "$(field "$m" eof)" 0)" = 1 ]; check "PROTO_2: a flipped header CRC ends the connection" $? "eof $(field "$m" eof) after $(field "$m" ms) ms"
-	[ "$(num "$(val log-badcrc)" 0)" -ge 1 ]; check "PROTO_2: the log names the bad CRC" $? "$(val log-badcrc) line(s)"
+	[ "$(num "$(field "$m" eof)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_reply)" 1)" = 0 ]; check "PROTO_2: a flipped header CRC ends the connection, the frame after it unanswered" $? "eof $(field "$m" eof), shell_reply $(field "$m" shell_reply), after $(field "$m" ms) ms"
+	[ "$(num "$(field "$a" aux_reply)" 1)" = 0 ] && [ "$(num "$(field "$a" eof)" 0)" = 1 ]; check "PROTO_2: a flipped aux CRC ends the connection" $? "aux_reply $(field "$a" aux_reply), eof $(field "$a" eof), after $(field "$a" ms) ms"
+	[ "$(num "$(val log-badcrc)" 0)" -ge 2 ]; check "PROTO_2: the log names the bad CRC, header and aux" $? "$(val log-badcrc) line(s)"
 fi
+m=$(val auxok)
+[ "$(num "$(field "$m" aux_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" aux_error)" 0)" = 32 ] && [ "$(num "$(field "$m" eof)" 1)" = 0 ]; check "PROTO_2: a frame with its aux CRC right is served" $? "aux_reply $(field "$m" aux_reply), aux_error $(field "$m" aux_error), eof $(field "$m" eof)"
 m=$(val badcrc1)
-[ "$(num "$(field "$m" eof)" 1)" = 0 ]; check "PROTO_1: the same bad CRC is ignored, as upstream's core checks none" $? "eof $(field "$m" eof) after $(field "$m" ms) ms"
+[ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(field "$m" shell_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_error)" 0)" = 32 ]; check "PROTO_1: the same bad CRC is consumed and the next frame served, as upstream's core checks none" $? "eof $(field "$m" eof), shell_reply $(field "$m" shell_reply), shell_error $(field "$m" shell_error)"
+m=$(val hm2proto1)
+[ "$(num "$(field "$m" eof)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_reply)" 1)" = 0 ] && [ "$(num "$(val log-hm2proto1)" 0)" -ge 1 ]; check "PROTO_1: a frame in the HM2 space ends the connection and the log names it" $? "eof $(field "$m" eof), shell_reply $(field "$m" shell_reply), $(val log-hm2proto1) log line(s)"
+m=$(val hm2proto2)
+[ "$(num "$(field "$m" eof)" 1)" = 0 ] && [ "$(num "$(field "$m" shell_reply)" 0)" = 1 ] && [ "$(num "$(field "$m" shell_error)" 0)" = 32 ]; check "PROTO_2: the same HM2 frame is ignored and the next frame served" $? "eof $(field "$m" eof), shell_reply $(field "$m" shell_reply), shell_error $(field "$m" shell_error)"
 m=$(val spanlist)
-[ "$(num "$(field "$m" spans_acked)" 0)" = 3 ]; check "PROTO_2: three spans from the peer are each answered" $? "$(field "$m" spans_acked) of 3"
-[ "$(num "$(val log-spantab3)" 0)" -ge 1 ]; check "PROTO_2: the span table lists the three" $? "$(val log-spantab3) line(s) at three"
+[ "$(num "$(field "$m" spans_open)" 0)" = 3 ]; check "PROTO_2: three spans from the peer are each answered and left open" $? "$(field "$m" spans_open) of 3 open"
+[ "$(num "$(val log-spantab3)" 0)" -ge 1 ] && [ "$(num "$(val log-span1)" 0)" -ge 1 ] && [ "$(num "$(val log-span2)" 0)" -ge 1 ] && [ "$(num "$(val log-span3)" 0)" -ge 1 ]; check "PROTO_2: the span table lists the three by type and label" $? "$(val log-spantab3) line(s) at three, labels $(val log-span1)/$(val log-span2)/$(val log-span3)"
 [ "$(num "$(val log-spantab0)" 0)" -ge 1 ]; check "PROTO_2: the table empties when the connection closes" $? "$(val log-spantab0) line(s) at zero"
-for act in proto2 badcrc badcrc1 spanlist; do
+m=$(val span2on1)
+[ "$(num "$(field "$m" closed)" 0)" = 1 ] && [ "$(num "$(val log-span9)" 1)" = 0 ]; check "PROTO_1: a PROTO_2 span on an unannounced connection is closed and never listed" $? "closed $(field "$m" closed), $(val log-span9) table line(s) with its label"
+for act in proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	[ "$(num "$(val $act-threads)" 9)" = 0 ]; check "stage 1: $act leaves no thread" $? "$(val $act-threads)"
 done
 [ "$(num "$(val log-badmagic)" 0)" -ge 1 ] && [ "$(num "$(val log-badsize)" 0)" -ge 1 ] && [ "$(num "$(val log-badaux)" 0)" -ge 1 ]; check "malformed: the kernel log names each reason" $? "bad magic $(val log-badmagic), bad header size $(val log-badsize), illegal payload $(val log-badaux)"
@@ -283,6 +305,7 @@ sb=$(num "$(val log-shitcan-before)" 0); sa=$(num "$(val log-shitcan-after)" 0)
 [ "$(num "$(val hold-umount-rc)" 1)" = 0 ] && [ "$hu" -lt 20000 ]; check "socket_faults: unmount completes under a silent daemon" $? "$hu ms, exit $(val hold-umount-rc)"
 [ "$hu" -ge 9000 ] && [ "$sa" -gt "$sb" ]; check "socket_faults: the ten-retry shutdown branch is what unstuck it" $? "$hu ms and the log's shutdown line went $sb to $sa"
 [ "$(num "$(field "$(val hold)" eof)" 0)" = 1 ] && [ "$ha" = 0 ]; check "socket_faults: the daemon then reads EOF and no thread is left" $? "eof $(field "$(val hold)" eof), $ha threads"
+[ "$(num "$(field "$(val hold-start)" spans_open)" 0)" = 3 ] && [ "$(num "$(val log-spantab0-after-hold)" 0)" -ge 2 ] && [ "$(num "$(val log-spanleft)" 1)" = 0 ]; check "stage 1: the unmount under three open PROTO_2 spans empties the table by the teardown's DELETEs, nothing left for the sweep" $? "spans_open $(field "$(val hold-start)" spans_open), $(val log-spantab0-after-hold) line(s) at zero, $(val log-spanleft) left"
 cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 [ "$cu" -lt 3000 ] && [ "$sf" = "$sa" ]; check "socket_faults: control, with the daemon closed first the unmount is fast and the line is absent" $? "$cu ms, line count $sa to $sf"
 

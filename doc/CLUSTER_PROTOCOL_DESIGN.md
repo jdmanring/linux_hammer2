@@ -137,8 +137,8 @@ to preserve.
 `msgid`, `circuit`, `link_verifier`, `cmd` with its flags and size,
 `aux_crc`, `aux_bytes`, `error`, `aux_descr`, `hdr_crc`, 64-byte
 alignment, `DMSG_HDR_MAX` 2048 and `DMSG_AUX_MAX` 1 MiB. A frame in a
-protocol space the connection did not negotiate ends the connection as
-a bad magic does today.
+protocol space the connection's peer did not announce ends the
+connection as a bad magic does today.
 
 **The vocabulary is the XOP API, in the HM2 space.** The 21 descriptors
 `hammer2_admin.c` declares with `H2XOPDESCRIPTOR` are the commands, in
@@ -188,10 +188,18 @@ admitting `PROTO_2` edits that test, marked `XXX` as a core edit the
 port could not avoid; a `PROTO_1` span stays open as today and never
 becomes an element, and a span at a version the kernel does not know is
 closed as today. A frame in the HM2 space on a connection whose peer
-announced `PROTO_1` ends the connection. That is the compatibility plan
-the extension rule asks for: an old reader sees spans and nothing else,
-as it does now, and a `PROTO_1` kernel reading a `PROTO_2` span closes
-it.
+announced `PROTO_1` ends the connection, and a `PROTO_2` span on such a
+connection is closed rather than listed, so nothing enters the span
+table from a connection whose frames are not verified. The announcement
+is the peer's `LNK_CONN`, read once: the flag it sets is the
+connection's for its life, cleared by a reconnect and not by a `CONN`
+`DELETE`, so a later `CONN` on the same connection can turn it on and
+nothing turns it off. In stage 1 the kernel's own `LNK_CONN` and spans
+stay at `PROTO_1`, since it has no HM2 vocabulary yet to announce;
+stage 2 moves them when it does, and until then the announcement is
+one-sided. That is the compatibility plan the extension rule asks for:
+an old reader sees spans and nothing else, as it does now, and a
+`PROTO_1` kernel reading a `PROTO_2` span closes it.
 
 **The kernel verifies `hdr_crc` and `aux_crc` on every frame of a
 `PROTO_2` connection**, because it acts on those frames. A mismatch ends
