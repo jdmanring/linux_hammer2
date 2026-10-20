@@ -562,15 +562,26 @@ rather than from the design document alone.
   `modify_tid` a cluster-level identifier that is "not propagated"
   (`hammer2_disk.h:595-601`), and the carried synchronizer depends on
   the propagation the code does anyway.
-- **C2. Two carried helpers modify a parent at the transaction's tid
-  for its blockmap alone, and only on the host whose flush has run.**
+- **C2. Carried helpers modify a parent at the transaction's tid for
+  its blockmap alone, on a schedule the host's flush sets.**
   `_hammer2_chain_delete_helper()` (`hammer2_chain.c:3437`) and
   `hammer2_chain_rename_obref()` (`:3398`) take that branch when the
-  child is `BLKMAPPED` (`:5226`, `:2013`), so any stamp taken at
+  child is `BLKMAPPED` (`:5226`, `:2013`), that is, already flushed into
+  the parent on that host; `hammer2_chain_create_indirect()` modifies
+  the parent at the transaction's tid when it splits a full blockset
+  (`:3602`), and whether two hosts split at the same transaction depends
+  on the parent's block table as each host's flush has laid it out,
+  which no round measured. So any stamp taken at
   `hammer2_chain_modify()` moves with the flush schedule too, and
   `update_tid`, the field the format reserves for the cluster
   (`:597`, `:638`, written by no tree), would need those sites excluded
-  and still meets C8 and C9.
+  and still meets C8 and C9. The caller set is the semantic index's
+  (`find_referencing_symbols` on `hammer2_chain_modify`, repeated until
+  its count stopped moving at the per-file counts `grep` gives): nine
+  sites in `hammer2_xops.c`, two each in `hammer2_ioctl.c`,
+  `hammer2_synchro.c` and `hammer2_strategy.c`, one in
+  `hammer2_vfsops.c`, the freemap's and bulkfree's on freemap chains,
+  the flush's at mtid 0, and the thirteen in `hammer2_chain.c` itself.
 - **C3. The core has no undo.** A modify copies the chain in place
   (`hammer2_chain.c:1608-1668`); a delete has modified the parent and
   removed the blockref before any protocol step could refuse it; only a
