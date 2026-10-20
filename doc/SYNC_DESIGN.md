@@ -161,7 +161,10 @@ head comment says what it is not: "This daemon does not run the higher
 level quorum or locking protocols." Encryption and authentication of a
 link are the library's, `lib/libdmsg/crypto.c` (777 lines, AES-256-GCM),
 and nothing in the kernel checks a frame beyond its magic, header size and
-aux bound; the CRCs are verified in `lib/libdmsg/msg.c` alone
+aux bound; the CRCs are verified in `lib/libdmsg/msg.c` alone. The port
+kept that until stage 1 of `doc/CLUSTER_PROTOCOL_DESIGN.md`, 1.0.44: on
+a connection whose peer announced `DMSG_SPAN_PROTO_2` the kernel
+verifies both CRCs, and on any other it checks what upstream checks
 (`doc/README.porting.md`, the transport section).
 
 So the original design reaches a master on another host by making its
@@ -190,7 +193,8 @@ remote. The 2015 status table lists "Network blk device - operational"
   initiates `LNK_CONN`, advertises one `LNK_SPAN` per PFS, sends the
   `VOLCONF`s, answers `PING`, and runs DragonFly's two message threads;
   32 checks 0 failed on both kernels by `script/cluster-dmsg.sh` against
-  `test/h2attach.c`, which plays the daemon's end.
+  `test/h2attach.c`, which plays the daemon's end, and 55 since 1.0.44
+  added the stage 1 checks of `doc/CLUSTER_PROTOCOL_DESIGN.md`.
 - The snapshot ioctl, with the identity described above, and the PFS
   ioctls that create, list and delete roots, exercised by `pfs-domains.sh`
   on both sides.
@@ -203,8 +207,9 @@ another host; a Linux `hammer2 service`, or any userland that holds the
 other end of the socket in production (`doc/README.porting.md` records that
 none exists); the block-device protocol's client or server; a reader of
 `pfs_subtype`; a fork of the source or of the target; a verify step; a
-replacement of a target; and any authentication, encryption or CRC check in
-the kernel path, which on DragonFly are the daemon's and the library's.
+replacement of a target; and any authentication or encryption in the
+kernel path, which on DragonFly are the daemon's and the library's, as
+the CRC check was until 1.0.44 verified it for a `PROTO_2` peer.
 
 ## What "remote synchronization" has to decide
 
@@ -278,9 +283,11 @@ part the exit criteria do not name.
 
 On DragonFly, the daemon and the library: keys under `/etc/hammer2`,
 AES-256-GCM on the link, CRCs checked in userland. The kernel trusts the
-descriptor it is handed. The port keeps that boundary exactly: a connected
-socket arrives from whoever can issue the mount's ioctl or the mount
-option, and the kernel verifies nothing about the peer. Any alternative
+descriptor it is handed. The port keeps that boundary for the peer's
+identity: a connected socket arrives from whoever can issue the mount's
+ioctl or the mount option, and the kernel verifies nothing about who the
+peer is, though since 1.0.44 it verifies the frames of a peer that
+announced `DMSG_SPAN_PROTO_2`. Any alternative
 that puts a master on another host inherits this: the remote end's
 identity is established in a daemon that does not exist on Linux. A
 design that reaches another host must say who holds the keys and where the

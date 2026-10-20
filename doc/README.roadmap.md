@@ -37,7 +37,9 @@ socket transport runs the message threads on a connected stream socket,
 and a quorum that cannot be met is unrun, its expected behavior
 to come from upstream rather than from this port's output; what is
 still missing for a member on another host is the remote PFS layer
-(P7).
+(P7), designed with P8 at `doc/CLUSTER_PROTOCOL_DESIGN.md`, whose stage
+1 (1.0.44) has the kernel verify a `PROTO_2` peer's frames and list its
+spans.
 
 0.9.52 and 0.9.53 open a capability the port had
 asserted away: `hammer2_assert_cluster()` required `nchains == 1` and
@@ -221,7 +223,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 1.0.43
+unload, and passed Linux and DragonFly checks. The driver is at 1.0.44
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

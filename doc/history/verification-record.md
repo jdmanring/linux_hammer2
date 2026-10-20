@@ -16692,3 +16692,155 @@ applied text and found this paragraph crediting the first round with
 two numbers written after it, the third control's and the second
 pre-push run's; the sentence now reads as above, and a third signed
 off on the correction.
+
+## The kernel verifies a PROTO_2 peer's frames and lists its spans, 2026-10-20
+
+Stage 1 of `doc/CLUSTER_PROTOCOL_DESIGN.md`, built at `a821b4e` and
+corrected at `4e46659` after its first audit. The carried message core
+read a frame's magic, header size and aux bound and no CRC, which was
+right while the kernel only monitored spans and wrong for a kernel that
+will act on a peer's frames. A peer's `LNK_CONN` CREATE carrying
+`DMSG_SPAN_PROTO_2` now sets `KDMSG_IOCOMF_PROTO2` on the connection in
+`hammer2_autodmsg()`, on the reader thread, which is the thread that
+reads it; the flag is the connection's for its life, a CONN DELETE does
+not clear it, and `kdmsg_iocom_reconnect()` does. Under it the reader
+in `kdmsg_iocom_thread_rd()` computes both CRCs the way the writer does
+at `kern_dmsg.c:2057-2060`, the header with `hdr_crc` zeroed and the aux
+over its aligned length, and ends the connection on a mismatch with a
+`bad crc hdr %08x/%08x aux %08x/%08x` line, before the state machine
+sees the frame. A frame in the HM2 space on a connection without the
+flag ends it with `HM2 frame %08x on a PROTO_1 connection`, outside the
+CRC block, as the note's wire format has it. A `PROTO_2` span is
+admitted beside `PROTO_1` only on a connection that carries the flag
+and is closed otherwise, so that nothing enters the per-device span
+table from a connection whose frames are not verified; the table is
+printed under `hammer2_debug & 0x0100` as `H2 SPANTAB n` and one
+`H2 SPAN type= label= pfs=` line per entry, emptied by the span's DELETE
+and by the connection's teardown, whose simulated DELETEs run on the
+writer thread after the reader is gone. The unmount's own sweep runs
+after `kdmsg_iocom_uninit()` returns and prints what the teardown left,
+which is zero unless it missed an entry. The announcement is one-sided
+in this stage: the kernel's own CONN and spans still carry `PROTO_1`
+(`hammer2_cluster_reconnect()`, `hammer2_update_spans()`), so the peer
+is never told the kernel verifies, and the documents say "announced",
+not "negotiated", until stage 2 moves the kernel's side.
+
+`test/h2attach.c` computes CRC-32C on every frame with h2loop's table,
+the aux over its aligned length as libdmsg does, and plays the peer in
+nine actions: `proto2`, `badcrc`, `badcrc1`, `auxok`, `auxbad`,
+`spanlist`, `span2on1`, `hm2proto1`, `hm2proto2`, with `hold`
+announcing `PROTO_2` and opening three spans before it holds. A refusal
+is not read as EOF alone, which a close for any reason satisfies: after
+a frame the kernel may refuse, the peer sends a `DBG_SHELL` and reports
+whether it was answered, so a refusal reads as EOF with that frame
+unanswered and the `PROTO_1` arm reads as the same bad frame consumed
+and that frame answered `DMSG_ERR_NOSUPP`. A span "answered" with error
+0 is also how the kernel closes one, so listing is read from the
+table's own lines by type and label. `script/cluster-dmsg.sh` on the
+guest at `4e46659`, 7.3.0-kasan
+(`~/Projects/linux_hammer2-data/fixtures/cluster-dmsg-stage1r2-kasan-20261020.log`,
+kernel log `dmsg-run-20261020-061540.klog` beside it): 55 checks, 0
+failed. A flipped header CRC ends the connection, the frame after it
+unanswered (eof 1, shell_reply 0); a flipped aux CRC ends it (aux_reply
+0, eof 1); the log names both (2 lines); a frame with its aux CRC right
+is served (aux_reply 1, aux_error 32); the same bad header CRC on a
+`PROTO_1` connection is consumed and the next frame served (eof 0,
+shell_reply 1, shell_error 32); an HM2 frame on `PROTO_1` ends the
+connection with its log line (eof 1, shell_reply 0, 1 line) and on
+`PROTO_2` is ignored and the next frame served (eof 0, shell_reply 1);
+three spans are each left open (3 of 3) and the table lists them by
+type and label (1 line at three, labels 3/3/3) and empties when the
+connection closes (1 line at zero); a `PROTO_2` span on an unannounced
+connection is closed and never listed (closed 1, 0 table lines with its
+label); the unmount under three open spans leaves the table empty by
+the teardown's DELETEs with nothing for the sweep (spans_open 3, 2
+lines at zero, 0 left); the log had named the peer's protocol 6 times
+where that check reads it; each of the nine actions leaves 0 threads;
+no kernel warning, lockdep or sanitizer report, kmemleak 0, the module
+unloads with 0 threads. The same on 7.3.0, the lockdep kernel
+(`cluster-dmsg-stage1r2-debug-20261020.log`, `dmsg-run-20261020-060019.klog`):
+55 checks, 0 failed, and with the millisecond readings and the kernel
+log's name stripped the two logs differ in one line, the kernel's name.
+The unmount under a silent daemon took 10854 ms on the KASAN kernel and
+10814 ms on the debug kernel, the ten-retry shutdown as at P6's close.
+
+The negative control is placed in the subject: `H2_CRC_CONTROL=1`
+builds the module with `HAMMER2_NOCRC`, which compiles out the CRC
+block and nothing else, and replaces the three refusal checks with two
+that must read the opposite. On 7.3.0-kasan
+(`cluster-dmsg-stage1r2-control-20261020.log`, `dmsg-run-20261020-061719.klog`):
+54 checks, 0 failed; the bad header CRC is consumed and the next frame
+served (conn2_reply 1, eof 0, shell_reply 1, 0 log lines) and the bad
+aux CRC is served (aux_reply 1, eof 0). The HM2 refusal still reads eof
+1 with its log line in the control build, which is what places it
+outside the block the control removes. A control that read eof 0
+without the following frame answered would be satisfied by a kernel
+that stalled, which is why the served `DBG_SHELL` is required.
+
+The first build, `a821b4e`, read 44 checks and 0 failed on 7.3.0-kasan
+twice (`cluster-dmsg-stage1-20261020-0517.log`,
+`cluster-dmsg-stage1-kasan-final-20261020.log`) and once on 7.3.0
+(`cluster-dmsg-stage1-debug-20261020.log`), its control 43 checks and 0
+failed (`cluster-dmsg-stage1-control-20261020.log`), and was refused by
+its audit on four counts the run could not see: the unmount swept the
+span table before `kdmsg_iocom_uninit()` with the reader thread alive
+on the same list; a `PROTO_2` span from a connection without the flag
+was listed; no action sent an aux-bearing frame, so the aux branch was
+built and never read while four documents said both CRCs were
+verified; and the HM2-space refusal the note states was not built,
+while the porting text called the connection "negotiated". Five more
+were taken with them: the `PROTO_1` arm read "no EOF within the
+window" and nothing proved the kernel kept serving; a `PROTO_2` check
+passed identically with the flag never set and the span count counted
+replies a refusal also sends; `span2_body` wrote `pfs_type` 1, which is
+`CACHE`, under a comment saying MASTER, and claimed sizes it did not
+assert; the flag's life was undocumented; the `sys/dmsg.h` origin row
+said eight `XXX` lines against a table reading ten. Every one is in
+`4e46659`, and the counts above are the second build's.
+
+Gates on the tree at `4e46659`, this machine: syntax 81 checks 0
+failed against the kernel of record; checkpatch deviation set unchanged
+at 1429 hits; inventory 0 findings over 21 sources, 61 test files and
+32 `XXX` rows, `kern_dmsg.c` at 32 `XXX` lines (27 ours) for the
+reader's new line and the table's total at five hundred and eleven,
+line counts 2244 and 477 as `wc -l` reads them; provenance 38 checks 0
+findings; citations 38 rows 35 symbol-anchored passes 0 failures;
+posix 109 checks 0 failed; doc-prose 40 documents 0 findings and vale 0
+on the edited documents; transport 35 checks 0 failed; absence 14 claims
+12 symbols resolved 0 failures; shim, ccms-lock, vectors, tools, report,
+reverts and history clean. The design note's line citations into the
+two edited files are pinned to the tree at `3ba554c` by its own text
+and are left as written. The sweep of the other tracked documents found
+`doc/SYNC_DESIGN.md` still saying the kernel checks no CRC in four
+places and `doc/DROPS_AND_DISABLES.md` still carrying the three message
+core files as "not carried", stale since 1.0.33, with no gate reading
+that ledger's status column; both say what holds now, with the roadmap's
+state section.
+
+The table keys an entry by its transaction state and `hammer2_span_add()`
+does not look for an existing entry, so a peer that opens the same span
+in two transactions and closes one leaves a second entry until the
+connection's teardown, which walks every state; the surface is the
+debug print and the sweep's line, no memory outlives the connection,
+and no mechanism is added for it in this stage. It is recorded here as
+the second audit's reading, for stage 2 to meet when registration reads
+the table.
+
+**Audit.** An independent adversarial reading of `a821b4e` (both logs
+read, the CRC arithmetic checked byte for byte against the writer's,
+the flag's every write and the span table's allocation, init order and
+teardown traced) returned NO SIGN-OFF with the nine findings above,
+four blocking; its report is kept as
+`~/Projects/linux_hammer2-data/p8-notes/stage1-audit-1-a821b4e-20261020.txt`,
+which states its 25 tool calls. All nine are applied at `4e46659`. A
+second reading, over `4e46659`, this entry, the 1.0.44 row and the
+three version sentences before any was published
+(`stage1-audit-2-4e46659-20261020.txt` beside it, 54 tool calls), traced
+every number here to its log, reran every gate with the numbers above,
+reconciled the kernel log counts at the point each check reads them
+with the final counts, confirmed the strip-diff of the two logs and the
+HM2 refusal in the control build, and returned SIGN-OFF with three low
+findings: the first reading's tool count was traceable to nothing kept,
+answered by the two files above; the absence gate's line had not been
+read, answered by the count above; and the ghost entry of the paragraph
+above.

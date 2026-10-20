@@ -20,9 +20,9 @@ like a scope decision.
 |---|---|---|
 | `hammer2_synchro.c` | carried since 0.9.61, 1176 lines then, the origin table carrying the current count, measured by `cluster-sync.sh` and by `sync-empty-base.sh`, which reads the slave's cluster PFS against its master's | implemented |
 | `hammer2_ccms.c` / `.h` | carried at 1.0.6, 323 and 177 lines then, the origin table carrying the current count with the lockdep exercise, building as `hammer2_ccms.o` | limited: the thread lock is carried and the coherency half is not written in any tree |
-| `hammer2_iocom.c` | not carried, 387 lines, 14 calls to 8 `kdmsg` functions | deferred-with-trigger: P6, behind the transport (P5) |
-| `hammer2_msgops.c` | not carried, 87 lines, 2 calls to `kdmsg_msg_reply()` | deferred-with-trigger: P6, behind the transport (P5) |
-| `kern_dmsg.c` | not carried, 2202 lines | deferred-with-trigger: P5, the transport interface with a deterministic loopback |
+| `hammer2_iocom.c` | carried since 1.0.33 (P6), 387 lines then, the origin table carrying the current count; the span table and the `PROTO_2` admission are its stage 1 additions | implemented |
+| `hammer2_msgops.c` | carried since 1.0.33 (P6), 87 lines then, the origin table carrying the current count | implemented |
+| `kern_dmsg.c` | carried since 1.0.33 (P6), 2202 lines then, the origin table carrying the current count, with the socket transport, and since 1.0.44 the CRC check on a `PROTO_2` connection | implemented |
 | the seven cluster ioctls | not implemented | deferred-with-trigger: P8, behind remote synchronization (P7); designed at `doc/CLUSTER_PROTOCOL_DESIGN.md` |
 | `HAMMER2IOC_BULKFREE_ASYNC` | not implemented | deferred-with-trigger: its cancellation is unspecified; the synchronous scan is carried and measured |
 
