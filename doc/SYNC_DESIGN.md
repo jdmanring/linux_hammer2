@@ -493,9 +493,10 @@ is skipped whole and put on the rescan set, so a directory the frontend
 changed after the snapshot is neither scanned nor refilled, and the
 insert arm counts the residue as `syncsnap: reinsert` lines in
 `hammer2_sync_insert()`, which the harness reads as `reinserts`, 0
-wanted: 0 in every one of the 29 kept klogs at this writing, with the
-mutation phase driving ten deletions and ten writes into an open pass
-in each run since the rule landed.
+wanted: 0 in each of the 17 klogs kept since the print landed at
+`6344999`, the mutation phase driving ten deletions and ten writes into
+an open pass in the nine default-shape runs since it landed at `615c29c`;
+the crash shape and the live-pass control stop before that phase.
 
 ## What this note does not settle
 

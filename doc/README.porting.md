@@ -1406,7 +1406,8 @@ more at the end of the run, 13 MiB and about 18 blocks a pass, and two
 bulkfree scans run with the thread up returned both runs to the same
 free count, 27178 blocks, so what a deleted snapshot holds is what the
 scan frees (`doc/history/verification-record.md`, runs 20 and 21 of
-the 2026-10-19 entry). A scan holds `hammer2_mntlk` for its whole run;
+the 2026-10-19 entry; the numbers are the session's notes of those
+runs' reports, which were lost, their klogs kept). A scan holds `hammer2_mntlk` for its whole run;
 the thread's try-lock on it skips the pass and a target whose delete the
 lock refused is deleted by the next pass or the unmount.
 

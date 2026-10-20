@@ -15648,18 +15648,19 @@ prints "deviation set unchanged (1429 hits, baseline: checkpatch.pl from
 linux v7.3)". The eleven kernel headers the stubs under `test/stub/linux/`
 transcribe were compared with `cmp` between the two trees: ten are
 identical and `include/linux/fs.h` gains two defines, `FOP_IMMUTABLE` at
-1981 and `FS_DISALLOW_NOTIFY` at 2301, neither among the two declarations
+1982, under a comment at 1981, and `FS_DISALLOW_NOTIFY` at 2301, neither among the two declarations
 the stub carries, so every stub citation now reads `v7.3` and no cited
-line moved. `git grep rc5` outside `CHANGELOG.md` and this record named
-30 tracked files before the move. The two that change behavior,
+line moved. `git grep rc5` outside `CHANGELOG.md` and `doc/history/` named
+26 tracked files before the move. The two that change behavior,
 `script/pre-push-check.sh`'s tree search and `.github/workflows/ci.yml`'s
 checker tag, moved first, as the rc5 entry said they must; the usage
 comments in `analyze.sh`, `cocci.sh`, `smatch.sh` and `storm.sh`, the
 baseline's name line, `README.kernel-style.md`, `README.capabilities.md`,
 `README.porting.md`, `README.status.md`, `README.testing.md`,
-`SYNC_DESIGN.md` and the ten stubs followed. Eleven files still say rc5,
-each a dated measurement or a sentence about a past move, and are left as
-written.
+`SYNC_DESIGN.md` and the ten stubs followed. Eleven files still say rc5: ten
+are dated measurements or sentences about a past move, left as written,
+and `script/pre-push-check.sh` keeps the rc5 tree as the second entry of
+its search list, the fallback behind the release tree.
 
 **Host readings on the release tree.** `test-syntax.sh`: 81 checks, 0
 failed, "against the kernel of record (7.3), 7.3.0, mainline". `make`
@@ -15804,7 +15805,9 @@ upstream's: DragonFly's `hammer2_xop_collect()` skips an ESRCH key and
 prints and skips an EDEADLK key, and reads either at the end of the scan
 as ENOENT, where run 3's correction skipped ESRCH alone and returned it
 at the end; carried as upstream has it, and the one `return` the checker
-stopped counting moved the baseline to 1409.
+stopped counting moved the baseline to 1409, an intermediate reading between the moves
+`doc/README.kernel-style.md` records (1396 to 1410) and absent from that
+ledger.
 
 **Run 6: the rescan set holds, and lockdep reads a carried order.** 37
 checks, 2 failed. The slave holds what the master holds (40042 inodes,
@@ -15874,7 +15877,8 @@ mounts (rc 0, an empty PFS, unmount rc 0), and the lone `SLAVE` label
 `CL` is refused, mount rc 32 with mount(8)'s `special device /dev/vdb@CL
 does not exist`, which is its rendering of ENOENT, and `hammer2:
 hammer2_get_tree: failed to get root inode: 2` in the kernel log, no
-mount and no thread left. A SLAVE-only cluster has no master, so the
+mount and no thread left (a reading of 2026-10-18 whose kernel log was
+not kept). A SLAVE-only cluster has no master, so the
 root inode's collect finds no quorum for its key, ESRCH, and reads it at
 the end of the scan as ENOENT, upstream's shape. No reader of a slave
 element's mixed state exists in this port, and the live-target fork of
@@ -15925,7 +15929,7 @@ differ), no `.h2sync-*` root left. The settle check that stood FAIL
 since step 2 is green: 99 idle passes over the run, 2 idle passes and 0
 snapshot passes in the 12 s after the resume settled, and the last idle
 line reads the master root and the slave root at the same tid
-(`0x44a17`), reached after 8 idle stamps over the run, at most two per
+(`0x44a17`), reached after 8 idle stamps over the run, one per
 burst; a stamp's root scan took up to 6.07 s on this kernel. 15
 snapshot passes, 10 verified in at most 2 rounds, a snapshot pass taking
 0.0 to 4.8 s from its `pass` line to its verdict, the 4.8 s a 40042-inode
@@ -16117,7 +16121,8 @@ counting no completed pass in its 30 s window and no destroy for its
 five deleted files, the resume's `filekeys` line reading 12488606 kept
 keys and 1041173 rescans, and the resumed copy settling nowhere in 900 s
 with 21219 of 120227 fingerprint lines apart. The stamps flooded the
-console: three soft lockups on an idle CPU in the serial path, and no
+console: 30 soft-lockup reports on one idle CPU (CPU#11) over 940 s in the
+serial path, and no
 report from the port's own code. The re-flag held again, 12012 paths at
 the interruption and 8635 at the teardown, scrapped 0. The pass-wide
 failed bit a kept key used to set had ended the pass after one drain and
@@ -16315,11 +16320,12 @@ stamp, bounded at 60 s, and the check prints the seconds it waited; the
 counter read 3 from run 24's settle line and 0 from the klog's end.
 
 **Run 25, and the reports of runs 1 to 25.** The re-verification of the
-idle window on `h2kasan-rc5` at `22e5e9f` ran from 03:16 on 2026-10-19
-and its klog is kept, `cluster-run-20261019-033334.klog`: 24 snapshot
+idle window on `h2kasan-rc5` at `22e5e9f` was launched at 03:16:33 on
+2026-10-19 and its klog is kept, `cluster-run-20261019-033334.klog`,
+stamped at the copy at the run's end as every klog before `01f82fe` was: 24 snapshot
 passes, 13 verified, 0 unverified, 52 idle lines, 12 idle stamps, 3
 stale snapshots deleted on resume, 5 passes skipped for want of a
-quorum, 0 held chains, no UBSAN, KASAN, `BUG:`, `WARNING:`, circular
+quorum, no UBSAN, KASAN, `BUG:`, `WARNING:`, circular
 lock or hung task line, and the last mount's unmount line reading 0
 inodes, 0 chains, 0 modified and 0 dio still allocated. Its harness
 report was not kept. The host rebooted at 14:25 the same day for the
@@ -16329,10 +16335,10 @@ the `cluster-sync-step*.log` files the paragraphs above name no longer
 exist, and run 25's check count, fingerprint and fsck lines were read
 by nobody before they were lost. The klogs named beside them were
 written by `cluster-sync.sh` itself into the fixtures directory and are
-all kept, so every kernel-side number above can still be read; the
-check counts, fingerprint and fsck lines for runs 1 to 24 are as the
-session's notes took them from the reports while the reports existed,
-and are marked here as such rather than as readings a reader can
+all kept, so every kernel-side number above can still be read; every harness-side reading for runs 1 to 24 (check counts, fingerprint
+and fsck lines, free-block counts, timings, verify and idle counts) is
+as the session's notes took it from the reports while they existed,
+and is marked here as such rather than as readings a reader can
 repeat. The harness now keeps its own report beside the klog under one
 stamp (`01f82fe`, `cluster-run-<stamp>.log` and `.klog`), and the runs
 that follow, on the 7.3 release kernels the entry above moved the pin
@@ -16343,7 +16349,7 @@ to, are the readings this entry's acceptance rests on.
 live), the code at `01f82fe` (the source unchanged since `b77d30f`),
 report `cluster-run-20261019-161509.log` and klog
 `cluster-run-20261019-161509.klog` beside the images: 56 checks, 0
-failed, about nine minutes from launch to exit. The lone slave's thread
+failed, under nine minutes from launch to the report. The lone slave's thread
 passed 3 times in 12 s and stopped 49 ms after a pass on unmount; the
 first pass copied 55 files and their directories in 60 updates; the
 stale slave's 5 deleted files cost 24 destroyed keys and its 5
@@ -16370,7 +16376,7 @@ fingerprint lines differing, no `.h2sync-*` left; free blocks 30592 at
 the first mount, 26426 at the end and 27178 after the two bulkfree
 scans (rc 0/0). The klog counts 12 passes, 7 verified, 36 idle lines, 7
 idle stamps, 3 stale snapshots deleted on resume, 5 passes skipped for
-want of a quorum, 0 held chains, and 0 sanitizer, warning or lockdep
+want of a quorum, 0 sanitizer, warning or lockdep
 lines.
 
 **Run 27: the crash shape on the 7.3 debug kernel.** `H2_CRASH=1
@@ -16452,7 +16458,7 @@ fsck exit 0 on both images, the 40055 file entries matching with 0 of
 30592 at the first mount, 25478 at the end and 27175 after the two
 bulkfree scans (rc 0/0). The klog counts 26 passes, 15 verified, 62
 idle lines, 14 idle stamps, 3 stale deletes, 5 skipped for want of a
-quorum, 0 held, 0 re-inserts, and 0 sanitizer, warning or lockdep
+quorum, 0 re-inserts, and 0 sanitizer, warning or lockdep
 lines.
 
 **Run 29: the crash shape on the 7.3 KASAN kernel.** `H2_CRASH=1
@@ -16477,7 +16483,11 @@ idle lines, 1 idle stamp, 2 stale deletes, 0 skipped, 0 held, 0
 re-inserts, 0 sanitizer, warning or lockdep lines. The QEMU core count
 stayed at 1 across the cut and the two kernel switches of the day.
 
-**What closes the local half.** The five criteria, each read as a count by `script/cluster-sync.sh` on the 7.3 release kernels and kept beside the images: `initial_convergence`, the first pass copying 55 files in 60 updates and the end-of-run fingerprint matching entry for entry (runs 26 and 28); `incremental_convergence`, the master changed under a converged slave with 24 keys destroyed for 5 deleted files and 13 replaced for 5 rewritten, the idle master costing idle passes and no snapshot, and the root tids equal once idle (runs 26 and 28); `snapshot_source`, the source and target snapshots listed as PFSes while the pass runs and the interrupted pass writing the snapshot's state of the marked set, ten deleted files present and none of the ten written, with `H2_SYNC_SNAPSHOT=0` listing none (runs 26 and 28, run 30); `interrupted_resume`, the device teardown stopping the thread between deferrals, the target surviving the cut on the slave's media, found by name and deleted once the resumed pass verified (runs 26 and 28); `crash_recovery`, the power cut 2003 and 2003 updates into the copy, both media consistent as the cut left them, the stale source deleted and the target found on restart, convergence to a matching fingerprint (runs 27 and 29). The two-master shape reads 22 checks unchanged. Lockdep, kmemleak, KASAN and UBSAN were silent in every one of these runs; the reports and klogs are `cluster-run-20261019-161509`, `-162504`, `-163530`, `-164444` and `-170434` in the fixtures tree. What stays open is the remote reach, A, B or C, at `doc/SYNC_DESIGN.md`.
+**What closes the local half.** The five criteria, each read as a count by `script/cluster-sync.sh` on the 7.3 release kernels and kept beside the images: `initial_convergence`, the first pass copying 55 files in 60 updates and the end-of-run fingerprint matching entry for entry (runs 26 and 28); `incremental_convergence`, the master changed under a converged slave with 24 keys destroyed for 5 deleted files and 13 replaced for 5 rewritten, the idle master costing idle passes and no snapshot, and the root tids equal once idle (runs 26 and 28); `snapshot_source`, the source and target snapshots listed as PFSes while the pass runs and the interrupted pass writing the snapshot's state of the marked set, ten deleted files present and none of the ten written, with `H2_SYNC_SNAPSHOT=0` listing none (runs 26 and 28, run 30); `interrupted_resume`, the device teardown stopping the thread between deferrals, the target surviving the cut on the slave's media, found by name and deleted once the resumed pass verified (runs 26 and 28); `crash_recovery`, the power cut 2003 and 2003 updates into the copy, both media consistent as the cut left them, the stale source deleted and the target found on restart, convergence to a matching fingerprint (runs 27 and 29). The two-master shape reads 22 checks unchanged. Lockdep, kmemleak, KASAN and UBSAN were silent in every one of these runs; the reports and klogs are `cluster-run-20261019-161509`, `-162504`, `-163530`, `-164444` and `-170434` in the fixtures tree. The plan's reference-count check before the source snapshot's delete,
+with its `syncsnap: held` line, was not built: the delete runs with every
+cursor dropped, and the KASAN kernel's silence across runs 9, 12, 23, 24,
+25, 28 and 29 is what stands in for it. What stays open is the remote
+reach, A, B or C, at `doc/SYNC_DESIGN.md`.
 
 **What the step fixed, by origin.** Of the carried core's, two, both
 staged under `doc/upstream/` with their provenance: the inode sync
@@ -16503,10 +16513,12 @@ the carried order in `hammer2_chain_repchange()` cannot deadlock, and
 the child's core is taken at a subclass there. The harness's own
 corrections stand in the runs that made them.
 
-Host gates on the tree at `303968e` with this entry's edits beside it,
-the one source comment carrying the `DEFER` above and the documents, the
-commit that carries them pinned in the 1.0.40 row, read after the last
-run and after the kernel of record moved to the 7.3 release: `make` against the 7.3 release tree and its KASAN
+Host gates read after the last run on the tree at `303968e` with this
+entry's edits beside it, the one source comment carrying the `DEFER`
+above and the documents, the commit that carries them pinned in the
+1.0.40 row; `analyze.sh` and `smatch.sh` were read at 16:18 and 16:19
+on the tree at `01f82fe`, before runs 28 and 29 and before that comment,
+whose six lines are the only change to the source since: `make` against the 7.3 release tree and its KASAN
 and release siblings warning-free, and warning-free at `W=1` on all
 three; `test-syntax.sh` 81/0 against the release tree with its negative
 controls failing; `test-checkpatch.sh` 1429, unchanged by the last five
@@ -16529,17 +16541,19 @@ the carry brought in on 2026-10-03 and 2026-09-05 that read the same in
 DragonFly's source, the eighth the `exit_reason = 0` store P4 added on
 2026-10-14; none on a line this step wrote. `smatch.sh` against the
 release tree (`smatch-7.3-20261019.log`): its planted double free
-reported, 15 candidates over 21 files: eleven on lines the carries of
-2026-08-26, 2026-10-03 and 2026-10-16 brought in that read the same in
-DragonFly's source (null-after-check patterns in `hammer2_chain.c`,
-`hammer2_flush.c`, `hammer2_freemap.c`, `hammer2_xops.c`,
-`hammer2_vfsops.c`, `hammer2_iocom.c` and `kern_dmsg.c`, two indent
-notes on the arms' debug prints), two on the port's earlier lines (the
-quorum code's `pfs_types` switch of 2026-10-02 in `hammer2_cluster.c`,
-P4's debug print of 2026-10-14 in `hammer2_sync_destroy()`), one on a
-line this step wrote, `hammer2_synchro.c:1798`, where the skip gate
+reported, 15 candidates over 21 files: ten null-after-check patterns on lines the
+carries of 2026-08-26, 2026-10-03 and 2026-10-16 brought in that read
+the same in DragonFly's source (`hammer2_chain.c`, `hammer2_flush.c`,
+`hammer2_freemap.c`, `hammer2_xops.c`, `hammer2_vfsops.c`,
+`hammer2_iocom.c` and `kern_dmsg.c`), three indent notes on the arms'
+debug prints (one on a carried line, two on the port's own of
+2026-10-12 and 2026-10-14), one on the quorum code's `pfs_types` switch
+of 2026-10-02 in `hammer2_cluster.c`, and one on a
+line this step wrote, `hammer2_synchro.c:1798` in the log's numbering at
+`01f82fe` (1804 at `da37ae7`, the `DEFER` comment above the pass driver
+adding six lines), where the skip gate
 reads `focus->bref.modify_tid` under `n == 0`: that value comes only
-from `hammer2_chain_cmp(chain, focus)` at 1627, which runs with both
+from `hammer2_chain_cmp(chain, focus)` at 1627 (1633), which runs with both
 chains present, so the pointer is non-null on the path by the same
 construction the carried replace branch under the same `n == 0` relies
 on. No candidate was changed.
