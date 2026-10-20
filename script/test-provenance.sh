@@ -75,8 +75,8 @@ if [ "${1:-}" = "--selftest" ]; then
 
 	# The positive control comes first. The three refusals below must
 	# come from the branch under test, and a fixture whose clone path
-	# never resolved would produce the first two of them for a reason
-	# that is not the one being checked.
+	# never resolved would produce the first of them for a reason that
+	# is not the one being checked.
 	out=$(run "$t/ok.csv" "$t/clones"); rc=$?
 	if [ "$rc" = 0 ] && printf '%s\n' "$out" | command grep -q 'identical to fakeorigin'; then
 		echo "  ok    selftest: a true identical claim is re-verified by cmp"
@@ -85,10 +85,15 @@ if [ "${1:-}" = "--selftest" ]; then
 		sfail=$((sfail + 1))
 	fi
 
-	# A clone directory that does not exist must be COULD-NOT-RUN.
+	# A clone directory that does not exist must be COULD-NOT-RUN, and
+	# by the no-clone line rather than any other way to exit 2.
 	out=$(run "$t/ok.csv" /nonexistent); rc=$?
-	[ "$rc" = 2 ] && echo "  ok    selftest: COULD-NOT-RUN with no clone present" || {
-		echo "  FAIL  selftest: exited $rc with no clone, wanted 2"; sfail=$((sfail + 1)); }
+	if [ "$rc" = 2 ] && printf '%s\n' "$out" | command grep -q 'no fakeorigin clone at /nonexistent'; then
+		echo "  ok    selftest: COULD-NOT-RUN with no clone present"
+	else
+		echo "  FAIL  selftest: exited $rc with no clone, wanted 2 by the no-clone line"
+		sfail=$((sfail + 1))
+	fi
 
 	# A clone at the wrong commit is the likelier way the cmp half stops
 	# meaning anything, the clone being a working tree somebody pulls. It
