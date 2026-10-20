@@ -590,7 +590,7 @@ of connected, unfenced masters under which the PFS is writable at all
 (`nquorum`, `hammer2_cluster.c:178`), not the number of acknowledgments
 a commit needs: a commit needs every connected, unfenced master's
 acknowledgment of the prepare. A master that does not acknowledge within
-the bound is not simply left out: the coordinator first runs a
+the bound is not left out and forgotten: the coordinator first runs a
 membership transaction that fences it (decision B), prepared on and
 acknowledged by every other connected, unfenced master, and commits the
 original transaction only once that has committed, so every master that
