@@ -16673,10 +16673,12 @@ row's commit whatever its carry column says, so it clones at
 
 **Audit.** An independent adversarial reading of this entry, the 1.0.41
 row, the two reworded sentences, the selftest block and the two commit
-messages, before any was published, traced every number above to the
-push log, the kept pre-push log, the table's history and the selftest's
-output at HEAD, reproduced both negative controls in scratch copies,
-read the old selftest at 6 checks 0 failed in a scratch archive of
+messages, before any was published, traced every number of the entry
+as it then stood to the push log, the kept pre-push log, the table's
+history, the selftest's output at HEAD and the gate's own line
+reproduced from a scratch archive of `d46e818`, reproduced both
+negative controls in scratch copies, read the old selftest at 6 checks
+0 failed in a scratch archive of
 `01b2254` and 3 of 6 failed at `b77d30f`, `303968e` and `d46e818`, and
 refused on one count: the comment above the positive control credited
 a fixture whose clone path never resolved with two of the three
@@ -16685,4 +16687,7 @@ such a fixture yields only the first. Two notes beside it were taken as
 well, the no-clone check pinned to its line and the testing document's
 "says so" replaced by the counts the summary line states. The script
 changes are `f392057`, where the row's pin moved, and the third
-control above is theirs.
+control above is theirs. A second round, over `f26c6e7`, held the
+applied text and found this paragraph crediting the first round with
+two numbers written after it, the third control's and the second
+pre-push run's; the sentence now reads as above.
