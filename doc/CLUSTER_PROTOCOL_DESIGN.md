@@ -503,12 +503,12 @@ drive two of these refusals. Under `H2_WIRE_REKEY=1` its relay moves
 the key of the first data block fed, the `bmap` of a file's first
 block, one block up and signs the frame again, and the slave refuses
 that feed and fails the call, so fiemap reports the error
-(`wire-run-20261021-013407`, debug kernel); a check refusing nothing
+(`wire-run-20261021-032049` at `90c7db1`, debug kernel); a check refusing nothing
 would have listed the block as an extent. Under `H2_WIRE_DIRENT=1` the
 relay turns the inode answering the first `nresolve`, the slave's stat of
 a file, into a directory entry with no bytes, and the slave refuses that
 feed and fails that one lookup, every file then reading equal to the
-master's (`wire-run-20261021-022837` at `2c06405`, debug kernel); with `nresolve`
+master's (`wire-run-20261021-032154` at `90c7db1`, debug kernel); with `nresolve`
 taking any entry, as it did before this check, the same control faulted
 the slave through a null pointer in `hammer2_inode_get()`
 (`wire-run-20261021-020154`). What is not checked is what the media does not constrain either:
