@@ -1193,7 +1193,7 @@ and exits (`:1612-1614`), copying nothing today in any tree
 a pass). **In P8 a MASTER element gets no synchronization thread**: the
 creation at `hammer2_vfsops.c:497`, which today skips a MASTER slot only
 when `pfs_nmasters` is at most one, skips every MASTER slot, one marked line with `DEFER(P9: reintegration of a
-stale master)`, and `cluster-quorum.sh`'s check at `:242`, which asserts
+stale master)`, and `cluster-quorum.sh`'s check at `:252`, which asserts
 two support threads as its only witness that `pfs_nmasters` is 2,
 inverts to assert none and takes a new witness, a `hammer2_debug` print
 of `pfs_nmasters` after `hammer2_pfsalloc()`'s count
