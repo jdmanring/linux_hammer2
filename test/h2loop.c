@@ -63,9 +63,11 @@
  * the closing frame of the first two readdir answers to
  * HAMMER2_ERROR_ABORTED, the code a server ends a request with when its
  * unmount drains it, and --end-readdir 2 clears those frames' error and
- * EOF flag, a clean close with no end fed; either way B must read the
- * master as unreachable.  Two, because a listing of an empty directory is
- * two getdents calls and the first has emitted . and .., which hides its
+ * EOF flag, a clean close with no end fed, while --end-readdir 3 sets
+ * bytes on those frames, a closing feed with a chain no honest server
+ * sends; every mode must read the master as unreachable.  Two, because
+ * a listing of an empty directory is two getdents calls and the first
+ * has emitted . and .., which hides its
  * error; only the second's error reaches the caller.  Every
  * decision is one trace line as before, under a header that
  * names the mode and the knobs.  The trace records what the relay did and
@@ -196,7 +198,7 @@ usage(void)
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
-	    "              [--refuse-nresolve 1] [--stall-ms MS] [--end-readdir 1|2]\n"
+	    "              [--refuse-nresolve 1] [--stall-ms MS] [--end-readdir 1|2|3]\n"
 	    "              [--trace FILE]\n");
 	exit(2);
 }
@@ -250,7 +252,7 @@ validate(void)
 	    opt.bare_dirent < 0 || opt.bare_dirent > 1 ||
 	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
 	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
-	    opt.end_readdir < 0 || opt.end_readdir > 2)
+	    opt.end_readdir < 0 || opt.end_readdir > 3)
 		usage();
 }
 
@@ -807,12 +809,17 @@ bare_dirent(struct frame *f)
 	uint16_t namlen = 1;
 
 	if ((f->hdr.cmd & 0x00FFFF00U) == 0x00201200U) {
-		if (nresolve_msgid == 0)
+		if ((f->hdr.cmd & 0xA0000000U) == 0x80000000U &&
+		    nresolve_msgid == 0)
 			nresolve_msgid = f->hdr.msgid;
 		return (0);
 	}
+	if (nresolve_msgid == 0 || f->hdr.msgid != nresolve_msgid ||
+	    (f->hdr.cmd & 0x20000000U) == 0)
+		return (0);
+	if (f->hdr.cmd & 0x40000000U)
+		nresolve_msgid = 1;	/* spent: the answer's own DELETE */
 	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U || f->ext_len < 136 ||
-	    f->hdr.msgid != nresolve_msgid || nresolve_msgid == 0 ||
 	    f->ext[0] != 1 || f->hdr.aux_bytes == 0)
 		return (0);
 	f->ext[0] = 4;
@@ -879,29 +886,44 @@ refuse_nresolve(struct frame *f)
 /*
  * The closing frame (DMSGF_DELETE) of one of the first two readdir
  * answers, whose
- * extension holds the feed's error at byte 132 and its flags at 136
- * (struct dmsg_hm2_feed, sys/sys/dmsg.h): mode 1 sets the error to
- * HAMMER2_ERROR_ABORTED, mode 2 clears the error and DMSG_HM2_FEEDF_EOF.
+ * extension holds the feed's bytes at byte 128, error at 132 and flags at
+ * 136 (struct dmsg_hm2_feed, sys/sys/dmsg.h): mode 1 sets the error to
+ * HAMMER2_ERROR_ABORTED, mode 2 clears the error and DMSG_HM2_FEEDF_EOF,
+ * mode 3 sets bytes, a closing feed with a chain.  A slot is spent by its
+ * own rewrite, so a msgid reused between the two closes cannot rewrite a
+ * wrong one: the kernel reuses a msgid once its state is freed.
  */
 static int
 end_readdir(struct frame *f)
 {
-	uint32_t error, flags;
+	uint32_t error, flags, bytes;
+	int slot = -1;
 
 	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U ||
 	    (f->hdr.cmd & 0x60000000U) != 0x60000000U || f->ext_len < 140 ||
-	    f->hdr.msgid == 0 || (f->hdr.msgid != end_msgid[0] &&
-	    f->hdr.msgid != end_msgid[1]))
+	    f->hdr.msgid == 0)
+		return (0);
+	if (f->hdr.msgid == end_msgid[0])
+		slot = 0;
+	else if (f->hdr.msgid == end_msgid[1])
+		slot = 1;
+	else
 		return (0);
 	memcpy(&flags, f->ext + 136, sizeof(flags));
 	if (opt.end_readdir == 1) {
 		error = 0x00001000U;
-	} else {
+		memcpy(f->ext + 132, &error, sizeof(error));
+		memcpy(f->ext + 136, &flags, sizeof(flags));
+	} else if (opt.end_readdir == 2) {
 		error = 0;
 		flags &= ~1U;
+		memcpy(f->ext + 132, &error, sizeof(error));
+		memcpy(f->ext + 136, &flags, sizeof(flags));
+	} else {
+		bytes = 64;
+		memcpy(f->ext + 128, &bytes, sizeof(bytes));
 	}
-	memcpy(f->ext + 132, &error, sizeof(error));
-	memcpy(f->ext + 136, &flags, sizeof(flags));
+	end_msgid[slot] = 1;	/* spent: no msgid is 1, so nothing matches */
 	resign(f);
 	return (1);
 }

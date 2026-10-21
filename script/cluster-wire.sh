@@ -136,6 +136,7 @@ make -s KDIR="$KDIR" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: module did 
 KO=src/sys/fs/hammer2/hammer2.ko
 # What was built, taken now: the tree can move before the report is written.
 SRC_REV=$(git describe --always --dirty); KO_SUM=$(sha256sum < "$KO" | cut -d' ' -f1)
+RELAY_SUM=$(sha256sum < test/h2loop.c | cut -d' ' -f1); WIRE_SUM=$(sha256sum < script/cluster-wire.sh | cut -d' ' -f1)
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2service" test/h2service.c 2>"$W/cc.err" || {
 	echo "wire: COULD-NOT-RUN: test/h2service.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
 cc -std=c11 -O1 -o "$W/h2loop" test/h2loop.c 2>"$W/cc.err" || {
@@ -190,7 +191,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
     ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
     ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
     --refuse-nresolve "$REFUSE" --stall-ms "$STALL" \
-    --end-readdir "$(case $END in aborted) echo 1;; noeof) echo 2;; *) echo 0;; esac)" \
+    --end-readdir "$(case $END in aborted) echo 1;; noeof) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -471,7 +472,7 @@ phase A down.sh
 kill "$RELAY_PID" 2>/dev/null; wait "$RELAY_PID" 2>/dev/null; RELAY_PID=
 scp -q "$SA:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null
 scp -q "$SB:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-b.klog" 2>/dev/null
-{ echo "source $SRC_REV"; echo "module-sha256 $KO_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
+{ echo "source $SRC_REV"; echo "relay-sha256 $RELAY_SUM"; echo "harness-sha256 $WIRE_SUM"; echo "module-sha256 $KO_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
 echo "  kept  both kernel logs and the relay trace beside the images as wire-run-$stamp-{a,b}.klog and .trace"
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
@@ -528,13 +529,17 @@ if [ "$REFUSE" = 1 ]; then
 fi
 if [ -n "$END" ]; then
 	en=$(grep -c ' end .*mode=' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
-	[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" -ge 1 ]; check "control: a reply closed $END reads the master unreachable, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn)"
+	if [ "$END" = lost ]; then
+		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" = 2 ] && [ "$(num "$(val B log-peer-sent)" 1)" -ge 1 ]; check "control: a closing feed with a chain ends the link, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn), peer-sent $(val B log-peer-sent)"
+	else
+		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" = 2 ]; check "control: a reply closed $END reads the master unreachable, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn)"
+	fi
 fi
 if [ "$STALL" != 0 ]; then
 	st=$(grep -c ' stall ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ] && [ "$(num "$(val B readdir-timedout-ms)" 0)" -ge 2000 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, shortest timed-out readdir $(val B readdir-timedout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
-[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
+[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$END" = lost ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 [ "$(num "$(val B log-detached)" 0)" = 1 ]; check "remote: B's device unmount detaches the element once" $? "$(val B log-detached), by $(val B detached-why)"
 # The PFS root's proxy is at level 1 and a file's at 2, the media's own.
