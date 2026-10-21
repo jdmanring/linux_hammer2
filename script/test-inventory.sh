@@ -628,9 +628,13 @@ done
 # since the last one, and a new object's starts at ~0, so one scan reports
 # nothing new (the kernel's own kmemleak-test read 0, then 1). Read on
 # lines that are not comments, in order: two scans and the clear on the
-# line before each load, the module's range from /proc/modules within six
-# lines before each unload, and within fourteen lines after it a count
-# taken in that range.
+# line before each load; within twelve lines before each unload the range
+# read from /proc/modules, its guard leaving a zero or malformed base
+# unread, its end added on the low half with the carry refused within six,
+# and the range printed within three; after it a wait of 6 s, kmemleak's
+# minimum age, and within fourteen lines a count of the frames inside that
+# range. The block is the same in every harness and each element is
+# matched as a literal string.
 nleak=0
 for s in script/*.sh; do
 	command grep -q 'echo scan > /sys/kernel/debug/kmemleak' "$s" || continue
@@ -645,12 +649,25 @@ for s in script/*.sh; do
 			print "a single scan at line " NR; exit }
 		/insmod \/tmp\/hammer2\.ko/ && prev !~ /echo scan > \/sys\/kernel\/debug\/kmemleak.*echo scan > \/sys\/kernel\/debug\/kmemleak.*echo clear > \/sys\/kernel\/debug\/kmemleak/ {
 			print "a load at line " NR " with no two scans and a clear before it"; exit }
-		/me=\$\(printf .%s%08x./ { mr = NR }
+		index($0, "mrange=$(awk ") && index($0, "$1 == \"hammer2\"") && index($0, "/proc/modules") { mg = NR }
+		index($0, "0x00000000*|*[!0-9a-fx]*)") { zg = NR }
+		index($0, "[ \"$ms\" -gt 0 ] && [ \"$ml\" -le 4294967295 ] && me=$(printf ") { mr = NR }
+		index($0, "echo \"kmemleak-unloaded-range ") { rp = NR }
 		/rmmod hammer2 && echo "rmmod ok"/ {
 			if (!mr || NR - mr > 6) {
 				print "an unload at line " NR " with no module range read before it"; exit }
-			rm = NR; mr = 0 }
-		/h2n=\$\(awk -v b="\$mb" -v e="\$me"/ && rm { hn = 1 }
+			if (!mg || NR - mg > 12) {
+				print "an unload at line " NR " whose range is not read from /proc/modules"; exit }
+			if (!zg || NR - zg > 12) {
+				print "an unload at line " NR " whose range takes a zero or malformed base"; exit }
+			if (!rp || NR - rp > 3) {
+				print "an unload at line " NR " whose range is not printed"; exit }
+			rm = NR; mr = 0; mg = 0; zg = 0; rp = 0; sl = 0 }
+		rm && /^[ \t]*sleep 6[ \t]*$/ { sl = 1 }
+		rm && index($0, "h2n=$(awk -v b=\"$mb\" -v e=\"$me\"") && index($0, "a ~ /^0x/ && a >= b && a < e") {
+			if (!sl) {
+				print "an unload at line " rm " counted before kmemleak reports a new object"; exit }
+			hn = 1 }
 		/echo "kmemleak-unloaded \$h2n"/ && rm && hn && NR - rm <= 14 { rm = 0; hn = 0 }
 		rm && NR - rm > 14 { print "an unload at line " rm " with no count in its range after it"; exit }
 		{ prev = $0 }
