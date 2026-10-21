@@ -346,6 +346,10 @@ finish() {
 		echo "kmemleak unusable"
 	fi
 	timeout 120 rmmod hammer2 && echo "rmmod ok"
+	# Scanned again after the unload, whose frames now print as addresses: an
+	# object a module global held at the first scan and the unload never freed
+	# is a leak only from here.
+	echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 	sync
 	kill $KPID 2>/dev/null
 }
@@ -383,6 +387,7 @@ dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
+{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
@@ -814,6 +819,7 @@ dmesg -C
 dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
+{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
 klog() { grep -c "$1" $K; }
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
@@ -1134,7 +1140,7 @@ g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned
 # it. No value at all means the guest stopped before this point.
 l=$(val kmemleak)
 case "$l" in
-0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

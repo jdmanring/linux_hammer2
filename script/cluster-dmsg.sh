@@ -126,6 +126,7 @@ klog() { grep -c "$1" $K; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 A=/tmp/h2attach
 M=/mnt/h2d
+{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
@@ -253,6 +254,10 @@ else
 	echo "kmemleak unusable"
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
+# Scanned again after the unload, whose frames now print as addresses: an
+# object a module global held at the first scan and the unload never freed
+# is a leak only from here.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 echo "threads-final $(threads)"
 kill $KPID 2>/dev/null
 GUEST
@@ -414,7 +419,7 @@ cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 # value at all means the guest stopped before the scan.
 l=$(val kmemleak)
 case "$l" in
-0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

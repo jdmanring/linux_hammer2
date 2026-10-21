@@ -113,6 +113,7 @@ set -u
 # writing its own, so a comparison could pass on files it never made.
 rm -f /tmp/q.want /tmp/q.sums
 rmmod hammer2 2>/dev/null; dmesg -C
+{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2a /mnt/h2b /mnt/h2q
 
@@ -180,6 +181,10 @@ else
 	echo "kmemleak unusable"
 fi
 rmmod hammer2 && echo "rmmod ok"
+# Scanned again after the unload, whose frames now print as addresses: an
+# object a module global held at the first scan and the unload never freed
+# is a leak only from here.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 echo "scrapped $(dmesg | grep -c unmount_scrap)"
 dmesg | tail -40 > /tmp/q.log
 GUEST
@@ -262,7 +267,7 @@ a=$(val kernel-warnings); [ "${a:-1}" = 0 ]; check "no kernel warning, lockdep, 
 # it. No value at all means the guest stopped before this point.
 l=$(val kmemleak)
 case "$l" in
-0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

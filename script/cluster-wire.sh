@@ -174,6 +174,7 @@ fi
 dmesg -C
 pkill -f 'dmesg -w' 2>/dev/null
 setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
+{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 mkdir -p $R $C /tmp/h2keys
@@ -307,10 +308,16 @@ fi
 sleep 6
 if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
+	# kept while the module is loaded, so its frames have names
+	grep -q hammer2 /sys/kernel/debug/kmemleak && sed 's/^/kmemleak-report /' /sys/kernel/debug/kmemleak | head -400
 else
 	echo "kmemleak unusable"
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
+# Scanned again after the unload, whose frames now print as addresses: an
+# object a module global held at the first scan and the unload never freed
+# is a leak only from here.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 # Counted after the unload, whose own work (the connection device's free,
 # the module's queues drained) can report too, from a stream shown alive by
 # a line written after it.
@@ -431,7 +438,8 @@ case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) fal
 for sd in A B; do
 	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
 	k=$(val $sd kmemleak)
-	[ "$k" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k"
+	u=$(val $sd kmemleak-unloaded)
+	[ "$k" = 0 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k, after the unload ${u:-unread}"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"
 done
 relay_frames=$(sed -n 's/.*pair done frames \([0-9]*\).*/\1/p' "$W/relay.out" | tail -1)

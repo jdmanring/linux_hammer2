@@ -618,6 +618,30 @@ done
 	echo "       debug_locks check above read nothing"
 	fail=$((fail + 1)); }
 
+# A harness that scans kmemleak must clear it before the load and scan it
+# again after the unload. Uncleared, the list carries an earlier run's
+# leaks, which the count names "hammer2" only when the new module loads
+# over their addresses: a stage 2b run on 2026-10-21 read 148 lines of a
+# run two hours earlier. Scanned only before rmmod, an object a module
+# global holds then and the unload never frees is seen by nobody.
+nleak=0
+for s in script/*.sh; do
+	command grep -q 'echo scan > /sys/kernel/debug/kmemleak' "$s" || continue
+	case "$s" in
+	script/test-inventory.sh) continue ;;
+	esac
+	nleak=$((nleak + 1))
+	command grep -q 'echo clear > /sys/kernel/debug/kmemleak' "$s" &&
+	    command grep -q 'kmemleak-unloaded' "$s" || {
+		echo "  FAIL $s: scans kmemleak without clearing it before the"
+		echo "       load or without scanning again after the unload"
+		fail=$((fail + 1)); }
+done
+[ "$nleak" -gt 0 ] || {
+	echo "  FAIL no script under script/ scans kmemleak, so the check"
+	echo "       above read nothing"
+	fail=$((fail + 1)); }
+
 # The staged files are a population like the rest. A glob that matched
 # nothing would check nothing and still print a clean count.
 [ "$npatch" -gt 0 ] || {
@@ -625,5 +649,5 @@ done
 	echo "       provenance check above read nothing"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $fail finding(s)"
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1

@@ -142,6 +142,7 @@ set -u
 rmmod hammer2 2>/dev/null
 mkdir -p /mnt/h2a
 dmesg -C
+{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod-failed"; exit 0; }
 
 # Mount the ROOT PFS, which the control proved mounts clean, and create the
@@ -294,6 +295,10 @@ else
 	echo "kmemleak unusable"
 fi
 rmmod hammer2 && echo "rmmod ok"
+# Scanned again after the unload, whose frames now print as addresses: an
+# object a module global held at the first scan and the unload never freed
+# is a leak only from here.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 echo "warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 echo "done"
 GUEST
@@ -394,7 +399,7 @@ grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod o
 k=$(val warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${k:-none}"
 l=$(val kmemleak)
 case "$l" in
-0) check "kmemleak reports nothing of hammer2's" 0 "$l" ;;
+0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
 unusable) check "kmemleak is usable" 1 "the scan refused; only a reboot turns it back on" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
