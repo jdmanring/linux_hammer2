@@ -313,19 +313,33 @@ if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel
 else
 	echo "kmemleak unusable"
 fi
-# hammer2's own text, so the scan after the unload counts its frames and
-# not another module's
+# hammer2's range as /proc/modules gives it before rmmod, its core text's
+# base and its total size, so the scan after the unload counts its frames
+# and not another module's; init text, freed after the load, is outside
+# it. The size is added to the base's low half alone, since a base above
+# INT64_MAX is past some shells' arithmetic, and a base printed as zero
+# (kptr_restrict) or a size that carries leaves the range unread.
 mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
+mb=${mrange% *}; ms=${mrange#* }; me=
+case $mb in
+0x00000000*|*[!0-9a-fx]*) ;;
+0x????????????????)
+	ml=$((0x${mb#0x????????} + ms))
+	[ "$ms" -gt 0 ] && [ "$ml" -le 4294967295 ] && me=$(printf '%s%08x' "${mb%????????}" "$ml") ;;
+esac
+echo "kmemleak-unloaded-range ${mb:-none} ${me:-none}"
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 # Scanned again after the unload, whose frames now print as addresses: an
 # object a module global held and the unload never freed is a leak only
 # from here. Each reading scans twice, since a scan greys an object whose
 # checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
 # new object's starts at ~0, so a leak is reported at its second scan.
-if [ -z "$mrange" ]; then
+# The scans wait out kmemleak's minimum age, 5 s, so an object the unload
+# itself left is old enough to be reported.
+sleep 6
+if [ -z "$me" ]; then
 	echo "kmemleak-unloaded unread"
 elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
-	mb=${mrange% *}; me=$(printf '0x%016x' $((mb + ${mrange#* })))
 	h2n=$(awk -v b="$mb" -v e="$me" '{ a = $1 "" } a ~ /^0x/ && a >= b && a < e' /sys/kernel/debug/kmemleak | wc -l)
 	echo "kmemleak-unloaded $h2n"
 	[ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200

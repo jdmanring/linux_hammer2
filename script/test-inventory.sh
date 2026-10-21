@@ -627,9 +627,10 @@ done
 # frees is seen by nobody. A scan greys an object whose checksum changed
 # since the last one, and a new object's starts at ~0, so one scan reports
 # nothing new (the kernel's own kmemleak-test read 0, then 1). Read on
-# lines that are not comments, in order: the clear on the line before
-# each load, and the count of the module's own frames within twelve lines
-# after each unload.
+# lines that are not comments, in order: two scans and the clear on the
+# line before each load, the module's range from /proc/modules within six
+# lines before each unload, and within fourteen lines after it a count
+# taken in that range.
 nleak=0
 for s in script/*.sh; do
 	command grep -q 'echo scan > /sys/kernel/debug/kmemleak' "$s" || continue
@@ -642,11 +643,16 @@ for s in script/*.sh; do
 		/echo scan > \/sys\/kernel\/debug\/kmemleak/ &&
 		    !/echo scan > \/sys\/kernel\/debug\/kmemleak.*echo scan > \/sys\/kernel\/debug\/kmemleak/ {
 			print "a single scan at line " NR; exit }
-		/insmod \/tmp\/hammer2\.ko/ && prev !~ /echo clear > \/sys\/kernel\/debug\/kmemleak/ {
-			print "a load at line " NR " with no clear before it"; exit }
-		/rmmod hammer2 && echo "rmmod ok"/ { rm = NR }
-		/echo "kmemleak-unloaded \$h2n"/ && rm && NR - rm <= 12 { rm = 0 }
-		rm && NR - rm > 12 { print "an unload at line " rm " with no scan after it"; exit }
+		/insmod \/tmp\/hammer2\.ko/ && prev !~ /echo scan > \/sys\/kernel\/debug\/kmemleak.*echo scan > \/sys\/kernel\/debug\/kmemleak.*echo clear > \/sys\/kernel\/debug\/kmemleak/ {
+			print "a load at line " NR " with no two scans and a clear before it"; exit }
+		/me=\$\(printf .%s%08x./ { mr = NR }
+		/rmmod hammer2 && echo "rmmod ok"/ {
+			if (!mr || NR - mr > 6) {
+				print "an unload at line " NR " with no module range read before it"; exit }
+			rm = NR; mr = 0 }
+		/h2n=\$\(awk -v b="\$mb" -v e="\$me"/ && rm { hn = 1 }
+		/echo "kmemleak-unloaded \$h2n"/ && rm && hn && NR - rm <= 14 { rm = 0; hn = 0 }
+		rm && NR - rm > 14 { print "an unload at line " rm " with no count in its range after it"; exit }
 		{ prev = $0 }
 		END { if (rm) print "an unload at line " rm " with no scan after it" }' "$s")
 	[ -z "$why" ] || {
