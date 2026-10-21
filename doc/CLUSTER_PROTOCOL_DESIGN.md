@@ -531,8 +531,9 @@ refused as a proxy ending the call `EIO`, and a server whose try for
 mean unreachable left every unlisted one on the answering side, and an
 allowlist puts a way of failing nobody has named on the unreachable one.
 The fourteenth found the two ends the allowlist did not see. A reply
-closed cleanly with no end fed is an answer only from a descriptor that
-feeds one chain, after that chain, since every scan feeds its end; any
+closed cleanly with no end fed is an answer only from a one-chain
+descriptor, after that chain, since a readdir or a scan always feeds its
+end; any
 other such close, which a lookup whose parent the server cannot resolve
 also sends (`hammer2_xops.c:794-797`), now reads as `ENOTCONN` where it
 left the element counted in progress and the check at `EINPROGRESS`. A

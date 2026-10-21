@@ -1478,7 +1478,9 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
  * from an earlier connection is served by the current one.  A proxy at a
  * slot that is no longer remote is fed as the closed connection.  The
  * wait is bounded for the whole reply, and every way it ends feeds an end
- * the quorum reads: the peer's answer, or unreachable (hammer2_remote_end).
+ * the quorum reads: the peer's answer through hammer2_remote_end, or
+ * unreachable.  The flush's clean end and a one-chain descriptor's close
+ * after its chain feed no end.
  */
 int
 hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
@@ -1496,7 +1498,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 	unsigned long deadline, t0 = jiffies;
 	const char *name = NULL;
 	size_t name_len = 0;
-	int proxy, idx, nmax = 0, fed = 0, cap, error;
+	int proxy, idx, nmax = 0, fed = 0, cap, error, onechain;
 	unsigned int level;
 	hammer2_key_t maxkey = 0;
 
@@ -1579,6 +1581,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		cap = 1;
 		break;
 	}
+	onechain = idx != 1 && idx != 5 && idx != 6;
 
 	deadline = jiffies + msecs_to_jiffies(hammer2_remote_timeout_ms);
 	call = hammer2_rcall_start(cdev, idx, &pmp->pfs_clid, ip1->meta.inum,
@@ -1644,11 +1647,11 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 			x->xop_readdir.rkey = call->rkey;
 		/*
 		 * A clean close with no end fed is an answer only from a
-		 * descriptor that feeds one chain, after that chain: a scan
-		 * always feeds its end.  Any other is a reply with no answer,
-		 * which would leave the element counted in progress.
+		 * one-chain descriptor, after that chain: a readdir or a
+		 * scan always feeds its end.  Any other is a reply with no
+		 * answer, which would leave the element counted in progress.
 		 */
-		if (!call->eof && error == 0 && !(cap == 1 && fed == 1))
+		if (!call->eof && error == 0 && !(onechain && fed == 1))
 			error = HAMMER2_ERROR_ENOTCONN;
 		if (call->eof || error)
 			hammer2_xop_feed(xop, NULL, clindex,
