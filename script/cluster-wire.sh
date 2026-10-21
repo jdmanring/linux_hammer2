@@ -19,6 +19,21 @@
 # tables empty, so the span count is compared with the peer's PFS count,
 # and the CL span is required by cluster id, which only the peer knows.
 #
+# H2_WIRE_REKEY=1 is the control on the read side's range check: the relay
+# moves the key of the first data block fed with its data one block up and
+# signs the frame again, so it passes both CRCs and only B's check of what
+# a feed can answer refuses it. That block is the bmap of the 512 KiB
+# file's first block, fiemap being the run's first read of file data, and
+# bmap takes the data arm a read takes. The run must then read one rekey
+# line in the trace and that one bmap feed refused, the FIEMAP call failing
+# so that filefrag falls back to FIBMAP (e2fsprogs misc/filefrag.c, "FIEMAP
+# failed, try FIBMAP instead") and lists no extent and no unknown_loc, and
+# every file's digest still equal to A's, warm and cold, since the knob
+# fires once; a check that refused nothing would list the one unknown_loc
+# extent the plain run reads. The same fallback is why the plain run's
+# fiemap check reads unknown_loc, which only FIEMAP reports, and not
+# filefrag's status alone.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -34,6 +49,7 @@ SB=${H2_GUEST_B_SSH:-root@192.168.122.64}
 HOST_ADDR=${H2_HOST_ADDR:-192.168.122.1}
 PORT=${H2_RELAY_PORT:-4800}
 SEED=${H2_WIRE_SEED:-11}
+REKEY=${H2_WIRE_REKEY:-0}
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
@@ -120,7 +136,7 @@ done
 stamp=$(date +%Y%m%d-%H%M%S)
 "$W/h2loop" --relay "$PORT" --seed "$SEED" \
     ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
-    ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} \
+    ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -158,6 +174,8 @@ else
 fi
 echo "clid $(hammer2 -s $R pfs-clid CL 2>/dev/null)"
 echo "pfs-count $(hammer2 -s $R pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
+# which utility reads the media: the C show and the Rust one stop short differently
+echo "utility $(command -v hammer2) $(hammer2 --version 2>&1 | head -1)"
 GUEST
 cat > "$W/dial.sh" <<'GUEST'
 # dial <clid> <host> <port> [ro]: one admitted row, then the dial; with ro
@@ -231,10 +249,12 @@ show=$(hammer2 -v show /dev/vdb 2>&1); echo "slave-show-rc $?"
 echo "slave-files $(printf '%s\n' "$show" | grep -c 'filename "e[0-9]')"
 echo "slave-cl $(printf '%s\n' "$show" | grep -c 'filename "CL"')"
 # show prints a name before it recurses and stops short of a subtree on a
-# failed read or check, saying "failed)", while its status stays 0
-echo "slave-show-failed $(printf '%s\n' "$show" | grep -c 'failed)')"
+# failed check, saying "failed)", while its status stays 0; the C show
+# says "(bad block size" too, and the Rust one fails a read with a status
+echo "slave-show-failed $(printf '%s\n' "$show" | grep -c -E 'failed\)|bad block size')"
 echo "refetches $(klog 'H2 REFETCH')"
 echo "log-not-proxy $(klog 'not a proxy')"
+echo "log-not-proxy-bmap $(klog 'HM2 bmap feed of type 3 not a proxy')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
 GUEST
 cat > "$W/link.sh" <<'GUEST'
@@ -368,15 +388,20 @@ nfa=$(num "$(val A files)" 0)
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
 [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"
 [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"
-[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
+[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by $(val B utility)'s show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
 # The file is on A alone, so no block has an address on B: every extent
 # says so rather than reporting the 0 no local element supplied.
 fx=$(num "$(val B fiemap-extents)" 0)
-[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
+[ "$REKEY" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
+if [ "$REKEY" = 1 ]; then
+	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ "$(num "$(val B fiemap-extents)" 1)" = 0 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
+else
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"
+fi
 [ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"
-[ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"
+[ "$REKEY" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 [ "$(num "$(val B log-detached)" 0)" = 1 ]; check "remote: B's device unmount detaches the element once" $? "$(val B log-detached), by $(val B detached-why)"
 # The PFS root's proxy is at level 1 and a file's at 2, the media's own.

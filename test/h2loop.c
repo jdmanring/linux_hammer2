@@ -46,7 +46,11 @@
  * generator, --partition-at K with --partition-len N drops every frame
  * both ways from the Kth to the (K+N)th, and --disconnect-at K closes the
  * pair at the Kth frame, after which the next two connections are the next
- * pair.  Every decision is one trace line as before, under a header that
+ * pair.  --rekey-data 1 moves the key of the first fed data block that
+ * carries its data 64 KiB up and signs the header again, so the frame
+ * passes every CRC and only the receiving kernel's range check can
+ * refuse it; the wire harness's control requires that refusal.  Every
+ * decision is one trace line as before, under a header that
  * names the mode and the knobs.  The trace records what the relay did and
  * is not a replay: two live kernels do not send the same frames twice, so
  * --replay refuses a relay trace rather than agreeing with it.  Stage 2b
@@ -156,7 +160,8 @@ static struct {
 	const char *trace, *replay;
 	int relay;			/* a TCP port: the two-kernel relay */
 	long partition_at, partition_len;
-} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0 };
+	int rekey_data;		/* the relay moves one data feed's key */
+} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0 };
 
 static void
 usage(void)
@@ -168,7 +173,7 @@ usage(void)
 	    "              [--trace FILE] [--replay FILE]\n"
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
-	    "              [--corrupt-at K] [--trace FILE]\n");
+	    "              [--corrupt-at K] [--rekey-data 1] [--trace FILE]\n");
 	exit(2);
 }
 
@@ -197,6 +202,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--relay")) opt.relay = atoi(v);
 		else if (!strcmp(a, "--partition-at")) opt.partition_at = atol(v);
 		else if (!strcmp(a, "--partition-len")) opt.partition_len = atol(v);
+		else if (!strcmp(a, "--rekey-data")) opt.rekey_data = atoi(v);
 		else usage();
 		i++;
 	}
@@ -212,7 +218,7 @@ validate(void)
 	if (opt.frames < 1 || opt.aux_max < 0 || opt.aux_max > AUX_CAP ||
 	    opt.delay_max < 0 || opt.loss < 0 || opt.loss > 1 ||
 	    opt.dup < 0 || opt.dup > 1 || opt.relay < 0 || opt.relay > 65535 ||
-	    opt.partition_len < 0)
+	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1)
 		usage();
 }
 
@@ -715,6 +721,33 @@ side_enqueue(struct side *to, struct frame *f, long due)
 	*pp = f;
 }
 
+static int rekeyed;		/* --rekey-data has fired */
+
+/*
+ * A feed frame (DMSG_HM2_FEED, sys/sys/dmsg.h) whose extended header opens
+ * with the fed chain's blockref: type at byte 0, key at byte 8.  The first
+ * one of a data block with its data aboard has its key moved one 64 KiB
+ * block up and its header CRC computed again, the aux untouched.
+ */
+static int
+rekey(struct frame *f)
+{
+	uint8_t h[DMSG_HDR_MAX];
+	uint64_t key;
+
+	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U || f->ext_len < 128 ||
+	    f->ext[0] != 3 || f->hdr.aux_bytes == 0)
+		return (0);
+	memcpy(&key, f->ext + 8, sizeof(key));
+	key += 65536;
+	memcpy(f->ext + 8, &key, sizeof(key));
+	memcpy(h, &f->hdr, sizeof(f->hdr));
+	memcpy(h + sizeof(f->hdr), f->ext, f->ext_len);
+	((struct dmsg_hdr *)h)->hdr_crc = 0;
+	f->hdr.hdr_crc = iscsi_crc32(h, sizeof(f->hdr) + f->ext_len);
+	return (1);
+}
+
 /* One frame read from `from`, decided for `to`.  The index i counts every
  * frame the relay read in either direction, so a partition or a disconnect
  * scripted at K lands at the Kth frame of the run and not of one side. */
@@ -753,6 +786,11 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		corrupted = 1;
 		f->hdr.aux_crc ^= 1;
 		trace("%s>%s i=%ld msgid=%" PRIu64 " corrupt t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
+	if (opt.rekey_data && !rekeyed && rekey(f)) {
+		rekeyed = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " rekey t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
 	side_enqueue(to, f, t + d);
@@ -915,9 +953,9 @@ relay(void)
 	}
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
-	    " corrupt-at=%ld\n", opt.relay, opt.seed, opt.delay_max, opt.loss,
-	    opt.dup, opt.partition_at, opt.partition_len, opt.disconnect_at,
-	    opt.corrupt_at);
+	    " corrupt-at=%ld rekey-data=%d\n", opt.relay, opt.seed, opt.delay_max,
+	    opt.loss, opt.dup, opt.partition_at, opt.partition_len,
+	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);
