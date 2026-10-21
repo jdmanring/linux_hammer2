@@ -89,6 +89,11 @@ while [ "$i" -lt 60 ]; do
 	i=$((i + 1))
 done
 [ "$i" -lt 60 ] || { echo "fuzz: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes; it is listed $state, host load $(cut -d" " -f1-3 /proc/loadavg)" >&2; exit 2; }
+# One lockdep report turns lockdep off until the next boot, and a run
+# on that boot reads "no report" with nothing checking.
+dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+[ "$dl" = 0 ] && {
+	echo "fuzz: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 
 # The guest side: mount whatever the last virtio disk is, read everything,
 # report one line. Written here so the guest carries nothing between runs.

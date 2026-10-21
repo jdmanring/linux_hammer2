@@ -24,6 +24,11 @@ rm -f "$IMG" "$IMG.pre"; truncate -s 1G "$IMG"; "$NEWFS" -L HP "$IMG" >/dev/null
 waitssh() { i=0; while [ $i -lt 60 ]; do ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && return 0; sleep 5; i=$((i+1)); done; return 1; }
 [ "$(virsh domstate $GUEST)" = "shut off" ] || { echo "COULD-NOT-RUN: $GUEST is $(virsh domstate $GUEST)"; exit 2; }
 virsh start $GUEST >/dev/null 2>&1; waitssh || { echo "COULD-NOT-RUN: no ssh"; exit 2; }
+# One lockdep report turns lockdep off until the next boot, and a run
+# on that boot reads "no report" with nothing checking.
+dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+[ "$dl" = 0 ] && {
+	echo "hpanic-contain: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 virsh attach-disk $GUEST "$IMG" vdb --targetbus virtio >/dev/null 2>&1 || { echo "COULD-NOT-RUN: attach"; exit 2; }
 scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko"
 ssh "$GUEST_SSH" "echo $KNOB > /tmp/h2knob"

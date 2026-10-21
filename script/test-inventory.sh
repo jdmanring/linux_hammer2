@@ -593,6 +593,28 @@ if [ -f "$TESTDOC" ]; then
 	done
 fi
 
+# A harness that counts the guest's kernel reports must read debug_locks.
+# One lockdep report turns lockdep off until the next boot, so a run on
+# that boot counts no report with nothing checking and passes: the stage
+# 2b wire harness did on 2026-10-20, and thirteen siblings had the same
+# shape. A counter is a script with a `grep -c` over a WARNING pattern.
+nrep=0
+for s in script/*.sh; do
+	command grep -q -E 'grep -c[^|]*WARNING|grep -ci? .*WARNING' "$s" || continue
+	case "$s" in
+	script/test-inventory.sh) continue ;;
+	esac
+	nrep=$((nrep + 1))
+	command grep -q debug_locks "$s" || {
+		echo "  FAIL $s: counts kernel reports and never reads debug_locks,"
+		echo "       so a guest whose lockdep is already off passes it"
+		fail=$((fail + 1)); }
+done
+[ "$nrep" -gt 0 ] || {
+	echo "  FAIL no script under script/ counts kernel reports, so the"
+	echo "       debug_locks check above read nothing"
+	fail=$((fail + 1)); }
+
 # The staged files are a population like the rest. A glob that matched
 # nothing would check nothing and still print a clean count.
 [ "$npatch" -gt 0 ] || {
@@ -600,5 +622,5 @@ fi
 	echo "       provenance check above read nothing"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $fail finding(s)"
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1

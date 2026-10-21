@@ -194,6 +194,11 @@ until ssh -o ConnectTimeout=3 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null; do
 	sleep 5; n=$((n + 1))
 	[ $n -gt 60 ] && { echo "sync-empty: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2; exit 2; }
 done
+# One lockdep report turns lockdep off until the next boot, and a run
+# on that boot reads "no report" with nothing checking.
+dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+[ "$dl" = 0 ] && {
+	echo "sync-empty: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 
 cat > "$W/guest.sh" <<'GUEST'
 set -u

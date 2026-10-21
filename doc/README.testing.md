@@ -10,7 +10,7 @@ twice.
 
 | gate | reads | needs |
 |---|---|---|
-| `test-inventory.sh` | the lists that claim to cover `src/`, every file under `test/`, the runner behind each runnable file under `test/`, the `DEFER` ledger and the `XXX` table | sh, grep, git |
+| `test-inventory.sh` | the lists that claim to cover `src/`, every file under `test/`, the runner behind each runnable file under `test/`, the `DEFER` ledger and the `XXX` table, and that every harness counting the guest's kernel reports reads `debug_locks`, since a guest whose lockdep an earlier report turned off passes a count of zero | sh, grep, git |
 | `test-citations.sh` | every `file:line` in a table under `doc/` or `doc/history/` resolves, and the named symbol is on the line | sh, grep |
 | `test-history.sh` | every changelog row's commit resolves with a matching subject, no two rows share a version, and every document stating the tree's current version names the newest row | git with full history |
 | `test-provenance.sh` | every file under `src/` has an origin row, and a carried file is re-checked with `cmp` | sh, git |

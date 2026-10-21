@@ -83,6 +83,11 @@ grel=$($RUN "$GUEST_SSH" uname -r 2>/dev/null)
 [ -n "$krel" ] && [ "$krel" = "$grel" ] || {
 	echo "sync-io: COULD-NOT-RUN: the module is for ${krel:-?} and $GUEST runs ${grel:-?}" >&2
 	exit 2; }
+# One lockdep report turns lockdep off until the next boot, and a run
+# on that boot reads "no report" with nothing checking.
+dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+[ "$dl" = 0 ] && {
+	echo "sync-io: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 
 # fail_make_request lives under debugfs; a guest that has it configured but
 # not mounted is an instrument that did not reach the control, so exit 2.

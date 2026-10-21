@@ -52,6 +52,11 @@ guest_rel=$(ssh "$GUEST_SSH" 'uname -r' 2>/dev/null)
 ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | awk '{print $1}')
 [ "$guest_rel" = "$ko_rel" ] || {
 	echo "nfsd: COULD-NOT-RUN: the module is for $ko_rel and $GUEST runs $guest_rel" >&2; exit 2; }
+# One lockdep report turns lockdep off until the next boot, and a run
+# on that boot reads "no report" with nothing checking.
+dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+[ "$dl" = 0 ] && {
+	echo "nfsd: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 ssh "$GUEST_SSH" 'command -v exportfs && command -v rpc.nfsd && command -v rpc.mountd && command -v rpcbind && command -v mount.nfs' >/dev/null 2>&1 || {
 	echo "nfsd: COULD-NOT-RUN: the guest lacks the NFS userspace" >&2; exit 2; }
 
