@@ -252,8 +252,12 @@ else
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 # Counted after the unload, whose own work (the connection device's free,
-# the module's queues drained) can report too.
+# the module's queues drained) can report too, from a stream shown alive by
+# a line written after it.
 sleep 2
+echo "h2wire end of unload" > /dev/kmsg
+n=0; until grep -q 'h2wire end of unload' /tmp/h2wire.klog || [ $n -ge 50 ]; do sleep 0.1; n=$((n+1)); done
+echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
 # A lockdep table that fills turns lockdep off and says BUG; that is the
 # guest kernel's table size (the KASAN build keeps the default, 2^15), not
 # a report on the subject, so it is counted apart and named in the check,
@@ -348,9 +352,9 @@ lr=$(val B lockdep-remote)
 # Every inode lives under the PFS root, so an inode is at 1 (the root) or
 # 2, a dirent at 2 or 3 and data at 3; any other class is a wrong level.
 lbad=$(printf '%s\n' $lr | grep -v -x -E 'h2ch_remote_(inode/[12]|dirent/[23]|data/3)' | tr '\n' ' ')
-case "$lr" in no-lockdep) true;; *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
+case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
 for sd in A B; do
-	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated)"
+	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
 	k=$(val $sd kmemleak)
 	[ "$k" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"

@@ -1193,6 +1193,83 @@ hammer2_remote_desc_idx(hammer2_xop_desc_t *desc)
 }
 
 /*
+ * What the carried consumers trust the media for, checked on every block
+ * a peer sends, fed or fetched again: a check method testcheck knows,
+ * whose default arm hpanics every device; a compression the decode knows;
+ * keybits a shift can take and a key aligned to them, since the slave's
+ * pass copies both into its own media; a dirent's name where the media
+ * keeps it, in the blockref up to its 64 bytes and in a block past them,
+ * since readdir picks one by the length and a copy's check overwrites the
+ * other; and an inode's name no longer than its array.  The block's own
+ * check is not tested again after its first load, so the content is.
+ */
+static int
+hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
+    uint32_t bytes, const char *data)
+{
+	hammer2_key_t mask;
+
+	switch (HAMMER2_DEC_CHECK(bref->methods)) {
+	case HAMMER2_CHECK_NONE:
+	case HAMMER2_CHECK_DISABLED:
+	case HAMMER2_CHECK_ISCSI32:
+	case HAMMER2_CHECK_XXHASH64:
+	case HAMMER2_CHECK_SHA192:
+		break;
+	default:
+		return (0);
+	}
+	if (HAMMER2_DEC_COMP(bref->methods) > HAMMER2_COMP_ZLIB)
+		return (0);
+	if (bref->keybits > 63)
+		return (0);
+	mask = ((hammer2_key_t)1 << bref->keybits) - 1;
+	if (bref->key & mask)
+		return (0);
+	if (error)
+		return (1);
+	if (bref->type == HAMMER2_BREF_TYPE_DIRENT &&
+	    ((bref->embed.dirent.namlen <= sizeof(bref->check.buf)) !=
+	    (bytes == 0) || (bytes && bref->embed.dirent.namlen > bytes)))
+		return (0);
+	if (bref->type == HAMMER2_BREF_TYPE_INODE && bytes &&
+	    (bytes < sizeof(hammer2_inode_data_t) || data == NULL ||
+	    ((const hammer2_inode_data_t *)data)->meta.name_len >
+	    HAMMER2_INODE_MAXNAME))
+		return (0);
+	return (1);
+}
+
+/*
+ * Whether a fed chain lies in what the request asked for: a scan's key
+ * range, a readdir's start (its end is the local element's and is past
+ * what the peer stops at, hammer2_vnops.c filtering above it), the block
+ * covering a read's or a bmap's offset.
+ * An inode fed for a direct-data file answers for itself and is not a
+ * block of the range; the other descriptors name one key or no range.
+ */
+static int
+hammer2_remote_in_range(int idx, const hammer2_blockref_t *bref,
+    hammer2_key_t key_beg, hammer2_key_t key_end)
+{
+	hammer2_key_t last = bref->key |
+	    (((hammer2_key_t)1 << bref->keybits) - 1);
+
+	switch (idx) {
+	case 1:			/* readdir, which the frontend bounds above */
+		return (last >= key_beg);
+	case 6:			/* scanall */
+		return (bref->key <= key_end && last >= key_beg);
+	case 18:		/* strategy_read */
+	case 20:		/* bmap */
+		return (bref->type == HAMMER2_BREF_TYPE_INODE ||
+		    (bref->key <= key_beg && last >= key_beg));
+	default:
+		return (1);
+	}
+}
+
+/*
  * A proxy for one fed chain: the peer's blockref with its data_off
  * replaced by the handle, locked as a storage function's chain is when it
  * is fed, its data loaded from the stash.  Only leaves are fed, since
@@ -1219,33 +1296,7 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
 		return (NULL);
 	}
 
-	/*
-	 * What the carried consumers trust the media for, checked here
-	 * since a peer sent it: a check method testcheck knows, whose
-	 * default arm hpanics every device; a compression the decode knows;
-	 * and a name no longer than what holds it, which readdir and the
-	 * nresolve compare copy by its length.
-	 */
-	switch (HAMMER2_DEC_CHECK(bref.methods)) {
-	case HAMMER2_CHECK_NONE:
-	case HAMMER2_CHECK_DISABLED:
-	case HAMMER2_CHECK_ISCSI32:
-	case HAMMER2_CHECK_XXHASH64:
-	case HAMMER2_CHECK_SHA192:
-		break;
-	default:
-		return (NULL);
-	}
-	if (HAMMER2_DEC_COMP(bref.methods) > HAMMER2_COMP_ZLIB)
-		return (NULL);
-	if (bref.type == HAMMER2_BREF_TYPE_DIRENT &&
-	    bref.embed.dirent.namlen > (f->bytes ? f->bytes :
-	    sizeof(bref.check.buf)))
-		return (NULL);
-	if (bref.type == HAMMER2_BREF_TYPE_INODE && f->bytes &&
-	    f->bytes >= sizeof(hammer2_inode_data_t) && f->data &&
-	    ((hammer2_inode_data_t *)f->data)->meta.name_len >
-	    HAMMER2_INODE_MAXNAME)
+	if (!hammer2_remote_feed_ok(&bref, f->error, f->bytes, f->data))
 		return (NULL);
 	if (f->bytes) {
 		if (radix < HAMMER2_RADIX_MIN || radix > HAMMER2_PBUFRADIX ||
@@ -1396,8 +1447,10 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 			level = iroot->lock.level + 1;
 		else
 			level = ip1->lock.level + 1;
-		chain = hammer2_remote_proxy(cdev, pmp, f, &pmp->pfs_clid,
-		    ip1->meta.inum, level);
+		chain = NULL;
+		if (hammer2_remote_in_range(idx, &f->bref, key_beg, key_end))
+			chain = hammer2_remote_proxy(cdev, pmp, f,
+			    &pmp->pfs_clid, ip1->meta.inum, level);
 		if (chain == NULL) {
 			pr_warn_ratelimited("hammer2: HM2 %s feed of type %d not a proxy\n",
 			    xop->desc->id, f->bref.type);
@@ -1482,7 +1535,8 @@ hammer2_remote_fetch(hammer2_dev_t *cdev, hammer2_off_t lbase, int lsize,
 	while (hammer2_rcall_next(call, deadline, &f) == 0) {
 		if (buf == NULL && f->error == 0 && f->data &&
 		    f->bref.type == h->type && f->bref.key == h->key &&
-		    f->bytes == (uint32_t)lsize) {
+		    f->bytes == (uint32_t)lsize &&
+		    hammer2_remote_feed_ok(&f->bref, 0, f->bytes, f->data)) {
 			buf = f->data;
 			f->data = NULL;
 			error = 0;
