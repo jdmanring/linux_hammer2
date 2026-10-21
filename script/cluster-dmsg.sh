@@ -253,13 +253,23 @@ if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel
 else
 	echo "kmemleak unusable"
 fi
+# hammer2's own text, so the scan after the unload counts its frames and
+# not another module's
+mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 # Scanned again after the unload, whose frames now print as addresses: an
 # object a module global held and the unload never freed is a leak only
 # from here. Each reading scans twice, since a scan greys an object whose
 # checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
 # new object's starts at ~0, so a leak is reported at its second scan.
-echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
+if [ -z "$mrange" ]; then
+	echo "kmemleak-unloaded unread"
+elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
+	mb=${mrange% *}; me=$(printf '0x%016x' $((mb + ${mrange#* })))
+	h2n=$(awk -v b="$mb" -v e="$me" '{ a = $1 "" } a ~ /^0x/ && a >= b && a < e' /sys/kernel/debug/kmemleak | wc -l)
+	echo "kmemleak-unloaded $h2n"
+	[ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200
+fi
 echo "threads-final $(threads)"
 kill $KPID 2>/dev/null
 GUEST

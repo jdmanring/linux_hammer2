@@ -628,7 +628,8 @@ done
 # since the last one, and a new object's starts at ~0, so one scan reports
 # nothing new (the kernel's own kmemleak-test read 0, then 1). Read on
 # lines that are not comments, in order: the clear on the line before
-# each load, a second scan after each unload's line within six lines.
+# each load, and the count of the module's own frames within twelve lines
+# after each unload.
 nleak=0
 for s in script/*.sh; do
 	command grep -q 'echo scan > /sys/kernel/debug/kmemleak' "$s" || continue
@@ -644,8 +645,8 @@ for s in script/*.sh; do
 		/insmod \/tmp\/hammer2\.ko/ && prev !~ /echo clear > \/sys\/kernel\/debug\/kmemleak/ {
 			print "a load at line " NR " with no clear before it"; exit }
 		/rmmod hammer2 && echo "rmmod ok"/ { rm = NR }
-		/kmemleak-unloaded \$\(/ && rm && NR - rm <= 6 { rm = 0 }
-		rm && NR - rm > 6 { print "an unload at line " rm " with no scan after it"; exit }
+		/echo "kmemleak-unloaded \$h2n"/ && rm && NR - rm <= 12 { rm = 0 }
+		rm && NR - rm > 12 { print "an unload at line " rm " with no scan after it"; exit }
 		{ prev = $0 }
 		END { if (rm) print "an unload at line " rm " with no scan after it" }' "$s")
 	[ -z "$why" ] || {
