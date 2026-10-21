@@ -160,9 +160,15 @@ echo "clid $(hammer2 -s $R pfs-clid CL 2>/dev/null)"
 echo "pfs-count $(hammer2 -s $R pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
 GUEST
 cat > "$W/dial.sh" <<'GUEST'
-# dial <clid> <host> <port>: one admitted row, then the dial
+# dial <clid> <host> <port> [ro]: one admitted row, then the dial; with ro
+# the device is opened again read-only between the two, so the slave's pass
+# refuses to run and every read on B's CL is the remote element's alone
 touch /tmp/h2keys/peer.none
 /tmp/h2service add $R --clid "$1" --label peer --path "span:$2:$3" | sed 's/^/add /'
+if [ "${4:-}" = ro ]; then
+	umount $R && mount -t hammer2 -o ro /dev/vdb@ROOT $R || { echo "ROOT read-only failed"; exit 1; }
+	echo "root-ro 1"
+fi
 /tmp/h2service dial $R --keys /tmp/h2keys | sed 's/^/dial /'
 echo "dial-rc $?"
 GUEST
@@ -209,13 +215,17 @@ echo "files $(cd $C && find . -type f 2>/dev/null | grep -c .)"
 echo "many $(find $C/many -mindepth 1 2>/dev/null | grep -c .)"
 # fiemap is the bmap XOP over the wire, past the first block
 filefrag -v $C/big.bin > /tmp/h2wire.frag 2>&1; echo "fiemap-rc $?"
-echo "fiemap-extents $(grep -c '^ *[0-9]*:' /tmp/h2wire.frag)"
+echo "fiemap-extents $(grep -c '^ *[0-9][0-9]*:' /tmp/h2wire.frag)"
+echo "fiemap-unknown $(grep '^ *[0-9][0-9]*:' /tmp/h2wire.frag | grep -c unknown_loc)"
+sed 's/^/frag /' /tmp/h2wire.frag
 (cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
 mount -o remount,rw $C 2>/dev/null; echo "remount-rc $?"
 echo "log-remount-refused $(klog 'read-write remount refused: a remote element')"
 echo 3 > /proc/sys/vm/drop_caches
 (cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/cold \2 \1/'
 echo "remote-xops $(klog 'H2 REMOTE ')"
+echo "pass-refused $(klog 'sync pass refused on clindex')"
+echo "slave-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')"
 echo "refetches $(klog 'H2 REFETCH')"
 echo "log-not-proxy $(klog 'not a proxy')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
@@ -304,7 +314,7 @@ phase B setup.sh slave "$clid" || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"
 phase A fill.sh
 phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT"
-phase B dial.sh "$clid" "$HOST_ADDR" "$PORT"
+phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" ro
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
@@ -351,7 +361,11 @@ nfa=$(num "$(val A files)" 0)
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
 [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"
 [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"
-[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$(num "$(val B fiemap-extents)" 0)" -ge 1 ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire" $? "rc $(val B fiemap-rc), $(val B fiemap-extents) extent(s)"
+[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files)"
+# The file is on A alone, so no block has an address on B: every extent
+# says so rather than reporting the 0 no local element supplied.
+fx=$(num "$(val B fiemap-extents)" 0)
+[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"
 [ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"

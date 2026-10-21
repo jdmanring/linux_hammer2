@@ -1470,7 +1470,13 @@ hammer2_file_mmap_prepare(struct vm_area_desc *desc)
  * positive ENOENT compared against a negative one is simply never
  * equal, and the first run of this code returned ENOENT as a file
  * position for every offset in the file.
+ *
+ * A block only a remote element holds has no address on this host: the
+ * offset is the local element's, and the XOP's is left 0 when no local
+ * element ran.  *poff is then HAMMER2_BMAP_UNKNOWN, never an invented 0.
  */
+#define HAMMER2_BMAP_UNKNOWN	((hammer2_off_t)-1)	/* Linux */
+
 static int
 hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 {
@@ -1483,8 +1489,12 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 	xop->lbn = lbn;
 	hammer2_xop_start(&xop->head, &hammer2_bmap_desc);
 	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
-	if (error == 0)
+	if (error == 0) {
 		*poff = xop->offset;
+		if (*poff == 0 && xop->head.cluster.focus &&
+		    hammer2_dev_is_conn(xop->head.cluster.focus->hmp))
+			*poff = HAMMER2_BMAP_UNKNOWN;
+	}
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
 
@@ -1708,8 +1718,8 @@ hammer2_bmap(struct address_space *mapping, sector_t lbn)
 	int error;
 
 	error = hammer2_bmap_lbn(mapping->host, lbn, &poff);
-	if (error != 0)
-		return (0);		/* a hole, or an error: nothing there */
+	if (error != 0 || poff == HAMMER2_BMAP_UNKNOWN)
+		return (0);	/* a hole, an error, or no address on this host */
 	/*
 	 * Linux: FIBMAP counts in filesystem blocks (bmap() in fs/inode.c),
 	 * not sectors.  The first run returned sectors, and filefrag -B read
@@ -2334,6 +2344,7 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	u32 bsize = i_blocksize(inode);
 	u64 logical, end;
 	u64 run_start = 0, run_phys = 0, run_len = 0;
+	u32 run_flags = 0;	/* FIEMAP_EXTENT_UNKNOWN for a remote block */
 	int error, ret;
 
 	error = fiemap_prep(inode, fieinfo, start, &len, 0);
@@ -2353,7 +2364,7 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	 * rather than reported, and it also ends any run being accumulated.
 	 */
 	for (logical = start; logical < end; logical += bsize) {
-		int hole;
+		int hole, unk;
 
 		error = hammer2_bmap_lbn(inode, logical >> inode->i_blkbits,
 		    &poff);
@@ -2362,15 +2373,17 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			if (run_len) {
 				ret = fiemap_fill_next_extent(fieinfo,
 				    run_start, run_phys, run_len,
-				    FIEMAP_EXTENT_MERGED);
+				    FIEMAP_EXTENT_MERGED | run_flags);
 				if (ret < 0)
 					return (ret);
 			}
 			return (-error);
 		}
 		hole = (error == ENOENT);
+		unk = !hole && poff == HAMMER2_BMAP_UNKNOWN;
 
-		if (hole || (run_len && poff != run_phys + run_len)) {
+		if (hole || (run_len && (unk != (run_flags != 0) ||
+		    (!unk && poff != run_phys + run_len)))) {
 			/*
 			 * A hole, or a physical discontinuity: the run ends
 			 * here.  Emit it and start over.
@@ -2378,7 +2391,7 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			if (run_len) {
 				ret = fiemap_fill_next_extent(fieinfo,
 				    run_start, run_phys, run_len,
-				    FIEMAP_EXTENT_MERGED);
+				    FIEMAP_EXTENT_MERGED | run_flags);
 				if (ret < 0)
 					return (ret);
 				if (ret > 0)
@@ -2390,7 +2403,8 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		}
 		if (run_len == 0) {
 			run_start = logical;
-			run_phys = poff;
+			run_phys = unk ? 0 : poff;
+			run_flags = unk ? FIEMAP_EXTENT_UNKNOWN : 0;
 		}
 		run_len += bsize;
 	}
@@ -2398,7 +2412,7 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	/* The run still open at the end of the range. */
 	if (run_len) {
 		ret = fiemap_fill_next_extent(fieinfo, run_start, run_phys,
-		    run_len, FIEMAP_EXTENT_MERGED |
+		    run_len, FIEMAP_EXTENT_MERGED | run_flags |
 		    (end >= isize ? FIEMAP_EXTENT_LAST : 0));
 		if (ret < 0)
 			return (ret);

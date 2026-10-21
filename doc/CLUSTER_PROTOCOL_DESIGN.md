@@ -203,12 +203,21 @@ fed only chains, as `ipcluster` and `lookup` do, its `error` is zero, and
 the client feeds no end, so the collect sees the element as a local one
 ending the same way would leave it. The closing frame of a `readdir`
 also carries `rkey`, the key the server's scan stopped before after
-`nmax` entries, or `HAMMER2_KEY_MAX` at the directory's end, which the
-client lowers its own `rkey` to: the frontend emits no entry at or past
+`nmax` entries, or the request's own `key_end` echoed when it did not
+stop, which the client lowers its own `rkey` to: the frontend emits no entry at or past
 it and starts its next XOP there, as it does for a local element that
 stopped first, so an entry the peer has not fed is never passed over.
 Without it a directory of more than `nmax` entries on the master listed
-only the first `nmax` through a slave holding fewer. A request the server will not serve is closed
+only the first `nmax` through a slave holding none of it: the wire run's
+control, the client's lowering removed, listed 255 of 300
+(`wire-run-20261020-234654`). The client takes the key only from a
+clean end after a full batch, and only when it lies past every key the
+peer fed, so each XOP starts beyond the last: a peer's key at or below
+what it fed would restart the frontend's loop at the same key without
+end, uninterruptibly, holding the directory's lock. A descriptor that
+answers one chain takes one feed, and a readdir `nmax`; the window
+bounds the frames in flight and not their total, so a peer past either
+count is refused like a frame that is not a proxy. A request the server will not serve is closed
 by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
 peer tells a served request from a refused one by the closing frame's
 command, and a served scan that found nothing reads as zero feeds and
@@ -453,6 +462,13 @@ block with neither bytes nor an error. What is not checked is what the media doe
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 
+**A block only the peer holds has no address here.** `bmap` answers
+with the offset of the local element's block, and a remote element has
+none to give; a file or a block the slave does not hold therefore
+reports no physical address rather than the 0 no element supplied:
+fiemap marks its extents `FIEMAP_EXTENT_UNKNOWN` and FIBMAP returns 0,
+as for a hole.
+
 The reply's data is copied off the reader thread into the frame, and
 the feed stashes it on the handle before it locks the new chain; the
 lock's `load_data` reaches the device's `hammer2_io_getblk()`, which
@@ -691,7 +707,7 @@ strategy write ends its folios only inside its storage function
 would leave every buffered write under writeback until unmount, and the
 buffered writes and attribute changes dispatch no XOP at all
 (`hammer2_vnops.c` starts one at `:135`, `:244`, `:517`, `:673`, `:712`,
-`:1484`, `:1523` and `:2248`), so they would have returned 0 and lost
+`:1490`, `:1533` and `:2258`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1842-1852`).
 The slave's pass writes its element through chain calls and its own
@@ -839,7 +855,7 @@ rather than from the design document alone.
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:376`, `:502`, `:621`, `:830`, `:1038`, `:1236`,
-  `:1429`, `:1812`, `:2496`), which a mount sets and only a remount
+  `:1429`, `:1822`, `:2510`), which a mount sets and only a remount
   rewrites (`hammer2_vfsops.c:1707`, `:2553`, `:2568`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
@@ -858,7 +874,7 @@ rather than from the design document alone.
   property of the write path's design, not of a flag.
 - **C14. A read served from the caches never reaches the quorum
   check.** Cached folios, the dentry cache and the in-memory inode
-  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2436`) with no
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2450`) with no
   XOP; only an uncached lookup and `readdir`, which is an XOP per call
   (`:199`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
@@ -1166,9 +1182,9 @@ keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
 those two test theirs: every VOP that modifies, since the port's
 create, unlink, rename, link, setattr, fallocate and time update modify
 local chains before the collect (C6), `open` and `mmap` for writing (the port has no `.open` and its
-`.read_iter` is the generic one, `hammer2_vnops.c:2009`, so those two are
+`.read_iter` is the generic one, `hammer2_vnops.c:2019`, so those two are
 new wrappers, and the mmap hook on the kernel of record is
-`.mmap_prepare`, `:2013`), `write_iter`, `page_mkwrite`, `writepages`,
+`.mmap_prepare`, `:2023`), `write_iter`, `page_mkwrite`, `writepages`,
 and the reads, which both refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
 so that a cut-off holder never serves cached data as current; `fsync`
 never returns 0 after the shutdown, as neither does (`fs/ext4/fsync.c:134`

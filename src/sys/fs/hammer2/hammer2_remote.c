@@ -673,7 +673,7 @@ struct hammer2_rhandle {
 	char			*stash;		/* the fed block, until loaded */
 	int			stash_bytes;
 	struct hammer2_rhandle	*next;		/* the block's next identity, hlock */
-	uint8_t			methods;	/* the fed bref's; not identity */
+	uint8_t			methods;	/* the fed bref's, which decodes it */
 };
 
 /*
@@ -1081,7 +1081,8 @@ hammer2_rhandle_same(const struct hammer2_rhandle *a,
     const struct hammer2_rhandle *b)
 {
 	return (a->type == b->type && a->cmd == b->cmd && a->inum == b->inum &&
-	    a->key == b->key && bcmp(&a->clid, &b->clid, sizeof(a->clid)) == 0);
+	    a->key == b->key && a->methods == b->methods &&
+	    bcmp(&a->clid, &b->clid, sizeof(a->clid)) == 0);
 }
 
 /* The handle of a block under one identity, or NULL. */
@@ -1400,8 +1401,9 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 	unsigned long deadline, t0 = jiffies;
 	const char *name = NULL;
 	size_t name_len = 0;
-	int proxy, idx, nmax = 0, fed = 0, error;
+	int proxy, idx, nmax = 0, fed = 0, cap, error;
 	unsigned int level;
+	hammer2_key_t maxkey = 0;
 
 	hammer2_spin_sh(&ip1->cluster_spin);
 	chain = ip1->cluster.array[clindex].chain;
@@ -1461,6 +1463,25 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		goto done;
 	}
 
+	/*
+	 * The chains a descriptor's storage function feeds at most: one for
+	 * those that answer one chain, nmax for a readdir, a scan's whole
+	 * range otherwise.  The window bounds the frames in flight and not
+	 * their total, so a peer past this is refused here.
+	 */
+	switch (idx) {
+	case 1:
+		cap = nmax;
+		break;
+	case 5:
+	case 6:
+		cap = INT_MAX;
+		break;
+	default:
+		cap = 1;
+		break;
+	}
+
 	deadline = jiffies + msecs_to_jiffies(hammer2_remote_timeout_ms);
 	call = hammer2_rcall_start(cdev, idx, &pmp->pfs_clid, ip1->meta.inum,
 	    key_beg, key_end, lookup_flags, nmax, name, name_len, &error);
@@ -1481,8 +1502,8 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		else
 			level = ip1->lock.level + 1;
 		chain = NULL;
-		if (hammer2_remote_in_range(idx, f, key_beg, key_end,
-		    ip1->meta.inum))
+		if (fed < cap && hammer2_remote_in_range(idx, f, key_beg,
+		    key_end, ip1->meta.inum))
 			chain = hammer2_remote_proxy(cdev, pmp, f,
 			    &pmp->pfs_clid, ip1->meta.inum, level);
 		if (chain == NULL) {
@@ -1492,6 +1513,8 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 			error = HAMMER2_ERROR_EIO;
 			break;
 		}
+		if (f->bref.key > maxkey)
+			maxkey = f->bref.key;
 		error = hammer2_xop_feed(xop, chain, clindex, f->error);
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
@@ -1506,9 +1529,14 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		 * The peer's readdir stopped after nmax entries at its rkey,
 		 * which the frontend must not pass, as it does not pass the
 		 * local element's: an entry beyond it is one this element has
-		 * not fed, and the next XOP starts there.  0 is no key.
+		 * not fed, and the next XOP starts there.  It is taken only
+		 * from a clean end after a full batch and only past every key
+		 * the peer fed, so the next XOP always starts beyond this one's
+		 * start: a peer's key at or below what it fed would otherwise
+		 * restart the frontend's loop at the same key for good.
 		 */
-		if (idx == 1 && call->eof && call->rkey != 0 &&
+		if (idx == 1 && call->eof && error == 0 && fed > 0 &&
+		    fed >= x->xop_readdir.nmax && call->rkey > maxkey &&
 		    call->rkey < x->xop_readdir.rkey)
 			x->xop_readdir.rkey = call->rkey;
 		if (call->eof || error)
