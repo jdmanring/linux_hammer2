@@ -66,6 +66,8 @@ guest_off() {	# guest_off <domain> <ssh>: unmount, unload, detach its volume
 make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
+# What was built, taken now: the tree can move before the report is written.
+SRC_REV=$(git describe --always --dirty); KO_SUM=$(sha256sum < "$KO" | cut -d' ' -f1)
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2service" test/h2service.c 2>"$W/cc.err" || {
 	echo "wire: COULD-NOT-RUN: test/h2service.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
 cc -std=c11 -O1 -o "$W/h2loop" test/h2loop.c 2>"$W/cc.err" || {
@@ -224,7 +226,8 @@ if mountpoint -q $C; then umount $C || echo "umount CL failed"; fi
 # With CL unmounted the element stays registered while ROOT holds the
 # device, so a read-write mount of CL is the mount path's own refusal; a
 # write on the read-only mount is the VFS's, and tests nothing of it.
-mount -t hammer2 /dev/vdb@CL $C 2>/dev/null; echo "rw-mount-rc $?"
+# -w: without it mount(8) retries read-only on EROFS and returns 0.
+mount -w -t hammer2 /dev/vdb@CL $C 2>/dev/null; echo "rw-mount-rc $?"
 echo "log-mount-refused $(klog 'read-write mount refused: a remote element')"
 if mountpoint -q $C; then umount $C; fi
 umount $R || echo "umount failed"
@@ -232,12 +235,6 @@ echo "log-detached $(klog 'remote element CL at clindex 1 detached')"
 echo "detached-why $(kl | grep 'remote element CL at clindex 1 detached' | sed 's/.*detached: //' | tr '\n' ' ')"
 echo "spans-del $(klog 'H2 -RXSPAN')"
 echo "spantab-end $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
-# A lockdep table that fills turns lockdep off and says BUG; that is the
-# guest kernel's table size (the KASAN build keeps the default, 2^15), not
-# a report on the subject, so it is counted apart and named in the check,
-# which it still fails: lockdep checks nothing for the rest of that run.
-echo "kernel-warnings $(kl | grep -v 'MAX_LOCKDEP_ENTRIES too low' | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
-echo "lockdep-saturated $(klog 'MAX_LOCKDEP_ENTRIES too low')"
 # A proxy is classed apart from the media's chains, at its level on the
 # peer; on level 0, the super-root's class, a contended inode lock in the
 # sync pass read as a cycle through the mount's order. The classes are
@@ -254,6 +251,15 @@ else
 	echo "kmemleak unusable"
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
+# Counted after the unload, whose own work (the connection device's free,
+# the module's queues drained) can report too.
+sleep 2
+# A lockdep table that fills turns lockdep off and says BUG; that is the
+# guest kernel's table size (the KASAN build keeps the default, 2^15), not
+# a report on the subject, so it is counted apart and named in the check,
+# which it still fails: lockdep checks nothing for the rest of that run.
+echo "kernel-warnings $(kl | grep -v 'MAX_LOCKDEP_ENTRIES too low' | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive|enqueued on deprecated workqueue')"
+echo "lockdep-saturated $(klog 'MAX_LOCKDEP_ENTRIES too low')"
 echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
@@ -298,7 +304,7 @@ phase A down.sh
 kill "$RELAY_PID" 2>/dev/null; wait "$RELAY_PID" 2>/dev/null; RELAY_PID=
 scp -q "$SA:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null
 scp -q "$SB:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-b.klog" 2>/dev/null
-{ echo "source $(git describe --always --dirty)"; echo "module-sha256 $(sha256sum < "$KO" | cut -d' ' -f1)"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
+{ echo "source $SRC_REV"; echo "module-sha256 $KO_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
 echo "  kept  both kernel logs and the relay trace beside the images as wire-run-$stamp-{a,b}.klog and .trace"
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
@@ -313,7 +319,7 @@ num() { case "$1" in ''|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
 # the one after B's unmount, so the second's values are read from the tail.
 val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
 
-echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $(git describe --always --dirty), module sha256 $(sha256sum < "$KO" | cut -c1-16):"
+echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM"):"
 npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 [ "$npa" -ge 3 ] && [ "$npb" -ge 3 ]; check "each volume has ROOT, LOCAL and CL" $? "A $npa, B $npb"
 [ "$(num "$(val A dial-rc)" 1)" = 0 ] && [ "$(num "$(val B dial-rc)" 1)" = 0 ]; check "link: both dials hand a connected TCP socket in" $? "A rc $(val A dial-rc), B rc $(val B dial-rc)"

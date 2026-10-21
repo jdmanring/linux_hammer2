@@ -667,6 +667,7 @@ struct hammer2_rhandle {
 	hammer2_key_t		key;
 	char			*stash;		/* the fed block, until loaded */
 	int			stash_bytes;
+	struct hammer2_rhandle	*next;		/* the block's next identity, hlock */
 };
 
 /*
@@ -1012,16 +1013,21 @@ hammer2_rcall_next(struct hammer2_rcall *call, unsigned long deadline,
 		    struct hammer2_rframe, entry);
 		if (f) {
 			list_del(&f->entry);
+			/*
+			 * Written under the mutex, as every frame on the state
+			 * is: the reply callback takes it to see the peer's
+			 * DELETE and send ours, and a continuation behind that
+			 * would go out on a closed state.
+			 */
 			if (!call->done && !call->txclosed && !rc->dead &&
 			    call->nrecv == call->allowed &&
 			    list_empty(&call->frames)) {
 				call->allowed += HAMMER2_XOPFIFO;
 				msg = kdmsg_msg_alloc(call->state,
 				    DMSG_HM2_XOP(call->idx), NULL, NULL);
+				kdmsg_msg_write(msg);
 			}
 			mutex_unlock(&rc->mtx);
-			if (msg)
-				kdmsg_msg_write(msg);
 			*fp = f;
 			return (0);
 		}
@@ -1070,6 +1076,21 @@ hammer2_rhandle_same(const struct hammer2_rhandle *a,
 	    a->key == b->key && bcmp(&a->clid, &b->clid, sizeof(a->clid)) == 0);
 }
 
+/* The handle of a block under one identity, or NULL. */
+static struct hammer2_rhandle *
+hammer2_rhandle_find(struct hammer2_rconn *rc, unsigned long off,
+    const struct hammer2_rhandle *want)
+{
+	struct hammer2_rhandle *h;
+
+	spin_lock(&rc->hlock);
+	for (h = xa_load(&rc->byoff, off); h; h = h->next)
+		if (hammer2_rhandle_same(h, want))
+			break;
+	spin_unlock(&rc->hlock);
+	return (h);
+}
+
 /*
  * The handle for a fed block: the one this block version already has, or
  * a new one, with the frame's data stashed on it for the first load.
@@ -1080,7 +1101,7 @@ hammer2_rhandle_get(hammer2_dev_t *cdev, struct hammer2_rframe *f,
     const struct uuid *clid, uint64_t parent_inum)
 {
 	struct hammer2_rconn *rc = cdev->rconn;
-	struct hammer2_rhandle *h, *xh, want = { 0 };
+	struct hammer2_rhandle *h, *nh, *xh, want = { 0 };
 	unsigned long off = (unsigned long)f->bref.data_off;
 	uint32_t id;
 	char *old;
@@ -1099,38 +1120,46 @@ hammer2_rhandle_get(hammer2_dev_t *cdev, struct hammer2_rframe *f,
 	/*
 	 * One block can be live under several identities, a deduplicated
 	 * block under two files' keys, and a refetch asks by identity, so a
-	 * handle found by the block that names another identity is not this
-	 * chain's.  The second identity takes a handle of its own, outside
-	 * the byoff table, which keeps the first.
+	 * feed takes the handle of its own identity.  The handles of one
+	 * block hang from the first, the one byoff holds, under hlock.
 	 */
-	h = xa_load(&rc->byoff, off);
-	if (h && !hammer2_rhandle_same(h, &want)) {
-		h = NULL;
-		off = 0;
-	}
+	h = hammer2_rhandle_find(rc, off, &want);
 	if (h == NULL) {
-		h = kzalloc_obj(*h);
-		if (h == NULL)
+		nh = kzalloc_obj(*nh);
+		if (nh == NULL)
 			return (0);
-		*h = want;
-		if (xa_alloc(&rc->byid, &id, h, XA_LIMIT(1, 0x7FFFFFFF),
+		*nh = want;
+		if (xa_alloc(&rc->byid, &id, nh, XA_LIMIT(1, 0x7FFFFFFF),
 		    GFP_KERNEL)) {
-			kfree(h);
+			kfree(nh);
 			return (0);
 		}
-		h->id = id;
-		xh = off ? xa_cmpxchg(&rc->byoff, off, NULL, h, GFP_KERNEL) :
-		    NULL;
+		nh->id = id;
+		xh = xa_cmpxchg(&rc->byoff, off, NULL, nh, GFP_KERNEL);
 		if (xa_is_err(xh)) {
 			xa_erase(&rc->byid, id);
-			kfree(h);
+			kfree(nh);
 			return (0);
 		}
-		if (xh && hammer2_rhandle_same(xh, &want)) {	/* raced */
-			xa_erase(&rc->byid, id);
-			kfree(h);
-			h = xh;
-		}		/* else another identity's: keep this one apart */
+		if (xh == NULL) {
+			h = nh;			/* the block's first */
+		} else {
+			spin_lock(&rc->hlock);
+			for (h = xh; h; h = h->next)
+				if (hammer2_rhandle_same(h, &want))
+					break;		/* raced */
+			if (h == NULL) {
+				nh->next = xh->next;
+				xh->next = nh;
+				h = nh;
+				nh = NULL;
+			}
+			spin_unlock(&rc->hlock);
+			if (nh) {
+				xa_erase(&rc->byid, id);
+				kfree(nh);
+			}
+		}
 	}
 	spin_lock(&rc->hlock);
 	old = h->stash;
@@ -1189,6 +1218,35 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
 	default:
 		return (NULL);
 	}
+
+	/*
+	 * What the carried consumers trust the media for, checked here
+	 * since a peer sent it: a check method testcheck knows, whose
+	 * default arm hpanics every device; a compression the decode knows;
+	 * and a name no longer than what holds it, which readdir and the
+	 * nresolve compare copy by its length.
+	 */
+	switch (HAMMER2_DEC_CHECK(bref.methods)) {
+	case HAMMER2_CHECK_NONE:
+	case HAMMER2_CHECK_DISABLED:
+	case HAMMER2_CHECK_ISCSI32:
+	case HAMMER2_CHECK_XXHASH64:
+	case HAMMER2_CHECK_SHA192:
+		break;
+	default:
+		return (NULL);
+	}
+	if (HAMMER2_DEC_COMP(bref.methods) > HAMMER2_COMP_ZLIB)
+		return (NULL);
+	if (bref.type == HAMMER2_BREF_TYPE_DIRENT &&
+	    bref.embed.dirent.namlen > (f->bytes ? f->bytes :
+	    sizeof(bref.check.buf)))
+		return (NULL);
+	if (bref.type == HAMMER2_BREF_TYPE_INODE && f->bytes &&
+	    f->bytes >= sizeof(hammer2_inode_data_t) && f->data &&
+	    ((hammer2_inode_data_t *)f->data)->meta.name_len >
+	    HAMMER2_INODE_MAXNAME)
+		return (NULL);
 	if (f->bytes) {
 		if (radix < HAMMER2_RADIX_MIN || radix > HAMMER2_PBUFRADIX ||
 		    (1U << radix) != f->bytes)

@@ -457,12 +457,14 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 			atomic_set_32(&xop->chk_mask, 1U << i);
 	/*
 	 * An element added since hammer2_xop_alloc() has no FIFO and is not
-	 * run.  Cluster membership is set at mount and only shrinks, so this
-	 * is not expected; it is said rather than assumed.
+	 * run.  Membership grows after mount only when a remote element
+	 * registers, which can race a frontend XOP on a PFS mounted
+	 * read-only; the XOP reads the elements it started with and the next
+	 * one runs the new element, so it is said and not warned.
 	 */
-	WARN_ONCE(ip1->cluster.nchains > xop->cluster.nchains,
-	    "hammer2: cluster grew from %d to %d under an XOP\n",
-	    xop->cluster.nchains, ip1->cluster.nchains);
+	if (ip1->cluster.nchains > xop->cluster.nchains)
+		pr_notice_once("hammer2: cluster grew from %d to %d under an XOP\n",
+		    xop->cluster.nchains, ip1->cluster.nchains);
 	hammer2_spin_unsh(&ip1->cluster_spin);
 
 	for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {

@@ -59,10 +59,10 @@ property the remote element depends on was read:
 |---|---|
 | `hammer2_admin.c:393` | `hammer2_xop_start_except()` runs each element's storage function inline, in slot order, holding the inode dependency it took first |
 | `hammer2_admin.c:456` | `chain` must be set on `ip1->cluster.array[i]` for the element to enter `chk_mask`, so a slot with no chain is never run |
-| `hammer2_admin.c:463` | an element that joins under a running XOP is not run, and `WARN_ONCE` says so |
-| `hammer2_admin.c:655` | `hammer2_xop_feed()` indexes `collect[clindex]`, takes `hammer2_chain_ref_hold()`, and doubles every FIFO rather than refusing |
-| `hammer2_admin.c:747` | the collect's advance drops the previous chain with `hammer2_chain_drop_unhold()` |
-| `hammer2_admin.c:500` | `hammer2_xop_retire()` caches the XOP's chains on the inode past the XOP, with a reference |
+| `hammer2_admin.c:466` | an element that joins under a running XOP is not run, and `pr_notice_once()` says so once; registration can race a frontend XOP on a PFS mounted read-only, so it is not a warning |
+| `hammer2_admin.c:657` | `hammer2_xop_feed()` indexes `collect[clindex]`, takes `hammer2_chain_ref_hold()`, and doubles every FIFO rather than refusing |
+| `hammer2_admin.c:749` | the collect's advance drops the previous chain with `hammer2_chain_drop_unhold()` |
+| `hammer2_admin.c:502` | `hammer2_xop_retire()` caches the XOP's chains on the inode past the XOP, with a reference |
 | `hammer2_cluster.c:179` | `nquorum` is `pfs_nmasters / 2 + 1` |
 | `hammer2_cluster.c:285` | `umasters` counts a master slot with no chain and no `CITEM_NULL` flag |
 | `hammer2_cluster.c:355` | `HAMMER2_ERROR_EINPROGRESS` is returned while enough masters are still in progress to reach the quorum |
@@ -270,10 +270,11 @@ path reads them from `ripdata`, with the span's `pfs_type` and `pfs_id`
 checked against the root's `pfs_type` and `pfs_fsid` and a mismatch
 registering nothing, `pfs_hmps[j]` the connection's device,
 `pfs_iroot_blocksets[j]` from the root's data. Two steps of that path
-are not taken for a remote slot, by one test on `pfs_hmps[j]` being a
-connection device, marked `/* Linux */`: `mount_count` is not
-incremented, since the device has no mount, and **no sync thread is
-created**. The thread would be the remote host's job for its own
+are not taken for a remote slot: `mount_count` is not incremented,
+since the device has no mount, the mount's and the unmount's loops
+skipping a connection device by a test marked `XXX`
+(`hammer2_vfsops.c:2103`, `:2667`), and **no sync thread is created**,
+the registration in `hammer2_remote.c` not starting one. The thread would be the remote host's job for its own
 element, and here it would walk its element by chains
 (`hammer2_inode_chain()` at `hammer2_synchro.c:1560`, `chain_lookup` at
 `:1578`, `chain_create` at `:2360`) through blockrefs that carry the
@@ -476,7 +477,7 @@ created (`hammer2_io_new()`, the `INITIAL` path) is refused on the
 device with `WARN_ONCE` and reads `EIO`, since proxies are never created
 locally and no write is sent to it in stage 2. One dispatch sits above
 the DIO layer: `hammer2_xop_start_except()` calls the descriptor's
-storage function per slot (`hammer2_admin.c:474-478`), and the marked
+storage function per slot (`hammer2_admin.c:476-480`), and the marked
 test there runs `hammer2_remote_xop()` first, which answers for a slot
 whose `pfs_hmps` is a connection device, read under the root inode's
 cluster spin that the registration and the detach write it under, and
@@ -599,7 +600,7 @@ unmount with it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
 (`:1578-1579`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
-`hammer2_admin.c:480` is not reused for this: it passes the POSIX
+`hammer2_admin.c:482` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
 bitmask, so 103 decodes as `EIO` at the first bit; the line is
 upstream's (`hammer2_admin.c:1227` upstream) and is recorded for
@@ -689,7 +690,7 @@ device (`hammer2_synchro.c:808`, `:824`), and `hammer2_pfs_snapshot()`
 takes `hmp` from `pfs_hmps[clindex]` (`hammer2_ioctl.c:830`) and asserts
 its modify succeeded (`:690-691`): on the connection device, where a
 create is refused, that is at best a pass that copies nothing and at
-worst the assertion. So the guard at `hammer2_synchro.c:733` refuses a
+worst the assertion. So the guard at `hammer2_synchro.c:734` refuses a
 local snapshot when the focus slot's device is a connection device, and
 stage 2b adds one command outside the 21 descriptors, a request for the
 master to take the snapshot on its own device and serve the pass from
@@ -766,12 +767,12 @@ rather than from the design document alone.
   other's. `hammer2_inode_repoint()` moves chains, not meta.
 - **C6. Elements run to completion before the collect, which waits on
   nothing and re-feeds nothing** (`hammer2_xop_start_except()` runs each
-  storage function and retires it in the caller, `hammer2_admin.c:474-478`;
-  the collect's comment at `:787-793` says so); a proxy's fields are its
+  storage function and retires it in the caller, `hammer2_admin.c:476-480`;
+  the collect's comment at `:789-795` says so); a proxy's fields are its
   feed frame's. A visibility rule that asks the collect
   to wait for a peer's apply has no feed to wait on.
 - **C7. The collect skips a key the check returns `ESRCH` or `EDEADLK`
-  for and ends the scan in `ENOENT`** (`hammer2_admin.c:802-814`,
+  for and ends the scan in `ENOENT`** (`hammer2_admin.c:804-816`,
   carried), and `readdir` ends on any collect error at the position it
   reached (`hammer2_vnops.c:254-257`) and maps the scan's final `ENOENT`
   to success (`:337-339`), so a disputed key vanishes from a listing that
@@ -1270,7 +1271,7 @@ peer with no `.none` and no key; the stage 2 read-only mount off must land
 a write on the slave alone; the pass's refusal under `hmp->rdonly` off
 must write a `CL`-alone volume silently, read by its fingerprint; the
 snapshot guard at
-`hammer2_synchro.c:733` off must make the wire pass attempt a create on
+`hammer2_synchro.c:734` off must make the wire pass attempt a create on
 the connection device and read the refusal, never the assertion;
 `fail_quorum_at` with the protocol's abort path disabled must leave the
 two masters' media different, under whatever protocol the later note
@@ -1285,7 +1286,7 @@ table in `doc/README.status.md` can be read against them: in
 pass 2, which also keeps such a master out of the end-of-scan agreement
 (`:290`), and the `ENOTCONN` return before the `ESRCH`/`EDEADLK` split
 (`:357`), decision C's settled half; in `hammer2_admin.c`, the XOP-level
-dispatch (`:475`); in `hammer2_iocom.c`, the span test admitting
+dispatch (`:477`); in `hammer2_iocom.c`, the span test admitting
 `PROTO_2` (`:375-380`), the span table's count and lock at its
 initialization (`:128-129`) and the debug gate on the `RCVMSG` print
 (`:225`); in `hammer2_synchro.c`, the guard refusing a local snapshot of
@@ -1403,7 +1404,7 @@ the list after its last device left, so registration requires a mounted
 PFS and the detach frees an emptied one. Also from that round: the
 handle records the parent inode and the tid, the waiter fills `buf`,
 the mount-time `mount_count` site, `devvp_list`, and the XOP-level
-dispatch at `hammer2_admin.c:474`. The third audit (Claude Opus 5.5, 28 tool uses, 11.2 min) found one of
+dispatch at `hammer2_admin.c:476`. The third audit (Claude Opus 5.5, 28 tool uses, 11.2 min) found one of
 the five round-two mechanisms holding and returned NO SIGN-OFF on six
 new findings, three blocking, each verified and applied, and the
 largest changed the note's shape: `modify_tid` is a per-PFS counter, so
