@@ -241,7 +241,8 @@ upgrade is those three together. A request the server will not serve is closed
 by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
 peer tells a served request from a refused one by the closing frame's
 command, and a served scan that found nothing reads as zero feeds and
-error zero rather than as a refusal. A reply
+error zero rather than as a refusal, which the client reads as its
+master unreachable and never as an empty answer. A reply
 frame with no data for a type that has data is a protocol error and ends
 the connection.
 
@@ -313,7 +314,7 @@ skipping a connection device by a test marked `XXX`
 the registration in `hammer2_remote.c` not starting one. The thread would be the remote host's job for its own
 element, and here it would walk its element by chains
 (`hammer2_inode_chain()` at `hammer2_synchro.c:1560`, `chain_lookup` at
-`:1578`, `chain_create` at `:2376`) through blockrefs that carry the
+`:1578`, `chain_create` at `:2378`) through blockrefs that carry the
 peer's real media offsets, and the first dio-hash miss would reach
 `hammer2_get_volume()`'s panic, which sets the host-wide
 `hammer2_device_error` and stops every device on the host writing. The
@@ -482,8 +483,8 @@ the type is read from the slave's own inode, which never changes it,
 but whether a file's data is embedded is not, since that copy is not
 refreshed when the master's file grows past its inode and a rule read
 from it refused an honest scan of the grown file, so the slave's insert
-refuses a block beneath a direct-data inode itself
-(`hammer2_synchro.c:2299-2312`), where the carried create would take
+refuses a block beneath a direct-data inode itself, with a log line
+(`hammer2_synchro.c:2299-2314`), where the carried create would take
 the embedded bytes for a blockset, for `lookup` an
 inode of the number asked for,
 and for a read or `bmap` the data block covering the offset or
@@ -495,19 +496,46 @@ number to check; a refetched block whose
 compression and check methods differ from the blockref the proxy keeps,
 which the consumer decodes it under, or a refetched inode of another
 number; and a feed of an inode or data block with neither bytes nor an
-error. An error the peer reports is taken only from the set a read's
-storage function feeds, `EIO`, `CHECK`, `BADBREF`, `ENOENT`, `EINVAL`,
-`EOPNOTSUPP` and the end of a scan, with the server's `ETIMEDOUT` at
-its window bound, and its `ABORTED`, a quiesce for its unmount or a
-reconnect, reads as the link's loss, `ENOTCONN`, the connection class
-decision C counts as unreachable; any other bit reads as `EIO`,
-since the collect and its callers act on the rest as control: the sync
-pass restarts with no sleep on `EAGAIN` (`hammer2_synchro.c:545-627`),
-and `ESRCH` and `EDEADLK` are the quorum's verdicts. The `scanall`
-shape and the error set guard the slave's pass, which no wire run
-drives yet, so no control reads either; the run that drives the pass is
-their trigger. The wire harness's two controls
-drive two of these refusals. Under `H2_WIRE_REKEY=1` its relay moves
+error. The inverse shape is not refused, and is a constraint on stage 3
+rather than a check here: a direct-data inode fed for one the slave holds
+with a blockset and blocks beneath it is copied over the blockset by the
+replace arm (`hammer2_synchro.c:2674-2697`), leaving the blocks under an
+inode that no longer points at them. No honest master gives embedded
+data to an inode that has blocks, since the frontend only ever clears
+the flag (`hammer2_inode.c:1818-1821`), so only a peer reaches it, and
+only through a pass that writes, which stage 2b's read-only device
+never runs; stage 3 refuses it or proves the blocks are freed before its
+pass writes over the wire. An error the peer reports on a fed chain is taken only from the
+media errors a chain carries, `EIO`, `CHECK` and `BADBREF`, and reads as
+`EIO` otherwise, since the collect and its callers act on the other bits
+as control: the sync pass restarts with no sleep on `EAGAIN`
+(`hammer2_synchro.c:545-627`), and `ESRCH` and `EDEADLK` are the
+quorum's verdicts. **The element's end is judged the other way round**,
+by what counts rather than by what does not: the error it feeds with its
+`NULL` chain, which the quorum check reads as that master's vote, is
+passed only when it is a clean end or `ENOENT`, what a master says of a
+key, or the bound's own `ETIMEDOUT`, and every other end reads as
+`ENOTCONN`, the connection class decision C counts as unreachable
+(`hammer2_remote_end()`). So a refusal, a server that could not take
+`hammer2_mntlk` within its bound, a quiesce for the peer's unmount, a
+frame this side refused, the peer's own media error and any code a later
+stage adds all leave the master without a vote, and none is read as the
+master having answered that the key does not exist, which with two
+masters is the quorum's `ESRCH` and the collect stepping over every key
+the local element holds. The thirteenth audit round found three ways a
+peer's failure still read as that answer after each earlier round had
+closed one, the refusal `DMSG_ERR_NOSUPP` mapped to `EOPNOTSUPP`, a frame
+refused as a proxy ending the call `EIO`, and a server whose try for
+`hammer2_mntlk` ran out answering with the refusal; listing the codes that
+mean unreachable left every unlisted one on the answering side, and an
+allowlist puts a way of failing nobody has named on the unreachable one.
+A master that cannot read its own media is unreachable for that read,
+which fails closed. What a peer that lies about a key is believed is the
+security model's question, admission now and authentication in stage 5,
+and not this one. The `scanall` shape guards the slave's pass, which no
+wire run drives yet, so no control reads it; the run that drives the pass
+is its trigger. The wire harness has four controls, two on what a feed
+can answer and two on how the element ends. Under `H2_WIRE_REKEY=1` its relay moves
 the key of the first data block fed, the `bmap` of a file's first
 block, one block up and signs the frame again, and the slave refuses
 that feed and fails the call, so fiemap reports the error
@@ -519,7 +547,19 @@ feed and fails that one lookup, every file then reading equal to the
 master's (`wire-run-20261021-032154` at `90c7db1`, debug kernel); with `nresolve`
 taking any entry, as it did before this check, the same control faulted
 the slave through a null pointer in `hammer2_inode_get()`
-(`wire-run-20261021-020154`). What is not checked is what the media does not constrain either:
+(`wire-run-20261021-020154`). Under `H2_WIRE_REFUSE=1` the relay answers
+that first `nresolve` with the refusal a server sends when it cannot take
+a request, `LNK_ERROR` carrying `DMSG_ERR_NOSUPP`, and drops the real
+answer; the stat fails not connected and the call ends `ENOTCONN`
+(`wire-run-20261021-045312`, module `28bd2123661a311e`, debug kernel),
+where the module built before the allowlist returned the refusal as the
+lookup's answer, "Operation not supported" with this one master
+(`wire-run-20261021-045155`, module `77a271b1cfe20139`). Under
+`H2_WIRE_STALL=5000` the slave's bound is 2000 ms and the relay holds
+every frame due to the slave from the first `readdir` answer; the listing
+fails not connected, both `readdir` calls end `ETIMEDOUT`, and every file
+read after the stall equals the master's (`wire-run-20261021-044235`,
+module `28bd2123661a311e`). What is not checked is what the media does not constrain either:
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 That includes content that reaches a warning: a compressed block whose
@@ -702,15 +742,25 @@ runs in milliseconds. The lock is taken by try-lock within the bound,
 since the unmount holds it while it waits for the server's queue to
 drain and a blocking take there would wait on the unmount waiting on it;
 a bulkfree scan holds it for its whole run, so a request started under
-one fails at the bound. The cost runs the other way too: a request holds
-the lock through its window wait, so a peer that stops continuing holds
-`hammer2_mntlk` for the bound, during which a mount, unmount, pfs-delete
-or bulkfree on the host waits and the synchronization
-thread's try-lock fails and its pass is skipped to its next cadence; the
-bound is the host's protection against that peer, and stage 2b's
-measured default is what sets it. A request for
-any other PFS is answered
-`DMSG_ERR_NOSUPP` and logged. A request for a command outside the stage's
+one fails at the bound. A request that does not get the lock, at the
+bound or because the request or the connection ended while it tried, is
+answered with its transaction's closing frame carrying `ETIMEDOUT` or
+`ABORTED`, and its log line says which, since neither says anything of
+what the device holds; the peer reads both as this master unreachable.
+The cost runs the other way too: a request holds the lock through its
+window waits, so the bound is one deadline for the whole request, from
+the start of its service to its closing frame, and every window wait
+runs to what is left of it. A bound re-armed per window let a peer
+continuing just inside it hold `hammer2_mntlk` for as many windows as
+the scan has, about three and a half hours for a 20000-entry `scanall`
+at ten seconds a window of sixteen. So a peer holds the lock for the
+bound at most, during which a mount, unmount, pfs-delete or bulkfree on
+the host waits and the synchronization thread's try-lock fails and its
+pass is skipped to its next cadence; the bound is the host's protection
+against that peer, and stage 2b's measured default is what sets it. A
+request for any other PFS is answered `DMSG_ERR_NOSUPP` and logged, and a
+request arriving while the connection closes is answered
+`DMSG_ERR_LOSTLINK`. A request for a command outside the stage's
 set is answered the same way; the set is a property of the descriptor,
 the eight read descriptors of the command table in stage 2 and never
 the call's `HAMMER2_XOP_MODIFYING` flag, which the slave's pass sets on
@@ -745,9 +795,24 @@ transaction from request to its `DELETE` and is not re-armed per frame: a
 peer trickling one frame inside each bound would otherwise hold a sync
 pass, whose freeze is acknowledged only at the top of the thread loop
 through a `thr_wait` that sleeps in `hz*60` steps with no exit, and the
-unmount with it. The bound is tested before a queued frame is taken, so
-a peer that keeps the next frame queued whenever the client asks is
-timed out like one that sends nothing. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
+unmount with it. Until the peer's `DELETE` the bound is tested before a
+queued frame is taken, so a peer that keeps the next frame queued
+whenever the client asks is timed out like one that sends nothing. After
+it the reply is complete and the peer has nothing left to send, so the
+frames are consumed to the end whatever the consumer's own time, and a
+master that answered in full is never counted unreachable for the time
+the slave took to take its answer. Before the `DELETE` the bound does
+count the consumer's time, `hammer2_xop_feed()` included, so an honest
+reply that needs more than the bound to arrive fails: a scan of more
+entries than the link carries in ten seconds reads its master as
+unreachable on every pass and copies only the keys fed before it. On
+the relay with no delay a 255-entry `readdir` took 19 to 21 ms on the
+debug kernel (`wire-run-20261021-040812`'s `H2 REMOTE` lines), about
+12000 entries a second, so the bound fails a single reply near 120000
+entries at that rate and far fewer on a slower link. That
+is a constraint on the write-capable pass of stage 3, which must either
+raise the bound with the size it asks for or ask in pieces, and stage
+2b's read-only pass never reaches it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
 (`:1586-1587`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
@@ -813,7 +878,7 @@ buffered writes and attribute changes dispatch no XOP at all
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1842-1852`).
 The slave's pass writes its element through chain calls and its own
-flush (`hammer2_synchro.c:2376`, `:2385`, `:2534`, `:2599`, `:464-503`,
+flush (`hammer2_synchro.c:2378`, `:2387`, `:2536`, `:2601`, `:464-503`,
 `:880`), which a read-only superblock does not refuse, and it needs the
 device open for writing: the open mode is the first mount's
 (`sb_open_mode()`, `hammer2_ondisk.c:147`, `:197`), so stage 2b mounts
@@ -939,7 +1004,7 @@ rather than from the design document alone.
   stamp a protocol took at `hammer2_chain_modify()` would differ there
   too.
 - **C9. The slave's pass re-stamps an inode copy at the replace with the
-  master's propagated tid** (`hammer2_synchro.c:1422`, `:2169`, `:2599`),
+  master's propagated tid** (`hammer2_synchro.c:1422`, `:2169`, `:2601`),
   and it snapshots its source on the source element's own device
   (`:808`, `:824`; `hammer2_ioctl.c:812`, `:890-891`), which for a
   remote source is the connection device, where a create is refused.
@@ -1058,7 +1123,7 @@ Five candidates, with what each met.
    the slave direction, which reverses decision B's "no thread for a
    MASTER" for that direction only; within one term every compared tid
    comes from the holder's counter and the pass stamps the replica from
-   the source (`hammer2_synchro.c:671-673`, `:2169`, `:2599`) where it
+   the source (`hammer2_synchro.c:671-673`, `:2169`, `:2601`) where it
    replaces, so C1 and C8 do not arise within a term, and one frontend
    with no forwarding means C3, C4, C5 and C11 do not arise while that
    frontend is the only one; replicas serve no reads of their own in
@@ -1075,7 +1140,7 @@ Five candidates, with what each met.
    what the stage-2 shape reads, a read-only mount whose cluster holds a
    remote master element, not what the holder's mount reads. C2 remains: the pass's inode
    insert and its destroy arm run at mtid 0 (`hammer2_synchro.c:1907-1910`, `:1818-1819`,
-   `:2376-2399`), so the delete helper's and the split's stamps on a
+   `:2378-2401`), so the delete helper's and the split's stamps on a
    replica carry no source tid today, which is the first obligation
    below. An
    `fsync` on the holder returns when a majority including the holder
@@ -1193,7 +1258,7 @@ and exits (`:1612-1614`), copying nothing today in any tree
 a pass). **In P8 a MASTER element gets no synchronization thread**: the
 creation at `hammer2_vfsops.c:497`, which today skips a MASTER slot only
 when `pfs_nmasters` is at most one, skips every MASTER slot, one marked line with `DEFER(P9: reintegration of a
-stale master)`, and `cluster-quorum.sh`'s check at `:252`, which asserts
+stale master)`, and `cluster-quorum.sh`'s check at `:266`, which asserts
 two support threads as its only witness that `pfs_nmasters` is 2,
 inverts to assert none and takes a new witness, a `hammer2_debug` print
 of `pfs_nmasters` after `hammer2_pfsalloc()`'s count
@@ -1258,7 +1323,9 @@ settled here: the check counts masters whose slot is absent or errored
 with the connection class (`ETIMEDOUT`, the closed-connection code) and
 returns a new `HAMMER2_ERROR_` bit, mapped to `ENOTCONN`, before the
 `ESRCH`/`EDEADLK` split, so a read under quorum loss is `ENOTCONN` and
-not "no such file"; the end-of-scan path that counts a `(NULL, error)`
+not "no such file". A remote element's every other way of ending
+without an answer is put into that class where it is fed, so the check
+needs no list of them (the remote element and the server above); the end-of-scan path that counts a `(NULL, error)`
 master as agreeing (`hammer2_cluster.c:301-306`) excludes an unreachable
 one. An absent master is counted against `pfs_nmasters`, which nothing
 lowers (`hammer2_vfsops.c:459-469` only raise it) and which the detach
@@ -1443,8 +1510,9 @@ dispatch (`:478`); in `hammer2_iocom.c`, the span test admitting
 `PROTO_2` (`:375-380`), the span table's count and lock at its
 initialization (`:128-129`) and the debug gate on the `RCVMSG` print
 (`:225`); in `hammer2_synchro.c`, the guard refusing a local snapshot of
-a remote focus (`:734`, `:743`) and the pass's refusal on a device
-opened read-only (`:1162`); in `hammer2_inode.c`, the release that skips
+a remote focus (`:734`, `:743`), the pass's refusal on a device
+opened read-only (`:1162`) and the insert's refusal beneath a
+direct-data inode (`:2299`); in `hammer2_inode.c`, the release that skips
 the caller's own element in `hammer2_inode_get()` (`:1043`), the hang
 the first wire run with a remote master found; in `hammer2_vfsops.c`,
 the remote slots' detach before a local device leaves (`:743`), the

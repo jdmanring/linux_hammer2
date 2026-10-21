@@ -52,7 +52,14 @@
  * refuse it; the wire harness's control requires that refusal.
  * --bare-dirent 1 turns the inode answering the first nresolve into a
  * directory entry with no bytes, the shape a peer's lookup must refuse
- * since its caller reads the answer as an inode.  Every
+ * since its caller reads the answer as an inode.
+ * --refuse-nresolve 1 answers the first nresolve with kern_dmsg's own
+ * refusal, the LNK_ERROR a server sends when it cannot take a request,
+ * and drops the rest of the real answer; the receiving kernel must read
+ * that master as unreachable and never as having answered "no such
+ * name".  --stall-ms N holds every frame due to B from the first readdir
+ * answer on for N milliseconds, in order, so B's bound on a reply ends the
+ * call while A has answered in full.  Every
  * decision is one trace line as before, under a header that
  * names the mode and the knobs.  The trace records what the relay did and
  * is not a replay: two live kernels do not send the same frames twice, so
@@ -165,7 +172,10 @@ static struct {
 	long partition_at, partition_len;
 	int rekey_data;		/* the relay moves one data feed's key */
 	int bare_dirent;	/* the relay answers one nresolve with a dirent */
-} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0 };
+	int refuse_nresolve;	/* the relay refuses one nresolve for A */
+	long stall_ms;		/* the relay holds B's frames from one readdir */
+} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
+    0, 0 };
 
 static void
 usage(void)
@@ -178,7 +188,7 @@ usage(void)
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
-	    "              [--trace FILE]\n");
+	    "              [--refuse-nresolve 1] [--stall-ms MS] [--trace FILE]\n");
 	exit(2);
 }
 
@@ -209,6 +219,8 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--partition-len")) opt.partition_len = atol(v);
 		else if (!strcmp(a, "--rekey-data")) opt.rekey_data = atoi(v);
 		else if (!strcmp(a, "--bare-dirent")) opt.bare_dirent = atoi(v);
+		else if (!strcmp(a, "--refuse-nresolve")) opt.refuse_nresolve = atoi(v);
+		else if (!strcmp(a, "--stall-ms")) opt.stall_ms = atol(v);
 		else usage();
 		i++;
 	}
@@ -225,7 +237,9 @@ validate(void)
 	    opt.delay_max < 0 || opt.loss < 0 || opt.loss > 1 ||
 	    opt.dup < 0 || opt.dup > 1 || opt.relay < 0 || opt.relay > 65535 ||
 	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1 ||
-	    opt.bare_dirent < 0 || opt.bare_dirent > 1)
+	    opt.bare_dirent < 0 || opt.bare_dirent > 1 ||
+	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
+	    opt.stall_ms < 0 || opt.stall_ms > 600000)
 		usage();
 }
 
@@ -715,6 +729,7 @@ struct side {
 	int eof;		/* its reader saw EOF: nothing more comes from it */
 	struct frame *queue;	/* frames due to it, sorted by due */
 	long sent;		/* frames read from it */
+	long held_until;	/* --stall-ms: nothing due to it before this */
 };
 
 static void
@@ -800,6 +815,48 @@ bare_dirent(struct frame *f)
 	return (1);
 }
 
+static int refused;		/* --refuse-nresolve has fired */
+static int stalled;		/* --stall-ms has fired */
+static uint64_t readdir_msgid;	/* the first readdir request, 0 none yet */
+static uint64_t refuse_msgid;	/* its transaction, 0 none yet */
+
+/*
+ * The first nresolve request is remembered by its msgid, as for
+ * --bare-dirent, and the first frame answering it becomes kern_dmsg's
+ * refusal (kdmsg_msg_reply(): DMSG_LNK_ERROR with the answer's flags and DELETE,
+ * DMSG_ERR_NOSUPP in the header's error) with no extension and no aux.
+ * Returns 1 for that frame, -1 for a later frame of the same answer, which
+ * the caller drops since the forged DELETE closed it, 0 otherwise.
+ */
+static int
+refuse_nresolve(struct frame *f)
+{
+	if ((f->hdr.cmd & 0x00FFFF00U) == 0x00201200U &&
+	    (f->hdr.cmd & 0x20000000U) == 0) {
+		if (refuse_msgid == 0)
+			refuse_msgid = f->hdr.msgid;
+		return (0);
+	}
+	if (refuse_msgid == 0 || f->hdr.msgid != refuse_msgid ||
+	    (f->hdr.cmd & 0x20000000U) == 0)
+		return (0);
+	if (refused)
+		return (-1);
+	/* the answer's own CREATE, REPLY and REVTRANS, which picks the
+	 * receiver's state tree (kern_dmsg.c, kdmsg_state_msgrx), and DELETE */
+	f->hdr.cmd = (f->hdr.cmd & 0xFF000000U) | 0x40000000U | 0x000FFF01U;
+	f->hdr.error = 0x20;
+	free(f->ext);
+	f->ext = NULL;
+	f->ext_len = 0;
+	free(f->aux);
+	f->aux = NULL;
+	f->hdr.aux_bytes = 0;
+	f->hdr.aux_crc = 0;
+	resign(f);
+	return (1);
+}
+
 /* One frame read from `from`, decided for `to`.  The index i counts every
  * frame the relay read in either direction, so a partition or a disconnect
  * scripted at K lands at the Kth frame of the run and not of one side. */
@@ -850,7 +907,35 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		trace("%s>%s i=%ld msgid=%" PRIu64 " bare-dirent t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
-	side_enqueue(to, f, t + d);
+	if (opt.refuse_nresolve) {
+		int rf = refuse_nresolve(f);
+
+		if (rf > 0) {
+			refused = 1;
+			trace("%s>%s i=%ld msgid=%" PRIu64 " refuse t=%ld\n",
+			    from->name, to->name, i, f->hdr.msgid, t);
+		} else if (rf < 0) {
+			ct.dropped++;
+			trace("%s>%s i=%ld msgid=%" PRIu64 " refused-rest t=%ld\n",
+			    from->name, to->name, i, f->hdr.msgid, t);
+			frame_free(f);
+			return;
+		}
+	}
+	/* the first frame answering a readdir, the HM2 feed to B */
+	if (opt.stall_ms && !stalled && to->name[0] == 'B' &&
+	    (f->hdr.cmd & 0x00FFFF00U) == 0x00203000U &&
+	    (f->hdr.cmd & 0x20000000U) && f->hdr.msgid == readdir_msgid) {
+		stalled = 1;
+		to->held_until = t + opt.stall_ms;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " stall t=%ld until=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t, to->held_until);
+	}
+	if (opt.stall_ms && readdir_msgid == 0 &&
+	    (f->hdr.cmd & 0x00FFFF00U) == 0x00201100U &&
+	    (f->hdr.cmd & 0x20000000U) == 0)
+		readdir_msgid = f->hdr.msgid;
+	side_enqueue(to, f, t + d > to->held_until ? t + d : to->held_until);
 }
 
 /* Write everything due to `to`; a side that went away loses them. */
@@ -987,7 +1072,7 @@ relay_pair(struct side *a, struct side *b, long i)
 static int
 relay(void)
 {
-	struct side a = { "A", -1, 0, NULL, 0 }, b = { "B", -1, 0, NULL, 0 };
+	struct side a = { "A", -1, 0, NULL, 0, 0 }, b = { "B", -1, 0, NULL, 0, 0 };
 	struct sockaddr_in sin;
 	int lfd, one = 1;
 	long i = 0;
@@ -1010,9 +1095,11 @@ relay(void)
 	}
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
-	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d\n", opt.relay, opt.seed,
+	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
+	    " stall-ms=%ld\n", opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
-	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent);
+	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
+	    opt.refuse_nresolve, opt.stall_ms);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);

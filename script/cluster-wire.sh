@@ -43,6 +43,25 @@
 # other, and every digest equal to A's, warm and cold, since only the first
 # lookup of the name was answered so.
 #
+# H2_WIRE_REFUSE=1 is the control on what B counts as a master's answer:
+# the relay answers the first nresolve, B's stat of small.txt, with the
+# refusal a server sends when it cannot take a request, and drops A's real
+# answer. A refusal says nothing of the name, so B must read A as
+# unreachable and the stat must fail "not connected". Read as an answer,
+# the refusal is the lookup's result: with this one master the stat fails
+# with the refusal's own "Operation not supported", and with two the
+# quorum reads the name as absent. The run must read one refuse line in
+# the trace, that stat failing not connected and neither absent nor
+# unsupported, B's nresolve ending ENOTCONN, and every digest equal to A's.
+#
+# H2_WIRE_STALL=MS is the control on B's bound: B's reply bound is set to
+# 2000 ms and the relay holds every frame due to B from the first readdir
+# answer, B's listing of CL's root, for MS ms in order. A answers in full
+# and B's call must end at its bound with the master read as unreachable:
+# the listing fails not connected, B's readdir ends ETIMEDOUT, and the
+# reads after the stall find every digest equal to A's. MS must exceed the
+# 2000 ms bound.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -60,7 +79,14 @@ PORT=${H2_RELAY_PORT:-4800}
 SEED=${H2_WIRE_SEED:-11}
 REKEY=${H2_WIRE_REKEY:-0}
 DIRENT=${H2_WIRE_DIRENT:-0}
-[ "$REKEY" = 1 ] && [ "$DIRENT" = 1 ] && { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
+REFUSE=${H2_WIRE_REFUSE:-0}
+STALL=${H2_WIRE_STALL:-0}
+case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
+[ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
+nctl=0
+for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); done
+[ "$STALL" = 0 ] || nctl=$((nctl + 1))
+[ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
@@ -148,6 +174,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
 "$W/h2loop" --relay "$PORT" --seed "$SEED" \
     ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
     ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
+    --refuse-nresolve "$REFUSE" --stall-ms "$STALL" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -241,11 +268,24 @@ mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "mount CL ro failed"; exit 1; }
 echo "ro-mounted 1"
 GUEST
 cat > "$W/read.sh" <<'GUEST'
-# read: B reads A's files through the registered element
+# read [<stall ms>]: B reads A's files through the registered element
 mountpoint -q $C || { echo "CL not mounted"; exit 1; }
+P=/sys/module/hammer2/parameters/remote_timeout_ms
+[ "${1:-0}" = 0 ] || echo 2000 > $P
+echo "remote-timeout-ms $(cat $P)"
 # the run's first lookup, so the dirent control knows the name it answers
-stat $C/small.txt >/dev/null 2>&1; echo "first-stat-rc $?"
-echo "files $(cd $C && find . -type f 2>/dev/null | grep -c .)"
+stat $C/small.txt >/dev/null 2>/tmp/h2wire.staterr; echo "first-stat-rc $?"
+echo "first-stat-notconn $(grep -c 'not connected' /tmp/h2wire.staterr)"
+echo "first-stat-enoent $(grep -c 'No such file' /tmp/h2wire.staterr)"
+echo "first-stat-unsupported $(grep -c 'not supported' /tmp/h2wire.staterr)"
+echo "first-stat-err $(sed -n '1s/.*: //p' /tmp/h2wire.staterr)"
+# and its first listing, which the stall control holds
+echo "files $(cd $C && find . -type f 2>/tmp/h2wire.finderr | grep -c .)"
+echo "find-notconn $(grep -c 'not connected' /tmp/h2wire.finderr)"
+if [ "${1:-0}" != 0 ]; then
+	sleep $(($1 / 1000 + 2))
+	echo 10000 > $P
+fi
 echo "many $(find $C/many -mindepth 1 2>/dev/null | grep -c .)"
 # fiemap is the bmap XOP over the wire, past the first block
 filefrag -v $C/big.bin > /tmp/h2wire.frag 2>&1; echo "fiemap-rc $?"
@@ -271,6 +311,8 @@ echo "log-not-proxy $(klog 'not a proxy')"
 echo "log-not-proxy-bmap $(klog 'HM2 bmap feed of type 3 not a proxy')"
 echo "log-not-proxy-nresolve $(klog 'HM2 nresolve feed of type 4 not a proxy')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
+echo "log-nresolve-notconn $(klog 'H2 REMOTE nresolve .* end=00080000')"
+echo "log-readdir-timedout $(klog 'H2 REMOTE readdir .* end=00040000')"
 GUEST
 cat > "$W/link.sh" <<'GUEST'
 # link <peer clid> <peer type>: what the log and the table say of the peer
@@ -393,7 +435,7 @@ sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
 phase B reg.sh
-phase B ro.sh && phase B read.sh
+phase B ro.sh && phase B read.sh "$STALL"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -433,7 +475,7 @@ sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
 nfa=$(num "$(val A files)" 0)
 [ "$(num "$(val B lone-mount-rc)" 0)" != 0 ]; check "remote: B's SLAVE CL alone does not mount, having no master" $? "rc $(val B lone-mount-rc)"
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
-[ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"
+[ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
 [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"
 [ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by $(val B utility)'s show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
 # The file is on A alone, so no block has an address on B: every extent
@@ -451,6 +493,14 @@ fi
 if [ "$DIRENT" = 1 ]; then
 	bd=$(grep -c ' bare-dirent ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$bd" 0)" = 1 ] && [ "$(num "$(val B first-stat-rc)" 0)" != 0 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-nresolve)" 0)" = 1 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "control: an nresolve answered by a directory entry with no bytes is refused, not read as an inode" $? "bare-dirent lines $(num "$bd" 0), first stat rc $(val B first-stat-rc), not-proxy $(val B log-not-proxy) of which nresolve $(val B log-not-proxy-nresolve), peer-sent $(val B log-peer-sent)"
+fi
+if [ "$REFUSE" = 1 ]; then
+	rf=$(grep -c ' refuse ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$rf" 0)" = 1 ] && [ "$(num "$(val B first-stat-rc)" 0)" != 0 ] && [ "$(num "$(val B first-stat-notconn)" 0)" = 1 ] && [ "$(num "$(val B first-stat-enoent)" 1)" = 0 ] && [ "$(num "$(val B first-stat-unsupported)" 1)" = 0 ] && [ "$(num "$(val B log-nresolve-notconn)" 0)" -ge 1 ]; check "control: a lookup the server refused reads the master unreachable, not as its answer" $? "refuse lines $(num "$rf" 0), first stat rc $(val B first-stat-rc) \"$(val B first-stat-err)\", not connected $(val B first-stat-notconn), no such file $(val B first-stat-enoent), not supported $(val B first-stat-unsupported), nresolve ended ENOTCONN $(val B log-nresolve-notconn)"
+fi
+if [ "$STALL" != 0 ]; then
+	st=$(grep -c ' stall ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
 [ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"

@@ -2299,14 +2299,16 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 	 * XXX Linux: a block beneath an inode whose data is embedded.  The
 	 * lookup above finds nothing there under NODIRECT, and
 	 * hammer2_chain_create() would take the embedded bytes for a blockset,
-	 * its assertion being compiled out.  A file the master grew after this
-	 * element copied it small reaches here until its directory's scan
-	 * replaces the inode, and a remote master can feed one on purpose.
+	 * its assertion being compiled out.  A file the master grew between its
+	 * directory's scan, which replaces the inode, and its own reaches here,
+	 * and a remote master can feed one on purpose.
 	 */
 	if ((*parentp)->bref.type == HAMMER2_BREF_TYPE_INODE &&
 	    (*parentp)->data != NULL &&
 	    ((*parentp)->data->ipdata.meta.op_flags &
 	     HAMMER2_OPFLAG_DIRECTDATA)) {
+		pr_warn_ratelimited("hammer2: sync insert refused: a block beneath direct-data inode %016llx\n",
+		    (unsigned long long)(*parentp)->data->ipdata.meta.inum);
 		error = HAMMER2_ERROR_EIO;
 		goto failed;
 	}

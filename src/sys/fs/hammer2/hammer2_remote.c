@@ -64,6 +64,7 @@ struct hammer2_remote_req {
 	int			idx;		/* descriptor index */
 	int			window;		/* feeds the peer has allowed so far */
 	int			cancelled;	/* the peer's DELETE arrived */
+	unsigned long		deadline;	/* the whole request's bound */
 };
 
 /*
@@ -246,7 +247,7 @@ hammer2_remote_rcvmsg(kdmsg_msg_t *msg)
 			kfree(req);
 			pr_warn_ratelimited("hammer2: HM2 request %08x refused: connection closing\n",
 			    cmd);
-			kdmsg_msg_reply(msg, DMSG_ERR_NOSUPP);
+			kdmsg_msg_reply(msg, DMSG_ERR_LOSTLINK);
 			return (0);
 		}
 		state->any.any = req;
@@ -367,9 +368,11 @@ hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof,
 }
 
 /*
- * The window: HAMMER2_XOPFIFO feeds per continuation.  The wait is bounded
- * so a peer that stops continuing cannot hold the connection's queue, and
- * it ends early on the peer's DELETE and on the connection's end.
+ * The window: HAMMER2_XOPFIFO feeds per continuation.  The wait runs to
+ * the request's own deadline, not a bound per window, since the request
+ * holds hammer2_mntlk throughout and a peer continuing just inside a
+ * per-window bound would hold it for as many windows as the scan has.  It
+ * ends early on the peer's DELETE and on the connection's end.
  * HAMMER2_NOWINDOW builds the negative control, which must send past it.
  */
 static int
@@ -377,15 +380,16 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
 {
 #ifndef HAMMER2_NOWINDOW
 	struct hammer2_remote *rm = req->hmp->remote;
-	long left;
+	long left = (long)(req->deadline - jiffies);
 
-	left = wait_event_timeout(req->waitq,
-	    READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN ||
-	    READ_ONCE(req->window) > fed,
-	    msecs_to_jiffies(hammer2_remote_timeout_ms));
+	if (left > 0)
+		wait_event_timeout(req->waitq,
+		    READ_ONCE(req->cancelled) ||
+		    READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN ||
+		    READ_ONCE(req->window) > fed, left);
 	if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN)
 		return (HAMMER2_ERROR_ABORTED);
-	if (left == 0 && READ_ONCE(req->window) <= fed)
+	if (READ_ONCE(req->window) <= fed)
 		return (HAMMER2_ERROR_ETIMEDOUT);
 #endif
 	return (0);
@@ -401,22 +405,29 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
  * take here would wait on the unmount waiting on it; a closed state ends the
  * wait.  A bulkfree scan holds the lock for its whole run and a request
  * started under one fails at the bound.  Returns with the lock held when
- * a PFS is found and released otherwise.
+ * a PFS is found and released otherwise, with *errorp saying why: 0 when
+ * this device has no such PFS mounted, a refusal, and ABORTED or ETIMEDOUT
+ * when the lock was not had, which says nothing of what the device holds.
  */
 static hammer2_pfs_t *
-hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp)
+hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,
+    uint32_t *errorp)
 {
 	hammer2_dev_t *hmp = req->hmp;
 	struct hammer2_remote *rm = hmp->remote;
 	hammer2_pfs_t *pmp;
-	unsigned long deadline;
 	int i;
 
-	deadline = jiffies + msecs_to_jiffies(hammer2_remote_timeout_ms);
+	*errorp = 0;
 	while (!hammer2_lk_tryex(&hammer2_mntlk)) {
-		if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN ||
-		    time_after(jiffies, deadline))
+		if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN) {
+			*errorp = HAMMER2_ERROR_ABORTED;
 			return (NULL);
+		}
+		if (time_after(jiffies, req->deadline)) {
+			*errorp = HAMMER2_ERROR_ETIMEDOUT;
+			return (NULL);
+		}
 		schedule_timeout_uninterruptible(msecs_to_jiffies(10));
 	}
 	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
@@ -455,11 +466,23 @@ hammer2_remote_serve(struct work_struct *work)
 	uint32_t error = 0;
 	int clindex = 0, fed = 0, nerror, refused = 0, eof = 1;
 
+	/*
+	 * One bound for the whole request, from here to its closing frame,
+	 * since everything from the PFS's lookup on holds hammer2_mntlk.
+	 */
+	req->deadline = t0 + msecs_to_jiffies(hammer2_remote_timeout_ms);
 	if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN) {
 		error = HAMMER2_ERROR_ABORTED;
 		goto out;
 	}
-	pmp = hammer2_remote_pfs(req, &clindex);
+	pmp = hammer2_remote_pfs(req, &clindex, &error);
+	if (pmp == NULL && error) {
+		pr_warn_ratelimited("hammer2: HM2 %s not served: %s\n", desc->id,
+		    error == HAMMER2_ERROR_ETIMEDOUT ?
+		    "the mount lock stayed held to the bound" :
+		    "the request or the connection ended");
+		goto out;
+	}
 	if (pmp == NULL) {
 		pr_warn_ratelimited("hammer2: HM2 %s refused: no mounted PFS of that cluster on this device\n",
 		    desc->id);
@@ -848,23 +871,40 @@ hammer2_rcall_close_locked(struct hammer2_rcall *call)
 }
 
 /*
- * The errors a read's storage function or the server feeds, which the
- * collect and its callers read as a local element's, and the server's
- * ETIMEDOUT at its window bound.  Its ABORTED, a quiesce for its unmount
- * or a reconnect, is the link's loss and reads as ENOTCONN.  Any other bit
- * is a control code the core acts on (EAGAIN restarts the sync pass with
- * no sleep, ESRCH and EDEADLK are quorum verdicts), so a peer's is EIO.
+ * A fed chain's error: one of the media errors a chain carries, which the
+ * collect reads as a local chain's, or EIO.  Any other bit is a control
+ * code the core acts on (EAGAIN restarts the sync pass with no sleep,
+ * ESRCH and EDEADLK are quorum verdicts) and no chain carries one.
  */
-#define HAMMER2_REMOTE_ERRORS	(HAMMER2_ERROR_EIO | HAMMER2_ERROR_CHECK | \
-	HAMMER2_ERROR_BADBREF | HAMMER2_ERROR_ENOENT | HAMMER2_ERROR_EINVAL | \
-	HAMMER2_ERROR_EOPNOTSUPP | HAMMER2_ERROR_EOF | HAMMER2_ERROR_ETIMEDOUT)
+#define HAMMER2_REMOTE_CHAIN_ERRORS	(HAMMER2_ERROR_EIO | \
+	HAMMER2_ERROR_CHECK | HAMMER2_ERROR_BADBREF)
 
 static uint32_t
 hammer2_remote_error(uint32_t error)
 {
-	if (error & HAMMER2_ERROR_ABORTED)
-		return (HAMMER2_ERROR_ENOTCONN);
-	return ((error & ~HAMMER2_REMOTE_ERRORS) ? HAMMER2_ERROR_EIO : error);
+	return ((error & ~HAMMER2_REMOTE_CHAIN_ERRORS) ? HAMMER2_ERROR_EIO : error);
+}
+
+/*
+ * The element's end, the error fed with its NULL chain, which the quorum
+ * check reads as this master's vote (hammer2_cluster.c): a clean end, 0,
+ * or ENOENT, no such key, are what a master says of the key and count.
+ * Every other end is the absence of an answer, whatever made it (a
+ * refusal, a server that could not take its mount lock, a frame this side
+ * could not take, the peer's own media error, the bound, the link's loss),
+ * and reads as unreachable, which the check counts as no vote.  A peer
+ * that lies about a key is admission's to keep out
+ * (doc/CLUSTER_PROTOCOL_DESIGN.md, the security model); one that fails to
+ * answer must never be read as having answered, and an allowlist keeps a
+ * new way of failing on the unreachable side without anyone listing it.
+ */
+static uint32_t
+hammer2_remote_end(uint32_t error)
+{
+	if (error == 0 || error == HAMMER2_ERROR_ENOENT ||
+	    error == HAMMER2_ERROR_ETIMEDOUT)
+		return (error);
+	return (HAMMER2_ERROR_ENOTCONN);
 }
 
 /*
@@ -931,22 +971,12 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 			if (msg->any.hm2_feed.flags & DMSG_HM2_FEEDF_EOF)
 				call->eof = 1;
 			call->rkey = msg->any.hm2_feed.rkey;
+			/* the peer's own, for hammer2_remote_end() to judge */
 			if (call->error == 0)
-				call->error = hammer2_remote_error(
-				    msg->any.hm2_feed.error);
+				call->error = msg->any.hm2_feed.error;
 		} else if (call->error == 0) {
 			/* kern_dmsg's LNK_ERROR: a refusal or the link's loss */
-			switch (msg->any.head.error) {
-			case DMSG_ERR_NOSUPP:
-				call->error = HAMMER2_ERROR_EOPNOTSUPP;
-				break;
-			case DMSG_ERR_LOSTLINK:
-				call->error = HAMMER2_ERROR_ENOTCONN;
-				break;
-			default:
-				call->error = HAMMER2_ERROR_EIO;
-				break;
-			}
+			call->error = HAMMER2_ERROR_ENOTCONN;
 		}
 		call->done = 1;
 		/* our side closes here, where the state is known to be live */
@@ -1029,8 +1059,11 @@ hammer2_rcall_start(hammer2_dev_t *cdev, int idx, const struct uuid *clid,
  * with the element's end consumed (call->eof and call->error say which),
  * HAMMER2_ERROR_ETIMEDOUT at the bound, HAMMER2_ERROR_ENOTCONN when the
  * link ended.  A continuation goes back every HAMMER2_XOPFIFO frames.
- * The bound is tested before a queued frame is taken, so a peer that
- * keeps the next frame queued is timed out like one that sends nothing.
+ * Until the peer's DELETE the bound is tested before a queued frame is
+ * taken, so a peer that keeps the next frame queued is timed out like one
+ * that sends nothing.  After it every frame of the reply is here and the
+ * peer has nothing left to send, so a complete reply is consumed to its
+ * end whatever the consumer's own time.
  */
 static int
 hammer2_rcall_next(struct hammer2_rcall *call, unsigned long deadline,
@@ -1043,9 +1076,11 @@ hammer2_rcall_next(struct hammer2_rcall *call, unsigned long deadline,
 
 	*fp = NULL;
 	for (;;) {
-		if (time_after(jiffies, deadline))
-			return (HAMMER2_ERROR_ETIMEDOUT);
 		mutex_lock(&rc->mtx);
+		if (!call->done && time_after(jiffies, deadline)) {
+			mutex_unlock(&rc->mtx);
+			return (HAMMER2_ERROR_ETIMEDOUT);
+		}
 		f = list_first_entry_or_null(&call->frames,
 		    struct hammer2_rframe, entry);
 		if (f) {
@@ -1541,7 +1576,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 	call = hammer2_rcall_start(cdev, idx, &pmp->pfs_clid, ip1->meta.inum,
 	    key_beg, key_end, lookup_flags, nmax, name, name_len, &error);
 	if (call == NULL) {
-		hammer2_xop_feed(xop, NULL, clindex, error);
+		hammer2_xop_feed(xop, NULL, clindex, hammer2_remote_end(error));
 		goto done;
 	}
 	while ((error = hammer2_rcall_next(call, deadline, &f)) == 0) {
@@ -1600,15 +1635,17 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		    call->rkey < x->xop_readdir.rkey)
 			x->xop_readdir.rkey = call->rkey;
 		if (call->eof || error)
-			hammer2_xop_feed(xop, NULL, clindex, error);
+			hammer2_xop_feed(xop, NULL, clindex,
+			    hammer2_remote_end(error));
 	} else {
-		hammer2_xop_feed(xop, NULL, clindex, error);
+		hammer2_xop_feed(xop, NULL, clindex, hammer2_remote_end(error));
 	}
 	hammer2_rcall_end(call);
 	if (hammer2_debug & 0x0100)
-		kprintf("H2 REMOTE %s inum=%016llx fed=%d error=%08x ms=%u\n",
+		kprintf("H2 REMOTE %s inum=%016llx fed=%d error=%08x end=%08x ms=%u\n",
 		    xop->desc->id, (unsigned long long)ip1->meta.inum, fed,
-		    error, jiffies_to_msecs(jiffies - t0));
+		    error, hammer2_remote_end(error),
+		    jiffies_to_msecs(jiffies - t0));
 done:
 	hammer2_remote_dev_drop(cdev);
 	return (1);
