@@ -84,23 +84,34 @@ The rows above are capabilities; this is the interface, because a
 consumer asks both and only the second is a list. DragonFly declares 27
 `HAMMER2IOC_*` names, of which 22 are commands and 5 are the
 `HAMMER2IOC_INODE_FLAG_*` bits that `INODE_SET` reads out of
-`ino->flags` rather than dispatching. This port declares 20 names on the
-same split, 15 commands and the same 5 flag bits, and dispatches one
-command DragonFly does not have, `HAMMER2IOC_VOLUME_LIST2`. The eight
-DragonFly commands it does not carry are enumerated here rather than
-left to be discovered, and each maps onto a row above so the two cannot
+`ino->flags` rather than dispatching. This port declares 27 names on the
+same split, 22 commands and the same 5 flag bits, and dispatches one
+command DragonFly does not have, `HAMMER2IOC_VOLUME_LIST2`. The one
+DragonFly command it does not carry is enumerated here rather than
+left to be discovered, and maps onto a row above so the two cannot
 drift apart:
 
 | ioctl | what it does upstream | covered by |
 |---|---|---|
-| `HAMMER2IOC_REMOTE_ADD` | add a cluster member | IncrementalReplication, RemoteCheckpoint: `unavailable`; Replication between local devices needs no remote member |
-| `HAMMER2IOC_REMOTE_DEL` | remove a cluster member | the same row |
-| `HAMMER2IOC_REMOTE_REP` | replicate to a member | the same row |
-| `HAMMER2IOC_REMOTE_SCAN` | scan for members | the same row |
-| `HAMMER2IOC_SOCKET_GET` | read cluster comms socket settings | the same row |
-| `HAMMER2IOC_SOCKET_SET` | set them | the same row |
-| `HAMMER2IOC_RECLUSTER` | re-form the cluster after a topology change | the same row |
 | `HAMMER2IOC_BULKFREE_ASYNC` | start a bulkfree scan and return | GC candidates: the port answers the synchronous `HAMMER2IOC_BULKFREE_SCAN`, which `script/bulkfree.sh` measures |
+
+The seven cluster ioctls are carried as upstream wrote them, for stage
+2b of `doc/CLUSTER_PROTOCOL_DESIGN.md`, and three of them do upstream's
+nothing, which is recorded here with the upstream line rather than
+given a meaning no document asks for:
+
+| ioctl | what it does here | upstream |
+|---|---|---|
+| `HAMMER2IOC_REMOTE_SCAN`, `_ADD`, `_DEL` | read, write and clear one `copyinfo[]` row of the volume header, the row's strings terminated and its type and flags checked before the header takes it; a written row goes to the peer as `LNK_HAMMER2_VOLCONF` | `hammer2_ioctl.c:244-357` |
+| `HAMMER2IOC_REMOTE_REP` | marks the volume header modified and returns 0 | `hammer2_ioctl.c:359-375` |
+| `HAMMER2IOC_SOCKET_GET` | `EOPNOTSUPP` | `hammer2_ioctl.c:380-384` |
+| `HAMMER2IOC_SOCKET_SET` | takes and releases the volume header lock and returns 0 | `hammer2_ioctl.c:389-404` |
+| `HAMMER2IOC_RECLUSTER` | hands a connected stream socket to the message core, the first slot on a block device chosen as the device, since a remote master's proxy can be the focus | `hammer2_ioctl.c:83-115` |
+
+What the rows drive, a remote member registered from a span and read
+through the XOP API, is the remote element of the same note, and the
+Replication, IncrementalReplication and RemoteCheckpoint rows above move
+when it lands and not before.
 
 Seven of the eight are the cluster surface, which the rows above declare
 absent today. They are not out of scope: they are P8 on the roadmap,

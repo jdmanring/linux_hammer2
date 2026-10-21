@@ -95,20 +95,25 @@ hammer2_ioctl_recluster(hammer2_inode_t *ip, void *data)
 		 */
 		error = 0;
 		if (error == 0) {
+			/*
+			 * XXX Linux: upstream hands the descriptor to the
+			 * focus's device.  With a remote master registered
+			 * the focus is a proxy on the connection device, and
+			 * after a detach the focus is cleared, so the socket
+			 * goes to the first slot on a block device, the pick
+			 * hammer2_vfs_statfs() makes, and no focus is read
+			 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the seven ioctls).
+			 */
+			hammer2_dev_t *hmp = hammer2_pfs_first_bdev(ip->pmp);
+
 			cluster = &ip->pmp->iroot->cluster;
-			if (cluster->focus != NULL) {
-				hammer2_cluster_reconnect(cluster->focus->hmp,
-							  fp);
-				error = 0;
-			} else if (cluster->nchains == 1 &&
-				   cluster->array[0].chain != NULL) {
-				hammer2_cluster_reconnect(
-					cluster->array[0].chain->hmp, fp);
+			if (hmp != NULL) {
+				hammer2_cluster_reconnect(hmp, fp);
 				error = 0;
 			} else {
 				kprintf("hammer2: recluster: "
-					"nchains=%d focus=%p\n",
-					cluster->nchains, cluster->focus);
+					"nchains=%d no block device\n",
+					cluster->nchains);
 				error = EINVAL;
 			}
 		}
@@ -116,6 +121,201 @@ hammer2_ioctl_recluster(hammer2_inode_t *ip, void *data)
 		error = EINVAL;
 	}
 	return error;
+}
+
+/*
+ * Retrieve information about a remote
+ */
+static int
+hammer2_ioctl_remote_scan(hammer2_inode_t *ip, void *data)
+{
+	hammer2_dev_t *hmp;
+	hammer2_ioc_remote_t *remote = data;
+	int copyid = remote->copyid;
+
+	hmp = hammer2_pfs_first_bdev(ip->pmp);	/* XXX Linux: was pfs_hmps[0] */
+	if (hmp == NULL)
+		return (EINVAL);
+
+	if (copyid < 0 || copyid >= HAMMER2_COPYID_COUNT)
+		return (EINVAL);
+
+	hammer2_voldata_lock(hmp);
+	remote->copy1 = hmp->voldata.copyinfo[copyid];
+	hammer2_voldata_unlock(hmp);
+
+	/*
+	 * Adjust nextid (GET only)
+	 */
+	while (++copyid < HAMMER2_COPYID_COUNT &&
+	       hmp->voldata.copyinfo[copyid].copyid == 0) {
+		;
+	}
+	if (copyid == HAMMER2_COPYID_COUNT)
+		remote->nextid = -1;
+	else
+		remote->nextid = copyid;
+
+	return(0);
+}
+
+/*
+ * XXX Linux: the fields a row carries from userland, checked before the
+ * row reaches the volume header (HAMMER2_AGENT_HANDOFF.md's validation
+ * list): the strings are terminated, the type is one the format names
+ * and the flags are the bits the format defines.  Upstream copies the
+ * structure as it arrives.
+ */
+static int
+hammer2_ioctl_remote_check(hammer2_volconf_t *copy)
+{
+	copy->label[sizeof(copy->label) - 1] = 0;
+	copy->path[sizeof(copy->path) - 1] = 0;
+	if (copy->remote_pfs_type >= HAMMER2_PFSTYPE_MAX)
+		return (EINVAL);
+	if (copy->flags & ~(DMSG_VOLF_ENABLED | DMSG_VOLF_INPROG))
+		return (EINVAL);
+	return (0);
+}
+
+/*
+ * Add new remote entry
+ */
+static int
+hammer2_ioctl_remote_add(hammer2_inode_t *ip, void *data)
+{
+	hammer2_ioc_remote_t *remote = data;
+	hammer2_pfs_t *pmp = ip->pmp;
+	hammer2_dev_t *hmp;
+	int copyid = remote->copyid;
+	int error = 0;
+
+	hmp = hammer2_pfs_first_bdev(pmp);	/* XXX Linux: was pfs_hmps[0] */
+	if (hmp == NULL)
+		return (EINVAL);
+	if (copyid >= HAMMER2_COPYID_COUNT)
+		return (EINVAL);
+	if (hammer2_ioctl_remote_check(&remote->copy1))	/* XXX Linux */
+		return (EINVAL);
+	if (hmp->rdonly)	/* XXX Linux: a row is a volume header write */
+		return (EROFS);
+
+	hammer2_voldata_lock(hmp);
+	if (copyid < 0) {
+		for (copyid = 1; copyid < HAMMER2_COPYID_COUNT; ++copyid) {
+			if (hmp->voldata.copyinfo[copyid].copyid == 0)
+				break;
+		}
+		if (copyid == HAMMER2_COPYID_COUNT) {
+			error = ENOSPC;
+			goto failed;
+		}
+	}
+	hammer2_voldata_modify(hmp);
+	remote->copy1.copyid = copyid;
+	hmp->voldata.copyinfo[copyid] = remote->copy1;
+	hammer2_volconf_update(hmp, copyid);
+failed:
+	hammer2_voldata_unlock(hmp);
+	return (error);
+}
+
+/*
+ * Delete existing remote entry
+ */
+static int
+hammer2_ioctl_remote_del(hammer2_inode_t *ip, void *data)
+{
+	hammer2_ioc_remote_t *remote = data;
+	hammer2_pfs_t *pmp = ip->pmp;
+	hammer2_dev_t *hmp;
+	int copyid = remote->copyid;
+	int error = 0;
+
+	hmp = hammer2_pfs_first_bdev(pmp);	/* XXX Linux: was pfs_hmps[0] */
+	if (hmp == NULL)
+		return (EINVAL);
+	if (copyid >= HAMMER2_COPYID_COUNT)
+		return (EINVAL);
+	if (hmp->rdonly)	/* XXX Linux */
+		return (EROFS);
+	remote->copy1.path[sizeof(remote->copy1.path) - 1] = 0;
+	hammer2_voldata_lock(hmp);
+	if (copyid < 0) {
+		for (copyid = 1; copyid < HAMMER2_COPYID_COUNT; ++copyid) {
+			if (hmp->voldata.copyinfo[copyid].copyid == 0)
+				continue;
+			if (strcmp(remote->copy1.path,
+			    hmp->voldata.copyinfo[copyid].path) == 0) {
+				break;
+			}
+		}
+		if (copyid == HAMMER2_COPYID_COUNT) {
+			error = ENOENT;
+			goto failed;
+		}
+	}
+	hammer2_voldata_modify(hmp);
+	hmp->voldata.copyinfo[copyid].copyid = 0;
+	hammer2_volconf_update(hmp, copyid);
+failed:
+	hammer2_voldata_unlock(hmp);
+	return (error);
+}
+
+/*
+ * Replace existing remote entry
+ */
+static int
+hammer2_ioctl_remote_rep(hammer2_inode_t *ip, void *data)
+{
+	hammer2_ioc_remote_t *remote = data;
+	hammer2_dev_t *hmp;
+	int copyid = remote->copyid;
+
+	hmp = hammer2_pfs_first_bdev(ip->pmp);	/* XXX Linux: was pfs_hmps[0] */
+	if (hmp == NULL)
+		return (EINVAL);
+	if (copyid < 0 || copyid >= HAMMER2_COPYID_COUNT)
+		return (EINVAL);
+
+	hammer2_voldata_lock(hmp);
+	hammer2_voldata_modify(hmp);
+	/*hammer2_volconf_update(hmp, copyid);*/
+	hammer2_voldata_unlock(hmp);
+
+	return(0);
+}
+
+/*
+ * Retrieve communications socket
+ */
+static int
+hammer2_ioctl_socket_get(hammer2_inode_t *ip, void *data)
+{
+	return (EOPNOTSUPP);
+}
+
+/*
+ * Set communications socket for connection
+ */
+static int
+hammer2_ioctl_socket_set(hammer2_inode_t *ip, void *data)
+{
+	hammer2_ioc_remote_t *remote = data;
+	hammer2_dev_t *hmp;
+	int copyid = remote->copyid;
+
+	hmp = hammer2_pfs_first_bdev(ip->pmp);	/* XXX Linux: was pfs_hmps[0] */
+	if (hmp == NULL)
+		return (EINVAL);
+	if (copyid < 0 || copyid >= HAMMER2_COPYID_COUNT)
+		return (EINVAL);
+
+	hammer2_voldata_lock(hmp);
+	hammer2_voldata_unlock(hmp);
+
+	return(0);
 }
 
 /*
@@ -1307,6 +1507,24 @@ hammer2_ioctl_impl(struct inode *vp, unsigned int com, void *data, int fflag,
 		break;
 	case HAMMER2IOC_RECLUSTER:
 		error = hammer2_ioctl_recluster(ip, data);
+		break;
+	case HAMMER2IOC_REMOTE_SCAN:
+		error = hammer2_ioctl_remote_scan(ip, data);
+		break;
+	case HAMMER2IOC_REMOTE_ADD:
+		error = hammer2_ioctl_remote_add(ip, data);
+		break;
+	case HAMMER2IOC_REMOTE_DEL:
+		error = hammer2_ioctl_remote_del(ip, data);
+		break;
+	case HAMMER2IOC_REMOTE_REP:
+		error = hammer2_ioctl_remote_rep(ip, data);
+		break;
+	case HAMMER2IOC_SOCKET_GET:
+		error = hammer2_ioctl_socket_get(ip, data);
+		break;
+	case HAMMER2IOC_SOCKET_SET:
+		error = hammer2_ioctl_socket_set(ip, data);
 		break;
 	case HAMMER2IOC_PFS_GET:
 		error = hammer2_ioctl_pfs_get(ip, data);

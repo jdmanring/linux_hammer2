@@ -173,16 +173,16 @@
 8 braces {} are not necessary for single statement blocks
 1 break is not useful after a return
 4 code indent should use tabs where possible
-83 do not add new typedefs
+84 do not add new typedefs
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-475 function definition argument 'X' should also have an identifier name
+476 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 210 please, no spaces at the start of a line
 82 quoted string split across lines
-307 return is not a function, parentheses are not required
+314 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
@@ -190,7 +190,7 @@
 2 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 1 return of an errno should typically be negative (ie: return -EINTR)
-56 return of an errno should typically be negative (ie: return -EINVAL)
+69 return of an errno should typically be negative (ie: return -EINVAL)
 11 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 3 return of an errno should typically be negative (ie: return -ENOENT)
@@ -198,8 +198,8 @@
 1 return of an errno should typically be negative (ie: return -ENOSPC)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
-5 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
-9 return of an errno should typically be negative (ie: return -EROFS)
+6 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+11 return of an errno should typically be negative (ie: return -EROFS)
 1 return of an errno should typically be negative (ie: return -ESRCH)
 1 return of an errno should typically be negative (ie: return -ETIMEDOUT)
 1 space prohibited before that 'X' (ctx:WxW)

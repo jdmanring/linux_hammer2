@@ -23,7 +23,7 @@ like a scope decision.
 | `hammer2_iocom.c` | carried since 1.0.33 (P6), 387 lines then, the origin table carrying the current count; the span table and the `PROTO_2` admission are its stage 1 additions, and stage 2a's hooks hand every HM2-space frame to `hammer2_remote.c`, the port's own server for the XOP API, and announce `PROTO_2` in the kernel's own `LNK_CONN` and spans | implemented |
 | `hammer2_msgops.c` | carried since 1.0.33 (P6), 87 lines then, the origin table carrying the current count | implemented |
 | `kern_dmsg.c` | carried since 1.0.33 (P6), 2202 lines then, the origin table carrying the current count, with the socket transport, and since 1.0.44 the CRC check on a `PROTO_2` connection | implemented |
-| the seven cluster ioctls | not implemented | deferred-with-trigger: P8, behind remote synchronization (P7); designed at `doc/CLUSTER_PROTOCOL_DESIGN.md` |
+| the seven cluster ioctls | carried as upstream wrote them since stage 2b of `doc/CLUSTER_PROTOCOL_DESIGN.md`, `REMOTE_REP` and `SOCKET_SET` upstream's returns of nothing and `SOCKET_GET` upstream's `EOPNOTSUPP` | the rows in `doc/README.capabilities.md`; what they drive, the remote element, is the rest of stage 2b |
 | `HAMMER2IOC_BULKFREE_ASYNC` | not implemented | deferred-with-trigger: its cancellation is unspecified; the synchronous scan is carried and measured |
 
 The coherency half is the one place where "not written" is a fact about

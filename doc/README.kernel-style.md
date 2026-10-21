@@ -152,6 +152,15 @@ that every function this tree declares in `hammer2.h` has. No category is new. T
 baselined: the checker's `kzalloc_obj()` over `kzalloc(sizeof(*p))`, which
 the kernel of record has and the port's other files already use.
 
+1,444 to 1,469 when the six remote ioctls were carried from DragonFly
+into `hammer2_ioctl.c` for stage 2b of the cluster protocol note, with
+`hammer2_ioc_remote_t` declared in `hammer2_ioctl.h` as upstream
+declares it: one typedef, one unnamed prototype argument, seven
+`return (x);`, and sixteen positive errnos (thirteen `EINVAL`, one
+`EOPNOTSUPP`, two `EROFS`), every one the tree's recorded convention
+arriving in carried bodies. No category is new and nothing was fixed
+rather than baselined.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

@@ -2289,6 +2289,24 @@ hammer2_sync_work(struct work_struct *work)
 }
 
 /*
+ * Linux: the first slot whose device is a block device, the one statfs,
+ * the socket intake and the remote-row ioctls act on.  A slot registered
+ * from a span sits on a connection device with no media and may precede
+ * the local ones (doc/CLUSTER_PROTOCOL_DESIGN.md, the remote element).
+ */
+hammer2_dev_t *
+hammer2_pfs_first_bdev(hammer2_pfs_t *pmp)
+{
+	int i;
+
+	for (i = 0; i < pmp->iroot->cluster.nchains; ++i) {
+		if (pmp->pfs_hmps[i] && pmp->pfs_hmps[i]->bdev_file)
+			return (pmp->pfs_hmps[i]);
+	}
+	return (NULL);
+}
+
+/*
  * Report the filesystem's size and identity.
  *
  * This is upstream's hammer2_vfs_statfs() with its two loops collapsed and
@@ -2330,16 +2348,10 @@ hammer2_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
 	hammer2_pfs_t *pmp = MPTOPMP(sb);
-	hammer2_dev_t *hmp = NULL;
+	hammer2_dev_t *hmp;
 	hammer2_off_t avail;
-	int i;
 
-	for (i = 0; i < pmp->iroot->cluster.nchains; ++i) {
-		if (pmp->pfs_hmps[i]) {
-			hmp = pmp->pfs_hmps[i];
-			break;
-		}
-	}
+	hmp = hammer2_pfs_first_bdev(pmp);
 	if (hmp == NULL)
 		return (-EIO);		/* Linux: the VFS half is negative */
 

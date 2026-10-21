@@ -356,7 +356,7 @@ of the root cluster's taken without a reference
 (`hammer2_inode.c:1579`); it is refreshed by the next collect and read
 by no consumer between, and `RECLUSTER` no longer reads any focus (the
 ioctls section). The connection's device is on no mount list: the
-helper's `mount_count` accounting (`hammer2_vfsops.c:2611-2616`) skips
+helper's `mount_count` accounting (`hammer2_vfsops.c:2623-2628`) skips
 it by the same test, its `devvp_list` is initialized empty because
 `hammer2_register_sb()` walks every slot's list
 (`hammer2_ondisk.c:139-143`), and it is freed by a reference count the connection device alone
@@ -370,7 +370,7 @@ when `disable_work_sync()` returns true for an item that will never run.
 The device's dios are not counted: a dio stays in the hash at its last
 release (`hammer2_io.c:722-735`) and is freed by
 `hammer2_io_hash_cleanup_all()` in the device's own free, as the block
-device's are at `hammer2_vfsops.c:2728`, so a count on them would hold
+device's are at `hammer2_vfsops.c:2740`, so a count on them would hold
 the device forever.
 
 **Replies become ordinary chains of a media-less device, and
@@ -445,11 +445,12 @@ marked `/* Linux */`: the entry of `hammer2_io_bread()` and
 above before any lock; `hammer2_io_alloc()` before `hammer2_get_volume()`
 (`:218-226`), where a miss on the media-less device must never reach
 the volume lookup's panic; and the first fetch's entry of a new dio
-with `buf` into the hash. A fourth site is outside the DIO layer: the
-loop `hammer2_vfsops.c:2336-2340` takes the first non-NULL `pfs_hmps`
-for `statfs`, and reads the connection device if a remote slot ever
-precedes the local ones, so it takes the first block device by the same
-test. Two
+with `buf` into the hash. A fourth site is outside the DIO layer: `statfs`
+took the first non-NULL `pfs_hmps` and would have read the connection
+device if a remote slot ever preceded the local ones, so it takes the
+first slot on a block device, `hammer2_pfs_first_bdev()`
+(`hammer2_vfsops.c:2298`), the pick the remote-row ioctls and
+`RECLUSTER` share. Two
 paths are refused on the device with `WARN_ONCE` and `EIO`: a chain
 being created (`hammer2_io_new()`, the `INITIAL` path), since proxies
 are never created locally and no write is sent to it in stage 2,
@@ -612,7 +613,7 @@ a mounted `pmp`, so the property rests on two checks under one lock:
 registration refuses a PFS whose `pmp->rdonly` is clear, and
 `->reconfigure` refuses `rw` while a remote slot exists, taking
 `hammer2_mntlk` around its test and its write of `pmp->rdonly`
-(`hammer2_vfsops.c:2514-2545` write it under `s_umount` alone today; the
+(`hammer2_vfsops.c:2526-2557` write it under `s_umount` alone today; the
 order `s_umount` then `hammer2_mntlk` is the unmount's at `:3249`),
 since without the lock a remount could pass its test, registration
 install a slot, and the remount then clear the flag. That is Linux's
@@ -657,7 +658,7 @@ becomes writable only under the protocol a later note settles.
 **The slave's pass over a remote master takes its source from the
 master.** The default pass snapshots its source on the source element's
 device (`hammer2_synchro.c:801`, `:817`), and `hammer2_pfs_snapshot()`
-takes `hmp` from `pfs_hmps[clindex]` (`hammer2_ioctl.c:612`) and asserts
+takes `hmp` from `pfs_hmps[clindex]` (`hammer2_ioctl.c:830`) and asserts
 its modify succeeded (`:690-691`): on the connection device, where a
 create is refused, that is at best a pass that copies nothing and at
 worst the assertion. So the guard at `hammer2_synchro.c:733` refuses a
@@ -749,7 +750,7 @@ rather than from the design document alone.
   otherwise succeeds, and any other collect error ends the listing from
   that position on.
 - **C8. PFS roots are stamped from each host's super-root counter at
-  creation** (`hammer2_ioctl.c:341`, `:349`), and a mount-time repair of
+  creation** (`hammer2_ioctl.c:559`, `:567`), and a mount-time repair of
   a mis-flagged root re-stamps its `mirror_tid` on one host, keeping
   `modify_tid` (`hammer2_vfsops.c:1978-1981`), so two roots of one
   cluster differ on `modify_tid` and `mirror_tid` from birth, and a
@@ -758,7 +759,7 @@ rather than from the design document alone.
 - **C9. The slave's pass re-stamps an inode copy at the replace with the
   master's propagated tid** (`hammer2_synchro.c:1402`, `:2149`, `:2563`),
   and it snapshots its source on the source element's own device
-  (`:801`, `:817`; `hammer2_ioctl.c:612`, `:690-691`), which for a
+  (`:801`, `:817`; `hammer2_ioctl.c:830`, `:908-909`), which for a
   remote source is the connection device, where a create is refused.
 - **C10. A span carries no status update** (the only `LNK_SPAN` arms
   are `CREATE` and `DELETE`, `hammer2_iocom.c:339`, `:377`), so a
@@ -782,13 +783,13 @@ rather than from the design document alone.
   `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
   no `SB_RDONLY` at run time for this reason, keeping its own flag
   (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
-  `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3214`).
+  `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3226`).
 - **C13. Dirty data at the moment of a loss reaches the local master's
   media.** A strategy write runs the local storage function before the
   collect (`hammer2_strategy.c:1560-1563`), an inode sync clears
   `MODIFIED` and on error only prints (`hammer2_inode.c:1825-1835`), and
   the unmount's three syncs run on any superblock
-  (`hammer2_vfsops.c:3261-3263`), so what was dirty when the quorum was
+  (`hammer2_vfsops.c:3273-3275`), so what was dirty when the quorum was
   lost is flushed to the local media with no peer agreeing, and C3 says
   it cannot be taken back. Fail-closed on the media under a loss is a
   property of the write path's design, not of a flag.
@@ -1262,11 +1263,11 @@ print (`:207`); in `hammer2_synchro.c`, the guard at
 refusal under `hmp->rdonly`; in
 `hammer2_vfsops.c`, the registration's refusal of a writable PFS and the
 refusal of `rw` through `->reconfigure`, both under `hammer2_mntlk`
-(`:2514-2545`), the
-MASTER slot's skipped thread (`:497`, the `DEFER`), the `pfs_nmasters` print after `:468-469`, the `statfs` loop
-taking the first block device (`:2336-2340`), the unmount helper's
+(`:2526-2557`), the
+MASTER slot's skipped thread (`:497`, the `DEFER`), the `pfs_nmasters` print after `:468-469`, `statfs`
+taking the first block device (`:2298`, `hammer2_pfs_first_bdev()`), the unmount helper's
 detach of remote slots, the mount-time `mount_count` tests
-(`:2076-2082`, `:2611-2616`) and `RECLUSTER`'s binding; and in
+(`:2076-2082`, `:2623-2628`) and `RECLUSTER`'s binding; and in
 `hammer2.h`, the `ENOTCONN` bit and its errno-map entry
 (`:1527-1569`). The protocol note lists its own. The dispatch sites in
 `hammer2_io.c` are `/* Linux */` and not `XXX`, since that file's split
@@ -1289,15 +1290,14 @@ returns of nothing and `SOCKET_GET` stays `EOPNOTSUPP`, each recorded in
 the capabilities table with the upstream line, since inventing semantics
 for them is an extension no document asks for. `REMOTE_ADD`'s `path` is
 what `h2service` dials. `RECLUSTER` is the intake the port has since
-1.0.33, with one change marked `XXX`: today it hands the descriptor to
-`cluster->focus->hmp` (`hammer2_ioctl.c:99-100`), and with a remote
-master the focus is a proxy, so the socket would go to the connection
-device, and after a detach on a lost connection, which is when
-`h2service` re-dials, the focus is cleared and the ioctl returns
-`EINVAL` for a cluster of more than one element (`:103-112`). It hands
-the descriptor to the first slot whose `pfs_hmps` is a block device,
-the loop `hammer2_vfsops.c:2336-2340` already uses to pick a device, and
-reads no focus.
+1.0.33, with one change marked `XXX`: upstream hands the descriptor to
+`cluster->focus->hmp`, and with a remote master the focus is a proxy, so
+the socket would go to the connection device, and after a detach on a
+lost connection, which is when `h2service` re-dials, the focus is
+cleared and upstream's ioctl returns `EINVAL` for a cluster of more than
+one element. It hands the descriptor to the first slot whose `pfs_hmps`
+is a block device (`hammer2_ioctl.c:107-111`), the pick
+`hammer2_pfs_first_bdev()` makes for `statfs` too, and reads no focus.
 
 ## What this note does not settle
 

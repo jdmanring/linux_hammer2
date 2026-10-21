@@ -39,6 +39,19 @@
  * against the carried message core; this program keeps the generator and
  * receiver so the transport's own behaviour is measured with no kernel.
  *
+ * Two kernels are in the loop under --relay PORT: the program listens on
+ * the host, accepts two connections, the first A and the second B, and
+ * relays frames between them under the same seeded knobs, so delay is
+ * real milliseconds now, loss and duplication draw from the same
+ * generator, --partition-at K with --partition-len N drops every frame
+ * both ways from the Kth to the (K+N)th, and --disconnect-at K closes the
+ * pair at the Kth frame, after which the next two connections are the next
+ * pair.  Every decision is one trace line as before, under a header that
+ * names the mode and the knobs.  The trace records what the relay did and
+ * is not a replay: two live kernels do not send the same frames twice, so
+ * --replay refuses a relay trace rather than agreeing with it.  Stage 2b
+ * of doc/CLUSTER_PROTOCOL_DESIGN.md is what runs on it.
+ *
  * Frame layout and CRC convention are DragonFly's (sys/sys/dmsg.h,
  * sys/libkern/icrc32.c): 64-byte header, magic 0x4832, size field
  * (cmd & 0xff) in 64-byte units, aux aligned to 64, hdr_crc over the
@@ -53,8 +66,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define DMSG_HDR_MAGIC	0x4832
@@ -62,6 +79,7 @@
 #define DMSG_ALIGNMASK	(DMSG_ALIGN - 1)
 #define DMSG_DOALIGN(n)	(((n) + DMSG_ALIGNMASK) & ~DMSG_ALIGNMASK)
 #define DMSGF_SIZE	0x000000FF
+#define DMSG_HDR_MAX	2048		/* kern_dmsg's bound on a header */
 #define AUX_CAP		65536	/* one frame fits a default socket buffer; see validate() */
 
 struct dmsg_hdr {
@@ -136,7 +154,9 @@ static struct {
 	double loss, dup;
 	long halfclose_at, disconnect_at, reconnect_at, corrupt_at;
 	const char *trace, *replay;
-} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL };
+	int relay;			/* a TCP port: the two-kernel relay */
+	long partition_at, partition_len;
+} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0 };
 
 static void
 usage(void)
@@ -145,7 +165,10 @@ usage(void)
 	    "usage: h2loop [--seed N] [--frames N] [--aux-max N] [--delay-max N]\n"
 	    "              [--loss P] [--dup P] [--halfclose-at K]\n"
 	    "              [--disconnect-at K] [--reconnect-at K] [--corrupt-at K]\n"
-	    "              [--trace FILE] [--replay FILE]\n");
+	    "              [--trace FILE] [--replay FILE]\n"
+	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
+	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
+	    "              [--corrupt-at K] [--trace FILE]\n");
 	exit(2);
 }
 
@@ -171,6 +194,9 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--corrupt-at")) opt.corrupt_at = atol(v);
 		else if (!strcmp(a, "--trace")) opt.trace = v;
 		else if (!strcmp(a, "--replay")) opt.replay = v;
+		else if (!strcmp(a, "--relay")) opt.relay = atoi(v);
+		else if (!strcmp(a, "--partition-at")) opt.partition_at = atol(v);
+		else if (!strcmp(a, "--partition-len")) opt.partition_len = atol(v);
 		else usage();
 		i++;
 	}
@@ -185,7 +211,8 @@ validate(void)
 {
 	if (opt.frames < 1 || opt.aux_max < 0 || opt.aux_max > AUX_CAP ||
 	    opt.delay_max < 0 || opt.loss < 0 || opt.loss > 1 ||
-	    opt.dup < 0 || opt.dup > 1)
+	    opt.dup < 0 || opt.dup > 1 || opt.relay < 0 || opt.relay > 65535 ||
+	    opt.partition_len < 0)
 		usage();
 }
 
@@ -266,6 +293,8 @@ disconnect(void)
 
 struct frame {
 	struct dmsg_hdr hdr;
+	uint8_t *ext;		/* the extended header past the base, hbytes - 64 */
+	size_t ext_len;
 	uint8_t *aux;		/* DMSG_DOALIGN(hdr.aux_bytes) bytes */
 	long due;		/* virtual tick it is delivered at */
 	struct frame *next;
@@ -318,8 +347,10 @@ read_all(int fd, void *buf, size_t len)
 static int
 frame_write(int fd, const struct frame *f)
 {
-	/* kdmsg_iocom_thread_wr: the header, then the aligned aux */
+	/* kdmsg_iocom_thread_wr: the header, its extension, then the aligned aux */
 	if (write_all(fd, &f->hdr, sizeof(f->hdr)) < 0)
+		return (-1);
+	if (f->ext_len && write_all(fd, f->ext, f->ext_len) < 0)
 		return (-1);
 	if (f->hdr.aux_bytes && write_all(fd, f->aux, aux_alloc(&f->hdr)) < 0)
 		return (-1);
@@ -346,10 +377,22 @@ frame_read(int fd, struct frame **fp, const char **why)
 		*why = "magic";
 		goto bad;
 	}
-	if ((f->hdr.cmd & DMSGF_SIZE) != 1) {
-		/* the base header only; an extended header is a P6 message */
+	/* The size the command encodes, in 64-byte units: the base header
+	 * alone for the loopback's generator, an extension for the LNK_CONN
+	 * and LNK_SPAN two kernels exchange through the relay.  The kernel's
+	 * bounds are its own. */
+	f->ext_len = (size_t)(f->hdr.cmd & DMSGF_SIZE) * DMSG_ALIGN;
+	if (f->ext_len < sizeof(f->hdr) || f->ext_len > DMSG_HDR_MAX) {
 		*why = "header size";
 		goto bad;
+	}
+	f->ext_len -= sizeof(f->hdr);
+	if (f->ext_len) {
+		f->ext = malloc(f->ext_len);
+		if (read_all(fd, f->ext, f->ext_len) != 1) {
+			*why = "torn header";
+			goto bad;
+		}
 	}
 	if (f->hdr.aux_bytes > 1024 * 1024) {
 		*why = "aux bound";
@@ -365,18 +408,24 @@ frame_read(int fd, struct frame **fp, const char **why)
 	*fp = f;
 	return (1);
 bad:
+	free(f->ext);
 	free(f->aux);
 	free(f);
 	return (-1);
 }
 
-/* The two checks the kernel does not make and libdmsg does. */
+/* The two checks the kernel does not make and libdmsg does.  The header
+ * CRC covers the whole header, extension included, with its field zero. */
 static const char *
 frame_verify(const struct frame *f)
 {
-	struct dmsg_hdr h = f->hdr;
-	h.hdr_crc = 0;
-	if (iscsi_crc32(&h, sizeof(h)) != f->hdr.hdr_crc)
+	uint8_t h[DMSG_HDR_MAX];
+	struct dmsg_hdr *hp = (struct dmsg_hdr *)h;
+	memcpy(h, &f->hdr, sizeof(f->hdr));
+	if (f->ext_len)
+		memcpy(h + sizeof(f->hdr), f->ext, f->ext_len);
+	hp->hdr_crc = 0;
+	if (iscsi_crc32(h, sizeof(f->hdr) + f->ext_len) != f->hdr.hdr_crc)
 		return ("hdr_crc");
 	if (f->hdr.aux_bytes &&
 	    iscsi_crc32(f->aux, aux_alloc(&f->hdr)) != f->hdr.aux_crc)
@@ -388,6 +437,7 @@ static void
 frame_free(struct frame *f)
 {
 	if (f) {
+		free(f->ext);
 		free(f->aux);
 		free(f);
 	}
@@ -398,6 +448,11 @@ frame_dup(const struct frame *f)
 {
 	struct frame *g = calloc(1, sizeof(*g));
 	g->hdr = f->hdr;
+	if (f->ext_len) {
+		g->ext = malloc(f->ext_len);
+		memcpy(g->ext, f->ext, f->ext_len);
+		g->ext_len = f->ext_len;
+	}
 	if (f->hdr.aux_bytes) {
 		g->aux = malloc(aux_alloc(&f->hdr));
 		memcpy(g->aux, f->aux, aux_alloc(&f->hdr));
@@ -626,6 +681,265 @@ run(void)
 	return (0);
 }
 
+/* ---- the relay: two kernels in the loop --------------------------------- */
+
+/* The relay's clock, milliseconds since its start; delay is real here. */
+static long
+now_ms(void)
+{
+	static struct timespec t0;
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	if (t0.tv_sec == 0 && t0.tv_nsec == 0)
+		t0 = t;
+	return ((t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000);
+}
+
+struct side {
+	const char *name;	/* "A" or "B" */
+	int fd;
+	int eof;		/* its reader saw EOF: nothing more comes from it */
+	struct frame *queue;	/* frames due to it, sorted by due */
+	long sent;		/* frames read from it */
+};
+
+static void
+side_enqueue(struct side *to, struct frame *f, long due)
+{
+	struct frame **pp = &to->queue;
+	f->due = due;
+	while (*pp && (*pp)->due <= due)
+		pp = &(*pp)->next;
+	f->next = *pp;
+	*pp = f;
+}
+
+/* One frame read from `from`, decided for `to`.  The index i counts every
+ * frame the relay read in either direction, so a partition or a disconnect
+ * scripted at K lands at the Kth frame of the run and not of one side. */
+static void
+relay_decide(struct side *from, struct side *to, struct frame *f, long i)
+{
+	double r = rng_unit();
+	long d, t = now_ms();
+
+	if (opt.partition_at >= 0 && i >= opt.partition_at &&
+	    i < opt.partition_at + opt.partition_len) {
+		ct.dropped++;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " partition t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+		frame_free(f);
+		return;
+	}
+	if (r < opt.loss) {
+		ct.dropped++;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " drop t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+		frame_free(f);
+		return;
+	}
+	d = opt.delay_max ? (long)(rng() % (opt.delay_max + 1)) : 0;
+	if (r < opt.loss + opt.dup) {
+		long d2 = opt.delay_max ? (long)(rng() % (opt.delay_max + 1)) : 0;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " dup t=%ld d=%ld d2=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t, d, d2);
+		side_enqueue(to, frame_dup(f), t + d2);
+	} else {
+		trace("%s>%s i=%ld msgid=%" PRIu64 " deliver t=%ld d=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t, d);
+	}
+	if (f->hdr.msgid == (uint64_t)opt.corrupt_at && !corrupted) {
+		corrupted = 1;
+		f->hdr.aux_crc ^= 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " corrupt t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
+	side_enqueue(to, f, t + d);
+}
+
+/* Write everything due to `to`; a side that went away loses them. */
+static void
+side_drain(struct side *to, int all)
+{
+	long t = now_ms();
+
+	while (to->queue && (all || to->queue->due <= t)) {
+		struct frame *f = to->queue;
+		to->queue = f->next;
+		if (to->fd < 0 || frame_write(to->fd, f) < 0) {
+			ct.lost++;
+			trace(">%s msgid=%" PRIu64 " lost t=%ld\n", to->name,
+			    f->hdr.msgid, t);
+		} else {
+			ct.delivered++;
+		}
+		frame_free(f);
+	}
+}
+
+static void
+side_close(struct side *s)
+{
+	if (s->fd >= 0) {
+		shutdown(s->fd, SHUT_RDWR);
+		close(s->fd);
+		s->fd = -1;
+	}
+	while (s->queue) {
+		struct frame *f = s->queue;
+		s->queue = f->next;
+		ct.lost++;
+		frame_free(f);
+	}
+}
+
+static int
+relay_accept(int lfd, struct side *s)
+{
+	int one = 1;
+
+	s->fd = accept(lfd, NULL, NULL);
+	if (s->fd < 0) {
+		perror("accept");
+		return (-1);
+	}
+	setsockopt(s->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+	s->eof = 0;
+	s->queue = NULL;
+	trace("%s connected t=%ld\n", s->name, now_ms());
+	return (0);
+}
+
+/* One pair, from both connected to both gone or the scripted disconnect.
+ * Returns the frame index after the pair. */
+static long
+relay_pair(struct side *a, struct side *b, long i)
+{
+	struct side *sides[2] = { a, b };
+
+	for (;;) {
+		struct pollfd pfd[2];
+		long wait = -1, t = now_ms();
+		int k, n;
+
+		for (k = 0; k < 2; k++) {
+			struct side *s = sides[k];
+			pfd[k].fd = (s->eof || s->fd < 0) ? -1 : s->fd;
+			pfd[k].events = POLLIN;
+			if (s->queue) {
+				long w = s->queue->due - t;
+				if (w < 0)
+					w = 0;
+				if (wait < 0 || w < wait)
+					wait = w;
+			}
+		}
+		if (pfd[0].fd < 0 && pfd[1].fd < 0 && a->queue == NULL &&
+		    b->queue == NULL)
+			break;
+		n = poll(pfd, 2, (int)wait);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			break;
+		}
+		for (k = 0; k < 2; k++) {
+			struct side *from = sides[k], *to = sides[1 - k];
+			struct frame *f;
+			const char *why;
+			int r;
+
+			if (!(pfd[k].revents & (POLLIN | POLLHUP | POLLERR)))
+				continue;
+			r = frame_read(from->fd, &f, &why);
+			if (r == 1) {
+				from->sent++;
+				relay_decide(from, to, f, i++);
+				if (i == opt.disconnect_at) {
+					trace("disconnect i=%ld t=%ld\n", i, now_ms());
+					side_drain(a, 1);
+					side_drain(b, 1);
+					side_close(a);
+					side_close(b);
+					ct.disconnects++;
+					return (i);
+				}
+			} else {
+				/* EOF or a torn frame: the far side's reader
+				 * sees the same once the queue to it drains */
+				trace("%s %s t=%ld\n", from->name,
+				    r == 0 ? "eof" : (why ? why : "error"), now_ms());
+				from->eof = 1;
+				if (r == 0)
+					ct.eof++;
+				else
+					ct.rejected++;
+				side_drain(to, 1);
+				if (to->fd >= 0)
+					shutdown(to->fd, SHUT_WR);
+			}
+		}
+		side_drain(a, 0);
+		side_drain(b, 0);
+	}
+	side_close(a);
+	side_close(b);
+	return (i);
+}
+
+static int
+relay(void)
+{
+	struct side a = { "A", -1, 0, NULL, 0 }, b = { "B", -1, 0, NULL, 0 };
+	struct sockaddr_in sin;
+	int lfd, one = 1;
+	long i = 0;
+
+	rng_state = opt.seed | 1;
+	lfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (lfd < 0) {
+		perror("socket");
+		return (2);
+	}
+	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(INADDR_ANY);
+	sin.sin_port = htons((uint16_t)opt.relay);
+	if (bind(lfd, (struct sockaddr *)&sin, sizeof(sin)) < 0 ||
+	    listen(lfd, 2) < 0) {
+		perror("bind");
+		return (2);
+	}
+	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
+	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
+	    " corrupt-at=%ld\n", opt.relay, opt.seed, opt.delay_max, opt.loss,
+	    opt.dup, opt.partition_at, opt.partition_len, opt.disconnect_at,
+	    opt.corrupt_at);
+	fflush(tracef);
+	printf("h2loop: relay listening on %d\n", opt.relay);
+	fflush(stdout);
+	for (;;) {
+		if (relay_accept(lfd, &a) < 0)
+			break;
+		if (relay_accept(lfd, &b) < 0) {
+			side_close(&a);
+			break;
+		}
+		i = relay_pair(&a, &b, i);
+		fflush(tracef);
+		printf("h2loop: pair done frames %ld delivered %ld dropped %ld dup %ld"
+		    " lost %ld eof %ld rejected %ld disconnects %ld\n",
+		    i, ct.delivered, ct.dropped, ct.dup, ct.lost, ct.eof,
+		    ct.rejected, ct.disconnects);
+		fflush(stdout);
+	}
+	close(lfd);
+	return (0);
+}
+
 static int
 files_equal(const char *a, const char *b)
 {
@@ -651,6 +965,18 @@ main(int argc, char **argv)
 	crc_init();
 	signal(SIGPIPE, SIG_IGN);	/* the generator reads EPIPE, as the kernel does */
 	parse_args(argc, argv);
+	if (opt.relay) {
+		if (opt.replay)
+			usage();
+		tracef = opt.trace ? fopen(opt.trace, "w") : fopen("/dev/null", "w");
+		if (tracef == NULL) {
+			perror(opt.trace ? opt.trace : "/dev/null");
+			return (2);
+		}
+		rc = relay();
+		fclose(tracef);
+		return (rc);
+	}
 	if (opt.replay) {
 		read_replay_header(opt.replay);
 		if (opt.trace == NULL) {

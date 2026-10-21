@@ -78,6 +78,22 @@ struct hammer2_ioc_recluster {
 typedef struct hammer2_ioc_recluster hammer2_ioc_recluster_t;
 
 /*
+ * Ioctls to manage the volume->copyinfo[] array and to associate or
+ * disassociate sockets
+ */
+struct hammer2_ioc_remote {
+	int			copyid;
+	int			nextid;	/* for iteration (get only) */
+	int			fd;	/* socket descriptor if applicable */
+	int			reserved03;
+	int			reserved04[8];
+	hammer2_volconf_t	copy1;	/* copy spec */
+	hammer2_volconf_t	copy2;	/* copy spec (rename ops only) */
+};
+
+typedef struct hammer2_ioc_remote hammer2_ioc_remote_t;
+
+/*
  * Ioctls to manage PFSs.
  *
  * PFSs can be clustered by matching their pfs_clid, and the PFSs making up
@@ -211,6 +227,14 @@ typedef struct hammer2_ioc_volume_list2 hammer2_ioc_volume_list2_t;
  */
 #define HAMMER2IOC_VERSION_GET		_IOWR('h', 64, struct hammer2_ioc_version)
 #define HAMMER2IOC_RECLUSTER	_IOWR('h', 65, struct hammer2_ioc_recluster)
+
+#define HAMMER2IOC_REMOTE_SCAN	_IOWR('h', 68, struct hammer2_ioc_remote)
+#define HAMMER2IOC_REMOTE_ADD	_IOWR('h', 69, struct hammer2_ioc_remote)
+#define HAMMER2IOC_REMOTE_DEL	_IOWR('h', 70, struct hammer2_ioc_remote)
+#define HAMMER2IOC_REMOTE_REP	_IOWR('h', 71, struct hammer2_ioc_remote)
+
+#define HAMMER2IOC_SOCKET_GET	_IOWR('h', 76, struct hammer2_ioc_remote)
+#define HAMMER2IOC_SOCKET_SET	_IOWR('h', 77, struct hammer2_ioc_remote)
 #define HAMMER2IOC_PFS_GET		_IOWR('h', 80, struct hammer2_ioc_pfs)
 #define HAMMER2IOC_PFS_CREATE		_IOWR('h', 81, struct hammer2_ioc_pfs)
 #define HAMMER2IOC_PFS_DELETE		_IOWR('h', 82, struct hammer2_ioc_pfs)

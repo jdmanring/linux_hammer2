@@ -1134,6 +1134,7 @@ extern hammer2_lk_t hammer2_mntlk;
 extern int hammer2_debug;
 extern int hammer2_sync_snapshot;	/* XXX Linux: see hammer2_synchro.c */
 extern int hammer2_remote_timeout_ms;	/* Linux: see hammer2_remote.c */
+hammer2_dev_t *hammer2_pfs_first_bdev(hammer2_pfs_t *);	/* Linux */
 extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
 extern int hammer2_cluster_data_read;
