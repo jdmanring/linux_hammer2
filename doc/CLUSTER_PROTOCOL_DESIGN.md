@@ -1008,8 +1008,8 @@ since `hammer2_vfsops.c:497` skips the thread only at `pfs_nmasters <=
 and exits (`:1592-1594`), copying nothing today in any tree
 (`cluster-quorum.sh` counts threads at `:126-130` and has never measured
 a pass). **In P8 a MASTER element gets no synchronization thread**: the
-creation at `hammer2_vfsops.c:497` is skipped for MASTER slots whatever
-`pfs_nmasters` says, one marked line with `DEFER(P9: reintegration of a
+creation at `hammer2_vfsops.c:497`, which today skips a MASTER slot only
+when `pfs_nmasters` is at most one, skips every MASTER slot, one marked line with `DEFER(P9: reintegration of a
 stale master)`, and `cluster-quorum.sh`'s check at `:230`, which asserts
 two support threads as its only witness that `pfs_nmasters` is 2,
 inverts to assert none and takes a new witness, a `hammer2_debug` print
@@ -1482,7 +1482,7 @@ overstated (the rename helper's condition is "was blockmapped before
 the rename's delete", `:3397` asserting the flag clear; the mount-time
 repair keeps `modify_tid`) and one cited at the wrong line (`C10` at
 `hammer2_iocom.c:480`, which is the volume configuration; the span arms
-are `:235` and `:260`), each corrected, and returned NO SIGN-OFF on
+are `:339` and `:377`), each corrected, and returned NO SIGN-OFF on
 seven findings, one blocking: three matrix rows promised unchanged
 media under partition and quorum loss that an errno computed after the
 storage functions have run cannot deliver. The fix is the audit's own:
