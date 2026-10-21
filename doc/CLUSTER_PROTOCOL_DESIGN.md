@@ -204,7 +204,7 @@ the client feeds no end, so the collect sees the element as a local one
 ending the same way would leave it. The closing frame of a `readdir`
 also carries `rkey`, the key the server's scan stopped before after
 `nmax` entries, or the request's own `key_end` echoed when it did not
-stop, which the client lowers its own `rkey` to: the frontend emits no entry at or past
+stop before it, which the client lowers its own `rkey` to: the frontend emits no entry at or past
 it and starts its next XOP there, as it does for a local element that
 stopped first, so an entry the peer has not fed is never passed over.
 Without it a directory of more than `nmax` entries on the master listed
@@ -212,12 +212,25 @@ only the first `nmax` through a slave holding none of it: the wire run's
 control, the client's lowering removed, listed 255 of 300
 (`wire-run-20261020-234654`). The client takes the key only from a
 clean end after a full batch, and only when it lies past every key the
-peer fed, so each XOP starts beyond the last: a peer's key at or below
+peer fed, and every key a readdir feeds lies at or past the request's
+start, so each XOP starts beyond the last: a peer's key at or below
 what it fed would restart the frontend's loop at the same key without
-end, uninterruptibly, holding the directory's lock. A descriptor that
-answers one chain takes one feed, and a readdir `nmax`; the window
-bounds the frames in flight and not their total, so a peer past either
-count is refused like a frame that is not a proxy. A request the server will not serve is closed
+end, uninterruptibly, holding the directory's lock, and an entry keyed
+below the start would let the stopping key fall back to it. A
+descriptor that answers one chain takes one feed and a readdir `nmax`,
+and every descriptor's keys rise, each above the one fed before it, as
+a scan of leaves feeds them, which also holds a `scanlhc` to its hash
+range; the window bounds the frames in flight and not their total, so
+a peer past any of these is refused like a frame that is not a proxy.
+The server holds a peer's `nmax` to between 1 and 255, the frontend's
+own bound, since a count of 0 or less would never stop its scan. A
+`scanall` has no count but its range: SEEK_DATA's scan resolves data
+and feeds every block from the offset to the end of the file, on a
+local element as on a remote one, and over the wire each block is a
+transfer under the bound. Whether a large remote file's SEEK_DATA
+outruns the bound is a candidate, unmeasured; its trigger is the first
+SEEK_DATA through a remote element, and the upgrade is the scan with
+`HAMMER2_LOOKUP_NODATA`, which it needs only the keys of. A request the server will not serve is closed
 by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
 peer tells a served request from a refused one by the closing frame's
 command, and a served scan that found nothing reads as zero feeds and
@@ -452,7 +465,7 @@ than an inode or whose name is longer than its 256-byte array; a block
 whose size its radix does not give; a chain the request could not be
 answered with, by its type and key: for `ipcluster` an inode of the
 number asked for, for `readdir`, `scanlhc` and `nresolve` a directory
-entry or an inode, the first from its start key and the second in its
+entry or an inode, the first at or past its start key and the second in its
 hash range, for `scanall` its key range, for `lookup` the chain covering
 its key, and for a read or `bmap` the data block covering the offset or,
 at offset 0 alone, a direct-data inode; a refetched block whose
@@ -464,10 +477,13 @@ entries are the peer's, as a local volume's are whoever wrote it.
 
 **A block only the peer holds has no address here.** `bmap` answers
 with the offset of the local element's block, and a remote element has
-none to give; a file or a block the slave does not hold therefore
-reports no physical address rather than the 0 no element supplied:
-fiemap marks its extents `FIEMAP_EXTENT_UNKNOWN` and FIBMAP returns 0,
-as for a hole.
+none to give. The XOP's offset is whichever local element ran last,
+which may lack the block or hold an older one, so with a remote focus
+the address is taken from a local element the quorum check matched to
+the focus by key and `modify_tid`, and a file or a block no local
+element matches reports no physical address: fiemap marks its extents
+`FIEMAP_EXTENT_UNKNOWN` and FIBMAP returns 0, as for a hole
+(`hammer2_bmap_offset()`).
 
 The reply's data is copied off the reader thread into the frame, and
 the feed stashes it on the handle before it locks the new chain; the

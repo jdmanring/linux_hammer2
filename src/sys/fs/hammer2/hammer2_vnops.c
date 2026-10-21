@@ -77,13 +77,11 @@
  * Linux: the smallest entry getdents64(2) writes, the header up to the
  * name plus a one-byte name and its NUL, rounded as the kernel rounds it,
  * so a buffer of n bytes holds at most n / HAMMER2_DIRENT64_MIN entries;
- * and the most entries one readdir XOP feeds, which with the end marker
- * fills a 256-slot FIFO and bounds what is fed past the buffer's end.
- * See hammer2_vop_readdir().
+ * HAMMER2_READDIR_NMAX (hammer2.h) bounds what is fed past the buffer's
+ * end.  See hammer2_vop_readdir().
  */
 #define HAMMER2_DIRENT64_MIN \
 	ALIGN(offsetof(struct linux_dirent64, d_name) + 2, sizeof(u64))
-#define HAMMER2_READDIR_NMAX	255
 
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
@@ -1471,11 +1469,32 @@ hammer2_file_mmap_prepare(struct vm_area_desc *desc)
  * equal, and the first run of this code returned ENOENT as a file
  * position for every offset in the file.
  *
- * A block only a remote element holds has no address on this host: the
- * offset is the local element's, and the XOP's is left 0 when no local
- * element ran.  *poff is then HAMMER2_BMAP_UNKNOWN, never an invented 0.
+ * A block only a remote element holds has no address on this host.  The
+ * XOP's offset is whichever local element ran last, which may lack the
+ * block or hold an older one, so with a remote focus the address is taken
+ * from a local element the quorum check matched to it, and is otherwise
+ * HAMMER2_BMAP_UNKNOWN, never an invented one.
  */
 #define HAMMER2_BMAP_UNKNOWN	((hammer2_off_t)-1)	/* Linux */
+
+static hammer2_off_t
+hammer2_bmap_offset(hammer2_xop_bmap_t *xop)	/* Linux */
+{
+	hammer2_cluster_t *cluster = &xop->head.cluster;
+	hammer2_chain_t *chain;
+	int i;
+
+	if (cluster->focus == NULL || !hammer2_dev_is_conn(cluster->focus->hmp))
+		return (xop->offset);
+	for (i = 0; i < cluster->nchains; ++i) {
+		chain = cluster->array[i].chain;
+		if (chain && chain->error == 0 &&
+		    !hammer2_dev_is_conn(chain->hmp) &&
+		    (cluster->array[i].flags & HAMMER2_CITEM_INVALID) == 0)
+			return (chain->bref.data_off);
+	}
+	return (HAMMER2_BMAP_UNKNOWN);
+}
 
 static int
 hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
@@ -1489,12 +1508,8 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 	xop->lbn = lbn;
 	hammer2_xop_start(&xop->head, &hammer2_bmap_desc);
 	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
-	if (error == 0) {
-		*poff = xop->offset;
-		if (*poff == 0 && xop->head.cluster.focus &&
-		    hammer2_dev_is_conn(xop->head.cluster.focus->hmp))
-			*poff = HAMMER2_BMAP_UNKNOWN;
-	}
+	if (error == 0)
+		*poff = hammer2_bmap_offset(xop);
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
 

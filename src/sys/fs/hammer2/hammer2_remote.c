@@ -502,7 +502,9 @@ hammer2_remote_serve(struct work_struct *work)
 	case 1:
 		xop->xop_readdir.lkey = req->req.key_beg;
 		xop->xop_readdir.rkey = req->req.key_end;
-		xop->xop_readdir.nmax = req->req.nmax;
+		/* a count of 0 or less would never stop the scan */
+		xop->xop_readdir.nmax = clamp_t(int, req->req.nmax, 1,
+		    HAMMER2_READDIR_NMAX);
 		break;
 	case 2:
 		if (req->aux.aux_data == NULL || req->aux.aux_size == 0 ||
@@ -1280,7 +1282,7 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 		    f->bytes >= sizeof(hammer2_inode_data_t) &&
 		    ((const hammer2_inode_data_t *)f->data)->meta.inum == inum));
 	case 1:			/* readdir */
-		return (entry && last >= key_beg);
+		return (entry && bref->key >= key_beg);
 	case 2:			/* nresolve */
 		return (entry);
 	case 5:			/* scanlhc */
@@ -1501,8 +1503,14 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 			level = iroot->lock.level + 1;
 		else
 			level = ip1->lock.level + 1;
+		/*
+		 * A scan feeds leaves in ascending key order, so a key at or
+		 * below the last one fed is a repeat no honest peer sends.
+		 * It also bounds a scanlhc by its hash range.
+		 */
 		chain = NULL;
-		if (fed < cap && hammer2_remote_in_range(idx, f, key_beg,
+		if (fed < cap && (fed == 0 || f->bref.key > maxkey) &&
+		    hammer2_remote_in_range(idx, f, key_beg,
 		    key_end, ip1->meta.inum))
 			chain = hammer2_remote_proxy(cdev, pmp, f,
 			    &pmp->pfs_clid, ip1->meta.inum, level);
@@ -1513,8 +1521,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 			error = HAMMER2_ERROR_EIO;
 			break;
 		}
-		if (f->bref.key > maxkey)
-			maxkey = f->bref.key;
+		maxkey = f->bref.key;
 		error = hammer2_xop_feed(xop, chain, clindex, f->error);
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);

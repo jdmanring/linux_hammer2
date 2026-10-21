@@ -1483,6 +1483,13 @@ void hammer2_remote_dev_drop(hammer2_dev_t *);
  */
 #define hammer2_dev_is_conn(hmp)	((hmp) != NULL && (hmp)->rconn != NULL)
 
+/*
+ * Linux: the most entries one readdir XOP feeds, which with the end marker
+ * fills a 256-slot FIFO; the frontend's budget and a peer's request are
+ * both held to it.  See hammer2_vop_readdir().
+ */
+#define HAMMER2_READDIR_NMAX	255
+
 /* hammer2_subr.c */
 int hammer2_get_dtype(uint8_t);
 int hammer2_get_vtype(uint8_t);
