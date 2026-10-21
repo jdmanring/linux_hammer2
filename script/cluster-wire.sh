@@ -62,17 +62,18 @@
 # reads after the stall find every digest equal to A's. MS must exceed the
 # 2000 ms bound.
 #
-# H2_WIRE_END=aborted or noeof is the control on how B reads the end of a
-# reply. B lists an empty directory of A's before anything else is listed,
+# H2_WIRE_END=aborted, noeof or lost is the control on how B reads the end
+# of a reply. B lists an empty directory of A's before anything else is listed,
 # and the relay rewrites the closing frames of the two getdents calls that
 # listing makes, since the first has emitted . and .. and so hides its
 # error: aborted sets their error to ABORTED, the code a server ends a
 # request with while its unmount drains it, and noeof clears their error
-# and EOF flag, a close with no end fed. Neither is an answer about the
+# and EOF flag, a close with no end fed, and lost sets the closing frame's
+# byte count, a closing feed carrying a chain. Neither is an answer about the
 # directory, so the listing must fail not connected and B's readdir end
 # ENOTCONN. Taken as an answer, aborted fails the listing with ABORTED's
-# own EINTR, and noeof leaves the element counted in progress,
-# EINPROGRESS.
+# own EINTR, noeof leaves the element counted in progress, EINPROGRESS,
+# and lost feeds a chain no descriptor answered.
 #
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
@@ -94,7 +95,7 @@ DIRENT=${H2_WIRE_DIRENT:-0}
 REFUSE=${H2_WIRE_REFUSE:-0}
 STALL=${H2_WIRE_STALL:-0}
 END=${H2_WIRE_END:-}
-case $END in ''|aborted|noeof) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted or noeof" >&2; exit 2;; esac
+case $END in ''|aborted|noeof|lost) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof or lost" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
 [ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
 nctl=0
