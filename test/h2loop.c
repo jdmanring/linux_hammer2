@@ -59,7 +59,14 @@
  * that master as unreachable and never as having answered "no such
  * name".  --stall-ms N holds every frame due to B from the first readdir
  * answer on for N milliseconds, in order, so B's bound on a reply ends the
- * call while A has answered in full.  Every
+ * call while A has answered in full.  --end-readdir 1 sets the error on
+ * the closing frame of the first two readdir answers to
+ * HAMMER2_ERROR_ABORTED, the code a server ends a request with when its
+ * unmount drains it, and --end-readdir 2 clears those frames' error and
+ * EOF flag, a clean close with no end fed; either way B must read the
+ * master as unreachable.  Two, because a listing of an empty directory is
+ * two getdents calls and the first has emitted . and .., which hides its
+ * error; only the second's error reaches the caller.  Every
  * decision is one trace line as before, under a header that
  * names the mode and the knobs.  The trace records what the relay did and
  * is not a replay: two live kernels do not send the same frames twice, so
@@ -174,8 +181,9 @@ static struct {
 	int bare_dirent;	/* the relay answers one nresolve with a dirent */
 	int refuse_nresolve;	/* the relay refuses one nresolve for A */
 	long stall_ms;		/* the relay holds B's frames from one readdir */
+	int end_readdir;	/* the relay rewrites one readdir's closing frame */
 } opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0 };
+    0, 0, 0 };
 
 static void
 usage(void)
@@ -188,7 +196,8 @@ usage(void)
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
-	    "              [--refuse-nresolve 1] [--stall-ms MS] [--trace FILE]\n");
+	    "              [--refuse-nresolve 1] [--stall-ms MS] [--end-readdir 1|2]\n"
+	    "              [--trace FILE]\n");
 	exit(2);
 }
 
@@ -221,6 +230,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--bare-dirent")) opt.bare_dirent = atoi(v);
 		else if (!strcmp(a, "--refuse-nresolve")) opt.refuse_nresolve = atoi(v);
 		else if (!strcmp(a, "--stall-ms")) opt.stall_ms = atol(v);
+		else if (!strcmp(a, "--end-readdir")) opt.end_readdir = atoi(v);
 		else usage();
 		i++;
 	}
@@ -239,7 +249,8 @@ validate(void)
 	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1 ||
 	    opt.bare_dirent < 0 || opt.bare_dirent > 1 ||
 	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
-	    opt.stall_ms < 0 || opt.stall_ms > 600000)
+	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
+	    opt.end_readdir < 0 || opt.end_readdir > 2)
 		usage();
 }
 
@@ -817,6 +828,9 @@ bare_dirent(struct frame *f)
 
 static int refused;		/* --refuse-nresolve has fired */
 static int stalled;		/* --stall-ms has fired */
+static int ended;		/* --end-readdir's rewrites so far */
+static uint64_t end_msgid[2];	/* its readdir requests, 0 none yet */
+static int nend_req;
 static uint64_t readdir_msgid;	/* the first readdir request, 0 none yet */
 static uint64_t refuse_msgid;	/* its transaction, 0 none yet */
 
@@ -826,7 +840,10 @@ static uint64_t refuse_msgid;	/* its transaction, 0 none yet */
  * refusal (kdmsg_msg_reply(): DMSG_LNK_ERROR with the answer's flags and DELETE,
  * DMSG_ERR_NOSUPP in the header's error) with no extension and no aux.
  * Returns 1 for that frame, -1 for a later frame of the same answer, which
- * the caller drops since the forged DELETE closed it, 0 otherwise.
+ * the caller drops since the forged DELETE closed it, 0 otherwise.  The
+ * answer ends at its own DELETE, after which the knob is spent: the kernel
+ * reuses a msgid once its state is freed, and a later transaction under
+ * the same one is not this answer.
  */
 static int
 refuse_nresolve(struct frame *f)
@@ -840,6 +857,8 @@ refuse_nresolve(struct frame *f)
 	if (refuse_msgid == 0 || f->hdr.msgid != refuse_msgid ||
 	    (f->hdr.cmd & 0x20000000U) == 0)
 		return (0);
+	if (f->hdr.cmd & 0x40000000U)
+		refuse_msgid = 1;	/* spent: no msgid is 1, so nothing matches */
 	if (refused)
 		return (-1);
 	/* the answer's own CREATE, REPLY and REVTRANS, which picks the
@@ -853,6 +872,36 @@ refuse_nresolve(struct frame *f)
 	f->aux = NULL;
 	f->hdr.aux_bytes = 0;
 	f->hdr.aux_crc = 0;
+	resign(f);
+	return (1);
+}
+
+/*
+ * The closing frame (DMSGF_DELETE) of one of the first two readdir
+ * answers, whose
+ * extension holds the feed's error at byte 132 and its flags at 136
+ * (struct dmsg_hm2_feed, sys/sys/dmsg.h): mode 1 sets the error to
+ * HAMMER2_ERROR_ABORTED, mode 2 clears the error and DMSG_HM2_FEEDF_EOF.
+ */
+static int
+end_readdir(struct frame *f)
+{
+	uint32_t error, flags;
+
+	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U ||
+	    (f->hdr.cmd & 0x60000000U) != 0x60000000U || f->ext_len < 140 ||
+	    f->hdr.msgid == 0 || (f->hdr.msgid != end_msgid[0] &&
+	    f->hdr.msgid != end_msgid[1]))
+		return (0);
+	memcpy(&flags, f->ext + 136, sizeof(flags));
+	if (opt.end_readdir == 1) {
+		error = 0x00001000U;
+	} else {
+		error = 0;
+		flags &= ~1U;
+	}
+	memcpy(f->ext + 132, &error, sizeof(error));
+	memcpy(f->ext + 136, &flags, sizeof(flags));
 	resign(f);
 	return (1);
 }
@@ -931,9 +980,20 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		trace("%s>%s i=%ld msgid=%" PRIu64 " stall t=%ld until=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t, to->held_until);
 	}
+	/* a readdir request's opening frame, CREATE and not REPLY: the same
+	 * transaction's continuations and its DELETE carry the command too */
+	if (opt.end_readdir && nend_req < 2 &&
+	    (f->hdr.cmd & 0x00FFFF00U) == 0x00201100U &&
+	    (f->hdr.cmd & 0xA0000000U) == 0x80000000U)
+		end_msgid[nend_req++] = f->hdr.msgid;
+	if (opt.end_readdir && ended < 2 && end_readdir(f)) {
+		ended++;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " end t=%ld mode=%d\n",
+		    from->name, to->name, i, f->hdr.msgid, t, opt.end_readdir);
+	}
 	if (opt.stall_ms && readdir_msgid == 0 &&
 	    (f->hdr.cmd & 0x00FFFF00U) == 0x00201100U &&
-	    (f->hdr.cmd & 0x20000000U) == 0)
+	    (f->hdr.cmd & 0xA0000000U) == 0x80000000U)
 		readdir_msgid = f->hdr.msgid;
 	side_enqueue(to, f, t + d > to->held_until ? t + d : to->held_until);
 }
@@ -1096,10 +1156,10 @@ relay(void)
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
-	    " stall-ms=%ld\n", opt.relay, opt.seed,
+	    " stall-ms=%ld end-readdir=%d\n", opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
-	    opt.refuse_nresolve, opt.stall_ms);
+	    opt.refuse_nresolve, opt.stall_ms, opt.end_readdir);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);

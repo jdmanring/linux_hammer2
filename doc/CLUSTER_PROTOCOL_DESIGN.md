@@ -514,7 +514,8 @@ quorum's verdicts. **The element's end is judged the other way round**,
 by what counts rather than by what does not: the error it feeds with its
 `NULL` chain, which the quorum check reads as that master's vote, is
 passed only when it is a clean end or `ENOENT`, what a master says of a
-key, or the bound's own `ETIMEDOUT`, and every other end reads as
+key, or `ETIMEDOUT`, which the check counts as unreachable whichever
+side's bound ran out, and every other end reads as
 `ENOTCONN`, the connection class decision C counts as unreachable
 (`hammer2_remote_end()`). So a refusal, a server that could not take
 `hammer2_mntlk` within its bound, a quiesce for the peer's unmount, a
@@ -529,13 +530,26 @@ refused as a proxy ending the call `EIO`, and a server whose try for
 `hammer2_mntlk` ran out answering with the refusal; listing the codes that
 mean unreachable left every unlisted one on the answering side, and an
 allowlist puts a way of failing nobody has named on the unreachable one.
+The fourteenth found the two ends the allowlist did not see. A reply
+closed cleanly with no end fed is an answer only from a descriptor that
+feeds one chain, after that chain, since every scan feeds its end; any
+other such close, which a lookup whose parent the server cannot resolve
+also sends (`hammer2_xops.c:794-797`), now reads as `ENOTCONN` where it
+left the element counted in progress and the check at `EINPROGRESS`. A
+frame this side cannot take, refused or out of memory, ends the link, so
+no later key of the same scan is fed past it and read the dropped one as
+absent before the call's end is seen. Two ends are this side's own: a
+descriptor the element does not serve feeds `EOPNOTSUPP` through the
+allowlist, no vote, and a flush, which has no remote part in stage 2,
+feeds a clean end, a vote of success no peer gave, which stage 3's flush
+over the wire replaces.
 A master that cannot read its own media is unreachable for that read,
 which fails closed. What a peer that lies about a key is believed is the
 security model's question, admission now and authentication in stage 5,
 and not this one. The `scanall` shape guards the slave's pass, which no
 wire run drives yet, so no control reads it; the run that drives the pass
-is its trigger. The wire harness has four controls, two on what a feed
-can answer and two on how the element ends. Under `H2_WIRE_REKEY=1` its relay moves
+is its trigger. The wire harness has five controls, two on what a feed
+can answer and three on how the element ends. Under `H2_WIRE_REKEY=1` its relay moves
 the key of the first data block fed, the `bmap` of a file's first
 block, one block up and signs the frame again, and the slave refuses
 that feed and fails the call, so fiemap reports the error
@@ -551,15 +565,29 @@ the slave through a null pointer in `hammer2_inode_get()`
 that first `nresolve` with the refusal a server sends when it cannot take
 a request, `LNK_ERROR` carrying `DMSG_ERR_NOSUPP`, and drops the real
 answer; the stat fails not connected and the call ends `ENOTCONN`
-(`wire-run-20261021-045312`, module `28bd2123661a311e`, debug kernel),
+(`wire-run-20261021-060851`, module `09eeb032d2850ebe`, debug kernel),
 where the module built before the allowlist returned the refusal as the
 lookup's answer, "Operation not supported" with this one master
 (`wire-run-20261021-045155`, module `77a271b1cfe20139`). Under
 `H2_WIRE_STALL=5000` the slave's bound is 2000 ms and the relay holds
 every frame due to the slave from the first `readdir` answer; the listing
-fails not connected, both `readdir` calls end `ETIMEDOUT`, and every file
-read after the stall equals the master's (`wire-run-20261021-044235`,
-module `28bd2123661a311e`). What is not checked is what the media does not constrain either:
+fails not connected, both `readdir` calls end `ETIMEDOUT`, the sooner
+after 2048 ms, and every file read after the stall equals the master's
+(`wire-run-20261021-055345`, module `09eeb032d2850ebe`). Under
+`H2_WIRE_END` the slave lists an empty directory of the master's and the
+relay rewrites the closing frames of the listing's two `getdents` calls,
+two because the first has emitted `.` and `..` and the kernel returns
+those rather than its error. With `aborted` their error becomes
+`ABORTED`, what a server ends a request with while its unmount drains
+it, and with `noeof` their error and EOF flag are cleared, a close with
+no end fed; both read the listing not connected and both calls ending
+`ENOTCONN` (`wire-run-20261021-060100` and `-055938`, module
+`09eeb032d2850ebe`). With every end passed through `hammer2_remote_end()`
+unchanged, `aborted` fails the listing with `ABORTED`'s own "Interrupted
+system call" (`wire-run-20261021-060728`, module `fd5c139bf73fb324`), and
+the module before the fourteenth round fails `noeof` with "Operation now
+in progress", the element counted in progress
+(`wire-run-20261021-060606`, module `28bd2123661a311e`). What is not checked is what the media does not constrain either:
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 That includes content that reaches a warning: a compressed block whose
@@ -754,7 +782,9 @@ runs to what is left of it. A bound re-armed per window let a peer
 continuing just inside it hold `hammer2_mntlk` for as many windows as
 the scan has, about three and a half hours for a 20000-entry `scanall`
 at ten seconds a window of sixteen. So a peer holds the lock for the
-bound at most, during which a mount, unmount, pfs-delete or bulkfree on
+bound plus the storage function's own run, which the deadline does not
+interrupt and whose length the peer chooses by the inode it names
+(not measured), during which a mount, unmount, pfs-delete or bulkfree on
 the host waits and the synchronization thread's try-lock fails and its
 pass is skipped to its next cadence; the bound is the host's protection
 against that peer, and stage 2b's measured default is what sets it. A
@@ -895,10 +925,10 @@ control. `rw` through `->reconfigure` is refused by the port's own test while a
 remote element is registered (`:2581-2586`), since the carried remount
 otherwise accepts ro to rw (`:2587-2595`). A write let through by
 a failed mount flag would run the local slave's storage function first
-and modify its chain, the remote's `(NULL, EOPNOTSUPP)` feed would set
-`CITEM_NULL`, the check would return `ESRCH` and then, on the
-`CHECK_NULL` end of scan, the element's `EOPNOTSUPP`, and the slave's
-created chain would flush with no master agreeing. `EIO` at
+and modify its chain, the remote element, which serves no modifying
+descriptor, would feed its end as `ENOTCONN`, the check would return
+`ENOTCONN` with this one master unreachable, and the slave's created
+chain would flush with no master agreeing. `EIO` at
 `hammer2_cluster.c:382` is reachable only with a quorum. The mount
 becomes writable only under the protocol a later note settles.
 

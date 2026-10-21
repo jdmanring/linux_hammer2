@@ -921,18 +921,20 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 	struct hammer2_rframe *f = NULL;
 	uint32_t cmd = msg->any.head.cmd;
 	const char *bad = NULL;
-	int feed;
+	int feed, lost = 0;
 
 	feed = (cmd & DMSGF_BASECMDMASK) == (DMSG_HM2_FEED & DMSGF_BASECMDMASK);
-	if (feed && msg->any.hm2_feed.bytes) {
-		/* the closing frame carries no chain */
+	if (feed && (cmd & DMSGF_DELETE) && msg->any.hm2_feed.bytes) {
+		bad = "a closing feed with a chain";
+	} else if (feed && (cmd & DMSGF_DELETE) == 0) {
+		/* a chain, its bytes in the aux data or in its blockref */
 		f = kzalloc_obj(*f);
 		if (f) {
 			memcpy(&f->bref, msg->any.hm2_feed.bref, sizeof(f->bref));
 			f->bytes = msg->any.hm2_feed.bytes;
 			f->error = hammer2_remote_error(msg->any.hm2_feed.error);
 		}
-		if (f && f->error == 0) {
+		if (f && f->error == 0 && f->bytes) {
 			if (f->bytes > HAMMER2_PBUFSIZE || msg->aux_data == NULL ||
 			    msg->aux_size < f->bytes)
 				bad = "a feed with no data for its bytes";
@@ -940,15 +942,13 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 				f->data = kvmemdup(msg->aux_data, f->bytes,
 				    GFP_KERNEL);
 		}
-	} else if (feed && (cmd & DMSGF_DELETE) == 0) {
-		/* a chain whose bytes are embedded in its blockref */
-		f = kzalloc_obj(*f);
-		if (f) {
-			memcpy(&f->bref, msg->any.hm2_feed.bref, sizeof(f->bref));
-			f->error = hammer2_remote_error(msg->any.hm2_feed.error);
-		}
 	}
 
+	/*
+	 * A frame not taken, refused or out of memory, ends the link, so no
+	 * later frame is fed past the key it held: a scan's later keys would
+	 * otherwise read that one as absent before the call's end is seen.
+	 */
 	mutex_lock(&rc->mtx);
 	if (f) {
 		++call->nrecv;
@@ -957,15 +957,17 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 			bad = "a feed past the window";
 #endif
 		if ((f->error == 0 && f->bytes && f->data == NULL) || bad) {
-			call->error = HAMMER2_ERROR_EIO;
+			lost = 1;
 			kvfree(f->data);
 			kfree(f);
 		} else {
 			list_add_tail(&f->entry, &call->frames);
 		}
-	} else if (feed && (cmd & DMSGF_DELETE) == 0) {
-		call->error = HAMMER2_ERROR_EIO;	/* out of memory */
+	} else if (bad || (feed && (cmd & DMSGF_DELETE) == 0)) {
+		lost = 1;
 	}
+	if (lost)
+		call->error = HAMMER2_ERROR_EIO;
 	if (cmd & DMSGF_DELETE) {
 		if (feed) {
 			if (msg->any.hm2_feed.flags & DMSG_HM2_FEEDF_EOF)
@@ -985,9 +987,12 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 	mutex_unlock(&rc->mtx);
 	wake_up_all(&rc->waitq);
 
-	if (bad) {
-		pr_warn_ratelimited("hammer2: HM2 peer sent %s, ending the link\n",
-		    bad);
+	if (lost) {
+		if (bad)
+			pr_warn_ratelimited("hammer2: HM2 peer sent %s, ending the link\n",
+			    bad);
+		else
+			pr_warn_ratelimited("hammer2: HM2 no memory for a feed, ending the link\n");
 		atomic_set_int(&state->iocom->msg_ctl, KDMSG_CLUSTERCTL_KILLRX);
 	}
 	if (cmd & DMSGF_DELETE)
@@ -1472,8 +1477,8 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
  * inode's own chain at the slot is not read and an inode whose proxy came
  * from an earlier connection is served by the current one.  A proxy at a
  * slot that is no longer remote is fed as the closed connection.  The
- * wait is bounded for the whole reply, and every way the reply ends feeds
- * what a local element ending that way feeds.
+ * wait is bounded for the whole reply, and every way it ends feeds an end
+ * the quorum reads: the peer's answer, or unreachable (hammer2_remote_end).
  */
 int
 hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
@@ -1546,10 +1551,13 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		key_beg = x->xop_bmap.lbn;
 		break;
 	case HAMMER2_REMOTE_IDX_FLUSH:
+		/* DEFER(stage 3: a flush over the wire): a vote no peer gave */
 		hammer2_xop_feed(xop, NULL, clindex, 0);
 		goto done;
 	default:
-		hammer2_xop_feed(xop, NULL, clindex, HAMMER2_ERROR_EOPNOTSUPP);
+		/* a request this element cannot make leaves it without a vote */
+		hammer2_xop_feed(xop, NULL, clindex,
+		    hammer2_remote_end(HAMMER2_ERROR_EOPNOTSUPP));
 		goto done;
 	}
 
@@ -1634,6 +1642,14 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		    fed >= x->xop_readdir.nmax && call->rkey > maxkey &&
 		    call->rkey < x->xop_readdir.rkey)
 			x->xop_readdir.rkey = call->rkey;
+		/*
+		 * A clean close with no end fed is an answer only from a
+		 * descriptor that feeds one chain, after that chain: a scan
+		 * always feeds its end.  Any other is a reply with no answer,
+		 * which would leave the element counted in progress.
+		 */
+		if (!call->eof && error == 0 && !(cap == 1 && fed == 1))
+			error = HAMMER2_ERROR_ENOTCONN;
 		if (call->eof || error)
 			hammer2_xop_feed(xop, NULL, clindex,
 			    hammer2_remote_end(error));
