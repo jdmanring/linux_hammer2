@@ -2295,6 +2295,22 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 				     HAMMER2_LOOKUP_ALWAYS);
 	KKASSERT(chain == NULL);
 
+	/*
+	 * XXX Linux: a block beneath an inode whose data is embedded.  The
+	 * lookup above finds nothing there under NODIRECT, and
+	 * hammer2_chain_create() would take the embedded bytes for a blockset,
+	 * its assertion being compiled out.  A file the master grew after this
+	 * element copied it small reaches here until its directory's scan
+	 * replaces the inode, and a remote master can feed one on purpose.
+	 */
+	if ((*parentp)->bref.type == HAMMER2_BREF_TYPE_INODE &&
+	    (*parentp)->data != NULL &&
+	    ((*parentp)->data->ipdata.meta.op_flags &
+	     HAMMER2_OPFLAG_DIRECTDATA)) {
+		error = HAMMER2_ERROR_EIO;
+		goto failed;
+	}
+
 	chain = NULL;
 	/*
 	 * XXX Linux: the radix this hands chain_create() comes from the FOCUS

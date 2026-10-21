@@ -313,7 +313,7 @@ skipping a connection device by a test marked `XXX`
 the registration in `hammer2_remote.c` not starting one. The thread would be the remote host's job for its own
 element, and here it would walk its element by chains
 (`hammer2_inode_chain()` at `hammer2_synchro.c:1560`, `chain_lookup` at
-`:1578`, `chain_create` at `:2360`) through blockrefs that carry the
+`:1578`, `chain_create` at `:2376`) through blockrefs that carry the
 peer's real media offsets, and the first dio-hash miss would reach
 `hammer2_get_volume()`'s panic, which sets the host-wide
 `hammer2_device_error` and stops every device on the host writing. The
@@ -475,11 +475,16 @@ number asked for, for `readdir` and `scanlhc` a directory entry or an
 inode, the first at or past its start key and the second in its hash
 range, for `nresolve` an inode or an entry carrying an error, for
 `scanall` its key range and what the scanned inode holds, entries and
-inodes under a directory, data under a file and nothing under a
-direct-data file, with the inode itself only when `NODIRECT` was not
-asked, since the slave's pass inserts what it is fed beneath the inode
-it scanned (`hammer2_synchro.c:1906-1911`) and a chain beneath a
-direct-data inode is read through the data it embeds, for `lookup` an
+inodes under a directory and data under a file, with the inode itself
+only when `NODIRECT` was not asked, since the slave's pass inserts what
+it is fed beneath the inode it scanned (`hammer2_synchro.c:1906-1911`);
+the type is read from the slave's own inode, which never changes it,
+but whether a file's data is embedded is not, since that copy is not
+refreshed when the master's file grows past its inode and a rule read
+from it refused an honest scan of the grown file, so the slave's insert
+refuses a block beneath a direct-data inode itself
+(`hammer2_synchro.c:2299-2312`), where the carried create would take
+the embedded bytes for a blockset, for `lookup` an
 inode of the number asked for,
 and for a read or `bmap` the data block covering the offset or
 the file's own inode, which the core's lookup returns for every key of
@@ -492,7 +497,10 @@ which the consumer decodes it under, or a refetched inode of another
 number; and a feed of an inode or data block with neither bytes nor an
 error. An error the peer reports is taken only from the set a read's
 storage function feeds, `EIO`, `CHECK`, `BADBREF`, `ENOENT`, `EINVAL`,
-`EOPNOTSUPP` and the end of a scan, and any other bit reads as `EIO`,
+`EOPNOTSUPP` and the end of a scan, with the server's `ETIMEDOUT` at
+its window bound, and its `ABORTED`, a quiesce for its unmount or a
+reconnect, reads as the link's loss, `ENOTCONN`, the connection class
+decision C counts as unreachable; any other bit reads as `EIO`,
 since the collect and its callers act on the rest as control: the sync
 pass restarts with no sleep on `EAGAIN` (`hammer2_synchro.c:545-627`),
 and `ESRCH` and `EDEADLK` are the quorum's verdicts. The `scanall`
@@ -737,7 +745,9 @@ transaction from request to its `DELETE` and is not re-armed per frame: a
 peer trickling one frame inside each bound would otherwise hold a sync
 pass, whose freeze is acknowledged only at the top of the thread loop
 through a `thr_wait` that sleeps in `hz*60` steps with no exit, and the
-unmount with it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
+unmount with it. The bound is tested before a queued frame is taken, so
+a peer that keeps the next frame queued whenever the client asks is
+timed out like one that sends nothing. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
 (`:1586-1587`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
@@ -803,7 +813,7 @@ buffered writes and attribute changes dispatch no XOP at all
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1842-1852`).
 The slave's pass writes its element through chain calls and its own
-flush (`hammer2_synchro.c:2360`, `:2369`, `:2518`, `:2583`, `:464-503`,
+flush (`hammer2_synchro.c:2376`, `:2385`, `:2534`, `:2599`, `:464-503`,
 `:880`), which a read-only superblock does not refuse, and it needs the
 device open for writing: the open mode is the first mount's
 (`sb_open_mode()`, `hammer2_ondisk.c:147`, `:197`), so stage 2b mounts
@@ -929,7 +939,7 @@ rather than from the design document alone.
   stamp a protocol took at `hammer2_chain_modify()` would differ there
   too.
 - **C9. The slave's pass re-stamps an inode copy at the replace with the
-  master's propagated tid** (`hammer2_synchro.c:1422`, `:2169`, `:2583`),
+  master's propagated tid** (`hammer2_synchro.c:1422`, `:2169`, `:2599`),
   and it snapshots its source on the source element's own device
   (`:808`, `:824`; `hammer2_ioctl.c:812`, `:890-891`), which for a
   remote source is the connection device, where a create is refused.
@@ -1048,7 +1058,7 @@ Five candidates, with what each met.
    the slave direction, which reverses decision B's "no thread for a
    MASTER" for that direction only; within one term every compared tid
    comes from the holder's counter and the pass stamps the replica from
-   the source (`hammer2_synchro.c:671-673`, `:2169`, `:2583`) where it
+   the source (`hammer2_synchro.c:671-673`, `:2169`, `:2599`) where it
    replaces, so C1 and C8 do not arise within a term, and one frontend
    with no forwarding means C3, C4, C5 and C11 do not arise while that
    frontend is the only one; replicas serve no reads of their own in
@@ -1065,7 +1075,7 @@ Five candidates, with what each met.
    what the stage-2 shape reads, a read-only mount whose cluster holds a
    remote master element, not what the holder's mount reads. C2 remains: the pass's inode
    insert and its destroy arm run at mtid 0 (`hammer2_synchro.c:1907-1910`, `:1818-1819`,
-   `:2360-2383`), so the delete helper's and the split's stamps on a
+   `:2376-2399`), so the delete helper's and the split's stamps on a
    replica carry no source tid today, which is the first obligation
    below. An
    `fsync` on the holder returns when a majority including the holder

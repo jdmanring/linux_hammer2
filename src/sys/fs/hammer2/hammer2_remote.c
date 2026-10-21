@@ -849,17 +849,21 @@ hammer2_rcall_close_locked(struct hammer2_rcall *call)
 
 /*
  * The errors a read's storage function or the server feeds, which the
- * collect and its callers read as a local element's.  Any other bit is a
- * control code the core acts on (EAGAIN restarts the sync pass with no
- * sleep, ESRCH and EDEADLK are quorum verdicts), so a peer's is EIO.
+ * collect and its callers read as a local element's, and the server's
+ * ETIMEDOUT at its window bound.  Its ABORTED, a quiesce for its unmount
+ * or a reconnect, is the link's loss and reads as ENOTCONN.  Any other bit
+ * is a control code the core acts on (EAGAIN restarts the sync pass with
+ * no sleep, ESRCH and EDEADLK are quorum verdicts), so a peer's is EIO.
  */
 #define HAMMER2_REMOTE_ERRORS	(HAMMER2_ERROR_EIO | HAMMER2_ERROR_CHECK | \
 	HAMMER2_ERROR_BADBREF | HAMMER2_ERROR_ENOENT | HAMMER2_ERROR_EINVAL | \
-	HAMMER2_ERROR_EOPNOTSUPP | HAMMER2_ERROR_EOF)
+	HAMMER2_ERROR_EOPNOTSUPP | HAMMER2_ERROR_EOF | HAMMER2_ERROR_ETIMEDOUT)
 
 static uint32_t
 hammer2_remote_error(uint32_t error)
 {
+	if (error & HAMMER2_ERROR_ABORTED)
+		return (HAMMER2_ERROR_ENOTCONN);
 	return ((error & ~HAMMER2_REMOTE_ERRORS) ? HAMMER2_ERROR_EIO : error);
 }
 
@@ -1025,6 +1029,8 @@ hammer2_rcall_start(hammer2_dev_t *cdev, int idx, const struct uuid *clid,
  * with the element's end consumed (call->eof and call->error say which),
  * HAMMER2_ERROR_ETIMEDOUT at the bound, HAMMER2_ERROR_ENOTCONN when the
  * link ended.  A continuation goes back every HAMMER2_XOPFIFO frames.
+ * The bound is tested before a queued frame is taken, so a peer that
+ * keeps the next frame queued is timed out like one that sends nothing.
  */
 static int
 hammer2_rcall_next(struct hammer2_rcall *call, unsigned long deadline,
@@ -1037,6 +1043,8 @@ hammer2_rcall_next(struct hammer2_rcall *call, unsigned long deadline,
 
 	*fp = NULL;
 	for (;;) {
+		if (time_after(jiffies, deadline))
+			return (HAMMER2_ERROR_ETIMEDOUT);
 		mutex_lock(&rc->mtx);
 		f = list_first_entry_or_null(&call->frames,
 		    struct hammer2_rframe, entry);
@@ -1282,10 +1290,13 @@ hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
  * its entry names, since the storage function resolves the entry and its
  * caller reads the result as an inode, or an errored entry; a scanall its
  * key range, and what the scanned inode holds: entries and inodes under a
- * directory, data under a file, nothing under a direct-data file, and the
- * inode itself only when NODIRECT was not asked, since the slave's pass
- * inserts what it is fed beneath the inode it scanned; a lookup the inode
- * of the number it asked for, which both its callers read as an inode; a
+ * directory, data under a file, and the inode itself only when NODIRECT
+ * was not asked, since the slave's pass inserts what it is fed beneath the
+ * inode it scanned.  The type is read from this side's inode, which never
+ * changes it; whether a file's data is embedded is not, since this side's
+ * copy is not refreshed when the master's file grows, so the slave's
+ * insert refuses a block beneath a direct-data inode itself; a lookup the
+ * inode of the number it asked for, which both its callers read as an inode; a
  * read or bmap the data block covering its offset, or the file's own
  * inode, which the core's lookup returns for every key of a direct-data
  * file.  A
@@ -1328,8 +1339,6 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 			return (0);
 		if (own && f->error == 0)	/* an errored chain is never a focus */
 			return ((lookup_flags & HAMMER2_LOOKUP_NODIRECT) == 0);
-		if (ip1->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA)
-			return (0);
 		if (ip1->meta.type == HAMMER2_OBJTYPE_DIRECTORY)
 			return (entry);
 		return (bref->type == HAMMER2_BREF_TYPE_DATA);
