@@ -104,6 +104,11 @@ guest_rel=$(ssh -o BatchMode=yes "$GUEST_SSH" uname -r 2>/dev/null)
 ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | cut -d' ' -f1)
 [ "$guest_rel" = "$ko_rel" ] || {
 	echo "dmsg: COULD-NOT-RUN: the module is built for $ko_rel and $GUEST runs $guest_rel; point KDIR at the guest's kernel" >&2; exit 2; }
+# One lockdep report turns lockdep off until the next boot, and a run
+# on that boot reads "no report" with nothing checking.
+dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+[ "$dl" = 0 ] && {
+	echo "dmsg: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 
 cat > "$W/guest.sh" <<'GUEST'
 set -u
