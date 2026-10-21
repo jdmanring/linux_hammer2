@@ -599,7 +599,9 @@ struct dmsg_hm2_feed {
 	uint32_t	bytes;
 	uint32_t	error;
 	uint32_t	flags;		/* DMSG_HM2_FEEDF_* on the closing frame */
-	uint8_t		reserved[52];
+	uint32_t	reserved0;
+	uint64_t	rkey;		/* a readdir's next key, closing frame */
+	uint8_t		reserved[40];
 };
 
 typedef struct dmsg_hm2_feed dmsg_hm2_feed_t;

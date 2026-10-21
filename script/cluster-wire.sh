@@ -175,7 +175,12 @@ head -c 524288 /dev/urandom > $C/big.bin
 head -c 262144 /dev/zero > $C/zeros.bin
 head -c 70000 /dev/urandom > $C/dir1/inner.bin
 echo long > "$C/a-name-longer-than-the-sixty-four-bytes-a-blockref-embeds-for-a-dirent.txt"
+# More entries than one readdir XOP takes (HAMMER2_READDIR_NMAX, 255), so
+# a listing on B crosses the peer's stopping key.
+mkdir -p $C/many
+i=0; while [ $i -lt 300 ]; do : > $C/many/e$i; i=$((i + 1)); done
 sync
+echo "many $(find $C/many -mindepth 1 | grep -c .)"
 echo "files $(cd $C && find . -type f | grep -c .)"
 (cd $C && find . -type f | sort | xargs sha256sum) | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
 GUEST
@@ -201,6 +206,10 @@ cat > "$W/read.sh" <<'GUEST'
 # read: B reads A's files through the registered element
 mountpoint -q $C || { echo "CL not mounted"; exit 1; }
 echo "files $(cd $C && find . -type f 2>/dev/null | grep -c .)"
+echo "many $(find $C/many -mindepth 1 2>/dev/null | grep -c .)"
+# fiemap is the bmap XOP over the wire, past the first block
+filefrag -v $C/big.bin > /tmp/h2wire.frag 2>&1; echo "fiemap-rc $?"
+echo "fiemap-extents $(grep -c '^ *[0-9]*:' /tmp/h2wire.frag)"
 (cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
 mount -o remount,rw $C 2>/dev/null; echo "remount-rc $?"
 echo "log-remount-refused $(klog 'read-write remount refused: a remote element')"
@@ -341,6 +350,8 @@ nfa=$(num "$(val A files)" 0)
 [ "$(num "$(val B lone-mount-rc)" 0)" != 0 ]; check "remote: B's SLAVE CL alone does not mount, having no master" $? "rc $(val B lone-mount-rc)"
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
 [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"
+[ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"
+[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$(num "$(val B fiemap-extents)" 0)" -ge 1 ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire" $? "rc $(val B fiemap-rc), $(val B fiemap-extents) extent(s)"
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"
 [ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"

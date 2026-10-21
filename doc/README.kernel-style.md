@@ -161,11 +161,11 @@ declares it: one typedef, one unnamed prototype argument, seven
 arriving in carried bodies. No category is new and nothing was fixed
 rather than baselined.
 
-1,469 to 1,548 when the remote element's client side landed in
+1,469 to 1,549 when the remote element's client side landed in
 `hammer2_remote.c` for stage 2b, with its marked lines in carried files:
 thirty-five `return (x);`, sixteen unnamed prototype arguments in
 `hammer2.h`, `hammer2_os.h` and the file's own static prototypes,
-eighteen continuation indents, and ten positive errnos, among them the
+nineteen continuation indents, and ten positive errnos, among them the
 first `ENOTCONN`, the code decision C of the note gives an unreachable
 quorum. Five of the prototype and indent hits came with the lockdep
 class a proxy chain is given, after a debug-kernel run read a false

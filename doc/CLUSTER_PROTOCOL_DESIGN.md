@@ -201,7 +201,14 @@ one, the one `hammer2_xop_feed()` would have been given with a `NULL`
 chain, or the server's own error ending the scan; without it the element
 fed only chains, as `ipcluster` and `lookup` do, its `error` is zero, and
 the client feeds no end, so the collect sees the element as a local one
-ending the same way would leave it. A request the server will not serve is closed
+ending the same way would leave it. The closing frame of a `readdir`
+also carries `rkey`, the key the server's scan stopped before after
+`nmax` entries, or `HAMMER2_KEY_MAX` at the directory's end, which the
+client lowers its own `rkey` to: the frontend emits no entry at or past
+it and starts its next XOP there, as it does for a local element that
+stopped first, so an entry the peer has not fed is never passed over.
+Without it a directory of more than `nmax` entries on the master listed
+only the first `nmax` through a slave holding fewer. A request the server will not serve is closed
 by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
 peer tells a served request from a refused one by the closing frame's
 command, and a served scan that found nothing reads as zero feeds and
@@ -433,10 +440,16 @@ by; a dirent whose name is not where the media keeps it, in the
 blockref up to its 64 bytes and in a block of at least its length past
 them, since readdir picks one by the length; an inode block shorter
 than an inode or whose name is longer than its 256-byte array; a block
-whose size its radix does not give; a chain outside the request's
-range, a scan's keys, a readdir's start or the block covering a read's
-offset; and a feed of an inode or data block with neither bytes nor an
-error. What is not checked is what the media does not constrain either:
+whose size its radix does not give; a chain the request could not be
+answered with, by its type and key: for `ipcluster` an inode of the
+number asked for, for `readdir`, `scanlhc` and `nresolve` a directory
+entry or an inode, the first from its start key and the second in its
+hash range, for `scanall` its key range, for `lookup` the chain covering
+its key, and for a read or `bmap` the data block covering the offset or,
+at offset 0 alone, a direct-data inode; a refetched block whose
+compression and check methods differ from the blockref the proxy keeps,
+which the consumer decodes it under; and a feed of an inode or data
+block with neither bytes nor an error. What is not checked is what the media does not constrain either:
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 
@@ -619,7 +632,7 @@ pass, whose freeze is acknowledged only at the top of the thread loop
 through a `thr_wait` that sleeps in `hz*60` steps with no exit, and the
 unmount with it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1578-1579`), and retires normally; a connection that closes fails every
+(`:1579-1580`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:483` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`

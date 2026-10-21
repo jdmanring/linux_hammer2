@@ -92,6 +92,7 @@ static hammer2_xop_desc_t *const hammer2_remote_descs[DMSG_HM2_XOP_COUNT] = {
 
 _Static_assert(sizeof(hammer2_blockref_t) ==
     sizeof(((dmsg_hm2_feed_t *)0)->bref), "a feed carries one blockref");
+_Static_assert(sizeof(dmsg_hm2_feed_t) == 256, "a feed frame's size");
 
 static void hammer2_remote_serve(struct work_struct *);
 static void hammer2_remote_reconcile(struct work_struct *);
@@ -347,7 +348,8 @@ hammer2_remote_feed(struct hammer2_remote_req *req, hammer2_chain_t *chain,
  * instead, so the peer tells the two apart by the closing frame's command.
  */
 static void
-hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof)
+hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof,
+    hammer2_key_t rkey)
 {
 	kdmsg_msg_t *msg;
 	uint32_t cmd = DMSG_HM2_FEED | DMSGF_REPLY | DMSGF_DELETE;
@@ -356,6 +358,7 @@ hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof)
 		cmd |= DMSGF_CREATE;
 	msg = kdmsg_msg_alloc(req->state, cmd, NULL, NULL);
 	msg->any.hm2_feed.error = error;
+	msg->any.hm2_feed.rkey = rkey;
 	if (eof)
 		msg->any.hm2_feed.flags = DMSG_HM2_FEEDF_EOF;
 	kdmsg_msg_write(msg);
@@ -597,7 +600,9 @@ out:
 	if (refused)
 		kdmsg_state_reply(state, DMSG_ERR_NOSUPP);
 	else
-		hammer2_remote_close(req, eof ? error : 0, eof);
+		hammer2_remote_close(req, eof ? error : 0, eof,
+		    (xop && req->idx == 1) ? xop->xop_readdir.rkey :
+		    HAMMER2_KEY_MAX);
 
 	if (xop) {
 		hammer2_xop_retire(&xop->head, 1U << clindex);
@@ -668,6 +673,7 @@ struct hammer2_rhandle {
 	char			*stash;		/* the fed block, until loaded */
 	int			stash_bytes;
 	struct hammer2_rhandle	*next;		/* the block's next identity, hlock */
+	uint8_t			methods;	/* the fed bref's; not identity */
 };
 
 /*
@@ -700,6 +706,7 @@ struct hammer2_rcall {
 	int			txclosed;	/* our DELETE is sent */
 	int			done;		/* the peer's DELETE arrived */
 	int			eof;		/* the element fed its end */
+	hammer2_key_t		rkey;		/* a readdir's, from the end; 0 none */
 	uint32_t		error;		/* HAMMER2_ERROR_* of the end */
 };
 
@@ -899,6 +906,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 		if (feed) {
 			if (msg->any.hm2_feed.flags & DMSG_HM2_FEEDF_EOF)
 				call->eof = 1;
+			call->rkey = msg->any.hm2_feed.rkey;
 			if (call->error == 0)
 				call->error = msg->any.hm2_feed.error;
 		} else if (call->error == 0) {
@@ -1107,6 +1115,7 @@ hammer2_rhandle_get(hammer2_dev_t *cdev, struct hammer2_rframe *f,
 	char *old;
 
 	want.type = f->bref.type;
+	want.methods = f->bref.methods;
 	want.clid = *clid;
 	want.key = f->bref.key;
 	if (f->bref.type == HAMMER2_BREF_TYPE_INODE) {
@@ -1241,29 +1250,53 @@ hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
 }
 
 /*
- * Whether a fed chain lies in what the request asked for: a scan's key
- * range, a readdir's start (its end is the local element's and is past
- * what the peer stops at, hammer2_vnops.c filtering above it), the block
- * covering a read's or a bmap's offset.
- * An inode fed for a direct-data file answers for itself and is not a
- * block of the range; the other descriptors name one key or no range.
+ * Whether a fed chain is one the request can be answered with: a type its
+ * storage function feeds and a key in what it asked for.  ipcluster feeds
+ * the inode itself, checked by its number, since the slave's pass copies
+ * it over the inode it asked about; a readdir, scanlhc or nresolve feeds
+ * directory entries and inodes, a readdir from its start (its end is the
+ * local element's and the peer's stopping key comes back with its end)
+ * and a scanlhc in its hash range; a scanall its key range, whatever the
+ * type; a lookup the chain covering its key; a read or bmap the data
+ * block covering its offset, or the inode of a direct-data file at
+ * offset 0.  bmap names a block number, the others a key.
  */
 static int
-hammer2_remote_in_range(int idx, const hammer2_blockref_t *bref,
-    hammer2_key_t key_beg, hammer2_key_t key_end)
+hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
+    hammer2_key_t key_beg, hammer2_key_t key_end, uint64_t inum)
 {
+	const hammer2_blockref_t *bref = &f->bref;
 	hammer2_key_t last = bref->key |
 	    (((hammer2_key_t)1 << bref->keybits) - 1);
+	int entry = bref->type == HAMMER2_BREF_TYPE_DIRENT ||
+	    bref->type == HAMMER2_BREF_TYPE_INODE;
 
 	switch (idx) {
-	case 1:			/* readdir, which the frontend bounds above */
-		return (last >= key_beg);
+	case 0:			/* ipcluster */
+		if (bref->type != HAMMER2_BREF_TYPE_INODE)
+			return (0);
+		return (f->error || (f->data &&
+		    f->bytes >= sizeof(hammer2_inode_data_t) &&
+		    ((const hammer2_inode_data_t *)f->data)->meta.inum == inum));
+	case 1:			/* readdir */
+		return (entry && last >= key_beg);
+	case 2:			/* nresolve */
+		return (entry);
+	case 5:			/* scanlhc */
+		return (entry && bref->key <= key_beg + HAMMER2_DIRHASH_LOMASK &&
+		    last >= key_beg);
 	case 6:			/* scanall */
 		return (bref->key <= key_end && last >= key_beg);
-	case 18:		/* strategy_read */
+	case 7:			/* lookup */
+		return (bref->key <= key_beg && last >= key_beg);
 	case 20:		/* bmap */
-		return (bref->type == HAMMER2_BREF_TYPE_INODE ||
-		    (bref->key <= key_beg && last >= key_beg));
+		key_beg *= hammer2_get_logical();
+		fallthrough;
+	case 18:		/* strategy_read */
+		if (bref->type == HAMMER2_BREF_TYPE_INODE)
+			return (key_beg == 0);
+		return (bref->type == HAMMER2_BREF_TYPE_DATA &&
+		    bref->key <= key_beg && last >= key_beg);
 	default:
 		return (1);
 	}
@@ -1448,7 +1481,8 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		else
 			level = ip1->lock.level + 1;
 		chain = NULL;
-		if (hammer2_remote_in_range(idx, &f->bref, key_beg, key_end))
+		if (hammer2_remote_in_range(idx, f, key_beg, key_end,
+		    ip1->meta.inum))
 			chain = hammer2_remote_proxy(cdev, pmp, f,
 			    &pmp->pfs_clid, ip1->meta.inum, level);
 		if (chain == NULL) {
@@ -1468,6 +1502,15 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 	}
 	if (error == HAMMER2_ERROR_EOF) {
 		error = call->error;
+		/*
+		 * The peer's readdir stopped after nmax entries at its rkey,
+		 * which the frontend must not pass, as it does not pass the
+		 * local element's: an entry beyond it is one this element has
+		 * not fed, and the next XOP starts there.  0 is no key.
+		 */
+		if (idx == 1 && call->eof && call->rkey != 0 &&
+		    call->rkey < x->xop_readdir.rkey)
+			x->xop_readdir.rkey = call->rkey;
 		if (call->eof || error)
 			hammer2_xop_feed(xop, NULL, clindex, error);
 	} else {
@@ -1536,6 +1579,7 @@ hammer2_remote_fetch(hammer2_dev_t *cdev, hammer2_off_t lbase, int lsize,
 		if (buf == NULL && f->error == 0 && f->data &&
 		    f->bref.type == h->type && f->bref.key == h->key &&
 		    f->bytes == (uint32_t)lsize &&
+		    f->bref.methods == h->methods &&
 		    hammer2_remote_feed_ok(&f->bref, 0, f->bytes, f->data)) {
 			buf = f->data;
 			f->data = NULL;
