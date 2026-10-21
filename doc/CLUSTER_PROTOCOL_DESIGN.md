@@ -417,7 +417,7 @@ helper's `mount_count` accounting (`hammer2_vfsops.c:2662-2669`) skips
 it by the same test, its `devvp_list` is initialized empty because
 `hammer2_register_sb()` walks every slot's list
 (`hammer2_ondisk.c:139-143`), and it is freed by a reference count the connection device alone
-carries (`struct hammer2_dev` has none, `hammer2.h:919-959`, only
+carries (`struct hammer2_dev` has none, `hammer2.h:919-969`, only
 `mount_count` and `iofree_count`): one reference per chain allocated on
 it, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`) and dropped
 where the chain is freed (`:837`, not at `hammer2_chain_lastdrop()`'s
@@ -476,7 +476,10 @@ entry or an inode, the first at or past its start key and the second in its
 hash range, for `scanall` its key range, for `lookup` the chain covering
 its key, and for a read or `bmap` the data block covering the offset or
 the file's own inode, which the core's lookup returns for every key of
-a direct-data file; a refetched block whose
+a direct-data file, for a read only at offset 0 since the read
+completion refuses an inode anywhere else (`hammer2_strategy.c:417-420`);
+an errored inode is taken as the file's, since its frame carries no
+number to check; a refetched block whose
 compression and check methods differ from the blockref the proxy keeps,
 which the consumer decodes it under; and a feed of an inode or data
 block with neither bytes nor an error. What is not checked is what the media does not constrain either:
@@ -494,11 +497,14 @@ block no local element matches reports no physical address: fiemap marks its ext
 (`hammer2_bmap_offset()`). The wire run drives the case with no local
 element, its slave held empty. A local element matched to the focus,
 and one holding the inode but lacking the block or holding an older
-one, are in the code and not driven by a run: the slave must have
-copied and then be held from copying while the master changes the
-file, and no harness can hold a pass; the trigger is the stage that
-gives the harness that hold, and a run with the slave matched would
-read the slave's own address under this code and the old alike.
+one, are in the code and not driven by a run, since each needs the slave
+to have copied from the master, and no run has yet driven the slave's
+pass over the wire, which the roadmap lists as the rest of stage 2b.
+That run is the trigger, and it has the hold the stale case needs: the
+pass refuses on a device opened read-only, so the slave's device
+reopened read-only after the copy and dialed again, with the file then
+changed on the master, reads the stale case, and a file left unchanged
+the matched one, whose address the old code reported too.
 
 The reply's data is copied off the reader thread into the frame, and
 the feed stashes it on the handle before it locks the new chain; the
@@ -737,8 +743,8 @@ strategy write ends its folios only inside its storage function
 (`hammer2_strategy.c:1597`, `:1609`, `:1612`), so a refusal before it
 would leave every buffered write under writeback until unmount, and the
 buffered writes and attribute changes dispatch no XOP at all
-(`hammer2_vnops.c` starts one at `:135`, `:244`, `:517`, `:673`, `:712`,
-`:1490`, `:1533` and `:2258`), so they would have returned 0 and lost
+(`hammer2_vnops.c` starts one at `:133`, `:242`, `:515`, `:671`, `:710`,
+`:1512`, `:1551` and `:2276`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1842-1852`).
 The slave's pass writes its element through chain calls and its own

@@ -1261,11 +1261,14 @@ hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
  * it over the inode it asked about; a readdir, scanlhc or nresolve feeds
  * directory entries and inodes, a readdir from its start (its end is the
  * local element's and the peer's stopping key comes back with its end)
- * and a scanlhc in its hash range; a scanall its key range, whatever the
- * type; a lookup the chain covering its key; a read or bmap the data
- * block covering its offset, or the file's own inode, which the core's
- * lookup returns for every key of a direct-data file.  bmap names a block
- * number, the others a key.
+ * and a scanlhc in its hash range, at or past its start; a scanall its key
+ * range, whatever the type; a lookup the chain covering its key; a read or
+ * bmap the data block covering its offset, or the file's own inode, which
+ * the core's lookup returns for every key of a direct-data file.  A
+ * direct-data file has one block, at its base, and the read completion
+ * refuses an inode anywhere else, so a read takes the inode at offset 0
+ * only.  An errored inode carries no number and is taken as the file's.
+ * bmap names a block number, the others a key.
  */
 static int
 hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
@@ -1288,8 +1291,8 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 	case 2:			/* nresolve */
 		return (entry);
 	case 5:			/* scanlhc */
-		return (entry && bref->key <= key_beg + HAMMER2_DIRHASH_LOMASK &&
-		    last >= key_beg);
+		return (entry && bref->key >= key_beg &&
+		    bref->key <= key_beg + HAMMER2_DIRHASH_LOMASK);
 	case 6:			/* scanall */
 		return (bref->key <= key_end && last >= key_beg);
 	case 7:			/* lookup */
@@ -1299,7 +1302,7 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 		fallthrough;
 	case 18:		/* strategy_read */
 		if (bref->type == HAMMER2_BREF_TYPE_INODE)
-			return (own);
+			return (own && (idx == 20 || key_beg == 0));
 		return (bref->type == HAMMER2_BREF_TYPE_DATA &&
 		    bref->key <= key_beg && last >= key_beg);
 	default:
