@@ -229,6 +229,7 @@ echo "remote-xops $(klog 'H2 REMOTE ')"
 echo "pass-refused $(klog 'sync pass refused on clindex')"
 show=$(hammer2 -v show /dev/vdb 2>&1); echo "slave-show-rc $?"
 echo "slave-files $(printf '%s\n' "$show" | grep -c 'filename "e[0-9]')"
+echo "slave-cl $(printf '%s\n' "$show" | grep -c 'filename "CL"')"
 echo "refetches $(klog 'H2 REFETCH')"
 echo "log-not-proxy $(klog 'not a proxy')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
@@ -364,7 +365,7 @@ nfa=$(num "$(val A files)" 0)
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
 [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"
 [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"
-[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by show rc $(val B slave-show-rc), the pattern matching $(val A media-files) on A's media"
+[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl), the pattern matching $(val A media-files) on A's media"
 # The file is on A alone, so no block has an address on B: every extent
 # says so rather than reporting the 0 no local element supplied.
 fx=$(num "$(val B fiemap-extents)" 0)

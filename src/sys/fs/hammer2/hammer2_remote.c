@@ -67,13 +67,15 @@ struct hammer2_remote_req {
 };
 
 /*
- * The lookup flags a scanall request carries: whether data is resolved, and
- * whether a direct-data inode answers as itself.  The slave's pass asks for
- * NODIRECT; without it a direct-data file's scan fed the file's own inode,
- * the pass inserted it beneath itself, and the flush recursed to its limit.
- * The lock modes stay the server's.
+ * The lookup flag a scanall request carries: whether a direct-data inode
+ * answers as itself.  The slave's pass asks for NODIRECT; without it a
+ * direct-data file's scan fed the file's own inode, the pass inserted it
+ * beneath itself, and the flush recursed to its limit.  NODATA is not
+ * carried: the server's scan runs with LOOKUP_ALWAYS, which resolves data
+ * whatever else is asked, and every feed ships its chain's data.  The lock
+ * modes stay the server's.
  */
-#define HAMMER2_REMOTE_LOOKUPF	(HAMMER2_LOOKUP_NODATA | HAMMER2_LOOKUP_NODIRECT)
+#define HAMMER2_REMOTE_LOOKUPF	HAMMER2_LOOKUP_NODIRECT
 
 /*
  * The read set of the command table: the descriptor at each index the
@@ -1261,8 +1263,9 @@ hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
  * local element's and the peer's stopping key comes back with its end)
  * and a scanlhc in its hash range; a scanall its key range, whatever the
  * type; a lookup the chain covering its key; a read or bmap the data
- * block covering its offset, or the inode of a direct-data file at
- * offset 0.  bmap names a block number, the others a key.
+ * block covering its offset, or the file's own inode, which the core's
+ * lookup returns for every key of a direct-data file.  bmap names a block
+ * number, the others a key.
  */
 static int
 hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
@@ -1273,14 +1276,13 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 	    (((hammer2_key_t)1 << bref->keybits) - 1);
 	int entry = bref->type == HAMMER2_BREF_TYPE_DIRENT ||
 	    bref->type == HAMMER2_BREF_TYPE_INODE;
+	int own = bref->type == HAMMER2_BREF_TYPE_INODE && (f->error ||
+	    (f->data && f->bytes >= sizeof(hammer2_inode_data_t) &&
+	    ((const hammer2_inode_data_t *)f->data)->meta.inum == inum));
 
 	switch (idx) {
 	case 0:			/* ipcluster */
-		if (bref->type != HAMMER2_BREF_TYPE_INODE)
-			return (0);
-		return (f->error || (f->data &&
-		    f->bytes >= sizeof(hammer2_inode_data_t) &&
-		    ((const hammer2_inode_data_t *)f->data)->meta.inum == inum));
+		return (own);
 	case 1:			/* readdir */
 		return (entry && bref->key >= key_beg);
 	case 2:			/* nresolve */
@@ -1297,7 +1299,7 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 		fallthrough;
 	case 18:		/* strategy_read */
 		if (bref->type == HAMMER2_BREF_TYPE_INODE)
-			return (key_beg == 0);
+			return (own);
 		return (bref->type == HAMMER2_BREF_TYPE_DATA &&
 		    bref->key <= key_beg && last >= key_beg);
 	default:

@@ -182,10 +182,11 @@ pointers: the inode's key, the directory's key, `lkey` and `rkey` and
 `strategy_read`, `lbn` for `bmap`, the name as aux where the XOP carries
 one. The lock modes a scan runs under come from no frame: `scanall` runs
 shared, resolving data, as the slave's own source scans do, and the
-request's `lookup_flags` contribute `HAMMER2_LOOKUP_NODATA` and
-`HAMMER2_LOOKUP_NODIRECT`, whether data is resolved and whether a
-direct-data inode answers a scan beneath it as itself. The first version
-carried `NODATA` alone, and the first wire run read the consequence: the
+request's `lookup_flags` contribute `HAMMER2_LOOKUP_NODIRECT` alone,
+whether a direct-data inode answers a scan beneath it as itself;
+`NODATA` would change nothing, since the server's scan runs with
+`HAMMER2_LOOKUP_ALWAYS`, which resolves data whatever else is asked, and
+is not carried. The first version carried `NODATA` alone, and the first wire run read the consequence: the
 slave's pass asks for `NODIRECT`, the server's scan of a direct-data file
 fed the file's own inode as its child, the pass inserted inode 0x405
 beneath itself 1091 times ("parent set for direct-data pkey
@@ -219,18 +220,24 @@ end, uninterruptibly, holding the directory's lock, and an entry keyed
 below the start would let the stopping key fall back to it. A
 descriptor that answers one chain takes one feed and a readdir `nmax`,
 and every descriptor's keys rise, each above the one fed before it, as
-a scan of leaves feeds them, which also holds a `scanlhc` to its hash
-range; the window bounds the frames in flight and not their total, so
+a scan of leaves feeds them, which with the hash range check bounds a
+`scanlhc` to `HAMMER2_DIRHASH_LOMASK` + 1 feeds; the window bounds the frames in flight and not their total, so
 a peer past any of these is refused like a frame that is not a proxy.
 The server holds a peer's `nmax` to between 1 and 255, the frontend's
 own bound, since a count of 0 or less would never stop its scan. A
-`scanall` has no count but its range: SEEK_DATA's scan resolves data
-and feeds every block from the offset to the end of the file, on a
-local element as on a remote one, and over the wire each block is a
-transfer under the bound. Whether a large remote file's SEEK_DATA
-outruns the bound is a candidate, unmeasured; its trigger is the first
-SEEK_DATA through a remote element, and the upgrade is the scan with
-`HAMMER2_LOOKUP_NODATA`, which it needs only the keys of. A request the server will not serve is closed
+`scanall` has no count but its range: the seek scan
+(`hammer2_bmap_next_key()`) feeds every block from the offset to the
+end of the file, on a local element as on a remote one, and over the
+wire each block is a transfer with its data under the bound. SEEK_DATA
+runs it once; SEEK_HOLE runs it once per block until a hole, so a
+dense file of n blocks costs about n²/2 block feeds. Whether a large
+remote file's seek outruns the bound is a candidate, unmeasured; its
+trigger is the first SEEK_DATA or SEEK_HOLE through a remote element.
+The scan needs only keys, but asking for none is not yet an upgrade:
+the server's scan runs with `HAMMER2_LOOKUP_ALWAYS`, which resolves
+data whatever else is asked, its feed ships every chain's data, and a
+proxy needs data to be fed, so the request carries no `NODATA` and the
+upgrade is those three together. A request the server will not serve is closed
 by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
 peer tells a served request from a refused one by the closing frame's
 command, and a served scan that found nothing reads as zero feeds and
@@ -467,8 +474,9 @@ answered with, by its type and key: for `ipcluster` an inode of the
 number asked for, for `readdir`, `scanlhc` and `nresolve` a directory
 entry or an inode, the first at or past its start key and the second in its
 hash range, for `scanall` its key range, for `lookup` the chain covering
-its key, and for a read or `bmap` the data block covering the offset or,
-at offset 0 alone, a direct-data inode; a refetched block whose
+its key, and for a read or `bmap` the data block covering the offset or
+the file's own inode, which the core's lookup returns for every key of
+a direct-data file; a refetched block whose
 compression and check methods differ from the blockref the proxy keeps,
 which the consumer decodes it under; and a feed of an inode or data
 block with neither bytes nor an error. What is not checked is what the media does not constrain either:
@@ -477,13 +485,20 @@ entries are the peer's, as a local volume's are whoever wrote it.
 
 **A block only the peer holds has no address here.** `bmap` answers
 with the offset of the local element's block, and a remote element has
-none to give. The XOP's offset is whichever local element ran last,
-which may lack the block or hold an older one, so with a remote focus
-the address is taken from a local element the quorum check matched to
-the focus by key and `modify_tid`, and a file or a block no local
-element matches reports no physical address: fiemap marks its extents
+none to give. The XOP's offset is whichever element ran last, which
+may lack the block or hold an older one, so the address is the focus's
+own; with a remote focus it is taken from a local element the quorum
+check matched to the focus by key and `modify_tid`, and a file or a
+block no local element matches reports no physical address: fiemap marks its extents
 `FIEMAP_EXTENT_UNKNOWN` and FIBMAP returns 0, as for a hole
-(`hammer2_bmap_offset()`).
+(`hammer2_bmap_offset()`). The wire run drives the case with no local
+element, its slave held empty. A local element matched to the focus,
+and one holding the inode but lacking the block or holding an older
+one, are in the code and not driven by a run: the slave must have
+copied and then be held from copying while the master changes the
+file, and no harness can hold a pass; the trigger is the stage that
+gives the harness that hold, and a run with the slave matched would
+read the slave's own address under this code and the old alike.
 
 The reply's data is copied off the reader thread into the frame, and
 the feed stashes it on the handle before it locks the new chain; the
@@ -664,7 +679,7 @@ pass, whose freeze is acknowledged only at the top of the thread loop
 through a `thr_wait` that sleeps in `hz*60` steps with no exit, and the
 unmount with it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1579-1580`), and retires normally; a connection that closes fails every
+(`:1586-1587`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:483` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
@@ -821,7 +836,7 @@ rather than from the design document alone.
 - **C4. Inode numbers are a per-host counter.** `pmp->inode_tid` is
   seeded at mount (`hammer2_vfsops.c:1736-1739`) and advanced by
   `hammer2_trans_newinum()` (`hammer2_flush.c:239-243`) from the VOP
-  (`hammer2_vnops.c:387`); the flush writes it into the root's
+  (`hammer2_vnops.c:385`); the flush writes it into the root's
   `pfs_inum` (`hammer2_flush.c:798`). Two coordinators issue the same
   inode numbers, and `hammer2_xop_inode_create()` answers the second
   `EEXIST` on every host (`hammer2_xops.c:1073-1077`).
@@ -840,8 +855,8 @@ rather than from the design document alone.
 - **C7. The collect skips a key the check returns `ESRCH` or `EDEADLK`
   for and ends the scan in `ENOENT`** (`hammer2_admin.c:805-817`,
   carried), and `readdir` ends on any collect error at the position it
-  reached (`hammer2_vnops.c:254-257`) and maps the scan's final `ENOENT`
-  to success (`:337-339`), so a disputed key vanishes from a listing that
+  reached (`hammer2_vnops.c:252-255`) and maps the scan's final `ENOENT`
+  to success (`:335-337`), so a disputed key vanishes from a listing that
   otherwise succeeds, and any other collect error ends the listing from
   that position on.
 - **C8. PFS roots are stamped from each host's super-root counter at
@@ -870,12 +885,12 @@ rather than from the design document alone.
   `open` and in the path calls through `mnt_want_write`, not on the
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
-  (`hammer2_vnops.c:376`, `:502`, `:621`, `:830`, `:1038`, `:1236`,
-  `:1429`, `:1822`, `:2510`), which a mount sets and only a remount
+  (`hammer2_vnops.c:374`, `:500`, `:619`, `:828`, `:1036`, `:1234`,
+  `:1427`, `:1840`, `:2528`), which a mount sets and only a remount
   rewrites (`hammer2_vfsops.c:1707`, `:2553`, `:2568`);
   with it set, `fsync` returns 0 before the sync without reading the
-  mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
-  `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
+  mapping's error (`hammer2_vnops.c:1350-1351`), and with it clear
+  `fsync` syncs and flushes the inode's chain (`:1356-1361`). ext4 sets
   no `SB_RDONLY` at run time for this reason, keeping its own flag
   (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
   `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3267`).
@@ -890,9 +905,9 @@ rather than from the design document alone.
   property of the write path's design, not of a flag.
 - **C14. A read served from the caches never reaches the quorum
   check.** Cached folios, the dentry cache and the in-memory inode
-  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2450`) with no
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2468`) with no
   XOP; only an uncached lookup and `readdir`, which is an XOP per call
-  (`:199`), reach the check. "A read under quorum loss" means those.
+  (`:197`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
   receive path builds its switch from `msg->state->icmd`
   (`kern_dmsg.c:1166`), which is zero on `state0`, so a bare `PING`
@@ -963,7 +978,7 @@ Five candidates, with what each met.
    needs a VOP-level command with a reply carrying the holder's inode
    number and errno, which the wire format does not have (the VOP space
    has no command, and the inode number is allocated at the receiving
-   VOP, `hammer2_vnops.c:387`); both are Dillon's "a client can submit
+   VOP, `hammer2_vnops.c:385`); both are Dillon's "a client can submit
    modifying operations to a single master"
    (`DILLON_HAMMER2_DESIGN_2015.md:729-731`) and both are the protocol
    note's to add, with their cost. The other masters
@@ -1150,7 +1165,7 @@ issues it twice.
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1554-1598`), and the collect turns `ESRCH` and `EDEADLK` at
+(`hammer2.h:1561-1605`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:353-366`, before pass 3,
 and `RDHARD` is set for a MASTER only in pass 3 (`:409-410`), so there is
@@ -1198,9 +1213,9 @@ keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
 those two test theirs: every VOP that modifies, since the port's
 create, unlink, rename, link, setattr, fallocate and time update modify
 local chains before the collect (C6), `open` and `mmap` for writing (the port has no `.open` and its
-`.read_iter` is the generic one, `hammer2_vnops.c:2019`, so those two are
+`.read_iter` is the generic one, `hammer2_vnops.c:2037`, so those two are
 new wrappers, and the mmap hook on the kernel of record is
-`.mmap_prepare`, `:2023`), `write_iter`, `page_mkwrite`, `writepages`,
+`.mmap_prepare`, `:2041`), `write_iter`, `page_mkwrite`, `writepages`,
 and the reads, which both refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
 so that a cut-off holder never serves cached data as current; `fsync`
 never returns 0 after the shutdown, as neither does (`fs/ext4/fsync.c:134`
@@ -1223,7 +1238,7 @@ state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
 2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
-errno map has no `pmp` (`hammer2.h:1554-1555`), the collect's skip (C7)
+errno map has no `pmp` (`hammer2.h:1561-1562`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
 **Taken: `ENOTCONN` for an uncached read with no quorum

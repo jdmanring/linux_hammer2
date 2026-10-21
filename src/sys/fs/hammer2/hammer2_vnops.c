@@ -1469,11 +1469,12 @@ hammer2_file_mmap_prepare(struct vm_area_desc *desc)
  * equal, and the first run of this code returned ENOENT as a file
  * position for every offset in the file.
  *
- * A block only a remote element holds has no address on this host.  The
- * XOP's offset is whichever local element ran last, which may lack the
- * block or hold an older one, so with a remote focus the address is taken
- * from a local element the quorum check matched to it, and is otherwise
- * HAMMER2_BMAP_UNKNOWN, never an invented one.
+ * The XOP's offset is whichever element ran last, which may lack the block
+ * or hold an older one, so the address is the focus's own, the chain the
+ * quorum check chose.  A block only a remote element holds has no address
+ * on this host: with a remote focus the address is a local element's the
+ * check matched to it, and is otherwise HAMMER2_BMAP_UNKNOWN, never an
+ * invented one.
  */
 #define HAMMER2_BMAP_UNKNOWN	((hammer2_off_t)-1)	/* Linux */
 
@@ -1484,8 +1485,10 @@ hammer2_bmap_offset(hammer2_xop_bmap_t *xop)	/* Linux */
 	hammer2_chain_t *chain;
 	int i;
 
-	if (cluster->focus == NULL || !hammer2_dev_is_conn(cluster->focus->hmp))
+	if (cluster->focus == NULL)
 		return (xop->offset);
+	if (!hammer2_dev_is_conn(cluster->focus->hmp))
+		return (cluster->focus->bref.data_off);
 	for (i = 0; i < cluster->nchains; ++i) {
 		chain = cluster->array[i].chain;
 		if (chain && chain->error == 0 &&
