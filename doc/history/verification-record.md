@@ -16697,7 +16697,9 @@ off on the correction.
 
 Stage 2a of `doc/CLUSTER_PROTOCOL_DESIGN.md`, the server side of the HM2
 XOP API, built at `25f0b37` after a first hostile audit of the working
-tree and corrected at `508c9de` after a second (both below). No BSD tree
+tree, corrected at `508c9de` after a second, at `2bbaae4` after a
+fourth, at `724c07d` after a fifth and at `3716052` after a sixth (all
+below). No BSD tree
 has a remote element, so the server is the port's own file,
 `hammer2_remote.c`, and the carried `hammer2_rcvdmsg()` hands it every
 frame in the HM2 space and nothing else. The wire is the note's: one
@@ -16782,16 +16784,16 @@ writes a tree on the volume first, forty small files and one of three
 blocks of random bytes, sets `remote_timeout_ms` to 3000 so the window
 reading waits three seconds and not the ten of the default, and reads
 every reply beside the guest's own reading of the same volume, never
-beside the kernel alone. On the guest at `508c9de`, 7.3.0-kasan
-(`~/Projects/linux_hammer2-data/fixtures/cluster-dmsg-stage2a-r4-kasan-20261020.log`,
-kernel log `dmsg-run-20261020-152110.klog` beside it): 79 checks, 0 failed. The kernel's
+beside the kernel alone. On the guest at `2bbaae4`, 7.3.0-kasan
+(`~/Projects/linux_hammer2-data/fixtures/cluster-dmsg-stage2a-r5-kasan-20261020.log`,
+kernel log `dmsg-run-20261020-160718.klog` beside it): 79 checks, 0 failed. The kernel's
 CONN and span announce PROTO_2 (conn_proto 2, span_proto 2) and an
 `ipcluster` of the PFS root returns the inode whose `pfs_fsid` is the
 span's (found 1, fsid_match 1); a `readdir` lists the forty entries
 whose inode numbers and names are `stat`'s (40 of 40, match 1) in
 windows of sixteen (maxrun 16, 2 continuations); the same request with
 no continuation stops at sixteen and closes at the bound (frames 16,
-error 0x40000, bound 3000 ms, after 3034 ms); `scanlhc` on one
+error 0x40000, bound 3000 ms, after 3019 ms); `scanlhc` on one
 entry's hash returns that entry (1 of 1); `nresolve` returns the inode
 `stat` names at its size and a name that does not exist as no chain and
 no refusal (found 0, closed 1, refused 0, error 0); three
@@ -16802,25 +16804,28 @@ no refusal (found 0, closed 1, refused 0, error 0); three
 `bmap` of logical block one return the chain at the same data offset,
 and `hammer2 -v show` on the unmounted media reads that block at that
 offset, the utility's line kept whole in the reading; a modifying
-command and a cluster this device has no mounted PFS of are refused
-(1/32, 1/32), an inode that does not exist is served as an error with
-no chain (error 64, 0 frames), and the connection outlives all three
-(eof 0, shell_reply 1); the log's `H2 SERVE` lines number fourteen, the
-cluster refusal among them, beside the one command refusal and the one
-cluster refusal named as such; each of the eleven actions leaves 0
+command, a cluster this device has no mounted PFS of and a one-shot
+request, `CREATE` with `DELETE`, are refused (1/32, 1/32, 1/32), an
+inode that does not exist is served as an error with no chain (error
+64, 0 frames), and the connection outlives all four (eof 0, shell_reply
+1); the log's `H2 SERVE` lines number fourteen, the cluster refusal
+among them, beside the one command refusal, the one one-shot refusal
+and the one cluster refusal named as such; each of the eleven actions leaves 0
 threads; no kernel warning, lockdep or sanitizer report, kmemleak 0, the
 module unloads with 0 threads. The same on 7.3.0, the lockdep kernel
-(`cluster-dmsg-stage2a-r4-debug-20261020.log`, `dmsg-run-20261020-152543.klog`): 79 checks,
+(`cluster-dmsg-stage2a-r5-debug-20261020.log`, `dmsg-run-20261020-160406.klog`): 79 checks,
 0 failed, and the two logs differ only in the kernel's name once
 timings, the kept log's name, the file's digest and the other
-run-specific values are stripped. The control, `H2_CRC_CONTROL=1`
+run-specific values are stripped, the random file's digest among them. The control, `H2_CRC_CONTROL=1`
 building `HAMMER2_NOCRC` and `HAMMER2_NOWINDOW` on 7.3.0-kasan
-(`cluster-dmsg-stage2a-r4-control-20261020.log`, `dmsg-run-20261020-152317.klog`): 78
+(`cluster-dmsg-stage2a-r5-control-20261020.log`, `dmsg-run-20261020-160926.klog`): 78
 checks, 0 failed, both bad frames served and the readdir with no
 continuation delivering all forty entries (frames 40 of 40, error 0),
-which is what proves the window is what stops it. The runs at `25f0b37`
-(`cluster-dmsg-stage2a-r3-{debug,kasan,control}-20261020.log`) and before
-the first audit's fixes (`r2`) read the same counts on the same kernels;
+which is what proves the window is what stops it. The runs at `508c9de`
+(`cluster-dmsg-stage2a-r4-{debug,kasan,control}-20261020.log`), at
+`25f0b37` (`r3`) and before the first audit's fixes (`r2`) read the same
+counts on the same kernels without the one-shot reading, which the
+fourth audit asked for;
 the first run of the stage, `cluster-dmsg-stage2a-r1-kasan-20261020.log`,
 failed two checks on two defects of the harness and none of the kernel,
 the stage 2a control branch reading `H2_CRC_CONTROL` unguarded under
@@ -16835,17 +16840,34 @@ baselined (`doc/README.kernel-style.md`, the 1,444 paragraph); inventory
 sums the table against (and, since the row commit, counts the rows it
 summed against the rows it parsed, the per-file check being what catches
 a row dropped from the table), and 9 `DEFER`s; provenance 39 checks 0 findings;
-citations 38 rows 35 symbol-anchored 0 failures, with the note's eight
-prose citations into `kern_dmsg.c` (five) and `hammer2.h` (three) that
-stage 1's insertions had left stale mapped through the diff from the
-commit that wrote them, the eight being what `git show 25f0b37` moves; posix, doc prose, history, absence, shim, ccms-lock,
+citations 38 rows 35 symbol-anchored 0 failures, with the note's
+citations into the five files stage 1 and stage 2a inserted lines into
+(`kern_dmsg.c`, `hammer2_iocom.c`, `hammer2_vfsops.c`, `hammer2.h`,
+`sys/dmsg.h`) brought to the kernel of record in three steps: eight
+filename-qualified ones through the diff from the commit that wrote
+them, at `25f0b37`; a ninth, the `msgid` sentence's second copy in the
+note's future-work table, found by the fourth audit and moved at
+`2bbaae4`; and the bare continuations, `:NNN` inside a sentence that
+named its file earlier, which neither remap had searched for and the
+fifth audit found four of, swept by population at `724c07d` over the
+note's 111 bare citations on 80 lines, of which 30 continue one of the
+five files and 28 were stale: 26 moved there with three qualified ones
+in the same files that pointed at a `#if 0`, a blank line and a brace,
+and the last two, the span arms named in the note's own audit history,
+which that sweep had set aside as text about the note and the sixth
+audit found, moved at `3716052`; the two sentences whose fact those stages changed, the span arm and the
+span fill's protocol version, now say which stage changed it beside the
+current line; none of these is in the citation gate's population, which
+reads only a table row whose first cell is a citation; posix, doc prose, history, absence, shim, ccms-lock,
 vectors, tools, report, reverts and transport clean; the `XXX` table
 counts `hammer2.h` at 30, `hammer2_iocom.c` at 22 and `sys/dmsg.h` at
 15, `hammer2_remote.c` at 0, the port's column 525 in twenty-five files.
 
 The first hostile audit, of the working tree before any commit
 (`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-1-33286a1-wt-20261020.txt`,
-the opus slot, 42 tool uses, 8.7 minutes), returned NO SIGN-OFF with two
+the opus slot, 42 tool uses, 8.7 minutes, the slot and the figures of
+every round here from the task's accounting, which no report carries),
+returned NO SIGN-OFF with two
 blocking findings, one fixable and three low. The first blocking finding
 held: the server's teardown flushed its queue, then destroyed and freed
 it while the message core's reader thread was still alive and could
@@ -16906,6 +16928,71 @@ takers of `hammer2_mntlk` and the create ioctl takes no lock, now
 removed from the note and from here; and the total-row check summed
 only the rows its own filter saw, now counted against the rows parsed,
 with the per-file check named as what catches a dropped row.
+The fourth audit, of `476c281` with the row committed
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-4-476c281-20261020.txt`,
+the Fable slot, 57 tool uses, 16.8 minutes from the task's accounting,
+which the report does not carry, sixteen gates run and the inventory
+gate's total-row check probed on a scratch export), returned
+NO SIGN-OFF with one blocking finding and seven low or confirming, and
+re-derived every number in the readings paragraph from the kept logs and
+every gate figure from runs at `476c281`. Its blocking finding held: the
+remap the third round counted was the diff's eight and not the stale
+set, a ninth copy of the `msgid` sentence surviving in the note's
+future-work table at the old line, in a row the citation gate never
+reads since its first cell is prose; moved at `2bbaae4`. Its low finding
+on the row held: the one-shot and at-close refusals were stated with
+nothing driving either; the one-shot arm is driven now, the fourth
+request of the refusal action above, and the at-close arm rests on the
+code's reading at `hammer2_remote.c`, which nothing in the harness
+drives, since its request would have to arrive inside the unmount's
+quiesce window, and the row says so. The fifth audit, of `2bbaae4` with
+the entry and the row uncommitted
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-5-2bbaae4-wt-20261020.txt`,
+the Fable slot after the opus slot's head fell through, 75 tool uses, 14.4 minutes from the task's accounting, sixteen
+gates run, every r5 number re-derived from the logs and the kernel logs
+and every line citation in the note swept), returned NO SIGN-OFF with
+one blocking finding, one fixable, two low and seven confirming. Its
+blocking finding held and was wider than what it found: the two remaps
+had searched for citations carrying a filename, and a bare continuation
+was in neither's population; it found four, and the sweep above found
+twenty-six, moved at `724c07d`. Its fixable finding held: the row
+counted three audits where four reports existed, every one NO SIGN-OFF,
+and pinned `508c9de` while describing the one-shot reading only the
+harness at `2bbaae4` takes; the row now pins `724c07d` and counts the
+rounds. Its low findings: the fourth round's figures rest on the task's
+accounting, which the report does not carry, said so now; and the
+at-close clause claimed no client could reach the arm on purpose, where
+a peer sending through the host's unmount would, so the row and this
+entry say what the harness drives and what it does not. The sixth
+audit, of `724c07d` with the entry and the row uncommitted
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-6-724c07d-wt-20261020.txt`,
+the Fable slot after the opus slot's head fell through, 81 tool uses, 24.5 minutes, sixteen gates run, the note's bare
+citations counted and diffed across `724c07d` by machine and every
+qualified citation into the five files resolved), returned NO SIGN-OFF
+with one blocking finding, two low and seven confirming. Its blocking
+finding held: the sweep had set aside the two bare citations in the
+note's own audit history as text about the note, and they name the
+`LNK_SPAN` arms of `hammer2_iocom.c` at the lines before stage 1; moved
+at `3716052`, the counts above corrected from 28 and 26. Its low
+findings: the first three rounds' slot and figures carried no
+disclosure of their source, which the sentence on the first round now
+gives for every round; and a sentence of the note read the thread
+creation at `hammer2_vfsops.c:497` as skipped for every MASTER slot
+where the line skips it only at one master, now stated as what the line
+does and what P8 asks of it, at `3716052`. The seventh audit, of
+`3716052` with the entry and the row uncommitted
+(`~/Projects/linux_hammer2-data/p8-notes/stage2a-audit-7-3716052-wt-20261020.txt`,
+the Fable slot after the opus slot's head fell through, 94 tool uses,
+44.2 minutes, sixteen gates run, the bare-citation population counted
+and every member resolved by content, the readings re-read from the r5
+logs and every round's claims checked against its report), returned
+SIGN-OFF with no finding at any grade, and two residuals it named as
+not findings: the slot and usage figures of every round rest on the
+task's accounting and the entry says so, and the claim that the two
+7.3 logs differ only in timings and run-specific values once stripped
+is one it read from the one differing figure it found, a window timing,
+rather than from a byte diff of its own; the diff is this session's,
+four lines, the random file's digest.
 
 What stage 2a does not do, for stage 2b: no slot registers from a span,
 no proxy chain exists, no request leaves this kernel. The ghost span
