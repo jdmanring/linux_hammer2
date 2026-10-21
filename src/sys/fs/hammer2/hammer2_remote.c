@@ -848,6 +848,22 @@ hammer2_rcall_close_locked(struct hammer2_rcall *call)
 }
 
 /*
+ * The errors a read's storage function or the server feeds, which the
+ * collect and its callers read as a local element's.  Any other bit is a
+ * control code the core acts on (EAGAIN restarts the sync pass with no
+ * sleep, ESRCH and EDEADLK are quorum verdicts), so a peer's is EIO.
+ */
+#define HAMMER2_REMOTE_ERRORS	(HAMMER2_ERROR_EIO | HAMMER2_ERROR_CHECK | \
+	HAMMER2_ERROR_BADBREF | HAMMER2_ERROR_ENOENT | HAMMER2_ERROR_EINVAL | \
+	HAMMER2_ERROR_EOPNOTSUPP | HAMMER2_ERROR_EOF)
+
+static uint32_t
+hammer2_remote_error(uint32_t error)
+{
+	return ((error & ~HAMMER2_REMOTE_ERRORS) ? HAMMER2_ERROR_EIO : error);
+}
+
+/*
  * The reply callback, on the reader thread, and on the writer thread for
  * the DELETEs the link's end simulates.  A frame is copied and queued; the
  * window and the frame's shape are checked here, where they can be read,
@@ -870,7 +886,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 		if (f) {
 			memcpy(&f->bref, msg->any.hm2_feed.bref, sizeof(f->bref));
 			f->bytes = msg->any.hm2_feed.bytes;
-			f->error = msg->any.hm2_feed.error;
+			f->error = hammer2_remote_error(msg->any.hm2_feed.error);
 		}
 		if (f && f->error == 0) {
 			if (f->bytes > HAMMER2_PBUFSIZE || msg->aux_data == NULL ||
@@ -885,7 +901,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 		f = kzalloc_obj(*f);
 		if (f) {
 			memcpy(&f->bref, msg->any.hm2_feed.bref, sizeof(f->bref));
-			f->error = msg->any.hm2_feed.error;
+			f->error = hammer2_remote_error(msg->any.hm2_feed.error);
 		}
 	}
 
@@ -912,7 +928,8 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 				call->eof = 1;
 			call->rkey = msg->any.hm2_feed.rkey;
 			if (call->error == 0)
-				call->error = msg->any.hm2_feed.error;
+				call->error = hammer2_remote_error(
+				    msg->any.hm2_feed.error);
 		} else if (call->error == 0) {
 			/* kern_dmsg's LNK_ERROR: a refusal or the link's loss */
 			switch (msg->any.head.error) {
@@ -1264,10 +1281,14 @@ hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
  * scanlhc in its hash range, at or past its start; an nresolve the inode
  * its entry names, since the storage function resolves the entry and its
  * caller reads the result as an inode, or an errored entry; a scanall its
- * key range, whatever the type; a lookup the inode of the number it asked
- * for, which both its callers read as an inode; a read or
- * bmap the data block covering its offset, or the file's own inode, which
- * the core's lookup returns for every key of a direct-data file.  A
+ * key range, and what the scanned inode holds: entries and inodes under a
+ * directory, data under a file, nothing under a direct-data file, and the
+ * inode itself only when NODIRECT was not asked, since the slave's pass
+ * inserts what it is fed beneath the inode it scanned; a lookup the inode
+ * of the number it asked for, which both its callers read as an inode; a
+ * read or bmap the data block covering its offset, or the file's own
+ * inode, which the core's lookup returns for every key of a direct-data
+ * file.  A
  * direct-data file has one block, at its base, and the read completion
  * refuses an inode anywhere else, so a read takes the inode at offset 0
  * only.  An errored inode carries no number and is taken as the file's.
@@ -1275,11 +1296,12 @@ hammer2_remote_feed_ok(const hammer2_blockref_t *bref, uint32_t error,
  */
 static int
 hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
-    hammer2_key_t key_beg, hammer2_key_t key_end, uint64_t inum)
+    hammer2_key_t key_beg, hammer2_key_t key_end, const hammer2_inode_t *ip1,
+    uint32_t lookup_flags)
 {
+	uint64_t inum = ip1->meta.inum;
 	const hammer2_blockref_t *bref = &f->bref;
-	hammer2_key_t last = bref->key |
-	    (((hammer2_key_t)1 << bref->keybits) - 1);
+	hammer2_key_t last;
 	int isinode = bref->type == HAMMER2_BREF_TYPE_INODE;
 	int entry = bref->type == HAMMER2_BREF_TYPE_DIRENT || isinode;
 	const hammer2_inode_data_t *ipdata = isinode && f->data &&
@@ -1288,6 +1310,9 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 	int own = isinode && (f->error ||
 	    (ipdata && ipdata->meta.inum == inum));
 
+	if (bref->keybits > 63)		/* the proxy refuses it, after this */
+		return (0);
+	last = bref->key | (((hammer2_key_t)1 << bref->keybits) - 1);
 	switch (idx) {
 	case 0:			/* ipcluster */
 		return (own);
@@ -1299,7 +1324,15 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 		return (entry && bref->key >= key_beg &&
 		    bref->key <= key_beg + HAMMER2_DIRHASH_LOMASK);
 	case 6:			/* scanall */
-		return (bref->key <= key_end && last >= key_beg);
+		if (bref->key > key_end || last < key_beg)
+			return (0);
+		if (own && f->error == 0)	/* an errored chain is never a focus */
+			return ((lookup_flags & HAMMER2_LOOKUP_NODIRECT) == 0);
+		if (ip1->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA)
+			return (0);
+		if (ip1->meta.type == HAMMER2_OBJTYPE_DIRECTORY)
+			return (entry);
+		return (bref->type == HAMMER2_BREF_TYPE_DATA);
 	case 7:			/* lookup */
 		return (isinode && bref->key <= key_beg && last >= key_beg &&
 		    (f->error || (ipdata && ipdata->meta.inum == key_beg)));
@@ -1522,7 +1555,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		chain = NULL;
 		if (fed < cap && (fed == 0 || f->bref.key > maxkey) &&
 		    hammer2_remote_in_range(idx, f, key_beg,
-		    key_end, ip1->meta.inum))
+		    key_end, ip1, lookup_flags))
 			chain = hammer2_remote_proxy(cdev, pmp, f,
 			    &pmp->pfs_clid, ip1->meta.inum, level);
 		if (chain == NULL) {
@@ -1576,7 +1609,8 @@ done:
  * hammer2_io_getblk_conn()'s fetch, with no lock held: the stash the feed
  * left, or the peer's chain again by the handle.  The refetch takes the
  * block the peer has now, so a chain the peer has moved on reads its
- * current content, as a local chain does under another thread.  A handle
+ * current content, as a local chain does under another thread, checked as
+ * a feed is, an inode by the number the handle asked for.  A handle
  * the peer no longer resolves reads EIO through load_data, never a fault.
  * Errnos are the DIO layer's, positive.
  */
@@ -1626,7 +1660,9 @@ hammer2_remote_fetch(hammer2_dev_t *cdev, hammer2_off_t lbase, int lsize,
 		    f->bref.type == h->type && f->bref.key == h->key &&
 		    f->bytes == (uint32_t)lsize &&
 		    f->bref.methods == h->methods &&
-		    hammer2_remote_feed_ok(&f->bref, 0, f->bytes, f->data)) {
+		    hammer2_remote_feed_ok(&f->bref, 0, f->bytes, f->data) &&
+		    (h->type != HAMMER2_BREF_TYPE_INODE ||
+		    ((hammer2_inode_data_t *)f->data)->meta.inum == h->inum)) {
 			buf = f->data;
 			f->data = NULL;
 			error = 0;

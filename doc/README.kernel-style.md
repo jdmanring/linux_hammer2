@@ -174,6 +174,12 @@ new. Two hits were fixed rather than baselined: `kvzalloc_obj()` over
 `kvzalloc(sizeof(*p))`, and an allocation assigned inside an `if`
 condition, now `kvmemdup()`.
 
+1,549 to 1,550 when the client's range check took the scanned inode
+and the lookup flags in place of an inode number, so that a `scanall`
+feed is judged by what the inode holds: its prototype's arguments run
+to a second continuation line, one more `no spaces at the start of a
+line` in the tree's BSD indent. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

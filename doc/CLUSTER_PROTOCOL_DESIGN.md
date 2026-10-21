@@ -474,7 +474,13 @@ answered with, by its type and key: for `ipcluster` an inode of the
 number asked for, for `readdir` and `scanlhc` a directory entry or an
 inode, the first at or past its start key and the second in its hash
 range, for `nresolve` an inode or an entry carrying an error, for
-`scanall` its key range, for `lookup` an inode of the number asked for,
+`scanall` its key range and what the scanned inode holds, entries and
+inodes under a directory, data under a file and nothing under a
+direct-data file, with the inode itself only when `NODIRECT` was not
+asked, since the slave's pass inserts what it is fed beneath the inode
+it scanned (`hammer2_synchro.c:1906-1911`) and a chain beneath a
+direct-data inode is read through the data it embeds, for `lookup` an
+inode of the number asked for,
 and for a read or `bmap` the data block covering the offset or
 the file's own inode, which the core's lookup returns for every key of
 a direct-data file, for a read only at offset 0 since the read
@@ -482,8 +488,17 @@ completion refuses an inode anywhere else (`hammer2_strategy.c:417-420`);
 an errored inode is taken as the file's, since its frame carries no
 number to check; a refetched block whose
 compression and check methods differ from the blockref the proxy keeps,
-which the consumer decodes it under; and a feed of an inode or data
-block with neither bytes nor an error. The wire harness's two controls
+which the consumer decodes it under, or a refetched inode of another
+number; and a feed of an inode or data block with neither bytes nor an
+error. An error the peer reports is taken only from the set a read's
+storage function feeds, `EIO`, `CHECK`, `BADBREF`, `ENOENT`, `EINVAL`,
+`EOPNOTSUPP` and the end of a scan, and any other bit reads as `EIO`,
+since the collect and its callers act on the rest as control: the sync
+pass restarts with no sleep on `EAGAIN` (`hammer2_synchro.c:545-627`),
+and `ESRCH` and `EDEADLK` are the quorum's verdicts. The `scanall`
+shape and the error set guard the slave's pass, which no wire run
+drives yet, so no control reads either; the run that drives the pass is
+their trigger. The wire harness's two controls
 drive two of these refusals. Under `H2_WIRE_REKEY=1` its relay moves
 the key of the first data block fed, the `bmap` of a file's first
 block, one block up and signs the frame again, and the slave refuses
