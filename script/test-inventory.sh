@@ -632,9 +632,11 @@ done
 # read from /proc/modules, its guard leaving a zero or malformed base
 # unread, its end added on the low half with the carry refused within six,
 # and the range printed within three; after it a wait of 6 s, kmemleak's
-# minimum age, and within fourteen lines a count of the frames inside that
-# range. The block is the same in every harness and each element is
-# matched as a literal string.
+# minimum age, then the two scans, and within fourteen lines a count of the
+# frames inside that range read from kmemleak's own list. The block is the
+# same in every harness and each element is matched as a literal string,
+# the guard, the wait and the scans as whole lines, so an arm given a body
+# or a scan replaced by `else` fails as a deletion does.
 nleak=0
 for s in script/*.sh; do
 	command grep -q 'echo scan > /sys/kernel/debug/kmemleak' "$s" || continue
@@ -644,13 +646,14 @@ for s in script/*.sh; do
 	nleak=$((nleak + 1))
 	why=$(awk '
 		/^[ \t]*#/ { next }
+		{ t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t) }
 		/echo scan > \/sys\/kernel\/debug\/kmemleak/ &&
 		    !/echo scan > \/sys\/kernel\/debug\/kmemleak.*echo scan > \/sys\/kernel\/debug\/kmemleak/ {
 			print "a single scan at line " NR; exit }
 		/insmod \/tmp\/hammer2\.ko/ && prev !~ /echo scan > \/sys\/kernel\/debug\/kmemleak.*echo scan > \/sys\/kernel\/debug\/kmemleak.*echo clear > \/sys\/kernel\/debug\/kmemleak/ {
 			print "a load at line " NR " with no two scans and a clear before it"; exit }
 		index($0, "mrange=$(awk ") && index($0, "$1 == \"hammer2\"") && index($0, "/proc/modules") { mg = NR }
-		index($0, "0x00000000*|*[!0-9a-fx]*)") { zg = NR }
+		t == "0x00000000*|*[!0-9a-fx]*) ;;" { zg = NR }
 		index($0, "[ \"$ms\" -gt 0 ] && [ \"$ml\" -le 4294967295 ] && me=$(printf ") { mr = NR }
 		index($0, "echo \"kmemleak-unloaded-range ") { rp = NR }
 		/rmmod hammer2 && echo "rmmod ok"/ {
@@ -662,11 +665,15 @@ for s in script/*.sh; do
 				print "an unload at line " NR " whose range takes a zero or malformed base"; exit }
 			if (!rp || NR - rp > 3) {
 				print "an unload at line " NR " whose range is not printed"; exit }
-			rm = NR; mr = 0; mg = 0; zg = 0; rp = 0; sl = 0 }
-		rm && /^[ \t]*sleep 6[ \t]*$/ { sl = 1 }
-		rm && index($0, "h2n=$(awk -v b=\"$mb\" -v e=\"$me\"") && index($0, "a ~ /^0x/ && a >= b && a < e") {
+			rm = NR; mr = 0; mg = 0; zg = 0; rp = 0; sl = 0; sc = 0 }
+		rm && t == "sleep 6" { sl = 1 }
+		rm && t == "elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then" {
 			if (!sl) {
-				print "an unload at line " rm " counted before kmemleak reports a new object"; exit }
+				print "an unload at line " rm " scanned before kmemleak reports a new object"; exit }
+			sc = 1 }
+		rm && index($0, "h2n=$(awk -v b=\"$mb\" -v e=\"$me\"") && index($0, "a ~ /^0x/ && a >= b && a < e") && index($0, "\047 /sys/kernel/debug/kmemleak | wc -l)") {
+			if (!sc) {
+				print "an unload at line " rm " counted with no two scans after it"; exit }
 			hn = 1 }
 		/echo "kmemleak-unloaded \$h2n"/ && rm && hn && NR - rm <= 14 { rm = 0; hn = 0 }
 		rm && NR - rm > 14 { print "an unload at line " rm " with no count in its range after it"; exit }
