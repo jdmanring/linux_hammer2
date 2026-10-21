@@ -529,9 +529,16 @@ block no local element matches reports no physical address: fiemap marks its ext
 element, its slave held empty. A local element matched to the focus,
 and one holding the inode but lacking the block or holding an older
 one, are in the code and not driven by a run, since each needs the slave
-to have copied from the master, and no kept run reads the slave's pass
-over the wire: the wire run holds the slave empty, and the run that
-reads the pass is what the roadmap lists as the rest of stage 2b.
+to have copied from the master, and no run on the code committed reads
+a slave that copied: the wire run holds the slave empty. Two kept runs
+had the pass copy the master's tree into the slave over the wire,
+`wire-run-20261020-200029` and `-203127`, on uncommitted code before
+`0d0717d`; the first shows the direct-data insertion described above, ending in
+the flush's depth limit, and the second ended in a circular locking
+report, so neither is a reading of the pass. `1eae1d3`'s message says no
+run has driven the pass over the wire, which those two contradict; the
+true statement is this one. The run that reads the pass is what the
+roadmap lists as the rest of stage 2b.
 That run is the trigger, and it has the hold the stale case needs: the
 pass refuses on a device opened read-only, so the slave's device
 reopened read-only after the copy and dialed again, with the file then
@@ -558,10 +565,10 @@ chain read under another thread reads what that thread has made it. A
 handle the peer no longer resolves reads `EIO` through the path
 `load_data` already has (`hammer2_chain.c:1079-1085`) and the element is
 errored, never a fault; the next XOP feeds a fresh proxy. The count
-varies between runs of one harness: three runs of the wire harness on
-the debug kernel, at `4b4d4d6`, `5461efe` and `1eae1d3`, kept as
-`wire-run-20261021-001225`, `-003151` and `-005246`, read 0, 1 and 1
-refetches, each in 879 remote XOPs.
+varies between runs of one module: two runs of the wire harness on the
+debug kernel with the module built from `1eae1d3`'s source (sha256
+`8b22d977871bbec1`), kept as `wire-run-20261021-005246` and `-013044`,
+read 1 and 0 refetches, each in 879 remote XOPs.
 
 **The round trip holds no dio lock and no hash lock.**
 `hammer2_io_alloc()` runs under `iohash_lock` exclusive and
@@ -629,7 +636,7 @@ reply frame per chain, honoring the window, and closes the transaction
 with the element's final error. **The server resolves the request's
 inode without an XOP.** The request names the inode by number; the
 server resolves it with `hammer2_chain_inode_find()`
-(`hammer2_chain.c:5512`), the nresolve hardlink arm's own path: it tries
+(`hammer2_chain.c:5479`), the nresolve hardlink arm's own path: it tries
 `hammer2_inode_lookup()` (`hammer2_inode.c:556`),
 which finds an inode already in memory and takes no dependency, and on
 a miss finds the inode's chain by `hammer2_chain_lookup()` under the
@@ -761,8 +768,9 @@ refuses a PFS mounted with `pmp->rdonly` clear, the mount refuses `rw`
 while a remote slot exists, and `->reconfigure` refuses `rw` the same
 way, taking `hammer2_mntlk` around its test and its write of
 `pmp->rdonly`
-(`hammer2_vfsops.c:2549-2595` write it under `s_umount` alone today; the
-order `s_umount` then `hammer2_mntlk` is the unmount's at `:3302`),
+(`hammer2_vfsops.c:2581-2596`; the read-only write at `:2565` takes no
+lock, since it only restricts; the order `s_umount` then
+`hammer2_mntlk` is the unmount's at `:3302`),
 since without the lock a remount could pass its test, registration
 install a slot, and the remount then clear the flag. That is Linux's
 own refusal: `write(2)`,
@@ -899,7 +907,7 @@ rather than from the design document alone.
   otherwise succeeds, and any other collect error ends the listing from
   that position on.
 - **C8. PFS roots are stamped from each host's super-root counter at
-  creation** (`hammer2_ioctl.c:541`, `:549`), and a mount-time repair of
+  creation** (`hammer2_ioctl.c:542`, `:549`), and a mount-time repair of
   a mis-flagged root re-stamps its `mirror_tid` on one host, keeping
   `modify_tid` (`hammer2_vfsops.c:1999-2002`), so two roots of one
   cluster differ on `modify_tid` and `mirror_tid` from birth, and a
