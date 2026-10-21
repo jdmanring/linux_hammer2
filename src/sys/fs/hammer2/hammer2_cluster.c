@@ -160,6 +160,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	int nslaves;
 	int nquorum;
 	int umasters;
+	int xmasters;	/* XXX Linux: unreachable masters, see pass 2 */
 	int error;
 	int i;
 
@@ -251,12 +252,14 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	 */
 	last_best_quorum_tid = HAMMER2_TID_MAX;
 	umasters = 0;
+	xmasters = 0;
 	nmasters = 0;
 	nmasters_keymatch = 0;
 	quorum_tid = 0;
 
 	while (nmasters < nquorum && last_best_quorum_tid != 0) {
 		umasters = 0;
+		xmasters = 0;
 		nmasters = 0;
 		nmasters_keymatch = 0;
 		quorum_tid = 0;
@@ -280,6 +283,18 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 			if (chain == NULL && (cluster->array[i].flags &
 					      HAMMER2_CITEM_NULL) == 0) {
 				++umasters;
+				continue;
+			}
+
+			/*
+			 * XXX Linux: a master whose element ended with the
+			 * connection class, timed out or its link closed, is
+			 * unreachable and agrees on nothing, including the end
+			 * of a scan (doc/CLUSTER_PROTOCOL_DESIGN.md, decision C).
+			 */
+			if (chain == NULL && (error & (HAMMER2_ERROR_ETIMEDOUT |
+			    HAMMER2_ERROR_ENOTCONN))) {
+				++xmasters;
 				continue;
 			}
 
@@ -338,6 +353,13 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	if (nmasters < nquorum) {
 		if (nmasters + umasters >= nquorum)
 			return (HAMMER2_ERROR_EINPROGRESS);
+		/*
+		 * XXX Linux: a master counted in pfs_nmasters with no slot,
+		 * or cut off above, is unreachable rather than disagreeing,
+		 * and the read says so rather than "no such entry".
+		 */
+		if (xmasters > 0 || (int)pmp->pfs_nmasters > ttlmasters)
+			return (HAMMER2_ERROR_ENOTCONN);
 		if (nmasters_keymatch < nquorum)
 			return (HAMMER2_ERROR_ESRCH);
 		return (HAMMER2_ERROR_EDEADLK);

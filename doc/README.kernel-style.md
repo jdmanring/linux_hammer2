@@ -161,6 +161,19 @@ declares it: one typedef, one unnamed prototype argument, seven
 arriving in carried bodies. No category is new and nothing was fixed
 rather than baselined.
 
+1,469 to 1,541 when the remote element's client side landed in
+`hammer2_remote.c` for stage 2b, with its marked lines in carried files:
+thirty-two `return (x);`, sixteen unnamed prototype arguments in
+`hammer2.h`, `hammer2_os.h` and the file's own static prototypes,
+fourteen continuation indents, and ten positive errnos, among them the
+first `ENOTCONN`, the code decision C of the note gives an unreachable
+quorum. Five of the prototype and indent hits came with the lockdep
+class a proxy chain is given, after a debug-kernel run read a false
+cycle through the class it had before. No category is
+new. Two hits were fixed rather than baselined: `kvzalloc_obj()` over
+`kvzalloc(sizeof(*p))`, and an allocation assigned inside an `if`
+condition, now `kvmemdup()`.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

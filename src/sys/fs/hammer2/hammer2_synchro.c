@@ -731,6 +731,7 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	}
 	hammer2_xop_retire(&xop2->head, HAMMER2_XOPMASK_VOP);
 	if (m < 0 || m == idx || pmp->pfs_hmps[m] == NULL ||
+	    hammer2_dev_is_conn(pmp->pfs_hmps[m]) ||	/* XXX Linux */
 	    pmp->pfs_names[idx] == NULL) {
 		/*
 		 * No source to snapshot: no quorum, or the focus is this
@@ -738,6 +739,12 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		 * live pass runs then, as it did before this one existed: its
 		 * own collect finds the same and copies nothing, and the pass
 		 * is counted where the harness counts passes.
+		 *
+		 * XXX Linux: nor a remote master, whose device is a
+		 * connection on which a snapshot cannot be created; the
+		 * master takes it on its own device once the protocol has
+		 * the command (doc/CLUSTER_PROTOCOL_DESIGN.md, the client
+		 * side), and until then the pass over the wire is live.
 		 */
 		if (hammer2_debug & 0x8000)
 			kprintf("syncsnap: noquorum clindex %d error %d\n",
@@ -1151,7 +1158,20 @@ hammer2_primary_sync_thread(void *arg)
 		 * XXX Linux: one pass, live or from a snapshot of the master
 		 * element; the pass body is hammer2_sync_pass() below.
 		 */
-		if (hammer2_sync_snapshot)
+		/*
+		 * XXX Linux: the pass writes its element through chain calls
+		 * and its own flush, which nothing refuses on a device opened
+		 * read-only, a CL mounted with no read-write PFS beside it,
+		 * and the block layer does not consult the open mode, so the
+		 * pass would write a volume whose mount-time recovery never
+		 * ran.  It refuses, and says so on every poll.
+		 */
+		if (thr->pmp->pfs_hmps[thr->clindex] &&
+		    thr->pmp->pfs_hmps[thr->clindex]->rdonly) {
+			pr_warn_ratelimited("hammer2: sync pass refused on clindex %d: device opened read-only\n",
+			    thr->clindex);
+			error = 0;
+		} else if (hammer2_sync_snapshot)
 			error = hammer2_sync_pass_snap(thr, &list);
 		else
 			error = hammer2_sync_pass(thr, NULL, &list);

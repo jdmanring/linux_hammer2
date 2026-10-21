@@ -216,14 +216,22 @@ hammer2_io_alloc(hammer2_dev_t *hmp, hammer2_off_t data_off, uint8_t btype,
 	if (dio) {
 		/* NOP */
 	} else if (createit) {
-		vol = hammer2_get_volume(hmp, pbase);
-		if (vol == NULL)	/* XXX Linux: hpanic returns */
-			return (NULL);
+		/*
+		 * Linux: a connection device has no volume, and its offsets
+		 * are handles that the volume lookup would panic on; its
+		 * blocks live in dio->buf alone (hammer2_io_getblk_conn()).
+		 */
+		vol = NULL;
+		if (hmp->rconn == NULL) {
+			vol = hammer2_get_volume(hmp, pbase);
+			if (vol == NULL)	/* XXX Linux: hpanic returns */
+				return (NULL);
+		}
 		dio = hmalloc(sizeof(*dio), M_HAMMER2, M_WAITOK | M_ZERO);
 		dio->hmp = hmp;
-		dio->bdev_file = vol->dev->bdev_file;
-		dio->ra = &vol->dev->ra;	/* Linux */
-		dio->dbase = vol->offset;
+		dio->bdev_file = vol ? vol->dev->bdev_file : NULL;
+		dio->ra = vol ? &vol->dev->ra : NULL;	/* Linux */
+		dio->dbase = vol ? vol->offset : 0;
 		KKASSERT((dio->dbase & HAMMER2_FREEMAP_LEVEL1_MASK) == 0);
 		dio->pbase = pbase;
 		dio->psize = psize;
@@ -524,6 +532,72 @@ hammer2_getblk_new(hammer2_io_t *dio, int zero)
 }
 
 /*
+ * Linux: the block of a connection device, which is a reply from the peer
+ * and not a read of any media (doc/CLUSTER_PROTOCOL_DESIGN.md, the remote
+ * element).  The offset is a handle, and hammer2_remote_fetch() returns
+ * the block the feed stashed for it or asks the peer for it again.  The
+ * round trip runs before the dio is entered and with no dio or hash lock
+ * held, so a slow peer serializes nothing else on the device; a dio found
+ * GOOD takes the carried path, and one filled by another thread while
+ * this one fetched keeps its block and the fetched one is freed.  Nothing
+ * is created or written here: proxies are never made locally, and a
+ * write reaching a connection device is refused.
+ */
+static hammer2_io_t *
+hammer2_io_getblk_conn(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase,
+    int lsize, int op)
+{
+	hammer2_io_t *dio;
+	char *buf = NULL;
+	int error;
+
+	if (op != HAMMER2_DOP_READ && op != HAMMER2_DOP_READQ) {
+		WARN_ONCE(1, "hammer2: block %016llx created on a connection device\n",
+		    (unsigned long long)lbase);
+		return (NULL);
+	}
+	hammer2_mtx_ex(&hmp->iohash_lock);
+	dio = hammer2_io_alloc(hmp, lbase, btype, 0);
+	hammer2_mtx_unlock(&hmp->iohash_lock);
+	if (dio) {
+		if (dio->refs & HAMMER2_DIO_GOOD) {
+			hammer2_mtx_unlock(&dio->lock);
+			return (dio);
+		}
+		hammer2_mtx_unlock(&dio->lock);	/* the reference holds it */
+	} else if (op == HAMMER2_DOP_READQ) {
+		return (NULL);
+	}
+
+	error = hammer2_remote_fetch(hmp, lbase, lsize, &buf);
+
+	if (dio == NULL) {
+		hammer2_mtx_ex(&hmp->iohash_lock);
+		dio = hammer2_io_alloc(hmp, lbase, btype, 1);
+		hammer2_mtx_unlock(&hmp->iohash_lock);
+		if (dio == NULL) {
+			kvfree(buf);
+			return (NULL);
+		}
+	} else {
+		hammer2_mtx_ex(&dio->lock);
+	}
+	if (dio->refs & HAMMER2_DIO_GOOD) {
+		kvfree(buf);
+	} else if (error == 0) {
+		KKASSERT(dio->folio == NULL && dio->buf == NULL);
+		dio->buf = buf;
+		dio->error = 0;
+		dio->refs |= HAMMER2_DIO_GOOD;
+	} else {
+		dio->error = error;
+	}
+	hammer2_mtx_unlock(&dio->lock);
+
+	return (dio);
+}
+
+/*
  * Acquire the requested dio.
  * If DIO_GOOD is set the buffer already exists and is good to go.
  */
@@ -535,6 +609,8 @@ hammer2_io_getblk(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase, int lsize,
 	int error;
 
 	KKASSERT((1 << (int)(lbase & HAMMER2_OFF_MASK_RADIX)) == lsize);
+	if (hmp->rconn)		/* Linux: a connection device, see above */
+		return (hammer2_io_getblk_conn(hmp, btype, lbase, lsize, op));
 
 	hammer2_mtx_ex_waits(&hmp->iohash_lock,
 	    hammer2_iohash_waits);	/* Linux: counted acquire */
@@ -720,12 +796,18 @@ hammer2_io_putblk(hammer2_io_t **diop)
 		folio_put(folio);
 	}
 	if (buf) {	/* Linux: the block the page cache could not hold */
-		if ((orefs & HAMMER2_DIO_GOOD) && (orefs & HAMMER2_DIO_DIRTY)) {
+		if ((orefs & HAMMER2_DIO_GOOD) && (orefs & HAMMER2_DIO_DIRTY) &&
+		    hmp->rconn) {
+			/* Linux: a connection device has nothing to write to */
+			WARN_ONCE(1, "hammer2: block %016llx dirtied on a connection device\n",
+			    (unsigned long long)dio->pbase);
+		} else if ((orefs & HAMMER2_DIO_GOOD) &&
+		    (orefs & HAMMER2_DIO_DIRTY)) {
 			hammer2_io_buf_put(dio, buf);
 			hammer2_inc_iostat(&hmp->iostat_write, dio->btype,
 			    dio->psize);
 		}
-		vfree(buf);
+		kvfree(buf);	/* Linux: vmalloc here, kvmalloc on a connection device */
 	}
 
 	/* Update iofree_count before disposing of the dio. */

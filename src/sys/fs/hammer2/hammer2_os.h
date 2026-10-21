@@ -477,7 +477,9 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * of the flush's parent-then-child.  The core spinlock in a chain is
  * taken child before parent, which upstream states as its rule, and its
  * class carries the same level.  An inode lock is classed at its
- * chain's level.  Every other lock initializer in this file takes a
+ * chain's level.  A remote element's proxy chains are a tree of their
+ * own, classed apart at their level on the peer by
+ * hammer2_chain_lockdep_remote().  Every other lock initializer in this file takes a
  * static key per call site, as init_rwsem() and mutex_init() do, so no
  * two of the core's locks share a class by accident.
  *
@@ -518,6 +520,7 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  */
 void hammer2_chain_lockdep_class(hammer2_mtx_t *);
 void hammer2_chain_lockdep_nest(hammer2_mtx_t *, hammer2_mtx_t *);
+void hammer2_chain_lockdep_remote(hammer2_mtx_t *, unsigned int);
 void hammer2_inode_lockdep_level(hammer2_mtx_t *, const hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest(hammer2_mtx_t *);
 void hammer2_inode_lockdep_nest_under(hammer2_mtx_t *, const hammer2_mtx_t *);

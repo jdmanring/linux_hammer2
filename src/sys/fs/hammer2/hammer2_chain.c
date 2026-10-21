@@ -172,7 +172,7 @@ hammer2_chain_dump_live(void)
 static unsigned int hammer2_chain_insert_outside;
 static unsigned int hammer2_create_indirect_refused;
 
-static hammer2_chain_t *
+hammer2_chain_t *
 hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
     hammer2_blockref_t *bref)
 {
@@ -222,6 +222,8 @@ hammer2_chain_alloc(hammer2_dev_t *hmp, hammer2_pfs_t *pmp,
 		chain->pmp = pmp;
 
 	chain->hmp = hmp;
+	if (hmp->rconn)		/* XXX Linux: a proxy holds its connection device */
+		hammer2_remote_dev_ref(hmp);
 	chain->bref = *bref;
 	chain->bytes = bytes;
 	chain->refs = 1;
@@ -824,6 +826,8 @@ hammer2_chain_lastdrop(hammer2_chain_t *chain, int depth)
 		hammer2_lk_destroy(&chain->inp_lock);
 		hammer2_lkc_destroy(&chain->inp_cv);
 		hammer2_spin_destroy(&chain->core.spin);
+		if (chain->hmp->rconn)	/* XXX Linux: the proxy's device reference */
+			hammer2_remote_dev_drop(chain->hmp);
 		chain->hmp = NULL;
 #if defined(HAMMER2_LOCKDEBUG)
 		spin_lock(&hammer2_dbg_chain_lock);

@@ -1039,11 +1039,28 @@ again:
 		 * trylock records no order, which is why this was seen only
 		 * where it missed.
 		 */
+		/*
+		 * XXX Linux: except the caller's own element.  The sync pass
+		 * puts its slave chain at idx locked, not held
+		 * (hammer2_sync_slaves()), and an unhold of it can neither
+		 * drop a hold nor take the lock its own thread has: it spun
+		 * in hammer2_chain_unhold() for good, h2race1 every two
+		 * seconds, the first time the inode lock was contended under
+		 * a remote master, and the unmount waited on the thread.
+		 */
 		if (xop) {
 			if (hammer2_mtx_ex_try(&nip->lock) != 0) {
-				hammer2_cluster_unhold(&xop->cluster);
+				int i;
+
+				for (i = 0; i < xop->cluster.nchains; ++i)
+					if (i != idx && xop->cluster.array[i].chain)
+						hammer2_chain_unhold(
+						    xop->cluster.array[i].chain);
 				hammer2_mtx_ex_nested(&nip->lock, 1);
-				hammer2_cluster_rehold(&xop->cluster);
+				for (i = 0; i < xop->cluster.nchains; ++i)
+					if (i != idx && xop->cluster.array[i].chain)
+						hammer2_chain_rehold(
+						    xop->cluster.array[i].chain);
 			}
 		} else {
 			hammer2_mtx_ex_nested(&nip->lock, 1);

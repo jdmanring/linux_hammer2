@@ -739,6 +739,14 @@ again:
 		if (i == HAMMER2_MAXCLUSTER)
 			continue;
 
+		/*
+		 * XXX Linux: a remote element's slot never names a device
+		 * being unmounted, so it would be left and the PFS would
+		 * outlive its last local element; it leaves first, under the
+		 * hammer2_mntlk every caller holds.
+		 */
+		hammer2_remote_detach_pmp(pmp);
+
 #if defined(HAMMER2_LOCKDEBUG)
 		hprintf("pfsfree_scan which %d syncing pmp %px\n",
 		    which, pmp);
@@ -1682,6 +1690,19 @@ next_hmp:
 		return (-error);
 	}
 
+	/*
+	 * XXX Linux: a PFS with a remote element registered is read-only
+	 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the client side); the registration
+	 * holds hammer2_mntlk, which this mount holds too.
+	 */
+	if (!rdonly && hammer2_remote_has_slot(pmp)) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		hprintf("read-write mount refused: a remote element is registered\n");
+		deactivate_locked_super(sb);	/* ->kill_sb unmounts */
+		return (-EROFS);
+	}
+
 	/* Update readonly hmp if !rdonly. */
 	pmp->rdonly = rdonly;
 
@@ -2078,6 +2099,8 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
 	for (i = 0; i < cluster->nchains; ++i) {
 		rchain = cluster->array[i].chain;
 		if (rchain == NULL)
+			continue;
+		if (hammer2_dev_is_conn(rchain->hmp))	/* XXX Linux: no mount */
 			continue;
 		++rchain->hmp->mount_count;
 	}
@@ -2547,14 +2570,30 @@ hammer2_reconfigure(struct fs_context *fc)
 	if (hmp == NULL)
 		return (-EINVAL);
 
+	/*
+	 * XXX Linux: a PFS with a remote element is read-only until the
+	 * protocol that writes through one is settled
+	 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the client side).  The test and
+	 * the write of pmp->rdonly are under hammer2_mntlk, which the
+	 * registration holds while it tests pmp->rdonly, so a remount cannot
+	 * pass its test while a registration installs a slot.
+	 */
+	hammer2_lk_ex(&hammer2_mntlk);
+	if (hammer2_remote_has_slot(pmp)) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hprintf("read-write remount refused: a remote element is registered\n");
+		return (-EROFS);
+	}
 	if (hmp->rdonly) {
 		error = hammer2_remount_impl(hmp);
 		if (error) {
+			hammer2_lk_unlock(&hammer2_mntlk);
 			hprintf("read-write remount refused %d\n", error);
 			return (-error);	/* Linux: the VFS half */
 		}
 	}
 	pmp->rdonly = 0;
+	hammer2_lk_unlock(&hammer2_mntlk);
 
 	return (0);
 }
@@ -2624,6 +2663,8 @@ hammer2_unmount_helper(struct super_block *sb, hammer2_pfs_t *pmp,
 		for (i = 0; i < cluster->nchains; ++i) {
 			rchain = cluster->array[i].chain;
 			if (rchain == NULL)
+				continue;
+			if (hammer2_dev_is_conn(rchain->hmp))	/* XXX Linux */
 				continue;
 			--rchain->hmp->mount_count;
 			/* Scrapping hmp now may invalidate the pmp. */
@@ -3369,7 +3410,8 @@ hammer2_kill_sb(struct super_block *sb)
  * a class past it registers a dynamic key as before.
  */
 #ifdef CONFIG_LOCKDEP
-enum { H2LD_CHAIN, H2LD_CORE, H2LD_DIOLK, H2LD_INODE };
+enum { H2LD_CHAIN, H2LD_CORE, H2LD_DIOLK, H2LD_INODE, H2LD_RCHAIN,
+    H2LD_RDIOLK };
 
 struct hammer2_lockdep_class {
 	struct lock_class_key *key;	/* a pool slot, or dynkey registered */
@@ -3382,7 +3424,7 @@ static DEFINE_XARRAY(hammer2_lockdep_classes);
 static struct lock_class_key hammer2_lockdep_keys[256];
 static unsigned int hammer2_lockdep_nkeys;	/* under the xarray lock */
 
-static const char *const hammer2_lockdep_names[4][9] = {
+static const char *const hammer2_lockdep_names[6][9] = {
 	{ "h2ch_empty", "h2ch_inode", "h2ch_indirect", "h2ch_data",
 	  "h2ch_dirent", "h2ch_freemap_node", "h2ch_freemap_leaf",
 	  "h2ch_freemap", "h2ch_volume" },
@@ -3393,6 +3435,14 @@ static const char *const hammer2_lockdep_names[4][9] = {
 	  "h2dio_dirent", "h2dio_freemap_node", "h2dio_freemap_leaf",
 	  "h2dio_freemap", "h2dio_volume" },
 	{ "h2ip" },
+	{ "h2ch_remote_empty", "h2ch_remote_inode", "h2ch_remote_indirect",
+	  "h2ch_remote_data", "h2ch_remote_dirent", "h2ch_remote_freemap_node",
+	  "h2ch_remote_freemap_leaf", "h2ch_remote_freemap",
+	  "h2ch_remote_volume" },
+	{ "h2dio_remote_empty", "h2dio_remote_inode", "h2dio_remote_indirect",
+	  "h2dio_remote_data", "h2dio_remote_dirent",
+	  "h2dio_remote_freemap_node", "h2dio_remote_freemap_leaf",
+	  "h2dio_remote_freemap", "h2dio_remote_volume" },
 };
 
 /*
@@ -3493,15 +3543,18 @@ hammer2_lockdep_unregister(void)
  * acquire.
  */
 static void
-hammer2_chain_lockdep_set(hammer2_chain_t *chain, unsigned int level)
+hammer2_chain_lockdep_set(hammer2_chain_t *chain, unsigned int level,
+    int remote)
 {
 	unsigned int kb, t = hammer2_chain_key_index(chain, &kb);
 	struct hammer2_lockdep_class *c;
 
-	c = hammer2_lockdep_lookup(H2LD_CHAIN, t, kb, level);
+	c = hammer2_lockdep_lookup(remote ? H2LD_RCHAIN : H2LD_CHAIN, t, kb,
+	    level);
 	if (c)
 		lockdep_set_class_and_name(&chain->lock, c->key, c->name);
-	c = hammer2_lockdep_lookup(H2LD_DIOLK, t, kb, level);
+	c = hammer2_lockdep_lookup(remote ? H2LD_RDIOLK : H2LD_DIOLK, t, kb,
+	    level);
 	if (c)
 		lockdep_set_class_and_name(&chain->diolk, c->key,
 		    c->name);
@@ -3521,7 +3574,31 @@ void
 hammer2_chain_lockdep_class(hammer2_mtx_t *p)
 {
 #ifdef CONFIG_LOCKDEP
-	hammer2_chain_lockdep_set(container_of(p, hammer2_chain_t, lock), 0);
+	hammer2_chain_lockdep_set(container_of(p, hammer2_chain_t, lock), 0,
+	    0);
+#endif
+}
+
+/*
+ * Linux: a remote element's proxy chain, hammer2_remote_proxy().  It is
+ * never placed under a parent, so it would keep the level-0 class of the
+ * roots above, which is the super-root inode's: a sync pass that relocks
+ * the master's proxy under the inode lock then read as the super-root
+ * taken under a file, closing a cycle with the mount's own super-root,
+ * PFS root, file order (debug kernel, 2026-10-20).  The proxy has the
+ * level its chain has on the peer, which the caller reads from the inode
+ * it asked about, and a family of its own, since the classes carry no
+ * tree and the pass holds the slave's chain at the level it relocks the
+ * proxy at.  The inode lock of an inode whose focus is a proxy takes its
+ * level from it, hammer2_inode_lockdep_nest(), as it does from a chain.
+ */
+void
+hammer2_chain_lockdep_remote(hammer2_mtx_t *p, unsigned int level)
+{
+#ifdef CONFIG_LOCKDEP
+	p->level = level;
+	hammer2_chain_lockdep_set(container_of(p, hammer2_chain_t, lock),
+	    level, 1);
 #endif
 }
 
@@ -3552,7 +3629,7 @@ hammer2_chain_lockdep_nest(hammer2_mtx_t *child, hammer2_mtx_t *parent)
 	if (pchain->bref.type == HAMMER2_BREF_TYPE_INODE)
 		level++;
 	child->level = level;
-	hammer2_chain_lockdep_set(cchain, level);
+	hammer2_chain_lockdep_set(cchain, level, 0);
 	c = hammer2_lockdep_lookup(H2LD_CORE, t, kb, level);
 	if (c)
 		lockdep_set_class_and_name(&cchain->core.spin.lock, c->key,

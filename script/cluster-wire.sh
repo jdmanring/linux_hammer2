@@ -106,6 +106,11 @@ for pair in "$GA:$SA" "$GB:$SB"; do
 	[ "$rel" = "$ko_rel" ] || {
 		echo "wire: COULD-NOT-RUN: the module is built for $ko_rel and $g runs $rel; point KDIR at the guests' kernel" >&2; exit 2; }
 	$SSH "$s" 'command -v hammer2 >/dev/null 2>&1' || { echo "wire: COULD-NOT-RUN: no hammer2 utility on $g" >&2; exit 2; }
+	# One lockdep report turns lockdep off until the next boot, and a run
+	# on that boot reads "no report" with nothing checking.
+	dl=$($SSH "$s" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
+	[ "$dl" = 0 ] && {
+		echo "wire: COULD-NOT-RUN: lockdep is off on $g since an earlier report; boot it again" >&2; exit 2; }
 	scp -q "$KO" "$s:/tmp/hammer2.ko" && scp -q "$W/h2service" "$s:/tmp/h2service" || {
 		echo "wire: COULD-NOT-RUN: copy to $g failed" >&2; exit 2; }
 done
@@ -125,7 +130,11 @@ grep -q "relay listening" "$W/relay.out" || { echo "wire: COULD-NOT-RUN: the rel
 cat > "$W/common.sh" <<'GUEST'
 set -u
 R=/mnt/h2r; C=/mnt/h2c
-klog() { dmesg | grep -c "$1"; }
+# The kernel log is streamed to a file from the load on, since a pass over
+# the wire prints faster than the ring holds and dmesg alone loses the head.
+K=/tmp/h2wire.klog
+kl() { cat $K; }
+klog() { kl | grep -c "$1"; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 GUEST
 cat > "$W/setup.sh" <<'GUEST'
@@ -134,6 +143,8 @@ if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type 
 	echo "wire: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
 dmesg -C
+pkill -f 'dmesg -w' 2>/dev/null
+setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 mkdir -p $R $C /tmp/h2keys
@@ -153,21 +164,82 @@ touch /tmp/h2keys/peer.none
 /tmp/h2service dial $R --keys /tmp/h2keys | sed 's/^/dial /'
 echo "dial-rc $?"
 GUEST
+cat > "$W/fill.sh" <<'GUEST'
+# fill: A's MASTER CL mounted read-write and given a known tree
+mount -t hammer2 /dev/vdb@CL $C || { echo "mount CL failed"; exit 1; }
+mkdir -p $C/dir1
+printf 'the remote element reads this line\n' > $C/small.txt
+head -c 524288 /dev/urandom > $C/big.bin
+head -c 262144 /dev/zero > $C/zeros.bin
+head -c 70000 /dev/urandom > $C/dir1/inner.bin
+echo long > "$C/a-name-longer-than-the-sixty-four-bytes-a-blockref-embeds-for-a-dirent.txt"
+sync
+echo "files $(cd $C && find . -type f | grep -c .)"
+(cd $C && find . -type f | sort | xargs sha256sum) | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
+GUEST
+cat > "$W/lone.sh" <<'GUEST'
+# lone: B's SLAVE CL alone has no master to answer its root, so it must not
+# mount; what B later reads through CL can only have come over the wire
+mount -t hammer2 -o ro /dev/vdb@CL $C 2>/dev/null; echo "lone-mount-rc $?"
+mountpoint -q $C && umount $C
+true
+GUEST
+cat > "$W/reg.sh" <<'GUEST'
+# reg: B's kernel registered A's CL root as an element
+echo "log-registered $(klog 'remote element CL registered at clindex 1')"
+echo "log-nmasters $(kl | grep 'remote element CL registered' | tail -1 | sed 's/.*pfs_nmasters //')"
+GUEST
+cat > "$W/ro.sh" <<'GUEST'
+# ro: B's SLAVE CL mounted read-only beside its read-write ROOT, once the
+# remote master is registered
+mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "mount CL ro failed"; exit 1; }
+echo "ro-mounted 1"
+GUEST
+cat > "$W/read.sh" <<'GUEST'
+# read: B reads A's files through the registered element
+mountpoint -q $C || { echo "CL not mounted"; exit 1; }
+echo "files $(cd $C && find . -type f 2>/dev/null | grep -c .)"
+(cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
+touch $C/written-on-b 2>/dev/null; echo "touch-rc $?"
+mount -o remount,rw $C 2>/dev/null; echo "remount-rc $?"
+echo "log-remount-refused $(klog 'read-write remount refused: a remote element')"
+echo 3 > /proc/sys/vm/drop_caches
+(cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/cold \2 \1/'
+echo "remote-xops $(klog 'H2 REMOTE ')"
+echo "refetches $(klog 'H2 REFETCH')"
+echo "log-not-proxy $(klog 'not a proxy')"
+echo "log-peer-sent $(klog 'HM2 peer sent')"
+GUEST
 cat > "$W/link.sh" <<'GUEST'
 # link <peer clid> <peer type>: what the log and the table say of the peer
 echo "log-proto2 $(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 echo "log-conn-terminated $(klog 'CONN WAS TERMINATED')"
 echo "spans-rx $(klog 'H2 +RXSPAN')"
-echo "span-cl $(dmesg | grep 'H2 +RXSPAN' | grep -c "cl=$1 .*type=$2")"
-echo "spantab $(dmesg | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
+echo "span-cl $(kl | grep 'H2 +RXSPAN' | grep -c "cl=$1 .*type=$2")"
+echo "spantab $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
 echo "threads $(threads)"
 GUEST
 cat > "$W/down.sh" <<'GUEST'
 # down: unmount, the leak scan, unload
+if mountpoint -q $C; then umount $C || echo "umount CL failed"; fi
 umount $R || echo "umount failed"
+echo "log-detached $(klog 'remote element CL at clindex 1 detached')"
 echo "spans-del $(klog 'H2 -RXSPAN')"
-echo "spantab-end $(dmesg | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
-echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
+echo "spantab-end $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
+# A lockdep table that fills turns lockdep off and says BUG; that is the
+# guest kernel's table size (the KASAN build keeps the default, 2^15), not
+# a report on the subject, so it is counted apart and named in the check.
+echo "kernel-warnings $(kl | grep -v 'MAX_LOCKDEP_ENTRIES too low' | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
+echo "lockdep-saturated $(klog 'MAX_LOCKDEP_ENTRIES too low')"
+# A proxy is classed apart from the media's chains, at its level on the
+# peer; on level 0, the super-root's class, a contended inode lock in the
+# sync pass read as a cycle through the mount's order. The classes are
+# listed until the unload, and a kernel without lockdep has no file.
+if [ -r /proc/lockdep ]; then
+	echo "lockdep-remote $(grep -o 'h2ch_remote_[a-z]*/[0-9]*' /proc/lockdep | sort -u | tr '\n' ' ')"
+else
+	echo "lockdep-remote no-lockdep"
+fi
 sleep 6
 if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
@@ -176,10 +248,10 @@ else
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 echo "threads-final $(threads)"
-dmesg > /tmp/h2wire.klog
+pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 for s in "$SA" "$SB"; do
-	scp -q "$W/common.sh" "$W/setup.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
+	scp -q "$W/common.sh" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $s failed" >&2; exit 2; }
 done
 phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
@@ -203,11 +275,15 @@ phase A setup.sh master || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase B setup.sh slave "$clid" || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+phase A fill.sh
+phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT"
 phase B dial.sh "$clid" "$HOST_ADDR" "$PORT"
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
+phase B reg.sh
+phase B ro.sh && phase B read.sh
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -241,8 +317,24 @@ npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
 [ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = "$npb" ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B sent $(val B spans-del)"
+# The read side: B's empty SLAVE answers nothing, so every file B reads
+# came through the remote element; the digests are A's own, taken on A.
+sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
+nfa=$(num "$(val A files)" 0)
+[ "$(num "$(val B lone-mount-rc)" 0)" != 0 ]; check "remote: B's SLAVE CL alone does not mount, having no master" $? "rc $(val B lone-mount-rc)"
+[ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
+[ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"
+[ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"
+[ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"
+[ "$(num "$(val B touch-rc)" 0)" != 0 ]; check "remote: a write on B's CL is refused" $? "touch rc $(val B touch-rc)"
+[ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"
+[ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"
+[ "$(num "$(val B log-detached)" 0)" = 1 ]; check "remote: B's device unmount detaches the element once" $? "$(val B log-detached)"
+# The PFS root's proxy is at level 1 and a file's at 2, the media's own.
+lr=$(val B lockdep-remote)
+case "$lr" in no-lockdep) true;; *h2ch_remote_inode/1*h2ch_remote_inode/2*) true;; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}"
 for sd in A B; do
-	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings)"
+	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated)"
 	k=$(val $sd kmemleak)
 	[ "$k" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"

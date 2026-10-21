@@ -472,7 +472,9 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 		atomic_set_32(&xop->run_mask, mask);
 
 		if (hammer2_xop_active(xop)) {
-			xop_storage_func(xop, ip1, xop->scratch, i);
+			/* XXX Linux: a remote element runs over its connection */
+			if (!hammer2_remote_xop(xop, i))
+				xop_storage_func(xop, ip1, xop->scratch, i);
 			hammer2_xop_retire(xop, mask);
 		} else {
 			hammer2_xop_feed(xop, NULL, i, ECONNABORTED);

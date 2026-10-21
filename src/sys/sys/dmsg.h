@@ -598,10 +598,13 @@ struct dmsg_hm2_feed {
 	uint8_t		bref[128];	/* hammer2_blockref_t, asserted where it is filled */
 	uint32_t	bytes;
 	uint32_t	error;
-	uint8_t		reserved[56];
+	uint32_t	flags;		/* DMSG_HM2_FEEDF_* on the closing frame */
+	uint8_t		reserved[52];
 };
 
 typedef struct dmsg_hm2_feed dmsg_hm2_feed_t;
+
+#define DMSG_HM2_FEEDF_EOF	0x00000001	/* the element fed its end, error is its */
 
 #define DMSG_HM2_XOP_BASE	0x010
 #define DMSG_HM2_XOP_COUNT	21

@@ -51,6 +51,7 @@ hammer2_span_dump(hammer2_dev_t *hmp)
 
 	if ((hammer2_debug & 0x0100) == 0)
 		return;
+	hammer2_spin_ex(&hmp->span_spin);
 	kprintf("H2 SPANTAB %d\n", hmp->nspans);
 	TAILQ_FOREACH(span, &hmp->spanq, entry) {
 		kprintf("H2 SPAN type=%d label=%s pfs=", span->pfs_type,
@@ -58,6 +59,7 @@ hammer2_span_dump(hammer2_dev_t *hmp)
 		printf_uuid(&span->pfs_id);
 		kprintf("\n");
 	}
+	hammer2_spin_unex(&hmp->span_spin);
 }
 
 static void
@@ -67,31 +69,46 @@ hammer2_span_add(hammer2_dev_t *hmp, kdmsg_msg_t *msg)
 
 	span = hmalloc(sizeof(*span), hmp->mmsg, M_WAITOK | M_ZERO);
 	span->state = msg->state;
+	span->peer_id = msg->any.lnk_span.peer_id;
 	span->pfs_id = msg->any.lnk_span.pfs_id;
 	span->pfs_type = msg->any.lnk_span.pfs_type;
 	DMSG_TERMINATE_STRING(msg->any.lnk_span.pfs_label);
 	bcopy(msg->any.lnk_span.pfs_label, span->pfs_label,
 	      sizeof(span->pfs_label));
+	DMSG_TERMINATE_STRING(msg->any.lnk_span.peer_label);
+	bcopy(msg->any.lnk_span.peer_label, span->peer_label,
+	      sizeof(span->peer_label));
+	hammer2_spin_ex(&hmp->span_spin);
 	TAILQ_INSERT_TAIL(&hmp->spanq, span, entry);
 	++hmp->nspans;
+	hammer2_spin_unex(&hmp->span_spin);
 	hammer2_span_dump(hmp);
+	hammer2_remote_span(hmp);	/* a master's span may register */
 }
 
 static void
 hammer2_span_del(hammer2_dev_t *hmp, kdmsg_state_t *state)
 {
 	struct hammer2_span *span;
+	int slotted;
 
+	hammer2_spin_ex(&hmp->span_spin);
 	TAILQ_FOREACH(span, &hmp->spanq, entry) {
 		if (span->state == state)
 			break;
 	}
-	if (span == NULL)
+	if (span == NULL) {
+		hammer2_spin_unex(&hmp->span_spin);
 		return;
+	}
 	TAILQ_REMOVE(&hmp->spanq, span, entry);
 	--hmp->nspans;
+	slotted = span->slotted;
+	hammer2_spin_unex(&hmp->span_spin);
 	hfree(span, hmp->mmsg, sizeof(*span));
 	hammer2_span_dump(hmp);
+	if (slotted)
+		hammer2_remote_span(hmp);	/* its element leaves */
 }
 
 void
@@ -109,6 +126,7 @@ hammer2_iocom_init(hammer2_dev_t *hmp)
 			 hmp->mmsg, hammer2_rcvdmsg);
 	TAILQ_INIT(&hmp->spanq);	/* XXX Linux */
 	hmp->nspans = 0;
+	hammer2_spin_init(&hmp->span_spin, "h2span");
 	hammer2_remote_init(hmp);	/* XXX Linux: the HM2 XOP API server */
 }
 
@@ -204,7 +222,7 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 static int
 hammer2_rcvdmsg(kdmsg_msg_t *msg)
 {
-	if (hammer2_debug & 0x0100)	/* XXX Linux: one line per frame */
+	if (hammer2_debug & 0x0400)	/* XXX Linux: one line per frame */
 		kprintf("RCVMSG %08x\n", msg->tcmd);
 
 	/*

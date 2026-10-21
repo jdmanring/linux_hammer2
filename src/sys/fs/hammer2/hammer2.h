@@ -326,6 +326,11 @@ struct hammer2_chain {
  */
 #define HAMMER2_ERROR_EDEADLK		0x00010000	/* quorum disagrees on tid */
 #define HAMMER2_ERROR_ESRCH		0x00020000	/* quorum lacks the key */
+/*
+ * XXX Linux: no quorum reachable, a master the cluster counts being absent
+ * or cut off from this host, doc/CLUSTER_PROTOCOL_DESIGN.md, decision C.
+ */
+#define HAMMER2_ERROR_ENOTCONN		0x00080000	/* quorum unreachable */
 #define HAMMER2_ERROR_EOPNOTSUPP	0x10000000	/* unsupported */
 
 /*
@@ -900,9 +905,13 @@ typedef struct hammer2_iostat hammer2_iostat_t;
 struct hammer2_span {
 	TAILQ_ENTRY(hammer2_span) entry;
 	struct kdmsg_state	*state;
+	struct uuid		peer_id;	/* the peer PFS's cluster id */
 	struct uuid		pfs_id;
 	uint8_t			pfs_type;
+	uint8_t			tried;		/* registration attempted */
+	uint8_t			slotted;	/* registered as an element */
 	char			pfs_label[DMSG_LABEL_SIZE];
+	char			peer_label[DMSG_LABEL_SIZE];	/* the PFS's name */
 };
 
 TAILQ_HEAD(hammer2_span_list, hammer2_span);
@@ -930,7 +939,9 @@ struct hammer2_dev {
 	kdmsg_iocom_t		iocom;		/* volume-level dmsg interface */
 	struct hammer2_span_list spanq;	/* XXX Linux: the peer's PROTO_2 spans */
 	int			nspans;		/* XXX Linux: entries on spanq */
+	hammer2_spin_t		span_spin;	/* XXX Linux: spanq, nspans */
 	struct hammer2_remote	*remote;	/* XXX Linux: the HM2 XOP API server */
+	struct hammer2_rconn	*rconn;		/* XXX Linux: set on a connection device */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */
@@ -1233,6 +1244,9 @@ int hammer2_bulkfree_pass(hammer2_dev_t *, hammer2_chain_t *,
 /* hammer2_chain.c */
 int hammer2_chain_cmp(const hammer2_chain_t *, const hammer2_chain_t *);
 void hammer2_chain_setflush(hammer2_chain_t *);
+/* Linux: public as DragonFly declares it; the remote element allocates proxies */
+hammer2_chain_t *hammer2_chain_alloc(hammer2_dev_t *, hammer2_pfs_t *,
+    hammer2_blockref_t *);
 void hammer2_chain_init(hammer2_chain_t *);
 void hammer2_chain_ref(hammer2_chain_t *);
 void hammer2_chain_ref_hold(hammer2_chain_t *);
@@ -1455,6 +1469,19 @@ void hammer2_remote_quiesce(hammer2_dev_t *, int);
 void hammer2_remote_resume(hammer2_dev_t *);
 void hammer2_remote_uninit(hammer2_dev_t *);
 int hammer2_remote_rcvmsg(kdmsg_msg_t *);
+void hammer2_remote_span(hammer2_dev_t *);
+void hammer2_remote_detach_pmp(hammer2_pfs_t *);
+int hammer2_remote_xop(hammer2_xop_head_t *, int);
+int hammer2_remote_fetch(hammer2_dev_t *, hammer2_off_t, int, char **);
+int hammer2_remote_has_slot(hammer2_pfs_t *);
+void hammer2_remote_dev_ref(hammer2_dev_t *);
+void hammer2_remote_dev_drop(hammer2_dev_t *);
+
+/*
+ * Linux: a connection device holds a remote element's proxy chains and no
+ * block device; hammer2_remote.c.
+ */
+#define hammer2_dev_is_conn(hmp)	((hmp) != NULL && (hmp)->rconn != NULL)
 
 /* hammer2_subr.c */
 int hammer2_get_dtype(uint8_t);
@@ -1563,6 +1590,8 @@ hammer2_error_to_errno(int error)
 		return (EDEADLK);	/* XXX Linux: upstream's, see the bits */
 	else if (error & HAMMER2_ERROR_ESRCH)
 		return (ESRCH);
+	else if (error & HAMMER2_ERROR_ENOTCONN)
+		return (ENOTCONN);	/* XXX Linux: see the bit */
 	else if (error & HAMMER2_ERROR_EOPNOTSUPP)
 		return (EOPNOTSUPP);
 	else
@@ -1607,6 +1636,8 @@ hammer2_errno_to_error(int error)
 		return (HAMMER2_ERROR_EEXIST);
 	case EOPNOTSUPP:
 		return (HAMMER2_ERROR_EOPNOTSUPP);
+	case ENOTCONN:
+		return (HAMMER2_ERROR_ENOTCONN);	/* XXX Linux */
 	default:
 		return (HAMMER2_ERROR_EINVAL);
 	}
