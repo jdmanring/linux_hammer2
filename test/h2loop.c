@@ -49,7 +49,10 @@
  * pair.  --rekey-data 1 moves the key of the first fed data block that
  * carries its data 64 KiB up and signs the header again, so the frame
  * passes every CRC and only the receiving kernel's range check can
- * refuse it; the wire harness's control requires that refusal.  Every
+ * refuse it; the wire harness's control requires that refusal.
+ * --bare-dirent 1 turns the inode answering the first nresolve into a
+ * directory entry with no bytes, the shape a peer's lookup must refuse
+ * since its caller reads the answer as an inode.  Every
  * decision is one trace line as before, under a header that
  * names the mode and the knobs.  The trace records what the relay did and
  * is not a replay: two live kernels do not send the same frames twice, so
@@ -161,7 +164,8 @@ static struct {
 	int relay;			/* a TCP port: the two-kernel relay */
 	long partition_at, partition_len;
 	int rekey_data;		/* the relay moves one data feed's key */
-} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0 };
+	int bare_dirent;	/* the relay answers one nresolve with a dirent */
+} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0 };
 
 static void
 usage(void)
@@ -173,7 +177,8 @@ usage(void)
 	    "              [--trace FILE] [--replay FILE]\n"
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
-	    "              [--corrupt-at K] [--rekey-data 1] [--trace FILE]\n");
+	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
+	    "              [--trace FILE]\n");
 	exit(2);
 }
 
@@ -203,6 +208,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--partition-at")) opt.partition_at = atol(v);
 		else if (!strcmp(a, "--partition-len")) opt.partition_len = atol(v);
 		else if (!strcmp(a, "--rekey-data")) opt.rekey_data = atoi(v);
+		else if (!strcmp(a, "--bare-dirent")) opt.bare_dirent = atoi(v);
 		else usage();
 		i++;
 	}
@@ -218,7 +224,8 @@ validate(void)
 	if (opt.frames < 1 || opt.aux_max < 0 || opt.aux_max > AUX_CAP ||
 	    opt.delay_max < 0 || opt.loss < 0 || opt.loss > 1 ||
 	    opt.dup < 0 || opt.dup > 1 || opt.relay < 0 || opt.relay > 65535 ||
-	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1)
+	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1 ||
+	    opt.bare_dirent < 0 || opt.bare_dirent > 1)
 		usage();
 }
 
@@ -721,6 +728,19 @@ side_enqueue(struct side *to, struct frame *f, long due)
 	*pp = f;
 }
 
+/* The header CRC again, over the header and its extension with the field
+ * zeroed, after a knob edited either. */
+static void
+resign(struct frame *f)
+{
+	uint8_t h[DMSG_HDR_MAX];
+
+	memcpy(h, &f->hdr, sizeof(f->hdr));
+	memcpy(h + sizeof(f->hdr), f->ext, f->ext_len);
+	((struct dmsg_hdr *)h)->hdr_crc = 0;
+	f->hdr.hdr_crc = iscsi_crc32(h, sizeof(f->hdr) + f->ext_len);
+}
+
 static int rekeyed;		/* --rekey-data has fired */
 
 /*
@@ -732,7 +752,6 @@ static int rekeyed;		/* --rekey-data has fired */
 static int
 rekey(struct frame *f)
 {
-	uint8_t h[DMSG_HDR_MAX];
 	uint64_t key;
 
 	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U || f->ext_len < 128 ||
@@ -741,10 +760,43 @@ rekey(struct frame *f)
 	memcpy(&key, f->ext + 8, sizeof(key));
 	key += 65536;
 	memcpy(f->ext + 8, &key, sizeof(key));
-	memcpy(h, &f->hdr, sizeof(f->hdr));
-	memcpy(h + sizeof(f->hdr), f->ext, f->ext_len);
-	((struct dmsg_hdr *)h)->hdr_crc = 0;
-	f->hdr.hdr_crc = iscsi_crc32(h, sizeof(f->hdr) + f->ext_len);
+	resign(f);
+	return (1);
+}
+
+static int bared;		/* --bare-dirent has fired */
+static uint64_t nresolve_msgid;	/* the first nresolve request, 0 none yet */
+
+/*
+ * The first nresolve request (DMSG_HM2_XOP(2), sys/sys/dmsg.h) is
+ * remembered by its msgid, and the first feed answering it with an inode
+ * and its data becomes a directory entry with no bytes: type 4, the bytes
+ * field at 128 zeroed, the aux dropped, a one-byte name embedded (namlen at
+ * byte 56, in embed.dirent).  Every check on the frame's own shape passes.
+ */
+static int
+bare_dirent(struct frame *f)
+{
+	uint32_t zero = 0;
+	uint16_t namlen = 1;
+
+	if ((f->hdr.cmd & 0x00FFFF00U) == 0x00201200U) {
+		if (nresolve_msgid == 0)
+			nresolve_msgid = f->hdr.msgid;
+		return (0);
+	}
+	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U || f->ext_len < 136 ||
+	    f->hdr.msgid != nresolve_msgid || nresolve_msgid == 0 ||
+	    f->ext[0] != 1 || f->hdr.aux_bytes == 0)
+		return (0);
+	f->ext[0] = 4;
+	memcpy(f->ext + 56, &namlen, sizeof(namlen));
+	memcpy(f->ext + 128, &zero, sizeof(zero));
+	free(f->aux);
+	f->aux = NULL;
+	f->hdr.aux_bytes = 0;
+	f->hdr.aux_crc = 0;
+	resign(f);
 	return (1);
 }
 
@@ -791,6 +843,11 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 	if (opt.rekey_data && !rekeyed && rekey(f)) {
 		rekeyed = 1;
 		trace("%s>%s i=%ld msgid=%" PRIu64 " rekey t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
+	if (opt.bare_dirent && !bared && bare_dirent(f)) {
+		bared = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " bare-dirent t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
 	side_enqueue(to, f, t + d);
@@ -953,9 +1010,9 @@ relay(void)
 	}
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
-	    " corrupt-at=%ld rekey-data=%d\n", opt.relay, opt.seed, opt.delay_max,
-	    opt.loss, opt.dup, opt.partition_at, opt.partition_len,
-	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data);
+	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d\n", opt.relay, opt.seed,
+	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
+	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);

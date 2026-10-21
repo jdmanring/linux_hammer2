@@ -34,6 +34,15 @@
 # fiemap check reads unknown_loc, which only FIEMAP reports, and not
 # filefrag's status alone.
 #
+# H2_WIRE_DIRENT=1 is the control on what a lookup takes: the relay turns
+# the inode answering the first nresolve, B's stat of small.txt, into a
+# directory entry with no bytes and signs it again. Its caller reads the
+# answer as an inode, so a check taking any entry hands it a chain with no
+# data and the stat faults on B. The run must read one bare-dirent line in
+# the trace, that stat failing, that one nresolve feed refused and no
+# other, and every digest equal to A's, warm and cold, since only the first
+# lookup of the name was answered so.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -50,6 +59,8 @@ HOST_ADDR=${H2_HOST_ADDR:-192.168.122.1}
 PORT=${H2_RELAY_PORT:-4800}
 SEED=${H2_WIRE_SEED:-11}
 REKEY=${H2_WIRE_REKEY:-0}
+DIRENT=${H2_WIRE_DIRENT:-0}
+[ "$REKEY" = 1 ] && [ "$DIRENT" = 1 ] && { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
@@ -136,7 +147,7 @@ done
 stamp=$(date +%Y%m%d-%H%M%S)
 "$W/h2loop" --relay "$PORT" --seed "$SEED" \
     ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
-    ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" \
+    ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -231,6 +242,8 @@ GUEST
 cat > "$W/read.sh" <<'GUEST'
 # read: B reads A's files through the registered element
 mountpoint -q $C || { echo "CL not mounted"; exit 1; }
+# the run's first lookup, so the dirent control knows the name it answers
+stat $C/small.txt >/dev/null 2>&1; echo "first-stat-rc $?"
 echo "files $(cd $C && find . -type f 2>/dev/null | grep -c .)"
 echo "many $(find $C/many -mindepth 1 2>/dev/null | grep -c .)"
 # fiemap is the bmap XOP over the wire, past the first block
@@ -255,6 +268,7 @@ echo "slave-show-failed $(printf '%s\n' "$show" | grep -c -E 'failed\)|bad block
 echo "refetches $(klog 'H2 REFETCH')"
 echo "log-not-proxy $(klog 'not a proxy')"
 echo "log-not-proxy-bmap $(klog 'HM2 bmap feed of type 3 not a proxy')"
+echo "log-not-proxy-nresolve $(klog 'HM2 nresolve feed of type 4 not a proxy')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
 GUEST
 cat > "$W/link.sh" <<'GUEST'
@@ -401,7 +415,11 @@ else
 [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"
 fi
 [ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"
-[ "$REKEY" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
+if [ "$DIRENT" = 1 ]; then
+	bd=$(grep -c ' bare-dirent ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$bd" 0)" = 1 ] && [ "$(num "$(val B first-stat-rc)" 0)" != 0 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-nresolve)" 0)" = 1 ]; check "control: an nresolve answered by a directory entry with no bytes is refused, not read as an inode" $? "bare-dirent lines $(num "$bd" 0), first stat rc $(val B first-stat-rc), not-proxy $(val B log-not-proxy) of which nresolve $(val B log-not-proxy-nresolve)"
+fi
+[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 [ "$(num "$(val B log-detached)" 0)" = 1 ]; check "remote: B's device unmount detaches the element once" $? "$(val B log-detached), by $(val B detached-why)"
 # The PFS root's proxy is at level 1 and a file's at 2, the media's own.

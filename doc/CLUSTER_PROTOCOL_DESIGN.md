@@ -471,10 +471,11 @@ them, since readdir picks one by the length; an inode block shorter
 than an inode or whose name is longer than its 256-byte array; a block
 whose size its radix does not give; a chain the request could not be
 answered with, by its type and key: for `ipcluster` an inode of the
-number asked for, for `readdir`, `scanlhc` and `nresolve` a directory
-entry or an inode, the first at or past its start key and the second in its
-hash range, for `scanall` its key range, for `lookup` the chain covering
-its key, and for a read or `bmap` the data block covering the offset or
+number asked for, for `readdir` and `scanlhc` a directory entry or an
+inode, the first at or past its start key and the second in its hash
+range, for `nresolve` an inode or an entry carrying an error, for
+`scanall` its key range, for `lookup` an inode of the number asked for,
+and for a read or `bmap` the data block covering the offset or
 the file's own inode, which the core's lookup returns for every key of
 a direct-data file, for a read only at offset 0 since the read
 completion refuses an inode anywhere else (`hammer2_strategy.c:417-420`);
@@ -482,13 +483,20 @@ an errored inode is taken as the file's, since its frame carries no
 number to check; a refetched block whose
 compression and check methods differ from the blockref the proxy keeps,
 which the consumer decodes it under; and a feed of an inode or data
-block with neither bytes nor an error. The wire harness's control
-drives one of these refusals: under `H2_WIRE_REKEY=1` its relay moves
+block with neither bytes nor an error. The wire harness's two controls
+drive two of these refusals. Under `H2_WIRE_REKEY=1` its relay moves
 the key of the first data block fed, the `bmap` of a file's first
 block, one block up and signs the frame again, and the slave refuses
 that feed and fails the call, so fiemap reports the error
 (`wire-run-20261021-013407`, debug kernel); a check refusing nothing
-would have listed the block as an extent. What is not checked is what the media does not constrain either:
+would have listed the block as an extent. Under `H2_WIRE_DIRENT=1` the
+relay turns the inode answering the first `nresolve`, the slave's stat of
+a file, into a directory entry with no bytes, and the slave refuses that
+feed and fails that one lookup, every file then reading equal to the
+master's (`wire-run-20261021-021450`, debug kernel); with `nresolve`
+taking any entry, as it did before this check, the same control faulted
+the slave through a null pointer in `hammer2_inode_get()`
+(`wire-run-20261021-020154`). What is not checked is what the media does not constrain either:
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 That includes content that reaches a warning: a compressed block whose
@@ -500,7 +508,14 @@ link, as the same bytes on a local volume do. A host booted with
 volume it did not write, trusting the writer. A frame's shape is the
 other kind: an inode fed for a read past a file's base is a frame no
 honest peer sends, and the range check refuses it before the read
-completion's warning sees it (`hammer2_strategy.c:417-420`).
+completion's warning sees it (`hammer2_strategy.c:417-420`). So is a
+directory entry answering `nresolve` or `lookup`: both callers read the
+answer as an inode (`hammer2_inode.c:1021-1022`, `:2006`), and an entry
+with its name in the blockref has no data, so the read is through a
+null pointer, a fault rather than a warning. The local storage
+functions never feed one, since `nresolve` resolves its entry to the
+inode (`hammer2_xops.c:267-272`) and `lookup` runs on the PFS root,
+whose children by number are inodes.
 
 **A block only the peer holds has no address here.** `bmap` answers
 with the offset of the local element's block, and a remote element has
