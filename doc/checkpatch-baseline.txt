@@ -152,10 +152,10 @@
 # identifier name` 469 -> 475. The tree's BSD style in a file this port
 # wrote; no category is new, see README.kernel-style.md.
 # 1,444 to 1,469 for the six remote ioctls, see README.kernel-style.md.
-# 1,469 to 1,541 for the remote element's client side in hammer2_remote.c
+# 1,469 to 1,543 for the remote element's client side in hammer2_remote.c
 # and its marked lines in carried files: `return is not a function`
-# 314 -> 346, `function definition argument should also have an identifier
-# name` 476 -> 492, `no spaces at the start of a line` 210 -> 224, and
+# 314 -> 347, `function definition argument should also have an identifier
+# name` 476 -> 492, `no spaces at the start of a line` 210 -> 225, and
 # positive errnos up by ten, `ENOTCONN` the one value new to the list; the
 # last five with the proxy's lockdep class. The
 # tree's BSD style and errno convention; no category is new.
@@ -188,9 +188,9 @@
 492 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
-224 please, no spaces at the start of a line
+225 please, no spaces at the start of a line
 82 quoted string split across lines
-346 return is not a function, parentheses are not required
+347 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)

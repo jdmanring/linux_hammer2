@@ -584,8 +584,13 @@ hammer2_io_getblk_conn(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase,
 	}
 	if (dio->refs & HAMMER2_DIO_GOOD) {
 		kvfree(buf);
+	} else if (error == 0 && (dio->folio || dio->buf)) {
+		/* a block without GOOD: the fill is refused, never overwritten */
+		WARN_ONCE(1, "hammer2: connection dio %016llx holds a block\n",
+		    (unsigned long long)lbase);
+		kvfree(buf);
+		dio->error = EIO;
 	} else if (error == 0) {
-		KKASSERT(dio->folio == NULL && dio->buf == NULL);
 		dio->buf = buf;
 		dio->error = 0;
 		dio->refs |= HAMMER2_DIO_GOOD;

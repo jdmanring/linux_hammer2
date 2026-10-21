@@ -3586,8 +3586,9 @@ hammer2_chain_lockdep_class(hammer2_mtx_t *p)
  * the master's proxy under the inode lock then read as the super-root
  * taken under a file, closing a cycle with the mount's own super-root,
  * PFS root, file order (debug kernel, 2026-10-20).  The proxy has the
- * level its chain has on the peer, which the caller reads from the inode
- * it asked about, and a family of its own, since the classes carry no
+ * level its chain has on the peer, which the caller derives from the
+ * inode it asked about and the PFS root every inode lives under, and a
+ * family of its own, since the classes carry no
  * tree and the pass holds the slave's chain at the level it relocks the
  * proxy at.  The inode lock of an inode whose focus is a proxy takes its
  * level from it, hammer2_inode_lockdep_nest(), as it does from a chain.

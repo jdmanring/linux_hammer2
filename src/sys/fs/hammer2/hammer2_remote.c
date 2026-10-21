@@ -651,7 +651,8 @@ struct hammer2_rconn {
  * What the peer needs to find a proxy's chain again: an inode by number
  * through ipcluster, anything else by key beneath its inode through
  * lookup.  A handle stands for one block version, the peer's data_off,
- * which the peer's media does not reuse while the block is live.
+ * which the peer's media does not reuse while the block is live, under
+ * one identity: a block deduplicated under two keys has two handles.
  *
  * ponytail: the table grows with the block versions this connection has
  * seen and is freed with the device; prune handles whose dio has left the
@@ -1061,6 +1062,14 @@ hammer2_rframe_free(struct hammer2_rframe *f)
 	kfree(f);
 }
 
+static int
+hammer2_rhandle_same(const struct hammer2_rhandle *a,
+    const struct hammer2_rhandle *b)
+{
+	return (a->type == b->type && a->cmd == b->cmd && a->inum == b->inum &&
+	    a->key == b->key && bcmp(&a->clid, &b->clid, sizeof(a->clid)) == 0);
+}
+
 /*
  * The handle for a fed block: the one this block version already has, or
  * a new one, with the frame's data stashed on it for the first load.
@@ -1071,40 +1080,57 @@ hammer2_rhandle_get(hammer2_dev_t *cdev, struct hammer2_rframe *f,
     const struct uuid *clid, uint64_t parent_inum)
 {
 	struct hammer2_rconn *rc = cdev->rconn;
-	struct hammer2_rhandle *h, *xh;
+	struct hammer2_rhandle *h, *xh, want = { 0 };
 	unsigned long off = (unsigned long)f->bref.data_off;
 	uint32_t id;
 	char *old;
 
+	want.type = f->bref.type;
+	want.clid = *clid;
+	want.key = f->bref.key;
+	if (f->bref.type == HAMMER2_BREF_TYPE_INODE) {
+		want.cmd = 0;	/* ipcluster, by its own number */
+		want.inum = ((hammer2_inode_data_t *)f->data)->meta.inum;
+	} else {
+		want.cmd = 7;	/* lookup, by key beneath its inode */
+		want.inum = parent_inum;
+	}
+
+	/*
+	 * One block can be live under several identities, a deduplicated
+	 * block under two files' keys, and a refetch asks by identity, so a
+	 * handle found by the block that names another identity is not this
+	 * chain's.  The second identity takes a handle of its own, outside
+	 * the byoff table, which keeps the first.
+	 */
 	h = xa_load(&rc->byoff, off);
+	if (h && !hammer2_rhandle_same(h, &want)) {
+		h = NULL;
+		off = 0;
+	}
 	if (h == NULL) {
 		h = kzalloc_obj(*h);
 		if (h == NULL)
 			return (0);
-		h->type = f->bref.type;
-		h->clid = *clid;
-		h->key = f->bref.key;
-		if (f->bref.type == HAMMER2_BREF_TYPE_INODE) {
-			h->cmd = 0;	/* ipcluster, by its own number */
-			h->inum = ((hammer2_inode_data_t *)f->data)->meta.inum;
-		} else {
-			h->cmd = 7;	/* lookup, by key beneath its inode */
-			h->inum = parent_inum;
-		}
+		*h = want;
 		if (xa_alloc(&rc->byid, &id, h, XA_LIMIT(1, 0x7FFFFFFF),
 		    GFP_KERNEL)) {
 			kfree(h);
 			return (0);
 		}
 		h->id = id;
-		xh = xa_cmpxchg(&rc->byoff, off, NULL, h, GFP_KERNEL);
-		if (xh != NULL) {	/* raced, or no memory: use the other */
+		xh = off ? xa_cmpxchg(&rc->byoff, off, NULL, h, GFP_KERNEL) :
+		    NULL;
+		if (xa_is_err(xh)) {
 			xa_erase(&rc->byid, id);
 			kfree(h);
-			if (xa_is_err(xh))
-				return (0);
-			h = xh;
+			return (0);
 		}
+		if (xh && hammer2_rhandle_same(xh, &want)) {	/* raced */
+			xa_erase(&rc->byid, id);
+			kfree(h);
+			h = xh;
+		}		/* else another identity's: keep this one apart */
 	}
 	spin_lock(&rc->hlock);
 	old = h->stash;
@@ -1180,6 +1206,9 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
 			bref.data_off = radix;	/* no block to load */
 		}
 	} else {
+		/* only a dirent's name fits in its blockref */
+		if (f->error == 0 && bref.type != HAMMER2_BREF_TYPE_DIRENT)
+			return (NULL);
 		bref.data_off = 0;	/* embedded in the blockref */
 	}
 	chain = hammer2_chain_alloc(cdev, pmp, &bref);
@@ -1230,6 +1259,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 	const char *name = NULL;
 	size_t name_len = 0;
 	int proxy, idx, nmax = 0, fed = 0, error;
+	unsigned int level;
 
 	hammer2_spin_sh(&ip1->cluster_spin);
 	chain = ip1->cluster.array[clindex].chain;
@@ -1297,9 +1327,19 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		goto done;
 	}
 	while ((error = hammer2_rcall_next(call, deadline, &f)) == 0) {
-		/* ipcluster feeds the inode's own chain, the rest its children */
+		/*
+		 * ipcluster feeds the inode's own chain and the rest its
+		 * children, except an inode, which lives under the PFS root
+		 * whatever directory names it.
+		 */
+		if (idx == 0)
+			level = ip1->lock.level;
+		else if (f->bref.type == HAMMER2_BREF_TYPE_INODE)
+			level = iroot->lock.level + 1;
+		else
+			level = ip1->lock.level + 1;
 		chain = hammer2_remote_proxy(cdev, pmp, f, &pmp->pfs_clid,
-		    ip1->meta.inum, ip1->lock.level + (idx != 0));
+		    ip1->meta.inum, level);
 		if (chain == NULL) {
 			pr_warn_ratelimited("hammer2: HM2 %s feed of type %d not a proxy\n",
 			    xop->desc->id, f->bref.type);
@@ -1828,7 +1868,7 @@ drop:
 out:
 	kfree(cand);
 	if (requeue)
-		mod_delayed_work(system_unbound_wq, &rm->regwork, delay);
+		mod_delayed_work(system_dfl_wq, &rm->regwork, delay);
 }
 
 /*
@@ -1842,7 +1882,7 @@ hammer2_remote_span(hammer2_dev_t *hmp)
 	struct hammer2_remote *rm = hmp->remote;
 
 	if (rm)
-		mod_delayed_work(system_unbound_wq, &rm->regwork, 0);
+		mod_delayed_work(system_dfl_wq, &rm->regwork, 0);
 }
 
 /*

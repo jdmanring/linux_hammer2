@@ -125,8 +125,8 @@ hammer2_iocom_init(hammer2_dev_t *hmp)
 			 KDMSG_IOCOMF_AUTORXSPAN,
 			 hmp->mmsg, hammer2_rcvdmsg);
 	TAILQ_INIT(&hmp->spanq);	/* XXX Linux */
-	hmp->nspans = 0;
-	hammer2_spin_init(&hmp->span_spin, "h2span");
+	hmp->nspans = 0;		/* XXX Linux: the span table */
+	hammer2_spin_init(&hmp->span_spin, "h2span");	/* XXX Linux */
 	hammer2_remote_init(hmp);	/* XXX Linux: the HM2 XOP API server */
 }
 

@@ -669,7 +669,7 @@ The decision, split by which half the code is in:
   and lets the message reach the disk. Measured on 2026-09-05 with the
   debug build's `debug_hpanic` parameter, which fires it at mount: the
   mount process died with `SIGSEGV`, the kernel printed the message
-  and `kernel BUG at hammer2_vfsops.c:1672!` with the site, the guest
+  and `kernel BUG at hammer2_vfsops.c:1664!` with the site, the guest
   answered ssh afterwards, and the module stayed pinned with one
   reference, so `rmmod` refused and the guest needed a hard stop to
   shed it. That is the trade: a wedged module and a reboot to clear it,

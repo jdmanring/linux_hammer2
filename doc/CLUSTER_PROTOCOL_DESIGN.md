@@ -71,9 +71,9 @@ property the remote element depends on was read:
 | `hammer2_chain.c:849` | `hammer2_chain_drop_data()` panics "data not NULL" for a chain with data and no `dio`, every type but VOLUME and FREEMAP |
 | `hammer2_chain.c:1164` | `hammer2_chain_unlock()` calls it on every last unlock |
 | `hammer2_chain.c:1027` | `hammer2_chain_load_data()` returns before touching the device when `chain->data` is set or the block part of `data_off` is zero, and reads through `hammer2_io_bread()` otherwise, an I/O error becoming the chain's `EIO` |
-| `hammer2_io.c:877` | `hammer2_io_bread()` is the read path from a chain to its device; `hammer2_io_new()` is the path for a chain being created, and `load_data` takes it for an `INITIAL` chain |
+| `hammer2_io.c:882` | `hammer2_io_bread()` is the read path from a chain to its device; `hammer2_io_new()` is the path for a chain being created, and `load_data` takes it for an `INITIAL` chain |
 | `hammer2_io.c:226` | `hammer2_get_volume()` is reached on a dio-hash miss before the dio is allocated, and panics with no volume for the offset; `hpanic` sets the host-wide `hammer2_device_error` |
-| `hammer2_io.c:798` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
+| `hammer2_io.c:803` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
 | `hammer2_synchro.c:1537` | `hammer2_xop_start_except()` with the pass's own index excludes the target element from the source scan |
 | `hammer2_synchro.c:1612` | a pass ends on any collect error but `ENOENT` |
 | `hammer2_vfsops.c:314` | `hammer2_pfsalloc()` merges every PFS root sharing a `pfs_clid` into one `pmp`, and a later mount joins an existing one |
@@ -322,8 +322,9 @@ slot, the steps that function takes for a local device's slots
 (`:799-842`) and nothing else of it, which freezes every thread, cleans
 snapshots under `hammer2_mntlk`, syncs the PFS and remasters, and cannot
 be called for one slot. It never frees a `pmp`: registration requires a
-mounted PFS, whose local slot outlives every remote one, so a detach
-cannot empty a cluster, and `hammer2_pfsfree()` would in any case
+local element, and `hammer2_pfsfree_scan()` detaches every remote slot
+of a `pmp` before it removes the last local one, so a detach cannot
+empty a cluster, and `hammer2_pfsfree()` would in any case
 assert `iroot->refs == 1` (`hammer2_vfsops.c:648-650`) on a mounted one;
 the detach asserts that a slot remains. It runs under `hammer2_mntlk`,
 the lock every walker of `hammer2_pfslist` holds (`:329`, `:730`,
@@ -347,9 +348,10 @@ while it runs; it reads the span table afresh each run, registers what
 is untried and detaches what has lost its span, so a run that finds the
 work already done does nothing.
 The device's free flushes nothing; the connection's teardown disables
-the item with `disable_work_sync()` (`kernel/workqueue.c:4677` in the
-kernel of record), since `cancel_work_sync()` re-enables the work on
-return and refuses a requeue only while it runs, and the teardown loses
+the item, delayed work, with `disable_delayed_work_sync()`
+(`kernel/workqueue.c:4729` in the kernel of record), since
+`cancel_delayed_work_sync()` re-enables the work on return and refuses a
+requeue only while it runs, and the teardown loses
 nothing by it because it detaches every remote slot itself. The
 teardown runs where `hammer2_mntlk` can be taken: in
 `hammer2_unmount_helper()`, which holds it, and on a `RECLUSTER` that
@@ -383,10 +385,10 @@ carries (`struct hammer2_dev` has none, `hammer2.h:919-959`, only
 it, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`) and dropped
 where the chain is freed (`:837`, not at `hammer2_chain_lastdrop()`'s
 entry, which returns early for a chain that keeps children), two marked
-lines, and one per queued work item, dropped when the item completes or
-when `disable_work_sync()` returns true for an item that will never run.
+lines, the link's own, dropped by its teardown, and the registration
+item's, taken only while it runs.
 The device's dios are not counted: a dio stays in the hash at its last
-release (`hammer2_io.c:798-817`) and is freed by
+release (`hammer2_io.c:803-822`) and is freed by
 `hammer2_io_hash_cleanup_all()` in the device's own free, as the block
 device's are at `hammer2_vfsops.c:2781`, so a count on them would hold
 the device forever.
@@ -405,7 +407,11 @@ again: for an inode chain its own inode number, fetched by `ipcluster`,
 and for a data or directory chain the inode the request ran under and
 the chain's key, fetched by `lookup`. A handle stands for one block
 version, the peer's `data_off`, which the peer's media does not reuse
-while the block is live, so two feeds of one version share a handle and
+while the block is live, under one of those identities: a deduplicated
+block is live under two files' keys, and a refetch by the first file's
+key would hand the second file the first file's current block, so a
+feed whose block has a handle under another identity takes one of its
+own. Two feeds of one version under one identity share a handle and
 its dio, and the table grows with the versions a connection sees; it is
 freed with the device, and pruning it is recorded at the definition
 with the reading that would call for it. Only leaves are fed, since
@@ -419,7 +425,7 @@ takes the stash, so the first load costs no round trip. The block then
 lives in a `hammer2_io_t` whose `buf` field, the form the port already
 has for "the block when the page cache had no folio for it", holds it,
 served by `hammer2_io_data()`. `hammer2_io_putblk()` frees `buf` at the
-dio's last drop (`hammer2_io.c:798-811`), so a proxy kept past its XOP
+dio's last drop (`hammer2_io.c:803-816`), so a proxy kept past its XOP
 (the retire's ccache, `ip->cluster` through `hammer2_inode_repoint()`,
 the registered root) has no data, and **every later load refetches**: the
 device's read looks the handle up and issues one request under the
@@ -1280,7 +1286,8 @@ pass 2, which also keeps such a master out of the end-of-scan agreement
 (`:290`), and the `ENOTCONN` return before the `ESRCH`/`EDEADLK` split
 (`:357`), decision C's settled half; in `hammer2_admin.c`, the XOP-level
 dispatch (`:475`); in `hammer2_iocom.c`, the span test admitting
-`PROTO_2` (`:375-380`) and the debug gate on the `RCVMSG` print
+`PROTO_2` (`:375-380`), the span table's count and lock at its
+initialization (`:128-129`) and the debug gate on the `RCVMSG` print
 (`:225`); in `hammer2_synchro.c`, the guard refusing a local snapshot of
 a remote focus (`:734`, `:743`) and the pass's refusal on a device
 opened read-only (`:1162`); in `hammer2_inode.c`, the release that skips
