@@ -174,7 +174,7 @@ fi
 dmesg -C
 pkill -f 'dmesg -w' 2>/dev/null
 setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
-{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 mkdir -p $R $C /tmp/h2keys
@@ -306,7 +306,7 @@ else
 	echo "lockdep-remote no-lockdep"
 fi
 sleep 6
-if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
 	# kept while the module is loaded, so its frames have names
 	grep -q hammer2 /sys/kernel/debug/kmemleak && sed 's/^/kmemleak-report /' /sys/kernel/debug/kmemleak | head -400
@@ -315,9 +315,11 @@ else
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 # Scanned again after the unload, whose frames now print as addresses: an
-# object a module global held at the first scan and the unload never freed
-# is a leak only from here.
-echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
+# object a module global held and the unload never freed is a leak only
+# from here. Each reading scans twice, since a scan greys an object whose
+# checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
+# new object's starts at ~0, so a leak is reported at its second scan.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 # Counted after the unload, whose own work (the connection device's free,
 # the module's queues drained) can report too, from a stream shown alive by
 # a line written after it.

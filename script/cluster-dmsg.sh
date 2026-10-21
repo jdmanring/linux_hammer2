@@ -126,7 +126,7 @@ klog() { grep -c "$1" $K; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 A=/tmp/h2attach
 M=/mnt/h2d
-{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
@@ -248,16 +248,18 @@ echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|p
 # a message per frame and frees them from two threads that exit on their
 # own, which is where a leak would sit.
 sleep 6
-if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
 else
 	echo "kmemleak unusable"
 fi
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 # Scanned again after the unload, whose frames now print as addresses: an
-# object a module global held at the first scan and the unload never freed
-# is a leak only from here.
-echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
+# object a module global held and the unload never freed is a leak only
+# from here. Each reading scans twice, since a scan greys an object whose
+# checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
+# new object's starts at ~0, so a leak is reported at its second scan.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 echo "threads-final $(threads)"
 kill $KPID 2>/dev/null
 GUEST

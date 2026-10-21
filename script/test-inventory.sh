@@ -619,11 +619,16 @@ done
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it
-# again after the unload. Uncleared, the list carries an earlier run's
-# leaks, which the count names "hammer2" only when the new module loads
-# over their addresses: a stage 2b run on 2026-10-21 read 148 lines of a
-# run two hours earlier. Scanned only before rmmod, an object a module
-# global holds then and the unload never frees is seen by nobody.
+# again after the unload, and every reading scans twice. Uncleared, the
+# list carries an earlier run's leaks, which the count names "hammer2"
+# only when the new module loads over their addresses: a stage 2b run on
+# 2026-10-21 read 148 lines of a run two hours earlier. Scanned only
+# before rmmod, an object a module global holds then and the unload never
+# frees is seen by nobody. A scan greys an object whose checksum changed
+# since the last one, and a new object's starts at ~0, so one scan reports
+# nothing new (the kernel's own kmemleak-test read 0, then 1). Read on
+# lines that are not comments, in order: the clear on the line before
+# each load, a second scan after each unload's line within six lines.
 nleak=0
 for s in script/*.sh; do
 	command grep -q 'echo scan > /sys/kernel/debug/kmemleak' "$s" || continue
@@ -631,10 +636,20 @@ for s in script/*.sh; do
 	script/test-inventory.sh) continue ;;
 	esac
 	nleak=$((nleak + 1))
-	command grep -q 'echo clear > /sys/kernel/debug/kmemleak' "$s" &&
-	    command grep -q 'kmemleak-unloaded' "$s" || {
-		echo "  FAIL $s: scans kmemleak without clearing it before the"
-		echo "       load or without scanning again after the unload"
+	why=$(awk '
+		/^[ \t]*#/ { next }
+		/echo scan > \/sys\/kernel\/debug\/kmemleak/ &&
+		    !/echo scan > \/sys\/kernel\/debug\/kmemleak.*echo scan > \/sys\/kernel\/debug\/kmemleak/ {
+			print "a single scan at line " NR; exit }
+		/insmod \/tmp\/hammer2\.ko/ && prev !~ /echo clear > \/sys\/kernel\/debug\/kmemleak/ {
+			print "a load at line " NR " with no clear before it"; exit }
+		/rmmod hammer2 && echo "rmmod ok"/ { rm = NR }
+		/kmemleak-unloaded \$\(/ && rm && NR - rm <= 6 { rm = 0 }
+		rm && NR - rm > 6 { print "an unload at line " rm " with no scan after it"; exit }
+		{ prev = $0 }
+		END { if (rm) print "an unload at line " rm " with no scan after it" }' "$s")
+	[ -z "$why" ] || {
+		echo "  FAIL $s: kmemleak read with $why"
 		fail=$((fail + 1)); }
 done
 [ "$nleak" -gt 0 ] || {

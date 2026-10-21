@@ -150,7 +150,7 @@ set -u
 rmmod hammer2 2>/dev/null
 mkdir -p /mnt/h2a
 dmesg -C
-{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod-failed"; exit 0; }
 
 # A MASTER set is written first and faultlessly, so the run has media to lose
@@ -291,16 +291,18 @@ echo "warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN')"
 umount /mnt/h2a && echo "umount-ok" || echo "umount-failed"
 sync
 sleep 6
-if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
 else
 	echo "kmemleak unusable"
 fi
 rmmod hammer2 && echo "rmmod ok"
 # Scanned again after the unload, whose frames now print as addresses: an
-# object a module global held at the first scan and the unload never freed
-# is a leak only from here.
-echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
+# object a module global held and the unload never freed is a leak only
+# from here. Each reading scans twice, since a scan greys an object whose
+# checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
+# new object's starts at ~0, so a leak is reported at its second scan.
+echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 echo "done"
 GUEST
 )

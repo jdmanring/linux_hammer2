@@ -340,16 +340,18 @@ finish() {
 	# a process named hammer2 could match, and to run without the wait the
 	# scanner's age rule needs (kmemleak.c MSECS_MIN_AGE, 5000 ms).
 	sleep 6
-	if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null; then
+	if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
 		echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
 	else
 		echo "kmemleak unusable"
 	fi
 	timeout 120 rmmod hammer2 && echo "rmmod ok"
 	# Scanned again after the unload, whose frames now print as addresses: an
-	# object a module global held at the first scan and the unload never freed
-	# is a leak only from here.
-	echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
+	# object a module global held and the unload never freed is a leak only
+	# from here. Each reading scans twice, since a scan greys an object whose
+	# checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
+	# new object's starts at ~0, so a leak is reported at its second scan.
+	echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak && echo "kmemleak-unloaded $(grep -c '^ *0xffffffffc' /sys/kernel/debug/kmemleak)"
 	sync
 	kill $KPID 2>/dev/null
 }
@@ -387,7 +389,7 @@ dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
-{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
@@ -819,7 +821,7 @@ dmesg -C
 dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
-{ echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
 klog() { grep -c "$1" $K; }
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
