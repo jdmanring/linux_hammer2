@@ -596,11 +596,14 @@ fi
 # A harness that counts the guest's kernel reports must read debug_locks.
 # One lockdep report turns lockdep off until the next boot, so a run on
 # that boot counts no report with nothing checking and passes: the stage
-# 2b wire harness did on 2026-10-20, and thirteen siblings had the same
-# shape. A counter is a script with a `grep -c` over a WARNING pattern.
+# 2b wire harness did on 2026-10-20, and fourteen siblings had the same
+# shape. A counter is a script with a grep carrying a count flag on a
+# line naming a report: WARNING, BUG:, KASAN, a circular lock or a cut-here
+# header. A count made through a wrapper function, with no grep -c on the
+# line, is outside what this can see.
 nrep=0
 for s in script/*.sh; do
-	command grep -q -E 'grep -c[^|]*WARNING|grep -ci? .*WARNING' "$s" || continue
+	command grep -q -E 'grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)' "$s" || continue
 	case "$s" in
 	script/test-inventory.sh) continue ;;
 	esac

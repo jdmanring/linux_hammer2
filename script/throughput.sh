@@ -127,6 +127,9 @@ boot() {	# boot <guest> <ssh> [ext4 image] [btrfs image]; the images are attache
 	until ssh -o ConnectTimeout=3 -o BatchMode=yes "$2" true 2>/dev/null; do
 		sleep 5; n=$((n + 1)); [ $n -gt 60 ] && { echo "  COULD-NOT-RUN  $1 did not answer ssh in 5 minutes, host load $(cut -d" " -f1-3 /proc/loadavg)"; return 1; }
 	done
+	# A guest whose lockdep an earlier report turned off counts no report.
+	[ "$(ssh -o BatchMode=yes "$2" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")" = 0 ] && {
+		echo "  COULD-NOT-RUN  lockdep is off on $1 since an earlier report; boot it again"; return 1; }
 	return 0
 }
 down() {	# down <guest> <ssh>

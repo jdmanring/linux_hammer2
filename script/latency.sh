@@ -148,6 +148,9 @@ boot() {
 		sleep 5; n=$((n + 1))
 		[ $n -gt 60 ] && { echo "latency: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes" >&2; return 1; }
 	done
+	# A guest whose lockdep an earlier report turned off counts no report.
+	[ "$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")" = 0 ] && {
+		echo "latency: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; return 1; }
 	return 0
 }
 down() {
