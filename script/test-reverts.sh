@@ -67,8 +67,11 @@ REVERT_WINDOW=${H2_REVERT_WINDOW:-25}
 
 # A reason token. Deliberately broad on the words that mean a direction was
 # taken or a measurement was made, and narrow enough that a message with none
-# of them usually has no reason in it.
-REASON='revert|undo|back out|backed out|remov|restore|reinstate|took back|taken back|withdraw|abandon|discard|drop|no longer|unnecessar|does not work|did not work|doesn.t work|inert|wrong|fail|broke|break|hangs|hang|wedge|panic|refus|regress|instead|because|since|measured|trial|tried|attempt|no effect|had no'
+# of them usually has no reason in it. `unchecked` is here for `7f6ff91`
+# (2026-10-21), which bounds four values its parent took from the peer and
+# states the defect as the values reaching the core unchecked, a reason in a
+# word the list did not have; the gate read it as a take-back with none.
+REASON='revert|undo|back out|backed out|remov|restore|reinstate|took back|taken back|withdraw|abandon|discard|drop|no longer|unnecessar|does not work|did not work|doesn.t work|inert|wrong|fail|broke|break|hangs|hang|wedge|panic|refus|regress|instead|because|since|measured|trial|tried|attempt|no effect|had no|unchecked'
 
 scanned=0; checked=0; flagged=0; bad=0
 
