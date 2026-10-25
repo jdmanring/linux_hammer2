@@ -54,13 +54,14 @@ git rev-parse --verify HEAD >/dev/null 2>&1 || { echo "reverts: COULD-NOT-RUN: n
 # happens to delete something. Today's reverts remove 15 to 30; an edit that
 # replaces a few lines is not one.
 REVERT_MIN=${H2_REVERT_MIN:-8}
-# How far back to read, and the default is measured rather than chosen. The
-# gate's subject is the commit about to land, not the archive, and the whole
-# history holds take-backs whose reason is stated in wording the vocabulary
-# does not name: `b3c3c37` (2026-09-04) removes `hammer2_mtx_sh(&chain->lock)`
-# calls and says why in its subject, and 60 commits back is where the
-# vocabulary's coverage of this tree reaches 11 of 12. `H2_REVERT_DEPTH=300`
-# reads the archive deliberately and reports what it finds there.
+# How far back to read. The gate's subject is the commit about to land,
+# not the archive, and the archive holds take-backs whose reason is stated
+# in wording the vocabulary does not name: `b3c3c37` (2026-09-04) removes
+# `hammer2_mtx_sh(&chain->lock)` calls and says why in its subject. The
+# default keeps such a commit out of the gate's reading once it is this
+# far back, rather than growing the vocabulary toward every past phrasing;
+# `H2_REVERT_DEPTH=300` reads the archive deliberately and reports what it
+# finds there.
 REVERT_DEPTH=${H2_REVERT_DEPTH:-60}
 # How many commits back the additions may have come from.
 REVERT_WINDOW=${H2_REVERT_WINDOW:-25}
