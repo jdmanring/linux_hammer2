@@ -115,9 +115,13 @@ fi
 # must hold the control's FAIL line before that line is taken out and
 # the rest counted; HEAD's own hash must not read as off. A reader over
 # every ref would pass the control, since it is on no ref, and that is
-# the control's floor. The population must hold a `.md` and a
-# `doc/*.txt`, since the baseline, a `doc/*.txt`, named a moved hash
-# while this check read the `.md` alone.
+# the control's floor, and a count rewritten by hand would pass it too.
+# Which files the population holds is asserted, not controlled: it must
+# hold a `.md` and a `doc/*.txt`, since the baseline, a `doc/*.txt`,
+# named a moved hash while this check read the `.md` alone, and it must
+# be every listed file but the two rewrite maps; the file set narrowed
+# in the listing's pathspec or at the extraction's call is outside what
+# a control on no ref can see.
 hobj=$(mktemp -d) || exit 2
 reach=$(mktemp) || { rm -rf "$hobj"; exit 2; }
 objs=$(CDPATH= cd -P "$(git rev-parse --git-path objects)" && pwd)
@@ -127,6 +131,8 @@ hctl=$(GIT_AUTHOR_NAME=control GIT_AUTHOR_EMAIL=control@invalid GIT_COMMITTER_NA
 	GIT_COMMITTER_EMAIL=control@invalid git commit-tree "HEAD^{tree}" </dev/null 2>/dev/null)
 git rev-list HEAD > "$reach"
 docs=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -e '-rewrite-commit-map\.txt$')
+nmaps=$(git ls-files -- '*.md' 'doc/*.txt' | grep -c -e '-rewrite-commit-map\.txt$')
+nall=$(git ls-files -- '*.md' 'doc/*.txt' | grep -c .)
 hist_tokens() {	# files as arguments; every hex token of 7 to 40 digits, once
 	grep -o -h -E '\b[0-9a-f]{7,40}\b' "$@" | LC_ALL=C sort -u
 }
@@ -158,6 +164,9 @@ for t in "$hctl" "$hc12" 1234567; do
 	   hist_done; exit 1 ;;
 	esac
 done
+[ "$nmaps" = 2 ] && [ "$(printf '%s\n' "$docs" | grep -c .)" = $((nall - 2)) ] || {
+	echo "history: FAIL: the population is $(printf '%s\n' "$docs" | grep -c .) of $nall listed files with $nmaps rewrite map(s) left out, not all but the two maps" >&2
+	hist_done; exit 1; }
 for p in '\.md$' '^doc/.*\.txt$'; do
 	printf '%s\n' "$docs" | grep -q -e "$p" || {
 		echo "history: FAIL: the population holds no file matching $p; the baseline is a doc/*.txt" >&2

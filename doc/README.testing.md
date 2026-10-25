@@ -349,10 +349,13 @@ written on a line beside a digit-only token, that line is read with the
 documents by the one extraction, and its tokens go through the same
 classification, membership test and report as theirs, whose output must
 hold the control's FAIL line before that line is taken out and the rest
-counted; HEAD's own hash must not read as off, and the population must
-hold a `.md` and a `doc/*.txt`. A reader over every ref would pass that
-control, since the control is on no ref, and a count rewritten by hand
-would too: that is the control's floor.
+counted; HEAD's own hash must not read as off. A reader over every ref
+would pass that control, since the control is on no ref, and a count
+rewritten by hand would too: that is the control's floor. Which files
+the population holds is asserted rather than controlled: a `.md`, a
+`doc/*.txt`, and every listed file but the two rewrite maps, so the file
+set narrowed in the listing's pathspec or at the extraction's call is
+outside what the control can see.
 It reads one thing no other gate reads: the documents that state which
 version the tree is on. A document naming an older one describes the state
 before the milestone it sits above, and that had happened four times in two
