@@ -632,7 +632,19 @@ done
 # against the canonical copy below, modulo leading indent and the
 # `timeout 120 ` some unloads carry: element matchers pass mutations that
 # keep every substring (`+ 0`, `&& 0`, `{ a = "" }`, a guard moved below
-# the 16-digit arm), a byte comparison fails on any of them.
+# the 16-digit arm), a byte comparison fails on any of them.  The text of
+# one block says nothing about what surrounds it, so the file is read
+# around it too: one block (a second `mrange=` line is a decoy copy the
+# comparison would read instead of the real one), one unload that reports
+# (a second unload before the block, with a reload the load rule accepts,
+# clears the first unload's leaks unread; the unloads before the first
+# load, `rmmod hammer2 2>/dev/null`, discard their status and are not
+# that), and `kmemleak-unloaded` named outside the block only where the
+# host reads it with `val`, since a second producer, a block wrapped in
+# `if false`, commented out in a heredoc or in a function never called,
+# all print a constant 0 the host's `head -1` takes.  The floor: a filter
+# that rewrites the block's output without naming the string is text this
+# gate does not see.
 leak_canon=$(cat <<'LEAKEOF'
 mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
 mb=${mrange% *}; ms=${mrange#* }; me=
@@ -685,6 +697,21 @@ for s in script/*.sh; do
 			flag && index($0, "kmemleak-unloaded-report ") { tail = 1; next }
 			tail { print line; exit }' "$s")
 		[ "$blk" = "$leak_canon" ] || why="its post-unload block differs from the canonical copy"
+	fi
+	if [ -z "$why" ]; then
+		why=$(awk '
+			/^[ \t]*#/ { next }
+			{ line = $0; sub(/^[ \t]+/, "", line); sub(/^timeout 120 /, "", line) }
+			index(line, "mrange=$(awk ") { nblk++; inb = 1 }
+			tail { tail = 0; inb = 0 }
+			inb && index(line, "kmemleak-unloaded-report ") { tail = 1 }
+			line == "rmmod hammer2 && echo \"rmmod ok\"" { nun++; next }
+			/rmmod hammer2/ && !/rmmod hammer2 2>\/dev\/null/ { bad = bad ", an unload at line " NR " that is not the block'"'"'s" }
+			!inb && /kmemleak-unloaded/ && !/val( [^ ]+)? kmemleak-unloaded\)/ { bad = bad ", kmemleak-unloaded named at line " NR " outside the block and not as the host'"'"'s read" }
+			END {
+				if (nblk != 1) bad = bad ", " nblk + 0 " post-unload blocks"
+				if (nun != 1) bad = bad ", " nun + 0 " reporting unloads"
+				if (bad != "") print substr(bad, 3) }' "$s")
 	fi
 	[ -z "$why" ] || {
 		echo "  FAIL $s: kmemleak read with $why"
