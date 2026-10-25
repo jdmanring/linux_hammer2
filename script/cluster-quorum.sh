@@ -253,7 +253,7 @@ for d in vdb vdc; do
 done
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
-nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
+nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value
 fail=0; checks=0
 check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))

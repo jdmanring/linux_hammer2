@@ -308,7 +308,7 @@ fi
 detach_disk
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
-nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
+nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value
 field() { printf '%s\n' "$1" | sed -n "s/.*[ :]$2=\([-0-9]*\).*/\1/p" | head -1; }
 fail=0; checks=0
 check() {	# check <name> <0 ok / 1 fail> <reading>

@@ -487,8 +487,8 @@ phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
 val() {	# val <A|B> <name>
 	sed -n "s/^$1 $2 //p" "$W/out" | head -1
 }
-nval() {	# nval <A|B> <name>: how many lines carry it
-	sed -n "s/^$1 $2 //p" "$W/out" | grep -c .
+nval() {	# nval <A|B> <name>: how many lines carry it, with or without a value
+	grep -c -E "^$1 $2( |$)" "$W/out"
 }
 : > "$W/out"
 phase A setup.sh master || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }

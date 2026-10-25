@@ -1011,7 +1011,7 @@ scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$STAMP.klog" 2>/dev
 detach_disks
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
-nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
+nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value
 fail=0; checks=0
 check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))

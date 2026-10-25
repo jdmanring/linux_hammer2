@@ -340,7 +340,7 @@ done
 
 printf '%s\n' "$out" > "$W/out"
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
-nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
+nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value
 for m in insmod-failed base-mount-failed pfs-create-failed ctl-failed; do
 	case "$out" in
 	*"$m"*) echo "sync-io: COULD-NOT-RUN: the setup stopped at $m" >&2; exit 2 ;;
