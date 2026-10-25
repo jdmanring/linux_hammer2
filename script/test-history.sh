@@ -124,8 +124,8 @@ fi
 # `doc/*.txt`, named a moved hash while this check read the `.md` alone,
 # and what the listing holds and it leaves out must be the two rewrite
 # maps under doc/history by name; the file set narrowed in the listing's
-# pathspec or at the extraction's call is outside what a control on no
-# ref can see.
+# pathspec, inside the extraction or at its call is outside what a
+# control on no ref can see.
 hobj=$(mktemp -d) || exit 2
 reach=$(mktemp) || { rm -rf "$hobj"; exit 2; }
 objs=$(CDPATH= cd -P "$(git rev-parse --git-path objects)" && pwd)

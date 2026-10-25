@@ -358,8 +358,8 @@ report is asserted to hold one FAIL per hash off the history. Which
 files the population holds is asserted rather than controlled: a `.md`,
 a `doc/*.txt`, and what the listing holds and it leaves out must be the
 two rewrite maps under `doc/history` by name, so the file set narrowed
-in the listing's pathspec or at the extraction's call is outside what
-the control can see.
+in the listing's pathspec, inside the extraction or at its call is
+outside what the control can see.
 It reads one thing no other gate reads: the documents that state which
 version the tree is on. A document naming an older one describes the state
 before the milestone it sits above, and that had happened four times in two
