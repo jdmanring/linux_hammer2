@@ -62,19 +62,25 @@
 # reads after the stall find every digest equal to A's. MS must exceed the
 # 2000 ms bound.
 #
-# H2_WIRE_END=aborted, noeof or lost is the control on how B reads the end
-# of a reply. B lists an empty directory of A's before anything else is listed,
-# and the relay rewrites the closing frames of the two getdents calls that
-# listing makes, since the first has emitted . and .. and so hides its
-# error: aborted sets their error to ABORTED, the code a server ends a
-# request with while its unmount drains it, and noeof clears their error
-# and EOF flag, a close with no end fed, and lost sets the closing frame's
-# byte count, a closing feed carrying a chain. Neither is an answer about the
-# directory, so the listing must fail not connected and B's readdir end
-# ENOTCONN. Taken as an answer, aborted fails the listing with ABORTED's
-# own EINTR and noeof leaves the element counted in progress, EINPROGRESS.
-# Lost is answered one level up: the kernel ends the whole link at the
-# first such close, so the run rewrites one close and reads nothing after.
+# H2_WIRE_END=aborted, noeof, lost or onefed is the control on how B reads
+# the end of a reply. B lists an empty directory of A's before anything
+# else is listed, and the relay rewrites the closing frames of the two
+# getdents calls that listing makes, since the first has emitted . and ..
+# and so hides its error: aborted sets their error to ABORTED, the code a
+# server ends a request with while its unmount drains it, and noeof clears
+# their error and EOF flag, a close with no end fed. Neither is an answer
+# about the directory, so the listing must fail not connected and B's
+# readdir end ENOTCONN. Taken as an answer, aborted fails the listing with
+# ABORTED's own EINTR and noeof leaves the element counted in progress,
+# EINPROGRESS. lost sets the first closing frame's byte count instead, a
+# closing feed carrying a chain, which the kernel answers one level up by
+# ending the whole link, so the run rewrites one close and reads nothing
+# after it. onefed is noeof on a listing of the 300-entry directory one
+# entry per getdents call, a buffer with room for one entry making every
+# readdir ask for one, so each rewritten close follows one fed chain: the
+# rule that takes a clean close with no end as an answer only from a
+# one-chain descriptor must still read ENOTCONN, where the rule it
+# replaced, keyed on the count, took the chain as the answer and listed on.
 #
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
@@ -96,7 +102,7 @@ DIRENT=${H2_WIRE_DIRENT:-0}
 REFUSE=${H2_WIRE_REFUSE:-0}
 STALL=${H2_WIRE_STALL:-0}
 END=${H2_WIRE_END:-}
-case $END in ''|aborted|noeof|lost) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof or lost" >&2; exit 2;; esac
+case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
 [ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
 nctl=0
@@ -193,7 +199,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
     ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
     ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
     --refuse-nresolve "$REFUSE" --stall-ms "$STALL" \
-    --end-readdir "$(case $END in aborted) echo 1;; noeof) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
+    --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -301,8 +307,24 @@ echo "first-stat-notconn $(grep -c 'not connected' /tmp/h2wire.staterr)"
 echo "first-stat-enoent $(grep -c 'No such file' /tmp/h2wire.staterr)"
 echo "first-stat-unsupported $(grep -c 'not supported' /tmp/h2wire.staterr)"
 echo "first-stat-err $(sed -n '1s/.*: //p' /tmp/h2wire.staterr)"
-# the end control's listing, the run's first
-if [ -n "${2:-}" ]; then
+# the end control's listing, the run's first: the empty directory, or
+# under onefed the 300-entry directory one entry per getdents64 call, a
+# 32-byte buffer holding one 24-byte entry, so every readdir asks for one
+if [ "${2:-}" = onefed ]; then
+	python3 - $C/many <<'PY' 2>/tmp/h2wire.emptyerr; echo "empty-ls-rc $?"
+import ctypes, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+buf = ctypes.create_string_buffer(32)
+n = 1
+while n > 0:
+    n = libc.syscall(217, fd, buf, 32)
+    if n < 0:
+        sys.exit("getdents64: " + os.strerror(ctypes.get_errno()))
+PY
+	echo "empty-ls-notconn $(grep -c 'not connected' /tmp/h2wire.emptyerr)"
+	echo "empty-ls-err $(sed -n '1s/.*: //p' /tmp/h2wire.emptyerr)"
+elif [ -n "${2:-}" ]; then
 	ls $C/empty >/dev/null 2>/tmp/h2wire.emptyerr; echo "empty-ls-rc $?"
 	echo "empty-ls-notconn $(grep -c 'not connected' /tmp/h2wire.emptyerr)"
 	echo "empty-ls-err $(sed -n '1s/.*: //p' /tmp/h2wire.emptyerr)"
@@ -343,6 +365,9 @@ echo "log-nresolve-notconn $(klog 'H2 REMOTE nresolve .* end=00080000')"
 echo "log-readdir-timedout $(klog 'H2 REMOTE readdir .* end=00040000')"
 echo "readdir-timedout-ms $(kl | sed -n 's/.*H2 REMOTE readdir .* end=00040000 ms=\([0-9]*\).*/\1/p' | sort -n | head -1)"
 echo "log-readdir-notconn $(klog 'H2 REMOTE readdir .* end=00080000')"
+echo "log-readdir-first $(kl | grep -m1 'H2 REMOTE readdir ' | sed 's/.* fed=/fed=/; s/ ms=.*//')"
+echo "log-readdir-other $(kl | grep 'H2 REMOTE readdir ' | grep -vc 'end=00080000')"
+echo "log-readdir-onefed-notconn $(klog 'H2 REMOTE readdir .* fed=1 .* end=00080000')"
 echo "log-bmap-notconn $(klog 'H2 REMOTE bmap .* end=00080000')"
 GUEST
 cat > "$W/link.sh" <<'GUEST'
@@ -534,7 +559,9 @@ fi
 if [ -n "$END" ]; then
 	en=$(grep -c ' end .*mode=' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	if [ "$END" = lost ]; then
-		[ "$(num "$en" 0)" = 1 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" = 2 ] && [ "$(num "$(val B log-peer-sent)" 1)" -ge 1 ] && [ "$(num "$(val B files)" 0)" = 0 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ]; check "control: a closing feed with a chain ends the link, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn), peer-sent $(val B log-peer-sent), B listed $(val B files) after with $(val B find-notconn) not connected"
+		[ "$(num "$en" 0)" = 1 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" -ge 1 ] && [ "$(val B log-readdir-first)" = "fed=0 error=00000001 end=00080000" ] && [ "$(num "$(val B log-readdir-other)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" -ge 1 ] && [ "$(num "$(val B files)" 0)" = 0 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ]; check "control: a closing feed with a chain ends the link, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn) with the first \"$(val B log-readdir-first)\" and $(val B log-readdir-other) ending otherwise, peer-sent $(val B log-peer-sent), B listed $(val B files) after with $(val B find-notconn) not connected"
+	elif [ "$END" = onefed ]; then
+		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-onefed-notconn)" 0)" = 2 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "control: a clean close with no end after one fed chain is no answer from a readdir" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir with one chain fed ended ENOTCONN $(val B log-readdir-onefed-notconn), the directory listed whole after $(val B many)"
 	else
 		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" = 2 ]; check "control: a reply closed $END reads the master unreachable, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn)"
 	fi

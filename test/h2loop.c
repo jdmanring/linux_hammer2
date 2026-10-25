@@ -64,11 +64,14 @@
  * HAMMER2_ERROR_ABORTED, the code a server ends a request with when its
  * unmount drains it, and --end-readdir 2 clears those frames' error and
  * EOF flag, a clean close with no end fed, while --end-readdir 3 sets
- * bytes on those frames, a closing feed with a chain no honest server
- * sends; every mode must read the master as unreachable.  Two, because
- * a listing of an empty directory is two getdents calls and the first
- * has emitted . and .., which hides its
- * error; only the second's error reaches the caller.  Every
+ * bytes on the first of them, a closing feed with a chain no honest
+ * server sends, at which the receiving kernel ends the link, so the
+ * second is never seen; every mode must read the master as unreachable.
+ * Two, because a listing of an empty directory is two getdents calls and
+ * the first has emitted . and .., which hides its error; only the
+ * second's error reaches the caller.  The harness also drives mode 2 on
+ * a listing whose every getdents asks for one entry, so each rewritten
+ * close follows one fed chain.  Every
  * decision is one trace line as before, under a header that
  * names the mode and the knobs.  The trace records what the relay did and
  * is not a replay: two live kernels do not send the same frames twice, so
