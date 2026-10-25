@@ -253,6 +253,7 @@ for d in vdb vdc; do
 done
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
+nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
 fail=0; checks=0
 check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))
@@ -293,7 +294,7 @@ a=$(val kernel-warnings); [ "${a:-1}" = 0 ]; check "no kernel warning, lockdep, 
 # it. No value at all means the guest stopped before this point.
 l=$(val kmemleak)
 case "$l" in
-0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
+0) u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range); [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

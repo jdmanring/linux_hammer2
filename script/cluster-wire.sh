@@ -484,6 +484,9 @@ phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
 val() {	# val <A|B> <name>
 	sed -n "s/^$1 $2 //p" "$W/out" | head -1
 }
+nval() {	# nval <A|B> <name>: how many lines carry it
+	sed -n "s/^$1 $2 //p" "$W/out" | grep -c .
+}
 : > "$W/out"
 phase A setup.sh master || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 clid=$(val A clid)
@@ -596,8 +599,8 @@ case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) fal
 for sd in A B; do
 	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
 	k=$(val $sd kmemleak)
-	u=$(val $sd kmemleak-unloaded)
-	[ "$k" = 0 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k, after the unload ${u:-unread}"
+	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)
+	[ "$k" = 0 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"
 done
 relay_frames=$(sed -n 's/.*pair done frames \([0-9]*\).*/\1/p' "$W/relay.out" | tail -1)

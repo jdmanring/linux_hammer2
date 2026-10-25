@@ -308,6 +308,7 @@ fi
 detach_disk
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
+nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
 field() { printf '%s\n' "$1" | sed -n "s/.*[ :]$2=\([-0-9]*\).*/\1/p" | head -1; }
 fail=0; checks=0
 check() {	# check <name> <0 ok / 1 fail> <reading>
@@ -445,7 +446,7 @@ cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 # value at all means the guest stopped before the scan.
 l=$(val kmemleak)
 case "$l" in
-0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
+0) u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range); [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

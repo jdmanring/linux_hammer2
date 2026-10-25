@@ -340,6 +340,7 @@ done
 
 printf '%s\n' "$out" > "$W/out"
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
+nval() { sed -n "s/^$1 //p" "$W/out" | grep -c .; }	# how many lines carry the name
 for m in insmod-failed base-mount-failed pfs-create-failed ctl-failed; do
 	case "$out" in
 	*"$m"*) echo "sync-io: COULD-NOT-RUN: the setup stopped at $m" >&2; exit 2 ;;
@@ -395,7 +396,7 @@ w=$(val warnings)
 check "no kernel warning, KASAN or UBSAN report" $? "${w:-none}"
 l=$(val kmemleak)
 case "$l" in
-0) u=$(val kmemleak-unloaded); [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}" ;;
+0) u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range); [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable" 1 "the scan refused" ;;
 "") ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
