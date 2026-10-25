@@ -115,13 +115,17 @@ fi
 # must hold the control's FAIL line before that line is taken out and
 # the rest counted; HEAD's own hash must not read as off. A reader over
 # every ref would pass the control, since it is on no ref, and that is
-# the control's floor, and a count rewritten by hand would pass it too.
-# Which files the population holds is asserted, not controlled: it must
-# hold a `.md` and a `doc/*.txt`, since the baseline, a `doc/*.txt`,
-# named a moved hash while this check read the `.md` alone, and it must
-# be every listed file but the two rewrite maps; the file set narrowed
-# in the listing's pathspec or at the extraction's call is outside what
-# a control on no ref can see.
+# the control's floor, and a count rewritten by hand would pass it too,
+# as would a filter keeping the sorted cited set by position, which the
+# one control's random id passes or fails in proportion to where it
+# sorts; the report is asserted to hold one FAIL per hash off the
+# history. Which files the population holds is asserted, not controlled:
+# it must hold a `.md` and a `doc/*.txt`, since the baseline, a
+# `doc/*.txt`, named a moved hash while this check read the `.md` alone,
+# and what the listing holds and it leaves out must be the two rewrite
+# maps under doc/history by name; the file set narrowed in the listing's
+# pathspec or at the extraction's call is outside what a control on no
+# ref can see.
 hobj=$(mktemp -d) || exit 2
 reach=$(mktemp) || { rm -rf "$hobj"; exit 2; }
 objs=$(CDPATH= cd -P "$(git rev-parse --git-path objects)" && pwd)
@@ -131,8 +135,9 @@ hctl=$(GIT_AUTHOR_NAME=control GIT_AUTHOR_EMAIL=control@invalid GIT_COMMITTER_NA
 	GIT_COMMITTER_EMAIL=control@invalid git commit-tree "HEAD^{tree}" </dev/null 2>/dev/null)
 git rev-list HEAD > "$reach"
 docs=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -e '-rewrite-commit-map\.txt$')
-nmaps=$(git ls-files -- '*.md' 'doc/*.txt' | grep -c -e '-rewrite-commit-map\.txt$')
-nall=$(git ls-files -- '*.md' 'doc/*.txt' | grep -c .)
+# what the listing holds and the population does not, by name: the two maps
+printf '%s\n' "$docs" > "$hobj/docs"
+hleft=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -x -F -f "$hobj/docs")
 hist_tokens() {	# files as arguments; every hex token of 7 to 40 digits, once
 	grep -o -h -E '\b[0-9a-f]{7,40}\b' "$@" | LC_ALL=C sort -u
 }
@@ -164,8 +169,8 @@ for t in "$hctl" "$hc12" 1234567; do
 	   hist_done; exit 1 ;;
 	esac
 done
-[ "$nmaps" = 2 ] && [ "$(printf '%s\n' "$docs" | grep -c .)" = $((nall - 2)) ] || {
-	echo "history: FAIL: the population is $(printf '%s\n' "$docs" | grep -c .) of $nall listed files with $nmaps rewrite map(s) left out, not all but the two maps" >&2
+[ "$(printf '%s\n' "$hleft" | grep -c .)" = 2 ] && [ "$(printf '%s\n' "$hleft" | grep -c -x -E 'doc/history/[0-9-]+-rewrite-commit-map\.txt')" = 2 ] || {
+	echo "history: FAIL: the population leaves out '$(printf '%s' "$hleft" | tr '\n' ' ')', not the two rewrite maps under doc/history alone" >&2
 	hist_done; exit 1; }
 for p in '\.md$' '^doc/.*\.txt$'; do
 	printf '%s\n' "$docs" | grep -q -e "$p" || {
@@ -187,6 +192,9 @@ case "$out" in
    hist_done; exit 1 ;;
 esac
 printf '%s\n' "$out" | awk -v l="$hcl" '$0 == l { skip = 1; next } skip { skip = 0; next } { print }'
+[ "$(printf '%s\n' "$out" | grep -c '^  FAIL ')" = "$(printf '%s\n' "$cited" | hist_off | grep -c .)" ] || {
+	echo "  FAIL control: the report holds $(printf '%s\n' "$out" | grep -c '^  FAIL ') FAIL line(s) for $(printf '%s\n' "$cited" | hist_off | grep -c .) hash(es) off the history." >&2
+	hist_done; exit 1; }
 b0=$bad; bad=$((bad + $(printf '%s\n' "$out" | grep -c '^  FAIL ')))
 [ "$bad" -gt "$b0" ] || {
 	echo "  FAIL control: the control's FAIL line was printed and not counted (still $bad)." >&2
