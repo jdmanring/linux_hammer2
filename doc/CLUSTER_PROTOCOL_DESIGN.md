@@ -588,7 +588,16 @@ unchanged, `aborted` fails the listing with `ABORTED`'s own "Interrupted
 system call" (`wire-run-20261021-060728`, module `fd5c139bf73fb324`), and
 the module before the fourteenth round fails `noeof` with "Operation now
 in progress", the element counted in progress
-(`wire-run-20261021-060606`, module `28bd2123661a311e`). What is not checked is what the media does not constrain either:
+(`wire-run-20261021-060606`, module `28bd2123661a311e`). Under
+`H2_WIRE_END=lost` the relay sets the first closing frame's byte count
+instead, a closing feed carrying a chain, a shape the protocol gives no
+meaning; the slave does not take it and ends the link at that frame
+(`hammer2_remote.c:927-928`, `:990-996`), as it does for any frame it
+cannot take, so no later frame is fed past the key the lost one held;
+the listing fails not
+connected with both `readdir` calls ending `ENOTCONN`, and the slave
+lists nothing afterwards, thirty-seven frames relayed and one rewritten
+(`wire-run-20261021-153331`, module `d47e9de86433a37e`). What is not checked is what the media does not constrain either:
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 That includes content that reaches a warning: a compressed block whose
