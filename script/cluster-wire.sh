@@ -79,8 +79,11 @@
 # entry per getdents call, a buffer with room for one entry making every
 # readdir ask for one, so each rewritten close follows one fed chain: the
 # rule that takes a clean close with no end as an answer only from a
-# one-chain descriptor must still read ENOTCONN, where the rule it
-# replaced, keyed on the count, took the chain as the answer and listed on.
+# one-chain descriptor must read ENOTCONN on both, where the rule it
+# replaced, keyed on the count, took the chain as the answer. The caller
+# sees neither: each call has emitted its one entry before the end is
+# judged and the kernel returns the entries written, so the listing
+# completes, and the reading is the element's own log line.
 #
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
@@ -317,10 +320,13 @@ libc = ctypes.CDLL(None, use_errno=True)
 fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
 buf = ctypes.create_string_buffer(32)
 n = 1
+calls = 0
 while n > 0:
     n = libc.syscall(217, fd, buf, 32)
     if n < 0:
         sys.exit("getdents64: " + os.strerror(ctypes.get_errno()))
+    calls += n > 0
+print("onefed-entries %d" % calls)
 PY
 	echo "empty-ls-notconn $(grep -c 'not connected' /tmp/h2wire.emptyerr)"
 	echo "empty-ls-err $(sed -n '1s/.*: //p' /tmp/h2wire.emptyerr)"
@@ -561,7 +567,7 @@ if [ -n "$END" ]; then
 	if [ "$END" = lost ]; then
 		[ "$(num "$en" 0)" = 1 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" -ge 1 ] && [ "$(val B log-readdir-first)" = "fed=0 error=00000001 end=00080000" ] && [ "$(num "$(val B log-readdir-other)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" -ge 1 ] && [ "$(num "$(val B files)" 0)" = 0 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ]; check "control: a closing feed with a chain ends the link, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn) with the first \"$(val B log-readdir-first)\" and $(val B log-readdir-other) ending otherwise, peer-sent $(val B log-peer-sent), B listed $(val B files) after with $(val B find-notconn) not connected"
 	elif [ "$END" = onefed ]; then
-		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-onefed-notconn)" 0)" = 2 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "control: a clean close with no end after one fed chain is no answer from a readdir" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir with one chain fed ended ENOTCONN $(val B log-readdir-onefed-notconn), the directory listed whole after $(val B many)"
+		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-onefed-notconn)" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 1)" = 0 ] && [ "$(num "$(val B onefed-entries)" 0)" = 302 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "control: a clean close with no end after one fed chain is no answer from a readdir, which the entry it emitted hides from the caller" $? "end lines $(num "$en" 0), readdir with one chain fed ended ENOTCONN $(val B log-readdir-onefed-notconn), listing rc $(val B empty-ls-rc) over $(val B onefed-entries) entries with the dots, the directory listed whole after $(val B many)"
 	else
 		[ "$(num "$en" 0)" = 2 ] && [ "$(num "$(val B empty-ls-rc)" 0)" != 0 ] && [ "$(num "$(val B empty-ls-notconn)" 0)" = 1 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" = 2 ]; check "control: a reply closed $END reads the master unreachable, not as its answer" $? "end lines $(num "$en" 0), listing rc $(val B empty-ls-rc) \"$(val B empty-ls-err)\", not connected $(val B empty-ls-notconn), readdir ended ENOTCONN $(val B log-readdir-notconn)"
 	fi
@@ -572,7 +578,15 @@ if [ "$STALL" != 0 ]; then
 fi
 [ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$END" = lost ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 [ "$END" = lost ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
-[ "$(num "$(val B log-detached)" 0)" = 1 ]; check "remote: B's device unmount detaches the element once" $? "$(val B log-detached), by $(val B detached-why)"
+# The plain run's detach is the connection's end at B's unmount; under lost
+# the link ended first and the peer's span deletion detached it. Each run
+# reads the path it expects, not a count of one by either.
+dw=$(val B detached-why | sed 's/ *$//')
+if [ "$END" = lost ]; then
+	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "span deleted" ]; check "remote: the link's end detaches the element once, by the span's deletion" $? "$(val B log-detached), by $dw"
+else
+	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "connection ended" ]; check "remote: B's device unmount detaches the element once, by the connection's end" $? "$(val B log-detached), by $dw"
+fi
 # The PFS root's proxy is at level 1 and a file's at 2, the media's own.
 lr=$(val B lockdep-remote)
 # Every inode lives under the PFS root, so an inode is at 1 (the root) or
