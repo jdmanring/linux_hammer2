@@ -1165,9 +1165,9 @@ g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned
 # kernel built without kmemleak has no file to write and fails the same
 # way, which is right for the two kernels this runs on, both built with
 # it. No value at all means the guest stopped before this point.
-l=$(val kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
+l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
 case "$l" in
-0) [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
+0) [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

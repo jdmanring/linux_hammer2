@@ -638,41 +638,49 @@ done
 # harness comment names the string or an unload: one `mrange=` line (a
 # second is a decoy copy the comparison would read instead of the real
 # one); one unload that reports, every other unload on a line, `rmmod`
-# or `modprobe` with any flags and the name quoted, by path or with its
-# suffix, matched by a status-discarding `rmmod hammer2 2>/dev/null` on
-# that line (the cleanup before a load that every harness carries; a
-# second reporting unload before the block, with a reload the load rule
+# or `modprobe` followed in the same simple command by the name, after
+# any flags or their arguments, quoted, with its suffix or by any path,
+# matched by a status-discarding `rmmod hammer2 2>/dev/null` on that line
+# (the cleanup before a load that every harness carries; a second
+# reporting unload before the block, with a reload the load rule
 # accepts, clears the first unload's leaks unread); every line naming
 # the kmemleak file one of the seven forms above, so a scan or a clear
-# respelled, requoted or prefixed fails; a load spelled other than
-# `insmod /tmp/hammer2.ko`, the spelling the clear rule reads, wherever
-# the word appears; and `kmemleak-unl` outside the block matched by a
-# `val` read of it on the same line, below the harness's `val()`
-# definition where the host side is, since a producer that shares its
-# line with a read is still a producer.  What passes the rule is named
-# by class, each a mutation measured to pass it.  Two are met at run
-# time: a second producer that does not spell the string in one token
-# (`echo "kmemleak-""unloaded 0"`), since every harness's host side
-# requires exactly one such line and one range line in the `.out`, so a
-# second fails the run however it is spelled; and the block and the
+# respelled, requoted or prefixed on its own line fails; the reading
+# before the unload once, its `if` form after a `sleep 6` and its count
+# line after that, both above the reporting unload; a load spelled other
+# than `insmod /tmp/hammer2.ko`, the spelling the clear rule reads,
+# wherever the word appears; and `kmemleak-unl` outside the block
+# matched by a `val` read of it on the same line, below the harness's
+# `val()` definition where the host side is, since a producer that
+# shares its line with a read is still a producer.  What passes the rule
+# is named by class, each a mutation measured to pass it.  Two are met
+# at run time: a second producer of either reading that does not spell
+# the string in one token (`echo "kmemleak-""unloaded 0"`), since every
+# harness's host side requires exactly one `kmemleak` line, one
+# `kmemleak-unloaded` line and one range line in the `.out`, so a second
+# fails the run however it is spelled; and the block kept from running
+# with nothing forged or with one of its two lines forged, and the
 # reading before the unload kept from running with nothing forged, since
-# an empty reading before the unload fails the run.  The rest are the
-# floor: the block kept from running with both its lines forged the same
-# way, which the count cannot tell from the block; the reading rewritten
-# in transit, a filter on the guest's output or an edit of the `.out`,
-# which leaves one line; a command or module name reaching its command
-# other than as the next word in one token (a pipe, a list, a variable,
-# `eval`, a name split by quotes), and a status-discarding unload with
-# the exact clear form and a reload placed between the load and the
+# the host counts both lines and an empty reading before the unload
+# fails the run.  The rest are the floor: the block kept from running
+# with both its lines forged the same way, which the count cannot tell
+# from the block; the reading rewritten in transit, a filter on the
+# guest's output or an edit of the `.out`, which leaves one line; a
+# command, module or file name reaching its command other than as the
+# next word in one token (a pipe, a list, a variable, `eval`, a name
+# split by quotes or built at run time), and a status-discarding unload
+# with the exact clear form and a reload placed between the load and the
 # block, which file order cannot place since cluster-sync.sh defines its
-# block in a function above the load it follows; a command the block
+# block in a function above the load it follows; a form kept from
+# running by the line before it (a continuation, an open quote, a
+# heredoc), since the rule reads one line at a time; a command the block
 # calls shadowed by a function, an alias or a PATH entry (`wc`,
 # `sleep`); and the host's own check rewritten.  The gate reads text and
 # catches drift; a harness written against it is what the floor
-# describes.  Nine lines, each placed after the file's end and just
-# above the block, go through the rule on every run and must fail it
-# for the reason each placement carries, one line per rule the gate
-# holds, so a rule dropped or weakened reads as a control finding.
+# describes.  Each part of the rule has a control below, a copy of one
+# harness with a line added, changed, moved or dropped, that goes
+# through the rule on every run and must fail it for the reason it
+# carries, so a part dropped or weakened reads as a control finding.
 leak_canon=$(cat <<'LEAKEOF'
 mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
 mb=${mrange% *}; ms=${mrange#* }; me=
@@ -716,6 +724,8 @@ grep -q hammer2 /sys/kernel/debug/kmemleak && sed 's/^/kmemleak-report /' /sys/k
 h2n=$(awk -v b="$mb" -v e="$me" '{ a = $1 "" } a ~ /^0x/ && a >= b && a < e' /sys/kernel/debug/kmemleak | wc -l)
 [ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200
 FORMSEOF
+leak_fif='if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then'
+leak_fecho='echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"'
 leak_rule() {	# leak_rule <harness>: prints why it fails the rule, nothing when it passes
 	lf=$1
 	why=$(awk '
@@ -739,20 +749,25 @@ leak_rule() {	# leak_rule <harness>: prints why it fails the rule, nothing when 
 		[ "$blk" = "$leak_canon" ] || why="its post-unload block differs from the canonical copy"
 	fi
 	if [ -z "$why" ]; then
-		why=$(awk '
+		why=$(awk -v fif="$leak_fif" -v fecho="$leak_fecho" '
 			{ line = $0; sub(/^[ \t]+/, "", line); sub(/^timeout 120 /, "", line) }
 			line ~ /^n?val\(\)/ { host = 1 }
 			index(line, "mrange=$(awk ") { nblk++; inb = 1 }
 			tail { tail = 0; inb = 0 }
 			inb && index(line, "kmemleak-unloaded-report ") { tail = 1 }
-			line == "rmmod hammer2 && echo \"rmmod ok\"" { nun++; next }
-			{ t = $0; nu = gsub(/(rmmod|modprobe)([ \t]+-[-a-z]*)*[ \t]+["'"'"']?(\/[^ \t]*\/)?hammer2(\.ko)?/, "", t); t = $0; nd = gsub(/rmmod hammer2 2>\/dev\/null/, "", t) }
+			line == fif { nif++; lif = NR; if (prev != "sleep 6") bad = bad ", the reading before the unload at line " NR " with no sleep 6 on the line before it" }
+			line == fecho { necho++; lecho = NR }
+			{ prev = line }
+			line == "rmmod hammer2 && echo \"rmmod ok\"" { nun++; lun = NR; next }
+			{ t = $0; nu = gsub(/(rmmod|modprobe)[^;&|]*[ \t"'"'"'\/]hammer2(\.ko)?/, "", t); t = $0; nd = gsub(/rmmod hammer2 2>\/dev\/null/, "", t) }
 			nu > nd { bad = bad ", an unload at line " NR " that is not the block'"'"'s" }
 			{ t = $0; nk = gsub(/kmemleak-unl/, "", t); t = $0; nv = host ? gsub(/val( [^ ]+)? kmemleak-unloaded(-range)?\)/, "", t) : 0 }
 			!inb && nk > nv { bad = bad ", kmemleak-unloaded named at line " NR " outside the block and not as the host'"'"'s read" }
 			END {
 				if (nblk != 1) bad = bad ", " nblk + 0 " post-unload blocks"
 				if (nun != 1) bad = bad ", " nun + 0 " reporting unloads"
+				if (nif != 1 || necho != 1) bad = bad ", the reading before the unload on " nif + 0 " if line(s) and " necho + 0 " count line(s), not one each"
+				else if (!(lif < lecho && lecho < lun)) bad = bad ", the reading before the unload at lines " lif " and " lecho " not before the reporting unload at line " lun
 				if (bad != "") print substr(bad, 3) }' "$lf")
 	fi
 	printf '%s' "$why"
@@ -773,38 +788,61 @@ for s in script/*.sh; do
 		echo "  FAIL $s: kmemleak read with $why"
 		fail=$((fail + 1)); }
 done
-# The controls: one harness with one line added, nine lines each placed
+# The controls, one per rule part, each a copy of one harness that must
+# fail the rule for the reason it carries. Twelve lines are each placed
 # after the file's end and just above the block (a dash skips a
 # placement the rule reads differently there), since a rule that counted
-# only past the block would still fail every appended copy. Each must
-# fail for the reason it carries, one per rule the gate holds: the decoy
-# above the block is read by the byte comparison, which takes it for the
-# block's first line; the val-shaped producer is read above the block
-# alone, where no val() has been defined.
+# only past the block would still fail every appended copy: the decoy,
+# which the byte comparison takes for the block's first line, for the
+# block count; the second reporting unload for its count; the val-riding
+# producer, the comment and the val-shaped line read above the block
+# alone, where no val() has been defined, for the producer rule; the
+# flagged unload, the one by relative path behind a flag's argument and
+# the one whose status a list discards for the unload pattern and the
+# exemption's exactness; the quoted load and the bare load for the
+# load's spelling and the clear before it; the full clear form behind
+# `true ||` for the forms compared whole; a second count line for the
+# reading before the unload. Three copies change a line instead: `sleep
+# 6` made `sleep 0` inside the block for the byte comparison, the
+# reading's `if` line moved past the end for its placement, and the
+# `sleep 6` before it dropped for the wait.
+leak_ctl() {	# leak_ctl <copy> <want> <how>
+	why=$(leak_rule "$1")
+	case "$why" in
+	*"$2"*) ;;
+	*) echo "  FAIL control: $leak_first with $3 read as ${why:-passing the kmemleak rule}, not as $2"
+	   fail=$((fail + 1)) ;;
+	esac
+}
 if [ -n "$leak_first" ]; then
 	leak_tmp=$(mktemp -d) || exit 2
 	for m in 'mrange=$(awk 1)::post-unload blocks::differs from the canonical copy' \
 	    'rmmod hammer2 && echo "rmmod ok"::reporting unloads::reporting unloads' \
 	    'echo "kmemleak-unloaded 0" # val kmemleak-unloaded)::kmemleak-unloaded named::kmemleak-unloaded named' \
-	    'rmmod -v hammer2::an unload at line::an unload at line' \
-	    'rmmod --force /tmp/hammer2.ko::an unload at line::an unload at line' \
 	    '#kmemleak-unloaded 0::kmemleak-unloaded named::kmemleak-unloaded named' \
 	    'printf "%s\n" "val kmemleak-unloaded) 0" | sed "s/^val //; s/)//"::-::kmemleak-unloaded named' \
+	    'rmmod -v hammer2::an unload at line::an unload at line' \
+	    'modprobe -r -d /lib/modules ../tmp/hammer2.ko::an unload at line::an unload at line' \
+	    'rmmod hammer2 || true::an unload at line::an unload at line' \
 	    'insmod "/tmp/hammer2.ko"::not spelled insmod::not spelled insmod' \
-	    'true || { echo scan > /sys/kernel/debug/kmemleak; }::a form the gate does not carry::a form the gate does not carry'; do
+	    'insmod /tmp/hammer2.ko::no two scans and a clear::no two scans and a clear' \
+	    'true || { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null::a form the gate does not carry::a form the gate does not carry' \
+	    "$leak_fecho::not one each::not one each"; do
 		mut=${m%%::*}; rest=${m#*::}; after=${rest%::*}; above=${rest#*::}
 		{ cat "$leak_first"; echo; printf '%s\n' "$mut"; } > "$leak_tmp/after.sh"
 		awk -v mut="$mut" 'index($0, "mrange=$(awk ") && !done { print mut; done = 1 } { print }' "$leak_first" > "$leak_tmp/above.sh"
 		for where in after above; do
 			eval "want=\$$where"
 			[ "$want" != - ] || continue
-			why=$(leak_rule "$leak_tmp/$where.sh")
-			case "$why" in
-			*"$want"*) ;;
-			*) echo "  FAIL control: $leak_first with \`$mut\` placed $where read as ${why:-passing the kmemleak rule}, not as $want"
-			   fail=$((fail + 1)) ;;
-			esac
+			leak_ctl "$leak_tmp/$where.sh" "$want" "\`$mut\` placed $where"
 		done
+	done
+	for m in 'index($0, "mrange=$(awk ") { inb = 1 } inb && line == "sleep 6" { sub(/6/, "0") } { print }::differs from the canonical copy::sleep 0 inside the block' \
+	    'line == fif { held = $0; next } { print } END { print held }::not before the reporting unload::the if line of the reading moved past the end' \
+	    'n && line != fif { print held } { held = $0; n = 1 } END { print held }::no sleep 6 on the line before it::the sleep before the reading dropped'; do
+		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
+		awk -v fif="$leak_fif" '{ line = $0; sub(/^[ \t]+/, "", line) } '"$prog" "$leak_first" > "$leak_tmp/changed.sh"
+		leak_ctl "$leak_tmp/changed.sh" "$want" "$how"
 	done
 	rm -rf "$leak_tmp"
 fi

@@ -601,9 +601,9 @@ lbad=$(printf '%s\n' $lr | grep -v -x -E 'h2ch_remote_(inode/[12]|dirent/[23]|da
 case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
 for sd in A B; do
 	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
-	k=$(val $sd kmemleak)
+	k=$(val $sd kmemleak); m=$(nval $sd kmemleak)
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)
-	[ "$k" = 0 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)"
+	[ "$k" = 0 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "$k, printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"
 done
 relay_frames=$(sed -n 's/.*pair done frames \([0-9]*\).*/\1/p' "$W/relay.out" | tail -1)

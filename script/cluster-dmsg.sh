@@ -444,9 +444,9 @@ cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 # Read as cluster-sync.sh reads it: a count is the reading, "unusable" is a
 # failure on the kernels this runs on, which are built with it, and no
 # value at all means the guest stopped before the scan.
-l=$(val kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
+l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
 case "$l" in
-0) [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
+0) [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
