@@ -126,7 +126,7 @@ klog() { grep -c "$1" $K; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 A=/tmp/h2attach
 M=/mnt/h2d
-{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
@@ -444,9 +444,9 @@ cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 # Read as cluster-sync.sh reads it: a count is the reading, "unusable" is a
 # failure on the kernels this runs on, which are built with it, and no
 # value at all means the guest stopped before the scan.
-l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
+c=$(nval kmemleak-cleared); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
 case "$l" in
-0) [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
+0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

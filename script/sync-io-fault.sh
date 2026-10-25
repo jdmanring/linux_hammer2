@@ -150,7 +150,7 @@ set -u
 rmmod hammer2 2>/dev/null
 mkdir -p /mnt/h2a
 dmesg -C
-{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod-failed"; exit 0; }
 
 # A MASTER set is written first and faultlessly, so the run has media to lose
@@ -394,9 +394,9 @@ check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
 w=$(val warnings)
 [ "${w:-1}" = 0 ]
 check "no kernel warning, KASAN or UBSAN report" $? "${w:-none}"
-l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
+c=$(nval kmemleak-cleared); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
 case "$l" in
-0) [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
+0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable" 1 "the scan refused" ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;

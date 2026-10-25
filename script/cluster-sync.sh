@@ -413,7 +413,7 @@ dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
-{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
@@ -845,7 +845,7 @@ dmesg -C
 dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
-{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null	# an earlier run's leaks are its own
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
 klog() { grep -c "$1" $K; }
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
@@ -1165,9 +1165,9 @@ g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned
 # kernel built without kmemleak has no file to write and fails the same
 # way, which is right for the two kernels this runs on, both built with
 # it. No value at all means the guest stopped before this point.
-l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
+c=$(nval kmemleak-cleared); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
 case "$l" in
-0) [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
+0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
