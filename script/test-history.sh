@@ -110,24 +110,33 @@ fi
 # repository's through the alternates mechanism, fed through the same
 # classification and membership as the cited tokens, and must come out
 # as off the history and raise the count by one, while HEAD's own hash
-# must not; a reader over every ref would still fail the control, since
-# it is on no ref, and that is the control's floor.
+# must not; a reader over every ref would pass the control, since it is
+# on no ref, and that is the control's floor. The extraction is
+# controlled too, over a line holding the control's abbreviation and a
+# digit-only token, which it must return, and the population must hold a
+# `doc/*.txt`, since the baseline was outside it for nine days.
 hobj=$(mktemp -d) || exit 2
 reach=$(mktemp) || { rm -rf "$hobj"; exit 2; }
-objs=$(cd "$(git rev-parse --git-path objects)" && pwd)
+objs=$(CDPATH= cd -P "$(git rev-parse --git-path objects)" && pwd)
 GIT_OBJECT_DIRECTORY=$hobj GIT_ALTERNATE_OBJECT_DIRECTORIES=$objs
 export GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 hctl=$(GIT_AUTHOR_NAME=control GIT_AUTHOR_EMAIL=control@invalid GIT_COMMITTER_NAME=control \
 	GIT_COMMITTER_EMAIL=control@invalid git commit-tree "HEAD^{tree}" </dev/null 2>/dev/null)
 git rev-list HEAD > "$reach"
+docs=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -e '-rewrite-commit-map\.txt$')
+hist_tokens() {	# files as arguments; every hex token of 7 to 40 digits, once
+	grep -o -h -E '\b[0-9a-f]{7,40}\b' "$@" | LC_ALL=C sort -u
+}
+hist_commits() {	# tokens on stdin; the commit objects among them, as full ids
+	git cat-file --batch-check 2>/dev/null | awk '$2 == "commit" { print $1 }'
+}
 hist_off() {	# tokens on stdin; the commit objects among them not on HEAD's history
-	git cat-file --batch-check 2>/dev/null | awk '$2 == "commit" { print $1 }' |
-		grep -v -x -F -f "$reach"
+	hist_commits | grep -v -x -F -f "$reach"
 }
 hist_report() {	# one FAIL per oid in $1, counted
 	for h in $1; do
 		echo "  FAIL $(git rev-parse --short=7 "$h") is a commit no branch at HEAD reaches: $(git log -1 --format=%s "$h")"
-		echo "       cited in $(git ls-files -- '*.md' 'doc/*.txt' | xargs grep -l -E "\b$(git rev-parse --short=7 "$h")" | tr '\n' ' ')"
+		echo "       cited in $(printf '%s\n' "$docs" | xargs grep -l -E "\b$(git rev-parse --short=7 "$h")" | tr '\n' ' ')"
 		bad=$((bad+1))
 	done
 }
@@ -143,14 +152,24 @@ bad=$b0
 [ -z "$(git rev-parse HEAD | hist_off)" ] || {
 	echo "  FAIL control: HEAD read as off its own history." >&2
 	hist_done; exit 1; }
-docs=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -e '-rewrite-commit-map\.txt$')
-tokens=$(printf '%s\n' "$docs" | xargs grep -o -h -E '\b[0-9a-f]{7,40}\b' | LC_ALL=C sort -u)
-ncited=$(printf '%s\n' "$tokens" | git cat-file --batch-check 2>/dev/null | awk '$2 == "commit"' | grep -c .)
+printf 'control: %s cited beside 1234567 here\n' "$(git rev-parse --short=7 "$hctl")" > "$hobj/ctl.txt"
+got=$(hist_tokens "$hobj/ctl.txt" | tr '\n' ' ')
+case "$got" in
+*1234567*"$(git rev-parse --short=7 "$hctl")"*|*"$(git rev-parse --short=7 "$hctl")"*1234567*) ;;
+*) echo "  FAIL control: the extraction read '${got:-nothing}' from a line naming two tokens," >&2
+   echo "  so this check cannot see a cited hash." >&2
+   hist_done; exit 1 ;;
+esac
+printf '%s\n' "$docs" | grep -q '^doc/.*\.txt$' || {
+	echo "history: FAIL: the population holds no doc/*.txt, which the baseline is" >&2
+	hist_done; exit 1; }
+cited=$(hist_tokens $docs | hist_commits)
+ncited=$(printf '%s\n' "$cited" | grep -c .)
 [ "$ncited" -gt 0 ] || {
 	echo "history: FAIL: no tracked document names a commit of this repository," >&2
 	echo "  so the reachability check above the changelog read nothing." >&2
 	hist_done; exit 1; }
-hist_report "$(printf '%s\n' "$tokens" | hist_off)"
+hist_report "$(printf '%s\n' "$cited" | grep -v -x -F -f "$reach")"
 hist_done
 echo "history: $ncited commit hash(es) named across tracked documents"
 
