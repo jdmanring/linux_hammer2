@@ -211,11 +211,13 @@ or `KDIR` points at one. That is could-not-run, not a pass.
   identical set. Neither figure travels without the checker that produced it;
   856 quoted bare reads as a mainline number and is not one. With no baseline
   present the gate refuses rather than writing one.
-- `script/test-history.sh`: resolves every commit the roadmap's history
-  table pins and checks its subject still matches, then prints how many
-  commits touching `src/` or `script/` have landed since the newest row.
-  That second half never fails, since whether a commit deserves a version row
-  is a judgment.
+- `script/test-history.sh`: resolves every commit the changelog pins and
+  checks its subject still matches, fails on any commit hash a tracked
+  document names that is not on HEAD's history, since a message replay
+  keeps every tree and moves every hash, then prints how many commits
+  touching `src/` or `script/` have landed since the newest row. That last
+  part never fails, since whether a commit deserves a version row is a
+  judgment.
 - `script/test-inventory.sh`: the directory is the population, and three
   hand-maintained lists claim to cover it: the origin table in this file, the
   Makefile's `hammer2-y`, and the filenames `script/test-syntax.sh` names one

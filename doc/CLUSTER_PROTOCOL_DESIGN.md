@@ -536,14 +536,13 @@ descriptor, after that chain, since a readdir or a scan always feeds its
 end; any other such close, which a lookup whose parent the server cannot
 resolve also sends (`hammer2_xops.c:794-797`), now reads as `ENOTCONN`
 where it left the element counted in progress and the check at
-`EINPROGRESS`. A
-frame this side cannot take, refused or out of memory, ends the link, so
-no later key of the same scan is fed past it and read the dropped one as
-absent before the call's end is seen. Two ends are this side's own: a
-descriptor the element does not serve feeds `EOPNOTSUPP` through the
-allowlist, no vote, and a flush, which has no remote part in stage 2,
-feeds a clean end, a vote of success no peer gave, which stage 3's flush
-over the wire replaces.
+`EINPROGRESS`. A frame this side cannot take, refused or out of memory,
+ends the link, so no later key of the same scan is fed past it and read
+the dropped one as absent before the call's end is seen. Two ends are
+this side's own: a descriptor the element does not serve feeds
+`EOPNOTSUPP` through the allowlist, no vote, and a flush, which has no
+remote part in stage 2, feeds a clean end, a vote of success no peer
+gave, which stage 3's flush over the wire replaces.
 A master that cannot read its own media is unreachable for that read,
 which fails closed. What a peer that lies about a key is believed is the
 security model's question, admission now and authentication in stage 5,
@@ -593,32 +592,39 @@ system call" (`wire-run-20261021-060728`, module `fd5c139bf73fb324`), and
 the module before the fourteenth round fails `noeof` with "Operation now
 in progress", the element counted in progress
 (`wire-run-20261021-060606`, module `28bd2123661a311e`). Under
-`H2_WIRE_END=lost` the relay sets the first closing frame's byte count
+`H2_WIRE_END=lost` the relay sets the closing frames' byte count
 instead, a closing feed carrying a chain, a shape the protocol gives no
 meaning; the slave does not take it and ends the link at that frame
 (`hammer2_remote.c:927-928`, `:990-996`), as it does for any frame it
-cannot take, so no later frame is fed past the key the lost one held;
-the listing fails not
-connected with both `readdir` calls ending `ENOTCONN`, and the slave
-lists nothing afterwards, thirty-seven frames relayed and one rewritten
-(`wire-run-20261021-153331`, module `d47e9de86433a37e`); the module built
-with that one refusal removed takes the forged close as a clean end,
-lists the empty directory with rc 0, has both closes rewritten since the
-link survives and reads every file after (`wire-run-20261024-230225`,
-module `ec6bca42546a0c44`). Under `H2_WIRE_END=onefed` the relay
-rewrites as `noeof` does, but the slave lists the 300-entry directory
-through `getdents64` with a 32-byte buffer, room for one 24-byte entry,
-so every `readdir` asks for one entry and each rewritten close follows
-one fed chain, the shape the descriptor rule above was written for; the
-element reads both such closes `ENOTCONN` by its own log line, and the
-listing completes over 302 entries with the dots, since each call has
-emitted its one entry before the end is judged and the kernel returns
-the entries written rather than the error, so the reading is the
-element's and not the caller's (`wire-run-20261024-230420`, module
-`d47e9de86433a37e`); the module before the descriptor rule, whose
-exemption keyed on the count, took each such chain as the answer with no
-end fed and printed no such line (`wire-run-20261024-230103`, module
-`09eeb032d2850ebe`, the tree at `ecba2c6`). What is not checked is what the media does not constrain either:
+cannot take, so no later frame is fed past the key the lost one held and
+the second call is never made; the listing fails not connected, the
+first `readdir` carrying the lost path's `EIO` and ending `ENOTCONN`
+with no `readdir` ending otherwise, and the slave lists nothing
+afterwards, thirty-seven frames relayed and one rewritten
+(`wire-run-20261021-153331`, module `d47e9de86433a37e`, read again as
+`wire-run-20261025-000853` under the check that reads the first line, 22
+checks and 0 failed); the module built with that one refusal removed
+takes the forged close as a clean end, lists the empty directory with rc
+0, has both closes rewritten since the link survives and reads every
+file after (`wire-run-20261024-230225`, module `ec6bca42546a0c44`).
+Under `H2_WIRE_END=onefed` the relay rewrites as `noeof` does, but the
+slave lists the 300-entry directory through `getdents64` with a 32-byte
+buffer, room for one 24-byte entry, so every `readdir` asks for one
+entry and each rewritten close follows one fed chain, the shape the
+descriptor rule above was written for; the element reads both such
+closes `ENOTCONN` by its own log line, and the listing completes over
+302 entries with the dots, since each call has emitted its one entry
+before the end is judged and the kernel returns the entries written
+rather than the error, so the reading is the element's and not the
+caller's (`wire-run-20261024-230420` and `wire-run-20261025-000727`,
+module `d47e9de86433a37e`, 30 checks and 0 failed each); the module
+before the descriptor rule, whose exemption keyed on the count, took
+each such chain as the answer with no end fed and printed no such line,
+the one check of 30 it fails (`wire-run-20261025-001017`, module
+`09eeb032d2850ebe`, the tree at `ecba2c6`; an earlier run of it,
+`wire-run-20261024-230103`, fell under a harness whose onefed check
+could not pass and is read for its line count alone).
+What is not checked is what the media does not constrain either:
 an inode's other fields, a data block's content and a directory's
 entries are the peer's, as a local volume's are whoever wrote it.
 That includes content that reaches a warning: a compressed block whose
