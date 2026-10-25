@@ -763,7 +763,12 @@ main(int argc, char **argv)
 	const char *mnt = NULL, *action = NULL, *tr = NULL;
 	const char *pfs = "ROOT", *name = NULL, *out = NULL;
 	uint64_t inum = 1, key = 0;
-	int count = 1, nmax = 0;
+	/*
+	 * The server holds a readdir count to 1..255, its frontend's own
+	 * bound (hammer2_remote.c), so the default asks for that bound;
+	 * --nmax 0 asks for one entry.
+	 */
+	int count = 1, nmax = 255;
 	long hold_max_ms = 30000;
 	struct hs hs;
 	int rc = 1;
