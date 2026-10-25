@@ -643,8 +643,11 @@ done
 # host reads it with `val`, since a second producer, a block wrapped in
 # `if false`, commented out in a heredoc or in a function never called,
 # all print a constant 0 the host's `head -1` takes.  The floor: a filter
-# that rewrites the block's output without naming the string is text this
-# gate does not see.
+# that rewrites the block's output without naming the string, and a
+# status-discarding unload placed between the load and the block, are
+# text this gate does not see; the second cannot be placed by file order,
+# since cluster-sync.sh defines its block in a function above the load it
+# follows, and a rule reading order would pass that file either way.
 leak_canon=$(cat <<'LEAKEOF'
 mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
 mb=${mrange% *}; ms=${mrange#* }; me=
