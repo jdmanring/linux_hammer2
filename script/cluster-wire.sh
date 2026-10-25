@@ -63,26 +63,28 @@
 # 2000 ms bound.
 #
 # H2_WIRE_END=aborted, noeof, lost or onefed is the control on how B reads
-# the end of a reply. B lists an empty directory of A's before anything
-# else is listed, and the relay rewrites the closing frames of the two
-# getdents calls that listing makes, since the first has emitted . and ..
-# and so hides its error: aborted sets their error to ABORTED, the code a
-# server ends a request with while its unmount drains it, and noeof clears
-# their error and EOF flag, a close with no end fed. Neither is an answer
-# about the directory, so the listing must fail not connected and B's
-# readdir end ENOTCONN. Taken as an answer, aborted fails the listing with
-# ABORTED's own EINTR and noeof leaves the element counted in progress,
-# EINPROGRESS. lost sets the first closing frame's byte count instead, a
-# closing feed carrying a chain, which the kernel answers one level up by
-# ending the whole link, so the run rewrites one close and reads nothing
-# after it. onefed is noeof on a listing of the 300-entry directory one
-# entry per getdents call, a buffer with room for one entry making every
-# readdir ask for one, so each rewritten close follows one fed chain: the
-# rule that takes a clean close with no end as an answer only from a
-# one-chain descriptor must read ENOTCONN on both, where the rule it
-# replaced, keyed on the count, took the chain as the answer. The caller
-# sees neither: each call has emitted its one entry before the end is
-# judged and the kernel returns the entries written, so the listing
+# the end of a reply. Under the first three B lists an empty directory of
+# A's before anything else is listed, and the relay rewrites the closing
+# frames of the two getdents calls that listing makes, since the first
+# has emitted . and .. and so hides its error: aborted sets their error
+# to ABORTED, the code a server ends a request with while its unmount
+# drains it, and noeof clears their error and EOF flag, a close with no
+# end fed. Neither is an answer about the directory, so the listing must
+# fail not connected and B's readdir end ENOTCONN. Taken as an answer,
+# aborted fails the listing with ABORTED's own EINTR and noeof leaves the
+# element counted in progress, EINPROGRESS. lost sets the closing frames'
+# byte count instead, a closing feed carrying a chain, which the kernel
+# answers one level up by ending the whole link; the relay arms both
+# closes as in every mode, but the link ends at the first and the second
+# call is never made, so the run reads one rewrite in the trace and
+# nothing after it. onefed is noeof on a listing of the 300-entry
+# directory one entry per getdents call, a buffer with room for one entry
+# making every readdir ask for one, so each rewritten close follows one
+# fed chain: the rule that takes a clean close with no end as an answer
+# only from a one-chain descriptor must read ENOTCONN on both, where the
+# rule it replaced, keyed on the count, took the chain as the answer. The
+# caller sees neither: each call has emitted its one entry before the end
+# is judged and the kernel returns the entries written, so the listing
 # completes, and the reading is the element's own log line.
 #
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
@@ -373,7 +375,7 @@ echo "readdir-timedout-ms $(kl | sed -n 's/.*H2 REMOTE readdir .* end=00040000 m
 echo "log-readdir-notconn $(klog 'H2 REMOTE readdir .* end=00080000')"
 echo "log-readdir-first $(kl | grep -m1 'H2 REMOTE readdir ' | sed 's/.* fed=/fed=/; s/ ms=.*//')"
 echo "log-readdir-other $(kl | grep 'H2 REMOTE readdir ' | grep -vc 'end=00080000')"
-echo "log-readdir-onefed-notconn $(klog 'H2 REMOTE readdir .* fed=1 .* end=00080000')"
+echo "log-readdir-onefed-notconn $(klog 'H2 REMOTE readdir .* fed=1 error=00080000 end=00080000')"
 echo "log-bmap-notconn $(klog 'H2 REMOTE bmap .* end=00080000')"
 GUEST
 cat > "$W/link.sh" <<'GUEST'
