@@ -1479,8 +1479,8 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
  * slot that is no longer remote is fed as the closed connection.  The
  * wait is bounded for the whole reply, and every way it ends feeds an end
  * the quorum reads: the peer's answer through hammer2_remote_end, or
- * unreachable.  The flush's clean end and a one-chain descriptor's close
- * after its chain feed no end.
+ * unreachable.  The flush feeds a clean end no peer gave (DEFER), and a
+ * one-chain descriptor's close after its chain feeds no end.
  */
 int
 hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
