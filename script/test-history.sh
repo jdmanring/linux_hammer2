@@ -90,6 +90,41 @@ if [ -n "$dups" ]; then
 	done
 fi
 
+# Every commit hash a tracked document names must sit on HEAD's history,
+# not only the ones the changelog pins. A replay that rewrites messages
+# keeps every tree and moves every hash, and the verification record
+# cited eight commits of the 2026-10-03 replay for three weeks (`3fff7f1`
+# where `30c92ab` is the commit on main, and seven more) with nothing
+# reading them: each resolved on the machine that wrote it and in a fresh
+# clone resolves to nothing. A token is 7 to 40 hex digits with a letter
+# among them, so a decimal count is not one; a token that is no object
+# here is another repository's head (DragonFly's and Kusumi's are cited
+# by hash) and is left alone. That is the floor: a dangling commit the
+# store has pruned reads as foreign. The membership test is controlled
+# with an id no repository holds, which must come out as off the history.
+reach=$(mktemp) || exit 2
+git rev-list HEAD > "$reach"
+cited=$(git ls-files '*.md' | xargs grep -o -h -E '\b[0-9a-f]{7,40}\b' | grep '[a-f]' |
+	LC_ALL=C sort -u | git cat-file --batch-check 2>/dev/null |
+	awk '$2 == "commit" { print $1 }')
+ncited=$(printf '%s\n' "$cited" | grep -c .)
+[ "$ncited" -gt 0 ] || {
+	echo "history: FAIL: no tracked document names a commit of this repository," >&2
+	echo "  so the reachability check above the changelog read nothing." >&2
+	rm -f "$reach"; exit 1; }
+ctl=$(printf '%040d\n' 0 | grep -v -x -F -f "$reach")
+[ -n "$ctl" ] || {
+	echo "  FAIL control: an id no repository holds read as reachable from HEAD," >&2
+	echo "  so this check cannot see a hash off the history." >&2
+	rm -f "$reach"; exit 1; }
+for h in $(printf '%s\n' "$cited" | grep -v -x -F -f "$reach"); do
+	echo "  FAIL $(git rev-parse --short=7 "$h") is a commit no branch at HEAD reaches: $(git log -1 --format=%s "$h")"
+	echo "       cited in $(git ls-files '*.md' | xargs grep -l -E "\b$(git rev-parse --short=7 "$h")" | tr '\n' ' ')"
+	bad=$((bad+1))
+done
+rm -f "$reach"
+echo "history: $ncited commit hash(es) named across tracked documents"
+
 # The newest row is what the tree IS. A document stating the tree's current
 # version and naming an older one describes the state before the milestone it
 # sits above, and no gate read prose for truth: four such documents were found

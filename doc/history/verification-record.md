@@ -1409,7 +1409,7 @@ device under RCU as the kernel's own accounting does, because under
 cgroup writeback the superblock's own is the root cgroup's alone and
 the guest's writer sits in another.
 
-Verified on the build that carries all of this, `9c6d30f` and after,
+Verified on the build that carries all of this, `9ecc707` and after,
 because the reserve check runs on every write, create, link, rename,
 remove and size change: the fixture gate, 11 images, 43 files, 100
 ioctl results, 0 failures; the round trip, both directions, 305 files
@@ -2683,7 +2683,7 @@ corrected run below admitted from a warm source on every filesystem.
 The volume is `2 * REPEAT + 2` files now, a refused write is printed as
 one and fails the run, and the source is drawn after the drop.
 
-Release kernel, host load 4.3 at launch, `daecc89`, MiB/s except the
+Release kernel, host load 4.3 at launch, `4dc637f`, MiB/s except the
 `syncfs` column in seconds. Pass 0 is the cold-source reading and the
 one comparable to the rows above; passes 1 and 2 had a warm source:
 
@@ -2739,7 +2739,7 @@ is read.
 
 ### The folio handed to the core, and what its safety costs
 
-Measured 2026-09-19 on the release kernel, `6bcd011`, host load 5.13 at
+Measured 2026-09-19 on the release kernel, `cd601e9`, host load 5.13 at
 launch against the run above's 4.29. The write XOP copied a whole 64 KiB
 block out of the folio into a scratch buffer that every write XOP
 allocated and zeroed up front, one of the two full-block copies per block
@@ -2761,11 +2761,11 @@ which waits on the folio's writeback only when the flag is set. The flag
 is a correctness requirement of the no-copy path, not a tuning knob, and
 its cost is part of the change rather than separable from it.
 
-MiB/s except the `syncfs` rows in seconds, against the `daecc89` run
+MiB/s except the `syncfs` rows in seconds, against the `4dc637f` run
 above. The two runs were taken at different host loads, so the control
 filesystems are given beside the port:
 
-| pass | | `daecc89` | `6bcd011` | ext4 then, now | btrfs then, now |
+| pass | | `4dc637f` | `cd601e9` | ext4 then, now | btrfs then, now |
 |---|---|---|---|---|---|
 | 0 | buffered write | 1280 | 914 | 883, 806 | 1024, 1024 |
 | 0 | `syncfs` | 0.88 | 2.15 | 2.17, 1.78 | 1.03, 1.04 |
@@ -2796,7 +2796,7 @@ damage and no warning.
 
 ### The flush with several writers at once
 
-Measured 2026-09-19 on the release kernel, `eebb2db`, host load 2.64 at
+Measured 2026-09-19 on the release kernel, `89d21a6`, host load 2.64 at
 launch. The reading above is one writer, and one writer rarely makes the
 kernel wait: the stable-writes flag added by the no-copy path only costs
 anything when a second writer arrives at a folio the core is hashing, so
@@ -2831,15 +2831,15 @@ which is four allocators interleaving and not a regression.
 Whether that tenth to four tenths is the no-copy path's or the
 machine's is what a control settles, and the control says the machine's.
 Two runs of the same instrument at four writers and two passes each, the
-build before the no-copy change (`a0bb998`) at host load 21.11 and this
-one (`3fff7f1`) at 17.14, so the pair is close enough in load to compare:
+build before the no-copy change (`0b8d4ec`) at host load 21.11 and this
+one (`30c92ab`) at 17.14, so the pair is close enough in load to compare:
 
 | build | | HAMMER2 | ext4 | btrfs |
 |---|---|---|---|---|
-| `a0bb998` | `syncfs` | 1.06, 1.26 | 1.92, 1.92 | 1.28, 1.12 |
-| `3fff7f1` | `syncfs` | 1.47, 1.20 | 1.13, 2.24 | 1.12, 1.96 |
-| `a0bb998` | write with `fsync` | 1600, 2438 | 453, 330 | 351, 449 |
-| `3fff7f1` | write with `fsync` | 883, 2226 | 430, 361 | 397, 427 |
+| `0b8d4ec` | `syncfs` | 1.06, 1.26 | 1.92, 1.92 | 1.28, 1.12 |
+| `30c92ab` | `syncfs` | 1.47, 1.20 | 1.13, 2.24 | 1.12, 1.96 |
+| `0b8d4ec` | write with `fsync` | 1600, 2438 | 453, 330 | 351, 449 |
+| `30c92ab` | write with `fsync` | 883, 2226 | 430, 361 | 397, 427 |
 
 Every range overlaps, on the port and on both references, so the two
 builds are not distinguishable on this instrument at four writers and
@@ -2857,7 +2857,7 @@ not claimed.
 The question the numbers above leave open is whether the write path they
 measure still writes correctly, so the build carrying the no-copy change
 and the stable-writes flag was put through the gates that exercise it
-rather than only the ones that time it. On `d4e5702`, the release kernel
+rather than only the ones that time it. On `ae2894e`, the release kernel
 for the rates and the debug kernel for the defect gates:
 
 - the full-volume fill as root, 472 of 472 files intact, 0 damaged, 0
@@ -4279,19 +4279,19 @@ Acted on, each verified against the kernel of record first:
 
 - The encoder wrote `inode->i_generation` into the handle and the decoder
   read it nowhere, so the field looked like a stale-handle check and enforced
-  nothing. Now written as zero with the reason beside it (`9c284a7`).
+  nothing. Now written as zero with the reason beside it (`96d9796`).
 - The encoder's comment said the caller retries a refused connectable handle
   with the size it reports. True of `name_to_handle_at(2)`, false of nfsd,
   where `_fh_update()` takes `fileid_type > 0 ? fileid_type : FILEID_INVALID`
   and `fh_compose()` answers `nfserr_stale`. The refusal is right for both;
-  the comment now names which caller does which (`9c284a7`).
+  the comment now names which caller does which (`96d9796`).
 - A lookup failure other than ENOENT, which is a read error on an exported
   volume, was turned into a stale handle with nothing written down. It now
-  prints (`9c284a7`).
+  prints (`96d9796`).
 - `hammer2_fh_to_parent()` decoded the handle's parent number without asking
   whether it named a directory. erofs and fuse do the same, so it is not a
   divergence, but a handle should resolve to the object it names or not at
-  all. A non-directory parent is now refused (`9c284a7`).
+  all. A non-directory parent is now refused (`96d9796`).
 
 Refuted. The audit's third finding held that `hammer2_get_parent()` can read
 a stale `meta.iparent` because `hammer2_inode_lock()` does not refresh `meta`

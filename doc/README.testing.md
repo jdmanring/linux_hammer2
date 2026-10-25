@@ -12,7 +12,7 @@ twice.
 |---|---|---|
 | `test-inventory.sh` | the lists that claim to cover `src/`, every file under `test/`, the runner behind each runnable file under `test/`, the `DEFER` ledger and the `XXX` table, and that every harness counting the guest's kernel reports reads `debug_locks`, since a guest whose lockdep an earlier report turned off passes a count of zero, and that every harness scanning kmemleak clears it before the load and scans again after the unload, since an uncleared list carries an earlier run's leaks under whatever names the new module's addresses give them and a scan before `rmmod` cannot see what the unload fails to free, and that every such reading scans twice, since a scan greys an object whose checksum changed since the last one and a new object's starts at `~0`, so one scan reports no new leak (the kernel's own `samples/kmemleak` module read 0 after one scan and 1 after two; two scans suffice because both guest kernels build without `CONFIG_DEBUG_KMEMLEAK_VERBOSE`, which asks for a third), the clear before each load following two scans on the same line; and that the scan after the unload counts only frames in the range `/proc/modules` gave before `rmmod`, read within twelve lines before it, its end within six and printed within three, since a frame left raw by any unloaded module looks the same. That range is the module's core text base and its total size, so it can reach into space another unloaded module's text held and leaves out init text, freed after the load; a base printed as zero (`kptr_restrict`) or a size that carries past the low half reads as unread, and the end is added on the low half alone, since a base above `INT64_MAX` is past some shells' arithmetic. The scans after the unload wait 6 s, kmemleak's minimum age being 5 s. Past the unload the whole block is compared byte for byte against the canonical copy in the gate, modulo leading indent and the `timeout 120 ` some unloads carry, so any edit inside it fails, including ones that keep every matched substring (an end added on the wrong half, a filter with `&& 0` appended, a count that assigns before reading, a guard given `true` or moved below the range it guards). The text of one block says nothing about what surrounds it, so the file around it is read too: one block, since a second `mrange=` line is a decoy the comparison reads instead of the real one; one unload that reports, the `rmmod hammer2 2>/dev/null` before a load discarding its status and not counted, since a second unload before the block followed by a reload clears the first unload's leaks unread; and `kmemleak-unloaded` named outside the block only as the host's `val` read of it, since a block wrapped in `if false`, commented out in a heredoc or put in a function never called prints a constant the host's `head -1` takes. The gate reads text, so a filter that rewrites the block's output without naming the string, or a status-discarding unload placed between the load and the block, is its floor, the second because file order is not execution order (`cluster-sync.sh` defines its block in a function above the load it follows), and whether the block ran is read from the run's own `.out`, which carries the line. The load side is still element matched: a lone scan, or a load with no two scans and a clear before it, fails. The count is a floor and not a census: kmemleak reports an object only when its scan finds no reference to it, so a leaked object whose address survives anywhere the scan reads, a stack or a cache among them, is not reported and a leak can read 0 | sh, grep, git |
 | `test-citations.sh` | every `file:line` in a table under `doc/` or `doc/history/` resolves, and the named symbol is on the line | sh, grep |
-| `test-history.sh` | every changelog row's commit resolves with a matching subject, no two rows share a version, and every document stating the tree's current version names the newest row | git with full history |
+| `test-history.sh` | every changelog row's commit resolves with a matching subject, no two rows share a version, every commit hash a tracked document names is on HEAD's history, and every document stating the tree's current version names the newest row | git with full history |
 | `test-provenance.sh` | every file under `src/` has an origin row, and a carried file is re-checked with `cmp` | sh, git |
 | `test-absence.sh` | every "X() is not carried" and "->method is not written" claim resolves against `src/` | sh, grep |
 | `test-shim.sh` | the shim parses against `test/stub` in both knob positions, with a control that must fail | a C compiler |
@@ -329,6 +329,16 @@ document has carried no such citation since `ff6a8e6`. This
 paragraph's own example was the thirty-third.
 `test-history.sh` checks that every changelog row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
+It also reads every commit hash any tracked document names, 570 of them on
+2026-10-24, and fails on one that is a commit here and not on HEAD's
+history, since a replay that rewrites messages keeps every tree and moves
+every hash: the verification record carried eight hashes of the 2026-10-03
+replay for three weeks, each resolving on the machine that wrote it and
+nowhere else, with nothing reading them. A token that is no object here is
+another repository's head, DragonFly's and Kusumi's are cited by hash, and
+is left alone; that is the floor, since a dangling commit the store has
+pruned reads the same way. The membership test is controlled with an id no
+repository holds, which must come out as off the history on every run.
 It reads one thing no other gate reads: the documents that state which
 version the tree is on. A document naming an older one describes the state
 before the milestone it sits above, and that had happened four times in two
@@ -1691,6 +1701,8 @@ disagreeing. Read the table.
 | `test-history.sh` | no current-state document | every `.md` outside `CHANGELOG.md` and `doc/history/` moved aside |
 | `test-history.sh` | a document names a version that is not the newest row's | `0.9.25` changed to `0.9.24` in `README.status.md` |
 | `test-history.sh` | the state-sentence matcher stops matching | its pattern altered in a scratch copy of the gate, which the built-in control catches |
+| `test-history.sh` | a document names a commit no branch at HEAD reaches | the eight hashes of the 2026-10-03 replay restored in `doc/history/verification-record.md`, read as 8 bad |
+| `test-history.sh` | the membership test reads an unknown id as reachable | the control, an id no repository holds, run on every pass |
 | `test-inventory.sh` | no `src/sys/fs/hammer2` | moved aside |
 | `test-absence.sh` | the population is empty | `doc/` and `src/` moved aside |
 | `test-absence.sh` | no claim matched, so the pattern has stopped | the phrase it matches renamed in a scratch copy of the gate |
