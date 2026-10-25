@@ -428,7 +428,7 @@ l=$(val kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(
 case "$l" in
 0) [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "$l, after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable" 1 "the scan refused; only a reboot turns it back on" ;;
-"") [ "$n$r" = 00 ] || check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
+"") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
 esac
 
