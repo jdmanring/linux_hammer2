@@ -56,7 +56,7 @@
 #
 # 1,277 to 1,278 on 2026-10-16: one more `quoted string split across lines`
 # from the setflush walk's stop diagnostic in hammer2_synchro.c, which P4 added
-# without moving this file, so the gate failed unnoticed from f3110dc until
+# without moving this file, so the gate failed unnoticed from 5ad6341 until
 # this row. The string is one kprintf format continued on a second line, which
 # is what the other 53 rows in this category are.
 #

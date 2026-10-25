@@ -93,36 +93,65 @@ fi
 # Every commit hash a tracked document names must sit on HEAD's history,
 # not only the ones the changelog pins. A replay that rewrites messages
 # keeps every tree and moves every hash, and the verification record
-# cited eight commits of the 2026-10-03 replay for three weeks (`3fff7f1`
-# where `30c92ab` is the commit on main, and seven more) with nothing
-# reading them: each resolved on the machine that wrote it and in a fresh
-# clone resolves to nothing. A token is 7 to 40 hex digits with a letter
-# among them, so a decimal count is not one; a token that is no object
-# here is another repository's head (DragonFly's and Kusumi's are cited
-# by hash) and is left alone. That is the floor: a dangling commit the
-# store has pruned reads as foreign. The membership test is controlled
-# with an id no repository holds, which must come out as off the history.
-reach=$(mktemp) || exit 2
+# cited eight commits of such a replay for three weeks (`3fff7f1` where
+# `30c92ab` is the commit on main, and seven more) with nothing reading
+# them: each resolved on the machine that wrote it and in a fresh clone
+# resolves to nothing. A token is 7 to 40 hex digits, digits alone
+# included, since a hash can be all digits (`3716052` pins a row); a token
+# that is no commit object here, a decimal count, a module's sha256 or
+# another repository's head (DragonFly's and Kusumi's are cited by hash),
+# is left alone. That is the floor, and a fresh clone is its common case:
+# a clone holds only what HEAD reaches, so there a moved hash reads as
+# foreign and this check can fire only where the old objects still are,
+# the machine that wrote them. The population is the tracked `.md` and
+# `doc/*.txt`, less the two rewrite maps, whose left columns are moved
+# hashes by design. The whole path is controlled: a commit of HEAD's tree
+# is written into a throwaway object directory, read beside the
+# repository's through the alternates mechanism, fed through the same
+# classification and membership as the cited tokens, and must come out
+# as off the history and raise the count by one, while HEAD's own hash
+# must not; a reader over every ref would still fail the control, since
+# it is on no ref, and that is the control's floor.
+hobj=$(mktemp -d) || exit 2
+reach=$(mktemp) || { rm -rf "$hobj"; exit 2; }
+objs=$(cd "$(git rev-parse --git-path objects)" && pwd)
+GIT_OBJECT_DIRECTORY=$hobj GIT_ALTERNATE_OBJECT_DIRECTORIES=$objs
+export GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+hctl=$(GIT_AUTHOR_NAME=control GIT_AUTHOR_EMAIL=control@invalid GIT_COMMITTER_NAME=control \
+	GIT_COMMITTER_EMAIL=control@invalid git commit-tree "HEAD^{tree}" </dev/null 2>/dev/null)
 git rev-list HEAD > "$reach"
-cited=$(git ls-files '*.md' | xargs grep -o -h -E '\b[0-9a-f]{7,40}\b' | grep '[a-f]' |
-	LC_ALL=C sort -u | git cat-file --batch-check 2>/dev/null |
-	awk '$2 == "commit" { print $1 }')
-ncited=$(printf '%s\n' "$cited" | grep -c .)
+hist_off() {	# tokens on stdin; the commit objects among them not on HEAD's history
+	git cat-file --batch-check 2>/dev/null | awk '$2 == "commit" { print $1 }' |
+		grep -v -x -F -f "$reach"
+}
+hist_report() {	# one FAIL per oid in $1, counted
+	for h in $1; do
+		echo "  FAIL $(git rev-parse --short=7 "$h") is a commit no branch at HEAD reaches: $(git log -1 --format=%s "$h")"
+		echo "       cited in $(git ls-files -- '*.md' 'doc/*.txt' | xargs grep -l -E "\b$(git rev-parse --short=7 "$h")" | tr '\n' ' ')"
+		bad=$((bad+1))
+	done
+}
+hist_done() { unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; rm -rf "$hobj" "$reach"; }
+[ -n "$hctl" ] || { echo "history: COULD-NOT-RUN: no control commit could be written"; hist_done; exit 2; }
+b0=$bad
+hist_report "$(printf '%s\n' "$hctl" | hist_off)" >/dev/null
+[ "$bad" -eq $((b0+1)) ] || {
+	echo "  FAIL control: a commit on no branch did not raise the count by one (from $b0 to $bad)," >&2
+	echo "  so this check cannot see a hash off the history." >&2
+	hist_done; exit 1; }
+bad=$b0
+[ -z "$(git rev-parse HEAD | hist_off)" ] || {
+	echo "  FAIL control: HEAD read as off its own history." >&2
+	hist_done; exit 1; }
+docs=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -e '-rewrite-commit-map\.txt$')
+tokens=$(printf '%s\n' "$docs" | xargs grep -o -h -E '\b[0-9a-f]{7,40}\b' | LC_ALL=C sort -u)
+ncited=$(printf '%s\n' "$tokens" | git cat-file --batch-check 2>/dev/null | awk '$2 == "commit"' | grep -c .)
 [ "$ncited" -gt 0 ] || {
 	echo "history: FAIL: no tracked document names a commit of this repository," >&2
 	echo "  so the reachability check above the changelog read nothing." >&2
-	rm -f "$reach"; exit 1; }
-ctl=$(printf '%040d\n' 0 | grep -v -x -F -f "$reach")
-[ -n "$ctl" ] || {
-	echo "  FAIL control: an id no repository holds read as reachable from HEAD," >&2
-	echo "  so this check cannot see a hash off the history." >&2
-	rm -f "$reach"; exit 1; }
-for h in $(printf '%s\n' "$cited" | grep -v -x -F -f "$reach"); do
-	echo "  FAIL $(git rev-parse --short=7 "$h") is a commit no branch at HEAD reaches: $(git log -1 --format=%s "$h")"
-	echo "       cited in $(git ls-files '*.md' | xargs grep -l -E "\b$(git rev-parse --short=7 "$h")" | tr '\n' ' ')"
-	bad=$((bad+1))
-done
-rm -f "$reach"
+	hist_done; exit 1; }
+hist_report "$(printf '%s\n' "$tokens" | hist_off)"
+hist_done
 echo "history: $ncited commit hash(es) named across tracked documents"
 
 # The newest row is what the tree IS. A document stating the tree's current

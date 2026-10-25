@@ -329,16 +329,24 @@ document has carried no such citation since `ff6a8e6`. This
 paragraph's own example was the thirty-third.
 `test-history.sh` checks that every changelog row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
-It also reads every commit hash any tracked document names, 570 of them on
-2026-10-24, and fails on one that is a commit here and not on HEAD's
-history, since a replay that rewrites messages keeps every tree and moves
-every hash: the verification record carried eight hashes of the 2026-10-03
-replay for three weeks, each resolving on the machine that wrote it and
-nowhere else, with nothing reading them. A token that is no object here is
-another repository's head, DragonFly's and Kusumi's are cited by hash, and
-is left alone; that is the floor, since a dangling commit the store has
-pruned reads the same way. The membership test is controlled with an id no
-repository holds, which must come out as off the history on every run.
+It also reads every 7-to-40-digit hex token in the tracked `.md` and
+`doc/*.txt` files, less the two rewrite maps whose left columns are moved
+hashes by design, 592 of them commits here on 2026-10-25, and fails on one
+not on HEAD's history, since a replay that rewrites messages keeps every
+tree and moves every hash: the verification record carried eight hashes of
+the 2026-10-03 replay for three weeks, each resolving on the machine that
+wrote it and nowhere else, with nothing reading them, and the checkpatch
+baseline a ninth. A token that is no commit object here, a count, a
+module's sha256 or another repository's head (DragonFly's and Kusumi's are
+cited by hash), is left alone. That is the floor, and a fresh clone is its
+common case: a clone holds only what HEAD reaches, so there a moved hash
+reads as foreign and the check fires only where the old objects still are,
+the machine that wrote them, which is where the record is edited. The
+whole path is controlled on every run: a commit of HEAD's tree is written
+into a throwaway object directory and read beside the repository's
+objects, must come out as off the history and raise the failure count by
+one, and HEAD's own hash must not; a reader over every ref would pass that
+control, since the control is on no ref, and that is the control's floor.
 It reads one thing no other gate reads: the documents that state which
 version the tree is on. A document naming an older one describes the state
 before the milestone it sits above, and that had happened four times in two
@@ -1701,8 +1709,8 @@ disagreeing. Read the table.
 | `test-history.sh` | no current-state document | every `.md` outside `CHANGELOG.md` and `doc/history/` moved aside |
 | `test-history.sh` | a document names a version that is not the newest row's | `0.9.25` changed to `0.9.24` in `README.status.md` |
 | `test-history.sh` | the state-sentence matcher stops matching | its pattern altered in a scratch copy of the gate, which the built-in control catches |
-| `test-history.sh` | a document names a commit no branch at HEAD reaches | the eight hashes of the 2026-10-03 replay restored in `doc/history/verification-record.md`, read as 8 bad |
-| `test-history.sh` | the membership test reads an unknown id as reachable | the control, an id no repository holds, run on every pass |
+| `test-history.sh` | a document names a commit no branch at HEAD reaches | the eight hashes of the 2026-10-03 replay restored in `doc/history/verification-record.md`, read as 8 bad; the moved hash left in `doc/checkpatch-baseline.txt`, read as 1 bad |
+| `test-history.sh` | the check stops counting or reads membership inverted | the control commit on every run; a scratch copy with the count's increment removed and one with the membership grep inverted each fail the control |
 | `test-inventory.sh` | no `src/sys/fs/hammer2` | moved aside |
 | `test-absence.sh` | the population is empty | `doc/` and `src/` moved aside |
 | `test-absence.sh` | no claim matched, so the pattern has stopped | the phrase it matches renamed in a scratch copy of the gate |
