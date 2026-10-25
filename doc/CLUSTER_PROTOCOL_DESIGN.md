@@ -550,23 +550,27 @@ security model's question, admission now and authentication in stage 5,
 and not this one. The `scanall` shape guards the slave's pass, which no
 wire run drives yet, so no control reads it; the run that drives the pass
 is its trigger. The wire harness has five controls, two on what a feed
-can answer and three on how the element ends. Under `H2_WIRE_REKEY=1` its relay moves
+can answer and three on how the element ends, each read on the debug
+kernel with the module built from `f6c8610`'s source (sha256
+`d47e9de86433a37e`), the one the tree still builds. Under
+`H2_WIRE_REKEY=1` its relay moves
 the key of the first data block fed, the `bmap` of a file's first
 block, one block up and signs the frame again, and the slave refuses
-that feed and fails the call, so fiemap reports the error
-(`wire-run-20261021-032049` at `90c7db1`, debug kernel); a check refusing nothing
+that feed and fails the call `ENOTCONN`, so fiemap reports the error and
+`filefrag` lists no extent, every file still reading equal to the
+master's (`wire-run-20261024-202905`); a check refusing nothing
 would have listed the block as an extent. Under `H2_WIRE_DIRENT=1` the
 relay turns the inode answering the first `nresolve`, the slave's stat of
 a file, into a directory entry with no bytes, and the slave refuses that
-feed and fails that one lookup, every file then reading equal to the
-master's (`wire-run-20261021-032154` at `90c7db1`, debug kernel); with `nresolve`
+feed and fails that one lookup `ENOTCONN`, every file then reading equal
+to the master's (`wire-run-20261024-203028`); with `nresolve`
 taking any entry, as it did before this check, the same control faulted
 the slave through a null pointer in `hammer2_inode_get()`
 (`wire-run-20261021-020154`). Under `H2_WIRE_REFUSE=1` the relay answers
 that first `nresolve` with the refusal a server sends when it cannot take
 a request, `LNK_ERROR` carrying `DMSG_ERR_NOSUPP`, and drops the real
 answer; the stat fails not connected and the call ends `ENOTCONN`
-(`wire-run-20261021-060851`, module `09eeb032d2850ebe`, debug kernel),
+(`wire-run-20261024-203326`),
 where the module built before the allowlist returned the refusal as the
 lookup's answer, "Operation not supported" with this one master
 (`wire-run-20261021-045155`, module `77a271b1cfe20139`). Under
@@ -574,7 +578,7 @@ lookup's answer, "Operation not supported" with this one master
 every frame due to the slave from the first `readdir` answer; the listing
 fails not connected, both `readdir` calls end `ETIMEDOUT`, the sooner
 after 2048 ms, and every file read after the stall equals the master's
-(`wire-run-20261021-055345`, module `09eeb032d2850ebe`). Under
+(`wire-run-20261024-203151`). Under
 `H2_WIRE_END` the slave lists an empty directory of the master's and the
 relay rewrites the closing frames of the listing's two `getdents` calls,
 two because the first has emitted `.` and `..` and the kernel returns
@@ -582,8 +586,8 @@ those rather than its error. With `aborted` their error becomes
 `ABORTED`, what a server ends a request with while its unmount drains
 it, and with `noeof` their error and EOF flag are cleared, a close with
 no end fed; both read the listing not connected and both calls ending
-`ENOTCONN` (`wire-run-20261021-060100` and `-055938`, module
-`09eeb032d2850ebe`). With every end passed through `hammer2_remote_end()`
+`ENOTCONN` (`wire-run-20261021-152315` and `-152437`). With every end
+passed through `hammer2_remote_end()`
 unchanged, `aborted` fails the listing with `ABORTED`'s own "Interrupted
 system call" (`wire-run-20261021-060728`, module `fd5c139bf73fb324`), and
 the module before the fourteenth round fails `noeof` with "Operation now
