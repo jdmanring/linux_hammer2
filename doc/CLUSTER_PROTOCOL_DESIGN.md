@@ -596,11 +596,12 @@ in progress", the element counted in progress
 instead, a closing feed carrying a chain, a shape the protocol gives no
 meaning; the slave does not take it and ends the link at that frame
 (`hammer2_remote.c:927-928`, `:990-996`), as it does for any frame it
-cannot take, so no later frame is fed past the key the lost one held and
-the second call is never made; the listing fails not connected, the
-first `readdir` carrying the lost path's `EIO` and ending `ENOTCONN`
-with no `readdir` ending otherwise, and the slave lists nothing
-afterwards, thirty-seven frames relayed and one rewritten
+cannot take, so no later frame is fed past the key the lost one held,
+and the second call's request never reaches the wire, ending `ENOTCONN`
+at the slave with no frame; the listing fails not connected, the first
+`readdir` carrying the lost path's `EIO` and ending `ENOTCONN` with no
+`readdir` ending otherwise, and the slave lists nothing afterwards,
+thirty-seven frames relayed and one rewritten
 (`wire-run-20261021-153331`, module `d47e9de86433a37e`, read again as
 `wire-run-20261025-000853` under the check that reads the first line, 22
 checks and 0 failed); the module built with that one refusal removed

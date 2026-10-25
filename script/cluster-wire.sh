@@ -75,9 +75,10 @@
 # element counted in progress, EINPROGRESS. lost sets the closing frames'
 # byte count instead, a closing feed carrying a chain, which the kernel
 # answers one level up by ending the whole link; the relay arms both
-# closes as in every mode, but the link ends at the first and the second
-# call is never made, so the run reads one rewrite in the trace and
-# nothing after it. onefed is noeof on a listing of the 300-entry
+# closes as in every mode, but the link ends at the first, so the second
+# call's request never reaches the wire and ends ENOTCONN at the slave
+# with no frame, and the run reads one rewrite in the trace and nothing
+# after it. onefed is noeof on a listing of the 300-entry
 # directory one entry per getdents call, a buffer with room for one entry
 # making every readdir ask for one, so each rewritten close follows one
 # fed chain: the rule that takes a clean close with no end as an answer
