@@ -116,10 +116,12 @@ fi
 # the rest counted; HEAD's own hash must not read as off. A reader over
 # every ref would pass the control, since it is on no ref, and that is
 # the control's floor, and a count rewritten by hand would pass it too,
-# as would a filter keeping the sorted cited set by position, which the
-# one control's random id passes or fails in proportion to where it
-# sorts; the report is asserted to hold one FAIL per hash off the
-# history. Which files the population holds is asserted, not controlled:
+# as would a filter keeping the sorted cited set by position, before
+# the membership test or inside it, which the one control's random id
+# passes or fails in proportion to where it sorts; the report is
+# asserted to hold one FAIL per hash off the history, counted through
+# the same membership test, so a filter inside it shrinks both. Which
+# files the population holds is asserted, not controlled:
 # it must hold a `.md` and a `doc/*.txt`, since the baseline, a
 # `doc/*.txt`, named a moved hash while this check read the `.md` alone,
 # and what the listing holds and it leaves out must be the two rewrite
