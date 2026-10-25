@@ -331,7 +331,7 @@ paragraph's own example was the thirty-third.
 with a matching subject, and names any deliverable commit that has no row.
 It also reads every 7-to-40-digit hex token in the tracked `.md` and
 `doc/*.txt` files, less the two rewrite maps whose left columns are moved
-hashes by design, 592 of them commits here on 2026-10-25, and fails on one
+hashes by design, 593 of them commits here on 2026-10-25, and fails on one
 not on HEAD's history, since a replay that rewrites messages keeps every
 tree and moves every hash: the verification record carried eight hashes of
 the 2026-10-03 replay for three weeks, each resolving on the machine that
@@ -342,11 +342,17 @@ cited by hash), is left alone. That is the floor, and a fresh clone is its
 common case: a clone holds only what HEAD reaches, so there a moved hash
 reads as foreign and the check fires only where the old objects still are,
 the machine that wrote them, which is where the record is edited. The
-whole path is controlled on every run: a commit of HEAD's tree is written
-into a throwaway object directory and read beside the repository's
-objects, must come out as off the history and raise the failure count by
-one, and HEAD's own hash must not; a reader over every ref would pass that
-control, since the control is on no ref, and that is the control's floor.
+control rides the path the cited tokens take on every run: a commit of
+HEAD's tree is written into a throwaway object directory and read beside
+the repository's objects, its full id and a twelve-digit abbreviation are
+written on a line beside a digit-only token, that line is read with the
+documents by the one extraction, and its tokens go through the same
+classification, membership test and report as theirs, whose output must
+hold the control's FAIL line before that line is taken out and the rest
+counted; HEAD's own hash must not read as off, and the population must
+hold a `.md` and a `doc/*.txt`. A reader over every ref would pass that
+control, since the control is on no ref, and a count rewritten by hand
+would too: that is the control's floor.
 It reads one thing no other gate reads: the documents that state which
 version the tree is on. A document naming an older one describes the state
 before the milestone it sits above, and that had happened four times in two

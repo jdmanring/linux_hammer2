@@ -105,16 +105,19 @@ fi
 # foreign and this check can fire only where the old objects still are,
 # the machine that wrote them. The population is the tracked `.md` and
 # `doc/*.txt`, less the two rewrite maps, whose left columns are moved
-# hashes by design. The whole path is controlled: a commit of HEAD's tree
-# is written into a throwaway object directory, read beside the
-# repository's through the alternates mechanism, fed through the same
-# classification and membership as the cited tokens, and must come out
-# as off the history and raise the count by one, while HEAD's own hash
-# must not; a reader over every ref would pass the control, since it is
-# on no ref, and that is the control's floor. The extraction is
-# controlled too, over a line holding the control's abbreviation and a
-# digit-only token, which it must return, and the population must hold a
-# `doc/*.txt`, since the baseline was outside it for nine days.
+# hashes by design. The control rides the path the cited tokens take: a
+# commit of HEAD's tree is written into a throwaway object directory and
+# read beside the repository's through the alternates mechanism, its full
+# id and a twelve-digit abbreviation are written on a line beside a
+# digit-only token, that line is read with the documents by the one
+# extraction, and its tokens go through the same classification,
+# membership test and report in the same call as theirs, whose output
+# must hold the control's FAIL line before that line is taken out and
+# the rest counted; HEAD's own hash must not read as off. A reader over
+# every ref would pass the control, since it is on no ref, and that is
+# the control's floor. The population must hold a `.md` and a
+# `doc/*.txt`, since the baseline, a `doc/*.txt`, named a moved hash
+# while this check read the `.md` alone.
 hobj=$(mktemp -d) || exit 2
 reach=$(mktemp) || { rm -rf "$hobj"; exit 2; }
 objs=$(CDPATH= cd -P "$(git rev-parse --git-path objects)" && pwd)
@@ -127,49 +130,59 @@ docs=$(git ls-files -- '*.md' 'doc/*.txt' | grep -v -e '-rewrite-commit-map\.txt
 hist_tokens() {	# files as arguments; every hex token of 7 to 40 digits, once
 	grep -o -h -E '\b[0-9a-f]{7,40}\b' "$@" | LC_ALL=C sort -u
 }
-hist_commits() {	# tokens on stdin; the commit objects among them, as full ids
-	git cat-file --batch-check 2>/dev/null | awk '$2 == "commit" { print $1 }'
+hist_commits() {	# tokens on stdin; the commit objects among them, as full ids, once
+	git cat-file --batch-check 2>/dev/null | awk '$2 == "commit" { print $1 }' | LC_ALL=C sort -u
 }
 hist_off() {	# tokens on stdin; the commit objects among them not on HEAD's history
 	hist_commits | grep -v -x -F -f "$reach"
 }
-hist_report() {	# one FAIL per oid in $1, counted
+hist_report() {	# two lines per oid in $1, the first a FAIL
 	for h in $1; do
 		echo "  FAIL $(git rev-parse --short=7 "$h") is a commit no branch at HEAD reaches: $(git log -1 --format=%s "$h")"
 		echo "       cited in $(printf '%s\n' "$docs" | xargs grep -l -E "\b$(git rev-parse --short=7 "$h")" | tr '\n' ' ')"
-		bad=$((bad+1))
 	done
 }
 hist_done() { unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; rm -rf "$hobj" "$reach"; }
 [ -n "$hctl" ] || { echo "history: COULD-NOT-RUN: no control commit could be written"; hist_done; exit 2; }
-b0=$bad
-hist_report "$(printf '%s\n' "$hctl" | hist_off)" >/dev/null
-[ "$bad" -eq $((b0+1)) ] || {
-	echo "  FAIL control: a commit on no branch did not raise the count by one (from $b0 to $bad)," >&2
-	echo "  so this check cannot see a hash off the history." >&2
-	hist_done; exit 1; }
-bad=$b0
 [ -z "$(git rev-parse HEAD | hist_off)" ] || {
 	echo "  FAIL control: HEAD read as off its own history." >&2
 	hist_done; exit 1; }
-printf 'control: %s cited beside 1234567 here\n' "$(git rev-parse --short=7 "$hctl")" > "$hobj/ctl.txt"
+hc12=$(git rev-parse --short=12 "$hctl")
+printf 'control: %s cited beside 1234567 and %s here\n' "$hctl" "$hc12" > "$hobj/ctl.txt"
 got=$(hist_tokens "$hobj/ctl.txt" | tr '\n' ' ')
-case "$got" in
-*1234567*"$(git rev-parse --short=7 "$hctl")"*|*"$(git rev-parse --short=7 "$hctl")"*1234567*) ;;
-*) echo "  FAIL control: the extraction read '${got:-nothing}' from a line naming two tokens," >&2
-   echo "  so this check cannot see a cited hash." >&2
-   hist_done; exit 1 ;;
-esac
-printf '%s\n' "$docs" | grep -q '^doc/.*\.txt$' || {
-	echo "history: FAIL: the population holds no doc/*.txt, which the baseline is" >&2
-	hist_done; exit 1; }
-cited=$(hist_tokens $docs | hist_commits)
-ncited=$(printf '%s\n' "$cited" | grep -c .)
+for t in "$hctl" "$hc12" 1234567; do
+	case " $got " in
+	*" $t "*) ;;
+	*) echo "  FAIL control: the extraction read '${got:-nothing}' from a line naming $t among three tokens," >&2
+	   echo "  so this check cannot see a cited hash." >&2
+	   hist_done; exit 1 ;;
+	esac
+done
+for p in '\.md$' '^doc/.*\.txt$'; do
+	printf '%s\n' "$docs" | grep -q -e "$p" || {
+		echo "history: FAIL: the population holds no file matching $p; the baseline is a doc/*.txt" >&2
+		hist_done; exit 1; }
+done
+cited=$(hist_tokens $docs "$hobj/ctl.txt" | hist_commits)
+ncited=$(($(printf '%s\n' "$cited" | grep -c .) - 1))
 [ "$ncited" -gt 0 ] || {
 	echo "history: FAIL: no tracked document names a commit of this repository," >&2
 	echo "  so the reachability check above the changelog read nothing." >&2
 	hist_done; exit 1; }
-hist_report "$(printf '%s\n' "$cited" | grep -v -x -F -f "$reach")"
+out=$(hist_report "$(printf '%s\n' "$cited" | hist_off)")
+hcl="  FAIL $(git rev-parse --short=7 "$hctl") is a commit no branch at HEAD reaches: "
+case "$out" in
+*"$hcl"*) ;;
+*) echo "  FAIL control: a commit on no branch, cited beside the documents, was not reported," >&2
+   echo "  so this check cannot see a hash off the history." >&2
+   hist_done; exit 1 ;;
+esac
+printf '%s\n' "$out" | awk -v l="$hcl" '$0 == l { skip = 1; next } skip { skip = 0; next } { print }'
+b0=$bad; bad=$((bad + $(printf '%s\n' "$out" | grep -c '^  FAIL ')))
+[ "$bad" -gt "$b0" ] || {
+	echo "  FAIL control: the control's FAIL line was printed and not counted (still $bad)." >&2
+	hist_done; exit 1; }
+bad=$((bad - 1))
 hist_done
 echo "history: $ncited commit hash(es) named across tracked documents"
 
