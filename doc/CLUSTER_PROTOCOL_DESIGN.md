@@ -1018,7 +1018,11 @@ which the next `SNAPSHOT`'s stale delete takes, or another pass's live
 source; and it serves an unmounted PFS by that suffix alone, so the
 snapshot's reads are answered by the same path as a mounted PFS's and no
 other unmounted PFS of the device is reachable whatever cluster id a peer
-names. The name is the source PFS's with the suffix, one per source per
+names. The served snapshot is not limited to the link's own: a snapshot
+is named by a fresh random cluster id fed only to the link that took
+it, and it is a past state of the PFS the admitted peer already reads
+whole, so reading another pass's source, were its id known, exposes
+nothing the peer lacks, and the limit is not built. The name is the source PFS's with the suffix, one per source per
 device, as the local pass names its own, so a device serves one pass
 from a given source at a time: a local slave's pass on the master's
 device and a remote slave's over its one link would each take the
