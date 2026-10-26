@@ -1529,9 +1529,10 @@ header is on the media leaves the blocks of a target and no name, and
 the restarted thread takes a fresh target of the slave as the cut left
 it, which the pass's one flush keeps at a whole pass's state (the run
 `cluster-run-20261025-185105` cut 2003 updates into the pass found the
-target by name and no source, and the first pass then had nothing
-stale to delete; what that pass had done with its target the run did
-not print, and the harness prints it since). This is the handoff's
+target by name and the first pass then had nothing stale to delete,
+and `cluster-run-20261025-193845` read no source on the master's
+image; what the cut pass had done with its target neither run
+printed, and the harness prints it since). This is the handoff's
 "a failed transfer does not destroy the last known-good destination",
 met with the primitives the port has. The lazier alternative, no target
 at all, was rejected because the property is explicit. The design

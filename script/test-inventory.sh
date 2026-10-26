@@ -664,10 +664,10 @@ done
 # `kmemleak-cleared`, named nowhere else but as the host's read, since
 # the host requires one in the `.out` per load the run performs (two in
 # cluster-sync.sh under H2_CRASH=1), counted by occurrence wherever it
-# sits, so a second clear whose marker reaches the `.out`, on its own
-# line, glued to a line printed without its newline or beside the first
-# on one line, fails the run with or without an unload and a reload
-# around it; the guarded load lines
+# sits, so a second clear whose marker reaches the `.out` beside the
+# first's, on its own line, glued to a line printed without its newline
+# or beside the first on one line, fails the run with or without an
+# unload and a reload around it; the guarded load lines
 # counted, one, and two in cluster-sync.sh (GUEST and GUESTB), whose
 # crash run boots the guest twice, so a second clear and load whose
 # marker never reaches the `.out` (inside a group, a function, an `exec`
@@ -710,10 +710,10 @@ done
 # unload still counts, without their names; the reading rewritten in
 # transit, a filter on the guest's output or an edit of the `.out`,
 # which leaves one line; the harness's one clear and load reused from a
-# function or a loop the script runs twice, the second time with its
-# output redirected or filtered, which adds no load line and keeps the
-# marker count at one, the edit a quiet reload helper logging to a file
-# is; DEFER(a harness's run clears kmemleak from one load line twice):
+# function or a loop the script runs twice, one of the two times with
+# its output redirected or filtered, which adds no load line and keeps
+# the marker count at one, the edit a quiet reload helper logging to a
+# file is; DEFER(a harness's run runs one clear and its load twice):
 # the marker written to `/dev/kmsg` and counted from the kept kernel
 # log, which no enclosing redirection takes, at the cost of a follower
 # and a host copy in the three harnesses that keep none, the ring clears
@@ -742,7 +742,7 @@ done
 # the clear-before-load test keyed on the guarded load, the comparison
 # on the whole line where the stripped one matches nothing, the load on
 # a comment line read by its fixed path alone) admit no
-# set the matrix holds; their number is asserted, a weakening none of them
+# set the matrix holds; the controls' number is asserted, a weakening none of them
 # reads that admits a set is what the list grows by, and three parts
 # have none: the forms list's count assertion and the controls' own,
 # each guarding a list and admitting nothing until the list is edited,

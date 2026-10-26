@@ -867,12 +867,12 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			/*
 			 * The snapshot's flush stops at its inode, so a taken
 			 * target is followed by the sync, which writes each
-			 * device's header and waits: both names are on the
-			 * media before the pass.  A kept target leaves the
-			 * source's name to the next sync of a PFS mounted from
-			 * the master's device, so a cut in the pass can leave
-			 * the source with no name, nothing to delete.  Only a
-			 * taken target is the slave before the pass; with none
+			 * device's header and waits: both names are on the media
+			 * before the pass when it succeeds.  A kept target leaves
+			 * the source's name to the next sync of a PFS mounted
+			 * from the master's device, so a cut in the pass can
+			 * leave the source with no name, nothing to delete.  Only
+			 * a taken target is the slave before the pass; with none
 			 * the next mount takes a fresh one of the slave as the
 			 * cut left it, whole by the pass's one flush.
 			 */
