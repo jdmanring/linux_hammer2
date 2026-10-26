@@ -17942,3 +17942,128 @@ master's is read by the last match, its link script running twice; and
 check keyed on the caller's string, which reads not connected under
 both builds, before it was keyed on the element's `ETIMEDOUT` line and
 the time. The subject was green in all three. The row is 1.0.48.
+
+## The slave's pass over the wire reads a snapshot the master takes, 2026-10-26
+
+What this entry claims: a slave on one kernel whose master is on
+another runs its synchronization pass from a snapshot the master takes
+at the slave's request, verifies against that snapshot, has it deleted,
+copies a second set the master writes after the first pass, and passes
+a quiet master idle without taking another; neither image holds a
+snapshot at the end; and the connection device's block accounting
+balances at its free. All hold on both 7.3 kernels with the kernel's
+own instruments silent. The source is `9369d96`.
+
+The mechanism. The pass snapshots its source on the source element's
+device, and a connection device refuses a create, so a pass over a
+remote master ran live and P7's immutable source held only locally.
+Two commands past the descriptors, `DMSG_HM2_SNAPSHOT` and
+`DMSG_HM2_SNAPDEL`, carry the name as the request's aux. The master
+deletes a stale snapshot of the name, takes the snapshot by the body
+the local pass uses under the mount lock, records the name against
+the link, and feeds the snapshot root with the transaction id on the
+closing frame; `SNAPDEL` deletes it and forgets it, and the link's end
+deletes what a lost link left. Only a name under the pass's suffix is
+taken, `SNAPDEL` deletes only a name the link recorded, answering any
+other as nothing there, and only a PFS of that suffix is served
+unmounted. On the slave,
+`hammer2_pfs_snapshot()` routes an element on a connection device to
+`hammer2_remote_snapshot_take()`, which registers the fed root as the
+local snapshot is registered, a PFS of its own by the snapshot's
+cluster id with the proxy as its one element;
+`hammer2_pfs_delete_byname()` frees that PFS and sends `SNAPDEL` by the
+id, and the unmount's cleanup finds a snapshot's device by its name.
+The remote element's blockset, which no flush on the slave writes, is
+refreshed from the master's root at the pass's first read, so the idle
+test can match again once the master has changed. The connection
+device counts its frames' blocks at every hand-over (copied, framed,
+stashed, replaced, taken, dropped, freed by the dio, freed with the
+device) and prints the balance at its free under debug `0x100`.
+
+The instrument. `cluster-wire.sh` under `H2_WIRE_PASS=1` loads the
+slave with its default `sync_snapshot` and debug `0x8100`, and reads
+beside the 31 checks of 1.0.47 three more: the snapshot taken,
+verified and deleted with no quorum failure after the first snapshot
+line and no error on the master; five files written on the master
+after the first pass on the slave's media by a later pass, the master
+then passed idle with no snapshot taken in 12 s; and neither image
+holding `CL.h2sync-src` or `CL.h2sync-tgt` at the end, none left by
+the link. The file counts include the second set, the scan's own
+debug line (`error 0` and the deferral's `error 256`) is no longer
+read as an error, and a kmemleak report's jiffies are dated against
+the guest's clock, read before the scan's settle.
+
+The readings, the harness at `9369d96`, the logs under
+`~/Projects/linux_hammer2-data/p8-notes/snapshot/`:
+
+- `h2debug-7.3`, module `75a453e77cffef2a`, `wire-run-20261026-045817`:
+  34 checks, 0 failed; 300 of A's files on B's media after 26 s,
+  refusals 0, errors 0 and 0, 941 remote XOPs in the pass, 0 ended
+  other than clean; 0 lines differ of 643 in the fingerprints, A 310
+  file entries and 15 data blocks, B 310; `fsck_hammer2` 0 and 0;
+  snapshots taken 1, bad 0, verified 1, unverified 0, no quorum 0,
+  deleted 1, delete errors 0, target taken 1, A's errors 0; the second
+  set 5 on A's media, 5 on B's after 28 s, passes verified 1 then 2,
+  1 more snapshot deleted, then 0 taken in 12 s over 11 idle passes;
+  `CL.h2sync-src` on A 0, `CL.h2sync-tgt` on B 0, left by the link 0;
+  1896 remote XOPs in all, 1 refetch, 0 protocol errors; B's blocks
+  copied 4290, framed 0, stashed 4289, replaced 17, taken 4272, dropped
+  1, freed by the dio 4271, freed with the device 1, so every block a
+  load took was freed by its dio or dropped, and one block fed onto a
+  handle was taken by no load before the device's free took it, which
+  is a fetch not read and not a reference kept; kmemleak 0 on both
+  guests after the unload; 0 warnings, lockdep on; 11938 frames
+  (`snap-debug-6.log`).
+- `h2kasan-7.3`, module `3b665819e2771486`, `wire-run-20261026-045219`:
+  34 and 0; 300 after 20 s, 941 XOPs, 0 and 0; 0 of 643 differ; fsck
+  0 and 0; taken 1, verified 1, no quorum 0, deleted 1; 5 after 28 s,
+  verified 1 then 2, 0 taken in 12 s over 11 idle passes; no snapshot
+  left on either image; 1896 XOPs, 3 refetches; blocks copied 4289,
+  stashed 4289, replaced 6, taken 4283, dropped 0, freed by the dio
+  4283, freed with the device 0; kmemleak 0 on both, 0 sanitizer
+  reports, 0 warnings; 11938 frames (`snap-kasan-2.log`).
+
+Both headers read `v1.0.4-620-g2d1f05c-dirty`, the working tree
+before the commit that holds the scope. The host's QEMU core count was 0 before and after every
+cycle, including the two cycles that switched both guests to the KASAN
+kernel, where the first two boots came up on the lockdep kernel again
+because `setkernel.sh` discards `grub-mkconfig`'s output and `virsh
+destroy` cut the guest before the write reached the disk; the third
+cycle ran `grub-mkconfig` with its output read and `sync` before the
+cut, and the kernel was read from `/proc/cmdline` and `CONFIG_KASAN`,
+never from `uname -r`.
+
+Two runs of the source before `SNAPDEL` was scoped to the link's own
+snapshots are kept beside these and read the same: `h2debug-7.3`,
+module `47d1ad475a1504f6`, `wire-run-20261026-041747`, 34 and 0, taken
+4265, dropped 1, freed by the dio 4264, 11946 frames
+(`snap-debug-5.log`); `h2kasan-7.3`, module `c52653afe1c32ba2`,
+`wire-run-20261026-042708`, 34 and 0, taken 4270, dropped 3, freed by
+the dio 4267, 11950 frames (`snap-kasan-1.log`). The scope came from
+the commit's own review: the arm deleted any PFS of the suffix, so a
+peer could delete a crash's leftover or another pass's live source,
+and now deletes only what the link recorded; no run drives a `SNAPDEL`
+for a name the link never took, which is the sixth negative control
+the roadmap row lists.
+
+Four debug runs before the reading are kept and are not readings.
+`wire-run-20261026-034958` (`snap-debug-1.log`), 4 of 34 failed, all
+in the harness's expectations: the file count read before the second
+set was compared with a listing after it (305 against 310, which also
+failed the fingerprint check's count), the error count matched the
+scan's own debug line, now on with `sync_snapshot=1`, on every return,
+and the no-quorum count took the slave thread's first pass, run from
+the slave's `pfs-create` before the element was registered; that run
+also found the blockset defect above, the slave taking a snapshot every
+cadence after the second set (verified 1 then 7). `wire-run-20261026-
+035403` (`snap-debug-2.log`) and `wire-run-20261026-040942`
+(`snap-debug-4.log`), 1 of 34 failed each, kmemleak holding 1024-byte
+blocks from `hammer2_rcall_reply` after the unload (4 and 12), the
+master's root as fed to the slave's `ipcluster`: the blockset refresh
+called `hammer2_xop_gdata()` a second time for the blockset, a dio
+reference per call against one `hammer2_xop_pdata()`, and run 4's
+balance (taken 4259, freed by the dio 4256, freed with the device 3)
+counted the blocks kept; one `gdata` serves both reads now.
+`wire-run-20261026-040045` (`snap-debug-3.log`) is void: the harness
+was edited while it ran and the shell resumed it at a shifted offset.
+The row is 1.0.49.
