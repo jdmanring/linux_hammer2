@@ -18067,3 +18067,149 @@ counted the blocks kept; one `gdata` serves both reads now.
 `wire-run-20261026-040045` (`snap-debug-3.log`) is void: the harness
 was edited while it ran and the shell resumed it at a shifted offset.
 The row is 1.0.49.
+
+## The wire harness runs stage 2's negative controls, 2026-10-26
+
+What this entry claims: each mechanism stage 2b relies on to refuse something
+has a negative control that `cluster-wire.sh` runs, a scratch build or a
+harness act that removes that one refusal and reads what the refusal exists
+to stop; each control reads the opposite of its plain run on both 7.3
+kernels, the plain runs still pass, and three defects in the source and
+five in the harness were found by the controls' runs and are fixed. The source is
+`6586470`; every run names `v1.0.4-623-g9552c22-dirty`, that tree before
+its commit, and the default module's hash is the same in every batch on
+each kernel.
+
+The mechanism. Six refusals are switched off by a term each in
+`hammer2_os.h` (`HAMMER2_CTL_NOROGATE`, `_NOPASSREFUSE`, `_NOSNAPROUTE`,
+`_NOSNAPSCOPE`, `_NOCONNFIX`, and the hold `hammer2_ctl_connwait()`), 0 or
+nothing in every build but the scratch one whose `make` variable names it,
+and each written on a line the refusal's test already has, so no cited line
+of a carried file moves for a control. The client's window keeps its
+`HAMMER2_NOCLIENTWINDOW` and now says once that it took a feed past the
+window, the reading the control needs. `test/h2service.c` takes
+`H2SERVICE_NOADMIT`, which admits every row. The harness builds the one
+side the control names and runs one control per invocation:
+`H2_WIRE_WINDOW`, `H2_WIRE_ADMIT` and `H2_WIRE_SNAPDEL` as `1` (the plain
+reading of the refusal) or `control`, and `H2_WIRE_ROGATE`,
+`H2_WIRE_PASSREFUSE` and `H2_WIRE_SNAPROUTE` as `control`, the plain reading
+of each being in the default run; `H2_WIRE_CONNWAIT` is the seventh, below.
+
+The defects in the source, three, each found by a control's run.
+
+- The callback that reads the peer's `LNK_CONN` was installed after the
+  reader started. `hammer2_cluster_reconnect()` started the reader in
+  `kdmsg_iocom_reconnect()` and installed `hammer2_autodmsg()` later, in
+  `kdmsg_iocom_autoinitiate()`, which is upstream's order and harmless
+  there, since upstream's callback only monitors; the port's `PROTO_2`
+  test lives in that callback, and `kern_dmsg.c` answers a `LNK_CONN` with
+  no callback when none is set, so a peer's announcement already in the
+  socket was answered and never read. Seen once in about twenty runs that
+  day, the SNAPDEL control's first run (`wire-run-20261026-060929`, KASAN):
+  the slave's log has the `CONN` reply and the volume dump and no `peer
+  speaks DMSG_SPAN_PROTO_2`, then four span deletions, 20 of 35 checks
+  failed, the control itself never reached. The callback is installed
+  before the reader starts (`hammer2_iocom.c:170-180`).
+- A snapshot that reached the body of `hammer2_pfs_snapshot()` on a
+  connection device faulted. The routing's control,
+  `wire-run-20261026-061740` (module `3890816c9db8a08e`, KASAN), read a
+  general protection fault at `hammer2_inode_create_pfs+0x3e` on the slave,
+  the body taking locks the connection device never initialized under a
+  super-root it does not have; 15 of 29 checks failed. Any snapshot of a
+  connection device that the pass does not route to its master is now
+  refused with `EOPNOTSUPP` before the body (`hammer2_ioctl.c:863`), one
+  more checkpatch line; the prototype of `hammer2_remote_connected()` is a
+  second, 1,585 to 1,587.
+- The fix above made the remote element's first HM2 frame able to reach
+  the peer ahead of the kernel's own `LNK_CONN`: with the callback first, a
+  peer's announcement and spans already in the socket are read at once,
+  and a span read then ran the registration, whose
+  root fetch put an HM2 request on the wire before
+  `kdmsg_iocom_autoinitiate()` queued the announcement, and the peer read a
+  `PROTO_1` connection and ended it. `HAMMER2_CONNWAIT` holds the reconnect
+  a second after the reader starts so the queued `LNK_CONN` is read in the
+  hold every time, and its first run, `wire-run-20261026-072713` (module
+  `486e249777438ef9`, KASAN), read the master's line `kdmsg: HM2 frame
+  80201002 on a PROTO_1 connection`, the master never reading the slave's
+  `PROTO_2`, 18 of 30 failed. The registration and keepalive work items
+  are now enabled and queued by `hammer2_remote_connected()` after the
+  announcement is queued (`hammer2_iocom.c:230`), not at the previous
+  link's end. The plain mode `H2_WIRE_CONNWAIT=1` runs that build and must
+  pass as a plain run; `H2_WIRE_CONNWAIT=control` adds
+  `HAMMER2_NOCONNFIX`, the callback installed where upstream installs it,
+  after the hold, and must read the slave answering the `LNK_CONN` with no
+  callback, never reading `PROTO_2`, closing the master's spans and
+  registering nothing.
+
+The defects in the harness, five, all in checks written for these modes
+or read by them for the first time.
+
+- The pass-refusal control read its verdict from the slave's device inside
+  the guest, which counted 0 of the master's files for 180 s
+  (`wire-run-20261026-060418`, 1 of 29 failed) while the image on the host
+  held all 305 entries and both volumes were clean by `fsck_hammer2`; the
+  verdict is now the host's fingerprint of the two images.
+- The span-deletion check compared the deletions the slave receives, the
+  master's, against the slave's PFS count; the SNAPDEL modes give the
+  master a fourth PFS, the decoy, and the check failed with the control
+  correct (`wire-run-20261026-061152`, 1 of 35). It reads the master's
+  count now.
+- The read-only gate's control first wrote by `touch`, which was refused
+  `ENOSPC` before it ran (`wire-run-20261026-061512`): the reserve check
+  counts the free space of master slots alone and a connection device's
+  volume header is zeroed, so a remote master reads 0 free. The control now
+  writes by a `chmod` under emergency mode, which the setattr check lets
+  through, and the note's stage 3 obligations carry the finding. The same
+  run failed the plain check that the pass refuses the read-only device,
+  which a read-write remount makes writable; under this control the check
+  reads the refusals before the remount and the 300 files the pass writes
+  after it.
+- The harness counted the carried ioctl's own line `hammer2_ioctl_emerg_mode:
+  WARNING: Emergency mode enabled` as a kernel warning
+  (`wire-run-20261026-071854`, 1 of 28 failed); the line is the harness's
+  act and is dropped by its full text.
+- The pass's second-set reading took its baseline after the fill, so a
+  later pass that had already ended by then was never counted: on the
+  lockdep kernel (`wire-run-20261026-082230`) the slave's log has the second
+  snapshot verified at 156.33 s and deleted at 156.59 s, before the
+  reading started, and the check read 0 more deleted against 1. The
+  baseline is now the first pass's own count, handed to the reading.
+
+The readings, the logs under `~/Projects/linux_hammer2-data/p8-notes/`
+(`ctl-kasan3-<mode>.log`, `ctl-debug3-<mode>.log`), every run's kept
+`.out`, kernel logs and trace under `fixtures/`:
+
+Each run's id is `wire-run-20261026-` and the time; the default
+module was `27fa2a85627b4f25` on `h2kasan-7.3` and `0d908d8255982f6b` on
+`h2debug-7.3`, and a control's scratch build is the one side it names.
+Every run read no kernel warning, lockdep or sanitizer report on either
+guest, kmemleak nothing of hammer2's after the unload, and 0 QEMU cores.
+
+| Mode | What the run reads | KASAN | lockdep |
+|---|---|---|---|
+| plain | the default run, 29 checks | `073611` 29/0 | `082113` 29/0 |
+| `PASS=1` | the pass over the wire, its second set by a later pass | `090427` 34/0 | `085506` 34/0 |
+| `WINDOW=1` | a server past its window ends the link: window lines 1, readdir `ENOTCONN` | `080239` 22/0 | `084223` 22/0 |
+| `WINDOW=control` | the count off: the feeds taken, 300 of 300 entries | `080507` 30/0 | `084358` 30/0 |
+| `ADMIT=1` | an unmarked peer refused at the dial (rc 1, 1 refusal), dialed once marked | `074121` 30/0 | `082655` 30/0 |
+| `ADMIT=control` | admission off: the unmarked peer dialed (rc 0) and registered | `074328` 30/0 | `082812` 30/0 |
+| `ROGATE=control` | the gate off: `CL` remounted read-write (rc 0), a `chmod` on the slave alone, 600 on B and 644 on A | `080726` 28/0 | `084527` 28/0 |
+| `PASSREFUSE=control` | the refusal off on a read-only device: 0 refusal lines, A 305 and B 305 entries by fingerprint, both `fsck` clean | `074547` 29/0 | `082940` 29/0 |
+| `SNAPROUTE=control` | the routing off: every snapshot refused `EOPNOTSUPP` (37 of 37, 36 of 36), 0 files on B | `081021` 29/0 | `084725` 29/0 |
+| `SNAPDEL=1` | a `SNAPDEL` naming the decoy: not-ours 1, deleted 0, the decoy on A's image | `090733` 35/0 | `085729` 35/0 |
+| `SNAPDEL=control` | the scope off: not-ours 0, deleted 1, the decoy gone | `091049` 35/0 | `090002` 35/0 |
+| `CONNWAIT=1` | the hold taken once, the plain run's checks | `081538` 30/0 | `085152` 30/0 |
+| `CONNWAIT=control` | the callback where upstream installs it: B held 1, read `PROTO_2` 0, registered 0; A read `PROTO_2` 1 | `081805` 10/0 | `085320` 10/0 |
+| `SILENCE=1` | the keepalive's run of 1.0.48, read again | `075726` 31/0 | `083853` 31/0 |
+| `SILENCE=control` | its control: no line on either side, the listing waits out the bound | `075934` 32/0 | `084017` 32/0 |
+
+The `CONNWAIT=control` run has 10 checks because B's `CL` never
+registers, so its mount and every check after it are not run, which is
+the control's reading. `PASS=1` on lockdep at `082230` is the harness
+defect above, 1 of 34; `PASS=1` and the two `SNAPDEL` modes were run
+again on both kernels after its fix, and the KASAN runs of the same modes
+under the earlier harness (`073817`, `075053`, `075419`) read 34, 35 and
+35 with 0 failed. The logs are `ctl-kasan3-*`, `ctl-debug3-*`, and
+`ctl-kasan4-*` and `ctl-debug4-*` for the reruns.
+
+The row is 1.0.50.
