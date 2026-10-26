@@ -1516,14 +1516,22 @@ pass verifies and kept across a failed or interrupted pass, a crash and
 an unmount, and found by name on the next mount. The snapshot helper's
 own flush stops at the new PFS inode and leaves the volume header to
 the next sync of a mounted PFS, so the thread runs the PFS sync once
-more after taking a target; that sync writes each device's header into
-its page cache and the media takes it with the kernel's writeback, so a
-cut before the header is on the media leaves the blocks of a target and
-no name, and the restarted thread takes a fresh target of the slave as
-the cut left it, which the pass's one flush keeps at a whole pass's
-state (the run `cluster-run-20261025-185105` cut 2003 updates into the
-pass found the target by name and no source, whose stale name the
-first pass then had nothing to delete). This is the handoff's
+more after taking a target, and that sync writes each device's header
+and waits for it (`hammer2_xop_inode_flush()` under
+`HAMMER2_XOP_VOLHDR` writes every device back, flushes its cache and
+waits on the header's folio), so both names are on the media before
+such a pass. A kept target leaves the source's name, taken under a
+sync that ran before its create, to the next sync of a PFS mounted
+from the master's device, its syncer's every thirty seconds or a
+caller's, so a cut inside such a pass can leave the source's blocks
+and no name, which is nothing to delete; a cut before a taken target's
+header is on the media leaves the blocks of a target and no name, and
+the restarted thread takes a fresh target of the slave as the cut left
+it, which the pass's one flush keeps at a whole pass's state (the run
+`cluster-run-20261025-185105` cut 2003 updates into the pass found the
+target by name and no source, and the first pass then had nothing
+stale to delete; what that pass had done with its target the run did
+not print, and the harness prints it since). This is the handoff's
 "a failed transfer does not destroy the last known-good destination",
 met with the primitives the port has. The lazier alternative, no target
 at all, was rejected because the property is explicit. The design

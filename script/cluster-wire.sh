@@ -601,7 +601,7 @@ lbad=$(printf '%s\n' $lr | grep -v -x -E 'h2ch_remote_(inode/[12]|dirent/[23]|da
 case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
 for sd in A B; do
 	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
-	c=$(grep -c "^$sd .*kmemleak-cleared" "$W/out"); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted wherever it sits, so one glued to a line printed without its newline is a second clear
+	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)
 	[ "$c" = 1 ] && [ "$k" = 0 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "cleared $c time(s), $k printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"
