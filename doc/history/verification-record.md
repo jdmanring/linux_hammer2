@@ -17812,3 +17812,133 @@ which a remote focus refuses, so the pass here is the live one that
 holding an older block than the master's) and a relay rewrite of a
 `scanall` feed under the pass are in the code and driven by no run,
 with the hold each needs named in the note. The row is 1.0.47.
+
+## A PROTO_2 link ends itself on a silent peer, 2026-10-26
+
+What this entry claims: a link between two kernels whose frames stop
+both ways while both sockets stay open is ended by the slave's own
+keepalive within its bound, with no request in flight to see the
+silence; the element is detached by the span's deletion before any
+request is made, and the next request fails not connected at once.
+The control built without the keepalive sees the same silence only at
+the next request's bound. Both hold on both 7.3 kernels with the
+kernel's own instruments silent. The source is `1236db0`.
+
+The mechanism. `kern_dmsg` sends `LNK_PING` only to unstick its reader
+at teardown, answers one, and a span carries no status, so a partition
+that dropped frames and kept the socket was seen only when a request
+reached `remote_timeout_ms`, and on a link with no request in flight
+never. `hammer2_remote.c` runs a second delayed work item per
+connection for the keepalive alone, armed when the peer's `PROTO_2`
+announcement arrives, on either end of the link: every half of the
+bound it sends `LNK_PING` as a `CREATE|DELETE` transaction, which the
+carried kernel refuses as it refuses every command it does not serve,
+and that refusal is the answer; the carried kernel answers no one-way
+ping, and an open transaction would leak a state per ping. A ping
+unanswered for the bound ends the link by the reader's own path,
+`KILLRX` and the descriptor shut down under the message lock as a
+reconnect does it, never by the teardown, which disables the item and
+would otherwise wait on itself. The link's end reaches the element as
+its span deleted, and a later request drains at once with `ENOTCONN`.
+`HAMMER2_NOKEEPALIVE` builds the control that arms no item;
+`HAMMER2_NOCLIENTWINDOW`, which the source tested for and nothing
+built, joins it in the Makefile.
+
+The instrument. `test/h2loop.c` takes `--silence-on NAME`: from the
+closing frame of the master's answer to a `nresolve` carrying NAME,
+every frame both ways is dropped with both sockets left open, so the
+silence starts with nothing in flight and only the keepalive can see
+it. `cluster-wire.sh` drives it as `H2_WIRE_SILENCE=1`: after the
+plain reads the slave's bound is set to 2000 ms, the slave looks up a
+name the master lacks, and the run reads one arming line and the
+frames dropped after it in the trace, the slave's kernel line ending
+the link once with the peer silent for no less than the bound and no
+protocol error, the element detached by the span's deletion, and the
+next listing failing not connected under 2000 ms with no element line
+ending `ETIMEDOUT`. `H2_WIRE_SILENCE=control` builds the module with
+`HAMMER2_NOKEEPALIVE` and reads the opposite: no line on either
+kernel, the element still registered, and the listing failing no
+sooner than 2000 ms with its request's own line ending `ETIMEDOUT`.
+The caller reads "Transport endpoint is not connected" under both,
+since a timed-out element is no answer, so the checks are keyed on the
+time and the element's end lines and never on the caller's string. The
+stall control, `H2_WIRE_STALL`, now holds the HM2 frames and passes
+the link's own, since holding everything for 5000 ms under a 2000 ms
+bound would end the link by the keepalive before the request's bound
+could be read. The guest script's third argument rides ssh's command
+line, where an empty one vanished and shifted the ones after it, so
+the end mode is passed as 0 when unset.
+
+The readings, the harness at `1236db0`, the logs under
+`~/Projects/linux_hammer2-data/p8-notes/keepalive/`:
+
+- `h2debug-7.3`, module `f003e16025e33f37`, `wire-run-20261026-031847`,
+  `H2_WIRE_SILENCE=1`: 31 checks, 0 failed, the plain 29 holding (305
+  of 305 digests equal); the marker's lookup absent, 1 arming line and
+  3 frames dropped after it in the trace, the slave's close of that
+  lookup, the slave's ping 4236 ms into the silence (the remainder of
+  the tick armed under the 10000 ms default, the bound having moved to
+  2000 ms after it) and the master's own ping; the slave's line once,
+  "HM2 peer silent for 2047 ms, ending the link", 6294 ms after the
+  lookup returned, 0 protocol errors, the master's line 0; detached 1,
+  "span deleted"; the listing not connected in 10 ms with 0 requests
+  timed out and 0 files; 4765 frames; 0 kernel warnings on either
+  guest, lockdep on (`silence-debug.log`).
+- `h2debug-7.3`, module `261b9dd836ab42f0` built with
+  `HAMMER2_NOKEEPALIVE`, `wire-run-20261026-032011`,
+  `H2_WIRE_SILENCE=control`: 32 checks, 0 failed; 1 arming line, 6
+  dropped; lines B 0 and A 0, detached 0; the listing not connected in
+  4121 ms with 2 requests timed out; 4760 frames
+  (`silence-control-debug.log`).
+- `h2debug-7.3`, `f003e16025e33f37`, `wire-run-20261026-032205`, plain:
+  29 checks, 0 failed, 4766 frames (`plain-debug.log`).
+- `h2debug-7.3`, `f003e16025e33f37`, `wire-run-20261026-032753`,
+  `H2_WIRE_STALL=5000`, the stall control as it now holds only the HM2
+  frames: 29 and 0, the stall for 5000 ms under the 2000 ms bound, the
+  shortest timed-out readdir 2013 ms, 2 `ETIMEDOUT` ends, 0 of 305
+  listed, 0 protocol errors, 4454 frames, 0 warnings on either guest
+  (`stall-debug.log`).
+- `h2kasan-7.3`, module `30f866b6d5678c75`, `wire-run-20261026-025848`,
+  `H2_WIRE_SILENCE=1`: 31 and 0; 1 arming line, 3 dropped; the slave's
+  line once, 7232 ms after the lookup returned, silent 2047 ms, 0
+  protocol errors, the master's 0; detached 1; the listing not
+  connected in 34 ms with 0 timed out; 4765 frames; 0 warnings and 0
+  sanitizer reports (`silence-kasan-3.log`).
+- `h2kasan-7.3`, module `f5948382c999f976` with `HAMMER2_NOKEEPALIVE`,
+  `wire-run-20261026-025604`, control: 32 and 0; lines 0 and 0,
+  detached 0; the listing not connected in 4102 ms with 2 timed out;
+  4760 frames (`silence-control-kasan-2.log`).
+- `h2kasan-7.3`, `30f866b6d5678c75`, `wire-run-20261026-030058`,
+  `H2_WIRE_STALL=5000`, the stall control as it now holds only the HM2
+  frames: 29 and 0, the stall for 5000 ms under the 2000 ms bound, the
+  shortest timed-out readdir 2035 ms, 2 `ETIMEDOUT` ends, 0 of 305
+  listed, 4448 frames (`stall-kasan.log`).
+- `h2kasan-7.3`, `30f866b6d5678c75`, `wire-run-20261026-030748`, plain:
+  29 and 0, 4762 frames (`plain-kasan.log`).
+
+The KASAN headers read `v1.0.4-616-g156ead9-dirty`: those runs came
+from the working tree before the commit, and the debug runs from a
+worktree checked out at `1236db0`. The hash `30f866b6d5678c75` is
+`1236db0`'s source built against the KASAN tree from the main tree's
+path, read again after the commit with the later edits stashed; the
+same source built from the worktree's path hashes `4c386a71a3a58c33`,
+the source path being in the sanitizer build's tables, and against the
+lockdep tree it hashes `f003e16025e33f37` from either path. The host's
+QEMU core count was 0 before and after every run.
+
+Three KASAN runs before these are kept and are not readings:
+`wire-run-20261026-024530` (`silence-kasan.log`), 4 of 31 failed with
+every silence value empty, the guest script's empty second argument
+having vanished from ssh's command line and shifted the third into its
+place, so the silence arm never ran; `wire-run-20261026-024908`
+(`silence-kasan-2.log`), 1 of 31 failed on the line count read 0 while
+the kernel line was there: the link script, run on both guests before
+the read script, printed a line under the same name, and the harness's
+reader takes the first match, so the slave's reading was the link
+phase's 0; the link script's line is `keepalive-line` now and the
+master's is read by the last match, its link script running twice; and
+`wire-run-20261026-025144`
+(`silence-control-kasan.log`), 1 of 32 failed, the control's second
+check keyed on the caller's string, which reads not connected under
+both builds, before it was keyed on the element's `ETIMEDOUT` line and
+the time. The subject was green in all three. The row is 1.0.48.
