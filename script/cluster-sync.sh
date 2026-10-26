@@ -1165,7 +1165,7 @@ g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned
 # kernel built without kmemleak has no file to write and fails the same
 # way, which is right for the two kernels this runs on, both built with
 # it. No value at all means the guest stopped before this point.
-c=$(nval kmemleak-cleared); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)
+c=$(grep -c kmemleak-cleared "$W/out"); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted wherever it sits, so one glued to a line printed without its newline is a second clear
 case "$l" in
 0) [ "$c" = $((1 + ${H2_CRASH:-0})) ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
 unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
