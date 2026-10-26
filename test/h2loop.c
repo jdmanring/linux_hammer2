@@ -53,6 +53,11 @@
  * --bare-dirent 1 turns the inode answering the first nresolve into a
  * directory entry with no bytes, the shape a peer's lookup must refuse
  * since its caller reads the answer as an inode.
+ * --retype-scan 1 gives the first directory entry fed to B in answer to
+ * one of B's scanall requests the type of a data block and signs the
+ * frame again, a feed every CRC passes and the shape the slave's pass
+ * must refuse beneath a directory, since the pass inserts what it is fed
+ * beneath the inode it scanned.
  * --refuse-nresolve 1 answers the first nresolve with kern_dmsg's own
  * refusal, the LNK_ERROR a server sends when it cannot take a request,
  * and drops the rest of the real answer; the receiving kernel must read
@@ -197,12 +202,13 @@ static struct {
 	int rekey_data;		/* the relay moves one data feed's key */
 	int bare_dirent;	/* the relay answers one nresolve with a dirent */
 	int refuse_nresolve;	/* the relay refuses one nresolve for A */
+	int retype_scan;	/* the relay retypes one entry a scanall feeds B */
 	long stall_ms;		/* the relay holds B's HM2 frames from one readdir */
 	int end_readdir;	/* the relay rewrites the readdir closes it sees, two at most */
 	const char *silence_on;	/* the name whose lookup's answer starts a silence */
 	const char *rename_snapdel; /* the name the first SNAPDEL is given */
 } opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0, NULL, NULL };
+    0, 0, 0, 0, NULL, NULL };
 
 static void
 usage(void)
@@ -215,7 +221,8 @@ usage(void)
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
-	    "              [--refuse-nresolve 1] [--stall-ms MS] [--end-readdir 1|2|3]\n"
+	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
+	    "              [--end-readdir 1|2|3]\n"
 	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n");
 	exit(2);
 }
@@ -248,6 +255,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--rekey-data")) opt.rekey_data = atoi(v);
 		else if (!strcmp(a, "--bare-dirent")) opt.bare_dirent = atoi(v);
 		else if (!strcmp(a, "--refuse-nresolve")) opt.refuse_nresolve = atoi(v);
+		else if (!strcmp(a, "--retype-scan")) opt.retype_scan = atoi(v);
 		else if (!strcmp(a, "--stall-ms")) opt.stall_ms = atol(v);
 		else if (!strcmp(a, "--end-readdir")) opt.end_readdir = atoi(v);
 		else if (!strcmp(a, "--silence-on")) opt.silence_on = *v ? v : NULL;
@@ -270,6 +278,7 @@ validate(void)
 	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1 ||
 	    opt.bare_dirent < 0 || opt.bare_dirent > 1 ||
 	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
+	    opt.retype_scan < 0 || opt.retype_scan > 1 ||
 	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
 	    opt.end_readdir < 0 || opt.end_readdir > 3)
 		usage();
@@ -852,6 +861,41 @@ bare_dirent(struct frame *f)
 	return (1);
 }
 
+static int retyped;		/* --retype-scan has fired */
+static uint64_t scan_msgid;	/* B's scanall request it watches, 0 none */
+
+/*
+ * B's scanall request (DMSG_HM2_XOP(6), sys/sys/dmsg.h) is remembered by
+ * its msgid on its opening frame, and the first feed from A answering it
+ * with a directory entry (type 4) becomes a data block (type 3) with the
+ * header signed again, key, bytes and aux untouched.  An answer that ends
+ * at its DELETE with no entry fed releases the msgid, so the next scanall
+ * is watched: the kernel reuses a msgid once its state is freed.
+ */
+static int
+retype_scan(const struct side *from, struct frame *f)
+{
+	uint32_t c = f->hdr.cmd;
+
+	if (from->name[0] == 'B' && (c & 0x00FFFF00U) == 0x00201600U &&
+	    (c & 0xA0000000U) == 0x80000000U) {
+		if (scan_msgid == 0)
+			scan_msgid = f->hdr.msgid;
+		return (0);
+	}
+	if (from->name[0] != 'A' || scan_msgid == 0 ||
+	    f->hdr.msgid != scan_msgid || (c & 0x20000000U) == 0)
+		return (0);
+	if (c & 0x40000000U)
+		scan_msgid = 0;
+	if ((c & 0x00FFFF00U) != 0x00203000U || f->ext_len < 128 ||
+	    f->ext[0] != 4)
+		return (0);
+	f->ext[0] = 3;
+	resign(f);
+	return (1);
+}
+
 static int refused;		/* --refuse-nresolve has fired */
 static int stalled;		/* --stall-ms has fired */
 static int ended;		/* --end-readdir's rewrites so far */
@@ -1030,6 +1074,11 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 	if (opt.bare_dirent && !bared && bare_dirent(f)) {
 		bared = 1;
 		trace("%s>%s i=%ld msgid=%" PRIu64 " bare-dirent t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
+	if (opt.retype_scan && !retyped && retype_scan(from, f)) {
+		retyped = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " retype t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
 	if (opt.refuse_nresolve) {
@@ -1254,11 +1303,12 @@ relay(void)
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
+	    " retype-scan=%d"
 	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s\n",
 	    opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
-	    opt.refuse_nresolve, opt.stall_ms, opt.end_readdir,
+	    opt.refuse_nresolve, opt.retype_scan, opt.stall_ms, opt.end_readdir,
 	    opt.silence_on ? opt.silence_on : "-",
 	    opt.rename_snapdel ? opt.rename_snapdel : "-");
 	fflush(tracef);

@@ -178,6 +178,14 @@
 # level by its pass reports every address, which is the fake pass this mode
 # rules out, and a slave matched to nothing reports none for the unchanged file.
 #
+# H2_WIRE_RETYPE=1 is the control on the shape the slave's pass reads, under
+# the pass: the relay gives the first directory entry A feeds in answer to
+# one of B's scanall requests the type of a data block and signs the frame
+# again. B must refuse that feed, end the scan ENOTCONN and fail that pass
+# with no verdict of verified, and a later pass must bring the slave level
+# with the master all the same; a pass that took the block beneath the
+# directory would leave a data block on B's media the master's has not.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -214,6 +222,8 @@ ROGATE=${H2_WIRE_ROGATE:-0}; PASSREFUSE=${H2_WIRE_PASSREFUSE:-0}; SNAPROUTE=${H2
 SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
 LINKDEV=${H2_WIRE_LINKDEV:-0}
 STALE=${H2_WIRE_STALE:-0}
+RETYPE=${H2_WIRE_RETYPE:-0}
+case $RETYPE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_RETYPE is 1" >&2; exit 2;; esac
 case $STALE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_STALE is 1" >&2; exit 2;; esac
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
 case $WINDOW in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WINDOW is 1 or control" >&2; exit 2;; esac
@@ -235,10 +245,13 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$WINDOW" = 0 ] || nctl=$((nctl + 1))
 [ "$LINKDEV" = 0 ] || nctl=$((nctl + 1))
 [ "$STALE" = 0 ] || nctl=$((nctl + 1))
+[ "$RETYPE" = 0 ] || nctl=$((nctl + 1))
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
-# the two snapshot controls and the stale element run under the pass
-{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ]; } && PASS=1
+# the two snapshot controls, the stale element and the retype run under the pass
+{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ]; } && PASS=1
+# the pass the retype fails ends unverified, once
+UNV=$RETYPE
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
@@ -357,7 +370,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
 "$W/h2loop" --relay "$PORT" --seed "$SEED" \
     ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
     ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
-    --refuse-nresolve "$REFUSE" --stall-ms "$STALL" \
+    --refuse-nresolve "$REFUSE" --retype-scan "$RETYPE" --stall-ms "$STALL" \
     --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
     --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
     --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src)" \
@@ -562,13 +575,16 @@ n=0
 until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')" -ge 300 ] || [ $n -ge 240 ]; do sleep 2; n=$((n + 2)); done
 echo "pass-wait-seconds $n"
 echo "pass-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')"
-n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -ge 1 ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
+# a pass that fails still deletes its snapshot, so under a control that
+# fails one the end is the second deletion ($1)
+n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -ge "${1:-1}" ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
 echo "pass-end-seconds $n"
 echo "pass-snap-taken $(klog 'syncsnap: remote snapshot CL.h2sync-src tid')"
 echo "pass-snap-bad $(klog 'syncsnap: remote snapshot CL.h2sync-src fed')"
 echo "pass-snap-passes $(klog 'syncsnap: pass clindex')"
 echo "pass-snap-verified $(klog 'syncsnap: verified clindex')"
 echo "pass-snap-unverified $(klog 'syncsnap: unverified clindex')"
+echo "pass-unverified-first $(kl | grep -m1 'syncsnap: unverified clindex' | sed 's/.*syncsnap: unverified clindex [0-9]* //')"
 echo "pass-snap-interrupted $(klog 'syncsnap: interrupted clindex')"
 # the thread passes from the slave's pfs-create, before the element is
 # registered, and those find no source; one after the first snapshot would
@@ -699,6 +715,8 @@ echo "refetches $(klog 'H2 REFETCH')"
 echo "log-not-proxy $(klog 'not a proxy')"
 echo "log-not-proxy-bmap $(klog 'HM2 bmap feed of type 3 not a proxy')"
 echo "log-not-proxy-nresolve $(klog 'HM2 nresolve feed of type 4 not a proxy')"
+echo "log-not-proxy-scanall $(klog 'HM2 scanall feed of type 3 not a proxy')"
+echo "log-scanall-notconn $(klog 'H2 REMOTE scanall .* end=00080000')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
 echo "log-window-ended $(klog 'HM2 peer sent a feed past the window')"
 echo "log-window-taken $(klog 'HM2 feed past the window taken')"
@@ -891,7 +909,7 @@ phase B reg.sh
 if [ "$SNAPROUTE" = control ] || [ "$PASSREFUSE" = control ]; then PASSES=first
 elif [ "$PASS" = 1 ]; then PASSES=full; else PASSES=none; fi
 phase B ro.sh && case $PASSES in
-	full)	phase B pass.sh && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)" &&
+	full)	phase B pass.sh $((RETYPE + 1)) && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)" &&
 		{ [ "$STALE" = 0 ] || { phase B stale.sh down && phase A redial.sh && phase B stale.sh up && phase A fill.sh stale; }; };;
 	first)	phase B pass.sh first;;
 	*)	true;;
@@ -986,7 +1004,7 @@ if [ "$WRITTEN" = 1 ]; then
 	cp "$W/fp.a" "$FIXDIR/wire-run-$stamp-fp-a.txt"; cp "$W/fp.b" "$FIXDIR/wire-run-$stamp-fp-b.txt"
 fi
 if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; then
-	[ "$(num "$(val B sync-snapshot)" 0)" = 1 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = 0 ] && [ "$(num "$(val B pass-sync-errors)" 1)" = 0 ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
+	[ "$(num "$(val B sync-snapshot)" 0)" = 1 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = "$UNV" ] && [ "$(num "$(val B pass-sync-errors)" 1)" = "$UNV" ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
 	if [ "$STALE" = 1 ]; then
 		# the one block A rewrote after the slave's last pass, and nothing else
 		fpd=$(diff "$W/fp.a" "$W/fp.b" | sed -n 's/^[<>] //p')
@@ -1001,11 +1019,11 @@ if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; then
 	# and B had it deleted; the fake pass, a live pass, has no snapshot
 	# line and no verdict, and a snapshot the master refused leaves its
 	# error line on A.
-	[ "$(num "$(val B pass-snap-taken)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-bad)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-passes)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-unverified)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-noquorum)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-delete-errors)" 1)" = 0 ] && [ "$(num "$(val A snap-peer-errors)" 1)" = 0 ]; check "pass: B's pass reads a snapshot the master takes at its request, verifies against it and has it deleted" $? "snapshots taken $(val B pass-snap-taken), bad $(val B pass-snap-bad), passes $(val B pass-snap-passes), verified $(val B pass-snap-verified), unverified $(val B pass-snap-unverified), no quorum $(val B pass-snap-noquorum), deleted $(val B pass-snap-deleted), delete errors $(val B pass-snap-delete-errors), target taken $(val B pass-snap-target-taken), A's errors $(val A snap-peer-errors), end after $(val B pass-end-seconds) s"
+	[ "$(num "$(val B pass-snap-taken)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-bad)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-passes)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-unverified)" 1)" = "$UNV" ] && [ "$(num "$(val B pass-snap-noquorum)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-delete-errors)" 1)" = 0 ] && [ "$(num "$(val A snap-peer-errors)" 1)" = 0 ]; check "pass: B's pass reads a snapshot the master takes at its request, verifies against it and has it deleted" $? "snapshots taken $(val B pass-snap-taken), bad $(val B pass-snap-bad), passes $(val B pass-snap-passes), verified $(val B pass-snap-verified), unverified $(val B pass-snap-unverified), no quorum $(val B pass-snap-noquorum), deleted $(val B pass-snap-deleted), delete errors $(val B pass-snap-delete-errors), target taken $(val B pass-snap-target-taken), A's errors $(val A snap-peer-errors), end after $(val B pass-end-seconds) s"
 	# Incremental convergence: a set written on the master after the first
 	# pass reaches the slave's media by a later pass, which also verifies
 	# and deletes its snapshot; the digests read after include the set.
-	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 1)" = 0 ] && [ "$(num "$(val B more-snap-verified)" 0)" -gt "$(num "$(val B pass-snap-verified)" 0)" ] && [ "$(num "$(val B more-snap-idle-taken)" 9)" -le 1 ] && [ "$(num "$(val B more-snap-idle-passes)" 0)" -ge 1 ]; check "pass: five files written on the master after the first pass reach the slave's media by a later pass, and a quiet master is then passed idle" $? "A $(val A more-media-files) on its media, B $(val B more-media-files) after $(val B more-wait-seconds) s, passes verified $(val B pass-snap-verified) then $(val B more-snap-verified), snapshots deleted $(val B more-snap-deleted) more, then $(val B more-snap-idle-taken) taken in 12 s with $(val B more-snap-idle-passes) idle passes"
+	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 1)" = "$UNV" ] && [ "$(num "$(val B more-snap-verified)" 0)" -gt "$(num "$(val B pass-snap-verified)" 0)" ] && [ "$(num "$(val B more-snap-idle-taken)" 9)" -le 1 ] && [ "$(num "$(val B more-snap-idle-passes)" 0)" -ge 1 ]; check "pass: five files written on the master after the first pass reach the slave's media by a later pass, and a quiet master is then passed idle" $? "A $(val A more-media-files) on its media, B $(val B more-media-files) after $(val B more-wait-seconds) s, passes verified $(val B pass-snap-verified) then $(val B more-snap-verified), snapshots deleted $(val B more-snap-deleted) more, then $(val B more-snap-idle-taken) taken in 12 s with $(val B more-snap-idle-passes) idle passes"
 	# Neither image holds a snapshot of the pass at the end: the source on
 	# the master's, deleted at B's request, and the target on the slave's,
 	# deleted when a pass verified; a lost link's leftovers would show as
@@ -1045,6 +1063,10 @@ elif [ "$WRITTEN" = 1 ]; then
 	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
 else
 [ "$REKEY" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
+fi
+if [ "$RETYPE" = 1 ]; then
+	rt=$(grep -c ' retype ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$rt" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-scanall)" 0)" = 1 ] && [ "$(num "$(val B log-scanall-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-unverified)" 0)" = 1 ]; check "control: a directory entry a scanall feeds as a data block passes the CRCs and B's pass refuses it" $? "retype lines $(num "$rt" 0), not-proxy $(val B log-not-proxy) of which scanall $(val B log-not-proxy-scanall), scanall ended ENOTCONN $(val B log-scanall-notconn), peer-sent $(val B log-peer-sent), unverified passes $(val B pass-snap-unverified) ($(val B pass-unverified-first)), pass errors $(val B pass-errors) and $(val B pass-sync-errors)"
 fi
 if [ "$REKEY" = 1 ]; then
 	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
@@ -1088,7 +1110,7 @@ if [ "$STALL" != 0 ]; then
 	st=$(grep -c ' stall ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ] && [ "$(num "$(val B readdir-timedout-ms)" 0)" -ge 2000 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, shortest timed-out readdir $(val B readdir-timedout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
-[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
+[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$RETYPE" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 if [ "$ROGATE" = control ]; then
 	[ "$(num "$(val B rw-mount-rc)" 1)" = 0 ] && [ "$(num "$(val B log-mount-refused)" 1)" = 0 ]; check "control: with the read-only gate off a read-write mount of B's CL is taken beside the remote master" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 else

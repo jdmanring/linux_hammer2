@@ -18336,3 +18336,81 @@ extent `0..7` all `unknown_loc`. A local element holding the inode and
 lacking the block is still driven by no run.
 
 The row is 1.0.52.
+
+## A retyped `scanall` feed under the pass, and the deferrals a failed root scan left, 2026-10-26
+
+What this entry claims: the shape check the slave's pass depends on is
+read by a control, `cluster-wire.sh` under `H2_WIRE_RETYPE=1`, and its
+first run found a defect in the pass that faulted the slave's
+synchronization thread; with the defect fixed, both 7.3 kernels read
+the control as designed. The source is `b9683d6`'s with the relay knob,
+the harness mode and the fix uncommitted; both passing runs name
+`v1.0.4-630-gb9683d6-dirty`, and the module hashes are
+`3bf3716d88f22c49` on `h2debug-7.3` and `0eb7a6989537cc07` on
+`h2kasan-7.3`.
+
+How the control works. The relay's `--retype-scan 1` records the msgid
+of a `scanall` request from the slave and, in the master's answer to it,
+turns the first directory entry fed (type 4) into a data block (type 3)
+and signs the frame again, so both CRCs pass and only the slave's shape
+check can refuse it. The mode runs the pass as `H2_WIRE_PASS=1` does.
+The slave must log one feed refused as not a proxy, from `scanall`, end
+that scan `ENOTCONN`, and fail its first pass unverified with the error;
+the five files the master writes after it must still reach the slave's
+media by a later pass. A refusal the relay did not cause shows as no
+`retype` line in the trace or a second not-proxy line; a pass that took
+the entry as a block verifies, which the unverified count of exactly one
+refuses; a slave the later pass left behind fails the five files and the
+image fingerprints, which must be equal.
+
+What the first run found. `wire-run-20261026-105103` on `h2debug-7.3`,
+relay seed 11, retyped frame `i=366` of the master's side (the trace's
+one `retype` line). The slave's sync thread faulted in a later snapshot
+pass:
+
+    BUG: unable to handle page fault for address: ffffcf6808406258
+    RIP: 0010:hammer2_trans_sub+0xe/0x20 [hammer2]
+     hammer2_xop_alloc+0xe7/0xf0
+     hammer2_sync_slaves+0xa9/0xe60
+     hammer2_sync_pass+0x11e/0x320
+     hammer2_sync_pass_snap+0x645/0xa30
+     hammer2_primary_sync_thread+0x1c8/0x3f0
+
+`RDI` was `ffffcf6808400000` and the fault `0x6258` above it, which
+`pahole` on the built module reads as `modify_tid` at offset 25176 of
+`hammer2_pfs_t`, a structure of 5006224 bytes allocated in vmalloc
+space: a write to a PFS whose pages were no longer mapped. The carried
+loop in `hammer2_sync_pass()` breaks on a root scan's error other than
+`EAGAIN` before it drains the deferral list (`hammer2_synchro.c:554-555`),
+and that list is the thread's, kept across passes. Over the live PFS
+that is upstream's behavior and harmless; over a snapshot the deferred
+inodes belong to the snapshot PFS, which `hammer2_sync_pass_snap()`
+deletes after the pass, and the next pass's drain allocated an XOP on one
+of them. The pass now drains the list before its pass-end flush
+(`hammer2_synchro.c:630-643`, marked `XXX`), as the loop's own cleanup
+for a broken pass already does; the next root scan defers the same
+directories again. The mechanism is read from the code and the oops and
+confirmed by the runs below taking the same path with the fix and not
+faulting; the slave's kernel log of the faulting run was not kept, since
+the run was stopped after the slave's pass timed out (`pass.sh` rc 124,
+240 s, 0 files on the slave's media) and before the harness gathered the
+logs, so what is kept is the trace, the four-line run log
+`retype-debug.log` and the oops as `retype-debug-oops.txt`. That run is
+the fix's negative control: the same seed with the drain absent.
+
+The readings with the fix, logs `retype-debug2.log` and
+`retype-kasan.log` under `~/Projects/linux_hammer2-data/p8-notes/`, each
+run's kernel logs and trace under `fixtures/`:
+
+| Kernel | Run | Checks | Retyped frame | Refusal and failed scan | First pass | Later pass | Images |
+|---|---|---|---|---|---|---|---|
+| `h2debug-7.3` | `wire-run-20261026-110048` | 34, 0 failed | `i=366` | at 36.09 s; `sync_slaves error 524288` with the list non-empty at 36.12 s | unverified, round 1 acted 308 failed 0 | five files on the slave after 28 s, verified 1 then 2 | 0 of 643 fingerprint lines differ, `fsck_hammer2` rc 0 on both |
+| `h2kasan-7.3` | `wire-run-20261026-110549` | 34, 0 failed | `i=362` | at 67.53 s; `sync_slaves error 524288` with the list non-empty at 67.60 s | unverified, round 1 acted 308 failed 0 | five files on the slave after 28 s, verified 1 then 2 | 0 of 643 fingerprint lines differ, `fsck_hammer2` rc 0 on both |
+
+Both runs read 943 remote XOPs in the pass, one ending other than clean
+(the refused scan), every digest equal on the slave warm and cold, no
+kernel warning, lockdep or sanitizer report on either guest, kmemleak
+silent after the unload, and both snapshots of each pass deleted. The
+QEMU core count read 0 before and after each cycle.
+
+The row is 1.0.53.

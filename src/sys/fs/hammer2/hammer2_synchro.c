@@ -627,6 +627,20 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 		}
 	}
 
+	/*
+	 * XXX Linux: a root scan that fails breaks the loop above before
+	 * its deferrals are drained, and the list is the thread's, so they
+	 * reached the next pass.  Their inodes are this pass's source, under
+	 * the snapshot form the snapshot PFS's, freed when the pass deletes
+	 * it: the next pass's drain allocated an XOP on that freed pmp
+	 * (wire-run-20261026-105103, a scanall feed refused).  The next
+	 * pass's root scan defers them again.
+	 */
+	while ((defer = list->base) != NULL) {
+		--list->count;
+		list->base = defer->next;
+		hammer2_sync_defer_done(list, defer);
+	}
 	hammer2_inode_drop(pmp->iroot);
 	hammer2_trans_done(pmp, 0);
 	/*
