@@ -18213,3 +18213,59 @@ under the earlier harness (`073817`, `075053`, `075419`) read 34, 35 and
 `ctl-kasan4-*` and `ctl-debug4-*` for the reruns.
 
 The row is 1.0.50.
+
+## The wire harness drives the detach by the local device's unmount, 2026-10-26
+
+What this entry claims: the third way a remote element leaves its
+cluster, detached by `hammer2_pfsfree_scan()` when the last local device
+of its PFS unmounts, is driven by a run, `cluster-wire.sh` under
+`H2_WIRE_LINKDEV=1`, and reads the element detached once by that path on
+both 7.3 kernels. The source is `911f048`'s; both runs name
+`v1.0.4-626-g911f048-dirty`, the tree dirty in the harness and documents
+alone, and the module hashes are 1.0.50's default modules, `27fa2a85627b4f25` on `h2kasan-7.3` and
+`0d908d8255982f6b` on `h2debug-7.3`.
+
+Why it needed a mode. `hammer2_unmount_helper()` ends a device's
+connection before it scans the PFSes, so when the slave's row and its
+link are on the same volume as its `CL`, the connection's end always
+detaches the element first and the unmount's own detach finds nothing,
+which is what every earlier run read ("connection ended"). Under
+`LINKDEV` the slave's row and dial go through a second volume,
+`wire-k.img` attached as `vdc` with its `ROOT` mounted on `/mnt/h2k`, so
+the link is that device's and the element's local device is `vdb`. The
+slave's `ROOT` and `CL` then unmount with the link up, and the run reads
+the detach line once with the reason "unmount", the link's two message
+threads still running, before `vdc`'s unmount ends the link. The plain
+run is the control: it reads the same line with "connection ended", and
+the check here fails on any other reason. The plain run under this
+harness on the lockdep kernel read 29 checks and 0 failed, the detach by
+the connection's end and A seeing B's SLAVE `CL` as before
+(`wire-run-20261026-095937`, log `linkdev-plain-debug.log`).
+
+The first run's two failures were the harness's (`wire-run-20261026-094708`,
+KASAN, 29 checks and 2 failed): A's span table was counted against B's
+`vdb` PFSes and A was expected to see B's SLAVE `CL`, where under this
+mode B's link spans `vdc`'s two PFSes and B's `CL` lives on `vdb`. The
+check counts against `vdc`'s `pfs-list` now and expects no SLAVE `CL`.
+The second (`wire-run-20261026-095017`, 29 and 1) read the volume check
+against the link device's count, the same fault in the line above it;
+that check reads B's own `vdb` again.
+
+The readings, logs `linkdev-kasan-3.log` and `linkdev-debug.log` under
+`~/Projects/linux_hammer2-data/p8-notes/`, each run's `.out`, kernel logs
+and trace under `fixtures/`:
+
+| Kernel | Run | Checks | The detach |
+|---|---|---|---|
+| `h2kasan-7.3` | `wire-run-20261026-095346` | 29, 0 failed | once, by unmount, before `vdc`'s unmount with 2 link threads; the relay trace 4764 frames |
+| `h2debug-7.3` | `wire-run-20261026-095721` | 29, 0 failed | once, by unmount, before `vdc`'s unmount with 2 link threads; the relay trace 4756 frames |
+
+The slave's kernel log has the line `HAMMER2: remote element CL at
+clindex 1 detached: unmount` once in each run, at the unmount of its
+`vdb` and before `vdc`'s. Both read no kernel warning, lockdep or
+sanitizer report on either guest, kmemleak nothing of hammer2's after
+the unload, and 0 QEMU cores. A span
+its peer withdraws over a link that stays up takes the span-deletion path
+and is still driven by no run.
+
+The row is 1.0.51.

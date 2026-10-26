@@ -158,6 +158,16 @@
 # once by chance in wire-run-20261026-060929. Each reads B's hold line, so
 # a module built without the hold passes neither.
 #
+# H2_WIRE_LINKDEV=1 reads the third way an element leaves. B's row and dial
+# go through a second volume, vdc, mounted beside B's own, so the link is
+# vdc's and the element's local device is vdb. The unmount helper ends a
+# device's connection before it scans the PFSes, so on one volume the
+# connection's end always detaches the element first; here B's vdb leaves
+# with the link still up, and the element must be detached once, by the
+# unmount's own detach in hammer2_pfsfree_scan(), before vdc's unmount ends
+# the link. The plain run reads "connection ended" and no other path
+# prints "unmount".
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -192,12 +202,14 @@ SILENCE=${H2_WIRE_SILENCE:-0}
 WINDOW=${H2_WIRE_WINDOW:-0}
 ROGATE=${H2_WIRE_ROGATE:-0}; PASSREFUSE=${H2_WIRE_PASSREFUSE:-0}; SNAPROUTE=${H2_WIRE_SNAPROUTE:-0}
 SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
+LINKDEV=${H2_WIRE_LINKDEV:-0}
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
 case $WINDOW in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WINDOW is 1 or control" >&2; exit 2;; esac
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE"; do
 	case $c in 0|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_ROGATE, _PASSREFUSE and _SNAPROUTE are control" >&2; exit 2;; esac
 done
 case $CONNWAIT in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CONNWAIT is 1 or control" >&2; exit 2;; esac
+case $LINKDEV in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_LINKDEV is 1" >&2; exit 2;; esac
 case $SNAPDEL$ADMIT in 00|10|control0|01|0control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SNAPDEL and H2_WIRE_ADMIT are 1 or control" >&2; exit 2;; esac
 case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
@@ -209,6 +221,7 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$PASS" = 1 ] && nctl=$((nctl + 1))
 [ "$SILENCE" = 0 ] || nctl=$((nctl + 1))
 [ "$WINDOW" = 0 ] || nctl=$((nctl + 1))
+[ "$LINKDEV" = 0 ] || nctl=$((nctl + 1))
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 # the two snapshot controls run under the pass
@@ -239,10 +252,12 @@ done
 
 guest_off() {	# guest_off <domain> <ssh>: unmount, unload, detach its volume
 	if [ "$($VIRSH domstate "$1" 2>/dev/null)" = running ]; then
-		timeout 45 $SSH "$2" 'umount -f /mnt/h2c 2>/dev/null; umount -f /mnt/h2r 2>/dev/null; rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
+		timeout 45 $SSH "$2" 'umount -f /mnt/h2c 2>/dev/null; umount -f /mnt/h2r 2>/dev/null; umount -f /mnt/h2k 2>/dev/null; rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
 	fi
-	$VIRSH detach-disk "$1" vdb --live >/dev/null 2>&1
-	$VIRSH detach-disk "$1" vdb --config >/dev/null 2>&1
+	for t in vdb vdc; do
+		$VIRSH detach-disk "$1" $t --live >/dev/null 2>&1
+		$VIRSH detach-disk "$1" $t --config >/dev/null 2>&1
+	done
 }
 
 build() {	# build <out> [make variables]: the module, kept as <out>
@@ -281,22 +296,23 @@ cc -std=c11 -O1 -o "$W/h2loop" test/h2loop.c 2>"$W/cc.err" || {
 
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
-for g in a b; do
+for g in a b $([ "$LINKDEV" = 1 ] && echo k); do
 	img=$FIXDIR/wire-$g.img
 	rm -f "$img"
 	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
 		echo "wire: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
-attach() {	# attach <domain> <image>
+attach() {	# attach <domain> <image> [target]: a guest that is off starts after vdb
 	state=$($VIRSH domstate "$1" 2>/dev/null)
 	if [ "$state" = running ]; then how=--live; else how=--config; fi
-	err=$($VIRSH attach-disk "$1" "$2" vdb --targetbus virtio $how 2>&1) || {
+	err=$($VIRSH attach-disk "$1" "$2" "${3:-vdb}" --targetbus virtio $how 2>&1) || {
 		echo "wire: COULD-NOT-RUN: could not attach $2 to $1: $err" >&2; exit 2; }
-	if [ "$state" != running ]; then
+	if [ "$state" != running ] && [ "${3:-vdb}" = vdb ]; then
 		$VIRSH start "$1" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: $1 did not start" >&2; exit 2; }
 	fi
 }
 attach "$GA" "$FIXDIR/wire-a.img"
+[ "$LINKDEV" = 1 ] && attach "$GB" "$FIXDIR/wire-k.img" vdc
 attach "$GB" "$FIXDIR/wire-b.img"
 wait_ssh() {	# wait_ssh <domain> <ssh>
 	n=0
@@ -400,19 +416,28 @@ echo "pfs-count $(hammer2 -s $R pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
 echo "utility $(command -v hammer2) $(hammer2 --version 2>&1 | head -1)"
 GUEST
 cat > "$W/dial.sh" <<'GUEST'
-# dial <clid> <host> <port> <ro|rw> [noadmit]: one admitted row, then the
-# dial; with ro the device is opened again read-only between the two, so
-# the slave's pass refuses to run and every read on B's CL is the remote
-# element's alone; with noadmit a dial is made first with no marker
+# dial <clid> <host> <port> <ro|rw> [noadmit] [linkdev]: one admitted row,
+# then the dial; with ro the device is opened again read-only between the
+# two, so the slave's pass refuses to run and every read on B's CL is the
+# remote element's alone; with noadmit a dial is made first with no
+# marker; with linkdev the row and the link are a second volume's, vdc
+L=$R
+case " $* " in *" linkdev "*)
+	mkdir -p /mnt/h2k
+	mount -t hammer2 /dev/vdc@ROOT /mnt/h2k || { echo "mount vdc failed"; exit 1; }
+	L=/mnt/h2k; echo "linkdev 1"
+	# a connection spans its own device's PFSes, so A sees vdc's
+	echo "link-pfs-count $(hammer2 -s $L pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)";;
+esac
 touch /tmp/h2keys/peer.none
-/tmp/h2service add $R --clid "$1" --label peer --path "span:$2:$3" | sed 's/^/add /'
+/tmp/h2service add $L --clid "$1" --label peer --path "span:$2:$3" | sed 's/^/add /'
 if [ "$4" = ro ]; then
 	umount $R && mount -t hammer2 -o ro /dev/vdb@ROOT $R || { echo "ROOT read-only failed"; exit 1; }
 	echo "root-ro 1"
 fi
 if [ "${5:-}" = noadmit ]; then
 	rm -f /tmp/h2keys/peer.none
-	/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial0 2>&1; r=$?
+	/tmp/h2service dial $L --keys /tmp/h2keys > /tmp/h2wire.dial0 2>&1; r=$?
 	echo "noadmit-dial-rc $r"
 	echo "noadmit-refused $(grep -c 'auth failure: unknown host' /tmp/h2wire.dial0)"
 	sed 's/^/dial0 /' /tmp/h2wire.dial0
@@ -420,7 +445,7 @@ if [ "${5:-}" = noadmit ]; then
 	[ "$r" = 0 ] && { echo "dial-rc 0"; exit 0; }
 fi
 # the dial's own status, not a pipe's
-/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial 2>&1; r=$?
+/tmp/h2service dial $L --keys /tmp/h2keys > /tmp/h2wire.dial 2>&1; r=$?
 sed 's/^/dial /' /tmp/h2wire.dial
 echo "dial-rc $r"
 GUEST
@@ -682,6 +707,13 @@ mount -w -t hammer2 /dev/vdb@CL $C 2>/dev/null; echo "rw-mount-rc $?"
 echo "log-mount-refused $(klog1 'read-write mount refused: a remote element')"
 if mountpoint -q $C; then umount $C; fi
 umount $R || echo "umount failed"
+# The link on vdc outlives B's own device, whose unmount detaches the
+# element before the PFS is freed; the link ends at vdc's unmount.
+if mountpoint -q /mnt/h2k; then
+	echo "vdb-gone-detached $(klog1 'remote element CL at clindex 1 detached')"
+	echo "vdb-gone-threads $(threads)"
+	umount /mnt/h2k || echo "umount vdc failed"
+fi
 echo "log-detached $(klog 'remote element CL at clindex 1 detached')"
 echo "detached-why $(kl | grep 'remote element CL at clindex 1 detached' | sed 's/.*detached: //' | tr '\n' ' ')"
 echo "spans-del $(klog 'H2 -RXSPAN')"
@@ -801,7 +833,7 @@ phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1
 phase A fill.sh
 phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT" rw
-phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" $([ "$PASS" = 1 ] && echo rw || echo ro) $([ "$ADMIT" = 0 ] || echo noadmit)
+phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" $([ "$PASS" = 1 ] && echo rw || echo ro) $([ "$ADMIT" = 0 ] || echo noadmit) $([ "$LINKDEV" = 1 ] && echo linkdev)
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
@@ -837,6 +869,10 @@ val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
 
 echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM"):"
 npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
+# under LINKDEV B's link is vdc's, which spans vdc's PFSes and not B's CL
+slv=1
+nlb=$npb
+[ "$LINKDEV" = 1 ] && { nlb=$(num "$(val B link-pfs-count)" 0); slv=0; }
 [ "$npa" -ge 3 ] && [ "$npb" -ge 3 ]; check "each volume has ROOT, LOCAL and CL" $? "A $npa, B $npb"
 [ "$(num "$(val A dial-rc)" 1)" = 0 ] && [ "$(num "$(val B dial-rc)" 1)" = 0 ]; check "link: both dials hand a connected TCP socket in" $? "A rc $(val A dial-rc), B rc $(val B dial-rc)"
 # The callback's install off: B's reader answers A's LNK_CONN, read in the
@@ -844,13 +880,13 @@ npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 # A's while A, whose CONN from B came after B's install, reads B's whole.
 # The fake pass, a module with no hold, has no hold line on B.
 if [ "$CONNWAIT" = control ]; then
-	[ "$(num "$(val B conn-held)" 0)" = 1 ] && [ "$(num "$(val B log-proto2)" 1)" = 0 ] && [ "$(num "$(val B spans-rx)" 1)" = 0 ] && [ "$(num "$(val B log-registered)" 1)" = 0 ] && [ "$(nval B ro-mounted)" = 0 ] && [ "$(num "$(val A log-proto2)" 0)" = 1 ] && [ "$(num "$(val A spantab)" 0)" = "$npb" ]; check "control: with the callback installed where upstream installs it B reads A's LNK_CONN in the hold, never reads PROTO_2 and closes A's spans" $? "B held $(val B conn-held), read PROTO_2 $(val B log-proto2), spans admitted $(val B spans-rx), table $(val B spantab), registered $(val B log-registered), CL mounted $(nval B ro-mounted); A read PROTO_2 $(val A log-proto2) and holds $(val A spantab) of $npb spans; terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
+	[ "$(num "$(val B conn-held)" 0)" = 1 ] && [ "$(num "$(val B log-proto2)" 1)" = 0 ] && [ "$(num "$(val B spans-rx)" 1)" = 0 ] && [ "$(num "$(val B log-registered)" 1)" = 0 ] && [ "$(nval B ro-mounted)" = 0 ] && [ "$(num "$(val A log-proto2)" 0)" = 1 ] && [ "$(num "$(val A spantab)" 0)" = "$nlb" ]; check "control: with the callback installed where upstream installs it B reads A's LNK_CONN in the hold, never reads PROTO_2 and closes A's spans" $? "B held $(val B conn-held), read PROTO_2 $(val B log-proto2), spans admitted $(val B spans-rx), table $(val B spantab), registered $(val B log-registered), CL mounted $(nval B ro-mounted); A read PROTO_2 $(val A log-proto2) and holds $(val A spantab) of $nlb spans; terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 else
 [ "$CONNWAIT" = 1 ] && { [ "$(num "$(val B conn-held)" 0)" = 1 ]; check "control: B's reconnect held a second after its reader's start" $? "hold lines $(val B conn-held)"; }
 [ "$(num "$(val A log-proto2)" 0)" = 1 ] && [ "$(num "$(val B log-proto2)" 0)" = 1 ]; check "link: each kernel reads the peer's PROTO_2 announcement once" $? "A $(val A log-proto2), B $(val B log-proto2)"
-[ "$(num "$(val A spantab)" 0)" = "$npb" ]; check "link: A's span table holds one span per PFS of B, counted against B's pfs-list" $? "$(val A spantab) spans, $npb PFSs"
+[ "$(num "$(val A spantab)" 0)" = "$nlb" ]; check "link: A's span table holds one span per PFS of B's link device, counted against its pfs-list" $? "$(val A spantab) spans, $nlb PFSs"
 [ "$(num "$(val B spantab)" 0)" = "$npa" ]; check "link: B's span table holds one span per PFS of A" $? "$(val B spantab) spans, $npa PFSs"
-[ "$(num "$(val A span-cl)" 0)" = 1 ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl), B sees MASTER $(val B span-cl)"
+[ "$(num "$(val A span-cl)" 9)" = "$slv" ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl) of $slv, B sees MASTER $(val B span-cl)"
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
 [ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = "$npa" ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa"
@@ -1011,7 +1047,9 @@ fi
 # span deletion detached it. Each run reads the path it expects, not a
 # count of one by either.
 dw=$(val B detached-why | sed 's/ *$//')
-if [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ]; then
+if [ "$LINKDEV" = 1 ]; then
+	[ "$(val B linkdev)" = 1 ] && [ "$(num "$(val B vdb-gone-detached)" 0)" = 1 ] && [ "$(num "$(val B vdb-gone-threads)" 0)" -ge 1 ] && [ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "unmount" ]; check "remote: B's own device leaving first detaches the element once, by its unmount, with the link on vdc still up" $? "$(val B log-detached), by $dw, $(val B vdb-gone-detached) before vdc's unmount with $(val B vdb-gone-threads) link threads"
+elif [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ]; then
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "span deleted" ]; check "remote: the link's end detaches the element once, by the span's deletion" $? "$(val B log-detached), by $dw"
 else
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "connection ended" ]; check "remote: B's device unmount detaches the element once, by the connection's end" $? "$(val B log-detached), by $dw"
