@@ -228,7 +228,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 1.0.45
+unload, and passed Linux and DragonFly checks. The driver is at 1.0.46
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on
@@ -287,7 +287,8 @@ The work past 1.0 follows the completion plan under "Beyond 1.0", in its
 dependency order. P0 to P6 are closed on the Linux reading; P7's local
 half is built and read, item 7 below, and its remote reach is ruled B,
 a chain-level protocol designed with P8's at
-`doc/CLUSTER_PROTOCOL_DESIGN.md`, not yet built.
+`doc/CLUSTER_PROTOCOL_DESIGN.md`, whose read side a slave on another
+kernel runs its pass over since 1.0.46, its write side not yet built.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at

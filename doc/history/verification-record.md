@@ -17150,3 +17150,573 @@ findings: the first reading's tool count was traceable to nothing kept,
 answered by the two files above; the absence gate's line had not been
 read, answered by the count above; and the ghost entry of the paragraph
 above.
+
+## A slave reads a master on another kernel as an element of its cluster, 2026-10-25
+
+Stage 2b of `doc/CLUSTER_PROTOCOL_DESIGN.md`, the remote element's read
+side, built in two commits and corrected over thirty-one hostile audit
+rounds (all below). The link came first, at `30783ff`: the six remote
+ioctls and `RECLUSTER` are carried as upstream wrote them
+(`hammer2_ioctl.c`), a row's strings terminated and its type and flags
+checked before the volume header takes it, `RECLUSTER` handing the
+socket to the first slot on a block device rather than the focus's
+device, since with a remote master registered the focus is a proxy on a
+device with no media, and `statfs` making the same pick through
+`hammer2_pfs_first_bdev()`. `test/h2service.c` is the harness's daemon:
+it reads and writes the `copyinfo[]` rows, refuses a dial for a peer
+with neither a `.none` marker nor a `.pub` key in its directory, and
+hands a connected TCP socket to the kernel, which reads and writes it
+as it does an `AF_UNIX` end. `test/h2loop.c` gained a relay mode that
+pairs two guests' connections on the host and relays frames under its
+seeded knobs with every decision traced, so a partition, a stall, a
+rewritten frame and a lost close are scripted and the trace replays.
+The second guest is `artix-s6-h2b`, a clone of `artix-s6-kde` carrying
+the same three kernels (`p8-notes/clone-artix-s6-h2b-20261020.log`).
+
+The element came at `0d0717d`. A `PROTO_2` link is a connection device,
+a `hammer2_dev` with no block device, no `spmp`, a dio hash and a handle
+table, referenced by its chains, the link and the registration work
+item while it runs, and freed after the last reference and not at
+disconnect, since the retire's ccache and `ip->cluster` hold proxies
+past the XOP and past the connection. Its chains are proxies for the
+peer's: a reply's chain is allocated against the device with the peer's
+blockref and a synthetic `data_off`, a handle number in 64 KiB units
+that the table maps to what the peer needs to find the block again, an
+inode's own number for an inode chain and the inode the request ran
+under with the chain's key for a data or directory chain. The block
+lives in a `hammer2_io_t`'s `buf`, the form the port already had for a
+block with no folio, stashed on the handle by the feed and taken by the
+first load at no round trip; `hammer2_io_putblk()` frees it at the
+dio's last drop, so a proxy kept past its XOP has no data and every
+later load refetches by handle under the bound, with no dio or hash
+lock held across the round trip. A handle the peer no longer resolves
+reads `EIO` through the path `load_data` already has and errors the
+element; a refetched block whose compression or check method differs
+from the blockref the proxy keeps, or an inode of another number, is
+refused. So `load_data`, `unlock`, `drop_data`, `lastdrop`, the ccache
+and `hammer2_inode_repoint()` run the carried code unchanged and
+`hammer2_chain.c` is not edited for the element; the dispatch between
+the block-device and handle forms is three marked sites in
+`hammer2_io.c` and one above the DIO layer in
+`hammer2_xop_start_except()`, where `hammer2_remote_xop()` answers for a
+slot whose `pfs_hmps` is a connection device.
+
+A remote element is span-derived. A `LNK_SPAN` of `peer_type` HAMMER2
+and `PROTO_2`, whose `peer_id` names a cluster id a local `pmp` carries
+and is admitted by an enabled `copyinfo[]` row with that `pfs_clid`,
+and whose type is MASTER, is a candidate; a SLAVE's span is monitored
+and never registered. A per-connection work item, never the server's
+queue, fetches the peer's PFS root by `ipcluster`, checks the span's
+type and `pfs_id` against the root's `pfs_type` and `pfs_fsid`, then
+takes `hammer2_mntlk`, finds the `pmp` again by cluster id, checks that
+it still has a local element and is not mounted read-write, and
+registers the slot with the root chain in hand through the steps a
+later local mount takes in `hammer2_pfsalloc()`, without the
+`mount_count` increment and without a synchronization thread, which
+would walk the element by the peer's media offsets into
+`hammer2_get_volume()`'s panic. A span whose root cannot be read
+registers nothing and is retried only when the connection is
+re-established, the one retry the protocol offers. The first version of
+the note required a mounted `pmp` and the first wire run refuted it: a
+SLAVE alone has no master to answer its root inode's collect and its
+mount fails `ENOENT`, so the element comes first and the mount follows,
+which the harness reads as a SLAVE `CL` that does not mount before the
+dial and does after. The detach, `hammer2_remote_detach()`, marked
+`/* Linux */`, drops the slot's chain and clears the focus under
+`iroot->lock`, runs on a span `DELETE`, a lost connection and from
+`hammer2_pfsfree_scan()` for every remote slot of a PFS whose local
+device is leaving, always under `hammer2_mntlk` and never on the reader
+thread, which queues it to the work item; the item takes the lock by
+try-lock and requeues after a delay when refused, since the device
+unmount holds that lock through `hammer2_iocom_uninit()`, which waits
+for the reader. Two carried paths needed a marked line:
+`hammer2_inode_get()` released every element of a contended caller's
+cluster, the slave chain the sync pass held locked at its own index
+among them, and spun in `hammer2_chain_unhold()` the first time a
+remote master made the inode lock contended, so it skips that index;
+and a proxy, never placed under a parent, kept the level-0 lockdep
+class the super-root has, which read as a cycle against the mount's own
+order, so proxies have a class family of their own at their level on
+the peer (`h2ch_remote_inode`, `h2ch_remote_dirent`, `h2ch_remote_data`,
+listed by the harness).
+
+The remote storage function sends the request and waits on its state
+within `remote_timeout_ms`, which covers the whole reply transaction to
+its `DELETE` and is tested before each queued frame is taken until
+then; after the `DELETE` the frames are consumed to the end whatever the
+consumer's own time, so a master that answered in full is never counted
+unreachable for the time the slave took to read it. A timed-out element
+feeds `HAMMER2_ERROR_ETIMEDOUT` and retires normally, and a connection
+that closes fails every request pending on it with the same code. The
+flush, which has no remote part in stage 2, is answered locally.
+
+What the client refuses of a feed, each found by an audit round and
+each with a control in the wire harness or in the code's own log line:
+a type other than an inode, a data block or a dirent; a check method
+`testcheck` does not know, whose default arm `hpanic`s every device on
+the host; a compression the decode does not know; `keybits` past 63 or
+a key not aligned to it; a dirent whose name is not where the media
+keeps it; an inode block shorter than an inode or with a name longer
+than its array; a block whose size its radix does not give; a chain the
+request could not be answered with by its type and key (for `ipcluster`
+and `lookup` an inode of the number asked, for `readdir` and `scanlhc`
+an entry or an inode at or past the start key and in the hash range,
+for `nresolve` an inode or an entry carrying an error, for `scanall` its
+range and what the scanned inode holds, for a read or `bmap` the data
+block covering the offset or the file's own inode, the inode for a read
+only at offset 0); feed keys that do not rise; a readdir's stopping key
+at or below what was fed; and a feed of an inode or data block with
+neither bytes nor an error, which the inode and strategy consumers
+would dereference. A frame this side cannot take ends the link, so no
+later key of the same scan is fed past it. An error a peer reports on a
+chain is taken only from the media errors a chain carries, `EIO`,
+`CHECK` and `BADBREF`, and reads `EIO` otherwise. The element's end is
+judged by an allowlist: a clean end, `ENOENT` and `ETIMEDOUT` pass as
+the master's vote, and every other end reads `ENOTCONN`, the class
+decision C counts as unreachable, so a refusal, a server that could not
+take `hammer2_mntlk` within its bound, a quiesce, a frame this side
+refused and the peer's own media error all leave the master without a
+vote and none reads as the master having answered that the key does
+not exist, which with two masters would be the quorum's `ESRCH` and the
+collect stepping over every key the local element holds. The
+thirteenth round found three ways a peer's failure still read as that
+answer after the earlier rounds had closed one each, which is why the
+list is of what passes; the fourteenth found the two ends it did not
+see, a reply closed cleanly with no end fed, which is an answer only
+from a one-chain descriptor after that chain, since a readdir or a scan
+always feeds its end, and a closing feed carrying a chain, a shape the
+protocol gives no meaning, at which the link ends.
+
+In stage 2 a PFS with a remote element is read-only at the VFS, on
+three checks under `hammer2_mntlk`: registration refuses a PFS mounted
+read-write, the mount refuses `rw` while a remote slot exists, and
+`->reconfigure` refuses `rw` the same way around its test and its write
+of `pmp->rdonly`. A dispatch-time refusal in the XOP layer was the first
+shape and is not the design, since buffered writes and attribute
+changes dispatch no XOP and a strategy write ends its folios only inside
+its storage function. The slave's pass writes its element through chain
+calls a read-only superblock does not refuse, so it refuses to run while
+`hmp->rdonly` is set, with a log line that is the harness's control, and
+refuses a local snapshot of a remote focus, since `hammer2_pfs_snapshot()`
+would take the connection device as its `hmp`. The master-side snapshot
+command, the slave's pass over the wire and the keepalive are the rest
+of stage 2b the roadmap row lists, in the code or in the note and
+driven by no run.
+
+`script/cluster-wire.sh` reads the link and the element between the two
+guests through the relay: each kernel reads the peer's `PROTO_2`
+announcement once; each span table holds one span per PFS the peer's
+own utility counts, with the `CL` span seen by the shared cluster id and
+the peer's type; the connection outlives the VOLCONF frames; one pair
+of message threads on each guest; the slave side's unmount empties the
+master side's table; the slave's `CL` alone does not mount; B registers
+A's `CL` root as `clindex` 1 with `pfs_nmasters` 1; B lists A's 305
+files and a directory of 300 entries, larger than one readdir XOP
+takes; B's pass refuses its read-only device and the slave holds no
+file by the utility's own `show`; `fiemap` of a 512 KiB file runs
+`bmap` over the wire and claims no address; every file's digest on B
+equals A's, 305 of 305 by sha256, warm and after dropping caches; a
+read-write remount and a read-write mount of B's `CL` are refused while
+the element is registered; no feed refused as a proxy and no protocol
+error over 887 remote XOPs; B's device unmount detaches the element
+once; the proxies are classed apart at their level; no kernel warning,
+lockdep or sanitizer report on either guest, lockdep still on, the log
+stream alive; kmemleak cleared once before each load, 0 before the
+unload and 0 in the module's own text range after it on both; both
+modules unloading with no message thread; and the relay's trace
+holding the exchange with every frame a decision line, 4765 frames on
+the debug kernel's acceptance run. Five controls run the relay's rewrites under the module
+the tree builds and are cited in the note with their runs: under
+`H2_WIRE_REKEY=1` the key of the first data block fed moves one block
+up and the slave refuses that feed, `filefrag` listing no extent
+(`wire-run-20261024-202905`); under `H2_WIRE_DIRENT=1` the inode
+answering the first `nresolve` becomes a directory entry with no bytes
+and that one lookup fails `ENOTCONN`, where before the check the same
+control faulted the slave through a null pointer in
+`hammer2_inode_get()` (`wire-run-20261024-203028` against
+`wire-run-20261021-020154`, module `8b22d977871bbec1`); under
+`H2_WIRE_REFUSE=1` the relay answers
+that `nresolve` with `LNK_ERROR` carrying `DMSG_ERR_NOSUPP` and the stat
+fails not connected (`wire-run-20261024-203326`), where the module
+before the allowlist returned "Operation not supported" as the lookup's
+answer (`wire-run-20261021-045155`, module `77a271b1cfe20139`); under
+`H2_WIRE_STALL=5000` the relay holds every frame due to the slave from
+the first `readdir` answer and both `readdir` calls end `ETIMEDOUT`
+after the 2000 ms bound, every file read after the stall equal to the
+master's (`wire-run-20261024-203151`); and under `H2_WIRE_END` the
+closing frames of an empty directory's two `getdents` calls are
+rewritten, `aborted` and `noeof` reading the listing not connected
+(`wire-run-20261021-152315`, `-152437`), `lost` setting a byte count on
+the close, at which the slave ends the link and lists nothing after,
+thirty-seven frames relayed and one rewritten
+(`wire-run-20261021-153331`, read again as `wire-run-20261025-000853`),
+and `onefed` rewriting each one-entry close of a 300-entry listing read
+through a 32-byte buffer, where the element reads both such closes
+`ENOTCONN` by its own line and the listing completes, the kernel
+returning the entries written rather than the error
+(`wire-run-20261024-230420`, `wire-run-20261025-000727`); the negative
+controls, the module with one refusal removed (`ec6bca42546a0c44`,
+`wire-run-20261024-230225`) and the module before the descriptor rule
+(`09eeb032d2850ebe`, `wire-run-20261025-001017`), each fail the check
+that reads the refusal. All of these are on the debug kernel, the
+controls under module `d47e9de86433a37e` and the comparison runs and
+negative controls under the modules named with them, kept as `fixtures/wire-run-<stamp>.{out,trace}`
+with both guests' kernel logs, the host-side logs under
+`p8-notes/final-2b/wire-r1[4-8]*-debug.log` and, for the run before the
+dirent check, `wire-r10-dirent-unfixed-debug.log`.
+
+Three apparatus defects of this stage are their own record. The
+post-unload kmemleak reading counted every unreferenced object on the
+guest, so a count was a run two hours old under the new module's
+addresses (`a9ab6d0`); every harness now clears kmemleak after two
+scans on the line before the load, printing `kmemleak-cleared`, which
+the host requires once per load the run performs, counted by
+occurrence, scans twice before the unload, since
+one scan reports no new object, and counts after the unload only frames
+in the text range `/proc/modules` gave before `rmmod`, waiting out the
+scanner's minimum age (`f72258c`, `90c7db1`, `279b27a`, `2235bbb`,
+`6ae28a8`, `336195b`, `b66e9d5`, `c21336a`). The
+positive control, a module holding 64 objects from a `noinline` text
+function, counts 3 in its own range and a module whose allocation is in
+`__init` text counts 0 (`p8-notes/r12-notes.md`,
+`kmemleak-control/`). Since the reading is six harnesses' guest text,
+`test-inventory.sh` reads it as text: the block after the unload
+compared byte for byte with a canonical copy, the file around it read
+line by line for a second `mrange`, a second reporting unload, a
+kmemleak line in a form other than the seven the harnesses share, a
+clear not on the line before the guarded load, a marker or a reading
+produced anywhere but its place, and the reading before the unload
+once on the line after its `sleep 6`, the file's name and a load of
+the module read on comment lines too and, with the word `insmod`, on
+the line whole before its trailing comment is stripped, and the
+guarded load lines counted per file, one, and two in
+`cluster-sync.sh`; 73 controls, copies of one harness with a line
+added, changed, moved or dropped, the set measured against every
+weakening of the rule tried (67 at `c21336a`, 57 failing the gate and
+the 10 that pass admitting none of the matrix's sets), their number
+asserted. What passes the rule is named by class in the gate's
+comment and in `doc/README.testing.md` row 13: three classes met at
+run time by the host's counts, and the floor, a harness written
+against the gate, which the mutation matrix of rounds 17 to 27
+measures at 163 sets, 131 failing in every harness, 30 passing (11
+met at run time, 16 the floor, 3 changing nothing the shell does) and
+2 mixed (`p8-notes/r28-matrix-classes.txt`); the floor's member the
+rule's comment defers, the harness's clear and load reused from a
+function or a loop with one of its two runs' output kept from the
+`.out`, is a `DEFER` to the marker written to `/dev/kmsg`, with its
+ledger row; the guest half run again with one run's output kept,
+the first's or the last's, and a load from a helper file the rule
+does not read, before the clear or after the reading, are named
+beside it as members that marker would not read either.
+Second, a lockdep report turns lockdep off until the next boot, and five
+harnesses counted reports on a guest with nothing checking; each reads
+`debug_locks` first and refuses a 0 (`7f07dbd`, `a3bf362`). Third,
+`test-history.sh` read the `.md` documents alone when the checkpatch
+baseline, a `doc/*.txt`, named a moved hash; it now reads every listed
+document but the two rewrite maps, which it names, with a control that
+commits an unreachable object and rides the whole path the cited hashes
+take, and asserts one FAIL line per hash off the history (`3f4f09f`,
+`b5d13ed`, `cb4b8b2`, `22747b3`, `eda6de0`, `d862b2b`).
+
+One reading was stale for four days with no run behind it. The server
+holds a peer's readdir count to between 1 and 255 since `4b4d4d6`,
+the first commit after round five, and the stage 2a client, `test/h2attach.c`, sent 0 by
+default, which the server before that commit read as no bound. No
+`cluster-dmsg.sh` run was made between `4b4d4d6` and 2026-10-25, every
+round reading `cluster-wire.sh` alone, and the status document's "79
+checks and 0 failed on both" stood on runs of a module the tree no
+longer built; the first run of the 2a harness on the final module read
+one entry of forty, 79 checks and 4 failed, three of them the
+readdir's and one the marker's below
+(`fixtures/dmsg-run-20261025-121316.out`, `final-2b/cluster-dmsg-debug-r23.log`).
+The client now asks for the server's bound by default and the run after
+it reads 79 and 0 (`dmsg-run-20261025-121901`). The same first run read
+the kmemleak marker 0 times on the host while the guest printed it,
+since the host's `nval` took a name followed by a space and the marker
+carries no value; `nval` counts a bare name now. The lesson is the one
+of 2026-10-19 again, that closing a step runs every instrument that
+reads the changed source, not only the stage's own.
+
+Acceptance on the two 7.3 kernels, both guests up and sharing the host
+(`H2_FIXTURE_SHARE=1`), every arm run again at the tree of `c21336a` after
+the twenty-seventh audit, since every harness changed in its answers.
+`src/` is unchanged since `608e4b5` but for two comments, one in
+`hammer2_remote.c` (`6817f2f`) and one in `hammer2_synchro.c`
+(`2ac664a`, `c21336a`, `2a628d5`, `eb7ce00`), so the module is one source on both kernels and a different
+object on each, built by each harness against the kernel it runs on:
+`cluster-wire.sh` prints the object's sha256 in its header, and the
+chain script that ran the arms (`final-2b/chain-debug-r28.sh`,
+`chain-kasan-r28.sh`) read the built module's sha256 after each harness
+and wrote it on the last line of that harness's log, with a `git
+describe` stamp at its head naming the head those runs were made at,
+replayed message-only since with its tree and author date kept as
+`c21336a`; the module built at the tree of `eb7ce00`, which `8c019f8`
+leaves unchanged under `src/`, against each kernel hashes as the
+logs' last lines do (`final-2b/module-hash-eb7ce00.txt`,
+`sha256sum`'s own lines, the two make logs beside it), and the
+scripts at `8c019f8` differ from that tree in comments alone
+(`cluster-sync.sh` and the gate `test-inventory.sh`; 0 changed lines
+outside a comment under `script/`). The crash arm ran
+on both kernels this time, where the rounds before ran it on the KASAN
+kernel alone.
+
+- `h2debug-7.3`, the module `d47e9de86433a37e` on every arm's last
+  line, both guests already on this kernel from round 27's run:
+  `cluster-dmsg.sh` 79 checks and 0 failed (`dmsg-run-20261025-211321`),
+  kmemleak cleared once and 0 printed; `cluster-wire.sh` 29 checks and
+  0 failed (`wire-run-20261025-211338`, 305 of 305 digests equal, 4765
+  frames in the trace), kmemleak cleared once and 0 printed on both
+  guests; `cluster-quorum.sh` 22 checks and 0 failed; `cluster-sync.sh`
+  under `H2_SYNC_SNAPSHOT=1` 56 checks and 0 failed
+  (`cluster-run-20261025-211517`, 14 snapshot passes, 8 verified, 5
+  waited behind a frontend write, 1 stopped by an unmount, 0
+  unverified); `cluster-sync.sh` under `H2_SYNC_SNAPSHOT=1 H2_CRASH=1`
+  45 checks and 0 failed (`cluster-run-20261025-212316`, the power cut
+  2002 updates into the pass, both media `fsck_hammer2` clean as the
+  cut left them, the last target line before the cut reading taken, the
+  master's root and the source's name both on the master's image, the target by name on the
+  slave's, and the first pass after the restart deleting the stale
+  source: `last-tgt=taken master-pfs=1 src-media=1 stale=1 tgt-kept=1`,
+  kmemleak cleared twice for the two loads and 0 printed, 1 snapshot
+  pass after the restart, 1 verified); the host's QEMU core count 1
+  before the chain and 1 at its end (`chain-debug-r28.log`); logs
+  `final-2b/*-debug-r28.log`.
+- `h2kasan-7.3`, the module `f8e1c3bc0b985b9a` on every arm's last
+  line, 18 `__asan` and 3 `__ubsan` imports in it where a harness
+  counts them, 0 reports: `cluster-dmsg.sh` 79 checks and 0 failed
+  (`dmsg-run-20261025-214823`), kmemleak cleared once and 0 printed;
+  `cluster-wire.sh` 29 checks and 0 failed (`wire-run-20261025-214847`,
+  305 of 305 digests equal, 4757 frames in the trace), kmemleak cleared
+  once and 0 printed on both guests; `cluster-quorum.sh` 22 checks and
+  0 failed; `cluster-sync.sh` under `H2_SYNC_SNAPSHOT=1` 56 checks and
+  0 failed (`cluster-run-20261025-215121`, 23 snapshot passes);
+  `cluster-sync.sh` under `H2_SYNC_SNAPSHOT=1 H2_CRASH=1` 45 checks and
+  0 failed (`cluster-run-20261025-220813`, the power cut 2003 updates
+  into the pass, both media `fsck_hammer2` clean as the cut left them, 0
+  of 20000 backlog files on the slave's media at the cut, the last target
+  line before the cut reading taken, the source's name on the master's
+  image beside its own root, the target by name on the slave's, and the first pass after the
+  restart deleting the stale source: `last-tgt=taken master-pfs=1
+  src-media=1 stale=1 tgt-kept=1`, kmemleak cleared twice for the two
+  loads and 0 printed, 1 snapshot pass after the restart, 1 verified);
+  `sync-alloc-fault.sh` 10 checks and 0 failed (3 allocation failures
+  injected, the thread create the one forced, the cluster running
+  synchronization-less, the remount healing the thread, kmemleak cleared
+  once and 0 printed) and `sync-io-fault.sh` 8 checks and 0 failed (4 I/O failures forced, 45
+  hammer2 frames in the trace, 200 files written before the fault all
+  readable after it, the volume unmounting, kmemleak cleared once and 0
+  printed); the
+  host's QEMU core count 1 before the chain, 1 after `artix-s6-h2b` was
+  cycled to this kernel and 1 at the end
+  (`chain-kasan-r28.log`); logs `final-2b/*-kasan-r28.log`. The chain's
+  first launch cycled `artix-s6-kde` and reached no ssh in five minutes
+  (`chain-kasan-r28-stall.log`; the probes through the agent and their
+answers, extracted from the session's transcript, in
+`chain-kasan-r28-stall-agent.txt`): the guest agent answered, the kernel
+  was `7.3.0-kasan` with sshd listening and the link's carrier up, and
+  NetworkManager held the device "unavailable" for want of a carrier,
+  which reads as the link-up event missed on the slow boot, an
+  inference the cure is consistent with; `ip link set eth0
+  down` and `up` through the agent gave it the event and a lease, the
+  relaunched chain found that guest already on the kernel and cycled
+  the other, and the script now bounces the link once through the
+  agent after two minutes without ssh. No harness had run in the
+  stalled launch.
+
+The audits. Rounds one to five of the element were answered at
+`65ee9d2` (a handle keyed by `data_off` alone handed a deduplicated
+block's second identity the first's content), `25857a8` (four ways a
+frame reached carried code that trusts the media), `d8d693b` (keybits
+and keys taken as sent, a refetched block unchecked), `835ffca` (a
+directory of more than one XOP's entries listed only the first batch)
+and `6ef44b0` (a stopping key at or below what was fed restarted the
+frontend's loop without end, uninterruptibly); rounds six to twelve at
+`4b4d4d6` through `279b27a`, their findings the bounds and refusals
+above, with round twelve's notes kept at `p8-notes/r12-notes.md`.
+Rounds thirteen to thirty-one are kept whole at
+`p8-notes/r13-audit-report.txt` through `r31-audit-report.txt` with
+their briefs beside them; their subject findings numbered 8, 5, 3, 2,
+0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 1 and 0, the three non-zero
+after the zeros a mechanism misstated in six texts, a comment's
+wording and the wording's siblings, not the code. The thirteenth's eight: a citation pin
+broken again by the next commit, the note's `XXX` list short by one,
+three ways a peer's failure still read as the master's answer (a
+transient error answered, the window bound re-armed per window, the
+loop-head deadline counting the consumer's time), a subject line
+claiming a bound that did not exist, the direct-data copy's inverse
+case unguarded, and a frame failing its range check feeding `EIO`
+without ending the link; the fourteenth's five, a reply ended with no
+end fed counted in progress and a refused frame followed by frames
+still fed among them; the fifteenth's three, the clean-close exemption
+keyed on the count rather than the descriptor among them; the
+sixteenth's two, a comment and a message. The rest were apparatus
+findings on the kmemleak rule, the history gate, the messages, the
+status opener, the class file and this entry, answered in the commits
+and the text each round's brief names beside its findings, some over
+two rounds. The twenty-third's ten (B1 to B10) were answered
+at `336195b` (B1, the marker the host never counted), `6ae28a8` (B2
+the marker count under `H2_CRASH=1`, B3 the redirected clear named as
+the floor, B4 the load's argument slot, B5 the dead `timeout` strip
+and the parts named without a control, B6 the controls' claim, B10
+`env -C`), `ba5bac0` (B9, a filter inside the history extraction) and
+the replays `2235bbb` and `d862b2b` (B7, B8, two messages). The
+twenty-fourth's twelve (C1 to C12): `45e1d9f` answered C1 (a clear or
+a load hidden after a quoted ` # ` on its line, which pass 1's comment
+strip removed before the trigger read it), C2 (the redirected clear
+named by mechanism, with a deferral the next round retired), C3 (the
+value class admitting a quote), C4 (two weakenings admitting a set no
+control read), C5 and C6 (stale sentences), C8 (the history floor) and
+C12 (the status opener's "since"); the replays `2235bbb`, `d862b2b`,
+`dfa5704` and `6ae28a8` answered C8, C9 and C10 (messages); C7 (no
+gate over the host arms) was answered by the KASAN runs of the three
+arms no run had read and the host's check left as the named floor;
+C11 (three harnesses print no module hash) is recorded above as it
+is. The twenty-fifth's nineteen (A1 to A19): `cca1171` answered A1
+(a second clear and load after a line printed without its newline,
+whose marker glued to that line and counted as none, read by the
+guarded load lines counted where it adds one), A2 (the deferral
+retired, and restored a round later with the trigger that round
+named), A3 (a brace in the load's value), A12, A17 and A18 (the
+comment's counts, the comment lines, a fourth class) and A13 (the
+status opener); the replays `6ae28a8`, `2235bbb` and `45e1d9f`
+answered A14, A15 and A16 (messages); A4 to A11 were this entry's own
+hashes, counts and wording, corrected here, and A19, the row's gate
+clause, is filled from the pre-push run. The twenty-sixth's twelve
+(N1 to N12), none on the subject: `b66e9d5` answered N1 (the
+harness's clear and load reused from a function after a line printed
+without its newline, whose glued marker the host's line-start count
+missed and the load count could not see; the host counts the marker
+wherever it sits on a line, and the reused load whose second run's
+output never reaches the `.out` is the floor's one residue, deferred
+with its trigger), N2 (a clear on a comment line inside a quote or a
+heredoc left open above it, which pass 1 skipped), N3 (`cluster-sync.sh`'s
+two load lines counted per file, named as a class one of its two runs
+fails), N4 (the detach on a span's deletion, which `H2_WIRE_END=lost`
+drives), N5 (load lines in the file, not loads the run performs), N9
+and N10 (a control for the count's lower side, the comment's parts);
+the replay `cca1171` answered N4, N5 and N12 in its message; N6, N7,
+N8 and N11 were this entry's, corrected here, N7 by the arms run
+again at `b66e9d5` and `2ac664a`, four on both kernels and the crash
+arm and the two fault harnesses on the KASAN kernel, the first crash
+run of which found the check that `2ac664a` corrects. The
+twenty-seventh's eight (S1, A1 to A7), one on the subject: S1, that
+`2ac664a` and the five texts written with it said the thread's sync
+after its snapshots leaves each header to the kernel's writeback,
+where the flush under `HAMMER2_XOP_VOLHDR` writes every device back,
+flushes its cache and waits on the header's folio
+(`hammer2_xop_inode_flush()`), the sync running only after a taken
+target, so a kept target leaves the source's name to the next sync of
+a PFS mounted from the master's device, the one way the code leaves
+no source name short of a failed header write, which is how the cut
+of `cluster-run-20261025-193845` read on the master's image, and
+`cluster-run-20261025-185105` before it by its stale count alone,
+neither printing its target line; `c21336a` answered it in the
+comment at its line count, the porting section, the testing row, the
+harness and the message, and with it A1 (the crash check accepting a
+missing name and no delete whatever the cut pass did, and a failed
+show read as none: the guest prints the last target line before the
+cut, the master's root is read beside the source's name, and the check wants
+the name and its delete after a taken target), A2 (two markers on one
+line counted as one by the host's count by line, the floor's reused
+load with both captured outputs echoed together, and a second clear
+whose refused load ends only its substitution: the six harnesses count
+by occurrence, with the count by line as a control), A3 (a load of the
+module on a comment line inside an open quote or heredoc, read now as
+the file's name is, with a control), A4 (the skip dropped fails
+`cluster-sync.sh` alone) and A5 (the wire runs read one detach each);
+the replays `cca1171`, `b66e9d5` and `2ac664a` answered A5, A6 and S1's
+message; A7 was this entry's, the KASAN module's hash now in every
+harness log's last line, the rounds list and the three version openers
+the record commit moves. The twenty-eighth's fourteen (S-a, S-b, D1
+to D5, G1 to G4, M1, M2 and H1 as a candidate), two on the subject's
+text: S-a, that the comment after the target step and the testing row
+said a kept target leaves the source's name to the next sync of a PFS
+mounted from "its device", the target's, where the name is on the
+master's, and S-b, that it said a target found by name is the slave
+before the pass, which a kept target is not; `2a628d5` answered both
+at the file's line count, with D2 (the harness comment's run named),
+G1 (the seventh weakening named), G2 (row 13 naming the comment-line
+load), G3 (the pipeline element and the subshell the guard ends) and
+G4 (the deferral's trigger naming the clear), the replay `b66e9d5`
+answered M1 and M2 in its message, and D1, D3, D4 and D5 were this
+entry's (the debug wire run's frame count, which arms the twenty-sixth
+round's reruns covered, the stall's probes kept, the crash arm on both
+kernels in the row); H1, that under `H2_CRASH=1` nothing ties the
+target line read to the cut pass, can fail a right run and, on the
+recorded sequence, not pass a wrong one, and stands as the harness's
+limit; its upgrade is the arm counting the guest's lines before the
+`ROOT` mount so the target line read is the cut pass's own, with the
+thread checks run under the crash as well, and its trigger a crash
+run whose last target line before the cut is read against what the
+image shows. The twenty-ninth's four
+(A1 to A4) and seven nits, none on the subject: A1, that the replayed
+message named as growth a control `cca1171` had added; A2, that this
+entry counted the comments in `src/` by commit; A3, that the floor's
+reused load was named with its second run the quiet one, where a copy
+quiet on its first and loud on its reload passes the rule and the
+count the same way, and that a second clear whose marker reaches the
+`.out` was said to fail the run, which it does beside the first's
+marker; A4, that two texts and this entry read the target line
+printed last before the cut as the cut pass's as fact, which nothing
+in the run ties to that pass. `eb7ce00` answered A3 and A4 in the
+comment, row 13, the ledger row, the harness and the testing row, with
+the trigger's wording, the controls' count sentence and the porting
+section's run (N1, N2, N7) and the snapshot comment's sync said to
+put both names on the media when it succeeds, the sync's return
+being unread; the replay `b66e9d5` answered A1 in its message; A2 and
+N3 to N6 were this entry's (the comments counted by file, two commits
+added to the kmemleak list, the stall extract carrying the probe
+script's write and the slow-boot cause marked an inference, the
+module's hashes kept as `sha256sum` printed them, the harnesses'
+difference from the runs' tree stated). The thirtieth's one on the
+subject's text, S1, that the sync's qualifier added to the snapshot
+comment was missing from the crash arm's comment, the porting section
+and the testing row, four on the apparatus (A1, row 13 requiring one
+marker line per load where the host counts by occurrence; A2, the
+message of the round 29 commit and this entry counting the snapshot
+comment among the texts reading the target line as the cut pass's;
+A3, row 13's "their number asserted"; A4, this entry counting the load
+lines per guest script where the rule counts per file), a candidate
+class of the floor, C1, the guest half run again with the last run's
+output kept, which the marker on the kernel log would not read
+either, and five nits. `83e716c` answered S1, A1, A3 and C1 in the
+three texts, row 13 and the gate's comment; the amend `eb7ce00`
+answered A2 in its message; A2's count, A4 and four nits were this
+entry's (the floor's deferred member no longer counted as one, the
+core counts as counts of 1, the stall's inference consistent with its
+cure rather than borne out by it, H1's "not pass a wrong one" bounded
+to the recorded sequence) and the fifth the class file's (its reuse
+row brought to the wording of record, its edit dated by round). The
+thirty-first found nothing on the subject, reproduced the matrix,
+the weakenings, the arms, every acceptance number, both module
+hashes and the replays, and returned two members of the floor's
+kept-output and unread-load shape (A1, the rerun with the first
+run's output kept, the second's reading discarded; A2, a load from a
+helper file the rule does not read, before the clear or after the
+reading, which the kernel-log marker would not read either since a
+helper runs no clear) and nine nits (every condition that skips the
+header write, the rerun member's caller clause, three ragged texts,
+the module-hash note's edited header undated, the class file's
+replaced hashes, three sentences of this entry, H1's upgrade
+unnamed). `8c019f8` names both members in the gate's comment and row
+13, reads the host's requirement as one marker per load of the
+module the harness's own text performs, narrows the deferral's
+trigger to the reuse under a redirection the kernel-log marker
+cures, and names every header-skipping condition in the porting
+section and the crash arm's comment; the notes and this entry carry
+the rest, the round 29 commit's ragged message left as it is. Those
+texts went out after the thirty-first round and no round read them:
+the loop was closed there on a reading of its rate, no round since
+the sixteenth having found a defect in the code, the subject
+findings since being a mechanism misstated in comments and prose,
+its wording and the wording's siblings, and the thirty-first's
+findings being names of the floor's classes and wording. One more
+move came from no round: the hand run of the hook before the push
+found `test-checkpatch.sh` reporting the deviation set moved, `return
+is not a function` 349 to 353 and `no spaces at the start of a line`
+230 to 231, five hits `982c4ea` had made in `hammer2_remote.c` on
+2026-10-21 in the tree's style with the baseline left behind, and
+unseen since because the gate exits 2 with no checker and the host
+sweep leaves it out; `2100ed0` moves the two rows and the total with
+the note beside them. The stage's record is this entry; the row is
+1.0.46.
