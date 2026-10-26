@@ -931,6 +931,13 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# "kept" line is a claim about this count, not about a listing taken
 	# after that pass.
 	echo "crash-tgt-on-media $("$HAMMER2" -v show "$SLAVE" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')" >> "$W/out"
+	# And what it left on the master's. The thread's sync after the two
+	# snapshots writes each device's volume header into that device's page
+	# cache, and the media takes it with the kernel's writeback, so a cut
+	# soon after leaves a name on one device and not the other: the run of
+	# 2026-10-25 under this arm found the target by name and no source, and
+	# the first pass then had nothing stale to delete.
+	echo "crash-src-on-media $("$HAMMER2" -v show "$MASTER" 2>/dev/null | grep -c 'filename "CL.h2sync-src"')" >> "$W/out"
 	# How much of the pass the cut left on the slave's media. The thread
 	# flushes once per pass, after its scan, and the volume header follows
 	# with a mounted PFS's sync, so the slave's media holds all of a pass or
@@ -1100,13 +1107,13 @@ fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
 else
-	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) backlog-media=$(val crash-backlog-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
+	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) backlog-media=$(val crash-backlog-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) src-media=$(val crash-src-on-media) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
 	c=$(val crash-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val crash-in-pass)" = 0 ]; check "the power is cut inside the copy" $? "${c:-none} updates into the pass, in-pass rc $(val crash-in-pass)"
 	a=$(val crash-destroyed); [ "${a:-9}" = 0 ]; check "the guest is destroyed at the armed line" $? "virsh destroy rc ${a:-none}, session rc $(val crash-session-rc)"
 	a=$(val crash-fsck-cluster-master.img); b=$(val crash-fsck-cluster-slave.img); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "both media are consistent as the cut left them" $? "fsck_hammer2 exit ${a:-none} and ${b:-none} before recovery"
 	n=$(val crash-backlog-on-media); [ "${n:-x}" = 0 ] || [ "${n:-x}" = "$NBIG2" ]; check "the cut leaves the slave's media at a whole pass's state" $? "${n:-none} of $NBIG2 backlog files on the slave's media at the cut; the pass's copies reach the media in one flush after its scan"
 	a=$(val recover-threads); [ "${a:-0}" = 1 ]; check "the two devices returning start the thread" $? "${a:-none}"
-	a=$(val recover-stale); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot the cut left is deleted by the first pass" $? "${a:-none} stale delete(s)"
+	m=$(val crash-src-on-media); a=$(val recover-stale); { [ "${m:-0}" -ge 1 ] && [ "${a:-0}" -ge 1 ]; } 2>/dev/null || { [ "${m:-x}" = 0 ] && [ "${a:-x}" = 0 ]; }; check "the source snapshot the cut left is deleted by the first pass, and none is when the cut left none" $? "${m:-none} on the master's media at the cut, ${a:-none} stale delete(s)"
 	# Three readings make one claim: the target is on the slave's media as
 	# the cut left it (read host-side while the guest was down), the first
 	# pass finds it by name rather than taking one, and one is listed after

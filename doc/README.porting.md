@@ -1516,9 +1516,14 @@ pass verifies and kept across a failed or interrupted pass, a crash and
 an unmount, and found by name on the next mount. The snapshot helper's
 own flush stops at the new PFS inode and leaves the volume header to
 the next sync of a mounted PFS, so the thread runs the PFS sync once
-more after taking a target: a cut before that header would leave the
-blocks of a target and no name, and the restarted thread would take a
-fresh target of the slave as the cut left it. This is the handoff's
+more after taking a target; that sync writes each device's header into
+its page cache and the media takes it with the kernel's writeback, so a
+cut before the header is on the media leaves the blocks of a target and
+no name, and the restarted thread takes a fresh target of the slave as
+the cut left it, which the pass's one flush keeps at a whole pass's
+state (the run `cluster-run-20261025-185105` cut 2003 updates into the
+pass found the target by name and no source, whose stale name the
+first pass then had nothing to delete). This is the handoff's
 "a failed transfer does not destroy the last known-good destination",
 met with the primitives the port has. The lazier alternative, no target
 at all, was rejected because the property is explicit. The design

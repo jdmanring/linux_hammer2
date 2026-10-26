@@ -867,14 +867,14 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			/*
 			 * The snapshot's own flush stops at its inode and
 			 * leaves the volume header to the next sync of a
-			 * mounted PFS, so a cut before that sync finds no
-			 * target by name on the slave's media, only the
-			 * blocks of one; the source snapshot survives the
-			 * same cut because the target's sync wrote the
-			 * master's header after it.  A target is the last
-			 * known-good slave only if it is on the media before
-			 * the pass's first write, so the header is written
-			 * here by the sync the snapshot itself ran.
+			 * mounted PFS, so the sync runs here; it writes each
+			 * device's header into its page cache and the media
+			 * takes it with the kernel's writeback, so a cut soon
+			 * after can leave either name on its device or not.
+			 * A target found by name is the slave before the pass;
+			 * with none the next mount takes a fresh one of the
+			 * slave as the cut left it, whole by the pass's one
+			 * flush, and a source with no name is nothing to delete.
 			 */
 			if (derror == 0)
 				hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
