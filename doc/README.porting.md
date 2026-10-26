@@ -1520,7 +1520,8 @@ more after taking a target, and that sync writes each device's header
 and waits for it (`hammer2_xop_inode_flush()` under
 `HAMMER2_XOP_VOLHDR` writes every device back, flushes its cache and
 waits on the header's folio), so both names are on the media before
-such a pass. A kept target leaves the source's name, taken under a
+such a pass when it succeeds (the header write is skipped on a flush
+error and the sync's return is not read). A kept target leaves the source's name, taken under a
 sync that ran before its create, to the next sync of a PFS mounted
 from the master's device, its syncer's every thirty seconds or a
 caller's, so a cut inside such a pass can leave the source's blocks

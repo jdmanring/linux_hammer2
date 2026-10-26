@@ -936,8 +936,9 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# the control a count of zero needs, since a show that fails reads as
 	# none. The thread's sync after a taken target writes each device's
 	# header and waits for it, so both names are on the media before such
-	# a pass; a kept target leaves the source's name to the next sync of a
-	# PFS mounted from the master's device, its syncer's every thirty
+	# a pass when it succeeds; a kept target leaves the source's name to
+	# the next sync of a PFS mounted from the master's device, its
+	# syncer's every thirty
 	# seconds or a caller's, so a cut inside such a pass can leave the
 	# target by name and no source, the first pass then having nothing
 	# stale to delete, which is how cluster-run-20261025-193845 read with

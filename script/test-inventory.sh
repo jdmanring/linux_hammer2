@@ -709,7 +709,11 @@ done
 # reads it in a function, and whose leaks the range reading after the
 # unload still counts, without their names; the reading rewritten in
 # transit, a filter on the guest's output or an edit of the `.out`,
-# which leaves one line; the harness's one clear and load reused from a
+# which leaves one line; the guest half run again by the harness or
+# its caller with the last run's output kept, whose second clear greys
+# the first run's leaks before its reading, which the marker on
+# `/dev/kmsg` below would not read either, the kept kernel log being
+# the last run's; the harness's one clear and load reused from a
 # function or a loop the script runs twice, one of the two times with
 # its output redirected or filtered, which adds no load line and keeps
 # the marker count at one, the edit a quiet reload helper logging to a
