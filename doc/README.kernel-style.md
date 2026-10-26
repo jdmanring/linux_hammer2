@@ -180,6 +180,17 @@ feed is judged by what the inode holds: its prototype's arguments run
 to a second continuation line, one more `no spaces at the start of a
 line` in the tree's BSD indent. No category is new.
 
+1,550 to 1,555 when the remote element's end became an allowlist in
+`hammer2_remote_end()` and a fed chain's error was limited to the media
+errors a chain carries, at `982c4ea`: four `return (x);` and one
+prototype argument on a continuation line, one more `no spaces at the
+start of a line`, in the port's own file. No category is new. The move was recorded five days after the
+commit that made it, because the gate exits 2 on a machine without a
+checker and the host sweep leaves it out, so only the hook that runs
+before a push, which points it at the kernel tree's copy, read the
+count; a source commit that adds a return in the tree's style moves
+this row and the baseline moves with it in the same commit.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the
