@@ -49,7 +49,20 @@ struct hammer2_remote {
 	struct delayed_work	regwork;	/* registration and detach */
 	struct delayed_work	pingwork;	/* the keepalive */
 	unsigned long		ping_sent;	/* jiffies of the ping awaiting its answer, 0 none */
+	struct list_head	snaps;		/* snapshots taken for this link, rm->lock */
 };
+
+/*
+ * A snapshot the server took for the peer, by name on this device, deleted
+ * at the peer's SNAPDEL or, if the link ends first, at the link's end.
+ */
+struct hammer2_remote_snap {
+	struct list_head	entry;
+	char			name[HAMMER2_INODE_MAXNAME];
+};
+
+/* The suffix of a synchronization pass's source snapshot, hammer2_synchro.c. */
+#define HAMMER2_REMOTE_SNAP_SUFFIX	".h2sync-src"
 
 #define HAMMER2_REMOTE_OPEN	0	/* requests admitted */
 #define HAMMER2_REMOTE_QUIESCED	1	/* refused until the next announcement */
@@ -82,9 +95,11 @@ struct hammer2_remote_req {
 
 /*
  * The read set of the command table: the descriptor at each index the
- * server runs, NULL where the command modifies and is refused.
+ * server runs, NULL where the command modifies and is refused; the two
+ * indices past the descriptors are the snapshot commands, served here with
+ * no storage function.
  */
-static hammer2_xop_desc_t *const hammer2_remote_descs[DMSG_HM2_XOP_COUNT] = {
+static hammer2_xop_desc_t *const hammer2_remote_descs[DMSG_HM2_CMD_COUNT] = {
 	[0] = &hammer2_ipcluster_desc,
 	[1] = &hammer2_readdir_desc,
 	[2] = &hammer2_nresolve_desc,
@@ -98,6 +113,16 @@ static hammer2_xop_desc_t *const hammer2_remote_descs[DMSG_HM2_XOP_COUNT] = {
 _Static_assert(sizeof(hammer2_blockref_t) ==
     sizeof(((dmsg_hm2_feed_t *)0)->bref), "a feed carries one blockref");
 _Static_assert(sizeof(dmsg_hm2_feed_t) == 256, "a feed frame's size");
+
+static const char *
+hammer2_remote_cmd_name(int idx)
+{
+	if (idx == DMSG_HM2_SNAPSHOT_IDX)
+		return ("snapshot");
+	if (idx == DMSG_HM2_SNAPDEL_IDX)
+		return ("snapdel");
+	return (hammer2_remote_descs[idx]->id);
+}
 
 static void hammer2_remote_serve(struct work_struct *);
 static void hammer2_remote_reconcile(struct work_struct *);
@@ -123,6 +148,7 @@ hammer2_remote_init(hammer2_dev_t *hmp)
 		rm->hmp = hmp;
 		INIT_DELAYED_WORK(&rm->regwork, hammer2_remote_reconcile);
 		INIT_DELAYED_WORK(&rm->pingwork, hammer2_remote_keepalive);
+		INIT_LIST_HEAD(&rm->snaps);
 	} else {
 		hprintf("no HM2 server for this device: out of memory\n");
 	}
@@ -288,9 +314,10 @@ hammer2_remote_rcvmsg(kdmsg_msg_t *msg)
 
 		if (rm == NULL)
 			why = "no server";
-		else if (idx < 0 || idx >= DMSG_HM2_XOP_COUNT)
+		else if (idx < 0 || idx >= DMSG_HM2_CMD_COUNT)
 			why = "not a command";
-		else if (hammer2_remote_descs[idx] == NULL)
+		else if (idx < DMSG_HM2_XOP_COUNT &&
+		    hammer2_remote_descs[idx] == NULL)
 			why = "a modifying command";
 		else if (cmd & DMSGF_DELETE)
 			why = "one-shot, no continuation possible";
@@ -432,7 +459,7 @@ hammer2_remote_feed(struct hammer2_remote_req *req, hammer2_chain_t *chain,
  */
 static void
 hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof,
-    hammer2_key_t rkey)
+    hammer2_key_t rkey, hammer2_tid_t tid)
 {
 	kdmsg_msg_t *msg;
 	uint32_t cmd = DMSG_HM2_FEED | DMSGF_REPLY | DMSGF_DELETE;
@@ -442,6 +469,7 @@ hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof,
 	msg = kdmsg_msg_alloc(req->state, cmd, NULL, NULL);
 	msg->any.hm2_feed.error = error;
 	msg->any.hm2_feed.rkey = rkey;
+	msg->any.hm2_feed.tid = tid;
 	if (eof)
 		msg->any.hm2_feed.flags = DMSG_HM2_FEEDF_EOF;
 	kdmsg_msg_write(msg);
@@ -473,6 +501,154 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
 		return (HAMMER2_ERROR_ETIMEDOUT);
 #endif
 	return (0);
+}
+
+/*
+ * Whether a name is one of the synchronization pass's source snapshots,
+ * the only PFS a peer may have this server create, delete or read unmounted.
+ */
+static int
+hammer2_remote_snap_name(const char *name)
+{
+	size_t len, slen = strlen(HAMMER2_REMOTE_SNAP_SUFFIX);
+
+	if (name == NULL)
+		return (0);
+	len = strlen(name);
+	return (len > slen && len < HAMMER2_INODE_MAXNAME &&
+	    strcmp(name + len - slen, HAMMER2_REMOTE_SNAP_SUFFIX) == 0);
+}
+
+/*
+ * The snapshot commands, under hammer2_mntlk with the PFS found.  SNAPSHOT
+ * takes the pass's source snapshot of this device's element by the body the
+ * local pass uses, a stale one of the name deleted first as the local pass
+ * deletes it, records the name against the link, and feeds the snapshot
+ * root's chain with the transaction id on the closing frame; SNAPDEL
+ * deletes a snapshot this link took and forgets it.  The name is the aux,
+ * only a name under the pass's suffix is taken and only this link's is
+ * deleted, so a peer cannot have a PFS of its choosing deleted.  Returns
+ * the final error, with *chainp the chain
+ * to feed, held and unlocked, and *tidp the id.
+ */
+static uint32_t
+hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
+    int clindex, hammer2_chain_t **chainp, hammer2_tid_t *tidp)
+{
+	hammer2_dev_t *hmp = req->hmp;
+	struct hammer2_remote *rm = hmp->remote;
+	struct hammer2_remote_snap *snap, *n;
+	hammer2_pfs_t *spmp = NULL;
+	char name[HAMMER2_INODE_MAXNAME];
+	int error;
+
+	*chainp = NULL;
+	*tidp = 0;
+	if (req->aux.aux_data == NULL || req->aux.aux_size == 0 ||
+	    req->aux.aux_size >= sizeof(name))
+		return (HAMMER2_ERROR_EINVAL);
+	memcpy(name, req->aux.aux_data, req->aux.aux_size);
+	name[req->aux.aux_size] = 0;
+	if (!hammer2_remote_snap_name(name) || strchr(name, '/'))
+		return (HAMMER2_ERROR_EINVAL);
+
+	if (req->idx == DMSG_HM2_SNAPDEL_IDX) {
+		/*
+		 * Only a snapshot this link took is deleted: a name it never
+		 * took, a crash's leftover or another pass's live source, is
+		 * left as it is and the peer is told nothing was there.  A
+		 * leftover goes at the next SNAPSHOT's stale delete.  The peer
+		 * names the snapshot by its own cluster id, so the PFS found
+		 * is the one freed here; the caller reads nothing of it after.
+		 */
+		int taken = 0;
+
+		spin_lock(&rm->lock);
+		list_for_each_entry(snap, &rm->snaps, entry)
+			if (strcmp(snap->name, name) == 0)
+				taken = 1;
+		spin_unlock(&rm->lock);
+		if (!taken) {
+			if (hammer2_debug & 0x8000)
+				kprintf("syncsnap: peer named %s, not this link's\n",
+				    name);
+			return (0);
+		}
+		error = hammer2_pfs_delete_byname(hmp, name,
+		    HAMMER2_PFSDEL_LOCKED);
+		if (error && error != ENOENT) {
+			kprintf("syncsnap: peer's delete of %s error %d\n", name,
+			    error);
+			return (HAMMER2_ERROR_EIO);	/* still the link's */
+		}
+		spin_lock(&rm->lock);
+		list_for_each_entry_safe(snap, n, &rm->snaps, entry) {
+			if (strcmp(snap->name, name) == 0) {
+				list_del(&snap->entry);
+				kfree(snap);
+			}
+		}
+		spin_unlock(&rm->lock);
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: peer deleted %s error %d\n", name, error);
+		return (0);
+	}
+
+	snap = kzalloc_obj(*snap);
+	if (snap == NULL)
+		return (HAMMER2_ERROR_ENOSPC);
+	strscpy(snap->name, name, sizeof(snap->name));
+	error = hammer2_pfs_delete_byname(hmp, name, HAMMER2_PFSDEL_LOCKED);
+	if (error && error != ENOENT) {
+		kfree(snap);
+		return (HAMMER2_ERROR_EIO);
+	}
+	if (error == 0 && (hammer2_debug & 0x8000))
+		kprintf("syncsnap: stale %s deleted for a peer\n", name);
+	error = hammer2_pfs_snapshot(pmp, clindex, name,
+	    HAMMER2_PFSSNAP_PMPSYNC, tidp, &spmp);
+	if (error || spmp == NULL || spmp->iroot == NULL) {
+		kfree(snap);
+		kprintf("syncsnap: snapshot %s for a peer error %d\n", name,
+		    error);
+		return (HAMMER2_ERROR_EIO);
+	}
+	spin_lock(&rm->lock);
+	list_add_tail(&snap->entry, &rm->snaps);
+	spin_unlock(&rm->lock);
+	*chainp = hammer2_inode_chain(spmp->iroot, 0, HAMMER2_RESOLVE_ALWAYS);
+	if (*chainp == NULL)
+		return (HAMMER2_ERROR_EIO);
+	hammer2_chain_unlock(*chainp);
+	if (hammer2_debug & 0x8000)
+		kprintf("syncsnap: snapshot %s for a peer tid %016llx\n", name,
+		    (long long)*tidp);
+	return (0);
+}
+
+/*
+ * The snapshots a link leaves, deleted at its end under hammer2_mntlk,
+ * which the teardown's caller holds and a reconnect takes; the peer's pass
+ * deletes its own, so what is here is what a lost link left.
+ */
+static void
+hammer2_remote_snaps_drop(struct hammer2_remote *rm)
+{
+	struct hammer2_remote_snap *snap, *n;
+	LIST_HEAD(left);
+	int error;
+
+	spin_lock(&rm->lock);
+	list_splice_init(&rm->snaps, &left);
+	spin_unlock(&rm->lock);
+	list_for_each_entry_safe(snap, n, &left, entry) {
+		error = hammer2_pfs_delete_byname(rm->hmp, snap->name,
+		    HAMMER2_PFSDEL_LOCKED);
+		kprintf("HAMMER2: snapshot %s left by the link deleted, error %d\n",
+		    snap->name, error);
+		list_del(&snap->entry);
+		kfree(snap);
+	}
 }
 
 /*
@@ -511,7 +687,7 @@ hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,
 		schedule_timeout_uninterruptible(msecs_to_jiffies(10));
 	}
 	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
-		if (pmp->mp == NULL || pmp->iroot == NULL)
+		if (pmp->iroot == NULL)
 			continue;
 		if (bcmp(&pmp->pfs_clid, &req->req.pfs_clid,
 		    sizeof(pmp->pfs_clid)) != 0)
@@ -519,10 +695,18 @@ hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,
 		for (i = 0; i < pmp->iroot->cluster.nchains; ++i)
 			if (pmp->pfs_hmps[i] == hmp)
 				break;
-		if (i < pmp->iroot->cluster.nchains) {
-			*clindexp = i;
-			return (pmp);	/* hammer2_mntlk held */
-		}
+		if (i == pmp->iroot->cluster.nchains)
+			continue;
+		/*
+		 * A mounted PFS, or an unmounted one this server snapshotted
+		 * for a peer's pass, which is never mounted and is named by
+		 * its suffix; every other unmounted PFS of the device is not
+		 * served, whatever cluster id a peer names.
+		 */
+		if (pmp->mp == NULL && !hammer2_remote_snap_name(pmp->pfs_names[i]))
+			continue;
+		*clindexp = i;
+		return (pmp);	/* hammer2_mntlk held */
 	}
 	hammer2_lk_unlock(&hammer2_mntlk);
 	return (NULL);
@@ -542,6 +726,7 @@ hammer2_remote_serve(struct work_struct *work)
 	hammer2_xop_t *xop = NULL;
 	hammer2_chain_t *parent = NULL, *chain = NULL;
 	hammer2_xop_fifo_t *fifo;
+	hammer2_tid_t tid = 0;
 	unsigned long t0 = jiffies;
 	uint32_t error = 0;
 	int clindex = 0, fed = 0, nerror, refused = 0, eof = 1;
@@ -557,7 +742,8 @@ hammer2_remote_serve(struct work_struct *work)
 	}
 	pmp = hammer2_remote_pfs(req, &clindex, &error);
 	if (pmp == NULL && error) {
-		pr_warn_ratelimited("hammer2: HM2 %s not served: %s\n", desc->id,
+		pr_warn_ratelimited("hammer2: HM2 %s not served: %s\n",
+		    hammer2_remote_cmd_name(req->idx),
 		    error == HAMMER2_ERROR_ETIMEDOUT ?
 		    "the mount lock stayed held to the bound" :
 		    "the request or the connection ended");
@@ -565,8 +751,19 @@ hammer2_remote_serve(struct work_struct *work)
 	}
 	if (pmp == NULL) {
 		pr_warn_ratelimited("hammer2: HM2 %s refused: no mounted PFS of that cluster on this device\n",
-		    desc->id);
+		    hammer2_remote_cmd_name(req->idx));
 		refused = 1;
+		goto out;
+	}
+	if (desc == NULL) {
+		/* the snapshot commands: one chain or none, then the end */
+		error = hammer2_remote_snapshot(req, pmp, clindex, &chain, &tid);
+		if (chain) {
+			hammer2_remote_feed(req, chain, 0);
+			hammer2_chain_drop(chain);
+			chain = NULL;
+			fed = 1;
+		}
 		goto out;
 	}
 
@@ -691,7 +888,8 @@ out:
 		hammer2_lk_unlock(&hammer2_mntlk);
 	if (hammer2_debug & 0x0100)
 		kprintf("H2 SERVE %s inum=%016llx fed=%d error=%08x%s%s ms=%u\n",
-		    desc->id, (unsigned long long)req->req.inum, fed, error,
+		    hammer2_remote_cmd_name(req->idx),
+		    (unsigned long long)req->req.inum, fed, error,
 		    eof ? " eof" : "", refused ? " refused" : "",
 		    jiffies_to_msecs(jiffies - t0));
 
@@ -709,7 +907,7 @@ out:
 	else
 		hammer2_remote_close(req, eof ? error : 0, eof,
 		    (xop && req->idx == 1) ? xop->xop_readdir.rkey :
-		    HAMMER2_KEY_MAX);
+		    HAMMER2_KEY_MAX, tid);
 
 	if (xop) {
 		hammer2_xop_retire(&xop->head, 1U << clindex);
@@ -757,6 +955,15 @@ struct hammer2_rconn {
 	struct xarray		byid;		/* handle number -> handle */
 	struct xarray		byoff;		/* the peer's data_off -> handle */
 	struct work_struct	free_work;
+	/*
+	 * Where a frame's block goes, counted at each hand-over so the
+	 * device's free can print the balance: copied from the frame, freed
+	 * with its frame, stashed on a handle, a stash replaced by a newer
+	 * feed, a stash taken by a load, a fetched block dropped for a dio
+	 * filled meanwhile, a block freed with its dio, a stash freed here.
+	 */
+	atomic_t		nb_copied, nb_framed, nb_stashed, nb_replaced,
+				nb_taken, nb_dropped, nb_diofreed, nb_devfreed;
 };
 
 /*
@@ -794,6 +1001,8 @@ struct hammer2_rframe {
 	char			*data;		/* kvmalloc(bytes) or NULL */
 };
 
+static void hammer2_rframe_free_on(struct hammer2_rconn *, struct hammer2_rframe *);
+
 /*
  * One request in flight, with two references: the caller's and the
  * transaction's, which the reply callback drops at the peer's DELETE, real
@@ -814,8 +1023,16 @@ struct hammer2_rcall {
 	int			done;		/* the peer's DELETE arrived */
 	int			eof;		/* the element fed its end */
 	hammer2_key_t		rkey;		/* a readdir's, from the end; 0 none */
+	hammer2_tid_t		tid;		/* a snapshot's, from the end */
 	uint32_t		error;		/* HAMMER2_ERROR_* of the end */
 };
+
+/* A connection block freed by the DIO layer, for the balance above. */
+void
+hammer2_remote_block_freed(hammer2_dev_t *cdev, int dropped)
+{
+	atomic_inc(dropped ? &cdev->rconn->nb_dropped : &cdev->rconn->nb_diofreed);
+}
 
 void
 hammer2_remote_dev_ref(hammer2_dev_t *cdev)
@@ -844,6 +1061,8 @@ hammer2_remote_dev_free(struct work_struct *work)
 	hammer2_io_hash_destroy(cdev);
 	hammer2_mtx_destroy(&cdev->iohash_lock);
 	xa_for_each(&rc->byid, id, h) {
+		if (h->stash)
+			atomic_inc(&rc->nb_devfreed);
 		kvfree(h->stash);
 		kfree(h);
 	}
@@ -851,7 +1070,11 @@ hammer2_remote_dev_free(struct work_struct *work)
 	xa_destroy(&rc->byoff);
 	mutex_destroy(&rc->mtx);
 	if (hammer2_debug & 0x0100)
-		kprintf("H2 CDEV freed\n");
+		kprintf("H2 CDEV freed: blocks copied %d framed %d stashed %d replaced %d taken %d dropped %d diofreed %d devfreed %d\n",
+		    atomic_read(&rc->nb_copied), atomic_read(&rc->nb_framed),
+		    atomic_read(&rc->nb_stashed), atomic_read(&rc->nb_replaced),
+		    atomic_read(&rc->nb_taken), atomic_read(&rc->nb_dropped),
+		    atomic_read(&rc->nb_diofreed), atomic_read(&rc->nb_devfreed));
 	kfree(rc);
 	kvfree(cdev);
 }
@@ -925,10 +1148,8 @@ hammer2_rcall_put(struct hammer2_rcall *call)
 	mutex_unlock(&cdev->rconn->mtx);
 	if (!last)
 		return;
-	list_for_each_entry_safe(f, n, &call->frames, entry) {
-		kvfree(f->data);
-		kfree(f);
-	}
+	list_for_each_entry_safe(f, n, &call->frames, entry)
+		hammer2_rframe_free_on(cdev->rconn, f);
 	kfree(call);
 	hammer2_remote_dev_drop(cdev);
 }
@@ -1021,6 +1242,8 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 			else
 				f->data = kvmemdup(msg->aux_data, f->bytes,
 				    GFP_KERNEL);
+			if (f->data)
+				atomic_inc(&rc->nb_copied);
 		}
 	}
 
@@ -1038,8 +1261,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 #endif
 		if ((f->error == 0 && f->bytes && f->data == NULL) || bad) {
 			lost = 1;
-			kvfree(f->data);
-			kfree(f);
+			hammer2_rframe_free_on(rc, f);
 		} else {
 			list_add_tail(&f->entry, &call->frames);
 		}
@@ -1053,6 +1275,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 			if (msg->any.hm2_feed.flags & DMSG_HM2_FEEDF_EOF)
 				call->eof = 1;
 			call->rkey = msg->any.hm2_feed.rkey;
+			call->tid = msg->any.hm2_feed.tid;
 			/* the peer's own, for hammer2_remote_end() to judge */
 			if (call->error == 0)
 				call->error = msg->any.hm2_feed.error;
@@ -1225,6 +1448,15 @@ hammer2_rframe_free(struct hammer2_rframe *f)
 	kfree(f);
 }
 
+/* The frame's block freed with it, counted against the connection. */
+static void
+hammer2_rframe_free_on(struct hammer2_rconn *rc, struct hammer2_rframe *f)
+{
+	if (f->data)
+		atomic_inc(&rc->nb_framed);
+	hammer2_rframe_free(f);
+}
+
 static int
 hammer2_rhandle_same(const struct hammer2_rhandle *a,
     const struct hammer2_rhandle *b)
@@ -1326,7 +1558,11 @@ hammer2_rhandle_get(hammer2_dev_t *cdev, struct hammer2_rframe *f,
 	h->stash_bytes = f->bytes;
 	spin_unlock(&rc->hlock);
 	f->data = NULL;
-	kvfree(old);
+	atomic_inc(&rc->nb_stashed);
+	if (old) {
+		atomic_inc(&rc->nb_replaced);
+		kvfree(old);
+	}
 
 	return (h->id);
 }
@@ -1696,7 +1932,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		if (chain == NULL) {
 			pr_warn_ratelimited("hammer2: HM2 %s feed of type %d not a proxy\n",
 			    xop->desc->id, f->bref.type);
-			hammer2_rframe_free(f);
+			hammer2_rframe_free_on(cdev->rconn, f);
 			error = HAMMER2_ERROR_EIO;
 			break;
 		}
@@ -1704,7 +1940,7 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		error = hammer2_xop_feed(xop, chain, clindex, f->error);
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
-		hammer2_rframe_free(f);
+		hammer2_rframe_free_on(cdev->rconn, f);
 		++fed;
 		if (error)	/* the frontend has gone; the call is cancelled */
 			break;
@@ -1781,7 +2017,9 @@ hammer2_remote_fetch(hammer2_dev_t *cdev, hammer2_off_t lbase, int lsize,
 	h->stash = NULL;
 	spin_unlock(&rc->hlock);
 	if (buf) {
+		atomic_inc(&rc->nb_taken);
 		if (h->stash_bytes != lsize) {
+			atomic_inc(&rc->nb_dropped);
 			kvfree(buf);
 			return (EIO);
 		}
@@ -1810,9 +2048,10 @@ hammer2_remote_fetch(hammer2_dev_t *cdev, hammer2_off_t lbase, int lsize,
 		    ((hammer2_inode_data_t *)f->data)->meta.inum == h->inum)) {
 			buf = f->data;
 			f->data = NULL;
+			atomic_inc(&rc->nb_taken);
 			error = 0;
 		}
-		hammer2_rframe_free(f);
+		hammer2_rframe_free_on(rc, f);
 	}
 	hammer2_rcall_end(call);
 	if (hammer2_debug & 0x0100)
@@ -1840,6 +2079,160 @@ struct hammer2_rcand {
 	char			name[HAMMER2_INODE_MAXNAME + 1];
 	hammer2_blockset_t	blockset;
 };
+
+/*
+ * The pass's source snapshot of a remote master, what hammer2_pfs_snapshot()
+ * gives the local pass and routes here for an element on a connection
+ * device (hammer2_sync_pass_snap()): the master takes it on its own device
+ * at SNAPSHOT, the name as the request's aux, a stale one of the name
+ * deleted first as the local pass deletes it, and feeds the snapshot root
+ * with the transaction id on the closing frame.  The root is registered
+ * here as the local one is, by hammer2_pfsalloc() under hammer2_mntlk,
+ * which the caller holds: a PFS of its own by the snapshot's fresh cluster
+ * id, its one element the proxy on this device, so the pass's reads of it
+ * go over the wire under that id as the element's do, and the master
+ * serves it unmounted by its suffix.  The root is taken only as a snapshot
+ * of that name, since a peer could feed any inode.  The wait is the
+ * request's bound, under the lock as the local snapshot's sync and flush
+ * are.  Errnos, as hammer2_pfs_snapshot() returns them.
+ */
+int
+hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
+    const char *name, hammer2_tid_t *tidp, hammer2_pfs_t **spmpp)
+{
+	const hammer2_inode_data_t *ripdata;
+	hammer2_dev_t *cdev = NULL;
+	struct hammer2_rcall *call;
+	struct hammer2_rframe *f;
+	hammer2_chain_t *chain = NULL;
+	hammer2_tid_t tid = 0;
+	struct uuid clid;
+	unsigned long deadline;
+	size_t len = strlen(name);
+	int error;
+
+	if (tidp)
+		*tidp = 0;
+	if (spmpp)
+		*spmpp = NULL;
+	if (pmp->iroot == NULL || len == 0 || len >= HAMMER2_INODE_MAXNAME)
+		return (EINVAL);
+	hammer2_spin_sh(&pmp->iroot->cluster_spin);
+	if (hammer2_dev_is_conn(pmp->pfs_hmps[clindex])) {
+		cdev = pmp->pfs_hmps[clindex];
+		hammer2_remote_dev_ref(cdev);
+	}
+	hammer2_spin_unsh(&pmp->iroot->cluster_spin);
+	if (cdev == NULL)
+		return (ENOTCONN);
+
+	deadline = jiffies + msecs_to_jiffies(hammer2_remote_timeout_ms);
+	call = hammer2_rcall_start(cdev, DMSG_HM2_SNAPSHOT_IDX, &pmp->pfs_clid,
+	    1, 0, 0, 0, 0, name, len, &error);
+	if (call == NULL) {
+		hammer2_remote_dev_drop(cdev);
+		return (hammer2_error_to_errno(error));
+	}
+	while ((error = hammer2_rcall_next(call, deadline, &f)) == 0) {
+		/*
+		 * The handle's cluster id is the snapshot's own, read from
+		 * the fed inode, since a later load of the root fetches it
+		 * again by that id.
+		 */
+		if (chain == NULL && f->error == 0 &&
+		    f->bref.type == HAMMER2_BREF_TYPE_INODE &&
+		    f->bytes >= sizeof(hammer2_inode_data_t) && f->data) {
+			memcpy(&clid, &((const hammer2_inode_data_t *)f->data)->
+			    meta.pfs_clid, sizeof(clid));
+			chain = hammer2_remote_proxy(cdev, NULL, f, &clid, 1,
+			    1);	/* a PFS root's level, hammer2_pfsalloc() */
+		}
+		hammer2_rframe_free_on(cdev->rconn, f);
+	}
+	if (error == HAMMER2_ERROR_EOF)
+		error = call->error;
+	tid = call->tid;
+	hammer2_rcall_end(call);
+	if (chain == NULL) {
+		hammer2_remote_dev_drop(cdev);
+		kprintf("syncsnap: remote snapshot %s fed no root, error %08x\n",
+		    name, error);
+		return (error ? hammer2_error_to_errno(error) : ENOENT);
+	}
+
+	error = EINVAL;
+	if (chain->error == 0 && chain->data) {
+		ripdata = &chain->data->ipdata;
+		if (ripdata->meta.pfs_type == HAMMER2_PFSTYPE_MASTER &&
+		    ripdata->meta.pfs_subtype == HAMMER2_PFSSUBTYPE_SNAPSHOT &&
+		    ripdata->meta.name_len == len &&
+		    memcmp(ripdata->filename, name, len) == 0)
+			error = 0;
+	}
+	if (error) {
+		kprintf("syncsnap: remote snapshot %s fed a root that is not it\n",
+		    name);
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
+		hammer2_remote_dev_drop(cdev);
+		return (error);
+	}
+	/*
+	 * Registered as hammer2_pfs_snapshot() registers the local one, the
+	 * chain locked for the blockset it copies out; nothing merges with
+	 * it, its cluster id being fresh, so one element and no thread.
+	 */
+	hammer2_pfsalloc(chain, &chain->data->ipdata, NULL);
+	if (spmpp)
+		*spmpp = chain->pmp;
+	if (tidp)
+		*tidp = tid;
+	hammer2_chain_unlock(chain);
+	hammer2_chain_drop(chain);
+	hammer2_remote_dev_drop(cdev);
+	if (hammer2_debug & 0x8000)
+		kprintf("syncsnap: remote snapshot %s tid %016llx\n", name,
+		    (long long)tid);
+
+	return (0);
+}
+
+/*
+ * SNAPDEL over the link: the master deletes the snapshot of that name on
+ * its device.  Sent by hammer2_pfs_delete_byname() for a snapshot PFS on a
+ * connection device after it has freed the PFS here, under no lock, by
+ * the snapshot's own cluster id, which is how the master finds a PFS it
+ * serves unmounted.  A link that has ended sends nothing, and the master
+ * deletes what a lost link left at the link's end.  Errnos.
+ */
+int
+hammer2_remote_snapshot_del(hammer2_dev_t *cdev, const struct uuid *clid,
+    const char *name)
+{
+	struct hammer2_rcall *call;
+	struct hammer2_rframe *f;
+	unsigned long deadline;
+	int error;
+
+	hammer2_remote_dev_ref(cdev);
+	deadline = jiffies + msecs_to_jiffies(hammer2_remote_timeout_ms);
+	call = hammer2_rcall_start(cdev, DMSG_HM2_SNAPDEL_IDX, clid, 1, 0, 0,
+	    0, 0, name, strlen(name), &error);
+	if (call == NULL) {
+		hammer2_remote_dev_drop(cdev);
+		return (hammer2_error_to_errno(error));
+	}
+	while ((error = hammer2_rcall_next(call, deadline, &f)) == 0)
+		hammer2_rframe_free_on(cdev->rconn, f);	/* a chain no SNAPDEL feeds */
+	if (error == HAMMER2_ERROR_EOF)
+		error = call->error;
+	hammer2_rcall_end(call);
+	hammer2_remote_dev_drop(cdev);
+	if (hammer2_debug & 0x8000)
+		kprintf("syncsnap: remote delete %s error %08x\n", name, error);
+
+	return (hammer2_error_to_errno(error));
+}
 
 /*
  * The kernel's own admission, beside h2service's: a copyinfo[] row of this
@@ -1891,7 +2284,7 @@ hammer2_remote_root(hammer2_dev_t *cdev, struct hammer2_rcand *c)
 		if (chain == NULL && f->bref.type == HAMMER2_BREF_TYPE_INODE)
 			chain = hammer2_remote_proxy(cdev, NULL, f, &c->peer_id,
 			    1, 1);	/* a PFS root's level, hammer2_pfsalloc() */
-		hammer2_rframe_free(f);
+		hammer2_rframe_free_on(cdev->rconn, f);
 	}
 	if (error == HAMMER2_ERROR_EOF)
 		error = call->error;
@@ -2111,7 +2504,7 @@ hammer2_remote_detach(hammer2_pfs_t *pmp, int j, const char *why)
 	iroot->cluster.nchains = i;
 	hammer2_spin_unex(&iroot->cluster_spin);
 	hammer2_mtx_unlock(&iroot->lock);
-	WARN_ONCE(i == 0, "hammer2: a detach emptied a mounted cluster\n");
+	WARN_ONCE(i == 0 && pmp->mp, "hammer2: a detach emptied a mounted cluster\n");
 
 	kprintf("HAMMER2: remote element %s at clindex %d detached: %s\n",
 	    name ? name : "?", j, why);
@@ -2237,6 +2630,9 @@ hammer2_remote_reconcile(struct work_struct *work)
 	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
 		if (pmp->iroot == NULL)
 			continue;
+		/* a pass's snapshot of a remote source has no span and no local element */
+		if (!hammer2_remote_local_elm(pmp))
+			continue;
 		for (j = 0; j < HAMMER2_MAXCLUSTER; ++j)
 			if (pmp->pfs_hmps[j] == cdev &&
 			    !hammer2_remote_slotted(hmp, &pmp->pfs_clid))
@@ -2293,21 +2689,28 @@ hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
 		hammer2_remote_dev_kill(cdev);
 	disable_delayed_work_sync(&rm->regwork);
 	disable_delayed_work_sync(&rm->pingwork);
+	if (!final)
+		hammer2_lk_ex(&hammer2_mntlk);
 	if (cdev) {
-		if (!final)
-			hammer2_lk_ex(&hammer2_mntlk);
 		TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
-			if (pmp->iroot == NULL)
+			/*
+			 * A pass's snapshot of a remote source has no local
+			 * element; its one slot is this device's and is the
+			 * thread's to free, with the device dead under it.
+			 */
+			if (pmp->iroot == NULL || !hammer2_remote_local_elm(pmp))
 				continue;
 			for (j = 0; j < HAMMER2_MAXCLUSTER; ++j)
 				if (pmp->pfs_hmps[j] == cdev)
 					hammer2_remote_detach(pmp, j,
 					    "connection ended");
 		}
-		if (!final)
-			hammer2_lk_unlock(&hammer2_mntlk);
-		hammer2_remote_dev_drop(cdev);	/* the link's reference */
 	}
+	hammer2_remote_snaps_drop(rm);
+	if (!final)
+		hammer2_lk_unlock(&hammer2_mntlk);
+	if (cdev)
+		hammer2_remote_dev_drop(cdev);	/* the link's reference */
 	hammer2_spin_ex(&rm->hmp->span_spin);
 	TAILQ_FOREACH(span, &rm->hmp->spanq, entry) {
 		span->tried = 1;	/* the old link's, whose DELETEs follow */

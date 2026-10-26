@@ -725,13 +725,32 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 				break;
 			}
 		}
+		const hammer2_inode_data_t *ripdata;
+
 		mtid = focus->bref.modify_tid;
-		mmeta = hammer2_xop_gdata(&xop2->head)->ipdata.meta;
+		/*
+		 * One gdata for both fields: each call references the
+		 * focus's dio and pdata releases one, so a second call kept
+		 * a remote root's block for good, three per run by kmemleak.
+		 */
+		ripdata = &hammer2_xop_gdata(&xop2->head)->ipdata;
+		mmeta = ripdata->meta;
+		/*
+		 * XXX Linux: a remote element's blockset is written by no
+		 * flush here, only by its registration, so the idle test below
+		 * could never match again once the master had changed and
+		 * every pass took a snapshot; the master's root as it answered
+		 * this read is the element's blockset.
+		 */
+		if (hammer2_dev_is_conn(pmp->pfs_hmps[m])) {
+			hammer2_spin_ex(&pmp->blockset_spin);
+			pmp->pfs_iroot_blocksets[m] = ripdata->u.blockset;
+			hammer2_spin_unex(&pmp->blockset_spin);
+		}
 		hammer2_xop_pdata(&xop2->head);
 	}
 	hammer2_xop_retire(&xop2->head, HAMMER2_XOPMASK_VOP);
 	if (m < 0 || m == idx || pmp->pfs_hmps[m] == NULL ||
-	    hammer2_dev_is_conn(pmp->pfs_hmps[m]) ||	/* XXX Linux */
 	    pmp->pfs_names[idx] == NULL) {
 		/*
 		 * No source to snapshot: no quorum, or the focus is this
@@ -740,11 +759,11 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		 * own collect finds the same and copies nothing, and the pass
 		 * is counted where the harness counts passes.
 		 *
-		 * XXX Linux: nor a remote master, whose device is a
-		 * connection on which a snapshot cannot be created; the
-		 * master takes it on its own device once the protocol has
-		 * the command (doc/CLUSTER_PROTOCOL_DESIGN.md, the client
-		 * side), and until then the pass over the wire is live.
+		 * XXX Linux: a remote master's device is a connection, on
+		 * which hammer2_pfs_snapshot() has the master take the
+		 * snapshot on its own device and serve it over the link
+		 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the client side), so it is
+		 * a source like a local one from here on.
 		 */
 		if (hammer2_debug & 0x8000)
 			kprintf("syncsnap: noquorum clindex %d error %d\n",
@@ -803,9 +822,12 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	}
 
 	/*
-	 * A snapshot a crash left behind.
+	 * A snapshot a crash left behind.  XXX Linux: a remote master deletes
+	 * its own stale one at the snapshot request, and here nothing of the
+	 * name is in memory to find.
 	 */
-	error = hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
+	error = hammer2_dev_is_conn(pmp->pfs_hmps[m]) ? ENOENT :
+	    hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
 	    HAMMER2_PFSDEL_TRYLOCK);
 	if (error == 0) {
 		if (hammer2_debug & 0x8000)
@@ -992,8 +1014,8 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	 * pass's flush has run; the snapshot can go.  One the lock refuses
 	 * is the next pass's stale one.
 	 */
-	derror = hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
-	    HAMMER2_PFSDEL_TRYLOCK);
+	derror = hammer2_pfs_delete_byname(snap_pmp->pfs_hmps[0], name,
+	    HAMMER2_PFSDEL_TRYLOCK);	/* XXX Linux: the snapshot's own device */
 	if (derror && (hammer2_debug & 0x8000))
 		kprintf("syncsnap: delete %s error %d\n", name, derror);
 	/*
@@ -1022,17 +1044,25 @@ hammer2_sync_snap_cleanup_one(hammer2_thread_t *thr, int m,
     const char *suffix)
 {
 	hammer2_pfs_t *pmp = thr->pmp;
+	hammer2_dev_t *hmp;
 	char name[HAMMER2_INODE_MAXNAME];
 	int n, error;
 
-	if (pmp->pfs_hmps[m] == NULL)
-		return (0);
 	n = snprintf(name, sizeof(name), "%s%s", pmp->pfs_names[thr->clindex],
 	    suffix);
 	if (n < 0 || n >= (int)sizeof(name))
 		return (0);
-	error = hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
-	    HAMMER2_PFSDEL_LOCKED);
+	/*
+	 * The snapshot's own device, found by its name: a remote source's is
+	 * the link's, which slot m no longer names once the link has ended
+	 * or been made again.
+	 */
+	hmp = hammer2_pfs_dev_byname(name);
+	if (hmp == NULL)
+		hmp = pmp->pfs_hmps[m];
+	if (hmp == NULL)
+		return (0);
+	error = hammer2_pfs_delete_byname(hmp, name, HAMMER2_PFSDEL_LOCKED);
 	if (hammer2_debug & 0x8000)
 		kprintf("syncsnap: unmount deleted %s error %d\n", name, error);
 	return (error == 0);

@@ -601,7 +601,8 @@ struct dmsg_hm2_feed {
 	uint32_t	flags;		/* DMSG_HM2_FEEDF_* on the closing frame */
 	uint32_t	reserved0;
 	uint64_t	rkey;		/* a readdir's next key, closing frame */
-	uint8_t		reserved[40];
+	uint64_t	tid;		/* a snapshot's transaction id, closing frame */
+	uint8_t		reserved[32];
 };
 
 typedef struct dmsg_hm2_feed dmsg_hm2_feed_t;
@@ -612,6 +613,21 @@ typedef struct dmsg_hm2_feed dmsg_hm2_feed_t;
 #define DMSG_HM2_XOP_COUNT	21
 #define DMSG_HM2_XOP(idx)	DMSG_HM2(DMSG_HM2_XOP_BASE + (idx), dmsg_hm2_xop)
 #define DMSG_HM2_FEED		DMSG_HM2(0x030, dmsg_hm2_feed)
+
+/*
+ * XXX Linux: the two commands past the descriptors, in the request's
+ * shape, which a slave's synchronization pass sends to the master it reads
+ * (doc/CLUSTER_PROTOCOL_DESIGN.md, the client side): SNAPSHOT takes a
+ * snapshot of the master's element of the named cluster under the name
+ * the aux carries and answers with the snapshot root's chain and, on the
+ * closing frame, the snapshot's transaction id; SNAPDEL deletes it.  The
+ * server takes a name under its synchronization suffix alone.
+ */
+#define DMSG_HM2_SNAPSHOT_IDX	DMSG_HM2_XOP_COUNT
+#define DMSG_HM2_SNAPDEL_IDX	(DMSG_HM2_XOP_COUNT + 1)
+#define DMSG_HM2_CMD_COUNT	(DMSG_HM2_XOP_COUNT + 2)
+#define DMSG_HM2_SNAPSHOT	DMSG_HM2_XOP(DMSG_HM2_SNAPSHOT_IDX)
+#define DMSG_HM2_SNAPDEL	DMSG_HM2_XOP(DMSG_HM2_SNAPDEL_IDX)
 
 /*
  * DMSG_PROTO_BLK Protocol

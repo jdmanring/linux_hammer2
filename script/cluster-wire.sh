@@ -126,10 +126,13 @@ STALL=${H2_WIRE_STALL:-0}
 END=${H2_WIRE_END:-}
 # H2_WIRE_PASS=1 runs the slave's synchronization pass over the wire: B's
 # device stays writable (no second read-only open between the row and the
-# dial), its module is loaded with sync_snapshot=0 since a snapshot of a
-# remote focus is refused, and the pass copies A's CL onto B's media, read
-# by the host from both images after the guests are down, fingerprinted as
-# cluster-sync.sh fingerprints its two volumes and checked by fsck_hammer2.
+# dial), and the pass copies A's CL onto B's media, read by the host from
+# both images after the guests are down, fingerprinted as cluster-sync.sh
+# fingerprints its two volumes and checked by fsck_hammer2.  The pass reads
+# a snapshot the master takes on its own device at B's request and serves
+# over the link, deleted at B's request when the pass has verified; a
+# second set written on A after the first pass must reach B's media by a
+# later pass, and at the end neither image holds a snapshot of the pass.
 PASS=${H2_WIRE_PASS:-0}
 SILENCE=${H2_WIRE_SILENCE:-0}
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
@@ -269,7 +272,11 @@ setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
 SNAP=${3:-1}	# sync_snapshot
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko sync_snapshot=$SNAP || { echo "insmod failed"; exit 1; }
-echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
+# the remote element's lines (0x100), and on a slave whose pass reads a
+# snapshot the pass's own (0x8000), which name the snapshot's taking,
+# verdict and deletion
+dbg=256; [ "$1" = slave ] && [ "$SNAP" = 1 ] && dbg=$((256 + 32768))
+echo $dbg > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot 2>/dev/null)"
 mkdir -p $R $C /tmp/h2keys
 mount -t hammer2 /dev/vdb@ROOT $R || { echo "mount failed"; exit 1; }
@@ -297,7 +304,18 @@ fi
 echo "dial-rc $?"
 GUEST
 cat > "$W/fill.sh" <<'GUEST'
-# fill: A's MASTER CL mounted read-write and given a known tree
+# fill: A's MASTER CL mounted read-write and given a known tree; with
+# "more", a second set written on the mounted CL after the slave's first
+# pass, which a later pass must copy
+if [ "${1:-}" = more ]; then
+	mkdir -p $C/more
+	i=0; while [ $i -lt 5 ]; do head -c 4096 /dev/urandom > $C/more/m$i; i=$((i + 1)); done
+	sync
+	echo "more-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')"
+	echo "more-files $(find $C/more -type f | grep -c .)"
+	(cd $C && find ./more -type f | sort | xargs sha256sum) | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
+	exit 0
+fi
 mount -t hammer2 /dev/vdb@CL $C || { echo "mount CL failed"; exit 1; }
 mkdir -p $C/dir1
 printf 'the remote element reads this line\n' > $C/small.txt
@@ -337,12 +355,48 @@ GUEST
 cat > "$W/pass.sh" <<'GUEST'
 # pass: B's slave element is written by its synchronization pass from A's
 # master over the wire; wait on the media, not the clock, for the master's
-# 300-entry directory to appear under B's CL, with a bound
+# 300-entry directory to appear under B's CL, with a bound, and then for
+# the pass's snapshot to be deleted, which is the pass's end.  With "more",
+# the second set's five files, and a later pass's end.
+if [ "${1:-}" = more ]; then
+	d0=$(klog 'syncsnap: remote delete .* error 00000000'); n=0
+	until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')" -ge 5 ] || [ $n -ge 180 ]; do sleep 2; n=$((n + 2)); done
+	echo "more-wait-seconds $n"
+	echo "more-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')"
+	n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -gt "$d0" ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
+	echo "more-end-seconds $n"
+	echo "more-snap-deleted $(( $(klog 'syncsnap: remote delete .* error 00000000') - d0 ))"
+	echo "more-snap-verified $(klog 'syncsnap: verified clindex')"
+	echo "more-snap-unverified $(klog 'syncsnap: unverified clindex')"
+	# the idle test over the wire: with the master quiet again the thread
+	# must stop snapshotting it, read as the taken count over 12 s
+	t0=$(klog 'syncsnap: remote snapshot CL.h2sync-src tid'); sleep 12
+	echo "more-snap-idle-taken $(( $(klog 'syncsnap: remote snapshot CL.h2sync-src tid') - t0 ))"
+	echo "more-snap-idle-passes $(klog 'syncsnap: idle clindex')"
+	exit 0
+fi
 n=0
 until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')" -ge 300 ] || [ $n -ge 240 ]; do sleep 2; n=$((n + 2)); done
 echo "pass-wait-seconds $n"
 echo "pass-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')"
-echo "pass-errors $(klog 'sync_slaves error')"
+n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -ge 1 ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
+echo "pass-end-seconds $n"
+echo "pass-snap-taken $(klog 'syncsnap: remote snapshot CL.h2sync-src tid')"
+echo "pass-snap-bad $(klog 'syncsnap: remote snapshot CL.h2sync-src fed')"
+echo "pass-snap-passes $(klog 'syncsnap: pass clindex')"
+echo "pass-snap-verified $(klog 'syncsnap: verified clindex')"
+echo "pass-snap-unverified $(klog 'syncsnap: unverified clindex')"
+echo "pass-snap-interrupted $(klog 'syncsnap: interrupted clindex')"
+# the thread passes from the slave's pfs-create, before the element is
+# registered, and those find no source; one after the first snapshot would
+# mean the element went away
+echo "pass-snap-noquorum $(kl | sed -n '/syncsnap: remote snapshot CL.h2sync-src tid/,$p' | grep -c 'syncsnap: noquorum clindex')"
+echo "pass-snap-deleted $(klog 'syncsnap: remote delete .* error 00000000')"
+echo "pass-snap-delete-errors $(kl | grep 'syncsnap: remote delete' | grep -vc 'error 00000000')"
+echo "pass-snap-target-taken $(klog 'syncsnap: target .* taken')"
+# the scan's own debug line, "sync_slaves error N defer", is every return of
+# it; an error is one neither 0 nor the deferral's EAGAIN (256)
+echo "pass-errors $(kl | grep 'sync_slaves error' | grep -vc -E 'error (0|256) defer')"
 echo "pass-sync-errors $(klog 'hammer2_sync_slaves: error')"
 echo "pass-refused-lines $(klog 'sync pass refused on clindex')"
 echo "pass-remote-xops $(klog 'H2 REMOTE ')"
@@ -477,6 +531,10 @@ echo "log-detached $(klog 'remote element CL at clindex 1 detached')"
 echo "detached-why $(kl | grep 'remote element CL at clindex 1 detached' | sed 's/.*detached: //' | tr '\n' ' ')"
 echo "spans-del $(klog 'H2 -RXSPAN')"
 echo "spantab-end $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
+# the server's side of a peer's snapshot: a snapshot it could not take, and
+# one a lost link left for it to delete, both printed unconditionally
+echo "snap-peer-errors $(klog 'syncsnap: snapshot .* for a peer error')"
+echo "snap-link-left $(klog 'snapshot .* left by the link deleted')"
 # A proxy is classed apart from the media's chains, at its level on the
 # peer; on level 0, the super-root's class, a contended inode lock in the
 # sync pass read as a cycle through the mount's order. The classes are
@@ -486,6 +544,9 @@ if [ -r /proc/lockdep ]; then
 else
 	echo "lockdep-remote no-lockdep"
 fi
+# a report dates its object by jiffies and the log by the printk clock;
+# the two read together here map one onto the other
+echo "clock $(grep -m1 '^jiffies:' /proc/timer_list 2>/dev/null) $(grep -m1 '^now at' /proc/timer_list 2>/dev/null)"
 sleep 6
 if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
 	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
@@ -532,6 +593,10 @@ sleep 2
 echo "h2wire end of unload" > /dev/kmsg
 n=0; until grep -q 'h2wire end of unload' /tmp/h2wire.klog || [ $n -ge 50 ]; do sleep 0.1; n=$((n+1)); done
 echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
+# the connection device's balance of the blocks its frames carried, printed
+# at its free: copied must equal framed plus replaced plus dropped plus
+# diofreed plus devfreed, or a block was lost between two hands
+echo "cdev-blocks $(kl | grep 'H2 CDEV freed: blocks' | tail -1 | sed 's/.*blocks //')"
 # A lockdep table that fills turns lockdep off and says BUG; that is the
 # guest kernel's table size (the KASAN build keeps the default, 2^15), not
 # a report on the subject, so it is counted apart and named in the check,
@@ -568,8 +633,7 @@ nval() {	# nval <A|B> <name>: how many lines carry it, with or without a value
 phase A setup.sh master || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
-slave_params=1; [ "$PASS" = 1 ] && slave_params=0	# sync_snapshot: a snapshot of a remote focus is refused
-phase B setup.sh slave "$clid" "$slave_params" || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+phase B setup.sh slave "$clid" 1 || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase A fill.sh
 phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT"
@@ -578,7 +642,7 @@ sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
 phase B reg.sh
-phase B ro.sh && { [ "$PASS" != 1 ] || phase B pass.sh; } && phase B read.sh "$STALL" "${END:-0}" "$SILENCE"
+phase B ro.sh && { [ "$PASS" != 1 ] || { phase B pass.sh && phase A fill.sh more && phase B pass.sh more; }; } && phase B read.sh "$STALL" "${END:-0}" "$SILENCE"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -615,7 +679,7 @@ npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 # The read side: B's empty SLAVE answers nothing, so every file B reads
 # came through the remote element; the digests are A's own, taken on A.
 sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
-nfa=$(num "$(val A files)" 0)
+nfa=$(( $(num "$(val A files)" 0) + $(num "$(val A more-files)" 0) ))	# the pass mode's second set, read after it
 [ "$(num "$(val B lone-mount-rc)" 0)" != 0 ]; check "remote: B's SLAVE CL alone does not mount, having no master" $? "rc $(val B lone-mount-rc)"
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
 # Lost ends the link at the first rewritten close, so every read after it
@@ -649,9 +713,25 @@ if [ "$PASS" = 1 ]; then
 	nfpa=$(grep -c ' FILE$' "$W/fp.a"); nfpb=$(grep -c ' FILE$' "$W/fp.b"); ndata=$(grep -c '^data ' "$W/fp.a")
 	"$FSCK" "$FIXDIR/wire-a.img" > "$W/fsck.a" 2>&1; fa=$?; "$FSCK" "$FIXDIR/wire-b.img" > "$W/fsck.b" 2>&1; fb=$?
 	cp "$W/fp.a" "$FIXDIR/wire-run-$stamp-fp-a.txt"; cp "$W/fp.b" "$FIXDIR/wire-run-$stamp-fp-b.txt"
-	[ "$(num "$(val B sync-snapshot)" 1)" = 0 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = 0 ] && [ "$(num "$(val B pass-sync-errors)" 1)" = 0 ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
+	[ "$(num "$(val B sync-snapshot)" 0)" = 1 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = 0 ] && [ "$(num "$(val B pass-sync-errors)" 1)" = 0 ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
 	[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b"; check "pass: the slave's CL matches the master's entry for entry and block for block on the media" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.a")"
 	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "pass: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
+	# The snapshot pass over the wire: the master took the pass's source
+	# snapshot at B's request and B read it, the pass verified against it,
+	# and B had it deleted; the fake pass, a live pass, has no snapshot
+	# line and no verdict, and a snapshot the master refused leaves its
+	# error line on A.
+	[ "$(num "$(val B pass-snap-taken)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-bad)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-passes)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-unverified)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-noquorum)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-delete-errors)" 1)" = 0 ] && [ "$(num "$(val A snap-peer-errors)" 1)" = 0 ]; check "pass: B's pass reads a snapshot the master takes at its request, verifies against it and has it deleted" $? "snapshots taken $(val B pass-snap-taken), bad $(val B pass-snap-bad), passes $(val B pass-snap-passes), verified $(val B pass-snap-verified), unverified $(val B pass-snap-unverified), no quorum $(val B pass-snap-noquorum), deleted $(val B pass-snap-deleted), delete errors $(val B pass-snap-delete-errors), target taken $(val B pass-snap-target-taken), A's errors $(val A snap-peer-errors), end after $(val B pass-end-seconds) s"
+	# Incremental convergence: a set written on the master after the first
+	# pass reaches the slave's media by a later pass, which also verifies
+	# and deletes its snapshot; the digests read after include the set.
+	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 1)" = 0 ] && [ "$(num "$(val B more-snap-verified)" 0)" -gt "$(num "$(val B pass-snap-verified)" 0)" ] && [ "$(num "$(val B more-snap-idle-taken)" 9)" -le 1 ] && [ "$(num "$(val B more-snap-idle-passes)" 0)" -ge 1 ]; check "pass: five files written on the master after the first pass reach the slave's media by a later pass, and a quiet master is then passed idle" $? "A $(val A more-media-files) on its media, B $(val B more-media-files) after $(val B more-wait-seconds) s, passes verified $(val B pass-snap-verified) then $(val B more-snap-verified), snapshots deleted $(val B more-snap-deleted) more, then $(val B more-snap-idle-taken) taken in 12 s with $(val B more-snap-idle-passes) idle passes"
+	# Neither image holds a snapshot of the pass at the end: the source on
+	# the master's, deleted at B's request, and the target on the slave's,
+	# deleted when a pass verified; a lost link's leftovers would show as
+	# A's own deletion line.
+	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
+	[ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 1)" = 0 ]; check "pass: neither image holds a snapshot of the pass at the end" $? "CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, left by the link $(val A snap-link-left)"
 else
 	[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by $(val B utility)'s show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
 fi

@@ -654,6 +654,26 @@ hammer2_pfs_find_byname(hammer2_dev_t *hmp, const char *name, int *idxp)
 }
 
 /*
+ * XXX Linux: the device holding a PFS of the name, any element, or NULL.
+ * Under hammer2_mntlk.
+ */
+hammer2_dev_t *
+hammer2_pfs_dev_byname(const char *name)
+{
+	hammer2_pfs_t *pmp;
+	int i;
+
+	TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
+		for (i = 0; i < HAMMER2_MAXCLUSTER; ++i) {
+			if (pmp->pfs_hmps[i] && pmp->pfs_names[i] &&
+			    strcmp(pmp->pfs_names[i], name) == 0)
+				return (pmp->pfs_hmps[i]);
+		}
+	}
+	return (NULL);
+}
+
+/*
  * XXX Linux: the body of the pfs-delete ioctl, callable from the
  * synchronization thread, which deletes the snapshots it took.  The
  * caller has checked the name and the mount's writability.
@@ -667,6 +687,7 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 	hammer2_pfs_t *spmp, *pmp;
 	hammer2_xop_unlink_t *xop;
 	hammer2_inode_t *dip;
+	struct uuid clid;	/* Linux */
 	int error, i;
 
 	/*
@@ -703,6 +724,7 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 	 * the PFS from the cluster.
 	 */
 	debug_hprintf("FOUND PFS %s CLINDEX %d\n", name, i);
+	clid = pmp->pfs_clid;	/* Linux: for the master's delete below */
 	hammer2_pfsdealloc(pmp, i, 1);
 
 	/*
@@ -725,6 +747,19 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 
 	if ((flags & HAMMER2_PFSDEL_LOCKED) == 0)
 		hammer2_lk_unlock(&hammer2_mntlk);
+
+	/*
+	 * XXX Linux: a snapshot on a connection device is the master's, taken
+	 * for the thread's pass; its PFS here held a proxy of the root and
+	 * is freed above, and the master deletes the snapshot itself at
+	 * SNAPDEL, named by the cluster id the freed PFS carried.  The link's
+	 * loss is not this delete's failure: the master deletes what a lost
+	 * link left at the link's end.
+	 */
+	if (hammer2_dev_is_conn(hmp)) {
+		error = hammer2_remote_snapshot_del(hmp, &clid, name);
+		return (error == ENOTCONN ? 0 : error);
+	}
 
 	/*
 	 * Now destroy the PFS under its device using the per-device
@@ -812,6 +847,15 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 	hmp = pmp->pfs_hmps[clindex];
 	if (hmp == NULL)
 		return (EINVAL);
+	/*
+	 * XXX Linux: an element on a connection device is a remote master's,
+	 * which takes the snapshot on its own device at the thread's request
+	 * and serves it over the link (hammer2_remote_snapshot_take()); only
+	 * the thread's flag reaches here, the ioctl snapshotting element 0.
+	 */
+	if (hammer2_dev_is_conn(hmp) && (flags & HAMMER2_PFSSNAP_PMPSYNC))
+		return (hammer2_remote_snapshot_take(pmp, clindex, name, mtidp,
+		    pmpp));
 
 	hammer2_lk_ex(&hmp->bulklk);
 

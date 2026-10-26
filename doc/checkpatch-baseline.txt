@@ -170,6 +170,16 @@
 # the port's own file. The gate had been red for five days before the
 # baseline moved, unseen because it exits 2 without a checker and no sweep ran it; the
 # hook before a push is what read it. See README.kernel-style.md.
+# 1,555 to 1,585: the master-side snapshot command, the two HM2 commands
+# past the descriptors and the client calls that send them. `function
+# definition argument` 492 -> 503 and `no spaces at the start of a line`
+# 231 -> 236, the new prototypes in hammer2.h and dmsg.h and their
+# continuation lines; `return is not a function` 353 -> 365, twelve
+# `return (x);` in the port's own files; `-EINVAL` 69 -> 70 and
+# `-ENOTCONN` 2 -> 3, hammer2_remote_snapshot_take() refusing an empty
+# or over-long name and an element whose device is not a connection, in
+# the module's positive errno convention. No category is new. See
+# README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -196,12 +206,12 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-492 function definition argument 'X' should also have an identifier name
+503 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
-231 please, no spaces at the start of a line
+236 please, no spaces at the start of a line
 82 quoted string split across lines
-353 return is not a function, parentheses are not required
+365 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
@@ -209,13 +219,13 @@
 3 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 1 return of an errno should typically be negative (ie: return -EINTR)
-69 return of an errno should typically be negative (ie: return -EINVAL)
+70 return of an errno should typically be negative (ie: return -EINVAL)
 14 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 5 return of an errno should typically be negative (ie: return -ENOENT)
 4 return of an errno should typically be negative (ie: return -ENOMEM)
 2 return of an errno should typically be negative (ie: return -ENOSPC)
-2 return of an errno should typically be negative (ie: return -ENOTCONN)
+3 return of an errno should typically be negative (ie: return -ENOTCONN)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
 6 return of an errno should typically be negative (ie: return -EOPNOTSUPP)

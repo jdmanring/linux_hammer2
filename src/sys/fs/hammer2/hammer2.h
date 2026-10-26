@@ -1406,6 +1406,7 @@ int hammer2_pfs_snapshot(hammer2_pfs_t *, int, const char *, int,
     hammer2_tid_t *, hammer2_pfs_t **);
 int hammer2_pfs_delete_byname(hammer2_dev_t *, const char *, int);
 hammer2_pfs_t *hammer2_pfs_find_byname(hammer2_dev_t *, const char *, int *);
+hammer2_dev_t *hammer2_pfs_dev_byname(const char *);
 
 /* hammer2_ondisk.c */
 int hammer2_open_devvp(struct super_block *, const hammer2_devvp_list_t *);
@@ -1473,7 +1474,12 @@ void hammer2_remote_span(hammer2_dev_t *);
 void hammer2_remote_detach_pmp(hammer2_pfs_t *);
 int hammer2_remote_xop(hammer2_xop_head_t *, int);
 int hammer2_remote_fetch(hammer2_dev_t *, hammer2_off_t, int, char **);
+int hammer2_remote_snapshot_take(hammer2_pfs_t *, int, const char *,
+    hammer2_tid_t *, hammer2_pfs_t **);
+int hammer2_remote_snapshot_del(hammer2_dev_t *, const struct uuid *,
+    const char *);
 int hammer2_remote_has_slot(hammer2_pfs_t *);
+void hammer2_remote_block_freed(hammer2_dev_t *, int);
 void hammer2_remote_dev_ref(hammer2_dev_t *);
 void hammer2_remote_dev_drop(hammer2_dev_t *);
 

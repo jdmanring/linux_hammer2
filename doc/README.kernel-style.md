@@ -191,6 +191,17 @@ before a push, which points it at the kernel tree's copy, read the
 count; a source commit that adds a return in the tree's style moves
 this row and the baseline moves with it in the same commit.
 
+1,555 to 1,585 when the master-side snapshot command landed: the two
+HM2 commands past the descriptors in `sys/dmsg.h`, the client calls
+that send them declared in `hammer2.h`, and the routing in
+`hammer2_ioctl.c` and `hammer2_synchro.c`. Eleven more `function
+definition argument` and five more `no spaces at the start of a line`
+are the new prototypes and their continuation lines; twelve more
+`return (x);` are in the port's own files; one `-EINVAL` and one `-ENOTCONN`
+are `hammer2_remote_snapshot_take()` refusing an empty or over-long
+name and an element whose device is not a connection, in the module's
+positive errno convention. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

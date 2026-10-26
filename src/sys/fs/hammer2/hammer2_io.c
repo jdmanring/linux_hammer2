@@ -576,6 +576,8 @@ hammer2_io_getblk_conn(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase,
 		dio = hammer2_io_alloc(hmp, lbase, btype, 1);
 		hammer2_mtx_unlock(&hmp->iohash_lock);
 		if (dio == NULL) {
+			if (buf)
+				hammer2_remote_block_freed(hmp, 1);
 			kvfree(buf);
 			return (NULL);
 		}
@@ -583,11 +585,14 @@ hammer2_io_getblk_conn(hammer2_dev_t *hmp, int btype, hammer2_off_t lbase,
 		hammer2_mtx_ex(&dio->lock);
 	}
 	if (dio->refs & HAMMER2_DIO_GOOD) {
+		if (buf)
+			hammer2_remote_block_freed(hmp, 1);
 		kvfree(buf);
 	} else if (error == 0 && (dio->folio || dio->buf)) {
 		/* a block without GOOD: the fill is refused, never overwritten */
 		WARN_ONCE(1, "hammer2: connection dio %016llx holds a block\n",
 		    (unsigned long long)lbase);
+		hammer2_remote_block_freed(hmp, 1);
 		kvfree(buf);
 		dio->error = EIO;
 	} else if (error == 0) {
@@ -812,6 +817,8 @@ hammer2_io_putblk(hammer2_io_t **diop)
 			hammer2_inc_iostat(&hmp->iostat_write, dio->btype,
 			    dio->psize);
 		}
+		if (hmp->rconn)
+			hammer2_remote_block_freed(hmp, 0);
 		kvfree(buf);	/* Linux: vmalloc here, kvmalloc on a connection device */
 	}
 
