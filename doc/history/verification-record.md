@@ -17720,3 +17720,95 @@ unseen since because the gate exits 2 with no checker and the host
 sweep leaves it out; `2100ed0` moves the two rows and the total with
 the note beside them. The stage's record is this entry; the row is
 1.0.46.
+
+## The slave's pass copies a master on another kernel over the wire, 2026-10-26
+
+What this entry claims: the synchronization thread of a SLAVE whose
+cluster holds a remote MASTER element runs its live pass through that
+element and writes the master's tree onto the slave's own media, the
+two media then reading equal entry for entry and data block for data
+block, on both 7.3 kernels, with the kernel's own instruments silent.
+No source changed for it; the 1.0.46 code ran the pass as it stood.
+What changed is `script/cluster-wire.sh`, which until `071555d` had
+mounted the slave's `ROOT` read-only before the dial so that the pass
+would refuse, and so had read the element through listings and digests
+alone, every read answered by the remote element with the slave's own
+element empty.
+
+The mode. Under `H2_WIRE_PASS=1` the slave's `ROOT` is mounted again
+read-write before the dial, so `hmp->rdonly` is clear and the refusal
+at `hammer2_synchro.c` does not fire; its module loads with
+`sync_snapshot=0`, since `hammer2_pfs_snapshot()` refuses a snapshot
+whose focus is a remote chain and a pass that cannot take its source
+snapshot would end before copying; the harness waits on the slave's
+media, bounded at 240 s, for the 300 entries of the master's directory
+to appear by `hammer2 -v show`, prints the seconds, and reads the
+pass's refusal and error lines from the kernel log. After both guests
+are down the host fingerprints `CL` on both images, `inode`, `dirent`
+and `data` lines with the data blocks by their `xxh` as
+`cluster-sync.sh` fingerprints its two volumes and with the inode check
+codes left out as there, keeps the fingerprints beside the images as
+`wire-run-<stamp>-fp-{a,b}.txt`, compares them whole, and runs
+`fsck_hammer2` on each. The `fiemap` check of the plain run inverts
+under the mode: with the block on the slave, `hammer2_bmap_offset()`
+returns the local chain the quorum check matched to the remote focus,
+so the 512 KiB file's one extent must carry an address and no
+`unknown_loc`, where the plain run reads `unknown_loc` on every
+extent. The mode needs `hammer2` and `fsck_hammer2` on the host
+(`H2_HAMMER2`, `H2_FSCK`) and is COULD-NOT-RUN without them.
+
+The readings, the harness at `071555d`, 31 checks and 0 failed each:
+
+- `h2debug-7.3`, module `d47e9de86433a37e`, `wire-run-20261026-015358`:
+  300 of the master's directory entries on the slave's media after
+  26 s, `sync_snapshot 0`, 0 refusal lines, 0 `sync_slaves` errors,
+  934 remote XOPs during the pass of which 0 ended other than clean
+  (1821 over the run: 625 `ipcluster`, 616 `nresolve`, 310 `scanall`,
+  232 `strategy_read`, 30 `readdir`, 8 `bmap`, by the slave's log),
+  1 refetch, clean; the fingerprints 626 lines each, 305 `FILE`
+  inodes and 10 data blocks on the master's image, 0 lines differing;
+  `fsck_hammer2` rc 0 on both; `fiemap` rc 0, 1 extent, 0
+  `unknown_loc`; 305 of 305 digests equal warm and cold; the read-write
+  remount and mount refused; 0 kernel warnings, lockdep on, kmemleak
+  cleared once and 0 printed on both guests; 9180 frames in the trace;
+  the host's QEMU core count 1 before and after, read by hand
+  (`final-2b/wire-pass-debug-2.log`).
+- `h2kasan-7.3`, module `f8e1c3bc0b985b9a`,
+  `wire-run-20261026-015707`, the tree's documents edited for this
+  entry and no source, which is why the header reads `-dirty` against
+  the 1.0.46 module hash: 300 entries on the slave's media after 22 s,
+  `sync_snapshot 0`, 0 refusals, 0 errors, 934 remote XOPs during the
+  pass of which 0 ended other than clean (1821 at the harness's reading
+  and 1822 in the slave's whole log, one `ipcluster` after it: 626
+  `ipcluster`, 616 `nresolve`, 310 `scanall`, 232 `strategy_read`, 30
+  `readdir`, 8 `bmap`), 0 refetches; the fingerprints 626 lines each,
+  305 `FILE` inodes and 10 data blocks, 0 lines differing;
+  `fsck_hammer2` rc 0 on both; `fiemap` rc 0, 1 extent, 0
+  `unknown_loc`; 305 of 305 digests equal warm and cold; 0 kernel
+  warnings and 0 sanitizer reports, lockdep on, kmemleak cleared once
+  and 0 printed on both guests; 9180 frames in the trace; the host's
+  QEMU core count 1 before and after, read by hand
+  (`final-2b/wire-pass-kasan-2.log`).
+
+Two runs before the commit are kept and are not the readings above:
+`wire-run-20261026-014405` on the KASAN kernel, the mode's first run,
+reported 2 of 31 failed with the subject green (300 files on the
+slave's media after 20 s, 0 refusals, 0 errors, fingerprints equal, both
+`fsck` clean, 0 warnings), both failures in the harness's expectations:
+the fingerprint check asked for 306 `FILE` inodes where the master's
+listing counts 305, an arithmetic slip, now the count the master's own
+`find` reports; and the `fiemap` check still asked for `unknown_loc`,
+the plain run's reading, where the block was by then on the slave
+(`final-2b/wire-pass-kasan-1.log`). `wire-run-20261026-014922` on the
+debug kernel ran with both expectations corrected and read 31 and 0
+(`final-2b/wire-pass-debug-1.log`) while the load's argument was still
+spelled in a form `test-inventory.sh` does not read as a guarded load;
+the spelling moved and the two runs above are from the committed text.
+
+What the pass over the wire does not yet read: the five criteria as
+`cluster-sync.sh` reads them locally need a snapshot of the source,
+which a remote focus refuses, so the pass here is the live one that
+`H2_SYNC_SNAPSHOT=0` reads locally; the stale local element (the slave
+holding an older block than the master's) and a relay rewrite of a
+`scanall` feed under the pass are in the code and driven by no run,
+with the hold each needs named in the note. The row is 1.0.47.

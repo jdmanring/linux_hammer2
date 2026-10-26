@@ -546,9 +546,10 @@ gave, which stage 3's flush over the wire replaces.
 A master that cannot read its own media is unreachable for that read,
 which fails closed. What a peer that lies about a key is believed is the
 security model's question, admission now and authentication in stage 5,
-and not this one. The `scanall` shape guards the slave's pass, which no
-wire run drives yet, so no control reads it; the run that drives the pass
-is its trigger. The wire harness has five controls, two on what a feed
+and not this one. The `scanall` shape guards the slave's pass, which the
+wire run drives under `H2_WIRE_PASS=1` since 2026-10-26, and no control
+reads it yet; a relay rewrite of a `scanall` feed under that mode is
+the control, and it is among the rest of stage 2b. The wire harness has five controls, two on what a feed
 can answer and three on how the element ends, each read on the debug
 kernel with the module built from `608e4b5`'s source (sha256
 `d47e9de86433a37e`), the one the tree still builds. Under
@@ -654,25 +655,28 @@ own; with a remote focus it is taken from a local element the quorum
 check matched to the focus by key and `modify_tid`, and a file or a
 block no local element matches reports no physical address: fiemap marks its extents
 `FIEMAP_EXTENT_UNKNOWN` and FIBMAP returns 0, as for a hole
-(`hammer2_bmap_offset()`). The wire run drives the case with no local
-element, its slave held empty. A local element matched to the focus,
-and one holding the inode but lacking the block or holding an older
-one, are in the code and not driven by a run, since each needs the slave
-to have copied from the master, and no run on the code committed reads
-a slave that copied: the wire run holds the slave empty. Two kept runs
-had the pass copy the master's tree into the slave over the wire,
+(`hammer2_bmap_offset()`). The plain wire run drives the case with no
+local element, its slave held empty. The matched case is driven under
+`H2_WIRE_PASS=1` since 2026-10-26: the slave's device stays writable,
+its pass copies the master's `CL` through the element, and `fiemap` of
+the 512 KiB file then reports one extent with no `unknown_loc`, the
+slave's own block (`wire-run-20261026-015358` on the lockdep kernel
+and `wire-run-20261026-015707` on the KASAN kernel, 31
+checks and 0 failed each). A local element holding the inode but
+lacking the block or holding an older one is in the code and not
+driven by a run. Two kept runs before the pass mode existed had the
+pass copy the master's tree into the slave over the wire,
 `wire-run-20261020-200029` and `-203127`, on uncommitted code before
-`0d0717d`; the first shows the direct-data insertion described above, ending in
-the flush's depth limit, and the second ended in a circular locking
-report, so neither is a reading of the pass. `1eae1d3`'s message says no
-run has driven the pass over the wire, which those two contradict; the
-true statement is this one. The run that reads the pass is what the
-roadmap lists as the rest of stage 2b.
-That run is the trigger, and it has the hold the stale case needs: the
-pass refuses on a device opened read-only, so the slave's device
-reopened read-only after the copy and dialed again, with the file then
-changed on the master, reads the stale case, and a file left unchanged
-the matched one, whose address the old code reported too.
+`0d0717d`; the first shows the direct-data insertion described above,
+ending in the flush's depth limit, and the second ended in a circular
+locking report, so neither is a reading of the pass. `1eae1d3`'s
+message says no run has driven the pass over the wire, which those two
+contradict; the first readings of the pass are the two runs above.
+The stale case has the hold it needs in the pass mode: the pass
+refuses on a device opened read-only, so the slave's device reopened
+read-only after the copy and dialed again, with the file then changed
+on the master, reads the stale case, and a file left unchanged the
+matched one.
 
 The reply's data is copied off the reader thread into the frame, and
 the feed stashes it on the handle before it locks the new chain; the
