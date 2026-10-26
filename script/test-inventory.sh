@@ -656,9 +656,10 @@ done
 # shell operator, brace, quote, backtick or backslash in the value, and
 # the guard the harnesses carry, `|| { echo "insmod failed"; exit 1; }`
 # or `insmod-failed` and `exit 0`, so a second load while the module is
-# loaded ends the shell that runs it, the guest script or a substitution
-# inside it whose captured output then carries the marker, since a clear
-# between the load and the reading greys every leak older than kmemleak's minimum age for
+# loaded ends the shell that runs it, the guest script or a substitution,
+# pipeline element or subshell inside it, whose output then carries the
+# marker to the `.out` or, discarded, does not, since a clear between
+# the load and the reading greys every leak older than kmemleak's minimum age for
 # both readings (mm/kmemleak.c, kmemleak_clear); the clear's own marker,
 # `kmemleak-cleared`, named nowhere else but as the host's read, since
 # the host requires one in the `.out` per load the run performs (two in
@@ -712,7 +713,7 @@ done
 # function or a loop the script runs twice, the second time with its
 # output redirected or filtered, which adds no load line and keeps the
 # marker count at one, the edit a quiet reload helper logging to a file
-# is; DEFER(a harness's run loads the module from one load line twice):
+# is; DEFER(a harness's run clears kmemleak from one load line twice):
 # the marker written to `/dev/kmsg` and counted from the kept kernel
 # log, which no enclosing redirection takes, at the cost of a follower
 # and a host copy in the three harnesses that keep none, the ring clears
@@ -739,7 +740,8 @@ done
 # marker alone, the admission by the path alone, the guard's exit code
 # widened to 3, a blank line allowed between the clear and its load,
 # the clear-before-load test keyed on the guarded load, the comparison
-# on the whole line where the stripped one matches nothing) admit no
+# on the whole line where the stripped one matches nothing, the load on
+# a comment line read by its fixed path alone) admit no
 # set the matrix holds; their number is asserted, a weakening none of them
 # reads that admits a set is what the list grows by, and three parts
 # have none: the forms list's count assertion and the controls' own,

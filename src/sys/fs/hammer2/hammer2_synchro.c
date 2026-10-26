@@ -870,11 +870,11 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			 * device's header and waits: both names are on the
 			 * media before the pass.  A kept target leaves the
 			 * source's name to the next sync of a PFS mounted from
-			 * its device, so a cut in the pass can leave the source
-			 * with no name, nothing to delete.  A target found by
-			 * name is the slave before the pass; with none the next
-			 * mount takes a fresh one of the slave as the cut left
-			 * it, whole by the pass's one flush.
+			 * the master's device, so a cut in the pass can leave
+			 * the source with no name, nothing to delete.  Only a
+			 * taken target is the slave before the pass; with none
+			 * the next mount takes a fresh one of the slave as the
+			 * cut left it, whole by the pass's one flush.
 			 */
 			if (derror == 0)
 				hammer2_vfs_sync_pmp(pmp, MNT_WAIT);

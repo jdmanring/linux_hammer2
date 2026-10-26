@@ -939,9 +939,10 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# a pass; a kept target leaves the source's name to the next sync of a
 	# PFS mounted from the master's device, its syncer's every thirty
 	# seconds or a caller's, so a cut inside such a pass can leave the
-	# target by name and no source, as the run of 2026-10-25 under this
-	# arm did, the first pass then having nothing stale to delete. The cut
-	# pass's target line, printed by the guest before the cut, says which.
+	# target by name and no source, the first pass then having nothing
+	# stale to delete, which is how cluster-run-20261025-193845 read with
+	# no target line printed. The cut pass's target line, printed by the
+	# guest before the cut, says which since.
 	if m=$("$HAMMER2" -v show "$MASTER" 2>/dev/null); then
 		echo "crash-master-pfs $(printf '%s\n' "$m" | grep -c 'filename "CL"')" >> "$W/out"
 		echo "crash-src-on-media $(printf '%s\n' "$m" | grep -c 'filename "CL.h2sync-src"')" >> "$W/out"
