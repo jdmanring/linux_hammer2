@@ -912,10 +912,31 @@ a state callback, since the carried kernel answers no one-way `PING`
 takes the reader's `DMSG_ERR_NOSUPP` reply as the answer, and when one
 goes unanswered for the bound ends the connection by the reader's own
 shutdown path (`KILLRX`, `kern_dmsg.c:121-133`), never by the teardown,
-which disables the items and would wait on itself. The keepalive is the
-one part of this section the first remote-element commit of stage 2b does
-not build; until it does, a partition that keeps the socket is seen when
-a request reaches its bound. The reply printed `RCVMSG` on every frame,
+which disables the items and would wait on itself. That is what
+`hammer2_remote_keepalive()` does since 2026-10-26, armed by the peer's
+`PROTO_2` announcement on both ends of a link and stopped by the same
+disable the registration item gets at a reconnect or the teardown: one
+ping outstanding at a time, stamped when sent and cleared by the
+callback's `DELETE`, real or simulated; a tick that finds the stamp a
+bound old prints `HM2 peer silent for N ms, ending the link`, sets
+`KILLRX` and shuts the descriptor down under the message lock, and
+re-arms nothing, the reader's exit having set `KILLRX` for every later
+tick to read. The link's end then reaches the element as its span
+deleted, and a request sent after it drains at once with
+`ENOTCONN`, since the writer thread's exit leaves `EXITNOACC` set.
+The relay reads it under `--silence-on NAME` (`cluster-wire.sh`'s
+`H2_WIRE_SILENCE=1`): the lookup of a name the master lacks is answered,
+and from that answer's closing frame on every frame both ways is
+dropped with the sockets open, so nothing is in flight when the frames
+stop and only the keepalive can see it; the control built with
+`HAMMER2_NOKEEPALIVE` arms no item and must read the silence at the
+next request's bound alone, the request ending `ETIMEDOUT` in the
+element's line while the caller reads `ENOTCONN` under both, a
+timed-out element being no answer. The stall control passes the link's own
+frames and holds the HM2 ones, so what it reads stays the request's
+bound on a link the keepalive keeps alive, where a stall of everything
+for 5000 ms under a 2000 ms bound would now end the link first. The
+numbers are in the verification record's stage 2b entry. The reply printed `RCVMSG` on every frame,
 debug-gated with the span table under 0x0100; at the wire run's rate
 that print overran the guest's log ring and took the registration line
 with it, so it has its own bit, 0x0400 (`hammer2_iocom.c:225-226`), one
@@ -1516,7 +1537,7 @@ and transport rows are stage 2's and are read there.
 | A dies after prepare | 2 masters | S1, S5: no commit becomes visible on one side alone; the cell is the one that refuted candidate 2 (C3), and what B does with a half-finished transaction is the protocol note's | `fail_quorum_at=prepared`, B's kernel log after `remote_timeout_ms`, fingerprints |
 | A dies before commit | 2 masters | as above, with the coordinator never sending commit | `fail_quorum_at=committing`, fingerprints |
 | A dies after commit acknowledgment | 2 masters | S5, S9: the acknowledged write survives on B; A's state at restart is what the protocol note's level test must read, and C1 says it cannot be A's root tid | B's media holding the write, A's registration line, writes after it |
-| B loses connectivity to A | 2 masters | S1: with the row present an uncached read returns `ENOTCONN` rather than the `ENOENT` the carried check gives today and the log names the transition once; what a write does after the loss, before and after the keepalive's detection, is the protocol note's (C12, C13) | relay partition for frames i..j, `cat` and `ls` with the caches dropped on both mounts after the keepalive's line, the errno and the log line; the write half's instruments are the protocol note's |
+| B loses connectivity to A | 2 masters | S1: with the row present an uncached read returns `ENOTCONN` rather than the `ENOENT` the carried check gives today and the log names the transition once; what a write does after the loss, before and after the keepalive's detection, is the protocol note's (C12, C13) | the relay's silence (`--silence-on`, the partition that keeps the socket, read by `cluster-wire.sh` under `H2_WIRE_SILENCE=1` on the slave since 2026-10-26) or its partition for frames i..j, `cat` and `ls` with the caches dropped on both mounts after the keepalive's line, the errno and the log line; the write half's instruments are the protocol note's |
 | A/B partition while C is reachable to one side | 3 masters | S1, S3: the side with two of three may commit, the lone side fails closed, and the lone master must not regain write authority on heal by reconnecting; the three-master interleave of round six is the schedule this cell runs | relay partition, writes on both sides, fingerprints: two equal and one behind, the lone master's registration line |
 | all but one master disappear | 3 masters | S1: the survivor's uncached reads return `ENOTCONN` from the check and no read of its own focus is served, since the carried check has no such path and soft-master mode is not P8's; its writes are the protocol note's | relay disconnect of two, `cat` and `ls` with the caches dropped after the loss, the errno; the write half's instruments are the protocol note's |
 | stale master reconnects | 2 masters, then 3 | S3, L1: with two masters nothing may commit while B is away and liveness must return on reconnect, both the protocol note's to deliver; with three, B returns behind and must neither vote nor be written through; what reads "behind" is the protocol note's | `stale_rejoin`: writes failing then succeeding on both sides; the three-master run's registration line on B, B's media unchanged, A's and C's unchanged by B |

@@ -88,6 +88,22 @@
 # is judged and the kernel returns the entries written, so the listing
 # completes, and the reading is the element's own log line.
 #
+# H2_WIRE_SILENCE=1 reads the keepalive: after every read above, B's bound
+# is set to 2000 ms and B looks up a name A does not have, whose answer
+# arms the relay's silence, a partition that drops every frame both ways
+# with the sockets left open. No request is in flight, so only the
+# keepalive can see it: B's kernel must end the link by its own line
+# within the bound and a half of the next ping, the element detached by
+# the span's deletion before any request, and B's next listing must fail
+# not connected at once, under the bound, where a listing that waits out
+# the bound times out instead. H2_WIRE_SILENCE=control builds the module
+# with HAMMER2_NOKEEPALIVE, which arms no keepalive, and must read the
+# opposite: no line, the listing timing out no sooner than the bound, the
+# element still registered at B's unmount and detached by the connection's
+# end. The caller reads not connected under both, since a timed-out
+# element is no answer, so the time and the element's own ETIMEDOUT line
+# tell them apart. Under either the plain reads before the silence hold.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -115,6 +131,8 @@ END=${H2_WIRE_END:-}
 # by the host from both images after the guests are down, fingerprinted as
 # cluster-sync.sh fingerprints its two volumes and checked by fsck_hammer2.
 PASS=${H2_WIRE_PASS:-0}
+SILENCE=${H2_WIRE_SILENCE:-0}
+case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
 case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
 [ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
@@ -123,6 +141,7 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$STALL" = 0 ] || nctl=$((nctl + 1))
 [ -z "$END" ] || nctl=$((nctl + 1))
 [ "$PASS" = 1 ] && nctl=$((nctl + 1))
+[ "$SILENCE" = 0 ] || nctl=$((nctl + 1))
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
@@ -157,7 +176,7 @@ guest_off() {	# guest_off <domain> <ssh>: unmount, unload, detach its volume
 }
 
 make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
+make -s KDIR="$KDIR" $([ "$SILENCE" = control ] && echo HAMMER2_NOKEEPALIVE=1) >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 # What was built, taken now: the tree can move before the report is written.
 SRC_REV=$(git describe --always --dirty); KO_SUM=$(sha256sum < "$KO" | cut -d' ' -f1)
@@ -217,6 +236,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
     ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
     --refuse-nresolve "$REFUSE" --stall-ms "$STALL" \
     --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
+    --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -330,7 +350,8 @@ echo "pass-remote-ends $(kl | grep 'H2 REMOTE ' | grep -c -v 'end=00000000')"
 echo "pass-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 GUEST
 cat > "$W/read.sh" <<'GUEST'
-# read [<stall ms> [<end mode>]]: B reads A's files through the element
+# read <stall ms> <end mode or 0> <silence or 0>: B reads A's files through
+# the element; the arguments ride ssh's command line, so none is empty
 mountpoint -q $C || { echo "CL not mounted"; exit 1; }
 P=/sys/module/hammer2/parameters/remote_timeout_ms
 [ "${1:-0}" = 0 ] || echo 2000 > $P
@@ -361,7 +382,7 @@ print("onefed-entries %d" % calls)
 PY
 	echo "empty-ls-notconn $(grep -c 'not connected' /tmp/h2wire.emptyerr)"
 	echo "empty-ls-err $(sed -n '1s/.*: //p' /tmp/h2wire.emptyerr)"
-elif [ -n "${2:-}" ]; then
+elif [ "${2:-0}" != 0 ]; then
 	ls $C/empty >/dev/null 2>/tmp/h2wire.emptyerr; echo "empty-ls-rc $?"
 	echo "empty-ls-notconn $(grep -c 'not connected' /tmp/h2wire.emptyerr)"
 	echo "empty-ls-err $(sed -n '1s/.*: //p' /tmp/h2wire.emptyerr)"
@@ -406,6 +427,30 @@ echo "log-readdir-first $(kl | grep -m1 'H2 REMOTE readdir ' | sed 's/.* fed=/fe
 echo "log-readdir-other $(kl | grep 'H2 REMOTE readdir ' | grep -vc 'end=00080000')"
 echo "log-readdir-onefed-notconn $(klog 'H2 REMOTE readdir .* fed=1 error=00080000 end=00080000')"
 echo "log-bmap-notconn $(klog 'H2 REMOTE bmap .* end=00080000')"
+# the keepalive: a name A does not have arms the relay's silence at its
+# answer, so no request is in flight when the frames stop; the bound is
+# 2000 ms from here, the keepalive reading it at its next tick
+if [ "${3:-0}" != 0 ]; then
+	echo 2000 > $P
+	stat $C/keepalive-marker >/dev/null 2>/tmp/h2wire.silerr; echo "silence-stat-rc $?"
+	echo "silence-stat-enoent $(grep -c 'No such file' /tmp/h2wire.silerr)"
+	t0=$(date +%s%N)
+	n=0; until [ "$(klog 'HM2 peer silent')" -ge 1 ] || [ $n -ge 200 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "silence-line $(klog 'HM2 peer silent')"
+	echo "silence-wait-ms $(( ($(date +%s%N) - t0) / 1000000 ))"
+	echo "silence-silent-ms $(kl | sed -n 's/.*HM2 peer silent for \([0-9]*\) ms.*/\1/p' | head -1)"
+	echo "silence-detached $(klog1 'remote element CL at clindex 1 detached')"
+	t0=$(date +%s%N)
+	echo "silence-files $(cd $C && find . -type f 2>/tmp/h2wire.silerr | grep -c .)"
+	echo "silence-find-ms $(( ($(date +%s%N) - t0) / 1000000 ))"
+	echo "silence-find-notconn $(grep -c 'not connected' /tmp/h2wire.silerr)"
+	echo "silence-find-err $(sed -n '1s/.*: //p' /tmp/h2wire.silerr)"
+	# a request that waited out the bound ends ETIMEDOUT in the element's
+	# own line; the caller reads not connected either way, so the time
+	# and this count tell the two apart
+	echo "silence-timedout-ends $(klog 'H2 REMOTE .* end=00040000')"
+	echo "silence-peer-sent $(klog 'HM2 peer sent')"
+fi
 GUEST
 cat > "$W/link.sh" <<'GUEST'
 # link <peer clid> <peer type>: what the log and the table say of the peer
@@ -415,6 +460,7 @@ echo "spans-rx $(klog 'H2 +RXSPAN')"
 echo "span-cl $(kl | grep 'H2 +RXSPAN' | grep -c "cl=$1 .*type=$2")"
 echo "spantab $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
 echo "threads $(threads)"
+echo "keepalive-line $(klog 'HM2 peer silent')"
 GUEST
 cat > "$W/down.sh" <<'GUEST'
 # down: unmount, the leak scan, unload
@@ -532,7 +578,7 @@ sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
 phase B reg.sh
-phase B ro.sh && { [ "$PASS" != 1 ] || phase B pass.sh; } && phase B read.sh "$STALL" "$END"
+phase B ro.sh && { [ "$PASS" != 1 ] || phase B pass.sh; } && phase B read.sh "$STALL" "${END:-0}" "$SILENCE"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -650,15 +696,32 @@ if [ "$STALL" != 0 ]; then
 	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ] && [ "$(num "$(val B readdir-timedout-ms)" 0)" -ge 2000 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, shortest timed-out readdir $(val B readdir-timedout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
 [ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$END" = lost ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
-[ "$END" = lost ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
+[ "$END" = lost ] || [ "$SILENCE" = 1 ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
 # The plain run's detach is the connection's end at B's unmount; under lost
-# the link ended first and the peer's span deletion detached it. Each run
-# reads the path it expects, not a count of one by either.
+# and under the keepalive's silence the link ended first and the peer's
+# span deletion detached it. Each run reads the path it expects, not a
+# count of one by either.
 dw=$(val B detached-why | sed 's/ *$//')
-if [ "$END" = lost ]; then
+if [ "$END" = lost ] || [ "$SILENCE" = 1 ]; then
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "span deleted" ]; check "remote: the link's end detaches the element once, by the span's deletion" $? "$(val B log-detached), by $dw"
 else
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "connection ended" ]; check "remote: B's device unmount detaches the element once, by the connection's end" $? "$(val B log-detached), by $dw"
+fi
+# The keepalive: the silence starts at the marker's answer, so nothing is
+# in flight, and the link's end is the keepalive's own line or nothing.
+# The fake pass, a link ended by anything else, is kept out by the line
+# itself and by the protocol-error count; a listing that fails fast for
+# another reason would still lack the line.
+if [ "$SILENCE" != 0 ]; then
+	sf=$(grep -c ' silence-from ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null); sd=$(grep -c ' silence ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$sf" 0)" = 1 ] && [ "$(num "$sd" 0)" -ge 1 ] && [ "$(num "$(val B silence-stat-rc)" 0)" != 0 ] && [ "$(num "$(val B silence-stat-enoent)" 0)" = 1 ]; check "silence: the marker's lookup is answered absent and the relay drops every frame after its answer" $? "silence-from lines $(num "$sf" 0), dropped $(num "$sd" 0), stat rc $(val B silence-stat-rc) absent $(val B silence-stat-enoent)"
+	if [ "$SILENCE" = 1 ]; then
+		[ "$(num "$(val B silence-line)" 0)" = 1 ] && [ "$(num "$(val B silence-silent-ms)" 0)" -ge 2000 ] && [ "$(num "$(val B silence-wait-ms)" 99999)" -lt 20000 ] && [ "$(num "$(val B silence-peer-sent)" 1)" = 0 ]; check "silence: B's keepalive ends the link once, the peer silent for no less than the bound, with no request in flight" $? "line $(val B silence-line) after $(val B silence-wait-ms) ms, silent $(val B silence-silent-ms) ms against the 2000 ms bound, protocol errors $(val B silence-peer-sent); A's line $(val2 A keepalive-line)"
+		[ "$(num "$(val B silence-detached)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-ms)" 99999)" -lt 2000 ] && [ "$(num "$(val B silence-timedout-ends)" 1)" = 0 ]; check "silence: the element is detached before the next listing, which fails not connected at once with no request timed out" $? "detached $(val B silence-detached), listing \"$(val B silence-find-err)\" in $(val B silence-find-ms) ms, not connected $(val B silence-find-notconn), requests timed out $(val B silence-timedout-ends), $(val B silence-files) files"
+	else
+		[ "$(num "$(val B silence-line)" 1)" = 0 ] && [ "$(num "$(val2 A keepalive-line)" 1)" = 0 ] && [ "$(num "$(val B silence-detached)" 1)" = 0 ]; check "control: with no keepalive armed the silence is seen by neither kernel and the element stays" $? "lines B $(val B silence-line), A $(val2 A keepalive-line), detached $(val B silence-detached)"
+		[ "$(num "$(val B silence-timedout-ends)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-ms)" 0)" -ge 2000 ] && [ "$(num "$(val B silence-find-notconn)" 0)" -ge 1 ]; check "control: the next listing waits out the bound, its request ending timed out, before the caller reads not connected" $? "listing \"$(val B silence-find-err)\" in $(val B silence-find-ms) ms, requests timed out $(val B silence-timedout-ends), not connected $(val B silence-find-notconn)"
+	fi
 fi
 # The PFS root's proxy is at level 1 and a file's at 2, the media's own.
 lr=$(val B lockdep-remote)

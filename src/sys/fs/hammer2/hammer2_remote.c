@@ -47,6 +47,8 @@ struct hammer2_remote {
 	hammer2_dev_t		*hmp;		/* the device this connection is on */
 	hammer2_dev_t		*cdev;		/* the connection device, the client side */
 	struct delayed_work	regwork;	/* registration and detach */
+	struct delayed_work	pingwork;	/* the keepalive */
+	unsigned long		ping_sent;	/* jiffies of the ping awaiting its answer, 0 none */
 };
 
 #define HAMMER2_REMOTE_OPEN	0	/* requests admitted */
@@ -99,6 +101,7 @@ _Static_assert(sizeof(dmsg_hm2_feed_t) == 256, "a feed frame's size");
 
 static void hammer2_remote_serve(struct work_struct *);
 static void hammer2_remote_reconcile(struct work_struct *);
+static void hammer2_remote_keepalive(struct work_struct *);
 static void hammer2_remote_conn_end(struct hammer2_remote *, int);
 
 void
@@ -119,6 +122,7 @@ hammer2_remote_init(hammer2_dev_t *hmp)
 		INIT_LIST_HEAD(&rm->reqq);
 		rm->hmp = hmp;
 		INIT_DELAYED_WORK(&rm->regwork, hammer2_remote_reconcile);
+		INIT_DELAYED_WORK(&rm->pingwork, hammer2_remote_keepalive);
 	} else {
 		hprintf("no HM2 server for this device: out of memory\n");
 	}
@@ -156,6 +160,10 @@ hammer2_remote_quiesce(hammer2_dev_t *hmp, int final)
 	hammer2_remote_conn_end(rm, final);	/* the client side */
 }
 
+/*
+ * The peer announced PROTO_2, on the reader thread: requests are admitted
+ * and the keepalive starts, its first ping half a bound from now.
+ */
 void
 hammer2_remote_resume(hammer2_dev_t *hmp)
 {
@@ -166,7 +174,79 @@ hammer2_remote_resume(hammer2_dev_t *hmp)
 	spin_lock(&rm->lock);
 	if (rm->state == HAMMER2_REMOTE_QUIESCED)
 		rm->state = HAMMER2_REMOTE_OPEN;
+	rm->ping_sent = 0;
 	spin_unlock(&rm->lock);
+#ifndef HAMMER2_NOKEEPALIVE
+	mod_delayed_work(system_dfl_wq, &rm->pingwork,
+	    msecs_to_jiffies(hammer2_remote_timeout_ms / 2));
+#endif
+}
+
+/*
+ * The keepalive (doc/CLUSTER_PROTOCOL_DESIGN.md, the client side).
+ * kern_dmsg has none, so a partition that drops frames and keeps the socket
+ * would be seen only when a request reached its bound, and on a link with
+ * no request in flight never.  A PROTO_2 link carries this second work item
+ * for it alone, which neither the registration item nor a server busy in a
+ * request holds up.  Every half of the bound it sends LNK_PING as a
+ * CREATE|DELETE transaction, since the carried kernel answers no one-way
+ * PING (C15) and a transaction left open would leak a state per ping; the
+ * peer's refusal of it, LNK_ERROR with DMSG_ERR_NOSUPP, is the answer, and
+ * so is the DELETE the link's own end simulates, after which the item sees
+ * KILLRX and stops.  A ping unanswered for the bound ends the link by the
+ * reader's own path, KILLRX and the descriptor shut down as a reconnect
+ * does it, never by the teardown, which disables this item and would wait
+ * on itself; the link's end then reaches the element as its span deleted.
+ * HAMMER2_NOKEEPALIVE builds the negative control, which never arms the
+ * item: under it a silent peer is seen at the next request's bound and
+ * never before.
+ */
+static int
+hammer2_remote_pong(kdmsg_state_t *state, kdmsg_msg_t *msg)
+{
+	struct hammer2_remote *rm = state->any.any;
+
+	if (msg->any.head.cmd & DMSGF_DELETE) {
+		spin_lock(&rm->lock);
+		rm->ping_sent = 0;
+		spin_unlock(&rm->lock);
+	}
+	return (0);
+}
+
+static void
+hammer2_remote_keepalive(struct work_struct *work)
+{
+	struct hammer2_remote *rm = container_of(to_delayed_work(work),
+	    struct hammer2_remote, pingwork);
+	kdmsg_iocom_t *iocom = &rm->hmp->iocom;
+	kdmsg_msg_t *msg;
+	unsigned long sent, bound = msecs_to_jiffies(hammer2_remote_timeout_ms);
+
+	if ((iocom->flags & KDMSG_IOCOMF_PROTO2) == 0 ||
+	    (iocom->msg_ctl & KDMSG_CLUSTERCTL_KILLRX))
+		return;
+	spin_lock(&rm->lock);
+	sent = rm->ping_sent;
+	if (sent == 0)
+		rm->ping_sent = jiffies | 1;	/* never the 0 that means none */
+	spin_unlock(&rm->lock);
+	if (sent == 0) {
+		msg = kdmsg_msg_alloc(&iocom->state0,
+		    DMSG_LNK_PING | DMSGF_CREATE | DMSGF_DELETE,
+		    hammer2_remote_pong, rm);
+		kdmsg_msg_write(msg);
+	} else if (time_after_eq(jiffies, sent + bound)) {
+		pr_warn("hammer2: HM2 peer silent for %u ms, ending the link\n",
+		    jiffies_to_msecs(jiffies - sent));
+		lockmgr(&iocom->msglk, LK_EXCLUSIVE);
+		atomic_set_int(&iocom->msg_ctl, KDMSG_CLUSTERCTL_KILLRX);
+		if (iocom->msg_fp)
+			fp_shutdown(iocom->msg_fp, SHUT_RDWR);
+		lockmgr(&iocom->msglk, LK_RELEASE);
+		return;
+	}
+	mod_delayed_work(system_dfl_wq, &rm->pingwork, max(bound / 2, 1UL));
 }
 
 /*
@@ -2190,12 +2270,12 @@ hammer2_remote_span(hammer2_dev_t *hmp)
 
 /*
  * The link this connection device stands for has ended, by a reconnect or
- * the device's teardown: its requests fail now, the work item is stopped
- * (disable_delayed_work_sync(), since a cancel would let it requeue), and
+ * the device's teardown: its requests fail now, both work items are stopped
+ * (disable_delayed_work_sync(), since a cancel would let one requeue), and
  * every slot on it is detached under hammer2_mntlk, which the teardown's
  * caller already holds and a reconnect, on the ioctl's thread, takes.  A
- * reconnect re-enables the item for the next link.  The device itself
- * lives until its last proxy.
+ * reconnect re-enables the items for the next link, whose announcement
+ * arms the keepalive again.  The device itself lives until its last proxy.
  */
 static void
 hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
@@ -2212,6 +2292,7 @@ hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
 	if (cdev)
 		hammer2_remote_dev_kill(cdev);
 	disable_delayed_work_sync(&rm->regwork);
+	disable_delayed_work_sync(&rm->pingwork);
 	if (cdev) {
 		if (!final)
 			hammer2_lk_ex(&hammer2_mntlk);
@@ -2233,6 +2314,8 @@ hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
 		span->slotted = 0;
 	}
 	hammer2_spin_unex(&rm->hmp->span_spin);
-	if (!final)
+	if (!final) {
 		enable_delayed_work(&rm->regwork);
+		enable_delayed_work(&rm->pingwork);
+	}
 }

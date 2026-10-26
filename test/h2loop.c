@@ -57,9 +57,16 @@
  * refusal, the LNK_ERROR a server sends when it cannot take a request,
  * and drops the rest of the real answer; the receiving kernel must read
  * that master as unreachable and never as having answered "no such
- * name".  --stall-ms N holds every frame due to B from the first readdir
+ * name".  --stall-ms N holds every HM2 frame due to B from the first readdir
  * answer on for N milliseconds, in order, so B's bound on a reply ends the
- * call while A has answered in full.  --end-readdir 1 sets the error on
+ * call while A has answered in full; frames in the LNK space, the two
+ * kernels' keepalive pings and their answers, pass, so the link stays
+ * alive under the stall and what the knob reads is the request's bound.
+ * --silence-on NAME is the keepalive's control: the nresolve request
+ * from B whose name is NAME is delivered with its answer, and from the
+ * answer's closing frame on every frame both ways is dropped with the
+ * sockets left open, a partition that keeps the socket, which only a
+ * keepalive can see on a link with no request in flight.  --end-readdir 1 sets the error on
  * the closing frame of the first two readdir answers to
  * HAMMER2_ERROR_ABORTED, the code a server ends a request with when its
  * unmount drains it, and --end-readdir 2 clears those frames' error and
@@ -186,10 +193,11 @@ static struct {
 	int rekey_data;		/* the relay moves one data feed's key */
 	int bare_dirent;	/* the relay answers one nresolve with a dirent */
 	int refuse_nresolve;	/* the relay refuses one nresolve for A */
-	long stall_ms;		/* the relay holds B's frames from one readdir */
+	long stall_ms;		/* the relay holds B's HM2 frames from one readdir */
 	int end_readdir;	/* the relay rewrites the readdir closes it sees, two at most */
+	const char *silence_on;	/* the name whose lookup's answer starts a silence */
 } opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0 };
+    0, 0, 0, NULL };
 
 static void
 usage(void)
@@ -203,7 +211,7 @@ usage(void)
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--stall-ms MS] [--end-readdir 1|2|3]\n"
-	    "              [--trace FILE]\n");
+	    "              [--silence-on NAME] [--trace FILE]\n");
 	exit(2);
 }
 
@@ -237,6 +245,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--refuse-nresolve")) opt.refuse_nresolve = atoi(v);
 		else if (!strcmp(a, "--stall-ms")) opt.stall_ms = atol(v);
 		else if (!strcmp(a, "--end-readdir")) opt.end_readdir = atoi(v);
+		else if (!strcmp(a, "--silence-on")) opt.silence_on = *v ? v : NULL;
 		else usage();
 		i++;
 	}
@@ -935,12 +944,22 @@ end_readdir(struct frame *f)
 /* One frame read from `from`, decided for `to`.  The index i counts every
  * frame the relay read in either direction, so a partition or a disconnect
  * scripted at K lands at the Kth frame of the run and not of one side. */
+static int silenced;		/* --silence-on has fired */
+static uint64_t silence_msgid;	/* the lookup that arms it, 0 none yet */
+
 static void
 relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 {
 	double r = rng_unit();
 	long d, t = now_ms();
 
+	if (silenced) {
+		ct.dropped++;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " silence t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+		frame_free(f);
+		return;
+	}
 	if (opt.partition_at >= 0 && i >= opt.partition_at &&
 	    i < opt.partition_at + opt.partition_len) {
 		ct.dropped++;
@@ -1021,7 +1040,23 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 	    (f->hdr.cmd & 0x00FFFF00U) == 0x00201100U &&
 	    (f->hdr.cmd & 0xA0000000U) == 0x80000000U)
 		readdir_msgid = f->hdr.msgid;
-	side_enqueue(to, f, t + d > to->held_until ? t + d : to->held_until);
+	/* the nresolve request from B carrying the name, then its answer's
+	 * closing frame, after which nothing passes */
+	if (opt.silence_on && silence_msgid == 0 && from->name[0] == 'B' &&
+	    (f->hdr.cmd & 0x00FFFF00U) == 0x00201200U &&
+	    (f->hdr.cmd & 0xA0000000U) == 0x80000000U &&
+	    f->hdr.aux_bytes == strlen(opt.silence_on) && f->aux &&
+	    memcmp(f->aux, opt.silence_on, f->hdr.aux_bytes) == 0)
+		silence_msgid = f->hdr.msgid;
+	if (silence_msgid && f->hdr.msgid == silence_msgid &&
+	    (f->hdr.cmd & 0x60000000U) == 0x60000000U) {
+		silenced = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " silence-from t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
+	/* the stall holds the HM2 frames, the link's own frames pass */
+	side_enqueue(to, f, (t + d > to->held_until ||
+	    (f->hdr.cmd & 0x00F00000U) == 0) ? t + d : to->held_until);
 }
 
 /* Write everything due to `to`; a side that went away loses them. */
@@ -1182,10 +1217,11 @@ relay(void)
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
-	    " stall-ms=%ld end-readdir=%d\n", opt.relay, opt.seed,
+	    " stall-ms=%ld end-readdir=%d silence-on=%s\n", opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
-	    opt.refuse_nresolve, opt.stall_ms, opt.end_readdir);
+	    opt.refuse_nresolve, opt.stall_ms, opt.end_readdir,
+	    opt.silence_on ? opt.silence_on : "-");
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);
