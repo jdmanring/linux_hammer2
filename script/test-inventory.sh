@@ -709,15 +709,20 @@ done
 # reads it in a function, and whose leaks the range reading after the
 # unload still counts, without their names; the reading rewritten in
 # transit, a filter on the guest's output or an edit of the `.out`,
-# which leaves one line; the guest half run again by the harness or
-# its caller with the last run's output kept, whose second clear greys
-# the first run's leaks before its reading, which the marker on
-# `/dev/kmsg` below would not read either, the kept kernel log being
-# the last run's; the harness's one clear and load reused from a
+# which leaves one line; the guest half run again by the harness with
+# one run's output kept, the last's, whose second clear greys the
+# first run's leaks before its reading, or the first's, the second
+# run's reading discarded, neither of which the marker on `/dev/kmsg`
+# below would read, the kept kernel log being one run's; a load the
+# run performs from a file the rule does not read, a helper naming no
+# kmemleak path, before the clear, which greys its leaks, or after the
+# reading, which never sees them, and which runs no clear for that
+# marker to count; the harness's one clear and load reused from a
 # function or a loop the script runs twice, one of the two times with
 # its output redirected or filtered, which adds no load line and keeps
 # the marker count at one, the edit a quiet reload helper logging to a
-# file is; DEFER(a harness's run runs one clear and its load twice):
+# file is;
+# DEFER(a harness's run reuses one clear and its load twice, once under a redirection):
 # the marker written to `/dev/kmsg` and counted from the kept kernel
 # log, which no enclosing redirection takes, at the cost of a follower
 # and a host copy in the three harnesses that keep none, the ring clears

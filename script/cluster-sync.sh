@@ -936,14 +936,16 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# the control a count of zero needs, since a show that fails reads as
 	# none. The thread's sync after a taken target writes each device's
 	# header and waits for it, so both names are on the media before such
-	# a pass when it succeeds; a kept target leaves the source's name to
-	# the next sync of a PFS mounted from the master's device, its
-	# syncer's every thirty
-	# seconds or a caller's, so a cut inside such a pass can leave the
-	# target by name and no source, the first pass then having nothing
-	# stale to delete, which is how cluster-run-20261025-193845 read with
-	# no target line printed. The last target line the guest printed
-	# before the cut, taken as the cut pass's, says which since.
+	# a pass when it succeeds (the header write is skipped on a flush
+	# error, a writeback error or a device in error, can itself fail,
+	# and the sync's return is not read); a kept target leaves the
+	# source's name to the next sync of a PFS mounted from the master's
+	# device, its syncer's every thirty seconds or a caller's, so a cut
+	# inside such a pass can leave the target by name and no source, the
+	# first pass then having nothing stale to delete, which is how
+	# cluster-run-20261025-193845 read with no target line printed. The
+	# last target line the guest printed before the cut, taken as the cut
+	# pass's, says which since.
 	if m=$("$HAMMER2" -v show "$MASTER" 2>/dev/null); then
 		echo "crash-master-pfs $(printf '%s\n' "$m" | grep -c 'filename "CL"')" >> "$W/out"
 		echo "crash-src-on-media $(printf '%s\n' "$m" | grep -c 'filename "CL.h2sync-src"')" >> "$W/out"
