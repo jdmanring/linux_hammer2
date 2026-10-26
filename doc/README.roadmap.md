@@ -287,8 +287,8 @@ The work past 1.0 follows the completion plan under "Beyond 1.0", in its
 dependency order. P0 to P6 are closed on the Linux reading; P7's local
 half is built and read, item 7 below, and its remote reach is ruled B,
 a chain-level protocol designed with P8's at
-`doc/CLUSTER_PROTOCOL_DESIGN.md`, whose read side a slave on another
-kernel runs its pass over since 1.0.46, its write side not yet built.
+`doc/CLUSTER_PROTOCOL_DESIGN.md`, whose remote element a slave on
+another kernel reads since 1.0.46, the pass over it not yet built.
 
 1. P0, the baseline, closed 2026-10-06: the documents naming the version
    agree with the newest row, the gates ran and passed on the tree at
