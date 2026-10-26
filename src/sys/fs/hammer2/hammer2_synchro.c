@@ -1196,7 +1196,7 @@ hammer2_primary_sync_thread(void *arg)
 		 * pass would write a volume whose mount-time recovery never
 		 * ran.  It refuses, and says so on every poll.
 		 */
-		if (thr->pmp->pfs_hmps[thr->clindex] &&
+		if (!HAMMER2_CTL_NOPASSREFUSE && thr->pmp->pfs_hmps[thr->clindex] &&
 		    thr->pmp->pfs_hmps[thr->clindex]->rdonly) {
 			pr_warn_ratelimited("hammer2: sync pass refused on clindex %d: device opened read-only\n",
 			    thr->clindex);

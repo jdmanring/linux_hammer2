@@ -225,6 +225,10 @@ admitted(const char *keys, const char *label)
 	static char p[4096];
 	struct stat st;
 
+#ifdef H2SERVICE_NOADMIT
+	/* the negative control, script/cluster-wire.sh's: every row admitted */
+	return ("control");
+#endif
 	snprintf(p, sizeof(p), "%s/%s.none", keys, label);
 	if (stat(p, &st) == 0)
 		return ("none");

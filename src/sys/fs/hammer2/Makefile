@@ -111,13 +111,41 @@ ifdef HAMMER2_NOWINDOW
 ccflags-y += -DHAMMER2_NOWINDOW
 endif
 # The remote element's negative controls, script/cluster-wire.sh's: the
-# client takes feeds past its window, and no keepalive is armed, so a
-# silent peer is seen only at a request's bound.  Never install either.
+# client takes feeds past its window and says so once, and no keepalive is
+# armed, so a silent peer is seen only at a request's bound.  Never install
+# either.
 ifdef HAMMER2_NOCLIENTWINDOW
 ccflags-y += -DHAMMER2_NOCLIENTWINDOW
 endif
 ifdef HAMMER2_NOKEEPALIVE
 ccflags-y += -DHAMMER2_NOKEEPALIVE
+endif
+# And four refusals, each switched off by its HAMMER2_CTL_ term in
+# hammer2_os.h: the read-only mount and remount of a PFS with a remote
+# element, the pass on a device opened read-only, the routing of a remote
+# master's snapshot to that master, and SNAPDEL's limit to the link's own
+# snapshots.  Never install any of them.
+ifdef HAMMER2_NOROGATE
+ccflags-y += -DHAMMER2_NOROGATE
+endif
+ifdef HAMMER2_NOPASSREFUSE
+ccflags-y += -DHAMMER2_NOPASSREFUSE
+endif
+ifdef HAMMER2_NOSNAPROUTE
+ccflags-y += -DHAMMER2_NOSNAPROUTE
+endif
+ifdef HAMMER2_NOSNAPSCOPE
+ccflags-y += -DHAMMER2_NOSNAPSCOPE
+endif
+# The dmsg callback's install before the reader starts: HAMMER2_CONNWAIT
+# holds the reconnect a second after the reader's start, so a peer's
+# LNK_CONN already queued is read first, and HAMMER2_NOCONNFIX installs
+# the callback where upstream does, after that.  Never install either.
+ifdef HAMMER2_CONNWAIT
+ccflags-y += -DHAMMER2_CONNWAIT
+endif
+ifdef HAMMER2_NOCONNFIX
+ccflags-y += -DHAMMER2_NOCONNFIX
 endif
 
 .PHONY: all clean

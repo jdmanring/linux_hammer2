@@ -852,10 +852,16 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 	 * which takes the snapshot on its own device at the thread's request
 	 * and serves it over the link (hammer2_remote_snapshot_take()); only
 	 * the thread's flag reaches here, the ioctl snapshotting element 0.
+	 * Anything else on a connection device is refused before the body,
+	 * which takes locks such a device never initialized and creates under
+	 * a super-root it does not have.
 	 */
-	if (hammer2_dev_is_conn(hmp) && (flags & HAMMER2_PFSSNAP_PMPSYNC))
+	if (hammer2_dev_is_conn(hmp) && (flags & HAMMER2_PFSSNAP_PMPSYNC) &&
+	    !HAMMER2_CTL_NOSNAPROUTE)
 		return (hammer2_remote_snapshot_take(pmp, clindex, name, mtidp,
 		    pmpp));
+	if (hammer2_dev_is_conn(hmp))	/* XXX Linux */
+		return (EOPNOTSUPP);
 
 	hammer2_lk_ex(&hmp->bulklk);
 

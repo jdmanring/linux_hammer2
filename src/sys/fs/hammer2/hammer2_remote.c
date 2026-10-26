@@ -568,7 +568,7 @@ hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
 			if (strcmp(snap->name, name) == 0)
 				taken = 1;
 		spin_unlock(&rm->lock);
-		if (!taken) {
+		if (!taken && !HAMMER2_CTL_NOSNAPSCOPE) {
 			if (hammer2_debug & 0x8000)
 				kprintf("syncsnap: peer named %s, not this link's\n",
 				    name);
@@ -1258,6 +1258,10 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 #ifndef HAMMER2_NOCLIENTWINDOW
 		if (call->nrecv > call->allowed)
 			bad = "a feed past the window";
+#else
+		/* the control's reading: the frames it exists to refuse came */
+		if (call->nrecv > call->allowed)
+			pr_warn_once("hammer2: HM2 feed past the window taken\n");
 #endif
 		if ((f->error == 0 && f->bytes && f->data == NULL) || bad) {
 			lost = 1;
@@ -2670,8 +2674,8 @@ hammer2_remote_span(hammer2_dev_t *hmp)
  * (disable_delayed_work_sync(), since a cancel would let one requeue), and
  * every slot on it is detached under hammer2_mntlk, which the teardown's
  * caller already holds and a reconnect, on the ioctl's thread, takes.  A
- * reconnect re-enables the items for the next link, whose announcement
- * arms the keepalive again.  The device itself lives until its last proxy.
+ * reconnect re-enables the items for the next link once its LNK_CONN is
+ * queued, hammer2_remote_connected().  The device itself lives until its last proxy.
  */
 static void
 hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
@@ -2717,8 +2721,33 @@ hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
 		span->slotted = 0;
 	}
 	hammer2_spin_unex(&rm->hmp->span_spin);
-	if (!final) {
-		enable_delayed_work(&rm->regwork);
-		enable_delayed_work(&rm->pingwork);
+}
+
+/*
+ * The next link's LNK_CONN is queued: the two items run again.  Not before,
+ * since the reader starts first and may read the peer's announcement and
+ * spans already in the socket, and an item run then would put an HM2 frame
+ * or a ping on the wire ahead of the LNK_CONN that announces PROTO_2, which
+ * the peer reads as a PROTO_1 connection and ends.  A span or an
+ * announcement read while the items were disabled queued nothing, so they
+ * are queued here; the reader sets the flag before its own queue attempt,
+ * and that attempt and the enable take the same lock, so the flag read
+ * after the enable sees it.
+ */
+void
+hammer2_remote_connected(hammer2_dev_t *hmp)
+{
+	struct hammer2_remote *rm = hmp->remote;
+
+	if (rm == NULL)
+		return;
+	enable_delayed_work(&rm->regwork);
+	enable_delayed_work(&rm->pingwork);
+	if (hmp->iocom.flags & KDMSG_IOCOMF_PROTO2) {
+		mod_delayed_work(system_dfl_wq, &rm->regwork, 0);
+#ifndef HAMMER2_NOKEEPALIVE
+		mod_delayed_work(system_dfl_wq, &rm->pingwork,
+		    msecs_to_jiffies(hammer2_remote_timeout_ms / 2));
+#endif
 	}
 }

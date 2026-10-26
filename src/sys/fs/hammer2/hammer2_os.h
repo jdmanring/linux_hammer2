@@ -1874,4 +1874,46 @@ void __hammer2_dbg_pmp_died(const void *);
 #define hammer2_dbg_pmp_died(pmp)	((void)(pmp))
 #endif
 
+/*
+ * Linux: the remote element's negative controls, script/cluster-wire.sh's
+ * (src/sys/fs/hammer2/Makefile).  Each is 0 in every build but the scratch
+ * one that names it, where it switches off one refusal; the term sits on a
+ * line the refusal's test already has, so a carried file's line numbers,
+ * which the documents cite, do not move.  Never install such a build.
+ */
+#ifdef HAMMER2_NOROGATE		/* the read-only mount and remount */
+#define HAMMER2_CTL_NOROGATE		1
+#else
+#define HAMMER2_CTL_NOROGATE		0
+#endif
+#ifdef HAMMER2_NOPASSREFUSE	/* the pass on a device opened read-only */
+#define HAMMER2_CTL_NOPASSREFUSE	1
+#else
+#define HAMMER2_CTL_NOPASSREFUSE	0
+#endif
+#ifdef HAMMER2_NOSNAPROUTE	/* a snapshot of a remote master, sent to it */
+#define HAMMER2_CTL_NOSNAPROUTE		1
+#else
+#define HAMMER2_CTL_NOSNAPROUTE		0
+#endif
+#ifdef HAMMER2_NOCONNFIX	/* the dmsg callback installed before the reader */
+#define HAMMER2_CTL_NOCONNFIX		1
+#else
+#define HAMMER2_CTL_NOCONNFIX		0
+#endif
+/* a second between the reader's start and the callback's usual install */
+#ifdef HAMMER2_CONNWAIT
+#define hammer2_ctl_connwait()		do {				\
+	pr_info("hammer2: reconnect held a second\n");			\
+	schedule_timeout_uninterruptible(HZ);				\
+} while (0)
+#else
+#define hammer2_ctl_connwait()		((void)0)
+#endif
+#ifdef HAMMER2_NOSNAPSCOPE	/* SNAPDEL limited to the link's own */
+#define HAMMER2_CTL_NOSNAPSCOPE		1
+#else
+#define HAMMER2_CTL_NOSNAPSCOPE		0
+#endif
+
 #endif /* !_FS_HAMMER2_OS_H_ */

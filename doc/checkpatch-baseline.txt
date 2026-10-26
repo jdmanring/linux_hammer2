@@ -180,6 +180,12 @@
 # or over-long name and an element whose device is not a connection, in
 # the module's positive errno convention. No category is new. See
 # README.kernel-style.md.
+# 1,585 to 1,587: `-EOPNOTSUPP` 6 -> 7, hammer2_pfs_snapshot() refusing
+# any snapshot on a connection device that is not the pass's, which the
+# routing control reached and KASAN read as a fault, positive by the
+# module's convention; and the unnamed-argument count 503 -> 504, the
+# prototype of hammer2_remote_connected() in BSD style. No category is
+# new. See README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -206,7 +212,7 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-503 function definition argument 'X' should also have an identifier name
+504 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 236 please, no spaces at the start of a line
@@ -228,7 +234,7 @@
 3 return of an errno should typically be negative (ie: return -ENOTCONN)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
-6 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+7 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
 12 return of an errno should typically be negative (ie: return -EROFS)
 1 return of an errno should typically be negative (ie: return -ESRCH)
 1 return of an errno should typically be negative (ie: return -ETIMEDOUT)

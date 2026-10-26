@@ -1695,7 +1695,7 @@ next_hmp:
 	 * (doc/CLUSTER_PROTOCOL_DESIGN.md, the client side); the registration
 	 * holds hammer2_mntlk, which this mount holds too.
 	 */
-	if (!rdonly && hammer2_remote_has_slot(pmp)) {
+	if (!rdonly && hammer2_remote_has_slot(pmp) && !HAMMER2_CTL_NOROGATE) {
 		hammer2_lk_unlock(&hammer2_mntlk);
 		hstrfree(devstr);
 		hprintf("read-write mount refused: a remote element is registered\n");
@@ -2579,7 +2579,7 @@ hammer2_reconfigure(struct fs_context *fc)
 	 * pass its test while a registration installs a slot.
 	 */
 	hammer2_lk_ex(&hammer2_mntlk);
-	if (hammer2_remote_has_slot(pmp)) {
+	if (hammer2_remote_has_slot(pmp) && !HAMMER2_CTL_NOROGATE) {
 		hammer2_lk_unlock(&hammer2_mntlk);
 		hprintf("read-write remount refused: a remote element is registered\n");
 		return (-EROFS);

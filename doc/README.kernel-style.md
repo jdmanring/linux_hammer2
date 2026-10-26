@@ -202,6 +202,15 @@ are `hammer2_remote_snapshot_take()` refusing an empty or over-long
 name and an element whose device is not a connection, in the module's
 positive errno convention. No category is new.
 
+1,585 to 1,587 with the snapshot's refusal on a connection device and
+the prototype of `hammer2_remote_connected()`, unnamed in BSD style. One
+more `-EOPNOTSUPP`, `hammer2_pfs_snapshot()` returning before its body
+for any snapshot of a connection device the pass did not route. The
+routing's negative control reached that body, which takes locks such a
+device never initialized, and the KASAN kernel read a general protection
+fault in `hammer2_inode_create_pfs()`; it is positive by the module's
+convention. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

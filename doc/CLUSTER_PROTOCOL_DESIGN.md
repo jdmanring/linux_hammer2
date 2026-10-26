@@ -40,7 +40,7 @@ kernel handles `LNK_CONN`, `LNK_SPAN`, `LNK_HAMMER2_VOLCONF` and
 `DBG_SHELL` and nothing else. Kusumi's three ports carry none of it.
 
 The original's own design for a remote element is written in a comment
-the port carries, `hammer2_iocom.c:282-292`: remote PFSs "look similar to
+the port carries, `hammer2_iocom.c:292-302`: remote PFSs "look similar to
 local (direct storage) PFSs", "are merged with local PFSs", and "are
 object-based and operate using an (inode,key) DMSG API instead of
 hammer2_chain's + direct I/O. A high level XOP API is employed to retain
@@ -101,14 +101,14 @@ aligned header with `hdr_crc` zeroed and over the aligned aux
 (`:2053-2060`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
 `iscsi_crc32`, the port's CRC-32C mapping (`hammer2_compat.h:156`).
 Received spans are open transactions under `state0`, and
-`hammer2_autodmsg()` monitors them (`hammer2_iocom.c:296`): a span whose
+`hammer2_autodmsg()` monitors them (`hammer2_iocom.c:306`): a span whose
 `peer_type` is not HAMMER2 or whose `proto_version` is not
 `DMSG_SPAN_PROTO_1` is closed with a reply, and only a `PROTO_1` HAMMER2
 span, since stage 1 also a `PROTO_2` span from a connection that
-announced it, is left open with a result (`:357-393`). The kernel fills its own
+announced it, is left open with a result (`:367-403`). The kernel fills its own
 spans with `peer_id` set to the PFS's `pfs_clid`, `pfs_id` to its
 `pfs_fsid`, `pfs_type` from the root inode and `proto_version` 1
-before stage 2a, `PROTO_2` since (`:451-455`); a span carries no root inode. `msgid` is the kernel
+before stage 2a, `PROTO_2` since (`:461-465`); a span carries no root inode. `msgid` is the kernel
 address of the transaction's state (`kern_dmsg.c:1849`), and
 `link_verifier` is read nowhere in `kern_dmsg.c`.
 
@@ -248,7 +248,7 @@ the connection.
 
 **Versioning rides `proto_version`.** `DMSG_SPAN_PROTO_2` means "HM2 XOP
 API version 1, CRCs verified". Today the carried test at
-`hammer2_iocom.c:375-380` closes every span that is not `PROTO_1`, so
+`hammer2_iocom.c:385-390` closes every span that is not `PROTO_1`, so
 admitting `PROTO_2` edits that test, marked `XXX` as a core edit the
 port could not avoid; a `PROTO_1` span stays open as today and never
 becomes an element, and a span at a version the kernel does not know is
@@ -262,7 +262,7 @@ connection's for its life, cleared by a reconnect and not by a `CONN`
 nothing turns it off. In stage 1 the kernel's own `LNK_CONN` and spans
 stayed at `PROTO_1`, since it had no HM2 vocabulary to announce; since
 stage 2a gave it the server side both announce `PROTO_2`
-(`hammer2_iocom.c:190`, `:455`). `libdmsg` reads neither field
+(`hammer2_iocom.c:200`, `:465`). `libdmsg` reads neither field
 (no occurrence of `proto_version` under `lib/libdmsg/` at the DragonFly
 clone's head), so the daemon relays them unchanged, and a DragonFly
 kernel reading the span closes it. That is the compatibility plan the
@@ -323,11 +323,11 @@ would never run and would hold every collect on the PFS at
 `EINPROGRESS`, so a span whose root cannot be read registers nothing,
 logs once, and is retried when the connection is re-established, which
 is the only retry the protocol offers: `hammer2_autodmsg()` has arms for
-a span's `CREATE` and `DELETE` only (`hammer2_iocom.c:357, 395`) and
+a span's `CREATE` and `DELETE` only (`hammer2_iocom.c:367, 405`) and
 `libdmsg` sends `LNK_SPAN` only with `CREATE`, so there is no status
 update to retry on. The fetch runs off the server's queue because two masters
 span each other at once (the kernel spans every PFS,
-`hammer2_iocom.c:440-444`), and a registration that waited on the one
+`hammer2_iocom.c:450-454`), and a registration that waited on the one
 thread that also serves the peer's requests would wait on a peer
 waiting on it, both registrations failing at the bound. A span registers
 against a `pmp` that holds an element on a block device of this host,
@@ -939,7 +939,7 @@ for 5000 ms under a 2000 ms bound would now end the link first. The
 numbers are in the verification record's stage 2b entry. The reply printed `RCVMSG` on every frame,
 debug-gated with the span table under 0x0100; at the wire run's rate
 that print overran the guest's log ring and took the registration line
-with it, so it has its own bit, 0x0400 (`hammer2_iocom.c:225-226`), one
+with it, so it has its own bit, 0x0400 (`hammer2_iocom.c:235-236`), one
 marked line; "reachable" below means "answered within the
 bound", and a write that arrives between the loss and its detection is
 the protocol note's, named as such in the matrix.
@@ -1031,7 +1031,7 @@ reads after that no run has driven. A second pass per source is the
 trigger for a name that carries the requester, the slave's `pfs_fsid`,
 and this note is where that decision is recorded. On the slave, `hammer2_pfs_snapshot()` routes an element on a
 connection device to `hammer2_remote_snapshot_take()`
-(`hammer2_ioctl.c:857`), which registers the fed root as the local
+(`hammer2_ioctl.c:859`), which registers the fed root as the local
 snapshot is registered, by `hammer2_pfsalloc()` under the lock the thread
 holds, a PFS of its own by the snapshot's fresh cluster id with the
 proxy as its one element, so the pass reads it through the carried XOPs
@@ -1149,7 +1149,7 @@ rather than from the design document alone.
   (`:830`, `:846`; `hammer2_ioctl.c:847`), which for a remote source is
   the master's, taken at the pass's request by the snapshot command.
 - **C10. A span carries no status update** (the only `LNK_SPAN` arms
-  are `CREATE` and `DELETE`, `hammer2_iocom.c:357`, `:395`), so a
+  are `CREATE` and `DELETE`, `hammer2_iocom.c:367`, `:405`), so a
   connected master learns nothing the protocol does not send it, and a
   fence or an outcome one coordinator holds is held by that coordinator
   alone until it is carried.
@@ -1189,7 +1189,7 @@ rather than from the design document alone.
   receive path builds its switch from `msg->state->icmd`
   (`kern_dmsg.c:1166`), which is zero on `state0`, so a bare `PING`
   falls through to `hammer2_rcvdmsg()`, which ignores a one-way message
-  and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:254-267`).
+  and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:264-277`).
   A keepalive is either a transaction whose refusal is the answer, or
   one marked arm there.
 
@@ -1325,7 +1325,14 @@ Five candidates, with what each met.
    snapshot (`:1805-1825`) included; which `copyinfo[]` row of a
    three-master PFS holds the term and how the election's messages
    travel (C10) and reach the volume header before the acknowledgment;
-   the term is read before any write after a mount; the holder's mount
+   the term is read before any write after a mount; the reserve check
+   counts the free space of master slots alone
+   (`hammer2_vfs_enospace()`, `hammer2_vfsops.c:2166-2177`) and a
+   connection device's volume header is zeroed, so a remote master reads
+   0 free and every create through a PFS with one is refused `ENOSPC`
+   before it runs, which stage 2b's read-only gate control met first and
+   worked around with a `chmod`; the master's free space reaches the
+   slave by a span field or a request before the first write; the holder's mount
    admits no element in its term and the demotion adds the new holder's
    as a membership change on a live mount; the pass stamps `update_tid`
    on verification, after C2, C8 and C9 are answered for it, so the
@@ -1631,32 +1638,51 @@ peer with no `.none` and no key; the stage 2 read-only mount off must land
 a write on the slave alone; the pass's refusal under `hmp->rdonly` off
 must write a `CL`-alone volume silently, read by its fingerprint; the
 snapshot command's
-routing at `hammer2_ioctl.c:857` off must make the wire pass attempt a
-create on the connection device and read the refusal, never the
-assertion;
+routing at `hammer2_ioctl.c:859` off must make the wire pass's snapshot
+reach the connection device and read `EOPNOTSUPP` on every attempt, the
+refusal at `:863`, never a fault in the body below it; the master's limit
+of `SNAPDEL` to the link's own snapshots off must delete a snapshot the
+link never took; the callback that reads the peer's `LNK_CONN` installed
+where upstream installs it, with the reconnect held a second after the
+reader starts so a `LNK_CONN` already queued is read in that hold, must
+leave the slave never reading `PROTO_2`, closing every span and
+registering nothing while the master reads the slave's;
 `fail_quorum_at` with the protocol's abort path disabled must leave the
 two masters' media different, under whatever protocol the later note
 settles, and the controls for that protocol's mechanisms are that
-note's to name.
+note's to name. The CRC control is `cluster-dmsg.sh`'s; every stage 2
+control after it is `cluster-wire.sh`'s since 2026-10-26, one per run,
+each mode named in `doc/README.testing.md`.
 
 **The marked lines stages 1 and 2 add to carried files**, so the XXX
 table in `doc/README.status.md` can be read against them: in
 `hammer2_chain.c`, the connection device's reference in
-`hammer2_chain_alloc()` and at the chain's free (`:225`, `:873`); in
+`hammer2_chain_alloc()` and at the chain's free (`:225`, `:829`); in
 `hammer2_cluster.c`, the unreachable-master count (`:163`), its test in
 pass 2, which also keeps such a master out of the end-of-scan agreement
 (`:290`), and the `ENOTCONN` return before the `ESRCH`/`EDEADLK` split
 (`:357`), decision C's settled half; in `hammer2_admin.c`, the XOP-level
 dispatch (`:478`); in `hammer2_iocom.c`, the span test admitting
-`PROTO_2` (`:375-380`), the span table's count and lock at its
-initialization (`:128-129`) and the debug gate on the `RCVMSG` print
-(`:225`); in `hammer2_synchro.c`, the guard refusing a local snapshot of
-a remote focus (`:769`, `:778`), the pass's refusal on a device
-opened read-only (`:1206`) and the insert's refusal beneath a
-direct-data inode (`:2299`); in `hammer2_inode.c`, the release that skips
-the caller's own element in `hammer2_inode_get()` (`:1087`), the hang
-the first wire run with a remote master found; in `hammer2_vfsops.c`,
-the remote slots' detach before a local device leaves (`:778`), the
+`PROTO_2` (`:385-390`), the span table's count and lock at its
+initialization (`:128-129`), the debug gate on the `RCVMSG` print
+(`:235`), and the callback that reads the peer's `LNK_CONN` installed
+before the reconnect starts the reader, with the control build's hold
+after it (`:170-180`), and the remote element's two work items, the
+registration that fetches a master's root and the keepalive, enabled
+only once the kernel's own `LNK_CONN` is queued (`:230`), since with the
+callback first a span read in the hold ran the registration and its
+first HM2 frame reached the peer ahead of the announcement, which the
+peer reads as a `PROTO_1` connection and ends; in `hammer2_ioctl.c`, the snapshot of a remote
+master's element routed to that master and any other snapshot on a
+connection device refused with `EOPNOTSUPP` (`:851`, `:863`); in
+`hammer2_synchro.c`, the remote element's blockset taken from the
+master's answer (`:739`) and a remote master's snapshot counted as a
+source (`:762`), the pass's refusal on a device opened read-only
+(`:1192`) and the insert's refusal beneath a direct-data inode
+(`:2329`); in `hammer2_inode.c`, the release that skips the caller's own
+element in `hammer2_inode_get()` (`:1043`), the hang the first wire run
+with a remote master found; in `hammer2_vfsops.c`, the remote slots'
+detach before a local device leaves (`:743`), the
 refusal of a read-write mount (`:1694`) and of `rw` through
 `->reconfigure` (`:2574`), both under `hammer2_mntlk`, and the mount and
 unmount `mount_count` loops skipping a connection device (`:2103`,
@@ -1680,7 +1706,7 @@ field validated, unknown enum values and bad lengths refused, stable
 errnos, malformed buffers under KASAN, races with unmount. `REMOTE_SCAN`,
 `REMOTE_ADD` and `REMOTE_DEL` are the `copyinfo[]` bookkeeping through
 `hammer2_volconf_update()`, which the port already has at
-`hammer2_iocom.c:498`. `REMOTE_REP` and `SOCKET_SET` stay upstream's
+`hammer2_iocom.c:508`. `REMOTE_REP` and `SOCKET_SET` stay upstream's
 returns of nothing and `SOCKET_GET` stays `EOPNOTSUPP`, each recorded in
 the capabilities table with the upstream line, since inventing semantics
 for them is an extension no document asks for. `REMOTE_ADD`'s `path` is
@@ -1876,8 +1902,8 @@ the eleven constraints on their lines, eight holding as written, two
 overstated (the rename helper's condition is "was blockmapped before
 the rename's delete", `hammer2_chain.c:3401` asserting the flag clear; the mount-time
 repair keeps `modify_tid`) and one cited at the wrong line (`C10` at
-`hammer2_iocom.c:498`, which is the volume configuration; the span arms
-are `:357` and `:395`), each corrected, and returned NO SIGN-OFF on
+`hammer2_iocom.c:508`, which is the volume configuration; the span arms
+are `:367` and `:405`), each corrected, and returned NO SIGN-OFF on
 seven findings, one blocking: three matrix rows promised unchanged
 media under partition and quorum loss that an errno computed after the
 storage functions have run cannot deliver. The fix is the audit's own:

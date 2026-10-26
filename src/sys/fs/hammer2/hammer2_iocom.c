@@ -167,7 +167,17 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 	 * new threads.
 	 */
 	hammer2_remote_quiesce(hmp, 0);	/* XXX Linux: the old connection's requests */
+	/*
+	 * XXX Linux: the callback is installed before the reader starts,
+	 * since kern_dmsg answers a peer's LNK_CONN already in the socket
+	 * with no callback when none is set, and the callback is what reads
+	 * its PROTO_2; upstream installs it in kdmsg_iocom_autoinitiate()
+	 * below, where its callback only monitors.  Seen once in a wire run:
+	 * the link up and every span closed.
+	 */
+	hmp->iocom.auto_callback = HAMMER2_CTL_NOCONNFIX ? NULL : hammer2_autodmsg;
 	kdmsg_iocom_reconnect(&hmp->iocom, fp, "hammer2");
+	hammer2_ctl_connwait();	/* XXX Linux: the control's window, else nothing */
 
 	/*
 	 * Setup LNK_CONN fields for autoinitiated state machine.  LNK_CONN
@@ -217,6 +227,7 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 		  "%s/%s",
 		  init_utsname()->nodename, "hammer2-mount"); /* XXX Linux */
 	kdmsg_iocom_autoinitiate(&hmp->iocom, hammer2_autodmsg);
+	hammer2_remote_connected(hmp);	/* XXX Linux: after our LNK_CONN */
 }
 
 static int

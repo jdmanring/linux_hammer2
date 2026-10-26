@@ -104,6 +104,60 @@
 # element is no answer, so the time and the element's own ETIMEDOUT line
 # tell them apart. Under either the plain reads before the silence hold.
 #
+# H2_WIRE_WINDOW=1 is the control on B's window count: A loads a module
+# built with HAMMER2_NOWINDOW, whose server sends every chain of a readdir
+# with no continuation, and B a plain one. B's first listing of the
+# 300-entry directory must end the link at the seventeenth feed by its own
+# line, the readdir ending ENOTCONN and the listing failing not connected;
+# every read after it finds the link gone, as under lost. The listings
+# before it stay inside sixteen feeds and pass. H2_WIRE_WINDOW=control
+# builds B's module with HAMMER2_NOCLIENTWINDOW, which takes those feeds,
+# says so once, and lists the directory whole: the failure the count exists
+# to stop. The fake pass, a link ended by anything else, lacks the line; a
+# server that kept its window gives neither line, so the control is not
+# satisfied by a run whose A was built plain.
+#
+# Four more controls switch off one refusal each in a scratch build of one
+# side (the HAMMER2_CTL_ terms in hammer2_os.h) and read what the refusal
+# exists to stop; the plain runs read the refusal itself.
+# H2_WIRE_ROGATE=control builds B with HAMMER2_NOROGATE: B's CL remounts
+# read-write beside the remote master, the live pass then fills the slave,
+# and a chmod of small.txt there must reach the slave's inode on B's media
+# and not the master's on A's. A create is refused ENOSPC before it gets
+# that far, since the reserve check counts masters and the connection
+# device reports no free space, so the write is a chmod in emergency mode,
+# which the setattr check lets through.
+# H2_WIRE_PASSREFUSE=control builds B with HAMMER2_NOPASSREFUSE and loads
+# it with sync_snapshot=0: the live pass must write A's files onto B's
+# device opened read-only with no refusal line, B's image then holding
+# A's file entries by fingerprint.
+# H2_WIRE_SNAPROUTE=control builds B with HAMMER2_NOSNAPROUTE under the
+# pass: the pass's snapshot of the remote master falls through to the
+# local snapshot, which must refuse the connection device before its body
+# with EOPNOTSUPP, the snapshot failing by that errno alone and the slave
+# copying nothing. Without that refusal the body faults under KASAN, which
+# is how the refusal came to exist; any kernel warning fails the run.
+# H2_WIRE_SNAPDEL=1 runs the pass with a PFS ZZ.h2sync-src made on A, a
+# name of the pass's suffix the link never took, and the relay gives the
+# first SNAPDEL that name: A must delete nothing and say so, the PFS still
+# on A's image at the end. H2_WIRE_SNAPDEL=control builds A with
+# HAMMER2_NOSNAPSCOPE, which must delete it.
+# H2_WIRE_ADMIT=1 removes B's .none marker before its dial: h2service
+# must refuse the row as DragonFly's daemon refuses an unknown host, and
+# the dial then made with the marker back proceeds as a plain run.
+# H2_WIRE_ADMIT=control builds B's h2service with H2SERVICE_NOADMIT, which
+# must dial with no marker and no key, and B registers A's master.
+# H2_WIRE_CONNWAIT=1 builds B with HAMMER2_CONNWAIT, which holds B's
+# reconnect a second between its reader's start and the rest of its setup,
+# so A's LNK_CONN, queued at the relay since A dialed, is read in the hold:
+# with the callback installed before the reader, B must still read A's
+# PROTO_2 and the run pass as a plain one. H2_WIRE_CONNWAIT=control adds
+# HAMMER2_NOCONNFIX, which installs the callback where upstream does,
+# after the hold: B must then answer the CONN with no callback, never read
+# PROTO_2, close A's spans and register nothing, the link failure seen
+# once by chance in wire-run-20261026-060929. Each reads B's hold line, so
+# a module built without the hold passes neither.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -135,7 +189,16 @@ END=${H2_WIRE_END:-}
 # later pass, and at the end neither image holds a snapshot of the pass.
 PASS=${H2_WIRE_PASS:-0}
 SILENCE=${H2_WIRE_SILENCE:-0}
+WINDOW=${H2_WIRE_WINDOW:-0}
+ROGATE=${H2_WIRE_ROGATE:-0}; PASSREFUSE=${H2_WIRE_PASSREFUSE:-0}; SNAPROUTE=${H2_WIRE_SNAPROUTE:-0}
+SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
+case $WINDOW in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WINDOW is 1 or control" >&2; exit 2;; esac
+for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE"; do
+	case $c in 0|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_ROGATE, _PASSREFUSE and _SNAPROUTE are control" >&2; exit 2;; esac
+done
+case $CONNWAIT in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CONNWAIT is 1 or control" >&2; exit 2;; esac
+case $SNAPDEL$ADMIT in 00|10|control0|01|0control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SNAPDEL and H2_WIRE_ADMIT are 1 or control" >&2; exit 2;; esac
 case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
 [ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
@@ -145,13 +208,17 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ -z "$END" ] || nctl=$((nctl + 1))
 [ "$PASS" = 1 ] && nctl=$((nctl + 1))
 [ "$SILENCE" = 0 ] || nctl=$((nctl + 1))
+[ "$WINDOW" = 0 ] || nctl=$((nctl + 1))
+for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
+# the two snapshot controls run under the pass
+{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ]; } && PASS=1
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
-[ "$PASS" != 1 ] || { [ -x "$HAMMER2" ] && [ -x "$FSCK" ]; } || { echo "wire: COULD-NOT-RUN: H2_WIRE_PASS needs hammer2 and fsck_hammer2 on the host (H2_HAMMER2, H2_FSCK)" >&2; exit 2; }
+{ [ "$PASS" != 1 ] && [ "$ROGATE" = 0 ] && [ "$PASSREFUSE" = 0 ]; } || { [ -x "$HAMMER2" ] && [ -x "$FSCK" ]; } || { echo "wire: COULD-NOT-RUN: H2_WIRE_PASS and the controls reading an image need hammer2 and fsck_hammer2 on the host (H2_HAMMER2, H2_FSCK)" >&2; exit 2; }
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 RUN="timeout ${H2_RUN_TIMEOUT:-300} $SSH"
 W=$(mktemp -d) || exit 2
@@ -178,14 +245,37 @@ guest_off() {	# guest_off <domain> <ssh>: unmount, unload, detach its volume
 	$VIRSH detach-disk "$1" vdb --config >/dev/null 2>&1
 }
 
-make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" $([ "$SILENCE" = control ] && echo HAMMER2_NOKEEPALIVE=1) >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
-KO=src/sys/fs/hammer2/hammer2.ko
+build() {	# build <out> [make variables]: the module, kept as <out>
+	out=$1; shift
+	make -s clean >/dev/null 2>&1
+	make -s KDIR="$KDIR" "$@" >/dev/null 2>&1 && cp src/sys/fs/hammer2/hammer2.ko "$out" || {
+		echo "wire: COULD-NOT-RUN: module did not build against $KDIR${*:+ with $*}" >&2; exit 2; }
+}
+# One module for both guests, but a control switches a refusal off on the
+# side that makes it: the window's on A's server, or with its count off
+# B's client too, the keepalive on both, SNAPDEL's scope on A, and the
+# read-only gate, the pass's refusal and the snapshot's routing on B, and
+# the reconnect's hold on B, the side that dials second.
+KO_A=$W/hammer2-a.ko; KO_B=$W/hammer2-b.ko
+AFLAGS=; BFLAGS=
+[ "$SILENCE" = control ] && AFLAGS=HAMMER2_NOKEEPALIVE=1 BFLAGS=HAMMER2_NOKEEPALIVE=1
+[ "$WINDOW" = 0 ] || AFLAGS=HAMMER2_NOWINDOW=1
+[ "$WINDOW" = control ] && BFLAGS=HAMMER2_NOCLIENTWINDOW=1
+[ "$SNAPDEL" = control ] && AFLAGS=HAMMER2_NOSNAPSCOPE=1
+[ "$ROGATE" = control ] && BFLAGS=HAMMER2_NOROGATE=1
+[ "$PASSREFUSE" = control ] && BFLAGS=HAMMER2_NOPASSREFUSE=1
+[ "$SNAPROUTE" = control ] && BFLAGS=HAMMER2_NOSNAPROUTE=1
+[ "$CONNWAIT" = 1 ] && BFLAGS=HAMMER2_CONNWAIT=1
+[ "$CONNWAIT" = control ] && BFLAGS="HAMMER2_CONNWAIT=1 HAMMER2_NOCONNFIX=1"
+build "$KO_B" $BFLAGS
+if [ "$AFLAGS" = "$BFLAGS" ]; then cp "$KO_B" "$KO_A"; else build "$KO_A" $AFLAGS; fi
 # What was built, taken now: the tree can move before the report is written.
-SRC_REV=$(git describe --always --dirty); KO_SUM=$(sha256sum < "$KO" | cut -d' ' -f1)
+SRC_REV=$(git describe --always --dirty); KO_SUM=$(sha256sum < "$KO_B" | cut -d' ' -f1); KO_A_SUM=$(sha256sum < "$KO_A" | cut -d' ' -f1)
 RELAY_SUM=$(sha256sum < test/h2loop.c | cut -d' ' -f1); WIRE_SUM=$(sha256sum < script/cluster-wire.sh | cut -d' ' -f1)
-cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2service" test/h2service.c 2>"$W/cc.err" || {
+cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2service" test/h2service.c 2>"$W/cc.err" &&
+    cc -static -O2 -Isrc/sys/fs/hammer2 $([ "$ADMIT" = control ] && echo -DH2SERVICE_NOADMIT) -o "$W/h2service-b" test/h2service.c 2>>"$W/cc.err" || {
 	echo "wire: COULD-NOT-RUN: test/h2service.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
+SVC_B_SUM=$(sha256sum < "$W/h2service-b" | cut -d' ' -f1)
 cc -std=c11 -O1 -o "$W/h2loop" test/h2loop.c 2>"$W/cc.err" || {
 	echo "wire: COULD-NOT-RUN: test/h2loop.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
 
@@ -217,9 +307,10 @@ wait_ssh() {	# wait_ssh <domain> <ssh>
 }
 wait_ssh "$GA" "$SA"
 wait_ssh "$GB" "$SB"
-ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | cut -d' ' -f1)
+ko_rel=$(modinfo -F vermagic "$KO_B" 2>/dev/null | cut -d' ' -f1)
 for pair in "$GA:$SA" "$GB:$SB"; do
 	g=${pair%%:*}; s=${pair#*:}
+	if [ "$g" = "$GA" ]; then ko=$KO_A svc=$W/h2service; else ko=$KO_B svc=$W/h2service-b; fi
 	rel=$($SSH "$s" uname -r 2>/dev/null)
 	[ "$rel" = "$ko_rel" ] || {
 		echo "wire: COULD-NOT-RUN: the module is built for $ko_rel and $g runs $rel; point KDIR at the guests' kernel" >&2; exit 2; }
@@ -229,7 +320,7 @@ for pair in "$GA:$SA" "$GB:$SB"; do
 	dl=$($SSH "$s" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
 	[ "$dl" = 0 ] && {
 		echo "wire: COULD-NOT-RUN: lockdep is off on $g since an earlier report; boot it again" >&2; exit 2; }
-	scp -q "$KO" "$s:/tmp/hammer2.ko" && scp -q "$W/h2service" "$s:/tmp/h2service" || {
+	scp -q "$ko" "$s:/tmp/hammer2.ko" && scp -q "$svc" "$s:/tmp/h2service" || {
 		echo "wire: COULD-NOT-RUN: copy to $g failed" >&2; exit 2; }
 done
 
@@ -240,6 +331,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
     --refuse-nresolve "$REFUSE" --stall-ms "$STALL" \
     --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
     --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
+    --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src)" \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -261,8 +353,22 @@ klog() { kl | grep -c "$1"; }
 klog1() { n=0; until [ "$(klog "$1")" -ge 1 ] || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done; klog "$1"; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 GUEST
+# clmode.awk -v n='"<name>"': the mode of <name> in CL, from a show on
+# stdin; an inode prints its mode before its inum, a dirent no mode, so the
+# mode is taken only by the inum that follows it. Read on a guest and here.
+cat > "$W/clmode.awk" <<'AWK'
+/filename "CL"$/ && !on && !past { on = 1; next }
+on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
+!on { next }
+$1 == "filename" { want = ($2 == n); next }
+want && $1 == "inum" { inum = $2; want = 0 }
+$1 == "mode" { m = $2 }
+$1 == "inum" { if (m != "") mode[$2] = m; m = "" }
+END { print (inum in mode) ? mode[inum] : "none" }
+AWK
 cat > "$W/setup.sh" <<'GUEST'
-# setup <type> [<clid> [<module parameters>]]: load, mount ROOT, create CL, print its id
+# setup <type> [<clid> [<sync_snapshot> [<decoy>]]]: load, mount ROOT,
+# create CL, and on a master a PFS of the name <decoy>, print CL's id
 if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "wire: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
@@ -275,13 +381,16 @@ insmod /tmp/hammer2.ko sync_snapshot=$SNAP || { echo "insmod failed"; exit 1; }
 # the remote element's lines (0x100), and on a slave whose pass reads a
 # snapshot the pass's own (0x8000), which name the snapshot's taking,
 # verdict and deletion
-dbg=256; [ "$1" = slave ] && [ "$SNAP" = 1 ] && dbg=$((256 + 32768))
+dbg=256; { [ "$1" = slave ] && [ "$SNAP" = 1 ]; } || [ -n "${4:-}" ] && dbg=$((256 + 32768))
 echo $dbg > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot 2>/dev/null)"
 mkdir -p $R $C /tmp/h2keys
 mount -t hammer2 /dev/vdb@ROOT $R || { echo "mount failed"; exit 1; }
 if [ "$1" = master ]; then
 	hammer2 -s $R pfs-create CL >/dev/null 2>&1 || { echo "pfs-create failed"; exit 1; }
+	if [ -n "${4:-}" ]; then
+		hammer2 -s $R pfs-create "$4" >/dev/null 2>&1; echo "decoy-rc $?"
+	fi
 else
 	hammer2 -s $R -t SLAVE -u "$2" pfs-create CL >/dev/null 2>&1 || { echo "slave pfs-create failed"; exit 1; }
 fi
@@ -291,17 +400,29 @@ echo "pfs-count $(hammer2 -s $R pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
 echo "utility $(command -v hammer2) $(hammer2 --version 2>&1 | head -1)"
 GUEST
 cat > "$W/dial.sh" <<'GUEST'
-# dial <clid> <host> <port> [ro]: one admitted row, then the dial; with ro
-# the device is opened again read-only between the two, so the slave's pass
-# refuses to run and every read on B's CL is the remote element's alone
+# dial <clid> <host> <port> <ro|rw> [noadmit]: one admitted row, then the
+# dial; with ro the device is opened again read-only between the two, so
+# the slave's pass refuses to run and every read on B's CL is the remote
+# element's alone; with noadmit a dial is made first with no marker
 touch /tmp/h2keys/peer.none
 /tmp/h2service add $R --clid "$1" --label peer --path "span:$2:$3" | sed 's/^/add /'
-if [ "${4:-}" = ro ]; then
+if [ "$4" = ro ]; then
 	umount $R && mount -t hammer2 -o ro /dev/vdb@ROOT $R || { echo "ROOT read-only failed"; exit 1; }
 	echo "root-ro 1"
 fi
-/tmp/h2service dial $R --keys /tmp/h2keys | sed 's/^/dial /'
-echo "dial-rc $?"
+if [ "${5:-}" = noadmit ]; then
+	rm -f /tmp/h2keys/peer.none
+	/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial0 2>&1; r=$?
+	echo "noadmit-dial-rc $r"
+	echo "noadmit-refused $(grep -c 'auth failure: unknown host' /tmp/h2wire.dial0)"
+	sed 's/^/dial0 /' /tmp/h2wire.dial0
+	touch /tmp/h2keys/peer.none
+	[ "$r" = 0 ] && { echo "dial-rc 0"; exit 0; }
+fi
+# the dial's own status, not a pipe's
+/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial 2>&1; r=$?
+sed 's/^/dial /' /tmp/h2wire.dial
+echo "dial-rc $r"
 GUEST
 cat > "$W/fill.sh" <<'GUEST'
 # fill: A's MASTER CL mounted read-write and given a known tree; with
@@ -358,8 +479,24 @@ cat > "$W/pass.sh" <<'GUEST'
 # 300-entry directory to appear under B's CL, with a bound, and then for
 # the pass's snapshot to be deleted, which is the pass's end.  With "more",
 # the second set's five files, and a later pass's end.
+if [ "${1:-}" = first ]; then
+	# a control's pass: whether one copies A's files, read within 180 s,
+	# and what refused or failed on the way
+	n=0
+	until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')" -ge 300 ] || [ $n -ge 180 ]; do sleep 2; n=$((n + 2)); done
+	echo "first-wait-seconds $n"
+	echo "first-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')"
+	echo "first-refused-lines $(klog 'sync pass refused on clindex')"
+	echo "first-snap-errors $(klog 'syncsnap: snapshot CL.h2sync-src error')"
+	echo "first-remote-snaps $(klog 'syncsnap: remote snapshot CL.h2sync-src tid')"
+	echo "first-snap-eopnotsupp $(klog 'syncsnap: snapshot CL.h2sync-src error 95$')"
+	echo "first-sync-errors $(klog 'hammer2_sync_slaves: error')"
+	exit 0
+fi
 if [ "${1:-}" = more ]; then
-	d0=$(klog 'syncsnap: remote delete .* error 00000000'); n=0
+	# the first pass's own count, handed in: one read here, after the
+	# fill, would already count a later pass that ended before it
+	d0=${2:-$(klog 'syncsnap: remote delete .* error 00000000')}; n=0
 	until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')" -ge 5 ] || [ $n -ge 180 ]; do sleep 2; n=$((n + 2)); done
 	echo "more-wait-seconds $n"
 	echo "more-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')"
@@ -404,8 +541,9 @@ echo "pass-remote-ends $(kl | grep 'H2 REMOTE ' | grep -c -v 'end=00000000')"
 echo "pass-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 GUEST
 cat > "$W/read.sh" <<'GUEST'
-# read <stall ms> <end mode or 0> <silence or 0>: B reads A's files through
-# the element; the arguments ride ssh's command line, so none is empty
+# read <stall ms> <end mode or 0> <silence or 0> <rogate or 0>: B reads A's
+# files through the element; the arguments ride ssh's command line, so none
+# is empty
 mountpoint -q $C || { echo "CL not mounted"; exit 1; }
 P=/sys/module/hammer2/parameters/remote_timeout_ms
 [ "${1:-0}" = 0 ] || echo 2000 > $P
@@ -461,6 +599,20 @@ echo 3 > /proc/sys/vm/drop_caches
 (cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/cold \2 \1/'
 echo "remote-xops $(klog 'H2 REMOTE ')"
 echo "pass-refused $(klog 'sync pass refused on clindex')"
+# the read-only gate's control: CL was remounted read-write above, so once
+# the live pass has put small.txt on the slave it is written through CL,
+# after every digest is taken, and the slave's inode read back at once,
+# before a later pass can bring it level again
+if [ "${4:-0}" != 0 ]; then
+	n=0; until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "small.txt"')" -ge 1 ] || [ $n -ge 60 ]; do sleep 2; n=$((n + 2)); done
+	echo "rogate-wait-seconds $n"
+	hammer2 emergency-mode-enable $C > /tmp/h2wire.emerg 2>&1; echo "rogate-emerg-rc $?"
+	echo 3 > /proc/sys/vm/drop_caches
+	chmod 600 $C/small.txt 2>/tmp/h2wire.rogerr; echo "rogate-write-rc $?"
+	echo "rogate-write-err $(sed -n '1s/.*: //p' /tmp/h2wire.rogerr)"
+	sync
+	echo "rogate-slave-mode $(hammer2 -v show /dev/vdb 2>/dev/null | awk -v n='"small.txt"' -f /tmp/clmode.awk)"
+fi
 show=$(hammer2 -v show /dev/vdb 2>&1); echo "slave-show-rc $?"
 echo "slave-files $(printf '%s\n' "$show" | grep -c 'filename "e[0-9]')"
 echo "slave-cl $(printf '%s\n' "$show" | grep -c 'filename "CL"')"
@@ -473,6 +625,8 @@ echo "log-not-proxy $(klog 'not a proxy')"
 echo "log-not-proxy-bmap $(klog 'HM2 bmap feed of type 3 not a proxy')"
 echo "log-not-proxy-nresolve $(klog 'HM2 nresolve feed of type 4 not a proxy')"
 echo "log-peer-sent $(klog 'HM2 peer sent')"
+echo "log-window-ended $(klog 'HM2 peer sent a feed past the window')"
+echo "log-window-taken $(klog 'HM2 feed past the window taken')"
 echo "log-nresolve-notconn $(klog 'H2 REMOTE nresolve .* end=00080000')"
 echo "log-readdir-timedout $(klog 'H2 REMOTE readdir .* end=00040000')"
 echo "readdir-timedout-ms $(kl | sed -n 's/.*H2 REMOTE readdir .* end=00040000 ms=\([0-9]*\).*/\1/p' | sort -n | head -1)"
@@ -515,6 +669,7 @@ echo "span-cl $(kl | grep 'H2 +RXSPAN' | grep -c "cl=$1 .*type=$2")"
 echo "spantab $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
 echo "threads $(threads)"
 echo "keepalive-line $(klog 'HM2 peer silent')"
+echo "conn-held $(klog 'reconnect held a second')"
 GUEST
 cat > "$W/down.sh" <<'GUEST'
 # down: unmount, the leak scan, unload
@@ -535,6 +690,10 @@ echo "spantab-end $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //'
 # one a lost link left for it to delete, both printed unconditionally
 echo "snap-peer-errors $(klog 'syncsnap: snapshot .* for a peer error')"
 echo "snap-link-left $(klog 'snapshot .* left by the link deleted')"
+# a SNAPDEL for a name the link never took, refused or (in the control)
+# carried out
+echo "snapdel-not-ours $(klog 'syncsnap: peer named ZZ.h2sync-src, not this link')"
+echo "snapdel-decoy-deleted $(klog 'syncsnap: peer deleted ZZ.h2sync-src')"
 # A proxy is classed apart from the media's chains, at its level on the
 # peer; on level 0, the super-root's class, a contended inode lock in the
 # sync pass read as a cycle through the mount's order. The classes are
@@ -601,13 +760,18 @@ echo "cdev-blocks $(kl | grep 'H2 CDEV freed: blocks' | tail -1 | sed 's/.*block
 # guest kernel's table size (the KASAN build keeps the default, 2^15), not
 # a report on the subject, so it is counted apart and named in the check,
 # which it still fails: lockdep checks nothing for the rest of that run.
-echo "kernel-warnings $(kl | grep -v 'MAX_LOCKDEP_ENTRIES too low' | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive|enqueued on deprecated workqueue')"
+# The read-only gate's control enables emergency mode itself, and the
+# carried ioctl says so in a line holding the word WARNING; that line is
+# the harness's own act, not a report, so it is dropped by its full text.
+echo "kernel-warnings $(kl | grep -v -e 'MAX_LOCKDEP_ENTRIES too low' -e 'hammer2_ioctl_emerg_mode: WARNING: Emergency mode enabled' | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive|enqueued on deprecated workqueue')"
 echo "lockdep-saturated $(klog 'MAX_LOCKDEP_ENTRIES too low')"
+# the connection device's own refusals, warnings by design
+echo "conn-warnings $(kl | grep 'WARNING' | grep -c -E 'hammer2_io_getblk_conn|hammer2_io\.c:')"
 echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 for s in "$SA" "$SB"; do
-	scp -q "$W/common.sh" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $s failed" >&2; exit 2; }
 done
 phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
@@ -630,19 +794,25 @@ nval() {	# nval <A|B> <name>: how many lines carry it, with or without a value
 	grep -c -E "^$1 $2( |$)" "$W/out"
 }
 : > "$W/out"
-phase A setup.sh master || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+phase A setup.sh master 0 1 $([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
-phase B setup.sh slave "$clid" 1 || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase A fill.sh
 phase B lone.sh
-phase A dial.sh "$clid" "$HOST_ADDR" "$PORT"
-if [ "$PASS" = 1 ]; then phase B dial.sh "$clid" "$HOST_ADDR" "$PORT"; else phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" ro; fi
+phase A dial.sh "$clid" "$HOST_ADDR" "$PORT" rw
+phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" $([ "$PASS" = 1 ] && echo rw || echo ro) $([ "$ADMIT" = 0 ] || echo noadmit)
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
 phase B reg.sh
-phase B ro.sh && { [ "$PASS" != 1 ] || { phase B pass.sh && phase A fill.sh more && phase B pass.sh more; }; } && phase B read.sh "$STALL" "${END:-0}" "$SILENCE"
+if [ "$SNAPROUTE" = control ] || [ "$PASSREFUSE" = control ]; then PASSES=first
+elif [ "$PASS" = 1 ]; then PASSES=full; else PASSES=none; fi
+phase B ro.sh && case $PASSES in
+	full)	phase B pass.sh && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
+	first)	phase B pass.sh first;;
+	*)	true;;
+esac && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -650,7 +820,7 @@ phase A down.sh
 kill "$RELAY_PID" 2>/dev/null; wait "$RELAY_PID" 2>/dev/null; RELAY_PID=
 scp -q "$SA:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null
 scp -q "$SB:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-b.klog" 2>/dev/null
-{ echo "source $SRC_REV"; echo "relay-sha256 $RELAY_SUM"; echo "harness-sha256 $WIRE_SUM"; echo "module-sha256 $KO_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
+{ echo "source $SRC_REV"; echo "relay-sha256 $RELAY_SUM"; echo "harness-sha256 $WIRE_SUM"; echo "module-sha256 $KO_SUM"; echo "module-a-sha256 $KO_A_SUM"; echo "h2service-b-sha256 $SVC_B_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO_B" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
 echo "  kept  both kernel logs and the relay trace beside the images as wire-run-$stamp-{a,b}.klog and .trace"
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
@@ -665,54 +835,69 @@ num() { case "$1" in ''|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
 # the one after B's unmount, so the second's values are read from the tail.
 val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
 
-echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM"):"
+echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM"):"
 npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 [ "$npa" -ge 3 ] && [ "$npb" -ge 3 ]; check "each volume has ROOT, LOCAL and CL" $? "A $npa, B $npb"
 [ "$(num "$(val A dial-rc)" 1)" = 0 ] && [ "$(num "$(val B dial-rc)" 1)" = 0 ]; check "link: both dials hand a connected TCP socket in" $? "A rc $(val A dial-rc), B rc $(val B dial-rc)"
+# The callback's install off: B's reader answers A's LNK_CONN, read in the
+# hold, with no callback, so B never reads PROTO_2 and closes every span of
+# A's while A, whose CONN from B came after B's install, reads B's whole.
+# The fake pass, a module with no hold, has no hold line on B.
+if [ "$CONNWAIT" = control ]; then
+	[ "$(num "$(val B conn-held)" 0)" = 1 ] && [ "$(num "$(val B log-proto2)" 1)" = 0 ] && [ "$(num "$(val B spans-rx)" 1)" = 0 ] && [ "$(num "$(val B log-registered)" 1)" = 0 ] && [ "$(nval B ro-mounted)" = 0 ] && [ "$(num "$(val A log-proto2)" 0)" = 1 ] && [ "$(num "$(val A spantab)" 0)" = "$npb" ]; check "control: with the callback installed where upstream installs it B reads A's LNK_CONN in the hold, never reads PROTO_2 and closes A's spans" $? "B held $(val B conn-held), read PROTO_2 $(val B log-proto2), spans admitted $(val B spans-rx), table $(val B spantab), registered $(val B log-registered), CL mounted $(nval B ro-mounted); A read PROTO_2 $(val A log-proto2) and holds $(val A spantab) of $npb spans; terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
+else
+[ "$CONNWAIT" = 1 ] && { [ "$(num "$(val B conn-held)" 0)" = 1 ]; check "control: B's reconnect held a second after its reader's start" $? "hold lines $(val B conn-held)"; }
 [ "$(num "$(val A log-proto2)" 0)" = 1 ] && [ "$(num "$(val B log-proto2)" 0)" = 1 ]; check "link: each kernel reads the peer's PROTO_2 announcement once" $? "A $(val A log-proto2), B $(val B log-proto2)"
 [ "$(num "$(val A spantab)" 0)" = "$npb" ]; check "link: A's span table holds one span per PFS of B, counted against B's pfs-list" $? "$(val A spantab) spans, $npb PFSs"
 [ "$(num "$(val B spantab)" 0)" = "$npa" ]; check "link: B's span table holds one span per PFS of A" $? "$(val B spantab) spans, $npa PFSs"
 [ "$(num "$(val A span-cl)" 0)" = 1 ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl), B sees MASTER $(val B span-cl)"
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
-[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = "$npb" ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B sent $(val B spans-del)"
+[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = "$npa" ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa"
 # The read side: B's empty SLAVE answers nothing, so every file B reads
 # came through the remote element; the digests are A's own, taken on A.
 sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
 nfa=$(( $(num "$(val A files)" 0) + $(num "$(val A more-files)" 0) ))	# the pass mode's second set, read after it
 [ "$(num "$(val B lone-mount-rc)" 0)" != 0 ]; check "remote: B's SLAVE CL alone does not mount, having no master" $? "rc $(val B lone-mount-rc)"
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
-# Lost ends the link at the first rewritten close, so every read after it
-# finds nothing: the live-link checks below do not apply to that mode.
-[ "$END" = lost ] || [ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
-[ "$END" = lost ] || { [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"; }
-if [ "$PASS" = 1 ]; then
-	# Both images read here with the guests down: the slave's CL against
-	# the master's entry for entry and block for block, as cluster-sync.sh
-	# reads its two volumes, and both clean by fsck. Inode check codes are
-	# left out, as there: a slave does not share its master's stamps.
-	fingerprint() {	# image
-		"$HAMMER2" -v show "$1" 2>/dev/null | awk '
-		/filename "CL"$/ && !on && !past { on = 1; next }
-		on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
-		!on { next }
-		/^ *inode\.[0-9]/ { mode = "inode"; next }
-		/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
-		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
-		/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
-		mode == "dirent" && $1 == "filename" { name = $2 }
-		mode == "dirent" && $1 == "inum" { dinum = $2 }
-		mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
-		mode == "inode" && $1 == "inum" { inum = $2 }
-		mode == "inode" && $1 == "type" { itype = $2 }
-		mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
-		mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
-		' | LC_ALL=C sort
-	}
+# Lost ends the link at the first rewritten close, and the window control
+# at the first listing past sixteen feeds, so every read after it finds
+# nothing: the live-link checks below do not apply to those modes.
+LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ]; } && LINKLOST=1
+[ "$LINKLOST" = 1 ] || [ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
+[ "$LINKLOST" = 1 ] || { [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"; }
+# The pass wrote B under the pass and under the pass-refusal control,
+# whose live pass writes B's read-only device.
+WRITTEN=0; { { [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; } || [ "$PASSREFUSE" = control ]; } && WRITTEN=1
+# Both images read here with the guests down: the slave's CL against
+# the master's entry for entry and block for block, as cluster-sync.sh
+# reads its two volumes, and both clean by fsck. Inode check codes are
+# left out, as there: a slave does not share its master's stamps.
+fingerprint() {	# image
+	"$HAMMER2" -v show "$1" 2>/dev/null | awk '
+	/filename "CL"$/ && !on && !past { on = 1; next }
+	on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
+	!on { next }
+	/^ *inode\.[0-9]/ { mode = "inode"; next }
+	/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
+	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+	/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
+	mode == "dirent" && $1 == "filename" { name = $2 }
+	mode == "dirent" && $1 == "inum" { dinum = $2 }
+	mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
+	mode == "inode" && $1 == "inum" { inum = $2 }
+	mode == "inode" && $1 == "type" { itype = $2 }
+	mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
+	mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
+	' | LC_ALL=C sort
+}
+if [ "$WRITTEN" = 1 ]; then
 	fingerprint "$FIXDIR/wire-a.img" > "$W/fp.a"; fingerprint "$FIXDIR/wire-b.img" > "$W/fp.b"
 	nfpa=$(grep -c ' FILE$' "$W/fp.a"); nfpb=$(grep -c ' FILE$' "$W/fp.b"); ndata=$(grep -c '^data ' "$W/fp.a")
 	"$FSCK" "$FIXDIR/wire-a.img" > "$W/fsck.a" 2>&1; fa=$?; "$FSCK" "$FIXDIR/wire-b.img" > "$W/fsck.b" 2>&1; fb=$?
 	cp "$W/fp.a" "$FIXDIR/wire-run-$stamp-fp-a.txt"; cp "$W/fp.b" "$FIXDIR/wire-run-$stamp-fp-b.txt"
+fi
+if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; then
 	[ "$(num "$(val B sync-snapshot)" 0)" = 1 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = 0 ] && [ "$(num "$(val B pass-sync-errors)" 1)" = 0 ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
 	[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b"; check "pass: the slave's CL matches the master's entry for entry and block for block on the media" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.a")"
 	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "pass: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
@@ -732,7 +917,21 @@ if [ "$PASS" = 1 ]; then
 	# A's own deletion line.
 	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
 	[ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 1)" = 0 ]; check "pass: neither image holds a snapshot of the pass at the end" $? "CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, left by the link $(val A snap-link-left)"
-else
+elif [ "$PASSREFUSE" = control ]; then
+	# The refusal off: the live pass writes the device opened read-only,
+	# with no line saying so, and B's image holds A's file entries. The
+	# image is the reading: the guest's own show of the device read none
+	# of them in 180 s (ctl-kasan-passrefuse-ctl.log), so it is printed
+	# beside and not judged.
+	[ "$(num "$(val B root-ro)" 0)" = 1 ] && [ "$(num "$(val B sync-snapshot)" 1)" = 0 ] && [ "$(num "$(val B first-refused-lines)" 1)" = 0 ] && [ "$nfa" -ge 300 ] && [ "$nfpb" = "$nfpa" ]; check "control: with the pass's refusal off the live pass writes B's read-only device silently" $? "device read-only $(val B root-ro), refusal lines $(val B first-refused-lines), $(val B first-media-files) of A's files on B's media after $(val B first-wait-seconds) s, file entries A $nfpa B $nfpb by fingerprint, $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ, fsck A rc $fa B rc $fb"
+elif [ "$SNAPROUTE" = control ]; then
+	# The routing off: the snapshot of the remote master runs the local
+	# body on the connection device, which refuses the block it would
+	# create; the pass takes no snapshot and copies nothing.
+	[ "$(num "$(val B first-snap-eopnotsupp)" 0)" -ge 1 ] && [ "$(num "$(val B first-snap-eopnotsupp)" 0)" = "$(num "$(val B first-snap-errors)" 0)" ] && [ "$(num "$(val B first-remote-snaps)" 1)" = 0 ] && [ "$(num "$(val B first-media-files)" 1)" = 0 ]; check "control: with the snapshot's routing off the pass's snapshot reaches the connection device and is refused before the body" $? "snapshot errors $(val B first-snap-errors) of which EOPNOTSUPP $(val B first-snap-eopnotsupp), remote snapshots $(val B first-remote-snaps), $(val B first-media-files) files on B's media after $(val B first-wait-seconds) s"
+elif [ "$ROGATE" = 0 ]; then
+	# (under the gate's control CL is writable after its remount, and the
+	# live pass fills the slave; its control check reads that)
 	[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by $(val B utility)'s show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
 fi
 # The file is on A alone, so no block has an address on B: every extent
@@ -740,19 +939,28 @@ fi
 # the pass the slave holds the block, and the address is the slave's,
 # the local chain the check matched to the remote focus.
 fx=$(num "$(val B fiemap-extents)" 0)
-if [ "$PASS" = 1 ]; then
+if [ "$WRITTEN" = 1 ]; then
 	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
 else
-[ "$REKEY" = 1 ] || [ "$END" = lost ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
+[ "$REKEY" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
 fi
 if [ "$REKEY" = 1 ]; then
 	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ "$(num "$(val B fiemap-extents)" 1)" = 0 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
 else
-[ "$END" = lost ] || { [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"; }
-[ "$END" = lost ] || { [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"; }
+[ "$LINKLOST" = 1 ] || { [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"; }
+[ "$LINKLOST" = 1 ] || { [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"; }
 fi
-[ "$END" = lost ] || { [ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"; }
+if [ "$ROGATE" = control ]; then
+	# The gate off: CL remounts read-write and a chmod through it reaches
+	# the slave's inode on B's media and not the master's, B read live just
+	# after the write and A from its image with the guests down; B's image
+	# is printed beside, since a later pass may have brought it level.
+	ma=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | awk -v n='"small.txt"' -f "$W/clmode.awk"); mb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | awk -v n='"small.txt"' -f "$W/clmode.awk")
+	[ "$(num "$(val B remount-rc)" 1)" = 0 ] && [ "$(num "$(val B log-remount-refused)" 1)" = 0 ] && [ "$(num "$(val B rogate-write-rc)" 1)" = 0 ] && [ "$(val B rogate-slave-mode)" = 600 ] && [ "$ma" = 644 ]; check "control: with the read-only gate off B's CL remounts read-write and a chmod lands on the slave alone" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused), the pass's refusals before it $(val B pass-refused) and $(val B slave-files) files on the slave after, small.txt on the slave after $(val B rogate-wait-seconds) s, emergency mode rc $(val B rogate-emerg-rc), chmod rc $(val B rogate-write-rc) \"$(val B rogate-write-err)\", mode on B's media live $(val B rogate-slave-mode), in the images A $ma B $mb"
+else
+[ "$LINKLOST" = 1 ] || { [ "$(num "$(val B remount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-remount-refused)" 0)" -ge 1 ]; check "remote: a read-write remount is refused while the element is registered" $? "remount rc $(val B remount-rc), refusal lines $(val B log-remount-refused)"; }
+fi
 if [ "$DIRENT" = 1 ]; then
 	bd=$(grep -c ' bare-dirent ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$bd" 0)" = 1 ] && [ "$(num "$(val B first-stat-rc)" 0)" != 0 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-nresolve)" 0)" = 1 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-nresolve-notconn)" 0)" -ge 1 ]; check "control: an nresolve answered by a directory entry with no bytes is refused, not read as an inode" $? "bare-dirent lines $(num "$bd" 0), nresolve ended ENOTCONN $(val B log-nresolve-notconn), first stat rc $(val B first-stat-rc), not-proxy $(val B log-not-proxy) of which nresolve $(val B log-not-proxy-nresolve), peer-sent $(val B log-peer-sent)"
@@ -775,14 +983,35 @@ if [ "$STALL" != 0 ]; then
 	st=$(grep -c ' stall ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ] && [ "$(num "$(val B readdir-timedout-ms)" 0)" -ge 2000 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, shortest timed-out readdir $(val B readdir-timedout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
-[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$END" = lost ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
-[ "$END" = lost ] || [ "$SILENCE" = 1 ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
+[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
+if [ "$ROGATE" = control ]; then
+	[ "$(num "$(val B rw-mount-rc)" 1)" = 0 ] && [ "$(num "$(val B log-mount-refused)" 1)" = 0 ]; check "control: with the read-only gate off a read-write mount of B's CL is taken beside the remote master" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
+else
+[ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
+fi
+# SNAPDEL for a name of the pass's suffix on A that the link never took:
+# A says so and the PFS stays, or in the control A deletes it.
+if [ "$SNAPDEL" != 0 ]; then
+	rn=$(grep -c ' rename-snapdel ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	za=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "ZZ.h2sync-src"')
+	if [ "$SNAPDEL" = 1 ]; then
+		[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A snapdel-not-ours)" 0)" = 1 ] && [ "$(num "$(val A snapdel-decoy-deleted)" 1)" = 0 ] && [ "$za" = 1 ]; check "control: a SNAPDEL naming a snapshot the link never took deletes nothing" $? "renames $(num "$rn" 0), decoy created rc $(val A decoy-rc), A's not-ours lines $(val A snapdel-not-ours), deleted $(val A snapdel-decoy-deleted), ZZ.h2sync-src on A's image $za"
+	else
+		[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A snapdel-not-ours)" 1)" = 0 ] && [ "$(num "$(val A snapdel-decoy-deleted)" 0)" = 1 ] && [ "$za" = 0 ]; check "control: with SNAPDEL's scope off the master deletes a snapshot its link never took" $? "renames $(num "$rn" 0), decoy created rc $(val A decoy-rc), A's not-ours lines $(val A snapdel-not-ours), deleted $(val A snapdel-decoy-deleted), ZZ.h2sync-src on A's image $za"
+	fi
+fi
+# Admission in the daemon: a row whose label has no .none and no key.
+if [ "$ADMIT" = 1 ]; then
+	[ "$(num "$(val B noadmit-dial-rc)" 0)" != 0 ] && [ "$(num "$(val B noadmit-refused)" 0)" = 1 ] && [ "$(num "$(val B dial-rc)" 1)" = 0 ] && [ "$(num "$(val B log-registered)" 0)" = 1 ]; check "control: a peer with no .none and no key is refused at the dial, and dialed once the marker is there" $? "unmarked dial rc $(val B noadmit-dial-rc) with $(val B noadmit-refused) refusal, marked dial rc $(val B dial-rc), registered $(val B log-registered)"
+elif [ "$ADMIT" = control ]; then
+	[ "$(num "$(val B noadmit-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B noadmit-refused)" 1)" = 0 ] && [ "$(num "$(val B log-registered)" 0)" = 1 ]; check "control: with admission off a peer with no .none and no key is dialed and its master registered" $? "unmarked dial rc $(val B noadmit-dial-rc) with $(val B noadmit-refused) refusal, registered $(val B log-registered)"
+fi
 # The plain run's detach is the connection's end at B's unmount; under lost
 # and under the keepalive's silence the link ended first and the peer's
 # span deletion detached it. Each run reads the path it expects, not a
 # count of one by either.
 dw=$(val B detached-why | sed 's/ *$//')
-if [ "$END" = lost ] || [ "$SILENCE" = 1 ]; then
+if [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ]; then
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "span deleted" ]; check "remote: the link's end detaches the element once, by the span's deletion" $? "$(val B log-detached), by $dw"
 else
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "connection ended" ]; check "remote: B's device unmount detaches the element once, by the connection's end" $? "$(val B log-detached), by $dw"
@@ -803,14 +1032,27 @@ if [ "$SILENCE" != 0 ]; then
 		[ "$(num "$(val B silence-timedout-ends)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-ms)" 0)" -ge 2000 ] && [ "$(num "$(val B silence-find-notconn)" 0)" -ge 1 ]; check "control: the next listing waits out the bound, its request ending timed out, before the caller reads not connected" $? "listing \"$(val B silence-find-err)\" in $(val B silence-find-ms) ms, requests timed out $(val B silence-timedout-ends), not connected $(val B silence-find-notconn)"
 	fi
 fi
+# The window: A's server sends past it, so the count either ends the link
+# by its own line at B's first listing of the 300-entry directory, or, in
+# the control built without it, takes the feeds and says so once.
+if [ "$WINDOW" = 1 ]; then
+	[ "$(num "$(val B log-window-ended)" 0)" -ge 1 ] && [ "$(num "$(val B log-window-taken)" 1)" = 0 ] && [ "$(num "$(val B log-readdir-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B many)" 1)" = 0 ] && [ "$(num "$(val B first-stat-rc)" 1)" = 0 ]; check "control: a server past its window ends the link at B's count, not as an answer" $? "window lines $(val B log-window-ended), taken $(val B log-window-taken), readdir ended ENOTCONN $(val B log-readdir-notconn), listing not connected $(val B find-notconn) with $(val B files) of $nfa files, $(val B many) of 300 entries, the stat before it rc $(val B first-stat-rc)"
+elif [ "$WINDOW" = control ]; then
+	[ "$(num "$(val B log-window-taken)" 0)" = 1 ] && [ "$(num "$(val B log-window-ended)" 1)" = 0 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "control: with B's count off the feeds past the window are taken and the directory listed whole" $? "taken $(val B log-window-taken), window lines $(val B log-window-ended), $(val B many) of 300 entries"
+fi
 # The PFS root's proxy is at level 1 and a file's at 2, the media's own.
 lr=$(val B lockdep-remote)
 # Every inode lives under the PFS root, so an inode is at 1 (the root) or
 # 2, a dirent at 2 or 3 and data at 3; any other class is a wrong level.
 lbad=$(printf '%s\n' $lr | grep -v -x -E 'h2ch_remote_(inode/[12]|dirent/[23]|data/3)' | tr '\n' ' ')
 case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
+fi
 for sd in A B; do
-	[ "$(num "$(val $sd kernel-warnings)" 1)" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
+	# under the route control the connection device's refusal is a
+	# warning by design, and the only one allowed
+	kw=$(num "$(val $sd kernel-warnings)" 1)
+	[ "$ROGATE" = control ] && [ "$sd" = B ] && kw=$((kw - $(num "$(val B conn-warnings)" 0)))
+	[ "$kw" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings) of which the connection device's refusals $(val $sd conn-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
 	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)
 	[ "$c" = 1 ] && [ "$k" = 0 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "cleared $c time(s), $k printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)"

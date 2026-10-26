@@ -66,7 +66,11 @@
  * from B whose name is NAME is delivered with its answer, and from the
  * answer's closing frame on every frame both ways is dropped with the
  * sockets left open, a partition that keeps the socket, which only a
- * keepalive can see on a link with no request in flight.  --end-readdir 1 sets the error on
+ * keepalive can see on a link with no request in flight.
+ * --rename-snapdel NAME gives the first SNAPDEL from B the name NAME, of
+ * the same length as the one B sent, and signs the frame again; the
+ * server must delete nothing of NAME, a snapshot its link never took.
+ * --end-readdir 1 sets the error on
  * the closing frame of the first two readdir answers to
  * HAMMER2_ERROR_ABORTED, the code a server ends a request with when its
  * unmount drains it, and --end-readdir 2 clears those frames' error and
@@ -196,8 +200,9 @@ static struct {
 	long stall_ms;		/* the relay holds B's HM2 frames from one readdir */
 	int end_readdir;	/* the relay rewrites the readdir closes it sees, two at most */
 	const char *silence_on;	/* the name whose lookup's answer starts a silence */
+	const char *rename_snapdel; /* the name the first SNAPDEL is given */
 } opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0, NULL };
+    0, 0, 0, NULL, NULL };
 
 static void
 usage(void)
@@ -211,7 +216,7 @@ usage(void)
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--stall-ms MS] [--end-readdir 1|2|3]\n"
-	    "              [--silence-on NAME] [--trace FILE]\n");
+	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n");
 	exit(2);
 }
 
@@ -246,6 +251,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--stall-ms")) opt.stall_ms = atol(v);
 		else if (!strcmp(a, "--end-readdir")) opt.end_readdir = atoi(v);
 		else if (!strcmp(a, "--silence-on")) opt.silence_on = *v ? v : NULL;
+		else if (!strcmp(a, "--rename-snapdel")) opt.rename_snapdel = *v ? v : NULL;
 		else usage();
 		i++;
 	}
@@ -941,6 +947,31 @@ end_readdir(struct frame *f)
 	return (1);
 }
 
+static int renamed;		/* --rename-snapdel has fired */
+
+/*
+ * The first SNAPDEL request (DMSG_HM2_XOP(22), sys/sys/dmsg.h), whose aux
+ * is the snapshot's name with no NUL, is given --rename-snapdel's name
+ * instead, of the same length, and both CRCs are computed again, so the
+ * server's own check of which snapshots the link took is all that stands
+ * between the request and a PFS the link never made.  A name of another
+ * length is left alone and the knob stays armed.
+ */
+static int
+rename_snapdel(struct frame *f)
+{
+	size_t n = strlen(opt.rename_snapdel);
+
+	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00202600U ||
+	    (f->hdr.cmd & 0xA0000000U) != 0x80000000U ||
+	    f->hdr.aux_bytes != n || f->aux == NULL)
+		return (0);
+	memcpy(f->aux, opt.rename_snapdel, n);
+	f->hdr.aux_crc = iscsi_crc32(f->aux, aux_alloc(&f->hdr));
+	resign(f);
+	return (1);
+}
+
 /* One frame read from `from`, decided for `to`.  The index i counts every
  * frame the relay read in either direction, so a partition or a disconnect
  * scripted at K lands at the Kth frame of the run and not of one side. */
@@ -1015,6 +1046,12 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 			frame_free(f);
 			return;
 		}
+	}
+	if (opt.rename_snapdel && !renamed && from->name[0] == 'B' &&
+	    rename_snapdel(f)) {
+		renamed = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " rename-snapdel t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
 	}
 	/* the first frame answering a readdir, the HM2 feed to B */
 	if (opt.stall_ms && !stalled && to->name[0] == 'B' &&
@@ -1217,11 +1254,13 @@ relay(void)
 	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
-	    " stall-ms=%ld end-readdir=%d silence-on=%s\n", opt.relay, opt.seed,
+	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s\n",
+	    opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
 	    opt.refuse_nresolve, opt.stall_ms, opt.end_readdir,
-	    opt.silence_on ? opt.silence_on : "-");
+	    opt.silence_on ? opt.silence_on : "-",
+	    opt.rename_snapdel ? opt.rename_snapdel : "-");
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);
