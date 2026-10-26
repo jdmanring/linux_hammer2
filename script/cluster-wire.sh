@@ -108,6 +108,13 @@ DIRENT=${H2_WIRE_DIRENT:-0}
 REFUSE=${H2_WIRE_REFUSE:-0}
 STALL=${H2_WIRE_STALL:-0}
 END=${H2_WIRE_END:-}
+# H2_WIRE_PASS=1 runs the slave's synchronization pass over the wire: B's
+# device stays writable (no second read-only open between the row and the
+# dial), its module is loaded with sync_snapshot=0 since a snapshot of a
+# remote focus is refused, and the pass copies A's CL onto B's media, read
+# by the host from both images after the guests are down, fingerprinted as
+# cluster-sync.sh fingerprints its two volumes and checked by fsck_hammer2.
+PASS=${H2_WIRE_PASS:-0}
 case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
 [ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
@@ -115,10 +122,14 @@ nctl=0
 for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); done
 [ "$STALL" = 0 ] || nctl=$((nctl + 1))
 [ -z "$END" ] || nctl=$((nctl + 1))
+[ "$PASS" = 1 ] && nctl=$((nctl + 1))
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
+HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
+FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
+[ "$PASS" != 1 ] || { [ -x "$HAMMER2" ] && [ -x "$FSCK" ]; } || { echo "wire: COULD-NOT-RUN: H2_WIRE_PASS needs hammer2 and fsck_hammer2 on the host (H2_HAMMER2, H2_FSCK)" >&2; exit 2; }
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 RUN="timeout ${H2_RUN_TIMEOUT:-300} $SSH"
 W=$(mktemp -d) || exit 2
@@ -228,16 +239,18 @@ klog1() { n=0; until [ "$(klog "$1")" -ge 1 ] || [ $n -ge 50 ]; do sleep 0.1; n=
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 GUEST
 cat > "$W/setup.sh" <<'GUEST'
-# setup <type> [<clid>]: load, mount ROOT, create CL, print its id
+# setup <type> [<clid> [<module parameters>]]: load, mount ROOT, create CL, print its id
 if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "wire: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
 dmesg -C
 pkill -f 'dmesg -w' 2>/dev/null
 setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
+SNAP=${3:-1}	# sync_snapshot
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
-insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
+insmod /tmp/hammer2.ko sync_snapshot=$SNAP || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
+echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot 2>/dev/null)"
 mkdir -p $R $C /tmp/h2keys
 mount -t hammer2 /dev/vdb@ROOT $R || { echo "mount failed"; exit 1; }
 if [ "$1" = master ]; then
@@ -300,6 +313,21 @@ cat > "$W/ro.sh" <<'GUEST'
 # remote master is registered
 mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "mount CL ro failed"; exit 1; }
 echo "ro-mounted 1"
+GUEST
+cat > "$W/pass.sh" <<'GUEST'
+# pass: B's slave element is written by its synchronization pass from A's
+# master over the wire; wait on the media, not the clock, for the master's
+# 300-entry directory to appear under B's CL, with a bound
+n=0
+until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')" -ge 300 ] || [ $n -ge 240 ]; do sleep 2; n=$((n + 2)); done
+echo "pass-wait-seconds $n"
+echo "pass-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')"
+echo "pass-errors $(klog 'sync_slaves error')"
+echo "pass-sync-errors $(klog 'hammer2_sync_slaves: error')"
+echo "pass-refused-lines $(klog 'sync pass refused on clindex')"
+echo "pass-remote-xops $(klog 'H2 REMOTE ')"
+echo "pass-remote-ends $(kl | grep 'H2 REMOTE ' | grep -c -v 'end=00000000')"
+echo "pass-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 GUEST
 cat > "$W/read.sh" <<'GUEST'
 # read [<stall ms> [<end mode>]]: B reads A's files through the element
@@ -468,7 +496,7 @@ echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 for s in "$SA" "$SB"; do
-	scp -q "$W/common.sh" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
+	scp -q "$W/common.sh" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $s failed" >&2; exit 2; }
 done
 phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
@@ -494,16 +522,17 @@ nval() {	# nval <A|B> <name>: how many lines carry it, with or without a value
 phase A setup.sh master || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
-phase B setup.sh slave "$clid" || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+slave_params=1; [ "$PASS" = 1 ] && slave_params=0	# sync_snapshot: a snapshot of a remote focus is refused
+phase B setup.sh slave "$clid" "$slave_params" || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase A fill.sh
 phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT"
-phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" ro
+if [ "$PASS" = 1 ]; then phase B dial.sh "$clid" "$HOST_ADDR" "$PORT"; else phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" ro; fi
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
 phase B reg.sh
-phase B ro.sh && phase B read.sh "$STALL" "$END"
+phase B ro.sh && { [ "$PASS" != 1 ] || phase B pass.sh; } && phase B read.sh "$STALL" "$END"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -547,11 +576,49 @@ nfa=$(num "$(val A files)" 0)
 # finds nothing: the live-link checks below do not apply to that mode.
 [ "$END" = lost ] || [ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
 [ "$END" = lost ] || { [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"; }
-[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by $(val B utility)'s show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
+if [ "$PASS" = 1 ]; then
+	# Both images read here with the guests down: the slave's CL against
+	# the master's entry for entry and block for block, as cluster-sync.sh
+	# reads its two volumes, and both clean by fsck. Inode check codes are
+	# left out, as there: a slave does not share its master's stamps.
+	fingerprint() {	# image
+		"$HAMMER2" -v show "$1" 2>/dev/null | awk '
+		/filename "CL"$/ && !on && !past { on = 1; next }
+		on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1; next }
+		!on { next }
+		/^ *inode\.[0-9]/ { mode = "inode"; next }
+		/^ *dirent\.[0-9]/ { mode = "dirent"; name = ""; next }
+		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+		/^ *(indirect|empty)\.[0-9]/ { mode = ""; next }
+		mode == "dirent" && $1 == "filename" { name = $2 }
+		mode == "dirent" && $1 == "inum" { dinum = $2 }
+		mode == "dirent" && $1 == "type" { print "dirent", name, dinum, $2 }
+		mode == "inode" && $1 == "inum" { inum = $2 }
+		mode == "inode" && $1 == "type" { itype = $2 }
+		mode == "inode" && $1 == "size" { print "inode", inum, itype, $2 }
+		mode == "data" && /xxh=/ { sub(/.*xxh=/, ""); print "data", inum, key, $1 }
+		' | LC_ALL=C sort
+	}
+	fingerprint "$FIXDIR/wire-a.img" > "$W/fp.a"; fingerprint "$FIXDIR/wire-b.img" > "$W/fp.b"
+	nfpa=$(grep -c ' FILE$' "$W/fp.a"); nfpb=$(grep -c ' FILE$' "$W/fp.b"); ndata=$(grep -c '^data ' "$W/fp.a")
+	"$FSCK" "$FIXDIR/wire-a.img" > "$W/fsck.a" 2>&1; fa=$?; "$FSCK" "$FIXDIR/wire-b.img" > "$W/fsck.b" 2>&1; fb=$?
+	cp "$W/fp.a" "$FIXDIR/wire-run-$stamp-fp-a.txt"; cp "$W/fp.b" "$FIXDIR/wire-run-$stamp-fp-b.txt"
+	[ "$(num "$(val B sync-snapshot)" 1)" = 0 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = 0 ] && [ "$(num "$(val B pass-sync-errors)" 1)" = 0 ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
+	[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b"; check "pass: the slave's CL matches the master's entry for entry and block for block on the media" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.a")"
+	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "pass: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
+else
+	[ "$(num "$(val B pass-refused)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-rc)" 1)" = 0 ] && [ "$(num "$(val B slave-cl)" 0)" -ge 1 ] && [ "$(num "$(val B slave-show-failed)" 1)" = 0 ] && [ "$(num "$(val B slave-files)" 1)" = 0 ] && [ "$(num "$(val A media-files)" 0)" -ge 300 ]; check "remote: B's pass refuses its read-only device and the slave copies nothing" $? "refusal lines $(val B pass-refused), slave files $(val B slave-files) by $(val B utility)'s show rc $(val B slave-show-rc) reaching CL's root $(val B slave-cl) with $(val B slave-show-failed) failed reads, the pattern matching $(val A media-files) on A's media"
+fi
 # The file is on A alone, so no block has an address on B: every extent
-# says so rather than reporting the 0 no local element supplied.
+# says so rather than reporting the 0 no local element supplied. After
+# the pass the slave holds the block, and the address is the slave's,
+# the local chain the check matched to the remote focus.
 fx=$(num "$(val B fiemap-extents)" 0)
+if [ "$PASS" = 1 ]; then
+	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
+else
 [ "$REKEY" = 1 ] || [ "$END" = lost ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
+fi
 if [ "$REKEY" = 1 ]; then
 	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ "$(num "$(val B fiemap-extents)" 1)" = 0 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
