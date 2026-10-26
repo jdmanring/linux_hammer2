@@ -18269,3 +18269,70 @@ its peer withdraws over a link that stays up takes the span-deletion path
 and is still driven by no run.
 
 The row is 1.0.51.
+
+## The wire harness drives a stale local element under bmap, 2026-10-26
+
+What this entry claims: the case the protocol note left in the code and
+undriven, a local element holding the inode and an older copy of a
+block beside a remote focus, is driven by a run, `cluster-wire.sh` under
+`H2_WIRE_STALE=1`, and reads on both 7.3 kernels the block the slave
+holds stale reported with no address and every other block at the
+slave's own. The source is `db24734`'s; both runs name
+`v1.0.4-628-gdb24734-dirty`, the tree dirty in the harness alone, and
+the module hashes are `27fa2a85627b4f25` on `h2kasan-7.3` and `0d908d8255982f6b`
+on `h2debug-7.3`.
+
+How the run holds the slave stale. The mode runs the pass as
+`H2_WIRE_PASS=1` does, so the slave first holds the master's `CL` on its
+own media. The pass refuses on a device opened read-only
+(`hammer2_synchro.c:1199-1205`), and that refusal is the hold: the
+slave's `ROOT` and `CL` unmount, which ends the link and detaches the
+element by the connection's end, its `ROOT` mounts again read-only, the
+master's message threads drain to 0, both sides dial again by their
+rows and the slave registers the master's root a second time. The
+master then rewrites the first 64 KiB of the 512 KiB file in place.
+The slave's pass refuses once, so its copy of that block is the old one
+and its copies of the other seven are current.
+
+What would read as a pass and is not. A pass that ran after the rewrite
+leaves the slave level and `fiemap` reports no `unknown_loc`; a check
+matching no local chain at all reports the untouched file unknown too,
+which is what the plain run reads with its slave empty; a rewrite that
+never landed leaves the images equal and the old digest. The run checks
+each: the image diff must be exactly two lines, both data, at one inode
+and key; `fiemap` of the rewritten file at least two extents and exactly
+one `unknown_loc`, at logical 0; `fiemap` of `dir1/inner.bin`, which the
+master left alone, no `unknown_loc`; and the slave's digests the
+master's with the new sum, which must differ from the old.
+
+The readings, logs `stale-debug.log` and `stale-kasan.log` under
+`~/Projects/linux_hammer2-data/p8-notes/`, each run's `.out`, kernel logs
+and trace under `fixtures/`:
+
+| Kernel | Run | Checks | Image diff | `fiemap` of the rewritten file | Remote XOPs |
+|---|---|---|---|---|---|
+| `h2debug-7.3` | `wire-run-20261026-101910` | 38, 0 failed | 2 lines at inode `0x402`, key `0/16`, of 310 file entries and 15 data blocks | extent 0 `0..0` `unknown_loc`, extent 1 `1..7` at 2371 | 941 in the pass, 1460 in all |
+| `h2kasan-7.3` | `wire-run-20261026-102423` | 38, 0 failed | 2 lines at inode `0x402`, key `0/16`, of 310 file entries and 15 data blocks | extent 0 `0..0` `unknown_loc`, extent 1 `1..7` at 2371 | 941 in the pass, 1898 in all |
+
+The rewrite moved the file's digest from `19413f350475ef207e` to
+`a6df030866001789e7` on the lockdep kernel and from `f18860a5880f1219c7`
+to `673672f9323af2cede` on the KASAN kernel (the first 18 hex digits as
+the run prints them; the file's content is drawn fresh each run), and
+in each run the slave read all 310 digests equal to the master's, warm
+and after dropping its caches. `dir1/inner.bin` reported two extents, at
+2368 and 2369, neither unknown, in both. The detach was read twice in
+each, both by the connection's end. The slave's pass refused once on the
+lockdep kernel and twice on the KASAN kernel, a second syncer interval
+falling inside the read-only window; the check asks for at least one,
+since the count is the window's length over the thread's cadence and
+not a property of the case. The slave refetched one block on the lockdep
+kernel and none on the KASAN kernel. Both runs read no warning, lockdep
+or sanitizer report on either guest and kmemleak nothing of hammer2's
+after the unload.
+
+For contrast under the same harness: the pass mode reads the file as
+one extent `0..7` at the slave's address, and the plain wire run as one
+extent `0..7` all `unknown_loc`. A local element holding the inode and
+lacking the block is still driven by no run.
+
+The row is 1.0.52.

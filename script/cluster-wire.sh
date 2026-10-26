@@ -168,6 +168,16 @@
 # the link. The plain run reads "connection ended" and no other path
 # prints "unmount".
 #
+# H2_WIRE_STALE=1 reads bmap's answer with a local element behind the focus.
+# It runs the pass, then B's device is opened again read-only and both sides
+# dial again, so B's pass refuses and the slave keeps what it copied; A then
+# rewrites the first 64 KiB block of the 512 KiB file. fiemap on B must report
+# that block with no address, since the slave's copy is older than the
+# master's, and the file's other blocks and an unchanged file at the slave's
+# own address. The images must differ by that one data block. A slave brought
+# level by its pass reports every address, which is the fake pass this mode
+# rules out, and a slave matched to nothing reports none for the unchanged file.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -203,6 +213,8 @@ WINDOW=${H2_WIRE_WINDOW:-0}
 ROGATE=${H2_WIRE_ROGATE:-0}; PASSREFUSE=${H2_WIRE_PASSREFUSE:-0}; SNAPROUTE=${H2_WIRE_SNAPROUTE:-0}
 SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
 LINKDEV=${H2_WIRE_LINKDEV:-0}
+STALE=${H2_WIRE_STALE:-0}
+case $STALE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_STALE is 1" >&2; exit 2;; esac
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
 case $WINDOW in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WINDOW is 1 or control" >&2; exit 2;; esac
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE"; do
@@ -222,10 +234,11 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$SILENCE" = 0 ] || nctl=$((nctl + 1))
 [ "$WINDOW" = 0 ] || nctl=$((nctl + 1))
 [ "$LINKDEV" = 0 ] || nctl=$((nctl + 1))
+[ "$STALE" = 0 ] || nctl=$((nctl + 1))
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
-# the two snapshot controls run under the pass
-{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ]; } && PASS=1
+# the two snapshot controls and the stale element run under the pass
+{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ]; } && PASS=1
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
@@ -453,6 +466,14 @@ cat > "$W/fill.sh" <<'GUEST'
 # fill: A's MASTER CL mounted read-write and given a known tree; with
 # "more", a second set written on the mounted CL after the slave's first
 # pass, which a later pass must copy
+if [ "${1:-}" = stale ]; then
+	# the 512 KiB file's first block rewritten on the master alone, once
+	# the slave's pass can no longer copy it
+	dd if=/dev/urandom of=$C/big.bin bs=65536 count=1 conv=notrunc 2>/dev/null; echo "stale-write-rc $?"
+	sync
+	(cd $C && sha256sum ./big.bin) | sed 's/^\([0-9a-f]*\)  \(.*\)/stalesum \2 \1/'
+	exit 0
+fi
 if [ "${1:-}" = more ]; then
 	mkdir -p $C/more
 	i=0; while [ $i -lt 5 ]; do head -c 4096 /dev/urandom > $C/more/m$i; i=$((i + 1)); done
@@ -565,6 +586,30 @@ echo "pass-remote-xops $(klog 'H2 REMOTE ')"
 echo "pass-remote-ends $(kl | grep 'H2 REMOTE ' | grep -c -v 'end=00000000')"
 echo "pass-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 GUEST
+cat > "$W/stale.sh" <<'GUEST'
+# stale <down|up>: B's device opened again read-only after the pass, which
+# ends the link, and dialed again, so the pass refuses on it and the slave
+# keeps the copy it holds
+if [ "$1" = down ]; then
+	umount $C && umount $R || { echo "stale unmount failed"; exit 1; }
+	echo "stale-detached $(klog1 'remote element CL at clindex 1 detached')"
+	mount -t hammer2 -o ro /dev/vdb@ROOT $R || { echo "stale ROOT read-only failed"; exit 1; }
+	exit 0
+fi
+/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; r=$?
+sed 's/^/redial /' /tmp/h2wire.dial2
+echo "stale-dial-rc $r"
+n=0; until [ "$(klog 'remote element CL registered at clindex 1')" -ge 2 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+echo "stale-registered $(klog 'remote element CL registered at clindex 1')"
+mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "stale mount CL ro failed"; exit 1; }
+GUEST
+cat > "$W/redial.sh" <<'GUEST'
+# redial: A dials again by the row already on its ROOT, once the link B's
+# unmount ended has let its message threads go
+n=0; until [ "$(threads)" = 0 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+echo "redial-threads-before $(threads)"
+/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; echo "redial-rc $?"
+GUEST
 cat > "$W/read.sh" <<'GUEST'
 # read <stall ms> <end mode or 0> <silence or 0> <rogate or 0>: B reads A's
 # files through the element; the arguments ride ssh's command line, so none
@@ -616,7 +661,12 @@ echo "many $(find $C/many -mindepth 1 2>/dev/null | grep -c .)"
 filefrag -v $C/big.bin > /tmp/h2wire.frag 2>&1; echo "fiemap-rc $?"
 echo "fiemap-extents $(grep -c '^ *[0-9][0-9]*:' /tmp/h2wire.frag)"
 echo "fiemap-unknown $(grep '^ *[0-9][0-9]*:' /tmp/h2wire.frag | grep -c unknown_loc)"
+echo "fiemap-first-unknown $(grep '^ *0: *0\.\.' /tmp/h2wire.frag | grep -c unknown_loc)"
 sed 's/^/frag /' /tmp/h2wire.frag
+filefrag -v $C/dir1/inner.bin > /tmp/h2wire.frag2 2>&1; echo "fiemap2-rc $?"
+echo "fiemap2-extents $(grep -c '^ *[0-9][0-9]*:' /tmp/h2wire.frag2)"
+echo "fiemap2-unknown $(grep '^ *[0-9][0-9]*:' /tmp/h2wire.frag2 | grep -c unknown_loc)"
+sed 's/^/frag2 /' /tmp/h2wire.frag2
 (cd $C && find . -type f | sort | xargs sha256sum) 2>&1 | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
 mount -o remount,rw $C 2>/dev/null; echo "remount-rc $?"
 echo "log-remount-refused $(klog1 'read-write remount refused: a remote element')"
@@ -803,7 +853,7 @@ echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 for s in "$SA" "$SB"; do
-	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$s:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$s:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $s failed" >&2; exit 2; }
 done
 phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
@@ -841,7 +891,8 @@ phase B reg.sh
 if [ "$SNAPROUTE" = control ] || [ "$PASSREFUSE" = control ]; then PASSES=first
 elif [ "$PASS" = 1 ]; then PASSES=full; else PASSES=none; fi
 phase B ro.sh && case $PASSES in
-	full)	phase B pass.sh && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
+	full)	phase B pass.sh && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)" &&
+		{ [ "$STALE" = 0 ] || { phase B stale.sh down && phase A redial.sh && phase B stale.sh up && phase A fill.sh stale; }; };;
 	first)	phase B pass.sh first;;
 	*)	true;;
 esac && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
@@ -889,7 +940,8 @@ else
 [ "$(num "$(val A span-cl)" 9)" = "$slv" ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl) of $slv, B sees MASTER $(val B span-cl)"
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
-[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = "$npa" ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa"
+# under STALE B's device is unmounted twice, each time with A's spans held
+[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = $((npa * (STALE + 1))) ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa times $((STALE + 1))"
 # The read side: B's empty SLAVE answers nothing, so every file B reads
 # came through the remote element; the digests are A's own, taken on A.
 sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
@@ -935,7 +987,14 @@ if [ "$WRITTEN" = 1 ]; then
 fi
 if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; then
 	[ "$(num "$(val B sync-snapshot)" 0)" = 1 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = 0 ] && [ "$(num "$(val B pass-sync-errors)" 1)" = 0 ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
+	if [ "$STALE" = 1 ]; then
+		# the one block A rewrote after the slave's last pass, and nothing else
+		fpd=$(diff "$W/fp.a" "$W/fp.b" | sed -n 's/^[<>] //p')
+		fpk=$(printf '%s\n' "$fpd" | awk '$1 == "data" { print $2, $3 }' | sort -u)
+		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$nfpb" = "$nfa" ] && [ "$(printf '%s\n' "$fpd" | grep -c .)" = 2 ] && [ "$(printf '%s\n' "$fpd" | grep -c '^data ')" = 2 ] && [ "$(printf '%s\n' "$fpk" | grep -c .)" = 1 ]; check "stale: the slave's CL differs from the master's by one data block alone, the one A rewrote" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(printf '%s\n' "$fpd" | grep -c .) lines differ, at inum and key $(printf '%s' "$fpk" | tr '\n' ';')"
+	else
 	[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b"; check "pass: the slave's CL matches the master's entry for entry and block for block on the media" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.a")"
+	fi
 	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "pass: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
 	# The snapshot pass over the wire: the master took the pass's source
 	# snapshot at B's request and B read it, the pass verified against it,
@@ -975,7 +1034,14 @@ fi
 # the pass the slave holds the block, and the address is the slave's,
 # the local chain the check matched to the remote focus.
 fx=$(num "$(val B fiemap-extents)" 0)
-if [ "$WRITTEN" = 1 ]; then
+if [ "$STALE" = 1 ]; then
+	# The slave's copy of the first block is older than the master's, so
+	# the check leaves it out of the quorum and bmap has no local address
+	# for that block; every other block, and every block of a file A left
+	# alone, is the slave's own.
+	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 2 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = 1 ] && [ "$(num "$(val B fiemap-first-unknown)" 0)" = 1 ]; check "stale: fiemap of the rewritten file has no address for the block the slave holds stale and the slave's own for the rest" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc of which at logical 0 $(val B fiemap-first-unknown)"
+	[ "$(num "$(val B fiemap2-rc)" 1)" = 0 ] && [ "$(num "$(val B fiemap2-extents)" 0)" -ge 1 ] && [ "$(num "$(val B fiemap2-unknown)" 1)" = 0 ]; check "stale: fiemap of a file A left alone reports the slave's own address for every block" $? "rc $(val B fiemap2-rc), $(val B fiemap2-extents) extent(s), $(val B fiemap2-unknown) unknown_loc"
+elif [ "$WRITTEN" = 1 ]; then
 	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
 else
 [ "$REKEY" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
@@ -984,8 +1050,11 @@ if [ "$REKEY" = 1 ]; then
 	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ "$(num "$(val B fiemap-extents)" 1)" = 0 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
 else
-[ "$LINKLOST" = 1 ] || { [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(sums A sum | grep -c .) equal by sha256"; }
-[ "$LINKLOST" = 1 ] || { [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"; }
+# under STALE A's digest of the rewritten file is the one taken after it
+asums() { if [ "$STALE" = 1 ]; then sums A sum | sed "s|^\./big\.bin .*|$(val A stalesum)|" | sort; else sums A sum; fi; }
+[ "$STALE" = 0 ] || { [ "$(num "$(val A stale-write-rc)" 1)" = 0 ] && [ -n "$(val A stalesum)" ] && [ "$(val A stalesum)" != "$(sums A sum | grep '^\./big\.bin ')" ]; check "stale: A's rewrite of the file's first block changed its digest" $? "dd rc $(val A stale-write-rc), $(sums A sum | grep '^\./big\.bin ' | cut -c1-28) then $(val A stalesum | cut -c1-28)"; }
+[ "$LINKLOST" = 1 ] || { [ -n "$(asums)" ] && [ "$(asums)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(asums | grep -c .) equal by sha256"; }
+[ "$LINKLOST" = 1 ] || { [ -n "$(asums)" ] && [ "$(asums)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold"; }
 fi
 if [ "$ROGATE" = control ]; then
 	# The gate off: CL remounts read-write and a chmod through it reaches
@@ -1051,6 +1120,10 @@ if [ "$LINKDEV" = 1 ]; then
 	[ "$(val B linkdev)" = 1 ] && [ "$(num "$(val B vdb-gone-detached)" 0)" = 1 ] && [ "$(num "$(val B vdb-gone-threads)" 0)" -ge 1 ] && [ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "unmount" ]; check "remote: B's own device leaving first detaches the element once, by its unmount, with the link on vdc still up" $? "$(val B log-detached), by $dw, $(val B vdb-gone-detached) before vdc's unmount with $(val B vdb-gone-threads) link threads"
 elif [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ]; then
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "span deleted" ]; check "remote: the link's end detaches the element once, by the span's deletion" $? "$(val B log-detached), by $dw"
+elif [ "$STALE" = 1 ]; then
+	[ "$(num "$(val B stale-detached)" 0)" = 1 ] && [ "$(num "$(val B log-detached)" 0)" = 2 ] && [ "$dw" = "connection ended connection ended" ]; check "stale: each of B's two device unmounts detaches the element once, by the connection's end" $? "$(val B stale-detached) at the first, $(val B log-detached) in all, by $dw"
+	[ "$(num "$(val A redial-threads-before)" 1)" = 0 ] && [ "$(num "$(val A redial-rc)" 1)" = 0 ] && [ "$(num "$(val B stale-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B stale-registered)" 0)" = 2 ]; check "stale: both sides dial again by their rows and B registers A's root a second time" $? "A's threads before $(val A redial-threads-before), A rc $(val A redial-rc), B rc $(val B stale-dial-rc), registered $(val B stale-registered)"
+	[ "$(num "$(val B pass-refused)" 0)" -ge 1 ]; check "stale: B's pass refuses its read-only device, so the slave keeps what it copied" $? "refusal lines $(val B pass-refused)"
 else
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "connection ended" ]; check "remote: B's device unmount detaches the element once, by the connection's end" $? "$(val B log-detached), by $dw"
 fi

@@ -662,9 +662,22 @@ its pass copies the master's `CL` through the element, and `fiemap` of
 the 512 KiB file then reports one extent with no `unknown_loc`, the
 slave's own block (`wire-run-20261026-015358` on the lockdep kernel
 and `wire-run-20261026-015707` on the KASAN kernel, 31
-checks and 0 failed each). A local element holding the inode but
-lacking the block or holding an older one is in the code and not
-driven by a run. Two kept runs before the pass mode existed had the
+checks and 0 failed each). A local element holding an older copy of
+the block is driven under `H2_WIRE_STALE=1` since 2026-10-26, by the
+hold the pass mode gives it: the pass refuses on a device opened
+read-only, so after the copy the slave's `ROOT` and `CL` unmount,
+ending the link, its `ROOT` mounts again read-only, both sides dial
+again by their rows, and the master rewrites the 512 KiB file's first
+block. The slave's image then differs from the master's by that one
+data block, two fingerprint lines at one inode and key; `fiemap` of the
+file reports its first block `unknown_loc` and its other seven at the
+slave's own addresses, the local chain of the first block older than the
+focus by `modify_tid` and matched to it by none, and a file the master
+left alone reports the slave's address for every block; and the digest
+the slave reads is the master's new one (`wire-run-20261026-101910` on
+the lockdep kernel and `wire-run-20261026-102423` on the KASAN kernel, 38 checks and 0
+failed each). A local element holding the inode and lacking the block
+is not driven by a run. Two kept runs before the pass mode existed had the
 pass copy the master's tree into the slave over the wire,
 `wire-run-20261020-200029` and `-203127`, on uncommitted code before
 `0d0717d`; the first shows the direct-data insertion described above,
@@ -672,11 +685,6 @@ ending in the flush's depth limit, and the second ended in a circular
 locking report, so neither is a reading of the pass. `1eae1d3`'s
 message says no run has driven the pass over the wire, which those two
 contradict; the first readings of the pass are the two runs above.
-The stale case has the hold it needs in the pass mode: the pass
-refuses on a device opened read-only, so the slave's device reopened
-read-only after the copy and dialed again, with the file then changed
-on the master, reads the stale case, and a file left unchanged the
-matched one.
 
 The reply's data is copied off the reader thread into the frame, and
 the feed stashes it on the handle before it locks the new chain; the
