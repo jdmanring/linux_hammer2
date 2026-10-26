@@ -18414,3 +18414,89 @@ silent after the unload, and both snapshots of each pass deleted. The
 QEMU core count read 0 before and after each cycle.
 
 The row is 1.0.53.
+
+## A link cut inside the pass over the wire, and the resume after the dial, 2026-10-26
+
+What this entry claims: P7's `interrupted_resume` is read over the wire
+by `cluster-wire.sh` under `H2_WIRE_CUT=disconnect`, a cut of both
+connections inside the slave's pass, and on both 7.3 kernels the slave
+detaches the element by the span's deletion, ends the pass unverified
+with its target kept, finds no quorum in the gap, and after both sides
+dial again verifies on that target with the images equal; its control,
+`H2_WIRE_CUT=control`, is the same cut with both dials withheld and
+leaves the slave short of the master. The source is `857a31a`'s with the
+relay option and the harness mode uncommitted; all four runs name
+`v1.0.4-632-g857a31a-dirty`, and the module hashes are
+`3bf3716d88f22c49` on `h2debug-7.3` and `0eb7a6989537cc07` on
+`h2kasan-7.3`. The kernel is not edited.
+
+How the cut is placed. The relay's `--cut-on-scan K` arms on the
+master's first reply to the slave's `SNAPSHOT`, numbers the slave's
+`scanall` calls from 0 by their CREATE, follows each msgid until the
+master's close releases it, and from call K on holds each feed one frame
+behind. A call that reaches 16 feeds is released and passed over, since
+the slave sends its continuation only on taking the sixteenth
+(`hammer2_remote.c:1406-1412`), and so is a call closing with fewer than
+2, since a lone feed is the frame carrying the reply's CREATE; at the
+close of the first call from K with 2 to 15 feeds the relay discards the
+held feed and the close, traces `cut` and ends both connections. K comes
+from `wire-run-20261026-124118` on `h2debug-7.3` (`cut-trace-debug.log`,
+34 checks and 0 failed), the cut armed past every call: the pass's
+`scanall` calls there are 0 to 310, so K is 155, and the first call from
+155 with 2 to 15 feeds is call 304, with 2 feeds, followed in that pass
+by six calls more, one of them with 8 feeds.
+
+What would read as a pass and is not. A cut after the pass's verdict
+reads as a clean resume and tests nothing, so the run requires the
+pass's snapshot read before the cut and no verdict line between them;
+the bound above it is the calibration run's six calls after call 304 and
+the control's slave one file entry short of the master. The `cut` check
+also counts calls traced after the cut, and under `disconnect` those are
+the resumed pass's on the pair the dials make again, so they bound
+nothing in the cut pass. A detach by the connection's end, a cut pass
+that verified, a target the resume took again, or a slave the resume
+left behind each fail a named check.
+
+What the first runs found. The pass was started by the element's
+registration, and its first scan began at the sync thread's next tick,
+2.5 s after it on the KASAN kernel and 4.0 s on the lockdep kernel; the
+cut landed 0.8 to 2.1 s into the pass, so it raced the harness's link
+readings and its mount of the slave's `CL`. On the KASAN kernel the cut
+won: `wire-run-20261026-125039` (`cut-disconnect-kasan-race.log`) read
+36 checks and 19 failed, the span table empty and the mount of `CL`
+refused "Transport endpoint is not connected". The lockdep runs of that
+harness, `wire-run-20261026-124428` and `-124710`, passed by timing
+alone and are kept as `cut-disconnect-debug-race.log` and
+`cut-control-debug-race.log`, cited by nothing. The slave now dials with
+its `ROOT` read-only, so the pass refuses on the device
+(`hammer2_synchro.c:1213-1217`) until the readings are taken, and the
+run then remounts it read-write; the check requires at least one refusal
+and no snapshot read before that remount, and the remount's rc 0.
+
+The readings, logs `cut-{disconnect,control}-{debug,kasan}.log` under
+`~/Projects/linux_hammer2-data/p8-notes/`, each run's kernel logs and
+trace under `fixtures/`:
+
+| Kernel | Mode | Run | Checks | Cut | Detach and gap | Resume | Images |
+|---|---|---|---|---|---|---|---|
+| `h2debug-7.3` | `disconnect` | `wire-run-20261026-130726` | 36, 0 failed | call 304 of K 155, 2 feeds; 1 refusal before the remount | `span deleted` after 2 s; `scanall` `ENOTCONN` 1; unverified 1, round 1 acted 616 failed 0; no quorum 1 in 7404 ms | verified on the cut pass's target, none taken; five more files on the slave after 30 s | 310 file entries and 15 data blocks each, 0 lines differ, no snapshot left |
+| `h2kasan-7.3` | `disconnect` | `wire-run-20261026-130037` | 36, 0 failed | call 304 of K 155, 2 feeds; 2 refusals before the remount | `span deleted` after 6 s; `scanall` `ENOTCONN` 1; unverified 1, round 1 acted 616 failed 0; no quorum 1 in 7565 ms | verified on the cut pass's target, none taken; five more files on the slave after 26 s | 310 file entries and 15 data blocks each, 0 lines differ, no snapshot left |
+| `h2debug-7.3` | `control` | `wire-run-20261026-131007` | 25, 0 failed | call 304 of K 155, 2 feeds; 1 refusal before the remount | `span deleted` after 2 s; unverified 1; no quorum 1 in 7203 ms | withheld | A 305 file entries, B 304; `CL.h2sync-tgt` on B 1 |
+| `h2kasan-7.3` | `control` | `wire-run-20261026-130402` | 25, 0 failed | call 304 of K 155, 2 feeds; 2 refusals before the remount | `span deleted` after 7 s; unverified 1; no quorum 1 in 8138 ms | withheld | A 305 file entries, B 304; `CL.h2sync-tgt` on B 1 |
+
+In every run the master printed no `HM2` line and deleted the link's
+snapshot `CL.h2sync-src` once, at its dial under `disconnect` and at its
+unmount under `control`, and not at the cut; both images read clean by
+`fsck_hammer2` after the cut and after the clean unmount. The
+`disconnect` runs read every one of 310 digests equal on the slave warm
+and cold, 1901 and 1896 remote XOPs with no feed refused, and the
+element detached twice, by the span's deletion at the cut and by the
+connection's end at the slave's unmount. No run read a kernel warning,
+lockdep or sanitizer report on either guest, and kmemleak printed
+nothing of hammer2's after the unload. The QEMU core count read 0 after
+the guests were destroyed.
+
+`crash_recovery` over the wire, a power cut of either guest inside the
+pass, and the reply path's own faults are still unread.
+
+The row is 1.0.54.

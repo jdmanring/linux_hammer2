@@ -1080,8 +1080,19 @@ quiet master that had changed once was snapshotted every pass. The
 `snapshot_source` criterion is read over the wire by `cluster-wire.sh`
 under `H2_WIRE_PASS=1`, with `initial_convergence` and
 `incremental_convergence`; `interrupted_resume` over the wire is the
-disconnect mid-pass the matrix names, and `crash_recovery` is read
-locally.
+disconnect mid-pass the matrix names, read since 2026-10-26 under
+`H2_WIRE_CUT=disconnect`: the relay ends both connections at the close
+of a `scanall` call inside the pass, the slave detaches by the span's
+deletion with its pass unverified and its target kept, every pass in the
+gap finds no quorum since the slot is empty and `pfs_nmasters`
+unchanged, and after both sides dial again the first pass verifies on
+that target, with the master's snapshot of the cut pass deleted at the
+master's own dial (`wire-run-20261026-130726` on the lockdep kernel and
+`wire-run-20261026-130037` on the KASAN kernel, 36 checks and 0 failed
+each). The slave dials read-only and starts the pass only once the
+link's readings are taken, since a pass that began 2.5 to 4 s after the
+element registered let the cut race the readings and the mount of `CL`.
+`crash_recovery` is read locally.
 
 ## The quorum protocol: what the carried core imposes, and the decision taken on it
 

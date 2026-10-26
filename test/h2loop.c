@@ -207,8 +207,9 @@ static struct {
 	int end_readdir;	/* the relay rewrites the readdir closes it sees, two at most */
 	const char *silence_on;	/* the name whose lookup's answer starts a silence */
 	const char *rename_snapdel; /* the name the first SNAPDEL is given */
+	long cut_on_scan;	/* the scanall call from which the link is cut */
 } opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0, 0, NULL, NULL };
+    0, 0, 0, 0, NULL, NULL, -1 };
 
 static void
 usage(void)
@@ -222,7 +223,7 @@ usage(void)
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
-	    "              [--end-readdir 1|2|3]\n"
+	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
 	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n");
 	exit(2);
 }
@@ -260,6 +261,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--end-readdir")) opt.end_readdir = atoi(v);
 		else if (!strcmp(a, "--silence-on")) opt.silence_on = *v ? v : NULL;
 		else if (!strcmp(a, "--rename-snapdel")) opt.rename_snapdel = *v ? v : NULL;
+		else if (!strcmp(a, "--cut-on-scan")) opt.cut_on_scan = atol(v);
 		else usage();
 		i++;
 	}
@@ -280,7 +282,7 @@ validate(void)
 	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
 	    opt.retype_scan < 0 || opt.retype_scan > 1 ||
 	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
-	    opt.end_readdir < 0 || opt.end_readdir > 3)
+	    opt.end_readdir < 0 || opt.end_readdir > 3 || opt.cut_on_scan < -1)
 		usage();
 }
 
@@ -1016,6 +1018,136 @@ rename_snapdel(struct frame *f)
 	return (1);
 }
 
+/*
+ * --cut-on-scan K: B's scanall calls (DMSG_HM2_XOP(6)) are counted from the
+ * first frame A answers B's first SNAPSHOT (DMSG_HM2_XOP(21)) with, so the
+ * count starts inside a synchronization pass, and each is followed by its
+ * msgid from B's CREATE to A's closing frame, after which the kernel may
+ * reuse the msgid.  From the Kth call on, each A>B feed of a call is held
+ * one frame behind and released when the next arrives.  A call reaching
+ * HAMMER2_XOPFIFO (16) feeds would stall, since B continues only on taking
+ * the 16th, so it is released there and skipped; one closing on 0 or 1 feed
+ * is skipped too, since a 1-feed call's only feed carries the CREATE and a
+ * close without it is refused.  The first call from K on closing with 2 to
+ * 15 feeds is the cut: its held feed and its close are discarded and the
+ * pair is closed, so B's call ends by the link's loss with the scan partway.
+ * The count goes on across pairs, so the calls after the cut are traced.
+ */
+#define CUT_NCALL	8	/* scanall calls in flight at once; the pass has one */
+static struct cut_call {
+	uint64_t msgid;		/* 0 a free slot */
+	long n;			/* its count among the calls since armed */
+	int feeds;		/* A>B feeds seen, the close not counted */
+	int watched;		/* its feeds are held one behind */
+	struct frame *held;
+} cut_calls[CUT_NCALL];
+static uint64_t cut_snap_msgid;	/* B's first SNAPSHOT request, 0 none yet */
+static int cut_armed, cut_done, cut_now;
+static long cut_ncalls;
+
+/* A pair's end: its msgids mean nothing on the next pair. */
+static void
+cut_reset(void)
+{
+	for (int k = 0; k < CUT_NCALL; k++) {
+		if (cut_calls[k].held) {
+			ct.lost++;
+			frame_free(cut_calls[k].held);
+		}
+		memset(&cut_calls[k], 0, sizeof(cut_calls[k]));
+	}
+	if (!cut_armed)
+		cut_snap_msgid = 0;
+}
+
+/* Returns 1 when it took f, held or discarded, and 0 to pass it on. */
+static int
+cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
+    long due)
+{
+	struct cut_call *cc = NULL;
+	uint32_t c = f->hdr.cmd, error;
+	long t = now_ms();
+	int k;
+
+	if (from->name[0] == 'B' && (c & 0xA0000000U) == 0x80000000U) {
+		if ((c & 0x00FFFF00U) == 0x00202500U && cut_snap_msgid == 0)
+			cut_snap_msgid = f->hdr.msgid;
+		if ((c & 0x00FFFF00U) != 0x00201600U || !cut_armed)
+			return (0);
+		for (k = 0; k < CUT_NCALL && cut_calls[k].msgid; k++)
+			;
+		if (k == CUT_NCALL) {
+			trace("%s>%s i=%ld msgid=%" PRIu64 " untracked t=%ld\n",
+			    from->name, to->name, i, f->hdr.msgid, t);
+			return (0);
+		}
+		cc = &cut_calls[k];
+		cc->msgid = f->hdr.msgid;
+		cc->n = cut_ncalls++;
+		cc->watched = !cut_done && cc->n >= opt.cut_on_scan;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " open t=%ld call=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t, cc->n);
+		return (0);
+	}
+	if (from->name[0] != 'A' || (c & 0x20000000U) == 0)
+		return (0);
+	if (!cut_armed && cut_snap_msgid && f->hdr.msgid == cut_snap_msgid) {
+		cut_armed = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " arm t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+		return (0);
+	}
+	for (k = 0; k < CUT_NCALL && cc == NULL; k++)
+		if (cut_calls[k].msgid == f->hdr.msgid)
+			cc = &cut_calls[k];
+	if (cc == NULL)
+		return (0);
+	if ((c & 0x40000000U) == 0) {
+		cc->feeds++;
+		if (!cc->watched)
+			return (0);
+		if (cc->held)
+			side_enqueue(to, cc->held, due);
+		cc->held = NULL;
+		if (cc->feeds < 16) {
+			cc->held = f;
+			return (1);
+		}
+		cc->watched = 0;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " skip t=%ld call=%ld feeds=%d\n",
+		    from->name, to->name, i, f->hdr.msgid, t, cc->n, cc->feeds);
+		return (0);
+	}
+	/* the close: a feed's own error, or kern_dmsg's LNK_ERROR's */
+	if ((c & 0x00FFFF00U) == 0x00203000U && f->ext_len >= 136)
+		memcpy(&error, f->ext + 132, sizeof(error));
+	else
+		error = f->hdr.error;
+	trace("%s>%s i=%ld msgid=%" PRIu64 " close t=%ld call=%ld feeds=%d"
+	    " error=%x\n", from->name, to->name, i, f->hdr.msgid, t, cc->n,
+	    cc->feeds, error);
+	if (cc->watched && cc->feeds >= 2) {
+		trace("%s>%s i=%ld msgid=%" PRIu64 " cut t=%ld call=%ld feeds=%d"
+		    " error=%x\n", from->name, to->name, i, f->hdr.msgid, t,
+		    cc->n, cc->feeds, error);
+		ct.dropped += 2;
+		frame_free(cc->held);
+		frame_free(f);
+		memset(cc, 0, sizeof(*cc));
+		cut_done = cut_now = 1;
+		return (1);
+	}
+	if (cc->watched) {
+		if (cc->held)
+			side_enqueue(to, cc->held, due);
+		trace("%s>%s i=%ld msgid=%" PRIu64 " skip t=%ld call=%ld feeds=%d\n",
+		    from->name, to->name, i, f->hdr.msgid, t, cc->n, cc->feeds);
+	}
+	memset(cc, 0, sizeof(*cc));
+	return (0);
+}
+
 /* One frame read from `from`, decided for `to`.  The index i counts every
  * frame the relay read in either direction, so a partition or a disconnect
  * scripted at K lands at the Kth frame of the run and not of one side. */
@@ -1140,6 +1272,8 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		trace("%s>%s i=%ld msgid=%" PRIu64 " silence-from t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
+	if (opt.cut_on_scan >= 0 && cut_scan(from, to, f, i, t + d))
+		return;
 	/* the stall holds the HM2 frames, the link's own frames pass */
 	side_enqueue(to, f, (t + d > to->held_until ||
 	    (f->hdr.cmd & 0x00F00000U) == 0) ? t + d : to->held_until);
@@ -1244,7 +1378,8 @@ relay_pair(struct side *a, struct side *b, long i)
 			if (r == 1) {
 				from->sent++;
 				relay_decide(from, to, f, i++);
-				if (i == opt.disconnect_at) {
+				if (i == opt.disconnect_at || cut_now) {
+					cut_now = 0;
 					trace("disconnect i=%ld t=%ld\n", i, now_ms());
 					side_drain(a, 1);
 					side_drain(b, 1);
@@ -1304,13 +1439,14 @@ relay(void)
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
 	    " retype-scan=%d"
-	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s\n",
+	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s"
+	    " cut-on-scan=%ld\n",
 	    opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
 	    opt.refuse_nresolve, opt.retype_scan, opt.stall_ms, opt.end_readdir,
 	    opt.silence_on ? opt.silence_on : "-",
-	    opt.rename_snapdel ? opt.rename_snapdel : "-");
+	    opt.rename_snapdel ? opt.rename_snapdel : "-", opt.cut_on_scan);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);
@@ -1322,6 +1458,7 @@ relay(void)
 			break;
 		}
 		i = relay_pair(&a, &b, i);
+		cut_reset();
 		fflush(tracef);
 		printf("h2loop: pair done frames %ld delivered %ld dropped %ld dup %ld"
 		    " lost %ld eof %ld rejected %ld disconnects %ld\n",

@@ -223,6 +223,18 @@ SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CON
 LINKDEV=${H2_WIRE_LINKDEV:-0}
 STALE=${H2_WIRE_STALE:-0}
 RETYPE=${H2_WIRE_RETYPE:-0}
+# H2_WIRE_CUT=disconnect ends the link inside the pass: the relay closes
+# both sides at the close of the first scanall call from the Kth on
+# (H2_WIRE_CUT_AT) that fed 2 to 15 chains, so the scan stops partway; then,
+# past the thread's idle sleep, both dial again and a later pass must
+# converge.  control is the same cut with the dial withheld, which must
+# leave the slave short of the master.  H2_WIRE_CUT_AT=1000000 alone under
+# H2_WIRE_PASS=1 traces every call and reaches none, which is how K is read.
+CUT=${H2_WIRE_CUT:-}; CUTAT=${H2_WIRE_CUT_AT:-}
+case $CUT in ''|disconnect|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect or control" >&2; exit 2;; esac
+case $CUTAT in *[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT is a call count" >&2; exit 2;; esac
+[ -z "$CUT" ] || [ -n "$CUTAT" ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT needs H2_WIRE_CUT_AT" >&2; exit 2; }
+[ -n "$CUT" ] || [ -z "$CUTAT" ] || [ "$CUTAT" -ge 1000000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT without H2_WIRE_CUT only traces, at 1000000" >&2; exit 2; }
 case $RETYPE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_RETYPE is 1" >&2; exit 2;; esac
 case $STALE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_STALE is 1" >&2; exit 2;; esac
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
@@ -246,12 +258,13 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$LINKDEV" = 0 ] || nctl=$((nctl + 1))
 [ "$STALE" = 0 ] || nctl=$((nctl + 1))
 [ "$RETYPE" = 0 ] || nctl=$((nctl + 1))
+[ -z "$CUT" ] || nctl=$((nctl + 1))
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 # the two snapshot controls, the stale element and the retype run under the pass
-{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ]; } && PASS=1
-# the pass the retype fails ends unverified, once
-UNV=$RETYPE
+{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ] || [ -n "$CUT" ]; } && PASS=1
+# the pass the retype or the cut fails ends unverified, once
+UNV=$RETYPE; [ -z "$CUT" ] || UNV=1
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
@@ -374,6 +387,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
     --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
     --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
     --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src)" \
+    ${CUTAT:+--cut-on-scan "$CUTAT"} \
     --trace "$FIXDIR/wire-run-$stamp.trace" > "$W/relay.out" 2>&1 &
 RELAY_PID=$!
 sleep 0.5
@@ -626,6 +640,75 @@ n=0; until [ "$(threads)" = 0 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); d
 echo "redial-threads-before $(threads)"
 /tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; echo "redial-rc $?"
 GUEST
+cat > "$W/cut.sh" <<'GUEST'
+# cut <go|wait|redial|resumed|peer [after]>: the link the relay closed inside
+# the pass, read on B at the cut, on B again at the dial and after the pass
+# that follows it, and on A for the snapshot the link left
+V='syncsnap: (verified|newer|unverified|interrupted) clindex'
+D='remote element CL at clindex 1 detached'
+case $1 in
+go)
+	# the device read-only since the dial, the pass refused until now
+	echo "cut-refused-before $(klog 'sync pass refused on clindex')"
+	echo "cut-snap-before-go $(klog 'syncsnap: remote snapshot CL.h2sync-src tid')"
+	mount -o remount,rw $R; echo "cut-root-rw-rc $?"
+	;;
+wait)
+	n=0; until [ "$(klog "$D")" -ge 1 ] || [ $n -ge 240 ]; do sleep 1; n=$((n + 1)); done
+	echo "cut-detach-seconds $n"
+	n=0; until [ "$(kl | grep -c -E "$V")" -ge 1 ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
+	echo "cut-verdict-seconds $n"
+	# past the thread's 5 s idle sleep, since nothing wakes it on a detach;
+	# the gap is read on the printk clock, from the verdict to this line
+	sleep 7
+	echo "h2wire cut gap end" > /dev/kmsg
+	n=0; until grep -q 'h2wire cut gap end' $K || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-gap-ms $(kl | awk -F'[][]' -v v="$V" '$0 ~ v && t == "" { t = $2 } /h2wire cut gap end/ { if (t != "") printf "%d\n", ($2 - t) * 1000; exit }')"
+	echo "cut-detached $(klog "$D")"
+	echo "cut-detached-why $(kl | grep "$D" | sed 's/.*detached: //' | tr '\n' ' ')"
+	echo "cut-verified $(klog 'syncsnap: verified clindex')"
+	echo "cut-unverified $(klog 'syncsnap: unverified clindex')"
+	echo "cut-unverified-line $(kl | grep -m1 'syncsnap: unverified clindex' | sed 's/.*syncsnap: unverified clindex [0-9]* //')"
+	echo "cut-other-verdicts $(kl | grep -c -E 'syncsnap: (newer|interrupted) clindex')"
+	# the placement: the pass's snapshot read before the cut, and no verdict
+	# between the two, or the cut fell after a pass had already ended
+	echo "cut-snap-before $(kl | awk -v d="$D" '$0 ~ d { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { n++ } END { print n + 0 }')"
+	echo "cut-verdicts-before $(kl | awk -v d="$D" -v v="$V" '$0 ~ d { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }')"
+	# with the slot empty and pfs_nmasters unchanged every pass in the gap
+	# finds no quorum and copies nothing
+	echo "cut-noquorum $(kl | awk -v d="$D" '$0 ~ d { s = 1 } s && /syncsnap: noquorum clindex/ { n++ } END { print n + 0 }')"
+	echo "cut-target-taken $(klog 'syncsnap: target .* taken')"
+	echo "cut-target-kept $(klog 'syncsnap: target .* kept')"
+	echo "cut-scanall-notconn $(klog 'H2 REMOTE scanall .* end=00080000')"
+	echo "cut-delete-errors $(kl | grep 'syncsnap: remote delete' | grep -vc 'error 00000000')"
+	echo "cut-hm2 $(klog 'hammer2: HM2 ')"
+	;;
+redial)
+	n=0; until [ "$(threads)" = 0 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-threads-before $(threads)"
+	/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial3 2>&1; r=$?
+	sed 's/^/cutdial /' /tmp/h2wire.dial3
+	echo "cut-dial-rc $r"
+	n=0; until [ "$(klog 'remote element CL registered at clindex 1')" -ge 2 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-registered $(klog 'remote element CL registered at clindex 1')"
+	;;
+resumed)
+	# from the gap's line on: the first pass to read a snapshot is the
+	# resumed one, and its target was taken before the cut
+	kl | sed -n '/h2wire cut gap end/,$p' > /tmp/h2wire.after
+	echo "cut-resumed-verdict $(awk -v v="$V" '/syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { sub(/.*syncsnap: /, ""); print $1; exit }' /tmp/h2wire.after)"
+	echo "cut-resumed-target $(grep -c 'syncsnap: target ' /tmp/h2wire.after)"
+	echo "cut-resumed-hm2 $(grep -c 'hammer2: HM2 ' /tmp/h2wire.after)"
+	;;
+peer)
+	# the link's snapshot on A is deleted at the next connection's end,
+	# the redial's or the unmount's, never at the cut
+	if [ "${2:-}" = after ]; then c=$(klog1 'snapshot .* left by the link deleted'); else c=$(klog 'snapshot .* left by the link deleted'); fi
+	echo "cut-link-left${2:+-$2} $c"
+	echo "cut-peer-hm2${2:+-$2} $(klog 'hammer2: HM2 ')"
+	;;
+esac
+GUEST
 cat > "$W/read.sh" <<'GUEST'
 # read <stall ms> <end mode or 0> <silence or 0> <rogate or 0>: B reads A's
 # files through the element; the arguments ride ssh's command line, so none
@@ -871,7 +954,7 @@ echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 for s in "$SA" "$SB"; do
-	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$s:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$s:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $s failed" >&2; exit 2; }
 done
 phase() {	# phase <A|B> <script> [args]: run it on that guest, keep its output
@@ -901,19 +984,29 @@ phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1
 phase A fill.sh
 phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT" rw
-phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" $([ "$PASS" = 1 ] && echo rw || echo ro) $([ "$ADMIT" = 0 ] || echo noadmit) $([ "$LINKDEV" = 1 ] && echo linkdev)
+phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" $([ "$PASS" = 1 ] && [ -z "$CUT" ] && echo rw || echo ro) $([ "$ADMIT" = 0 ] || echo noadmit) $([ "$LINKDEV" = 1 ] && echo linkdev)
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
 phase B reg.sh
 if [ "$SNAPROUTE" = control ] || [ "$PASSREFUSE" = control ]; then PASSES=first
 elif [ "$PASS" = 1 ]; then PASSES=full; else PASSES=none; fi
+[ -n "$CUT" ] && PASSES=cut
+# The cut: B dialed with its device read-only, so no pass runs before the
+# readings above and CL's mount, which a cut would otherwise race (a pass
+# starts at the thread's next 5 s tick after the registration and the cut
+# falls 1 to 2 s into it); B's ROOT remounted read-write starts the pass.
+# Then where the cut fell, and A's snapshot before any dial; the cell dials
+# A and then B, and the resumed pass is read as a plain one is.
 phase B ro.sh && case $PASSES in
+	cut)	phase B cut.sh go && phase B cut.sh wait && phase A cut.sh peer &&
+		{ [ "$CUT" = control ] || { phase A redial.sh && phase A cut.sh peer after && phase B cut.sh redial &&
+		    phase B pass.sh 1 && phase B cut.sh resumed && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)"; }; };;
 	full)	phase B pass.sh $((RETYPE + 1)) && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)" &&
 		{ [ "$STALE" = 0 ] || { phase B stale.sh down && phase A redial.sh && phase B stale.sh up && phase A fill.sh stale; }; };;
 	first)	phase B pass.sh first;;
 	*)	true;;
-esac && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
+esac && [ "$CUT" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -958,8 +1051,10 @@ else
 [ "$(num "$(val A span-cl)" 9)" = "$slv" ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl) of $slv, B sees MASTER $(val B span-cl)"
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
-# under STALE B's device is unmounted twice, each time with A's spans held
-[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = $((npa * (STALE + 1))) ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa times $((STALE + 1))"
+# under STALE B's device is unmounted twice, each time with A's spans held,
+# and under the cut's disconnect B holds them over two links
+nlk=$((STALE + 1)); [ "$CUT" = disconnect ] && nlk=2
+[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = $((npa * nlk)) ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa times $nlk"
 # The read side: B's empty SLAVE answers nothing, so every file B reads
 # came through the remote element; the digests are A's own, taken on A.
 sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
@@ -968,8 +1063,9 @@ nfa=$(( $(num "$(val A files)" 0) + $(num "$(val A more-files)" 0) ))	# the pass
 [ "$(num "$(val B log-registered)" 0)" = 1 ] && [ "$(num "$(val B log-nmasters)" 0)" = 1 ]; check "remote: B registers A's CL root as clindex 1, one master" $? "registered $(val B log-registered), pfs_nmasters $(val B log-nmasters)"
 # Lost ends the link at the first rewritten close, and the window control
 # at the first listing past sixteen feeds, so every read after it finds
-# nothing: the live-link checks below do not apply to those modes.
-LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ]; } && LINKLOST=1
+# nothing: the live-link checks below do not apply to those modes, nor to
+# the cut's control, which never dials again and reads nothing after.
+LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ] || [ "$CUT" = control ]; } && LINKLOST=1
 [ "$LINKLOST" = 1 ] || [ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
 [ "$LINKLOST" = 1 ] || { [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"; }
 # The pass wrote B under the pass and under the pass-refusal control,
@@ -1003,7 +1099,7 @@ if [ "$WRITTEN" = 1 ]; then
 	"$FSCK" "$FIXDIR/wire-a.img" > "$W/fsck.a" 2>&1; fa=$?; "$FSCK" "$FIXDIR/wire-b.img" > "$W/fsck.b" 2>&1; fb=$?
 	cp "$W/fp.a" "$FIXDIR/wire-run-$stamp-fp-a.txt"; cp "$W/fp.b" "$FIXDIR/wire-run-$stamp-fp-b.txt"
 fi
-if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; then
+if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ] && [ -z "$CUT" ]; then
 	[ "$(num "$(val B sync-snapshot)" 0)" = 1 ] && [ "$(num "$(val B root-ro)" 0)" = 0 ] && [ "$(num "$(val B pass-refused-lines)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-errors)" 1)" = "$UNV" ] && [ "$(num "$(val B pass-sync-errors)" 1)" = "$UNV" ]; check "pass: B's pass runs on its writable device and writes A's files to B's media" $? "$(val B pass-media-files) of A's files on B's media after $(val B pass-wait-seconds) s, sync_snapshot $(val B sync-snapshot), refusals $(val B pass-refused-lines), errors $(val B pass-errors) and $(val B pass-sync-errors), $(val B pass-remote-xops) remote XOPs of which $(val B pass-remote-ends) ended other than clean"
 	if [ "$STALE" = 1 ]; then
 		# the one block A rewrote after the slave's last pass, and nothing else
@@ -1030,6 +1126,36 @@ if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ]; then
 	# A's own deletion line.
 	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
 	[ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 1)" = 0 ]; check "pass: neither image holds a snapshot of the pass at the end" $? "CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, left by the link $(val A snap-link-left)"
+elif [ -n "$CUT" ]; then
+	# Where the cut fell: in a scanall call from the Kth on, with 2 to 15
+	# feeds, after the pass read its snapshot and before any verdict; under
+	# disconnect the calls the relay counts after it on the next pair are
+	# the upper bound, the pass having had more to scan.
+	tr=$FIXDIR/wire-run-$stamp.trace
+	ccut=$(sed -n 's/.* cut t=[0-9]* call=\([0-9]*\) feeds=\([0-9]*\).*/\1 \2/p' "$tr" 2>/dev/null)
+	cc=$(num "${ccut% *}" -1); cf=$(num "${ccut#* }" 0)
+	cafter=$(awk -v c="$cc" '/ open t=/ { sub(/.*call=/, ""); if ($1 + 0 > c) n++ } END { print n + 0 }' "$tr" 2>/dev/null)
+	ndisc=$(grep -c '^disconnect ' "$tr" 2>/dev/null)
+	[ "$(printf '%s\n' "$ccut" | grep -c .)" = 1 ] && [ "$cc" -ge "$CUTAT" ] && [ "$cf" -ge 2 ] && [ "$cf" -le 15 ] && [ "$(num "$ndisc" 0)" = 1 ] && { [ "$CUT" = control ] || [ "$(num "$cafter" 0)" -ge 1 ]; } && [ "$(num "$(val B cut-snap-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-verdicts-before)" 1)" = 0 ] && [ "$(num "$(val B cut-refused-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "cut: the relay ends the link inside the pass, in a scanall call from the ${CUTAT}th with chains still to feed" $? "call $cc of K $CUTAT with $cf feeds, $(num "$cafter" 0) calls after it, disconnects $(num "$ndisc" 0), snapshots read before $(val B cut-snap-before), verdicts between $(val B cut-verdicts-before); before the read-write remount (rc $(val B cut-root-rw-rc)) refusals $(val B cut-refused-before), snapshots $(val B cut-snap-before-go)"
+	# The link's end on B: the span's deletion detaches the slot, the call
+	# in flight ends not connected, the pass unverified, its target kept,
+	# and every pass in the gap finds no quorum.
+	[ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ] && [ "$(num "$(val B cut-scanall-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B cut-unverified)" 0)" = 1 ] && [ "$(num "$(val B cut-verified)" 1)" = 0 ] && [ "$(num "$(val B cut-other-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-target-taken)" 0)" = 1 ] && [ "$(num "$(val B cut-target-kept)" 1)" = 0 ] && [ "$(num "$(val B cut-noquorum)" 0)" -ge 1 ] && [ "$(num "$(val B cut-gap-ms)" 0)" -ge 6000 ]; check "cut: B detaches by the span's deletion, the pass ends unverified with its target kept, and the gap finds no quorum" $? "detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s, scanall ended ENOTCONN $(val B cut-scanall-notconn), verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), no quorum $(val B cut-noquorum) in $(val B cut-gap-ms) ms, source deletions refused $(val B cut-delete-errors)"
+	# Neither kernel says HM2 at a link the relay ended; A keeps the link's
+	# snapshot until its next connection's end.
+	[ "$(num "$(val B cut-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-peer-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-link-left)" 1)" = 0 ]; check "cut: no HM2 line on either side, and A keeps the link's snapshot past the cut" $? "B $(val B cut-hm2), A $(val A cut-peer-hm2) HM2 lines, A's left-by-the-link deletions $(val A cut-link-left)"
+	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
+	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "cut: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
+	if [ "$CUT" = control ]; then
+		# No dial: the slave stays short of the master, its target listed,
+		# and A deletes the link's snapshot at its own unmount.
+		[ "$nfa" -ge 300 ] && [ "$nfpb" -lt "$nfpa" ] && [ "$sb" = 1 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "control: with no dial after the cut the slave stays short of the master and keeps its target" $? "file entries A $nfpa B $nfpb, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions at its unmount $(val A snap-link-left), CL.h2sync-src on A $sa"
+	else
+		[ "$(num "$(val A cut-link-left-after)" 0)" = 1 ] && [ "$(num "$(val A cut-peer-hm2-after)" 1)" = 0 ] && [ "$(num "$(val B cut-threads-before)" 1)" = 0 ] && [ "$(num "$(val B cut-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B cut-registered)" 0)" = 2 ]; check "cut: A deletes the link's snapshot at its dial, and B dials again and registers A's root a second time" $? "A's deletions $(val A cut-link-left-after), A's HM2 lines $(val A cut-peer-hm2-after), B's threads before $(val B cut-threads-before), B rc $(val B cut-dial-rc), registered $(val B cut-registered)"
+		[ "$(val B cut-resumed-verdict)" = verified ] && [ "$(num "$(val B cut-resumed-target)" 1)" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "cut: the first pass after the dial verifies on the target the cut pass took" $? "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
+		[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
+		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
+	fi
 elif [ "$PASSREFUSE" = control ]; then
 	# The refusal off: the live pass writes the device opened read-only,
 	# with no line saying so, and B's image holds A's file entries. The
@@ -1060,7 +1186,7 @@ if [ "$STALE" = 1 ]; then
 	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 2 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = 1 ] && [ "$(num "$(val B fiemap-first-unknown)" 0)" = 1 ]; check "stale: fiemap of the rewritten file has no address for the block the slave holds stale and the slave's own for the rest" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc of which at logical 0 $(val B fiemap-first-unknown)"
 	[ "$(num "$(val B fiemap2-rc)" 1)" = 0 ] && [ "$(num "$(val B fiemap2-extents)" 0)" -ge 1 ] && [ "$(num "$(val B fiemap2-unknown)" 1)" = 0 ]; check "stale: fiemap of a file A left alone reports the slave's own address for every block" $? "rc $(val B fiemap2-rc), $(val B fiemap2-extents) extent(s), $(val B fiemap2-unknown) unknown_loc"
 elif [ "$WRITTEN" = 1 ]; then
-	[ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"
+	[ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
 else
 [ "$REKEY" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
 fi
@@ -1140,6 +1266,10 @@ fi
 dw=$(val B detached-why | sed 's/ *$//')
 if [ "$LINKDEV" = 1 ]; then
 	[ "$(val B linkdev)" = 1 ] && [ "$(num "$(val B vdb-gone-detached)" 0)" = 1 ] && [ "$(num "$(val B vdb-gone-threads)" 0)" -ge 1 ] && [ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "unmount" ]; check "remote: B's own device leaving first detaches the element once, by its unmount, with the link on vdc still up" $? "$(val B log-detached), by $dw, $(val B vdb-gone-detached) before vdc's unmount with $(val B vdb-gone-threads) link threads"
+elif [ "$CUT" = disconnect ]; then
+	# the cut's by the span, the redial finding the slot already clear; the
+	# second link's by B's unmount
+	[ "$(num "$(val B log-detached)" 0)" = 2 ] && [ "$dw" = "span deleted connection ended" ]; check "cut: the element is detached once at the cut, by the span's deletion, and once at B's unmount" $? "$(val B log-detached), by $dw"
 elif [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ]; then
 	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "span deleted" ]; check "remote: the link's end detaches the element once, by the span's deletion" $? "$(val B log-detached), by $dw"
 elif [ "$STALE" = 1 ]; then
