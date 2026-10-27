@@ -1006,12 +1006,26 @@ hammer2_thr_wait_neg(hammer2_thread_t *thr, uint32_t flags)
 {
 	uint32_t oflags;
 	uint32_t nflags;
+	int waited;
 
+	/*
+	 * XXX Linux: bounded as hammer2_thr_wait() is, for the same fault:
+	 * the unmount's unfreeze waits for the sync thread to clear
+	 * HAMMER2_THREAD_FROZEN itself, which a thread that faulted while
+	 * frozen never does.
+	 */
+	waited = 0;
 	for (;;) {
 		oflags = thr->flags;
 		cpu_ccfence();
 		if ((oflags & flags) == 0)
 			break;
+		if (++waited > 120) {
+			kprintf("thr_wait_neg: thr %p want %04x clear td %p flags %04x after %d tries, device in error\n",
+			    thr, flags, thr->td, thr->flags, waited - 1);
+			hpanic("thread did not leave state %04x", flags);
+			break;
+		}
 		nflags = oflags | HAMMER2_THREAD_WAITING;
 		/* XXX Linux: tsleep_interlock() and PINTERLOCKED, see os.h */
 		if (atomic_cmpset_int(&thr->flags, oflags, nflags)) {
