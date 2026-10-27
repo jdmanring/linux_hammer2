@@ -18564,3 +18564,99 @@ sits at a multiple of 2 GiB, and a naturally aligned folio of at most
 pinned to one order are corrected.
 
 The row is 1.0.55.
+
+## A power cut of either guest inside the pass over the wire, 2026-10-26
+
+What this entry claims: P7's `crash_recovery` is read over the wire by
+`cluster-wire.sh` under `H2_WIRE_CUT=slave` and `=master`, the host
+destroying the slave's or the master's guest inside the slave's pass,
+and on both 7.3 kernels the cut image is clean, the survivor's
+keepalive ends the link, the cut guest boots on what the cut left and
+dials, and the pass after the dials verifies on the slave's kept target
+with the images equal. The runs found three defects in
+`hammer2_remote.c`'s request handling, fixed in `d2bd3ac` with the
+cells. The four runs below are that commit's source,
+`v1.0.4-637-gd2bd3ac`, with module hashes `091eb57f8a3056dc` on
+`h2debug-7.3` and `1818918ab5301a8d` on `h2kasan-7.3`, the same hashes
+as the passing runs built earlier from the uncommitted tree. The KASAN
+slave cut names `v1.0.4-637-gd2bd3ac-dirty`, from document edits made while it
+ran; nothing under `src/`, `script/` or `test/` differed from the
+commit, and its module hash is the KASAN master cut's.
+
+How the cut is placed. The master's `CL` takes 5000 more files in a
+directory `bulk`, for 5310 the pass copies. The harness arms once the
+slave has printed 1000 `update inode` lines after the pass's snapshot
+read, checks that no verdict line has printed, and destroys the guest;
+every run below armed and cut at 1001 updates of 5310 with no verdict at
+either point, so the cut sits inside the pass with more than 4000
+inodes still to copy. The cut image is read on the host while the guest
+is down. The relay is then started again on the same port with a second
+trace, since a destroyed guest sends no FIN and the relay's sockets
+carry no keepalive, and the cut guest boots, loads the module and dials
+after the survivor.
+
+What would read as a pass and is not. A cut after the verdict reads as
+a clean resume and tests nothing, so the arm and the cut each count
+verdict lines. A count of 0 stale deletions passes trivially when the
+cut image held no source, so that count is printed beside the number
+of copies the cut image held, and the master's
+`hammer2_debug` is read back from the guest. A slave whose pass verified
+before the cut would hold no target, so the slave cut requires
+`CL.h2sync-tgt` on the cut image.
+
+| Kernel | Cut | Run | Checks | Cut image | Link's end | After the dials | Images |
+|---|---|---|---|---|---|---|---|
+| `h2debug-7.3` | `master` | `wire-run-20261026-211947` | 37, 0 failed | `fsck_hammer2` rc 0; `CL.h2sync-src` 0 | B silent after 11141 ms; detached 1 by span deleted; unverified 1, round 1 acted 7291, error `0x80000`; in-flight `scanall` `0x40000`; 0 requests after the end | A's stale deletions 0 of 0; B takes no target; `newer` then verified after 6 s, 7 keys kept by tid, no quorum 7 | 5310 file entries and 5015 data blocks each, 0 lines differ |
+| `h2kasan-7.3` | `master` | `wire-run-20261026-212755` | 37, 0 failed | `fsck_hammer2` rc 0; `CL.h2sync-src` 0 | B silent after 13991 ms; detached 1 by span deleted; unverified 1, round 1 acted 7121, error `0x80000`; in-flight `scanall` `0x40000`; 0 requests after the end | A's stale deletions 0 of 0; B takes no target; `newer` then verified after 8 s, 7 keys kept by tid, no quorum 12 | 5310 file entries and 5015 data blocks each, 0 lines differ |
+| `h2debug-7.3` | `slave` | `wire-run-20261026-212309` | 36, 0 failed | `fsck_hammer2` rc 0; `CL.h2sync-tgt` 1 | A silent after 11210 ms; 0 detach lines; A keeps the link's snapshot | A deletes it at its redial, 1; B's thread keeps the target, taking none; verified directly, 1 key kept by tid | 5310 file entries and 5015 data blocks each, 0 lines differ |
+| `h2kasan-7.3` | `slave` | `wire-run-20261026-213405` | 36, 0 failed | `fsck_hammer2` rc 0; `CL.h2sync-tgt` 1 | A silent after 14138 ms; 0 detach lines; A keeps the link's snapshot | A deletes it at its redial, 1; B's thread keeps the target, taking none; verified directly, 1 key kept by tid | 5310 file entries and 5015 data blocks each, 0 lines differ |
+
+`0x80000` is `HAMMER2_ERROR_ENOTCONN` and `0x40000` is
+`HAMMER2_ERROR_ETIMEDOUT` (`hammer2.h:312, 333`): the request in flight
+at a master cut ends on its own 10 s deadline before the keepalive ends
+the link, in all five master runs that passed. In every run five files written on the master after the resumed
+pass reach the slave by a later pass, every digest of 5310 is equal on
+the slave warm and cold, both images read clean by `fsck_hammer2` after
+the clean unmount with no snapshot of the pass left, no kernel warning,
+lockdep or sanitizer report printed on either guest, and kmemleak
+printed nothing of hammer2's after the unload. The logs are
+`power-{master,slave}-{debug,kasan}-*.log` under
+`~/Projects/linux_hammer2-data/p8-notes/`, and each run's kernel logs,
+fingerprints and traces sit beside the images under `fixtures/`.
+
+The resumed pass after a master cut reads `newer` before it verifies.
+Under `hammer2_debug` 0x8000 the slave prints each key it keeps by tid,
+and in every master run that key is `0x534/1`, the `bulk` directory's
+inode, kept 7 times with the slave's tid 8 above the source's
+(`0x51c7` against `0x51bf` on the lockdep kernel, `0x5d71` against
+`0x5d69` on the KASAN kernel); after a slave cut the same key is kept
+once and the pass verifies directly. The next pass verifies in every
+run and the images are then equal, so the reading costs a pass and
+nothing on the media. Its cause is not read, and stays a `candidate`:
+the slave's own inserts under `bulk` before the cut modified that
+directory's chain under a tid the source never had.
+
+What the earlier runs found, each from the uncommitted tree at
+`v1.0.4-634-ga0a5b6c-dirty` and kept beside the others:
+
+| Run | Cut and kernel | Checks | Cause, and what changed |
+|---|---|---|---|
+| `wire-run-20261026-140018` | `slave`, `h2kasan-7.3` | 36, 15 failed | the server's handle set no `chk_mask`, and the retire drains only the FIFOs that mask names, so a request ended early kept a reference on every chain it had fed and the master hung; `hammer2_remote_serve()` sets it |
+| `wire-run-20261026-144706` | `slave`, `h2kasan-7.3` | 36, 1 failed | the harness expected 5315 file entries where the run writes 5310; the harness |
+| `wire-run-20261026-145438` | `master`, `h2kasan-7.3` | 36, 19 failed | the client withheld its DELETE on an ended link, but the message threads free a state only once both directions close, and the exiting writer waits for every state, so the slave's redial hung; `hammer2_rcall_close_locked()` sends it on a dead link |
+| `wire-run-20261026-151912`, `-154118` | `master`, `h2kasan-7.3` | 37, 7 and 6 failed | the block inside a larger device folio, the entry above |
+| `wire-run-20261026-163047` | `master`, `h2kasan-7.3` | 37, 1 failed | the harness read the `newer` verdict as the resumed pass's and not the next pass's; the harness |
+| `wire-run-20261026-180750` | `master`, `h2kasan-7.3` | 37, 1 failed | a request started on a link whose reader had exited waited 4315 ms for the writer's next tick before failing; `hammer2_rcall_start()` refuses it on `KDMSG_IOCOMF_EXITNOACC` |
+| `wire-run-20261026-184028` | `master`, `h2kasan-7.3` | 37, 1 failed | soft lockups on the slave's serial interrupt: the guest's `metalog` relayed the module's warnings to the console; disabled on both guests |
+| `wire-run-20261026-202600` | `master`, `h2debug-7.3` | 37, 1 failed | the restarted master had no `copyinfo[]` row: `REMOTE_ADD` marks the volume data modified only, and the cut came before the syncer wrote it; the harness syncs the volume after the row |
+
+Runs `wire-run-20261026-200944` and `-204259` on `h2kasan-7.3` and
+`-203254` on `h2debug-7.3` (master), and `-201816` on `h2kasan-7.3` and
+`-203758` on `h2debug-7.3` (slave), passed every check from that tree.
+The cut image of `wire-run-20261026-145438` held `CL.h2sync-src` by
+name, and its slave hung before it asked for a snapshot; no cut image
+since has held it. The restarted master's deletion of a stale source at
+its first `SNAPSHOT` is therefore unexercised, and the reply path's own
+faults are still unread.
+
+The row is 1.0.56.

@@ -1092,7 +1092,30 @@ master's own dial (`wire-run-20261026-130726` on the lockdep kernel and
 each). The slave dials read-only and starts the pass only once the
 link's readings are taken, since a pass that began 2.5 to 4 s after the
 element registered let the cut race the readings and the mount of `CL`.
-`crash_recovery` is read locally.
+`crash_recovery` over the wire is a power cut of either guest inside
+the pass, read since 2026-10-26 under `H2_WIRE_CUT=slave` and `=master`.
+It supersedes this note's first reading that the criterion is read
+locally: with the master on another host the source is remote at the
+restart, and the snapshot the pass reads sits on the other host's media,
+so a cut on one host of two is a case the local run cannot reach. The
+master's `CL` takes 5000 more files, and the host destroys the cut guest
+once the slave's pass has updated 1000 inodes with its snapshot read
+and no verdict. After a slave cut the image is clean by `fsck_hammer2`
+and holds the target the pass took; the master's keepalive ends the
+link, the master keeps the link's snapshot until the slave's next dial
+and deletes it there, and the slave's recreated thread keeps the target
+and takes none. After a master cut the image is clean, the slave's
+keepalive ends the link, the in-flight `scanall` ends on its own
+deadline, the element detaches by the span's deletion and the pass ends
+unverified, and every request the pass sends after the link's end is
+refused at once. In both, the pass after the dials verifies on the kept
+target, five more files reach the slave, and the images are equal by
+fingerprint and by every digest warm and cold; the run ids are in the
+verification record's entry. One cut image held the source snapshot by
+name, in a run whose slave then hung at its redial on a defect since
+fixed and never asked for a snapshot, and no cut image since has, so
+the restarted master's deletion of a stale source at its first
+`SNAPSHOT` is unexercised.
 
 ## The quorum protocol: what the carried core imposes, and the decision taken on it
 
