@@ -211,6 +211,14 @@ device never initialized, and the KASAN kernel read a general protection
 fault in `hammer2_inode_create_pfs()`; it is positive by the module's
 convention. No category is new.
 
+1,587 to 1,592 with the power cut's diagnostics and the larger-folio
+read. Four more `quoted string split across lines` are print formats
+split as the files' other prints are: the two `H2 READ` lines in
+`hammer2_read_folio()` and the `syncsnap: kept absent` and `kept newer`
+lines in `hammer2_sync_slaves()`. One more `return (x);` is in
+`hammer2_io.c`, from reading a block inside a larger device folio at its
+own offset. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

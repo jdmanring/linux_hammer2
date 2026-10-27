@@ -186,6 +186,13 @@
 # module's convention; and the unnamed-argument count 503 -> 504, the
 # prototype of hammer2_remote_connected() in BSD style. No category is
 # new. See README.kernel-style.md.
+# 1,587 to 1,592: `quoted string split across lines` 82 -> 86, four
+# print formats split as the files' other prints are, the two `H2 READ`
+# diagnostics in hammer2_read_folio() and the `syncsnap: kept absent`
+# and `kept newer` lines in hammer2_sync_slaves(); `return is not a
+# function` 365 -> 366, one `return (x);` in hammer2_io.c from the read
+# of a block inside a larger device folio. No category is new. See
+# README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -216,8 +223,8 @@
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 236 please, no spaces at the start of a line
-82 quoted string split across lines
-365 return is not a function, parentheses are not required
+86 quoted string split across lines
+366 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
