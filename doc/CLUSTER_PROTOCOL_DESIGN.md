@@ -350,7 +350,7 @@ skipping a connection device by a test marked `XXX`
 the registration in `hammer2_remote.c` not starting one. The thread would be the remote host's job for its own
 element, and here it would walk its element by chains
 (`hammer2_inode_chain()` at `hammer2_synchro.c:1604`, `chain_lookup` at
-`:1622`, `chain_create` at `:2422`) through blockrefs that carry the
+`:1622`, `chain_create` at `:2436`) through blockrefs that carry the
 peer's real media offsets, and the first dio-hash miss would reach
 `hammer2_get_volume()`'s panic, which sets the host-wide
 `hammer2_device_error` and stops every device on the host writing. The
@@ -514,13 +514,13 @@ range, for `nresolve` an inode or an entry carrying an error, for
 `scanall` its key range and what the scanned inode holds, entries and
 inodes under a directory and data under a file, with the inode itself
 only when `NODIRECT` was not asked, since the slave's pass inserts what
-it is fed beneath the inode it scanned (`hammer2_synchro.c:1950-1955`);
+it is fed beneath the inode it scanned (`hammer2_synchro.c:1964-1969`);
 the type is read from the slave's own inode, which never changes it,
 but whether a file's data is embedded is not, since that copy is not
 refreshed when the master's file grows past its inode and a rule read
 from it refused an honest scan of the grown file, so the slave's insert
 refuses a block beneath a direct-data inode itself, with a log line
-(`hammer2_synchro.c:2343-2358`), where the carried create would take
+(`hammer2_synchro.c:2357-2372`), where the carried create would take
 the embedded bytes for a blockset, for `lookup` an
 inode of the number asked for,
 and for a read or `bmap` the data block covering the offset or
@@ -535,7 +535,7 @@ number; and a feed of an inode or data block with neither bytes nor an
 error. The inverse shape is not refused, and is a constraint on stage 3
 rather than a check here: a direct-data inode fed for one the slave holds
 with a blockset and blocks beneath it is copied over the blockset by the
-replace arm (`hammer2_synchro.c:2718-2741`), leaving the blocks under an
+replace arm (`hammer2_synchro.c:2732-2755`), leaving the blocks under an
 inode that no longer points at them. No honest master gives embedded
 data to an inode that has blocks, since the frontend only ever clears
 the flag (`hammer2_inode.c:1818-1821`), so only a peer reaches it, and
@@ -897,7 +897,7 @@ set is answered the same way; the set is a property of the descriptor,
 the eight read descriptors of the command table in stage 2 and never
 the call's `HAMMER2_XOP_MODIFYING` flag, which the slave's pass sets on
 its own source scans (`hammer2_synchro.c:729`, `:1448`, `:1573`,
-`:2167`) and which would refuse them. A peer that stops continuing holds
+`:2181`) and which would refuse them. A peer that stops continuing holds
 the connection's queue only to `remote_timeout_ms`, which the server's
 window wait and its try for `hammer2_mntlk` share with the client side's
 bound below. The queue closes with the connection: admission and
@@ -1031,7 +1031,7 @@ buffered writes and attribute changes dispatch no XOP at all
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1842-1852`).
 The slave's pass writes its element through chain calls and its own
-flush (`hammer2_synchro.c:2422`, `:2431`, `:2580`, `:2645`, `:464-503`,
+flush (`hammer2_synchro.c:2436`, `:2445`, `:2594`, `:2659`, `:464-503`,
 `:916`), which a read-only superblock does not refuse, and it needs the
 device open for writing: the open mode is the first mount's
 (`sb_open_mode()`, `hammer2_ondisk.c:147`, `:197`), so stage 2b mounts
@@ -1263,7 +1263,7 @@ rather than from the design document alone.
   stamp a protocol took at `hammer2_chain_modify()` would differ there
   too.
 - **C9. The slave's pass re-stamps an inode copy at the replace with the
-  master's propagated tid** (`hammer2_synchro.c:1466`, `:2213`, `:2645`),
+  master's propagated tid** (`hammer2_synchro.c:1466`, `:2227`, `:2659`),
   and it snapshots its source on the source element's own device
   (`:844`, `:860`; `hammer2_ioctl.c:847`), which for a remote source is
   the master's, taken at the pass's request by the snapshot command.
@@ -1382,7 +1382,7 @@ Five candidates, with what each met.
    the slave direction, which reverses decision B's "no thread for a
    MASTER" for that direction only; within one term every compared tid
    comes from the holder's counter and the pass stamps the replica from
-   the source (`hammer2_synchro.c:685-687`, `:2213`, `:2645`) where it
+   the source (`hammer2_synchro.c:685-687`, `:2227`, `:2659`) where it
    replaces, so C1 and C8 do not arise within a term, and one frontend
    with no forwarding means C3, C4, C5 and C11 do not arise while that
    frontend is the only one; replicas serve no reads of their own in
@@ -1398,8 +1398,8 @@ Five candidates, with what each met.
    majority that acknowledges a pass, and decision C's `ENOTCONN` is
    what the stage-2 shape reads, a read-only mount whose cluster holds a
    remote master element, not what the holder's mount reads. C2 remains: the pass's inode
-   insert and its destroy arm run at mtid 0 (`hammer2_synchro.c:1951-1954`, `:1862-1863`,
-   `:2422-2445`), so the delete helper's and the split's stamps on a
+   insert and its destroy arm run at mtid 0 (`hammer2_synchro.c:1965-1968`, `:1869-1870`,
+   `:2436-2459`), so the delete helper's and the split's stamps on a
    replica carry no source tid today, which is the first obligation
    below. An
    `fsync` on the holder returns when a majority including the holder
@@ -1432,7 +1432,7 @@ Five candidates, with what each met.
    written back whole by the carried sync the pass itself calls on its
    mount (`hammer2_synchro.c:916`, `hammer2_inode.c:1842-1852`), which is
    C5 on that host and moves a carried line to stop, and the snapshot pass keeps a slave chain it
-   reads as newer at three arms (`hammer2_synchro.c:1542`, `:1867-1880`,
+   reads as newer at three arms (`hammer2_synchro.c:1542`, `:1874-1887`,
    `:1810`), which a demoted holder's writes, stamped from its own
    counter, will be whenever that counter ran ahead, and decision B's
    raise cannot order them, since tids never carried to the majority are
