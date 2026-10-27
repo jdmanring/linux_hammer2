@@ -966,8 +966,10 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		 * allocates and can fail with its data NULL.  The source
 		 * chain was relocked above, which reads its data again after
 		 * the unlock dropped it, and a failed read leaves it NULL.
-		 * Either fails the snapshot with the PFS created and empty,
-		 * as a failed pfs-create leaves its PFS.
+		 * Either fails the snapshot and leaves the new root on media
+		 * with the create's defaults, type NONE and zero ids, and
+		 * registered nowhere until a remount, so a delete by name
+		 * cannot find it before then.
 		 */
 		if (error == 0 && chain->data == NULL)
 			error = chain->error ? chain->error : HAMMER2_ERROR_EIO;

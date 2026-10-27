@@ -1263,6 +1263,13 @@ hammer2_inode_create_pfs(hammer2_pfs_t *spmp, const char *name, size_t name_len,
 done:
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 done2:
+	/*
+	 * XXX Linux: upstream returns no inode and no error from the two
+	 * exits above, which the PFS create reads as success and
+	 * dereferences, and the snapshot reports as taken.
+	 */
+	if (error)
+		*errorp = error;
 	hammer2_inode_unlock(pip);
 
 	return (nip);
