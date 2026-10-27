@@ -258,11 +258,11 @@ link up, and a frame left over from a closed call would be taken as the
 next call's first on the same `msgid` whenever its key fell in that
 call's range. On `h2debug-7.3` the allocator handed no `msgid` back in
 the eight calls before the unmount of the one run that waited for it,
-and on `h2kasan-7.3` the quarantine keeps a freed state out of reach by
-design, so the wire harness's `late` cell makes the reuse by rewriting
-the copy's `msgid` to the next call's. The client checks
-four things at a frame's receipt, in this order, and each ends the
-connection:
+and on `h2kasan-7.3` the quarantine holds freed objects back from reuse
+until its bounded FIFO evicts them, which makes a reuse rarer still, so
+the wire harness's `late` cell makes the reuse by rewriting the copy's
+`msgid` to the next call's. The client checks four things at a frame's
+receipt, in this order, and each ends the connection:
 - a frame whose call has closed: the close clears the state's pointer
   to its call before the call can be freed, so `HM2 peer sent a frame
   after its reply closed`;
