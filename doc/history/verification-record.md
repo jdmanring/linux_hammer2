@@ -18753,3 +18753,80 @@ Notes beside the logs: `p8-notes/trail-head-reading.md` and
 `p8-notes/seq-control-reading.md` under `linux_hammer2-data`.
 
 The row is 1.0.58.
+
+## The reply path's faults on the fixed module, 2026-10-27
+
+What this entry claims: with the sequence checks of `8f75dd7` in the
+module, each of the five reply-path faults ends the link at receipt with
+the line its check prints, or for `trail` the copy finds its call gone
+and does nothing, and in every run the pass after both dials leaves the
+slave equal to its master; ten runs on the two kernels of record, 36
+checks and 0 failed each, with no KASAN, lockdep or kmemleak report. Two
+earlier `trail` runs failed on predictions of the harness, not of the
+module, and are recorded with their causes.
+
+The runs used the harness frozen from `692279d`, whose difference from
+`33274e0` is the reading of `trail` alone, so the `loss`, `dup`,
+`reorder` and `late` runs stand at `33274e0`; the `trail` runs below are
+at `33274e0`. The logs' `source` field is `git describe` of the working
+tree when the run began, which held uncommitted documents only; `src/`
+is unchanged since `8f75dd7`. Each run cycled both guests, built the
+module, and faulted call 304 of K 155 with 2 feeds on key
+`0000000000010000`.
+
+- `h2debug-7.3` (module `816b13cef68fb9e5`): `loss`
+  `wire-run-20261027-000917`, `dup` `-001215`, `reorder` `-001509`,
+  `late` `-002102`, `trail` `wire-run-20261027-005933`.
+- `h2kasan-7.3` (module `6a55a4e71771ce33`): `loss`
+  `wire-run-20261027-003122`, `dup` `-003528`, `reorder` `-003934`,
+  `late` `-004743`, `trail` `wire-run-20261027-005415`.
+
+In every run that closed the link, B printed the one expected `HM2`
+line, `closed a reply short` for `loss` and `reorder`, `out of sequence`
+for `dup` and `another call's feed` for `late`, and the relay read B's
+end of the pair 195 to 215 ms after the fault on `h2debug-7.3` and 429
+to 473 ms on `h2kasan-7.3`. The cut pass ended
+`unverified ... error 524288` with its target kept, one pass in the gap
+of 7.4 to 7.9 s found no quorum, A deleted the link's snapshot at its
+dial, and the first pass after the dials verified with 300 files on B's
+media. Both images were clean by `fsck_hammer2` and equal by
+fingerprint, and the 310 digests were equal warm and cold.
+
+Both `trail` runs took the silent outcome: no `HM2` line, the relay's
+wait ending at 10031 and 10033 ms with one hangup, and the cut pass
+verifying inside the wait with its target deleted, so A had no link
+snapshot to delete and the first verdict after the dials came with the
+five files written later. The closed outcome is read in
+`wire-run-20261027-001808` below, whose module printed `after its reply
+closed` and whose failed check was the harness's.
+
+`late`'s control on `h2kasan-7.3`, the module built with
+`HAMMER2_NOCLIENTSEQ=1`, is `wire-run-20261027-002726`, 23 checks and 0
+failed: the copy was taken onto the next call with no `HM2` line, and
+B's fingerprint held one line A's lacked, as the `h2debug-7.3` control
+in the entry before this one did.
+
+The two `trail` runs that failed:
+
+- `wire-run-20261027-001808` on `h2debug-7.3`, 36 checks and 1 failed.
+  B printed `after its reply closed` and ended the link, but no call was
+  in flight: the cut call had closed at 37.144659 s, after the line at
+  37.144390 s, and the pass printed `unverified ... error 524288`. The
+  harness required a `scanall` call to end `ENOTCONN`; since `b1cea75`
+  it also reads the pass's own error under `trail`.
+- `wire-run-20261027-004339` on `h2kasan-7.3`, 36 checks and 3 failed,
+  outcome silent. The copy did nothing, the pass verified inside the
+  relay's 10 s wait and deleted the master's source by its own path, so
+  A had no snapshot left for the link and no pass after the dial printed
+  a verdict, the master being idle. The images were equal by fingerprint.
+  The harness predicted the link's deletion and a resumed verdict; since
+  `33274e0` it predicts both by whether the cut pass verified.
+
+The use after free in `hammer2_rcall_reply` stays a `candidate`: check 1
+now ends the link at a frame after the close, and no run here printed a
+report naming it.
+
+Notes beside the logs: `p8-notes/step5-*.log`, `p8-notes/step5b-*.log`
+and `p8-notes/doc-moves-draft.md` under `linux_hammer2-data`.
+
+The row is 1.0.59.

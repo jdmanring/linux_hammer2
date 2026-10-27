@@ -1141,6 +1141,31 @@ fixed and never asked for a snapshot, and no cut image since has, so
 the restarted master's deletion of a stale source at its first
 `SNAPSHOT` is unexercised.
 
+The reply path's own faults are read since 2026-10-27 under
+`H2_WIRE_CUT=loss`, `dup`, `reorder`, `trail` and `late`. The relay
+counts the slave's `scanall` calls inside the pass and, from the Kth on,
+faults the last feed of the first call with 2 to 15 feeds, a reply's
+only partial window: it drops the feed, sends it twice, sends it after
+the call's close, sends a copy after the close in the same write, or
+delivers a copy as the first frame of the next `scanall` call with the
+msgid rewritten and the header signed again. Before the sequence checks
+of the frame section, a lost feed and a feed taken from the previous
+call each left the slave verified and unequal to its master, and a
+repeated feed was refused with the link left up; those readings are
+taken under `HAMMER2_NOCLIENTSEQ`, which compiles the checks out. With
+the checks, the slave ends the link at receipt with the line its check
+prints, `closed a reply short` for `loss` and `reorder`, `out of
+sequence` for `dup`, `another call's feed` for `late` and `after its
+reply closed` for `trail`, and the readings of the disconnect follow:
+the detach by the span's deletion, the pass unverified with its target
+kept, the gap without a quorum, and after both dials a pass that
+verifies with the images equal by fingerprint and digest. A `trail`
+copy may instead find its call's state gone and do nothing, and the
+pass then runs on and can verify before the relay hangs the pair up;
+three of the four `trail` runs on the fixed module took that path, and
+the fourth ended the link with `after its reply closed`. The run ids are in the
+verification record's entry, and no run printed a KASAN report.
+
 ## The quorum protocol: what the carried core imposes, and the decision taken on it
 
 The completion plan's rule stops a decision that changes distributed
