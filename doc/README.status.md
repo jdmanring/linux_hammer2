@@ -427,9 +427,11 @@ recounted, which had left the total two low and `hammer2.h` two short.
 
 `hammer2_admin.c`,
 `hammer2_xops.c`, `hammer2_bulkfree.c`, `hammer2_chain.c`,
-`hammer2_cluster.c` and `hammer2_mount.h` are still byte-identical to that
-upstream commit under `cmp`, so most of the carried core has no port edit
-of any kind, marked or unmarked.
+`hammer2_cluster.c` and `hammer2_mount.h` were byte-identical to that
+upstream commit under `cmp` on 2026-08-26. None of the six is on
+2026-10-27, read against `3df307f` in the FreeBSD clone; the table
+above counts their marked lines, and `hammer2_mount.h`'s origin row
+names its change.
 
 The table covers every `.c` and `.h` under `src/sys/fs/hammer2/` whatever
 its count, and any file elsewhere under `src/` that holds a mark, so
