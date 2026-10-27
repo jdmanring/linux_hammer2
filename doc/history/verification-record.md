@@ -18500,3 +18500,67 @@ the guests were destroyed.
 pass, and the reply path's own faults are still unread.
 
 The row is 1.0.54.
+
+## A block inside a larger device folio, 2026-10-26
+
+What this entry claims: the DIO layer placed every 64 KiB block at the
+start of the folio holding it, and a block device's folio can be
+larger than the block, so after a remount the core read another
+block's bytes under this block's check code; `9d9c27c` places the
+block by `offset_in_folio()`, and on both 7.3 kernels the run that
+found it reads no check failure since.
+
+The mapping's order is a minimum. `set_blocksize()` sets it with
+`mapping_set_folio_min_order()` (`block/bdev.c:209` in the kernel of
+record), which sets the range from the block's order up to
+`MAX_PAGECACHE_ORDER` (`include/linux/pagemap.h:438-442`), and
+read-ahead builds folios past the minimum. `hammer2_io_data()`, the
+dirty block offered back to the page cache and the zeroing grab each
+took `folio_address()` as the block's first byte.
+
+How it was found. `cluster-wire.sh` under `H2_WIRE_CUT=master` cuts the
+master guest's power inside the slave's pass and mounts the master
+again on the media the cut left, so the master's cache is refilled by
+read-ahead and not by the grabs that created the volume. That mode
+enters the tree with the power cut cells, in the row after this one,
+since every run below also read those cells' other checks. The first two
+runs on `h2kasan-7.3`, logs `power-master-kasan-{2,3}.log` under
+`~/Projects/linux_hammer2-data/p8-notes/`, read `hammer2_chain_testcheck:
+failed` in the master's kernel log after the restart, and the slave
+copied the wrong bytes:
+
+| Module | Run | `testcheck: failed` on A | Digests equal on B | `io_large_folios` on A |
+|---|---|---|---|---|
+| `e791181019eb4782`, before | `wire-run-20261026-151912` | 33 | 4932 of 5310 | not built |
+| `2f86faec77c196f1`, before | `wire-run-20261026-154118` | 20 | 3140 of 5310 | not built |
+| `1818918ab5301a8d`, `h2kasan-7.3` | `wire-run-20261026-163047` | 0 | 5310 | 937 |
+| `1818918ab5301a8d`, `h2kasan-7.3` | `wire-run-20261026-180750` | 0 | 5310 | 936 |
+| `1818918ab5301a8d`, `h2kasan-7.3` | `wire-run-20261026-184028` | 0 | 5310 | 936 |
+| `1818918ab5301a8d`, `h2kasan-7.3` | `wire-run-20261026-200944` | 0 | 5310 | 936 |
+| `1818918ab5301a8d`, `h2kasan-7.3` | `wire-run-20261026-204259` | 0 | 5310 | 936 |
+| `091eb57f8a3056dc`, `h2debug-7.3` | `wire-run-20261026-202600` | 0 | 5310 | 936 |
+| `091eb57f8a3056dc`, `h2debug-7.3` | `wire-run-20261026-203254` | 0 | 5310 | 936 |
+
+The counts are `grep -c` over each run's kept `-a.klog` beside the
+images under `fixtures/`, and the counter is the `io-large-folios` line
+of each run's `.out`. The slave power cut, which restarts the slave and
+not the master, read `io_large_folios` 0 on both guests in its two runs
+(`wire-run-20261026-201816` and `-203758`): a volume created and
+written in one mount meets no larger folio, which is why no earlier
+gate saw the defect. The runs after the fix that failed other checks
+failed on the harness and the reply path, each recorded with the power
+cut cells; none failed on a digest.
+
+The fix changes three sites. A grab returning a larger folio not
+uptodate is refused with `EIO` and a `WARN_ONCE`, since marking it
+uptodate would hand out the other blocks a failed read never filled,
+and the offer back to the page cache declines such a folio and takes
+the bio path. `hammer2_flush.c:1357` already placed its copy by
+`offset_in_folio()`. The volume header read at `hammer2_ondisk.c:763`
+also takes its folio's start and is correct by alignment: each header
+sits at a multiple of 2 GiB, and a naturally aligned folio of at most
+`MAX_PAGECACHE_ORDER` holding such an offset starts there.
+`doc/IO_MODEL.md`'s step 3 and its two sentences calling the mapping
+pinned to one order are corrected.
+
+The row is 1.0.55.
