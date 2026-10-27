@@ -208,8 +208,9 @@ static struct {
 	const char *silence_on;	/* the name whose lookup's answer starts a silence */
 	const char *rename_snapdel; /* the name the first SNAPDEL is given */
 	long cut_on_scan;	/* the scanall call from which the link is cut */
+	const char *cut_fault;	/* what the cut does: disconnect or trail */
 } opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0, 0, NULL, NULL, -1 };
+    0, 0, 0, 0, NULL, NULL, -1, "disconnect" };
 
 static void
 usage(void)
@@ -224,6 +225,7 @@ usage(void)
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
 	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
+	    "              [--cut-fault disconnect|trail]\n"
 	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n");
 	exit(2);
 }
@@ -262,6 +264,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--silence-on")) opt.silence_on = *v ? v : NULL;
 		else if (!strcmp(a, "--rename-snapdel")) opt.rename_snapdel = *v ? v : NULL;
 		else if (!strcmp(a, "--cut-on-scan")) opt.cut_on_scan = atol(v);
+		else if (!strcmp(a, "--cut-fault")) opt.cut_fault = v;
 		else usage();
 		i++;
 	}
@@ -282,7 +285,8 @@ validate(void)
 	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
 	    opt.retype_scan < 0 || opt.retype_scan > 1 ||
 	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
-	    opt.end_readdir < 0 || opt.end_readdir > 3 || opt.cut_on_scan < -1)
+	    opt.end_readdir < 0 || opt.end_readdir > 3 || opt.cut_on_scan < -1 ||
+	    (strcmp(opt.cut_fault, "disconnect") && strcmp(opt.cut_fault, "trail")))
 		usage();
 }
 
@@ -367,6 +371,7 @@ struct frame {
 	size_t ext_len;
 	uint8_t *aux;		/* DMSG_DOALIGN(hdr.aux_bytes) bytes */
 	long due;		/* virtual tick it is delivered at */
+	int cork;		/* the frame after it goes in the same segment */
 	struct frame *next;
 };
 
@@ -1032,6 +1037,11 @@ rename_snapdel(struct frame *f)
  * 15 feeds is the cut: its held feed and its close are discarded and the
  * pair is closed, so B's call ends by the link's loss with the scan partway.
  * The count goes on across pairs, so the calls after the cut are traced.
+ *
+ * --cut-fault trail closes nothing: the held feed, the close and a copy of
+ * the feed go to B back to back, so a frame arrives after the call's close
+ * while B's state for the msgid may still stand.  Every SNAPSHOT request of
+ * B's is traced, so a trace reads which pass the fault fell in.
  */
 #define CUT_NCALL	8	/* scanall calls in flight at once; the pass has one */
 static struct cut_call {
@@ -1071,8 +1081,12 @@ cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
 	int k;
 
 	if (from->name[0] == 'B' && (c & 0xA0000000U) == 0x80000000U) {
-		if ((c & 0x00FFFF00U) == 0x00202500U && cut_snap_msgid == 0)
-			cut_snap_msgid = f->hdr.msgid;
+		if ((c & 0x00FFFF00U) == 0x00202500U) {
+			if (cut_snap_msgid == 0)
+				cut_snap_msgid = f->hdr.msgid;
+			trace("%s>%s i=%ld msgid=%" PRIu64 " snapshot t=%ld\n",
+			    from->name, to->name, i, f->hdr.msgid, t);
+		}
 		if ((c & 0x00FFFF00U) != 0x00201600U || !cut_armed)
 			return (0);
 		for (k = 0; k < CUT_NCALL && cut_calls[k].msgid; k++)
@@ -1127,6 +1141,22 @@ cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
 	trace("%s>%s i=%ld msgid=%" PRIu64 " close t=%ld call=%ld feeds=%d"
 	    " error=%x\n", from->name, to->name, i, f->hdr.msgid, t, cc->n,
 	    cc->feeds, error);
+	if (cc->watched && cc->feeds >= 2 && !strcmp(opt.cut_fault, "trail")) {
+		struct frame *copy = frame_dup(cc->held);
+
+		trace("%s>%s i=%ld msgid=%" PRIu64 " trail t=%ld call=%ld feeds=%d"
+		    " error=%x\n", from->name, to->name, i, f->hdr.msgid, t,
+		    cc->n, cc->feeds, error);
+		fflush(tracef);
+		cc->held->cork = f->cork = 1;
+		side_enqueue(to, cc->held, due);
+		side_enqueue(to, f, due);
+		side_enqueue(to, copy, due);
+		ct.dup++;
+		memset(cc, 0, sizeof(*cc));
+		cut_done = 1;
+		return (1);
+	}
 	if (cc->watched && cc->feeds >= 2) {
 		trace("%s>%s i=%ld msgid=%" PRIu64 " cut t=%ld call=%ld feeds=%d"
 		    " error=%x\n", from->name, to->name, i, f->hdr.msgid, t,
@@ -1279,15 +1309,21 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 	    (f->hdr.cmd & 0x00F00000U) == 0) ? t + d : to->held_until);
 }
 
-/* Write everything due to `to`; a side that went away loses them. */
+/* Write everything due to `to`; a side that went away loses them.  A run
+ * of corked frames and the one after it leave in one segment. */
 static void
 side_drain(struct side *to, int all)
 {
 	long t = now_ms();
+	int corked = 0, on;
 
 	while (to->queue && (all || to->queue->due <= t)) {
 		struct frame *f = to->queue;
 		to->queue = f->next;
+		if (f->cork && !corked && to->fd >= 0) {
+			on = corked = 1;
+			setsockopt(to->fd, IPPROTO_TCP, TCP_CORK, &on, sizeof(on));
+		}
 		if (to->fd < 0 || frame_write(to->fd, f) < 0) {
 			ct.lost++;
 			trace(">%s msgid=%" PRIu64 " lost t=%ld\n", to->name,
@@ -1295,7 +1331,15 @@ side_drain(struct side *to, int all)
 		} else {
 			ct.delivered++;
 		}
+		if (corked && !f->cork && to->fd >= 0) {
+			on = corked = 0;
+			setsockopt(to->fd, IPPROTO_TCP, TCP_CORK, &on, sizeof(on));
+		}
 		frame_free(f);
+	}
+	if (corked && to->fd >= 0) {
+		on = 0;
+		setsockopt(to->fd, IPPROTO_TCP, TCP_CORK, &on, sizeof(on));
 	}
 }
 
@@ -1332,6 +1376,17 @@ relay_accept(int lfd, struct side *s)
 	return (0);
 }
 
+/* SIGUSR1 closes the pair in hand, as a disconnect does, and the relay
+ * goes on listening: a harness ends a link the fault left up this way. */
+static volatile sig_atomic_t hangup;
+
+static void
+on_usr1(int sig)
+{
+	(void)sig;
+	hangup = 1;
+}
+
 /* One pair, from both connected to both gone or the scripted disconnect.
  * Returns the frame index after the pair. */
 static long
@@ -1359,6 +1414,17 @@ relay_pair(struct side *a, struct side *b, long i)
 		if (pfd[0].fd < 0 && pfd[1].fd < 0 && a->queue == NULL &&
 		    b->queue == NULL)
 			break;
+		if (hangup) {
+			hangup = 0;
+			trace("hangup i=%ld t=%ld\n", i, t);
+			fflush(tracef);
+			side_drain(a, 1);
+			side_drain(b, 1);
+			side_close(a);
+			side_close(b);
+			ct.disconnects++;
+			return (i);
+		}
 		n = poll(pfd, 2, (int)wait);
 		if (n < 0) {
 			if (errno == EINTR)
@@ -1393,6 +1459,7 @@ relay_pair(struct side *a, struct side *b, long i)
 				 * sees the same once the queue to it drains */
 				trace("%s %s t=%ld\n", from->name,
 				    r == 0 ? "eof" : (why ? why : "error"), now_ms());
+				fflush(tracef);	/* a harness waits on it */
 				from->eof = 1;
 				if (r == 0)
 					ct.eof++;
@@ -1418,7 +1485,9 @@ relay(void)
 	struct sockaddr_in sin;
 	int lfd, one = 1;
 	long i = 0;
+	struct sigaction sa = { .sa_handler = on_usr1, .sa_flags = SA_RESTART };
 
+	sigaction(SIGUSR1, &sa, NULL);	/* poll still returns EINTR */
 	rng_state = opt.seed | 1;
 	lfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (lfd < 0) {
@@ -1440,13 +1509,14 @@ relay(void)
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
 	    " retype-scan=%d"
 	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s"
-	    " cut-on-scan=%ld\n",
+	    " cut-on-scan=%ld cut-fault=%s\n",
 	    opt.relay, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
 	    opt.refuse_nresolve, opt.retype_scan, opt.stall_ms, opt.end_readdir,
 	    opt.silence_on ? opt.silence_on : "-",
-	    opt.rename_snapdel ? opt.rename_snapdel : "-", opt.cut_on_scan);
+	    opt.rename_snapdel ? opt.rename_snapdel : "-", opt.cut_on_scan,
+	    opt.cut_fault);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);
 	fflush(stdout);

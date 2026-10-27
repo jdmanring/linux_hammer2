@@ -239,8 +239,16 @@ RETYPE=${H2_WIRE_RETYPE:-0}
 # second trace, and the cut guest boots again, loads the module on what the
 # cut left and dials; the pass after the dial must verify and the slave
 # converge as after the disconnect.
+#
+# H2_WIRE_CUT=trail leaves the link up: at the same call the relay sends
+# the last feed, the close and a copy of the feed in one write, so the
+# copy reaches B after its call has closed. B's own end of the link is
+# waited for 10 s and, failing it, the relay hangs the pair up; no dial
+# follows. The run prints which of three things the copy did on B: nothing,
+# a refusal as not a proxy, or a KASAN report in hammer2_rcall_reply.
 CUT=${H2_WIRE_CUT:-}; CUTAT=${H2_WIRE_CUT_AT:-}; DEPTH=${H2_WIRE_CUT_DEPTH:-1000}
-case $CUT in ''|disconnect|control|slave|master) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect, control, slave or master" >&2; exit 2;; esac
+case $CUT in ''|disconnect|control|trail|slave|master) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect, control, trail, slave or master" >&2; exit 2;; esac
+FAULT=disconnect; [ "$CUT" = trail ] && FAULT=trail
 POWER=0; case $CUT in slave|master) POWER=1;; esac
 case $CUTAT in *[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT is a call count" >&2; exit 2;; esac
 case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an inode count" >&2; exit 2;; esac
@@ -279,6 +287,36 @@ for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; d
 # the pass the retype or the cut fails ends unverified, once
 UNV=$RETYPE; [ -z "$CUT" ] || UNV=1
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
+# H2_REPEAT=n runs the cell n times, each on guests booted for it, as
+# test-enospc.sh does: KASAN reports once per boot and lockdep turns itself
+# off after one report, so a run on a boot that has reported reads nothing.
+# Each run's output is kept, and the trail cell's outcomes are tallied from
+# the line each run prints.
+repeat=${H2_REPEAT:-1}
+case $repeat in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_REPEAT is a run count" >&2; exit 2;; esac
+if [ "$repeat" -gt 1 ]; then
+	logdir=${H2_LOGDIR:-$HOME/Projects/linux_hammer2-data/p8-notes/wire-repeat-$(date +%Y%m%d-%H%M%S)}
+	mkdir -p "$logdir" || exit 2
+	# a batch runs this file once per run, so an edit made under it would
+	# change the runs after the edit
+	sum0=$(sha256sum < "$0") || exit 2
+	pass=0; failed=0; cnr=0; i=1
+	while [ "$i" -le "$repeat" ]; do
+		$VIRSH destroy "$GA" >/dev/null 2>&1; $VIRSH destroy "$GB" >/dev/null 2>&1
+		[ "$(sha256sum < "$0")" = "$sum0" ] || { echo "wire: COULD-NOT-RUN: this script changed while the batch was running" >&2; exit 2; }
+		H2_REPEAT=1 sh "$0" > "$logdir/run-$i.log" 2>&1
+		case $? in 0) pass=$((pass + 1)); v=pass;; 2) cnr=$((cnr + 1)); v=could-not-run;; *) failed=$((failed + 1)); v=fail;; esac
+		echo "run $i: $v $(sed -n 's/^  trail-outcome //p' "$logdir/run-$i.log")"
+		i=$((i + 1))
+	done
+	$VIRSH destroy "$GA" >/dev/null 2>&1; $VIRSH destroy "$GB" >/dev/null 2>&1
+	echo "wire: $repeat runs, $pass passed, $failed failed, $cnr could not run; logs in $logdir"
+	[ "$CUT" = trail ] && for o in silent notproxy kasan other; do
+		echo "  trail-outcome $o $(cat "$logdir"/run-*.log | grep -c "^  trail-outcome $o\$")"
+	done
+	[ "$failed" = 0 ] && [ "$cnr" = 0 ]
+	exit
+fi
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
@@ -389,6 +427,10 @@ to_guest() {	# to_guest <domain> <ssh>: its module and daemon, on a boot that ca
 	dl=$($SSH "$s" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
 	[ "$dl" = 0 ] && {
 		echo "wire: COULD-NOT-RUN: lockdep is off on $g since an earlier report; boot it again" >&2; exit 2; }
+	# KASAN reports once per boot (mm/kasan/report.c, without kasan_multi_shot)
+	kb=$($SSH "$s" "dmesg | grep -c 'BUG: KASAN'")
+	[ "${kb:-0}" = 0 ] || {
+		echo "wire: COULD-NOT-RUN: $g's boot already holds $kb KASAN report(s), so it reports no more; boot it again" >&2; exit 2; }
 	scp -q "$ko" "$s:/tmp/hammer2.ko" && scp -q "$svc" "$s:/tmp/h2service" || {
 		echo "wire: COULD-NOT-RUN: copy to $g failed" >&2; exit 2; }
 }
@@ -406,7 +448,7 @@ relay_start() {	# relay_start <trace>: a relay on the port, its output appended
 	    --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
 	    --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
 	    --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src)" \
-	    ${CUTAT:+--cut-on-scan "$CUTAT"} \
+	    ${CUTAT:+--cut-on-scan "$CUTAT" --cut-fault "$FAULT"} \
 	    --trace "$1" >> "$W/relay.out" 2>&1 &
 	RELAY_PID=$!
 	sleep 0.5
@@ -673,7 +715,7 @@ echo "redial-threads-before $(threads)"
 /tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; echo "redial-rc $?"
 GUEST
 cat > "$W/cut.sh" <<'GUEST'
-# cut <go|arm|silent|wait|redial|resumed|peer [after]>: the link the relay closed inside
+# cut <go|arm|mark|silent|wait|redial|resumed|peer [after]>: the link the relay closed inside
 # the pass, read on B at the cut, on B again at the dial and after the pass
 # that follows it, and on A for the snapshot the link left
 V='syncsnap: (verified|newer|unverified|interrupted) clindex'
@@ -696,6 +738,15 @@ arm)
 	echo "cut-arm-verdicts $(kl | grep -c -E "$V")"
 	echo "cut-arm-snap $(klog 'syncsnap: remote snapshot CL.h2sync-src tid')"
 	echo "cut-printk $(cat /proc/sys/kernel/printk | tr '\t' ' ')"
+	;;
+mark)
+	# the host saw the relay's trail: a line in this log, and the pass's
+	# snapshots and verdicts before it; the line trails the fault by the
+	# host's poll and an ssh, so a verdict can only be counted early
+	echo "h2wire trail seen" > /dev/kmsg
+	n=0; until grep -q 'h2wire trail seen' $K || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-mark-snap $(kl | awk '/h2wire trail seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { n++ } END { print n + 0 }')"
+	echo "cut-mark-verdicts $(kl | awk -v v="$V" '/h2wire trail seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }')"
 	;;
 silent)
 	# the survivor's own end of the link, or 30 s, whichever came first
@@ -1158,6 +1209,21 @@ power_on() {
 	    $VIRSH start "$cg" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: $cg did not start again on $ci" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 	wait_ssh "$cg" "$cs"; to_guest "$cg" "$cs"; to_scripts "$cs"
 }
+# The trail: the relay's line for it, a mark in B's log at once, then 10 s
+# for B's own end of the link, which only a check on B makes; failing it
+# the relay hangs the pair up, as nothing else would end a link left up.
+trail_wait() {
+	tr=$FIXDIR/wire-run-$stamp.trace
+	n=0; until grep -q ' trail t=' "$tr" || [ $n -ge 2400 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "H trail-wait-ms $((n * 100))" >> "$W/out"
+	t0=$(date +%s%N)
+	grep -q ' trail t=' "$tr" && phase B cut.sh mark
+	beof() { awk '/ trail t=/ { s = 1 } s && /^B eof / { n++ } END { print n + 0 }' "$tr"; }
+	until [ "$(beof)" -ge 1 ] || [ $(( ($(date +%s%N) - t0) / 1000000 )) -ge 10000 ]; do sleep 0.1; done
+	if [ "$(beof)" -ge 1 ]; then first=eof; else first=timeout; kill -USR1 "$RELAY_PID"; fi
+	echo "H trail-first $first" >> "$W/out"
+	echo "H trail-first-ms $(( ($(date +%s%N) - t0) / 1000000 ))" >> "$W/out"
+}
 # The cut: B dialed with its device read-only, so no pass runs before the
 # readings above and CL's mount, which a cut would otherwise race (a pass
 # starts at the thread's next 5 s tick after the registration and the cut
@@ -1165,8 +1231,8 @@ power_on() {
 # Then where the cut fell, and A's snapshot before any dial; the cell dials
 # A and then B, and the resumed pass is read as a plain one is.
 phase B ro.sh && case $PASSES in
-	cut)	phase B cut.sh go && phase B cut.sh wait && phase A cut.sh peer &&
-		{ [ "$CUT" = control ] || { phase A redial.sh && phase A cut.sh peer after && phase B cut.sh redial &&
+	cut)	phase B cut.sh go && { [ "$CUT" != trail ] || trail_wait; } && phase B cut.sh wait && phase A cut.sh peer &&
+		{ [ "$CUT" = control ] || [ "$CUT" = trail ] || { phase A redial.sh && phase A cut.sh peer after && phase B cut.sh redial &&
 		    phase B pass.sh 1 && phase B cut.sh resumed && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)"; }; };;
 	full)	phase B pass.sh $((RETYPE + 1)) && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)" &&
 		{ [ "$STALE" = 0 ] || { phase B stale.sh down && phase A redial.sh && phase B stale.sh up && phase A fill.sh stale; }; };;
@@ -1183,7 +1249,7 @@ phase B ro.sh && case $PASSES in
 		{ [ "$CUT" = slave ] || phase A cut.sh peer after; } &&
 		phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
 	*)	true;;
-esac && [ "$CUT" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
+esac && [ "$CUT" != control ] && [ "$CUT" != trail ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -1246,8 +1312,9 @@ nfa=$(( $(num "$(val A files)" 0) + $(num "$(val A more-files)" 0) ))	# the pass
 # Lost ends the link at the first rewritten close, and the window control
 # at the first listing past sixteen feeds, so every read after it finds
 # nothing: the live-link checks below do not apply to those modes, nor to
-# the cut's control, which never dials again and reads nothing after.
-LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ] || [ "$CUT" = control ]; } && LINKLOST=1
+# the cut's control or the trail, which never dial again and read nothing
+# after.
+LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ] || [ "$CUT" = control ] || [ "$CUT" = trail ]; } && LINKLOST=1
 [ "$LINKLOST" = 1 ] || [ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
 [ "$LINKLOST" = 1 ] || { [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"; }
 # The pass wrote B under the pass and under the pass-refusal control,
@@ -1361,6 +1428,33 @@ elif [ "$POWER" = 1 ]; then
 	[ "$rv" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "power: the resumed pass verifies, or reads newer and the next pass verifies" $? "verdicts $(val B cut-resumed-verdicts)after a wait of $(val B cut-resumed-second-wait) s, keys kept by tid $(val B cut-resumed-kept-keys), HM2 lines after $(val B cut-resumed-hm2), deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors), end after $(val B pass-end-seconds) s"
 	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 9)" = "$nu" ]; check "power: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) of $nu"
 	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5310 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
+elif [ "$CUT" = trail ]; then
+	# Where the trail fell, as the cut's: one trail line, in a scanall call
+	# from the Kth on with 2 to 15 feeds, after the pass read its snapshot
+	# and before any verdict, read at the mark written into B's log.
+	tr=$FIXDIR/wire-run-$stamp.trace
+	ctr=$(sed -n 's/.* trail t=[0-9]* call=\([0-9]*\) feeds=\([0-9]*\).*/\1 \2/p' "$tr" 2>/dev/null)
+	cc=$(num "${ctr% *}" -1); cf=$(num "${ctr#* }" 0)
+	cafter=$(awk -v c="$cc" '/ open t=/ { sub(/.*call=/, ""); if ($1 + 0 > c) n++ } END { print n + 0 }' "$tr" 2>/dev/null)
+	[ "$(printf '%s\n' "$ctr" | grep -c .)" = 1 ] && [ "$cc" -ge "$CUTAT" ] && [ "$cf" -ge 2 ] && [ "$cf" -le 15 ] && [ "$(num "$(val B cut-mark-snap)" 0)" -ge 1 ] && [ "$(num "$(val B cut-mark-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-refused-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "trail: the relay sends a call's last feed, its close and a copy inside the pass, in a scanall call from the ${CUTAT}th with 2 to 15 feeds" $? "call $cc of K $CUTAT with $cf feeds after $(val H trail-wait-ms) ms, $(num "$cafter" 0) calls opened after it, snapshots read before the mark $(val B cut-mark-snap), verdicts between $(val B cut-mark-verdicts); before the read-write remount (rc $(val B cut-root-rw-rc)) refusals $(val B cut-refused-before), snapshots $(val B cut-snap-before-go)"
+	# The link's end: B's own, by a check that ends it, or the relay's
+	# hangup 10 s after the trail, and then B's detach by the span.
+	nh=$(grep -c '^hangup ' "$tr" 2>/dev/null)
+	case $(val H trail-first) in eof) [ "$(num "$nh" 1)" = 0 ];; timeout) [ "$(num "$nh" 0)" = 1 ];; *) false;; esac && [ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ]; check "trail: B ends the link or the relay hangs it up after 10 s, and B detaches by the span's deletion" $? "first $(val H trail-first) after $(val H trail-first-ms) ms, hangups $(num "$nh" 0), detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s"
+	# What the copy did on B, from B's kept log: nothing, a refusal as not
+	# a proxy, or a use of the freed call. The verdict, the target and the
+	# HM2 lines are printed: with the link up the pass ran on. A report is
+	# the call's when hammer2_rcall_reply is in its access stack, the title
+	# naming the faulting function and that inlined into the frame below; a
+	# kasan outcome also fails B's warning check below, as a report should.
+	bk=$FIXDIR/wire-run-$stamp-b.klog
+	nk=$(num "$(grep -c 'BUG: KASAN' "$bk" 2>/dev/null)" -1)
+	nkr=$(awk '/BUG: KASAN/ { r = 1 } r && /hammer2_rcall_reply/ { n++; r = 0 } /Allocated by task|Freed by task|The buggy address|=====/ { r = 0 } END { print n + 0 }' "$bk" 2>/dev/null)
+	nkr=$(num "$nkr" -1); np=$(num "$(grep -c 'not a proxy' "$bk" 2>/dev/null)" -1)
+	if [ "$nkr" -ge 1 ]; then to=kasan; elif [ "$nk" = 0 ] && [ "$np" = 1 ]; then to=notproxy; elif [ "$nk" = 0 ] && [ "$np" = 0 ]; then to=silent; else to=other; fi
+	echo "  trail-outcome $to"
+	[ "$to" != other ]; check "trail: the copy after the close does nothing, is refused once as not a proxy, or is a KASAN report in hammer2_rcall_reply" $? "outcome $to: not a proxy $np, KASAN reports $nk of which in hammer2_rcall_reply $nkr; verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), HM2 lines $(val B cut-hm2), remote ends $(val B cut-remote-ends), A's left-by-the-link deletions $(val A snap-link-left)"
+	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "trail: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
 elif [ -n "$CUT" ]; then
 	# Where the cut fell: in a scanall call from the Kth on, with 2 to 15
 	# feeds, after the pass read its snapshot and before any verdict; under
