@@ -527,8 +527,10 @@ only on a snapshot pass.
   quorum protocol, `doc/CLUSTER_PROTOCOL_DESIGN.md`, is where it is
   designed: the XOP API as the HM2 commands, `DMSG_SPAN_PROTO_2`, CRCs
   verified by the kernel, a span-derived element whose replies are
-  chains of a media-less device, and the quorum protocol's four open
-  decisions presented with recommendations.
+  chains of a media-less device, and the quorum protocol's four
+  decisions, taken since (A as one writer per PFS under a lease, ruled
+  2026-10-21). Its stages 1 and 2 are built and this note's pass runs
+  over them.
 - The live-mount handoff. Where the chains of an open file go when the
   root under it is swapped is unanswered in every tree. The local half
   did not build the swap: the slave is written in place and a snapshot
@@ -541,12 +543,14 @@ only on a snapshot pass.
   taken as a source. For a single-element master it is; for a two-master
   cluster the snapshot is of one element, and whether that is the right
   source is P8's question as much as P7's.
-- Who holds the keys. A Linux daemon is outside this tree today, and the
-  note records that any remote alternative needs one before it needs
-  kernel code.
-- Whether the `copyinfo[]` array the document retired and the format kept
-  has any role. The port sends it on `LNK_CONN` because `hammer2_iocom.c`
-  does; nothing reads it on the other end here.
+- Who holds the keys. The harness's daemon, `test/h2service.c`, dials
+  only a peer with a `.pub` or `.none` file in its key directory, and
+  every link today is the `.none` kind, plaintext; keys move to `tlshd`
+  with kernel TLS in the cluster note's stage 5, after which P7 closes.
+- The `copyinfo[]` array the document retired and the format kept now
+  has a role: the kernel registers a remote master's span only against
+  an enabled row whose cluster id matches (`hammer2_remote_admitted()`,
+  `hammer2_remote.c`), and `HAMMER2IOC_REMOTE_ADD` writes the row.
 
 ## Provenance
 

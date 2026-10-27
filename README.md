@@ -51,16 +51,16 @@ At a glance, on a kernel of 7.3 or newer:
   in step with its MASTER by DragonFly's synchronization thread, and a
   cluster of two MASTERs on two devices is written and read through the
   quorum that requires both to agree, every file reading back what was
-  written; both on the debug and the sanitizer kernel. No member on
-  another host yet: the transport and its message core are carried and
-  measured with the kernel in the loop (P5, P6), the synchronization
-  pass above them copies from a per-pass snapshot of the master and
-  keeps a snapshot of the slave as its last known-good copy (P7's local
-  half; the remote reach is ruled B and designed with P8's quorum
-  protocol at `doc/CLUSTER_PROTOCOL_DESIGN.md`, whose first two stages
-  are built, the kernel verifying a `PROTO_2` peer's frames and serving
-  its read requests, and whose remote element is not), and no run
-  yet of a quorum that cannot be met
+  written; both on the debug and the sanitizer kernel. A master on
+  another host is read too: over the transport and message core carried
+  since P5 and P6, a slave's synchronization pass on one guest copies the
+  master's PFS on another through a remote element, from a snapshot the
+  master takes at the slave's request, and P7's five criteria read on
+  two hosts as well as on one (`doc/CLUSTER_PROTOCOL_DESIGN.md`, stages 1
+  and 2). The link is plaintext with a peer admitted by a marker file
+  until kernel TLS lands in P8's stage 5, and P7 closes then. No run yet
+  of a quorum that cannot be met, and no write through a PFS with a
+  remote master, which stays read-only until P8's lease protocol
 + not yet: a package, a run of that closure
   on a guest smaller than 4 GiB, and any write to media that is not a
   scratch image
