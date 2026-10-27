@@ -254,8 +254,11 @@ nothing told one call's frames from another's: kern_dmsg writes `salt`
 and checks it nowhere, and a `msgid` is a state's address, reused once
 the state is freed. A lost feed read as a key absent on the master, a
 repeated one was refused as not a proxy and stopped the scan with the
-link up, and a frame left over from a closed call was taken as the next
-call's first on the same `msgid`, whatever its key. The client checks
+link up, and a frame left over from a closed call would be taken as the
+next call's first on the same `msgid` whenever its key fell in that
+call's range. The kernel reused no `msgid` inside a pass on either 7.3
+build, so the wire harness's `late` cell makes the reuse by rewriting
+the copy's `msgid` to the next call's. The client checks
 four things at a frame's receipt, in this order, and each ends the
 connection:
 - a frame whose call has closed: the close clears the state's pointer
@@ -268,7 +271,14 @@ connection:
 The first guards memory and is under no control. `HAMMER2_NOCLIENTSEQ`
 compiles out the other three, and is the build the wire harness's
 `H2_WIRE_SEQ=control` reads the defects under. The fields were reserved
-space in a frame only this port speaks, so no other reader changes.
+space in a frame only this port speaks, so no other implementation's
+reader changes, but this port's own builds before the checks send a
+zero tag and index under the same `PROTO_2`, and the handshake does not
+tell the two apart: a client with the checks ends such a link at its
+first feed with `another call's feed`, since the tag counter starts at
+1. The version is left as it is because that failure is closed: a peer
+built before the checks is refused at its first feed, never misread,
+and every reading so far builds both ends from one tree.
 
 **Versioning rides `proto_version`.** `DMSG_SPAN_PROTO_2` means "HM2 XOP
 API version 1, CRCs verified". Today the carried test at

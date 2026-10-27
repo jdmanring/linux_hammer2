@@ -18765,10 +18765,10 @@ checks and 0 failed each, with no KASAN, lockdep or kmemleak report. Two
 earlier `trail` runs failed on predictions of the harness, not of the
 module, and are recorded with their causes.
 
-The runs used the harness frozen from `692279d`, whose difference from
-`33274e0` is the reading of `trail` alone, so the `loss`, `dup`,
-`reorder` and `late` runs stand at `33274e0`; the `trail` runs below are
-at `33274e0`. The logs' `source` field is `git describe` of the working
+The `loss`, `dup`, `reorder` and `late` runs used the harness frozen
+from `692279d`, whose difference from `33274e0` is the reading of
+`trail` alone, so they stand at `33274e0`; the two `trail` runs used a
+copy frozen from `33274e0` itself. The logs' `source` field is `git describe` of the working
 tree when the run began, which held uncommitted documents only; `src/`
 is unchanged since `8f75dd7`. Each run cycled both guests, built the
 module, and faulted call 304 of K 155 with 2 feeds on key
