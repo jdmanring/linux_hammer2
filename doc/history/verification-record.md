@@ -18996,8 +18996,9 @@ found in session when the name test's choice was reversed, below. Each
 of those two rounds corrected claims of this entry and reworded three
 commit messages, all before any push. A third round found the rename's
 target loop deleting what the reversed test matches, fixed in
-`8c4bda5`, which is not counted as a site since the previous commit
-made it, and corrected three claims of this entry.
+`8c4bda5`, and corrected three claims of this entry; a fourth found
+that fix keeping the target's own entry, fixed in `8926fc6`. Neither
+is counted as a site, since the reversal made both.
 
 A write or read through `chain->data` after a call that can leave it
 NULL. `4cedfc3` guarded the freemap scan after a failed
@@ -19066,11 +19067,23 @@ equal the target's; deleting it would lose that name. A third review
 read that case, and `8c4bda5` makes the loop leave such a chain, while
 a short DIRENT, compared through its blockref, and a chain whose check
 failed, which keeps its data and is compared by name as upstream
-compares it, are deleted as before. One exposure is left: an unreadable
-entry of another name ahead of a readable one in the range stops the
-lookup there, so a lookup, an unlink or a rename of the readable name
-returns `EIO`. The change made the PFS lookup's
-handling of a matched chain carrying an error reachable: DragonFly
+compares it, are deleted as before. A fourth review found that the
+chain left may be the target's own entry: a rename onto a name whose
+dentry the VFS holds positive reaches the backend with no lookup, and
+if that entry no longer reads, the loop kept it, the rename inserted
+the new entry beside it, and the frontend dropped a link from the
+inode it named (`hammer2_vnops.c` 742 onward). `8926fc6` hands the XOP
+the replaced inode's number, which a DIRENT's blockref carries, and the
+loop deletes an unreadable DIRENT naming it and leaves any other. What
+is left: an unreadable INODE chain in the range is kept, since its
+number sits in its data; a negative dentry held for a name whose entry
+exists, which needs a change made beneath the dcache, reaches the
+same duplicate with no inode to compare; another link of
+the replaced inode, unreadable and colliding, is deleted with it and
+leaves the count one high; and an unreadable entry of another name
+ahead of a readable one stops the lookup there, so a lookup, an unlink
+or a rename of the readable name returns `EIO`. The change made the
+PFS lookup's handling of a matched chain carrying an error reachable: DragonFly
 leaves it locked and referenced and returns `ENOENT`, and `0b055c6`
 releases it and returns its error, which the PFS create now refuses
 unless it is `ENOENT`.
@@ -19160,11 +19173,11 @@ parent's check passes, so from crafted media, which `fuzz-mount.sh`
 cannot make since it never recomputes a check. It stays a `candidate`
 until an image carrying such a radix is mounted under UBSAN.
 
-The fleet gates were run on a module built from `8c4bda5` with `src/`
+The fleet gates were run on a module built from `8926fc6` with `src/`
 clean, against `~/kernels/linux-7.3`, release `7.3.0`, the debug tree,
 which the gates' vermagic check requires the guest to run; the log's
 first two lines record the tree and the guest's `uname`. The output is
-kept as `p8-notes/fleet-siblings-r3-20261027-072129.log`:
+kept as `p8-notes/fleet-siblings-r4-20261027-073259.log`:
 `test-fixtures.sh` read 11 images, 43 files and 100 ioctl results with
 0 failures and lockdep enabled throughout, and `test-enospc.sh` filled
 2G with 0 failures, 0 kernel warnings and 0 module faults after its run
