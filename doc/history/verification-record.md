@@ -18660,3 +18660,38 @@ its first `SNAPSHOT` is therefore unexercised, and the reply path's own
 faults are still unread.
 
 The row is 1.0.56.
+
+## A lockdep class name read after the module freed it, 2026-10-26
+
+What this entry claims: a lockdep class the module registers from its
+pool of static keys kept its name in a class entry that
+`hammer2_module_exit()` frees, while lockdep holds the class until the
+module's memory is released, so a class registered by anyone in that
+window read the freed name; `b181cd1` moves a pool class's name into
+module data beside its key. The claim rests on the report below and the
+code reading. No run since has driven the window, so the fix's effect
+is not read as a count.
+
+The report is in B's kernel log of `wire-run-20261026-223134`, built
+from `v1.0.4-640-g79c5b3a-dirty` on `h2kasan-7.3` (line 2149 of
+`wire-run-20261026-223134-b.klog` under `fixtures/`): `BUG: KFENCE:
+use-after-free read in strcmp+0x28/0x50`, called from
+`register_lock_class()` under `__mutex_lock()` in
+`fprobe_module_callback()`, a going notifier of `delete_module`. The
+object is `kfence-#57`, 64 bytes of `kmalloc-64`, allocated by
+`hammer2_lockdep_lookup()` from the sync thread's
+`hammer2_pfs_snapshot()` at 74.528 s and freed by
+`hammer2_module_exit()` 1.3 ms before the read. KASAN on the same
+kernel reports nothing, because neither the compare nor its caller is
+instrumented (`KASAN_SANITIZE_lockdep.o := n` at
+`kernel/locking/Makefile:14` and `KASAN_SANITIZE_string.o := n` at
+`lib/Makefile:31` of the 7.3 tree); KFENCE sees it by page protection,
+and only for the objects it samples.
+
+A sweep of the kernel logs kept under `fixtures/` found one KFENCE
+report in the 620 kept before the fix and none in the 34 kept between
+the fix and 2026-10-27 00:30. At one report in 620 logs, none in 34 is what the
+unfixed module would show too, so those numbers say nothing about the
+fix; they are the population the report came from.
+
+The row is 1.0.57.
