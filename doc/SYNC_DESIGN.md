@@ -493,11 +493,14 @@ copy, and the thread's pass-end flush writes the slave element alone.
 one the root `ipcluster` focus names; without one the live pass runs
 and copies nothing. The snapshot covers that element only, which is what
 a snapshot is in both trees. Two-master convergence stays
-`cluster-quorum.sh`'s and P8's, and one reading there is owed to the
-idle test: the thread's own flush of an element root does not refresh
-that element's blockset slot, so a second master's thread writing the
-source element would leave the idle test reading stale for up to the
-syncer's interval.
+`cluster-quorum.sh`'s and P8's. The thread's own flush of an element
+root does not refresh that element's blockset slot, which would leave
+the idle test reading stale if a second master's thread wrote the
+source element, but on two local masters no pass reaches the idle test:
+each thread's collect excludes its own element, the other alone cannot
+make a quorum of two, and `cluster-quorum.sh` with `H2_QUORUM_IDLE=40`
+read 19 passes, every one `noquorum` (18 with `EINPROGRESS`, the last
+with `ENOTCONN` at the unmount), and no idle test (1.0.62).
 
 **The frontend writes the slave element too.** A frontend write on the
 mounted cluster lands on both elements at once, so a pass whose snapshot

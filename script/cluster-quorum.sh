@@ -168,6 +168,9 @@ echo "reread-mount-rc $rc"
 ( cd /mnt/h2q/set && md5sum q* 2>/dev/null | LC_ALL=C sort ) > /tmp/q.sums
 echo "read-sums $(grep -c . /tmp/q.sums)"
 sync
+# IDLE=n holds the cluster mounted n seconds after the read-back, so each
+# thread's snapshot pass and idle test run several times on two masters.
+[ "${IDLE:-0}" -gt 0 ] && sleep "$IDLE"
 umount /mnt/h2q && echo "cluster-umount ok" || exit 1
 umount /mnt/h2b && umount /mnt/h2a || exit 1
 echo "threads-after $(ps -eo comm | grep -c '^h2nod')"
@@ -216,10 +219,11 @@ elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kern
 fi
 echo "scrapped $(dmesg | grep -c unmount_scrap)"
 dmesg | tail -40 > /tmp/q.log
+dmesg > /tmp/q.klog
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} sh /tmp/h2quorum.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=${H2_QUORUM_IDLE:-0} sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
 # The guest half's exit, read before anything is inferred from its output.
 # A non-zero that is not 124 means the guest or its session ended without
@@ -250,6 +254,10 @@ fi
 [ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
 scp -q "$GUEST_SSH:/tmp/q.sums" "$W/sums" >/dev/null 2>&1
 scp -q "$GUEST_SSH:/tmp/q.want" "$W/want" >/dev/null 2>&1
+# The guest's whole kernel log for the run, kept beside the images.
+STAMP=$(date +%Y%m%d-%H%M%S)
+scp -q "$GUEST_SSH:/tmp/q.klog" "$FIXDIR/quorum-run-$STAMP.klog" >/dev/null 2>&1 &&
+	echo "  kept  the guest's kernel log as $FIXDIR/quorum-run-$STAMP.klog"
 for d in vdb vdc; do
 	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
 	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
@@ -343,6 +351,18 @@ nda=$(grep -c '^data ' "$W/fp.a" || true)
 d=$(diff "$W/fp.a" "$W/fp.b" 2>/dev/null | grep -c '^[<>]' || true)
 [ "${d:-1}" = 0 ]; check "the two MASTERs match entry for entry and block for block" $? "${d:-none} line(s) differ of $(grep -c . "$W/fp.a" || true)"
 
+# The sync threads under debug 0x8000, per element, printed and not
+# checked. Each thread's collect excludes its own element, so the other
+# master alone cannot make a quorum of two: noquorum is expected on every
+# pass, and idle or idlestamp would be the idle test reached.
+K="$FIXDIR/quorum-run-$STAMP.klog"
+if [ -r "$K" ]; then
+	for i in 0 1; do
+		kc() { grep -c "$1 clindex $i" "$K"; }
+		echo "  read  clindex $i: pass $(kc 'syncsnap: pass') idle $(kc 'syncsnap: idle') idlestamp $(kc 'syncsnap: idlestamp') noquorum $(kc 'syncsnap: noquorum') flush $(kc 'sync_flush:') verified $(kc 'syncsnap: verified')"
+	done
+	echo "  read  thread inode updates $(grep -c 'syncthr: update inode' "$K")"
+fi
 echo "quorum: $checks check(s), $fail failed"
 [ "$fail" = 0 ] || exit 1
 exit 0
