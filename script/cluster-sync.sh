@@ -64,7 +64,21 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
-RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# H2_PASS_TREE=N replaces the phases with one question: what one
+# snapshot-form pass costs over a tree of N files when one file changed,
+# read against the thread's cadence of 5.12 s, which a commit acknowledged
+# by a pass would wait out (doc/CLUSTER_PROTOCOL_DESIGN.md, candidate 5).
+# The tree is written through the cluster, whose frontend writes both
+# elements, in H2_TREE_FANOUT directories by H2_TREE_WRITERS shells as
+# million-tree.sh writes it; then H2_PASS_CHANGES times one file is
+# rewritten on the master alone and the slave returned, and the thread's
+# next pass is read from its begin, pass, verdict and end lines.
+TREE=${H2_PASS_TREE:-0}
+TREE_FAN=${H2_TREE_FANOUT:-1000}
+TREE_WRITERS=${H2_TREE_WRITERS:-4}
+PASS_CHANGES=${H2_PASS_CHANGES:-3}
+if [ "$TREE" = 0 ]; then IMGSIZE=2G; RUNSECS=600; else IMGSIZE=8G; RUNSECS=14400; fi
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 # Release the volumes and detach them, safely.
 #
 # `virsh detach-disk --live` reaches a running guest as an ACPI eject:
@@ -140,6 +154,12 @@ H2DEBUG=${H2_DEBUG:-0x8000}
 # follows the module's own, so a run that sets neither reads what a user
 # gets; H2_SYNC_SNAPSHOT=0 is the negative control for the snapshot phase.
 H2SNAP=${H2_SYNC_SNAPSHOT:-1}
+# The tree arm times the snapshot pass by its begin and end lines, which
+# only that pass prints, under bit 0x8000.
+if [ "$TREE" != 0 ] && { [ "$H2SNAP" != 1 ] || [ $(( H2DEBUG & 0x8000 )) = 0 ] || [ $(( TREE % TREE_FAN )) != 0 ]; }; then
+	echo "cluster: COULD-NOT-RUN: H2_PASS_TREE needs H2_SYNC_SNAPSHOT=1, H2_DEBUG with 0x8000 and a count H2_TREE_FANOUT divides" >&2
+	exit 2
+fi
 MASTER=$FIXDIR/cluster-master.img
 SLAVE=$FIXDIR/cluster-slave.img
 W=$(mktemp -d) || exit 2
@@ -194,6 +214,9 @@ command -v nm >/dev/null 2>&1 || {
 want_asan=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config" 2>/dev/null)
 have_asan=$(nm -u "$KO" 2>/dev/null | grep -c '__asan' || true)
 have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
+# The release tree builds without kmemleak, and the tree arm's timing is
+# read there; a refused scan fails only where the tree configures one.
+want_kmemleak=$(sed -n 's/^CONFIG_DEBUG_KMEMLEAK=//p' "$KDIR/.config" 2>/dev/null)
 
 # The volumes are detached before they are recreated: a running guest's
 # qemu holds an image open, and a file replaced under it is a file it no
@@ -205,7 +228,7 @@ detach_disks || {
 	exit 2; }
 rm -f "$MASTER" "$SLAVE"
 for img in "$MASTER" "$SLAVE"; do
-	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
+	truncate -s $IMGSIZE "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
 		echo "cluster: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
 # Under H2_CRASH=1 the guest is destroyed and restarted mid-run, and a disk
@@ -429,6 +452,98 @@ mounts() { mount 2>/dev/null | grep -c ' type hammer2'; }
 # converged and was passing idle every five seconds.
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
 . /tmp/h2cluster-tail.sh
+
+# 7. H2_PASS_TREE=N, in place of every phase below: one snapshot-form pass
+# over a tree of N files with one file changed, timed. The change reaches
+# the slave only through the thread in phase 4b's shape: both mounts down,
+# the master written alone, the slave's device returned to the unmounted
+# cluster pmp, whose new thread's first pass carries it. A new thread's cut
+# is 0, which decides only whether a key the slave holds and the snapshot
+# lacks is kept, and here there is none. bracket() reads the first pass
+# that ends after line $1 of the log: the milliseconds from its begin to
+# its pass line (the stale delete, the snapshot and the target with its
+# sync), from there to its verdict (the verify rounds), and from the
+# verdict to its end (the snapshot's delete), then the verdict, the rounds
+# and the largest root scan's iteration count. A begin that a busy lock or
+# a refused snapshot closes without an end is passed over, so the reading
+# is the last begin before the first end.
+bracket() {
+	tail -n +$(($1 + 1)) $K | awk '
+	{ t = $0; sub(/^\[ */, "", t); sub(/\].*/, "", t) }
+	/syncsnap: begin clindex/ { b = t; p = ""; v = ""; w = "none"; r = 0; mx = 0; next }
+	b == "" { next }
+	/syncsnap: pass clindex/ && p == "" { p = t }
+	/^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters" && $(i + 1) + 0 > mx) mx = $(i + 1) + 0 }
+	/syncsnap: (verified|newer|unverified|interrupted) clindex/ && v == "" {
+		v = t; w = $0; sub(/.*syncsnap: /, "", w); sub(/ .*/, "", w)
+		r = $0; sub(/.* rounds /, "", r); sub(/ .*/, "", r) }
+	/syncsnap: end clindex/ {
+		if (p == "") p = t; if (v == "") v = t
+		printf "%d %d %d %d %s %s %d\n", (p - b) * 1000, (v - p) * 1000, (t - v) * 1000, (t - b) * 1000, w, r, mx
+		found = 1; exit }
+	END { if (!found) print "none" }'
+}
+if [ "$TREE" != 0 ]; then
+	mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
+	echo "space-start $(stat -f -c %f /mnt/h2m)"
+	hammer2 -s /mnt/h2m pfs-create CL >/dev/null 2>&1 || { echo "master pfs-create failed"; exit 1; }
+	clid=$(hammer2 -s /mnt/h2m pfs-list | awk '$3=="CL"{print $2}')
+	mount -t hammer2 /dev/vdb@CL /mnt/h2c || exit 1
+	mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+	hammer2 -s /mnt/h2s -t SLAVE -u "$clid" pfs-create CL >/dev/null 2>&1 || { echo "slave pfs-create failed"; exit 1; }
+	echo "cluster-thread $(ps -eo comm | grep -c '^h2nod-CL')"
+	# The tree, one shell per writer, each taking the directories congruent
+	# to its number, as million-tree.sh does. Each file is past the 512 bytes
+	# an inode embeds, so its content has a data block the fingerprint
+	# compares by xxh; embedded, only its size would be compared.
+	t0=$(date +%s)
+	mkdir /mnt/h2c/t
+	w=0; wp=
+	while [ $w -lt $TREE_WRITERS ]; do
+		( d=$w
+		while [ $d -lt $TREE_FAN ]; do
+			mkdir /mnt/h2c/t/d$d; f=0
+			while [ $f -lt $(( TREE / TREE_FAN )) ]; do printf '%s.%s %0600d\n' $d $f 0 > /mnt/h2c/t/d$d/f$f; f=$((f + 1)); done
+			d=$((d + TREE_WRITERS))
+		done ) &
+		wp="$wp $!"; w=$((w + 1))
+	done
+	# Only the writers: a bare wait also waits on the dmesg -w at KPID.
+	wait $wp
+	sync
+	echo "tree-write-seconds $(( $(date +%s) - t0 ))"
+	echo "tree-files $(find /mnt/h2c/t -type f | wc -l)"
+	# Settled once two idle lines follow the last idle stamp, as finish()
+	# reads the idle window, bounded by H2_TREE_SECS.
+	l1=$(wc -l < $K); n=0
+	idles() { tail -n +$((l1 + 1)) $K | awk '/syncsnap: idlestamp/ { n = 0 } /syncsnap: idle clindex/ { n++ } END { print n + 0 }'; }
+	until [ "$(idles)" -ge 2 ] || [ $n -ge "$TREE_SECS" ]; do sleep 1; n=$((n + 1)); done
+	echo "tree-settle-seconds $n"
+	echo "tree-settle-idles $(idles)"
+	echo "tree-snap-passes $(klog 'syncsnap: end clindex')"
+	c=1
+	while [ $c -le "$PASS_CHANGES" ]; do
+		timeout 600 umount /mnt/h2c; timeout 600 umount /mnt/h2s
+		echo "change-$c-threads-down $(ps -eo comm | grep -c '^h2nod-CL')"
+		mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "master-alone mount failed"; exit 1; }
+		# The same length as the file it replaces, so only the block's xxh
+		# tells the two apart.
+		printf '%s.%s %0600d\n' $c $c $c > /mnt/h2c/t/d$c/f$c
+		sync
+		timeout 600 umount /mnt/h2c
+		l0=$(wc -l < $K); e0=$(klog 'syncsnap: end clindex')
+		mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
+		n=0
+		until [ "$(klog 'syncsnap: end clindex')" -gt "$e0" ] || [ $n -ge "$TREE_SECS" ]; do sleep 1; n=$((n + 1)); done
+		echo "change-$c-wait-seconds $n"
+		echo "change-$c-pass $(bracket $l0)"
+		c=$((c + 1))
+	done
+	echo "tree-errors $(klog 'hammer2_sync_slaves: error')"
+	mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "resume mount failed"; exit 1; }
+	finish
+	exit 0
+fi
 
 # 1. A lone SLAVE: start, pass, stop.
 timeout 30 mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
@@ -901,7 +1016,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900}"
+GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -1016,7 +1131,7 @@ fi
 if [ "$rc" = 124 ]; then
 	scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-hang-$(date +%Y%m%d-%H%M%S).klog" 2>/dev/null
 	detach_disks
-	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s; its kernel log is kept beside the images as cluster-hang-*.klog"
+	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-$RUNSECS}s; its kernel log is kept beside the images as cluster-hang-*.klog"
 	exit 1
 fi
 # The guest's kernel log carries the pass's own records -- the filekeys
@@ -1038,6 +1153,28 @@ check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
 }
+if [ "$TREE" != 0 ]; then
+# The tree arm's reading is each changed pass's time against the cadence,
+# printed rather than checked: a pass past 5120 ms is the finding the arm
+# exists for, not a harness failure. What is checked is that the reading
+# is of the shape it claims: the whole tree written, the thread idle on it
+# before the change, the slave element gone while the master was written,
+# and a pass that verified.
+echo "  raw   tree files=$(val tree-files) write-s=$(val tree-write-seconds) settle-s=$(val tree-settle-seconds) idles=$(val tree-settle-idles) snapshot-passes=$(val tree-snap-passes)"
+a=$(val cluster-thread); [ "${a:-0}" = 1 ]; check "the SLAVE in a cluster starts one thread" $? "${a:-0}"
+a=$(val tree-files); [ "${a:-0}" = "$TREE" ]; check "the tree holds its $TREE files" $? "${a:-none} in $(val tree-write-seconds) s by $TREE_WRITERS writer(s)"
+a=$(val tree-settle-idles); [ "${a:-0}" -ge 2 ] 2>/dev/null; check "the thread is idle on the tree before the change" $? "${a:-none} idle pass(es) after $(val tree-settle-seconds) s"
+c=1
+while [ $c -le "$PASS_CHANGES" ]; do
+	a=$(val change-$c-threads-down); [ "${a:-1}" = 0 ]; check "change $c: the slave element leaves while the master is written" $? "${a:-none} thread(s)"
+	set -- $(val change-$c-pass)
+	[ "${5:-none}" = verified ]; check "change $c: the thread's next pass verifies" $? "${5:-none} after $(val change-$c-wait-seconds) s"
+	echo "  read  change $c: ${4:-none} ms against 5120 (snapshot and target ${1:-none}, verify ${2:-none} in ${6:-none} round(s), delete ${3:-none}), largest scan ${7:-none} iterations"
+	c=$((c + 1))
+done
+a=$(val tree-errors); [ "${a:-1}" = 0 ]; check "no pass reports an error" $? "${a:-none}"
+grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
+else
 t=$(val lone-thread)
 case "$t" in I*|S*) r=0 ;; *) r=1 ;; esac; check "lone SLAVE's thread exists and sleeps idle" $r "state '${t:-none}'"
 p=$(val lone-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "it passes every five seconds" $? "${p:-0} passes in 12 s"
@@ -1153,6 +1290,7 @@ p=$(val resume-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the resumed thre
 # settle counter is 10 consecutive seconds with no new update-inode line; the
 # bound is H2_RESUME_SECS (300) and a run that hits it did not converge.
 s=$(val resume-settled); [ "${s:-0}" -ge 10 ] 2>/dev/null; check "the resumed thread stops advancing rather than being cut off" $? "settled ${s:-none} s after $(( $(val resume-updates) )) updates in $(val resume-converge-seconds) s"
+fi
 # The snapshot pass: every pass that took a snapshot verified against it,
 # the target snapshot was on the slave's device while the pass was
 # interrupted, an idle master costs idle passes and no snapshot, and once
@@ -1170,10 +1308,12 @@ if [ "$H2SNAP" = 1 ]; then
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
 	[ -n "$mt" ] && [ "$mt" = "$st" ]; check "the slave root's tid agrees with the master's once idle" $? "master ${mt:-none} slave ${st:-none}, after $(val snap-idlestamp) idle stamp(s)"
 fi
+if [ "$TREE" = 0 ]; then
 if [ $(( H2DEBUG & 1 )) = 1 ]; then
 	w=$(val write-destroys); [ "${w:-1}" = 0 ]; check "no pass destroys on the slave while the master is being written" $? "${w:-none} destroy(s) inside the write"
 fi
 e=$(val resume-errors); [ "${e:-1}" = 0 ]; check "no pass reports an error across the interruption" $? "${e:-none}"
+fi
 echo "  raw   space start=$(val space-start) end=$(val space-end) after-bulkfree=$(val space-after-bulkfree) bulkfree-rc=$(val space-bulkfree-rc-1)/$(val space-bulkfree-rc-2) free blocks of the master's device, snapshot passes $(val snap-passes)"
 s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
@@ -1195,7 +1335,7 @@ g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned
 c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 case "$l" in
 0) [ "$c" = $((1 + ${H2_CRASH:-0})) ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
-unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
+unusable) if [ "$want_kmemleak" != y ]; then echo "  note  the kernel tree configures no kmemleak, so this run takes no leak reading"; else check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on"; fi ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
 esac
@@ -1209,11 +1349,16 @@ for img in "$MASTER" "$SLAVE"; do
 	"$FSCK" "$img" > "$W/fsck.$b" 2>&1
 	s=$?
 	check "fsck_hammer2 $b" $s "exit $s"
+	"$FSCK" -b "$img" > "$W/fsck-best.$b" 2>&1
 done
-# fsck prints a running total as it walks; the last one is the volume's.
+# The totals come from the best zone alone, fsck -b, whose last running total
+# is that zone's. The walk above covers all four headers, and an older one
+# still holds the tree a pass's snapshot was in. MEASURED 2026-10-27: a tree
+# run with no write after its last pass left zone 3 at twice the inodes of
+# the best zone, which matched the slave.
 last() { grep -o '([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)' "$1" | tail -1; }
-m=$(last "$W/fsck.cluster-master.img" | sed 's/ [0-9]* indirect,//')
-v=$(last "$W/fsck.cluster-slave.img" | sed 's/ [0-9]* indirect,//')
+m=$(last "$W/fsck-best.cluster-master.img" | sed 's/ [0-9]* indirect,//')
+v=$(last "$W/fsck-best.cluster-slave.img" | sed 's/ [0-9]* indirect,//')
 [ -n "$m" ] && [ "$m" = "$v" ]; check "the slave holds what the master holds" $? "master $m, slave $v; indirect blocks are left out, the slave's being built in insertion order"
 
 # The fingerprint of the cluster's PFS, from the line naming it to the
@@ -1226,7 +1371,7 @@ nd=$(grep -c '^data ' "$W/fp.master")
 # The interruption phase leaves its large directory on both volumes, so the
 # fingerprint's expected count is the set's 35, bigdir's NBIG, bigdir2's NBIG2 and
 # the marked set's 20 (20 made, 10 deleted and 10 new during the pass).
-want_files=$((35 + NBIG + NBIG2 + 20))
+want_files=$((35 + NBIG + NBIG2 + 20)); [ "$TREE" = 0 ] || want_files=$TREE
 [ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
 # The thread's per-pass snapshot must be gone from both devices after a clean

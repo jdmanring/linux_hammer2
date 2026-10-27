@@ -839,7 +839,13 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	 * A snapshot a crash left behind.  XXX Linux: a remote master deletes
 	 * its own stale one at the snapshot request, and here nothing of the
 	 * name is in memory to find.
+	 *
+	 * The begin and end lines bracket the snapshot form, from here to the
+	 * snapshot's delete, so its cost is read from the log's timestamps
+	 * against the thread's cadence.
 	 */
+	if (hammer2_debug & 0x8000)
+		kprintf("syncsnap: begin clindex %d\n", idx);
 	error = hammer2_dev_is_conn(pmp->pfs_hmps[m]) ? ENOENT :
 	    hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
 	    HAMMER2_PFSDEL_TRYLOCK);
@@ -1040,6 +1046,8 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	 * master's media, 40039 inodes counted twice.
 	 */
 	thr->snap_left = derror ? m + 1 : 0;
+	if (hammer2_debug & 0x8000)
+		kprintf("syncsnap: end clindex %d\n", idx);
 
 	return (error);
 }
