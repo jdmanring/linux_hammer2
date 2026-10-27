@@ -18914,6 +18914,17 @@ was a coincidence of size and kernel. A line through the two release
 means, 3045 and 32843 ms, crosses 5120 ms near 160,000 files on this
 guest; that is an estimate from two sizes and is not a reading.
 
+The four klogs also carry a print no debug bit gated,
+`indirect_maint: move sub`, one line per child an indirect block's
+collapse moves: 7592 of 49891 lines in `022323`, 93182 of 594170 in
+`023051`, 8470 of 35924 in `024915` and 94568 of 520066 in `032344`. A
+console that floods measures itself, so the timed passes were read for
+it: from the first `begin` of the three timed passes to the end of each
+klog the count is 0 in all four, and every line falls in the tree's
+write. The times above carry no cost of it. It is gated on 0x4000 at
+`a18c929`, beside the collapse's entry print, which `ed32d24` gated for
+the same flood.
+
 The million-file run also found a defect in the harness. Its totals
 check read `100092 inode, 99984 data, 104000 dirent` on both images and
 passed: `fsck_hammer2` cuts each running total to the width of a
@@ -18941,3 +18952,161 @@ and the launchers' logs are `p8-notes/tree-million-20261027-023051.log`,
 `p8-notes/tree-million-20261027-032344.log` beside them.
 
 The row is 1.0.60.
+
+## Siblings of corrected defects, swept by class, 2026-10-27
+
+What this entry claims: the defect classes the port had corrected since
+2026-09-20 were each searched for further instances in `src/`, and the
+search found twenty sites in six commits. They are one print of the
+port's own (`a18c929`); three allocator checks DragonFly makes and the
+FreeBSD port dropped, and three recovery sites DragonFly shares
+(`b23b219`); three reads of an inode's data after a failed read and a
+loop and a jump in the span update (`746bcca`); one loop (`72dc5d8`);
+one wait (`26590c1`); and in `ce1dfe2`, four more reads after a failed
+read, a snapshot modify upstream asserts, and the PFS create's error
+returned to userland unconverted. Sixteen of the twenty are upstream's
+own. Every site rests on the code reading below. None of the new error
+paths has been driven, since no instrument here fails
+`hammer2_io_new()` inside an allocation or makes an inode unreadable on
+demand; the success paths they sit on are what the fleet gates run.
+
+The population was the 218 commits touching `src/` whose committer date
+is on or after 2026-09-20 00:00, up to `a97cb0b`, grouped by the shape
+of what each fixed, and the older ones read by subject for a shape not
+already covered. Each search's candidate set was read site by site; a
+search that could miss its own class was first run against the parent
+of the commit that fixed the class, and had to flag the fixed site. An
+independent review of the first five commits found six of the twenty
+sites, corrected four claims of this entry and three commit messages,
+and the messages were reworded before any push.
+
+A write or read through `chain->data` after a call that can leave it
+NULL. `4cedfc3` guarded the freemap scan after a failed
+`hammer2_chain_modify()`, which returns with `chain->data` NULL when
+`hammer2_io_new()` cannot give the new block (`hammer2_getblk_new()`,
+on an allocation failure or a larger folio whose read failed). The
+allocator's three modify calls dropped their error as the FreeBSD port
+does, where DragonFly reads it (`hammer2_freemap.c` 333, 368 and 392
+upstream). The first, on a leaf just created, then zeroed the leaf
+through the pointer; the other two reach the bitmap scan, whose guard
+from `4cedfc3` kept it off the pointer and let the leaf read as full.
+The recovery pass carried upstream's "XXX handle error" after creating
+a leaf, so a failed create left `chain` NULL and a failed modify left
+its data NULL before both were read, and its modify of an existing leaf
+discarded the error the same way: `b23b219`.
+
+Two other `hammer2_chain_modify()` calls are followed by
+`KKASSERT(error == 0)` and a read of the data, in the PFS create and
+the snapshot ioctls. The PFS create's holds: it runs under the
+super-root's flush transaction, so the chain
+`hammer2_inode_create_pfs()` has just modified stays modified and the
+second modify allocates nothing. The snapshot's does not: its
+transaction is the source PFS's, `hammer2_trans_init()` interlocks per
+PFS (`hammer2_flush.c` 91 to 130), and a device sync can flush the new
+chain after the create unlocks it, so the modify allocates and can
+fail. The snapshot fails there now, with the PFS created and empty
+(`ce1dfe2`). `hammer2_chain_rename_obref()`'s bare call is reached only
+with a parent its two callers have already modified and checked
+(`hammer2_chain.c` 3867 and 4307); whether a failed indirect create
+inside `hammer2_chain_rename()` can leave it inserting into a full
+blockmap was not traced.
+
+Reads of an inode's data with no test, which is NULL after an I/O error
+(`hammer2_chain_load_data()`; a check failure sets an error and keeps
+the data). The PFS search by label, the recovery scan, which visits
+every inode under the volume root, and `hammer2_update_spans()`,
+`746bcca`; the label search now stops at an unreadable inode, the mount
+is refused with `EINVAL` by the chain error after the loop, and an
+unreadable inode in another label's hash range refuses that label's
+mount too, where it faulted before. `hammer2_chain_dirent_test()`, under
+every name lookup, unlink, rename and PFS lookup;
+`hammer2_checkpath()`; and the PFS create's and the snapshot's relock of
+the new root after its flush, which leaves it unmodified so the unlock
+drops its data, with the snapshot's relocked source root beside them,
+`ce1dfe2`. The dirent test now matches no unreadable chain, since the
+rename's loop deletes every chain it matches without testing the
+chain's error; a name whose entry cannot be read then reads as absent,
+an `ENOENT` where the read's `EIO` has no way out, since
+`hammer2_chain_lookup()` sets its error for the parent only.
+
+A loop over chains whose `continue` skips the advance at its bottom.
+`hammer2_update_spans()` skipped a non-inode that way, and
+`hammer2_fixup_pfses()`, run on every read-write mount with the
+super-root inode locked, has the same loop: `72dc5d8`. A non-inode leaf
+there needs media whose checks pass, since its blockref sits beneath
+the volume header's.
+
+A jump past an unlock. `hammer2_update_spans()` jumped to its exit
+past the super-root inode's unlock when the inode had no chain,
+`746bcca`. The search covered inode, mutex, spin and `lk` locks and
+`mutex_lock()`, and found no other; chain locks were not searched,
+since their variables are reassigned along the walks.
+
+A wait with no exit. `b8a98ea` bounded `hammer2_thr_wait()` after an
+unmount waited on a sync thread that had faulted before setting
+`HAMMER2_THREAD_FROZEN`. `hammer2_thr_wait_neg()`, the unmount's wait
+for that bit to clear, kept the unbounded loop: `26590c1`. Its bound
+counts tries, each a wake or a sleep of at most a minute. The other
+sleeps are a lock's own wait, the frozen thread's sleep, which the
+unfreeze ends, and upstream's retry loops on the sync queue.
+
+An error the VFS boundary misreads. `hammer2_vfs_errno()` only negates,
+so a core error passed through reaches userland as another errno.
+`hammer2_ioctl_pfs_create()` alone of the file's ioctl bodies returned
+the core's error unconverted, so a full volume's
+`HAMMER2_ERROR_ENOSPC`, 0x20, read as `EPIPE`: `ce1dfe2`. The other
+bodies that return `error` raw assign errnos to it.
+
+An ungated print per element. The kept klogs ranked by message, the
+newest 200 of 686, put `syncsnap: kept`, `sync_insert: focus`, the
+`H2 SERVE` and `H2 REMOTE` lines, `syncthr: update inode` and
+`indirect_maint: move sub` above 100,000 lines each; all but the last
+sit under a debug bit, and it is gated at `a18c929`. `ipdep wait` in
+`hammer2_xop_start_except()` prints per contended wait: 256 lines in
+the kept klogs, the most in one run 103 on 2026-10-14 and at most 2 in
+any run after 2026-10-19. It is a bounded diagnostic and stays.
+
+Classes searched and found closed, each by a reason read in the code:
+a shift past its operand's width (`ab9513f`, `b77d30f`): the peer's
+`keybits` and radix are bounded before use (`hammer2_remote.c` 1684,
+1745 and 1812) and the freemap's mask shifts stop below 64; a copy
+sized by the wrong operand (`29edf24`): every bounded copy's two sides
+are declared the same size; a block taken at its folio's start
+(`9d9c27c`): the device sites offset into the folio, the volume header
+copies sit on 2 GiB boundaries a folio cannot cross, and the file
+mapping's folios run from order 0 to one 64 KiB block
+(`hammer2_mapping_set_block_folios()`), naturally aligned, so a folio
+at least a logical block long starts at that block, and a logical block
+under 64 KiB is the single block of a file under 64 KiB, at offset 0; a
+folio zeroed while the core reads it for writeback (`a1cc133`): every
+zeroing of a file folio waits for stable pages under its lock, or zeroes
+a folio not uptodate, which cannot be under writeback; a free sized
+differently from its allocation (`e5f28ae`): the size reaches only the
+`HAMMER2_MALLOC` accounting, since `kvfree()` takes none, and was not
+searched site by site; a name handed to lockdep or a cache that
+outlives its memory (`b181cd1`): every lock and cache is named by a
+literal; a pointer kept on a kdmsg state (`35e3ca2`): the keepalive's
+`rm` outlives every state and its work is disabled before the free; an
+assertion of a runtime condition in the port's own files (`268b69f`):
+those left state the `M_WAITOK` contract, which maps to
+`__GFP_NOFAIL`, and no caller passes `M_NOWAIT`.
+
+One candidate is left open. A blockref's radix is six bits of its
+`data_off`, and the carried core shifts an `int` or `unsigned` by it
+(`hammer2_chain.c` 187, `hammer2_io.c` 218 and 1291,
+`hammer2_strategy.c` 1354), with no range check on a radix read from
+media anywhere in the tree; DragonFly is the same. A radix of 32 to 63
+is undefined there. It reaches those lines only from a block whose
+parent's check passes, so from crafted media, which `fuzz-mount.sh`
+cannot make since it never recomputes a check. It stays a `candidate`
+until an image carrying such a radix is mounted under UBSAN.
+
+The fleet gates were run on a module built from `ce1dfe2` with `src/`
+clean, on the guest's lockdep kernel, their output kept as
+`p8-notes/fleet-siblings-20261027-063203.log`: `test-fixtures.sh`
+read 11 images, 43 files and 100 ioctl results with 0 failures and
+lockdep enabled throughout, and `test-enospc.sh` filled 2G with 0
+failures, 0 kernel warnings and 0 module faults after its run marker.
+Both run the allocator's success path, the mount by label and the
+read-write fixup; neither drives a failed modify, a failed inode read
+or a frozen thread that never thaws.
