@@ -249,7 +249,8 @@ RETYPE=${H2_WIRE_RETYPE:-0}
 # B's reply path ends the link with its own line, read as the cell's one HM2
 # line; trail prints which of four things its copy did on B: ended the
 # link, nothing, a refusal as not a proxy, or a KASAN report in
-# hammer2_rcall_reply.  A late copy no reuse reached makes the run void.
+# hammer2_rcall_reply.  A late copy no later scanall call met makes the
+# run void.
 #
 # H2_WIRE_SEQ=control builds B with HAMMER2_NOCLIENTSEQ, under loss, dup
 # or late: with the tag, the index and the close's count unchecked the
@@ -1245,10 +1246,10 @@ power_on() {
 	wait_ssh "$cg" "$cs"; to_guest "$cg" "$cs"; to_scripts "$cs"
 }
 # A protocol cell's fault: the relay's line for it, a mark in B's log at
-# once, then 10 s, or 60 s for late's reuse, for B's own end of the link,
-# which only a check on B makes; failing it the relay hangs the pair up, as
-# nothing else would end a link left up, except under the control, whose
-# link is read up.
+# once, then 10 s, or 60 s for late's next scanall call, for B's own end
+# of the link, which only a check on B makes; failing it the relay hangs
+# the pair up, as nothing else would end a link left up, except under the
+# control, whose link is read up.
 fault_wait() {
 	tr=$FIXDIR/wire-run-$stamp.trace
 	n=0; until grep -q " $FAULT t=" "$tr" || [ $n -ge 2400 ]; do sleep 0.1; n=$((n + 1)); done
@@ -1497,14 +1498,23 @@ elif [ "$SEQ" = control ]; then
 	case $CUT in
 	loss) enp=0;;
 	dup) enp=1;;
-	late) if [ -z "$kc" ] || [ -z "$kn" ]; then enp=void; elif [ "$(expr "x$kn" \> "x$kc")" = 1 ]; then enp=0; else enp=1; fi;;
+	# the copy is refused unless it is in the new call's range, and then
+	# the call's own first feed unless its key is above the copy's
+	# (hammer2_remote.c's feed loop); a call that feeds nothing of its own
+	# leaves the copy its only frame
+	late) kr=$(sed -n 's/.* late-copy t=[0-9]* key=[0-9a-f]* inrange=\([01]\).*/\1/p' "$tr" 2>/dev/null | head -1)
+		lm=$(sed -n 's/.* msgid=\([0-9]*\) late-copy .*/\1/p' "$tr" 2>/dev/null | head -1)
+		lf=$(awk -v m="msgid=$lm" '/ late-copy / { s = 1 } s && index($0, m " open ") { sub(/.*call=/, ""); c = $1 } c != "" && index($0, " close ") && index($0, " call=" c " ") { sub(/.*feeds=/, ""); print $1; exit }' "$tr" 2>/dev/null)
+		if [ -z "$kc" ]; then enp=void; elif [ "$kr" != 1 ]; then enp=1; elif [ -n "$kn" ]; then [ "$(expr "x$kn" \> "x$kc")" = 1 ] && enp=0 || enp=1; elif [ "$lf" = 0 ]; then enp=0; else enp=void; fi;;
 	esac
 	if [ "$enp" = void ]; then
-		VOID="late's copy met no scanall call on its msgid (late-unspent $(grep -c '^late-unspent ' "$tr" 2>/dev/null), copy key ${kc:-none}, new key ${kn:-none})"
+		VOID="late's copy met no scanall call after the fault, or that call's own feeds went unread (late-unspent $(grep -c '^late-unspent ' "$tr" 2>/dev/null), copy key ${kc:-none}, new key ${kn:-none}, the new call's feeds ${lf:-unread})"
 	else
 		[ "$(num "$(val B cut-up-notproxy)" -1)" = "$enp" ] && [ "$(num "$(val B cut-up-hm2)" -1)" = "$enp" ] && [ "$(num "$(val B cut-up-ending)" 1)" = 0 ] && [ "$(num "$(val B cut-up-detached)" 1)" = 0 ] && [ "$(val H fault-first)" = timeout ] && [ "$(num "$nh" 1)" = 0 ] && [ "$(num "$nbc" 0)" = 1 ] && [ "$ce" = 0 ] && [ "$(num "$cafter" 0)" -ge 1 ]; check "control: with the sequence checks off the $CUT fault is taken and the link stays up past it" $? "not a proxy $(val B cut-up-notproxy) of $enp, HM2 lines $(val B cut-up-hm2) ($(val B cut-up-hm2-text)), ending the link $(val B cut-up-ending), detached $(val B cut-up-detached), first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), B's pairs $(num "$nbc" 0), the cut call's close error ${ce:-unread}, calls after $(num "$cafter" 0), keys copy ${kc:--} new ${kn:--}; verdict $(val B cut-up-verdict) after $(val B cut-up-seconds) s"
 	fi
-	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "control: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
+	# a fault the slave took leaves it unequal to the master under a verified
+	# pass; printed, as the verdict is
+	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "control: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb; fingerprint lines only on A $(diff "$W/fp.a" "$W/fp.b" | grep -c '^<'), only on B $(diff "$W/fp.a" "$W/fp.b" | grep -c '^>')"
 elif [ -n "$CUT" ]; then
 	# Where the cut fell: in a scanall call from the Kth on, with 2 to 15
 	# feeds, after the pass read its snapshot and before any verdict; under
@@ -1525,7 +1535,8 @@ elif [ -n "$CUT" ]; then
 	# A protocol cell ends the link on B with the one line its check prints,
 	# so B's reader ends the pair and no hangup follows; trail's copy may
 	# instead find its state gone and do nothing, outcome (a), which only
-	# the hangup ends. Late's copy meeting no reuse makes the run void.
+	# the hangup ends. Late's copy meeting no later scanall call makes the
+	# run void.
 	pa=0
 	if [ "$PROTO" = 1 ]; then
 		case $CUT in

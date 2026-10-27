@@ -1046,11 +1046,12 @@ rename_snapdel(struct frame *f)
  * feed and sends the close, dup sends the feed twice and then the close, and
  * reorder sends the close before the feed.  late sends the feed and the
  * close as they came and keeps a copy of the feed, delivered to B right
- * after B's next scanall CREATE on the same msgid, a reuse the kernel makes
- * once the state is freed; the copy is then the new call's first frame.  A
- * reuse by another XOP is traced late-other and keeps the copy, and a copy
- * the pair ends holding is traced late-unspent.  Every SNAPSHOT request of
- * B's is traced, so a trace reads which pass the fault fell in.
+ * after B's next scanall CREATE with its msgid rewritten to that call's and
+ * its header CRC computed again, so the copy is the new call's first frame.
+ * That is the frame a reuse of the msgid would carry; waiting for the
+ * kernel to reuse the state's address left the copy unspent on both guest
+ * kernels.  A copy the pair ends holding is traced late-unspent.  Every
+ * SNAPSHOT request of B's is traced, so a trace reads which pass the fault fell in.
  */
 #define CUT_NCALL	8	/* scanall calls in flight at once; the pass has one */
 static struct cut_call {
@@ -1117,21 +1118,29 @@ cut_scan(struct side *from, struct side *to, struct frame *f, long i,
 			trace("%s>%s i=%ld msgid=%" PRIu64 " snapshot t=%ld\n",
 			    from->name, to->name, i, f->hdr.msgid, t);
 		}
-		if (late_copy && f->hdr.msgid == late_msgid) {
-			if ((c & 0x00FFFF00U) != 0x00201600U) {
-				trace("%s>%s i=%ld msgid=%" PRIu64 " late-other idx=%u"
-				    " t=%ld\n", from->name, to->name, i, f->hdr.msgid,
-				    ((c >> 8) & 0xFF) - 0x10, t);
-			} else {
-				/* B's CREATE went out before the copy is queued */
-				trace("%s>%s i=%ld msgid=%" PRIu64 " late-copy t=%ld"
-				    " key=%016" PRIx64 "\n", to->name, from->name, i,
-				    f->hdr.msgid, t, cut_key(late_copy));
-				fflush(tracef);
-				side_enqueue(from, late_copy, due);
-				late_copy = NULL;
-				late_newkey = 1;
+		if (late_copy && (c & 0x00FFFF00U) == 0x00201600U) {
+			/* the request's key_beg and key_end, dmsg_hm2_xop, and
+			 * the scanall range test of hammer2_remote_in_range() */
+			uint64_t kb = 0, ke = 0, kc = cut_key(late_copy), last;
+			unsigned bits = late_copy->ext_len > 3 ?
+			    late_copy->ext[3] : 64;
+
+			if (f->ext_len >= 40) {
+				memcpy(&kb, f->ext + 24, sizeof(kb));
+				memcpy(&ke, f->ext + 32, sizeof(ke));
 			}
+			last = bits > 63 ? kc : kc | ((UINT64_C(1) << bits) - 1);
+			/* B's CREATE went out before the copy is queued */
+			trace("%s>%s i=%ld msgid=%" PRIu64 " late-copy t=%ld"
+			    " key=%016" PRIx64 " inrange=%d from=%" PRIu64 "\n",
+			    to->name, from->name, i, f->hdr.msgid, t, kc,
+			    bits <= 63 && kc <= ke && last >= kb, late_msgid);
+			fflush(tracef);
+			late_copy->hdr.msgid = late_msgid = f->hdr.msgid;
+			resign(late_copy);
+			side_enqueue(from, late_copy, due);
+			late_copy = NULL;
+			late_newkey = 1;
 		}
 		if ((c & 0x00FFFF00U) != 0x00201600U || !cut_armed)
 			return (0);
