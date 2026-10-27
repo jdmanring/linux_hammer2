@@ -768,12 +768,14 @@ hm2)
 	echo "cut-hm2-verdicts $(kl | awk -v v="$V" '/hammer2: HM2 / { h = 1; exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print h ? n + 0 : "none" }')"
 	;;
 up)
-	# the link left up past the fault: the pass's verdict after the mark,
-	# bounded, and what B said of the link by then
-	nv() { kl | awk -v v="$V" '/h2wire fault seen/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }'; }
+	# the link left up past the fault: the faulted pass's verdict, bounded,
+	# and what B said of the link by then; read from the pass's snapshot,
+	# which the placement check puts before the fault, since the mark can
+	# trail the verdict
+	nv() { kl | awk -v v="$V" '/syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }'; }
 	n=0; until [ "$(nv)" -ge 1 ] || [ $n -ge 240 ]; do sleep 1; n=$((n + 1)); done
 	echo "cut-up-seconds $n"
-	echo "cut-up-verdict $(kl | awk -v v="$V" '/h2wire fault seen/ { s = 1 } s && $0 ~ v { sub(/.*syncsnap: /, ""); print $1; exit }')"
+	echo "cut-up-verdict $(kl | awk -v v="$V" '/syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { sub(/.*syncsnap: /, ""); print $1; exit }')"
 	echo "cut-up-ending $(klog 'ending the link')"
 	echo "cut-up-detached $(klog "$D")"
 	echo "cut-up-notproxy $(klog 'not a proxy')"
@@ -1542,7 +1544,7 @@ elif [ -n "$CUT" ]; then
 		else to=other; fi
 		[ "$CUT" = trail ] && echo "  trail-outcome $to"
 		if [ "$CUT" = late ] && grep -q '^late-unspent ' "$tr" 2>/dev/null; then
-			VOID="late's copy met no scanall call on its msgid before the pair ended"
+			VOID="late's copy met no scanall call after the fault before the pair ended"
 		else
 			[ "$to" != other ] && [ "$nk" = 0 ] && [ "$np" = 0 ]; check "$CUT: B ends the link at the fault with the one line its check prints$([ "$CUT" = trail ] && echo ", or the copy does nothing and the relay hangs the pair up")" $? "outcome $to: HM2 lines $(val B cut-hm2) ($(val B cut-hm2-text)) of \"$el\", first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), not a proxy $np, KASAN reports $nk of which in hammer2_rcall_reply $nkr, late keys $(sed -n 's/.* late-\(copy\|new\) t=[0-9]* key=/\1 /p' "$tr" 2>/dev/null | tr '\n' ' ')"
 		fi
