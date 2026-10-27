@@ -94,14 +94,29 @@ static_assert(!IS_ENABLED(CONFIG_HIGHMEM),
 	      "hammer2 assumes a permanently mapped page cache");
 
 /*
- * Page cache index of the 64 KiB folio holding device offset `pbase`
- * relative to the volume's start.  pbase is HAMMER2_PBUFSIZE-aligned,
- * so the index is aligned to the folio order the mapping enforces.
+ * Page cache index of device offset `pbase` relative to the volume's
+ * start.  pbase is HAMMER2_PBUFSIZE-aligned, so the index is aligned to
+ * the folio order the mapping enforces as its minimum.
  */
 static inline pgoff_t
 hammer2_io_index(hammer2_io_t *dio)
 {
 	return (pgoff_t)((dio->pbase - dio->dbase) >> PAGE_SHIFT);
+}
+
+/*
+ * Byte offset of the dio's block inside its folio.  set_blocksize() sets
+ * the mapping's folio orders to the block's and up to
+ * MAX_PAGECACHE_ORDER (mapping_set_folio_min_order()), and read-ahead
+ * builds folios past the minimum, so a block can sit anywhere inside a
+ * larger, naturally aligned folio.  Taking the folio's start as the
+ * block's handed the core another block's bytes, which failed its check
+ * code, once a remount had refilled the cache by read-ahead.
+ */
+static inline size_t
+hammer2_io_foff(hammer2_io_t *dio, struct folio *folio)
+{
+	return (offset_in_folio(folio, (loff_t)(dio->pbase - dio->dbase)));
 }
 
 static inline struct address_space *
@@ -132,6 +147,8 @@ hammer2_io_mapping(hammer2_io_t *dio)
 static int
 hammer2_io_folio_check(hammer2_io_t *dio, struct folio *folio)
 {
+	if (folio_size(folio) > (size_t)dio->psize)
+		hammer2_io_large_folios++;	/* Linux: unlocked, a diagnostic */
 	if (likely(folio_size(folio) >= (size_t)dio->psize))
 		return (0);
 
@@ -385,8 +402,12 @@ hammer2_io_buf_put(hammer2_io_t *dio, char *buf)
 	    __filemap_get_folio(mapping, index,
 	    FGP_LOCK | FGP_ACCESSED | FGP_CREAT, hammer2_io_gfp(dio));
 	memalloc_nofs_restore(nofs);
-	if (!IS_ERR(folio) && hammer2_io_folio_check(dio, folio) == 0) {
-		memcpy(folio_address(folio), buf, dio->psize);
+	/* the rest of a larger folio not uptodate is not this block's to validate */
+	if (!IS_ERR(folio) && hammer2_io_folio_check(dio, folio) == 0 &&
+	    (folio_size(folio) == (size_t)dio->psize ||
+	    folio_test_uptodate(folio))) {
+		memcpy(folio_address(folio) + hammer2_io_foff(dio, folio), buf,
+		    dio->psize);
 		folio_mark_uptodate(folio);
 		folio_unlock(folio);
 		folio_mark_dirty_lock(folio);
@@ -516,6 +537,17 @@ hammer2_getblk_new(hammer2_io_t *dio, int zero)
 	if (IS_ERR(folio))
 		return (int)-PTR_ERR(folio);	/* the core's errnos are positive */
 	error = hammer2_io_folio_check(dio, folio);
+	/*
+	 * Linux: a grab creates a folio of the minimum order, so a larger one
+	 * is read-ahead's and holds other blocks; marking it uptodate after
+	 * a failed read would hand them out as read.
+	 */
+	if (error == 0 && folio_size(folio) > (size_t)dio->psize &&
+	    !folio_test_uptodate(folio)) {
+		WARN_ONCE(1, "hammer2: block %016llx inside a folio that failed its read\n",
+		    (unsigned long long)dio->pbase);
+		error = EIO;
+	}
 	if (error) {
 		/* grab returns it locked, and it never became uptodate. */
 		folio_unlock(folio);
@@ -523,7 +555,8 @@ hammer2_getblk_new(hammer2_io_t *dio, int zero)
 		return (error);
 	}
 	if (zero)
-		folio_zero_range(folio, 0, dio->psize);
+		folio_zero_range(folio, hammer2_io_foff(dio, folio),
+		    dio->psize);
 	folio_mark_uptodate(folio);
 	folio_unlock(folio);
 	dio->folio = folio;
@@ -862,7 +895,8 @@ hammer2_io_data(hammer2_io_t *dio, hammer2_off_t lbase)
 
 	if (dio->buf)	/* Linux: the block the page cache could not hold */
 		return (dio->buf + off);
-	return ((char *)folio_address(folio) + off);
+	return ((char *)folio_address(folio) + hammer2_io_foff(dio, folio) +
+	    off);
 }
 
 int

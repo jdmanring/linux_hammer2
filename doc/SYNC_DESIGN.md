@@ -175,7 +175,7 @@ remote. The 2015 status table lists "Network blk device - operational"
 ## What the port carries today
 
 - `hammer2_synchro.c` since 0.9.61, hardened by P4: the thread starts for
-  every element that is not a lone MASTER (`hammer2_vfsops.c:476-498`),
+  every element that is not a lone MASTER (`hammer2_vfsops.c:478-500`),
   passes every five seconds or on wakeup, and converges a SLAVE on a
   second local device with the master changed under it, interrupted,
   with allocations refused in its insert, replace and destroy arms
@@ -258,7 +258,7 @@ plan's first rule it is an extension with a written design, and the
 compatibility question is sharp, since every reader that exists today,
 DragonFly and the three BSD ports, would mount such a snapshot as a second
 MASTER element and count it toward `pfs_nmasters`
-(`hammer2_vfsops.c:447-457` here, the same logic upstream). Or leave the
+(`hammer2_vfsops.c:449-459` here, the same logic upstream). Or leave the
 snapshot's identity alone and give the thread a source that is not the
 focus: the snapshot is a PFS root under the super-root of the same
 `hammer2_dev` as the master element, reachable by name through the

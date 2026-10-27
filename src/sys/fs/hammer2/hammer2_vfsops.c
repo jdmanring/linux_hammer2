@@ -93,6 +93,7 @@ unsigned long hammer2_alloc_meta_bytes;	/* Linux */
 unsigned long hammer2_data_rewrites;	/* Linux: data blocks given new media */
 unsigned long hammer2_folio_changed;	/* Linux: folios changed under the core */
 unsigned long hammer2_iohash_waits[2];	/* Linux: [0] waited, [1] total */
+unsigned long hammer2_io_large_folios;	/* Linux: DIO folios past the block */
 int hammer2_count_dio_allocated;
 int hammer2_dio_limit = 256;
 int hammer2_bulkfree_tps = 5000;
@@ -192,6 +193,7 @@ module_param_named(alloc_meta_bytes, hammer2_alloc_meta_bytes, ulong, 0444);
 module_param_named(data_rewrites, hammer2_data_rewrites, ulong, 0444);
 module_param_named(folio_changed, hammer2_folio_changed, ulong, 0444);
 module_param_array_named(iohash_waits, hammer2_iohash_waits, ulong, NULL, 0444);
+module_param_named(io_large_folios, hammer2_io_large_folios, ulong, 0444);
 #if defined(HAMMER2_LOCKDEBUG)
 /*
  * XXX Linux: fires hpanic() on the next mount, so what hpanic does to

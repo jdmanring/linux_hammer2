@@ -39,12 +39,13 @@ Lifetime, in the order it happens:
    `(pbase - dbase) >> PAGE_SHIFT` in `bdev_file->f_mapping` and referenced.
    `DIO_GOOD` is then set and `dio->folio` is stable.
 3. The core reaches the bytes through `hammer2_io_data()`, which returns
-   `folio_address()` plus an offset.
+   `folio_address()` plus the block's offset in its folio plus the
+   offset the core asked for.
 4. The last drop with `DIO_DIRTY` marks the folio dirty; with `DIO_FLUSH` it
    kicks writeback.
 
 When step 2's grab returns `ENOMEM`, memory holding no free run of
-sixteen pages and the mapping being pinned to that order, the dio takes
+sixteen pages and the mapping refusing any smaller order, the dio takes
 the block in a buffer of its own instead: `vmalloc`, which wants pages
 and not a run of them, read through a bio of the block's pages, and
 `hammer2_io_data()` returns that buffer plus the offset. The page cache
@@ -55,10 +56,27 @@ the page cache first, copied into a folio and dirtied as step 4 would
 have; only when the cache still cannot hold it is it written with a
 bio, and the range is invalidated afterwards, since a folio read ahead
 into the cache in the meantime would be stale. This is the one thing a
-BSD buffer cache has that a page cache pinned to one order does not,
+BSD buffer cache has that a page cache with a minimum order does not,
 memory of its own, and the module parameter `io_buf_only=1` puts every
 block through it so the fixture and full-volume gates read the path
 rather than wait for it.
+
+The mapping's order is a minimum, not a size. `set_blocksize()` sets
+the block device mapping's folio orders from the block's up to
+`MAX_PAGECACHE_ORDER` (`mapping_set_folio_min_order()`), and read-ahead
+builds folios past the minimum, so a 64 KiB block can sit anywhere
+inside a larger, naturally aligned folio. Every byte the dio hands out
+or writes is therefore placed by `offset_in_folio()` of the block's
+device offset, never at the folio's start. The port took the folio's
+start as the block's until a remount refilled the cache by read-ahead
+and the core read another block's bytes under this one's check code;
+the read-only parameter `io_large_folios` counts dios that found their
+block inside a larger folio, so a run can say whether it reached the
+case at all. Two consequences follow for a larger folio: a grab that
+returns one not uptodate holds other blocks a failed read never filled,
+so it is refused with `EIO` rather than marked uptodate, and the dirty
+offer back to the page cache declines one not uptodate, taking the bio
+path instead.
 
 ## A file folio the core is handed
 
@@ -216,8 +234,8 @@ strategy would meet the same format.
 |---|---|
 | `hammer2_io.c:43-47` | one folio per `hammer2_io`, via a 64 KiB block size |
 | `hammer2_io.c:82` | the `BLK_MAX_BLOCK_SIZE` static assert |
-| `hammer2_io.c:99-107` | `hammer2_io_index()` assuming the mapping's folio order |
-| `hammer2_io.c:133` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
+| `hammer2_io.c:96-105` | `hammer2_io_index()` assuming the mapping's minimum folio order |
+| `hammer2_io.c:148` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
 | `hammer2_os.h:55-67` | the version floor, 7.3, the kernel of record |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 

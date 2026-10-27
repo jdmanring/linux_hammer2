@@ -1158,6 +1158,7 @@ extern unsigned long hammer2_alloc_meta_bytes;	/* Linux */
 extern unsigned long hammer2_data_rewrites;	/* Linux */
 extern unsigned long hammer2_folio_changed;	/* Linux */
 extern unsigned long hammer2_iohash_waits[2];	/* Linux: [0] waited, [1] total */
+extern unsigned long hammer2_io_large_folios;	/* Linux */
 #if defined(HAMMER2_LOCKDEBUG)
 extern int hammer2_fail_alloc_after;	/* Linux */
 extern int hammer2_debug_hpanic;	/* Linux */
