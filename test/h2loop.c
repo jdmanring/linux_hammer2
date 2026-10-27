@@ -225,7 +225,7 @@ usage(void)
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
 	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
-	    "              [--cut-fault disconnect|trail]\n"
+	    "              [--cut-fault disconnect|trail|loss|dup|reorder|late]\n"
 	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n");
 	exit(2);
 }
@@ -286,7 +286,9 @@ validate(void)
 	    opt.retype_scan < 0 || opt.retype_scan > 1 ||
 	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
 	    opt.end_readdir < 0 || opt.end_readdir > 3 || opt.cut_on_scan < -1 ||
-	    (strcmp(opt.cut_fault, "disconnect") && strcmp(opt.cut_fault, "trail")))
+	    (strcmp(opt.cut_fault, "disconnect") && strcmp(opt.cut_fault, "trail") &&
+	    strcmp(opt.cut_fault, "loss") && strcmp(opt.cut_fault, "dup") &&
+	    strcmp(opt.cut_fault, "reorder") && strcmp(opt.cut_fault, "late")))
 		usage();
 }
 
@@ -1040,7 +1042,14 @@ rename_snapdel(struct frame *f)
  *
  * --cut-fault trail closes nothing: the held feed, the close and a copy of
  * the feed go to B back to back, so a frame arrives after the call's close
- * while B's state for the msgid may still stand.  Every SNAPSHOT request of
+ * while B's state for the msgid may still stand.  loss discards the held
+ * feed and sends the close, dup sends the feed twice and then the close, and
+ * reorder sends the close before the feed.  late sends the feed and the
+ * close as they came and keeps a copy of the feed, delivered to B right
+ * after B's next scanall CREATE on the same msgid, a reuse the kernel makes
+ * once the state is freed; the copy is then the new call's first frame.  A
+ * reuse by another XOP is traced late-other and keeps the copy, and a copy
+ * the pair ends holding is traced late-unspent.  Every SNAPSHOT request of
  * B's is traced, so a trace reads which pass the fault fell in.
  */
 #define CUT_NCALL	8	/* scanall calls in flight at once; the pass has one */
@@ -1052,6 +1061,9 @@ static struct cut_call {
 	struct frame *held;
 } cut_calls[CUT_NCALL];
 static uint64_t cut_snap_msgid;	/* B's first SNAPSHOT request, 0 none yet */
+static struct frame *late_copy;	/* --cut-fault late's, kept for a reuse */
+static uint64_t late_msgid;	/* its msgid; the new call's while late_key is */
+static int late_newkey;		/* the new call's first own feed is traced next */
 static int cut_armed, cut_done, cut_now;
 static long cut_ncalls;
 
@@ -1068,11 +1080,29 @@ cut_reset(void)
 	}
 	if (!cut_armed)
 		cut_snap_msgid = 0;
+	if (late_copy) {
+		trace("late-unspent msgid=%" PRIu64 "\n", late_msgid);
+		ct.lost++;
+		frame_free(late_copy);
+		late_copy = NULL;
+	}
+	late_newkey = 0;
+}
+
+/* A feed's blockref key, from the extension's blockref at byte 8. */
+static uint64_t
+cut_key(const struct frame *f)
+{
+	uint64_t key = 0;
+
+	if (f->ext_len >= 16)
+		memcpy(&key, f->ext + 8, sizeof(key));
+	return (key);
 }
 
 /* Returns 1 when it took f, held or discarded, and 0 to pass it on. */
 static int
-cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
+cut_scan(struct side *from, struct side *to, struct frame *f, long i,
     long due)
 {
 	struct cut_call *cc = NULL;
@@ -1086,6 +1116,22 @@ cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
 				cut_snap_msgid = f->hdr.msgid;
 			trace("%s>%s i=%ld msgid=%" PRIu64 " snapshot t=%ld\n",
 			    from->name, to->name, i, f->hdr.msgid, t);
+		}
+		if (late_copy && f->hdr.msgid == late_msgid) {
+			if ((c & 0x00FFFF00U) != 0x00201600U) {
+				trace("%s>%s i=%ld msgid=%" PRIu64 " late-other idx=%u"
+				    " t=%ld\n", from->name, to->name, i, f->hdr.msgid,
+				    ((c >> 8) & 0xFF) - 0x10, t);
+			} else {
+				/* B's CREATE went out before the copy is queued */
+				trace("%s>%s i=%ld msgid=%" PRIu64 " late-copy t=%ld"
+				    " key=%016" PRIx64 "\n", to->name, from->name, i,
+				    f->hdr.msgid, t, cut_key(late_copy));
+				fflush(tracef);
+				side_enqueue(from, late_copy, due);
+				late_copy = NULL;
+				late_newkey = 1;
+			}
 		}
 		if ((c & 0x00FFFF00U) != 0x00201600U || !cut_armed)
 			return (0);
@@ -1119,6 +1165,12 @@ cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
 		return (0);
 	if ((c & 0x40000000U) == 0) {
 		cc->feeds++;
+		if (late_newkey && f->hdr.msgid == late_msgid) {
+			trace("%s>%s i=%ld msgid=%" PRIu64 " late-new t=%ld"
+			    " key=%016" PRIx64 "\n", from->name, to->name, i,
+			    f->hdr.msgid, t, cut_key(f));
+			late_newkey = 0;
+		}
 		if (!cc->watched)
 			return (0);
 		if (cc->held)
@@ -1153,6 +1205,41 @@ cut_scan(const struct side *from, struct side *to, struct frame *f, long i,
 		side_enqueue(to, f, due);
 		side_enqueue(to, copy, due);
 		ct.dup++;
+		memset(cc, 0, sizeof(*cc));
+		cut_done = 1;
+		return (1);
+	}
+	if (cc->watched && cc->feeds >= 2 && strcmp(opt.cut_fault, "disconnect")) {
+		const char *how = opt.cut_fault;
+
+		trace("%s>%s i=%ld msgid=%" PRIu64 " %s t=%ld call=%ld feeds=%d"
+		    " error=%x key=%016" PRIx64 "\n", from->name, to->name, i,
+		    f->hdr.msgid, how, t, cc->n, cc->feeds, error,
+		    cut_key(cc->held));
+		fflush(tracef);
+		cc->held->cork = f->cork = 1;
+		if (!strcmp(how, "loss")) {
+			ct.dropped++;
+			frame_free(cc->held);
+			side_enqueue(to, f, due);
+		} else if (!strcmp(how, "dup")) {
+			struct frame *copy = frame_dup(cc->held);
+
+			copy->cork = 1;
+			ct.dup++;
+			side_enqueue(to, cc->held, due);
+			side_enqueue(to, copy, due);
+			side_enqueue(to, f, due);
+		} else if (!strcmp(how, "reorder")) {
+			ct.reordered++;
+			side_enqueue(to, f, due);
+			side_enqueue(to, cc->held, due);
+		} else {	/* late */
+			late_copy = frame_dup(cc->held);
+			late_msgid = f->hdr.msgid;
+			side_enqueue(to, cc->held, due);
+			side_enqueue(to, f, due);
+		}
 		memset(cc, 0, sizeof(*cc));
 		cut_done = 1;
 		return (1);

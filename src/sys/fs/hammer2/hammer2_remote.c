@@ -79,6 +79,7 @@ struct hammer2_remote_req {
 	int			idx;		/* descriptor index */
 	int			window;		/* feeds the peer has allowed so far */
 	int			cancelled;	/* the peer's DELETE arrived */
+	uint32_t		nsent;		/* feeds sent, each frame's seq */
 	unsigned long		deadline;	/* the whole request's bound */
 };
 
@@ -113,6 +114,7 @@ static hammer2_xop_desc_t *const hammer2_remote_descs[DMSG_HM2_CMD_COUNT] = {
 _Static_assert(sizeof(hammer2_blockref_t) ==
     sizeof(((dmsg_hm2_feed_t *)0)->bref), "a feed carries one blockref");
 _Static_assert(sizeof(dmsg_hm2_feed_t) == 256, "a feed frame's size");
+_Static_assert(sizeof(dmsg_hm2_xop_t) == 128, "a request frame's size");
 
 static const char *
 hammer2_remote_cmd_name(int idx)
@@ -437,6 +439,8 @@ hammer2_remote_feed(struct hammer2_remote_req *req, hammer2_chain_t *chain,
 	memcpy(msg->any.hm2_feed.bref, &chain->bref, sizeof(chain->bref));
 	msg->any.hm2_feed.bytes = chain->bytes;
 	msg->any.hm2_feed.error = error ? error : chain->error;
+	msg->any.hm2_feed.seq = req->nsent++;
+	memcpy(msg->any.hm2_feed.tag, req->req.tag, sizeof(req->req.tag));
 	if (chain->bytes && chain->data && chain->error == 0) {
 		abytes = DMSG_DOALIGN(chain->bytes);
 		msg->aux_data = hmalloc(abytes, req->hmp->mmsg, M_WAITOK | M_ZERO);
@@ -470,6 +474,8 @@ hammer2_remote_close(struct hammer2_remote_req *req, uint32_t error, int eof,
 	msg->any.hm2_feed.error = error;
 	msg->any.hm2_feed.rkey = rkey;
 	msg->any.hm2_feed.tid = tid;
+	msg->any.hm2_feed.seq = req->nsent;	/* the count the peer checks */
+	memcpy(msg->any.hm2_feed.tag, req->req.tag, sizeof(req->req.tag));
 	if (eof)
 		msg->any.hm2_feed.flags = DMSG_HM2_FEEDF_EOF;
 	kdmsg_msg_write(msg);
@@ -955,6 +961,7 @@ struct hammer2_rconn {
 	struct mutex		mtx;		/* dead, lhmp, every call */
 	hammer2_dev_t		*lhmp;		/* the device carrying the link */
 	int			dead;		/* the link has ended */
+	uint64_t		ntag;		/* the last call's tag */
 	refcount_t		refs;		/* the link's, each chain's, each user's */
 	wait_queue_head_t	waitq;		/* every call on the link */
 	spinlock_t		hlock;		/* handle stashes */
@@ -1022,6 +1029,7 @@ struct hammer2_rcall {
 	kdmsg_state_t		*state;
 	int			idx;
 	int			refs;
+	uint64_t		tag;		/* sent with the request, echoed */
 	struct list_head	frames;		/* received, not yet taken */
 	int			nrecv;		/* feeds received */
 	int			allowed;	/* feeds the window allows */
@@ -1222,22 +1230,38 @@ hammer2_remote_end(uint32_t error)
 /*
  * The reply callback, on the reader thread, and on the writer thread for
  * the DELETEs the link's end simulates.  A frame is copied and queued; the
- * window and the frame's shape are checked here, where they can be read,
- * and a peer breaking either ends the link by the reader's own shutdown.
+ * window, the frame's shape and its place in the reply are checked here,
+ * where they can be read, and a peer breaking any ends the link by the
+ * reader's own shutdown.
+ *
+ * The state outlives the call: it stays in kern_dmsg's tree until our
+ * DELETE goes out, and kern_dmsg passes a frame after the peer's DELETE
+ * to this callback as it passed the ones before.  So the close clears the
+ * call from the state before the transaction's reference goes, and a
+ * frame finding none ends the link rather than reading a call its
+ * consumer may have freed.  The link's simulated end reaches only a state
+ * whose peer has not closed, and a frame arrives on the reader thread
+ * that ran the close, so the test needs no lock.
  */
 static int
 hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 {
 	struct hammer2_rcall *call = state->any.any;
-	struct hammer2_rconn *rc = call->cdev->rconn;
+	struct hammer2_rconn *rc;
 	struct hammer2_rframe *f = NULL;
 	uint32_t cmd = msg->any.head.cmd;
 	const char *bad = NULL;
 	int feed, lost = 0;
 
+	if (call == NULL) {
+		pr_warn_ratelimited("hammer2: HM2 peer sent a frame after its reply closed, ending the link\n");
+		atomic_set_int(&state->iocom->msg_ctl, KDMSG_CLUSTERCTL_KILLRX);
+		return (0);
+	}
+	rc = call->cdev->rconn;
 	feed = (cmd & DMSGF_BASECMDMASK) == (DMSG_HM2_FEED & DMSGF_BASECMDMASK);
 	if (feed && (cmd & DMSGF_DELETE) && msg->any.hm2_feed.bytes) {
-		bad = "a closing feed with a chain";
+		bad = "sent a closing feed with a chain";
 	} else if (feed && (cmd & DMSGF_DELETE) == 0) {
 		/* a chain, its bytes in the aux data or in its blockref */
 		f = kzalloc_obj(*f);
@@ -1249,7 +1273,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 		if (f && f->error == 0 && f->bytes) {
 			if (f->bytes > HAMMER2_PBUFSIZE || msg->aux_data == NULL ||
 			    msg->aux_size < f->bytes)
-				bad = "a feed with no data for its bytes";
+				bad = "sent a feed with no data for its bytes";
 			else
 				f->data = kvmemdup(msg->aux_data, f->bytes,
 				    GFP_KERNEL);
@@ -1264,11 +1288,27 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 	 * otherwise read that one as absent before the call's end is seen.
 	 */
 	mutex_lock(&rc->mtx);
+#ifndef HAMMER2_NOCLIENTSEQ
+	/*
+	 * A feed of another call, or out of its place, would be taken as this
+	 * call's next: a reused msgid's late frame reads as the new call's
+	 * first key, a lost feed as a key the master lacks, and a repeated one
+	 * stops the scan short.  The tag before the index, so a late frame is
+	 * named as what it is.
+	 */
+	if (feed && bad == NULL) {
+		if (memcmp(msg->any.hm2_feed.tag, &call->tag, sizeof(call->tag)))
+			bad = "sent another call's feed";
+		else if (msg->any.hm2_feed.seq != (uint32_t)call->nrecv)
+			bad = (cmd & DMSGF_DELETE) ? "closed a reply short" :
+			    "sent a feed out of sequence";
+	}
+#endif
 	if (f) {
 		++call->nrecv;
 #ifndef HAMMER2_NOCLIENTWINDOW
 		if (call->nrecv > call->allowed)
-			bad = "a feed past the window";
+			bad = "sent a feed past the window";
 #else
 		/* the control's reading: the frames it exists to refuse came */
 		if (call->nrecv > call->allowed)
@@ -1299,6 +1339,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 			call->error = HAMMER2_ERROR_ENOTCONN;
 		}
 		call->done = 1;
+		state->any.any = NULL;
 		/* our side closes here, where the state is known to be live */
 		hammer2_rcall_close_locked(call);
 	}
@@ -1307,7 +1348,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 
 	if (lost) {
 		if (bad)
-			pr_warn_ratelimited("hammer2: HM2 peer sent %s, ending the link\n",
+			pr_warn_ratelimited("hammer2: HM2 peer %s, ending the link\n",
 			    bad);
 		else
 			pr_warn_ratelimited("hammer2: HM2 no memory for a feed, ending the link\n");
@@ -1364,6 +1405,8 @@ hammer2_rcall_start(hammer2_dev_t *cdev, int idx, const struct uuid *clid,
 	msg = kdmsg_msg_alloc(&rc->lhmp->iocom.state0,
 	    DMSG_HM2_XOP(idx) | DMSGF_CREATE, hammer2_rcall_reply, call);
 	call->state = msg->state;
+	call->tag = ++rc->ntag;
+	memcpy(msg->any.hm2_xop.tag, &call->tag, sizeof(call->tag));
 	msg->any.hm2_xop.pfs_clid = *clid;
 	msg->any.hm2_xop.inum = inum;
 	msg->any.hm2_xop.key_beg = key_beg;

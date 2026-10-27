@@ -219,6 +219,10 @@ lines in `hammer2_sync_slaves()`. One more `return (x);` is in
 `hammer2_io.c`, from reading a block inside a larger device folio at its
 own offset. No category is new.
 
+1,592 to 1,593 with the reply path's sequence checks. One more `return
+(x);` is in `hammer2_rcall_reply()`, refusing a frame that arrives after
+its reply closed. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

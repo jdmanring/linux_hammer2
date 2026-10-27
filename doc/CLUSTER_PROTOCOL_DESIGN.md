@@ -246,6 +246,30 @@ master unreachable and never as an empty answer. A reply
 frame with no data for a type that has data is a protocol error and ends
 the connection.
 
+Every reply frame names its call and its place in it. The request
+carries an eight-byte `tag` from a per-connection counter, each feed
+echoes it in `dmsg_hm2_feed.tag` with the count of feeds sent before it
+in `seq`, and the closing frame's `seq` is the count sent. Without them
+nothing told one call's frames from another's: kern_dmsg writes `salt`
+and checks it nowhere, and a `msgid` is a state's address, reused once
+the state is freed. A lost feed read as a key absent on the master, a
+repeated one was refused as not a proxy and stopped the scan with the
+link up, and a frame left over from a closed call was taken as the next
+call's first on the same `msgid`, whatever its key. The client checks
+four things at a frame's receipt, in this order, and each ends the
+connection:
+- a frame whose call has closed: the close clears the state's pointer
+  to its call before the call can be freed, so `HM2 peer sent a frame
+  after its reply closed`;
+- a tag not the call's: `another call's feed`;
+- an index not the count received: `a feed out of sequence`;
+- a closing count not the count received: `closed a reply short`.
+
+The first guards memory and is under no control. `HAMMER2_NOCLIENTSEQ`
+compiles out the other three, and is the build the wire harness's
+`H2_WIRE_SEQ=control` reads the defects under. The fields were reserved
+space in a frame only this port speaks, so no other reader changes.
+
 **Versioning rides `proto_version`.** `DMSG_SPAN_PROTO_2` means "HM2 XOP
 API version 1, CRCs verified". Today the carried test at
 `hammer2_iocom.c:385-390` closes every span that is not `PROTO_1`, so

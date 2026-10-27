@@ -134,13 +134,16 @@ struct dmsg_hm2_xop {
 	uint64_t inum, key_beg, key_end;
 	uint32_t resolve_flags, lookup_flags;
 	int32_t nmax;
-	uint32_t reserved[3];
+	uint8_t tag[8];
+	uint32_t reserved;
 };
 struct dmsg_hm2_feed {
 	struct dmsg_hdr head;
 	hammer2_blockref_t bref;
-	uint32_t bytes, error;
-	uint8_t reserved[56];
+	uint32_t bytes, error, flags, seq;
+	uint64_t rkey, tid;
+	uint8_t tag[8];
+	uint8_t reserved[24];
 };
 _Static_assert(sizeof(struct dmsg_hm2_xop) == 128, "dmsg_hm2_xop");
 _Static_assert(sizeof(struct dmsg_hm2_feed) == 256, "dmsg_hm2_feed");

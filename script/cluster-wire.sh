@@ -240,15 +240,26 @@ RETYPE=${H2_WIRE_RETYPE:-0}
 # cut left and dials; the pass after the dial must verify and the slave
 # converge as after the disconnect.
 #
-# H2_WIRE_CUT=trail leaves the link up: at the same call the relay sends
-# the last feed, the close and a copy of the feed in one write, so the
-# copy reaches B after its call has closed. B's own end of the link is
-# waited for 10 s and, failing it, the relay hangs the pair up; no dial
-# follows. The run prints which of three things the copy did on B: nothing,
-# a refusal as not a proxy, or a KASAN report in hammer2_rcall_reply.
+# The protocol cells fault the same call's last feed and leave the link to
+# B: loss drops it, dup sends it twice, reorder sends it after the close,
+# trail sends it, the close and a copy of it in one write, and late keeps a
+# copy for the first scanall call B opens again on the msgid.  B's own end
+# of the link is waited for, 10 s or 60 s for late, and failing it the relay
+# hangs the pair up; then both dial as after the disconnect.  Each check of
+# B's reply path ends the link with its own line, read as the cell's one HM2
+# line; trail prints which of four things its copy did on B: ended the
+# link, nothing, a refusal as not a proxy, or a KASAN report in
+# hammer2_rcall_reply.  A late copy no reuse reached makes the run void.
+#
+# H2_WIRE_SEQ=control builds B with HAMMER2_NOCLIENTSEQ, under loss, dup
+# or late: with the tag, the index and the close's count unchecked the
+# fault is taken, the link stays up to B's unmount and nothing dials.
 CUT=${H2_WIRE_CUT:-}; CUTAT=${H2_WIRE_CUT_AT:-}; DEPTH=${H2_WIRE_CUT_DEPTH:-1000}
-case $CUT in ''|disconnect|control|trail|slave|master) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect, control, trail, slave or master" >&2; exit 2;; esac
-FAULT=disconnect; [ "$CUT" = trail ] && FAULT=trail
+SEQ=${H2_WIRE_SEQ:-0}; VOID=
+case $CUT in ''|disconnect|control|loss|dup|reorder|trail|late|slave|master) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect, control, loss, dup, reorder, trail, late, slave or master" >&2; exit 2;; esac
+case $SEQ$CUT in 0*|controlloss|controldup|controllate) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SEQ is control, under H2_WIRE_CUT=loss, dup or late" >&2; exit 2;; esac
+FAULT=disconnect; PROTO=0
+case $CUT in loss|dup|reorder|trail|late) FAULT=$CUT PROTO=1;; esac
 POWER=0; case $CUT in slave|master) POWER=1;; esac
 case $CUTAT in *[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT is a call count" >&2; exit 2;; esac
 case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an inode count" >&2; exit 2;; esac
@@ -311,7 +322,7 @@ if [ "$repeat" -gt 1 ]; then
 	done
 	$VIRSH destroy "$GA" >/dev/null 2>&1; $VIRSH destroy "$GB" >/dev/null 2>&1
 	echo "wire: $repeat runs, $pass passed, $failed failed, $cnr could not run; logs in $logdir"
-	[ "$CUT" = trail ] && for o in silent notproxy kasan other; do
+	[ "$CUT" = trail ] && for o in closed silent notproxy kasan other; do
 		echo "  trail-outcome $o $(cat "$logdir"/run-*.log | grep -c "^  trail-outcome $o\$")"
 	done
 	[ "$failed" = 0 ] && [ "$cnr" = 0 ]
@@ -373,6 +384,7 @@ AFLAGS=; BFLAGS=
 [ "$SNAPROUTE" = control ] && BFLAGS=HAMMER2_NOSNAPROUTE=1
 [ "$CONNWAIT" = 1 ] && BFLAGS=HAMMER2_CONNWAIT=1
 [ "$CONNWAIT" = control ] && BFLAGS="HAMMER2_CONNWAIT=1 HAMMER2_NOCONNFIX=1"
+[ "$SEQ" = control ] && BFLAGS=HAMMER2_NOCLIENTSEQ=1
 build "$KO_B" $BFLAGS
 if [ "$AFLAGS" = "$BFLAGS" ]; then cp "$KO_B" "$KO_A"; else build "$KO_A" $AFLAGS; fi
 # What was built, taken now: the tree can move before the report is written.
@@ -715,7 +727,7 @@ echo "redial-threads-before $(threads)"
 /tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; echo "redial-rc $?"
 GUEST
 cat > "$W/cut.sh" <<'GUEST'
-# cut <go|arm|mark|silent|wait|redial|resumed|peer [after]>: the link the relay closed inside
+# cut <go|arm|mark|up|silent|wait|redial|resumed|peer [after]>: the link the relay closed inside
 # the pass, read on B at the cut, on B again at the dial and after the pass
 # that follows it, and on A for the snapshot the link left
 V='syncsnap: (verified|newer|unverified|interrupted) clindex'
@@ -740,13 +752,33 @@ arm)
 	echo "cut-printk $(cat /proc/sys/kernel/printk | tr '\t' ' ')"
 	;;
 mark)
-	# the host saw the relay's trail: a line in this log, and the pass's
+	# the host saw the relay's fault: a line in this log, and the pass's
 	# snapshots and verdicts before it; the line trails the fault by the
-	# host's poll and an ssh, so a verdict can only be counted early
-	echo "h2wire trail seen" > /dev/kmsg
-	n=0; until grep -q 'h2wire trail seen' $K || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
-	echo "cut-mark-snap $(kl | awk '/h2wire trail seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { n++ } END { print n + 0 }')"
-	echo "cut-mark-verdicts $(kl | awk -v v="$V" '/h2wire trail seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }')"
+	# host's poll and an ssh, about 0.4 s, as long as a verify round takes,
+	# so its verdict count is printed and the placement is read from B's
+	# own HM2 line or the relay's next call
+	echo "h2wire fault seen" > /dev/kmsg
+	n=0; until grep -q 'h2wire fault seen' $K || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-mark-snap $(kl | awk '/h2wire fault seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { n++ } END { print n + 0 }')"
+	echo "cut-mark-verdicts $(kl | awk -v v="$V" '/h2wire fault seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }')"
+	;;
+hm2)
+	# the verdicts before B's first HM2 line, which its check prints at the
+	# frame's receipt: the fault on B's own clock, or none
+	echo "cut-hm2-verdicts $(kl | awk -v v="$V" '/hammer2: HM2 / { h = 1; exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print h ? n + 0 : "none" }')"
+	;;
+up)
+	# the link left up past the fault: the pass's verdict after the mark,
+	# bounded, and what B said of the link by then
+	nv() { kl | awk -v v="$V" '/h2wire fault seen/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }'; }
+	n=0; until [ "$(nv)" -ge 1 ] || [ $n -ge 240 ]; do sleep 1; n=$((n + 1)); done
+	echo "cut-up-seconds $n"
+	echo "cut-up-verdict $(kl | awk -v v="$V" '/h2wire fault seen/ { s = 1 } s && $0 ~ v { sub(/.*syncsnap: /, ""); print $1; exit }')"
+	echo "cut-up-ending $(klog 'ending the link')"
+	echo "cut-up-detached $(klog "$D")"
+	echo "cut-up-notproxy $(klog 'not a proxy')"
+	echo "cut-up-hm2 $(klog 'hammer2: HM2 ')"
+	echo "cut-up-hm2-text $(kl | sed -n 's/.*hammer2: HM2 //p' | tr '\n' ';')"
 	;;
 silent)
 	# the survivor's own end of the link, or 30 s, whichever came first
@@ -802,6 +834,7 @@ wait)
 	echo "cut-scanall-notconn $(klog 'H2 REMOTE scanall .* end=00080000')"
 	echo "cut-delete-errors $(kl | grep 'syncsnap: remote delete' | grep -vc 'error 00000000')"
 	echo "cut-hm2 $(klog 'hammer2: HM2 ')"
+	echo "cut-hm2-text $(kl | sed -n 's/.*hammer2: HM2 //p' | tr '\n' ';')"
 	;;
 redial)
 	n=0; until [ "$(threads)" = 0 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
@@ -1209,20 +1242,23 @@ power_on() {
 	    $VIRSH start "$cg" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: $cg did not start again on $ci" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 	wait_ssh "$cg" "$cs"; to_guest "$cg" "$cs"; to_scripts "$cs"
 }
-# The trail: the relay's line for it, a mark in B's log at once, then 10 s
-# for B's own end of the link, which only a check on B makes; failing it
-# the relay hangs the pair up, as nothing else would end a link left up.
-trail_wait() {
+# A protocol cell's fault: the relay's line for it, a mark in B's log at
+# once, then 10 s, or 60 s for late's reuse, for B's own end of the link,
+# which only a check on B makes; failing it the relay hangs the pair up, as
+# nothing else would end a link left up, except under the control, whose
+# link is read up.
+fault_wait() {
 	tr=$FIXDIR/wire-run-$stamp.trace
-	n=0; until grep -q ' trail t=' "$tr" || [ $n -ge 2400 ]; do sleep 0.1; n=$((n + 1)); done
-	echo "H trail-wait-ms $((n * 100))" >> "$W/out"
+	n=0; until grep -q " $FAULT t=" "$tr" || [ $n -ge 2400 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "H fault-wait-ms $((n * 100))" >> "$W/out"
 	t0=$(date +%s%N)
-	grep -q ' trail t=' "$tr" && phase B cut.sh mark
-	beof() { awk '/ trail t=/ { s = 1 } s && /^B eof / { n++ } END { print n + 0 }' "$tr"; }
-	until [ "$(beof)" -ge 1 ] || [ $(( ($(date +%s%N) - t0) / 1000000 )) -ge 10000 ]; do sleep 0.1; done
-	if [ "$(beof)" -ge 1 ]; then first=eof; else first=timeout; kill -USR1 "$RELAY_PID"; fi
-	echo "H trail-first $first" >> "$W/out"
-	echo "H trail-first-ms $(( ($(date +%s%N) - t0) / 1000000 ))" >> "$W/out"
+	grep -q " $FAULT t=" "$tr" && phase B cut.sh mark
+	lim=10000; [ "$CUT" = late ] && lim=60000
+	beof() { awk -v f=" $FAULT t=" 'index($0, f) { s = 1 } s && /^B eof / { n++ } END { print n + 0 }' "$tr"; }
+	until [ "$(beof)" -ge 1 ] || [ $(( ($(date +%s%N) - t0) / 1000000 )) -ge $lim ]; do sleep 0.1; done
+	if [ "$(beof)" -ge 1 ]; then first=eof; else first=timeout; [ "$SEQ" = control ] || kill -USR1 "$RELAY_PID"; fi
+	echo "H fault-first $first" >> "$W/out"
+	echo "H fault-first-ms $(( ($(date +%s%N) - t0) / 1000000 ))" >> "$W/out"
 }
 # The cut: B dialed with its device read-only, so no pass runs before the
 # readings above and CL's mount, which a cut would otherwise race (a pass
@@ -1231,9 +1267,11 @@ trail_wait() {
 # Then where the cut fell, and A's snapshot before any dial; the cell dials
 # A and then B, and the resumed pass is read as a plain one is.
 phase B ro.sh && case $PASSES in
-	cut)	phase B cut.sh go && { [ "$CUT" != trail ] || trail_wait; } && phase B cut.sh wait && phase A cut.sh peer &&
-		{ [ "$CUT" = control ] || [ "$CUT" = trail ] || { phase A redial.sh && phase A cut.sh peer after && phase B cut.sh redial &&
-		    phase B pass.sh 1 && phase B cut.sh resumed && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)"; }; };;
+	cut)	phase B cut.sh go && { [ "$PROTO" = 0 ] || fault_wait; } &&
+		if [ "$SEQ" = control ]; then phase B cut.sh up && phase B cut.sh hm2; else
+		phase B cut.sh wait && { [ "$PROTO" = 0 ] || phase B cut.sh hm2; } && phase A cut.sh peer &&
+		{ [ "$CUT" = control ] || { phase A redial.sh && phase A cut.sh peer after && phase B cut.sh redial &&
+		    phase B pass.sh 1 && phase B cut.sh resumed && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)"; }; }; fi;;
 	full)	phase B pass.sh $((RETYPE + 1)) && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)" &&
 		{ [ "$STALE" = 0 ] || { phase B stale.sh down && phase A redial.sh && phase B stale.sh up && phase A fill.sh stale; }; };;
 	first)	phase B pass.sh first;;
@@ -1249,7 +1287,7 @@ phase B ro.sh && case $PASSES in
 		{ [ "$CUT" = slave ] || phase A cut.sh peer after; } &&
 		phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
 	*)	true;;
-esac && [ "$CUT" != control ] && [ "$CUT" != trail ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
+esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -1268,6 +1306,16 @@ check() {	# check <name> <0 ok / 1 fail> <reading>
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
 }
 num() { case "$1" in ''|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
+# inpass <trace>: a protocol cell's fault fell inside the pass: no verdict
+# before B's first HM2 line, which its check prints at the frame's receipt,
+# or with no such line the relay's next call opening within 1 s of the
+# fault, against the thread's 5 s idle between passes; sets hv and fgap
+inpass() {
+	hv=$(val B cut-hm2-verdicts)
+	ft=$(sed -n "s/.* $FAULT t=\([0-9]*\) call=.*/\1/p" "$1" 2>/dev/null | head -1)
+	fgap=$(awk -v f=" $FAULT t=" -v ft="$ft" 'index($0, f) { s = 1; next } s && / open t=/ { sub(/.* t=/, ""); print $1 - ft; exit }' "$1" 2>/dev/null)
+	if [ "$hv" = none ]; then [ "$(num "$fgap" 9999)" -lt 1000 ]; else [ "$(num "$hv" 1)" = 0 ]; fi
+}
 # A's link.sh ran twice; the first reading is the paired one, the second
 # the one after B's unmount, so the second's values are read from the tail.
 val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
@@ -1296,7 +1344,8 @@ else
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
 # under STALE B's device is unmounted twice, each time with A's spans held,
 # and under the cut's disconnect B holds them over two links
-nlk=$((STALE + 1)); case $CUT in disconnect|master) nlk=2;; esac
+nlk=$((STALE + 1)); case $CUT in disconnect|master|loss|dup|reorder|trail|late) nlk=2;; esac
+[ "$SEQ" = control ] && nlk=1
 # A restarted on the cut media advertises the pass's source snapshot when
 # the cut left it there; the stale delete that follows sends no span
 # DELETE, as upstream's spans go out once at the LNK_CONN, so B holds it
@@ -1312,9 +1361,9 @@ nfa=$(( $(num "$(val A files)" 0) + $(num "$(val A more-files)" 0) ))	# the pass
 # Lost ends the link at the first rewritten close, and the window control
 # at the first listing past sixteen feeds, so every read after it finds
 # nothing: the live-link checks below do not apply to those modes, nor to
-# the cut's control or the trail, which never dial again and read nothing
-# after.
-LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ] || [ "$CUT" = control ] || [ "$CUT" = trail ]; } && LINKLOST=1
+# the cut's control or the sequence control, which never dial again and
+# read nothing after.
+LINKLOST=0; { [ "$END" = lost ] || [ "$WINDOW" = 1 ] || [ "$CUT" = control ] || [ "$SEQ" = control ]; } && LINKLOST=1
 [ "$LINKLOST" = 1 ] || [ "$STALL" != 0 ] || { [ "$nfa" -ge 5 ] && [ "$(num "$(val B files)" 0)" = "$nfa" ]; check "remote: B lists A's files through the element" $? "A $nfa, B $(val B files)"; }
 [ "$LINKLOST" = 1 ] || { [ "$(num "$(val A many)" 0)" = 300 ] && [ "$(num "$(val B many)" 0)" = 300 ]; check "remote: B lists a directory larger than one readdir XOP takes" $? "A $(val A many), B $(val B many) of 300"; }
 # The pass wrote B under the pass and under the pass-refusal control,
@@ -1428,51 +1477,83 @@ elif [ "$POWER" = 1 ]; then
 	[ "$rv" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "power: the resumed pass verifies, or reads newer and the next pass verifies" $? "verdicts $(val B cut-resumed-verdicts)after a wait of $(val B cut-resumed-second-wait) s, keys kept by tid $(val B cut-resumed-kept-keys), HM2 lines after $(val B cut-resumed-hm2), deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors), end after $(val B pass-end-seconds) s"
 	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 9)" = "$nu" ]; check "power: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) of $nu"
 	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5310 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
-elif [ "$CUT" = trail ]; then
-	# Where the trail fell, as the cut's: one trail line, in a scanall call
-	# from the Kth on with 2 to 15 feeds, after the pass read its snapshot
-	# and before any verdict, read at the mark written into B's log.
+elif [ "$SEQ" = control ]; then
+	# The sequence checks compiled out: the fault, placed as the cut's, is
+	# taken, and the link stays up to B's unmount: no line of B's ending it,
+	# no hangup, one pair, the cut call closed clean and a later call opened.
+	# What B said is predicted per cell, late's from the two keys the relay
+	# traced; the pass's verdict is printed.
 	tr=$FIXDIR/wire-run-$stamp.trace
-	ctr=$(sed -n 's/.* trail t=[0-9]* call=\([0-9]*\) feeds=\([0-9]*\).*/\1 \2/p' "$tr" 2>/dev/null)
+	ctr=$(sed -n "s/.* $FAULT t=[0-9]* call=\([0-9]*\) feeds=\([0-9]*\).*/\1 \2/p" "$tr" 2>/dev/null)
 	cc=$(num "${ctr% *}" -1); cf=$(num "${ctr#* }" 0)
 	cafter=$(awk -v c="$cc" '/ open t=/ { sub(/.*call=/, ""); if ($1 + 0 > c) n++ } END { print n + 0 }' "$tr" 2>/dev/null)
-	[ "$(printf '%s\n' "$ctr" | grep -c .)" = 1 ] && [ "$cc" -ge "$CUTAT" ] && [ "$cf" -ge 2 ] && [ "$cf" -le 15 ] && [ "$(num "$(val B cut-mark-snap)" 0)" -ge 1 ] && [ "$(num "$(val B cut-mark-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-refused-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "trail: the relay sends a call's last feed, its close and a copy inside the pass, in a scanall call from the ${CUTAT}th with 2 to 15 feeds" $? "call $cc of K $CUTAT with $cf feeds after $(val H trail-wait-ms) ms, $(num "$cafter" 0) calls opened after it, snapshots read before the mark $(val B cut-mark-snap), verdicts between $(val B cut-mark-verdicts); before the read-write remount (rc $(val B cut-root-rw-rc)) refusals $(val B cut-refused-before), snapshots $(val B cut-snap-before-go)"
-	# The link's end: B's own, by a check that ends it, or the relay's
-	# hangup 10 s after the trail, and then B's detach by the span.
-	nh=$(grep -c '^hangup ' "$tr" 2>/dev/null)
-	case $(val H trail-first) in eof) [ "$(num "$nh" 1)" = 0 ];; timeout) [ "$(num "$nh" 0)" = 1 ];; *) false;; esac && [ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ]; check "trail: B ends the link or the relay hangs it up after 10 s, and B detaches by the span's deletion" $? "first $(val H trail-first) after $(val H trail-first-ms) ms, hangups $(num "$nh" 0), detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s"
-	# What the copy did on B, from B's kept log: nothing, a refusal as not
-	# a proxy, or a use of the freed call. The verdict, the target and the
-	# HM2 lines are printed: with the link up the pass ran on. A report is
-	# the call's when hammer2_rcall_reply is in its access stack, the title
-	# naming the faulting function and that inlined into the frame below; a
-	# kasan outcome also fails B's warning check below, as a report should.
-	bk=$FIXDIR/wire-run-$stamp-b.klog
-	nk=$(num "$(grep -c 'BUG: KASAN' "$bk" 2>/dev/null)" -1)
-	nkr=$(awk '/BUG: KASAN/ { r = 1 } r && /hammer2_rcall_reply/ { n++; r = 0 } /Allocated by task|Freed by task|The buggy address|=====/ { r = 0 } END { print n + 0 }' "$bk" 2>/dev/null)
-	nkr=$(num "$nkr" -1); np=$(num "$(grep -c 'not a proxy' "$bk" 2>/dev/null)" -1)
-	if [ "$nkr" -ge 1 ]; then to=kasan; elif [ "$nk" = 0 ] && [ "$np" = 1 ]; then to=notproxy; elif [ "$nk" = 0 ] && [ "$np" = 0 ]; then to=silent; else to=other; fi
-	echo "  trail-outcome $to"
-	[ "$to" != other ]; check "trail: the copy after the close does nothing, is refused once as not a proxy, or is a KASAN report in hammer2_rcall_reply" $? "outcome $to: not a proxy $np, KASAN reports $nk of which in hammer2_rcall_reply $nkr; verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), HM2 lines $(val B cut-hm2), remote ends $(val B cut-remote-ends), A's left-by-the-link deletions $(val A snap-link-left)"
-	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "trail: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
+	ce=$(sed -n "s/.* close t=[0-9]* call=$cc feeds=[0-9]* error=\([0-9a-f]*\).*/\1/p" "$tr" 2>/dev/null | head -1)
+	nh=$(grep -c '^hangup ' "$tr" 2>/dev/null); nbc=$(grep -c '^B connected ' "$tr" 2>/dev/null)
+	inpass "$tr"; ip=$?
+	[ "$(printf '%s\n' "$ctr" | grep -c .)" = 1 ] && [ "$cc" -ge "$CUTAT" ] && [ "$cf" -ge 2 ] && [ "$cf" -le 15 ] && [ "$(num "$(val B cut-mark-snap)" 0)" -ge 1 ] && [ "$ip" = 0 ] && [ "$(num "$(val B cut-refused-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "control: the relay's $CUT fault falls inside the pass, in a scanall call from the ${CUTAT}th with 2 to 15 feeds" $? "call $cc of K $CUTAT with $cf feeds after $(val H fault-wait-ms) ms, $(num "$cafter" 0) calls opened after it, snapshots read before the mark $(val B cut-mark-snap), verdicts before B's HM2 line $hv, the next call $(num "$fgap" -) ms after it, verdicts before the mark $(val B cut-mark-verdicts); before the read-write remount (rc $(val B cut-root-rw-rc)) refusals $(val B cut-refused-before), snapshots $(val B cut-snap-before-go)"
+	kc=$(sed -n 's/.* late-copy t=[0-9]* key=\([0-9a-f]*\).*/\1/p' "$tr" 2>/dev/null | head -1); kn=$(sed -n 's/.* late-new t=[0-9]* key=\([0-9a-f]*\).*/\1/p' "$tr" 2>/dev/null | head -1)
+	case $CUT in
+	loss) enp=0;;
+	dup) enp=1;;
+	late) if [ -z "$kc" ] || [ -z "$kn" ]; then enp=void; elif [ "$(expr "x$kn" \> "x$kc")" = 1 ]; then enp=0; else enp=1; fi;;
+	esac
+	if [ "$enp" = void ]; then
+		VOID="late's copy met no scanall call on its msgid (late-unspent $(grep -c '^late-unspent ' "$tr" 2>/dev/null), copy key ${kc:-none}, new key ${kn:-none})"
+	else
+		[ "$(num "$(val B cut-up-notproxy)" -1)" = "$enp" ] && [ "$(num "$(val B cut-up-hm2)" -1)" = "$enp" ] && [ "$(num "$(val B cut-up-ending)" 1)" = 0 ] && [ "$(num "$(val B cut-up-detached)" 1)" = 0 ] && [ "$(val H fault-first)" = timeout ] && [ "$(num "$nh" 1)" = 0 ] && [ "$(num "$nbc" 0)" = 1 ] && [ "$ce" = 0 ] && [ "$(num "$cafter" 0)" -ge 1 ]; check "control: with the sequence checks off the $CUT fault is taken and the link stays up past it" $? "not a proxy $(val B cut-up-notproxy) of $enp, HM2 lines $(val B cut-up-hm2) ($(val B cut-up-hm2-text)), ending the link $(val B cut-up-ending), detached $(val B cut-up-detached), first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), B's pairs $(num "$nbc" 0), the cut call's close error ${ce:-unread}, calls after $(num "$cafter" 0), keys copy ${kc:--} new ${kn:--}; verdict $(val B cut-up-verdict) after $(val B cut-up-seconds) s"
+	fi
+	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "control: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
 elif [ -n "$CUT" ]; then
 	# Where the cut fell: in a scanall call from the Kth on, with 2 to 15
 	# feeds, after the pass read its snapshot and before any verdict; under
 	# disconnect the calls the relay counts after it on the next pair are
 	# the upper bound, the pass having had more to scan.
+	# A protocol cell's fault is its own trace line, read against the mark
+	# written into B's log when the host saw it, since B's detach can follow
+	# the fault by the 10 s wait; the disconnect is the cut line and the
+	# relay's one disconnect, read against the detach.
 	tr=$FIXDIR/wire-run-$stamp.trace
-	ccut=$(sed -n 's/.* cut t=[0-9]* call=\([0-9]*\) feeds=\([0-9]*\).*/\1 \2/p' "$tr" 2>/dev/null)
+	fw=cut; sb4=cut-snap-before; ip=0; hv=-; fgap=-
+	if [ "$PROTO" = 1 ]; then fw=$FAULT sb4=cut-mark-snap; inpass "$tr"; ip=$?; else [ "$(num "$(val B cut-verdicts-before)" 1)" = 0 ] || ip=1; fi
+	ccut=$(sed -n "s/.* $fw t=[0-9]* call=\([0-9]*\) feeds=\([0-9]*\).*/\1 \2/p" "$tr" 2>/dev/null)
 	cc=$(num "${ccut% *}" -1); cf=$(num "${ccut#* }" 0)
 	cafter=$(awk -v c="$cc" '/ open t=/ { sub(/.*call=/, ""); if ($1 + 0 > c) n++ } END { print n + 0 }' "$tr" 2>/dev/null)
-	ndisc=$(grep -c '^disconnect ' "$tr" 2>/dev/null)
-	[ "$(printf '%s\n' "$ccut" | grep -c .)" = 1 ] && [ "$cc" -ge "$CUTAT" ] && [ "$cf" -ge 2 ] && [ "$cf" -le 15 ] && [ "$(num "$ndisc" 0)" = 1 ] && { [ "$CUT" = control ] || [ "$(num "$cafter" 0)" -ge 1 ]; } && [ "$(num "$(val B cut-snap-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-verdicts-before)" 1)" = 0 ] && [ "$(num "$(val B cut-refused-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "cut: the relay ends the link inside the pass, in a scanall call from the ${CUTAT}th with chains still to feed" $? "call $cc of K $CUTAT with $cf feeds, $(num "$cafter" 0) calls after it, disconnects $(num "$ndisc" 0), snapshots read before $(val B cut-snap-before), verdicts between $(val B cut-verdicts-before); before the read-write remount (rc $(val B cut-root-rw-rc)) refusals $(val B cut-refused-before), snapshots $(val B cut-snap-before-go)"
+	ndisc=$(grep -c '^disconnect ' "$tr" 2>/dev/null); nd=1; [ "$PROTO" = 1 ] && nd=0
+	[ "$(printf '%s\n' "$ccut" | grep -c .)" = 1 ] && [ "$cc" -ge "$CUTAT" ] && [ "$cf" -ge 2 ] && [ "$cf" -le 15 ] && [ "$(num "$ndisc" 9)" = "$nd" ] && { [ "$CUT" = control ] || [ "$(num "$cafter" 0)" -ge 1 ]; } && [ "$(num "$(val B $sb4)" 0)" -ge 1 ] && [ "$ip" = 0 ] && [ "$(num "$(val B cut-refused-before)" 0)" -ge 1 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "cut: the relay's $FAULT falls inside the pass, in a scanall call from the ${CUTAT}th with chains still to feed" $? "call $cc of K $CUTAT with $cf feeds, $(num "$cafter" 0) calls after it, disconnects $(num "$ndisc" 0), snapshots read before $(val B $sb4), verdicts between $(val B cut-verdicts-before) (B's HM2 line $hv, the next call $fgap ms after it, the mark $(val B cut-mark-verdicts)); before the read-write remount (rc $(val B cut-root-rw-rc)) refusals $(val B cut-refused-before), snapshots $(val B cut-snap-before-go)"
+	# A protocol cell ends the link on B with the one line its check prints,
+	# so B's reader ends the pair and no hangup follows; trail's copy may
+	# instead find its state gone and do nothing, outcome (a), which only
+	# the hangup ends. Late's copy meeting no reuse makes the run void.
+	pa=0
+	if [ "$PROTO" = 1 ]; then
+		case $CUT in
+		loss|reorder) el='peer closed a reply short, ending the link';;
+		dup) el='peer sent a feed out of sequence, ending the link';;
+		late) el="peer sent another call's feed, ending the link";;
+		trail) el='peer sent a frame after its reply closed, ending the link';;
+		esac
+		nh=$(grep -c '^hangup ' "$tr" 2>/dev/null)
+		bk=$FIXDIR/wire-run-$stamp-b.klog
+		nk=$(num "$(grep -c 'BUG: KASAN' "$bk" 2>/dev/null)" -1)
+		nkr=$(awk '/BUG: KASAN/ { r = 1 } r && /hammer2_rcall_reply/ { n++; r = 0 } /Allocated by task|Freed by task|The buggy address|=====/ { r = 0 } END { print n + 0 }' "$bk" 2>/dev/null)
+		nkr=$(num "$nkr" -1); np=$(num "$(grep -c 'not a proxy' "$bk" 2>/dev/null)" -1)
+		if [ "$(val B cut-hm2-text)" = "$el;" ] && [ "$(val H fault-first)" = eof ] && [ "$(num "$nh" 1)" = 0 ]; then to=closed
+		elif [ "$CUT" = trail ] && [ "$(num "$(val B cut-hm2)" 1)" = 0 ] && [ "$(val H fault-first)" = timeout ] && [ "$(num "$nh" 0)" = 1 ]; then to=silent; pa=1
+		else to=other; fi
+		[ "$CUT" = trail ] && echo "  trail-outcome $to"
+		if [ "$CUT" = late ] && grep -q '^late-unspent ' "$tr" 2>/dev/null; then
+			VOID="late's copy met no scanall call on its msgid before the pair ended"
+		else
+			[ "$to" != other ] && [ "$nk" = 0 ] && [ "$np" = 0 ]; check "$CUT: B ends the link at the fault with the one line its check prints$([ "$CUT" = trail ] && echo ", or the copy does nothing and the relay hangs the pair up")" $? "outcome $to: HM2 lines $(val B cut-hm2) ($(val B cut-hm2-text)) of \"$el\", first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), not a proxy $np, KASAN reports $nk of which in hammer2_rcall_reply $nkr, late keys $(sed -n 's/.* late-\(copy\|new\) t=[0-9]* key=/\1 /p' "$tr" 2>/dev/null | tr '\n' ' ')"
+		fi
+	fi
 	# The link's end on B: the span's deletion detaches the slot, the call
 	# in flight ends not connected, the pass unverified, its target kept,
 	# and every pass in the gap finds no quorum.
-	[ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ] && [ "$(num "$(val B cut-scanall-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B cut-unverified)" 0)" = 1 ] && [ "$(num "$(val B cut-verified)" 1)" = 0 ] && [ "$(num "$(val B cut-other-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-target-taken)" 0)" = 1 ] && [ "$(num "$(val B cut-target-kept)" 1)" = 0 ] && [ "$(num "$(val B cut-noquorum)" 0)" -ge 1 ] && [ "$(num "$(val B cut-gap-ms)" 0)" -ge 6000 ]; check "cut: B detaches by the span's deletion, the pass ends unverified with its target kept, and the gap finds no quorum" $? "detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s, scanall ended ENOTCONN $(val B cut-scanall-notconn), verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), no quorum $(val B cut-noquorum) in $(val B cut-gap-ms) ms, source deletions refused $(val B cut-delete-errors)"
+	[ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ] && { [ "$pa" = 1 ] || { [ "$(num "$(val B cut-scanall-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B cut-unverified)" 0)" = 1 ] && [ "$(num "$(val B cut-verified)" 1)" = 0 ] && [ "$(num "$(val B cut-other-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-target-taken)" 0)" = 1 ] && [ "$(num "$(val B cut-target-kept)" 1)" = 0 ] && [ "$(num "$(val B cut-noquorum)" 0)" -ge 1 ]; }; } && [ "$(num "$(val B cut-gap-ms)" 0)" -ge 6000 ]; check "cut: B detaches by the span's deletion, the pass ends unverified with its target kept, and the gap finds no quorum" $? "detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s, scanall ended ENOTCONN $(val B cut-scanall-notconn), verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), no quorum $(val B cut-noquorum) in $(val B cut-gap-ms) ms, source deletions refused $(val B cut-delete-errors)"
 	# Neither kernel says HM2 at a link the relay ended; A keeps the link's
 	# snapshot until its next connection's end.
-	[ "$(num "$(val B cut-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-peer-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-link-left)" 1)" = 0 ]; check "cut: no HM2 line on either side, and A keeps the link's snapshot past the cut" $? "B $(val B cut-hm2), A $(val A cut-peer-hm2) HM2 lines, A's left-by-the-link deletions $(val A cut-link-left)"
+	{ [ "$PROTO" = 1 ] || [ "$(num "$(val B cut-hm2)" 1)" = 0 ]; } && [ "$(num "$(val A cut-peer-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-link-left)" 1)" = 0 ]; check "cut: no HM2 line on A$([ "$PROTO" = 1 ] || echo " or B"), and A keeps the link's snapshot past the cut" $? "B $(val B cut-hm2), A $(val A cut-peer-hm2) HM2 lines, A's left-by-the-link deletions $(val A cut-link-left)"
 	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
 	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "cut: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
 	if [ "$CUT" = control ]; then
@@ -1481,8 +1562,8 @@ elif [ -n "$CUT" ]; then
 		[ "$nfa" -ge 300 ] && [ "$nfpb" -lt "$nfpa" ] && [ "$sb" = 1 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "control: with no dial after the cut the slave stays short of the master and keeps its target" $? "file entries A $nfpa B $nfpb, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions at its unmount $(val A snap-link-left), CL.h2sync-src on A $sa"
 	else
 		[ "$(num "$(val A cut-link-left-after)" 0)" = 1 ] && [ "$(num "$(val A cut-peer-hm2-after)" 1)" = 0 ] && [ "$(num "$(val B cut-threads-before)" 1)" = 0 ] && [ "$(num "$(val B cut-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B cut-registered)" 0)" = 2 ]; check "cut: A deletes the link's snapshot at its dial, and B dials again and registers A's root a second time" $? "A's deletions $(val A cut-link-left-after), A's HM2 lines $(val A cut-peer-hm2-after), B's threads before $(val B cut-threads-before), B rc $(val B cut-dial-rc), registered $(val B cut-registered)"
-		[ "$(val B cut-resumed-verdict)" = verified ] && [ "$(num "$(val B cut-resumed-target)" 1)" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "cut: the first pass after the dial verifies on the target the cut pass took" $? "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
-		[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
+		[ "$(val B cut-resumed-verdict)" = verified ] && { [ "$pa" = 1 ] || [ "$(num "$(val B cut-resumed-target)" 1)" = 0 ]; } && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "cut: the first pass after the dial verifies on the target the cut pass took" $? "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
+		[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && { [ "$pa" = 1 ] || [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; }; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
 		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
 	fi
 elif [ "$PASSREFUSE" = control ]; then
@@ -1565,7 +1646,7 @@ if [ "$STALL" != 0 ]; then
 	st=$(grep -c ' stall ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ] && [ "$(num "$(val B readdir-timedout-ms)" 0)" -ge 2000 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, shortest timed-out readdir $(val B readdir-timedout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
-[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$RETYPE" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
+[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$RETYPE" = 1 ] || [ "$LINKLOST" = 1 ] || [ "$PROTO" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 if [ "$ROGATE" = control ]; then
 	[ "$(num "$(val B rw-mount-rc)" 1)" = 0 ] && [ "$(num "$(val B log-mount-refused)" 1)" = 0 ]; check "control: with the read-only gate off a read-write mount of B's CL is taken beside the remote master" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 else
@@ -1595,7 +1676,9 @@ fi
 dw=$(val B detached-why | sed 's/ *$//')
 if [ "$LINKDEV" = 1 ]; then
 	[ "$(val B linkdev)" = 1 ] && [ "$(num "$(val B vdb-gone-detached)" 0)" = 1 ] && [ "$(num "$(val B vdb-gone-threads)" 0)" -ge 1 ] && [ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "unmount" ]; check "remote: B's own device leaving first detaches the element once, by its unmount, with the link on vdc still up" $? "$(val B log-detached), by $dw, $(val B vdb-gone-detached) before vdc's unmount with $(val B vdb-gone-threads) link threads"
-elif [ "$CUT" = disconnect ] || [ "$CUT" = master ]; then
+elif [ "$SEQ" = control ]; then
+	[ "$(num "$(val B log-detached)" 0)" = 1 ] && [ "$dw" = "connection ended" ]; check "control: the link left up past the fault detaches the element once, by the connection's end at B's unmount" $? "$(val B log-detached), by $dw"
+elif [ "$CUT" = disconnect ] || [ "$CUT" = master ] || [ "$PROTO" = 1 ]; then
 	# the cut's by the span, the redial finding the slot already clear; the
 	# second link's by B's unmount
 	[ "$(num "$(val B log-detached)" 0)" = 2 ] && [ "$dw" = "span deleted connection ended" ]; check "cut: the element is detached once at the cut, by the span's deletion, and once at B's unmount" $? "$(val B log-detached), by $dw"
@@ -1655,4 +1738,5 @@ relay_frames=$(sed -n 's/.*pair done frames \([0-9]*\).*/\1/p' "$W/relay.out" | 
 [ "$(num "$relay_frames" 0)" -ge 8 ]; check "relay: the trace holds the exchange, every frame a decision line" $? "$relay_frames frames, trace wire-run-$stamp.trace"
 
 echo "wire: $checks check(s), $fail failed"
-[ "$fail" = 0 ]
+[ "$fail" = 0 ] || exit 1
+[ -z "$VOID" ] || { echo "wire: VOID: $VOID" >&2; exit 2; }

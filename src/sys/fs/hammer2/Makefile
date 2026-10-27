@@ -111,11 +111,15 @@ ifdef HAMMER2_NOWINDOW
 ccflags-y += -DHAMMER2_NOWINDOW
 endif
 # The remote element's negative controls, script/cluster-wire.sh's: the
-# client takes feeds past its window and says so once, and no keepalive is
-# armed, so a silent peer is seen only at a request's bound.  Never install
-# either.
+# client takes feeds past its window and says so once, takes a feed with
+# another call's tag or out of its place and a close short of its count,
+# and no keepalive is armed, so a silent peer is seen only at a request's
+# bound.  Never install any of them.
 ifdef HAMMER2_NOCLIENTWINDOW
 ccflags-y += -DHAMMER2_NOCLIENTWINDOW
+endif
+ifdef HAMMER2_NOCLIENTSEQ
+ccflags-y += -DHAMMER2_NOCLIENTSEQ
 endif
 ifdef HAMMER2_NOKEEPALIVE
 ccflags-y += -DHAMMER2_NOKEEPALIVE

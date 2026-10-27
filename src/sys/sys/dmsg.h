@@ -577,7 +577,9 @@ typedef struct dmsg_dbg_shell dmsg_dbg_shell_t;
  * descriptor's index, carrying the XOP's arguments that are not pointers
  * with the name as aux; a reply frame is one fed chain's blockref with
  * its bytes and error, the chain's data as aux, and the transaction's
- * DELETE carries the element's final error.
+ * DELETE carries the element's final error.  Every reply frame echoes
+ * the request's tag and counts the feeds sent before it, since a msgid
+ * is reused once its state is freed and kern_dmsg checks no sequence.
  */
 struct dmsg_hm2_xop {
 	dmsg_hdr_t	head;
@@ -588,7 +590,8 @@ struct dmsg_hm2_xop {
 	uint32_t	resolve_flags;
 	uint32_t	lookup_flags;
 	int32_t		nmax;
-	uint32_t	reserved[3];	/* 128 bytes, the size the command encodes */
+	uint8_t		tag[8];		/* the call's, echoed by its reply */
+	uint32_t	reserved;	/* 128 bytes, the size the command encodes */
 };
 
 typedef struct dmsg_hm2_xop dmsg_hm2_xop_t;
@@ -599,10 +602,11 @@ struct dmsg_hm2_feed {
 	uint32_t	bytes;
 	uint32_t	error;
 	uint32_t	flags;		/* DMSG_HM2_FEEDF_* on the closing frame */
-	uint32_t	reserved0;
+	uint32_t	seq;		/* feeds sent before this frame */
 	uint64_t	rkey;		/* a readdir's next key, closing frame */
 	uint64_t	tid;		/* a snapshot's transaction id, closing frame */
-	uint8_t		reserved[32];
+	uint8_t		tag[8];		/* the request's */
+	uint8_t		reserved[24];
 };
 
 typedef struct dmsg_hm2_feed dmsg_hm2_feed_t;
