@@ -443,14 +443,22 @@ hammer2_update_spans(hammer2_dev_t *hmp, kdmsg_state_t *state)
 
 	parent = hammer2_inode_chain(spmp->iroot, 0, HAMMER2_RESOLVE_ALWAYS);
 	chain = NULL;
-	if (parent == NULL)
+	if (parent == NULL) {
+		/* XXX Linux: done is past the inode's unlock */
+		hammer2_inode_unlock(spmp->iroot);
 		goto done;
+	}
 	chain = hammer2_chain_lookup(&parent, &key_next,
 				     HAMMER2_KEY_MIN, HAMMER2_KEY_MAX,
 				     &error, 0);
 	while (chain) {
-		if (chain->bref.type != HAMMER2_BREF_TYPE_INODE)
-			continue;
+		/*
+		 * XXX Linux: the carried continue never advanced the chain,
+		 * and an inode whose read failed has no data to announce.
+		 */
+		if (chain->bref.type != HAMMER2_BREF_TYPE_INODE ||
+		    chain->data == NULL)
+			goto next;
 		ripdata = &chain->data->ipdata;
 #if 0
 		kprintf("UPDATE SPANS: %s\n", ripdata->filename);
@@ -472,7 +480,7 @@ hammer2_update_spans(hammer2_dev_t *hmp, kdmsg_state_t *state)
 		      name_len);
 
 		kdmsg_msg_write(rmsg);
-
+next:
 		chain = hammer2_chain_next(&parent, chain, &key_next,
 					       HAMMER2_KEY_MAX, /* XXX key_beg */
 					       &error, 0);

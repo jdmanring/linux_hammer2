@@ -223,6 +223,10 @@ own offset. No category is new.
 (x);` is in `hammer2_rcall_reply()`, refusing a frame that arrives after
 its reply closed. No category is new.
 
+1,593 to 1,594 with the reads of a failed lookup. One more `return
+(x);` is in `hammer2_recovery_scan()`, returning the error of an inode
+whose read left no data. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

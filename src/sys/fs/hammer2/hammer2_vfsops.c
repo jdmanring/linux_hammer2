@@ -1557,8 +1557,14 @@ next_hmp:
 	chain = hammer2_chain_lookup(&parent, &key_next, lhc,
 	    lhc + HAMMER2_DIRHASH_LOMASK, &error, 0);
 	while (chain) {
+		/*
+		 * XXX Linux: an inode whose read failed has no data and its
+		 * name cannot be read, so it stops the search and the chain
+		 * error below names it, rather than strcmp() reading NULL.
+		 */
 		if (chain->bref.type == HAMMER2_BREF_TYPE_INODE &&
-		    strcmp(label, (char *)chain->data->ipdata.filename) == 0)
+		    (chain->data == NULL ||
+		    strcmp(label, (char *)chain->data->ipdata.filename) == 0))
 			break;
 		chain = hammer2_chain_next(&parent, chain, &key_next,
 		    lhc + HAMMER2_DIRHASH_LOMASK, &error, 0);
@@ -1876,6 +1882,17 @@ hammer2_recovery_scan(hammer2_dev_t *hmp, hammer2_chain_t *parent,
 		 * for recursion.
 		 */
 		hammer2_chain_lock(parent, HAMMER2_RESOLVE_ALWAYS);
+		/*
+		 * XXX Linux: a read that failed leaves no data, which the
+		 * scan below reports for an indirect block by the parent's
+		 * error, as this does.
+		 */
+		if (parent->data == NULL) {
+			error = parent->error ? parent->error :
+			    HAMMER2_ERROR_EIO;
+			hammer2_chain_unlock(parent);
+			return (error);
+		}
 		ripdata = &parent->data->ipdata;
 		if (ripdata->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA) {
 			/* not applicable to recovery scan */
