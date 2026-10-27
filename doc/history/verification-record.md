@@ -18833,3 +18833,69 @@ Notes beside the logs: `p8-notes/step5-*.log`, `p8-notes/step5b-*.log`
 and `p8-notes/doc-moves-draft.md` under `linux_hammer2-data`.
 
 The row is 1.0.59.
+
+## One snapshot pass timed on a million-file tree, 2026-10-27
+
+What this entry claims: one snapshot-form pass of the synchronization
+thread costs about three walks of every inode the PFS indexes, whatever
+the change, so on a million-file tree a pass for one rewritten file
+takes 33 s against the thread's 5.12 s cadence. This is stage 3.0 of the
+cluster protocol note; its outcome there is the paragraph that follows
+the stage's description.
+
+The runs are `cluster-sync.sh` under `H2_PASS_TREE`, the module of
+`0393232`, files of 605 bytes in 1000 directories written by four
+shells, one file rewritten at the same length on the master alone and
+the slave returned, three times a run:
+
+| tree | kernel | run | pass, ms | largest scan | checks |
+|---|---|---|---|---|---|
+| 1,000,000 | `h2release-7.3` | `cluster-run-20261027-023051` | 32976, 32784, 32768 | 1,001,003 | 26, 0 failed |
+| 100,000 | `h2release-7.3` | `cluster-run-20261027-024915` | 3799, 2826, 2511 | 101,003 | 26, 0 failed |
+| 100,000 | `h2debug-7.3` | `cluster-run-20261027-022323` | 33706, 33397, 33248 | 101,003 | 27, 0 failed |
+
+Every pass verified in two rounds, and each run ended with the slave
+equal to its master entry for entry and block for block (3,002,002
+fingerprint lines at the million, 0 differing) and both images
+`fsck_hammer2` clean. The debug run takes a kmemleak reading the release
+kernel cannot, hence its one more check.
+
+The mechanism, read from the kept klogs by count: each of the six
+release passes printed `START_SCAN` three times between its `begin` and
+`end`, the root, its rescan once the changed directory's deferral
+drained (`hammer2_sync_pass()`, the loop at `hammer2_synchro.c:545-555`,
+the `sync_slaves error 256` line between them being
+`HAMMER2_ERROR_EAGAIN`), and the second verify round's. A root scan
+iterates over every inode the PFS indexes. At the million each of the
+nine scans spent 2.69 to 2.82 s between `sync_slaves pfs` and
+`START_SCAN`, which is the snapshot element's scan filling the XOP's FIFO
+before the first collect, and 8.01 to 8.50 s merging. Each verified pass
+is followed by one `idlestamp` pass that scans the live root once more,
+7.1 and 11.2 s at the million and 0.67 and 0.91 s at 100,000, two per
+run; the idle passes after it print `syncsnap: idle` every 5.12 s and
+scan nothing, so an idle PFS of this size costs the thread no scan.
+
+The debug run read the same 33 s at a tenth of the tree, which looked
+like a fixed wait until the release run at 100,000 read a tenth of the
+release million's time: the debug kernel's cost per iteration is about
+ten times the release kernel's here, and the agreement of the two totals
+was a coincidence of size and kernel. A line through the two release
+means, 3045 and 32843 ms, crosses 5120 ms near 160,000 files on this
+guest; that is an estimate from two sizes and is not a reading.
+
+The million-file run also found a defect in the harness. Its totals
+check read `100092 inode, 99984 data, 104000 dirent` on both images and
+passed: `fsck_hammer2` cuts each running total to the terminal's width,
+80 with output to a file, and the pattern took the last total that
+still fit. Fixed at `4e5f5d7`; the same images read `1001005 inode,
+1000000 data, 1001001 dirent` on both with the width set, the cut output
+reads as no total, and the 100,000-file release run is the first under
+the fix, `101005 inode, 100000 data, 101001 dirent` on both. The
+fingerprint check, which compares every entry, read the whole tree in
+both runs, so the slave's equality above does not rest on the totals.
+
+Each run is `fixtures/<run>.log` and `.klog` under `linux_hammer2-data`,
+and the launchers' logs are `p8-notes/tree-million-20261027-023051.log`
+and `p8-notes/tree-100k-release-20261027-024915.log` beside them.
+
+The row is 1.0.60.

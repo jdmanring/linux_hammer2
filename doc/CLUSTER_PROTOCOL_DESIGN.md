@@ -1500,6 +1500,34 @@ phase-2 `fsync` already waits out; a pass longer than the cadence makes
 that `fsync` unusable as a default, and the next step is then the
 latency question rather than the wire. Stages 1 and 2 need no part of this and proceed.
 
+**The measurement is read, and the next step is latency.** On
+`h2release-7.3` with the module of `0393232`, one file of the tree
+rewritten on the master and the slave returned, three times a run, one
+snapshot-form pass took 32976, 32784 and 32768 ms on a tree of 1,000,000
+files (`cluster-run-20261027-023051`) and 3799, 2826 and 2511 ms on one
+of 100,000 (`cluster-run-20261027-024915`), against 5120 ms; both runs
+verified every pass and ended with the slave equal to its master, 26
+checks and 0 failed. The pass follows the tree and not the change. Every
+one of the six ran three root scans, the root, its rescan once the
+changed directory's deferral drained (`hammer2_sync_pass()`, `hammer2_synchro.c:545-555`)
+and the second verify round's, and a root scan walks every inode the
+PFS indexes, 1,001,003 iterations at the million; there each of the
+nine scans spent 2.7 to 2.8 s before its first compare, while the
+snapshot's element filled the XOP's FIFO, and 8.0 to 8.5 s merging it
+with the slave's tree. The
+verified pass is followed by one stamp pass that scans the live root
+again, 7.1 and 11.2 s at the million, and the idle passes after it scan
+nothing. A 100,000-file run on `h2debug-7.3` read 33.2 to 33.7 s
+(`cluster-run-20261027-022323`), the same total at a tenth of the tree,
+which is that kernel's cost per iteration: the two release runs on one
+kernel are the reading, the debug run is not. A line through the two
+release means crosses the cadence near 160,000 files on this guest, an
+estimate from two sizes. A phase-2 `fsync` that waits for a pass is
+therefore not a default on a PFS of the million-tree size, and the
+lease's acknowledgment, which waits on the same pass, inherits its
+latency; the lease protocol note takes the pass's cost as its first
+question, before the wire.
+
 ### B. Membership, epoch and stale rejection (S1 to S3)
 
 **Membership is settled where the research settles it.** Today
