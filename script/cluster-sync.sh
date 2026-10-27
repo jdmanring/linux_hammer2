@@ -1349,14 +1349,21 @@ for img in "$MASTER" "$SLAVE"; do
 	"$FSCK" "$img" > "$W/fsck.$b" 2>&1
 	s=$?
 	check "fsck_hammer2 $b" $s "exit $s"
-	"$FSCK" -b "$img" > "$W/fsck-best.$b" 2>&1
+	COLUMNS=4096 "$FSCK" -b "$img" > "$W/fsck-best.$b" 2>&1
 done
 # The totals come from the best zone alone, fsck -b, whose last running total
 # is that zone's. The walk above covers all four headers, and an older one
 # still holds the tree a pass's snapshot was in. MEASURED 2026-10-27: a tree
 # run with no write after its last pass left zone 3 at twice the inodes of
 # the best zone, which matched the slave.
-last() { grep -o '([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)' "$1" | tail -1; }
+#
+# fsck cuts each running total to the terminal's width, $COLUMNS with no
+# terminal, else 80. At 80 a million-file tree's totals lost their closing
+# parenthesis, and a pattern matching complete totals anywhere in the file
+# took the last one that still fit, 100092 inodes of 1001005, and passed on
+# a tenth of the walk. The width is set wide, and the last total is taken
+# whole or not at all, so a cut one reads as no total and fails.
+last() { tr '\r' '\n' < "$1" | grep 'blockref (' | tail -1 | grep -o '([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)'; }
 m=$(last "$W/fsck-best.cluster-master.img" | sed 's/ [0-9]* indirect,//')
 v=$(last "$W/fsck-best.cluster-slave.img" | sed 's/ [0-9]* indirect,//')
 [ -n "$m" ] && [ "$m" = "$v" ]; check "the slave holds what the master holds" $? "master $m, slave $v; indirect blocks are left out, the slave's being built in insertion order"
