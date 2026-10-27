@@ -192,12 +192,19 @@ mkfifo "$W/report" || exit 2
 tee "$FIXDIR/cluster-run-$STAMP.log" < "$W/report" &
 exec > "$W/report" 2>&1
 echo "  kept  this report beside the images as cluster-run-$STAMP.log"
-# The build the run read, named in its report: two runs of 2026-10-27
+# The build the run read, named in its report: two pass timing runs
 # began before the commit of the source they built and kept no hash, so
 # their identity rested on the session's order. The harness is copied
 # beside the report, since the frozen script/.run-*.sh copies are reused.
+# A module given by H2_KO is named by its own hash, since HEAD is not its
+# source.
 git diff --quiet HEAD -- src/ 2>/dev/null; dirty=$?
-echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty ko=${H2_KO:-built} harness=$(sha256sum < "$0" | cut -c1-16)"
+if [ -n "${H2_KO:-}" ]; then
+	ko="$H2_KO sha256=$(sha256sum < "$H2_KO" 2>/dev/null | cut -c1-16)"
+else
+	ko=built
+fi
+echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty ko=$ko harness=$(sha256sum < "$0" | cut -c1-16)"
 cp "$0" "$FIXDIR/cluster-run-$STAMP.sh"
 
 if [ -n "${H2_KO:-}" ]; then

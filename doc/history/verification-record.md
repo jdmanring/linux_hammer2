@@ -18857,7 +18857,9 @@ harness of `024915` is not kept either: it started at 02:49:15, before
 `7f1ed18` was committed at 02:56:13, and its whole totals of 101005
 inodes are what the cut pattern of `022323` could not print, which is
 consistent with that commit's fix and does not show the bytes. The
-harness of `032344` is kept and is byte-identical to `c271541`'s.
+harness of `032344` was copied beside its report as
+`cluster-run-20261027-032344.sh` and compares equal by `cmp` with
+`c271541`'s.
 Runs from `cluster-sync.sh` after this entry print a `raw build` line
 and keep their harness beside the report.
 
