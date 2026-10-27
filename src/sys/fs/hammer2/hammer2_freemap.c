@@ -328,8 +328,16 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 		    HAMMER2_BREF_TYPE_FREEMAP_LEAF, HAMMER2_FREEMAP_LEVELN_PSIZE,
 		    mtid, 0, 0);
 		KKASSERT(error == 0);
+		/*
+		 * XXX Linux: DragonFly's checks on this modify and the two
+		 * below, which the FreeBSD port dropped.  A modify whose new
+		 * block cannot be had (hammer2_io_new(), ENOMEM or a failed
+		 * folio) returns with chain->data NULL, which the bzero()
+		 * would write through.
+		 */
+		if (error == 0)
+			error = hammer2_chain_modify(chain, mtid, 0, 0);
 		if (error == 0) {
-			hammer2_chain_modify(chain, mtid, 0, 0);
 			bzero(&chain->data->bmdata[0],
 			    HAMMER2_FREEMAP_LEVELN_PSIZE);
 			chain->bref.check.freemap.bigmask = (uint32_t)-1;
@@ -348,7 +356,7 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 		error = HAMMER2_ERROR_ENOSPC;
 	} else {
 		/* Modify existing chain to setup for adjustment. */
-		hammer2_chain_modify(chain, mtid, 0, 0);
+		error = hammer2_chain_modify(chain, mtid, 0, 0); /* XXX Linux */
 	}
 
 	/* Scan 4MB entries. */
@@ -357,7 +365,9 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 		start = (int)((iter->bnext - key) >>
 		    HAMMER2_FREEMAP_LEVEL0_RADIX);
 		KKASSERT(start >= 0 && start < HAMMER2_FREEMAP_COUNT);
-		hammer2_chain_modify(chain, mtid, 0, 0);
+		error = hammer2_chain_modify(chain, mtid, 0, 0); /* XXX Linux */
+		if (error)
+			goto skip_scan;
 
 		error = HAMMER2_ERROR_ENOSPC;
 		for (count = 0; count < HAMMER2_FREEMAP_COUNT; ++count) {
@@ -475,6 +485,8 @@ hammer2_freemap_try_alloc(hammer2_chain_t **parentp, hammer2_blockref_t *bref,
 			    (uint32_t)~((size_t)1 << radix);
 
 		/* XXX also scan down from original count. */
+skip_scan:
+		;
 	}
 
 	if (error == 0) {
@@ -932,17 +944,29 @@ hammer2_freemap_adjust(hammer2_dev_t *hmp, hammer2_blockref_t *bref, int how)
 		    HAMMER2_METH_DEFAULT, key, HAMMER2_FREEMAP_LEVEL1_RADIX,
 		    HAMMER2_BREF_TYPE_FREEMAP_LEAF,
 		    HAMMER2_FREEMAP_LEVELN_PSIZE, mtid, 0, 0);
-		if (error == 0) {
+		if (error == 0)
 			error = hammer2_chain_modify(chain, mtid, 0, 0);
-			KKASSERT(error == 0);
-			bzero(&chain->data->bmdata[0],
-			    HAMMER2_FREEMAP_LEVELN_PSIZE);
-			chain->bref.check.freemap.bigmask = (uint32_t)-1;
-			chain->bref.check.freemap.avail = l1size;
-			/* bref.methods should already be inherited. */
-			hammer2_freemap_init(hmp, key, chain);
+		/*
+		 * XXX Linux: upstream's "handle error", here as the lookup's
+		 * error is handled above.  The pass went on to bzero() and to
+		 * the bitmap through chain->data, NULL after a failed modify
+		 * and chain itself after a failed create.
+		 */
+		if (error) {
+			hprintf("error %d creating leaf at data_off %016llx\n",
+			    error, (long long)bref->data_off);
+			if (chain) {
+				hammer2_chain_unlock(chain);
+				hammer2_chain_drop(chain);
+				chain = NULL;
+			}
+			goto done;
 		}
-		/* XXX handle error */
+		bzero(&chain->data->bmdata[0], HAMMER2_FREEMAP_LEVELN_PSIZE);
+		chain->bref.check.freemap.bigmask = (uint32_t)-1;
+		chain->bref.check.freemap.avail = l1size;
+		/* bref.methods should already be inherited. */
+		hammer2_freemap_init(hmp, key, chain);
 	}
 
 	/* Calculate the bitmask (runs in 2-bit pairs). */
@@ -981,7 +1005,16 @@ again:
 			/* Recovery request, mark as allocated. */
 			if ((*bitmap & bmmask11) != bmmask11) {
 				if (modified == 0) {
-					hammer2_chain_modify(chain, mtid, 0, 0);
+					/* XXX Linux: the error, as above */
+					error = hammer2_chain_modify(chain,
+					    mtid, 0, 0);
+					if (error) {
+						hprintf("error %d at data_off %016llx\n",
+						    error, (long long)bref->data_off);
+						hammer2_chain_unlock(chain);
+						hammer2_chain_drop(chain);
+						goto done;
+					}
 					modified = 1;
 					goto again;
 				}
