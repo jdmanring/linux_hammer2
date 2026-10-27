@@ -18846,12 +18846,20 @@ the stage's description.
 The runs are `cluster-sync.sh` under `H2_PASS_TREE`, files of 605 to 609
 bytes in 1000 directories written by four shells, one file rewritten at
 the same length on the master alone and the slave returned, three times
-a run. The module is the source committed as `976a135`. Runs `022323`
-and `023051` started before that commit, at 02:23:23 and 02:30:51
-against its 02:32:21, from the working tree it then recorded, and no
-build hash was kept, so that identity rests on the session's order and
-not on a reading; `024915` ran after it, with a harness byte-identical
-to the one `7f1ed18` committed.
+a run. No run kept a build identity, so which source each module was
+built from is read from the session and not from the runs. Runs
+`022323` and `023051` started before `976a135`, at 02:23:23 and
+02:30:51 against its 02:32:21, from the working tree it then recorded;
+`024915` and `032344` started after it. What can be read is that
+`src/` is the same at `976a135` and at `8d194f9`, so a module built
+from a clean tree at any point between them is that source. The
+harness of `024915` is not kept either: it started at 02:49:15, before
+`7f1ed18` was committed at 02:56:13, and its whole totals of 101005
+inodes are what the cut pattern of `022323` could not print, which is
+consistent with that commit's fix and does not show the bytes. The
+harness of `032344` is kept and is byte-identical to `c271541`'s.
+Runs from `cluster-sync.sh` after this entry print a `raw build` line
+and keep their harness beside the report.
 
 | tree | kernel | run | pass, ms | largest scan | checks |
 |---|---|---|---|---|---|

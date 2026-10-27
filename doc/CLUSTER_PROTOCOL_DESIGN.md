@@ -1501,7 +1501,7 @@ that `fsync` unusable as a default, and the next step is then the
 latency question rather than the wire. Stages 1 and 2 need no part of this and proceed.
 
 **The measurement is read, and the next step is latency.** On
-`h2release-7.3` with the module of `976a135`, one file of the tree
+`h2release-7.3` with a module of the source `976a135` committed (the record says how that identity is read), one file of the tree
 rewritten on the master and the slave returned, three times a run, one
 snapshot-form pass took 32976, 32784 and 32768 ms on a tree of 1,000,000
 files (`cluster-run-20261027-023051`) and 3799, 2826 and 2511 ms on one
