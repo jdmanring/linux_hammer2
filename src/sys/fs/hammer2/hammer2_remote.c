@@ -1234,8 +1234,8 @@ hammer2_remote_end(uint32_t error)
  * where they can be read, and a peer breaking any ends the link by the
  * reader's own shutdown.
  *
- * The state outlives the call: it stays in kern_dmsg's tree until our
- * DELETE goes out, and kern_dmsg passes a frame after the peer's DELETE
+ * The state outlives the call: it stays in kern_dmsg's tree until the
+ * client's own DELETE goes out, and kern_dmsg passes a frame after the peer's DELETE
  * to this callback as it passed the ones before.  So the close clears the
  * call from the state before the transaction's reference goes, and a
  * frame finding none ends the link rather than reading a call its
@@ -1307,7 +1307,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 	if (f) {
 		++call->nrecv;
 #ifndef HAMMER2_NOCLIENTWINDOW
-		if (call->nrecv > call->allowed)
+		if (call->nrecv > call->allowed && bad == NULL)
 			bad = "sent a feed past the window";
 #else
 		/* the control's reading: the frames it exists to refuse came */
