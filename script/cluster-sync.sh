@@ -211,12 +211,17 @@ fi
 # the status discarded.
 command -v nm >/dev/null 2>&1 || {
 	echo "cluster: COULD-NOT-RUN: no nm, so the module's instrumentation cannot be read" >&2; exit 2; }
-want_asan=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config" 2>/dev/null)
+# An unreadable .config read as no KASAN and no kmemleak, and skipped both
+# readings.
+[ -r "$KDIR/.config" ] || {
+	echo "cluster: COULD-NOT-RUN: $KDIR/.config is not readable, so what the tree configures is unknown" >&2; exit 2; }
+want_asan=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config")
 have_asan=$(nm -u "$KO" 2>/dev/null | grep -c '__asan' || true)
 have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
 # The release tree builds without kmemleak, and the tree arm's timing is
-# read there; a refused scan fails only where the tree configures one.
-want_kmemleak=$(sed -n 's/^CONFIG_DEBUG_KMEMLEAK=//p' "$KDIR/.config" 2>/dev/null)
+# read there; a refused scan is a note only where the tree says it is not
+# set, and fails wherever the tree configures it or says nothing.
+want_kmemleak=$(sed -n 's/^CONFIG_DEBUG_KMEMLEAK=//p; s/^# CONFIG_DEBUG_KMEMLEAK is not set$/n/p' "$KDIR/.config")
 
 # The volumes are detached before they are recreated: a running guest's
 # qemu holds an image open, and a file replaced under it is a file it no
@@ -1335,7 +1340,7 @@ g=$(val gpu-warnings); [ "${g:-0}" = 0 ] || echo "  note  the guest's GPU warned
 c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 case "$l" in
 0) [ "$c" = $((1 + ${H2_CRASH:-0})) ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
-unusable) if [ "$want_kmemleak" != y ]; then echo "  note  the kernel tree configures no kmemleak, so this run takes no leak reading"; else check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on"; fi ;;
+unusable) if [ "$want_kmemleak" = n ]; then echo "  note  the kernel tree configures no kmemleak, so this run takes no leak reading"; else check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on"; fi ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
 esac
@@ -1349,7 +1354,7 @@ for img in "$MASTER" "$SLAVE"; do
 	"$FSCK" "$img" > "$W/fsck.$b" 2>&1
 	s=$?
 	check "fsck_hammer2 $b" $s "exit $s"
-	COLUMNS=4096 "$FSCK" -b "$img" > "$W/fsck-best.$b" 2>&1
+	COLUMNS=4096 "$FSCK" -b "$img" < /dev/null > "$W/fsck-best.$b" 2>&1
 done
 # The totals come from the best zone alone, fsck -b, whose last running total
 # is that zone's. The walk above covers all four headers, and an older one
@@ -1357,8 +1362,9 @@ done
 # run with no write after its last pass left zone 3 at twice the inodes of
 # the best zone, which matched the slave.
 #
-# fsck cuts each running total to the terminal's width, $COLUMNS with no
-# terminal, else 80. At 80 a million-file tree's totals lost their closing
+# fsck cuts each running total to the width of a terminal on its stdout,
+# stderr or stdin, else to $COLUMNS, else to 80, so stdin is taken off a
+# terminal for $COLUMNS to count. At 80 a million-file tree's totals lost their closing
 # parenthesis, and a pattern matching complete totals anywhere in the file
 # took the last one that still fit, 100092 inodes of 1001005, and passed on
 # a tenth of the walk. The width is set wide, and the last total is taken

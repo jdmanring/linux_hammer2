@@ -70,7 +70,10 @@ KO=src/sys/fs/hammer2/hammer2.ko
 # so a sanitizer reading on the wrong module cannot pass in silence.
 # grep -c prints its count and exits 1 on no match, so the count is kept and
 # the status discarded.
-want_asan=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config" 2>/dev/null)
+# An unreadable .config read as no KASAN and skipped the sanitizer check.
+[ -r "$KDIR/.config" ] || {
+	echo "quorum: COULD-NOT-RUN: $KDIR/.config is not readable, so what the tree configures is unknown" >&2; exit 2; }
+want_asan=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config")
 have_asan=$(nm -u "$KO" 2>/dev/null | grep -c '__asan' || true)
 have_ubsan=$(nm -u "$KO" 2>/dev/null | grep -c '__ubsan' || true)
 
