@@ -132,13 +132,16 @@ fi
 # module whose vermagic is not the one running, so the tree is chosen by
 # asking the guest which it booted: a guest on the KASAN build reported
 # both fleet gates COULD-NOT-RUN on two pushes while the rc5 tree sat
-# first in the list. A guest that does not answer in three seconds
+# first in the list, and a guest on the release build met the same
+# fallthrough. A guest that does not answer in three seconds
 # leaves the list to decide, as before.
 if [ -z "${KDIR:-}" ]; then
 	rel=$(timeout 3 ssh -o ConnectTimeout=2 -o BatchMode=yes \
 		"${H2_GUEST_SSH:-root@192.168.122.16}" uname -r 2>/dev/null)
 	case "$rel" in
 	*-kasan) d="$HOME/kernels/linux-7.3-kasan"
+		[ -d "$d" ] && { KDIR=$d; export KDIR; } ;;
+	*-release) d="$HOME/kernels/linux-7.3-release"
 		[ -d "$d" ] && { KDIR=$d; export KDIR; } ;;
 	esac
 fi
