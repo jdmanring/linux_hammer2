@@ -376,6 +376,19 @@ if [ "$guest_rel" != "$ko_rel" ]; then
 	echo "enospc: COULD-NOT-RUN: the module is for $ko_rel and $GUEST runs $guest_rel" >&2
 	exit 2
 fi
+# The lockdep readings below are the instrument's control, and a kernel
+# built without lockdep has no /proc/lockdep_stats: h2release-7.3 read
+# as two failures after a full fill. Status 1 is the file absent; any
+# other nonzero is ssh's and says nothing about the kernel.
+ssh "$GUEST_SSH" 'test -e /proc/lockdep_stats' 2>/dev/null; s=$?
+if [ "$s" != 0 ]; then
+	if [ "$s" = 1 ]; then
+		echo "enospc: COULD-NOT-RUN: $guest_rel has no lockdep; boot h2debug-7.3" >&2
+	else
+		echo "enospc: COULD-NOT-RUN: could not ask $GUEST for lockdep, ssh status $s" >&2
+	fi
+	exit 2
+fi
 
 $VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio >/dev/null 2>&1 || {
 	echo "enospc: COULD-NOT-RUN: could not attach $IMG" >&2; exit 2; }
