@@ -4381,12 +4381,15 @@ hammer2_chain_indirect_maintenance(hammer2_chain_t *parent,
 		 * destination's blockmap is full and chain_create() re-points
 		 * the parent to it.  Printing sub beside parent here separates
 		 * them, and the flag says whether this is a move (SAMEPARENT)
-		 * or the retry that follows a re-pointed parent.
+		 * or the retry that follows a re-pointed parent.  Gated on the
+		 * entry print's bit: ungated, it was 93182 of 594170 lines of
+		 * a million-file cluster run's console (measured 2026-10-27).
 		 */
-		kprintf("indirect_maint: move sub %p %016llx/%d to parent %p %016llx/%d chain %p\n",
-		    sub, (long long)sub->bref.key, sub->bref.keybits,
-		    parent, (long long)parent->bref.key, parent->bref.keybits,
-		    chain);
+		if (hammer2_debug & 0x4000)
+			kprintf("indirect_maint: move sub %p %016llx/%d to parent %p %016llx/%d chain %p\n",
+			    sub, (long long)sub->bref.key, sub->bref.keybits,
+			    parent, (long long)parent->bref.key,
+			    parent->bref.keybits, chain);
 		hammer2_chain_rename_obref(&parent, sub,
 		    sub->bref.modify_tid, HAMMER2_INSERT_SAMEPARENT, &bsave);
 		hammer2_chain_unlock(sub);
