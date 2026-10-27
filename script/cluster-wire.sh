@@ -242,8 +242,10 @@ RETYPE=${H2_WIRE_RETYPE:-0}
 #
 # The protocol cells fault the same call's last feed and leave the link to
 # B: loss drops it, dup sends it twice, reorder sends it after the close,
-# trail sends it, the close and a copy of it in one write, and late keeps a
-# copy for the first scanall call B opens again on the msgid.  B's own end
+# trail sends it, the close and a copy of it in one write, and late sends
+# both as they came and delivers a copy of the feed as the first frame of
+# B's next scanall call, its msgid rewritten to that call's and the frame
+# signed again.  B's own end
 # of the link is waited for, 10 s or 60 s for late, and failing it the relay
 # hangs the pair up; then both dial as after the disconnect.  Each check of
 # B's reply path ends the link with its own line, read as the cell's one HM2
@@ -1537,7 +1539,7 @@ elif [ -n "$CUT" ]; then
 	# instead find its state gone and do nothing, outcome (a), which only
 	# the hangup ends. Late's copy meeting no later scanall call makes the
 	# run void.
-	pa=0
+	pa=0; pv=0
 	if [ "$PROTO" = 1 ]; then
 		case $CUT in
 		loss|reorder) el='peer closed a reply short, ending the link';;
@@ -1553,6 +1555,11 @@ elif [ -n "$CUT" ]; then
 		if [ "$(val B cut-hm2-text)" = "$el;" ] && [ "$(val H fault-first)" = eof ] && [ "$(num "$nh" 1)" = 0 ]; then to=closed
 		elif [ "$CUT" = trail ] && [ "$(num "$(val B cut-hm2)" 1)" = 0 ] && [ "$(val H fault-first)" = timeout ] && [ "$(num "$nh" 0)" = 1 ]; then to=silent; pa=1
 		else to=other; fi
+		# A silent copy leaves the pass running through the wait, and a
+		# pass that verifies there deletes the source by its own path: A
+		# has no snapshot left for the link, and with the master idle no
+		# pass after the dial need print a verdict.
+		[ "$pa" = 1 ] && [ "$(num "$(val B cut-verified)" 0)" = 1 ] && pv=1
 		[ "$CUT" = trail ] && echo "  trail-outcome $to"
 		if [ "$CUT" = late ] && grep -q '^late-unspent ' "$tr" 2>/dev/null; then
 			VOID="late's copy met no scanall call after the fault before the pair ended"
@@ -1576,10 +1583,10 @@ elif [ -n "$CUT" ]; then
 		# and A deletes the link's snapshot at its own unmount.
 		[ "$nfa" -ge 300 ] && [ "$nfpb" -lt "$nfpa" ] && [ "$sb" = 1 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "control: with no dial after the cut the slave stays short of the master and keeps its target" $? "file entries A $nfpa B $nfpb, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions at its unmount $(val A snap-link-left), CL.h2sync-src on A $sa"
 	else
-		[ "$(num "$(val A cut-link-left-after)" 0)" = 1 ] && [ "$(num "$(val A cut-peer-hm2-after)" 1)" = 0 ] && [ "$(num "$(val B cut-threads-before)" 1)" = 0 ] && [ "$(num "$(val B cut-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B cut-registered)" 0)" = 2 ]; check "cut: A deletes the link's snapshot at its dial, and B dials again and registers A's root a second time" $? "A's deletions $(val A cut-link-left-after), A's HM2 lines $(val A cut-peer-hm2-after), B's threads before $(val B cut-threads-before), B rc $(val B cut-dial-rc), registered $(val B cut-registered)"
-		[ "$(val B cut-resumed-verdict)" = verified ] && { [ "$pa" = 1 ] || [ "$(num "$(val B cut-resumed-target)" 1)" = 0 ]; } && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "cut: the first pass after the dial verifies on the target the cut pass took" $? "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
+		[ "$(num "$(val A cut-link-left-after)" 0)" = $((1 - pv)) ] && [ "$(num "$(val A cut-peer-hm2-after)" 1)" = 0 ] && [ "$(num "$(val B cut-threads-before)" 1)" = 0 ] && [ "$(num "$(val B cut-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B cut-registered)" 0)" = 2 ]; check "cut: A deletes the link's snapshot at its dial, and B dials again and registers A's root a second time" $? "A's deletions $(val A cut-link-left-after), A's HM2 lines $(val A cut-peer-hm2-after), B's threads before $(val B cut-threads-before), B rc $(val B cut-dial-rc), registered $(val B cut-registered)"
+		{ [ "$(val B cut-resumed-verdict)" = verified ] || { [ "$pv" = 1 ] && [ -z "$(val B cut-resumed-verdict)" ]; }; } && { [ "$pa" = 1 ] || [ "$(num "$(val B cut-resumed-target)" 1)" = 0 ]; } && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "cut: the first pass after the dial verifies on the target the cut pass took" $? "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
 		[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && { [ "$pa" = 1 ] || [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; }; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
-		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
+		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = $((1 - pv)) ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
 	fi
 elif [ "$PASSREFUSE" = control ]; then
 	# The refusal off: the live pass writes the device opened read-only,
