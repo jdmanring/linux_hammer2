@@ -40,7 +40,7 @@ HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/h
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 # The hold is added to the bound, so a long H2_QUORUM_IDLE is not read as a hang.
 IDLE=${H2_QUORUM_IDLE:-0}
-case $IDLE in ''|*[!0-9]*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_IDLE is not a number of seconds" >&2; exit 2 ;; esac
+case $IDLE in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_IDLE is not a number of seconds without a leading zero" >&2; exit 2 ;; esac
 RUN="timeout $(( ${H2_RUN_TIMEOUT:-600} + IDLE )) ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 QA=$FIXDIR/cluster-qa.img
 QB=$FIXDIR/cluster-qb.img
@@ -367,8 +367,8 @@ d=$(diff "$W/fp.a" "$W/fp.b" 2>/dev/null | grep -c '^[<>]' || true)
 K="$FIXDIR/quorum-run-$STAMP.klog"
 echo "  read  $(val guest-kernel), lockdep debug_locks ${dl:-absent}"
 if [ -r "$K" ]; then
-	grep -q 'h2quorum: start' "$K" && echo "  read  the kept log starts at the run's marker" ||
-		echo "  read  the kept log lost the run's marker, so the ring wrapped and the counts below are short"
+	head -1 "$K" | grep -q 'h2quorum: start' && echo "  read  the kept log starts at the run's marker" ||
+		echo "  read  the kept log does not start at the run's marker: the ring wrapped or the marker was never written, and the counts below may be short"
 	for i in 0 1; do
 		kc() { grep -c "$1 clindex $i" "$K"; }
 		echo "  read  clindex $i: pass $(kc 'syncsnap: pass') idle $(kc 'syncsnap: idle') idlestamp $(kc 'syncsnap: idlestamp') noquorum $(kc 'syncsnap: noquorum') flush $(kc 'sync_flush:') verified $(kc 'syncsnap: verified')"

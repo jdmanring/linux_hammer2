@@ -506,11 +506,12 @@ snapshot copies. On two local masters no pass reaches either: each
 thread's collect excludes its own element, the other alone cannot make
 a quorum of two, and `cluster-quorum.sh` with `H2_QUORUM_IDLE=40` read
 19 passes, every one `noquorum` (18 with `EINPROGRESS`, the last with
-`ENOTCONN` at the unmount), and no idle test (1.0.62). With three or
-more masters a master's thread makes a quorum from the other two and
-reads a slot whose element another master's thread writes, so the stale
-slot is reachable there and unread; it is a `candidate` for P8's
-three-master stage.
+`ENOTCONN` at the unmount), and no idle test (1.0.62). With a third
+local element, a slave beside two masters or a third master, a thread
+makes its quorum from masters other than its own element and reads a
+slot whose master's thread may have flushed a frontend change past it,
+so the stale slot is reachable there; it is a `candidate`, argued from
+the code and unread, in the verification record's entry for 1.0.62.
 
 **The frontend writes the slave element too.** A frontend write on the
 mounted cluster lands on both elements at once, so a pass whose snapshot

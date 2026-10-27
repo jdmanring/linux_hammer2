@@ -19211,7 +19211,9 @@ cluster mounted n seconds after the read-back, with the run's bound
 raised by the hold. Each run now keeps the guest's kernel log beside
 the images with a start marker that a wrapped ring would lose, and
 prints the module's commit and `KDIR`, the guest's kernel and each
-thread's counts under debug 0x8000. Run on `artix-s6-kde` with
+thread's counts under debug 0x8000. Run with the harness as committed in
+`c2f4c87`, from the working tree before that commit, on `artix-s6-kde`
+with
 `H2_QUORUM_IDLE=40`, the log reading "module from 69cdd7d with src/
 clean, against /home/james/kernels/linux-7.3" and the guest "7.3.0 #1
 SMP PREEMPT_DYNAMIC Mon Oct 19 15:40:38 PDT 2026, lockdep debug_locks
@@ -19237,14 +19239,20 @@ needs a focus, which no pass reached, so its 0 is no reading, and it
 was removed.
 
 So no pass on two local masters reaches the idle test or takes a
-snapshot. With three or more masters it does: a master's thread
-excludes itself and the other two make a quorum, so its idle test and
-its snapshot read the slot of an element whose own thread writes it by
-`hammer2_sync_flush()`. That shape is reachable today and unread, and
-the stale slot stays a `candidate` there, for P8's three-master stage,
-which builds that shape. Two masters and a slave should not reach it,
-argued from the code and not run: the slave's thread reads a master's
-slot, but each master's thread is short of quorum as above and takes
-the arm that copied nothing in these runs.
+snapshot. A cluster with a third local element does. When the
+remaining masters make a quorum without the thread's own element, as a
+slave's thread does beside two masters or a master's beside three or
+more, its idle test and its snapshot read a master's slot. That
+master's own thread still runs `hammer2_sync_flush()` on a `noquorum`
+pass, as the 20 `sync_flush: clindex 0` lines beside element 0's 10
+passes show here. A flush with nothing dirty writes nothing, but one
+that finds a frontend change still dirty on its element writes the root
+and leaves the slot behind, and the frontend's next inode flush finds
+that root clean and does not refresh the slot either, since the refresh
+sits inside the flush-mask test (`hammer2_flush.c` 1161-1177). That
+sequence is argued from the code and not run; the stale slot stays a
+`candidate` for those shapes, and its instrument, a third local element
+in `cluster-quorum.sh` with the frontend writing during the hold, is
+not built.
 
 The row is 1.0.62.

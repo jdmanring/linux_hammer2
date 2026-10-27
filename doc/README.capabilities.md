@@ -69,9 +69,10 @@ native and measured on both sides; rollback and the durable checkpoint
 are composed from those and the mount by label; the accounting is the
 format's lazy accounting with a fixed reserve; quota and online repair
 are absent, in every port, and are declared absent rather than
-emulated. Replication is the one cluster capability here, `limited`:
-between local devices, and from a master on another host read-only over
-a plaintext link, which no BSD port reaches. No row is now absent
+emulated. Replication and IncrementalReplication are the cluster
+capabilities here, both `limited`: between local devices, and from a
+master on another host read-only over a plaintext link, which no BSD
+port reaches. No row is now absent
 here and present upstream: NFS export, the one such gap, is closed at
 `native` above, and the operation DragonFly reaches through `vfs_vptofh`,
 `vfs_fhtovp` and `vfs_checkexp` is reached here through the kernel's
