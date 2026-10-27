@@ -663,13 +663,15 @@ done
 # both readings (mm/kmemleak.c, kmemleak_clear); the clear's own marker,
 # `kmemleak-cleared`, named nowhere else but as the host's read, since
 # the host requires one in the `.out` per load the run performs (two in
-# cluster-sync.sh under H2_CRASH=1), counted by occurrence wherever it
+# cluster-sync.sh under H2_CRASH=1 and on the cut guest of a
+# cluster-wire.sh power cut), counted by occurrence wherever it
 # sits, so a second clear whose marker reaches the `.out` beside the
 # first's, on its own line, glued to a line printed without its newline
 # or beside the first on one line, fails the run with or without an
 # unload and a reload around it; the guarded load lines
 # counted, one, and two in cluster-sync.sh (GUEST and GUESTB), whose
-# crash run boots the guest twice, so a second clear and load whose
+# crash run boots the guest twice, and in cluster-wire.sh (its guest
+# setup and restart.sh), whose power cuts boot one guest twice, so a second clear and load whose
 # marker never reaches the `.out` (inside a group, a function, an `exec`
 # or a pipe that redirects or filters their output) is read by the load
 # line it adds; the reading before the unload once, its
@@ -812,7 +814,7 @@ leak_fecho='echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"'
 	fail=$((fail + 1)); }
 leak_rule() {	# leak_rule <harness>: prints why it fails the rule, nothing when it passes
 	lf=$1
-	case $lf in */cluster-sync.sh) nwant=2 ;; *) nwant=1 ;; esac
+	case $lf in */cluster-sync.sh|*/cluster-wire.sh) nwant=2 ;; *) nwant=1 ;; esac
 	why=$(awk -v fclear="$leak_fclear" -v nwant="$nwant" '
 		NR == FNR { forms[$0] = 1; next }
 		/^[ \t]*#/ && /\/kmemleak([^-_.a-zA-Z0-9]|$)/ {

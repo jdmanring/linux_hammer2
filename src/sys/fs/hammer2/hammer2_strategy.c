@@ -456,7 +456,7 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 	hammer2_inode_t *ip = VTOI(folio->mapping->host);
 	hammer2_chain_t *focus;
 	const char *data;
-	int error;
+	int cerror, error;
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_STRATEGY);
@@ -464,7 +464,8 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 	xop->folio = folio;
 	hammer2_xop_start(&xop->head, &hammer2_strategy_read_desc);
 
-	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
+	cerror = hammer2_xop_collect(&xop->head, 0);
+	error = hammer2_error_to_errno(cerror);
 	if (error == 0) {
 		focus = xop->head.cluster.focus;
 		data = hammer2_xop_gdata(&xop->head)->buf;
@@ -478,6 +479,29 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 		 */
 		folio_zero_range(folio, 0, folio_size(folio));
 		error = 0;
+	}
+	/*
+	 * A failed read names what each element fed, so a read that fails
+	 * on a cluster can be told apart by element in the log.
+	 */
+	if (error && (hammer2_debug & 0x0100)) {
+		hammer2_cluster_t *cl = &xop->head.cluster;
+		int i;
+
+		kprintf("H2 READ inum=%016llx lbase=%016llx collect=%08x "
+		    "error=%d focus=%d\n", (unsigned long long)ip->meta.inum,
+		    (unsigned long long)xop->lbase, cerror, error,
+		    cl->focus ? cl->focus_index : -1);
+		for (i = 0; i < cl->nchains; ++i) {
+			hammer2_chain_t *ch = cl->array[i].chain;
+
+			kprintf("H2 READ  elm %d type %d chain %s key=%016llx "
+			    "tid=%016llx cerr=%08x err=%08x\n", i,
+			    ip->pmp->pfs_types[i], ch ? "yes" : "no",
+			    ch ? (unsigned long long)ch->bref.key : 0ULL,
+			    ch ? (unsigned long long)ch->bref.modify_tid : 0ULL,
+			    ch ? ch->error : 0, cl->array[i].error);
+		}
 	}
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);

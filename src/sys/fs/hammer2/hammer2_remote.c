@@ -841,7 +841,13 @@ hammer2_remote_serve(struct work_struct *work)
 	default:
 		break;
 	}
+	/*
+	 * run_mask and chk_mask as hammer2_xop_start_except() sets them for
+	 * one element: chk_mask is the set of FIFOs the retire drains, so
+	 * without it every chain an early end leaves keeps its reference.
+	 */
 	xop->head.desc = desc;
+	atomic_set_32(&xop->head.chk_mask, 1U << clindex);
 	atomic_set_32(&xop->head.run_mask, 1U << clindex);
 	desc->storage_func(xop, NULL, clindex);
 
@@ -1120,9 +1126,9 @@ hammer2_remote_dev_alloc(hammer2_dev_t *lhmp)
 }
 
 /*
- * The link has ended: nothing is sent on it again, and every request in
+ * The link has ended: no request is sent on it again, and every request in
  * flight fails now with the closed-connection code rather than at its
- * bound.
+ * bound.  Its transactions still close (hammer2_rcall_close_locked()).
  */
 static void
 hammer2_remote_dev_kill(hammer2_dev_t *cdev)
@@ -1156,14 +1162,19 @@ hammer2_rcall_put(struct hammer2_rcall *call)
 
 /*
  * Our side's DELETE, an HM2 frame so the server's queue sees it and
- * cancels a request still running.  Under the connection's mutex.
+ * cancels a request still running.  Under the connection's mutex.  It goes
+ * out on a dead link too: kern_dmsg frees a state only once both
+ * directions are closed, and its writer, exiting, waits for every state
+ * (kern_dmsg.c, kdmsg_iocom_thread_wr()) and drains a write to a dying
+ * one locally, so a DELETE withheld there wedges the redial and the
+ * unmount behind it.
  */
 static void
 hammer2_rcall_close_locked(struct hammer2_rcall *call)
 {
 	kdmsg_msg_t *msg;
 
-	if (call->txclosed || call->cdev->rconn->dead)
+	if (call->txclosed)
 		return;
 	call->txclosed = 1;
 	msg = kdmsg_msg_alloc(call->state,
@@ -1334,9 +1345,16 @@ hammer2_rcall_start(hammer2_dev_t *cdev, int idx, const struct uuid *clid,
 	call->allowed = HAMMER2_XOPFIFO;
 	INIT_LIST_HEAD(&call->frames);
 
+	/*
+	 * A link whose reader has exited is dead before the quiesce marks it:
+	 * the writer, draining toward its exit, fails a new state only at its
+	 * next half-second tick (kern_dmsg.c), so a pass sending one request
+	 * per deferred directory would wait that long on each.
+	 */
 	mutex_lock(&rc->mtx);
 	if (rc->dead || rc->lhmp == NULL ||
-	    (rc->lhmp->iocom.flags & KDMSG_IOCOMF_PROTO2) == 0) {
+	    (rc->lhmp->iocom.flags & KDMSG_IOCOMF_PROTO2) == 0 ||
+	    (READ_ONCE(rc->lhmp->iocom.flags) & KDMSG_IOCOMF_EXITNOACC)) {
 		mutex_unlock(&rc->mtx);
 		kfree(call);
 		hammer2_remote_dev_drop(cdev);

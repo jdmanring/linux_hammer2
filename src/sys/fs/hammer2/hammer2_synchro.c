@@ -1838,6 +1838,13 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				 */
 				atomic_add_int(&h2dbg_newer_kept, 1);
 				++list->kept;	/* XXX Linux */
+				if (snap && (hammer2_debug & 0x8000)) /* XXX Linux */
+					kprintf("syncsnap: kept absent %016llx/%d "
+					    "tid %016llx cut %016llx\n",
+					    (long long)chain->bref.key,
+					    chain->bref.type,
+					    (long long)chain->bref.modify_tid,
+					    (long long)thr->snap_cut);
 				advance_local = 1;
 				advance_xop = 1;
 				nerror = HAMMER2_ERROR_EINPROGRESS;
@@ -1878,6 +1885,13 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 */
 			atomic_add_int(&h2dbg_newer_kept, 1);
 			++list->kept;	/* XXX Linux */
+			if (hammer2_debug & 0x8000) /* XXX Linux */
+				kprintf("syncsnap: kept newer %016llx/%d "
+				    "tid %016llx source %016llx\n",
+				    (long long)chain->bref.key,
+				    chain->bref.type,
+				    (long long)chain->bref.modify_tid,
+				    (long long)focus->bref.modify_tid);
 			advance_local = 1;
 			advance_xop = 1;
 			nerror = HAMMER2_ERROR_EINPROGRESS;
