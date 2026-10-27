@@ -19193,46 +19193,58 @@ The row is 1.0.61.
 ## The idle test on two masters, 2026-10-27
 
 Run 10's entry left one two-master item unconfirmed: a thread's own
-`hammer2_flush()` of an element root does not refresh that element's
-slot in `pfs_iroot_blocksets[]`, which the idle test compares and the
-snapshot copies (`hammer2_ioctl.c` 1037), so a second master's thread
-writing the source element would leave the idle test reading stale. The
-reading asks first whether a two-master pass reaches the idle test at
-all. The thread elects its source by a collect that excludes its own
-element (`hammer2_xop_start_except()`, `hammer2_synchro.c` 730), and
-with `pfs_nmasters` 2 the quorum is 2, which the other element alone
-cannot make; the pass then takes the `noquorum` arm and runs the live
-pass, which never reads the slot.
+`hammer2_flush()` of an element root, which `hammer2_sync_flush()` runs
+unconditionally at the end of every pass, does not refresh that
+element's slot in `pfs_iroot_blocksets[]`, and the idle test compares
+the slot and the snapshot copies it (`hammer2_ioctl.c` 1037), so a
+second master's thread writing the source element would leave both
+reading stale. Whether a pass reaches either depends on the number of
+masters. The thread elects its source by a collect that excludes its
+own element (`hammer2_xop_start_except()`, `hammer2_synchro.c` 730),
+and the excluded element counts as a master still in progress, so with
+`pfs_nmasters` 2 the quorum of 2 is never met by the other element
+alone: the collect returns `EINPROGRESS`, the pass takes the `noquorum`
+arm and runs the live pass, which never reads the slot.
 
 `script/cluster-quorum.sh` gained `H2_QUORUM_IDLE=n`, which holds the
-cluster mounted n seconds after the read-back, and now keeps the
-guest's whole kernel log beside the images and prints each thread's
-counts under debug 0x8000. Run on `artix-s6-kde` booted on
-`h2debug-7.3` (7.3.0, lockdep and kmemleak), the module built from
-`66407a6` with `src/` clean against `~/kernels/linux-7.3`, with
-`H2_QUORUM_IDLE=40`: 22 checks, 0 failed, lockdep and kmemleak silent.
-Each thread ran a pass at the 5.12 s cadence, 10 on element 0 and 9 on
-element 1, and all 19 were `noquorum`: 18 with error `0x800`
-(`HAMMER2_ERROR_EINPROGRESS`) and element 0's last with `0x80000`
-(`HAMMER2_ERROR_ENOTCONN`) at the unmount. `syncsnap: pass`,
+cluster mounted n seconds after the read-back, with the run's bound
+raised by the hold. Each run now keeps the guest's kernel log beside
+the images with a start marker that a wrapped ring would lose, and
+prints the module's commit and `KDIR`, the guest's kernel and each
+thread's counts under debug 0x8000. Run on `artix-s6-kde` with
+`H2_QUORUM_IDLE=40`, the log reading "module from 69cdd7d with src/
+clean, against /home/james/kernels/linux-7.3" and the guest "7.3.0 #1
+SMP PREEMPT_DYNAMIC Mon Oct 19 15:40:38 PDT 2026, lockdep debug_locks
+1" with the start marker kept: 22 checks, 0 failed, lockdep and
+kmemleak silent. Each thread ran a pass at the 5.12 s cadence, 10 on
+element 0 and 9 on element 1, and all 19 were `noquorum`: 18 with error
+`0x800` (`HAMMER2_ERROR_EINPROGRESS`) and element 0's last with
+`0x80000` (`HAMMER2_ERROR_ENOTCONN`) at the unmount. `syncsnap: pass`,
 `syncsnap: idle` and `syncsnap: idlestamp` printed 0 times, and the
-threads updated 0 inodes. The log is `p7a/quorum-idle-2.log` and the
-klog `fixtures/quorum-run-20261027-162921.klog`. The counters are not
+threads updated 0 inodes. The log is `p7a/quorum-idle-3.log` and the
+klog `fixtures/quorum-run-20261027-164958.klog`. The counters are not
 inert by construction: `idlestamp` printed twice in every run of the
 million-file entry above, on the slave shape.
 
-A first run, `p7a/quorum-idle-1.log` with
-`fixtures/quorum-run-20261027-162735.klog`, carried a scratch print
-comparing a clean source root's blockset with its slot. It read 0, but
-the print sat in the arm that needs a focus, which no pass reached, so
-that 0 is no reading; the print was removed, and the run above is on
-the committed source. Its counts were the same.
+Two earlier runs on the same guest read the same counts before the
+harness printed its provenance, so their build is known from the
+session and not from the log: `p7a/quorum-idle-2.log` with
+`fixtures/quorum-run-20261027-162921.klog` on the source of `66407a6`,
+and `p7a/quorum-idle-1.log` with `fixtures/quorum-run-20261027-162735.klog`
+on a scratch build carrying a print that compared a clean source root's
+blockset with its slot. That print read 0, but it sat in the arm that
+needs a focus, which no pass reached, so its 0 is no reading, and it
+was removed.
 
 So no pass on two local masters reaches the idle test or takes a
-snapshot, and the stale slot cannot be observed in this shape. It
-returns under the lease only if a pass reads a local element's slot
-that another thread's flush wrote; the replica's pass in P8 sources the
-holder, which only the frontend writes, and a remote holder's slot is
-refreshed from the root each pass reads (`hammer2_synchro.c` 753-763).
+snapshot. With three or more masters it does: a master's thread
+excludes itself and the other two make a quorum, so its idle test and
+its snapshot read the slot of an element whose own thread writes it by
+`hammer2_sync_flush()`. That shape is reachable today and unread, and
+the stale slot stays a `candidate` there, for P8's three-master stage,
+which builds that shape. Two masters and a slave should not reach it,
+argued from the code and not run: the slave's thread reads a master's
+slot, but each master's thread is short of quorum as above and takes
+the arm that copied nothing in these runs.
 
 The row is 1.0.62.

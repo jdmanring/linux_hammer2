@@ -38,7 +38,10 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
-RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The hold is added to the bound, so a long H2_QUORUM_IDLE is not read as a hang.
+IDLE=${H2_QUORUM_IDLE:-0}
+case $IDLE in ''|*[!0-9]*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_IDLE is not a number of seconds" >&2; exit 2 ;; esac
+RUN="timeout $(( ${H2_RUN_TIMEOUT:-600} + IDLE )) ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 QA=$FIXDIR/cluster-qa.img
 QB=$FIXDIR/cluster-qb.img
 W=$(mktemp -d) || exit 2
@@ -65,6 +68,8 @@ make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || {
 	echo "quorum: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
+# What the module was built from, so a kept log names its own build.
+echo "  read  module from $(git rev-parse --short HEAD) with src/ $(git diff --quiet HEAD -- src/ && echo clean || echo modified), against $KDIR"
 
 # What the kernel tree configures against what the module actually carries,
 # so a sanitizer reading on the wrong module cannot pass in silence.
@@ -116,6 +121,10 @@ set -u
 # writing its own, so a comparison could pass on files it never made.
 rm -f /tmp/q.want /tmp/q.sums
 rmmod hammer2 2>/dev/null; dmesg -C
+# The marker the host looks for at the head of the kept log: a ring that
+# wrapped during the run has lost it, and the counts read from it are short.
+echo "h2quorum: start" > /dev/kmsg
+echo "guest-kernel $(uname -r) $(uname -v)"
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod failed"; exit 1; }
 mkdir -p /mnt/h2a /mnt/h2b /mnt/h2q
@@ -169,7 +178,7 @@ echo "reread-mount-rc $rc"
 echo "read-sums $(grep -c . /tmp/q.sums)"
 sync
 # IDLE=n holds the cluster mounted n seconds after the read-back, so each
-# thread's snapshot pass and idle test run several times on two masters.
+# thread runs several passes, whose counts are printed at the end.
 [ "${IDLE:-0}" -gt 0 ] && sleep "$IDLE"
 umount /mnt/h2q && echo "cluster-umount ok" || exit 1
 umount /mnt/h2b && umount /mnt/h2a || exit 1
@@ -223,7 +232,7 @@ dmesg > /tmp/q.klog
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=${H2_QUORUM_IDLE:-0} sh /tmp/h2quorum.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
 # The guest half's exit, read before anything is inferred from its output.
 # A non-zero that is not 124 means the guest or its session ended without
@@ -356,7 +365,10 @@ d=$(diff "$W/fp.a" "$W/fp.b" 2>/dev/null | grep -c '^[<>]' || true)
 # master alone cannot make a quorum of two: noquorum is expected on every
 # pass, and idle or idlestamp would be the idle test reached.
 K="$FIXDIR/quorum-run-$STAMP.klog"
+echo "  read  $(val guest-kernel), lockdep debug_locks ${dl:-absent}"
 if [ -r "$K" ]; then
+	grep -q 'h2quorum: start' "$K" && echo "  read  the kept log starts at the run's marker" ||
+		echo "  read  the kept log lost the run's marker, so the ring wrapped and the counts below are short"
 	for i in 0 1; do
 		kc() { grep -c "$1 clindex $i" "$K"; }
 		echo "  read  clindex $i: pass $(kc 'syncsnap: pass') idle $(kc 'syncsnap: idle') idlestamp $(kc 'syncsnap: idlestamp') noquorum $(kc 'syncsnap: noquorum') flush $(kc 'sync_flush:') verified $(kc 'syncsnap: verified')"

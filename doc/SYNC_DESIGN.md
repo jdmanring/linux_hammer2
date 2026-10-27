@@ -175,7 +175,7 @@ remote. The 2015 status table lists "Network blk device - operational"
 ## What the port carries today
 
 - `hammer2_synchro.c` since 0.9.61, hardened by P4: the thread starts for
-  every element that is not a lone MASTER (`hammer2_vfsops.c:478-500`),
+  every element that is not a lone MASTER (`hammer2_vfsops.c:490-512`),
   passes every five seconds or on wakeup, and converges a SLAVE on a
   second local device with the master changed under it, interrupted,
   with allocations refused in its insert, replace and destroy arms
@@ -203,13 +203,16 @@ remote. The 2015 status table lists "Network blk device - operational"
   (64, `hammer2_disk.h:1116`) devices; this is one `hammer2_dev` over
   several devices, not several elements.
 
-What it does not carry: any way for an element of a cluster to live on
-another host; a Linux `hammer2 service`, or any userland that holds the
+What it did not carry when this note was written: any way for an
+element of a cluster to live on another host, carried since 1.0.46 as
+the remote element of `doc/CLUSTER_PROTOCOL_DESIGN.md`; and a verify
+step, carried since 1.0.40 (the decisions below). What it still does
+not carry: a Linux `hammer2 service`, or any userland that holds the
 other end of the socket in production (`doc/README.porting.md` records that
-none exists); the block-device protocol's client or server; a reader of
-`pfs_subtype`; a fork of the source or of the target; a verify step; a
-replacement of a target; and any authentication or encryption in the
-kernel path, which on DragonFly are the daemon's and the library's, as
+none exists; `test/h2service.c` is the harness's); the block-device
+protocol's client or server; a reader of `pfs_subtype`; a fork of the
+source or of the target; a replacement of a target; and any
+authentication or encryption in the kernel path, which on DragonFly are the daemon's and the library's, as
 the CRC check was until 1.0.44 verified it for a `PROTO_2` peer.
 
 ## What "remote synchronization" has to decide
@@ -288,9 +291,12 @@ descriptor it is handed. The port keeps that boundary for the peer's
 identity: a connected socket arrives from whoever can issue the mount's
 ioctl or the mount option, and the kernel verifies nothing about who the
 peer is, though since 1.0.44 it verifies the frames of a peer that
-announced `DMSG_SPAN_PROTO_2`. Any alternative
-that puts a master on another host inherits this: the remote end's
-identity is established in a daemon that does not exist on Linux. A
+announced `DMSG_SPAN_PROTO_2`, and since 1.0.46 it registers a remote
+master only against an enabled `copyinfo[]` row with its cluster id.
+Any alternative that puts a master on another host inherits this: the
+remote end's identity is established outside the kernel, today by the
+harness's `test/h2service.c` from a marker file, and by `tlshd` once
+the link runs over kernel TLS. A
 design that reaches another host must say who holds the keys and where the
 frames are checked before the first byte of a remote master's tree is
 written into a local slave.
@@ -493,14 +499,18 @@ copy, and the thread's pass-end flush writes the slave element alone.
 one the root `ipcluster` focus names; without one the live pass runs
 and copies nothing. The snapshot covers that element only, which is what
 a snapshot is in both trees. Two-master convergence stays
-`cluster-quorum.sh`'s and P8's. The thread's own flush of an element
-root does not refresh that element's blockset slot, which would leave
-the idle test reading stale if a second master's thread wrote the
-source element, but on two local masters no pass reaches the idle test:
-each thread's collect excludes its own element, the other alone cannot
-make a quorum of two, and `cluster-quorum.sh` with `H2_QUORUM_IDLE=40`
-read 19 passes, every one `noquorum` (18 with `EINPROGRESS`, the last
-with `ENOTCONN` at the unmount), and no idle test (1.0.62).
+`cluster-quorum.sh`'s and P8's. A thread's own flush of an element
+root (`hammer2_sync_flush()`, unconditional each pass) does not refresh
+that element's blockset slot, which the idle test compares and the
+snapshot copies. On two local masters no pass reaches either: each
+thread's collect excludes its own element, the other alone cannot make
+a quorum of two, and `cluster-quorum.sh` with `H2_QUORUM_IDLE=40` read
+19 passes, every one `noquorum` (18 with `EINPROGRESS`, the last with
+`ENOTCONN` at the unmount), and no idle test (1.0.62). With three or
+more masters a master's thread makes a quorum from the other two and
+reads a slot whose element another master's thread writes, so the stale
+slot is reachable there and unread; it is a `candidate` for P8's
+three-master stage.
 
 **The frontend writes the slave element too.** A frontend write on the
 mounted cluster lands on both elements at once, so a pass whose snapshot
@@ -528,9 +538,9 @@ only on a snapshot pass.
   designed: the XOP API as the HM2 commands, `DMSG_SPAN_PROTO_2`, CRCs
   verified by the kernel, a span-derived element whose replies are
   chains of a media-less device, and the quorum protocol's four
-  decisions, taken since (A as one writer per PFS under a lease, ruled
-  2026-10-21). Its stages 1 and 2 are built and this note's pass runs
-  over them.
+  decisions, the first taken in that note as one writer per PFS under a
+  durable lease and the other three carrying recommendations. Its
+  stages 1 and 2 are built and this note's pass runs over them.
 - The live-mount handoff. Where the chains of an open file go when the
   root under it is swapped is unanswered in every tree. The local half
   did not build the swap: the slave is written in place and a snapshot
@@ -546,7 +556,7 @@ only on a snapshot pass.
 - Who holds the keys. The harness's daemon, `test/h2service.c`, dials
   only a peer with a `.pub` or `.none` file in its key directory, and
   every link today is the `.none` kind, plaintext; keys move to `tlshd`
-  with kernel TLS in the cluster note's stage 5, after which P7 closes.
+  with kernel TLS in P8's TLS stage, after which P7 closes.
 - The `copyinfo[]` array the document retired and the format kept now
   has a role: the kernel registers a remote master's span only against
   an enabled row whose cluster id matches (`hammer2_remote_admitted()`,

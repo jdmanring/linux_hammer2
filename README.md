@@ -58,7 +58,7 @@ At a glance, on a kernel of 7.3 or newer:
   master takes at the slave's request, and P7's five criteria read on
   two hosts as well as on one (`doc/CLUSTER_PROTOCOL_DESIGN.md`, stages 1
   and 2). The link is plaintext with a peer admitted by a marker file
-  until kernel TLS lands in P8's stage 5, and P7 closes then. No run yet
+  until kernel TLS lands in P8's TLS stage, and P7 closes then. No run yet
   of a quorum that cannot be met, and no write through a PFS with a
   remote master, which stays read-only until P8's lease protocol
 + not yet: a package, a run of that closure
