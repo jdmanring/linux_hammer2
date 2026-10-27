@@ -18700,7 +18700,7 @@ The row is 1.0.57.
 
 What this entry claims: an HM2 reply carried no sequence and its close no
 count, so under `HAMMER2_NOCLIENTSEQ`, which compiles out the checks
-`8f75dd7` adds, a lost feed and a feed taken from the previous call each
+`35e3ca2` adds, a lost feed and a feed taken from the previous call each
 leave the slave verified and unequal to its master, and a repeated feed is
 refused with the link left up; on both kernels of record for loss and dup,
 on `h2debug-7.3` for late. The fixed module's readings of the same faults
@@ -18715,7 +18715,7 @@ cycled before each run. Every run faulted call 304 of K 155 with 2 feeds,
 and the next call opened 6 or 7 ms after the fault. The tally is silent
 10, `not a proxy` 0, KASAN 0, and could-not-run 0. Runs 5, 6, 7 and 9
 failed the placement check with one verdict between the fault and the
-mark, which trails the fault by about 0.4 s; the harness at `8f75dd7`
+mark, which trails the fault by about 0.4 s; the harness at `35e3ca2`
 reads placement from the slave's own `HM2` line, or with none from the
 relay's gap to the next call.
 
@@ -18737,7 +18737,7 @@ link` line and no hangup.
   `HM2 scanall feed of type 3 not a proxy` once; the faulted pass ended
   `unverified ... error 524288`, the next verified, and the fingerprints
   were equal.
-- late: `wire-run-20261027-000623` on `h2debug-7.3` at `692279d`, 23 and
+- late: `wire-run-20261027-000623` on `h2debug-7.3` at `807c0f3`, 23 and
   0. The relay rewrote the copy's msgid to the next scanall call's and
   signed the frame again, and traced the copy inside that call's range.
   B printed no `HM2` line, the pass verified at 37.979 s, and A's
@@ -18756,7 +18756,7 @@ The row is 1.0.58.
 
 ## The reply path's faults on the fixed module, 2026-10-27
 
-What this entry claims: with the sequence checks of `8f75dd7` in the
+What this entry claims: with the sequence checks of `35e3ca2` in the
 module, each of the five reply-path faults ends the link at receipt with
 the line its check prints, or for `trail` the copy finds its call gone
 and does nothing, and in every run the pass after both dials leaves the
@@ -18766,11 +18766,14 @@ earlier `trail` runs failed on predictions of the harness, not of the
 module, and are recorded with their causes.
 
 The `loss`, `dup`, `reorder` and `late` runs used the harness frozen
-from `692279d`, whose difference from `33274e0` is the reading of
-`trail` alone, so they stand at `33274e0`; the two `trail` runs used a
-copy frozen from `33274e0` itself. The logs' `source` field is `git describe` of the working
-tree when the run began, which held uncommitted documents only; `src/`
-is unchanged since `8f75dd7`. Each run cycled both guests, built the
+from `807c0f3`, whose difference from `b428c03` is the reading of
+`trail` alone, so they stand at `b428c03`; the two `trail` runs used a
+copy frozen from `b428c03` itself. The logs' `source` field is `git
+describe` of the working tree when the run began, which held uncommitted
+documents only. Its hashes predate a rewording of the range's commit
+messages that changed no tree: `807c0f3`, `10148d0`, `820a4ba`,
+`624f4eb` and `b428c03` are the five commits it names, in order. `src/`
+at every run was `35e3ca2`'s. Each run cycled both guests, built the
 module, and faulted call 304 of K 155 with 2 feeds on key
 `0000000000010000`.
 
@@ -18812,7 +18815,7 @@ The two `trail` runs that failed:
   B printed `after its reply closed` and ended the link, but no call was
   in flight: the cut call had closed at 37.144659 s, after the line at
   37.144390 s, and the pass printed `unverified ... error 524288`. The
-  harness required a `scanall` call to end `ENOTCONN`; since `b1cea75`
+  harness required a `scanall` call to end `ENOTCONN`; since `820a4ba`
   it also reads the pass's own error under `trail`.
 - `wire-run-20261027-004339` on `h2kasan-7.3`, 36 checks and 3 failed,
   outcome silent. The copy did nothing, the pass verified inside the
@@ -18820,7 +18823,7 @@ The two `trail` runs that failed:
   A had no snapshot left for the link and no pass after the dial printed
   a verdict, the master being idle. The images were equal by fingerprint.
   The harness predicted the link's deletion and a resumed verdict; since
-  `33274e0` it predicts both by whether the cut pass verified.
+  `b428c03` it predicts both by whether the cut pass verified.
 
 The use after free in `hammer2_rcall_reply` stays a `candidate`: check 1
 now ends the link at a frame after the close, and no run here printed a

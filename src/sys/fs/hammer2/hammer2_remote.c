@@ -1235,11 +1235,11 @@ hammer2_remote_end(uint32_t error)
  * reader's own shutdown.
  *
  * The state outlives the call: it stays in kern_dmsg's tree until the
- * client's own DELETE goes out, and kern_dmsg passes a frame after the peer's DELETE
- * to this callback as it passed the ones before.  So the close clears the
- * call from the state before the transaction's reference goes, and a
- * frame finding none ends the link rather than reading a call its
- * consumer may have freed.  The link's simulated end reaches only a state
+ * client's own DELETE goes out, and kern_dmsg passes a frame after the
+ * peer's DELETE to this callback as it passed the ones before.  So the
+ * close clears the call from the state before the transaction's reference
+ * goes, and a frame finding none ends the link rather than reading a call
+ * its consumer may have freed.  The link's simulated end reaches only a state
  * whose peer has not closed, and a frame arrives on the reader thread
  * that ran the close, so the test needs no lock.
  */

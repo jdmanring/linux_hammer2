@@ -256,8 +256,10 @@ the state is freed. A lost feed read as a key absent on the master, a
 repeated one was refused as not a proxy and stopped the scan with the
 link up, and a frame left over from a closed call would be taken as the
 next call's first on the same `msgid` whenever its key fell in that
-call's range. The kernel reused no `msgid` inside a pass on either 7.3
-build, so the wire harness's `late` cell makes the reuse by rewriting
+call's range. On `h2debug-7.3` the allocator handed no `msgid` back in
+the eight calls before the unmount of the one run that waited for it,
+and on `h2kasan-7.3` the quarantine keeps a freed state out of reach by
+design, so the wire harness's `late` cell makes the reuse by rewriting
 the copy's `msgid` to the next call's. The client checks
 four things at a frame's receipt, in this order, and each ends the
 connection:
