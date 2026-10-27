@@ -1441,7 +1441,7 @@ Five candidates, with what each met.
    destroy arms carry the source's tid so C2's three sites stamp the
    replica as the source was stamped, which today's pass does not do;
    the pass deletes chains the source lacks, its guarded arm under a
-   snapshot (`:1827-1847`) included; which `copyinfo[]` row of a
+   snapshot (`:1818-1881`) included; which `copyinfo[]` row of a
    three-master PFS holds the term and how the election's messages
    travel (C10) and reach the volume header before the acknowledgment;
    the term is read before any write after a mount; the reserve check
@@ -1501,23 +1501,30 @@ that `fsync` unusable as a default, and the next step is then the
 latency question rather than the wire. Stages 1 and 2 need no part of this and proceed.
 
 **The measurement is read, and the next step is latency.** On
-`h2release-7.3` with the module of `0393232`, one file of the tree
+`h2release-7.3` with the module of `976a135`, one file of the tree
 rewritten on the master and the slave returned, three times a run, one
 snapshot-form pass took 32976, 32784 and 32768 ms on a tree of 1,000,000
 files (`cluster-run-20261027-023051`) and 3799, 2826 and 2511 ms on one
-of 100,000 (`cluster-run-20261027-024915`), against 5120 ms; both runs
-verified every pass and ended with the slave equal to its master, 26
-checks and 0 failed. The pass follows the tree and not the change. Every
-one of the six ran three root scans, the root, its rescan once the
-changed directory's deferral drained (`hammer2_sync_pass()`, `hammer2_synchro.c:545-555`)
-and the second verify round's, and a root scan walks every inode the
-PFS indexes, 1,001,003 iterations at the million; there each of the
-nine scans spent 2.7 to 2.8 s before its first compare, while the
-snapshot's element filled the XOP's FIFO, and 8.0 to 8.5 s merging it
-with the slave's tree. The
-verified pass is followed by one stamp pass that scans the live root
-again, 7.1 and 11.2 s at the million, and the idle passes after it scan
-nothing. A 100,000-file run on `h2debug-7.3` read 33.2 to 33.7 s
+of 100,000 (`cluster-run-20261027-024915`), against 5120 ms; each of the
+six timed passes verified in two rounds, and both runs ended with the
+slave equal to its master, 26 checks and 0 failed. For a one-file change
+the pass follows the tree and not the change. Each of the six ran three
+root scans: the root, its rescan once the changed directory's deferral
+drained (`hammer2_sync_pass()`, `hammer2_synchro.c:545-555`), and the
+second verify round's. A pass with no deferral runs one fewer, as the
+settle pass before the first change did, and each further verify round
+adds one. A root scan walks every inode the PFS indexes, 1,001,003
+iterations at the million; there each of the nine timed scans spent 2.7
+to 2.8 s before its `START_SCAN` and 8.0 to 8.5 s merging. The same gap
+precedes the stamp passes' scans of the live root, where no snapshot
+element exists, so its cause is a candidate: the elements' storage
+functions run inline to their end before the first collect
+(`hammer2_admin.c:471-481`), the FIFO doubling rather than blocking
+(`:670-688`). When the thread survives to its next cadence, as after the
+settle pass and the third change but not after the first two, which an
+unmount followed, a verified pass is followed by one stamp pass that
+scans the live root once more, 7.1 and 11.2 s at the million, and the
+idle passes after it scan nothing. A 100,000-file run on `h2debug-7.3` read 33.2 to 33.7 s
 (`cluster-run-20261027-022323`), the same total at a tenth of the tree,
 which is that kernel's cost per iteration: the two release runs on one
 kernel are the reading, the debug run is not. A line through the two
