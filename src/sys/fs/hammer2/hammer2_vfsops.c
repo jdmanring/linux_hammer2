@@ -3410,6 +3410,12 @@ hammer2_kill_sb(struct super_block *sb)
  * walk and ran past its bound.  A key in the module's own data is
  * answered by the module address tree instead.  The pool is a page, and
  * a class past it registers a dynamic key as before.
+ *
+ * A pool key's class is dropped by lockdep only when the module's memory
+ * is released, after the exit function and the going notifiers, and a
+ * class registered anywhere in that window compares its name with every
+ * class's.  So a pool class's name sits in module data beside its key;
+ * one kept in the entry was read by that compare after the exit freed it.
  */
 #ifdef CONFIG_LOCKDEP
 enum { H2LD_CHAIN, H2LD_CORE, H2LD_DIOLK, H2LD_INODE, H2LD_RCHAIN,
@@ -3419,11 +3425,13 @@ struct hammer2_lockdep_class {
 	struct lock_class_key *key;	/* a pool slot, or dynkey registered */
 	struct lock_class_key dynkey;
 	int ready;			/* registered, see the lookup */
-	char name[32];
+	char *name;			/* a pool name, or dynname */
+	char dynname[32];
 };
 
 static DEFINE_XARRAY(hammer2_lockdep_classes);
 static struct lock_class_key hammer2_lockdep_keys[256];
+static char hammer2_lockdep_knames[256][32];
 static unsigned int hammer2_lockdep_nkeys;	/* under the xarray lock */
 
 static const char *const hammer2_lockdep_names[6][9] = {
@@ -3497,16 +3505,19 @@ hammer2_lockdep_lookup(unsigned int fam, unsigned int t, unsigned int kb,
 			c = NULL;
 		}
 		if (c) {
-			snprintf(c->name, sizeof(c->name), "%s/%u",
-			    hammer2_lockdep_names[fam][t], level);
 			if (hammer2_lockdep_nkeys <
 			    ARRAY_SIZE(hammer2_lockdep_keys)) {
 				c->key = &hammer2_lockdep_keys[
+				    hammer2_lockdep_nkeys];
+				c->name = hammer2_lockdep_knames[
 				    hammer2_lockdep_nkeys++];
 			} else {
 				c->key = &c->dynkey;
+				c->name = c->dynname;
 				lockdep_register_key(c->key);
 			}
+			snprintf(c->name, sizeof(c->dynname), "%s/%u",
+			    hammer2_lockdep_names[fam][t], level);
 			/* published to lockless readers only once registered */
 			smp_store_release(&c->ready, 1);
 		}
