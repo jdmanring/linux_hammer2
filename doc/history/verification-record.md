@@ -18689,9 +18689,67 @@ instrumented (`KASAN_SANITIZE_lockdep.o := n` at
 and only for the objects it samples.
 
 A sweep of the kernel logs kept under `fixtures/` found one KFENCE
-report in the 620 kept before the fix and none in the 34 kept between
-the fix and 2026-10-27 00:30. At one report in 620 logs, none in 34 is what the
+report in the 620 kept before the fix and none in the 34 kept from
+the fix through `wire-run-20261027-000623`. At one report in 620 logs, none in 34 is what the
 unfixed module would show too, so those numbers say nothing about the
 fix; they are the population the report came from.
 
 The row is 1.0.57.
+
+## A reply frame names its call and its place, 2026-10-27
+
+What this entry claims: an HM2 reply carried no sequence and its close no
+count, so under `HAMMER2_NOCLIENTSEQ`, which compiles out the checks
+`8f75dd7` adds, a lost feed and a feed taken from the previous call each
+leave the slave verified and unequal to its master, and a repeated feed is
+refused with the link left up; on both kernels of record for loss and dup,
+on `h2debug-7.3` for late. The fixed module's readings of the same faults
+are the entries that follow. The use after free in `hammer2_rcall_reply`
+that check 1 guards stays a `candidate`: ten runs of `trail` before the
+fix printed no report.
+
+Before the fix, `trail` ran ten times on `h2kasan-7.3` at `6296671`
+(`H2_REPEAT=10`, module sha256 `a3aa4ce7cbe76017`, relay seed 11, logs
+`wire-run-20261026-224149` to `-231115` under `fixtures/`), the guests
+cycled before each run. Every run faulted call 304 of K 155 with 2 feeds,
+and the next call opened 6 or 7 ms after the fault. The tally is silent
+10, `not a proxy` 0, KASAN 0, and could-not-run 0. Runs 5, 6, 7 and 9
+failed the placement check with one verdict between the fault and the
+mark, which trails the fault by about 0.4 s; the harness at `8f75dd7`
+reads placement from the slave's own `HM2` line, or with none from the
+relay's gap to the next call.
+
+The control runs build B's module with `HAMMER2_NOCLIENTSEQ=1`, in which
+`out of sequence`, `closed a reply short` and `another call's feed` occur
+0 times and `after its reply closed` 1 time (1 each in the normal build).
+Every run faulted call 304 of K 155 with 2 feeds on key
+`0000000000010000`, and ended by the clean unmount with no `ending the
+link` line and no hangup.
+
+- loss: `wire-run-20261026-233247` on `h2kasan-7.3` (module
+  `d1e2c94ce7f51a35`) and `wire-run-20261026-234533` on `h2debug-7.3`
+  (`9029edce39d9aa1f`), 23 checks and 0 failed each. B printed no `HM2`
+  line and its pass printed `verified clindex 0 rounds 2`. A's fingerprint
+  had 626 lines and B's 625, and the one line only on A was `data
+  0x0000000000000404 0000000000010000/16`, the lost feed's key.
+- dup: `wire-run-20261026-234021` on `h2kasan-7.3` and
+  `wire-run-20261026-234751` on `h2debug-7.3`, 23 and 0 each. B printed
+  `HM2 scanall feed of type 3 not a proxy` once; the faulted pass ended
+  `unverified ... error 524288`, the next verified, and the fingerprints
+  were equal.
+- late: `wire-run-20261027-000623` on `h2debug-7.3` at `692279d`, 23 and
+  0. The relay rewrote the copy's msgid to the next scanall call's and
+  signed the frame again, and traced the copy inside that call's range.
+  B printed no `HM2` line, the pass verified at 37.979 s, and A's
+  fingerprint had 626 lines and B's 627. The one line only on B was
+  `data 0x0000000000000403 0000000000010000/16`: the old call's feed,
+  taken as the new call's and written to the slave. Two earlier runs are
+  void. `wire-run-20261026-235003` waited for B to reuse the msgid, which
+  it did not do before the unmount, and `wire-run-20261026-235725` put
+  the copy on a call that fed nothing of its own, which the harness then
+  had no prediction for (B held the same extra line).
+
+Notes beside the logs: `p8-notes/trail-head-reading.md` and
+`p8-notes/seq-control-reading.md` under `linux_hammer2-data`.
+
+The row is 1.0.58.
