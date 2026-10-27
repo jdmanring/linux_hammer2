@@ -231,6 +231,14 @@ whose read left no data. No category is new.
 `return (x);` is in `hammer2_checkpath()`, returning the errno of a
 directory whose read left no data. No category is new.
 
+1,595 to 1,594 with the second review of those reads. The path check's
+return left with its test, which a read showed could never run, since
+the loop refs the target directory before reaching it; the dirent
+test's `return (0);` became `return (chain->error != 0);`, which
+checkpatch does not count; and one more `return (x);` is in
+`hammer2_ioctl_pfs_create()`, refusing a name whose lookup failed other
+than by ENOENT. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

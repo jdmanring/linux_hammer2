@@ -474,6 +474,15 @@ hammer2_ioctl_pfs_lookup(hammer2_inode_t *ip, void *data)
 
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
+	} else if (chain) {
+		/*
+		 * XXX Linux: upstream leaves a matched chain with an error
+		 * locked and referenced, and reports the name absent.
+		 */
+		if (error == 0)
+			error = hammer2_error_to_errno(chain->error);
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
 	} else if (error == 0) {
 		error = ENOENT;
 	}
@@ -512,8 +521,16 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	if (hammer2_is_rdonly(ip->pmp->mp))
 		return (EROFS);
 
-	if (hammer2_ioctl_pfs_lookup(ip, pfs) == 0)
+	/*
+	 * XXX Linux: a lookup that fails other than by ENOENT has not shown
+	 * the name free, and the create walks the hash range by key alone,
+	 * so it would insert a second PFS of the name.
+	 */
+	error = hammer2_ioctl_pfs_lookup(ip, pfs);
+	if (error == 0)
 		return (EEXIST);
+	if (error != ENOENT)
+		return (error);
 
 	/*
 	 * XXX Linux: the three BSD ports refuse every type but MASTER here,

@@ -202,6 +202,12 @@
 # 1,594 to 1,595: `return is not a function` 368 -> 369, the errno
 # hammer2_checkpath() returns for a directory whose read left no data.
 # No category is new. See README.kernel-style.md.
+# 1,595 to 1,594: `return is not a function` 369 -> 368. The path check's
+# return goes with its test, which could never run; the dirent test's
+# `return (0);` for an unreadable chain is now `return (chain->error != 0);`,
+# an expression checkpatch does not count; the PFS create's `return (error);`
+# for a lookup that failed other than by ENOENT is one more. No category is
+# new. See README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -233,7 +239,7 @@
 4 please, no space before tabs
 236 please, no spaces at the start of a line
 86 quoted string split across lines
-369 return is not a function, parentheses are not required
+368 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
