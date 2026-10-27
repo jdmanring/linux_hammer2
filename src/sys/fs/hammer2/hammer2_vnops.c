@@ -699,6 +699,8 @@ hammer2_vop_rename(struct mnt_idmap *idmap __maybe_unused,
 		xop4 = hammer2_xop_alloc(fdip, HAMMER2_XOP_MODIFYING);
 		xop4->lhc = tlhc;
 		xop4->ip_key = fip->meta.name_key;
+		if (tip)				/* Linux */
+			xop4->tip_inum = tip->meta.inum;
 		hammer2_xop_setip2(&xop4->head, fip);
 		hammer2_xop_setip3(&xop4->head, tdip);
 		if (tip && tip->meta.type == HAMMER2_OBJTYPE_DIRECTORY)

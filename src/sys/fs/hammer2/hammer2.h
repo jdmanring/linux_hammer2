@@ -695,6 +695,7 @@ struct hammer2_xop_nrename {
 	hammer2_xop_head_t	head;
 	hammer2_tid_t		lhc;
 	int			ip_key;
+	hammer2_tid_t		tip_inum;	/* Linux: the replaced inode */
 };
 
 struct hammer2_xop_scanlhc {

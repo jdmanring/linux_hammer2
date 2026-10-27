@@ -696,14 +696,19 @@ hammer2_xop_nrename(hammer2_xop_t *arg, void *scratch, int clindex)
 			 * XXX Linux: the dirent test takes a chain whose read
 			 * failed as the name when the name sits in the data,
 			 * and this loop runs over the whole range, so such a
-			 * chain may hold another name; it is not deleted.
+			 * chain may hold another name.  It is deleted only as
+			 * the DIRENT of the inode being replaced, whose number
+			 * its blockref carries; keeping that one would leave
+			 * two entries of the name and the inode a link short.
 			 */
 			if (hammer2_chain_dirent_test(tmp, xop->head.name2,
 			    xop->head.name2_len) &&
 			    (tmp->data != NULL || tmp->error == 0 ||
 			    (tmp->bref.type == HAMMER2_BREF_TYPE_DIRENT &&
-			    xop->head.name2_len <=
-			    sizeof(tmp->bref.check.buf)))) {
+			    (xop->head.name2_len <=
+			    sizeof(tmp->bref.check.buf) ||
+			    (xop->tip_inum != 0 &&
+			    tmp->bref.embed.dirent.inum == xop->tip_inum))))) {
 				e2 = hammer2_chain_delete(parent, tmp,
 				    xop->head.mtid, 0);
 				if (error == 0 && e2)
