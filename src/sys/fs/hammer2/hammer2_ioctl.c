@@ -589,9 +589,23 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 		force_local = (hmp->hflags & HMNT2_LOCAL) ? hmp : NULL;
 
 		hammer2_chain_lock(nchain, HAMMER2_RESOLVE_ALWAYS);
-		nipdata = &nchain->data->ipdata;
-		debug_hprintf("ADD LOCAL PFS (IOCTL): %s\n", nipdata->filename);
-		hammer2_pfsalloc(nchain, nipdata, force_local);
+		/*
+		 * XXX Linux: the flush above left the chain unmodified, so the
+		 * unlock dropped its data and this lock reads it again; a read
+		 * that fails leaves no data, and the PFS is created on media
+		 * but not associated, as a failed flush would leave it.
+		 */
+		if (nchain->data == NULL) {
+			error = nchain->error ? nchain->error :
+			    HAMMER2_ERROR_EIO;
+			hprintf("PFS %s created but not read back, error %08x\n",
+			    pfs->name, error);
+		} else {
+			nipdata = &nchain->data->ipdata;
+			debug_hprintf("ADD LOCAL PFS (IOCTL): %s\n",
+			    nipdata->filename);
+			hammer2_pfsalloc(nchain, nipdata, force_local);
+		}
 
 		hammer2_chain_unlock(nchain);
 		hammer2_chain_drop(nchain);
@@ -599,7 +613,12 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	hammer2_trans_done(hmp->spmp,
 	    HAMMER2_TRANS_ISFLUSH | HAMMER2_TRANS_SIDEQ);
 
-	return (error);
+	/*
+	 * XXX Linux: the error here is the core's, from the create or the
+	 * read back, and the boundary only negates; the early returns
+	 * above are errnos already.
+	 */
+	return (hammer2_error_to_errno(error));
 }
 
 /*
@@ -938,7 +957,29 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 			    &nip->cluster.array[0].chain->lock, &chain->lock);
 		nchain = hammer2_inode_chain(nip, 0, HAMMER2_RESOLVE_ALWAYS);
 		error = hammer2_chain_modify(nchain, mtid, 0, 0);
-		KKASSERT(error == 0);
+		/*
+		 * XXX Linux: upstream asserts this modify, which holds in
+		 * hammer2_ioctl_pfs_create() under the super-root's flush
+		 * transaction.  Here the transaction is the source PFS's, so
+		 * a device sync can flush the new chain after
+		 * hammer2_inode_create_pfs() unlocks it, and the modify then
+		 * allocates and can fail with its data NULL.  The source
+		 * chain was relocked above, which reads its data again after
+		 * the unlock dropped it, and a failed read leaves it NULL.
+		 * Either fails the snapshot with the PFS created and empty,
+		 * as a failed pfs-create leaves its PFS.
+		 */
+		if (error == 0 && chain->data == NULL)
+			error = chain->error ? chain->error : HAMMER2_ERROR_EIO;
+		if (error) {
+			hprintf("snapshot %s not taken, error %08x\n", name,
+			    error);
+			hammer2_chain_unlock(chain);
+			hammer2_chain_unlock(nchain);
+			hammer2_chain_drop(nchain);
+			hammer2_inode_unlock(nip);
+			goto done;
+		}
 		wipdata = &nchain->data->ipdata;
 
 		starting_inum = ip->pmp->inode_tid + 1;
@@ -1001,18 +1042,27 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		force_local = (hmp->hflags & HMNT2_LOCAL) ? hmp : NULL;
 
 		hammer2_chain_lock(nchain, HAMMER2_RESOLVE_ALWAYS);
-		wipdata = &nchain->data->ipdata;
-		debug_hprintf("SNAPSHOT LOCAL PFS (IOCTL): %s\n",
-		    wipdata->filename);
-		hammer2_pfsalloc(nchain, wipdata, force_local);
-		nchain->pmp->inode_tid = starting_inum;
-		if (pmpp)		/* Linux */
-			*pmpp = nchain->pmp;
+		/* XXX Linux: read back as in hammer2_ioctl_pfs_create() */
+		if (nchain->data == NULL) {
+			error = nchain->error ? nchain->error :
+			    HAMMER2_ERROR_EIO;
+			hprintf("snapshot %s created but not read back, error %08x\n",
+			    name, error);
+		} else {
+			wipdata = &nchain->data->ipdata;
+			debug_hprintf("SNAPSHOT LOCAL PFS (IOCTL): %s\n",
+			    wipdata->filename);
+			hammer2_pfsalloc(nchain, wipdata, force_local);
+			nchain->pmp->inode_tid = starting_inum;
+			if (pmpp)		/* Linux */
+				*pmpp = nchain->pmp;
+		}
 
 		hammer2_chain_unlock(nchain);
 		hammer2_chain_drop(nchain);
 	}
 
+done:
 	if (nip == NULL)	/* XXX Linux: otherwise released above */
 		hammer2_chain_unlock(chain);
 	hammer2_chain_drop(chain);

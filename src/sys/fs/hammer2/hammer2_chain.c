@@ -5608,6 +5608,18 @@ hammer2_chain_dirent_test(const hammer2_chain_t *chain, const char *name,
 {
 	const hammer2_inode_data_t *ripdata;
 
+	/*
+	 * XXX Linux: a chain whose read failed has no data, and its name
+	 * cannot be compared, so it matches nothing: a caller deletes what
+	 * matches (the rename's target loop without testing chain->error),
+	 * and a name whose entry cannot be read then reads as absent.
+	 * Upstream compares through NULL.  A DIRENT short enough to sit in
+	 * its blockref needs no data.
+	 */
+	if (chain->data == NULL &&
+	    (chain->bref.type == HAMMER2_BREF_TYPE_INODE ||
+	    name_len > sizeof(chain->bref.check.buf)))
+		return (0);
 	if (chain->bref.type == HAMMER2_BREF_TYPE_INODE) {
 		ripdata = &chain->data->ipdata;
 		if (ripdata->meta.name_len == name_len &&

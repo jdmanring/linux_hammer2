@@ -1984,6 +1984,14 @@ hammer2_checkpath(const hammer2_inode_t *dip, hammer2_inode_t *tdip)
 		if (inum == tdip->meta.inum) {
 			chain = hammer2_inode_chain(tdip, 0,
 			    HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED);
+			/* XXX Linux: a failed read leaves no data to walk */
+			if (chain && chain->data == NULL) {
+				error = chain->error ? chain->error :
+				    HAMMER2_ERROR_EIO;
+				hammer2_chain_unlock(chain);
+				hammer2_chain_drop(chain);
+				return (hammer2_error_to_errno(error));
+			}
 			if (chain) {
 				ipdata = &chain->data->ipdata;
 				if (dip->meta.inum == ipdata->meta.iparent) {
