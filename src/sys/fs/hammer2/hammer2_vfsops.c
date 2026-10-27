@@ -2010,8 +2010,12 @@ hammer2_fixup_pfses(hammer2_dev_t *hmp)
 	    HAMMER2_KEY_MAX, &error, 0);
 
 	while (chain) {
+		/*
+		 * XXX Linux: the carried continue never advanced the chain,
+		 * as in hammer2_update_spans().
+		 */
 		if (chain->bref.type != HAMMER2_BREF_TYPE_INODE)
-			continue;
+			goto next;
 		if (chain->error) {
 			hprintf("I/O error scanning PFS labels\n");
 			error |= chain->error;
@@ -2031,6 +2035,7 @@ hammer2_fixup_pfses(hammer2_dev_t *hmp)
 			    HAMMER2_FLUSH_TOP | HAMMER2_FLUSH_ALL);
 			hammer2_trans_done(hmp->spmp, 0);
 		}
+next:
 		chain = hammer2_chain_next(&parent, chain, &key_next,
 		    HAMMER2_KEY_MAX, &error, 0);
 	}
