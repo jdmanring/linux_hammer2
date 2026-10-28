@@ -19401,3 +19401,234 @@ a change the slave took alone is settled, and round 6 returned
 SIGN-OFF.
 
 The row is 1.0.64.
+
+## Three scan defects fixed against their controls, 2026-10-27
+
+Three of the five candidates in "Five defects a design audit found in
+the scan" are fixed, a fourth has its candidate cause read and the fifth
+is refuted on its path. The three fixed are each read first on the source
+as it stood (`18c33d5` with instruments and debug knobs only) and then
+with the fix. The unfixed source is `p7-notes/r-batch-a.py` applied to
+`18c33d5`, which holds the stamp knob's first placement; its second, the
+one the stamp reading below counts, was a hand edit of that tree which no
+file keeps, and is described where it is read. The fixed runs were built
+from the source `p7-notes/r-batch-b-src.diff` holds (sha256 prefix
+`70a86bf798f02941`), written after them from the same tree. The source
+committed differs from it in three ways, the destroy print on one line,
+the stamp knob moved after the carried replace, where it overrides the
+result of a replace that ran, and the root branch's missing chain added
+to the failures, and it carries the guard of "The scan's parent collapsed
+under it" below. The committed source is `p7-notes/r-batch-e-src.diff`
+(sha256 prefix `77e7afc3dbb6ec9f`). Four runs of that entry and this one,
+`011200`, `012113`, `013559` and `013846`, were built from
+`r-batch-d-src.diff` (`6f0803bf57a18338`), which differs from it in the
+scan's test of its parent, which now also ends on a helper's `EAGAIN` and
+counts a failure, in the knob's assignment hoisted out of its test and its
+function moved, and in comments. Read from the code, `EAGAIN` reaches the
+scan only from the guards, so the two runs no guard fired in read the
+same on either; the runs after the last audit round are on the committed
+source and are named so. Every run is `script/cluster-sync.sh` on `h2debug-7.3` unless
+named otherwise, with the module built by the harness from the working
+tree, whose `raw build` line reads `src-dirty=1` on all of them; which
+source a run was built from is from the session, in the order given
+here. The reports and kernel logs are kept as
+`fixtures/cluster-run-<stamp>.log` and `.klog`.
+
+**The kept-absent arm passed over a source key.** The arm's print now
+names the source's focus, and the tree arm counts a later `kept absent`
+line naming another focus while its local key still sorts below the
+previous focus, which is a source key passed over uncompared. Unfixed,
+`H2_PASS_TREE=100000` (`cluster-run-20261027-232350`) read 34,249 kept
+lines, 2 of them with a live focus, both `e47f9043743c8001`, the root's
+directory entry for the tree; after each the source read as exhausted and
+the remaining 34,247 took the sweep path. The sweep then destroyed that
+entry at 1352.62 s, the destroy line's new `last` field showing the
+source's last key to be the entry itself, and the next pass inserted it
+again at 1364.45 s: for 12 s the slave lacked its top-level directory's
+entry, while the directory's inode stayed in the inode index.
+Fixed, the arm advances the local cursor alone, as the destroy arm does,
+and the same shape (`cluster-run-20261027-233649`) read 41,798 kept lines,
+every one naming `e47f9043743c8001`, no key passed over, no sweep destroy,
+24 checks with none failed. The comment the arm carried attributed a
+livelock to the local-only advance; the revert it cites (`36d664b`)
+recorded 180 keys retried 69 times each with `EAGAIN` on every pass,
+which is a loop across passes: in that tree the slave-side error rolled
+up into the pass's error and withheld the stamp, read from its code, since
+no log of that day's runs before the revert is kept. Within a scan the
+local cursor moves on every iteration. Two comments read that the
+`EINPROGRESS` return withholds the stamp, true before `6d43038`; they now
+say it puts the inode on the rescan set.
+
+**The sweep destroying keys the master holds** is this defect, as a
+`candidate`. The alternation found while reading for the third candidate,
+`b77f7af1cd8e8001` destroyed through the sweep eight times in
+`cluster-run-20261025-215121`, from 1280.37 s to 1510.50 s, seven of them
+inserted again from the next snapshot and the eighth not until 1964.80 s,
+454 s later, and the second
+round of `cluster-hang-20261020-220134` destroying the same key, are root
+directory entries under the same parent, `b6a9cb23fd8a8001`, as the entry
+read above; both logs predate the focus print, so the cause is not read on
+them. No second round has acted since 2026-10-21 in the 20
+`cluster-run` logs kept from then to this batch: 92 second rounds, none
+acting.
+
+**A pass with the whole rescan set asked for never ended.** The rescan
+set holds 64 inodes and no harness fills it, so a debug knob,
+`sync_force_rescan`, starts the next pass as if it had overflowed, and
+`H2_FORCE_RESCAN=1` sets it for the tree arm's first change. Unfixed
+(`cluster-run-20261027-231627`, 10,000 files in 100 directories), the pass
+printed `rescan all` at 901.80 s and returned `EAGAIN` from 519 root scans
+in the 300 s wait, ending `interrupted` only when the unmount broke it at
+1203.96 s. Every inode is a child of the PFS root and a deferred one is
+stamped by its own scan, so each root rescan deferred every agreeing inode
+again. Fixed, the pass records the highest root key it deferred and a root
+rescan under `rescan_now` defers only above it; the same arm
+(`cluster-run-20261027-233342`) read 13 root scans and a verified pass
+after 15 s.
+
+**A pass verified with its root's stamp failed.** A debug knob,
+`sync_fail_stamp`, fails the PFS root's stamp with `EIO`; in the runs
+below the fixed ones it did so in place of the replace, and as committed
+it overrides the result of a replace that ran, so the root is stamped and
+the stamp reported failed, which reads what a reported failure does to the
+verdict and not an unstamped root; and `H2_FAIL_STAMP=1` sets it for the second change. Its first
+placement failed the first root stamp, which was round 1's, a round that
+acted, and round 2 then stamped the root and verified correctly
+(`cluster-run-20261027-231627`); that reading says nothing about the
+defect, which lives in the round that acts on nothing, and is not counted.
+Placed there (`cluster-run-20261027-232929`), the stamp failed at
+1695.21 s in round 2 after round 1 acted on 2 keys, and the pass read
+`verified`, its root unstamped. Fixed, a stamp that fails or finds no
+element sets the pass's failure and the inode's rescan note, and the same
+arm (`cluster-run-20261027-233342`) read `unverified`; the third change's
+pass verified after it. Only the failed replace is driven; the missing
+element is read from the code, and so is its sibling at the scan's entry,
+where a slave root chain not found returned no failure and the pass went
+on to verify with nothing compared, which the root branch now records as
+one. The out-of-rounds check now leaves out the one pass `H2_FAIL_STAMP`
+fails, which it had counted: `233342` ran on a harness without that and
+failed that check alone. On the committed source and harness the arm
+with both knobs and three changes (`cluster-run-20261028-013559`) read 29
+checks with none failed: 12 root scans in the round that compared every
+inode and a verified pass, the stamp failed once and its pass
+`unverified`, the third change verified, and the subtraction applied.
+
+## The read-only remount's dirty mappings, 2026-10-28
+
+The fifth candidate of "Five defects a design audit found in the scan" is
+refuted on the path it named. A write fault reaches `file_update_time()` from
+`filemap_page_mkwrite()`, and this port's `->update_time`,
+`hammer2_vfs_update_time()`, stamps the inode with
+`hammer2_inode_modify()` and ends its transaction with
+`HAMMER2_TRANS_SIDEQ`, so the first fault through a mapping puts the
+inode on the queue the remount's sync walks. A probe in
+`script/test-enospc.sh` makes and syncs a file, writes it through a
+shared mapping released with no `msync`, remounts read-only and counts
+the completed writes of the guest's device over 5 s with the flusher's
+expiry and interval set to one second. On the source before the fix the
+count read 0 (`p7-notes/r11-control-20261028-001034.log`), a run made
+before the window had a control of its own, so that zero is uncontrolled.
+The window's control, the same write on a second file with no remount,
+read 2 writes in the run with the fix
+(`p7-notes/r11-fixed-20261028-001323.log`), so the window sees the
+flusher, and after the remount it read 0. What is
+left is a fault that skips the stamp because the time read equal: the
+stored stamp is the coarse clock truncated to microseconds and the
+kernel's comparison is in nanoseconds, so that needs a nanosecond field
+that is a whole microsecond within one tick, which no run reproduced.
+`hammer2_reconfigure()` now calls `sync_filesystem()` on the read-write
+to read-only transition, as ext4 does, so the remount writes every dirty
+folio whether or not its inode is queued. The probe stays in the gate,
+and it guards the queueing through `->update_time`, not that call: the
+source without the call read 0 there too, so removing it would pass.
+
+## The scan's parent collapsed under it, 2026-10-28
+
+The crash shape of `script/cluster-sync.sh` (`H2_CRASH=1`), run for this
+batch's regression, took the synchronization thread down 61 s into the
+resumed pass, which began at 25.76 s of guest uptime and faulted at
+86.72 s (`cluster-run-20261028-001442`, its kernel log kept as
+`p7-notes/crash-20261028-001442.klog` and the oops as
+`p7-notes/crash-oops-20261028-001442.dmesg`). The fault was a NULL
+dereference in `hammer2_chain_repparent()`, called by
+`hammer2_chain_lookup()` from the scan's `hammer2_chain_next()` in
+`hammer2_sync_slaves()`. The thread died holding an inode dependency on
+the root inode, and from 1004.18 s the kept log prints `ipdep wait` on
+it, the kept copy ending after the first twenty such lines (the waiter was the harness's `bulkfree`, read
+from the guest's process list in the session); the run was stopped by
+hand with the guest hard-stopped and has no report. The crash shape had last run at
+1.0.40.
+
+The scan was inserting the root's inodes. `0x9b0b` went into the indirect
+block `0x9a00/9` at 86.719575 s, and `0x9b0c` and `0x9b0d`, both inside
+that block's range, went into its parent `0x9800/11` at 86.720079 s and
+86.720314 s, so by then `0x9a00/9` was no longer a child there; which
+block the scan held when it faulted is in neither kept log. The cause is
+a `candidate`: the flusher's `hammer2_chain_indirect_maintenance()` folds
+a sparse indirect block into its parent, and the delete inside it clears
+the block's parent pointer. `hammer2_sync_insert()` and `hammer2_sync_destroy()` each release
+the scan's parent twice, to relock it exclusive and again shared, holding
+only a reference, and a climb from the deleted block then dereferences the
+pointer the delete cleared. The four releases, the cleared pointer and the
+flusher's call are all in DragonFly's tree at the clone's commit
+(`250a8b4928`); upstream's head was not checked. No `kept absent` line
+appears in that scan, so the arm this batch changed did not run there.
+
+A run of the same shape with the scan's parent tested at both sites
+(`cluster-run-20261028-004740`, 45 checks, none failed; that build's
+source is not kept) printed none of the two probe lines, while the
+flusher's `0x4000` print named 169 distinct indirect blocks it folded,
+the empty blocks it deletes not printing, so the window is narrow and one
+clean run gives no rate. A debug knob,
+`sync_collapse_parent`, runs the flusher's collapse inside the insert's
+window, after the insert (1) or before its lookup (2), and clears itself
+once one is done; `H2_COLLAPSE` sets it for phase 4's backlog copy. The
+tree run cannot carry it, since its cluster mount writes both elements and
+its passes insert nothing (`cluster-run-20261028-010336`, 0 collapses).
+With the guards removed from a copy of the source (module sha256 prefix
+`7102ed8ae345ae17`), the knob at 1 collapsed `0x5200/9` at 994.566431 s
+and the thread faulted 47 us later at the same code offset,
+`hammer2_sync_slaves` plus `0x4c9` through `hammer2_chain_lookup()` into
+`hammer2_chain_repparent()`, its fault address `0x388` against the
+crash's `0x378` because the debug build's chain carries one more field (`cluster-run-20261028-010638`, stopped by
+hand, its log kept as `p7-notes/collapse-control-20261028-010638.klog`).
+At 2 the same module collapsed `0xc000000000000000/62` at 1337.159068 s and
+faulted 24 us later inside the insert's own lookup,
+`hammer2_sync_insert()` through `hammer2_chain_lookup()` into
+`hammer2_chain_repparent()` (`cluster-run-20261028-012949`, stopped by
+hand, `p7-notes/collapse-control2-20261028-012949.klog`).
+
+The scan now tests its parent after every arm that does not end the scan
+at the deferral cap, which ends it with `EAGAIN` anyway, and, finding it deleted,
+ends as a failed scan with a line of its own, so no stamp covers it and
+the next pass reaches the keys after it. The insert tests it before its
+lookup and the destroy before its delete and its lookup, the destroy also
+refusing a chain that left an intact parent (moved by a frontend's
+indirect create, or deleted), each returning `EAGAIN`, and the scan's
+test ends on that error as well as on the deleted parent, counting a
+failure so the inode stays on the rescan set. The destroy's refusal on an
+intact parent first left the scan going on with no chain, which read as
+the local side exhausted and inserted a key the slave holds; the audit
+found it on the code, and no run drove it. With the guards, the knob at 1
+(`cluster-run-20261028-011200`) collapsed `0x5200/9` at 302.828907 s, the
+scan ended on it 24 us later, and that round read `failed 1`; the run's
+one failed check of 58 was the harness's, which subtracted an unverified
+pass where the round had instead gone on to a second that phase 4's
+unmount interrupted, and it now reads the guarded round's failure. At 2
+(`cluster-run-20261028-012113`) it collapsed a directory's block,
+`0xc000000000000000/62`, the scan ended 7 us later, the round read
+`failed 1`, and the run read 59 checks with none failed, the slave equal
+to the master for 40055 files. The destroy's two tests are read from the
+code; no knob places a collapse in the destroy's windows. The crash shape
+with no knob, on the `d` form, in which no guard fired
+(`cluster-run-20261028-013846`), read
+45 checks with none failed and no guard line, which says the window was
+not met in that run and nothing about its rate. On the committed source
+the default shape on `h2kasan-7.3` (`cluster-run-20261028-020245`) read 56
+checks with none failed, the module carrying 18 `__asan` and 3 `__ubsan`
+imports and the kernel reporting nothing, kmemleak clean after the
+unload, and no guard line. The knob at 1 on the committed source
+(`cluster-run-20261028-022150`) collapsed `0x5200/9` at 311.165932 s, the
+scan ended on it 22 us later, that round read `failed 1`, and the run read
+59 checks with none failed, the slave equal to the master for 40055 files
+and both volumes clean under `fsck_hammer2`.

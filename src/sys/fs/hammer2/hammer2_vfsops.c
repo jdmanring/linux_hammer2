@@ -216,6 +216,31 @@ module_param_named(fail_alloc_after, hammer2_fail_alloc_after, int, 0644);
  */
 int hammer2_fail_alloc_count;
 module_param_named(fail_alloc_count, hammer2_fail_alloc_count, int, 0644);
+/*
+ * XXX Linux: the next this many synchronization passes start as if the
+ * rescan set had overflowed, so the pass that compares every inode runs
+ * on demand; the set holds 64 entries and no harness fills it.  Debug
+ * build only.
+ */
+int hammer2_sync_force_rescan;
+module_param_named(sync_force_rescan, hammer2_sync_force_rescan, int, 0644);
+/*
+ * XXX Linux: the next this many PFS-root stamps of a synchronization round
+ * that acted on nothing report EIO after the replace, as a failed one
+ * would, so what a failed root stamp does to the verdict runs on demand.
+ * A round that acted is followed by another, whose stamp would cover the
+ * failure.
+ * Debug build only.
+ */
+int hammer2_sync_fail_stamp;
+module_param_named(sync_fail_stamp, hammer2_sync_fail_stamp, int, 0644);
+/*
+ * XXX Linux: 1 or 2 collapses the synchronization insert's indirect parent
+ * into its own at the insert's second or first release of it, as the
+ * flusher can, and clears itself once one is done.  Debug build only.
+ */
+int hammer2_sync_collapse_parent;
+module_param_named(sync_collapse_parent, hammer2_sync_collapse_parent, int, 0644);
 #endif
 
 /*
@@ -2561,8 +2586,8 @@ hammer2_remount_impl(hammer2_dev_t *hmp)
  *
  * The recovery below runs with s_umount held by reconfigure_super().
  * hammer2_recovery() and hammer2_fixup_pfses() walk chains and flush
- * them; neither reaches sync_filesystem(), which would take that lock
- * again.
+ * them; neither reaches sync_filesystem(), which wants that lock held
+ * rather than taking it, and which the read-only arm calls.
  */
 static int
 hammer2_reconfigure(struct fs_context *fc)
@@ -2584,7 +2609,18 @@ hammer2_reconfigure(struct fs_context *fc)
 		 * Read-write to read-only is per-mount: the device stays
 		 * open as it is, and a sibling PFS on it that is still
 		 * read-write is unaffected.
+		 *
+		 * Linux: sync_filesystem() first, as ext4 does on this
+		 * transition, so every dirty folio is written whether or not
+		 * its inode is on this PFS's queue.  A write fault queues the
+		 * inode through ->update_time, so the PFS sync alone covers a
+		 * fault that stamped it; one that read the time unchanged
+		 * does not queue it.  SB_RDONLY is applied after this
+		 * returns, so the sync is not skipped as a read-only one.
 		 */
+		error = sync_filesystem(sb);	/* Linux */
+		if (error)
+			return (error);
 		hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
 		pmp->rdonly = 1;
 		return (0);

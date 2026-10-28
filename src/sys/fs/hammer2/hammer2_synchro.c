@@ -225,6 +225,8 @@ hammer2_sync_slave_chain(hammer2_thread_t *thr, hammer2_key_t inum,
 	if (isroot) {
 		chain = hammer2_inode_chain_and_parent(pmp->iroot, thr->clindex,
 		    parentp, HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED);
+		if (chain == NULL)	/* XXX Linux: as for any inode below */
+			list->failed = 1;
 		return (chain);
 	}
 	error = hammer2_chain_inode_find(pmp, inum, thr->clindex,
@@ -537,8 +539,15 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	 * hammer2_thread.rescan.
 	 */
 	++thr->rescan_pass;
+#if defined(HAMMER2_LOCKDEBUG)
+	if (hammer2_sync_force_rescan > 0) {	/* XXX Linux */
+		--hammer2_sync_force_rescan;
+		thr->rescan_all = 1;
+	}
+#endif
 	thr->rescan_now = thr->rescan_all;
 	thr->rescan_all = 0;
+	thr->rescan_upto = 0;
 	if (thr->rescan_now && (hammer2_debug & 0x8000))
 		kprintf("syncthr: rescan all clindex %d\n", thr->clindex);
 
@@ -1395,6 +1404,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	int exit_reason;	/* XXX Linux: which break left the loop */
 	int swept;		/* XXX Linux: sweep destroys this pass */
 	int nfail;		/* XXX Linux: this call's kept or failed keys */
+	hammer2_key_t lastsrc = 0;	/* XXX Linux: see the sweep's destroy */
 	hammer2_key_t rinum;	/* XXX Linux: the inode's number on both sides */
 	u64 t_start, t_fed, t_first, t_end;	/* XXX Linux: root scan, ns */
 	int fifo;		/* XXX Linux: the FIFO's size at the scan's end */
@@ -1714,6 +1724,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			focus = xop->head.cluster.focus;
 			n = hammer2_chain_cmp(chain, focus);
 		}
+		if (focus)	/* XXX Linux: the source's last key, for the sweep */
+			lastsrc = focus->bref.key;
 
 		/*
 		 * XXX Linux: the instrument the six refuted changes assumed.
@@ -1839,32 +1851,37 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				 * and the same 66 present on the master and absent
 				 * from the slave.
 				 *
-				 * Keep it and advance BOTH cursors.  Every other arm
-				 * of this switch advances both, and this one must
-				 * too: the earlier guard set only `advance_local`,
-				 * which walked the local scan away from a master
-				 * cursor that stayed put, and the change that dropped
-				 * the advance altogether re-entered this arm on the
-				 * same chain forever and hung the pass.  With both
-				 * set the two walk forward together and the loop ends
-				 * when either exhausts.
+				 * Keep it and advance the local cursor alone, as the
+				 * destroy arm below does inside hammer2_sync_destroy():
+				 * the focus sorts above this key and has not been
+				 * compared.  Advancing the source as well passed over
+				 * one source key per kept key, which the next compare
+				 * then read as absent.  The loop the revert of the
+				 * first guard recorded (36d664b, 180 keys re-attempted
+				 * 69 times each, EAGAIN on every pass) repeated across
+				 * passes: in that tree the slave-side error rolled up
+				 * into merror withheld the stamp, read from its code,
+				 * no log of it being kept.  Within a scan the local
+				 * cursor moves on every iteration, so the loop ends
+				 * when it exhausts.  The change that set neither
+				 * cursor did hang the pass.
 				 *
-				 * EINPROGRESS so the pass does not stamp the element:
-				 * the kept chain is not yet known to match the master,
-				 * and a stamp here would call it synchronized against a
-				 * state this pass never compared it to.
+				 * EINPROGRESS so the inode goes on the rescan set
+				 * without failing the pass: the kept chain is not yet
+				 * known to match the master, and the next pass compares
+				 * it again; see the EINPROGRESS arm below.
 				 */
 				atomic_add_int(&h2dbg_newer_kept, 1);
 				++list->kept;	/* XXX Linux */
 				if (snap && (hammer2_debug & 0x8000)) /* XXX Linux */
 					kprintf("syncsnap: kept absent %016llx/%d "
-					    "tid %016llx cut %016llx\n",
+					    "tid %016llx cut %016llx focus %016llx\n",
 					    (long long)chain->bref.key,
 					    chain->bref.type,
 					    (long long)chain->bref.modify_tid,
-					    (long long)thr->snap_cut);
+					    (long long)thr->snap_cut,
+					    (long long)(focus ? focus->bref.key : 0));
 				advance_local = 1;
-				advance_xop = 1;
 				nerror = HAMMER2_ERROR_EINPROGRESS;
 			} else {
 				/*
@@ -1880,10 +1897,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				 * key mid-scan; a focus key equal to or overlapping
 				 * the local key refutes that and reopens the compare.
 				 */
-				kprintf("destroy focus %016llx/%d local %016llx/%d\n",
+				kprintf("destroy focus %016llx/%d local %016llx/%d last %016llx\n",
 					(focus ? focus->bref.key : 0),
 					(focus ? focus->bref.type : -1),
-					chain->bref.key, chain->bref.type);
+					chain->bref.key, chain->bref.type,
+					lastsrc);
 				nerror = hammer2_sync_destroy(thr, &parent,
 							      &chain, 0, idx);
 				atomic_add_int(&h2dbg_act_destroy, 1);
@@ -1898,8 +1916,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * snapshot will hold the same.  Replacing it would put
 			 * the older copy back for a pass, measured 2026-10-18 as
 			 * 98 replacements for 5 rewritten files.  Kept, both
-			 * cursors advance, and EINPROGRESS withholds the stamp
-			 * as the kept-newer arm above does.
+			 * cursors advance, and EINPROGRESS puts the inode on
+			 * the rescan set as the kept-absent arm above does.
 			 */
 			atomic_add_int(&h2dbg_newer_kept, 1);
 			++list->kept;	/* XXX Linux */
@@ -1953,7 +1971,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * inode chain's key is its number.
 			 */
 			if (focus->bref.type == HAMMER2_BREF_TYPE_INODE &&
-			    hammer2_sync_rescan_wanted(thr, focus->bref.key))
+			    hammer2_sync_rescan_wanted(thr, focus->bref.key) &&
+			    !(isroot && thr->rescan_now &&
+			      focus->bref.key <= thr->rescan_upto))
 				dodefer = 1;
 		} else if (n > 0) {
 			/*
@@ -2009,9 +2029,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 * scan goes on past the failed key, so every key that can be
 		 * copied is, and no inode root is stamped for the rest of the
 		 * pass, so the next pass rescans and reaches the failed key again.
-		 * EINPROGRESS from the kept-newer arm is a failure here on
-		 * purpose: that arm's comment promises the element is not
-		 * stamped, and this is what keeps the promise.
+		 * EINPROGRESS from the two kept arms is not a failure: it puts
+		 * the inode on the rescan set, below.
 		 *
 		 * DEFER(a failing pass is measured rewriting unrelated inodes):
 		 * the bit is pass-wide, so a failure under one directory
@@ -2118,6 +2137,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			list->base = defer;
 			++list->count;
 			needrescan = 1;
+			if (isroot && focus->bref.key > thr->rescan_upto)
+				thr->rescan_upto = focus->bref.key; /* XXX Linux */
 		}
 
 		/*
@@ -2127,6 +2148,36 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 */
 		if (needrescan && list->count > 1000) {
 			exit_reason = 3;
+			break;
+		}
+
+		/*
+		 * XXX Linux: the scan's parent deleted under it.  The insert and
+		 * destroy helpers release *parentp to relock it, and in that
+		 * window the flusher's hammer2_chain_indirect_maintenance() can
+		 * collapse an indirect parent into its own, which deletes it and
+		 * clears its parent pointer.  The next climb from it, in
+		 * hammer2_chain_next() or a helper's lookup, dereferences NULL in
+		 * hammer2_chain_repparent().  A fault of that signature was read
+		 * 2026-10-28 in the resumed pass of cluster-sync.sh's crash shape,
+		 * with this collapse its candidate cause, and the debug knob
+		 * sync_collapse_parent reproduces it.  The scan ends
+		 * as a failed one, so no stamp covers it, and the inode is noted
+		 * for the next pass, which reaches the keys after it.  The same
+		 * for a helper's EAGAIN, which the destroy also returns when its
+		 * chain left the parent intact (moved by a frontend's indirect
+		 * create, or deleted), leaving no chain to go on from.
+		 */
+		if ((parent->flags & HAMMER2_CHAIN_DELETED) ||
+		    nerror == HAMMER2_ERROR_EAGAIN) {
+			kprintf("syncsnap: scan parent %016llx/%d %s, scan ended\n",
+			    (long long)parent->bref.key, parent->bref.keybits,
+			    (parent->flags & HAMMER2_CHAIN_DELETED) ?
+			    "deleted" : "left by its chain");
+			list->failed = 1;
+			++nfail;
+			merror = HAMMER2_ERROR_EAGAIN;
+			exit_reason = 4;
 			break;
 		}
 
@@ -2238,9 +2289,13 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			 * NULL parent the pair is one condition.  Upstream
 			 * states it as an assert; here a missing cluster
 			 * element is an ordinary outcome of the flush path,
-			 * so it is a skipped update rather than a fault.
+			 * so it is a skipped update rather than a fault, and
+			 * a failure of the pass, which must not verify an
+			 * inode it did not stamp.
 			 */
 			if (parent == NULL) {
+				list->failed = 1;	/* XXX Linux */
+				++nfail;
 				hammer2_xop_retire(&xop2->head,
 				    HAMMER2_XOPMASK_VOP);
 				hammer2_sync_rescan_note(thr, rinum, nfail);
@@ -2251,6 +2306,18 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 					thr, parent, chain,
 					sync_tid,
 					idx, &xop2->head, focus, isroot);
+#if defined(HAMMER2_LOCKDEBUG)
+			if (isroot && list->acted == 0 &&	/* XXX Linux */
+			    hammer2_sync_fail_stamp > 0) {
+				--hammer2_sync_fail_stamp;
+				kprintf("syncsnap: root stamp failed on demand\n");
+				nerror = HAMMER2_ERROR_EIO;
+			}
+#endif
+			if (nerror) {	/* XXX Linux: see list->failed */
+				list->failed = 1;
+				++nfail;
+			}
 			hammer2_chain_unlock(chain);
 			hammer2_chain_drop(chain);
 			hammer2_chain_unlock(parent);
@@ -2278,6 +2345,42 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 
 	return merror;
 }
+
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * XXX Linux: the debug build's knob sync_collapse_parent, set to 1 or 2,
+ * runs the flusher's collapse of an unlocked indirect parent into its own
+ * at the insert's second or first release of it, and clears itself once a
+ * collapse is done.  That window is the candidate for the fault the guard
+ * in hammer2_sync_slaves() describes.
+ */
+static void
+hammer2_sync_collapse(hammer2_chain_t *parent, int at)
+{
+	hammer2_chain_t *gp;
+	int done;
+
+	gp = parent->parent;
+	if (hammer2_sync_collapse_parent != at ||
+	    parent->bref.type != HAMMER2_BREF_TYPE_INDIRECT || gp == NULL)
+		return;
+	hammer2_chain_ref(gp);
+	hammer2_chain_lock(gp, HAMMER2_RESOLVE_ALWAYS);
+	hammer2_chain_lock(parent, HAMMER2_RESOLVE_ALWAYS);
+	done = 0;
+	if (parent->parent == gp &&
+	    (parent->flags & HAMMER2_CHAIN_DELETED) == 0)
+		done = hammer2_chain_indirect_maintenance(gp, parent);
+	hammer2_chain_unlock(parent);
+	hammer2_chain_unlock(gp);
+	hammer2_chain_drop(gp);
+	if (done) {
+		hammer2_sync_collapse_parent = 0;
+		kprintf("syncsnap: collapse of %016llx/%d on demand at %d\n",
+		    (long long)parent->bref.key, parent->bref.keybits, at);
+	}
+}
+#endif
 
 /*
  * Create a missing chain by copying the focus from another device.
@@ -2363,7 +2466,19 @@ hammer2_sync_insert(hammer2_thread_t *thr,
 		*chainp = NULL;
 	}
 	hammer2_chain_unlock(*parentp);
+#if defined(HAMMER2_LOCKDEBUG)
+	hammer2_sync_collapse(*parentp, 2);	/* XXX Linux */
+#endif
 	hammer2_chain_lock(*parentp, HAMMER2_RESOLVE_ALWAYS);
+	/*
+	 * XXX Linux: the parent collapsed by the flusher while unlocked; the
+	 * lookup below would climb from it.  See the scan's own test.
+	 */
+	if ((*parentp)->flags & HAMMER2_CHAIN_DELETED) {
+		error = HAMMER2_ERROR_EAGAIN;
+		chain = NULL;
+		goto failed;
+	}
 
 	/*
 	 * We must reissue the lookup to properly position (*parentp)
@@ -2536,6 +2651,9 @@ failed:
 	 * Avoid an ordering deadlock when relocking shared.
 	 */
 	hammer2_chain_unlock(*parentp);
+#if defined(HAMMER2_LOCKDEBUG)
+	hammer2_sync_collapse(*parentp, 1);	/* XXX Linux */
+#endif
 	hammer2_chain_lock(*parentp, HAMMER2_RESOLVE_SHARED |
 				     HAMMER2_RESOLVE_ALWAYS);
 	if (chain) {
@@ -2609,6 +2727,23 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 	hammer2_chain_lock(chain, HAMMER2_RESOLVE_NEVER);
 
 	/*
+	 * XXX Linux: the parent collapsed by the flusher while unlocked, and
+	 * the chain moved with its siblings to the parent's parent; deleting
+	 * it through the old parent would take it out of a tree it is no
+	 * longer in.  See the scan's own test.
+	 */
+	if (((*parentp)->flags & HAMMER2_CHAIN_DELETED) ||
+	    chain->parent != *parentp) {
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
+		*chainp = NULL;
+		hammer2_chain_unlock(*parentp);
+		hammer2_chain_lock(*parentp, HAMMER2_RESOLVE_SHARED |
+					     HAMMER2_RESOLVE_ALWAYS);
+		return (HAMMER2_ERROR_EAGAIN);
+	}
+
+	/*
 	 * XXX Linux: the carried call discarded the delete's return, and the
 	 * helper behind it modifies the parent, which can fail.  Kept and
 	 * returned ahead of the re-lookup's, which still has to run to
@@ -2624,6 +2759,10 @@ hammer2_sync_destroy(hammer2_thread_t *thr,
 	hammer2_chain_unlock(*parentp);	/* relock shared */
 	hammer2_chain_lock(*parentp, HAMMER2_RESOLVE_SHARED |
 				     HAMMER2_RESOLVE_ALWAYS);
+	if ((*parentp)->flags & HAMMER2_CHAIN_DELETED) {	/* XXX Linux */
+		*chainp = NULL;
+		return (derror ? derror : HAMMER2_ERROR_EAGAIN);
+	}
 	*chainp = hammer2_chain_lookup(parentp, &key_next,
 				     save_key, HAMMER2_KEY_MAX,
 				     &error,

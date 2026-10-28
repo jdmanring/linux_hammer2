@@ -208,6 +208,9 @@
 # an expression checkpatch does not count; the PFS create's `return (error);`
 # for a lookup that failed other than by ENOENT is one more. No category is
 # new. See README.kernel-style.md.
+# 1,594 to 1,596: `return is not a function` 368 -> 370, the two returns
+# of hammer2_sync_destroy() refusing a parent the flusher collapsed while
+# it was released. No category is new. See README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -239,7 +242,7 @@
 4 please, no space before tabs
 236 please, no spaces at the start of a line
 86 quoted string split across lines
-368 return is not a function, parentheses are not required
+370 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)

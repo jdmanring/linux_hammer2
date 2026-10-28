@@ -111,6 +111,23 @@ main(int argc, char **argv)
 
 	if (argc > 2 && strcmp(argv[2], "race") == 0)
 		return (race_mode(path, argc > 3 ? atoi(argv[3]) : 2000));
+	/* "nosync": write through a shared mapping of a file the caller
+	 * made and synced, then unmap and close with no msync, so the dirty
+	 * folios are the page cache's alone and the inode is on no queue of
+	 * the filesystem's.  The caller reads what a read-only remount does
+	 * with them. */
+	if (argc > 2 && strcmp(argv[2], "nosync") == 0) {
+		fd = open(path, O_RDWR);
+		if (fd < 0) { perror("open"); return (1); }
+		p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (p == MAP_FAILED) { perror("mmap shared"); return (1); }
+		memset(p, 'C', len / 2);
+		memset(p + len / 2, 'D', len - len / 2);
+		if (munmap(p, len) != 0) { perror("munmap"); return (1); }
+		close(fd);
+		printf("mmap nosync written\n");
+		return (0);
+	}
 
 	fd = existing ? open(path, O_RDWR) :
 	    open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);

@@ -143,6 +143,20 @@ STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
 # which is how a run against the tree before a fix is made.
 FAULT=${H2_FAULT:-0}
 LOCKDEBUG=${H2_LOCKDEBUG:-0}
+# Two arms of the tree run, each 0 or 1 and each needing H2_LOCKDEBUG=1's
+# knob. H2_FORCE_RESCAN=1 starts the first change's pass as if the rescan
+# set had overflowed, so it compares every inode; the set holds 64 entries
+# and nothing else here fills it. H2_FAIL_STAMP=1 fails the second change's
+# PFS-root stamp, whose pass must then not read verified. H2_COLLAPSE=1 or
+# 2, with the same knob build and outside the tree run, collapses the
+# indirect parent of one insert of phase 4's backlog copy into its own
+# parent while the insert has it unlocked, after (1) or before (2) the
+# insert, as the flusher can; the scan must then end failed with its guard's
+# line and the copy still complete. The tree run's cluster mount writes both
+# elements, so its passes insert nothing.
+FORCE_RESCAN=${H2_FORCE_RESCAN:-0}
+FAIL_STAMP=${H2_FAIL_STAMP:-0}
+COLLAPSE=${H2_COLLAPSE:-0}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
@@ -158,6 +172,20 @@ H2SNAP=${H2_SYNC_SNAPSHOT:-1}
 # only that pass prints, under bit 0x8000.
 if [ "$TREE" != 0 ] && { [ "$H2SNAP" != 1 ] || [ $(( H2DEBUG & 0x8000 )) = 0 ] || [ $(( TREE % TREE_FAN )) != 0 ]; }; then
 	echo "cluster: COULD-NOT-RUN: H2_PASS_TREE needs H2_SYNC_SNAPSHOT=1, H2_DEBUG with 0x8000 and a count H2_TREE_FANOUT divides" >&2
+	exit 2
+fi
+case $FORCE_RESCAN$FAIL_STAMP in 00|01|10|11) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_FORCE_RESCAN and H2_FAIL_STAMP are 0 or 1" >&2; exit 2 ;;
+esac
+case $COLLAPSE in 0|1|2) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE is 0, 1 or 2" >&2; exit 2 ;;
+esac
+if [ "$COLLAPSE" != 0 ] && { [ "$TREE" != 0 ] || { [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; }; }; then
+	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE needs the default shape, not H2_PASS_TREE, and H2_LOCKDEBUG=1 (or an H2_KO built with it)" >&2
+	exit 2
+fi
+if [ "$FORCE_RESCAN$FAIL_STAMP" != 00 ] && { [ "$TREE" = 0 ] || { [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; } || { [ "$FAIL_STAMP" = 1 ] && [ "$PASS_CHANGES" -lt 2 ]; }; }; then
+	echo "cluster: COULD-NOT-RUN: H2_FORCE_RESCAN and H2_FAIL_STAMP need H2_PASS_TREE, H2_LOCKDEBUG=1 (or an H2_KO built with it), and H2_FAIL_STAMP two changes" >&2
 	exit 2
 fi
 MASTER=$FIXDIR/cluster-master.img
@@ -540,6 +568,23 @@ if [ "$TREE" != 0 ]; then
 	echo "tree-settle-seconds $n"
 	echo "tree-settle-idles $(idles)"
 	echo "tree-snap-passes $(klog 'syncsnap: end clindex')"
+	echo "kept-absent $(klog 'syncsnap: kept absent')"
+	# A sweep destroy whose source last key sorts at or above the
+	# destroyed local key is the same skip seen from the other side: the
+	# source had not ended below that key, so the key was passed over, not
+	# swept. Equal is the shape measured, the source holding the key.
+	echo "kept-absent-skips $(awk '
+	/filekeys |START_SCAN|sync_slaves |syncsnap: pass |syncthr: update inode/ { pf = "" }
+	/syncsnap: kept absent / {
+		l = $0; sub(/.*kept absent /, "", l); sub(/\/.*/, "", l)
+		f = $0; sub(/.* focus /, "", f)
+		if (pf != "" && f != pf && ("x" l) < ("x" pf)) s++
+		pf = f }
+	/destroy focus 0000000000000000\/-1 local .* last / {
+		l = $0; sub(/.* local /, "", l); sub(/\/.*/, "", l)
+		a = $0; sub(/.* last /, "", a)
+		if (("x" a) >= ("x" l)) s++ }
+	END { print s + 0 }' $K)"
 	c=1
 	while [ $c -le "$PASS_CHANGES" ]; do
 		timeout 600 umount /mnt/h2c; timeout 600 umount /mnt/h2s
@@ -551,11 +596,25 @@ if [ "$TREE" != 0 ]; then
 		sync
 		timeout 600 umount /mnt/h2c
 		l0=$(wc -l < $K); e0=$(klog 'syncsnap: end clindex')
+		# The arms are set before the slave's device returns, so the knob
+		# is read at the first pass of the thread it starts.
+		knob=
+		[ $c = 1 ] && [ "$H2_FORCE_RESCAN" = 1 ] && knob=sync_force_rescan
+		[ $c = 2 ] && [ "$H2_FAIL_STAMP" = 1 ] && knob=sync_fail_stamp
+		if [ -n "$knob" ]; then
+			[ -e /sys/module/hammer2/parameters/$knob ] || {
+				echo "cluster: COULD-NOT-RUN: no $knob knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
+			echo 1 > /sys/module/hammer2/parameters/$knob
+		fi
 		mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 		n=0
 		until [ "$(klog 'syncsnap: end clindex')" -gt "$e0" ] || [ $n -ge "$TREE_SECS" ]; do sleep 1; n=$((n + 1)); done
 		echo "change-$c-wait-seconds $n"
 		echo "change-$c-pass $(bracket $l0)"
+		[ -n "$knob" ] && echo "change-$c-knob-left $(cat /sys/module/hammer2/parameters/$knob)"
+		echo "change-$c-rescan-all $(tail -n +$((l0 + 1)) $K | grep -c 'syncthr: rescan all')"
+		echo "change-$c-root-scans $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: verify clindex .* round 1 / { exit } /sync_slaves error/ { n++ } END { print n + 0 }')"
+		echo "change-$c-stamp-failed $(tail -n +$((l0 + 1)) $K | grep -c 'root stamp failed on demand')"
 		c=$((c + 1))
 	done
 	echo "tree-errors $(klog 'hammer2_sync_slaves: error')"
@@ -839,6 +898,12 @@ timeout 60 umount /mnt/h2c
 verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer') + $(klog 'syncsnap: unverified') )); }
 copied() { grep -c 'syncthr: update inode' $K; }
 p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode')
+# Set before the slave's device returns, so the knob is read by the copy.
+if [ "$H2_COLLAPSE" != 0 ]; then
+	[ -e /sys/module/hammer2/parameters/sync_collapse_parent ] || {
+		echo "cluster: COULD-NOT-RUN: no sync_collapse_parent knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
+	echo "$H2_COLLAPSE" > /sys/module/hammer2/parameters/sync_collapse_parent
+fi
 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 echo "backlog-threads-up $(ps -eo comm | grep -c '^h2nod-CL')"
 # The copy has begun once its update lines pass the baseline by more than a
@@ -964,6 +1029,12 @@ echo "resume-mounts $(mount 2>/dev/null | grep -c ' type hammer2')"
 echo "resume-thread $(ps -eo comm | grep -c '^h2nod-CL')"
 settle_wait
 echo "backlog-inserts $(( $(fieldc 'n>0') - ${ins0:-0} ))"
+echo "collapse-done $(klog 'syncsnap: collapse of .* on demand')"
+echo "collapse-guard $(klog 'syncsnap: scan parent .* deleted')"
+# The failures of the round the first such scan ended in, which must not
+# verify: the next verify line after it.
+echo "collapse-round-failed $(awk '/syncsnap: scan parent .* deleted/ { g = 1 } g && /syncsnap: verify clindex/ { sub(/.* failed /, ""); print $1 + 0; exit }' $K)"
+[ "$H2_COLLAPSE" != 0 ] && echo "collapse-knob-left $(cat /sys/module/hammer2/parameters/sync_collapse_parent)"
 echo "mutate-reinserts $(( $(klog 'syncsnap: reinsert') - ${ri0:-0} ))"
 echo "mutate-newer-inodes $(( $(klog 'syncsnap: newer inode') - ${nd0:-0} ))"
 finish
@@ -1035,7 +1106,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -1187,11 +1258,26 @@ c=1
 while [ $c -le "$PASS_CHANGES" ]; do
 	a=$(val change-$c-threads-down); [ "${a:-1}" = 0 ]; check "change $c: the slave element leaves while the master is written" $? "${a:-none} thread(s)"
 	set -- $(val change-$c-pass)
-	[ "${5:-none}" = verified ]; check "change $c: the thread's next pass verifies" $? "${5:-none} after $(val change-$c-wait-seconds) s"
+	if [ $c = 2 ] && [ "$FAIL_STAMP" = 1 ]; then
+		a=$(val change-$c-stamp-failed); [ "${a:-0}" = 1 ]; check "change 2: the PFS root's stamp fails once on demand" $? "${a:-none} failure(s), knob left at $(val change-$c-knob-left)"
+		[ "${5:-none}" = unverified ]; check "change 2: a pass whose root stamp failed does not verify" $? "${5:-none} after $(val change-$c-wait-seconds) s"
+	else
+		[ "${5:-none}" = verified ]; check "change $c: the thread's next pass verifies" $? "${5:-none} after $(val change-$c-wait-seconds) s"
+	fi
+	if [ $c = 1 ] && [ "$FORCE_RESCAN" = 1 ]; then
+		a=$(val change-$c-rescan-all); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "change 1: the pass is asked to compare every inode" $? "${a:-none} rescan-all line(s), knob left at $(val change-$c-knob-left)"
+		echo "  read  change 1: $(val change-$c-root-scans) root scan(s) in the round that compared every inode"
+	fi
 	echo "  read  change $c: ${4:-none} ms against 5120 (snapshot and target ${1:-none}, verify ${2:-none} in ${6:-none} round(s), delete ${3:-none}), largest scan ${7:-none} iterations"
 	c=$((c + 1))
 done
 a=$(val tree-errors); [ "${a:-1}" = 0 ]; check "no pass reports an error" $? "${a:-none}"
+a=$(val kept-absent)
+if [ "${a:-0}" -gt 0 ] 2>/dev/null; then
+	b=$(val kept-absent-skips); [ "${b:-1}" = 0 ]; check "no kept-absent line or sweep destroy shows a source key passed over" $? "${b:-none} in $a kept-absent line(s)"
+else
+	echo "  read  the kept-absent arm did not run: ${a:-none} line(s)"
+fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 else
 t=$(val lone-thread)
@@ -1257,6 +1343,13 @@ a=$(val backlog-threads-down); [ "${a:-1}" = 0 ]; check "both mounts down leave 
 a=$(val backlog-threads-up); [ "${a:-0}" = 1 ]; check "the slave's device returning starts the thread on the unmounted cluster" $? "${a:-none}"
 b=$(val interrupt-begun); [ "$b" = 0 ]; check "the thread's copy of the backlog had begun" $? "rc ${b:-none}"
 i=$(val backlog-inserts); [ "${i:-0}" -ge "$NBIG2" ] 2>/dev/null; check "the backlog is the thread's copy, not the frontend's" $? "${i:-none} file-key inserts for $NBIG2 files; the step-2 runs read 64 to 70 over a whole run"
+if [ "$COLLAPSE" != 0 ]; then
+	a=$(val collapse-done); [ "${a:-0}" = 1 ]; check "an insert's parent is collapsed once on demand" $? "${a:-none} collapse(s), knob left at $(val collapse-knob-left)"
+	a=$(val collapse-guard); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the scan ends on its deleted parent" $? "${a:-none} line(s)"
+	a=$(val collapse-round-failed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the round that scan ended in does not verify" $? "${a:-none} failure(s) in that round"
+else
+	echo "  read  the scan's parent found deleted $(val collapse-guard) time(s) with no knob"
+fi
 m=$(val mutate-mount-rc); [ "${m:-1}" = 0 ] && [ "$(val mutate-in-pass)" = 0 ]; check "the master is mutated while the pass runs" $? "mount rc ${m:-none}, in-pass rc $(val mutate-in-pass)"
 c=$(val interrupt-stop-copied | awk '{print $1}'); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ]; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass)"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
@@ -1321,7 +1414,11 @@ if [ "$H2SNAP" = 1 ]; then
 	# next snapshot; that is printed as `newer` and is not a pass that ran
 	# out of rounds. MEASURED 2026-10-18: 5 such passes in a run, every one
 	# with 0 actions and 1 kept key, 4 of them under the 20000-file write.
-	a=$(val snap-unverified); [ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write, $(val snap-interrupted) stopped by an unmount"
+	# H2_FAIL_STAMP's pass is unverified by design and is read above, so
+	# it is subtracted here and no other is.
+	a=$(val snap-unverified); fs=
+	[ -n "$a" ] && [ "$FAIL_STAMP" = 1 ] && { a=$((a - 1)); fs=", the one H2_FAIL_STAMP fails not counted"; }
+	[ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write, $(val snap-interrupted) stopped by an unmount$fs"
 	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
 	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in $(val idle-window-seconds) s after the resume settled"
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')

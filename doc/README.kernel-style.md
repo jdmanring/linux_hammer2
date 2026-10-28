@@ -239,6 +239,11 @@ checkpatch does not count; and one more `return (x);` is in
 `hammer2_ioctl_pfs_create()`, refusing a name whose lookup failed other
 than by ENOENT. No category is new.
 
+1,594 to 1,596 with the guard on the synchronization scan's parent. Two
+more `return (x);`, both in `hammer2_sync_destroy()`, refusing a parent
+the flusher's collapse deleted while the helper had it released. No
+category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

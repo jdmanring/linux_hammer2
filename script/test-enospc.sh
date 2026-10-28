@@ -564,6 +564,47 @@ out=$(ssh "$GUEST_SSH" '
 	# the directory at the end, so the fill measures what it did.
 	/tmp/h2fh /mnt/h2enospc/.h2fh 2>&1 | sed -n /fh-/p
 	rm -rf /mnt/h2enospc/.h2fh >/dev/null 2>&1
+	# A read-only remount with the folios of a mapping dirty. A write fault
+	# dirties a folio through filemap_page_mkwrite(), whose call of
+	# file_update_time() puts the inode on the sync queue through
+	# ->update_time, so the PFS sync in the remount writes it; a fault that
+	# read the time unchanged would not, and sync_filesystem() in the
+	# remount covers that one. The probe reads the first path, so it guards the
+	# queueing and not the sync_filesystem() call, which no run here has
+	# shown to be needed.
+	# The file is made and synced first, so its inode is clean and on no
+	# queue when the mapping dirties it; made by truncate alone, it would
+	# be queued and the sync in the remount would write its folios, a pass
+	# that tests nothing. The reading is the completed writes of the
+	# device after the remount, across a window in which the flusher, told to
+	# expire and wake every second, writes whatever is still dirty.
+	# The window is first read with no remount, on a second file
+	# dirtied the same way: the flusher must write it there, or a zero
+	# below says only that the window cannot see a write.
+	truncate -s 128K /mnt/h2enospc/romap /mnt/h2enospc/romapc; sync
+	exp=$(cat /proc/sys/vm/dirty_expire_centisecs)
+	wbi=$(cat /proc/sys/vm/dirty_writeback_centisecs)
+	/tmp/h2mmaptest /mnt/h2enospc/romapc nosync 2>&1 | tail -1
+	w1=$(awk "{print \$5}" /sys/block/vdb/stat)
+	echo 100 > /proc/sys/vm/dirty_expire_centisecs
+	echo 100 > /proc/sys/vm/dirty_writeback_centisecs
+	sleep 5
+	w2=$(awk "{print \$5}" /sys/block/vdb/stat)
+	echo $exp > /proc/sys/vm/dirty_expire_centisecs
+	echo $wbi > /proc/sys/vm/dirty_writeback_centisecs
+	echo "romap control writes with no remount $((w2 - w1))"
+	/tmp/h2mmaptest /mnt/h2enospc/romap nosync 2>&1 | tail -1
+	mount -o remount,ro /mnt/h2enospc; echo "romap remount ro exit $?"
+	w1=$(awk "{print \$5}" /sys/block/vdb/stat)
+	echo 100 > /proc/sys/vm/dirty_expire_centisecs
+	echo 100 > /proc/sys/vm/dirty_writeback_centisecs
+	sleep 5
+	w2=$(awk "{print \$5}" /sys/block/vdb/stat)
+	echo $exp > /proc/sys/vm/dirty_expire_centisecs
+	echo $wbi > /proc/sys/vm/dirty_writeback_centisecs
+	echo "romap writes after the remount $((w2 - w1))"
+	mount -o remount,rw /mnt/h2enospc; echo "romap remount rw exit $?"
+	rm -f /mnt/h2enospc/romap /mnt/h2enospc/romapc
 	# The population this script claims is "the volume filled", and a
 	# bare break on a failed dd cannot tell ENOSPC from a wedged mount,
 	# a read-only remount or an I/O error. Every check below would then
@@ -975,6 +1016,15 @@ else
 	printf '%s\n' "$out" | sed -n 's/^write of 128K on the full volume/        &/p'
 	fail=$((fail + 1))
 fi
+# A read-only remount writes nothing after it: the folios a mapping
+# dirtied before it are written by the remount, not by the flusher once
+# the mount reads read-only.
+printf '%s\n' "$out" | command grep -q '^romap control writes with no remount [1-9]' &&
+printf '%s\n' "$out" | command grep -q '^romap remount ro exit 0$' &&
+printf '%s\n' "$out" | command grep -q '^romap writes after the remount 0$' ||
+	{ echo "  FAIL  the device was written after a read-only remount, the remount failed, or the window saw no write with no remount:"
+	  printf '%s\n' "$out" | sed -n 's/^\(romap\|mmap nosync\)/        &/p'
+	  fail=$((fail + 1)); }
 # The two thresholds, read after the sync. A user is refused in either
 # mode. Root is accepted after a user fill, which stopped with the
 # whole reserve free, and refused after its own, which stopped at half.

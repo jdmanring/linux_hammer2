@@ -1042,6 +1042,13 @@ struct hammer2_thread {
 	int			rescan_all;	/* the set overflowed */
 	int			rescan_now;	/* this pass compares every inode */
 	/*
+	 * XXX Linux: the highest PFS-root key this pass deferred.  Every inode
+	 * is a child of the root, and a deferred one is stamped by its own
+	 * scan, so a root rescan under rescan_now deferring every agreeing
+	 * inode again never ended; it defers only above this key.
+	 */
+	hammer2_key_t		rescan_upto;
+	/*
 	 * XXX Linux: the source element, plus one, whose snapshot the last
 	 * pass could not delete because an unmount held hammer2_mntlk; 0 when
 	 * none.  The unmount deletes it, see hammer2_sync_snap_cleanup().
@@ -1165,6 +1172,9 @@ extern int hammer2_fail_alloc_after;	/* Linux */
 extern int hammer2_debug_hpanic;	/* Linux */
 extern int hammer2_alloc_count;		/* Linux */
 extern int hammer2_fail_alloc_count;	/* Linux */
+extern int hammer2_sync_force_rescan;	/* Linux */
+extern int hammer2_sync_fail_stamp;	/* Linux */
+extern int hammer2_sync_collapse_parent;	/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
 #endif
 extern int hammer2_count_dio_allocated;
