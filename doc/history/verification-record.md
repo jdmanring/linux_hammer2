@@ -19241,8 +19241,8 @@ was removed.
 So no pass on two local masters reaches the idle test or takes a
 snapshot. A cluster with a third local element does. When the
 remaining masters make a quorum without the thread's own element, as a
-slave's thread does beside two masters or a master's beside three or
-more, its idle test and its snapshot read a master's slot. That
+slave's thread does beside two masters or a master's beside two or
+more others, its idle test and its snapshot read a master's slot. That
 master's own thread still runs `hammer2_sync_flush()` on a `noquorum`
 pass, as the 20 `sync_flush: clindex 0` lines beside element 0's 10
 passes show here. A flush with nothing dirty writes nothing, but one
