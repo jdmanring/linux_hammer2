@@ -614,7 +614,8 @@ kept readings move with it. A scan that stopped at the cap is resumed
 rather than repeated, from the lowest key not yet compared on either
 cursor, since the cap's `break` comes before both cursors advance and
 the destroy arm advances the local side alone; the stamp is taken only
-when the final segment ends with `exit` 1 and no segment was abandoned.
+when the final segment ends with `exit` 1, or stops at the cap with
+neither cursor holding a key, and no segment was abandoned.
 Resuming is scoped to snapshot passes: on the live pass, and with
 `sync_snapshot` 0, the master moves between the segments, and a resumed
 segment would stamp the root with a tid newer than the one the first
@@ -735,7 +736,15 @@ equaled the master's (`hammer2_synchro.c:942-943`).
 one root walk plus the acted keys where the carried pass is three, a
 third of its time read in the same boot and build, about 11 s at the
 million on 1.0.60's per-walk time and still above the 5.12 s cadence,
-so lever 2 is expected to follow.
+so lever 2 is expected to follow. 1a is built at 1.0.67: a one-file
+change, and one in each of 100 directories, read two walks where the
+carried pass reads three, a removed or moved file one against two, and
+4000 changed files one walk in four resumed segments where the carried
+pass makes five scans from key 0 in its first round; on
+`h2release-7.3` a one-file pass took 19.9 s against 29.5 s at the
+million in one boot
+(`doc/history/verification-record.md`, "The root rescan replaced on a
+snapshot pass").
 The walks are counted from the scan itself: iterations summed per pass
 against the root's key count, since a resumed segment prints its own
 `START_SCAN`. The new behavior sits behind `sync_walks` (1 the design,
@@ -747,12 +756,15 @@ at the end of every arm catch it, and each control is placed where its
 change executes:
 
 - the resume, in an arm that changes 4000 inodes, more than the 1001
-  deferrals a capped segment takes (`:2275`) times the three verify
-  rounds (`:823`), so the cap fires in every round, with a scratch build that drops both the resume
+  deferrals a capped segment takes (`hammer2_synchro.c:2275`) times the
+  three verify rounds (`:823`), so the cap fires in every round, with a scratch build that drops both the resume
   and 1a's end-reached test, so the stamp is taken after a capped
-  segment: the fingerprint, read with the slave's device unmounted at
-  the pass's `end` line as the tree arm's change loop returns it, must
-  show keys past the break unequal;
+  segment: each round after the first must then act again on the keys
+  past the break, which the round's own `acted` count reads without a
+  fingerprint, and the pass must end unverified where the design's
+  verifies in two rounds (read on a scratch build of `57c5682` in
+  1.0.67's record, acted 2002 in each of three rounds, then
+  unverified);
 - the narrowing, placed by the reading above: if a write can reach the
   slave with the master's slot detached, a `HAMMER2_LOCKDEBUG` hold
   point between the rounds and one before the verdict let the harness
@@ -769,6 +781,16 @@ change executes:
   `sync_snapshot=0`, with a hook writing the master alone below the
   break key during the drain and forcing a master flush before the
   resumed segment: the slave must stay unequal after the next pass.
+  A scratch build of `57c5682` was read for 1.0.67's record without
+  the hook, which is not built. It removed the scope test and also set
+  the list's walks on the live branch, which `sync_snapshot` 0 never
+  does: its live passes took 3 stamps alone and resumed 20 segments in
+  one run, where the design's took none. That shows a live pass takes
+  1a once the list's walks is set and the scope test is gone. The
+  shipped exposure is a live pass inside a snapshot thread, the idle
+  stamp among them, which inherits the list's walks from the snapshot
+  pass before it; no run has driven one to defer, and the miss the scope
+  prevents is not read.
 
 ## What this note does not settle
 

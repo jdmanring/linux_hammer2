@@ -19691,3 +19691,223 @@ Seven rounds of independent review to SIGN-OFF: subject findings 8, 9, 4,
 1, 1, 1, 0, the fourth and fifth signing off with one minor finding each
 on the fence rule, both fixed and attacked again, and the sixth finding
 this entry's split of the 34 failures summing to 32.
+
+## The root rescan replaced on a snapshot pass, 2026-10-28
+
+Lever 1a of `doc/SYNC_DESIGN.md`, "The walks a one-file pass repeats",
+built at `57c5682` behind the module parameter `sync_walks` (1 the
+default, 0 the carried rescan). On a snapshot pass whose root scan
+reached the end of both key spaces, the root rescan after the deferral
+drain is replaced by the root's stamp alone; a root scan the deferral cap
+stopped is resumed from the lowest key neither cursor compared. The live
+pass and a pass comparing every inode keep the carried rescan. The
+expected readings and each control's expected reading were written
+before the runs, in `p7-notes/lever1a-expected.md`.
+
+The tree arm of `script/cluster-sync.sh` gained `H2_SYNC_WALKS` (`alt`
+sets 1 for odd changes and 0 for even ones, so both settings read one
+tree in one boot) and `H2_PASS_SHAPE`, and each change prints its root
+walks from key 0, its resumed segments and its stamps taken alone, read
+from `START_SCAN` lines by their `beg` key and from the stamp's own line,
+with a check that the setting took its path. The `root scan capped` line
+is not that reading: it prints at every cap whatever the pass, 21 times
+in the design's `H2_SYNC_SNAPSHOT=0` run at `57c5682` and in the
+live-guard control's, and 20 in each of the other three of that shape
+below.
+
+| shape | kernel | run | build | walks 1: from key 0, resumed, alone | walks 0: from key 0 | checks |
+|---|---|---|---|---|---|---|
+| one | `h2debug-7.3` | `cluster-run-20261028-093941` | `57c5682` | 2, 0, 1 | 3 | 29, 0 failed |
+| spread | `h2debug-7.3` | `cluster-run-20261028-095520` | `57c5682` | 2, 0, 1 | 3 | 33, 0 failed |
+| delete | `h2debug-7.3` | `cluster-run-20261028-100406` | `57c5682` | 1, 0, 1 | 2 | 32, 0 failed |
+| rename | `h2debug-7.3` | `cluster-run-20261028-100604` | `57c5682` | 1, 0, 1 | 2 | 32, 0 failed |
+| bulk | `h2debug-7.3` | `cluster-run-20261028-100114` | `57c5682` | 2, 3, 1 | 6 | 33, 0 failed |
+| one | `h2kasan-7.3` | `cluster-run-20261028-104428` | `1cd17bf` | 2, 0, 1 | 3 | 33, 0 failed |
+| spread | `h2kasan-7.3` | `cluster-run-20261028-104715` | `1cd17bf` | 2, 0, 1 | 3 | 33, 0 failed |
+| delete | `h2kasan-7.3` | `cluster-run-20261028-105000` | `1cd17bf` | 1, 0, 1 | 2 | 32, 0 failed |
+| rename | `h2kasan-7.3` | `cluster-run-20261028-105247` | `1cd17bf` | 1, 0, 1 | 2 | 32, 0 failed |
+| bulk | `h2kasan-7.3` | `cluster-run-20261028-105534` | `1cd17bf` | 2, 3, 1 | 6 | 33, 0 failed |
+| one | `h2debug-7.3` | `cluster-run-20261028-145414` | `a136f17` | 2, 0, 1 | 3 | 33, 0 failed |
+| one | `h2kasan-7.3` | `cluster-run-20261028-142304` | `a136f17` | 2, 0, 1 | 3 | 33, 0 failed |
+
+Each tree is 10,000 files in 100 directories, four changes, the counts
+the same on both changes of a setting, and every run ends with the
+slave equal to its master by fingerprint and both images `fsck_hammer2`
+clean. In the bulk shape, 4000 files changed, round 1 under walks 1
+reads four segments of 2470, 2465, 2465 and 2703 iterations, one root
+walk of 10,103 keys in all, then a stamp alone and round 2's whole walk;
+under walks 0 round 1 rescans from key 0 after each capped drain, five
+walks of 2470, 4935, 7400, 10,103 and 10,103 iterations, before round
+2's one (`cluster-run-20261028-100114`, the second change, from 1374.86
+s).
+Every pass verified in two rounds under either setting, except under
+delete and rename. Under those the slave's device returns as a new
+thread, whose cut is 0, so the keys the snapshot lacks are kept as
+newer and each pass ends `newer` after one round under both settings
+(`syncsnap: newer clindex 1 rounds 1`). The expectations written before
+the runs predicted `verified` and two rounds there, with the walks of
+the one-file shape; the shapes read one round and one walk fewer, the
+second round never running. The first run of those two shapes
+(`cluster-run-20261028-095716` and `095916`) checked for `verified`:
+of their 6 and 5 failures, 4 each were that verdict, both failed the
+idle window, which the kept keys' later destroy fell inside, and the
+delete run's file count read 9996 against 10,000, the four files the
+changes removed. `1cd17bf` corrected all three in the harness.
+
+Times on the debug and sanitizer kernels are function only. Within one
+boot the one-file pass read 2005 and 1982 ms under walks 1 against 2855
+and 2854 ms under walks 0 on `h2debug-7.3`, and 5361 and 5339 against
+7761 and 7737 ms on `h2kasan-7.3`, both at `a136f17`.
+
+The default, crash and live shapes, with `sync_walks` 1:
+
+| shape | kernel | run | build | checks | 1a in its kept klog: alone, resumed |
+|---|---|---|---|---|---|
+| default | `h2debug-7.3` | `cluster-run-20261028-100928` | `57c5682` | 56, 0 failed | 6, 20 |
+| `H2_CRASH=1` | `h2debug-7.3` | `cluster-run-20261028-101628` | `57c5682` | 45, 0 failed | 1, 20 |
+| `H2_SYNC_SNAPSHOT=0` | `h2debug-7.3` | `cluster-run-20261028-102525` | `57c5682` | 45, 0 failed | 0, 0 |
+| default | `h2kasan-7.3` | `cluster-run-20261028-112102` | `1cd17bf` | 56, 0 failed | 6, 19 |
+| `H2_SYNC_SNAPSHOT=0` | `h2kasan-7.3` | `cluster-run-20261028-115217` | `1cd17bf` | 45, 0 failed | 0, 0 |
+| `H2_CRASH=1` | `h2kasan-7.3` | `cluster-run-20261028-131826` | `a136f17` | 45, 0 failed | 1, 20 |
+| `H2_CRASH=1` | `h2kasan-7.3` | `cluster-run-20261028-133501` | `a136f17` | 45, 0 failed | 1, 20 |
+| default | `h2kasan-7.3` | `cluster-run-20261028-135130` | `a136f17` | 56, 0 failed | 6, 19 |
+| `H2_SYNC_SNAPSHOT=0` | `h2kasan-7.3` | `cluster-run-20261028-140633` | `a136f17` | 45, 0 failed | 0, 0 |
+| `H2_CRASH=1` | `h2debug-7.3` | `cluster-run-20261028-143043` | `a136f17` | 45, 0 failed | 1, 20 |
+| default | `h2debug-7.3` | `cluster-run-20261028-143929` | `a136f17` | 56, 0 failed | 6, 20 |
+| `H2_SYNC_SNAPSHOT=0` | `h2debug-7.3` | `cluster-run-20261028-144630` | `a136f17` | 45, 0 failed | 0, 0 |
+
+A crash run's kept klog is the restarted guest's, so its counts are the
+recovery's passes. The live shape's zeros hold by construction, since
+under `sync_snapshot` 0 nothing sets the list's walks, and they are not a
+reading of the scope test below.
+
+The crash shape on `h2kasan-7.3` at `1cd17bf` failed one check in three
+runs of three, which the next entry reads. The first sanitizer runs of the
+default and live shapes (`cluster-run-20261028-105857` and `110937`) ran
+without `H2_RUN_TIMEOUT` and outran the harness's 600 s bound in the
+backlog write; the guest's job was still running when its process list
+was read by hand in the session, which no kept log holds; they are not readings, and the crash run between them refused with
+COULD-NOT-RUN on the volume the first left mounted.
+
+**Controls.** The resume: a scratch build of `57c5682` with the resume and
+1a's end-reached test removed, so the root is stamped after a capped
+segment (module sha256 prefix `1f9120488f2b76f3`), under the bulk shape
+with walks 1 and one change (`cluster-run-20261028-100802`). Each of the
+three verify rounds stopped at its first capped segment, stamped and
+acted on 2002 keys, `syncsnap: unverified clindex 1 rounds 3 acted 2002`
+at 1761.12 s, and the next pass acted on 1994 and verified; 24 checks, 3
+failed, the pass's verdict, the out-of-rounds count and the idle window,
+as written before the run. The stamp over keys the scan had not reached
+did not hide them, since each round scans the root from key 0 whatever
+its stamp, and the pass could not verify in three rounds without the
+resume. The design note's text placed this control's reading in a
+fingerprint at the pass's `end` line; the rounds' own `acted` counts read
+it without one, and the note now says so.
+
+The live-pass scope: a scratch build that makes two changes, as
+`p7-notes/lever1a-expected.md` names them, `snap_pmp != NULL` removed
+from the walks condition and the list's walks set from the parameter on
+the live branch of the thread body (sha256 prefix `4922f1ae30ee5ac3`),
+under `H2_SYNC_SNAPSHOT=0` (`cluster-run-20261028-103346`). Its live
+passes took 3 stamps alone and 20 resumed segments, where the design's
+run of the same shape (`cluster-run-20261028-102525`) took 0 and 0; 45
+checks, 0 failed. With the list's walks set, a live pass takes 1a unless
+the scope test refuses it; that is what this shows. The exposure the
+scope test guards in a shipped configuration is narrower and unread: a
+live pass inside a snapshot thread, the idle stamp among them, runs with
+the list's walks left set by the snapshot pass before it, since nothing
+clears it. In the default runs `100928`, `112102` and `143929`, at `57c5682`,
+`1cd17bf` and `a136f17`, each has 9 such live passes, 4 idle stamps and 5
+with no quorum, and every one's root call returned 0 with nothing
+deferred, so none reached the path.
+Nor does the control show the miss the scope prevents, a master write
+below the break key between segments, which needs a hook that writes the
+master alone during the drain; the hook is not built, and the design note
+says so.
+
+**Rates**, on `h2release-7.3` at `a136f17`, the tree arm under
+`H2_SYNC_WALKS=alt` with four changes of one file in 1000 directories,
+so each setting is read twice in one boot:
+
+| tree | run | walks 1, ms | walks 0, ms | walks per pass, 1 and 0 | checks |
+|---|---|---|---|---|---|
+| 100,000 | `cluster-run-20261028-145703` | 1616, 1623 | 2363, 2350 | 2 and 3 | 32, 0 failed |
+| 1,000,000 | `cluster-run-20261028-145955` | 19896, 19823 | 29462, 29476 | 2 and 3 | 33, 0 failed |
+
+Every snapshot pass verified in at most two rounds (6 of 6 and 10 of
+10), and the slave matched its master entry for entry and block for
+block, 3,002,002 fingerprint lines at the million with none differing.
+Under walks 1 a one-file pass takes two thirds of the carried pass's
+time, as one walk of three predicts. The carried times here are below
+1.0.60's, 32768 to 32976 ms at the million and 2511 to 3799 ms at
+100,000, by about a tenth at the million; that run is another boot on
+another day, and the in-boot pair is the comparison, so the carried
+setting is not read as matching 1.0.60 within its spread. At the million
+the pass under 1a, about 19.9 s, is still above the 5.12 s cadence: 1b,
+the second verify round, is next, and the design's figure with both is
+about one walk, near 10 s.
+
+## The volume header a new PFS's sync skipped, 2026-10-28
+
+The crash shape (`H2_CRASH=1`) on `h2kasan-7.3` at `1cd17bf` failed its
+check that the source snapshot the cut left is on the master's media
+after a taken target, in three runs of three
+(`cluster-run-20261028-113548`, `120858` and `122529`): the target on the
+slave's media, no `CL.h2sync-src` on the master's beside its `CL` root,
+nothing stale for the first pass to delete. The harness took the last
+target line in the guest's log as the cut pass's; a pass whose target an
+earlier pass left valid prints none, so that could have been another
+pass's. `a136f17` reads the cut pass's own target line and copies its
+pass lines before the cut into the report. In `120858` the cut pass took
+its own target at 1881.340 s and printed its pass line 2.6 ms later.
+
+A probe build (sha256 prefix `112293ee97c5d69b`) printed, for every flush
+carrying `VOLHDR`, the element, the reason `hammer2_xop_inode_flush()`
+skipped the header or reached it, `VOLUMESYNC`, and the header written
+(`cluster-run-20261028-124225`). In the sync after the cut pass's taken
+target, the master's element read "not a PFS root" and the slave's wrote
+header 0; every `CL` flush on the master's device in the kept tail read
+the same, and that device's header was written only by its `ROOT` mount's
+syncer, every 30 s. Both images carry the `PFSROOT` flag on the `CL`
+inode's blockref. `hammer2_chain_create()` sets that flag for a PFS root
+created by `hammer2_inode_create_pfs()` and does not set the chain's
+`PFSBOUNDARY`, which `hammer2_chain_alloc()` derives from a blockref read
+from media. A PFS or snapshot made since its device's mount is no PFS
+root to the `VOLHDR` test until a remount, and a sync of it skips that
+device's volume header. The harness creates `CL` on the master's device
+in the mount the pass runs in; the slave's device is remounted mid-run,
+which is why its element passed the test. That the debug runs which read
+the source on the media did so on the syncer's timing is a `candidate`:
+the probe ran on `h2kasan-7.3` alone. All four origin trees
+set the chain flag only at allocation (DragonFly at `250a8b4928`, the
+FreeBSD, NetBSD and OpenBSD ports at `3df307f`, `64095c3` and `a3747df`,
+local clones; upstream's heads were not checked).
+
+`51c1646` sets the chain flag beside the blockref's. The same probe with
+the fix (sha256 prefix `efb7ffa3c300498d`, `cluster-run-20261028-130127`)
+read the master's element reaching the test and writing header 0 in the
+sync after the cut pass's taken target, and the check passed, 45 checks
+and 0 failed; the unfixed probe at the same site is the control. At
+`a136f17` the crash shape passed twice on `h2kasan-7.3` and once on
+`h2debug-7.3`, each reading the source on the master's media and one
+stale delete (table above). What the skipped header costs outside the
+thread, a PFS created and written in one mount of its device and the
+power cut after a sync of it, is a `candidate` and is not read.
+
+A sibling is recorded and not fixed: `hammer2_fixup_pfses()`
+(`hammer2_vfsops.c:2064`) sets the blockref's `PFSROOT` on a cached chain
+that an older implementation's defect left unflagged, without the chain's
+`PFSBOUNDARY`, so such a PFS is no PFS root to the `VOLHDR` test until
+the next mount of its device, as upstream has it. It is reached only on
+an image carrying that older defect, which no harness here makes, so it
+is a `candidate` until one does.
+
+Errata for the range. `51c1646`'s message names the insert as
+`hammer2_chain_insert()`; the function is `hammer2_chain_create()`.
+`57c5682`, `1cd17bf` and `51c1646` each fail `test-inventory.sh`'s leak
+rule, a line between the kmemleak clear and the module load, which
+`a136f17` moved above the clear; the gate log kept for `57c5682`
+(`p7-notes/lever1a-gate-inventory.log`) was taken before the line was
+added.
+
+The row is 1.0.67.
