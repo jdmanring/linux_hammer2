@@ -19269,30 +19269,40 @@ and the FIFO's final size to the root scan's `filekeys` line under
 debug 0x8000, with no change in behavior.
 
 One run, `cluster-sync.sh` with `H2_PASS_TREE=100000` on `artix-s6-kde`
-booted on `h2release-7.3` (7.3.0-release), the report's build line
-reading `head=b2bae17 src-dirty=0`: 26 checks, 0 failed. The host carried
-a four-job `nix-ninja` build through it, load 5.2 at the start on 24
+booted on `h2release-7.3`, the report's build line reading
+`head=b2bae17 src-dirty=0` with the harness byte-equal to the committed
+`cluster-sync.sh`: 26 checks, 0 failed. The guest's kernel and the
+host's load are from the session and not from the kept files: `uname
+-r` read 7.3.0-release before the launch, and the host carried a
+four-job `nix-ninja` build through the run, load 5.2 at the start on 24
 cores, so the times are this run's and are not compared with 1.0.60's
 rates. The report and klog are `cluster-run-20261027-173632` in the
 fixtures tree.
 
 The three timed passes took 2479, 2378 and 2422 ms, each verifying in
 two rounds on three root scans of 101,003 iterations. Across those nine
-scans the start took 206 to 218 ms, the first collect returned in 0 ms,
-and the merge took 552 to 668 ms. So the time before `START_SCAN` is the
-start's own, the storage function walking the whole root into the FIFO
-before the merge reads its first entry, and its share of a scan, about
+scans the start took 206 to 218 ms and the merge 552 to 668 ms, a scan
+0.76 to 0.89 s; the first collect read 0 ms, which the port's collect,
+never waiting, makes close to certain, so what that field shows is that
+the slave's lookup between the two costs under a millisecond. The
+klog's own stamps agree: 211 ms from `sync_slaves pfs` to `START_SCAN`
+in the first timed scan, against its 210. So the time before
+`START_SCAN` is the start's own, the storage function walking the whole
+root into the FIFO before the merge reads its first entry, and its share of a scan, about
 a quarter, is the share the million run's 2.7 s against 8.0 to 8.5 s
 shows. Every root scan of the full tree ended with the FIFO at 131,072
-entries, the power of two above 101,003, so the whole root's chains are
-held at once before the merge starts. What that holds in memory is not
+entries, the power of two above 101,003. That size alone shows only
+that occupancy once passed 65,536, since the FIFO is a ring that
+doubles when full; that every chain of the root is held at once follows
+from the order instead, the storage function running to its end inside
+the start before the first collect reads an entry. What that holds in memory is not
 read here; it is read with a sampler in the million-file runs of the
 next step.
 
 The rounds: each timed pass, one rewritten file with the slave
 returned, acted on 2 in its first round and on 0 in its second, and
 verified there (`syncsnap: verify` lines). The "acted 29 then 5 then 5"
-in the pass's comment (`hammer2_synchro.c` 946-949) was a different
+in the pass's comment (`hammer2_synchro.c` 947-950) was a different
 change set, measured before the rounds stopped on a kept key, and is
 not re-read here. What this run shows is why a one-file pass takes two
 rounds: verification is a full round that acts on nothing

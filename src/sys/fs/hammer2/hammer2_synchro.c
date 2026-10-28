@@ -2165,9 +2165,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		    h2dbg_newer_kept, swept, iters,
 		    exit_reason, h2dbg_act_replace, h2dbg_act_destroy,
 		    h2dbg_rescan,
-		    (unsigned long long)(t_fed - t_start) / 1000000,
-		    (unsigned long long)(t_first - t_fed) / 1000000,
-		    (unsigned long long)(t_end - t_first) / 1000000, fifo);
+		    div_u64(t_fed - t_start, NSEC_PER_MSEC),
+		    div_u64(t_first - t_fed, NSEC_PER_MSEC),
+		    div_u64(t_end - t_first, NSEC_PER_MSEC), fifo);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);

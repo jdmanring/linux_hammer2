@@ -1519,9 +1519,10 @@ to 2.8 s before its `START_SCAN` and 8.0 to 8.5 s merging. The same gap
 precedes the stamp passes' scans of the live root, where no snapshot
 element exists. Its cause was read at 100,000 files (1.0.63): the
 elements' storage functions run inline to their end inside the XOP
-start (`hammer2_admin.c:471-481`), 206 to 218 ms of each 0.76 to 0.88 s
-scan there, the first collect returning in 0 ms, with the FIFO doubling
-rather than blocking (`:670-688`) until it holds the whole root. When the thread survives to its next cadence, as after the
+start (`hammer2_admin.c:471-481`), 206 to 218 ms of each 0.76 to 0.89 s
+scan there, before the merge reads its first entry; the FIFO doubles
+rather than blocking (`:670-688`), so it holds every chain of the root
+when the merge starts. When the thread survives to its next cadence, as after the
 settle pass and the third change but not after the first two, which an
 unmount followed, a verified pass is followed by one stamp pass that
 scans the live root once more, 7.1 and 11.2 s at the million, and the
