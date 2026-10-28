@@ -694,13 +694,23 @@ reads the same. This is the lease's replica, which mounts for the pass
 alone; locally the condition is never met, and the local shapes keep
 the carried round.
 
-Three questions stay open for 1b's code step, recorded here as
-constraints rather than settled. Whether any write reaches the slave
-element while its only master's slot is detached is unread: the read-only
-gates open then, but a SLAVE alone makes no quorum, and whether a
-modifying operation on such a mount touches the slave before it fails
-decides both whether the detach count is needed and whether the
-narrowing's control can fail; it is read first. Over the wire the source
+Three questions stayed open for 1b's code step, recorded here as
+constraints rather than settled. The first, whether any write reaches
+the slave element while its only master's slot is detached, is read: it
+does. A detach keeps `pfs_nmasters`, so every collect fails
+`ENOTCONN` (`hammer2_cluster.c:361-362`) and a create fails at its
+lookup, but the gates open, and a change to an inode the mount already
+holds needs no lookup: `hammer2_inode_chain_sync()` starts its modifying
+XOP on every element before its collect fails (`hammer2_inode.c:1852-1853`).
+Under `H2_WIRE_SILENCE=1 H2_WIRE_DETACHWRITE=1` in `script/cluster-wire.sh`
+(`wire-run-20261028-164316`), after the keepalive detached the master's
+element, B's `CL` remounted read-write, a `chmod` of its root returned 0
+and moved the root's mode on B's media from 755 to 700, and to 711 in
+emergency mode, with two inode syncs reported failed; a create failed
+not connected and left no entry. So the detach count is needed, and the
+narrowing's control can fail. The chmod's success with its sync failed
+is the carried `XXX return error somehow?` of that function, upstream's.
+Over the wire the source
 snapshot is taken on the peer by the peer's server
 (`hammer2_ioctl.c:895-898`) and is a PFS a mount there could write, so
 the server refuses a read-write mount of the name it holds for a peer,

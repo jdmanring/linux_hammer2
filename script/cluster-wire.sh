@@ -103,6 +103,13 @@
 # end. The caller reads not connected under both, since a timed-out
 # element is no answer, so the time and the element's own ETIMEDOUT line
 # tell them apart. Under either the plain reads before the silence hold.
+# H2_WIRE_DETACHWRITE=1, under H2_WIRE_SILENCE=1, then reads whether a
+# write reaches the slave element while its only master's slot is
+# detached, the first open question of doc/SYNC_DESIGN.md for 1b: B's CL
+# is remounted read-write, its root chmodded, which needs no lookup, and a
+# name created, which does, and CL's root mode is read from B's media
+# before and after each. The checks state what the code predicts; a FAIL
+# is the other answer.
 #
 # H2_WIRE_WINDOW=1 is the control on B's window count: A loads a module
 # built with HAMMER2_NOWINDOW, whose server sends every chain of a readdir
@@ -217,6 +224,7 @@ END=${H2_WIRE_END:-}
 # later pass, and at the end neither image holds a snapshot of the pass.
 PASS=${H2_WIRE_PASS:-0}
 SILENCE=${H2_WIRE_SILENCE:-0}
+DETACHWRITE=${H2_WIRE_DETACHWRITE:-0}
 WINDOW=${H2_WIRE_WINDOW:-0}
 ROGATE=${H2_WIRE_ROGATE:-0}; PASSREFUSE=${H2_WIRE_PASSREFUSE:-0}; SNAPROUTE=${H2_WIRE_SNAPROUTE:-0}
 SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
@@ -273,6 +281,7 @@ case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an i
 case $RETYPE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_RETYPE is 1" >&2; exit 2;; esac
 case $STALE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_STALE is 1" >&2; exit 2;; esac
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
+case $DETACHWRITE in 0) ;; 1) [ "$SILENCE" = 1 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_DETACHWRITE rides H2_WIRE_SILENCE=1" >&2; exit 2; };; *) echo "wire: COULD-NOT-RUN: H2_WIRE_DETACHWRITE is 1" >&2; exit 2;; esac
 case $WINDOW in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WINDOW is 1 or control" >&2; exit 2;; esac
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE"; do
 	case $c in 0|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_ROGATE, _PASSREFUSE and _SNAPROUTE are control" >&2; exit 2;; esac
@@ -1018,6 +1027,28 @@ if [ "${3:-0}" != 0 ]; then
 	echo "silence-timedout-ends $(klog 'H2 REMOTE .* end=00040000')"
 	echo "silence-peer-sent $(klog 'HM2 peer sent')"
 fi
+# the slave written with its only master's slot detached: the gates open
+# once the element is gone, a lookup collects from no master, and CL's
+# root, held in memory since the mount, needs no lookup to be changed
+if [ "${5:-0}" != 0 ]; then
+	clroot() { sync; echo 3 > /proc/sys/vm/drop_caches; hammer2 -v show /dev/vdb 2>/dev/null | awk '/filename "CL"$/ { f = 1 } f && $1 == "mode" { print $2; exit }'; }
+	echo "dw-root-mode-before $(clroot)"
+	echo "dw-fsync-failed-before $(klog 'unable to fsync inode')"
+	mount -o remount,rw $C 2>/tmp/h2wire.dwerr; echo "dw-remount-rc $?"
+	echo "dw-remount-err $(sed -n '1s/.*: //p' /tmp/h2wire.dwerr)"
+	chmod 700 $C 2>/tmp/h2wire.dwerr; echo "dw-chmod-rc $?"
+	echo "dw-chmod-err $(sed -n '1s/.*: //p' /tmp/h2wire.dwerr)"
+	echo "dw-root-mode-after $(clroot)"
+	hammer2 emergency-mode-enable $C > /tmp/h2wire.emerg 2>&1; echo "dw-emerg-rc $?"
+	chmod 711 $C 2>/tmp/h2wire.dwerr; echo "dw-chmod2-rc $?"
+	echo "dw-chmod2-err $(sed -n '1s/.*: //p' /tmp/h2wire.dwerr)"
+	echo "dw-root-mode-emerg $(clroot)"
+	touch $C/dw-created 2>/tmp/h2wire.dwerr; echo "dw-create-rc $?"
+	echo "dw-create-err $(sed -n '1s/.*: //p' /tmp/h2wire.dwerr)"
+	echo "dw-created-on-media $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "dw-created"')"
+	echo "dw-fsync-failed $(klog 'unable to fsync inode')"
+	mount -o remount,ro $C; echo "dw-remount-ro-rc $?"
+fi
 GUEST
 cat > "$W/restart.sh" <<'GUEST'
 # restart <master|slave> <clid> <host> <port>: the guest a power cut stopped,
@@ -1292,7 +1323,7 @@ phase B ro.sh && case $PASSES in
 		{ [ "$CUT" = slave ] || phase A cut.sh peer after; } &&
 		phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
 	*)	true;;
-esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)"
+esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)" "$DETACHWRITE"
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
@@ -1727,6 +1758,15 @@ if [ "$SILENCE" != 0 ]; then
 	if [ "$SILENCE" = 1 ]; then
 		[ "$(num "$(val B silence-line)" 0)" = 1 ] && [ "$(num "$(val B silence-silent-ms)" 0)" -ge 2000 ] && [ "$(num "$(val B silence-wait-ms)" 99999)" -lt 20000 ] && [ "$(num "$(val B silence-peer-sent)" 1)" = 0 ]; check "silence: B's keepalive ends the link once, the peer silent for no less than the bound, with no request in flight" $? "line $(val B silence-line) after $(val B silence-wait-ms) ms, silent $(val B silence-silent-ms) ms against the 2000 ms bound, protocol errors $(val B silence-peer-sent); A's line $(val2 A keepalive-line)"
 		[ "$(num "$(val B silence-detached)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-ms)" 99999)" -lt 2000 ] && [ "$(num "$(val B silence-timedout-ends)" 1)" = 0 ]; check "silence: the element is detached before the next listing, which fails not connected at once with no request timed out" $? "detached $(val B silence-detached), listing \"$(val B silence-find-err)\" in $(val B silence-find-ms) ms, not connected $(val B silence-find-notconn), requests timed out $(val B silence-timedout-ends), $(val B silence-files) files"
+		# The prediction from the code, doc/SYNC_DESIGN.md's first open
+		# question for 1b: the inode sync starts on every element before
+		# its collect fails, so a chmod of CL's root reaches the slave's
+		# media with the master's slot detached, while a create's lookup
+		# fails first. A FAIL here is the other answer, not a defect.
+		if [ "$DETACHWRITE" = 1 ]; then
+			[ "$(num "$(val B dw-remount-rc)" 1)" = 0 ] && [ "$(val B dw-root-mode-before)" != none ] && { [ "$(val B dw-root-mode-after)" = 700 ] || [ "$(val B dw-root-mode-emerg)" = 711 ]; }; check "detach write: with the master's slot detached B's CL remounts read-write and a chmod of its root reaches the slave's media" $? "remount rc $(val B dw-remount-rc) \"$(val B dw-remount-err)\"; root mode on B's media $(val B dw-root-mode-before) before, $(val B dw-root-mode-after) after chmod 700 (rc $(val B dw-chmod-rc) \"$(val B dw-chmod-err)\"), $(val B dw-root-mode-emerg) after chmod 711 in emergency mode (rc $(val B dw-chmod2-rc) \"$(val B dw-chmod2-err)\", enable rc $(val B dw-emerg-rc)); inode syncs failed $(val B dw-fsync-failed-before) before, $(val B dw-fsync-failed) after; read-only again rc $(val B dw-remount-ro-rc)"
+			[ "$(num "$(val B dw-create-rc)" 0)" != 0 ] && [ "$(num "$(val B dw-created-on-media)" 1)" = 0 ]; check "detach write: a create through the same mount fails at its lookup and leaves no entry on the slave" $? "create rc $(val B dw-create-rc) \"$(val B dw-create-err)\", entries on B's media $(val B dw-created-on-media)"
+		fi
 	else
 		[ "$(num "$(val B silence-line)" 1)" = 0 ] && [ "$(num "$(val2 A keepalive-line)" 1)" = 0 ] && [ "$(num "$(val B silence-detached)" 1)" = 0 ]; check "control: with no keepalive armed the silence is seen by neither kernel and the element stays" $? "lines B $(val B silence-line), A $(val2 A keepalive-line), detached $(val B silence-detached)"
 		[ "$(num "$(val B silence-timedout-ends)" 0)" -ge 1 ] && [ "$(num "$(val B silence-find-ms)" 0)" -ge 2000 ] && [ "$(num "$(val B silence-find-notconn)" 0)" -ge 1 ]; check "control: the next listing waits out the bound, its request ending timed out, before the caller reads not connected" $? "listing \"$(val B silence-find-err)\" in $(val B silence-find-ms) ms, requests timed out $(val B silence-timedout-ends), not connected $(val B silence-find-notconn)"
