@@ -1396,6 +1396,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	int swept;		/* XXX Linux: sweep destroys this pass */
 	int nfail;		/* XXX Linux: this call's kept or failed keys */
 	hammer2_key_t rinum;	/* XXX Linux: the inode's number on both sides */
+	u64 t_start, t_fed, t_first, t_end;	/* XXX Linux: root scan, ns */
+	int fifo;		/* XXX Linux: the FIFO's size at the scan's end */
 
 	pmp = thr->pmp;
 	/*
@@ -1586,8 +1588,15 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	xop->lookup_flags = HAMMER2_LOOKUP_SHARED |
 			    HAMMER2_LOOKUP_NODIRECT |
 			    HAMMER2_LOOKUP_ALWAYS;
+	/*
+	 * XXX Linux: the storage functions run inline to their end inside
+	 * the start (hammer2_admin.c), so the start's time is the feed's,
+	 * printed with the root scan's line below.
+	 */
+	t_start = ktime_get_ns();
 	hammer2_xop_start_except(&xop->head, &hammer2_scanall_desc,
 				 snap ? -1 : idx);	/* XXX Linux: see above */
+	t_fed = ktime_get_ns();
 	if (snap) {
 		/*
 		 * XXX Linux: the slave's inode chain is found under this
@@ -1634,6 +1643,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 				     HAMMER2_LOOKUP_NODIRECT |
 				     HAMMER2_LOOKUP_NODATA);
 	merror = hammer2_xop_collect(&xop->head, 0);
+	t_first = ktime_get_ns();
 	/*
 	 * XXX Linux: the root scan's line; one per deferred inode was 20000
 	 * lines a copy pass on a serial console (2026-10-18).
@@ -2136,6 +2146,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 						   HAMMER2_LOOKUP_NODATA);
 		}
 	}
+	t_end = ktime_get_ns();
+	fifo = xop->head.fifo_size;
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	/*
 	 * XXX Linux: the arm the file keys took, printed once per root scan.
@@ -2147,12 +2159,15 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * sweep, which a directory scan's local counters never carried.
 	 */
 	if ((hammer2_debug & 0x8000) && isroot) {
-		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d sweep %d iters %d exit %d replaced %d destroyed %d rescan %d\n",
+		kprintf("filekeys n<0 %d  n==0 %d  n>0 %d  acted %d failed %d last %d kept %d sweep %d iters %d exit %d replaced %d destroyed %d rescan %d feed_ms %llu first_ms %llu merge_ms %llu fifo %d\n",
 		    h2dbg_file_nlt, h2dbg_file_neq, h2dbg_file_ngt,
 		    h2dbg_act_tried, h2dbg_act_failed, h2dbg_act_last,
 		    h2dbg_newer_kept, swept, iters,
 		    exit_reason, h2dbg_act_replace, h2dbg_act_destroy,
-		    h2dbg_rescan);
+		    h2dbg_rescan,
+		    (unsigned long long)(t_fed - t_start) / 1000000,
+		    (unsigned long long)(t_first - t_fed) / 1000000,
+		    (unsigned long long)(t_end - t_first) / 1000000, fifo);
 	}
 	if (chain) {
 		hammer2_chain_unlock(chain);
