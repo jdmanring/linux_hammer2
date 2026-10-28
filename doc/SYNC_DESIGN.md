@@ -686,9 +686,9 @@ root chain (`:614`, `hammer2_ioctl.c:924-925`) and no root key. Under these a ke
 equal: the source is the snapshot, and the thread's round-1 writes touch
 the keys it acted on and the indirect blocks and root above them, while
 a move of a key between indirect blocks keeps the leaf's bref, its
-`modify_tid` included (the collapse, `hammer2_chain.c:4393-4394`; an
-indirect block's creation, `:4089`, `:4100`; the reconnect of an
-existing chain, `:3278-3279`), so a root scan's comparison of a leaf
+`modify_tid` included (the collapse, `hammer2_chain.c:4402-4403`; an
+indirect block's creation, `:4098`, `:4109`; the reconnect of an
+existing chain, `:3287-3288`), so a root scan's comparison of a leaf
 reads the same. This is the lease's replica, which mounts for the pass
 alone; locally the condition is never met, and the local shapes keep
 the carried round.

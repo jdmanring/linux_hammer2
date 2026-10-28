@@ -3099,8 +3099,17 @@ hammer2_chain_create(hammer2_chain_t **parentp, hammer2_chain_t **chainp,
 	 *	 knowing about special flags, so don't clear bref flags
 	 *	 here!
 	 */
-	if (flags & HAMMER2_INSERT_PFSROOT)
+	if (flags & HAMMER2_INSERT_PFSROOT) {
 		chain->bref.flags |= HAMMER2_BREF_FLAG_PFSROOT;
+		/*
+		 * XXX Linux: and the chain flag hammer2_chain_alloc() derives
+		 * from it, which a chain created here never had, so a PFS made
+		 * since its device's mount was not a PFS root to the flush's
+		 * VOLHDR test until a remount: a sync of it skipped that
+		 * device's volume header.  Upstream carries the same.
+		 */
+		atomic_set_int(&chain->flags, HAMMER2_CHAIN_PFSBOUNDARY);
+	}
 
 	if (parent == NULL)
 		goto skip;

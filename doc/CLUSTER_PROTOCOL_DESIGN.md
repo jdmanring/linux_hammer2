@@ -830,7 +830,7 @@ reply frame per chain, honoring the window, and closes the transaction
 with the element's final error. **The server resolves the request's
 inode without an XOP.** The request names the inode by number; the
 server resolves it with `hammer2_chain_inode_find()`
-(`hammer2_chain.c:5482`), the nresolve hardlink arm's own path: it tries
+(`hammer2_chain.c:5491`), the nresolve hardlink arm's own path: it tries
 `hammer2_inode_lookup()` (`hammer2_inode.c:556`),
 which finds an inode already in memory and takes no dependency, and on
 a miss finds the inode's chain by `hammer2_chain_lookup()` under the
@@ -848,7 +848,7 @@ but its cluster slot; the call sites are `hammer2_xops.c:141, 173, 244,
 807, 906` and `hammer2_strategy.c`'s read. One of them indexes by slot:
 `nresolve`'s hardlink arm calls `hammer2_chain_inode_find()` with the
 request's `clindex` on the server's own `pmp` (`hammer2_xops.c:271`),
-which reads that `pmp`'s inode at that slot (`hammer2_chain.c:5515`), so
+which reads that `pmp`'s inode at that slot (`hammer2_chain.c:5524`), so
 the handle's slot is the server's own index for its element, never the
 requester's. **The server takes no inode
 dependency.** `hammer2_xop_testset_ipdep()` sleeps with no bound on any
@@ -1203,14 +1203,14 @@ rather than from the design document alone.
   the propagation the code does anyway.
 - **C2. Carried helpers modify a parent at the transaction's tid for
   its blockmap alone, on a schedule the host's flush sets.**
-  `_hammer2_chain_delete_helper()` (`hammer2_chain.c:3441`) and
-  `hammer2_chain_rename_obref()` (`:3402`) take that branch when the
-  child is, or was before the rename's delete, `BLKMAPPED` (`:5233`,
+  `_hammer2_chain_delete_helper()` (`hammer2_chain.c:3450`) and
+  `hammer2_chain_rename_obref()` (`:3411`) take that branch when the
+  child is, or was before the rename's delete, `BLKMAPPED` (`:5242`,
   `:2017`; the rename's `obref` is filled only by the delete helper's
-  blockmapped arm, `:3498`, and `:3401` asserts the flag is already
+  blockmapped arm, `:3507`, and `:3410` asserts the flag is already
   clear), that is, already flushed into the parent on that host; `hammer2_chain_create_indirect()` modifies
   the parent at the transaction's tid when it splits a full blockset
-  (`:3607`), and whether two hosts split at the same transaction depends
+  (`:3616`), and whether two hosts split at the same transaction depends
   on the parent's block table as each host's flush has laid it out,
   which no round measured. So any stamp taken at
   `hammer2_chain_modify()` moves with the flush schedule too, and
