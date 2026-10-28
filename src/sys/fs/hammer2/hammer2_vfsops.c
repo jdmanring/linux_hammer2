@@ -181,6 +181,15 @@ module_param_named(always_compress, hammer2_always_compress, int, 0644);
 int hammer2_sync_snapshot = 1;
 module_param_named(sync_snapshot, hammer2_sync_snapshot, int, 0644);
 /*
+ * XXX Linux: one replaces the root rescan a snapshot pass makes after its
+ * deferral drain with the root's stamp alone, or with the rest of a root
+ * scan the deferral cap stopped; zero is the carried rescan, kept as the
+ * comparison and the control.  Read once a pass.  See doc/SYNC_DESIGN.md,
+ * "The walks a one-file pass repeats".
+ */
+int hammer2_sync_walks = 1;
+module_param_named(sync_walks, hammer2_sync_walks, int, 0644);
+/*
  * Linux: the HM2 XOP API server's bound on a wait for the peer: the window
  * continuation a request stops at, and the try for hammer2_mntlk a request
  * starts with.  See hammer2_remote.c; the client's bound of the design note

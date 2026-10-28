@@ -108,6 +108,25 @@ typedef struct hammer2_deferred_list {
 	 * above each kept chain is re-flagged before the flush.
 	 */
 	hammer2_deferred_ip_t	*done;
+	/*
+	 * XXX Linux: the root walks a snapshot pass repeats, 1a of
+	 * doc/SYNC_DESIGN.md.  walks is hammer2_sync_walks as the pass began.
+	 * The pass sets root_call around its own call on the root, which
+	 * records the break that left its scan in root_exit and, at the
+	 * deferral cap, the lowest key neither cursor has compared in
+	 * root_next, or root_end when neither has one.  The pass then starts
+	 * the root's next call at root_beg, or with root_stamp the root's
+	 * stamp alone, and root_nfail carries the root's kept and failed keys
+	 * across those calls to its rescan note.
+	 */
+	int			walks;
+	int			root_call;
+	int			root_exit;
+	int			root_end;
+	int			root_stamp;
+	int			root_nfail;
+	hammer2_key_t		root_beg;
+	hammer2_key_t		root_next;
 } hammer2_deferred_list_t;
 
 
@@ -291,6 +310,64 @@ hammer2_sync_root_meta_differs(const hammer2_inode_meta_t *a,
 
 	hammer2_sync_root_meta_copy(&t, b);
 	return (bcmp(&t, a, sizeof(t)) != 0);
+}
+
+/*
+ * XXX Linux: the first key above a chain's range, or 0 with *endp set when
+ * the range reaches the end of the key space.  A chain's key is aligned to
+ * its keybits.
+ */
+static hammer2_key_t
+hammer2_sync_key_after(hammer2_chain_t *chain, int *endp)
+{
+	hammer2_key_t last;
+
+	if (chain->bref.keybits >= 64)
+		last = HAMMER2_KEY_MAX;
+	else
+		last = chain->bref.key |
+		    (((hammer2_key_t)1 << chain->bref.keybits) - 1);
+	*endp = (last == HAMMER2_KEY_MAX);
+	return (*endp ? 0 : last + 1);
+}
+
+/*
+ * XXX Linux: where a root scan the deferral cap stopped resumes, 1a of
+ * doc/SYNC_DESIGN.md: the lowest key neither cursor has compared.  The cap
+ * breaks after the iteration's arm and before either cursor advances, so a
+ * cursor whose arm consumed its key resumes above that key's range, one
+ * whose arm did not resumes at it, and the destroy arm has already moved
+ * the local cursor to its next chain.  A cursor at its end has no key.
+ */
+static void
+hammer2_sync_resume_at(hammer2_deferred_list_t *list, hammer2_chain_t *chain,
+    int advance_local, hammer2_chain_t *focus, int advance_xop)
+{
+	hammer2_key_t k;
+	int end;
+
+	list->root_end = 1;
+	if (chain) {
+		end = 0;
+		k = advance_local ? hammer2_sync_key_after(chain, &end) :
+		    chain->bref.key;
+		if (!end) {
+			list->root_next = k;
+			list->root_end = 0;
+		}
+	}
+	if (focus) {
+		end = 0;
+		k = advance_xop ? hammer2_sync_key_after(focus, &end) :
+		    focus->bref.key;
+		if (!end && (list->root_end || k < list->root_next)) {
+			list->root_next = k;
+			list->root_end = 0;
+		}
+	}
+	if (hammer2_debug & 0x8000)
+		kprintf("syncsnap: root scan capped, resume %016llx end %d\n",
+		    (long long)list->root_next, list->root_end);
 }
 
 /* Release a deferral of either kind. */
@@ -523,6 +600,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	hammer2_deferred_ip_t *defer;
 	int error;
 	int ferror;		/* XXX Linux: the write-back's own result */
+	int walks;		/* XXX Linux: see hammer2_deferred_list.walks */
 
 	if (hammer2_debug & 0x8000)
 		kprintf("sync_slaves pfs %s clindex %d\n",
@@ -550,12 +628,30 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	thr->rescan_upto = 0;
 	if (thr->rescan_now && (hammer2_debug & 0x8000))
 		kprintf("syncthr: rescan all clindex %d\n", thr->clindex);
+	/*
+	 * XXX Linux: 1a of doc/SYNC_DESIGN.md.  On a snapshot pass the root
+	 * rescan after the drain is replaced: a root scan that reached the end
+	 * of both key spaces is followed by the root's stamp alone, and one
+	 * the deferral cap stopped is resumed from the lowest key neither
+	 * cursor compared.  The live pass, whose master moves between the
+	 * calls, and a pass comparing every inode keep the carried rescan.
+	 */
+	walks = (snap_pmp != NULL && list->walks && !thr->rescan_now);
+	list->root_beg = HAMMER2_KEY_MIN;
+	list->root_stamp = 0;
+	list->root_nfail = 0;
 
 	for (;;) {
 		int didbreak = 0;
 		/* XXX lock synchronize pmp->modify_tid */
+		if (!walks)
+			list->root_nfail = 0;	/* XXX Linux */
+		list->root_call = 1;		/* XXX Linux */
 		error = hammer2_sync_slaves(thr,
 		    snap_pmp ? snap_pmp->iroot : pmp->iroot, 0, NULL, list, 1);
+		list->root_call = 0;		/* XXX Linux */
+		list->root_beg = HAMMER2_KEY_MIN;
+		list->root_stamp = 0;
 		if (hammer2_debug & 0x8000) {
 			kprintf("sync_slaves error %d defer %p\n",
 				error, list->base);
@@ -633,6 +729,20 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 		if (list->failed) {
 			error = 0;
 			break;
+		}
+
+		/*
+		 * XXX Linux: 1a, see above.  A scan that ended at the end of
+		 * both key spaces, or at the cap with neither cursor holding a
+		 * key, is followed by the stamp alone; one the cap stopped
+		 * before that, by the rest of it.  Any other end keeps the
+		 * carried rescan from the first key.
+		 */
+		if (walks) {
+			if (list->root_exit == 3 && !list->root_end)
+				list->root_beg = list->root_next;
+			else if (list->root_exit == 1 || list->root_exit == 3)
+				list->root_stamp = 1;
 		}
 	}
 
@@ -959,6 +1069,7 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	 * the 5 in one.  The cut stays the previous snapshot's for every
 	 * round.
 	 */
+	list->walks = hammer2_sync_walks;	/* XXX Linux: read once a pass */
 	for (round = 1;; ++round) {
 		/*
 		 * Every round scans the root whatever its tid, see
@@ -1408,8 +1519,12 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	hammer2_key_t rinum;	/* XXX Linux: the inode's number on both sides */
 	u64 t_start, t_fed, t_first, t_end;	/* XXX Linux: root scan, ns */
 	int fifo;		/* XXX Linux: the FIFO's size at the scan's end */
+	int rootcall;		/* XXX Linux: see hammer2_deferred_list.walks */
+	hammer2_key_t beg;	/* XXX Linux: the scan's first key, both sides */
 
 	pmp = thr->pmp;
+	rootcall = (isroot && list->root_call);
+	beg = rootcall ? list->root_beg : HAMMER2_KEY_MIN;
 	/*
 	 * XXX Linux: on a snapshot pass the inode scanned belongs to the
 	 * snapshot PFS, so the two XOPs below read the snapshot's tree through
@@ -1426,7 +1541,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	slave_tid = 0;		/* XXX Linux */
 	chain = NULL;
 	parent = NULL;
-	nfail = 0;		/* XXX Linux */
+	nfail = rootcall ? list->root_nfail : 0;	/* XXX Linux */
 	rinum = ip->meta.inum;	/* XXX Linux: the snapshot's inode has the master's */
 
 #if 0
@@ -1584,6 +1699,16 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		return(0);
 
 	/*
+	 * XXX Linux: the root's stamp alone, in place of the root rescan
+	 * after the drain; see hammer2_sync_pass().
+	 */
+	if (rootcall && list->root_stamp) {
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: root stamp without a rescan\n");
+		goto stamp;
+	}
+
+	/*
 	 * The inode is left unlocked during the scan.  Issue a XOP
 	 * that does *not* include our cluster index to iterate
 	 * properly synchronized elements and resolve our cluster index
@@ -1591,7 +1716,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 */
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_MODIFYING);
-	xop->key_beg = HAMMER2_KEY_MIN;
+	xop->key_beg = beg;	/* XXX Linux: HAMMER2_KEY_MIN, but see beg */
 	xop->key_end = HAMMER2_KEY_MAX;
 	xop->resolve_flags = HAMMER2_RESOLVE_SHARED |
 			     HAMMER2_RESOLVE_ALWAYS;
@@ -1647,7 +1772,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	}
 
 	chain = hammer2_chain_lookup(&parent, &key_next,
-				     HAMMER2_KEY_MIN, HAMMER2_KEY_MAX,
+				     beg, HAMMER2_KEY_MAX,	/* XXX Linux */
 				     &serror,
 				     HAMMER2_LOOKUP_SHARED |
 				     HAMMER2_LOOKUP_NODIRECT |
@@ -1656,13 +1781,14 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	t_first = ktime_get_ns();
 	/*
 	 * XXX Linux: the root scan's line; one per deferred inode was 20000
-	 * lines a copy pass on a serial console (2026-10-18).
+	 * lines a copy pass on a serial console (2026-10-18).  A resumed
+	 * scan names the key it began at.
 	 */
 	if ((hammer2_debug & 0x8000) && isroot) {
 		/* XXX Linux: %jx, which printk does not implement */
-		kprintf("START_SCAN IP=%016llx chain=%p (%016llx)\n",
+		kprintf("START_SCAN IP=%016llx chain=%p (%016llx) beg %016llx\n",
 			ip->meta.name_key, chain,
-			(chain ? chain->bref.key : -1));
+			(chain ? chain->bref.key : -1), (long long)beg);
 	}
 
 	for (;;) {
@@ -2148,6 +2274,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		 */
 		if (needrescan && list->count > 1000) {
 			exit_reason = 3;
+			if (rootcall)	/* XXX Linux: see hammer2_sync_pass() */
+				hammer2_sync_resume_at(list, chain, advance_local,
+				    focus, advance_xop);
 			break;
 		}
 
@@ -2228,6 +2357,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		hammer2_chain_unlock(parent);
 		hammer2_chain_drop(parent);
 	}
+stamp:	/* XXX Linux: see the root's stamp alone above */
+	if (rootcall)
+		list->root_exit = exit_reason;
 
 	/*
 	 * If we added deferrals we want the caller to synchronize them
@@ -2341,6 +2473,8 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 * XXX Linux: a scan that kept or failed a key puts this inode on the
 	 * rescan set, a clean one takes it off; see hammer2_thread.rescan.
 	 */
+	if (rootcall)
+		list->root_nfail = nfail;
 	hammer2_sync_rescan_note(thr, rinum, nfail);
 
 	return merror;

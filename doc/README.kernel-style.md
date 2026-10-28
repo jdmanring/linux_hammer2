@@ -244,6 +244,11 @@ more `return (x);`, both in `hammer2_sync_destroy()`, refusing a parent
 the flusher's collapse deleted while the helper had it released. No
 category is new.
 
+1,596 to 1,598 with 1a of the synchronization note's walks section. One
+more `return (x);` and one more BSD continuation indent, both in
+`hammer2_sync_key_after()`, the first key above a chain's range, which a
+root scan the deferral cap stopped resumes from. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

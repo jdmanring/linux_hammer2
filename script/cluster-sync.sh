@@ -168,6 +168,29 @@ H2DEBUG=${H2_DEBUG:-0x8000}
 # follows the module's own, so a run that sets neither reads what a user
 # gets; H2_SYNC_SNAPSHOT=0 is the negative control for the snapshot phase.
 H2SNAP=${H2_SYNC_SNAPSHOT:-1}
+# The module's sync_walks parameter: 1 replaces the root rescan a snapshot
+# pass makes after its deferral drain (doc/SYNC_DESIGN.md, 1a), 0 is the
+# carried rescan. alt sets 1 for the tree arm's odd changes and 0 for its
+# even ones, so both read one tree in one boot. H2_PASS_SHAPE is the tree
+# arm's change: one file (one), one file in each of 100 directories
+# (spread), one file removed (delete) or moved to the next directory
+# (rename), or 4000 files, more than the 1001 deferrals that stop a root
+# scan in each of the three verify rounds (bulk).
+WALKS=${H2_SYNC_WALKS:-1}
+SHAPE=${H2_PASS_SHAPE:-one}
+case $WALKS in 0|1|alt) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_SYNC_WALKS is 0, 1 or alt" >&2; exit 2 ;;
+esac
+case $SHAPE in one|spread|delete|rename|bulk) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_PASS_SHAPE is one, spread, delete, rename or bulk" >&2; exit 2 ;;
+esac
+if { [ "$WALKS" = alt ] || [ "$SHAPE" != one ]; } && [ "$TREE" = 0 ]; then
+	echo "cluster: COULD-NOT-RUN: H2_SYNC_WALKS=alt and H2_PASS_SHAPE need H2_PASS_TREE" >&2; exit 2
+fi
+if [ "$TREE" != 0 ] && { { [ "$SHAPE" = spread ] && [ "$TREE_FAN" -lt 100 ]; } ||
+    { [ "$SHAPE" = bulk ] && [ $(( TREE / TREE_FAN )) -lt $(( (4000 + TREE_FAN - 1) / TREE_FAN )) ]; }; }; then
+	echo "cluster: COULD-NOT-RUN: H2_PASS_SHAPE=spread needs 100 directories and bulk 4000 files" >&2; exit 2
+fi
 # The tree arm times the snapshot pass by its begin and end lines, which
 # only that pass prints, under bit 0x8000.
 if [ "$TREE" != 0 ] && { [ "$H2SNAP" != 1 ] || [ $(( H2DEBUG & 0x8000 )) = 0 ] || [ $(( TREE % TREE_FAN )) != 0 ]; }; then
@@ -484,8 +507,10 @@ KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
-insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
+w0=$H2WALKS; [ "$w0" = alt ] && w0=1
+insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP sync_walks=$w0 || { echo "insmod failed"; exit 1; }
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
+echo "sync-walks $(cat /sys/module/hammer2/parameters/sync_walks 2>/dev/null || echo absent)"
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
 klog() { grep -c "$1" $K; }
 # A mount the guest cannot drop leaves its volume held, and the next unmount
@@ -592,12 +617,25 @@ if [ "$TREE" != 0 ]; then
 		mount -t hammer2 /dev/vdb@CL /mnt/h2c || { echo "master-alone mount failed"; exit 1; }
 		# The same length as the file it replaces, so only the block's xxh
 		# tells the two apart.
-		printf '%s.%s %0600d\n' $c $c $c > /mnt/h2c/t/d$c/f$c
+		case $SHAPE in
+		one) printf '%s.%s %0600d\n' $c $c $c > /mnt/h2c/t/d$c/f$c ;;
+		spread) d=0; while [ $d -lt 100 ]; do printf '%s.%s %0600d\n' $c $d $c > /mnt/h2c/t/d$d/f$c; d=$((d + 1)); done ;;
+		delete) rm /mnt/h2c/t/d$c/f$c ;;
+		rename) mv /mnt/h2c/t/d$c/f$c /mnt/h2c/t/d$((c + 1))/r$c ;;
+		bulk) d=0; while [ $d -lt $TREE_FAN ]; do
+			f=0; while [ $f -lt $(( (4000 + TREE_FAN - 1) / TREE_FAN )) ]; do
+				printf '%s.%s %0600d\n' $c $f $c > /mnt/h2c/t/d$d/f$f; f=$((f + 1)); done
+			d=$((d + 1)); done ;;
+		esac
 		sync
 		timeout 600 umount /mnt/h2c
 		l0=$(wc -l < $K); e0=$(klog 'syncsnap: end clindex')
 		# The arms are set before the slave's device returns, so the knob
 		# is read at the first pass of the thread it starts.
+		if [ "$H2WALKS" = alt ]; then
+			echo $((c % 2)) > /sys/module/hammer2/parameters/sync_walks
+		fi
+		echo "change-$c-walks-set $(cat /sys/module/hammer2/parameters/sync_walks)"
 		knob=
 		[ $c = 1 ] && [ "$H2_FORCE_RESCAN" = 1 ] && knob=sync_force_rescan
 		[ $c = 2 ] && [ "$H2_FAIL_STAMP" = 1 ] && knob=sync_fail_stamp
@@ -615,6 +653,12 @@ if [ "$TREE" != 0 ]; then
 		echo "change-$c-rescan-all $(tail -n +$((l0 + 1)) $K | grep -c 'syncthr: rescan all')"
 		echo "change-$c-root-scans $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: verify clindex .* round 1 / { exit } /sync_slaves error/ { n++ } END { print n + 0 }')"
 		echo "change-$c-stamp-failed $(tail -n +$((l0 + 1)) $K | grep -c 'root stamp failed on demand')"
+		# Root walks of the pass, every round: scans from key 0, scans
+		# resumed elsewhere after the deferral cap, and stamps with no
+		# rescan (1a); then each root scan's iterations, whose sum against
+		# the root's key count is the walk count a resumed scan splits.
+		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0 }')"
+		echo "change-$c-root-iters $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters") printf "%s ", $(i + 1) } END { print "" }')"
 		c=$((c + 1))
 	done
 	echo "tree-errors $(klog 'hammer2_sync_slaves: error')"
@@ -1052,7 +1096,8 @@ dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
-insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP || { echo "insmod failed"; exit 1; }
+w0=$H2WALKS; [ "$w0" = alt ] && w0=1
+insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP sync_walks=$w0 || { echo "insmod failed"; exit 1; }
 klog() { grep -c "$1" $K; }
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
 . /tmp/h2cluster-tail.sh
@@ -1106,7 +1151,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
