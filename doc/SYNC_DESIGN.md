@@ -739,8 +739,8 @@ million on 1.0.60's per-walk time and still above the 5.12 s cadence,
 so lever 2 is expected to follow. 1a is built at 1.0.67: a one-file
 change, and one in each of 100 directories, read two walks where the
 carried pass reads three, a removed or moved file one against two, and
-4000 changed files one walk in four resumed segments where the carried
-pass makes five scans from key 0 in its first round; on
+4000 changed files one walk in four segments, three of them resumed,
+where the carried pass makes five scans from key 0 in its first round; on
 `h2release-7.3` a one-file pass took 19.9 s against 29.5 s at the
 million in one boot
 (`doc/history/verification-record.md`, "The root rescan replaced on a

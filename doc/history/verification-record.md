@@ -19817,9 +19817,12 @@ scope test guards in a shipped configuration is narrower and unread: a
 live pass inside a snapshot thread, the idle stamp among them, runs with
 the list's walks left set by the snapshot pass before it, since nothing
 clears it. In the default runs `100928`, `112102` and `143929`, at `57c5682`,
-`1cd17bf` and `a136f17`, each has 9 such live passes, 4 idle stamps and 5
-with no quorum, and every one's root call returned 0 with nothing
-deferred, so none reached the path.
+`1cd17bf` and `a136f17`, the snapshot thread ran 4 such live passes each,
+all idle stamps, and every one's root call returned 0 with nothing
+deferred, so none reached the path. The 5 passes a run makes with no
+quorum are clindex 0's thread, which runs no snapshot pass in these
+runs and returns before the list's walks is read, so they carry walks
+0.
 Nor does the control show the miss the scope prevents, a master write
 below the break key between segments, which needs a hook that writes the
 master alone during the drain; the hook is not built, and the design note
@@ -19838,7 +19841,9 @@ segment with the snapshot pass and walks 1, none otherwise. Its negative
 control is the live-guard module above under `H2_SYNC_SNAPSHOT=0`, on
 which the whole-run check must fail. On `h2debug-7.3`, every run with the harness this paragraph is
 committed with (sha256 prefix `0a0bca0575c4604b`, its report's digest),
-the module built from the source of `b60cd38` but for the control's
+the module built from the source of `a136f17`, unchanged under `src/`
+through this paragraph's commit, but for the control's; each report's
+build line names a commit whose message was reworded before the push
 (`p7-notes/r1-debug-20261028-154510.log`):
 
 | shape | run | 1a over the run: alone, resumed | checks |
