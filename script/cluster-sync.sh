@@ -1306,6 +1306,14 @@ while [ $c -le "$PASS_CHANGES" ]; do
 	if [ $c = 2 ] && [ "$FAIL_STAMP" = 1 ]; then
 		a=$(val change-$c-stamp-failed); [ "${a:-0}" = 1 ]; check "change 2: the PFS root's stamp fails once on demand" $? "${a:-none} failure(s), knob left at $(val change-$c-knob-left)"
 		[ "${5:-none}" = unverified ]; check "change 2: a pass whose root stamp failed does not verify" $? "${5:-none} after $(val change-$c-wait-seconds) s"
+	elif [ "$SHAPE" = delete ] || [ "$SHAPE" = rename ]; then
+		# The slave's device returns as a new thread, whose cut is 0, so a
+		# key the slave holds and the snapshot lacks (the removed file, the
+		# moved file's old entry) is kept as newer rather than destroyed:
+		# the pass waits for the next snapshot, under either sync_walks.
+		# The thread after the resume, with a cut, destroys them, and the
+		# fingerprint at the end reads the slave against the master.
+		[ "${5:-none}" = newer ]; check "change $c: the thread's next pass keeps what the master removed, its cut 0" $? "${5:-none} after $(val change-$c-wait-seconds) s"
 	else
 		[ "${5:-none}" = verified ]; check "change $c: the thread's next pass verifies" $? "${5:-none} after $(val change-$c-wait-seconds) s"
 	fi
@@ -1314,6 +1322,19 @@ while [ $c -le "$PASS_CHANGES" ]; do
 		echo "  read  change 1: $(val change-$c-root-scans) root scan(s) in the round that compared every inode"
 	fi
 	echo "  read  change $c: ${4:-none} ms against 5120 (snapshot and target ${1:-none}, verify ${2:-none} in ${6:-none} round(s), delete ${3:-none}), largest scan ${7:-none} iterations"
+	# 1a's own reading: a pass under sync_walks 0 takes no stamp alone
+	# and resumes no scan, and one under 1 takes one or the other, unless
+	# the change's knob asked it to compare every inode, which keeps the
+	# carried rescan. A run that never took 1a's path proves nothing
+	# about it, whatever it verified.
+	w=$(val change-$c-walks-set)
+	set -- $(val change-$c-root-walks)
+	echo "  read  change $c: sync_walks ${w:-none}, root walks ${1:-none} from key 0, ${2:-none} resumed, ${3:-none} stamp(s) alone; scan iterations $(val change-$c-root-iters)"
+	if [ "$w" = 0 ]; then
+		[ "${2:-1}" = 0 ] && [ "${3:-1}" = 0 ]; check "change $c: the carried pass takes no stamp alone and resumes no scan" $? "${2:-none} resumed, ${3:-none} alone"
+	elif [ "$w" = 1 ] && ! { [ $c = 1 ] && [ "$FORCE_RESCAN" = 1 ]; }; then
+		[ $(( ${2:-0} + ${3:-0} )) -ge 1 ]; check "change $c: the pass replaces the root rescan" $? "${2:-none} resumed, ${3:-none} alone"
+	fi
 	c=$((c + 1))
 done
 a=$(val tree-errors); [ "${a:-1}" = 0 ]; check "no pass reports an error" $? "${a:-none}"
@@ -1465,7 +1486,15 @@ if [ "$H2SNAP" = 1 ]; then
 	[ -n "$a" ] && [ "$FAIL_STAMP" = 1 ] && { a=$((a - 1)); fs=", the one H2_FAIL_STAMP fails not counted"; }
 	[ "${a:-1}" = 0 ]; check "no snapshot pass ran out of verify rounds" $? "${a:-none} unverified, $(val snap-newer) waited for the next snapshot behind a frontend write, $(val snap-interrupted) stopped by an unmount$fs"
 	a=$(val snap-target-errors); [ "${a:-1}" = 0 ]; check "every target snapshot was taken or kept" $? "${a:-none} error(s)"
-	a=$(val idle-window-idles); b=$(val idle-window-passes); [ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in $(val idle-window-seconds) s after the resume settled"
+	a=$(val idle-window-idles); b=$(val idle-window-passes)
+	if [ "$SHAPE" = delete ] || [ "$SHAPE" = rename ]; then
+		# The kept keys are destroyed by a snapshot pass once the resumed
+		# thread has a cut, which can fall inside the window; read, since
+		# the window was not built for a backlog of kept keys.
+		echo "  read  an idle master costs no snapshot, read only under H2_PASS_SHAPE=$SHAPE: ${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in $(val idle-window-seconds) s after the resume settled"
+	else
+		[ "${a:-0}" -ge 2 ] 2>/dev/null && [ "${b:-1}" = 0 ]; check "an idle master costs no snapshot" $? "${a:-none} idle pass(es), ${b:-none} snapshot pass(es) in $(val idle-window-seconds) s after the resume settled"
+	fi
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
 	[ -n "$mt" ] && [ "$mt" = "$st" ]; check "the slave root's tid agrees with the master's once idle" $? "master ${mt:-none} slave ${st:-none}, after $(val snap-idlestamp) idle stamp(s)"
 fi
@@ -1541,6 +1570,7 @@ nd=$(grep -c '^data ' "$W/fp.master")
 # fingerprint's expected count is the set's 35, bigdir's NBIG, bigdir2's NBIG2 and
 # the marked set's 20 (20 made, 10 deleted and 10 new during the pass).
 want_files=$((35 + NBIG + NBIG2 + 20)); [ "$TREE" = 0 ] || want_files=$TREE
+[ "$SHAPE" = delete ] && want_files=$((TREE - PASS_CHANGES))
 [ "$nm" = "$want_files" ] && [ "$nd" -gt 0 ]; check "the master's PFS holds the $want_files files, by its own media" $? "$nm file entries, $nd data blocks"
 cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's entry for entry and block for block" $? "$ns file entries; $(diff "$W/fp.master" "$W/fp.slave" | grep -c '^[<>]') lines differ of $(wc -l < "$W/fp.master")"
 # The thread's per-pass snapshot must be gone from both devices after a clean
