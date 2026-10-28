@@ -531,6 +531,222 @@ the crash shape stops before that phase, and the live-pass control drives
 it through a live pass, which the print does not count, since it fires
 only on a snapshot pass.
 
+## The walks a one-file pass repeats (design, 1.0.63)
+
+A snapshot pass for one changed file costs three walks of the PFS
+root's whole inode index, measured at 100,000 and 1,000,000 files
+(1.0.60) and split into feed and merge at 100,000 (1.0.63): each root
+scan feeds every chain of the root into the FIFO inside the XOP start
+and then merges, 0.76 to 0.89 s a scan there and about 11 s at the
+million. The lease's acknowledgment waits on a pass that verifies
+(`doc/CLUSTER_PROTOCOL_DESIGN.md`, stage 3.0), so this is the cost the
+lease inherits. Neither repeated walk is redundant today, and each is
+named here by what it does. The design builds on the scan as it is,
+including five defects found while it was audited and recorded as
+candidates in the verification record (1.0.64): the kept-absent arm
+passes over a source key, a pass with the whole rescan set asked for
+never ends, the sweep once destroyed keys the first round had just
+inserted, a pass verifies with its root's stamp failed or skipped, and
+a read-only remount leaves dirty mappings to be written after it. Each is
+fixed or closed by a placed reading before this design's code, and the
+preconditions below keep the design clear of each meanwhile.
+
+**Two parts.** 1a replaces the root rescan after the drain and needs
+no condition on other writers, since the carried second round stays as
+its backstop. 1b narrows the second round, and is taken only where the
+slave element can have no writer but its own thread by construction.
+
+**1a, the root rescan after the drain.** `hammer2_sync_pass()` scans the
+root (`hammer2_synchro.c:548`), drains the inodes that scan deferred,
+and scans the root again until a root scan defers nothing. That rescan
+does two jobs. It continues a root scan that stopped at the deferral
+cap, which breaks the loop once more than 1000 deferrals are listed
+(`:2128-2131`), before either cursor advances. And it stamps the root,
+since a scan that deferred returns `EAGAIN` (`:2188-2189`) and the
+stamp is taken only by a scan that did not (`:2199`). On a snapshot
+pass whose root scan ended at the end of both key spaces (`exit` 1;
+`exit` 2 is the source scan's error, `:1674-1677`), with nothing failed
+and `rescan_now` clear, the second job is the only one: every root key
+the scan found unequal was replaced, inserted, destroyed or deferred,
+and every deferred inode was scanned and stamped by its own call, or
+left unstamped as newer than the snapshot (`:1552-1558`, `:1573`),
+before the drain removed it. A key the scan found equal is either still
+equal, and the rescan finds nothing, or a writer changed it after the
+scan. Then the two differ: the carried rescan would put back a key the
+writer deleted (`:1976-1981`) and keep one it wrote, where 1a stamps the
+root over both. The next pass scans the root whatever its tid (`:961`),
+and a change the master also took is in the next snapshot. One the
+slave took alone is settled only in part, and the same under both
+forms: a key it added is destroyed by the cut rule (`:1828`) once older
+than the cut, but a key it rewrote is kept as newer at the key
+(`:1892-1915`) and at the inode (`:1552-1558`), with no cut test, until
+the master writes that key again. That is carried behavior, which 1a
+neither causes nor cures. When round 1
+acted on nothing no second round runs (`:968`), so 1a's backstop is the
+next pass and not the second round. The rescan is replaced by the stamp alone: the stamp block run for the root
+with no iteration, with the first scan's count of kept and failed keys
+passed to the root's rescan note (`:2277`), which a stamp with no scan
+would otherwise clear. The carried rescan counts the root's kept keys a
+second time, so `list->kept` reads lower under 1a, and the harness's
+kept readings move with it. A scan that stopped at the cap is resumed
+rather than repeated, from the lowest key not yet compared on either
+cursor, since the cap's `break` comes before both cursors advance and
+the destroy arm advances the local side alone; the stamp is taken only
+when the final segment ends with `exit` 1 and no segment was abandoned.
+Resuming is scoped to snapshot passes: on the live pass, and with
+`sync_snapshot` 0, the master moves between the segments, and a resumed
+segment would stamp the root with a tid newer than the one the first
+segment compared against, so the live pass keeps the carried rescan.
+With `rescan_now` set the carried rescan never ends (the second defect
+above), so 1a is not taken then either. Expected: two walks a one-file
+pass where the carried pass takes three.
+
+**1b, the second verify round.** Before each round the snapshot root is
+put on the rescan set (`:961`), and the rounds end at one that acts on
+nothing (`:968-969`); that round is what "verified" means (`:972`), and
+on it the target, the slave's last known-good copy, is deleted. A
+one-file pass acts in round 1 and pays a whole round 2 to show it is
+done (1.0.63, acted 2 then 0). The narrowed round compares again only
+the root keys round 1 replaced, inserted, destroyed or deferred, held in
+a set of fixed size. What it catches that round 1's own counts cannot
+is an inode stamp whose error the stamp block discards (`nerror`,
+`:2250`): that inode's root key compares unequal again. A failed root
+stamp it does not catch, and neither does the carried round, since no
+arm counts the root's stamp as an action; that is a fourth candidate in
+the record. The narrowed round equals the carried one when all of these
+hold, and the carried round runs otherwise:
+
+- round 1's root scan ended with `exit` 1, every segment of it, and the
+  pass did not end on a failed key (`:624-627`);
+- `rescan_now` and `rescan_all` are clear, since with either set the
+  carried round compares every inode (`:166-167`);
+- the set of acted keys did not overflow;
+- a remote element is registered on the PFS when the pass starts and
+  again when round 2 is chosen, a per-PFS count of slot detaches,
+  raised in `hammer2_remote_detach()` (`hammer2_remote.c:2549`), the
+  one function that clears a slot, reads the same at both, and
+  `HAMMER2_CTL_NOROGATE` is off.
+
+The count is read a third time at the verdict (`:972`). If it moved
+after round 2 was chosen, a narrowed round that acted on nothing does
+not verify: the pass ends unverified with a print of its own beside
+`newer` and `interrupted` (`:1004-1029`), so a harness does not read it
+as a pass that ran out of rounds, the target stands, and the next pass
+decides afresh. A narrowed round that acted is followed by a round
+narrowed to the keys it replaced, inserted, destroyed or deferred, with
+the conditions read again when it is chosen, within the carried limit
+of three rounds (`:704`).
+
+The last is C_N, the condition that nothing but this thread writes a
+root key of the slave element between the rounds, made structural
+rather than detected. While a remote element is registered no frontend
+can write the PFS: a read-write mount and a read-write remount are
+refused (`hammer2_vfsops.c:1705-1711`, `:2606`), the vnode operations
+refuse a write on a read-only PFS (`hammer2_vnops.c:374`, `:500`,
+`:1429`), and the registration itself refuses a PFS mounted read-write
+(`hammer2_remote.c:2488-2492`). That leaves the mapping a read-write
+mount dirtied before a read-only remount: the remount syncs only the
+inodes on its sync queue (`hammer2_vfsops.c:2588-2589`, the loop at `:2973-2990`), where ext4 and
+the kernel's own convention call `sync_filesystem()` on that transition,
+so a folio dirtied off the queue can be written back after the
+registration. That is the fifth candidate, and 1b's code waits on its
+fix. A slot can also be detached while the link stays up, when the
+peer's span goes, and the pass's reads of its source snapshot continue
+(`hammer2_remote.c:2695-2704`); the read-write gates open while it is
+detached and the slot can be registered again later, which is why the
+condition reads the detach count and not two samples of the slot.
+Another element's sync thread reaches only chains of its own element,
+each found by its `clindex` (`hammer2_synchro.c:226`, `:1481`, `:1621`),
+and the pass's own snapshot, other threads' syncs and the remote
+server's snapshot commands (`hammer2_remote.c:99-101`) touch the slave's
+root chain (`:922`, `hammer2_ioctl.c:924-925`) and no root key. Under these a key round 1 found equal is still
+equal: the source is the snapshot, and the thread's round-1 writes touch
+the keys it acted on and the indirect blocks and root above them, while
+a move of a key between indirect blocks keeps the leaf's bref, its
+`modify_tid` included (the collapse, `hammer2_chain.c:4393-4394`; an
+indirect block's creation, `:4089`, `:4100`; the reconnect of an
+existing chain, `:3271-3279`), so a root scan's comparison of a leaf
+reads the same. This is the lease's replica, which mounts for the pass
+alone; locally the condition is never met, and the local shapes keep
+the carried round.
+
+Three questions stay open for 1b's code step, recorded here as
+constraints rather than settled. Whether any write reaches the slave
+element while its only master's slot is detached is unread: the read-only
+gates open then, but a SLAVE alone makes no quorum, and whether a
+modifying operation on such a mount touches the slave before it fails
+decides both whether the detach count is needed and whether the
+narrowing's control can fail; it is read first. Over the wire the source
+snapshot is taken on the peer by the peer's server
+(`hammer2_ioctl.c:895-898`) and is a PFS a mount there could write, so
+the server refuses a read-write mount of the name it holds for a peer,
+`<pfs>.h2sync-src`, while it holds it. And whether `hammer2 pfs-delete`
+of the slave element through the device's super-root
+(`hammer2_ioctl.c:806`) stops the thread before it writes is read from
+the code. The local rate runs cannot reach 1b under its
+own condition, so they read it through a `HAMMER2_LOCKDEBUG`-only
+parameter that asserts C_N, set only by `cluster-sync.sh`'s tree arm,
+which keeps the cluster PFS unmounted for the timed passes; both arms
+of that comparison are then `HAMMER2_LOCKDEBUG` builds, unlike the
+1.0.60 and 1.0.63 runs. The wire runs read 1b under the real
+condition. `sync_walks` is read once at the
+pass's start, since the parameter can change while a pass runs.
+
+This is branch N. Branch K, a narrowed verification that keeps the
+target with a full round every K passes, needs no proof but leaves an
+acknowledging pass paying the full round, no saving for the lease.
+
+**The idle stamp pass stays.** After a verified pass the next cadence
+can find the master idle and run the live pass as the idle stamp
+(`:825-835`). A shortcut taking the root's stamp without that walk was
+weighed and dropped: of 336 idle stamps in the logs kept since
+2026-10-20, 23 deferred or acted, 17 of them after a pass that verified
+while keeping keys, which "verified" allows (`:968-972`). On
+`fixtures/wire-run-20261026-151912-b.klog`, over the wire with
+read-write mounts refused, an idle stamp at 255.684 s replaced one key
+and deferred and scanned inode 0x534. The stamp pass is what settles
+those keys, and nothing would revisit them once the root's stamp
+equaled the master's (`:823-824`).
+
+**Readings and controls.** With 1a and 1b a one-file snapshot pass is
+one root walk plus the acted keys where the carried pass is three, a
+third of its time read in the same boot and build, about 11 s at the
+million on 1.0.60's per-walk time and still above the 5.12 s cadence,
+so lever 2 is expected to follow.
+The walks are counted from the scan itself: iterations summed per pass
+against the root's key count, since a resumed segment prints its own
+`START_SCAN`. The new behavior sits behind `sync_walks` (1 the design,
+0 the carried), and the comparison is made within one boot, the same
+tree read under each setting in turn, since times on a loaded host do
+not compare across runs. A fake pass is a narrowed or stamp-only pass
+that verifies a slave which differs from its snapshot; the fingerprints
+at the end of every arm catch it, and each control is placed where its
+change executes:
+
+- the resume, in an arm that changes 4000 inodes, more than the 1001
+  deferrals a capped segment takes (`:2128`) times the three verify
+  rounds (`:704`), so the cap fires in every round, with a scratch build that drops both the resume
+  and 1a's end-reached test, so the stamp is taken after a capped
+  segment: the fingerprint, read with the slave's device unmounted at
+  the pass's `end` line as the tree arm's change loop returns it, must
+  show keys past the break unequal;
+- the narrowing, placed by the reading above: if a write can reach the
+  slave with the master's slot detached, a `HAMMER2_LOCKDEBUG` hold
+  point between the rounds and one before the verdict let the harness
+  delete the peer's span, remount read-write, write, remount read-only
+  and restore the span, and with the detach count's test in place the
+  pass must not verify on a narrowed round, while with it removed in a
+  scratch build the narrowed round must verify a slave the fingerprint
+  shows unequal; if no write can reach the slave, the count is dropped
+  and the control is the hook writing a root key of the slave from
+  another thread under its own transaction with the remote-element test
+  removed, whose negative half is the read-only gate's own control,
+  `H2_WIRE_ROGATE=control` in `script/cluster-wire.sh`;
+- the resume on the live pass, allowed in a scratch build under
+  `sync_snapshot=0`, with a hook writing the master alone below the
+  break key during the drain and forcing a master flush before the
+  resumed segment: the slave must stay unequal after the next pass.
+
 ## What this note does not settle
 
 - B's design: the commands, the frame check, the flow control and the

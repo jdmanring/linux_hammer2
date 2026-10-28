@@ -19310,3 +19310,94 @@ rounds: verification is a full round that acts on nothing
 more scan of the whole root to prove it.
 
 The row is 1.0.63.
+
+## Five defects a design audit found in the scan, 2026-10-27
+
+The audit of lever 1's design (the walks a one-file pass repeats,
+`doc/SYNC_DESIGN.md`) read the scan the design builds on and found five
+defects in it and beside it that no run had named. Each was checked on the source or
+the kept logs here before it was written down. All five are
+`candidate`: none is reproduced by a placed run yet.
+
+**The kept-absent arm skips a source key.** For `n<0` the local key
+sorts before the source's focus, so the slave holds a key the source
+does not at that position, and the merge's step is to advance the local
+cursor alone; the destroy arm does exactly that, inside
+`hammer2_sync_destroy()`. The arm that keeps such a key instead, when its
+tid is at or above the snapshot cut (`hammer2_synchro.c` 1828), sets
+both `advance_local` and `advance_xop` (1866-1867), so the focus it was
+compared against is passed over uncompared. If the slave holds that
+focus key next, it is then compared with the following focus, reads
+`n<0` again, and is kept, or destroyed when its tid is below the cut,
+although the source holds it; if the slave lacks it, it goes uninserted
+for the rest of the pass. Its comment (1842-1843) says every other
+arm advances both, which the destroy arm does not. The sequence is read
+from the code and not run; the reproduction needs a slave key kept as
+absent directly before a source key the slave also holds.
+
+**A pass with the whole rescan set asked for never ends.** When the
+rescan set overflows (`hammer2_synchro.c` 191-192), the next pass sets
+`rescan_now` (540), and `hammer2_sync_rescan_wanted()` then returns 1 for
+every inode (166-167). The `n==0` arm defers every inode for which it
+returns 1 (1955-1957), so every root scan of that pass defers, returns
+`EAGAIN` (2188-2189), and the loop in `hammer2_sync_pass()` (545-628)
+scans the root again, ending only on a failure or a thread break; with
+more than 1000 inodes no scan passes the cap either. It is the shape of
+the 176,763 root rescans of `cluster-run-20261019-011005`, which the
+pass number fixed for entries of the set but not for the overflow.
+`syncthr: rescan all` printed 0 times in the kept logs since 2026-10-20,
+so the overflow has not been driven since.
+
+**The sweep destroyed keys round 1 had just inserted.** In
+`fixtures/cluster-hang-20261020-220134.klog` two root keys,
+`952c5ca9c9858001` and `b77f7af1cd8e8001`, are destroyed through the
+sweep entry (`destroy focus 0000000000000000/-1`) at 3982.83 s, inserted
+from the next snapshot at 3991.50 s, and destroyed again by that pass's
+second round at 3998.38 s, the one second round since 2026-10-20 that
+acted. The sweep entry is where an early `ENOENT` from the source's scan
+reads as a completed scan (`hammer2_synchro.c` 1783-1795). That log is
+of the source as of 2026-10-20; 256 second rounds since then acted on
+nothing, so whether the current source still oscillates is not known.
+
+**A pass verifies with its root's stamp failed.** The stamp block
+discards its own error (`nerror`, `hammer2_synchro.c` 2250), and no arm
+counts the root's stamp as an action (`acted` is raised at 1890, 1919
+and 1981 only), so a round whose root stamp failed still reads acted 0
+and verifies, the root left unstamped. A failed inode stamp is seen by
+the next round, where that inode's key compares unequal; the root's is
+not. A sibling skips the root's stamp with nothing recorded: when the
+stamp block finds no parent it returns with no stamp and no failure
+(`hammer2_synchro.c` 2243-2247), and for the root of a snapshot pass the
+slave chain comes from the root branch of `hammer2_sync_slave_chain()`
+(225-228), which, unlike the branch for any other inode (243-250), does
+not set `list->failed`. Read from the code, not run.
+
+**A read-only remount leaves dirty mappings to be written after it.**
+`hammer2_reconfigure()` on the read-write to read-only transition runs
+`hammer2_vfs_sync_pmp()` and sets `rdonly` (`hammer2_vfsops.c`
+2588-2589); that sync writes back the mappings of inodes on its sync
+queue only (the loop at 2973-2990), and the kernel's `reconfigure_super()` leaves the sync to
+the filesystem, which ext4 does with `sync_filesystem()` on the same
+transition (`fs/ext4/super.c` 6727-6728 in the kernel of record). A
+folio dirtied on an inode off the queue is written back later by the
+flusher, after the mount reads read-only and after a remote element's
+registration, which a read-only mount admits (`hammer2_remote.c`
+2488-2492). That breaks the client side's rule that a PFS with a remote
+element registered is not written (`hammer2_vfsops.c` 1701-1704), in the
+code as it is today, not only in lever 1's design. Read from the code,
+not run.
+
+The design is revised to stand clear of all five, and each is an item
+to fix or close by a placed reading before lever 1's code.
+
+**Audit.** One independent adversarial reviewer read the design section
+and this entry against the source over six rounds, resumed across them,
+with subject findings of 9, 9, 6, 3, 1 and 0. Rounds 1 to 4 found the
+five defects above and the design's own structural faults: the idle
+stamp shortcut, since dropped; the tail left uncompared after the cap
+and after a failed key; the detach count; the span deletion that
+detaches; the read-only remount. Round 5 found one overclaim about how
+a change the slave took alone is settled, and round 6 returned
+SIGN-OFF.
+
+The row is 1.0.64.
