@@ -100,16 +100,17 @@ drift apart:
 
 The seven cluster ioctls are carried as upstream wrote them, for stage
 2b of `doc/CLUSTER_PROTOCOL_DESIGN.md`, and three of them do upstream's
-nothing, which is recorded here with the upstream line rather than
+nothing, which is recorded here with upstream's line at DragonFly
+`250a8b4` rather than
 given a meaning no document asks for:
 
 | ioctl | what it does here | upstream |
 |---|---|---|
-| `HAMMER2IOC_REMOTE_SCAN`, `_ADD`, `_DEL` | read, write and clear one `copyinfo[]` row of the volume header, the row's strings terminated and its type and flags checked before the header takes it; a written row goes to the peer as `LNK_HAMMER2_VOLCONF` | `hammer2_ioctl.c:244-357` |
-| `HAMMER2IOC_REMOTE_REP` | marks the volume header modified and returns 0 | `hammer2_ioctl.c:359-375` |
-| `HAMMER2IOC_SOCKET_GET` | `EOPNOTSUPP` | `hammer2_ioctl.c:380-384` |
-| `HAMMER2IOC_SOCKET_SET` | takes and releases the volume header lock and returns 0 | `hammer2_ioctl.c:389-404` |
-| `HAMMER2IOC_RECLUSTER` | hands a connected stream socket to the message core, the first slot on a block device chosen as the device, since a remote master's proxy can be the focus | `hammer2_ioctl.c:83-115` |
+| `HAMMER2IOC_REMOTE_SCAN`, `_ADD`, `_DEL` | read, write and clear one `copyinfo[]` row of the volume header, the row's strings terminated and its type and flags checked before the header takes it; a written row goes to the peer as `LNK_HAMMER2_VOLCONF` | `sys/vfs/hammer2/hammer2_ioctl.c:244-353` |
+| `HAMMER2IOC_REMOTE_REP` | marks the volume header modified and returns 0 | `sys/vfs/hammer2/hammer2_ioctl.c:359-377` |
+| `HAMMER2IOC_SOCKET_GET` | `EOPNOTSUPP` | `sys/vfs/hammer2/hammer2_ioctl.c:383-386` |
+| `HAMMER2IOC_SOCKET_SET` | takes and releases the volume header lock and returns 0 | `sys/vfs/hammer2/hammer2_ioctl.c:392-408` |
+| `HAMMER2IOC_RECLUSTER` | hands a connected stream socket to the message core, the first slot on a block device chosen as the device, since a remote master's proxy can be the focus | `sys/vfs/hammer2/hammer2_ioctl.c:204-238` |
 
 What the rows drive, a remote member registered from a span and read
 through the XOP API, is the remote element of the same note, built since

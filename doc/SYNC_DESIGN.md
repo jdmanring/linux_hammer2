@@ -23,8 +23,19 @@ Read against the DragonFly clone at `250a8b4`, with `sys/dev/disk/xdisk`,
 reading, Dillon's 2015 design document in
 `doc/research/primary/DILLON_HAMMER2_DESIGN_2015.md`, the handoff's work
 package and state model under `proposals/hammer2-completion-handoff/`, and
-this tree at `5078090`, on 2026-10-17.
+this tree at `5078090`, on 2026-10-17. The line citations in the
+sections from here to "What the implementation decided" are those of that
+reading, and `script/test-citations.sh` checks them against that tree
+rather than against the tree as it moves; sentences added to those
+sections later carry their own dates and cite no line. Four of the
+findings have since changed: the wire protocol carries HAMMER2 commands
+(`DMSG_HM2_XOP`, `DMSG_HM2_FEED`, `DMSG_HM2_SNAPSHOT`;
+`doc/CLUSTER_PROTOCOL_DESIGN.md`), the thread scans a snapshot of its
+source, the snapshot copies the blockset of the element the thread names
+rather than element 0's, and `hammer2_remote_snapshot_take()` reads
+`pfs_subtype` to check the snapshot a peer took for it.
 
+<!-- citations at 5078090 -->
 ## The findings that make this note necessary
 
 Three readings, each of which changes what "remote synchronization" can
@@ -58,9 +69,9 @@ lines 628-662). `hammer2_synchro.c`, carried since 0.9.61 and hardened
 by P4, 1749 lines here to upstream's 1069 with 66 `XXX Linux` marks,
 keeps upstream's scan, source and target and does neither:
 `hammer2_primary_sync_thread()`
-(`src/sys/fs/hammer2/hammer2_synchro.c:259`) scans from `pmp->iroot` at
-`:345`, and `hammer2_sync_slaves()` (`:589`) takes its source from the
-cluster's focus, `xop2->head.cluster.focus` at `:658`, which is the chain
+(`src/sys/fs/hammer2/hammer2_synchro.c:257`) scans from `pmp->iroot` at
+`:343`, and `hammer2_sync_slaves()` (`:580`) takes its source from the
+cluster's focus, `xop2->head.cluster.focus` at `:649`, which is the chain
 the quorum code selected among the live MASTER elements, and writes into
 the live element at `thr->clindex`. The 2015 status table lists
 "Synchronization - under development" (line 77), and the roadmap's
@@ -84,7 +95,7 @@ to be used as part of the same cluster" (`:544-547`); the code below the
 comment does not do that, in this tree or upstream, where the branch that
 would is under `#if 0` with the sentence "As a snapshot no further
 synchronization with the original cluster will be done." The cluster is
-assembled by `pfs_clid` (`src/sys/fs/hammer2/hammer2_vfsops.c:346-347`),
+assembled by `pfs_clid` (`src/sys/fs/hammer2/hammer2_vfsops.c:313-314`),
 so a snapshot is not an element of the cluster it was taken from, and no
 line of the assembly, the thread, the cluster code or the admin code reads
 `pfs_subtype` (`command grep` over `src/`, 2026-10-17: the field appears
@@ -175,7 +186,7 @@ remote. The 2015 status table lists "Network blk device - operational"
 ## What the port carries today
 
 - `hammer2_synchro.c` since 0.9.61, hardened by P4: the thread starts for
-  every element that is not a lone MASTER (`hammer2_vfsops.c:515-537`),
+  every element that is not a lone MASTER (`hammer2_vfsops.c:468-490`),
   passes every five seconds or on wakeup, and converges a SLAVE on a
   second local device with the master changed under it, interrupted,
   with allocations refused in its insert, replace and destroy arms
@@ -206,12 +217,14 @@ remote. The 2015 status table lists "Network blk device - operational"
 What it did not carry when this note was written: any way for an
 element of a cluster to live on another host, carried since 1.0.46 as
 the remote element of `doc/CLUSTER_PROTOCOL_DESIGN.md`; and a verify
-step, carried since 1.0.40 (the decisions below). What it still does
-not carry: a Linux `hammer2 service`, or any userland that holds the
+step, carried since 1.0.40 (the decisions below), whose per-pass
+snapshot of the master is the fork of the source. What it did not carry
+on 2026-10-27: a Linux `hammer2 service`, or any userland that holds the
 other end of the socket in production (`doc/README.porting.md` records that
 none exists; `test/h2service.c` is the harness's); the block-device
-protocol's client or server; a reader of `pfs_subtype`; a fork of the
-source or of the target; a replacement of a target; and any
+protocol's client or server; a fork of the target, which is written in
+place with a snapshot kept until a pass verifies; a replacement of a
+target; and any
 authentication or encryption in the kernel path, which on DragonFly are the daemon's and the library's, as
 the CRC check was until 1.0.44 verified it for a `PROTO_2` peer.
 
@@ -261,7 +274,7 @@ plan's first rule it is an extension with a written design, and the
 compatibility question is sharp, since every reader that exists today,
 DragonFly and the three BSD ports, would mount such a snapshot as a second
 MASTER element and count it toward `pfs_nmasters`
-(`hammer2_vfsops.c:474-484` here, the same logic upstream). Or leave the
+(`hammer2_vfsops.c:439-449` here, the same logic upstream). Or leave the
 snapshot's identity alone and give the thread a source that is not the
 focus: the snapshot is a PFS root under the super-root of the same
 `hammer2_dev` as the master element, reachable by name through the
@@ -294,8 +307,8 @@ peer is, though since 1.0.44 it verifies the frames of a peer that
 announced `DMSG_SPAN_PROTO_2`, and since 1.0.46 it registers a remote
 master only against an enabled `copyinfo[]` row with its cluster id.
 Any alternative that puts a master on another host inherits this: the
-remote end's identity is established outside the kernel, today by the
-harness's `test/h2service.c` from a marker file, and by `tlshd` once
+remote end's identity is established outside the kernel, on 2026-10-27
+by the harness's `test/h2service.c` from a marker file, and by `tlshd` once
 the link runs over kernel TLS. A
 design that reaches another host must say who holds the keys and where the
 frames are checked before the first byte of a remote master's tree is
@@ -418,6 +431,7 @@ change on this page that would need the extension rule, and it is not
 taken. B is a protocol extension and would carry a version in its frames
 from the first one; the `dmsg` header has the room. A changes no media
 and no protocol and changes the mount's semantics instead.
+<!-- citations end -->
 
 ## What the implementation decided (2026-10-18)
 
@@ -668,13 +682,13 @@ Another element's sync thread reaches only chains of its own element,
 each found by its `clindex` (`hammer2_synchro.c:226`, `:1491`, `:1631`),
 and the pass's own snapshot, other threads' syncs and the remote
 server's snapshot commands (`hammer2_remote.c:99-101`) touch the slave's
-root chain (`:922`, `hammer2_ioctl.c:924-925`) and no root key. Under these a key round 1 found equal is still
+root chain (`:614`, `hammer2_ioctl.c:924-925`) and no root key. Under these a key round 1 found equal is still
 equal: the source is the snapshot, and the thread's round-1 writes touch
 the keys it acted on and the indirect blocks and root above them, while
 a move of a key between indirect blocks keeps the leaf's bref, its
 `modify_tid` included (the collapse, `hammer2_chain.c:4393-4394`; an
 indirect block's creation, `:4089`, `:4100`; the reconnect of an
-existing chain, `:3271-3279`), so a root scan's comparison of a leaf
+existing chain, `:3278-3279`), so a root scan's comparison of a leaf
 reads the same. This is the lease's replica, which mounts for the pass
 alone; locally the condition is never met, and the local shapes keep
 the carried round.
@@ -707,7 +721,7 @@ acknowledging pass paying the full round, no saving for the lease.
 
 **The idle stamp pass stays.** After a verified pass the next cadence
 can find the master idle and run the live pass as the idle stamp
-(`hammer2_synchro.c:834-844`). A shortcut taking the root's stamp without that walk was
+(`hammer2_synchro.c:835-844`). A shortcut taking the root's stamp without that walk was
 weighed and dropped: of 336 idle stamps in the logs kept since
 2026-10-20, 23 deferred or acted, 17 of them after a pass that verified
 while keeping keys, which "verified" allows (`hammer2_synchro.c:977-981`). On
@@ -733,8 +747,8 @@ at the end of every arm catch it, and each control is placed where its
 change executes:
 
 - the resume, in an arm that changes 4000 inodes, more than the 1001
-  deferrals a capped segment takes (`:2145`) times the three verify
-  rounds (`:711`), so the cap fires in every round, with a scratch build that drops both the resume
+  deferrals a capped segment takes (`:2149`) times the three verify
+  rounds (`:713`), so the cap fires in every round, with a scratch build that drops both the resume
   and 1a's end-reached test, so the stamp is taken after a capped
   segment: the fingerprint, read with the slave's device unmounted at
   the pass's `end` line as the tree arm's change loop returns it, must
@@ -774,7 +788,7 @@ change executes:
   has no reader here, so it stands as `DEFER(a consumer that reads a
   slave element directly, a static mount or a standalone slave mount)`
   in the section above.
-- Whether the snapshot's blockset copy, one element's at `:594` under
+- Whether the snapshot's blockset copy, one element's at `hammer2_ioctl.c:1037` under
   upstream's "doesn't work with real cluster", is enough for a snapshot
   taken as a source. For a single-element master it is; for a two-master
   cluster the snapshot is of one element, and whether that is the right

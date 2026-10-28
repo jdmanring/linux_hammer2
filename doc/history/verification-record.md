@@ -19632,3 +19632,62 @@ unload, and no guard line. The knob at 1 on the committed source
 scan ended on it 22 us later, that round read `failed 1`, and the run read
 59 checks with none failed, the slave equal to the master for 40055 files
 and both volumes clean under `fsck_hammer2`.
+
+## The design notes' prose citations, 2026-10-28
+
+`script/test-citations.sh` read only the `file:line` cells of `doc/`
+tables. It now also reads every citation of the port's source in the prose
+of the tracked documents outside `doc/history/`, `doc/research/`,
+`doc/upstream/` and `CHANGELOG.md`, and fails one that lands past the end
+of its file, on a blank line, on a closing brace or on a comment's end, or
+that names no file of the port. Run against the documents of `b12aaae`, in
+a clone, it reads 387 citations and fails 34, 26 in
+`doc/CLUSTER_PROTOCOL_DESIGN.md`, 6 in `doc/SYNC_DESIGN.md` and one each in
+`doc/README.porting.md` and `doc/README.testing.md`
+(`p7-notes/r12-gate-at-b12aaae-round4.log`); on the documents now it reads
+371 and fails none, under bash, dash 0.5.13.3 and busybox 1.37.0's ash and
+awk (`p7-notes/r12-citations-round6-bash.log`, `r12-citations-round6-dash.log`,
+`r12-bb-round6.log`).
+
+The check is placement, not meaning: a citation that drifted onto other
+code passes it. A heuristic, `p7-notes/r12-drift.py`, flags a citation
+whose cited lines hold none of the backticked identifiers of its sentence.
+It flagged the citations of both notes for re-derivation, 239 of them read
+against their sentences in four batches (`p7-notes/r12-proposals-{A,B,C,D}.tsv`),
+88 moved and 151 kept as they stood; the audit then corrected more by
+reading sentences against their lines. On the documents now it flags 82 of
+371 (`p7-notes/r12-drift-round5.err`); a sentence naming no identifier in its
+cited lines is what it flags, so that count is candidates, not defects.
+
+`doc/SYNC_DESIGN.md`'s findings of 2026-10-18 were cited against the source
+of their day, and rewriting them to today's lines would make them claim
+what they did not read. They are restored to their text and wrapped in the
+lines `<!-- citations at 5078090 -->` and `<!-- citations end -->`, and the
+gate reads a region's citations through `git show` at that commit. Upstream
+citations in the notes and `doc/README.capabilities.md` are written as
+DragonFly paths at `250a8b4`, which the gate leaves out as another tree's.
+
+The gate's own controls, 25 beside a baseline that reads 0, each placed in
+a tracked document of a throwaway clone carrying the change
+(`p7-notes/r12-controls.sh`), read as wanted
+(`p7-notes/r12-controls-round6.log`). Those that must fail: a moved
+citation, a missing file by name, by path and as the file of a later `:N`,
+a list element and a range end past the end, a file name that does not end
+at a word boundary, a region citation that holds at HEAD and not at its
+commit, a region pinned to no commit, a region left open, an end with no
+region open, a near-miss marker, a marker built to reach the shell (which
+ran nothing), an unclosed fence, a fence of four backticks holding three,
+an inline code span and a code line indented four spaces that open no
+fence, and the reader's own exit status. Those that must pass: a path into
+another tree, a marker quoted in prose, a quoted kernel message, a marker
+in a fenced block, a tilde fence and an indented one. An empty population
+exits 2. Four of the fence controls read the opposite on the gate of the
+fourth review round, whose fence was a toggle on three backticks
+(`p7-notes/r12-oldgate-round4.log`), and the last two read 0 on the fifth
+round's gate
+(`p7-notes/r12-oldgate-round6.log`).
+
+Seven rounds of independent review to SIGN-OFF: subject findings 8, 9, 4,
+1, 1, 1, 0, the fourth and fifth signing off with one minor finding each
+on the fence rule, both fixed and attacked again, and the sixth finding
+this entry's split of the 34 failures summing to 32.
