@@ -19825,6 +19825,36 @@ below the break key between segments, which needs a hook that writes the
 master alone during the drain; the hook is not built, and the design note
 says so.
 
+**The harness's 1a checks after review.** The per-change check passed on
+any stamp or resumed segment, counted a `START_SCAN` line without its
+`beg` field as resumed, and skipped silently when the setting was not
+read; the default, crash and live shapes had no 1a check, and the
+loaded parameters were printed and never read. The per-change check now
+also requires one scan from key 0 a round under walks 1, a `START_SCAN`
+without `beg` is counted apart and must be 0, an unread setting fails,
+every shape checks the loaded `sync_snapshot` and `sync_walks`, and every
+shape reads 1a over the whole run: at least one stamp alone or resumed
+segment with the snapshot pass and walks 1, none otherwise. Its negative
+control is the live-guard module above under `H2_SYNC_SNAPSHOT=0`, on
+which the whole-run check must fail. On `h2debug-7.3`, every run with the harness this paragraph is
+committed with (sha256 prefix `0a0bca0575c4604b`, its report's digest),
+the module built from the source of `b60cd38` but for the control's
+(`p7-notes/r1-debug-20261028-154510.log`):
+
+| shape | run | 1a over the run: alone, resumed | checks |
+|---|---|---|---|
+| live-guard control, `H2_SYNC_SNAPSHOT=0` | `cluster-run-20261028-154510` | 3, 20 | 47, 1 failed, the whole-run check |
+| default | `cluster-run-20261028-155231` | 6, 20 | 58, 0 failed |
+| `H2_SYNC_SNAPSHOT=0` | `cluster-run-20261028-155928` | 0, 0 | 47, 0 failed |
+| `H2_CRASH=1` | `cluster-run-20261028-160716` | 1, 20, the recovery's | 47, 0 failed |
+| bulk tree, two changes | `cluster-run-20261028-161616` | 1, 3 | 31, 0 failed |
+| delete tree, two changes | `cluster-run-20261028-161759` | 1, 0 | 30, 0 failed |
+
+The bulk tree's walks 1 change read 2 scans from key 0 in 2 rounds and
+the delete tree's 1 in 1. The check that a round makes one scan from key
+0 has no negative control: no build that resumes and then rescans from
+key 0 as well was made.
+
 **Rates**, on `h2release-7.3` at `a136f17`, the tree arm under
 `H2_SYNC_WALKS=alt` with four changes of one file in 1000 directories,
 so each setting is read twice in one boot:

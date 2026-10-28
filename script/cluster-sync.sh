@@ -405,6 +405,10 @@ finish() {
 	echo "snap-target-errors $(klog 'syncsnap: target .* error')"
 	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
 	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
+	# 1a over the whole run: the root's stamps taken alone, and the scans
+	# begun past key 0, which only a resumed segment does; a START_SCAN
+	# without its beg field is counted apart, not as either.
+	echo "walks-run $(awk '/root stamp without a rescan/ { s++ } /START_SCAN/ { if ($(NF - 1) != "beg") m++; else if ($NF ~ /^0+$/) f++; else r++ } END { print s + 0, r + 0, m + 0 }' $K)"
 	# The master device's free blocks at the end and after two bulkfree
 	# scans (a delete frees nothing until the second, script/bulkfree.sh),
 	# beside the count at the first mount: every snapshot pass creates and
@@ -657,7 +661,7 @@ if [ "$TREE" != 0 ]; then
 		# resumed elsewhere after the deferral cap, and stamps with no
 		# rescan (1a); then each root scan's iterations, whose sum against
 		# the root's key count is the walk count a resumed scan splits.
-		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0 }')"
+		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($(NF - 1) != "beg") m++; else if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0, m + 0 }')"
 		echo "change-$c-root-iters $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters") printf "%s ", $(i + 1) } END { print "" }')"
 		c=$((c + 1))
 	done
@@ -1333,13 +1337,21 @@ while [ $c -le "$PASS_CHANGES" ]; do
 	# the change's knob asked it to compare every inode, which keeps the
 	# carried rescan. A run that never took 1a's path proves nothing
 	# about it, whatever it verified.
+	# Under 1 each round makes one scan from key 0, its resumed segments
+	# and stamp replacing the rescans, so the count from key 0 is the
+	# rounds'; a build that resumed and then rescanned from 0 as well
+	# fails there. An unread setting fails rather than skipping both.
+	rounds=${6:-}
 	w=$(val change-$c-walks-set)
 	set -- $(val change-$c-root-walks)
-	echo "  read  change $c: sync_walks ${w:-none}, root walks ${1:-none} from key 0, ${2:-none} resumed, ${3:-none} stamp(s) alone; scan iterations $(val change-$c-root-iters)"
+	echo "  read  change $c: sync_walks ${w:-none}, root walks ${1:-none} from key 0, ${2:-none} resumed, ${3:-none} stamp(s) alone, ${4:-none} unparsed; scan iterations $(val change-$c-root-iters)"
+	[ "${4:-1}" = 0 ]; check "change $c: every root scan's start key is read" $? "${4:-none} START_SCAN line(s) without beg"
 	if [ "$w" = 0 ]; then
 		[ "${2:-1}" = 0 ] && [ "${3:-1}" = 0 ]; check "change $c: the carried pass takes no stamp alone and resumes no scan" $? "${2:-none} resumed, ${3:-none} alone"
 	elif [ "$w" = 1 ] && ! { [ $c = 1 ] && [ "$FORCE_RESCAN" = 1 ]; }; then
-		[ $(( ${2:-0} + ${3:-0} )) -ge 1 ]; check "change $c: the pass replaces the root rescan" $? "${2:-none} resumed, ${3:-none} alone"
+		[ $(( ${2:-0} + ${3:-0} )) -ge 1 ] && [ "${1:-x}" = "${rounds:-y}" ]; check "change $c: the pass replaces the root rescan, one scan from key 0 a round" $? "${1:-none} from key 0 in ${rounds:-none} round(s), ${2:-none} resumed, ${3:-none} alone"
+	elif [ "$w" != 1 ]; then
+		false; check "change $c: the module's sync_walks is read before the change" $? "${w:-nothing} read"
 	fi
 	c=$((c + 1))
 done
@@ -1506,6 +1518,20 @@ if [ "$H2SNAP" = 1 ]; then
 	fi
 	l=$(val snap-last-idle); mt=$(printf '%s\n' "$l" | awk '{print $1}'); st=$(printf '%s\n' "$l" | awk '{print $3}')
 	[ -n "$mt" ] && [ "$mt" = "$st" ]; check "the slave root's tid agrees with the master's once idle" $? "master ${mt:-none} slave ${st:-none}, after $(val snap-idlestamp) idle stamp(s)"
+fi
+# The parameters the module was loaded with, and 1a over the whole run:
+# with the snapshot pass and sync_walks 1 the root's rescan is replaced at
+# least once, and with either off it never is, which under
+# H2_SYNC_SNAPSHOT=0 holds by construction, since only the snapshot pass
+# sets the list's walks. A crash run's klog is its restarted guest's.
+a=$(val sync-snapshot); b=$(val sync-walks); w0=$WALKS; [ "$w0" = alt ] && w0=1
+[ "${a:-x}" = "$H2SNAP" ] && [ "${b:-x}" = "$w0" ]; check "the module runs with the parameters asked for" $? "sync_snapshot ${a:-none} of $H2SNAP, sync_walks ${b:-none} of $w0"
+set -- $(val walks-run)
+echo "  read  1a over the run: ${1:-none} stamp(s) alone, ${2:-none} resumed segment(s), ${3:-none} START_SCAN line(s) without beg"
+if [ "$H2SNAP" = 1 ] && [ "$w0" = 1 ]; then
+	[ "${3:-1}" = 0 ] && [ $(( ${1:-0} + ${2:-0} )) -ge 1 ]; check "a snapshot pass replaces its root rescan" $? "${1:-none} alone, ${2:-none} resumed"
+else
+	[ "${3:-1}" = 0 ] && [ "${1:-1}" = 0 ] && [ "${2:-1}" = 0 ]; check "no pass replaces its root rescan, the snapshot pass or sync_walks off" $? "${1:-none} alone, ${2:-none} resumed"
 fi
 if [ "$TREE" = 0 ]; then
 if [ $(( H2DEBUG & 1 )) = 1 ]; then
