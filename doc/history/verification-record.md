@@ -19256,3 +19256,47 @@ in `cluster-quorum.sh` with the frontend writing during the hold, is
 not built.
 
 The row is 1.0.62.
+
+## The root scan's time split between its feed and its merge, 2026-10-27
+
+The million-file entry above left the time before each root scan's
+`START_SCAN` line, 2.69 to 2.82 s at the million, a `candidate`: the
+elements' storage functions run inline to their end inside the XOP
+start (`hammer2_admin.c` 471-481), into a FIFO that doubles rather than
+blocks (`:670-688`), but nothing timed the start. `b2bae17` adds the
+start's time, the time from it to the first collect, the merge's time
+and the FIFO's final size to the root scan's `filekeys` line under
+debug 0x8000, with no change in behavior.
+
+One run, `cluster-sync.sh` with `H2_PASS_TREE=100000` on `artix-s6-kde`
+booted on `h2release-7.3` (7.3.0-release), the report's build line
+reading `head=b2bae17 src-dirty=0`: 26 checks, 0 failed. The host carried
+a four-job `nix-ninja` build through it, load 5.2 at the start on 24
+cores, so the times are this run's and are not compared with 1.0.60's
+rates. The report and klog are `cluster-run-20261027-173632` in the
+fixtures tree.
+
+The three timed passes took 2479, 2378 and 2422 ms, each verifying in
+two rounds on three root scans of 101,003 iterations. Across those nine
+scans the start took 206 to 218 ms, the first collect returned in 0 ms,
+and the merge took 552 to 668 ms. So the time before `START_SCAN` is the
+start's own, the storage function walking the whole root into the FIFO
+before the merge reads its first entry, and its share of a scan, about
+a quarter, is the share the million run's 2.7 s against 8.0 to 8.5 s
+shows. Every root scan of the full tree ended with the FIFO at 131,072
+entries, the power of two above 101,003, so the whole root's chains are
+held at once before the merge starts. What that holds in memory is not
+read here; it is read with a sampler in the million-file runs of the
+next step.
+
+The rounds: each timed pass, one rewritten file with the slave
+returned, acted on 2 in its first round and on 0 in its second, and
+verified there (`syncsnap: verify` lines). The "acted 29 then 5 then 5"
+in the pass's comment (`hammer2_synchro.c` 946-949) was a different
+change set, measured before the rounds stopped on a kept key, and is
+not re-read here. What this run shows is why a one-file pass takes two
+rounds: verification is a full round that acts on nothing
+(`hammer2_synchro.c` 968-972), so a pass that copies anything pays one
+more scan of the whole root to prove it.
+
+The row is 1.0.63.
