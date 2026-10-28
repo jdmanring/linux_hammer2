@@ -506,8 +506,8 @@ dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
-{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 w0=$H2WALKS; [ "$w0" = alt ] && w0=1
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP sync_walks=$w0 || { echo "insmod failed"; exit 1; }
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
 echo "sync-walks $(cat /sys/module/hammer2/parameters/sync_walks 2>/dev/null || echo absent)"
@@ -984,6 +984,12 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	echo "crash-copied $(( $(copied) - u1 ))"
 	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 	echo "crash-last-target $(awk '/syncsnap: target/ { v = $NF } END { print v }' $K)"
+	# The cut pass's own target line: a pass whose target an earlier pass
+	# left valid prints none, so the last line above can be another pass's.
+	# Its pass lines before the cut go into the report, since the guest's
+	# log dies with it.
+	echo "crash-cut-target $(awk '/syncsnap: begin/ { v = "none" } /syncsnap: target/ { v = $NF } END { print v }' $K)"
+	grep -E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' $K | tail -n 12 | sed 's/^/crash-klog /'
 	echo "crash-armed"
 	sleep 600
 	exit 0
@@ -1095,8 +1101,8 @@ dmesg -C
 dmesg -w > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
-{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 w0=$H2WALKS; [ "$w0" = alt ] && w0=1
+{ echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP sync_walks=$w0 || { echo "insmod failed"; exit 1; }
 klog() { grep -c "$1" $K; }
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
@@ -1194,8 +1200,8 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# inside such a pass can leave the target by name and no source, the
 	# first pass then having nothing stale to delete, which is how
 	# cluster-run-20261025-193845 read with no target line printed. The
-	# last target line the guest printed before the cut, taken as the cut
-	# pass's, says which since.
+	# cut pass's own target line says which since: a pass that runs on a
+	# target an earlier pass left valid prints none and takes no sync.
 	if m=$("$HAMMER2" -v show "$MASTER" 2>/dev/null); then
 		echo "crash-master-pfs $(printf '%s\n' "$m" | grep -c 'filename "CL"')" >> "$W/out"
 		echo "crash-src-on-media $(printf '%s\n' "$m" | grep -c 'filename "CL.h2sync-src"')" >> "$W/out"
@@ -1436,19 +1442,22 @@ fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
 else
-	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) backlog-media=$(val crash-backlog-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) last-tgt=$(val crash-last-target) master-pfs=$(val crash-master-pfs) src-media=$(val crash-src-on-media) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
+	echo "  raw   crash copied=$(val crash-copied) in-pass=$(val crash-in-pass) destroyed=$(val crash-destroyed) session-rc=$(val crash-session-rc) fsck=$(val crash-fsck-cluster-master.img)/$(val crash-fsck-cluster-slave.img) tgt-media=$(val crash-tgt-on-media) backlog-media=$(val crash-backlog-on-media) restart-s=$(val crash-restart-seconds) threads=$(val recover-threads) last-tgt=$(val crash-last-target) cut-tgt=$(val crash-cut-target) master-pfs=$(val crash-master-pfs) src-media=$(val crash-src-on-media) stale=$(val recover-stale) tgt-kept=$(val recover-tgt-kept) tgt-listed=$(val recover-tgt-listed) cluster-rc=$(val resume-remount-rc)"
 	c=$(val crash-copied); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val crash-in-pass)" = 0 ]; check "the power is cut inside the copy" $? "${c:-none} updates into the pass, in-pass rc $(val crash-in-pass)"
 	a=$(val crash-destroyed); [ "${a:-9}" = 0 ]; check "the guest is destroyed at the armed line" $? "virsh destroy rc ${a:-none}, session rc $(val crash-session-rc)"
 	a=$(val crash-fsck-cluster-master.img); b=$(val crash-fsck-cluster-slave.img); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "both media are consistent as the cut left them" $? "fsck_hammer2 exit ${a:-none} and ${b:-none} before recovery"
 	n=$(val crash-backlog-on-media); [ "${n:-x}" = 0 ] || [ "${n:-x}" = "$NBIG2" ]; check "the cut leaves the slave's media at a whole pass's state" $? "${n:-none} of $NBIG2 backlog files on the slave's media at the cut; the pass's copies reach the media in one flush after its scan"
 	a=$(val recover-threads); [ "${a:-0}" = 1 ]; check "the two devices returning start the thread" $? "${a:-none}"
-	t=$(val crash-last-target); p=$(val crash-master-pfs); m=$(val crash-src-on-media); a=$(val recover-stale)
+	sed -n 's/^crash-klog /  raw   before the cut: /p' "$W/out"
+	t=$(val crash-cut-target); p=$(val crash-master-pfs); m=$(val crash-src-on-media); a=$(val recover-stale)
+	# A pass with no target line of its own ran on a target an earlier
+	# pass left, and took no sync after its snapshot, as a kept one.
 	case $t in
 	taken) [ "${p:-0}" -ge 1 ] && [ "${m:-0}" -ge 1 ] && [ "${a:-0}" -ge 1 ] ;;
-	kept) [ "${p:-0}" -ge 1 ] && { { [ "${m:-0}" -ge 1 ] && [ "${a:-0}" -ge 1 ]; } || { [ "${m:-x}" = 0 ] && [ "${a:-x}" = 0 ]; }; } ;;
+	kept|none) [ "${p:-0}" -ge 1 ] && { { [ "${m:-0}" -ge 1 ] && [ "${a:-0}" -ge 1 ]; } || { [ "${m:-x}" = 0 ] && [ "${a:-x}" = 0 ]; }; } ;;
 	*) false ;;
 	esac 2>/dev/null
-	check "the source snapshot the cut left is deleted by the first pass: there after a taken target, and after a kept one deleted exactly when its name was there" $? "target ${t:-none} at the cut, ${m:-none} source(s) on the master's media beside ${p:-none} PFS root(s) read, ${a:-none} stale delete(s)"
+	check "the source snapshot the cut left is deleted by the first pass: there after a taken target, and after a kept one or none deleted exactly when its name was there" $? "target ${t:-none} at the cut, ${m:-none} source(s) on the master's media beside ${p:-none} PFS root(s) read, ${a:-none} stale delete(s)"
 	# Three readings make one claim: the target is on the slave's media as
 	# the cut left it (read host-side while the guest was down), the first
 	# pass finds it by name rather than taking one, and one is listed after
