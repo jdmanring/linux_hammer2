@@ -687,14 +687,14 @@ The last is C_N, the condition that nothing but this thread writes a
 root key of the slave element between the rounds, made structural
 rather than detected. While a remote element is registered no frontend
 can write the PFS: a read-write mount and a read-write remount are
-refused (`hammer2_vfsops.c:1759-1765`, `:2682`), the vnode operations
+refused (`hammer2_vfsops.c:1759-1765`, `:2685`), the vnode operations
 refuse a write on a read-only PFS (`hammer2_vnops.c:374`, `:500`,
 `:1429`), and the registration itself refuses a PFS mounted read-write
 (`hammer2_remote.c:2488-2492`). A mapping a read-write mount dirtied before a read-only remount leaves no
 gap: the write fault stamps the inode through `->update_time`, which
 queues it (`hammer2_vnops.c:2535`), so the remount's sync walks it, and
 since 1.0.65 the remount also calls `sync_filesystem()`
-(`hammer2_vfsops.c:2661`), as ext4 does on that transition. The fifth
+(`hammer2_vfsops.c:2664`), as ext4 does on that transition. The fifth
 candidate is refuted on its path, with its probe kept in
 `script/test-enospc.sh`. A slot can also be detached while the link stays up, when the
 peer's span goes, and the pass's reads of its source snapshot continue
@@ -737,16 +737,22 @@ snapshot is taken on the peer by the peer's server
 (`hammer2_ioctl.c:895-898`) and is a PFS a mount there could write.
 The refusal is built by name rather than by the server's list of the
 snapshots it holds: a PFS whose name carries the pass's suffix,
-`<pfs>.h2sync-src`, is refused a read-write mount and a read-write
-remount (`hammer2_remote_is_source()`, `hammer2_remote.c:2614`, tested at
-`hammer2_vfsops.c:1771` and `:2688` under `hammer2_mntlk`). The name
-covers the local pass's own source, which 1a's resume and 1b's narrowing
-also take as immutable, and a crash's leftover, which the next pass
-deletes by that name; a list would cover only a peer's, is kept per
-connection while a mount names a PFS, and is edited under its own lock.
-A read-only mount stays allowed, and holds the PFS against the pass's
-delete of it, which then fails `EBUSY` (`hammer2_ioctl.c:752-755`, read
-from the code) and is printed as the pass's delete error. The
+`<pfs>.h2sync-src`, is refused any mount (`hammer2_remote_is_source()`,
+`hammer2_remote.c:2614`, tested at `hammer2_vfsops.c:1774` under
+`hammer2_mntlk`). The name covers the local pass's own source, which 1a's
+resume and 1b's narrowing also take as immutable, and a crash's leftover,
+which the next pass deletes by that name; a list would cover only a
+peer's, is kept per connection while a mount names a PFS, and is edited
+under its own lock. A read-only mount is refused too, since any mount
+holds the PFS against the delete by name that begins every later pass
+(`EBUSY`, `hammer2_ioctl.c:752-755`): the local pass then skips its pass,
+printing only under bit 0x8000, and the server answers the peer's
+snapshot `EIO`, so one read-only mount would stop the slave's passes.
+With no mount of
+a source there is no remount to refuse; an element of the suffix's name
+can still join a mounted PFS by `pfs-create` with that PFS's cluster id,
+a name collision rather than a pass's source, which takes a fresh cluster
+id (`hammer2_ioctl.c:1025`). The
 `.h2sync-tgt` target is not gated: a pass deletes and retakes it and never
 reads it as a source. And whether `hammer2 pfs-delete`
 of the slave element through the device's super-root

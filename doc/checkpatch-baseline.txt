@@ -220,8 +220,8 @@
 # category is new. See README.kernel-style.md.
 # 1,600 to 1,602: `return is not a function` 371 -> 372 and `function
 # definition argument` 504 -> 505, the return and the unnamed prototype
-# argument of hammer2_remote_is_source(), which keeps a pass's source
-# snapshot read-only at mount. No category is new. See README.kernel-style.md.
+# argument of hammer2_remote_is_source(), which refuses a pass's source
+# snapshot any mount. No category is new. See README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations

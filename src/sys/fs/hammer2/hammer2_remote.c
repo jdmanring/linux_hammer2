@@ -2607,7 +2607,7 @@ hammer2_remote_has_slot(hammer2_pfs_t *pmp)
  * Whether a PFS is a synchronization pass's source snapshot, by its name:
  * the local pass's own, one this server holds for a peer's pass, or one a
  * crash left, which the next pass deletes by that name.  A pass reads its
- * source as immutable, so the mount gates keep it read-only; the caller
+ * source as immutable, so the mount gate refuses it any mount; the caller
  * holds hammer2_mntlk, under which a PFS's names are freed.
  */
 int

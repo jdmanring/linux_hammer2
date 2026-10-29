@@ -257,7 +257,7 @@ the debug build's control for it. Their returns and
 `hammer2_sync_narrow_cn()`'s are not among checkpatch's `return (x);`
 hits, read by line number. No category is new.
 
-1,600 to 1,602 with the refusal of a read-write mount of a pass's source
+1,600 to 1,602 with the refusal of any mount of a pass's source
 snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
 (`hammer2_remote.c:2621`), the same form checkpatch reads at
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype

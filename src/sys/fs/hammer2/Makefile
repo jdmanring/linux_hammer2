@@ -128,8 +128,8 @@ endif
 # hammer2_os.h: the read-only mount and remount of a PFS with a remote
 # element, the pass on a device opened read-only, the routing of a remote
 # master's snapshot to that master, SNAPDEL's limit to the link's own
-# snapshots, and the read-only mount and remount of a pass's source
-# snapshot.  Never install any of them.
+# snapshots, and any mount of a pass's source snapshot.  Never install
+# any of them.
 ifdef HAMMER2_NOROGATE
 ccflags-y += -DHAMMER2_NOROGATE
 endif

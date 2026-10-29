@@ -150,14 +150,14 @@
 # on A's image at the end. H2_WIRE_SNAPDEL=control builds A with
 # HAMMER2_NOSNAPSCOPE, which must delete it.
 # H2_WIRE_SRCGATE=1 makes the same ZZ.h2sync-src on A and, before any
-# link, asks for it read-write, then read-only and remounted read-write:
-# a PFS of the pass's suffix is the source a pass reads as immutable, so
-# the read-write mount and remount must be refused with A's line each, the
-# read-only mount must succeed, and no file written there may reach A's
-# image. mount -w, since without it mount(8) retries read-only on EROFS
-# and the refusal would read as a mount. H2_WIRE_SRCGATE=control builds A
-# with HAMMER2_NOSRCGATE, under which the source mounts read-write and the
-# file written there is on A's image.
+# link, asks for it read-write, then read-only: a PFS of the pass's
+# suffix is the source a pass reads as immutable, and a mount of either
+# kind would hold it against the next pass's delete, so both must be
+# refused with A's line each, and A's image must name the PFS and hold no
+# file written there. mount -w, since without it mount(8) retries
+# read-only on EROFS. H2_WIRE_SRCGATE=control builds A with
+# HAMMER2_NOSRCGATE, under which the source mounts both ways and the file
+# written there is on A's image.
 # H2_WIRE_ADMIT=1 removes B's .none marker before its dial: h2service
 # must refuse the row as DragonFly's daemon refuses an unknown host, and
 # the dial then made with the marker back proceeds as a plain run.
@@ -657,8 +657,8 @@ mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "mount CL ro failed"; exit 1; }
 echo "ro-mounted 1"
 GUEST
 cat > "$W/srcgate.sh" <<'GUEST'
-# srcgate: A's ZZ.h2sync-src asked for read-write, then read-only and
-# remounted read-write; each state read from /proc/mounts
+# srcgate: A's ZZ.h2sync-src asked for read-write, then read-only; each
+# state read from /proc/mounts
 S=/mnt/h2src; mkdir -p $S
 st() { awk -v m=$S '$2 == m { split($4, o, ","); print o[1]; f = 1 } END { if (!f) print "none" }' /proc/mounts; }
 n0=$(dmesg | grep -c 'refused: a synchronization source')
@@ -670,10 +670,7 @@ if [ "$(st)" != none ]; then
 fi
 mount -t hammer2 -o ro /dev/vdb@ZZ.h2sync-src $S 2>/dev/null; echo "srcgate-ro-rc $?"
 echo "srcgate-ro-state $(st)"
-mount -o remount,rw $S 2>/dev/null; echo "srcgate-remount-rc $?"
-echo "srcgate-remount-state $(st)"
-echo x > $S/remounted 2>/dev/null; echo "srcgate-remount-write-rc $?"
-sync; umount $S; echo "srcgate-umount-rc $?"
+[ "$(st)" = none ] || umount $S
 echo "srcgate-lines $(( $(dmesg | grep -c 'refused: a synchronization source') - n0 ))"
 GUEST
 cat > "$W/pass.sh" <<'GUEST'
@@ -1744,12 +1741,16 @@ fi
 # A PFS of the pass's suffix asked for read-write on A, and what A's
 # image holds of the files written there.
 if [ "$SRCGATE" != 0 ]; then
-	zw=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c -E 'filename "(written|remounted)"')
-	sg="decoy rc $(val A decoy-rc); rw rc $(val A srcgate-rw-rc) $(val A srcgate-rw-state); ro rc $(val A srcgate-ro-rc) $(val A srcgate-ro-state); remount rc $(val A srcgate-remount-rc) $(val A srcgate-remount-state), its write rc $(val A srcgate-remount-write-rc); refusal lines $(val A srcgate-lines); files on A's image $zw"
+	# the decoy's own name in the same read, so a show that failed
+	# cannot read as no file written
+	zs=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null)
+	zn=$(printf '%s\n' "$zs" | grep -c 'filename "ZZ.h2sync-src"')
+	zw=$(printf '%s\n' "$zs" | grep -c 'filename "written"')
+	sg="decoy rc $(val A decoy-rc); rw rc $(val A srcgate-rw-rc) $(val A srcgate-rw-state); ro rc $(val A srcgate-ro-rc) $(val A srcgate-ro-state); refusal lines $(val A srcgate-lines); decoy named on A's image $zn, files written there $zw"
 	if [ "$SRCGATE" = 1 ]; then
-		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 0)" != 0 ] && [ "$(val A srcgate-rw-state)" = none ] && [ "$(num "$(val A srcgate-ro-rc)" 1)" = 0 ] && [ "$(val A srcgate-ro-state)" = ro ] && [ "$(num "$(val A srcgate-remount-rc)" 0)" != 0 ] && [ "$(val A srcgate-remount-state)" = ro ] && [ "$(num "$(val A srcgate-remount-write-rc)" 0)" != 0 ] && [ "$(num "$(val A srcgate-lines)" 0)" = 2 ] && [ "$zw" = 0 ]; check "a pass's source snapshot is refused read-write at mount and remount and mounts read-only" $? "$sg"
+		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 0)" != 0 ] && [ "$(val A srcgate-rw-state)" = none ] && [ "$(num "$(val A srcgate-ro-rc)" 0)" != 0 ] && [ "$(val A srcgate-ro-state)" = none ] && [ "$(num "$(val A srcgate-lines)" 0)" = 2 ] && [ "$zn" -ge 1 ] && [ "$zw" = 0 ]; check "a pass's source snapshot is refused a mount, read-write and read-only" $? "$sg"
 	else
-		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 1)" = 0 ] && [ "$(val A srcgate-rw-state)" = rw ] && [ "$(num "$(val A srcgate-rw-write-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-lines)" 1)" = 0 ] && [ "$zw" -ge 1 ]; check "control: without the gate a pass's source snapshot mounts read-write and a file written there reaches A's image" $? "$sg"
+		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 1)" = 0 ] && [ "$(val A srcgate-rw-state)" = rw ] && [ "$(num "$(val A srcgate-rw-write-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-ro-rc)" 1)" = 0 ] && [ "$(val A srcgate-ro-state)" = ro ] && [ "$(num "$(val A srcgate-lines)" 1)" = 0 ] && [ "$zn" -ge 1 ] && [ "$zw" -ge 1 ]; check "control: without the gate a pass's source snapshot mounts read-write and read-only, and a file written there reaches A's image" $? "$sg"
 	fi
 fi
 # SNAPDEL for a name of the pass's suffix on A that the link never took:
