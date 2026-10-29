@@ -1772,31 +1772,38 @@ if [ "$PASS" = 1 ]; then
 	if [ "$PASSES" = full ] || { [ "$PASSES" = cut ] && [ "$CUT" != control ]; }; then
 		mp=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $11 > 0 { l = $0 } END { print l }')
 		set -- $mp
-		[ -n "$mp" ] && [ "${9:-0}" -ge 1 ] && [ "${5:-x}" = "${10:-y}" ]; check "B: the more pass narrows its second round" $? "${mp:+pass $2, $9 of $8 round(s) narrowed, $5 scan(s) for ${10} key(s), round 1 acted ${11}, carried for ${14}}${mp:-no verified pass acted}"
+		if [ -n "$mp" ]; then md="pass $2, $9 of $8 round(s) narrowed, $5 scan(s) for ${10} key(s), round 1 acted ${11}, carried for ${14}"; else md="no verified pass acted"; fi
+		[ -n "$mp" ] && [ "${9:-0}" -ge 1 ] && [ "${5:-x}" = "${10:-y}" ]; check "B: the more pass narrows its second round" $? "$md"
 	fi
-	# Scanall calls per pass, when the relay traced calls: opens between
-	# one snapshot line and the next, the count the cost on the link is
-	# read in.
+	# Scanall calls and the chains they fed per pass, when the relay
+	# traced calls: the opens and the closes' feeds between one snapshot
+	# line and the next, the counts the cost on the link is read in. A root
+	# walk is one call, so a walk saved shows in the feeds.
 	tr=$FIXDIR/wire-run-$stamp.trace
 	if grep -q ' snapshot t=' "$tr" 2>/dev/null; then
-		echo "  read  scanall calls per pass, from the relay's trace: $(awk '/ snapshot t=/ { if (s) printf "%d ", c; s = 1; c = 0; next } s && / open t=/ { c++ } END { if (s) printf "%d", c; print "" }' "$tr")"
+		echo "  read  scanall calls and chains fed per pass, from the relay's trace: $(awk '/ snapshot t=/ { if (s) printf "%d/%d ", c, f; s = 1; c = f = 0; next } s && / open t=/ { c++ } s && / close t=/ { for (i = 1; i <= NF; i++) if ($i ~ /^feeds=/) f += substr($i, 7) } END { if (s) printf "%d/%d", c, f; print "" }' "$tr")"
 	fi
 fi
-# The keepalive's leg through A, from the relay's trace: B's LNK_PING
-# (CREATE|DELETE) to A's reply on the same msgid, each stamped in
-# microseconds when the relay took it, so the figure is the relay's leg
-# to A and back, half the path. A median under ten times the 1 us stamp
-# says nothing, and fails.
+# The link's round trip from the relay's trace. Each side pings every
+# half of the bound as a CREATE|DELETE LNK_PING and the other answers it
+# on the same msgid with a REPLY, the carried kernel's refusal; each frame
+# is stamped in microseconds when the relay took it. B's ping to A's
+# answer is the relay's leg through A, A's to B's the leg through B, and
+# the round trip is the two medians summed. A median under ten times the
+# 1 us stamp says nothing, and fails.
 if [ "$LINKLOST" != 1 ] && [ "$SILENCE" = 0 ]; then
 	tr=$FIXDIR/wire-run-$stamp.trace
-	rt=$(awk '/ deliver / { c = u = m = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^cmd=/) c = substr($i, 5); else if ($i ~ /^us=/) u = substr($i, 4); else if ($i ~ /^msgid=/) m = substr($i, 7) }
-	    if (c == "" || u == "" || substr(c, 3, 4) != "0001") next
-	    if ($1 == "B>A" && substr(c, 1, 1) ~ /^[cd]$/) p[m] = u
-	    else if ($1 == "A>B" && substr(c, 1, 1) ~ /^[ef]$/ && (m in p)) { print u - p[m]; delete p[m] } }' "$tr" 2>/dev/null |
-	    sort -n | awk '{ v[NR] = $1 } END { if (NR) print NR, v[int((NR + 1) / 2)], v[1], v[NR]; else print 0 }')
-	set -- $rt
-	echo "  read  the keepalive's leg through A: ${1:-0} ping(s), median ${2:-none} us, least ${3:-none}, most ${4:-none}; the round trip is twice the median"
-	[ "${1:-0}" -ge 1 ] && [ "${2:-0}" -ge 10 ]; check "link: the keepalive's leg through A is read above the stamp's resolution" $? "${1:-0} ping(s), median ${2:-none} us"
+	legs() {	# legs <pinger>: count, median, least, most of its pings' answers in us
+		awk -v me="$1" '/ deliver / { c = u = m = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^cmd=/) c = substr($i, 5); else if ($i ~ /^us=/) u = substr($i, 4); else if ($i ~ /^msgid=/) m = substr($i, 7) }
+		    if (c == "" || u == "") next
+		    split($1, d, ">")
+		    if (d[1] == me && substr(c, 3, 4) == "0001" && substr(c, 1, 1) ~ /^[cd]$/) p[m] = u
+		    else if (d[2] == me && substr(c, 1, 1) ~ /^[ef]$/ && (m in p)) { print u - p[m]; delete p[m] } }' "$tr" 2>/dev/null |
+		    sort -n | awk '{ v[NR] = $1 } END { if (NR) print NR, v[int((NR + 1) / 2)], v[1], v[NR]; else print 0 }'
+	}
+	set -- $(legs B); la=${1:-0} ma=${2:-}; echo "  read  the leg through A, B's pings: ${1:-0} answered, median ${2:-none} us, least ${3:-none}, most ${4:-none}"
+	set -- $(legs A); lb=${1:-0} mb=${2:-}; echo "  read  the leg through B, A's pings: ${1:-0} answered, median ${2:-none} us, least ${3:-none}, most ${4:-none}"
+	[ "$la" -ge 1 ] && [ "$lb" -ge 1 ] && [ "${ma:-0}" -ge 10 ] && [ "${mb:-0}" -ge 10 ]; check "link: the round trip is read above the stamp's resolution" $? "$la and $lb ping(s) answered, ${ma:-none} + ${mb:-none} = $(( ${ma:-0} + ${mb:-0} )) us"
 fi
 if [ "$ROGATE" = control ]; then
 	# The gate off: CL remounts read-write and a chmod through it reaches
