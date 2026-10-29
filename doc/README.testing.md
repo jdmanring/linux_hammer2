@@ -1325,7 +1325,10 @@ cost the batch both its runs. A guest a script started is shut down
 from an exit trap, not from its last line, since a COULD-NOT-RUN after
 the start had left one running for the next script to refuse. The
 long guest runs are bounded from the host with `timeout`, `H2_RUN_TIMEOUT`
-seconds and 1800 by default, because a guest whose task hangs keeps
+seconds, each script's own default otherwise (300 s for a phase of
+`cluster-wire.sh` to 14400 for `cluster-sync.sh`'s tree arm, and
+`cluster-sync.sh`'s four times longer on a KASAN tree, whose default shape
+ran past 600 s), because a guest whose task hangs keeps
 sshd answering and the ssh open; the bound expiring is reported as the
 guest hanging, which is a failure and not a skip.
 

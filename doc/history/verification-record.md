@@ -20068,53 +20068,108 @@ which is not built.
 
 The row is 1.0.68.
 
-## A pass's source snapshot refused read-write, 2026-10-28
+## A pass's source snapshot refused any mount, 2026-10-28
 
 Lever 1b's second open question in `doc/SYNC_DESIGN.md`: a pass reads its
 source snapshot as immutable, and over the wire that snapshot is a PFS on
-the peer, which a mount there could write. Built at `d502568`: a PFS whose
-name carries the pass's suffix, `.h2sync-src`, is refused a read-write
-mount and a read-write remount with `EROFS` under `hammer2_mntlk`
+the peer, which a mount there could write. Built at `d502568` and
+corrected at `795fe24`: a PFS whose name carries the pass's suffix,
+`.h2sync-src`, is refused any mount with `EROFS` under `hammer2_mntlk`
 (`hammer2_remote_is_source()`), by name rather than by the server's list
 of the snapshots it holds, so the local pass's own source and a crash's
-leftover are covered as well; a read-only mount stays allowed. The
-expected readings were written before the code, in
-`p7-notes/q2-expected.md`, which planned the reading on `cluster-sync.sh`;
-it was moved to `cluster-wire.sh`, whose `setup.sh` already makes a PFS of
-that suffix on the master for `H2_WIRE_SNAPDEL`.
+leftover are covered as well. The expected readings were written before
+the code, in `p7-notes/q2-expected.md` and, for the correction,
+`p7-notes/q2b-expected.md`; the first planned the reading on
+`cluster-sync.sh`, and it was moved to `cluster-wire.sh`, whose `setup.sh`
+already makes a PFS of that suffix on the master for `H2_WIRE_SNAPDEL`.
+
+**What the review found in `d502568`.** An independent review of
+`6f5522e..1fe39b1` returned no sign-off with two findings, both applied
+at `795fe24`. The first build refused a read-write mount and remount and
+allowed a read-only mount, and any mount holds the PFS against the delete
+by name that begins every later snapshot pass:
+`hammer2_pfs_delete_byname()` returns `EBUSY` for a mounted PFS, the
+local pass then returns without a pass, printing only under bit 0x8000,
+and the server answers the peer's snapshot `EIO`. One read-only mount of
+a source stopped the slave's passes for as long as it stayed, read from
+the code and not driven. The mount gate now refuses every mount, and the
+remount refusal is removed, since no mount of a source exists to remount;
+the one path left, an element of the suffix's name added to a mounted PFS
+by `pfs-create` with its cluster id, is a name collision, a pass's source
+taking a fresh cluster id. The second: the harness read "no file written
+there" from a `hammer2 -v show` of A's image that could have failed and
+printed nothing; the same read must now name `ZZ.h2sync-src`.
 
 `H2_WIRE_SRCGATE=1` makes `ZZ.h2sync-src` on A and, before any link, asks
-for it with `mount -w` (without `-w` mount(8) retries read-only on `EROFS`,
-and the refusal would read as a mount), then read-only, then remounted
-read-write, each state read from `/proc/mounts`, and A's image is read for
-the files written there. `H2_WIRE_SRCGATE=control` builds A with
-`HAMMER2_NOSRCGATE`, which switches the refusal off.
+for it with `mount -w` (without `-w` mount(8) retries read-only on
+`EROFS`), then read-only, each state read from `/proc/mounts`, and A's
+image is read for the PFS's name and the file written there.
+`H2_WIRE_SRCGATE=control` builds A with `HAMMER2_NOSRCGATE`, which
+switches the refusal off.
 
-| mode | kernel | run | read-write mount | read-only, then remount | refusal lines | files on A's image | checks |
+| mode | kernel | run | read-write mount | read-only mount | refusal lines | on A's image: the PFS, files written | checks |
 |---|---|---|---|---|---|---|---|
-| 1 | `h2debug-7.3` | `wire-run-20261028-200130` | rc 32, not mounted | rc 0 `ro`; rc 32, still `ro`, its write rc 1 | 2 | 0 | 30, 0 failed |
-| control | `h2debug-7.3` | `wire-run-20261028-200307` | rc 0, `rw`, a write rc 0 | rc 0 `ro`; rc 0, `rw`, its write rc 0 | 0 | 2 | 30, 0 failed |
-| 1 | `h2kasan-7.3` | `wire-run-20261028-200736` | rc 32, not mounted | rc 0 `ro`; rc 32, still `ro`, its write rc 1 | 2 | 0 | 30, 0 failed |
-| control | `h2kasan-7.3` | `wire-run-20261028-200956` | rc 0, `rw`, a write rc 0 | rc 0 `ro`; rc 0, `rw`, its write rc 0 | 0 | 2 | 30, 0 failed |
+| 1 | `h2debug-7.3` | `wire-run-20261028-204052` | rc 32, not mounted | rc 32, not mounted | 2 | 1, 0 | 30, 0 failed |
+| control | `h2debug-7.3` | `wire-run-20261028-204219` | rc 0, `rw` | rc 0, `ro` | 0 | 1, 1 | 30, 0 failed |
+| 1 | `h2kasan-7.3` | `wire-run-20261028-210851` | rc 32, not mounted | rc 32, not mounted | 2 | 1, 0 | 30, 0 failed |
+| control | `h2kasan-7.3` | `wire-run-20261028-211111` | rc 0, `rw` | rc 0, `ro` | 0 | 1, 1 | 30, 0 failed |
 
-Every run read source `v1.0.4-714-gd502568` with no local change, the
-module sha256 prefix `79e7daea29aa4984` on `h2debug-7.3` and
-`035e69fd0d928856` on `h2kasan-7.3`, A's control module `dc4373c5384d3282`
-and `414287b338f84375`; the sequences' logs are
-`p7-notes/q2-seq-20261028-200044.log` and
-`p7-notes/q2-kasan-seq-20261028-200529.log`. In each run the plain
-link's reading stood beside the refusal, every file's digest on B equal
-to A's, 305 of 305. On `h2kasan-7.3` both guests read no kernel warning,
-lockdep or sanitizer report and kmemleak found nothing of hammer2's after
-the unload; the wire harness does not count the module's sanitizer
-imports, so that the modules were the sanitizer builds rests on their
-build against `~/kernels/linux-7.3-kasan`, their hashes and their load on
-the `-kasan` kernel.
+Every run read source `v1.0.4-716-g795fe24`, the module sha256 prefix
+`1c4bb2faed55c118` on `h2debug-7.3` and `2e606a70a94ff06b` on
+`h2kasan-7.3`, A's control module `0e291e343a9f2b7e` and
+`f2d792e07486ac58`; the sequence's log is
+`p7-notes/q2b-seq-20261028-204036.log`. In each run the plain link's
+reading stood beside the refusal, every file's digest on B equal to A's,
+305 of 305, and both guests read no kernel warning, lockdep or sanitizer
+report and kmemleak 0 after the unload. The wire harness does not count
+the module's sanitizer imports, so that the KASAN modules were sanitizer
+builds rests on their build against `~/kernels/linux-7.3-kasan`, their
+hashes and their load on the `-kasan` kernel, and on the
+`cluster-sync.sh` runs below, which count them and loaded the module of
+the same hash.
 
-Not read here: a read-write mount of a source a peer's pass holds while
-the pass runs, which takes the same test, since the name is all it reads;
-and a read-only mount holding a source against the pass's delete of it,
-which `hammer2_pfs_delete_byname()` refuses `EBUSY` while it is mounted,
-read from the code.
+The runs at `d502568` (`wire-run-20261028-200130` to `-200956`,
+`p7-notes/q2-seq-20261028-200044.log` and `q2-kasan-seq-20261028-200529.log`)
+read the first build's shape, a read-only mount allowed, and are
+superseded by these and kept.
+
+**The 3.0b.1 regressions at the same head.** 1b's runs were the tree arm
+and the wire, so `cluster-sync.sh`'s three shapes had last run with 1a's
+entry (`cluster-run-20261028-155231`, `-155928` and `-160716`, built from
+`a136f17`'s source, whose build lines name a commit reworded before the
+push); they ran again on `795fe24`'s source, on `h2debug-7.3` at
+`795fe24` (harness sha256 prefix `1931a3b0138014b7`, log
+`p7-notes/q2b-seq-20261028-204036.log`) and on `h2kasan-7.3` at `c0402cd`,
+which changes only the harness (`c274dd15483f899d`, srcdiff empty, log
+`p7-notes/q2b-kasan-seq-20261028-212953.log`).
+
+| shape | kernel | run | checks | with 1a's entry |
+|---|---|---|---|---|
+| default | `h2debug-7.3` | `cluster-run-20261028-204320` | 58, 0 failed | 58, 0 failed |
+| `H2_CRASH=1` | `h2debug-7.3` | `cluster-run-20261028-205021` | 47, 0 failed | 47, 0 failed |
+| `H2_SYNC_SNAPSHOT=0` | `h2debug-7.3` | `cluster-run-20261028-205908` | 47, 0 failed | 47, 0 failed |
+| default | `h2kasan-7.3` | `cluster-run-20261028-213042` | 58, 0 failed | 58, 0 failed |
+| `H2_CRASH=1` | `h2kasan-7.3` | `cluster-run-20261028-214529` | 47, 0 failed | 47, 0 failed |
+| `H2_SYNC_SNAPSHOT=0` | `h2kasan-7.3` | `cluster-run-20261028-220149` | 47, 0 failed | 47, 0 failed |
+
+Each read no kernel warning, lockdep, KASAN or UBSAN report. The module
+sha256 prefix was `1c4bb2faed55c118` on `h2debug-7.3`, the same build as
+the wire runs, and `2e606a70a94ff06b` on `h2kasan-7.3`, which carried 18
+`__asan` and 3 `__ubsan` imports in each of its three runs; the same hash
+is the KASAN wire runs' module, so those loaded a sanitizer build too.
+
+The first KASAN default run at `795fe24` (`cluster-run-20261028-211242`)
+was killed at the harness's 600 s bound for the default shape and
+reported as a hang (`cluster-hang-20261028-212300.klog`). Its log holds
+no hung-task, lockdep or sanitizer report; its last line is the second
+`bigdir` write starting, and its first `bigdir` write took 265 s against
+267 s in the passing KASAN run `cluster-run-20261028-135130`, which spent
+709 s from that write to the last unmount under a longer
+`H2_RUN_TIMEOUT`. So the bound was short for the kernel, not the module
+stuck. `c0402cd` scales the bound by four on a `CONFIG_KASAN=y` tree, and
+the three runs above ran under it.
+
+Not read here: a mount of a source a peer's pass holds while the pass
+runs, which takes the same test, since the name is all it reads.
 
 The row is 1.0.69.
