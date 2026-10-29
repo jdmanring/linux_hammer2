@@ -686,6 +686,16 @@ if [ "$TREE" != 0 ]; then
 		sync
 		timeout 600 umount /mnt/h2c
 		l0=$(wc -l < $K); e0=$(klog 'syncsnap: end clindex')
+		# N3.5's memory reading: the FIFO's peak across the pass. The
+		# sampler starts here, before the slave's remount below starts
+		# the pass, so the baseline is the idle state immediately
+		# before it; at 100,000 files and above the pass dominates the
+		# window, as the record states. A zero sample count voids the
+		# reading.
+		memdir=$(mktemp -d /tmp/h2mem.XXXXXX) || { echo "cluster: FAIL: cannot create memory-sample directory" >&2; exit 1; }
+		mem0=$(awk '/^MemAvailable:/{a=$2} /^Slab:/{s=$2} END{print a, s}' /proc/meminfo)
+		( while true; do awk '/^MemAvailable:/{a=$2} /^Slab:/{s=$2} END{print a, s}' /proc/meminfo; sleep 1; done > "$memdir/log" 2>&1 ) &
+		mempid=$!
 		# The arms are set before the slave's device returns, so the knob
 		# is read at the first pass of the thread it starts.
 		if [ "$H2WALKS" = alt ]; then
@@ -704,7 +714,13 @@ if [ "$TREE" != 0 ]; then
 		mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 		n=0
 		until [ "$(klog 'syncsnap: end clindex')" -gt "$e0" ] || [ $n -ge "$TREE_SECS" ]; do sleep 1; n=$((n + 1)); done
+		kill "$mempid" 2>/dev/null
+		wait "$mempid" 2>/dev/null || true
 		echo "change-$c-wait-seconds $n"
+		echo "change-$c-mem-baseline-kb $mem0"
+		echo "change-$c-mem-samples $(wc -l < "$memdir/log")"
+		echo "change-$c-mem-min-kb $(awk 'NR==1{m1=$1;m2=$2} $1<m1{m1=$1} $2<m2{m2=$2} END{print m1+0, m2+0}' "$memdir/log")"
+		rm -rf "$memdir"
 		echo "change-$c-pass $(bracket $l0)"
 		[ -n "$knob" ] && echo "change-$c-knob-left $(cat /sys/module/hammer2/parameters/$knob)"
 		echo "change-$c-rescan-all $(tail -n +$((l0 + 1)) $K | grep -c 'syncthr: rescan all')"
