@@ -838,7 +838,11 @@ change executes:
   harness deletes the peer's span with the link up and writes through
   the opened gate, is not built: no harness mode deletes a span with
   its link left up, and Linux has no single-element `local` mount to
-  write the slave alone from a local cluster (`hammer2_vfsops.c:1053`);
+  write the slave alone from a local cluster (`hammer2_vfsops.c:1053`).
+  `DEFER(3.2.7, the first increment where an acknowledgment rests on a
+  narrowed pass)`: until then the local control reads the verdict's
+  count on the path the wire form would reach, and 1.0.70 read the walks
+  of both levers on the wire without it;
 - the resume on the live pass, allowed in a scratch build under
   `sync_snapshot=0`, with a hook writing the master alone below the
   break key during the drain and forcing a master flush before the
