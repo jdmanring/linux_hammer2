@@ -78,6 +78,11 @@ TREE_FAN=${H2_TREE_FANOUT:-1000}
 TREE_WRITERS=${H2_TREE_WRITERS:-4}
 PASS_CHANGES=${H2_PASS_CHANGES:-3}
 if [ "$TREE" = 0 ]; then IMGSIZE=2G; RUNSECS=600; else IMGSIZE=8G; RUNSECS=14400; fi
+# A KASAN kernel takes the default shape past 600 s: 709 s from the bigdir
+# write to the last unmount in cluster-run-20261028-135130, which passed
+# under a longer H2_RUN_TIMEOUT, and a run without one read a write still
+# advancing as a hang. The bound follows the tree rather than each caller.
+grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
 RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 # Release the volumes and detach them, safely.
 #
