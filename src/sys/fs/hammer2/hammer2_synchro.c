@@ -127,6 +127,17 @@ typedef struct hammer2_deferred_list {
 	int			root_nfail;
 	hammer2_key_t		root_beg;
 	hammer2_key_t		root_next;
+	/*
+	 * XXX Linux: 1b of doc/SYNC_DESIGN.md.  narrow is set for a verify
+	 * round that compares again only the root keys the round before it
+	 * acted on, thr->narrow[] by hammer2_sync_narrow_ok(); root_last is
+	 * the root call's last key, HAMMER2_KEY_MAX but in such a round; and
+	 * root_unclean is set by a root call of the round that ended anywhere
+	 * but at the end of both key spaces.
+	 */
+	int			narrow;
+	int			root_unclean;
+	hammer2_key_t		root_last;
 } hammer2_deferred_list_t;
 
 
@@ -171,6 +182,52 @@ hammer2_sync_rescan_find(hammer2_thread_t *thr, hammer2_key_t inum)
 			return (i);
 	}
 	return (-1);
+}
+
+/*
+ * XXX Linux: 1b of doc/SYNC_DESIGN.md.  A root key a round replaced,
+ * inserted, destroyed or deferred goes in the set the round records, once;
+ * a full set is a round the next one cannot narrow.
+ */
+static void
+hammer2_sync_narrow_note(hammer2_thread_t *thr, hammer2_key_t key)
+{
+	int r = thr->narrow_rec;
+	int i;
+
+	for (i = 0; i < thr->nnarrow[r]; ++i) {
+		if (thr->narrow[r][i] == key)
+			return;
+	}
+	if (thr->nnarrow[r] < HAMMER2_SYNC_NARROW_MAX)
+		thr->narrow[r][thr->nnarrow[r]++] = key;
+	else
+		thr->narrow_over = 1;
+}
+
+/*
+ * XXX Linux: C_N of 1b, that nothing but this thread writes a root key of
+ * the slave element between its rounds: a remote element registered, whose
+ * registration refuses every read-write mount and remount of the PFS, with
+ * the gate built in.  *genp is the PFS's count of slot detaches, read under
+ * the spin the detach raises it under; a detach between two readings is a
+ * window in which the gates were open, whatever the slots read after it.
+ */
+static int
+hammer2_sync_narrow_cn(hammer2_thread_t *thr, unsigned int *genp)
+{
+	hammer2_pfs_t *pmp = thr->pmp;
+	int cn;
+
+	hammer2_spin_sh(&pmp->iroot->cluster_spin);
+	*genp = pmp->remote_detaches;
+	cn = hammer2_remote_has_slot(pmp) && !HAMMER2_CTL_NOROGATE;
+	hammer2_spin_unsh(&pmp->iroot->cluster_spin);
+#if defined(HAMMER2_LOCKDEBUG)
+	if (hammer2_sync_assert_cn)
+		cn = 1;
+#endif
+	return (cn);
 }
 
 /*
@@ -601,6 +658,9 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	int error;
 	int ferror;		/* XXX Linux: the write-back's own result */
 	int walks;		/* XXX Linux: see hammer2_deferred_list.walks */
+	int k, nk;		/* XXX Linux: see hammer2_deferred_list.narrow */
+	int stop;
+	hammer2_key_t kbeg, klast;
 
 	if (hammer2_debug & 0x8000)
 		kprintf("sync_slaves pfs %s clindex %d\n",
@@ -637,9 +697,29 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 	 * calls, and a pass comparing every inode keep the carried rescan.
 	 */
 	walks = (snap_pmp != NULL && list->walks && !thr->rescan_now);
-	list->root_beg = HAMMER2_KEY_MIN;
+	/*
+	 * XXX Linux: 1b, see hammer2_deferred_list.narrow.  A narrowed round
+	 * runs the root's scan once per key the round before it acted on,
+	 * from that key to that key, each with its own deferral drain; any
+	 * other round runs it once over the whole key space.
+	 */
+	if (!walks)
+		list->narrow = 0;
+	nk = list->narrow ? thr->nnarrow[!thr->narrow_rec] : 1;
+	list->root_unclean = 0;
+	error = 0;
+	stop = 0;
+	k = 0;
+
+next_key:	/* XXX Linux: 1b */
+	kbeg = list->narrow ? thr->narrow[!thr->narrow_rec][k] :
+	    HAMMER2_KEY_MIN;
+	klast = list->narrow ? kbeg : HAMMER2_KEY_MAX;
+	list->root_beg = kbeg;
+	list->root_last = klast;
 	list->root_stamp = 0;
-	list->root_nfail = 0;
+	if (k == 0)
+		list->root_nfail = 0;	/* XXX Linux: the root's across its keys */
 
 	for (;;) {
 		int didbreak = 0;
@@ -650,7 +730,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 		error = hammer2_sync_slaves(thr,
 		    snap_pmp ? snap_pmp->iroot : pmp->iroot, 0, NULL, list, 1);
 		list->root_call = 0;		/* XXX Linux */
-		list->root_beg = HAMMER2_KEY_MIN;
+		list->root_beg = kbeg;
 		list->root_stamp = 0;
 		if (hammer2_debug & 0x8000) {
 			kprintf("sync_slaves error %d defer %p\n",
@@ -714,6 +794,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 			}
 			if (error == 0 || error == HAMMER2_ERROR_EAGAIN)
 				error = HAMMER2_ERROR_EINPROGRESS;
+			stop = 1;
 			break;
 		}
 
@@ -728,6 +809,7 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 		 */
 		if (list->failed) {
 			error = 0;
+			stop = 1;
 			break;
 		}
 
@@ -745,6 +827,9 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
 				list->root_stamp = 1;
 		}
 	}
+	if (!stop && error == 0 && !list->failed && ++k < nk)
+		goto next_key;		/* XXX Linux: 1b */
+	list->root_last = HAMMER2_KEY_MAX;
 
 	/*
 	 * XXX Linux: a root scan that fails breaks the loop above before
@@ -822,6 +907,130 @@ hammer2_sync_pass(hammer2_thread_t *thr, hammer2_pfs_t *snap_pmp,
  */
 #define HAMMER2_SYNC_VERIFY_ROUNDS	3
 
+/*
+ * XXX Linux: whether the round after this one may be narrowed, 1b of
+ * doc/SYNC_DESIGN.md: under sync_walks, with no pass comparing every inode,
+ * every root call of this round ended at the end of both key spaces,
+ * nothing failed, the round's keys fitted and there were some, the rescan
+ * set holds nothing but the snapshot root the rounds put there, and C_N
+ * held at the pass's start and holds now with no detach between.  *whyp
+ * names the first that does not.
+ */
+static int
+hammer2_sync_narrow_ok(hammer2_thread_t *thr, hammer2_deferred_list_t *list,
+    hammer2_key_t rinum, int cn0, unsigned int gen0, const char **whyp)
+{
+	unsigned int gen;
+	int i;
+
+	*whyp = NULL;
+	if (!list->walks)
+		*whyp = "walks";
+	else if (thr->rescan_now || thr->rescan_all)
+		*whyp = "rescan all";
+	else if (list->root_unclean)
+		*whyp = "root unclean";
+	else if (list->failed)
+		*whyp = "failed";
+	else if (thr->narrow_over)
+		*whyp = "keys over";
+	else if (thr->nnarrow[thr->narrow_rec] == 0)
+		*whyp = "no keys";
+	else if (!cn0 || !hammer2_sync_narrow_cn(thr, &gen))
+		*whyp = "no C_N";
+	else if (gen != gen0)
+		*whyp = "detached";
+	for (i = 0; *whyp == NULL && i < thr->nrescan; ++i) {
+		if (thr->rescan[i] != rinum)
+			*whyp = "rescan set";
+	}
+	return (*whyp == NULL);
+}
+
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * XXX Linux: sync_narrow_alter, see hammer2_vfsops.c.  The detach count is
+ * raised as hammer2_remote_detach() raises it, and the slave inode with the
+ * highest key outside the narrowed round's keys is destroyed through the
+ * scan's own helper, under a transaction of its own.
+ */
+static void
+hammer2_sync_narrow_alter_key(hammer2_thread_t *thr,
+    hammer2_deferred_list_t *list)
+{
+	hammer2_pfs_t *pmp = thr->pmp;
+	hammer2_chain_t *parent, *pparent, *chain;
+	hammer2_key_t key_next, key = 0;
+	int r = thr->narrow_rec;
+	int error = 0, found = 0, i;
+
+	hammer2_spin_ex(&pmp->iroot->cluster_spin);
+	++pmp->remote_detaches;
+	hammer2_spin_unex(&pmp->iroot->cluster_spin);
+
+	hammer2_trans_init(pmp, 0);
+	parent = hammer2_sync_slave_chain(thr, 0, NULL, 1, &pparent, list);
+	if (pparent) {
+		hammer2_chain_unlock(pparent);
+		hammer2_chain_drop(pparent);
+	}
+	if (parent == NULL)
+		goto done;
+	chain = hammer2_chain_lookup(&parent, &key_next, HAMMER2_KEY_MIN,
+	    HAMMER2_KEY_MAX, &error, HAMMER2_LOOKUP_SHARED |
+	    HAMMER2_LOOKUP_NODIRECT | HAMMER2_LOOKUP_NODATA);
+	while (chain) {
+		if (chain->bref.type == HAMMER2_BREF_TYPE_INODE) {
+			for (i = 0; i < thr->nnarrow[r]; ++i) {
+				if (thr->narrow[r][i] == chain->bref.key)
+					break;
+			}
+			if (i == thr->nnarrow[r]) {
+				key = chain->bref.key;
+				found = 1;
+			}
+		}
+		chain = hammer2_chain_next(&parent, chain, &key_next,
+		    HAMMER2_KEY_MAX, &error, HAMMER2_LOOKUP_SHARED |
+		    HAMMER2_LOOKUP_NODIRECT | HAMMER2_LOOKUP_NODATA);
+	}
+	/* the walk leaves parent on the deepest indirect block it read */
+	if (parent) {
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+	}
+	parent = NULL;
+	if (found) {
+		parent = hammer2_sync_slave_chain(thr, 0, NULL, 1, &pparent,
+		    list);
+		if (pparent) {
+			hammer2_chain_unlock(pparent);
+			hammer2_chain_drop(pparent);
+		}
+	}
+	if (found && parent) {
+		chain = hammer2_chain_lookup(&parent, &key_next, key, key,
+		    &error, HAMMER2_LOOKUP_SHARED | HAMMER2_LOOKUP_NODIRECT |
+		    HAMMER2_LOOKUP_NODATA);
+		if (chain)
+			error = hammer2_sync_destroy(thr, &parent, &chain, 0,
+			    thr->clindex);
+		kprintf("syncsnap: narrow alter destroyed %016llx error %d\n",
+		    (long long)key, error);
+		if (chain) {
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+		}
+	}
+	if (parent) {
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+	}
+done:
+	hammer2_trans_done(pmp, 0);
+}
+#endif
+
 static int
 hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 {
@@ -837,6 +1046,9 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	char name[HAMMER2_INODE_MAXNAME];
 	char tname[HAMMER2_INODE_MAXNAME];
 	int idx, m, n, error, derror, round, verified, idle;
+	int cn0, narrowed, detached;	/* XXX Linux: 1b */
+	unsigned int gen0, gen;
+	const char *why;
 
 	idx = thr->clindex;
 
@@ -1070,6 +1282,16 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	 * round.
 	 */
 	list->walks = hammer2_sync_walks;	/* XXX Linux: read once a pass */
+	/*
+	 * XXX Linux: 1b.  A round after the first compares again only the root
+	 * keys the round before it acted on, when hammer2_sync_narrow_ok()
+	 * finds C_N and the rest held; the detach count is read at the pass's
+	 * start, at each such choice and at the verdict.
+	 */
+	list->narrow = 0;
+	narrowed = 0;
+	detached = 0;
+	cn0 = hammer2_sync_narrow_cn(thr, &gen0);
 	for (round = 1;; ++round) {
 		/*
 		 * Every round scans the root whatever its tid, see
@@ -1079,6 +1301,12 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		 * against the slave root's by coincidence.
 		 */
 		hammer2_sync_rescan_note(thr, snap_pmp->iroot->meta.inum, 1);
+		thr->narrow_rec = !thr->narrow_rec;	/* XXX Linux: 1b */
+		thr->nnarrow[thr->narrow_rec] = 0;
+		thr->narrow_over = 0;
+		if (list->narrow && (hammer2_debug & 0x8000))
+			kprintf("syncsnap: narrowed clindex %d round %d keys %d\n",
+			    idx, round, thr->nnarrow[!thr->narrow_rec]);
 		error = hammer2_sync_pass(thr, snap_pmp, list);
 		if (hammer2_debug & 0x8000)
 			kprintf("syncsnap: verify clindex %d round %d acted %d "
@@ -1088,8 +1316,34 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		if (error || list->acted == 0 || list->kept ||
 		    round >= HAMMER2_SYNC_VERIFY_ROUNDS)
 			break;
+		list->narrow = hammer2_sync_narrow_ok(thr, list,	/* XXX Linux */
+		    snap_pmp->iroot->meta.inum, cn0, gen0, &why);
+		narrowed |= list->narrow;
+#if defined(HAMMER2_LOCKDEBUG)
+		if (list->narrow && hammer2_sync_narrow_alter > 0) {
+			--hammer2_sync_narrow_alter;
+			hammer2_sync_narrow_alter_key(thr, list);
+		}
+#endif
+		if (!list->narrow && (hammer2_debug & 0x8000))
+			kprintf("syncsnap: carried round clindex %d round %d: %s\n",
+			    idx, round + 1, why);
 	}
+	list->narrow = 0;
 	verified = (error == 0 && list->acted == 0 && list->failed == 0);
+	/*
+	 * XXX Linux: 1b.  A narrowed verification stands only if no slot was
+	 * detached since the pass began: a detach opens the read-write gates,
+	 * and a write through them reaches the slave element
+	 * (doc/SYNC_DESIGN.md, the first open question, read).
+	 */
+	if (verified && narrowed) {
+		(void)hammer2_sync_narrow_cn(thr, &gen);
+		if (gen != gen0) {
+			verified = 0;
+			detached = 1;
+		}
+	}
 	thr->snap_cut = root_tid;	/* the next pass's cut, see hammer2.h */
 
 	if (verified) {
@@ -1121,6 +1375,15 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 					    tname, derror);
 			}
 		}
+	} else if (detached) {
+		/*
+		 * XXX Linux: 1b, see above.  The target stands, and the next
+		 * pass decides afresh; read apart from a pass that ran out of
+		 * rounds.
+		 */
+		thr->tgt_left = 0;
+		kprintf("syncsnap: detached clindex %d rounds %d acted %d\n",
+		    idx, round, list->acted);
 	} else if (error == 0 && list->kept) {
 		/*
 		 * The slave is ahead of the snapshot; nothing failed.  Not a
@@ -1521,10 +1784,14 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	int fifo;		/* XXX Linux: the FIFO's size at the scan's end */
 	int rootcall;		/* XXX Linux: see hammer2_deferred_list.walks */
 	hammer2_key_t beg;	/* XXX Linux: the scan's first key, both sides */
+	hammer2_key_t end;	/* XXX Linux: and its last, see list->root_last */
+	int acted;		/* XXX Linux: list->acted before this turn's arm */
+	hammer2_key_t kact;	/* XXX Linux: the key this turn's arm acts on */
 
 	pmp = thr->pmp;
 	rootcall = (isroot && list->root_call);
 	beg = rootcall ? list->root_beg : HAMMER2_KEY_MIN;
+	end = rootcall ? list->root_last : HAMMER2_KEY_MAX;
 	/*
 	 * XXX Linux: on a snapshot pass the inode scanned belongs to the
 	 * snapshot PFS, so the two XOPs below read the snapshot's tree through
@@ -1717,7 +1984,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_MODIFYING);
 	xop->key_beg = beg;	/* XXX Linux: HAMMER2_KEY_MIN, but see beg */
-	xop->key_end = HAMMER2_KEY_MAX;
+	xop->key_end = end;	/* XXX Linux: HAMMER2_KEY_MAX, but see end */
 	xop->resolve_flags = HAMMER2_RESOLVE_SHARED |
 			     HAMMER2_RESOLVE_ALWAYS;
 	xop->lookup_flags = HAMMER2_LOOKUP_SHARED |
@@ -1772,7 +2039,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	}
 
 	chain = hammer2_chain_lookup(&parent, &key_next,
-				     beg, HAMMER2_KEY_MAX,	/* XXX Linux */
+				     beg, end,	/* XXX Linux */
 				     &serror,
 				     HAMMER2_LOOKUP_SHARED |
 				     HAMMER2_LOOKUP_NODIRECT |
@@ -1786,9 +2053,10 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 	 */
 	if ((hammer2_debug & 0x8000) && isroot) {
 		/* XXX Linux: %jx, which printk does not implement */
-		kprintf("START_SCAN IP=%016llx chain=%p (%016llx) beg %016llx\n",
+		kprintf("START_SCAN IP=%016llx chain=%p (%016llx) end %016llx beg %016llx\n",
 			ip->meta.name_key, chain,
-			(chain ? chain->bref.key : -1), (long long)beg);
+			(chain ? chain->bref.key : -1), (long long)end,
+			(long long)beg);
 	}
 
 	for (;;) {
@@ -1852,6 +2120,9 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		}
 		if (focus)	/* XXX Linux: the source's last key, for the sweep */
 			lastsrc = focus->bref.key;
+		acted = list->acted;	/* XXX Linux: see list->narrow */
+		kact = (n < 0 && chain) ? chain->bref.key :
+		    (focus ? focus->bref.key : 0);
 
 		/*
 		 * XXX Linux: the instrument the six refuted changes assumed.
@@ -2265,7 +2536,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			needrescan = 1;
 			if (isroot && focus->bref.key > thr->rescan_upto)
 				thr->rescan_upto = focus->bref.key; /* XXX Linux */
+			if (rootcall)	/* XXX Linux: see list->narrow */
+				hammer2_sync_narrow_note(thr, focus->bref.key);
 		}
+		if (rootcall && list->acted != acted)	/* XXX Linux */
+			hammer2_sync_narrow_note(thr, kact);
 
 		/*
 		 * If at least one deferral was added and the deferral
@@ -2319,7 +2594,7 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		if (advance_local) {
 			/* XXX Linux: the FreeBSD port's chain_next(), no key_beg */
 			chain = hammer2_chain_next(&parent, chain, &key_next,
-						   HAMMER2_KEY_MAX,
+						   end,	/* XXX Linux */
 						   &serror,
 						   HAMMER2_LOOKUP_SHARED |
 						   HAMMER2_LOOKUP_NODIRECT |
@@ -2358,8 +2633,11 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		hammer2_chain_drop(parent);
 	}
 stamp:	/* XXX Linux: see the root's stamp alone above */
-	if (rootcall)
+	if (rootcall) {
 		list->root_exit = exit_reason;
+		if (exit_reason != 1 && !list->root_stamp)
+			list->root_unclean = 1;	/* XXX Linux: see list->narrow */
+	}
 
 	/*
 	 * If we added deferrals we want the caller to synchronize them

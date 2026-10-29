@@ -244,6 +244,25 @@ module_param_named(sync_force_rescan, hammer2_sync_force_rescan, int, 0644);
 int hammer2_sync_fail_stamp;
 module_param_named(sync_fail_stamp, hammer2_sync_fail_stamp, int, 0644);
 /*
+ * XXX Linux: asserts C_N, that nothing but the synchronization thread
+ * writes the slave element between its verify rounds, in place of the
+ * remote element's registration that establishes it, so the narrowed round
+ * of 1b (doc/SYNC_DESIGN.md) runs on a local cluster.  Only a harness that
+ * keeps the cluster PFS unmounted for the passes it times may set it.
+ * Debug build only.
+ */
+int hammer2_sync_assert_cn;
+module_param_named(sync_assert_cn, hammer2_sync_assert_cn, int, 0644);
+/*
+ * XXX Linux: the next this many narrowed verify rounds are preceded by
+ * what a slot detach and a write through the gates it opens would do: the
+ * PFS's detach count raised and one slave inode outside the round's keys
+ * destroyed, so the narrowing's control runs on a local cluster.  Debug
+ * build only.
+ */
+int hammer2_sync_narrow_alter;
+module_param_named(sync_narrow_alter, hammer2_sync_narrow_alter, int, 0644);
+/*
  * XXX Linux: 1 or 2 collapses the synchronization insert's indirect parent
  * into its own at the insert's second or first release of it, as the
  * flusher can, and clears itself once one is done.  Debug build only.

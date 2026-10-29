@@ -156,6 +156,25 @@ LOCKDEBUG=${H2_LOCKDEBUG:-0}
 # elements, so its passes insert nothing.
 FORCE_RESCAN=${H2_FORCE_RESCAN:-0}
 FAIL_STAMP=${H2_FAIL_STAMP:-0}
+# H2_SYNC_NARROW=1 sets the debug build's sync_assert_cn before the tree
+# arm's changes: the cluster PFS stays unmounted for every timed pass, so
+# nothing but the thread writes the slave between its rounds, the condition
+# a remote element's registration establishes on the wire, and a pass under
+# sync_walks 1 may narrow its verify rounds to the root keys the round
+# before acted on (doc/SYNC_DESIGN.md, 1b). Each change then reads its
+# narrowed rounds and scans beside the rounds' count.
+NARROW=${H2_SYNC_NARROW:-0}
+# H2_NARROW_ALTER=1, with H2_SYNC_NARROW=1, is the narrowing's control:
+# the debug build's sync_narrow_alter makes the first narrowed round of
+# change 1 do what a slot detach and a write through the gates it opens
+# would do, raising the PFS's detach count and destroying one slave inode
+# outside the round's keys, so the narrowed round cannot see it. The pass
+# must end detached and the slave be one inode short of the master right
+# after it. H2_NARROW_ALTER=control is the same against an H2_KO built
+# without the verdict's reading of the count, and the pass must then
+# verify the slave one inode short; either way the next change's pass,
+# which compares every root key, puts it back.
+NARROW_ALTER=${H2_NARROW_ALTER:-0}
 COLLAPSE=${H2_COLLAPSE:-0}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
@@ -200,6 +219,20 @@ fi
 case $FORCE_RESCAN$FAIL_STAMP in 00|01|10|11) ;; *)
 	echo "cluster: COULD-NOT-RUN: H2_FORCE_RESCAN and H2_FAIL_STAMP are 0 or 1" >&2; exit 2 ;;
 esac
+case $NARROW_ALTER in 0|1|control) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_NARROW_ALTER is 1 or control" >&2; exit 2 ;;
+esac
+if [ "$NARROW_ALTER" != 0 ] && { [ "$NARROW" != 1 ] || [ "$WALKS" = 0 ] || [ "$SHAPE" != one ] || [ "$PASS_CHANGES" -lt 2 ] || { [ "$NARROW_ALTER" = control ] && [ -z "${H2_KO:-}" ]; }; }; then
+	echo "cluster: COULD-NOT-RUN: H2_NARROW_ALTER needs H2_SYNC_NARROW=1, sync_walks 1 or alt, H2_PASS_SHAPE=one, two changes, and under control an H2_KO" >&2
+	exit 2
+fi
+case $NARROW in 0|1) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_SYNC_NARROW is 0 or 1" >&2; exit 2 ;;
+esac
+if [ "$NARROW" = 1 ] && { [ "$TREE" = 0 ] || [ "$WALKS" = 0 ] || { [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; }; }; then
+	echo "cluster: COULD-NOT-RUN: H2_SYNC_NARROW needs H2_PASS_TREE, sync_walks 1 or alt, and H2_LOCKDEBUG=1 (or an H2_KO built with it)" >&2
+	exit 2
+fi
 case $COLLAPSE in 0|1|2) ;; *)
 	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE is 0, 1 or 2" >&2; exit 2 ;;
 esac
@@ -550,7 +583,7 @@ bracket() {
 	b == "" { next }
 	/syncsnap: pass clindex/ && p == "" { p = t }
 	/^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters" && $(i + 1) + 0 > mx) mx = $(i + 1) + 0 }
-	/syncsnap: (verified|newer|unverified|interrupted) clindex/ && v == "" {
+	/syncsnap: (verified|newer|unverified|interrupted|detached) clindex/ && v == "" {
 		v = t; w = $0; sub(/.*syncsnap: /, "", w); sub(/ .*/, "", w)
 		r = $0; sub(/.* rounds /, "", r); sub(/ .*/, "", r) }
 	/syncsnap: end clindex/ {
@@ -614,6 +647,12 @@ if [ "$TREE" != 0 ]; then
 		a = $0; sub(/.* last /, "", a)
 		if (("x" a) >= ("x" l)) s++ }
 	END { print s + 0 }' $K)"
+	if [ "$H2_NARROW" = 1 ]; then
+		[ -e /sys/module/hammer2/parameters/sync_assert_cn ] || {
+			echo "cluster: COULD-NOT-RUN: no sync_assert_cn knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
+		echo 1 > /sys/module/hammer2/parameters/sync_assert_cn
+	fi
+	echo "assert-cn $(cat /sys/module/hammer2/parameters/sync_assert_cn 2>/dev/null || echo absent)"
 	c=1
 	while [ $c -le "$PASS_CHANGES" ]; do
 		timeout 600 umount /mnt/h2c; timeout 600 umount /mnt/h2s
@@ -643,6 +682,7 @@ if [ "$TREE" != 0 ]; then
 		knob=
 		[ $c = 1 ] && [ "$H2_FORCE_RESCAN" = 1 ] && knob=sync_force_rescan
 		[ $c = 2 ] && [ "$H2_FAIL_STAMP" = 1 ] && knob=sync_fail_stamp
+		[ $c = 1 ] && [ "$H2_NARROW_ALTER" != 0 ] && knob=sync_narrow_alter
 		if [ -n "$knob" ]; then
 			[ -e /sys/module/hammer2/parameters/$knob ] || {
 				echo "cluster: COULD-NOT-RUN: no $knob knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
@@ -661,7 +701,24 @@ if [ "$TREE" != 0 ]; then
 		# resumed elsewhere after the deferral cap, and stamps with no
 		# rescan (1a); then each root scan's iterations, whose sum against
 		# the root's key count is the walk count a resumed scan splits.
-		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($(NF - 1) != "beg") m++; else if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0, m + 0 }')"
+		# A narrowed round's scans run from a key to that key, so a scan
+		# whose end is not the last key is one of them (1b) and counted
+		# apart from 1a's resumed segments.
+		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0, m + 0, n + 0 }')"
+		echo "change-$c-narrowed $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /syncsnap: narrowed clindex/ { n++ } /syncsnap: carried round clindex/ { sub(/.*: /, ""); gsub(/ /, "_"); c = c $0 "," } END { print n + 0, (c == "" ? "-" : c) }')"
+		echo "change-$c-detached $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: detached clindex')"
+		if [ "$H2_NARROW_ALTER" != 0 ]; then
+			# The slave's inodes against the master's on media, before the
+			# next change's pass can put one back.
+			sync; echo 3 > /proc/sys/vm/drop_caches
+			# CL's own inodes: a device also holds the pass's snapshots,
+			# the target among them when a pass does not verify, so the
+			# count is taken inside CL's block of the show, by the mode
+			# line an inode prints and a dirent does not.
+			cli='/filename "CL"$/ && !on && !past { on = 1; next } on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1 } on && $1 == "mode" { n++ } END { print n + 0 }'
+			echo "change-$c-inodes $(hammer2 -v show /dev/vdb 2>/dev/null | awk "$cli") $(hammer2 -v show /dev/vdc 2>/dev/null | awk "$cli")"
+			echo "change-$c-altered $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: narrow alter destroyed')"
+		fi
 		echo "change-$c-root-iters $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters") printf "%s ", $(i + 1) } END { print "" }')"
 		c=$((c + 1))
 	done
@@ -1161,7 +1218,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -1316,6 +1373,18 @@ while [ $c -le "$PASS_CHANGES" ]; do
 	if [ $c = 2 ] && [ "$FAIL_STAMP" = 1 ]; then
 		a=$(val change-$c-stamp-failed); [ "${a:-0}" = 1 ]; check "change 2: the PFS root's stamp fails once on demand" $? "${a:-none} failure(s), knob left at $(val change-$c-knob-left)"
 		[ "${5:-none}" = unverified ]; check "change 2: a pass whose root stamp failed does not verify" $? "${5:-none} after $(val change-$c-wait-seconds) s"
+	elif [ $c = 1 ] && [ "$NARROW_ALTER" != 0 ]; then
+		# The control: the narrowed round passes over the destroyed
+		# inode, and only the detach count read at the verdict stops the
+		# pass verifying it.
+		a=$(val change-$c-altered); set -- $(val change-$c-pass); v=${5:-none}
+		set -- $(val change-$c-inodes)
+		if [ "$NARROW_ALTER" = 1 ]; then
+			[ "${a:-0}" = 1 ] && [ "$v" = detached ] && [ "$(val change-$c-detached)" = 1 ]; check "control: a detach and a write between the rounds end the narrowed pass detached" $? "altered ${a:-none}, verdict $v, detached lines $(val change-$c-detached), inodes master ${1:-none} slave ${2:-none}"
+		else
+			[ "${a:-0}" = 1 ] && [ "$v" = verified ] && [ $(( ${1:-0} - ${2:-0} )) = 1 ]; check "control: without the verdict's count the narrowed pass verifies a slave one inode short" $? "altered ${a:-none}, verdict $v, inodes master ${1:-none} slave ${2:-none}"
+		fi
+		set -- $(val change-$c-pass)
 	elif [ "$SHAPE" = delete ] || [ "$SHAPE" = rename ]; then
 		# The slave's device returns as a new thread, whose cut is 0, so a
 		# key the slave holds and the snapshot lacks (the removed file, the
@@ -1344,12 +1413,35 @@ while [ $c -le "$PASS_CHANGES" ]; do
 	rounds=${6:-}
 	w=$(val change-$c-walks-set)
 	set -- $(val change-$c-root-walks)
-	echo "  read  change $c: sync_walks ${w:-none}, root walks ${1:-none} from key 0, ${2:-none} resumed, ${3:-none} stamp(s) alone, ${4:-none} unparsed; scan iterations $(val change-$c-root-iters)"
+	echo "  read  change $c: sync_walks ${w:-none}, root walks ${1:-none} from key 0, ${2:-none} resumed, ${3:-none} stamp(s) alone, ${4:-none} unparsed, ${5:-none} narrowed; scan iterations $(val change-$c-root-iters)"
 	[ "${4:-1}" = 0 ]; check "change $c: every root scan's start key is read" $? "${4:-none} START_SCAN line(s) without beg"
+	# 1b: a narrowed round makes no scan from key 0, so the count from key
+	# 0 is the rounds less the narrowed ones. Without H2_SYNC_NARROW no
+	# round narrows, and the carried setting never does.
+	nscans=${5:-}
+	set -- $(val change-$c-narrowed)
+	nrounds=${1:-}; why=${2:-}
+	[ "$NARROW" = 1 ] || [ "${nrounds:-1}" = 0 ]; check "change $c: no round narrows without C_N asserted" $? "${nrounds:-none} narrowed round(s), carried for ${why:-nothing}"
+	if [ $c = 1 ] && [ "$NARROW_ALTER" = 1 ]; then dw=1; else dw=0; fi
+	[ "$(val change-$c-detached)" = $dw ]; check "change $c: $dw pass(es) end detached" $? "$(val change-$c-detached)"
+	set -- $(val change-$c-root-walks)
 	if [ "$w" = 0 ]; then
-		[ "${2:-1}" = 0 ] && [ "${3:-1}" = 0 ]; check "change $c: the carried pass takes no stamp alone and resumes no scan" $? "${2:-none} resumed, ${3:-none} alone"
+		[ "${2:-1}" = 0 ] && [ "${3:-1}" = 0 ] && [ "${nrounds:-1}" = 0 ]; check "change $c: the carried pass takes no stamp alone, resumes no scan and narrows no round" $? "${2:-none} resumed, ${3:-none} alone, ${nrounds:-none} narrowed"
 	elif [ "$w" = 1 ] && ! { [ $c = 1 ] && [ "$FORCE_RESCAN" = 1 ]; }; then
-		[ $(( ${2:-0} + ${3:-0} )) -ge 1 ] && [ "${1:-x}" = "${rounds:-y}" ]; check "change $c: the pass replaces the root rescan, one scan from key 0 a round" $? "${1:-none} from key 0 in ${rounds:-none} round(s), ${2:-none} resumed, ${3:-none} alone"
+		[ $(( ${2:-0} + ${3:-0} )) -ge 1 ] && [ "${1:-x}" = "$(( ${rounds:-0} - ${nrounds:-0} ))" ]; check "change $c: the pass replaces the root rescan, one scan from key 0 a round not narrowed" $? "${1:-none} from key 0 in ${rounds:-none} round(s), ${nrounds:-none} narrowed, ${2:-none} resumed, ${3:-none} alone"
+		# The design's reading: a one-file change's rounds after the
+		# first are narrowed, each scan a key round 1 acted on, and a
+		# change of more root keys than the set holds keeps the carried
+		# round and says why: spread by the set's size, bulk by the cap
+		# that stops its first round, which narrow_ok tests first.
+		if [ "$NARROW" = 1 ] && [ "$SHAPE" = one ] && [ "${rounds:-0}" -ge 2 ] 2>/dev/null; then
+			[ "${nrounds:-0}" = $(( rounds - 1 )) ] && [ "${nscans:-0}" -ge 1 ]; check "change $c: every round after the first is narrowed" $? "${nrounds:-none} of $(( rounds - 1 )), ${nscans:-none} narrowed scan(s), carried for ${why:-nothing}"
+		elif [ "$NARROW" = 1 ] && { [ "$SHAPE" = spread ] || [ "$SHAPE" = bulk ]; } && [ "${rounds:-0}" -ge 2 ] 2>/dev/null; then
+			# spread's round 1 runs whole and overflows the set; bulk's is
+			# stopped by the deferral cap, which is tested first
+			if [ "$SHAPE" = spread ]; then wy=keys_over; else wy=root_unclean; fi
+			[ "${nrounds:-1}" = 0 ] && case "$why" in $wy,*) true ;; *) false ;; esac; check "change $c: a change past the key set keeps the carried round, for $wy" $? "${nrounds:-none} narrowed, carried for ${why:-nothing}"
+		fi
 	elif [ "$w" != 1 ]; then
 		false; check "change $c: the module's sync_walks is read before the change" $? "${w:-nothing} read"
 	fi

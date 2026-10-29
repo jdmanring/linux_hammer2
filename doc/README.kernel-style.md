@@ -249,6 +249,14 @@ more `return (x);` and one more BSD continuation indent, both in
 `hammer2_sync_key_after()`, the first key above a chain's range, which a
 root scan the deferral cap stopped resumes from. No category is new.
 
+1,598 to 1,600 with 1b of the same section. Two more BSD continuation
+indents, on the second parameter lines of `hammer2_sync_narrow_ok()`,
+which decides whether a verify round compares again only the root keys
+the round before it acted on, and of `hammer2_sync_narrow_alter_key()`,
+the debug build's control for it. Their returns and
+`hammer2_sync_narrow_cn()`'s are not among checkpatch's `return (x);`
+hits, read by line number. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

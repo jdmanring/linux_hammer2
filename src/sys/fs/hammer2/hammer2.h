@@ -995,6 +995,7 @@ struct hammer2_dev {
  * tsleep() and wakeup() in hammer2_os.h make any address one.
  */
 #define HAMMER2_SYNC_RESCAN_MAX	64	/* XXX Linux: see rescan below */
+#define HAMMER2_SYNC_NARROW_MAX	64	/* XXX Linux: see narrow below */
 struct hammer2_thread {
 	struct hammer2_pfs	*pmp;
 	struct hammer2_dev	*hmp;
@@ -1077,6 +1078,17 @@ struct hammer2_thread {
 	 */
 	int			tgt_valid;
 	int			tgt_left;
+	/*
+	 * XXX Linux: 1b of doc/SYNC_DESIGN.md.  The PFS-root keys a snapshot
+	 * round replaced, inserted, destroyed or deferred, recorded in the set
+	 * narrow_rec names while the next round reads the other; a round whose
+	 * keys do not fit sets narrow_over, and the round after it is the
+	 * carried one.
+	 */
+	hammer2_key_t		narrow[2][HAMMER2_SYNC_NARROW_MAX];
+	int			nnarrow[2];
+	int			narrow_rec;
+	int			narrow_over;
 };
 typedef struct hammer2_thread	hammer2_thread_t;
 
@@ -1111,6 +1123,12 @@ struct hammer2_pfs {
 	char			*pfs_names[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_types[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_nmasters;	/* masters in this cluster */
+	/*
+	 * XXX Linux: the slots hammer2_remote_detach() has cleared on this PFS,
+	 * under the root's cluster_spin; read by the synchronization pass's
+	 * narrowed verify round, 1b of doc/SYNC_DESIGN.md.
+	 */
+	unsigned int		remote_detaches;
 	hammer2_thread_t	sync_thrs[HAMMER2_MAXCLUSTER];
 	hammer2_blockset_t	pfs_iroot_blocksets[HAMMER2_MAXCLUSTER];
 	int			flags;		/* for HAMMER2_PMPF_xxx */
@@ -1176,6 +1194,8 @@ extern int hammer2_fail_alloc_count;	/* Linux */
 extern int hammer2_sync_force_rescan;	/* Linux */
 extern int hammer2_sync_fail_stamp;	/* Linux */
 extern int hammer2_sync_collapse_parent;	/* Linux */
+extern int hammer2_sync_assert_cn;	/* Linux */
+extern int hammer2_sync_narrow_alter;	/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
 #endif
 extern int hammer2_count_dio_allocated;

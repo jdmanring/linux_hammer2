@@ -2560,6 +2560,7 @@ hammer2_remote_detach(hammer2_pfs_t *pmp, int j, const char *why)
 	if (rchain && iroot->cluster.focus == rchain)
 		iroot->cluster.focus = NULL;
 	pmp->pfs_types[j] = HAMMER2_PFSTYPE_NONE;
+	++pmp->remote_detaches;		/* see hammer2_sync_narrow_cn() */
 	name = pmp->pfs_names[j];
 	pmp->pfs_names[j] = NULL;
 	pmp->pfs_hmps[j] = NULL;
