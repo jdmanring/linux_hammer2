@@ -149,6 +149,15 @@
 # first SNAPDEL that name: A must delete nothing and say so, the PFS still
 # on A's image at the end. H2_WIRE_SNAPDEL=control builds A with
 # HAMMER2_NOSNAPSCOPE, which must delete it.
+# H2_WIRE_KO_A=<ko> and H2_WIRE_KO_B=<ko> load a prebuilt module on that
+# side instead of building one, for a scratch-build control; the header
+# names it by sha256 and says it was given. Each side's module is read
+# with nm -u against the tree's CONFIG_KASAN, so a run on a sanitizer
+# kernel whose module carries no __asan import fails rather than reading
+# no report as clean. Under H2_WIRE_PASS=1 each of B's snapshot passes is
+# read from its begin to its end line as cluster-sync.sh's tree arm reads
+# a change, and every run reads the keepalive's leg through A from the
+# relay's microsecond us= field; both are described in README.testing.md.
 # H2_WIRE_SRCGATE=1 makes the same ZZ.h2sync-src on A and, before any
 # link, asks for it read-write, then read-only: a PFS of the pass's
 # suffix is the source a pass reads as immutable, and a mount of either
@@ -409,8 +418,26 @@ AFLAGS=; BFLAGS=
 [ "$CONNWAIT" = 1 ] && BFLAGS=HAMMER2_CONNWAIT=1
 [ "$CONNWAIT" = control ] && BFLAGS="HAMMER2_CONNWAIT=1 HAMMER2_NOCONNFIX=1"
 [ "$SEQ" = control ] && BFLAGS=HAMMER2_NOCLIENTSEQ=1
-build "$KO_B" $BFLAGS
-if [ "$AFLAGS" = "$BFLAGS" ]; then cp "$KO_B" "$KO_A"; else build "$KO_A" $AFLAGS; fi
+# H2_WIRE_KO_A and H2_WIRE_KO_B load a prebuilt module on that side in place
+# of the build, for a scratch-build control; each is named by its sha256 in
+# the header, and a side given one builds nothing.
+KO_A_GIVEN=${H2_WIRE_KO_A:-}; KO_B_GIVEN=${H2_WIRE_KO_B:-}
+for k in "$KO_A_GIVEN" "$KO_B_GIVEN"; do
+	[ -z "$k" ] || [ -r "$k" ] || { echo "wire: COULD-NOT-RUN: no module at $k" >&2; exit 2; }
+done
+if [ -n "$KO_B_GIVEN" ]; then cp "$KO_B_GIVEN" "$KO_B"; else build "$KO_B" $BFLAGS; fi
+if [ -n "$KO_A_GIVEN" ]; then cp "$KO_A_GIVEN" "$KO_A"
+elif [ "$AFLAGS" = "$BFLAGS" ] && [ -z "$KO_B_GIVEN" ]; then cp "$KO_B" "$KO_A"
+else build "$KO_A" $AFLAGS; fi
+# What the kernel tree configures against what each side's module carries:
+# a KASAN run whose module has no __asan import reads no report and proves
+# nothing. grep -c prints its count and exits 1 on none, so the status is
+# discarded.
+command -v nm >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: no nm, so the modules' instrumentation cannot be read" >&2; exit 2; }
+[ -r "$KDIR/.config" ] || { echo "wire: COULD-NOT-RUN: $KDIR/.config is not readable, so what the tree configures is unknown" >&2; exit 2; }
+WANT_ASAN=$(sed -n 's/^CONFIG_KASAN=//p' "$KDIR/.config")
+ASAN_A=$(nm -u "$KO_A" 2>/dev/null | grep -c '__asan' || true); UBSAN_A=$(nm -u "$KO_A" 2>/dev/null | grep -c '__ubsan' || true)
+ASAN_B=$(nm -u "$KO_B" 2>/dev/null | grep -c '__asan' || true); UBSAN_B=$(nm -u "$KO_B" 2>/dev/null | grep -c '__ubsan' || true)
 # What was built, taken now: the tree can move before the report is written.
 SRC_REV=$(git describe --always --dirty); KO_SUM=$(sha256sum < "$KO_B" | cut -d' ' -f1); KO_A_SUM=$(sha256sum < "$KO_A" | cut -d' ' -f1)
 RELAY_SUM=$(sha256sum < test/h2loop.c | cut -d' ' -f1); WIRE_SUM=$(sha256sum < script/cluster-wire.sh | cut -d' ' -f1)
@@ -1386,7 +1413,7 @@ inpass() {
 # the one after B's unmount, so the second's values are read from the tail.
 val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
 
-echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM"):"
+echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM")${KO_B_GIVEN:+, B's given}${KO_A_GIVEN:+, A's given}:"
 npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 # under LINKDEV B's link is vdc's, which spans vdc's PFSes and not B's CL
 slv=1
@@ -1700,6 +1727,77 @@ asums() { if [ "$STALE" = 1 ]; then sums A sum | sed "s|^\./big\.bin .*|$(val A 
 [ "$LINKLOST" = 1 ] || { [ -n "$(asums)" ] && [ "$(asums)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(asums | grep -c .) equal by sha256, blocks read in folios larger than the block A $(val A io-large-folios) B $(val B io-large-folios)"; }
 [ "$LINKLOST" = 1 ] || { [ -n "$(asums)" ] && [ "$(asums)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold, cpu0 $(val B digest-irqs-before) then $(val B digest-irqs-after)"; }
 fi
+# B's snapshot passes, each read from its begin line to its end line in
+# B's kernel log as cluster-sync.sh's tree arm reads a change: root scans
+# from key 0, resumed segments, narrowed scans and unparsed START_SCAN
+# lines, stamps alone, verify rounds, narrowed rounds and the keys they
+# name, round 1's acted count, detach verdicts, the verdict and the
+# reasons a round was carried. A run whose log holds no bracketed pass
+# fails rather than passing every per-pass check on nothing.
+if [ "$PASS" = 1 ]; then
+	bk=$FIXDIR/wire-run-$stamp-b.klog
+	pv=$(awk '/syncsnap: begin clindex/ { p++; f = r = n = s = m = rd = nr = k = a1 = dt = 0; v = "none"; c = ""; in_p = 1; next }
+	    !in_p { next }
+	    /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ }
+	    /root stamp without a rescan/ { s++ }
+	    /syncsnap: verify clindex/ { rd++; for (i = 1; i < NF; i++) if ($i == "round" && $(i + 1) == 1) for (j = i; j < NF; j++) if ($j == "acted") a1 = $(j + 1) }
+	    /syncsnap: narrowed clindex/ { nr++; k += $NF }
+	    /syncsnap: carried round clindex/ { x = $0; sub(/.*: /, "", x); gsub(/ /, "_", x); c = c x "," }
+	    /syncsnap: detached clindex/ { dt++ }
+	    /syncsnap: verified clindex/ { v = "verified" }
+	    /syncsnap: end clindex/ { print "pass", p, f, r, n, s, m, rd, nr, k, a1, dt, v, (c == "" ? "-" : c); in_p = 0 }' "$bk" 2>/dev/null)
+	np=$(printf '%s\n' "$pv" | grep -c '^pass ')
+	printf '%s\n' "$pv" | grep '^pass ' | while read -r _ p f r n s m rd nr k a1 dt v c; do
+		echo "  read  B pass $p: $f from key 0, $r resumed, $n narrowed scan(s) for $k key(s) in $nr of $rd round(s), $s stamp(s) alone, round 1 acted $a1, $v, carried for $c"
+	done
+	um=$(printf '%s\n' "$pv" | awk '/^pass / { m += $7 } END { print m + 0 }')
+	[ "$np" -ge 1 ] && [ "$um" = 0 ]; check "B: every snapshot pass is read from its begin to its end, with every root scan's start key" $? "$np pass(es), $um START_SCAN line(s) without beg"
+	# A narrowed round scans each key it names once.
+	nb=$(printf '%s\n' "$pv" | awk '/^pass / && $5 != $10 { b = b $2 " " } END { print b }')
+	[ "$np" -ge 1 ] && [ -z "$nb" ]; check "B: every narrowed round scans each key it names" $? "${nb:+pass(es) $nb}${nb:-every pass}"
+	# Under sync_walks 1 each round not narrowed makes one scan from key
+	# 0, resumed segments and the stamp alone replacing the rescans; read
+	# on verified passes, since a pass the link cut mid-round has a scan
+	# with no round line after it.
+	wb=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $3 != $8 - $9 { b = b $2 " " } END { print b }')
+	nv=$(printf '%s\n' "$pv" | grep -c ' verified ')
+	[ "$nv" -ge 1 ] && [ -z "$wb" ]; check "B: every verified pass makes one scan from key 0 a round not narrowed" $? "$nv verified${wb:+, not so in pass(es) $wb}"
+	if [ -z "$CUT" ]; then
+		nd=$(printf '%s\n' "$pv" | awk '/^pass / { d += $12 } END { print d + 0 }')
+		[ "$nd" = 0 ]; check "B: no pass ends detached on a link left up" $? "$nd"
+	fi
+	# The more pass, the last verified one that acted in round 1: five
+	# files and their directory, within the key set, so its second round
+	# is narrowed.
+	if [ "$PASSES" = full ] || { [ "$PASSES" = cut ] && [ "$CUT" != control ]; }; then
+		mp=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $11 > 0 { l = $0 } END { print l }')
+		set -- $mp
+		[ -n "$mp" ] && [ "${9:-0}" -ge 1 ] && [ "${5:-x}" = "${10:-y}" ]; check "B: the more pass narrows its second round" $? "${mp:+pass $2, $9 of $8 round(s) narrowed, $5 scan(s) for ${10} key(s), round 1 acted ${11}, carried for ${14}}${mp:-no verified pass acted}"
+	fi
+	# Scanall calls per pass, when the relay traced calls: opens between
+	# one snapshot line and the next, the count the cost on the link is
+	# read in.
+	tr=$FIXDIR/wire-run-$stamp.trace
+	if grep -q ' snapshot t=' "$tr" 2>/dev/null; then
+		echo "  read  scanall calls per pass, from the relay's trace: $(awk '/ snapshot t=/ { if (s) printf "%d ", c; s = 1; c = 0; next } s && / open t=/ { c++ } END { if (s) printf "%d", c; print "" }' "$tr")"
+	fi
+fi
+# The keepalive's leg through A, from the relay's trace: B's LNK_PING
+# (CREATE|DELETE) to A's reply on the same msgid, each stamped in
+# microseconds when the relay took it, so the figure is the relay's leg
+# to A and back, half the path. A median under ten times the 1 us stamp
+# says nothing, and fails.
+if [ "$LINKLOST" != 1 ] && [ "$SILENCE" = 0 ]; then
+	tr=$FIXDIR/wire-run-$stamp.trace
+	rt=$(awk '/ deliver / { c = u = m = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^cmd=/) c = substr($i, 5); else if ($i ~ /^us=/) u = substr($i, 4); else if ($i ~ /^msgid=/) m = substr($i, 7) }
+	    if (c == "" || u == "" || substr(c, 3, 4) != "0001") next
+	    if ($1 == "B>A" && substr(c, 1, 1) ~ /^[cd]$/) p[m] = u
+	    else if ($1 == "A>B" && substr(c, 1, 1) ~ /^[ef]$/ && (m in p)) { print u - p[m]; delete p[m] } }' "$tr" 2>/dev/null |
+	    sort -n | awk '{ v[NR] = $1 } END { if (NR) print NR, v[int((NR + 1) / 2)], v[1], v[NR]; else print 0 }')
+	set -- $rt
+	echo "  read  the keepalive's leg through A: ${1:-0} ping(s), median ${2:-none} us, least ${3:-none}, most ${4:-none}; the round trip is twice the median"
+	[ "${1:-0}" -ge 1 ] && [ "${2:-0}" -ge 10 ]; check "link: the keepalive's leg through A is read above the stamp's resolution" $? "${1:-0} ping(s), median ${2:-none} us"
+fi
 if [ "$ROGATE" = control ]; then
 	# The gate off: CL remounts read-write and a chmod through it reaches
 	# the slave's inode on B's media and not the master's, B read live just
@@ -1833,6 +1931,14 @@ lbad=$(printf '%s\n' $lr | grep -v -x -E 'h2ch_remote_(inode/[12]|dirent/[23]|da
 case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
 fi
 for sd in A B; do
+	# The report check below says nothing on a sanitizer kernel unless the
+	# module loaded there carries the instrumentation.
+	if [ "$sd" = A ]; then na=$ASAN_A; nu=$UBSAN_A; else na=$ASAN_B; nu=$UBSAN_B; fi
+	if [ "$WANT_ASAN" = y ]; then
+		[ "$na" -ge 1 ]; check "$sd: the module carries the instrumentation its kernel tree configures" $? "$na __asan and $nu __ubsan import(s)"
+	else
+		[ "$na" = 0 ]; check "$sd: the module carries no KASAN instrumentation, its kernel tree configuring none" $? "$na __asan and $nu __ubsan import(s); a KASAN report cannot be emitted on this kernel"
+	fi
 	# under the route control the connection device's refusal is a
 	# warning by design, and the only one allowed
 	kw=$(num "$(val $sd kernel-warnings)" 1)

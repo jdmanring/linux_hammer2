@@ -761,16 +761,32 @@ run(void)
 /* ---- the relay: two kernels in the loop --------------------------------- */
 
 /* The relay's clock, milliseconds since its start; delay is real here. */
+static struct timespec relay_t0;
+
 static long
 now_ms(void)
 {
-	static struct timespec t0;
 	struct timespec t;
 
 	clock_gettime(CLOCK_MONOTONIC, &t);
-	if (t0.tv_sec == 0 && t0.tv_nsec == 0)
-		t0 = t;
-	return ((t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000);
+	if (relay_t0.tv_sec == 0 && relay_t0.tv_nsec == 0)
+		relay_t0 = t;
+	return ((t.tv_sec - relay_t0.tv_sec) * 1000 + (t.tv_nsec - relay_t0.tv_nsec) / 1000000);
+}
+
+/*
+ * The same clock in microseconds, for the trace alone: a round trip on the
+ * link is under the millisecond the schedule runs on.
+ */
+static long
+now_us(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	if (relay_t0.tv_sec == 0 && relay_t0.tv_nsec == 0)
+		relay_t0 = t;
+	return ((t.tv_sec - relay_t0.tv_sec) * 1000000 + (t.tv_nsec - relay_t0.tv_nsec) / 1000);
 }
 
 struct side {
@@ -1315,8 +1331,9 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		    from->name, to->name, i, f->hdr.msgid, t, d, d2);
 		side_enqueue(to, frame_dup(f), t + d2);
 	} else {
-		trace("%s>%s i=%ld msgid=%" PRIu64 " deliver t=%ld d=%ld\n",
-		    from->name, to->name, i, f->hdr.msgid, t, d);
+		/* cmd and us last, so no reader of the fields before moves */
+		trace("%s>%s i=%ld msgid=%" PRIu64 " deliver t=%ld d=%ld cmd=%08x us=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t, d, f->hdr.cmd, now_us());
 	}
 	if (f->hdr.msgid == (uint64_t)opt.corrupt_at && !corrupted) {
 		corrupted = 1;
