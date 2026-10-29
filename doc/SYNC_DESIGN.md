@@ -777,7 +777,12 @@ where the carried pass makes five scans from key 0 in its first round; on
 `h2release-7.3` a one-file pass took 19.9 s against 29.5 s at the
 million in one boot
 (`doc/history/verification-record.md`, "The root rescan replaced on a
-snapshot pass").
+snapshot pass"). 1b is built at 1.0.68: with C_N asserted, a one-file
+change's second round scanned its one key and an eight-file change's its
+eight, 2 iterations each against the root walk's 10,103, one walk from
+key 0 where the carried pass makes three, and a change past the key set
+kept the carried round (`doc/history/verification-record.md`, "The
+second verify round narrowed").
 The walks are counted from the scan itself: iterations summed per pass
 against the root's key count, since a resumed segment prints its own
 `START_SCAN`. The new behavior sits behind `sync_walks` (1 the design,
