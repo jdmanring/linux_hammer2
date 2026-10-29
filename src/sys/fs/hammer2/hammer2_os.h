@@ -1915,5 +1915,10 @@ void __hammer2_dbg_pmp_died(const void *);
 #else
 #define HAMMER2_CTL_NOSNAPSCOPE		0
 #endif
+#ifdef HAMMER2_NOSRCGATE	/* a pass's source snapshot mounted read-only */
+#define HAMMER2_CTL_NOSRCGATE		1
+#else
+#define HAMMER2_CTL_NOSRCGATE		0
+#endif
 
 #endif /* !_FS_HAMMER2_OS_H_ */

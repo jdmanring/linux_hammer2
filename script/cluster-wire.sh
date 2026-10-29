@@ -149,6 +149,15 @@
 # first SNAPDEL that name: A must delete nothing and say so, the PFS still
 # on A's image at the end. H2_WIRE_SNAPDEL=control builds A with
 # HAMMER2_NOSNAPSCOPE, which must delete it.
+# H2_WIRE_SRCGATE=1 makes the same ZZ.h2sync-src on A and, before any
+# link, asks for it read-write, then read-only and remounted read-write:
+# a PFS of the pass's suffix is the source a pass reads as immutable, so
+# the read-write mount and remount must be refused with A's line each, the
+# read-only mount must succeed, and no file written there may reach A's
+# image. mount -w, since without it mount(8) retries read-only on EROFS
+# and the refusal would read as a mount. H2_WIRE_SRCGATE=control builds A
+# with HAMMER2_NOSRCGATE, under which the source mounts read-write and the
+# file written there is on A's image.
 # H2_WIRE_ADMIT=1 removes B's .none marker before its dial: h2service
 # must refuse the row as DragonFly's daemon refuses an unknown host, and
 # the dial then made with the marker back proceeds as a plain run.
@@ -227,6 +236,7 @@ SILENCE=${H2_WIRE_SILENCE:-0}
 DETACHWRITE=${H2_WIRE_DETACHWRITE:-0}
 WINDOW=${H2_WIRE_WINDOW:-0}
 ROGATE=${H2_WIRE_ROGATE:-0}; PASSREFUSE=${H2_WIRE_PASSREFUSE:-0}; SNAPROUTE=${H2_WIRE_SNAPROUTE:-0}
+SRCGATE=${H2_WIRE_SRCGATE:-0}
 SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
 LINKDEV=${H2_WIRE_LINKDEV:-0}
 STALE=${H2_WIRE_STALE:-0}
@@ -288,6 +298,7 @@ for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE"; do
 done
 case $CONNWAIT in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CONNWAIT is 1 or control" >&2; exit 2;; esac
 case $LINKDEV in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_LINKDEV is 1" >&2; exit 2;; esac
+case $SRCGATE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SRCGATE is 1 or control" >&2; exit 2;; esac
 case $SNAPDEL$ADMIT in 00|10|control0|01|0control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SNAPDEL and H2_WIRE_ADMIT are 1 or control" >&2; exit 2;; esac
 case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
@@ -303,7 +314,7 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$STALE" = 0 ] || nctl=$((nctl + 1))
 [ "$RETYPE" = 0 ] || nctl=$((nctl + 1))
 [ -z "$CUT" ] || nctl=$((nctl + 1))
-for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
+for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$SRCGATE" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
 # the two snapshot controls, the stale element and the retype run under the pass
 { [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ] || [ -n "$CUT" ]; } && PASS=1
@@ -391,6 +402,7 @@ AFLAGS=; BFLAGS=
 [ "$WINDOW" = 0 ] || AFLAGS=HAMMER2_NOWINDOW=1
 [ "$WINDOW" = control ] && BFLAGS=HAMMER2_NOCLIENTWINDOW=1
 [ "$SNAPDEL" = control ] && AFLAGS=HAMMER2_NOSNAPSCOPE=1
+[ "$SRCGATE" = control ] && AFLAGS=HAMMER2_NOSRCGATE=1
 [ "$ROGATE" = control ] && BFLAGS=HAMMER2_NOROGATE=1
 [ "$PASSREFUSE" = control ] && BFLAGS=HAMMER2_NOPASSREFUSE=1
 [ "$SNAPROUTE" = control ] && BFLAGS=HAMMER2_NOSNAPROUTE=1
@@ -643,6 +655,26 @@ cat > "$W/ro.sh" <<'GUEST'
 # remote master is registered
 mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "mount CL ro failed"; exit 1; }
 echo "ro-mounted 1"
+GUEST
+cat > "$W/srcgate.sh" <<'GUEST'
+# srcgate: A's ZZ.h2sync-src asked for read-write, then read-only and
+# remounted read-write; each state read from /proc/mounts
+S=/mnt/h2src; mkdir -p $S
+st() { awk -v m=$S '$2 == m { split($4, o, ","); print o[1]; f = 1 } END { if (!f) print "none" }' /proc/mounts; }
+n0=$(dmesg | grep -c 'refused: a synchronization source')
+mount -t hammer2 -w /dev/vdb@ZZ.h2sync-src $S 2>/dev/null; echo "srcgate-rw-rc $?"
+echo "srcgate-rw-state $(st)"
+if [ "$(st)" != none ]; then
+	echo x > $S/written 2>/dev/null; echo "srcgate-rw-write-rc $?"
+	sync; umount $S
+fi
+mount -t hammer2 -o ro /dev/vdb@ZZ.h2sync-src $S 2>/dev/null; echo "srcgate-ro-rc $?"
+echo "srcgate-ro-state $(st)"
+mount -o remount,rw $S 2>/dev/null; echo "srcgate-remount-rc $?"
+echo "srcgate-remount-state $(st)"
+echo x > $S/remounted 2>/dev/null; echo "srcgate-remount-write-rc $?"
+sync; umount $S; echo "srcgate-umount-rc $?"
+echo "srcgate-lines $(( $(dmesg | grep -c 'refused: a synchronization source') - n0 ))"
 GUEST
 cat > "$W/pass.sh" <<'GUEST'
 # pass: B's slave element is written by its synchronization pass from A's
@@ -1211,7 +1243,7 @@ echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 to_scripts() {	# to_scripts <ssh>
-	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$1:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$1:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $1 failed" >&2; exit 2; }
 }
 to_scripts "$SA"
@@ -1236,7 +1268,8 @@ nval() {	# nval <A|B> <name>: how many lines carry it, with or without a value
 	grep -c -E "^$1 $2( |$)" "$W/out"
 }
 : > "$W/out"
-phase A setup.sh master 0 1 $([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+phase A setup.sh master 0 1 $({ [ "$SNAPDEL" = 0 ] && [ "$SRCGATE" = 0 ]; } || echo ZZ.h2sync-src) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+[ "$SRCGATE" = 0 ] || phase A srcgate.sh
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
@@ -1707,6 +1740,17 @@ if [ "$ROGATE" = control ]; then
 	[ "$(num "$(val B rw-mount-rc)" 1)" = 0 ] && [ "$(num "$(val B log-mount-refused)" 1)" = 0 ]; check "control: with the read-only gate off a read-write mount of B's CL is taken beside the remote master" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 else
 [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
+fi
+# A PFS of the pass's suffix asked for read-write on A, and what A's
+# image holds of the files written there.
+if [ "$SRCGATE" != 0 ]; then
+	zw=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c -E 'filename "(written|remounted)"')
+	sg="decoy rc $(val A decoy-rc); rw rc $(val A srcgate-rw-rc) $(val A srcgate-rw-state); ro rc $(val A srcgate-ro-rc) $(val A srcgate-ro-state); remount rc $(val A srcgate-remount-rc) $(val A srcgate-remount-state), its write rc $(val A srcgate-remount-write-rc); refusal lines $(val A srcgate-lines); files on A's image $zw"
+	if [ "$SRCGATE" = 1 ]; then
+		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 0)" != 0 ] && [ "$(val A srcgate-rw-state)" = none ] && [ "$(num "$(val A srcgate-ro-rc)" 1)" = 0 ] && [ "$(val A srcgate-ro-state)" = ro ] && [ "$(num "$(val A srcgate-remount-rc)" 0)" != 0 ] && [ "$(val A srcgate-remount-state)" = ro ] && [ "$(num "$(val A srcgate-remount-write-rc)" 0)" != 0 ] && [ "$(num "$(val A srcgate-lines)" 0)" = 2 ] && [ "$zw" = 0 ]; check "a pass's source snapshot is refused read-write at mount and remount and mounts read-only" $? "$sg"
+	else
+		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 1)" = 0 ] && [ "$(val A srcgate-rw-state)" = rw ] && [ "$(num "$(val A srcgate-rw-write-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-lines)" 1)" = 0 ] && [ "$zw" -ge 1 ]; check "control: without the gate a pass's source snapshot mounts read-write and a file written there reaches A's image" $? "$sg"
+	fi
 fi
 # SNAPDEL for a name of the pass's suffix on A that the link never took:
 # A says so and the PFS stays, or in the control A deletes it.

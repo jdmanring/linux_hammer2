@@ -124,11 +124,12 @@ endif
 ifdef HAMMER2_NOKEEPALIVE
 ccflags-y += -DHAMMER2_NOKEEPALIVE
 endif
-# And four refusals, each switched off by its HAMMER2_CTL_ term in
+# And five refusals, each switched off by its HAMMER2_CTL_ term in
 # hammer2_os.h: the read-only mount and remount of a PFS with a remote
 # element, the pass on a device opened read-only, the routing of a remote
-# master's snapshot to that master, and SNAPDEL's limit to the link's own
-# snapshots.  Never install any of them.
+# master's snapshot to that master, SNAPDEL's limit to the link's own
+# snapshots, and the read-only mount and remount of a pass's source
+# snapshot.  Never install any of them.
 ifdef HAMMER2_NOROGATE
 ccflags-y += -DHAMMER2_NOROGATE
 endif
@@ -140,6 +141,9 @@ ccflags-y += -DHAMMER2_NOSNAPROUTE
 endif
 ifdef HAMMER2_NOSNAPSCOPE
 ccflags-y += -DHAMMER2_NOSNAPSCOPE
+endif
+ifdef HAMMER2_NOSRCGATE
+ccflags-y += -DHAMMER2_NOSRCGATE
 endif
 # The dmsg callback's install before the reader starts: HAMMER2_CONNWAIT
 # holds the reconnect a second after the reader's start, so a peer's

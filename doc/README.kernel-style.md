@@ -257,6 +257,12 @@ the debug build's control for it. Their returns and
 `hammer2_sync_narrow_cn()`'s are not among checkpatch's `return (x);`
 hits, read by line number. No category is new.
 
+1,600 to 1,602 with the refusal of a read-write mount of a pass's source
+snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
+(`hammer2_remote.c:2621`), the same form checkpatch reads at
+`hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
+argument, its declaration in `hammer2.h`. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

@@ -2604,6 +2604,24 @@ hammer2_remote_has_slot(hammer2_pfs_t *pmp)
 }
 
 /*
+ * Whether a PFS is a synchronization pass's source snapshot, by its name:
+ * the local pass's own, one this server holds for a peer's pass, or one a
+ * crash left, which the next pass deletes by that name.  A pass reads its
+ * source as immutable, so the mount gates keep it read-only; the caller
+ * holds hammer2_mntlk, under which a PFS's names are freed.
+ */
+int
+hammer2_remote_is_source(hammer2_pfs_t *pmp)
+{
+	int j;
+
+	for (j = 0; j < HAMMER2_MAXCLUSTER; ++j)
+		if (hammer2_remote_snap_name(pmp->pfs_names[j]))
+			return (1);
+	return (0);
+}
+
+/*
  * The work item.  Candidates are the masters' spans not yet tried; each
  * root is fetched holding only the connection, then hammer2_mntlk is tried
  * and, when refused, the item requeues after a delay rather than wait,

@@ -1513,6 +1513,7 @@ int hammer2_remote_snapshot_take(hammer2_pfs_t *, int, const char *,
 int hammer2_remote_snapshot_del(hammer2_dev_t *, const struct uuid *,
     const char *);
 int hammer2_remote_has_slot(hammer2_pfs_t *);
+int hammer2_remote_is_source(hammer2_pfs_t *);
 void hammer2_remote_block_freed(hammer2_dev_t *, int);
 void hammer2_remote_dev_ref(hammer2_dev_t *);
 void hammer2_remote_dev_drop(hammer2_dev_t *);

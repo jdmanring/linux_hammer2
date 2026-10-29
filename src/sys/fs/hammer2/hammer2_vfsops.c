@@ -1764,6 +1764,18 @@ next_hmp:
 		return (-EROFS);
 	}
 
+	/*
+	 * XXX Linux: a synchronization pass's source snapshot is read-only,
+	 * since the pass reads it as immutable (doc/SYNC_DESIGN.md, 1b).
+	 */
+	if (!rdonly && hammer2_remote_is_source(pmp) && !HAMMER2_CTL_NOSRCGATE) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hstrfree(devstr);
+		hprintf("read-write mount refused: a synchronization source\n");
+		deactivate_locked_super(sb);	/* ->kill_sb unmounts */
+		return (-EROFS);
+	}
+
 	/* Update readonly hmp if !rdonly. */
 	pmp->rdonly = rdonly;
 
@@ -2670,6 +2682,12 @@ hammer2_reconfigure(struct fs_context *fc)
 	if (hammer2_remote_has_slot(pmp) && !HAMMER2_CTL_NOROGATE) {
 		hammer2_lk_unlock(&hammer2_mntlk);
 		hprintf("read-write remount refused: a remote element is registered\n");
+		return (-EROFS);
+	}
+	/* XXX Linux: a synchronization pass's source, see the mount */
+	if (hammer2_remote_is_source(pmp) && !HAMMER2_CTL_NOSRCGATE) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hprintf("read-write remount refused: a synchronization source\n");
 		return (-EROFS);
 	}
 	if (hmp->rdonly) {

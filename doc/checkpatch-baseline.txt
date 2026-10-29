@@ -218,6 +218,10 @@
 # parameter lines of hammer2_sync_narrow_ok(), 1b's choice of a narrowed
 # verify round, and hammer2_sync_narrow_alter_key(), its debug control. No
 # category is new. See README.kernel-style.md.
+# 1,600 to 1,602: `return is not a function` 371 -> 372 and `function
+# definition argument` 504 -> 505, the return and the unnamed prototype
+# argument of hammer2_remote_is_source(), which keeps a pass's source
+# snapshot read-only at mount. No category is new. See README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -244,12 +248,12 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-504 function definition argument 'X' should also have an identifier name
+505 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 239 please, no spaces at the start of a line
 86 quoted string split across lines
-371 return is not a function, parentheses are not required
+372 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
