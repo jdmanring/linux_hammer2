@@ -20067,3 +20067,54 @@ snapshot a peer's pass holds, the design note's second open question,
 which is not built.
 
 The row is 1.0.68.
+
+## A pass's source snapshot refused read-write, 2026-10-28
+
+Lever 1b's second open question in `doc/SYNC_DESIGN.md`: a pass reads its
+source snapshot as immutable, and over the wire that snapshot is a PFS on
+the peer, which a mount there could write. Built at `d502568`: a PFS whose
+name carries the pass's suffix, `.h2sync-src`, is refused a read-write
+mount and a read-write remount with `EROFS` under `hammer2_mntlk`
+(`hammer2_remote_is_source()`), by name rather than by the server's list
+of the snapshots it holds, so the local pass's own source and a crash's
+leftover are covered as well; a read-only mount stays allowed. The
+expected readings were written before the code, in
+`p7-notes/q2-expected.md`, which planned the reading on `cluster-sync.sh`;
+it was moved to `cluster-wire.sh`, whose `setup.sh` already makes a PFS of
+that suffix on the master for `H2_WIRE_SNAPDEL`.
+
+`H2_WIRE_SRCGATE=1` makes `ZZ.h2sync-src` on A and, before any link, asks
+for it with `mount -w` (without `-w` mount(8) retries read-only on `EROFS`,
+and the refusal would read as a mount), then read-only, then remounted
+read-write, each state read from `/proc/mounts`, and A's image is read for
+the files written there. `H2_WIRE_SRCGATE=control` builds A with
+`HAMMER2_NOSRCGATE`, which switches the refusal off.
+
+| mode | kernel | run | read-write mount | read-only, then remount | refusal lines | files on A's image | checks |
+|---|---|---|---|---|---|---|---|
+| 1 | `h2debug-7.3` | `wire-run-20261028-200130` | rc 32, not mounted | rc 0 `ro`; rc 32, still `ro`, its write rc 1 | 2 | 0 | 30, 0 failed |
+| control | `h2debug-7.3` | `wire-run-20261028-200307` | rc 0, `rw`, a write rc 0 | rc 0 `ro`; rc 0, `rw`, its write rc 0 | 0 | 2 | 30, 0 failed |
+| 1 | `h2kasan-7.3` | `wire-run-20261028-200736` | rc 32, not mounted | rc 0 `ro`; rc 32, still `ro`, its write rc 1 | 2 | 0 | 30, 0 failed |
+| control | `h2kasan-7.3` | `wire-run-20261028-200956` | rc 0, `rw`, a write rc 0 | rc 0 `ro`; rc 0, `rw`, its write rc 0 | 0 | 2 | 30, 0 failed |
+
+Every run read source `v1.0.4-714-gd502568` with no local change, the
+module sha256 prefix `79e7daea29aa4984` on `h2debug-7.3` and
+`035e69fd0d928856` on `h2kasan-7.3`, A's control module `dc4373c5384d3282`
+and `414287b338f84375`; the sequences' logs are
+`p7-notes/q2-seq-20261028-200044.log` and
+`p7-notes/q2-kasan-seq-20261028-200529.log`. In each run the plain
+link's reading stood beside the refusal, every file's digest on B equal
+to A's, 305 of 305. On `h2kasan-7.3` both guests read no kernel warning,
+lockdep or sanitizer report and kmemleak found nothing of hammer2's after
+the unload; the wire harness does not count the module's sanitizer
+imports, so that the modules were the sanitizer builds rests on their
+build against `~/kernels/linux-7.3-kasan`, their hashes and their load on
+the `-kasan` kernel.
+
+Not read here: a read-write mount of a source a peer's pass holds while
+the pass runs, which takes the same test, since the name is all it reads;
+and a read-only mount holding a source against the pass's delete of it,
+which `hammer2_pfs_delete_byname()` refuses `EBUSY` while it is mounted,
+read from the code.
+
+The row is 1.0.69.
