@@ -20178,13 +20178,19 @@ The row is 1.0.69.
 ## The wire harness readings, 2026-10-29
 
 Stage 1 and 2 readings of `script/cluster-wire.sh` on the two-guest link
-(`artix-s6-kde` and `artix-s6-h2b`, both running 7.3.0), read at `7c0adfe`
-(`wire-run-20261029-021557`):
-- 42 checks, 0 failed.
+(`artix-s6-kde` and `artix-s6-h2b`), read at `7c0adfe` across six kept runs
+(`wire-run-20261029-021557` step 0 on `h2debug-7.3`;
+`wire-run-20261029-002052`/`-002314`, the debug walks-1/walks-0 carried pair
+in `p7-notes/n2c-seq-20261029-002036.log`, 42 checks and 0 failed each;
+`wire-run-20261029-002723`/`-003033`, the KASAN walks-1/walks-0 carried pair
+in the same log, 42 checks and 0 failed each;
+`wire-run-20261029-001140`, the KASAN N1.7 scratch-`norootcont` rerun in
+`p7-notes/n2b-seq-20261029-000721.log`, 42 checks with the control's 2 failures):
+- 42 checks, 0 failed on the step-0 and carried runs; the N1.7 rerun fails its 2 placed checks and nothing else.
 - Module sha256 `1c4bb2faed55c118` (debug) and `2e606a70a94ff06b` (KASAN).
-- Round trip: leg through A 219 us, leg through B 266 us, sum 485 us.
-- Remote entry counts: 310 of 310 digests equal warm and cold.
-- Sanitizer import check: 18 `__asan` and 3 `__ubsan` imports verified on both guests of the KASAN runs.
+- Round trip, read on `wire-run-20261029-021557`'s trace: leg through A 219 us, leg through B 266 us, sum 485 us.
+- Remote entry counts: 310 of 310 digests equal warm and cold, on every run with the link left up.
+- Sanitizer import check: 18 `__asan` and 3 `__ubsan` imports verified on both guests of the carried-pair KASAN runs.
 - Kernel log alive, 0 kernel warnings, 0 lockdep/sanitizer reports, kmemleak clean.
 
 The row is 1.0.70.
