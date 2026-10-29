@@ -20175,6 +20175,190 @@ runs, which takes the same test, since the name is all it reads.
 
 The row is 1.0.69.
 
+## The levers read over the wire, 2026-10-28
+
+Step 4 of 3.0b.1 in the plan: levers 1a and 1b, read so far on one host,
+read on the two-guest link, where `cluster-wire.sh` had read the pass only
+by its outcome. The harness gained the readings first, at `aff598c`,
+`768038e`, `4edb61d` and `7c0adfe`: under `H2_WIRE_PASS=1` each of B's
+snapshot passes is read from its begin line to its end line in B's kernel
+log, as `cluster-sync.sh`'s tree arm reads a change, with five checks
+(every pass parsed; every narrowed round scanning each key it names; every
+verified pass making one scan from key 0 a round not narrowed; no pass
+ending detached with the link up; the `more` pass narrowing its second
+round); with calls traced, the scanall calls and the chains they fed per
+pass; on every run both legs of the link from the keepalive, in
+microseconds from a `us=` field `test/h2loop.c` now appends to its relay
+`deliver` lines (`test-transport.sh` 35 of 35 after it); each side's
+module read by `nm -u` against the tree's `CONFIG_KASAN`; and
+`H2_WIRE_KO_A`/`_B` to load a prebuilt module on a side. The expected
+readings and fake passes were written before the first run, in
+`p7-notes/wire-levers-expected.md`, with K and the carried arm appended
+before their runs.
+
+Every run loaded a module built from `592e3c9`'s source, which differs
+from `795fe24`'s by nothing under `src/`: sha256 prefix `1c4bb2faed55c118`
+on `h2debug-7.3` and `2e606a70a94ff06b` (18 `__asan` and 3 `__ubsan`
+imports, read on both sides of every KASAN run) on `h2kasan-7.3`, the
+builds 1.0.69's runs loaded. The first session (`p7-notes/n2-seq-20261028-231420.log`)
+ran a frozen copy of `768038e`'s harness (sha256 prefix
+`e2f7c68446feb4e4`) and the reruns (`n2b-seq-20261029-000721.log`) one of
+`4edb61d`'s (`933bbdd41ae759ae`); the wire header named the tree's head
+and not the harness then, so the KASAN half reads `4edb61d` and one debug
+run `768038e-dirty` while running `768038e`'s copy. The header names the
+harness's hash from `7c0adfe`.
+
+**The cut point.** `H2_WIRE_PASS=1 H2_WIRE_CUT_AT=1000000` traced every
+call: K = 156 on `h2debug-7.3` (`wire-run-20261028-231437`) and 155 on
+`h2kasan-7.3` (`-233621`), each half of the copy pass's calls as the
+bracket then counted them (312 and 311; 310 under the corrected bracket
+below). The cut falls on the first call from K on with 2 to 15 chains
+still to feed, and in all four disconnect and control runs that was call
+304, inside round 1 (round 2's walk is call 309). The bound of six calls
+after round 1's last, which the plan asked to be written beside K before
+any cut run, was not written; call 304 is also where the cut fell at
+1.0.54.
+
+| cell | `h2debug-7.3` | checks | `h2kasan-7.3` | checks |
+|---|---|---|---|---|
+| step 0, traced | `wire-run-20261028-231437` | 42, 0 failed | `-233621` | 42, 0 failed |
+| `H2_WIRE_PASS=1` | `-231659` | 42, 0 failed | `-233932` | 42, 0 failed |
+| `CUT=disconnect` | `-231922` | 43, 0 failed | `-234232` | 43, 0 failed |
+| `CUT=control` | `-232150`, rerun `wire-run-20261029-001647` | 30, 1 failed; 30, 0 failed | `-234536`, rerun `wire-run-20261029-000923` | 30, 1 failed; 30, 0 failed |
+| `CUT=slave` | `-232314` | 42, 0 failed | `-234747` | 42, 0 failed |
+| `CUT=master` | `-232654` | 43, 0 failed | `-235359` | 43, 0 failed |
+| N1.7 control | `-233017`, rerun `wire-run-20261029-001812` | 42, 3 failed; 42, 2 failed | `-235957`, rerun `wire-run-20261029-001140` | 42, 2 failed; 42, 2 failed |
+| N1.6 control | `cluster-run-20261028-233224` | 51, 2 failed | `cluster-run-20261029-000244` | 51, 2 failed |
+
+**The passes, the same on both kernels.** The copy pass (305 files)
+made 2 scans from key 0 and a stamp alone, acted on 626 keys in round 1,
+carried round 2 for `keys_over` and verified. The `more` pass made 1 scan
+from key 0 and 7 narrowed scans for the 7 keys its second round named
+(6 and 6 in debug's step 0, with 16 acted against 17), and verified.
+Under the disconnect the cut pass made 1 scan from key 0 and acted on 616
+keys with no verdict; the pass after the dial made 1 scan from key 0 and 5
+narrowed scans for 5 keys and verified, and the `more` pass after it 7 for
+7. After the slave's power cut the pass made 2 scans from key 0 and 5
+resumed segments over the 5000-file `bulk` set, acted on 15628 keys in
+round 1, kept `0x534/1` in round 2 (`kept newer`) and verified, carried for
+`root_unclean`. After the master's the cut pass acted on 8005 in round 1
+with one failure and carried round 2 for `root_unclean`; the resumed pass
+made 1 scan from key 0 and 4 resumed segments, acted on 8624 and kept
+`0x534/1`, and ended `newer` (`syncsnap: newer clindex 0 rounds 1 kept 1
+acted 8624`, both kernels); the next pass verified in one round that
+acted on nothing. Every walk is the expected file's, written before the
+runs. Every run with the link left up read 310 of 310 digests equal
+(5310 under a power cut), and no run read a kernel warning, lockdep or
+sanitizer report or a kmemleak object of hammer2's.
+
+**Calls and chains fed per pass.** A root walk is one scanall call, so a
+saved walk shows in the chains the calls fed and not in the calls. Read
+from a snapshot line to B's `SNAPDEL` of it (`7c0adfe`; the bracket before
+it is below): the copy pass 310 calls feeding 941 chains on both kernels
+(two root walks of 315 and one directory of 300 in them), the `more` pass
+13 calls and 338 chains on debug and 14 and 339 on KASAN, one call and
+one chain apart with its one narrowed key, and the pass after a
+disconnect 11 and 331. The carried arm (`H2_WIRE_WALKS=0`,
+`p7-notes/n2c-seq-20261029-002036.log`, frozen copy sha256 prefix
+`662d2a341ff9f924` of `7c0adfe`'s harness, both kernels, each arm 42
+checks with 0 failed): under walks 0 the copy pass makes 3 scans from
+key 0 with 0 resumed and 0 narrowed and 311 calls feeding 1256 chains,
+and the `more` pass 3 from key 0 and 9 calls feeding 976, carried for
+`walks` on both rounds, against the walks 1 arms beside them reading 310
+and 941 with 2 from key 0 on the copy pass and 13 or 14 calls with 338
+or 339 chains on the narrowed `more` pass. The source names
+`v1.0.4-725-g7c0adfe-dirty`, dirty by the working tree's design-note
+line now `527635b`; `src/` is unchanged since `592e3c9` (empty diff)
+and the modules are the same builds the N1 arms loaded
+(`1c4bb2faed55c118` debug, `2e606a70a94ff06b` KASAN with 18 `__asan`
+and 3 `__ubsan` imports on both sides of both KASAN runs). Digests 310
+of 310 on all four, no kernel warning, lockdep, sanitizer or kmemleak
+finding, cores 0 across the kernel switches back to `h2debug-7.3`.
+The walks 0 figures are the expected file's (`wire-levers-expected.md`,
+written 2026-10-29 00:12): about 311 calls and 941 plus 315 chains on
+the copy pass, about 9 calls and about 970 chains on the `more` pass,
+the fake pass of a write that did not take guarded by the sysfs reading
+and the from-key-0 count of 3.
+
+**The link's round trip.** Each side pings the other as a CREATE|DELETE
+`LNK_PING` and the carried kernel answers on the same msgid with a REPLY;
+the relay stamps each frame when it takes it, so B's ping to A's answer
+is the leg through A and A's to B's the leg through B, and their medians
+sum to the round trip. On `h2debug-7.3` the runs with 12 to 14 pings a
+side read 468 to 541 us (265 + 203 in the plain pass), on `h2kasan-7.3`
+737 to 816 us (404 + 380); the power-cut cells, whose link is up only
+after the restart, read 1 to 4 pings a side (407 and 863 us debug, 549 and
+602 KASAN). Every median is above 10 us, so the 1 us stamp is under a
+tenth of it. The two guests share one host bridge and one cpuset, so this
+is a function reading of the link, not a rate.
+
+**The controls.** N1.7 loads on B a scratch build of `592e3c9`'s source
+with the root gate's pass-through disabled (`p7-notes/n1/scratch-norootcont`,
+sha256 prefix `ce3f689c1a2f5947` debug, `9e0452010bbc3188` KASAN): the
+`more` pass's narrowed round scans 1 key of the 7 it names, and the run
+fails "every narrowed round scans each key it names" and "the more pass
+narrows its second round", and nothing else at `4edb61d`, 310 of 310
+digests equal, since round 1 copied everything; on both kernels. N1.6
+runs `cluster-sync.sh`'s capping `bulk` shape (`H2_PASS_TREE=10000
+H2_TREE_FANOUT=100 H2_SYNC_WALKS=alt H2_PASS_CHANGES=4 H2_PASS_SHAPE=bulk`)
+under `H2_KO` at a scratch build that rescans from key 0 after a resumed
+round (`scratch-rescan`, `b09f4bd8b546c937` debug, `662152e5a5bff281`
+KASAN): changes 1 and 3, under walks 1, read 3 scans from key 0 in 2
+rounds with 3 resumed segments and fail "the pass replaces the root
+rescan, one scan from key 0 a round not narrowed"; changes 2 and 4, the
+carried walks 0, read 6 and pass the carried check; the slave matches the
+master, 0 lines of 30202 differing; 51 checks, 2 failed, on both kernels.
+This is the negative control the record's 1a entry lacked for that check,
+placed on the only shape that caps.
+
+**What the first runs found in the harness.** Three defects, none in the
+module. The control cell leaves the link down, so it verifies nothing,
+and the per-pass check required one verified pass anyway: 30 checks, 1
+failed, on both kernels at `768038e`, and 30, 0 failed on both reruns
+after `4edb61d` made that floor one verified pass only where the link is
+left up or dialed again. The `more` check counted the five files on A's
+whole device and required five; a source snapshot of the next pass taken
+before the count holds the same files, and debug's N1.7 run read A 10 with
+the digests equal. `4edb61d` counts the snapshots of `CL` in the same
+show and requires five per copy; the four reruns read 0 snapshots beside
+the five, so the arm that adds a copy rests on the code and the one kept
+run. And the calls-per-pass reading bracketed a pass from one snapshot
+line to the next, taking in the idle stamp passes between a verdict and
+the next snapshot, each one call walking the live root over the wire; B's
+log has two in debug's step 0 (`idlestamp` at 516.7 and 537.2 s, calls 310
+and 311 with 315 and 316 chains) and the KASAN run one, so the same copy
+pass read 312 calls and 1572 chains on one kernel and 311 and 1256 on the
+other. `7c0adfe` ends a pass at B's `SNAPDEL` of its snapshot, and the
+figures above are that bracket's, read by the committed reading over the
+kept traces and by the carried-arm runs.
+
+**Sweeps.** The run bound: a KASAN run of `cluster-sync.sh` had read as a
+hang under a fixed bound (1.0.69). Fifteen other fleet scripts carried a
+fixed default; fourteen now scale it by four on a `CONFIG_KASAN=y` tree as
+`cluster-sync.sh` does, and `cluster-wire.sh` with them (`7c0adfe`).
+`dfly-enospc.sh` times a DragonFly guest and is left. The instrumentation
+check: five fleet scripts read sanitizer reports without counting the
+module's imports (`ccms-lockdep.sh`, `cluster-dmsg.sh`, `storm.sh`,
+`sync-empty-base.sh`, `test-fixtures.sh`). Each builds the module from
+`KDIR` in the run, insmod refuses a module whose vermagic is not the
+booted kernel's (`7.3.0` against `7.3.0-kasan`, read by `modinfo` from the
+two scratch builds), and neither Makefile switches a sanitizer off (`grep`
+for `SANITIZE`, `KASAN` and `KCOV`, exit 1), so a KASAN guest loads only a
+module the KASAN tree instrumented. The check matters where a prebuilt
+module is loaded: `cluster-sync.sh` and `cluster-wire.sh` load one and
+carry it, and `hpanic-contain.sh` loads one and claims no sanitizer
+reading. Of the fleet scripts
+only `cluster-sync.sh` and `cluster-wire.sh` print their own hash; the
+rest name a head at most, and gain it when a record entry next cites one.
+
+Not read here: a narrowing control with a real slot detach on the wire,
+which needs a hold between B's rounds timed against a relay partition,
+`DEFER(3.2.7, the first increment where an acknowledgment rests on a
+narrowed pass)` in `doc/SYNC_DESIGN.md`. The plan's 3.0b exit multiplies
+scanall calls by the round trip; the calls barely move with a walk, so
+the cost on the wire is read as both, the calls times the round trip as a
+floor and the chains fed as the volume.
+
 ## The wire harness readings, 2026-10-29
 
 Stage 1 and 2 readings of `script/cluster-wire.sh` on the two-guest link
