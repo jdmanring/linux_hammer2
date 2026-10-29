@@ -191,24 +191,26 @@ H2SNAP=${H2_SYNC_SNAPSHOT:-1}
 # pass makes after its deferral drain (doc/SYNC_DESIGN.md, 1a), 0 is the
 # carried rescan. alt sets 1 for the tree arm's odd changes and 0 for its
 # even ones, so both read one tree in one boot. H2_PASS_SHAPE is the tree
-# arm's change: one file (one), one file in each of 100 directories
-# (spread), one file removed (delete) or moved to the next directory
-# (rename), or 4000 files, more than the 1001 deferrals that stop a root
-# scan in each of the three verify rounds (bulk).
+# arm's change: one file (one), one file in each of 8 directories (few),
+# one file in each of 100 directories (spread), one file removed (delete)
+# or moved to the next directory (rename), or 4000 files, more than the
+# 1001 deferrals that stop a root scan in each of the three verify rounds
+# (bulk).
 WALKS=${H2_SYNC_WALKS:-1}
 SHAPE=${H2_PASS_SHAPE:-one}
 case $WALKS in 0|1|alt) ;; *)
 	echo "cluster: COULD-NOT-RUN: H2_SYNC_WALKS is 0, 1 or alt" >&2; exit 2 ;;
 esac
-case $SHAPE in one|spread|delete|rename|bulk) ;; *)
-	echo "cluster: COULD-NOT-RUN: H2_PASS_SHAPE is one, spread, delete, rename or bulk" >&2; exit 2 ;;
+case $SHAPE in one|few|spread|delete|rename|bulk) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_PASS_SHAPE is one, few, spread, delete, rename or bulk" >&2; exit 2 ;;
 esac
 if { [ "$WALKS" = alt ] || [ "$SHAPE" != one ]; } && [ "$TREE" = 0 ]; then
 	echo "cluster: COULD-NOT-RUN: H2_SYNC_WALKS=alt and H2_PASS_SHAPE need H2_PASS_TREE" >&2; exit 2
 fi
 if [ "$TREE" != 0 ] && { { [ "$SHAPE" = spread ] && [ "$TREE_FAN" -lt 100 ]; } ||
+    { [ "$SHAPE" = few ] && [ "$TREE_FAN" -lt 8 ]; } ||
     { [ "$SHAPE" = bulk ] && [ $(( TREE / TREE_FAN )) -lt $(( (4000 + TREE_FAN - 1) / TREE_FAN )) ]; }; }; then
-	echo "cluster: COULD-NOT-RUN: H2_PASS_SHAPE=spread needs 100 directories and bulk 4000 files" >&2; exit 2
+	echo "cluster: COULD-NOT-RUN: H2_PASS_SHAPE=few needs 8 directories, spread 100 and bulk 4000 files" >&2; exit 2
 fi
 # The tree arm times the snapshot pass by its begin and end lines, which
 # only that pass prints, under bit 0x8000.
@@ -281,14 +283,16 @@ echo "  kept  this report beside the images as cluster-run-$STAMP.log"
 # their identity rested on the session's order. The harness is copied
 # beside the report, since the frozen script/.run-*.sh copies are reused.
 # A module given by H2_KO is named by its own hash, since HEAD is not its
-# source.
+# source; a dirty tree by the hash of its diff against HEAD, and a built
+# module by its own hash once built.
 git diff --quiet HEAD -- src/ 2>/dev/null; dirty=$?
+srcdiff=$(git diff HEAD -- src/ 2>/dev/null | sha256sum | cut -c1-16)
 if [ -n "${H2_KO:-}" ]; then
 	ko="$H2_KO sha256=$(sha256sum < "$H2_KO" 2>/dev/null | cut -c1-16)"
 else
 	ko=built
 fi
-echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty ko=$ko harness=$(sha256sum < "$0" | cut -c1-16)"
+echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty srcdiff=$srcdiff ko=$ko harness=$(sha256sum < "$0" | cut -c1-16)"
 cp "$0" "$FIXDIR/cluster-run-$STAMP.sh"
 
 if [ -n "${H2_KO:-}" ]; then
@@ -302,6 +306,7 @@ else
 		make -s KDIR="$KDIR" >/dev/null 2>&1
 	fi || { echo "cluster: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 	KO=src/sys/fs/hammer2/hammer2.ko
+	echo "  raw   built ko sha256=$(sha256sum < "$KO" | cut -c1-16)"
 fi
 
 # What the kernel tree configures against what the module actually carries.
@@ -439,9 +444,11 @@ finish() {
 	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
 	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
 	# 1a over the whole run: the root's stamps taken alone, and the scans
-	# begun past key 0, which only a resumed segment does; a START_SCAN
-	# without its beg field is counted apart, not as either.
-	echo "walks-run $(awk '/root stamp without a rescan/ { s++ } /START_SCAN/ { if ($(NF - 1) != "beg") m++; else if ($NF ~ /^0+$/) f++; else r++ } END { print s + 0, r + 0, m + 0 }' $K)"
+	# begun past key 0 that run to the last key, which only a resumed
+	# segment does; a narrowed scan (1b) ends at its own key and is
+	# counted fourth, and a START_SCAN without its end and beg fields
+	# third, as neither.
+	echo "walks-run $(awk '/root stamp without a rescan/ { s++ } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } END { print s + 0, r + 0, m + 0, n + 0 }' $K)"
 	# The master device's free blocks at the end and after two bulkfree
 	# scans (a delete frees nothing until the second, script/bulkfree.sh),
 	# beside the count at the first mount: every snapshot pass creates and
@@ -662,6 +669,7 @@ if [ "$TREE" != 0 ]; then
 		# tells the two apart.
 		case $SHAPE in
 		one) printf '%s.%s %0600d\n' $c $c $c > /mnt/h2c/t/d$c/f$c ;;
+		few) d=0; while [ $d -lt 8 ]; do printf '%s.%s %0600d\n' $c $d $c > /mnt/h2c/t/d$d/f$c; d=$((d + 1)); done ;;
 		spread) d=0; while [ $d -lt 100 ]; do printf '%s.%s %0600d\n' $c $d $c > /mnt/h2c/t/d$d/f$c; d=$((d + 1)); done ;;
 		delete) rm /mnt/h2c/t/d$c/f$c ;;
 		rename) mv /mnt/h2c/t/d$c/f$c /mnt/h2c/t/d$((c + 1))/r$c ;;
@@ -705,7 +713,7 @@ if [ "$TREE" != 0 ]; then
 		# whose end is not the last key is one of them (1b) and counted
 		# apart from 1a's resumed segments.
 		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0, m + 0, n + 0 }')"
-		echo "change-$c-narrowed $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /syncsnap: narrowed clindex/ { n++ } /syncsnap: carried round clindex/ { sub(/.*: /, ""); gsub(/ /, "_"); c = c $0 "," } END { print n + 0, (c == "" ? "-" : c) }')"
+		echo "change-$c-narrowed $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /syncsnap: narrowed clindex/ { n++; k += $NF } /syncsnap: carried round clindex/ { sub(/.*: /, ""); gsub(/ /, "_"); c = c $0 "," } END { print n + 0, (c == "" ? "-" : c), k + 0 }')"
 		echo "change-$c-detached $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: detached clindex')"
 		if [ "$H2_NARROW_ALTER" != 0 ]; then
 			# The slave's inodes against the master's on media, before the
@@ -717,7 +725,7 @@ if [ "$TREE" != 0 ]; then
 			# line an inode prints and a dirent does not.
 			cli='/filename "CL"$/ && !on && !past { on = 1; next } on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1 } on && $1 == "mode" { n++ } END { print n + 0 }'
 			echo "change-$c-inodes $(hammer2 -v show /dev/vdb 2>/dev/null | awk "$cli") $(hammer2 -v show /dev/vdc 2>/dev/null | awk "$cli")"
-			echo "change-$c-altered $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: narrow alter destroyed')"
+			echo "change-$c-altered $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: narrow alter destroyed [0-9a-f]* error 0$')"
 		fi
 		echo "change-$c-root-iters $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters") printf "%s ", $(i + 1) } END { print "" }')"
 		c=$((c + 1))
@@ -1380,7 +1388,7 @@ while [ $c -le "$PASS_CHANGES" ]; do
 		a=$(val change-$c-altered); set -- $(val change-$c-pass); v=${5:-none}
 		set -- $(val change-$c-inodes)
 		if [ "$NARROW_ALTER" = 1 ]; then
-			[ "${a:-0}" = 1 ] && [ "$v" = detached ] && [ "$(val change-$c-detached)" = 1 ]; check "control: a detach and a write between the rounds end the narrowed pass detached" $? "altered ${a:-none}, verdict $v, detached lines $(val change-$c-detached), inodes master ${1:-none} slave ${2:-none}"
+			[ "${a:-0}" = 1 ] && [ "$v" = detached ] && [ "$(val change-$c-detached)" = 1 ] && [ $(( ${1:-0} - ${2:-0} )) = 1 ]; check "control: a detach and a write between the rounds end the narrowed pass detached" $? "altered ${a:-none}, verdict $v, detached lines $(val change-$c-detached), inodes master ${1:-none} slave ${2:-none}"
 		else
 			[ "${a:-0}" = 1 ] && [ "$v" = verified ] && [ $(( ${1:-0} - ${2:-0} )) = 1 ]; check "control: without the verdict's count the narrowed pass verifies a slave one inode short" $? "altered ${a:-none}, verdict $v, inodes master ${1:-none} slave ${2:-none}"
 		fi
@@ -1420,8 +1428,11 @@ while [ $c -le "$PASS_CHANGES" ]; do
 	# round narrows, and the carried setting never does.
 	nscans=${5:-}
 	set -- $(val change-$c-narrowed)
-	nrounds=${1:-}; why=${2:-}
+	nrounds=${1:-}; why=${2:-}; nkeys=${3:-}
 	[ "$NARROW" = 1 ] || [ "${nrounds:-1}" = 0 ]; check "change $c: no round narrows without C_N asserted" $? "${nrounds:-none} narrowed round(s), carried for ${why:-nothing}"
+	# A narrowed round scans each key it names once: fewer scans than keys
+	# is a key the round never compared.
+	[ -n "$nscans" ] && [ "$nscans" = "${nkeys:-x}" ]; check "change $c: the narrowed rounds scan every key they name" $? "${nscans:-none} narrowed scan(s), ${nkeys:-none} key(s) named in ${nrounds:-none} round(s)"
 	if [ $c = 1 ] && [ "$NARROW_ALTER" = 1 ]; then dw=1; else dw=0; fi
 	[ "$(val change-$c-detached)" = $dw ]; check "change $c: $dw pass(es) end detached" $? "$(val change-$c-detached)"
 	set -- $(val change-$c-root-walks)
@@ -1434,8 +1445,9 @@ while [ $c -le "$PASS_CHANGES" ]; do
 		# change of more root keys than the set holds keeps the carried
 		# round and says why: spread by the set's size, bulk by the cap
 		# that stops its first round, which narrow_ok tests first.
-		if [ "$NARROW" = 1 ] && [ "$SHAPE" = one ] && [ "${rounds:-0}" -ge 2 ] 2>/dev/null; then
-			[ "${nrounds:-0}" = $(( rounds - 1 )) ] && [ "${nscans:-0}" -ge 1 ]; check "change $c: every round after the first is narrowed" $? "${nrounds:-none} of $(( rounds - 1 )), ${nscans:-none} narrowed scan(s), carried for ${why:-nothing}"
+		if [ "$NARROW" = 1 ] && { [ "$SHAPE" = one ] || [ "$SHAPE" = few ]; } && [ "${rounds:-0}" -ge 2 ] 2>/dev/null; then
+			if [ "$SHAPE" = few ]; then kmin=8; else kmin=1; fi
+			[ "${nrounds:-0}" = $(( rounds - 1 )) ] && [ "${nscans:-0}" -ge $(( kmin * (rounds - 1) )) ]; check "change $c: every round after the first is narrowed" $? "${nrounds:-none} of $(( rounds - 1 )), ${nscans:-none} narrowed scan(s), carried for ${why:-nothing}"
 		elif [ "$NARROW" = 1 ] && { [ "$SHAPE" = spread ] || [ "$SHAPE" = bulk ]; } && [ "${rounds:-0}" -ge 2 ] 2>/dev/null; then
 			# spread's round 1 runs whole and overflows the set; bulk's is
 			# stopped by the deferral cap, which is tested first
@@ -1619,7 +1631,7 @@ fi
 a=$(val sync-snapshot); b=$(val sync-walks); w0=$WALKS; [ "$w0" = alt ] && w0=1
 [ "${a:-x}" = "$H2SNAP" ] && [ "${b:-x}" = "$w0" ]; check "the module runs with the parameters asked for" $? "sync_snapshot ${a:-none} of $H2SNAP, sync_walks ${b:-none} of $w0"
 set -- $(val walks-run)
-echo "  read  1a over the run: ${1:-none} stamp(s) alone, ${2:-none} resumed segment(s), ${3:-none} START_SCAN line(s) without beg"
+echo "  read  1a over the run: ${1:-none} stamp(s) alone, ${2:-none} resumed segment(s), ${3:-none} START_SCAN line(s) without end and beg, ${4:-none} narrowed scan(s)"
 if [ "$H2SNAP" = 1 ] && [ "$w0" = 1 ]; then
 	[ "${3:-1}" = 0 ] && [ $(( ${1:-0} + ${2:-0} )) -ge 1 ]; check "a snapshot pass replaces its root rescan" $? "${1:-none} alone, ${2:-none} resumed"
 else

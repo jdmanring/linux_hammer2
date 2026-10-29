@@ -133,10 +133,15 @@ typedef struct hammer2_deferred_list {
 	 * acted on, thr->narrow[] by hammer2_sync_narrow_ok(); root_last is
 	 * the root call's last key, HAMMER2_KEY_MAX but in such a round; and
 	 * root_unclean is set by a root call of the round that ended anywhere
-	 * but at the end of both key spaces.
+	 * but at the end of both key spaces.  root_cont marks a root call
+	 * that goes on with a walk of the root this round already began, a
+	 * narrowed key after the first or a resumed segment, which the root
+	 * tid gate lets through: the round's first call took the root off
+	 * the rescan set and may have stamped it.
 	 */
 	int			narrow;
 	int			root_unclean;
+	int			root_cont;
 	hammer2_key_t		root_last;
 } hammer2_deferred_list_t;
 
@@ -718,6 +723,7 @@ next_key:	/* XXX Linux: 1b */
 	list->root_beg = kbeg;
 	list->root_last = klast;
 	list->root_stamp = 0;
+	list->root_cont = (k > 0);
 	if (k == 0)
 		list->root_nfail = 0;	/* XXX Linux: the root's across its keys */
 
@@ -732,6 +738,7 @@ next_key:	/* XXX Linux: 1b */
 		list->root_call = 0;		/* XXX Linux */
 		list->root_beg = kbeg;
 		list->root_stamp = 0;
+		list->root_cont = (k > 0);
 		if (hammer2_debug & 0x8000) {
 			kprintf("sync_slaves error %d defer %p\n",
 				error, list->base);
@@ -821,9 +828,10 @@ next_key:	/* XXX Linux: 1b */
 		 * carried rescan from the first key.
 		 */
 		if (walks) {
-			if (list->root_exit == 3 && !list->root_end)
+			if (list->root_exit == 3 && !list->root_end) {
 				list->root_beg = list->root_next;
-			else if (list->root_exit == 1 || list->root_exit == 3)
+				list->root_cont = 1;
+			} else if (list->root_exit == 1 || list->root_exit == 3)
 				list->root_stamp = 1;
 		}
 	}
@@ -1922,8 +1930,12 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 			/*
 			 * XXX Linux: or the rescan set asks for it, the tids
 			 * agreeing by the flush's propagation and not by a clean
-			 * scan; see hammer2_thread.rescan.
+			 * scan; see hammer2_thread.rescan.  Or the call goes on
+			 * with a root walk the round began, see list->root_cont.
 			 */
+			if (chain && rootcall && list->root_cont &&
+			    !list->root_stamp)
+				want_update = 1;
 			if (chain && want_update == 0 &&
 			    hammer2_sync_rescan_wanted(thr, rinum)) {
 				want_update = 1;
@@ -2071,6 +2083,17 @@ hammer2_sync_slaves(hammer2_thread_t *thr, hammer2_inode_t *ip,
 		hammer2_chain_t *focus;
 
 		++iters;
+		/*
+		 * XXX Linux: a slave key past the call's last, which only
+		 * hammer2_sync_destroy()'s reposition to HAMMER2_KEY_MAX can
+		 * return, ends the local side, or a narrowed round's sweep
+		 * would destroy keys it was never given; see list->root_last.
+		 */
+		if (chain && chain->bref.key > end) {
+			hammer2_chain_unlock(chain);
+			hammer2_chain_drop(chain);
+			chain = NULL;
+		}
 		if (chain == NULL && merror == HAMMER2_ERROR_ENOENT) {
 			exit_reason = 1;
 			break;
