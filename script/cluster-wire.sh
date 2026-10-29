@@ -635,7 +635,11 @@ if [ "${1:-}" = more ]; then
 	mkdir -p $C/more
 	i=0; while [ $i -lt 5 ]; do head -c 4096 /dev/urandom > $C/more/m$i; i=$((i + 1)); done
 	sync
-	echo "more-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')"
+	# one show for both counts: a pass's source snapshot on this device
+	# holds the same five files, and is counted beside them
+	ms=$(hammer2 -v show /dev/vdb 2>/dev/null)
+	echo "more-media-files $(printf '%s\n' "$ms" | grep -c 'filename "m[0-9]')"
+	echo "more-media-snaps $(printf '%s\n' "$ms" | grep -c 'filename "CL\.h2sync-')"
 	echo "more-files $(find $C/more -type f | grep -c .)"
 	(cd $C && find ./more -type f | sort | xargs sha256sum) | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
 	exit 0
@@ -726,7 +730,10 @@ if [ "${1:-}" = more ]; then
 	d0=${2:-$(klog 'syncsnap: remote delete .* error 00000000')}; n=0
 	until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')" -ge 5 ] || [ $n -ge 180 ]; do sleep 2; n=$((n + 2)); done
 	echo "more-wait-seconds $n"
-	echo "more-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "m[0-9]')"
+	# a pass's target on this device holds them too, counted beside them
+	ms=$(hammer2 -v show /dev/vdb 2>/dev/null)
+	echo "more-media-files $(printf '%s\n' "$ms" | grep -c 'filename "m[0-9]')"
+	echo "more-media-snaps $(printf '%s\n' "$ms" | grep -c 'filename "CL\.h2sync-')"
 	n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -gt "$d0" ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
 	echo "more-end-seconds $n"
 	echo "more-snap-deleted $(( $(klog 'syncsnap: remote delete .* error 00000000') - d0 ))"
@@ -1510,7 +1517,7 @@ if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ] && [ -z "$CUT" ]; then
 	# Incremental convergence: a set written on the master after the first
 	# pass reaches the slave's media by a later pass, which also verifies
 	# and deletes its snapshot; the digests read after include the set.
-	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 1)" = "$UNV" ] && [ "$(num "$(val B more-snap-verified)" 0)" -gt "$(num "$(val B pass-snap-verified)" 0)" ] && [ "$(num "$(val B more-snap-idle-taken)" 9)" -le 1 ] && [ "$(num "$(val B more-snap-idle-passes)" 0)" -ge 1 ]; check "pass: five files written on the master after the first pass reach the slave's media by a later pass, and a quiet master is then passed idle" $? "A $(val A more-media-files) on its media, B $(val B more-media-files) after $(val B more-wait-seconds) s, passes verified $(val B pass-snap-verified) then $(val B more-snap-verified), snapshots deleted $(val B more-snap-deleted) more, then $(val B more-snap-idle-taken) taken in 12 s with $(val B more-snap-idle-passes) idle passes"
+	[ "$(num "$(val A more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val A more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val B more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 1)" = "$UNV" ] && [ "$(num "$(val B more-snap-verified)" 0)" -gt "$(num "$(val B pass-snap-verified)" 0)" ] && [ "$(num "$(val B more-snap-idle-taken)" 9)" -le 1 ] && [ "$(num "$(val B more-snap-idle-passes)" 0)" -ge 1 ]; check "pass: five files written on the master after the first pass reach the slave's media by a later pass, and a quiet master is then passed idle" $? "A $(val A more-media-files) on its media beside $(val A more-media-snaps) snapshot(s), B $(val B more-media-files) beside $(val B more-media-snaps) after $(val B more-wait-seconds) s, passes verified $(val B pass-snap-verified) then $(val B more-snap-verified), snapshots deleted $(val B more-snap-deleted) more, then $(val B more-snap-idle-taken) taken in 12 s with $(val B more-snap-idle-passes) idle passes"
 	# Neither image holds a snapshot of the pass at the end: the source on
 	# the master's, deleted at B's request, and the target on the slave's,
 	# deleted when a pass verified; a lost link's leftovers would show as
@@ -1568,7 +1575,7 @@ elif [ "$POWER" = 1 ]; then
 	# or reads newer and the next verifies.
 	case "$(val B cut-resumed-verdicts)" in "verified "*|"newer verified ") rv=0;; *) rv=1;; esac
 	[ "$rv" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "power: the resumed pass verifies, or reads newer and the next pass verifies" $? "verdicts $(val B cut-resumed-verdicts)after a wait of $(val B cut-resumed-second-wait) s, keys kept by tid $(val B cut-resumed-kept-keys), HM2 lines after $(val B cut-resumed-hm2), deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors), end after $(val B pass-end-seconds) s"
-	[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 9)" = "$nu" ]; check "power: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) of $nu"
+	[ "$(num "$(val A more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val A more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val B more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 9)" = "$nu" ]; check "power: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files) beside $(val A more-media-snaps) snapshot(s), B $(val B more-media-files) beside $(val B more-media-snaps) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) of $nu"
 	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5310 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
 elif [ "$SEQ" = control ]; then
 	# The sequence checks compiled out: the fault, placed as the cut's, is
@@ -1676,7 +1683,7 @@ elif [ -n "$CUT" ]; then
 		lbl="cut: the first pass after the dial verifies on the target the cut pass took"
 		[ "$pv" = 1 ] && lbl="cut: the cut pass verified inside the relay's wait and deleted its own target"
 		check "$lbl" $rc "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
-		[ "$(num "$(val A more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-media-files)" 0)" = 5 ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && { [ "$pa" = 1 ] || [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; }; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files), B $(val B more-media-files) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
+		[ "$(num "$(val A more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val A more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val B more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && { [ "$pa" = 1 ] || [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; }; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files) beside $(val A more-media-snaps) snapshot(s), B $(val B more-media-files) beside $(val B more-media-snaps) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
 		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = $((1 - pv)) ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
 	fi
 elif [ "$PASSREFUSE" = control ]; then
@@ -1761,7 +1768,10 @@ if [ "$PASS" = 1 ]; then
 	# with no round line after it.
 	wb=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $3 != $8 - $9 { b = b $2 " " } END { print b }')
 	nv=$(printf '%s\n' "$pv" | grep -c ' verified ')
-	[ "$nv" -ge 1 ] && [ -z "$wb" ]; check "B: every verified pass makes one scan from key 0 a round not narrowed" $? "$nv verified${wb:+, not so in pass(es) $wb}"
+	# A run that leaves the link down verifies nothing, so the floor of
+	# one verified pass holds only where the link is left up or redialed.
+	if [ "$LINKLOST" = 1 ]; then nvmin=0; else nvmin=1; fi
+	[ "$nv" -ge $nvmin ] && [ -z "$wb" ]; check "B: every verified pass makes one scan from key 0 a round not narrowed" $? "$nv verified${wb:+, not so in pass(es) $wb}"
 	if [ -z "$CUT" ]; then
 		nd=$(printf '%s\n' "$pv" | awk '/^pass / { d += $12 } END { print d + 0 }')
 		[ "$nd" = 0 ]; check "B: no pass ends detached on a link left up" $? "$nd"
