@@ -19946,3 +19946,90 @@ rule, a line between the kmemleak clear and the module load, which
 added.
 
 The row is 1.0.67.
+
+## The second verify round narrowed, 2026-10-28
+
+Lever 1b of `doc/SYNC_DESIGN.md`, "The walks a one-file pass repeats",
+built at `01acb6f` behind `sync_walks`: a verify round after the first
+compares again only the PFS-root keys the round before it replaced,
+inserted, destroyed or deferred, one root scan per key bounded to that key
+on both cursors, when the round's root calls all ended at the end of both
+key spaces, nothing failed, the keys fitted the 64-key set and there were
+some, the rescan set held only the snapshot root, and C_N held at the
+pass's start and at the choice with the PFS's count of slot detaches
+unchanged. The count is read again at the verdict, and a pass it moved in
+ends `detached`. The expected readings were written before the runs, in
+`p7-notes/lever1b-expected.md`, with the first open question read the
+same day on the wire (`wire-run-20261028-164316`, the design note).
+
+Locally C_N is never met, so the tree arm of `script/cluster-sync.sh`
+asserts it under `H2_SYNC_NARROW=1` through the debug build's
+`sync_assert_cn`, the cluster PFS being unmounted for every timed pass.
+Each tree is 10,000 files in 100 directories, four changes under
+`H2_SYNC_WALKS=alt`, so changes 1 and 3 read 1a and 1b and changes 2 and 4
+the carried pass in the same boot.
+
+| shape | kernel | run | walks 1: from key 0, narrowed rounds, narrowed scans | walks 0: from key 0 | checks |
+|---|---|---|---|---|---|
+| one | `h2debug-7.3` | `cluster-run-20261028-170248` | 1, 1, 1 | 3 | 49, 0 failed |
+| spread | `h2debug-7.3` | `cluster-run-20261028-170537` | 2, 0 (`keys_over`), 0 | 3 | 49, 0 failed |
+| bulk | `h2debug-7.3` | `cluster-run-20261028-171537` | 2 and 3 resumed, 0 (`root_unclean`), 0 | 6 | 49, 0 failed |
+| delete | `h2debug-7.3` | `cluster-run-20261028-170939` | 1, 0, 0 | 2 | 46, 0 failed |
+| rename | `h2debug-7.3` | `cluster-run-20261028-171140` | 1, 0, 0 | 2 | 46, 0 failed |
+| one | `h2kasan-7.3` | `cluster-run-20261028-172617` | 1, 1, 1 | 3 | 49, 0 failed |
+| spread | `h2kasan-7.3` | `cluster-run-20261028-172900` | 2, 0 (`keys_over`), 0 | 3 | 49, 0 failed |
+| bulk | `h2kasan-7.3` | `cluster-run-20261028-173147` | 2 and 3 resumed, 0 (`root_unclean`), 0 | 6 | 49, 0 failed |
+| delete | `h2kasan-7.3` | `cluster-run-20261028-173513` | 1, 0, 0 | 2 | 46, 0 failed |
+| rename | `h2kasan-7.3` | `cluster-run-20261028-173801` | 1, 0, 0 | 2 | 46, 0 failed |
+
+The narrowed scan of a one-file change read 2 iterations against the
+root walk's 10,103. Within one boot on `h2debug-7.3` the one-file pass
+read 974 and 1001 ms under 1a and 1b against 2947 and 2932 ms carried,
+times that are function only on the debug kernel.
+
+The bulk prediction was wrong: the expected readings named `keys_over`
+for it, and its first run (`cluster-run-20261028-170731`) failed the two
+checks written to that. Bulk's first round is stopped by the deferral cap,
+which `hammer2_sync_narrow_ok()` tests before the key set's size, so the
+carried round is kept for `root_unclean`; the check was corrected and the
+re-run is the row above. Under `delete` and `rename` each pass verified
+`newer` in one round, so no round was chosen.
+
+The shape runs at 17:02 to 17:11 were built before the control's hook
+was added; every run from 17:15 on, the sanitizer runs among them, was
+built from the source committed at `01acb6f`. The hook does nothing unless
+its knob is set. The debug shape runs were read by earlier revisions of
+the harness (sha256 prefix `e01451adc4f81003`, and `ab65d6066c9142db` for
+the bulk re-run, the first with the corrected bulk check), which lacked
+the control's mode; the controls and every sanitizer run were read by the
+harness committed with the source (`626c4e545a9ce738`).
+
+**Control.** `H2_NARROW_ALTER`: the debug build's `sync_narrow_alter`
+makes change 1's narrowed round do what a slot detach and a write
+through the gates it opens would do, raising the detach count and
+destroying one slave inode outside the round's keys. With the verdict's
+reading of the count the pass ended `detached`, the slave one inode short
+of its master by `CL`'s own inodes, 10,101 against 10,102
+(`cluster-run-20261028-172142`, 49 checks, 0 failed). A scratch build
+with that one line disabled (sha256 prefix `9a3d2cd6a354bc23`) verified
+the same short slave (`cluster-run-20261028-172339`, 49, 0 failed). In
+both the next change's pass, which compares every root key, put the
+inode back and the fingerprints at the end compared equal. The first pair
+(`cluster-run-20261028-171743` and `171942`) counted every `inum` line on
+each device, snapshots and dirents included, and read 20,206 against
+40,408 for the `detached` pass, whose target the slave keeps; the count was
+scoped to `CL` and the pair re-run.
+
+On `h2kasan-7.3` the pair read the same: `detached`, 10,101 against
+10,102 (`cluster-run-20261028-174049`, 49, 0 failed), and verified one
+short with the scratch build (sha256 prefix `47282369cd763539`,
+`cluster-run-20261028-174340`, 49, 0 failed). Each of the seven sanitizer
+runs read no KASAN, UBSAN, lockdep or kernel warning report, and found
+18 `__asan` and 3 `__ubsan` imports in the module it loaded.
+
+Not read here: the wire form of the control, a span deleted with its
+link up between the rounds, which no harness mode does, and the refusal of
+a read-write mount of the source snapshot a peer's pass holds, the design
+note's second open question, which is not built.
+
+The row is 1.0.68.
