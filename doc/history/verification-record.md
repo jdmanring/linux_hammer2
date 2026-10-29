@@ -20163,9 +20163,9 @@ was killed at the harness's 600 s bound for the default shape and
 reported as a hang (`cluster-hang-20261028-212300.klog`). Its log holds
 no hung-task, lockdep or sanitizer report. Its first `bigdir` write took
 265 s, against 267 s in the passing KASAN run
-`cluster-run-20261028-135130`, and its last module line is the second
-`bigdir` write starting, 192 s before the session's logout that is the
-kill, a write that took 249 s in that run, which spent 709 s from the
+`cluster-run-20261028-135130`, and its last line before the logout that
+is the kill is the harness's probe for the second `bigdir` write
+starting, 192 s earlier, a write that took 249 s in that run, which spent 709 s from the
 first write to the last unmount under a longer `H2_RUN_TIMEOUT`. So the bound was short for the kernel, not the module
 stuck. `c0402cd` scales the bound by four on a `CONFIG_KASAN=y` tree, and
 the three runs above ran under it.
