@@ -20174,3 +20174,17 @@ Not read here: a mount of a source a peer's pass holds while the pass
 runs, which takes the same test, since the name is all it reads.
 
 The row is 1.0.69.
+
+## The wire harness readings, 2026-10-29
+
+Stage 1 and 2 readings of `script/cluster-wire.sh` on the two-guest link
+(`artix-s6-kde` and `artix-s6-h2b`, both running 7.3.0), read at `7c0adfe`
+(`wire-run-20261029-021557`):
+- 42 checks, 0 failed.
+- Module sha256 `1c4bb2faed55c118` (debug) and `2e606a70a94ff06b` (KASAN).
+- Round trip: leg through A 219 us, leg through B 266 us, sum 485 us.
+- Remote entry counts: 310 of 310 digests equal warm and cold.
+- Sanitizer import check: 18 `__asan` and 3 `__ubsan` imports verified on both guests of the KASAN runs.
+- Kernel log alive, 0 kernel warnings, 0 lockdep/sanitizer reports, kmemleak clean.
+
+The row is 1.0.70.
