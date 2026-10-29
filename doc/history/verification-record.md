@@ -20378,3 +20378,14 @@ in the same log, 42 checks and 0 failed each;
 - Kernel log alive, 0 kernel warnings, 0 lockdep/sanitizer reports, kmemleak clean.
 
 The row is 1.0.70.
+
+## The N3 rate readings on the release kernel, 2026-10-29
+
+Readings of `script/cluster-sync.sh` on `h2release-7.3` (`artix-s6-kde`), with `H2_PASS_TREE=100000` then `=1000000`, `H2_TREE_FANOUT=1000`, `H2_SYNC_WALKS=alt`, `H2_PASS_CHANGES=4`, `H2_LOCKDEBUG=1`, `H2_SYNC_NARROW=1`, shape `one`, and `KDIR` naming the release tree (`cluster-run-20261029-104916.log` and `cluster-run-20261029-105708.log`), compared against 1.0.60's carried readings:
+- At 100,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 898 and 952 ms against 2300-2400 ms carried; carried change passes (change 2 and 4) read 2745 and 2795 ms.
+- At 1,000,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 12.7 s (12773 and 12692 ms) against ~32.8 s carried; carried change passes (change 2 and 4) read 36.2 and 38.5 s.
+- Module sha256 `89596171c66daab5` (release).
+- Kernel log alive, 0 kernel warnings, 0 lockdep/sanitizer reports, kmemleak clean.
+- `fsck_hammer2` clean on master and slave images.
+
+The row is 1.0.71.
