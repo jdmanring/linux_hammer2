@@ -20389,3 +20389,5 @@ Readings of `script/cluster-sync.sh` on `h2release-7.3` (`artix-s6-kde`), with `
 - `fsck_hammer2` clean on master and slave images.
 
 The row is 1.0.71.
+
+N4: the narrowed pass at 1,000,000 files takes 12.7 s (12773 and 12692 ms), above the 5.12 s cadence. Lever 1 misses; lever 2, subtree skipping, follows per the approved plan.

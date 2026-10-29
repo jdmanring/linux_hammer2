@@ -284,6 +284,8 @@ invokes the kernel's build system, so running `make` is that act.
 
 ### Next moves
 
+N4: the narrowed pass at 1,000,000 files takes 12.7 s, above the 5.12 s cadence. Lever 2 follows.
+
 The work past 1.0 follows the completion plan under "Beyond 1.0", in its
 dependency order. P0 to P6 are closed on the Linux reading; P7's local
 half is built and read, item 7 below, and its remote reach is ruled B,
