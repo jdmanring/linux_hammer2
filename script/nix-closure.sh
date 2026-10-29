@@ -64,7 +64,10 @@ jobs=${H2_NC_JOBS:-1}
 W=$(mktemp -d) || exit 2
 # Twelve gigabytes through a debug kernel on a 4 GiB guest is hours of
 # work, not minutes, so the bound is two of them.
-RUN="timeout ${H2_RUN_TIMEOUT:-7200} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=7200; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 trap 'rm -rf "$W" "$H2_NC_COPY"' EXIT
 
 command -v virsh >/dev/null 2>&1 || { echo "closure: COULD-NOT-RUN: no virsh" >&2; exit 2; }
@@ -283,7 +286,7 @@ printf '%s\n' "$out" | sed 's/^/  linux   /'
 DMESG=${H2_CLOSURE_DMESG:-$W/guest-dmesg.txt}
 scp -q -o ConnectTimeout=5 "$GUEST_SSH:/tmp/closure-dmesg.txt" "$DMESG" 2>/dev/null && echo "  linux   dmesg saved to $DMESG"
 if [ $st = 124 ]; then
-	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-7200}s"; fail=$((fail + 1))
+	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1))
 	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	$VIRSH destroy "$GUEST" >/dev/null 2>&1
 fi
@@ -362,7 +365,7 @@ GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "closure: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
 dout=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1); st=$?
-[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-7200}s"; fail=$((fail + 1)); }
+[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1)); }
 printf '%s\n' "$dout" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
 printf '%s\n' "$dout" | grep -q "^dragonfly counted $nfiles files" || { echo "  FAIL  DragonFly did not count $nfiles files"; fail=$((fail + 1)); }

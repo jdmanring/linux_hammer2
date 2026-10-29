@@ -34,7 +34,10 @@ W=$(mktemp -d) || exit 2
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
 # is a finding, not a pass and not a skip.
-RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=1800; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 trap 'rm -rf "$W"' EXIT
 
 # The negative control for every host fsck verdict, as the other fleet
@@ -153,7 +156,7 @@ out=$($RUN "$GUEST_SSH" 'sh /tmp/linux.sh' 2>&1); st=$?
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 down "$GUEST" "$GUEST_SSH"
 [ $st = 3 ] && { echo "pfs: COULD-NOT-RUN: the Linux guest has no hammer2 utility" >&2; exit 2; }
-[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
+[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^created $ndom$" || { echo "  FAIL  not every PFS was created"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^mounted by label $ndom$" || { echo "  FAIL  not every PFS mounted by label"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^volumes on linux: $VOLUMES$" || { echo "  FAIL  volume-list here did not report $VOLUMES volume(s)"; fail=$((fail + 1)); }
@@ -192,7 +195,7 @@ GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "pfs: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
 out=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
-[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
 for d in $DOMAINS $SNAP; do

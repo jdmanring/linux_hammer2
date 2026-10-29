@@ -41,7 +41,10 @@ FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/ha
 # The hold is added to the bound, so a long H2_QUORUM_IDLE is not read as a hang.
 IDLE=${H2_QUORUM_IDLE:-0}
 case $IDLE in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_IDLE is not a number of seconds without a leading zero" >&2; exit 2 ;; esac
-RUN="timeout $(( ${H2_RUN_TIMEOUT:-600} + IDLE )) ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout $(( ${H2_RUN_TIMEOUT:-$RUNSECS} + IDLE )) ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 QA=$FIXDIR/cluster-qa.img
 QB=$FIXDIR/cluster-qb.img
 W=$(mktemp -d) || exit 2
@@ -260,7 +263,7 @@ if [ "$rc" != 0 ] && [ "$rc" != 124 ]; then
 	echo "quorum: COULD-NOT-RUN: the guest session ended rc=$rc, so the run did not finish" >&2
 	exit 2
 fi
-[ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-600}s"; exit 1; }
+[ "$rc" = 124 ] && { echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-$RUNSECS}s"; exit 1; }
 scp -q "$GUEST_SSH:/tmp/q.sums" "$W/sums" >/dev/null 2>&1
 scp -q "$GUEST_SSH:/tmp/q.want" "$W/want" >/dev/null 2>&1
 # The guest's whole kernel log for the run, kept beside the images.

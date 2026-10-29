@@ -42,7 +42,10 @@ W=$(mktemp -d) || exit 2
 # Bounded from this side, as pfs-domains.sh bounds its runs: a guest whose
 # task hangs keeps sshd answering. A million files take longer than the
 # other scripts' work, so the default bound is an hour.
-RUN="timeout ${H2_RUN_TIMEOUT:-3600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=3600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 trap 'rm -rf "$W" "$H2_TREE_COPY"' EXIT
 
 fsck_control() {	# image; the negative control every host fsck verdict carries
@@ -284,7 +287,7 @@ if [ $st = 124 ]; then
 	# the agent since ssh is usually wedged with the mount, and the guest
 	# is destroyed rather than shut down, a shutdown needing the unmount
 	# that hung.
-	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1))
+	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1))
 	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	$VIRSH destroy "$GUEST" >/dev/null 2>&1
 fi
@@ -345,7 +348,7 @@ GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
 scp -q -o ConnectTimeout=5 "$W/dfly.sh" "$DFLY_SSH:/tmp/" || { echo "tree: COULD-NOT-RUN: scp failed" >&2; down "$DFLY" "$DFLY_SSH"; exit 2; }
 out=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
-[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-3600}s"; fail=$((fail + 1)); }
+[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
 if [ $CHURN = 1 ]; then

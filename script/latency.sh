@@ -62,7 +62,10 @@ UTILS=$HOME/Projects/hammer2-utils-upstream/target/release
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$UTILS/newfs_hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$UTILS/fsck_hammer2")}
 W=$(mktemp -d) || exit 2
-RUN="timeout ${H2_RUN_TIMEOUT:-3600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=3600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 fail=0
 
 # The numbers are compared between filesystems, so the guest and its

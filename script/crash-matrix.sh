@@ -53,7 +53,10 @@ W=$(mktemp -d) || exit 2
 # and the script would wait on it forever; the fuzzer bounds each image
 # the same way. 124 from timeout is reported as the guest hanging, which
 # is a finding, not a pass and not a skip.
-RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=1800; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
 # The negative control for every host fsck verdict: a sparse copy of the
 # same image with one volume header byte complemented must fail the same
@@ -288,7 +291,7 @@ verdict_linux() {	# image -> prints lines, returns failures
 	boot "$GUEST" "$GUEST_SSH" "$1" || { down "$GUEST" "$GUEST_SSH"; return 9; }
 	scp -q -o ConnectTimeout=5 "$KO" "$W/recover-linux.sh" "$GUEST_SSH:/tmp/" || { down "$GUEST" "$GUEST_SSH"; return 9; }
 	out=$($RUN "$GUEST_SSH" 'sh /tmp/recover-linux.sh' 2>&1)
-	[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; f=$((f + 1)); }
+	[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; f=$((f + 1)); }
 	printf '%s\n' "$out" | sed 's/^/  linux   /'
 	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))
@@ -302,7 +305,7 @@ verdict_fbsd() {
 	boot "$FBSD" "$FBSD_SSH" "$1" || { down "$FBSD" "$FBSD_SSH"; return 9; }
 	scp -q -o ConnectTimeout=5 "$W/recover-fbsd.sh" "$FBSD_SSH:/tmp/" || { down "$FBSD" "$FBSD_SSH"; return 9; }
 	out=$($RUN "$FBSD_SSH" 'doas sh /tmp/recover-fbsd.sh' 2>&1)
-	[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; f=$((f + 1)); }
+	[ $? = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; f=$((f + 1)); }
 	printf '%s\n' "$out" | sed 's/^/  fbsd    /'
 	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^freebsd fsck clean$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))

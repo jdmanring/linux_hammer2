@@ -65,7 +65,10 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
-RUN="timeout ${H2_RUN_TIMEOUT:-600} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 IMG=$FIXDIR/sync-alloc.img
 W=$(mktemp -d) || exit 2
 trap 'rm -rf "$W"' EXIT
@@ -330,7 +333,7 @@ echo "done"
 GUEST
 )
 rc=$?
-[ $rc -eq 124 ] && { echo "sync-alloc: FAIL: the guest run hung past ${H2_RUN_TIMEOUT:-600}s" >&2; exit 1; }
+[ $rc -eq 124 ] && { echo "sync-alloc: FAIL: the guest run hung past ${H2_RUN_TIMEOUT:-$RUNSECS}s" >&2; exit 1; }
 
 for d in vdb; do
 	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1

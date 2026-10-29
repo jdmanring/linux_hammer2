@@ -240,7 +240,12 @@ END=${H2_WIRE_END:-}
 # over the link, deleted at B's request when the pass has verified; a
 # second set written on A after the first pass must reach B's media by a
 # later pass, and at the end neither image holds a snapshot of the pass.
+# H2_WIRE_WALKS=0 sets B's sync_walks to 0 under H2_WIRE_PASS=1, the
+# carried pass the levers are read against: its passes must take no stamp
+# alone, resume no scan and narrow no round. A power cut reloads B's
+# module, so the knob is refused beside one.
 PASS=${H2_WIRE_PASS:-0}
+WALKS=${H2_WIRE_WALKS:-}
 SILENCE=${H2_WIRE_SILENCE:-0}
 DETACHWRITE=${H2_WIRE_DETACHWRITE:-0}
 WINDOW=${H2_WIRE_WINDOW:-0}
@@ -308,6 +313,7 @@ done
 case $CONNWAIT in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CONNWAIT is 1 or control" >&2; exit 2;; esac
 case $LINKDEV in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_LINKDEV is 1" >&2; exit 2;; esac
 case $SRCGATE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SRCGATE is 1 or control" >&2; exit 2;; esac
+case $WALKS in '') ;; 0|1) { [ "$PASS" = 1 ] && [ "$POWER" = 0 ]; } || { echo "wire: COULD-NOT-RUN: H2_WIRE_WALKS rides H2_WIRE_PASS=1 without a power cut" >&2; exit 2; };; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WALKS is 0 or 1" >&2; exit 2;; esac
 case $SNAPDEL$ADMIT in 00|10|control0|01|0control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SNAPDEL and H2_WIRE_ADMIT are 1 or control" >&2; exit 2;; esac
 case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_END is aborted, noeof, lost or onefed" >&2; exit 2;; esac
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
@@ -366,8 +372,11 @@ HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/h
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 { [ "$PASS" != 1 ] && [ "$ROGATE" = 0 ] && [ "$PASSREFUSE" = 0 ]; } || { [ -x "$HAMMER2" ] && [ -x "$FSCK" ]; } || { echo "wire: COULD-NOT-RUN: H2_WIRE_PASS and the controls reading an image need hammer2 and fsck_hammer2 on the host (H2_HAMMER2, H2_FSCK)" >&2; exit 2; }
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
-# a power cut's reads cross 5310 files over the wire, warm and cold
-RUN="timeout ${H2_RUN_TIMEOUT:-$([ "$POWER" = 1 ] && echo 900 || echo 300)} $SSH"
+# a power cut's reads cross 5310 files over the wire, warm and cold; the
+# bound scales on a KASAN tree, as cluster-sync.sh's does
+RUNSECS=300; [ "$POWER" = 1 ] && RUNSECS=900
+grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} $SSH"
 W=$(mktemp -d) || exit 2
 RELAY_PID=
 cleanup() {
@@ -680,6 +689,11 @@ cat > "$W/reg.sh" <<'GUEST'
 # reg: B's kernel registered A's CL root as an element
 echo "log-registered $(klog 'remote element CL registered at clindex 1')"
 echo "log-nmasters $(kl | grep 'remote element CL registered' | tail -1 | sed 's/.*pfs_nmasters //')"
+GUEST
+cat > "$W/walks.sh" <<'GUEST'
+# walks <n>: B's sync_walks, read once a pass, so set before any pass
+echo "$1" > /sys/module/hammer2/parameters/sync_walks
+echo "sync-walks $(cat /sys/module/hammer2/parameters/sync_walks 2>/dev/null)"
 GUEST
 cat > "$W/ro.sh" <<'GUEST'
 # ro: B's SLAVE CL mounted read-only beside its read-write ROOT, once the
@@ -1274,7 +1288,7 @@ echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
 to_scripts() {	# to_scripts <ssh>
-	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$1:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/walks.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$1:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $1 failed" >&2; exit 2; }
 }
 to_scripts "$SA"
@@ -1304,6 +1318,7 @@ phase A setup.sh master 0 1 $({ [ "$SNAPDEL" = 0 ] && [ "$SRCGATE" = 0 ]; } || e
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+[ -z "$WALKS" ] || phase B walks.sh "$WALKS"
 phase A fill.sh $([ "$POWER" = 1 ] && echo bulk)
 phase B lone.sh
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT" rw
@@ -1420,7 +1435,7 @@ inpass() {
 # the one after B's unmount, so the second's values are read from the tail.
 val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
 
-echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM")${KO_B_GIVEN:+, B's given}${KO_A_GIVEN:+, A's given}:"
+echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, harness $(sha256sum < "$0" | cut -c1-16), module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM")${KO_B_GIVEN:+, B's given}${KO_A_GIVEN:+, A's given}:"
 npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 # under LINKDEV B's link is vdc's, which spans vdc's PFSes and not B's CL
 slv=1
@@ -1761,17 +1776,26 @@ if [ "$PASS" = 1 ]; then
 	[ "$np" -ge 1 ] && [ "$um" = 0 ]; check "B: every snapshot pass is read from its begin to its end, with every root scan's start key" $? "$np pass(es), $um START_SCAN line(s) without beg"
 	# A narrowed round scans each key it names once.
 	nb=$(printf '%s\n' "$pv" | awk '/^pass / && $5 != $10 { b = b $2 " " } END { print b }')
-	[ "$np" -ge 1 ] && [ -z "$nb" ]; check "B: every narrowed round scans each key it names" $? "${nb:+pass(es) $nb}${nb:-every pass}"
-	# Under sync_walks 1 each round not narrowed makes one scan from key
-	# 0, resumed segments and the stamp alone replacing the rescans; read
-	# on verified passes, since a pass the link cut mid-round has a scan
-	# with no round line after it.
-	wb=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $3 != $8 - $9 { b = b $2 " " } END { print b }')
-	nv=$(printf '%s\n' "$pv" | grep -c ' verified ')
-	# A run that leaves the link down verifies nothing, so the floor of
-	# one verified pass holds only where the link is left up or redialed.
-	if [ "$LINKLOST" = 1 ]; then nvmin=0; else nvmin=1; fi
-	[ "$nv" -ge $nvmin ] && [ -z "$wb" ]; check "B: every verified pass makes one scan from key 0 a round not narrowed" $? "$nv verified${wb:+, not so in pass(es) $wb}"
+	nbr=${nb:+pass(es) $nb}
+	[ "$np" -ge 1 ] && [ -z "$nb" ]; check "B: every narrowed round scans each key it names" $? "${nbr:-every pass}"
+	if [ -n "$WALKS" ]; then
+		[ "$(val B sync-walks)" = "$WALKS" ]; check "B: the module runs with the sync_walks asked for" $? "$(val B sync-walks) of $WALKS"
+	fi
+	if [ "$WALKS" = 0 ]; then
+		cw=$(printf '%s\n' "$pv" | awk '/^pass / { r += $4; n += $5; s += $6 } END { print r + 0, s + 0, n + 0 }')
+		[ "$cw" = "0 0 0" ]; check "B: the carried pass takes no stamp alone, resumes no scan and narrows no round" $? "${cw% * *} resumed, $(echo "$cw" | cut -d' ' -f2) alone, ${cw##* } narrowed"
+	else
+		# Under sync_walks 1 each round not narrowed makes one scan from key
+		# 0, resumed segments and the stamp alone replacing the rescans; read
+		# on verified passes, since a pass the link cut mid-round has a scan
+		# with no round line after it.
+		wb=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $3 != $8 - $9 { b = b $2 " " } END { print b }')
+		nv=$(printf '%s\n' "$pv" | grep -c ' verified ')
+		# A run that leaves the link down verifies nothing, so the floor of
+		# one verified pass holds only where the link is left up or redialed.
+		if [ "$LINKLOST" = 1 ]; then nvmin=0; else nvmin=1; fi
+		[ "$nv" -ge $nvmin ] && [ -z "$wb" ]; check "B: every verified pass makes one scan from key 0 a round not narrowed" $? "$nv verified${wb:+, not so in pass(es) $wb}"
+	fi
 	if [ -z "$CUT" ]; then
 		nd=$(printf '%s\n' "$pv" | awk '/^pass / { d += $12 } END { print d + 0 }')
 		[ "$nd" = 0 ]; check "B: no pass ends detached on a link left up" $? "$nd"
@@ -1779,19 +1803,24 @@ if [ "$PASS" = 1 ]; then
 	# The more pass, the last verified one that acted in round 1: five
 	# files and their directory, within the key set, so its second round
 	# is narrowed.
-	if [ "$PASSES" = full ] || { [ "$PASSES" = cut ] && [ "$CUT" != control ]; }; then
+	if [ "$WALKS" != 0 ] && { [ "$PASSES" = full ] || { [ "$PASSES" = cut ] && [ "$CUT" != control ]; }; }; then
 		mp=$(printf '%s\n' "$pv" | awk '/^pass / && $13 == "verified" && $11 > 0 { l = $0 } END { print l }')
 		set -- $mp
 		if [ -n "$mp" ]; then md="pass $2, $9 of $8 round(s) narrowed, $5 scan(s) for ${10} key(s), round 1 acted ${11}, carried for ${14}"; else md="no verified pass acted"; fi
 		[ -n "$mp" ] && [ "${9:-0}" -ge 1 ] && [ "${5:-x}" = "${10:-y}" ]; check "B: the more pass narrows its second round" $? "$md"
 	fi
 	# Scanall calls and the chains they fed per pass, when the relay
-	# traced calls: the opens and the closes' feeds between one snapshot
-	# line and the next, the counts the cost on the link is read in. A root
+	# traced calls: the opens and the closes' feeds from a snapshot line to
+	# B's SNAPDEL of it (CREATE, HM2 command 0x26), the counts the cost on
+	# the link is read in. A pass that verifies nothing sends no SNAPDEL
+	# and ends at the next snapshot line, marked open. The idle stamp
+	# passes between a verdict and the next snapshot, each one call
+	# walking the live root, fall outside, since their number varies with
+	# timing (two in wire-run-20261028-231437, one in -233621). A root
 	# walk is one call, so a walk saved shows in the feeds.
 	tr=$FIXDIR/wire-run-$stamp.trace
 	if grep -q ' snapshot t=' "$tr" 2>/dev/null; then
-		echo "  read  scanall calls and chains fed per pass, from the relay's trace: $(awk '/ snapshot t=/ { if (s) printf "%d/%d ", c, f; s = 1; c = f = 0; next } s && / open t=/ { c++ } s && / close t=/ { for (i = 1; i <= NF; i++) if ($i ~ /^feeds=/) f += substr($i, 7) } END { if (s) printf "%d/%d", c, f; print "" }' "$tr")"
+		echo "  read  scanall calls and chains fed per pass, from the relay's trace: $(awk '/ snapshot t=/ { if (s) printf "%d/%d(open) ", c, f; s = 1; c = f = 0; next } /^B>A .* cmd=[89cd]02026[0-9a-f]2 / { if (s) printf "%d/%d ", c, f; s = 0; next } s && / open t=/ { c++ } s && / close t=/ { for (i = 1; i <= NF; i++) if ($i ~ /^feeds=/) f += substr($i, 7) } END { if (s) printf "%d/%d(open)", c, f; print "" }' "$tr")"
 	fi
 fi
 # The link's round trip from the relay's trace. Each side pings every

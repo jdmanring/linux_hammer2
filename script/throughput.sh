@@ -77,7 +77,10 @@ NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$UTILS/newfs_h
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$UTILS/fsck_hammer2")}
 SHOW=${H2_SHOW:-$(command -v hammer2 2>/dev/null || echo "$UTILS/hammer2")}
 W=$(mktemp -d) || exit 2
-RUN="timeout ${H2_RUN_TIMEOUT:-1800} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=1800; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 trap 'rm -rf "$W" "$H2_TP_COPY"' EXIT
 
 command -v virsh >/dev/null 2>&1 || { echo "throughput: COULD-NOT-RUN: no virsh" >&2; exit 2; }
@@ -364,7 +367,7 @@ scp -q -o ConnectTimeout=5 "$KO" "$W/linux.sh" "$GUEST_SSH:/tmp/" || { echo "thr
 out=$($RUN "$GUEST_SSH" 'sh /tmp/linux.sh' 2>&1); st=$?
 printf '%s\n' "$out" | sed 's/^/  linux   /'
 down "$GUEST" "$GUEST_SSH"
-[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-1800}s"; fail=$((fail + 1)); }
+[ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1)); }
 e4=$(printf '%s\n' "$out" | sed -n 's/^e4 read 1M \([0-9]*\) MiB.*/\1/p')
 printf '%s\n' "$out" | grep -q "^kernel .* lockdep 1$" && echo "  note  the guest kernel carries CONFIG_PROVE_LOCKING: every number above is the debug kernel's, and a read on the release build of the same kernel measured four times faster"
 [ -n "$e4" ] && [ "$e4" -lt 2000 ] && echo "  note  ext4 read $e4 MiB/s: the host's cache was cold, so every read above is the host's disk and compares only with a run that says the same"

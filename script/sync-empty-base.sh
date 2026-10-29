@@ -64,7 +64,10 @@ NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects
 # silently drops the copy both read the same without this.
 HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/hammer2")}
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
-RUN="timeout ${H2_RUN_TIMEOUT:-900} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
+# kernel is not read as a hang.
+RUNSECS=900; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
+RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 # The set written to the master. Big enough that the slave's copy leaves
 # chains behind, small enough to write in seconds.
 N=${H2_N:-4000}
@@ -336,7 +339,7 @@ if [ "$rc" = 124 ]; then
 		$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
 		$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
 	done
-	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-900}s; its kernel log is kept beside the images"
+	echo "  FAIL  the guest run hung past ${H2_RUN_TIMEOUT:-$RUNSECS}s; its kernel log is kept beside the images"
 	exit 1
 fi
 # A non-zero that is neither 2 nor 124 is the guest half or its session
