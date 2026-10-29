@@ -752,7 +752,10 @@ With no mount of
 a source there is no remount to refuse; an element of the suffix's name
 can still join a mounted PFS by `pfs-create` with that PFS's cluster id,
 a name collision rather than a pass's source, which takes a fresh cluster
-id (`hammer2_ioctl.c:1025`). The
+id (`hammer2_ioctl.c:1025`). The suffix's name is still reserved: an
+element named `<pfs>.h2sync-src` on the master's device is what that
+PFS's pass deletes by name at its start, so while it is mounted every
+pass stops as under a read-only mount, and unmounted it is deleted. The
 `.h2sync-tgt` target is not gated: a pass deletes and retakes it and never
 reads it as a source. And whether `hammer2 pfs-delete`
 of the slave element through the device's super-root
