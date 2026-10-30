@@ -20385,9 +20385,71 @@ Readings of `script/cluster-sync.sh` on `h2release-7.3` (`artix-s6-kde`), with `
 - At 100,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 898 and 952 ms against 2300-2400 ms carried; carried change passes (change 2 and 4) read 2745 and 2795 ms.
 - At 1,000,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 12.7 s (12773 and 12692 ms) against ~32.8 s carried; carried change passes (change 2 and 4) read 36.2 and 38.5 s.
 - Module sha256 `89596171c66daab5` (release).
-- Kernel log alive, 0 kernel warnings, 0 lockdep/sanitizer reports, kmemleak clean.
+- Kernel log alive, 0 kernel warnings, no lockdep or sanitizer report, and no leak reading: the kept logs state the tree configures no kmemleak.
 - `fsck_hammer2` clean on master and slave images.
 
 The row is 1.0.71.
 
 N4: the narrowed pass at 1,000,000 files takes 12.7 s (12773 and 12692 ms), above the 5.12 s cadence. Lever 1 misses; lever 2, subtree skipping, follows per the approved plan.
+
+## The `-tls` kernel baselines, 2026-10-29 to 2026-10-30
+
+Three builds beside the plain three (`~/kernels/linux-7.3-tls`,
+`~/kernels/linux-7.3-release-tls`, `~/kernels/linux-7.3-kasan-tls`, each
+its plain twin's configuration plus `TLS`, `CRYPTO_GCM` and `NVME_TCP`
+with `NET_HANDSHAKE`), installed on both guests under the grub names
+`h2debug-7.3tls`, `h2release-7.3tls` and `h2kasan-7.3tls`. What the runs
+below read of the install: each `-tls` name boots (`guest-kernel`
+`7.3.0-tls` and `7.3.0-kasan-tls` in the wire runs' headers,
+`7.3.0-release-tls` live on `artix-s6-kde` 2026-10-30), and the module
+built against each matching tree loads (`module-vermagic` matching the
+guest kernel in every run). `KERNEL_REF` and the floor do not move: the
+kernel of record is still 7.3.
+
+Baselines on the `-tls` kernels, the ones later stages compare with:
+- `cluster-sync.sh` default on `h2debug-7.3tls`
+  (`cluster-run-20261029-234547.log`): 58 checks, 0 failed; module
+  sha256 `e20131a3515161b3`; no instrumentation (0 `__asan` imports);
+  kmemleak cleared and clean; `fsck_hammer2` clean on both images; the
+  slave matches its master (40055 entries, 0 of 120227 lines differ); no
+  `.h2sync-*` left.
+- `cluster-sync.sh` default on `h2kasan-7.3tls`
+  (`cluster-run-20261029-235901.log`): 58 checks, 0 failed; module
+  sha256 `bff94bf502b2213c`; 18 `__asan` and 3 `__ubsan` imports;
+  kmemleak cleared and clean; the same fsck and slave-match figures.
+- `cluster-wire.sh H2_WIRE_PASS=1` on `h2debug-7.3tls`
+  (`wire-run-20261029-234330.out`) and on `h2kasan-7.3tls`
+  (`wire-run-20261029-235552.out`): `read-failed 0`, `pass-refused 0`
+  and `slave-show-failed 0` on both; 310 `A sum` lines against 310 `B
+  cold` lines per run, every path's digest identical warm to cold
+  (compared in session from the kept outputs); `kernel-warnings 0`,
+  `lockdep-saturated 0` and `kmemleak 0` on the debug-tls run.
+- N3's two rates again on `h2release-7.3tls`, N3's shape (100k then 1M,
+  `FANOUT` 1000, `WALKS` alt, `CHANGES` 4, `LOCKDEBUG`, `NARROW`, shape
+  `one`):
+  - At 100,000 (`cluster-run-20261030-002001.log`): 52 checks, 0 failed,
+    the kept-absent arm not running (0 lines, hence 52 against N3's 53);
+    narrowed 823 and 833 ms against N3's 898 and 952; carried 2489 and
+    2498 ms against 2745 and 2795.
+  - At 1,000,000 (`cluster-run-20261030-002559.log`): 53 checks, 0
+    failed; narrowed 11312 and 11346 ms against 12773 and 12692; carried
+    34931 and 34291 ms against about 36200 and 38500; kept-absent clean
+    (0 in 508483 kept lines); the slave holds its master (0 of 3002002
+    lines differ); no `.h2sync-*` left.
+  - Module sha256 `276bfa9f92ad31c4` in both; kernel log alive, 0
+    warnings, no lockdep or sanitizer report, and no leak reading (the
+    kept lines state the tree configures none, as N3's release logs did).
+- Against N3 the re-reads are 3 to 13% faster (100k narrowed -8.4 and
+  -12.5%, carried -9.3 and -10.6%; 1M narrowed -11.4 and -10.6%,
+  carried -3.5 and -10.9%), at and just past the tenth the expected file
+  allowed. Read as config and environment spread, not a regression and
+  not a lever result: no rate compares across a config change, and these
+  two runs are the baselines the later stages compare with.
+
+Not read here: the guest-side memory sampler (in the tree arm since
+`be0f52d`, running in all four runs above) prints its `mem-baseline`
+and `samples` lines on the guest, and the host keeps only the
+`wait-seconds` figure from that transcript. N3's own logs keep none
+either. The FIFO-memory reading stays open.
+
+The row is 1.0.72.

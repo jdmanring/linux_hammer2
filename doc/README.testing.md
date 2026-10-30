@@ -1109,6 +1109,17 @@ defect run stays on the debug kernel; a rate is taken on the release
 one and says so. The release build has no function tracer, so the
 `read_folio` count that gate prints reads as unavailable there.
 
+Three TLS builds sit beside them since 2026-10-29: `7.3.0-tls` from
+`~/kernels/linux-7.3-tls`, `7.3.0-release-tls` from
+`~/kernels/linux-7.3-release-tls`, and `7.3.0-kasan-tls` from
+`~/kernels/linux-7.3-kasan`, each its plain twin's configuration plus
+`TLS`, `CRYPTO_GCM`, and `NVME_TCP` with `NET_HANDSHAKE`, chosen at
+boot by `setkernel-7.3tls.sh` under the grub names `h2debug-7.3tls`,
+`h2release-7.3tls` and `h2kasan-7.3tls`. The old three stay installed
+as the comparison, and a reading names the build it ran on.
+`KERNEL_REF` and the floor do not move: the kernel of record is
+still 7.3.
+
 Read `stat -c %b` on the result as well as the checksum. `i_blocks` is the
 on-media count, so it says which branch of the read completion each file
 took, and a set of matching checksums proves nothing about which paths
