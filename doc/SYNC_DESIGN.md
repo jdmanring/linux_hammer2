@@ -858,6 +858,173 @@ change executes:
   pass before it; no run has driven one to defer, and the miss the scope
   prevents is not read.
 
+## Skipping unchanged subtrees (design, 3.0b.2)
+
+A snapshot pass that can acknowledge still walks the whole root index once
+a round even when one file changed. Lever 2 prunes subtrees the last
+verified snapshot already compared, keyed on `mirror_tid` rather than the
+cut: the cut is a PFS transaction counter taken after the snapshot's flush
+(`hammer2_ioctl.c:911-919`), and a writer that took its tid before cut N
+can land in snapshot N+1 under blocks whose propagated `modify_tid` sits
+below cut N, with no fixed slack bounding a stalled writer
+(`hammer2_flush.c:118-121`, `hammer2.h:1008-1015`,
+`hammer2_chain.c:2395-2405, 2602-2609, 3282-3289, 3844-3855, 4398-4403`).
+`mirror_tid` is stamped at every modify from the device's flush generation
+(`hammer2_chain.c:1670`) and is monotone per device
+(`DILLON_HAMMER2_DESIGN_2015.md:299, 302-306, 332-335, 386-387`).
+
+**The prune predicate and its proof.** The pass records a per-thread
+last-verified generation, sampled as a candidate around the snapshot and
+adopted only in the verified arm (`hammer2_synchro.c:1341` computes
+`verified`, `:1355` sets the next pass's cut, `:1357-1385` is the verified
+arm that deletes the target; the candidate is adopted beside that arm, and
+`thr->snap_cut` cannot serve because `:1355` runs on every pass, verified
+or not. The generation's reset sites are enumerated: zeroed at thread
+start (`:1534`), adopted beside the verified arm, and reset whenever the
+source element changes (the stale-thread path, `:1528-1538`; a term or
+holder change under the lease, another device and counter). The candidate is read from
+`voldata.mirror_tid` at two points inside the shared snapshot helper
+`hammer2_pfs_snapshot()` (`hammer2_ioctl.c:859`), past its early returns:
+after the pre-snapshot PFS sync returns before the flush transaction
+begins (between the sync call and `hammer2_trans_sub()`, `:914-920`), and
+after the snapshot copy before its flush transaction closes. A pass
+prunes only when both read equal. The pre-snapshot PFS sync can itself
+move the generation (`hammer2_vfs_sync_pmp()` stage 2 flushes with
+`VOLHDR`, `hammer2_vfsops.c:3271-3278`, whose volume-root pass flushes
+fchain and vchain when flagged, `hammer2_flush.c:1249-1275`, executing the
+FREEMAP/VOLUME bump arms, `:694`, `:721-723`), which is why no read sits
+before it: the candidate is the post-sync generation, and any inequality
+across the snapshot window proper, from whatever flusher, runs that pass
+unpruned. The check fails closed; its cost is availability (one unpruned
+pass per syncer volume flush in-window), not correctness. Each read takes
+the voldata lock (`hammer2.h:1565`, `hammer2_chain.c:5593`) and is done
+twice requiring equal: the FREEMAP bump runs outside that lock (taken
+only in the VOLUME arm, `:710`), so the reads rest on the counter's
+monotonicity and double-read equality, not on exclusion. A subtree prunes only when its root's
+`mirror_tid` is strictly below the adopted generation. Soundness rests on
+one claim: any chain modified after the last verified snapshot's
+comparison carries a `mirror_tid` above its generation. The stamp is
+`voldata.mirror_tid + 1` read at modify time (`hammer2_chain.c:1670`), and
+`voldata.mirror_tid` moves only at the volume flush, monotone
+nondecreasing, so a later modify stamps strictly above a generation sampled
+before the snapshot whose comparison verified. Two halves carry the content:
+
+Source half: a `hammer2_chain_modify` restamps exactly one chain
+(`hammer2_chain.c:1670-1672`): the insert helper (`:3411`), the destroy
+(`:3450`), the indirect create and rename paths (`:3616`, `:3876`), and
+the flush-time blockmap update with mtid 0 (`hammer2_flush.c:922`) each
+restamp the immediate parent, and the collapse (`hammer2_chain.c:4316`)
+likewise. Higher ancestors follow only through flush propagation: every
+modify sets UPDATE (`hammer2_chain.c:1543-1545`), and flushing a child
+modifies its parent with mtid 0 (`hammer2_flush.c:922`). A below-threshold
+range root therefore proves no *flushed* structural change below it since
+the generation was adopted; a destroy two levels down in-window does not
+lift the root at modify time. In-window mutations are excluded by the
+residue veto instead, which has two legs: the PFS queues, and the
+device-wide dirty-chain count. An inode the sync requeues on a failed
+vget (`hammer2_vfsops.c:3099-3125`, setting `dorestart`) or finds
+re-dirtied mid-flush (`:3158-3166`) restarts the flush (`:3244-3258`), and
+anything still queued or requeued when the sync returns leaves observable
+residue in the PFS queues; anything dirtied with no queue entry still
+moves the device-wide `hammer2_count_chain_modified` delta (incremented on
+every first modify, `hammer2_chain.c:1483`, decremented as the flush
+clears MODIFIED, `hammer2_flush.c:641-642`). The snapshot helper already
+syncs before it cuts (`hammer2_ioctl.c:914-920`); lever 2 reads both legs
+after the snapshot copy and prunes nothing on any pass that leaves queue
+residue or a nonzero dirty delta across the window. The two
+`HAMMER2_LOCKDEBUG` controls the plan names read the two legs: a writer
+held between `hammer2_trans_sub()` and `hammer2_chain_modify()` across a
+snapshot (queue residue), and a chain dirtied under an inode kept off the
+sync queue (counter delta with clean queues); each must be followed by a
+pruned pass that still copies the key.
+
+Slave half: the slave side iterates its own key space
+(`hammer2_synchro.c:2109-2128, 2210-2213, 2224-2226`) and sweeps what the
+source lacks, so a skipped source range must reach the slave as an explicit
+record through the feed and collect, suppressing the sweep inside it. In
+the local shape, where the frontend writes the slave, that record is also
+what the slave-side test reads: a slave key altered inside a pruned range
+must survive to the K-th round and trip the detection line below. The
+slave-side test is the half the local shape can fail while the source
+half holds.
+
+**Where a skip lives.** Indirect blocks recurse inside the carried lookup
+(`hammer2_chain.c:2602-2609`), which every frontend path shares, and
+`LOOKUP_MATCHIND` returns an indirect block only on an exact range
+(`:2395-2405`). The skip is a lookup flag carrying the prune threshold
+into the carried lookup, and the frontend gates and `xfstests.sh` join
+the readings since the carried lookup changes. The forced control is
+placed in that predicate: a source-only skip with the merge unchanged
+must produce sweeps the fingerprints read.
+
+**Scope.** Snapshot passes only: the live pass and the idle stamp pass
+read in-memory chains whose parents the flush has not yet raised, so they
+never prune, and `H2_SYNC_SNAPSHOT=0` asserts no prune.
+
+**Backstops and S5.** A wrong prune deletes the last known-good target
+(the verified arm deletes it, `hammer2_synchro.c:1373-1385`; the snapshot
+carries `pfs_lsnap_tid`, `hammer2_ioctl.c:925, 1009`; the next pass's cut
+is set at `hammer2_synchro.c:1355`), so the lever takes the target
+lifecycle of branch K: the target is kept across pruned verifications and
+retaken at an unpruned one every K passes and on any `rescan_all`, with
+the target's staleness and held space stated; only an unpruned full round
+deletes it. Like branch K's narrowed pass, a pruned pass neither
+acknowledges an `fsync` nor stamps `update_tid`: both wait for the 3.2.7
+machinery that can protect them, and the 3.0b exit reads the full round's
+cost for the same reason. S5 then rests on the two-half proof without
+spending it: no acknowledgment leaves the holder on a pruned "verified at
+T", so a holder dying before the next full round leaves the election
+reading an older stamp that no released write depends on. A full round
+that acts after pruned verifications is still a safety event: one named
+line, pruned passes disabled (unpruned verification only) until the design
+is re-audited, and the K-th round retakes the target. The stamp is never
+lowered here because a pruned pass writes none; any lowering belongs to
+3.2.7b, where acknowledgments first exist, and is read there. Read in
+3.0b.2 only what exists then: a slave key altered inside a pruned range,
+then the K-th round, and the detection line and the retaken target must
+read.
+
+**The comment conflict.** Upstream says `modify_tid` "is not propagated"
+(`hammer2_flush.c:269-271`) while `hammer2_flush.c:885-887, 932-933`
+propagate it upward at flush time; the lever's dependence on the carried
+flush's ancestor restamp is named and XXX-marked. Dillon's "skipping
+elements with matching modify_tids" (`DILLON_HAMMER2_DESIGN_2015.md:341-342`)
+relies on a syncing node raising `modify_tid` only when the whole
+sub-hierarchy is synchronized (`:326-329, 320-322, 337-339`), which the
+port's flush does not do; a generation cut is a different mechanism, and
+the section states so rather than claiming his premise.
+
+**The destroy bound and the resumed segment.** A destroy marks its parent
+modified at its own tid (`hammer2_chain.c:3450`), restamping the parent,
+with higher ancestors following only at flush time (see the source half
+above). A below-threshold root therefore holds no *flushed* insert or
+destroy since the last verification and needs no tombstone feed for keys
+the skip never visits; an in-window destroy is barred by the residue
+veto's counter leg instead. The merge's destroy-before-sweep order
+applies within traversed ranges, and the destroy-in-a-narrowed-call shape
+the plan leaves undriven is driven here as the control: a destroy inside
+a would-be-pruned range must either keep the range unpruned or arrive
+through the traversed path, never vanish inside a skip. A
+segment the 1000-deferral cap stops (`hammer2_synchro.c:2573-2579`)
+resumes from the lowest key not yet compared on either cursor past the
+cap's break, on snapshot passes only (`:2097-2104` are the loop-head ends
+around that break); the prune threshold and the resume key travel together
+per round, and a 1a segment resumed in a round after the first is read
+with pruning on, since no run has produced one.
+
+**The wire record.** Over the wire the skip record is a feed the client
+refuses today, so the feed type, the client's shape test and the version
+gate move together. The generation does not fit `dmsg_hm2_xop.reserved`
+(`dmsg.h:594`, size pinned at
+`hammer2_remote.c:116-117, 326`, the new-type gate at `:319-323`, PROTO2
+gates at `:254-255, 1397, 2644`, unknown-feed refusal at `:1997-2002`);
+the request grows behind the version while `dmsg_hm2_feed` has room for
+the record (`dmsg.h:599, 609`). A remote source's generation travels on
+the snapshot reply's closing frame from the master's device, and the
+last-verified generation resets whenever the source element changes,
+since under the lease a term or holder change means another device and
+counter.
+
 ## What this note does not settle
 
 - B's design: the commands, the frame check, the flow control and the
