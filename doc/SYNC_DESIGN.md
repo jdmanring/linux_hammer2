@@ -863,8 +863,8 @@ change executes:
 A snapshot pass that can acknowledge still walks the whole root index once
 a round even when one file changed. Lever 2 prunes subtrees the last
 verified snapshot already compared, keyed on `mirror_tid` rather than the
-cut: the cut is a PFS transaction counter taken after the snapshot's flush
-(`hammer2_ioctl.c:911-919`), and a writer that took its tid before cut N
+cut: the cut is the snapshot flush transaction's id, taken right after
+the PFS sync (`hammer2_ioctl.c:911-920`), and a writer that took its tid before cut N
 can land in snapshot N+1 under blocks whose propagated `modify_tid` sits
 below cut N, with no fixed slack bounding a stalled writer
 (`hammer2_flush.c:118-121`, `hammer2.h:1008-1015`,
@@ -885,8 +885,8 @@ source element changes (the stale-thread path, `:1528-1538`; a term or
 holder change under the lease, another device and counter). The candidate is read from
 `voldata.mirror_tid` at two points inside the shared snapshot helper
 `hammer2_pfs_snapshot()` (`hammer2_ioctl.c:859`), past its early returns:
-after the pre-snapshot PFS sync returns before the flush transaction
-begins (between the sync call and `hammer2_trans_sub()`, `:914-920`), and
+after the pre-snapshot PFS sync returns, before `hammer2_trans_sub()`
+takes the cut (`:914-920`), and
 after the snapshot copy before its flush transaction closes. A pass
 prunes only when both read equal. The pre-snapshot PFS sync can itself
 move the generation (`hammer2_vfs_sync_pmp()` stage 2 flushes with
@@ -921,22 +921,30 @@ range root therefore proves no *flushed* structural change below it since
 the generation was adopted; a destroy two levels down in-window does not
 lift the root at modify time. In-window mutations are excluded by the
 residue veto instead, which has two legs: the PFS queues, and the
-device-wide dirty-chain count. An inode the sync requeues on a failed
+module-wide dirty-chain count. An inode the sync requeues on a failed
 vget (`hammer2_vfsops.c:3099-3125`, setting `dorestart`) or finds
 re-dirtied mid-flush (`:3158-3166`) restarts the flush (`:3244-3258`), and
 anything still queued or requeued when the sync returns leaves observable
 residue in the PFS queues; anything dirtied with no queue entry still
-moves the device-wide `hammer2_count_chain_modified` delta (incremented on
+moves the module-wide `hammer2_count_chain_modified` delta (incremented on
 every first modify, `hammer2_chain.c:1483`, decremented as the flush
 clears MODIFIED, `hammer2_flush.c:641-642`). The snapshot helper already
 syncs before it cuts (`hammer2_ioctl.c:914-920`); lever 2 reads both legs
 after the snapshot copy and prunes nothing on any pass that leaves queue
-residue or a nonzero dirty delta across the window. The two
+residue or a nonzero dirty delta across the window. The counter is
+module-wide (a file-scope global across devices), so dirt on a sibling PFS
+or a sibling device fires the veto too: fail-closed
+availability, never a wrong prune, and the per-pass line below tells the two
+apart. The two
 `HAMMER2_LOCKDEBUG` controls the plan names read the two legs: a writer
 held between `hammer2_trans_sub()` and `hammer2_chain_modify()` across a
 snapshot (queue residue), and a chain dirtied under an inode kept off the
 sync queue (counter delta with clean queues); each must be followed by a
-pruned pass that still copies the key.
+pruned pass that still copies the key. Every snapshot pass prints one
+`syncsnap: prune` line naming pruned or unpruned and, when unpruned, which
+leg vetoed or which generation read disagreed: a capture that never agrees
+(a deterministic in-window bump) then reads as a count of unpruned passes,
+not as a lever that silently never fires.
 
 Slave half: the slave side iterates its own key space
 (`hammer2_synchro.c:2109-2128, 2210-2213, 2224-2226`) and sweeps what the
@@ -1007,8 +1015,9 @@ a would-be-pruned range must either keep the range unpruned or arrive
 through the traversed path, never vanish inside a skip. A
 segment the 1000-deferral cap stops (`hammer2_synchro.c:2573-2579`)
 resumes from the lowest key not yet compared on either cursor past the
-cap's break, on snapshot passes only (`:2097-2104` are the loop-head ends
-around that break); the prune threshold and the resume key travel together
+cap's break, on snapshot passes only (the resume consumer is gated on
+`walks` at `:831-836`, and `walks` is snapshot-only at `:697-704`); the
+prune threshold and the resume key travel together
 per round, and a 1a segment resumed in a round after the first is read
 with pruning on, since no run has produced one.
 
