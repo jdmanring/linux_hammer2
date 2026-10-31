@@ -361,6 +361,8 @@ struct hammer2_chain {
  */
 #define HAMMER2_LOOKUP_NODATA		0x00000002	/* data left NULL */
 #define HAMMER2_LOOKUP_NODIRECT		0x00000004	/* no offset=0 DD */
+/* XXX Linux: lever 2 of doc/SYNC_DESIGN.md, the prune predicate below */
+#define HAMMER2_LOOKUP_PRUNE		0x00000400	/* skip below-threshold subtrees */
 #define HAMMER2_LOOKUP_SHARED		0x00000100
 #define HAMMER2_LOOKUP_MATCHIND		0x00000200	/* return all chains */
 #define HAMMER2_LOOKUP_ALWAYS		0x00000800	/* resolve data */
