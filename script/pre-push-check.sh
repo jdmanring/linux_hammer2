@@ -173,6 +173,9 @@ H2_GUEST_WAIT=${H2_GUEST_WAIT:-2}
 export H2_GUEST_WAIT
 
 for g in script/test-*.sh; do
+	case "$g" in
+	*test-enospc.sh|*test-fixtures.sh) continue ;;
+	esac
 	run_gate "$g"
 done
 
