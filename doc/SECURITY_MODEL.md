@@ -7,11 +7,11 @@ this page summarizes the parts an operator meets today.
 
 ## Integrity on the media
 
-- Every block reference carries a check code, XXH64 by default, on
-  data blocks and on every blockref, inode and indirect block, verified
-  on read; `hammer2 setcheck` chooses another (`none`, `crc32`,
-  `sha192`), which no script here runs. One byte changed in a data block is refused naming
-  the check, and a volume header failing its CRC is not mounted
+- Every block reference carries a check code, XXH64 by default, on data
+  blocks and on every blockref, inode and indirect block, verified on
+  read. `hammer2 setcheck` chooses another (`crc32`, `sha192`) or none
+  at all, and no script here runs it. One byte changed in a data block
+  is refused naming the check, and a volume header failing its CRC is not mounted
   (`doc/README.capabilities.md`, DataChecksum and MetadataChecksum).
 - Writes are copy-on-write: a modified block is written to a new
   location and committed by the volume header, so a crash leaves the
@@ -43,19 +43,24 @@ latency, the half that was never measured").
   link whose peer announced `DMSG_SPAN_PROTO_2` both CRCs of every frame
   are verified and a mismatch ends the link; that is integrity against
   corruption, not authentication.
-- **Admission**: a remote master is registered only against an enabled
-  `copyinfo[]` row with its cluster id. The peer's identity is not
-  verified by the kernel; the test harness's `test/h2service.c` admits a
-  peer by a marker file. Run a cluster only between hosts on a network
-  you control.
-- **What a remote peer can do**: a PFS with a remote master mounts
-  read-only, and the server refuses every modifying descriptor from a
-  peer. Two commands outside the descriptor table do write the master's
-  media: a peer can have the master take a snapshot of its element,
-  only under the pass's `<pfs>.h2sync-src` name (a stale one of that
-  name is deleted first), and delete a snapshot that same link took
-  (`hammer2_remote.c`, the snapshot commands). Each costs the master
-  space until it is deleted and the bulkfree scan has run.
+- **Admission**: an enabled `copyinfo[]` row with the cluster id gates
+  only the registration of a remote master, on the side that dials it
+  (`hammer2_remote_admitted()`); the serving side checks no row. The
+  kernel verifies no peer identity, and the test harness's
+  `test/h2service.c` chooses whom to connect by a marker file. Run a
+  cluster only between hosts on a network you control.
+- **What a connected peer can do**: a device announces a span for every
+  PFS under its super-root, cluster id included, and the server serves
+  any mounted PFS with an element on the device whose cluster id a peer
+  names (`hammer2_remote_pfs()`), so a peer can read every mounted PFS on
+  it. The server refuses every modifying descriptor. Two snapshot
+  commands outside the descriptor table do write the serving side's
+  media: a peer can have it snapshot any such PFS under any name ending
+  `.h2sync-src`, which first deletes an existing PFS of that name,
+  including one another pass is using as its source, and can delete a
+  snapshot that same link took. Each snapshot costs space until it is
+  deleted and the bulkfree scan has run. A PFS with a remote master
+  mounts read-only.
 - **Next**: kernel TLS through the kernel's handshake upcall, with
   `tlshd` holding the keys, is P8's TLS stage.
 
