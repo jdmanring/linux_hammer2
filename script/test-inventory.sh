@@ -1016,7 +1016,7 @@ rm -f "$leak_forms"
 # after the summary line and its exit until 2026-11-01, so a missing
 # document printed FAIL and the gate still exited 0.
 nops=0
-for d in doc/STATUS_SNAPSHOT.md doc/CAPABILITIES_MATRIX.md doc/SECURITY_MODEL.md doc/PACKAGING_NOTES.md doc/PERFORMANCE.md doc/REPRODUCIBILITY.md doc/RELEASE_POLICY.md doc/UPSTREAM_ENGAGEMENT.md doc/ROOTFS_MILESTONES.md; do
+for d in doc/ARCHITECTURE.md doc/USER_GUIDE.md doc/STATUS_SNAPSHOT.md doc/CAPABILITIES_MATRIX.md doc/SECURITY_MODEL.md doc/PACKAGING_NOTES.md doc/PERFORMANCE.md doc/REPRODUCIBILITY.md doc/RELEASE_POLICY.md doc/UPSTREAM_ENGAGEMENT.md doc/ROOTFS_MILESTONES.md; do
 	nops=$((nops + 1))
 	[ -f "$d" ] || { echo "  FAIL $d: an operator document README.md indexes is missing"; fail=$((fail+1)); }
 	command grep -qF "$(basename "$d")" README.md || { echo "  FAIL $d: README.md does not index it"; fail=$((fail+1)); }
