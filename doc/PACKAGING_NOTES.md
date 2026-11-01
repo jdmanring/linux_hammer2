@@ -1,34 +1,43 @@
-# Packaging and Distribution Notes
+# Packaging Notes
 
-Lightweight guidance for packaging `linux_hammer2` as an out-of-tree kernel module on Linux 7.3 and newer.
+What a packager needs to know about the module. Nothing here is packaged
+by this repository; `make install` and `make uninstall` (README.md,
+"Install") are the supported installation.
 
-## 1. Module Loading Order
-Load order is critical to satisfy codec and hashing symbols at `modprobe` time:
+## Kernel
 
-```sh
-modprobe libcrc32c
-modprobe xxhash
-insmod hammer2.ko
-```
+The module builds against the kernel of record, 7.3, and refuses an
+older one at compile time (`hammer2_os.h`). It imports `crc32c`, `xxh64`,
+SHA-256, LZ4 and zlib from the kernel's libraries (`nm -u hammer2.ko`),
+so the kernel needs `CONFIG_CRC32`, `CONFIG_XXHASH`,
+`CONFIG_CRYPTO_LIB_SHA256`, `CONFIG_LZ4_COMPRESS`,
+`CONFIG_LZ4_DECOMPRESS`, `CONFIG_ZLIB_DEFLATE` and `CONFIG_ZLIB_INFLATE`.
+It also needs `CONFIG_TRANSPARENT_HUGEPAGE`, without which the block
+layer caps the block size below the format's 64 KiB and the build
+stops at an assertion (`hammer2_io.c`). The kernels this port is tested
+on build all eight in; on a kernel that builds the libraries as modules,
+`modprobe hammer2` loads them first, and `insmod` does not.
 
-`hammer2.ko` depends on `libcrc32c` for block checksum validation and `xxhash` for hash-tree operations.
+## Userland
 
-## 2. DKMS Support
-A `dkms.conf` can wrap the module build against `/lib/modules/$(uname -r)/build`. Recommended minimal DKMS stanza:
+Formatting, PFS management, snapshots and checking come from
+[hammer2-utils](https://github.com/kusumi/hammer2-utils):
+`newfs_hammer2`, `hammer2` and `fsck_hammer2`. No `mount.hammer2` helper
+is needed: the source is `<device>@LABEL`, or `<dev1>:<dev2>@LABEL` for
+a filesystem across volumes, and the module's own options are `emerg`
+and `cluster_fd=`.
 
-```
-PACKAGE_NAME=hammer2
-PACKAGE_VERSION=1.0.72
-BUILT_MODULE_NAME[0]=hammer2
-DEST_MODULE_LOCATION[0]=/extra
-AUTOINSTALL=yes
-```
+## Root on HAMMER2
 
-## 3. udev and Rules
-No custom `udev` rules are required for standard operation. Block device access via `blkid` and `/dev/disk/by-label` works for multi-volume management.
+`script/root-boot.sh` boots a kernel whose root filesystem is a HAMMER2
+volume: an initramfs holding the module and an init that reads `root=`
+from the kernel command line (`root=/dev/vda@LABEL rootfstype=hammer2`),
+mounts the volume, moves the mount over `/` and executes `/sbin/init`
+from it. Its control boots against a label not on the volume and must
+fail at the mount. No distribution initramfs generator (mkinitcpio,
+dracut) has been configured or read here.
 
-## 4. Initramfs and Root-on-HAMMER2
-For root filesystem usage:
-1. Include `hammer2.ko`, `libcrc32c.ko`, and `xxhash.ko` in `initramfs` via `/etc/mkinitcpio.conf` or `dracut`.
-2. Specify root mount as `root=/dev/vdX rootfstype=hammer2` or via UUID.
-3. Verify superblock availability before `switch_root` to avoid premature unmount panics.
+## Not provided
+
+No DKMS configuration, udev rules or distribution package is shipped or
+tested.
