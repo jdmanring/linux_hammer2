@@ -65,9 +65,10 @@ At a glance, on a kernel of 7.3 or newer:
   image
 + not built: `O_DIRECT`, which is refused by decision. What a root
   filesystem needs and where each need stands is in
-  `doc/ROOTFS_MILESTONES.md`. Small-file create and delete
+  `doc/ROOTFS_MILESTONES.md`
++ measured: small-file create and delete
   rates, mixed read/write with mmap and fsync storms, and an export
-  served by `nfsd` are measured, by `million-tree.sh`, `storm.sh` and
+  served by `nfsd`, by `million-tree.sh`, `storm.sh` and
   `nfsd-export.sh`; a sustained soak is the same load over
   `H2_STORM_CYCLES` cycles, each checked and reclaimed on its own, and
   the readings are in `doc/history/verification-record.md`
@@ -176,9 +177,10 @@ than about a shared bug.
 
 + Linux 7.3 or newer, enforced by an `#error`. The floor is the 7.3
   line by decision, not by accident: 7.1 is end of life, 7.2 is an
-  ordinary stable series that goes the same way shortly after 7.3
-  ships, and 7.3 is the next longterm, so a floor at 7.2 would buy one
-  cycle and charge for the migration twice. The kernel of record is one
+  ordinary stable series that goes the same way shortly after 7.3,
+  which shipped on 2026-10-18 and is expected to be the next longterm,
+  so a floor at 7.2 would buy one cycle and charge for the migration
+  twice. The kernel of record is one
   tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
   refuses to report a pass against anything else; the pin moved
   through 7.3's release candidates to the release, because running on
@@ -187,7 +189,9 @@ than about a shared bug.
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
   mounted, and the `create` operation's signature. A build against 7.2
-  fails on exactly those, recorded in `doc/history/verification-record.md`. Older
+  failed on exactly those on 2026-09-05, recorded in
+  `doc/history/verification-record.md`; nothing has rebuilt against 7.2
+  since. Older
   kernels are not blocked by anything deeper: measured from below, 6.18
   needed two compatibility conditionals in September and seven in
   October, as the port took up what 6.19 to 7.3 added, and 6.15 is where
