@@ -13,9 +13,10 @@ How work found here goes back to the trees it came from.
 
 ## Rules
 
-- The carried core stays readable as DragonFly's. A change to a carried
-  file is marked `XXX` in place, Linux lines `/* Linux */`, so a patch
-  can be lifted out and offered upstream in the form upstream wrote.
+- The carried core stays readable as DragonFly's. A line the port
+  changes in a carried file is marked `/* Linux */`, and `XXX` where it
+  is a compromise rather than a translation, so a patch can be lifted
+  out and offered upstream in the form upstream wrote.
 - Every draft under `doc/upstream/` is named by a document beside it
   saying whether the code is still that way at upstream's head and how
   that was checked, what was searched for, and what could not be

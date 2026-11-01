@@ -17,8 +17,8 @@ sudo losetup -f --show scratch.img
 sudo mount -t hammer2 /dev/loop0@TEST /mnt
 ```
 
-`losetup` prints the device it chose. A PFS is named after the device,
-`<device>@<label>`. A mount that names no PFS asks for `DATA`, which
+`losetup` prints the device it chose. A PFS is mounted by its label,
+with the source written `<device>@<label>`. A mount that names no PFS asks for `DATA`, which
 `newfs_hammer2` creates only when it is given no `-L`, so after the
 format above name `@TEST`. Add
 `-o ro` to read without writing; `mount -o remount,rw` goes the other
