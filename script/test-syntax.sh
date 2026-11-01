@@ -473,6 +473,23 @@ check "hammer2_strategy.c: invariants on"   pass src/sys/fs/hammer2/hammer2_stra
 check "hammer2_strategy.c: invariants off"  pass src/sys/fs/hammer2/hammer2_strategy.c
 check "hammer2_vnops.c: invariants on"      pass src/sys/fs/hammer2/hammer2_vnops.c -DHAMMER2_INVARIANTS
 check "hammer2_vnops.c: invariants off"     pass src/sys/fs/hammer2/hammer2_vnops.c
+# The debug build's blocks, which the fleet's build was the only compiler
+# of: every .c carrying HAMMER2_LOCKDEBUG is compiled with it here, and a
+# file that gains a block with no line below fails the population check.
+check "hammer2_chain.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_chain.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_flush.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_flush.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_freemap.c: lockdebug"  pass src/sys/fs/hammer2/hammer2_freemap.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_ioctl.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_ioctl.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_synchro.c: lockdebug"  pass src/sys/fs/hammer2/hammer2_synchro.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_vfsops.c: lockdebug"   pass src/sys/fs/hammer2/hammer2_vfsops.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+nld=0
+for f in $(command grep -l 'HAMMER2_LOCKDEBUG' src/sys/fs/hammer2/*.c); do
+	nld=$((nld + 1))
+	command grep -q "^check \"${f##*/}: lockdebug\".*-DHAMMER2_LOCKDEBUG" "$0" || {
+		echo "  FAIL  ${f##*/} carries HAMMER2_LOCKDEBUG and is not compiled with it here"
+		fail=$((fail + 1)); }
+done
+[ "$nld" -gt 0 ] || { echo "  FAIL  no .c carries HAMMER2_LOCKDEBUG; the population check reads nothing"; fail=$((fail + 1)); }
 # Negative control: a wrong kernel call must be refused by the same
 # headers, or a pass above proves only that the compiler ran. Both
 # controls are prefix headers applied after the kernel header they
@@ -521,8 +538,13 @@ if [ -n "$CC2" ]; then
 		src/sys/fs/hammer2/hammer2_export.c \
 		src/sys/fs/hammer2/hammer2_remote.c \
 		src/sys/fs/hammer2/hammer2_synchro.c \
-		src/sys/fs/hammer2/hammer2_ccms.c; do
+		src/sys/fs/hammer2/hammer2_ccms.c \
+		$(command grep -l 'HAMMER2_LOCKDEBUG' src/sys/fs/hammer2/*.c | sed 's/^/ld:/'); do
 		ran=$((ran + 1))
+		# An ld: entry is a file carrying HAMMER2_LOCKDEBUG, compiled
+		# again with it (without INVARIANTS, which this compiler is not
+		# asked for anywhere here).
+		ld=; case "$f" in ld:*) f=${f#ld:}; ld=-DHAMMER2_LOCKDEBUG ;; esac
 		# The packed-member suppression applies to the carried files
 		# only, exactly as it does for the first compiler. Our own
 		# hammer2_io.c and the header TU are held to the full set,
@@ -531,12 +553,12 @@ if [ -n "$CC2" ]; then
 		*/hammer2_io.c|*/hammer2_strategy.c|*/hammer2_export.c|*/hammer2_remote.c|test/*) carried= ;;
 		*) carried=$CARRIED ;;
 		esac
-		"$CC2" "${CFLAGS2[@]}" $carried "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
+		"$CC2" "${CFLAGS2[@]}" $carried $ld "$f" >/tmp/h2syn2.$$ 2>&1; rc=$?
 		ours=$(command grep -c "^src/.*warning:" /tmp/h2syn2.$$ || true)
 		if [ "$rc" = 0 ] && [ "$ours" = 0 ]; then
-			echo "  ok    $CC2: $(basename "$f") (pass)"
+			echo "  ok    $CC2: $(basename "$f")${ld:+ lockdebug} (pass)"
 		else
-			echo "  FAIL  $CC2: $(basename "$f") rc=$rc, $ours warning(s) in our files"
+			echo "  FAIL  $CC2: $(basename "$f")${ld:+ lockdebug} rc=$rc, $ours warning(s) in our files"
 			command grep -E "^src/|error:" /tmp/h2syn2.$$ | sed 's/^/        /' | head -6
 			fail=$((fail + 1))
 		fi
