@@ -1111,7 +1111,7 @@ one and says so. The release build has no function tracer, so the
 Three TLS builds sit beside them since 2026-10-29: `7.3.0-tls` from
 `~/kernels/linux-7.3-tls`, `7.3.0-release-tls` from
 `~/kernels/linux-7.3-release-tls`, and `7.3.0-kasan-tls` from
-`~/kernels/linux-7.3-kasan`, each its plain twin's configuration plus
+`~/kernels/linux-7.3-kasan-tls`, each its plain twin's configuration plus
 `TLS`, `CRYPTO_GCM`, and `NVME_TCP` with `NET_HANDSHAKE`, chosen at
 boot by `setkernel-7.3tls.sh` under the grub names `h2debug-7.3tls`,
 `h2release-7.3tls` and `h2kasan-7.3tls`. The old three stay installed
