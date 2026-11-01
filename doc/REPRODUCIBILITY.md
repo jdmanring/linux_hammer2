@@ -1,82 +1,77 @@
-# Reproducibility Guide: Stock Linux to Green Verification Suite
+# Reproducing the Verification
 
-How to take a stock Linux machine (Kernel 7.3 or newer, QEMU/KVM, root access) and run the complete `linux_hammer2` verification suite from zero to green.
+How to go from a clone to the gates, and from the gates to the fleet
+runs. `doc/README.testing.md` is the authority: every gate and fleet
+script, what each proves, and the guest kernels' configuration.
 
-## 1. Prerequisites and Build Environment
-- **Operating System**: Linux kernel 7.3.0 or newer (or kernel of record source tree configured via `KDIR`).
-- **Dependencies**: `make`, `gcc`, `clang`, `git`, `bash`, `coreutils`, `qemu-system-x86_64`, `libvirt` (`virsh`), `bc`, `jq`.
-- **Kernel of Record Source**: The kernel of record (7.3) is obtained from upstream Linux (`git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git` at tag `v7.3` or equivalent pinned in `script/test-syntax.sh` as `KERNEL_REF`). Configure with standard x86_64 defconfig plus `CONFIG_TRANSPARENT_HUGEPAGE=y`, `CONFIG_LZ4_COMPRESS=y`, `CONFIG_LZ4_DECOMPRESS=y`, `CONFIG_ZLIB_DEFLATE=y`, `CONFIG_ZLIB_INFLATE=y`, and `CONFIG_XXHASH=y`.
+## 1. The host
 
-Pinned kernel `.config` fragment (append to `arch/x86/configs/x86_64_defconfig` before `make olddefconfig`):
-```
-CONFIG_TRANSPARENT_HUGEPAGE=y
-CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y
-CONFIG_LZ4_COMPRESS=y
-CONFIG_LZ4_DECOMPRESS=y
-CONFIG_ZLIB_DEFLATE=y
-CONFIG_ZLIB_INFLATE=y
-CONFIG_XXHASH=y
-```
+- A kernel build tree of the kernel of record, 7.3, the version
+  `script/test-syntax.sh` pins as `KERNEL_REF`. The module imports
+  `crc32c`, `xxh64`, LZ4 and zlib, so that tree needs `CONFIG_CRC32`,
+  `CONFIG_XXHASH`, `CONFIG_LZ4_COMPRESS`, `CONFIG_LZ4_DECOMPRESS`,
+  `CONFIG_ZLIB_DEFLATE` and `CONFIG_ZLIB_INFLATE`.
+- `make`, `gcc`, `clang`, `git`, `bash`, `dash`, `busybox`, `vale`,
+  `python3`, and for the fleet `qemu`, `libvirt` (`virsh`) and `ssh`.
+- For `test-provenance.sh`, clones of the origin trees its rows name;
+  without one, a row claiming a byte-for-byte carry reports
+  COULD-NOT-RUN.
+- [hammer2-utils](https://github.com/kusumi/hammer2-utils) built, for
+  `newfs_hammer2`, `hammer2` and `fsck_hammer2`.
 
-- **Source Clone**:
-  ```bash
-  git clone https://github.com/jdmanring/linux_hammer2.git
-  cd linux_hammer2
-  ```
-
-## 2. Building the Module
-Build against the running kernel headers:
-```bash
-make
-```
-Or against an explicit kernel build tree:
-```bash
-make KDIR=/path/to/linux-7.3/build
+```sh
+git clone https://github.com/jdmanring/linux_hammer2.git
+cd linux_hammer2
+make KDIR=/path/to/linux-7.3
 ```
 
-## 3. Running the Fast Gate Suite (Local Machine)
-The eighteen automated gates in `script/` test provenance, inventory, citations, syntax, checkpatch baseline, and shim behavior:
-```bash
-H2_FIXTURE_START=1 KDIR=/path/to/linux-7.3/build bash script/pre-push-check.sh
-```
-A clean run verifies module compilation, checkpatch compliance, shim stubs, and inventory consistency, ending with: `pre-push: gates and selftests pass, 0 could not run`.
+## 2. The gates
 
-## 4. Setting up QEMU/KVM Guest Fleet for Fleet Gates
-Fleet gates (`cluster-sync.sh`, `cluster-wire.sh`, `test-enospc.sh`, `test-fixtures.sh`) require QEMU/KVM guest virtual machines:
+One script per gate, each run on its own; there is no aggregate
+runner. Most need only this machine and the prerequisites above:
+`test-syntax.sh` needs the 7.3 tree and both compilers,
+`test-checkpatch.sh` the checker its baseline names, and each reports
+COULD-NOT-RUN (exit 2) without them. Two need a guest:
 
-Minimal `guest.xml` example (one guest, 4 GiB RAM, 12 vCPUs, virtio disk):
-```xml
-<domain type='kvm'>
-  <name>hammer2-guest-a</name>
-  <memory unit='GiB'>4</memory>
-  <vcpu>12</vcpu>
-  <os><type arch='x86_64'>hvm</type><boot dev='hd'/></os>
-  <devices>
-    <disk type='file' device='disk'>
-      <driver name='qemu' type='qcow2'/>
-      <source file='/var/lib/libvirt/images/hammer2-guest-a.qcow2'/>
-      <target dev='vda' bus='virtio'/>
-    </disk>
-    <interface type='network'><source network='default'/></interface>
-  </devices>
-</domain>
+```sh
+for g in script/test-*.sh; do bash "$g"; echo "$g exit $?"; done
 ```
 
-Provision and run:
-1. Define and start two guest domains (e.g., `hammer2-guest-a` and `hammer2-guest-b`) via `virsh`:
-   ```bash
-   virsh define guest-a.xml
-   virsh start hammer2-guest-a
-   ```
-2. Ensure passwordless SSH (`root@<guest-ip>` or configured `H2_GUEST_SSH`) is active for automated provisioning during test runs.
-3. Execute fleet exercisers:
-   ```bash
-   H2_FIXTURE_START=1 bash script/cluster-sync.sh
-   H2_FIXTURE_START=1 bash script/cluster-wire.sh
-   ```
-4. Shut down guests cleanly:
-   ```bash
-   virsh shutdown hammer2-guest-a
-   ```
+Exit 0 passes, 1 fails, and 2 means the instrument could not run, which
+is neither. `script/pre-push-check.sh` runs what a push needs without a
+guest: the module build (`script/build-check.sh`), every gate but the
+two fleet gates, and the selftest of every gate that has one. It
+fetches `checkpatch.pl` at the baseline's kernel version when no cached
+copy matches the baseline's hash.
 
+## 3. The guests
 
+The fleet gates (`test-fixtures.sh`, `test-enospc.sh`) and the fleet
+scripts (`cluster-sync.sh`, `cluster-wire.sh` and the rest the testing
+document lists) drive libvirt guests over ssh as root:
+
+- `H2_GUEST` names the libvirt domain and `H2_GUEST_SSH` its ssh target
+  (`cluster-wire.sh` takes `H2_GUEST_A`, `H2_GUEST_B` and their `_SSH`
+  variables for its two guests).
+- `H2_FIXTURE_START=1` lets a gate start a guest that is off;
+  `H2_FIXTURE_DIR` is where images and kept reports go.
+- Each script builds the module itself against `KDIR`, which must be the
+  tree of the kernel the guest booted, and copies it in.
+- The maintainer's Linux guests are Artix Linux with 4 GiB and 12 vCPUs
+  each, booting debug (lockdep, kmemleak), KASAN and release builds of
+  7.3, each also built with kernel TLS; `doc/README.testing.md` records
+  each build's configuration.
+- Several fleet scripts also drive a DragonFly 6.4.2 guest
+  (`f4-roundtrip.sh`, `pfs-domains.sh`, `bulkfree.sh`, `cut-flush.sh`,
+  `million-tree.sh`, `nix-closure.sh`, `throughput.sh`), and
+  `crash-matrix.sh` runs against the FreeBSD port;
+  `doc/README.roadmap.md`'s guests table lists what each milestone
+  needs.
+
+```sh
+H2_FIXTURE_START=1 KDIR=/path/to/linux-7.3 bash script/test-fixtures.sh
+H2_FIXTURE_START=1 KDIR=/path/to/linux-7.3 bash script/test-enospc.sh
+```
+
+A green run reads its own report, kept under `H2_FIXTURE_DIR`, since a
+gate prints little on success.
