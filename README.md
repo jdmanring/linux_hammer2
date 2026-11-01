@@ -8,6 +8,8 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
 
+> **Recommended Evaluation Point**: Because there are no stable release tags yet (historical baseline `v1.0.4` only), external testers and reviewers should evaluate against the commit hash pinned in the newest row of [CHANGELOG.md](CHANGELOG.md) (currently roadmap position `1.0.72`). Consult [doc/RELEASE_POLICY.md](doc/RELEASE_POLICY.md) for details.
+
 HAMMER2 is Matthew Dillon's copy-on-write filesystem for DragonFly BSD:
 snapshots, transparent compression, block-level deduplication, an
 integrity check on every block, and a design that has been in production
