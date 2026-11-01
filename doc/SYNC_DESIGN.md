@@ -860,31 +860,354 @@ change executes:
 
 ## Skipping unchanged subtrees (design, 3.0b.2)
 
-**Status, 2026-11-01: under amendment; the tree carries only
-scaffolding (the `HAMMER2_LOOKUP_PRUNE` flag, `hammer2.h:365`, two
-unused thread fields, `hammer2.h:1020-1021`, and scanall clearing the
-flag, `hammer2_xops.c:902`) and no prune predicate, and, under
-`HAMMER2_LOCKDEBUG` alone, an instrument that prints what the capture
-and the veto below would read on each snapshot
+**Status, 2026-11-01: amended and audited to SIGN-OFF; the tree
+carries only scaffolding (the `HAMMER2_LOOKUP_PRUNE` flag,
+`hammer2.h:365`, two unused thread fields, `hammer2.h:1020-1021`, and
+scanall clearing the flag, `hammer2_xops.c:902`) and no prune
+predicate, and, under `HAMMER2_LOCKDEBUG` alone, an instrument that
+prints what the capture and the veto below would read on each snapshot
 (`hammer2_snap_gen()`, `hammer2_snap_queues()`, `hammer2_ioctl.c:853,
-869`), read once on the default shape from a draft of the commit that
-added it, before its labels and its gating on bit 0x8000 were revised
-(kept as `p7-notes/n8-0-instrument-reading.md` in the data tree,
-beside the run's klog).** The plan review
-of 2026-11-01 (five rounds, served by Gemini 4 Argon, transcript kept
-as `p8-notes/plan-review-20261101-a971c20377d8e83c7.jsonl` in the data
-tree) found the residue veto below unsound as written: `hammer2_pfs_snapshot()`
-itself calls `hammer2_inode_modify()` on the source PFS root inside the
-window (`hammer2_ioctl.c:1002`), which queues that root on the PFS's
-sideq (`hammer2_inode.c:1802-1803`), so the queue leg read after the
-copy would veto every pass. The failure is closed (nothing would
-prune), not a wrong prune. The same review asked for the generation to
-be bound to the attachment instance, since a master restored from an
-older image can move it backwards, for the capturing caller to be
-named, and for the remote veto and the harness shape that can produce
-a pruned pass to be stated. The amendment settles these and is audited
-before the code; until then this section is the design of
-2026-10-30 as reviewed then, its citations corrected 2026-11-01.
+869`).** The plan review of 2026-11-01 (five rounds, served by Gemini 4
+Argon, transcript kept as
+`p8-notes/plan-review-20261101-a971c20377d8e83c7.jsonl` in the data
+tree) found the residue veto unsound as the design of 2026-10-30 wrote
+it: `hammer2_pfs_snapshot()` itself calls `hammer2_inode_modify()` on
+the source PFS root inside the window (`hammer2_ioctl.c:1002`), which
+queues that root on the PFS's sideq (`hammer2_inode.c:1802-1803`), so
+the queue leg read after the copy would veto every pass. The failure is
+closed (nothing would prune), not a wrong prune. The same review asked
+for the generation to be bound to the attachment instance, since a
+master restored from an older image can move it backwards, for the
+capturing caller to be named, and for the remote veto and the harness
+shape that can produce a pruned pass to be stated. The instrument,
+read on `cluster-sync.sh`'s default shape at `0c4c709` (run
+`cluster-run-20261101-120355`, 27 snapshot calls; the reading and its
+per-call tally are `p7-notes/n8-0-instrument-reading.md` in the data
+tree), confirmed the queue leg's failure and found the counter leg's
+the same: the source root goes from neither queue to the sideq on
+every call, and the module-wide dirty count rises by 2 or 3 across the
+copy on every call outside the backlog window, the snapshot root's
+create and modify under the super-root. The amendment below settles both
+legs and the review's other points, and replaces the paragraphs of
+2026-10-30 where they disagree. Its hostile audit, one reviewer resumed
+across seven rounds and served by Claude Opus 5.5 (transcript kept as
+`p8-notes/amend-review-20261101-a2a62f84f7ecea8fb.jsonl` in the data
+tree), counted subject findings of 14 (1 blocking, 5 major), 7, 1, 1, 3,
+2 and 0, and signed off on the seventh; every finding was checked on the
+source before it was applied, and no lever-2 code precedes it.
+
+**The amendment of 2026-11-01.** Each item says which text of
+2026-10-30 it replaces, or that it adds what that text left out.
+
+1. *Where the legs are read, and what they read.* Replaces "reads both
+   legs after the snapshot copy" and the delta across the window. Every
+   leg is read once, at the cut: after the PFS sync returns and before
+   `hammer2_trans_sub()` (`hammer2_ioctl.c:994`), the point the
+   instrument reads as `trans` (`:990`), with the source root's inode
+   not yet locked (`:997`). A pass is pruned-eligible only if, at that
+   point, both of the source PFS's queues are empty,
+   `hammer2_count_chain_modified` is 0, the source device has never
+   failed a flush since its mount (the latch below), and the
+   blockset the copy will take, `pmp->pfs_iroot_blocksets[clindex]`
+   (`:1119`), equals the source element's root chain's own blockset,
+   both read inside the root chain's lock, which is the lock the flush
+   holds when it refreshes the slot (`hammer2_flush.c:1170-1177`). The
+   slot can still be refreshed between the cut and the copy, by an
+   `fsync` of the PFS root directory (`hammer2_vnops.c:1362`) or any
+   other flush of the root; what that brings into the copy was written
+   after the cut, stamped `G + 1`, and harmless to the proof. These are
+   absolute readings, not deltas. The body's own work all follows the cut (the source root's
+   `hammer2_inode_modify()` at `:1002`, which touches no chain, and the
+   snapshot root's create at `:1043`), so no leg can see it and no
+   excuse for the body is needed. On the source calls of the run above
+   the count read 0 at this point on all 8 calls outside the backlog
+   window and 362 to 687 on the 7 inside it, which veto.
+
+   Why the window after the cut needs no leg: the generation is read
+   equal at the cut and after the copy, so every chain modified in
+   between is stamped `G + 1` (`hammer2_chain.c:1670`), above the
+   generation `G` the pass may adopt, and every ancestor a later flush
+   restamps for it is stamped at that flush's generation plus one,
+   higher still. Such a chain cannot fall inside a later pass's pruned
+   range whether or not this snapshot holds it, and a frontend
+   `setattr` on the source root inside the window need not veto. What
+   can fall inside one is a chain stamped at or below `G` whose content
+   this snapshot lacks, modified before the cut and not carried into
+   the copied blockset. There are four ways to be there, one per leg:
+   - still `MODIFIED`: the count sees it (incremented on every first
+     modify, `hammer2_chain.c:1483`, and on the volume chain,
+     `hammer2_vfsops.c:361`; decremented as the flush writes the chain,
+     `hammer2_flush.c:642`). Two paths leave a chain changed with
+     `MODIFIED` clear and `UPDATE` set: the dedup branch
+     (`hammer2_chain.c:1601-1604`) and a rename into a new parent
+     (`:3287-3288`, described at `hammer2_flush.c:832-834`). Both run
+     under an inode the frontend has queued, which the queue leg sees.
+     That rests on a premise: every modify below an inode queues that
+     inode. The port's dirty-folio fix made it hold for the write path
+     (`hammer2_writepages()` queues the inode), and `storm.sh` checks it;
+     a path that modifies under an unqueued inode breaks this way and
+     not the count's.
+   - its inode still queued, including after an `fsync`, which leaves
+     the inode on the sideq for the syncer (`hammer2_vnops.c:1338-1340`):
+     the queues see it.
+   - written, `MODIFIED` cleared, with the parent's update failed: a
+     parent modify that fails in the flush sets `UPDATE` on the child
+     again and skips the update (`hammer2_flush.c:922-930`), and nothing
+     re-flags the path, since the sync's second stage clears `ONFLUSH`
+     on its way down (`:538`) and stops at inode boundaries without
+     re-flagging (`:501-516`). The chain then waits until its inode is
+     next dirtied, while later syncs move the generation past its stamp,
+     and the sync still returns 0, unconditionally
+     (`hammer2_vfsops.c:3285`), its errors going only to
+     `hammer2_sync_error()` (`:2955-2966`). The latch sees it: any
+     `hammer2_flush()` that ends with an error for a chain of a device
+     sets a flag in that device's `hammer2_dev_t`, set inside
+     `hammer2_flush()` itself, since the lastdrop caller discards its
+     return (`hammer2_chain.c:637`), and zeroed only when the structure
+     is allocated at the device's mount. It is not tied to item 4's
+     attachment instance: every snapshot registers its PFS through the
+     same join (`hammer2_ioctl.c:1156` calls `hammer2_pfsalloc()`), so an
+     attachment value moves on every pass, while the stranded chain lives
+     as long as the device structure. After a flush failure, ENOSPC
+     among them, lever 2 is off on that device until it is mounted
+     again. That is availability, not correctness; a reading of
+     `UPDATE`-pending chains by count would be finer and is not built.
+   - flushed, but the copied blockset stale: the copy takes the cached
+     slot, which is refreshed only when the root's inode flush finds a
+     flush flag on the root chain (`hammer2_flush.c:1158-1178`), and a
+     stale slot is a recorded candidate (the 1.0.62 idle-test entry,
+     "The idle test on two masters", and the third-element reading the
+     plan's track R item 6 owns). The equality leg sees it.
+   The paragraph of this item's first draft that claimed the volume
+   flush reaches every flagged path, and proposed the root chain's
+   `ONFLUSH` as a third reading, was wrong on both counts: the volume
+   recursion skips mounted PFS roots (`hammer2_flush.c:472-500`), the
+   FREEMAP arm moves the generation too (`:694`), and a mounted PFS's
+   sync clears the path it walks (`hammer2_synchro.c:574-580`). It is
+   withdrawn.
+
+2. *Adoption.* Replaces "adopted beside that arm", which left the vetoed
+   pass unstated. A pass adopts its candidate (`last_gen = cand_gen`)
+   only in the verified arm (`hammer2_synchro.c:1367`), and only when
+   the candidate is valid: the two reads at each point agreed, the two
+   points agreed, and every leg of item 1 was clear. A pass with an
+   invalid candidate may still verify, unpruned, and keeps the
+   `last_gen` it had: snapshot N-1's verification covered every chain
+   stamped below that older generation, and nothing in pass N changed
+   that. A pass that fails verification also keeps it.
+
+3. *Which caller captures.* Adds what the 2026-10-30 text left out.
+   `hammer2_pfs_snapshot()` has four callers: the user ioctl
+   (`hammer2_ioctl.c:839`), the server for a remote slave
+   (`hammer2_remote.c:614`), and the thread's source and target calls
+   (`hammer2_synchro.c:1215, 1250`). It gains an out-parameter beside
+   `mtidp` for the candidate and its validity; the ioctl and the target
+   call pass NULL and capture nothing, so a target call, which reads
+   the slave device's own unrelated generation (0x12 to 0x44 against
+   the source's 0x14 to 0x5d in the run above), cannot overwrite the
+   master's candidate. A source behind a connection is routed to
+   `hammer2_remote_snapshot_take()` (`hammer2_ioctl.c:955-959`), which
+   carries the same out-parameter and fills it from the closing frame
+   (item 6).
+
+4. *The attachment instance.* Replaces "reset whenever the source
+   element changes". A module-wide 64-bit counter is drawn once for
+   every element a PFS gains: at the local join
+   (`pmp->pfs_hmps[j] = chain->hmp`, `hammer2_vfsops.c:487`) and at a
+   remote registration (`hammer2_remote.c:2519`), into a per-slot field
+   beside `pfs_hmps[]`. The candidate records the source slot's and the
+   slave slot's values; `last_gen` is used only while both slots still
+   carry them, and is zeroed otherwise, as it is at thread start
+   (beside `thr->snap_cut = 0`, `hammer2_synchro.c:1547`). A volume
+   cannot be replaced under a mounted device, so an older image swapped
+   in for either element, flushed past `last_gen` or not, arrives
+   through a detach (`hammer2_vfsops.c:889`, `hammer2_remote.c:2566`)
+   and a new join, and a new value. A field every attach initializes
+   alike, or the `hmp` pointer, which a later allocation can reuse,
+   would match across that detach. The below-`last_gen` test is kept as
+   a second guard. The slave's slot is bound too, since a slave element
+   replaced by an older image holds keys inside ranges the thread no
+   longer compares.
+
+5. *The harness shape that produces a pruned pass.* Adds what the
+   2026-10-30 text left out. The default shape has two pruned-eligible
+   source passes under item 1's legs, at 68.2 s and 119.9 s of the
+   instrument's run (a verified snapshot pass of the same thread before
+   each, the count 0 at the cut, the source root on neither queue
+   before the body's modify and the sideq after the copy holding only
+   that root, the body's own). N8a's expected
+   count for the default shape is those two, by phase; it rests also
+   on the latch and equality legs, which the instrument never read, so
+   a mismatch there is read first as a finding about those two legs.
+   No shape that
+   times a pass does: the tree arm unmounts both mounts on every change
+   and reads that no thread is left (`cluster-sync.sh:1013-1014`), so
+   each timed pass is a new thread's first pass and item 4 resets it,
+   and a slave element left attached is written directly by the
+   frontend (`cluster-sync.sh:1291-1295`), so a pass finds nothing to
+   copy. The shape built for the local rates is the plan's candidate
+   (i): a `HAMMER2_LOCKDEBUG` knob under which an XOP allocated with
+   `HAMMER2_XOP_MODIFYING` skips every element whose `pfs_types[]` is
+   `SLAVE` when its element set is built (`hammer2_admin.c:454-457`),
+   with one exception: the PFS root's own inode flush in the sync's
+   second stage, the `VOLHDR` call (`hammer2_vfsops.c:3276-3278`), runs
+   on every element when the sync is the snapshot body's on the thread
+   (`hammer2_ioctl.c:977`). Without it the target call's sync would
+   leave the slave device's volume header unwritten, and that dirt would
+   sit in the count at the next cut. It does not keep the slave's root
+   slot current: the previous pass's `hammer2_sync_flush()` left the
+   slave root clean without refreshing the slot (the paragraph "Two
+   masters" above), and the slot is refreshed only inside the flush-flag
+   test (`hammer2_flush.c:1161-1178`), so the exempt flush finds the root
+   clean and skips it. Under the knob that would make every target after
+   a pass that acted a copy of an old slot, and the kept target is the
+   backstop branch K and N8d rest on. So lever 2's first increment,
+   under `sync_prune` or the knob armed, so that with both off every
+   carried path is unchanged and a carried arm run in the knob's shape
+   still takes current targets, refreshes the slot in `hammer2_sync_flush()` right
+   after its root flush, under the root chain's lock as
+   `hammer2_flush.c:1170-1177` does, and applies item 1's equality test
+   to the target call too. On a mismatch the target call flushes the
+   slave root chain inside the body's own flush transaction, already
+   open at the cut (`hammer2_ioctl.c:986`): `hammer2_sync_setflush()` on
+   the root (static in `hammer2_synchro.c` today, so it gains a prototype
+   in `hammer2.h`), then `hammer2_flush()` with `FLUSH_TOP`, `FLUSH_ALL`
+   and `FLUSH_FSSYNC` under the root chain's lock, without calling
+   `hammer2_sync_flush()`, whose own `HAMMER2_TRANS_ISFLUSH`
+   (`hammer2_synchro.c:605`) would wait on the body's for good, since flush
+   transactions on one PFS do not nest (`hammer2_flush.c:102-106`). It
+   then refreshes the slot from the root after that flush, prints the
+   mismatch, and takes the target
+   from the refreshed slot, so the copy is always of a flushed root,
+   never of a root the frontend dirtied after the call's sync. It
+   cannot refuse the target: the thread runs no pass without one
+   (`hammer2_synchro.c:1242-1244`), which would also stop the pass-end
+   flush, the slot's other refresh. The same refresh made ungated, the
+   answer to the stale-slot candidate in every build, belongs to the
+   plan's track R item 6 with its own readings on a build with lever 2
+   off. The exemption is no wider: the sync's
+   first stage on the thread drains the frontend's queued inodes
+   through the insert, destroy, sync and flush XOPs
+   (`hammer2_inode.c:1879, 1917, 1822, 1947`;
+   `hammer2_vfsops.c:3182-3217`), and run on the slave those would put
+   a frontend change's metadata, at the master's transaction id, on a
+   slave whose data the knob withheld, an inode the pass would then
+   skip by its tid. Under the knob they skip the slave whoever starts
+   them, and the pass copies the change, data included. Twenty-one
+   allocation sites carry the flag, the strategy write
+   (`hammer2_vnops.c:2273`) among them; the reads, lookups and readdirs
+   still run on every element. The shape also reads both queues empty
+   at every sync the thread starts while the knob is armed, so a stage
+   1 that found work there is a reading, not an assumption. The shape has one slave; with two, the thread's
+   election XOP (`hammer2_synchro.c:1068`), which excludes only its own
+   index, would meet the other, and the knob's effect there is not
+   designed. An inode the frontend creates under the knob gets its
+   in-memory cluster from the XOP's elements, so its slave index holds
+   no chain; a snapshot pass reaches the slave by inode number
+   (`hammer2_sync_slave_chain()`, `hammer2_synchro.c:297`) and is not
+   affected, while the live idle stamp pass reaches it through the
+   inode (`:1897`) and finds NULL, which the ternary at `:1944-1945`
+   reads as nothing to update: a skip, not a failure. The shape
+   unmounts the cluster PFS before the timed pass, which evicts those
+   inodes, and one idle stamp pass after a knob change is read with the
+   fingerprints compared. The thread is frozen across the change and
+   the unmount, the freeze trigger, its side effects and the timing as
+   the plan's N8.0 states them. The wire (candidate (ii)) reads function
+   only.
+
+6. *The remote veto.* Replaces "travels on the snapshot reply's closing
+   frame", which named no field. Over the wire the capture and every
+   leg run in the master's server call (`hammer2_remote.c:614`), on the
+   master's device. The snapshot reply's closing frame, `dmsg_hm2_feed`
+   (`src/sys/sys/dmsg.h:599-610`), whose `tid` already carries the
+   snapshot's transaction id (1.0.49), carries the candidate in eight
+   bytes taken from `reserved[24]` and a new flag `DMSG_HM2_FEEDF_GEN`
+   in `flags`, set only when the candidate is valid as item 2 defines
+   it. A peer that predates the field sends zeroed reserved bytes and
+   no flag, since a message is allocated zeroed
+   (`hammer2/kern_dmsg.c:1822-1823`),
+   so the slave adopts nothing and never prunes; the request needs no
+   version for this field. The slave adopts the candidate in its own
+   verified arm under item 2, and never one the master's legs refused,
+   since a refused one is never sent.
+
+7. *The shape of the skip.* Replaces "a lookup flag carrying the prune
+   threshold into the carried lookup" in "Where a skip lives".
+   `hammer2_chain_lookup()` takes no XOP (`hammer2_chain.c:2336`). The
+   scan's XOP carries the threshold, and `hammer2_xop_scanall()` passes
+   it to a lookup and a next variant only the scan calls (it iterates
+   with both, `hammer2_xops.c:919, 925`, and `hammer2_chain_next()`
+   re-enters the lookup), which return an indirect block whose
+   `mirror_tid` is below the threshold as a range record, the way
+   `LOOKUP_MATCHIND` returns one on an exact range
+   (`hammer2_chain.c:2395-2405`), instead of recursing into it
+   (`hammer2_chain.c:2602-2609`). The record travels
+   through the feed and collect to the slave side, which suppresses its
+   sweep inside the range. The clearing line at `hammer2_xops.c:902`
+   goes with the variant: the variant is selected by the threshold, not
+   by a lookup flag, and the flag `HAMMER2_LOOKUP_PRUNE` is removed with
+   it rather than left defined and cleared. The carried lookup's body is
+   shared with the variant, so the frontend gates and `xfstests.sh`
+   still join N8b's readings.
+
+8. *Scope, cited.* Replaces the uncited "Scope" paragraph's assertion.
+   The threshold is set only on the snapshot pass's source scan, where
+   `snap` is true (`hammer2_synchro.c:1827`, the scan's inode belonging
+   to the snapshot PFS rather than the thread's), never on the live
+   pass nor on the idle stamp pass, which is a live pass inside a
+   snapshot thread (`:1159-1174`). A count of `syncsnap: prune` lines
+   cannot carry the assertion, since only a snapshot pass prints one
+   and it reads 0 under `H2_SYNC_SNAPSHOT=0` whatever the code does.
+   The variant counts every range record it returns in a module-wide
+   counter, printed by every pass, live and idle stamp passes included,
+   beside the pass's kind; the assertion is that counter unmoved across
+   every live pass of every run and across the whole of an
+   `H2_SYNC_SNAPSHOT=0` run. Its positive control is the same build's
+   pruned arm of N8b, which must move it; a counter that no path
+   increments reads 0 in both, which is the fake pass this control
+   exists to expose.
+
+9. *Copy-on-write and EMERG.* Answers the review finding that the proof
+   leaned on immutability without saying so. It does not: soundness
+   rests on the stamp. An emergency-mode modify that cannot allocate
+   reuses the block in place (`hammer2_chain.c:1629-1632`; the
+   snapshot warning is at `:1625-1627`), and the in-place paths of
+   `:1498-1522` are guarded by `pfs_lsnap_tid`, but every successful
+   modify, in place or not, stamps the live chain (`:1670`) and sets
+   `UPDATE`, so the next pass reads the changed range unpruned. A pass
+   never reads a range it skipped, so an in-place change there cannot
+   affect the pass that skipped it. What EMERG corrupts is the source
+   device's snapshots themselves, with or without lever 2 (the kept
+   target is a snapshot of the slave, on the slave's device); it is not
+   excluded here.
+
+10. *Controls under the cut-point reading.* Replaces the two
+    `HAMMER2_LOCKDEBUG` controls of 2026-10-30, which the plan's N8a
+    and N8c also name. Each is a hook of its own under
+    `HAMMER2_LOCKDEBUG`, armed for one pass, and each vetoed pass prints
+    unpruned with its leg.
+    - The writer held between `hammer2_trans_sub()` and
+      `hammer2_chain_modify()` across the snapshot, held before its
+      `hammer2_inode_modify()` so that its inode is on no queue when the
+      sync returns: it modifies after the cut, is stamped `G + 1`, moves
+      no leg, and stays as a negative control reading eligible, a later
+      pass still copying its key. Held after `hammer2_inode_modify()`
+      instead, its inode is on the sideq at the cut and the queue leg
+      must fire.
+    - Queue leg: an inode put back on the sideq after the sync returns
+      and before the cut.
+    - Count leg: one source chain modified directly before the sync
+      under an inode on no queue, so the sync leaves it `MODIFIED`; the
+      hook flushes that chain after the vetoed pass, since no stage 2
+      would reach it (`hammer2_flush.c:501-516`), and the next pass must
+      then be eligible and still copy the key.
+    - Latch: a flush error forced on the source device, after which
+      every pass reads the latch until the device is mounted again.
+    - Equality leg: the root slot overwritten with the blockset the
+      previous pass copied, before the cut, which the leg must refuse.
+
+The other paragraphs of this section are the design of 2026-10-30,
+corrected where an item above names them.
 
 A snapshot pass that can acknowledge still walks the whole root index once
 a round even when one file changed. Lever 2 prunes subtrees the last
@@ -905,10 +1228,11 @@ adopted only in the verified arm (`hammer2_synchro.c:1351` computes
 `verified`, `:1365` sets the next pass's cut, `:1367-1398` is the verified
 arm that deletes the target; the candidate is adopted beside that arm, and
 `thr->snap_cut` cannot serve because `:1365` runs on every pass, verified
-or not. The generation's reset sites are enumerated: zeroed at thread
-start (`:1547`), adopted beside the verified arm, and reset whenever the
-source element changes (the stale-thread path, `:1541-1551`; a term or
-holder change under the lease, another device and counter). The candidate is read from
+or not. Which pass adopts, and on what candidate, is the amendment's
+item 2; the generation is zeroed at thread start (beside `:1547`) and
+bound to the source's and the slave's attachment instances (item 4), and
+under the lease a term or holder change is another device and counter.
+The candidate is read from
 `voldata.mirror_tid` at two points inside the shared snapshot helper
 `hammer2_pfs_snapshot()` (`hammer2_ioctl.c:915`), past its early returns:
 after the pre-snapshot PFS sync returns, before `hammer2_trans_sub()`
@@ -947,28 +1271,27 @@ modify sets UPDATE (`hammer2_chain.c:1543-1545`), and flushing a child
 modifies its parent with mtid 0 (`hammer2_flush.c:922`). A below-threshold
 range root therefore proves no *flushed* structural change below it since
 the generation was adopted; a destroy two levels down in-window does not
-lift the root at modify time. In-window mutations are excluded by the
-residue veto instead, which has two legs: the PFS queues, and the
-module-wide dirty-chain count. An inode the sync requeues on a failed
+lift the root at modify time, but is stamped above the generation itself
+and so cannot sit inside a later pass's pruned range (amendment, item 1).
+What the residue veto excludes is dirt from before the cut that the sync
+left out of the copied blockset, with four legs (amendment, item 1): the
+PFS queues, the module-wide dirty-chain count, the device's flush-error
+latch and the root slot's equality. An inode the sync requeues on a failed
 vget (`hammer2_vfsops.c:3099-3125`, setting `dorestart`) or finds
 re-dirtied mid-flush (`:3158-3166`) restarts the flush (`:3244-3258`), and
 anything still queued or requeued when the sync returns leaves observable
 residue in the PFS queues; anything dirtied with no queue entry still
-moves the module-wide `hammer2_count_chain_modified` delta (incremented on
-every first modify, `hammer2_chain.c:1483`, decremented as the flush
-clears MODIFIED, `hammer2_flush.c:641-642`). The snapshot helper already
-syncs before it cuts (`hammer2_ioctl.c:976-994`); lever 2 reads both legs
-after the snapshot copy and prunes nothing on any pass that leaves queue
-residue or a nonzero dirty delta across the window. The counter is
+keeps the module-wide `hammer2_count_chain_modified` above zero
+(incremented on every first modify, `hammer2_chain.c:1483`, decremented
+as the flush clears MODIFIED, `hammer2_flush.c:641-642`). The snapshot
+helper already syncs before it cuts (`hammer2_ioctl.c:976-994`); lever 2
+reads every leg at the cut, as absolute values, and prunes nothing on any
+pass that finds a leg set there (amendment, item 1). The counter is
 module-wide (a file-scope global across devices), so dirt on a sibling PFS
 or a sibling device fires the veto too: fail-closed
 availability, never a wrong prune, and the per-pass line below tells the two
-apart. The two
-`HAMMER2_LOCKDEBUG` controls the plan names read the two legs: a writer
-held between `hammer2_trans_sub()` and `hammer2_chain_modify()` across a
-snapshot (queue residue), and a chain dirtied under an inode kept off the
-sync queue (counter delta with clean queues); each must be followed by a
-pruned pass that still copies the key. Every snapshot pass prints one
+apart. The controls, one per leg, are the amendment's item 10. Every
+snapshot pass prints one
 `syncsnap: prune` line naming pruned or unpruned and, when unpruned, which
 leg vetoed or which generation read disagreed: a capture that never agrees
 (a deterministic in-window bump) then reads as a count of unpruned passes,
@@ -978,8 +1301,9 @@ Slave half: the slave side iterates its own key space
 (`hammer2_synchro.c:2125-2144, 2226-2229, 2240-2242`) and sweeps what the
 source lacks, so a skipped source range must reach the slave as an explicit
 record through the feed and collect, suppressing the sweep inside it. In
-the local shape, where the frontend writes the slave, that record is also
-what the slave-side test reads: a slave key altered inside a pruned range
+a local shape where the frontend writes the slave, the default shape's
+and not the knob's of amendment item 5, that record is also what the
+slave-side test reads: a slave key altered inside a pruned range
 must survive to the K-th round and trip the detection line below. The
 slave-side test is the half the local shape can fail while the source
 half holds.
@@ -987,15 +1311,17 @@ half holds.
 **Where a skip lives.** Indirect blocks recurse inside the carried lookup
 (`hammer2_chain.c:2602-2609`), which every frontend path shares, and
 `LOOKUP_MATCHIND` returns an indirect block only on an exact range
-(`:2395-2405`). The skip is a lookup flag carrying the prune threshold
-into the carried lookup, and the frontend gates and `xfstests.sh` join
-the readings since the carried lookup changes. The forced control is
-placed in that predicate: a source-only skip with the merge unchanged
+(`:2395-2405`). The skip is a lookup and next variant that only the
+scan calls, selected by the threshold the scan's XOP carries
+(amendment, item 7), and the frontend gates and `xfstests.sh` join the
+readings since the variant shares the carried lookup's body. The forced
+control is placed in that predicate: a source-only skip with the merge unchanged
 must produce sweeps the fingerprints read.
 
 **Scope.** Snapshot passes only: the live pass and the idle stamp pass
 read in-memory chains whose parents the flush has not yet raised, so they
-never prune, and `H2_SYNC_SNAPSHOT=0` asserts no prune.
+never prune. Where the threshold is set and what counts as the assertion
+under `H2_SYNC_SNAPSHOT=0` are the amendment's item 8.
 
 **Backstops and S5.** A wrong prune deletes the last known-good target
 (the verified arm deletes it, `hammer2_synchro.c:1386-1398`; the snapshot
@@ -1035,8 +1361,9 @@ modified at its own tid (`hammer2_chain.c:3450`), restamping the parent,
 with higher ancestors following only at flush time (see the source half
 above). A below-threshold root therefore holds no *flushed* insert or
 destroy since the last verification and needs no tombstone feed for keys
-the skip never visits; an in-window destroy is barred by the residue
-veto's counter leg instead. The merge's destroy-before-sweep order
+the skip never visits; an in-window destroy restamps its parent at
+`G + 1` and so falls outside a later pass's pruned range (amendment,
+item 1). The merge's destroy-before-sweep order
 applies within traversed ranges, and the destroy-in-a-narrowed-call shape
 the plan leaves undriven is driven here as the control: a destroy inside
 a would-be-pruned range must either keep the range unpruned or arrive
@@ -1044,7 +1371,7 @@ through the traversed path, never vanish inside a skip. A
 segment the 1000-deferral cap stops (`hammer2_synchro.c:2589-2595`)
 resumes from the lowest key not yet compared on either cursor past the
 cap's break, on snapshot passes only (the resume consumer is gated on
-`walks` at `:831-836`, and `walks` is snapshot-only at `:697-704`); the
+`walks` at `:830-836`, and `walks` is snapshot-only at `:696-704`); the
 prune threshold and the resume key travel together
 per round, and a 1a segment resumed in a round after the first is read
 with pruning on, since no run has produced one.
@@ -1057,8 +1384,9 @@ gate move together. The generation does not fit `dmsg_hm2_xop.reserved`
 gates at `:254-255, 1397, 2644`, unknown-feed refusal at `:1997-2002`);
 the request grows behind the version while `dmsg_hm2_feed` has room for
 the record (`dmsg.h:599, 609`). A remote source's generation travels on
-the snapshot reply's closing frame from the master's device, and the
-last-verified generation resets whenever the source element changes,
+the snapshot reply's closing frame from the master's device, in the
+field and under the flag the amendment's item 6 names, and the
+last-verified generation is bound to the attachment instance (item 4),
 since under the lease a term or holder change means another device and
 counter.
 
