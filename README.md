@@ -61,12 +61,11 @@ At a glance, on a kernel of 7.3 or newer:
   until kernel TLS lands in P8's TLS stage, and P7 closes then. No run yet
   of a quorum that cannot be met, and no write through a PFS with a
   remote master, which stays read-only until P8's lease protocol
-+ not yet: a package, a run of that closure
-  on a guest smaller than 4 GiB, and any write to media that is not a
-  scratch image
-+ not verified or not built: `O_DIRECT`, which is refused; and what
-  stands between this and a root filesystem, in
-  `doc/readiness-audit-2026-09-25.md`. Small-file create and delete
++ not yet: a package, and any write to media that is not a scratch
+  image
++ not built: `O_DIRECT`, which is refused by decision. What a root
+  filesystem needs and where each need stands is in
+  `doc/ROOTFS_MILESTONES.md`. Small-file create and delete
   rates, mixed read/write with mmap and fsync storms, and an export
   served by `nfsd` are measured, by `million-tree.sh`, `storm.sh` and
   `nfsd-export.sh`; a sustained soak is the same load over
@@ -83,11 +82,11 @@ page, at one 64 KiB block and at 200 KB, on images written with LZ4 and
 with ZLIB compression, and on media created and written by DragonFly
 itself.
 
-Nothing is released: no tag exists, and the media it has written to are
-scratch copies on a guest. To try a point that has been through the
-fleet, take the newest row of [CHANGELOG.md](CHANGELOG.md): every row
-pins the commits that delivered it and names the runs that verified
-them, which is what a tag would say. See
+`v1.0.0` and `v1.0.4` are tagged, and the media it has written to are
+scratch copies on a guest. To try a later point that has
+been through the fleet, take the newest row of
+[CHANGELOG.md](CHANGELOG.md): every row pins the commits that delivered
+it and names the runs that verified them, which is what a tag would say. See
 [doc/README.status.md](doc/README.status.md) for exactly what exists and
 what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
 for the order the rest lands in. There is no schedule attached to any of
@@ -95,17 +94,25 @@ it.
 
 ## Where it stands
 
-The repository is at roadmap position `1.0.72` (pinned to the commit hash in the newest row of [CHANGELOG.md](CHANGELOG.md)). Until version 1.0, version numbers track milestones rather than calendar releases. Every release is pinned to its source commits and verified by the automated gates in `script/`.
+The version is a position on the roadmap, not a release: the first two
+numbers name the milestone reached and the third counts point releases
+inside it. The tree is at 1.0.72, and [CHANGELOG.md](CHANGELOG.md) pins
+every row to the commits that delivered it and the runs that verified
+it.
 
-The driver is evaluated for scratch media and multi-device testing. It is not packaged, carries no stable release tags (baseline `v1.0.4` only), and is not recommended for unattended single-node root deployment without backup. Every write has been run on scratch media and verified against DragonFly BSD in both directions, including crash recovery, sparse file mapping (`SEEK_DATA`, `SEEK_HOLE`, `FIEMAP`), and `fsfreeze`.
-
-One important operational warning before trying it: **be careful about filling a HAMMER2 volume to capacity.** A volume allowed to fill completely without free space for its commit flush can lose uncommitted writes. HAMMER2 enforces a write reserve through `script/test-enospc.sh` to prevent this, counting dirty page cache pages against the reserve and refusing new allocations once full.
-
-See [doc/README.status.md](doc/README.status.md) for what exists and what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md) for the completion plan.
+Be careful about filling a HAMMER2 volume to capacity. HAMMER2 needs free
+space for the flush that commits a fill, and every tree this port
+carries from keeps a reserve for it. The port carries that check, with
+the page cache's dirty pages counted against the reserve, so a fill is
+refused with every accepted file whole on the media. Seven defects in
+that path were found and fixed on the way there. `script/test-enospc.sh`
+fills a volume on every run and compares each file's hash with the
+media, and [doc/README.status.md](doc/README.status.md) has the account.
 
 To try it, make an image, put it on a loop device and mount the PFS by
-label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
-PFS asks for `DATA`:
+label. `newfs_hammer2` is in hammer2-utils. A mount that names no PFS
+asks for `DATA`, which `newfs_hammer2` creates only when given no `-L`,
+so the mount below names `@TEST`:
 
         $ make && sudo make install
         $ sudo modprobe hammer2
@@ -120,7 +127,8 @@ be modules on your kernel and only `modprobe` loads them first.
 
 Add `-o ro` to read without writing; `mount -o remount,rw` goes the
 other way and runs the flush recovery on the transition, refusing only
-when the device itself is write-protected. A volume DragonFly made
+when the device itself is write-protected, while a remote element is
+registered on the PFS, or when that recovery fails. A volume DragonFly made
 mounts the same way.
 
 `hammer2-utils` drives the ioctls once a PFS is mounted:
@@ -172,10 +180,9 @@ than about a shared bug.
   ships, and 7.3 is the next longterm, so a floor at 7.2 would buy one
   cycle and charge for the migration twice. The kernel of record is one
   tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
-  refuses to report a pass against anything else; while 7.3 is still a
-  candidate that tree is the newest `-rc`, and the pin advances with
-  each one and to the release, because running on the line and pinning
-  the floor to it are the same decision here. There is
+  refuses to report a pass against anything else; the pin moved
+  through 7.3's release candidates to the release, because running on
+  the line and pinning the floor to it are the same decision here. There is
   no conditional compilation on the kernel version in the tree. Two
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
@@ -199,6 +206,9 @@ than about a shared bug.
   codecs HAMMER2 compresses and decompresses with and the digest in every
   blockref. Distribution kernels carry all five; a `defconfig` leaves the
   LZ4 compressor out, and the build names the missing one
+
++ `CONFIG_CRC32` and `CONFIG_CRYPTO_LIB_SHA256`, for the `crc32c` and
+  SHA-256 the module imports
 
 + userland from [hammer2-utils](https://github.com/kusumi/hammer2-utils),
   which already supports Linux
@@ -253,7 +263,7 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-report.sh      # a committed kernel report is a whole capture
         $ bash script/test-reverts.sh     # a take-back of recent work carries its reason
 
-`test-provenance.sh` is the one of those six that asks a question this
+`test-provenance.sh` is the one of those that asks a question this
 repository cannot answer alone: a row claiming a byte-for-byte carry is
 re-run with `cmp` against the origin clone, and where a row makes that
 claim and the clone is not on the machine it reports COULD-NOT-RUN
@@ -319,12 +329,12 @@ including what each gate cannot catch.
 | [doc/README.kernel-style.md](doc/README.kernel-style.md) | licensing, and the path to mainline |
 | [doc/README.maintenance.md](doc/README.maintenance.md) | how the carried core is kept current, and how a defect goes back |
 | [doc/SECURITY_MODEL.md](doc/SECURITY_MODEL.md) | what the port guarantees, and what the cluster link does not yet |
-| [doc/PACKAGING_NOTES.md](doc/PACKAGING_NOTES.md) | module load order, DKMS, initramfs and root-on-HAMMER2 |
-| [doc/PERFORMANCE.md](doc/PERFORMANCE.md) | what rates to expect, with the methodology and controls |
+| [doc/PACKAGING_NOTES.md](doc/PACKAGING_NOTES.md) | what a package or an initramfs needs to carry |
+| [doc/PERFORMANCE.md](doc/PERFORMANCE.md) | dated rate readings, each with the run that holds it |
 | [doc/REPRODUCIBILITY.md](doc/REPRODUCIBILITY.md) | stock Linux plus QEMU to green gates |
-| [doc/RELEASE_POLICY.md](doc/RELEASE_POLICY.md) | what the version number means, and the upstream plan |
-| [doc/UPSTREAM_ENGAGEMENT.md](doc/UPSTREAM_ENGAGEMENT.md) | upstream maintenance protocol and handover plan |
-| [doc/ROOTFS_MILESTONES.md](doc/ROOTFS_MILESTONES.md) | P0 root-filesystem readiness milestones and exit criteria |
+| [doc/RELEASE_POLICY.md](doc/RELEASE_POLICY.md) | what the version number means, and which points are tagged |
+| [doc/UPSTREAM_ENGAGEMENT.md](doc/UPSTREAM_ENGAGEMENT.md) | how drafts for DragonFly and the BSD ports are kept and filed |
+| [doc/ROOTFS_MILESTONES.md](doc/ROOTFS_MILESTONES.md) | what a root filesystem needs, and where each need stands |
 
 ## Contributing
 
