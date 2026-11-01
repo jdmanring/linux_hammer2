@@ -7,10 +7,8 @@ script, what each proves, and the guest kernels' configuration.
 ## 1. The host
 
 - A kernel build tree of the kernel of record, 7.3, the version
-  `script/test-syntax.sh` pins as `KERNEL_REF`. The module imports
-  `crc32c`, `xxh64`, LZ4 and zlib, so that tree needs `CONFIG_CRC32`,
-  `CONFIG_XXHASH`, `CONFIG_LZ4_COMPRESS`, `CONFIG_LZ4_DECOMPRESS`,
-  `CONFIG_ZLIB_DEFLATE` and `CONFIG_ZLIB_INFLATE`.
+  `script/test-syntax.sh` pins as `KERNEL_REF`, configured with the
+  options `doc/PACKAGING_NOTES.md` lists.
 - `make`, `gcc`, `clang`, `git`, `bash`, `dash`, `busybox`, `vale`,
   `python3`, and for the fleet `qemu`, `libvirt` (`virsh`) and `ssh`.
 - For `test-provenance.sh`, clones of the origin trees its rows name;
@@ -61,10 +59,11 @@ document lists) drive libvirt guests over ssh as root:
   each, booting debug (lockdep, kmemleak), KASAN and release builds of
   7.3, each also built with kernel TLS; `doc/README.testing.md` records
   each build's configuration.
-- Several fleet scripts also drive a DragonFly 6.4.2 guest
-  (`f4-roundtrip.sh`, `pfs-domains.sh`, `bulkfree.sh`, `cut-flush.sh`,
-  `million-tree.sh`, `nix-closure.sh`, `throughput.sh`), and
-  `crash-matrix.sh` runs against the FreeBSD port;
+- Several fleet scripts also drive a DragonFly 6.4.2 guest, named by
+  `H2_DFLY_GUEST` and `H2_DFLY_SSH` (`f4-roundtrip.sh`, `pfs-domains.sh`,
+  `bulkfree.sh`, `cut-flush.sh`, `dfly-enospc.sh`, `million-tree.sh`,
+  `nix-closure.sh`, `throughput.sh`), and `crash-matrix.sh` runs against
+  the FreeBSD port on a guest named by `H2_FBSD_GUEST` and `H2_FBSD_SSH`;
   `doc/README.roadmap.md`'s guests table lists what each milestone
   needs.
 

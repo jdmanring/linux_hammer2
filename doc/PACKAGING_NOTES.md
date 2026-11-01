@@ -14,8 +14,10 @@ so the kernel needs `CONFIG_CRC32`, `CONFIG_XXHASH`,
 `CONFIG_LZ4_DECOMPRESS`, `CONFIG_ZLIB_DEFLATE` and `CONFIG_ZLIB_INFLATE`.
 It also needs `CONFIG_TRANSPARENT_HUGEPAGE`, without which the block
 layer caps the block size below the format's 64 KiB and the build
-stops at an assertion (`hammer2_io.c`). The kernels this port is tested
-on build all eight in; on a kernel that builds the libraries as modules,
+stops at an assertion (`hammer2_io.c`), `CONFIG_NET` for the cluster
+link's socket calls, and a 64-bit kernel without `CONFIG_HIGHMEM`,
+which `hammer2_io.c` also asserts; 32-bit kernels are not on the
+roadmap. The kernels this port is tested on build all of these in; on a kernel that builds the libraries as modules,
 `modprobe hammer2` loads them first, and `insmod` does not.
 
 ## Userland
