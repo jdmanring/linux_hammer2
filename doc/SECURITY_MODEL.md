@@ -7,7 +7,7 @@ this page summarizes the parts an operator meets today.
 
 ## Integrity on the media
 
-- Every block reference carries a check code, XXH64 by default, on data
+- Every block reference carries a check method, XXH64 by default, on data
   blocks and on every blockref, inode and indirect block, verified on
   read. `hammer2 setcheck` chooses another (`crc32`, `sha192`) or none
   at all, and no script here runs it. One byte changed in a data block
@@ -44,8 +44,8 @@ latency, the half that was never measured").
   are verified and a mismatch ends the link; that is integrity against
   corruption, not authentication.
 - **Admission**: an enabled `copyinfo[]` row with the cluster id gates
-  only the registration of a remote master, on the side that dials it
-  (`hammer2_remote_admitted()`); the serving side checks no row. The
+  only the registration of a remote master, on the side that registers
+  it (`hammer2_remote_admitted()`); the serving side checks no row. The
   kernel verifies no peer identity, and the test harness's
   `test/h2service.c` chooses whom to connect by a marker file. Run a
   cluster only between hosts on a network you control.
@@ -53,11 +53,14 @@ latency, the half that was never measured").
   PFS under its super-root, cluster id included, and the server serves
   any mounted PFS with an element on the device whose cluster id a peer
   names (`hammer2_remote_pfs()`), so a peer can read every mounted PFS on
-  it. The server refuses every modifying descriptor. Two snapshot
-  commands outside the descriptor table do write the serving side's
-  media: a peer can have it snapshot any such PFS under any name ending
-  `.h2sync-src`, which first deletes an existing PFS of that name,
-  including one another pass is using as its source, and can delete a
+  it, and every unmounted PFS whose name ends `.h2sync-src`, among them a
+  local pass's source snapshot. The server refuses every modifying
+  descriptor. Two snapshot commands outside the descriptor table do
+  write the serving side's media, whatever the peer's type or the PFS's:
+  a peer can have it snapshot any PFS it can read under any name ending
+  `.h2sync-src`, which first deletes an existing unmounted PFS of that
+  name (a mounted one makes the command fail; read from the code, a
+  pass's source of that name is not protected), and can delete a
   snapshot that same link took. Each snapshot costs space until it is
   deleted and the bulkfree scan has run. A PFS with a remote master
   mounts read-only.

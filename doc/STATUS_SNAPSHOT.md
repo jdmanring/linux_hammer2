@@ -40,7 +40,8 @@ has been read back by DragonFly and the other way round
 - **Cluster link**: plaintext. An enabled `copyinfo` row gates only the
   registration of a remote master, the test harness's `h2service`
   chooses peers by a marker file, and a connected peer can read every
-  mounted PFS on the serving device (`doc/SECURITY_MODEL.md`). Kernel TLS is P8's TLS stage, and P7 closes once the pass
+  mounted PFS on the serving device and every unmounted one named
+  `*.h2sync-src` (`doc/SECURITY_MODEL.md`). Kernel TLS is P8's TLS stage, and P7 closes once the pass
   runs over it.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
