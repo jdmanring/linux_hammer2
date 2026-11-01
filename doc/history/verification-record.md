@@ -20189,7 +20189,9 @@ ending detached with the link up; the `more` pass narrowing its second
 round); with calls traced, the scanall calls and the chains they fed per
 pass; on every run both legs of the link from the keepalive, in
 microseconds from a `us=` field `test/h2loop.c` now appends to its relay
-`deliver` lines (`test-transport.sh` 35 of 35 after it); each side's
+`deliver` lines (`test-transport.sh` 35 of 35 at `864e5f5`, 2026-11-01,
+`p8-notes/test-transport-20261101.log`; no run between `aff598c` and
+then was kept); each side's
 module read by `nm -u` against the tree's `CONFIG_KASAN`; and
 `H2_WIRE_KO_A`/`_B` to load a prebuilt module on a side. The expected
 readings and fake passes were written before the first run, in
@@ -20248,16 +20250,17 @@ made 1 scan from key 0 and 4 resumed segments, acted on 8624 and kept
 acted 8624`, both kernels); the next pass verified in one round that
 acted on nothing. Every walk is the expected file's, written before the
 runs. Every run with the link left up read 310 of 310 digests equal
-(5310 under a power cut), and no run read a kernel warning, lockdep or
-sanitizer report or a kmemleak object of hammer2's.
+(5310 under a power cut), and no run read a kernel warning, a lockdep
+report or a kmemleak object of hammer2's, nor a sanitizer report on the
+KASAN runs, the only ones that can print one.
 
 **Calls and chains fed per pass.** A root walk is one scanall call, so a
 saved walk shows in the chains the calls fed and not in the calls. Read
 from a snapshot line to B's `SNAPDEL` of it (`7c0adfe`; the bracket before
 it is below): the copy pass 310 calls feeding 941 chains on both kernels
 (two root walks of 315 and one directory of 300 in them), the `more` pass
-13 calls and 338 chains on debug and 14 and 339 on KASAN, one call and
-one chain apart with its one narrowed key, and the pass after a
+14 calls and 339 chains on both kernels, 13 and 338 in debug's step 0,
+whose second round narrowed 6 keys, and the pass after a
 disconnect 11 and 331. The carried arm (`H2_WIRE_WALKS=0`,
 `p7-notes/n2c-seq-20261029-002036.log`, frozen copy sha256 prefix
 `662d2a341ff9f924` of `7c0adfe`'s harness, both kernels, each arm 42
@@ -20265,15 +20268,20 @@ checks with 0 failed): under walks 0 the copy pass makes 3 scans from
 key 0 with 0 resumed and 0 narrowed and 311 calls feeding 1256 chains,
 and the `more` pass 3 from key 0 and 9 calls feeding 976, carried for
 `walks` on both rounds, against the walks 1 arms beside them reading 310
-and 941 with 2 from key 0 on the copy pass and 13 or 14 calls with 338
-or 339 chains on the narrowed `more` pass. The source names
-`v1.0.4-725-g7c0adfe-dirty`, dirty by the working tree's design-note
-line now `527635b`; `src/` is unchanged since `592e3c9` (empty diff)
+and 941 with 2 from key 0 on the copy pass and 14 calls with 339
+chains on the narrowed `more` pass on both kernels (`n2c-seq`
+lines 34 and 148). Two of the four runs' sources name
+`v1.0.4-725-g7c0adfe-dirty` and two `v1.0.4-725-g7c0adfe` (`n2c-seq`
+lines 118 and 170 against 4 and 56), and no captured output records
+what made the tree dirty (the draft `p7-notes/record-n2.md`, written
+after the runs, asserts one, unsourced); `src/` is unchanged since `592e3c9` (empty diff)
 and the modules are the same builds the N1 arms loaded
 (`1c4bb2faed55c118` debug, `2e606a70a94ff06b` KASAN with 18 `__asan`
 and 3 `__ubsan` imports on both sides of both KASAN runs). Digests 310
-of 310 on all four, no kernel warning, lockdep, sanitizer or kmemleak
-finding, cores 0 across the kernel switches back to `h2debug-7.3`.
+of 310 on all four, no kernel warning, lockdep report or kmemleak
+finding, and no sanitizer report on the two KASAN runs, the only ones
+that can print one; cores 0 across the kernel switches back to
+`h2debug-7.3`.
 The walks 0 figures are the expected file's (`wire-levers-expected.md`,
 written 2026-10-29 00:12): about 311 calls and 941 plus 315 chains on
 the copy pass, about 9 calls and about 970 chains on the `more` pass,
@@ -20285,8 +20293,10 @@ and the from-key-0 count of 3.
 the relay stamps each frame when it takes it, so B's ping to A's answer
 is the leg through A and A's to B's the leg through B, and their medians
 sum to the round trip. On `h2debug-7.3` the runs with 12 to 14 pings a
-side read 468 to 541 us (265 + 203 in the plain pass), on `h2kasan-7.3`
-737 to 816 us (404 + 380); the power-cut cells, whose link is up only
+side read 468 to 546 us (265 + 203 in the plain pass; 292 + 254 and
+239 + 270 in the carried-arm runs, `n2c-seq` lines 37 and 89), on
+`h2kasan-7.3` the runs with 12 to 16 a side 737 to 869 us (404 + 380; 442 + 423 and 438 + 431 in the
+carried arm, lines 151 and 203); the power-cut cells, whose link is up only
 after the restart, read 1 to 4 pings a side (407 and 863 us debug, 549 and
 602 KASAN). Every median is above 10 us, so the 1 us stamp is under a
 tenth of it. The two guests share one host bridge and one cpuset, so this
@@ -20320,9 +20330,13 @@ left up or dialed again. The `more` check counted the five files on A's
 whole device and required five; a source snapshot of the next pass taken
 before the count holds the same files, and debug's N1.7 run read A 10 with
 the digests equal. `4edb61d` counts the snapshots of `CL` in the same
-show and requires five per copy; the four reruns read 0 snapshots beside
-the five, so the arm that adds a copy rests on the code and the one kept
-run. And the calls-per-pass reading bracketed a pass from one snapshot
+show and requires five per copy; the two N1.7 reruns read 0 snapshots
+beside the five (`n2b-seq` lines 69 and 167; the two control reruns
+carry no `more` check), so the per-copy arm rests on the code and on
+one kept run, debug's first N1.7 run (`wire-run-20261028-233017`),
+which read A 10 under the check before `4edb61d` (`n2-seq` line 323);
+no run since has exercised the arm with a copy present. And the
+calls-per-pass reading bracketed a pass from one snapshot
 line to the next, taking in the idle stamp passes between a verdict and
 the next snapshot, each one call walking the live root over the wire; B's
 log has two in debug's step 0 (`idlestamp` at 516.7 and 537.2 s, calls 310
@@ -20359,38 +20373,75 @@ scanall calls by the round trip; the calls barely move with a walk, so
 the cost on the wire is read as both, the calls times the round trip as a
 floor and the chains fed as the volume.
 
+**Corrected 2026-11-01.** This entry first said "the four reruns" read 0
+snapshots (two N1.7 reruns carry the check), set the `more` pass's 13
+calls and 338 chains on debug against 14 and 339 on KASAN as a kernel
+difference (13 and 338 are debug's step 0 alone), stated the round trip
+and the walks 1 arms without the carried-arm runs, named the dirty
+tree's cause from a draft, cited a `test-transport.sh` reading no file
+kept, and counted sanitizer reports on debug runs that cannot print one.
+
 ## The wire harness readings, 2026-10-29
 
 Stage 1 and 2 readings of `script/cluster-wire.sh` on the two-guest link
-(`artix-s6-kde` and `artix-s6-h2b`), read at `7c0adfe` across six kept runs
-(`wire-run-20261029-021557` step 0 on `h2debug-7.3`;
-`wire-run-20261029-002052`/`-002314`, the debug walks-1/walks-0 carried pair
-in `p7-notes/n2c-seq-20261029-002036.log`, 42 checks and 0 failed each;
-`wire-run-20261029-002723`/`-003033`, the KASAN walks-1/walks-0 carried pair
-in the same log, 42 checks and 0 failed each;
-`wire-run-20261029-001140`, the KASAN N1.7 scratch-`norootcont` rerun in
-`p7-notes/n2b-seq-20261029-000721.log`, 42 checks with the control's 2 failures):
-- 42 checks, 0 failed on the step-0 and carried runs; the N1.7 rerun fails its 2 placed checks and nothing else.
-- Module sha256 `1c4bb2faed55c118` (debug) and `2e606a70a94ff06b` (KASAN).
-- Round trip, read on `wire-run-20261029-021557`'s trace: leg through A 219 us, leg through B 266 us, sum 485 us.
-- Remote entry counts: 310 of 310 digests equal warm and cold, on every run with the link left up.
-- Sanitizer import check: 18 `__asan` and 3 `__ubsan` imports verified on both guests of the carried-pair KASAN runs.
-- Kernel log alive, 0 kernel warnings, 0 lockdep/sanitizer reports, kmemleak clean.
+(`artix-s6-kde` and `artix-s6-h2b`), across six kept runs: the four
+carried-pair runs, run from `7c0adfe` (debug) and `7c0adfe-dirty`
+(KASAN), every module built from `592e3c9`'s source
+(`wire-run-20261029-002052`/`-002314`
+on `h2debug-7.3` and `-002723`/`-003033` on `h2kasan-7.3`, walks 1 then
+walks 0, in `p7-notes/n2c-seq-20261029-002036.log`); the KASAN N1.7
+scratch-`norootcont` rerun `wire-run-20261029-001140`, run from a tree
+at `4edb61d-dirty` (its `.out` line 1), A loading `2e606a70a94ff06b`
+and B the scratch `9e0452010bbc3188` (`.out` lines 5 and 4), in `p7-notes/n2b-seq-20261029-000721.log`; and
+`wire-run-20261029-021557` on `h2debug-7.3` from `7c0adfe-dirty` (its
+`.out` line 1), a walks-0 pass
+run with no call trace (its `.out` line 19 reads `B sync-walks 0`, and
+its trace holds no `open t=` line), whose stdout was not kept:
+- 42 checks, 0 failed, on each of the four carried-pair runs (`n2c-seq`
+  lines 52, 104, 166, 218); the N1.7 rerun fails its 2 placed checks and
+  nothing else (`n2b-seq` lines 77, 80, 98). No captured output keeps a
+  tally of `021557` (the draft `p7-notes/record-n2-wire.md`, written
+  after the run, states 42 with 0 failed, unsourced).
+- Module sha256 `1c4bb2faed55c118` (debug) and `2e606a70a94ff06b` (KASAN),
+  the carried pair's run headers (`n2c-seq` lines 4, 56, 118, 170);
+  `001140`'s B side loaded the scratch `9e0452010bbc3188`.
+- Round trip: 509 and 546 us on the debug carried pair (239 + 270 and
+  292 + 254) and 865 and 869 us on the KASAN pair (442 + 423 and
+  438 + 431), `n2c-seq` lines 89, 37, 151 and 203. `021557`'s trace,
+  read with the harness's own `legs()`, gives 219 and 266 us, 485 us.
+- 310 of 310 digests equal warm and cold on every run with the link left
+  up, recomputed from the six `.out` files.
+- 18 `__asan` and 3 `__ubsan` imports on both guests of each KASAN
+  carried-pair run (`n2c-seq` lines 157, 161, 209, 213).
+- `klog-alive 1`, `kernel-warnings 0` and `kmemleak 0` on both sides of
+  every run (each `.out`; the warnings count takes in lockdep's cycle
+  and recursion banners and `KASAN` and `UBSAN` lines,
+  `cluster-wire.sh:1283`); a sanitizer report was readable only on the
+  three KASAN runs, and none was printed there.
+
+**Corrected 2026-11-01.** This entry first named `021557` "step 0", read
+the whole set "at `7c0adfe`", gave its 42 checks a tally no kept log
+holds, attributed the KASAN module and imports to a set whose one cited
+run was debug-only, and gave 485 us, `021557`'s figure, as the round
+trip; the 1.0.70 row repeated that figure. Each bullet above names the
+kept file it was read or recomputed from.
 
 The row is 1.0.70.
 
 ## The N3 rate readings on the release kernel, 2026-10-29
 
-Readings of `script/cluster-sync.sh` on `h2release-7.3` (`artix-s6-kde`), with `H2_PASS_TREE=100000` then `=1000000`, `H2_TREE_FANOUT=1000`, `H2_SYNC_WALKS=alt`, `H2_PASS_CHANGES=4`, `H2_LOCKDEBUG=1`, `H2_SYNC_NARROW=1`, shape `one`, and `KDIR` naming the release tree (`cluster-run-20261029-104916.log` and `cluster-run-20261029-105708.log`), compared against 1.0.60's carried readings:
-- At 100,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 898 and 952 ms against 2300-2400 ms carried; carried change passes (change 2 and 4) read 2745 and 2795 ms.
-- At 1,000,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 12.7 s (12773 and 12692 ms) against ~32.8 s carried; carried change passes (change 2 and 4) read 36.2 and 38.5 s.
+Readings of `script/cluster-sync.sh` on `h2release-7.3` (`artix-s6-kde`), with `H2_PASS_TREE=100000` then `=1000000`, `H2_TREE_FANOUT=1000`, `H2_SYNC_WALKS=alt`, `H2_PASS_CHANGES=4`, `H2_LOCKDEBUG=1`, `H2_SYNC_NARROW=1`, shape `one`, and `KDIR` naming the release tree (`cluster-run-20261029-104916.log` and `cluster-run-20261029-105708.log`, both built at `be0f52d`, `src-dirty=0`, line 2):
+- At 100,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 898 and 952 ms; carried change passes (change 2 and 4) read 2745 and 2795 ms, against 1.0.67's carried pass, recorded as a plain module (`p7-notes/n3-expected.md`; its report keeps no build flag), 2363 and 2350 ms (`cluster-run-20261028-145703.log`). 1.0.60's carried readings at 100,000 were 3799, 2826 and 2511 ms (`cluster-run-20261027-024915.log`).
+- At 1,000,000 files: 53 checks, 0 failed; narrowed change passes (change 1 and 3) read 12773 and 12692 ms, mean 12.7 s; carried change passes (change 2 and 4) read 36.2 and 38.5 s, against 1.0.60's 32976, 32784 and 32768 ms (`cluster-run-20261027-023051.log`) and 1.0.67's carried pass, recorded as a plain module, 29462 and 29476 ms (`cluster-run-20261028-145955.log`).
 - Module sha256 `89596171c66daab5` (release).
-- Kernel log alive, 0 kernel warnings, no lockdep or sanitizer report, and no leak reading: the kept logs state the tree configures no kmemleak.
+- 0 kernel warnings. The release kernel configures no lockdep, KASAN, UBSAN or kmemleak (`CONFIG_PROVE_LOCKING`, `CONFIG_KASAN`, `CONFIG_UBSAN` and `CONFIG_DEBUG_KMEMLEAK` unset in `~/kernels/linux-7.3-release/.config`), so the harness's sweep reading 0 for those reports (line 62 of each log) says nothing for them; the logs state this for KASAN, UBSAN and kmemleak (lines 61 and 63). `cluster-sync.sh` has no kernel-log-alive reading.
 - `fsck_hammer2` clean on master and slave images.
+
+**Corrected 2026-11-01.** This entry first compared the 100,000 run with "2300-2400 ms carried" as 1.0.60's (it is 1.0.67's), and listed "kernel log alive" and "no lockdep or sanitizer report" as readings when the harness has no such reading and the kernel cannot print either report; the 1.0.71 row named `0e227d5`, the record commit, as the build.
 
 The row is 1.0.71.
 
-N4: the narrowed pass at 1,000,000 files takes 12.7 s (12773 and 12692 ms), above the 5.12 s cadence. Lever 1 misses; lever 2, subtree skipping, follows per the approved plan.
+N4: the narrowed pass at 1,000,000 files takes 12.7 s (12773 and 12692 ms), above the 5.12 s cadence. The expected file (`p7-notes/n3-expected.md`, "The build's cost") required the figure divided by the `HAMMER2_LOCKDEBUG` build's cost when that exceeds 1.1: N3's carried mean 37344 ms against 1.0.67's 29469 ms, recorded as a plain module, is 1.267, so the narrowed pass is about 10.0 s with the build's cost divided out, a cross-boot figure with a spread of about a tenth (added 2026-11-01; the verdict as first written did not apply it), still above the cadence. Lever 1 misses; lever 2, subtree skipping, follows per the approved plan.
 
 ## The `-tls` kernel baselines, 2026-10-29 to 2026-10-30
 
@@ -20399,11 +20450,19 @@ Three builds beside the plain three (`~/kernels/linux-7.3-tls`,
 its plain twin's configuration plus `TLS`, `CRYPTO_GCM` and `NVME_TCP`
 with `NET_HANDSHAKE`), installed on both guests under the grub names
 `h2debug-7.3tls`, `h2release-7.3tls` and `h2kasan-7.3tls`. What the runs
-below read of the install: each `-tls` name boots (`guest-kernel`
-`7.3.0-tls` and `7.3.0-kasan-tls` in the wire runs' headers,
-`7.3.0-release-tls` live on `artix-s6-kde` 2026-10-30), and the module
-built against each matching tree loads (`module-vermagic` matching the
-guest kernel in every run). `KERNEL_REF` and the floor do not move: the
+below read of the install: `h2debug-7.3tls` and `h2kasan-7.3tls` boot
+(`guest-kernel` `7.3.0-tls` and `7.3.0-kasan-tls` in the wire runs'
+headers, line 7), and the module built against each matching tree loads
+(`module-vermagic` matching the guest kernel, line 8; the wire runs are
+the only ones that print it). No kept line shows `7.3.0-release-tls`
+booted: the two rate runs below load a prebuilt module whose hash
+differs from N3's, which fits the release-tls tree and is not a
+reading of the kernel. The two `cluster-sync.sh` default runs built
+their module at `53c7391` with `src-dirty=0` (line 2, `ko=built`), and
+the two wire runs name `53c7391` as their `source` (`.out` line 1); the
+two rate runs loaded a prebuilt module by `H2_KO`, `276bfa9f92ad31c4`,
+with the tree at `53c7391` (line 2), and no kept line names that
+module's source or `KDIR`. `KERNEL_REF` and the floor do not move: the
 kernel of record is still 7.3.
 
 Baselines on the `-tls` kernels, the ones later stages compare with:
@@ -20436,9 +20495,13 @@ Baselines on the `-tls` kernels, the ones later stages compare with:
     34931 and 34291 ms against about 36200 and 38500; kept-absent clean
     (0 in 508483 kept lines); the slave holds its master (0 of 3002002
     lines differ); no `.h2sync-*` left.
-  - Module sha256 `276bfa9f92ad31c4` in both; kernel log alive, 0
-    warnings, no lockdep or sanitizer report, and no leak reading (the
-    kept lines state the tree configures none, as N3's release logs did).
+  - Module sha256 `276bfa9f92ad31c4` in both; 0 warnings. The
+    release-tls tree configures no lockdep, KASAN, UBSAN or kmemleak
+    (`CONFIG_PROVE_LOCKING`, `CONFIG_KASAN`, `CONFIG_UBSAN` and
+    `CONFIG_DEBUG_KMEMLEAK` unset in
+    `~/kernels/linux-7.3-release-tls/.config`), so the sweep reading 0
+    for those reports (line 61 of each log) says nothing for them; the
+    logs state this for KASAN, UBSAN and kmemleak (lines 60 and 62).
 - Against N3 the re-reads are 3 to 13% faster (100k narrowed -8.4 and
   -12.5%, carried -9.3 and -10.6%; 1M narrowed -11.4 and -10.6%,
   carried -3.5 and -10.9%), at and just past the tenth the expected file
@@ -20447,9 +20510,20 @@ Baselines on the `-tls` kernels, the ones later stages compare with:
   two runs are the baselines the later stages compare with.
 
 Not read here: the guest-side memory sampler (in the tree arm since
-`be0f52d`, running in all four runs above) prints its `mem-baseline`
-and `samples` lines on the guest, and the host keeps only the
-`wait-seconds` figure from that transcript. N3's own logs keep none
-either. The FIFO-memory reading stays open.
+`be0f52d`) runs on the tree arm's path ahead of the `wait-seconds`
+reading, whose value each of the four tree-arm reports (N3's two and
+the two rate runs here) keeps as "verified after N s"; its
+`mem-baseline` and `samples` lines were printed on the guest and no
+report keeps them. The two default-shape runs have no tree arm.
+`56e251e` keeps the sampler's lines in the report, and `864e5f5` marks
+a pass with no sample void. The FIFO-memory reading stays open.
+
+**Corrected 2026-11-01.** This entry first said the release-tls kernel
+was read live, that vermagic matched "in every run", and that the
+sampler ran "in all four runs", two of which have no tree arm; it
+listed "kernel log alive" and "no lockdep or sanitizer report" for the
+release runs; the 1.0.72 row named `ec3070f`, the record commit, as the
+build, and the release-tls module was prebuilt, so the tree's head is
+not its source.
 
 The row is 1.0.72.
