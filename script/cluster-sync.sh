@@ -441,7 +441,7 @@ finish() {
 	echo "snap-idlestamp $(klog 'syncsnap: idlestamp')"
 	echo "snap-verified $(klog 'syncsnap: verified')"
 	echo "snap-unverified $(klog 'syncsnap: unverified')"
-	echo "snap-newer $(klog 'syncsnap: newer')"
+	echo "snap-newer $(klog 'syncsnap: newer clindex')"
 	echo "snap-interrupted $(klog 'syncsnap: interrupted')"
 	echo "snap-target-taken $(klog 'syncsnap: target .* taken')"
 	echo "snap-target-kept $(klog 'syncsnap: target .* kept')"
@@ -1034,7 +1034,7 @@ i=$(( NBIG2 / 2 )); while [ $i -lt $NBIG2 ]; do head -c 4096 /dev/urandom > /mnt
 sync
 echo "h2probe: bigdir2 write end" > /dev/kmsg
 timeout 60 umount /mnt/h2c
-verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer') + $(klog 'syncsnap: unverified') )); }
+verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified') )); }
 copied() { grep -c 'syncthr: update inode' $K; }
 p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode')
 # Set before the slave's device returns, so the knob is read by the copy.
