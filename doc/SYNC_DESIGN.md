@@ -860,6 +860,25 @@ change executes:
 
 ## Skipping unchanged subtrees (design, 3.0b.2)
 
+**Status, 2026-11-01: under amendment; the tree carries only
+scaffolding (the `HAMMER2_LOOKUP_PRUNE` flag, `hammer2.h:365`, two
+unused thread fields, `hammer2.h:1020-1021`, and scanall clearing the
+flag, `hammer2_xops.c:902`) and no prune predicate.** The plan review
+of 2026-11-01 (five rounds, served by Gemini 4 Argon, transcript kept
+as `p8-notes/plan-review-20261101-a971c20377d8e83c7.jsonl` in the data
+tree) found the residue veto below unsound as written: `hammer2_pfs_snapshot()`
+itself calls `hammer2_inode_modify()` on the source PFS root inside the
+window (`hammer2_ioctl.c:924`), which queues that root on the PFS's
+sideq (`hammer2_inode.c:1802-1803`), so the queue leg read after the
+copy would veto every pass. The failure is closed (nothing would
+prune), not a wrong prune. The same review asked for the generation to
+be bound to the attachment instance, since a master restored from an
+older image can move it backwards, for the capturing caller to be
+named, and for the remote veto and the harness shape that can produce
+a pruned pass to be stated. The amendment settles these and is audited
+before the code; until then this section is the design of
+2026-10-30 as reviewed then, its citations corrected 2026-11-01.
+
 A snapshot pass that can acknowledge still walks the whole root index once
 a round even when one file changed. Lever 2 prunes subtrees the last
 verified snapshot already compared, keyed on `mirror_tid` rather than the
@@ -867,7 +886,7 @@ cut: the cut is the snapshot flush transaction's id, taken right after
 the PFS sync (`hammer2_ioctl.c:911-920`), and a writer that took its tid before cut N
 can land in snapshot N+1 under blocks whose propagated `modify_tid` sits
 below cut N, with no fixed slack bounding a stalled writer
-(`hammer2_flush.c:118-121`, `hammer2.h:1008-1015`,
+(`hammer2_flush.c:118-121`, `hammer2.h:1010-1019`,
 `hammer2_chain.c:2395-2405, 2602-2609, 3282-3289, 3844-3855, 4398-4403`).
 `mirror_tid` is stamped at every modify from the device's flush generation
 (`hammer2_chain.c:1670`) and is monotone per device
@@ -897,9 +916,9 @@ before it: the candidate is the post-sync generation, and any inequality
 across the snapshot window proper, from whatever flusher, runs that pass
 unpruned. The check fails closed; its cost is availability (one unpruned
 pass per syncer volume flush in-window), not correctness. Each read takes
-the voldata lock (`hammer2.h:1565`, `hammer2_chain.c:5593`) and is done
+the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:346`, declared at `hammer2.h:1569`) and is done
 twice requiring equal: the FREEMAP bump runs outside that lock (taken
-only in the VOLUME arm, `:710`), so the reads rest on the counter's
+only in the VOLUME arm, `hammer2_flush.c:710`), so the reads rest on the counter's
 monotonicity and double-read equality, not on exclusion. A subtree prunes only when its root's
 `mirror_tid` is strictly below the adopted generation. Soundness rests on
 one claim: any chain modified after the last verified snapshot's
@@ -910,8 +929,10 @@ nondecreasing, so a later modify stamps strictly above a generation sampled
 before the snapshot whose comparison verified. Two halves carry the content:
 
 Source half: a `hammer2_chain_modify` restamps exactly one chain
-(`hammer2_chain.c:1670-1672`): the insert helper (`:3411`), the destroy
-(`:3450`), the indirect create and rename paths (`:3616`, `:3876`), and
+(`hammer2_chain.c:1670-1672`): the rename-and-reinsert helper (`:3411`),
+the destroy (`:3450`), the indirect create (`:3616`, its parent, and
+`:3876`, the new indirect block that becomes the moved chains'
+parent), and
 the flush-time blockmap update with mtid 0 (`hammer2_flush.c:922`) each
 restamp the immediate parent, and the collapse (`hammer2_chain.c:4316`)
 likewise. Higher ancestors follow only through flush propagation: every
