@@ -1404,7 +1404,13 @@ a=$(val tree-files); [ "${a:-0}" = "$TREE" ]; check "the tree holds its $TREE fi
 a=$(val tree-settle-idles); [ "${a:-0}" -ge 2 ] 2>/dev/null; check "the thread is idle on the tree before the change" $? "${a:-none} idle pass(es) after $(val tree-settle-seconds) s"
 c=1
 while [ $c -le "$PASS_CHANGES" ]; do
-	echo "  raw   change $c memory kB: baseline (MemAvailable Slab)=$(val change-$c-mem-baseline-kb) samples=$(val change-$c-mem-samples) MemAvailable-min Slab-max=$(val change-$c-mem-avail-min-slab-max-kb)"
+	# A pass that ended before the sampler's first line leaves awk's
+	# "0 0", which is no reading; say so in the line a reader quotes.
+	if [ "$(val change-$c-mem-samples)" -gt 0 ] 2>/dev/null; then
+		echo "  raw   change $c memory kB: baseline (MemAvailable Slab)=$(val change-$c-mem-baseline-kb) samples=$(val change-$c-mem-samples) MemAvailable-min Slab-max=$(val change-$c-mem-avail-min-slab-max-kb)"
+	else
+		echo "  raw   change $c memory kB: void, samples=$(val change-$c-mem-samples) (none taken during the pass)"
+	fi
 	a=$(val change-$c-threads-down); [ "${a:-1}" = 0 ]; check "change $c: the slave element leaves while the master is written" $? "${a:-none} thread(s)"
 	set -- $(val change-$c-pass)
 	if [ $c = 2 ] && [ "$FAIL_STAMP" = 1 ]; then
