@@ -1019,9 +1019,9 @@ nops=0
 for d in doc/ARCHITECTURE.md doc/USER_GUIDE.md doc/STATUS_SNAPSHOT.md doc/CAPABILITIES_MATRIX.md doc/SECURITY_MODEL.md doc/PACKAGING_NOTES.md doc/PERFORMANCE.md doc/REPRODUCIBILITY.md doc/RELEASE_POLICY.md doc/UPSTREAM_ENGAGEMENT.md doc/ROOTFS_MILESTONES.md; do
 	nops=$((nops + 1))
 	[ -f "$d" ] || { echo "  FAIL $d: an operator document README.md indexes is missing"; fail=$((fail+1)); }
-	# The index row's link, not any mention: a sentence naming the file
-	# would otherwise satisfy the check with the row gone.
-	command grep -qF "]($d)" README.md || { echo "  FAIL $d: README.md does not index it"; fail=$((fail+1)); }
+	# The index row itself, not any mention or prose link: either would
+	# otherwise satisfy the check with the row gone.
+	command grep -qF "| [$d]($d) |" README.md || { echo "  FAIL $d: README.md does not index it"; fail=$((fail+1)); }
 done
 
 # A summary may say the cluster link runs over kernel TLS only once src/
