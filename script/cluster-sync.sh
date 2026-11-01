@@ -605,6 +605,7 @@ bracket() {
 	END { if (!found) print "none" }'
 }
 if [ "$TREE" != 0 ]; then
+	: > /tmp/h2cluster.mem	# every change's memory samples, copied off beside the klog
 	mount -t hammer2 /dev/vdb@ROOT /mnt/h2m || { echo "mount failed"; exit 1; }
 	echo "space-start $(stat -f -c %f /mnt/h2m)"
 	hammer2 -s /mnt/h2m pfs-create CL >/dev/null 2>&1 || { echo "master pfs-create failed"; exit 1; }
@@ -720,6 +721,10 @@ if [ "$TREE" != 0 ]; then
 		echo "change-$c-mem-baseline-kb $mem0"
 		echo "change-$c-mem-samples $(wc -l < "$memdir/log")"
 		echo "change-$c-mem-min-kb $(awk 'NR==1{m1=$1;m2=$2} $1<m1{m1=$1} $2<m2{m2=$2} END{print m1+0, m2+0}' "$memdir/log")"
+		# Slab grows as the scan allocates chains, so its reading is the
+		# maximum; the minimum above sits at or below the baseline.
+		echo "change-$c-mem-avail-min-slab-max-kb $(awk 'NR==1{a=$1;m=$2} $1<a{a=$1} $2>m{m=$2} END{print a+0, m+0}' "$memdir/log")"
+		{ echo "change $c baseline $mem0"; cat "$memdir/log"; } >> /tmp/h2cluster.mem
 		rm -rf "$memdir"
 		echo "change-$c-pass $(bracket $l0)"
 		[ -n "$knob" ] && echo "change-$c-knob-left $(cat /sys/module/hammer2/parameters/$knob)"
@@ -1375,6 +1380,8 @@ fi
 # which discarded exactly the evidence the run produced.
 scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$STAMP.klog" 2>/dev/null \
 	&& echo "  kept  the guest kernel log beside the images as cluster-run-*.klog"
+[ "$TREE" != 0 ] && scp -q "$GUEST_SSH:/tmp/h2cluster.mem" "$FIXDIR/cluster-run-$STAMP.mem" 2>/dev/null \
+	&& echo "  kept  the guest's memory samples beside the images as cluster-run-*.mem"
 detach_disks
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
@@ -1397,6 +1404,7 @@ a=$(val tree-files); [ "${a:-0}" = "$TREE" ]; check "the tree holds its $TREE fi
 a=$(val tree-settle-idles); [ "${a:-0}" -ge 2 ] 2>/dev/null; check "the thread is idle on the tree before the change" $? "${a:-none} idle pass(es) after $(val tree-settle-seconds) s"
 c=1
 while [ $c -le "$PASS_CHANGES" ]; do
+	echo "  raw   change $c memory kB: baseline (MemAvailable Slab)=$(val change-$c-mem-baseline-kb) samples=$(val change-$c-mem-samples) MemAvailable-min Slab-max=$(val change-$c-mem-avail-min-slab-max-kb)"
 	a=$(val change-$c-threads-down); [ "${a:-1}" = 0 ]; check "change $c: the slave element leaves while the master is written" $? "${a:-none} thread(s)"
 	set -- $(val change-$c-pass)
 	if [ $c = 2 ] && [ "$FAIL_STAMP" = 1 ]; then
