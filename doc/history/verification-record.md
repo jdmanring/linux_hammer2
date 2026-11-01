@@ -20527,3 +20527,56 @@ build, and the release-tls module was prebuilt, so the tree's head is
 not its source.
 
 The row is 1.0.72.
+
+## Re-reads of 2026-11-01: the release-tls boot, the sampler, the wire on `-tls`
+
+Readings the audit of 2026-11-01 found stated without a kept line,
+taken on today's tree in one sequence
+(`p8-notes/support-seq-20261101-091412.log`, head `864e5f5`, QEMU cores
+0 before and after), each run from a frozen copy of its harness. Its
+`src/` differs from 1.0.72's `53c7391` by the lever-2 scaffolding
+(`a8e28cc`, `2253223`, six lines), so these are new readings and not
+1.0.72's. The wire `.out` files name `864e5f5-dirty`; `src/` read clean
+at the sequence's start (log line 1) and in the tree run (its line 2),
+and no captured line lists what else was modified.
+
+- The release-tls boot: `uname` `7.3.0-release-tls`, booted image
+  `vmlinuz-linux-h2release-7.3tls` (sequence log line 8).
+- `cluster-sync.sh` at 100,000 on that kernel in N3's shape
+  (`cluster-run-20261101-091445.log`, harness `cd9cfea9979359f8`, the
+  module built in the run, sha256 `ba7a1ec8a45daf0a` (lines 2 and 3),
+  with `KDIR=~/kernels/linux-7.3-release-tls` (`p8-notes/support-seq.sh`
+  line 35)): 52 checks, 0 failed (line
+  75); narrowed 809 and 813 ms, carried 2436 and 2455 ms (lines 13, 24,
+  34, 45), each within 2.5% of 1.0.72's 823, 833, 2489 and 2498 ms on a
+  module built from that later source; the kept-absent arm 0 lines again (line 53);
+  `fsck_hammer2` clean on both images, no `.h2sync-*` left.
+- The sampler's first kept reading (lines 10, 21, 31, 42; 36 lines in
+  `cluster-run-20261101-091445.mem`): 7 to 9 samples a window, the idle
+  baseline `MemAvailable` 3488428 to 3499244 kB and `Slab` 97324 to
+  97432 kB. Across each sampler window, from before the slave's remount
+  to the pass's end line (at least 6 to 8 s, the wait after the remount,
+  lines 11, 22, 32, 43, against passes of 0.8 and 2.4 s), `MemAvailable` fell 36356 and 12976 kB and
+  `Slab` rose 27492 and 6372 kB on the narrowed changes, and 62004 and
+  64136 kB, and 55220 and 56456 kB, on the carried ones. The window
+  holds the remount, which adds to the drop, and samples once a second,
+  which can miss a sub-second peak, so these neither isolate nor bound
+  the pass's cost, least of all for the narrowed pass; the harness's comment that the pass dominates the window at
+  100,000 (`cluster-sync.sh:693-694`) does not hold for it. One run at
+  100,000; the 1,000,000 reading is N11's.
+- `cluster-wire.sh H2_WIRE_PASS=1` on `h2debug-7.3tls`
+  (`wire-run-20261101-091920`) and `h2kasan-7.3tls`
+  (`wire-run-20261101-092330`), harness `662d2a341ff9f924`, the same
+  copy hash as 1.0.70's carried arm: 42 checks, 0 failed on each
+  (sequence log lines 148 and 209); module sha256 `4aeea794340902d1`
+  and `77405e3bf202001a`, `guest-kernel` and `module-vermagic`
+  `7.3.0-tls` and `7.3.0-kasan-tls` (`.out` lines 4, 7, 8); 310 `A sum`
+  and 310 `B cold` lines in each `.out`, every digest equal warm and
+  cold; the `more` pass 7 narrowed scans for 7 keys on both; round trip
+  517 us (306 + 211, 14 pings a side) and 881 us (428 + 453, 15 a
+  side); 0 and 18 `__asan`, 0 and 3 `__ubsan` imports on both guests;
+  no kernel warning, lockdep report or kmemleak object of hammer2's on
+  either, and no sanitizer report on the KASAN run, the only one that
+  can print one. 1.0.72's own wire runs still have no kept tally.
+- `test-transport.sh` 35 of 35 at `864e5f5`
+  (`p8-notes/test-transport-20261101.log`).
