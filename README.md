@@ -209,15 +209,10 @@ than about a shared bug.
 ## Requirements
 
 + Linux 7.3 or newer, enforced by an `#error`. The floor is the 7.3
-  line by decision, not by accident: 7.1 is end of life, 7.2 is an
-  ordinary stable series that goes the same way shortly after 7.3
-  ships, and 7.3 is the next longterm, so a floor at 7.2 would buy one
-  cycle and charge for the migration twice. The kernel of record is one
-  tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
-  refuses to report a pass against anything else; while 7.3 is still a
-  candidate that tree is the newest `-rc`, and the pin advances with
-  each one and to the release, because running on the line and pinning
-  the floor to it are the same decision here. There is
+  line by decision, not by accident: 7.3 is the long-term stable
+  kernel of record. The kernel of record is one tree, the version
+  `script/test-syntax.sh` pins as `KERNEL_REF` and refuses to report a
+  pass against anything else; the pin advances with releases. There is
   no conditional compilation on the kernel version in the tree. Two
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
@@ -228,7 +223,7 @@ than about a shared bug.
   October, as the port took up what 6.19 to 7.3 added, and 6.15 is where
   the block layer first holds a 64 KiB folio. The ruling keeps the kernel
   of record as the floor, and backward compatibility, if it is ever
-  provided, goes to 6.18 alone, the one longterm kernel in that range,
+  provided, goes to 6.18 alone, the one long-term kernel in that range,
   revisited after 1.0.0; `doc/README.roadmap.md` records the list
 
 + kernel headers for the running kernel
