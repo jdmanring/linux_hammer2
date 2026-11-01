@@ -30,13 +30,13 @@ H2_FIXTURE_START=1 KDIR=/path/to/linux-7.3/build bash script/pre-push-check.sh
 A clean run verifies module compilation, checkpatch compliance, shim stubs, and inventory consistency, ending with: `pre-push: gates and selftests pass, 0 could not run`.
 
 ## 4. Setting up QEMU/KVM Guest Fleet for Fleet Gates
-Fleet gates (`cluster-sync.sh`, `cluster-wire.sh`, `test-enospc.sh`, `test-fixtures.sh`) require KVM guest virtual machines configured with QEMU:
-1. Define and start the guest domains (`artix-s6-kde` or `artix-s6-h2b`) via `virsh`:
+Fleet gates (`cluster-sync.sh`, `cluster-wire.sh`, `test-enospc.sh`, `test-fixtures.sh`) require QEMU/KVM guest virtual machines:
+1. Define and start two guest domains (e.g., `hammer2-guest-a` and `hammer2-guest-b`) via `virsh`:
    ```bash
-   virsh define guest.xml
-   virsh start artix-s6-kde
+   virsh define guest-a.xml
+   virsh start hammer2-guest-a
    ```
-2. Ensure passwordless SSH (`root@192.168.122.16` or configured `H2_GUEST_SSH`) is active for automated provisioning during test runs.
+2. Ensure passwordless SSH (`root@<guest-ip>` or configured `H2_GUEST_SSH`) is active for automated provisioning during test runs.
 3. Execute fleet exercisers:
    ```bash
    H2_FIXTURE_START=1 bash script/cluster-sync.sh
@@ -44,6 +44,6 @@ Fleet gates (`cluster-sync.sh`, `cluster-wire.sh`, `test-enospc.sh`, `test-fixtu
    ```
 4. Shut down guests cleanly:
    ```bash
-   virsh shutdown artix-s6-kde
+   virsh shutdown hammer2-guest-a
    ```
 
