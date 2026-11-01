@@ -20,6 +20,14 @@ Which file answers which question.
 | Why BSD style in a Linux tree, and what would a mainline submission change? | `README.kernel-style.md` |
 | How is the carried core kept in step with upstream after a release? | `README.maintenance.md` |
 | Where did each file under `src/` come from, and is it a byte-for-byte carry? | `provenance.csv` |
+| What do the DIO layer, lock order, and cluster stages look like at a glance? | `ARCHITECTURE.md` (diagrams), `IO_MODEL.md` (DIO detail) |
+| What is the short current status (one page, no history)? | `STATUS_SNAPSHOT.md` |
+| What can an operator enable today, and what are the limits? | `CAPABILITIES_MATRIX.md` |
+| What does the port guarantee against corruption, and how does clustering authenticate? | `SECURITY_MODEL.md` |
+| How is the module packaged (DKMS, module order, initramfs)? | `PACKAGING_NOTES.md` |
+| What performance should an operator expect, and how was it measured? | `PERFORMANCE.md` |
+| How is a clean machine taken from stock Linux plus QEMU to green gates? | `REPRODUCIBILITY.md` |
+| What is the release and tag policy, and where does upstream engagement stand? | `RELEASE_POLICY.md` |
 | What is the style gate's baseline count? | `checkpatch-baseline.txt` |
 | What did the lockdep report of the full-volume defect look like? | `enospc-lockdep.txt` |
 | What was measured, when, with what, and what did it find? | `history/verification-record.md` |

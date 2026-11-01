@@ -176,3 +176,47 @@ ports. The file's opening comment collects the differences.
 table has a row for every file here. The `DEFER` markers, four at this
 writing, are collected in that document's ledger, which
 `test-inventory.sh` compares against the source in both directions.
+
+## DIO lifetime
+
+```
+write folio (page cache, up to 64 KiB)
+  |
+  v
+hammer2_io (one per 64 KiB physical buffer, dio hash under iohash_lock)
+  |-- get: lookup_bdev read, buffer pinned for the I/O
+  |-- dirty: block marked through the chain modify path
+  |-- flush: blkdev_issue_flush, buffer written back, then released
+  v
+block device (physical storage)
+```
+
+A `hammer2_io` lives from first reference to last put. The fleet gates
+read the unload print as zero allocations left.
+
+## Lock hierarchy (leaf to root)
+
+```
+chain lock (per hammer2_chain, sleeping, lockdep subclass by level)
+  < inode lock (per hammer2_inode, same primitive)
+    < pfs lock (per PFS mount state)
+      < mntlk (per hammer2_mnt, serializes mount, remount, cluster reconnect)
+```
+
+Order is bottom-up: a chain lock never nests outside an inode lock held
+at the same level, and nothing under `mntlk` waits on a chain. The
+flusher collapses a released indirect parent only where the scan holds
+no lock the collapse needs, which the 1.0.65 guard reads.
+
+## Cluster stages (local to remote)
+
+```
+stage 1: span table (PROTO_2 announce, peer spans listed)
+stage 2a: read XOP server (peer reads served from this host)
+stage 2b: remote element (proxy chains, slave pass over the link)
+stage 5:  kernel TLS on the link (peer admitted by key)
+P8 lease: holder election, verified-at acknowledgment, demotion
+```
+
+Each stage builds on the one above it. The wire harness reads stages
+1 through 2b today; stage 5 and the lease are the active work.
