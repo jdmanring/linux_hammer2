@@ -95,52 +95,13 @@ it.
 
 ## Where it stands
 
-The version is a position on the roadmap, not a release. The first two
-numbers name the milestone reached, the third counts point releases
-inside it, and until 1.0 the number says nothing about stability.
-[CHANGELOG.md](CHANGELOG.md) carries the current number and pins every
-release to the commits that delivered it and the runs that verified it.
-0.6 was crash recovery: a writer killed, the kernel panicked, the power
-cut and a volume header torn, each twice, on media this port wrote and
-on media the FreeBSD port wrote, with both ports recovering every image
-to the same tree and `fsck_hammer2` clean afterwards.
+The repository is at roadmap position `1.0.72` (pinned to the commit hash in the newest row of [CHANGELOG.md](CHANGELOG.md)). Until version 1.0, version numbers track milestones rather than calendar releases. Every release is pinned to its source commits and verified by the automated gates in `script/`.
 
-0.7 is HAMMER2's ioctl surface, reachable as Linux ioctls, which is what
-makes `hammer2-utils` work against this driver: snapshot create, PFS
-create, delete, list and lookup, inode and volume queries, growfs and
-bulkfree. A snapshot this port takes mounts on DragonFly and reads back
-the tree as it stood. The rows for both milestones in
-[CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
+The driver is evaluated for scratch media and multi-device testing. It is not packaged, carries no stable release tags (baseline `v1.0.4` only), and is not recommended for unattended single-node root deployment without backup. Every write has been run on scratch media and verified against DragonFly BSD in both directions, including crash recovery, sparse file mapping (`SEEK_DATA`, `SEEK_HOLE`, `FIEMAP`), and `fsfreeze`.
 
-One thing to know before trying it: **be careful about filling a HAMMER2
-volume to capacity.** A volume with no space left reports the failure
-correctly, and two defects behind that have been fixed. The `sync` that
-follows a fill used to trip a circular lock dependency, and unmounting a
-filled volume used to take a page fault in the flush, on a PFS the
-teardown had just released, which killed the unmount and left the module
-impossible to unload.
+One important operational warning before trying it: **be careful about filling a HAMMER2 volume to capacity.** A volume allowed to fill completely without free space for its commit flush can lose uncommitted writes. HAMMER2 enforces a write reserve through `script/test-enospc.sh` to prevent this, counting dirty page cache pages against the reserve and refusing new allocations once full.
 
-The reproducer then grew a check nothing had done: hash every file
-as written and compare the media afterwards. A volume allowed to fill
-to its last block had lost nearly the whole fill, two files of five
-hundred reading back whole with both checkers clean, because HAMMER2
-needs free space for the flush that commits a fill and every tree this
-port carries from keeps a reserve for it through a check this port had
-declared and never carried. The check is carried now, with the page
-cache's dirty pages counted against the reserve, and a fill is refused
-with every accepted file whole on the media. A held lock freed during a
-fill, seen twice and unexplained for a day, was captured whole once the
-log was kept and fixed the same hour.
-
-The reproducer is `script/test-enospc.sh`, a gate since it passed ten runs, and the account, wrong turns
-included, is in [doc/README.status.md](doc/README.status.md).
-
-What that buys you is a driver that can be tried, on media you can
-afford to lose. What it does not yet do:
-nothing is packaged, and no tag exists. It has booted as a root filesystem once, with a static init
-and nothing else on the volume, which is a long way from a
-distribution. Every write it has made was to a scratch image on a
-guest.
+See [doc/README.status.md](doc/README.status.md) for what exists and what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md) for the completion plan.
 
 To try it, make an image, put it on a loop device and mount the PFS by
 label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
