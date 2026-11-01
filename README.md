@@ -57,7 +57,7 @@ sudo mount -t hammer2 test.img /mnt/hammer2
 
 ## Verification & Testing
 
-The repository includes eighteen automated gates in `script/` covering syntax, provenance, citations, and inventory:
+The repository includes eighteen automated gates in `script/` covering syntax, provenance, citations, and inventory (`test-absence.sh`, `test-ccms-lock.sh`, `test-checkpatch.sh`, `test-citations.sh`, `test-doc-prose.sh`, `test-enospc.sh`, `test-fixtures.sh`, `test-history.sh`, `test-inventory.sh`, `test-posix.sh`, `test-provenance.sh`, `test-report.sh`, `test-reverts.sh`, `test-shim.sh`, `test-syntax.sh`, `test-tools.sh`, `test-transport.sh`, `test-vectors-contract.sh`):
 
 ```bash
 H2_FIXTURE_START=1 bash script/pre-push-check.sh
