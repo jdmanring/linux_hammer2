@@ -223,8 +223,8 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:135` | `HAMMER2_PBUFSIZE` 65536 |
 | `hammer2_disk.h:1254` | `HAMMER2_VOLUME_BYTES` 65536 |
 | `hammer2_disk.h:1262` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
-| `hammer2_disk.h:447` | maximum radix 16, which is 64 KiB |
-| `hammer2_disk.h:229,247` | freemap leaf and node geometry in the 64 KiB slot |
+| `hammer2_disk.h:454` | maximum radix 16, which is 64 KiB |
+| `hammer2_disk.h:236,254` | freemap leaf and node geometry in the 64 KiB slot |
 | `hammer2.h:598` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
@@ -232,11 +232,11 @@ strategy would meet the same format.
 
 | site | what |
 |---|---|
-| `hammer2_io.c:43-47` | one folio per `hammer2_io`, via a 64 KiB block size |
+| `hammer2_io.c:43-45` | one folio per `hammer2_io`, via a 64 KiB block size |
 | `hammer2_io.c:82` | the `BLK_MAX_BLOCK_SIZE` static assert |
 | `hammer2_io.c:96-105` | `hammer2_io_index()` assuming the mapping's minimum folio order |
 | `hammer2_io.c:148` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
-| `hammer2_os.h:55-67` | the version floor, 7.3, the kernel of record |
+| `hammer2_os.h:64-76` | the version floor, 7.3, the kernel of record |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
 `HAMMER2_LIMIT_DIRTY_INODES` in `hammer2.h` is 65536 and is neither: it

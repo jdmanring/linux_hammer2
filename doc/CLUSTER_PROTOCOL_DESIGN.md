@@ -364,7 +364,7 @@ a span's `CREATE` and `DELETE` only (`hammer2_iocom.c:368, 406`) and
 `libdmsg` sends `LNK_SPAN` only with `CREATE`, so there is no status
 update to retry on. The fetch runs off the server's queue because two masters
 span each other at once (the kernel spans every PFS,
-`hammer2_iocom.c:451-454`), and a registration that waited on the one
+`hammer2_iocom.c:451-462`), and a registration that waited on the one
 thread that also serves the peer's requests would wait on a peer
 waiting on it, both registrations failing at the bound. A span registers
 against a `pmp` that holds an element on a block device of this host,
@@ -1030,7 +1030,7 @@ buffered writes and attribute changes dispatch no XOP at all
 (`hammer2_vnops.c` starts one at `:133`, `:242`, `:515`, `:671`, `:712`,
 `:1514`, `:1553` and `:2278`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
-before it starts and on error only prints (`hammer2_inode.c:1842-1852`).
+before it starts and on error only prints (`hammer2_inode.c:1849-1859`).
 The slave's pass writes its element through chain calls and its own
 flush (`hammer2_synchro.c:3025`, `:3034`, `:3203`, `:3272`, `:605-644`,
 `:1271`), which a read-only superblock does not refuse, and it needs the
@@ -1236,10 +1236,10 @@ rather than from the design document alone.
   (`hammer2_vnops.c:385`); the flush writes it into the root's
   `pfs_inum` (`hammer2_flush.c:797-798`). Two coordinators issue the same
   inode numbers, and `hammer2_xop_inode_create()` answers the second
-  `EEXIST` on every host (`hammer2_xops.c:1090-1093`).
+  `EEXIST` on every host (`hammer2_xops.c:1092-1095`).
 - **C5. The frontend's inode is not refreshed by a chain commit.** A
   participant's `ip->meta` is written by its own VOPs and written back
-  whole by `inode_chain_sync` (`hammer2_xops.c:1431`), so a commit that
+  whole by `inode_chain_sync` (`hammer2_xops.c:1433`), so a commit that
   changed the chains under an inode on another host leaves this host's
   in-memory size, mode and times stale and its next sync overwrites the
   other's. `hammer2_inode_repoint()` moves chains, not meta.
@@ -1275,7 +1275,7 @@ rather than from the design document alone.
   alone until it is carried.
 - **C11. Storage functions read host-local inode state**:
   `hammer2_xop_inode_create()` takes the parent's compression and check
-  methods from the in-memory inode (`hammer2_xops.c:1101-1102`), so the
+  methods from the in-memory inode (`hammer2_xops.c:1103-1104`), so the
   same request can produce different chains on two hosts.
 - **C12. A read-only state set at run time does not stop a writer
   already holding a descriptor.** The kernel tests `sb_rdonly` at
@@ -1287,14 +1287,14 @@ rather than from the design document alone.
   rewrites (`hammer2_vfsops.c:1783`, `:2668`, `:2698`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1352-1353`), and with it clear
-  `fsync` syncs and flushes the inode's chain (`:1356-1363`). ext4 sets
+  `fsync` syncs and flushes the inode's chain (`:1358-1363`). ext4 sets
   no `SB_RDONLY` at run time for this reason, keeping its own flag
   (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
   `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3370`).
 - **C13. Dirty data at the moment of a loss reaches the local master's
   media.** A strategy write runs the local storage function before the
   collect (`hammer2_strategy.c:1608-1610`), an inode sync clears
-  `MODIFIED` and on error only prints (`hammer2_inode.c:1842-1852`), and
+  `MODIFIED` and on error only prints (`hammer2_inode.c:1849-1859`), and
   the unmount's three syncs run on any superblock
   (`hammer2_vfsops.c:3417-3419`), so what was dirty when the quorum was
   lost is flushed to the local media with no peer agreeing, and C3 says
@@ -1431,7 +1431,7 @@ Five candidates, with what each met.
    slot, `hammer2_vfsops.c:543-558`), that mount's frontend outlives
    the term while descriptors are open, its `MODIFIED` inodes are
    written back whole by the carried sync the pass itself calls on its
-   mount (`hammer2_synchro.c:1271`, `hammer2_inode.c:1842-1852`), which is
+   mount (`hammer2_synchro.c:1271`, `hammer2_inode.c:1849-1859`), which is
    C5 on that host and moves a carried line to stop, and the snapshot pass keeps a slave chain it
    reads as newer at three arms (`hammer2_synchro.c:1972`, `:2346-2359`,
    `:2276`), which a demoted holder's writes, stamped from its own
@@ -1670,7 +1670,7 @@ no majority holds. The entries are in `hammer2_vnops.c` and
 (`doc/README.status.md`, the origin table), so the refusals move no
 carried line. What the state cannot do is take back what was dirty at
 the loss (C13), nor stop the carried sync writing a `MODIFIED` inode's
-meta back whole (`hammer2_inode.c:1842-1852`, a carried file); under
+meta back whole (`hammer2_inode.c:1849-1859`, a carried file); under
 candidate 5 both are the demotion's problem, answered by the pass
 overwriting the demoted holder once that sync is stopped, which does
 move a carried line, and it stays hard in full only under 4. The shutdown state is therefore the
