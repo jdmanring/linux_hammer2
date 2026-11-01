@@ -898,6 +898,8 @@ hammer2_xop_scanall(hammer2_xop_t *arg, void *scratch, int clindex)
 	/* Assert required flags. */
 	KKASSERT(xop->resolve_flags & HAMMER2_RESOLVE_SHARED);
 	KKASSERT(xop->lookup_flags & HAMMER2_LOOKUP_SHARED);
+	/* XXX Linux: lever 2 does not prune scanall */
+	xop->lookup_flags &= ~HAMMER2_LOOKUP_PRUNE;
 
 	/*
 	 * The inode's chain is the iterator.  If we cannot acquire it our

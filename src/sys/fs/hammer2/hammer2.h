@@ -1017,6 +1017,8 @@ struct hammer2_thread {
 	 * have been flushed into the next.  See hammer2_sync_slaves().
 	 */
 	hammer2_tid_t		snap_cut;
+	hammer2_tid_t		last_gen;	/* XXX Linux: lever 2 last verified generation */
+	hammer2_tid_t		cand_gen;	/* XXX Linux: lever 2 candidate generation */
 	/*
 	 * XXX Linux: the inodes whose last scan kept or failed a key, which
 	 * the next pass scans whether or not their tids agree.  The pass
