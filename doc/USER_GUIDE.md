@@ -1,86 +1,108 @@
-# HAMMER2 on Linux: User Guide
+# User Guide
 
-A practical guide to mounting, formatting, snapshotting, deduplicating, and synchronizing HAMMER2 filesystems on Linux 7.3 and newer.
+How to format, mount, snapshot, compress and replicate with this port.
+The commands below follow the README and the scripts under `script/`,
+except `setcomp`, which only `test/hammer2-seek.c` runs here; the userland is [hammer2-utils](https://github.com/kusumi/hammer2-utils)
+(`newfs_hammer2`, `hammer2`, `fsck_hammer2`). Use scratch media: the
+port is not yet recommended for data you cannot restore.
 
-## 1. Formatting and Mounting
+## Build, load, format, mount
 
-HAMMER2 volumes are managed via `hammer2-utils` (`mkfs.hammer2`, `mount.hammer2`, `hammer2`).
-
-### Formatting a Single Volume
-To format a block device or image as a HAMMER2 volume:
-```bash
-mkfs.hammer2 /dev/vdb
-```
-
-On Linux, `newfs_hammer2` in `hammer2-utils` performs the same operation:
-```bash
-sudo newfs_hammer2 -L TEST /dev/vdb
-```
-
-### Formatting Across Multiple Devices (Multi-Device)
-To format a filesystem across two volumes:
-```bash
-mkfs.hammer2 -L mypool /dev/vdb /dev/vdc
-```
-
-### Mounting by PFS Label
-HAMMER2 organizes filesystems into Pseudo-Filesystems (PFS). Mount a PFS by its label:
-```bash
-mount -t hammer2 -o label=ROOT /dev/vdb /mnt/hammer2
-```
-
-Loop devices use the `@LABEL` selector:
-```bash
+```sh
+make && sudo make install
+sudo modprobe hammer2
+truncate -s 8G scratch.img
+newfs_hammer2 -L TEST scratch.img
 sudo losetup -f --show scratch.img
 sudo mount -t hammer2 /dev/loop0@TEST /mnt
 ```
 
-### Mounting with the Correct Utility Syntax
-Give `-s <mount>` before the subcommand, which is required on Linux even though it is optional on the BSDs. Without it the utility looks the mount up through `libfs`, whose Linux build reports no mounted filesystems at all:
-```bash
+`losetup` prints the device it chose. A PFS is named after the device,
+`<device>@<label>`. A mount that names no PFS asks for `DATA`, which
+`newfs_hammer2` creates only when it is given no `-L`, so after the
+format above name `@TEST`. Add
+`-o ro` to read without writing; `mount -o remount,rw` goes the other
+way. A volume DragonFly made mounts the same way.
+
+## The `hammer2` utility
+
+Give `-s <mount>` before a subcommand that acts on a mounted
+filesystem, as `pfs-list`, `pfs-create`, `pfs-delete`, `snapshot` and
+`bulkfree` do. It is optional on the BSDs and needed here, because the
+utility otherwise looks the mount up through a library whose Linux
+build reports no mounted filesystems. `setcomp` opens the path it is
+given and needs none.
+
+```sh
 sudo hammer2 -s /mnt pfs-list
+sudo hammer2 -s /mnt pfs-create WORK
+sudo mount -t hammer2 /dev/loop0@WORK /mnt/work
+```
+
+## Snapshots
+
+```sh
 sudo hammer2 -s /mnt snapshot /mnt before-upgrade
+sudo mount -t hammer2 /dev/loop0@before-upgrade /mnt/snap
+sudo hammer2 -s /mnt pfs-delete before-upgrade
 ```
 
-## 2. Taking and Managing Snapshots
+A snapshot is a PFS of its own and mounts by its label. Deleting one
+returns its space only after the bulkfree scan has run twice:
 
-Snapshots are full copy-on-write clones of a PFS root inode under the super-root.
-
-### Creating a Snapshot
-```bash
-hammer2 -d /mnt/hammer2 snapshot snap1
-```
-This creates a read-only snapshot point. You can mount it directly by its label (`snap1`).
-
-### Deleting a Snapshot
-```bash
-hammer2 -d /mnt/hammer2 pfs-delete snap1
-```
-Space is reclaimed across subsequent bulkfree passes (`script/bulkfree.sh`).
-
-## 3. Deduplication and Compression
-
-### Deduplication
-Deduplication is active by default. When writing data, the write path checks block hashes before allocating new physical blocks. Identical blocks share storage transparently.
-
-### Compression
-Enable compression at mount or via mkfs (supports LZ4 and ZLIB):
-```bash
-mount -t hammer2 -o compress=lz4 /dev/vdb /mnt/hammer2
+```sh
+sudo hammer2 -s /mnt bulkfree /mnt
 ```
 
-## 4. Local Synchronization (P7 Local Replication)
+## Compression and deduplication
 
-HAMMER2 includes a built-in synchronization thread (`hammer2_synchro.c`) that keeps a SLAVE PFS in sync with a MASTER PFS on another device.
+Compression is set per directory and applies to what is written below
+it afterwards; there is no mount option for it.
 
-### Setting Up Local Replication
-1. Ensure both devices are attached.
-2. The synchronization thread automatically starts for any SLAVE PFS whose cluster ID matches a MASTER on another local device.
-3. Pass verification uses a per-pass snapshot of the master element (`.h2sync-src`) and maintains a last known-good target (`.h2sync-tgt`) on failure.
-
-## 5. File Handles & NFS Export
-
-HAMMER2 registers `export_operations` (`hammer2_export.c`), supporting `name_to_handle_at(2)` and `open_by_handle_at(2)`. It can also be exported over NFS via a running `nfsd` (`script/nfsd-export.sh`), supporting both `subtree_check` and `no_subtree_check` modes.
-```bash
-exportfs -o rw,no_subtree_check *:/mnt/hammer2
+```sh
+sudo hammer2 setcomp lz4 /mnt/logs      # or zlib, autozero, none
 ```
+
+Deduplication is on by default: the write path looks for an identical
+block before it allocates a new one.
+
+## Replication between two local volumes
+
+A second PFS created with the first's cluster id joins its cluster, and
+the synchronization thread keeps a SLAVE equal to its MASTER. This is
+the sequence `script/cluster-sync.sh` runs, with the master on `vdb` and
+the slave on `vdc`:
+
+```sh
+mount -t hammer2 /dev/vdb@ROOT /mnt/m
+hammer2 -s /mnt/m pfs-create CL
+clid=$(hammer2 -s /mnt/m pfs-list | awk '$3 == "CL" { print $2 }')
+mount -t hammer2 /dev/vdb@CL /mnt/cl
+mount -t hammer2 /dev/vdc@ROOT /mnt/s
+hammer2 -s /mnt/s -t SLAVE -u "$clid" pfs-create CL
+```
+
+Writes go through `/mnt/cl`. Each pass reads a snapshot of the master
+named `<pfs>.h2sync-src`, which refuses any mount, and keeps the slave's
+last verified copy as `<pfs>.h2sync-tgt` until a pass verifies again.
+A master changed while the slave is mounted reaches the slave's media
+at the slave's unmount.
+
+Replication from a master on another host exists, read-only and over a
+plaintext link, and is driven today by the test harness
+(`script/cluster-wire.sh`); `doc/STATUS_SNAPSHOT.md` says where it stops.
+
+## Export
+
+A mounted PFS can be exported by `nfsd` as any filesystem is, under
+either `subtree_check` or `no_subtree_check`, and supports
+`name_to_handle_at(2)` and `open_by_handle_at(2)`.
+
+## Checking a volume
+
+```sh
+sudo umount /mnt
+fsck_hammer2 scratch.img
+```
+
+`fsck_hammer2` is offline only; nothing scrubs a mounted volume yet.
