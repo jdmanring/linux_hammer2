@@ -37,12 +37,18 @@ has been read back by DragonFly and the other way round
 
 ## Known limits
 
-- **Cluster link**: plaintext. An enabled `copyinfo` row gates only the
-  registration of a remote master, the test harness's `h2service`
-  chooses peers by a marker file, and a connected peer can read every
-  mounted PFS the serving device announced when the link came up
-  (`doc/SECURITY_MODEL.md` has the rest). Kernel TLS is P8's TLS stage, and P7 closes once the pass
-  runs over it.
+- **Cluster link**: plaintext. The kernel verifies no peer identity and
+  the serving side checks no `copyinfo` row, so whoever the userland
+  service connects is a peer; an enabled row gates only the registration
+  of a remote master, and the test harness's `h2service` chooses peers
+  by a marker file. A peer can read every mounted PFS, and every
+  unmounted `*.h2sync-src`, whose cluster id it names (the serving
+  device announces every PFS present when the link comes up), and can
+  have the serving side take a snapshot under any `*.h2sync-src` name,
+  first deleting any unmounted PFS of that name, a local pass's own
+  source among them. Run a cluster only on a network you control
+  (`doc/SECURITY_MODEL.md` has the rest). Kernel TLS is P8's TLS stage,
+  and P7 closes once the pass runs over it.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
   not yet written.
