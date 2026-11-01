@@ -16,8 +16,8 @@ It also needs `CONFIG_TRANSPARENT_HUGEPAGE`, without which the block
 layer caps the block size below the format's 64 KiB and the build
 stops at an assertion (`hammer2_io.c`), `CONFIG_NET` for the cluster
 link's socket calls, and `CONFIG_HIGHMEM` off, which `hammer2_io.c`
-also asserts. A 32-bit kernel is not on the roadmap, though nothing
-refuses one at build time. The kernels this port is tested on are
+also asserts. A 32-bit kernel is not on the roadmap; no assertion names
+one, and none has been built. The kernels this port is tested on are
 64-bit and configured this way; on a kernel that builds the libraries as modules,
 `modprobe hammer2` loads them first, and `insmod` does not.
 

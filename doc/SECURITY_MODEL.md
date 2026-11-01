@@ -49,19 +49,22 @@ latency, the half that was never measured").
   kernel verifies no peer identity, and the test harness's
   `test/h2service.c` chooses whom to connect by a marker file. Run a
   cluster only between hosts on a network you control.
-- **What a connected peer can do**: a device announces a span for every
-  PFS under its super-root, cluster id included, and the server serves
-  any mounted PFS with an element on the device whose cluster id a peer
-  names (`hammer2_remote_pfs()`), so a peer can read every mounted PFS on
-  it, and every unmounted PFS whose name ends `.h2sync-src`, among them a
-  local pass's source snapshot. The server refuses every modifying
-  descriptor. Two snapshot commands outside the descriptor table do
+- **What a connected peer can do**: the server serves any PFS with an
+  element on the device whose cluster id a peer names, mounted or
+  unmounted and named `*.h2sync-src` (`hammer2_remote_pfs()`), and the
+  device announces every PFS present when the link's `LNK_CONN` arrives,
+  cluster id included. So a peer can read every PFS of those two kinds
+  that existed when the link came up. A snapshot taken later carries a
+  fresh random cluster id no span announces, so a local pass's source
+  snapshot is readable only if it existed then. The server refuses every
+  modifying descriptor. Two snapshot commands outside the descriptor table do
   write the serving side's media, whatever the peer's type or the PFS's:
   a peer can have it snapshot any PFS it can read under any name ending
   `.h2sync-src`, which first deletes an existing unmounted PFS of that
-  name (a mounted one makes the command fail; read from the code, a
-  pass's source of that name is not protected), and can delete a
-  snapshot that same link took. Each snapshot costs space until it is
+  name (a mounted one makes the command fail). The delete is by name, and
+  a pass's source name is its PFS's label with that suffix, so read from
+  the code a pass's source can be deleted at any time. The same link can
+  also delete a snapshot it took. Each snapshot costs space until it is
   deleted and the bulkfree scan has run. A PFS with a remote master
   mounts read-only.
 - **Next**: kernel TLS through the kernel's handshake upcall, with
