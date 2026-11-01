@@ -20,13 +20,12 @@
 # ahead of a green tree. Exit 2 from a gate is COULD-NOT-RUN and is a
 # warning here exactly as it is in CI, never a pass and never a failure.
 #
-# A budget bounds the whole run, because a fleet gate against a guest that
-# is up but wedged spends its own five-minute ssh wait and returns 2, and
-# two such gates outlive the window the remote keeps an idle connection
-# open: the push then dies before it sends anything, with no gate having
-# failed. The eleven gates that need only this machine take about
-# forty-five seconds together, so the budget is never reached on a healthy
-# tree and only ever ends a push the fleet was going to refuse anyway.
+# A budget bounds the whole run, because a gate that outlives the window
+# the remote keeps an idle connection open kills the push before it sends
+# anything, with no gate having failed. No gate run here waits on a guest
+# (the fleet gates are skipped, below); the build, the gates and their
+# selftests took 176 s together on 2026-11-01, under the budget on a
+# healthy tree.
 # H2_PREPUSH_BUDGET=<seconds> raises it for a run that means to wait.
 set -u
 
@@ -161,20 +160,27 @@ fi
 # The reason a COULD-NOT-RUN gate gives is kept: it was being dropped, so
 # a harness defect that stopped a gate from running read exactly like a
 # machine that was not available.
-# A push checks the tree, not the guest fleet. The two fleet gates wait five
-# minutes for a guest that does not answer ssh, and a guest that is up but
-# wedged is indistinguishable from a slow one to the gate; two of those waits
-# are what killed a push whose every other gate was green. The check that the
-# fleet gates perform is worth having when they can run, and it costs nothing
-# when the guest answers at once, so the wait is cut to ten seconds here and
-# the gates return COULD-NOT-RUN as they would anyway. Both remain hand
-# runnable at their own five minutes, which is the run that means something.
-H2_GUEST_WAIT=${H2_GUEST_WAIT:-2}
-export H2_GUEST_WAIT
+# A push checks the tree on this machine and needs no guest. The two fleet
+# gates, test-enospc.sh and test-fixtures.sh, boot a guest, and a guest
+# that was off or still held the module made them report COULD-NOT-RUN
+# after their ssh wait on every push, holding the push past its caller's
+# limit; they are run by hand before a push whose change they read, and
+# their selftests below need no guest and still run here. They were also
+# the only build of the module a push made, so the build is a step of its
+# own, before any gate: build-check.sh against the tree chosen above,
+# warning-clean or the push is refused. A clean build took 12 s on the
+# maintainer's machine on 2026-11-01.
+if [ -n "${KDIR:-}" ]; then
+	run_gate script/build-check.sh "$KDIR"
+else
+	warned=$((warned + 1))
+	echo "pre-push: COULD-NOT-RUN script/build-check.sh" >&2
+	echo "          no kernel of record tree was found to build against" >&2
+fi
 
 for g in script/test-*.sh; do
 	case "$g" in
-	*test-enospc.sh|*test-fixtures.sh) continue ;;
+	*/test-enospc.sh|*/test-fixtures.sh) continue ;;
 	esac
 	run_gate "$g"
 done
@@ -183,7 +189,7 @@ done
 # a symbol query about a file missing from it with no callers rather than an
 # error: three files carried in one commit sat outside it for two hours and
 # a caller search returned nothing where grep found three. The generator
-# reads the .cmd files a module build leaves, and the fleet gate above is
+# reads the .cmd files a module build leaves, and build-check.sh above is
 # the build on this machine, so the database is remade here, where it can
 # be no older than the module it describes.
 if [ -n "${KDIR:-}" ] && ls src/sys/fs/hammer2/.*.cmd >/dev/null 2>&1; then

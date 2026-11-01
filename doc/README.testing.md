@@ -927,10 +927,9 @@ Both fleet gates wait five minutes for a guest that does not answer ssh
 before giving up on it, which is what a boot takes and also what a guest
 that is up but wedged costs a caller who meant only to check the tree.
 `H2_GUEST_WAIT` is the number of five-second rounds to wait, defaulting to
-sixty, and it bounds the waiting rather than the check: the pre-push hook
-sets it to two, so a push against a wedged guest ends in a report in
-seconds instead of holding the connection open, and a hand run keeps the
-five minutes that distinguishes a boot from a hang. When a guest is
+sixty, and it bounds the waiting rather than the check. The pre-push hook
+runs neither fleet gate, so a push never waits on a guest, and a hand run
+keeps the five minutes that distinguishes a boot from a hang. When a guest is
 running and still silent at the end of the wait, the gate prints every
 vCPU's instruction pointer, the disk requests over three seconds and
 whether the guest agent answers, read from outside before the exit trap
