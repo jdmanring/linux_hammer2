@@ -1,59 +1,66 @@
 # Architecture
 
-How the DragonFly source is carried on Linux: what is vendored unchanged,
-what is shimmed, and where the boundary is. `doc/IO_MODEL.md` covers the I/O layer specifically; this is the
+How the DragonFly source is carried on Linux: what is carried, what is
+shimmed, and where the boundary is. `doc/IO_MODEL.md` covers the I/O layer specifically; this is the
 shape around it.
 
 ## System Topology and Data Flow
 
 ```
 +-----------------------------------------------------------------------+
-|                        Linux VFS Layer                                |
-|   (sys_open, sys_read, sys_write, sys_mmap, ->fsync, ->freeze_fs)     |
+|                        Linux VFS                                      |
+|   (open, read, write, mmap, ->fsync, ->freeze_fs, NFS file handles)   |
 +-----------------------------------------------------------------------+
                                    |
                                    v
 +-----------------------------------------------------------------------+
-|                    Linux / OS Shim Layer                              |
-|   - hammer2_os.h      (locks, allocations, print primitives)          |
-|   - hammer2_compat.h  (KKASSERT, atomics, kernel look-alikes)         |
-|   - hammer2_export.c  (NFS export_operations & file handle mapping)   |
+|                 VFS entry points (the port's own half)                |
+|   - hammer2_vfsops.c   (mount API, superblock operations)             |
+|   - hammer2_vnops.c    (inode and file operations)                    |
+|   - hammer2_strategy.c (address-space operations, read-ahead)         |
+|   - hammer2_export.c   (export_operations, file handles)              |
 +-----------------------------------------------------------------------+
                                    |
                                    v
 +-----------------------------------------------------------------------+
-|                 DragonFly BSD HAMMER2 Core                            |
+|                 DragonFly HAMMER2 core (carried)                      |
 |   - hammer2_chain.c   (block reference tree, modify, lookup, delete)  |
 |   - hammer2_inode.c   (inode lifecycle, direct data, PFS root create) |
 |   - hammer2_flush.c   (topology flush, mirror_tid advancement)        |
-|   - hammer2_freemap.c (block allocator, ref-counts, recovery)         |
-|   - hammer2_xops.c    (synchronous extended operations / scanall)     |
+|   - hammer2_freemap.c (block allocator)                               |
+|   - hammer2_xops.c    (XOP backends, scanall)                         |
 +-----------------------------------------------------------------------+
            |                                           |
            v                                           v
 +-----------------------+                   +---------------------------+
-| Synchronization Pass  |                   | Cluster Message Core      |
+| Synchronization pass  |                   | Cluster message core      |
 |   - hammer2_synchro.c |                   |   - kern_dmsg.c (dmsg)    |
-|   - Snapshots (.src/.t)|                   |   - hammer2_iocom.c       |
+|   - .h2sync-src/-tgt  |                   |   - hammer2_iocom.c       |
 |   - Lever 1a/1b walks |                   |   - hammer2_remote.c      |
-|   - Lever 2 (prune)   |                   |   - XOP API (PROTO_2)     |
+|                       |                   |   - over a TCP socket     |
 +-----------------------+                   +---------------------------+
            |                                           |
            +-----------------------+-------------------+
                                    |
                                    v
 +-----------------------------------------------------------------------+
-|                      Boundary I/O Layer                               |
-|   - hammer2_io.c      (64 KiB physical buffers, dio hash, bvecs)      |
-|   - hammer2_ondisk.c  (block device open, lookup_bdev, superblock)    |
+|                      Boundary I/O                                     |
+|   - hammer2_io.c      (64 KiB physical buffers, dio hash)             |
+|   - hammer2_ondisk.c  (device open, volume header verification)       |
 +-----------------------------------------------------------------------+
                                    |
                                    v
 +-----------------------------------------------------------------------+
-|                   Linux Block Layer & Storage                         |
+|                   Linux block layer and storage                       |
 |           (blkdev_issue_flush, submit_bio_wait, physical disks)       |
 +-----------------------------------------------------------------------+
 ```
+
+`hammer2_os.h` and `hammer2_compat.h`, the shim, sit beside the stack
+rather than in it: `hammer2.h` includes them, so both halves are built
+on them. The message core reads and writes its socket through the
+shim's wrappers over `kernel_read()` and `kernel_write()`, not through
+`hammer2_io`.
 
 ## The rule the whole port turns on
 
@@ -85,7 +92,7 @@ side by side.
 
 `src/sys/sys/queue.h` and `tree.h` are BSD's, and the kernel has its own
 macros with the same names. Any collision is latent rather than loud:
-`hammer2_io.c` includes four kernel headers after the vendored ones, so a
+`hammer2_io.c` includes kernel headers after the vendored ones, so a
 BSD definition is live for the rest of the translation unit and the break
 appears somewhere unrelated to either file.
 
@@ -102,7 +109,9 @@ any warning in a file under `src/`, which is what keeps the class closed.
 
 Three objects matter and only one of them is ours.
 
-`hammer2_chain` is the core's, unchanged, and its lifetime is DragonFly's.
+`hammer2_chain` is the core's, carried byte for byte but its marked
+lines (the debug build's chain list and the lockdep class set where a
+chain lock is initialized), and its lifetime is DragonFly's.
 
 `hammer2_io` is the boundary object. It wraps one 64 KiB physical buffer and
 is the only place the filesystem meets Linux memory. See `doc/IO_MODEL.md`
@@ -110,10 +119,13 @@ for its lifetime, which is where the port's real design decisions are.
 
 `hammer2_dev` holds the per-device state, the `struct file` for each
 volume and the dio hash under its one `iohash_lock`, which
-`doc/IO_MODEL.md` explains against DragonFly's lockless io layer. It
-lives from the first mount of a PFS on the device to the last unmount,
-and `hammer2_kill_sb()` prints what it left allocated, which the fleet
-gates read as zero.
+`doc/IO_MODEL.md` explains against DragonFly's lockless io layer. A
+block device's lives from the first mount of a PFS on it to the last
+unmount; a cluster link has one with no media, the connection device,
+which lives as long as the link. After each unmount `hammer2_kill_sb()`
+prints the module's allocation counters, which describe the whole
+module rather than that superblock; `test-enospc.sh` prints the line
+when a run fails and asserts nothing on it.
 
 ## Locking
 
@@ -141,8 +153,9 @@ small file reached. The shared side does not recurse under an exclusive
 hold, on DragonFly either.
 
 `hammer2_spin_*` is a `rw_semaphore`, not a `spinlock_t`, as FreeBSD's
-`sx(9)` mapping sleeps too; every acquire site was audited and none is
-under an I/O completion.
+`sx(9)` mapping sleeps too. An audit of the acquire sites found none
+under an I/O completion; `script/hammer2-spin-audit.py` is the tool, and
+no gate runs it over the tree, so a site added since is unaudited.
 
 ## Build knobs
 
@@ -156,8 +169,14 @@ the knob here goes one step past theirs, since a build that reported the
 stored atime without storing a read's read the create's back after every
 remount.
 
-All three are Kusumi's names from the other ports. Do not add a knob that
-none of them has without saying why in the same commit.
+These three are the knobs a user builds with, and all three are
+Kusumi's names from the other ports. Do not add one that none of them
+has without saying why in the same commit. The Makefile also defines
+test builds that are never installed: `HAMMER2_LOCKDEBUG` for the fault
+and probe parameters, `HAMMER2_CCMS_LOCKTEST`, and negative controls
+such as `HAMMER2_FOLIO_CONTROL` and the `HAMMER2_NO*` set, each of
+which takes back one check so that a harness can show the check is what
+passes it.
 
 ## The mount, and what is deliberately not `get_tree_bdev()`
 
@@ -173,90 +192,7 @@ The PFS half below the entry is DragonFly's and reads against the BSD
 ports. The file's opening comment collects the differences.
 
 `doc/README.status.md` is the authority on what is done, and its origin
-table has a row for every file here. The `DEFER` markers, four at this
-writing, are collected in that document's ledger, which
+table has a row for every file here. The `DEFER` markers are collected
+in that document's ledger, which
 `test-inventory.sh` compares against the source in both directions.
 
-## Visual Reference & Diagrams
-
-### 1. System Topology and Data Flow
-```
-+-----------------------------------------------------------------------+
-|                        Linux VFS Layer                                |
-|   (sys_open, sys_read, sys_write, sys_mmap, ->fsync, ->freeze_fs)     |
-+-----------------------------------------------------------------------+
-                                   |
-                                   v
-+-----------------------------------------------------------------------+
-|                    Linux / OS Shim Layer                              |
-|   - hammer2_os.h      (locks, allocations, print primitives)          |
-|   - hammer2_compat.h  (KKASSERT, atomics, kernel look-alikes)         |
-|   - hammer2_export.c  (NFS export_operations & file handle mapping)   |
-+-----------------------------------------------------------------------+
-                                   |
-                                   v
-+-----------------------------------------------------------------------+
-|                 DragonFly BSD HAMMER2 Core                            |
-|   - hammer2_chain.c   (block reference tree, modify, lookup, delete)  |
-|   - hammer2_inode.c   (inode lifecycle, direct data, PFS root create) |
-|   - hammer2_flush.c   (topology flush, mirror_tid advancement)        |
-|   - hammer2_freemap.c (block allocator, ref-counts, recovery)         |
-|   - hammer2_xops.c    (synchronous extended operations / scanall)     |
-+-----------------------------------------------------------------------+
-           |                                           |
-           v                                           v
-+-----------------------+                   +---------------------------+
-| Synchronization Pass  |                   | Cluster Message Core      |
-|   - hammer2_synchro.c |                   |   - kern_dmsg.c (dmsg)    |
-|   - Snapshots (.src/.t)|                   |   - hammer2_iocom.c       |
-|   - Lever 1a/1b walks |                   |   - hammer2_remote.c      |
-|   - Lever 2 (prune)   |                   |   - XOP API (PROTO_2)     |
-+-----------------------+                   +---------------------------+
-           |                                           |
-           +-----------------------+-------------------+
-                                   |
-                                   v
-+-----------------------------------------------------------------------+
-|                      Boundary I/O Layer                               |
-|   - hammer2_io.c      (64 KiB physical buffers, dio hash, bvecs)      |
-|   - hammer2_ondisk.c  (block device open, lookup_bdev, superblock)    |
-+-----------------------------------------------------------------------+
-                                   |
-                                   v
-+-----------------------------------------------------------------------+
-|                   Linux Block Layer & Storage                         |
-|           (blkdev_issue_flush, submit_bio_wait, physical disks)       |
-+-----------------------------------------------------------------------+
-```
-
-### 2. DIO Lifetime Model
-```
-write folio (page cache, up to 64 KiB)
-  |
-  v
-hammer2_io (one per 64 KiB physical buffer, dio hash under iohash_lock)
-  |-- get: lookup_bdev read, buffer pinned for the I/O
-  |-- dirty: block marked through the chain modify path
-  |-- flush: blkdev_issue_flush, buffer written back, then released
-  v
-block device (physical storage)
-```
-*A `hammer2_io` lives from first reference to last put. Fleet gates verify zero allocations remain on unmount.*
-
-### 3. Lock Hierarchy (Leaf to Root)
-```
-chain lock (per hammer2_chain, sleeping, lockdep subclass by level)
-  < inode lock (per hammer2_inode, same primitive)
-    < pfs lock (per PFS mount state)
-      < mntlk (per hammer2_mnt, serializes mount, remount, cluster reconnect)
-```
-*Order is strictly bottom-up: a chain lock never nests outside an inode lock held at the same level.*
-
-### 4. Cluster Stages (Local to Remote)
-```
-stage 1: span table (PROTO_2 announce, peer spans listed)
-stage 2a: read XOP server (peer reads served from this host)
-stage 2b: remote element (proxy chains, slave pass over the link)
-stage 5:  kernel TLS on the link (peer admitted by key)
-P8 lease: holder election, verified-at acknowledgment, demotion
-```
