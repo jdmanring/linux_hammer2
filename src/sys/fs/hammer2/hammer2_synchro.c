@@ -1185,6 +1185,16 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	 */
 	if (hammer2_debug & 0x8000)
 		kprintf("syncsnap: begin clindex %d\n", idx);
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * Linux: lever 2's instrument, what precedes this pass in its
+	 * thread; prevcut is the cut of the last pass that reached its
+	 * verdict.
+	 */
+	if (hammer2_debug & 0x8000)
+		kprintf("lever2: pass clindex %d verified before %d prevcut %016llx\n",
+		    idx, thr->dbg_nverified, (unsigned long long)thr->snap_cut);
+#endif
 	error = hammer2_dev_is_conn(pmp->pfs_hmps[m]) ? ENOENT :
 	    hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
 	    HAMMER2_PFSDEL_TRYLOCK);
@@ -1370,6 +1380,9 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 		if (hammer2_debug & 0x8000)
 			kprintf("syncsnap: verified clindex %d rounds %d\n",
 			    idx, round);
+#if defined(HAMMER2_LOCKDEBUG)
+		thr->dbg_nverified++;		/* Linux */
+#endif
 		if (thr->tgt_valid) {
 			derror = hammer2_pfs_delete_byname(pmp->pfs_hmps[idx],
 			    tname, HAMMER2_PFSDEL_TRYLOCK);
@@ -1536,6 +1549,9 @@ hammer2_primary_sync_thread(void *arg)
 	bzero(&thr->last_meta, sizeof(thr->last_meta));
 	thr->tgt_valid = 0;
 	thr->tgt_left = 0;
+#if defined(HAMMER2_LOCKDEBUG)
+	thr->dbg_nverified = 0;		/* Linux */
+#endif
 
 	for (;;) {
 		flags = thr->flags;

@@ -1019,6 +1019,9 @@ struct hammer2_thread {
 	hammer2_tid_t		snap_cut;
 	hammer2_tid_t		last_gen;	/* XXX Linux: lever 2 last verified generation */
 	hammer2_tid_t		cand_gen;	/* XXX Linux: lever 2 candidate generation */
+#if defined(HAMMER2_LOCKDEBUG)
+	int			dbg_nverified;	/* Linux: verified snapshot passes, the instrument's */
+#endif
 	/*
 	 * XXX Linux: the inodes whose last scan kept or failed a key, which
 	 * the next pass scans whether or not their tids agree.  The pass

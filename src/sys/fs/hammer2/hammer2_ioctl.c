@@ -840,6 +840,62 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 	    NULL, NULL));
 }
 
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * Linux: lever 2's instrument, which changes nothing it reads
+ * (doc/SYNC_DESIGN.md, skipping unchanged subtrees, the capture and the
+ * residue veto), and reads nothing unless debug bit 0x8000 is set.  The
+ * device's flush generation is read twice, under two holds of the
+ * voldata lock, since the FREEMAP arm of the flush raises it outside
+ * that lock.
+ */
+static void
+hammer2_snap_gen(hammer2_dev_t *hmp, hammer2_tid_t *gen)
+{
+	hammer2_voldata_lock(hmp);
+	gen[0] = hmp->voldata.mirror_tid;
+	hammer2_voldata_unlock(hmp);
+	hammer2_voldata_lock(hmp);
+	gen[1] = hmp->voldata.mirror_tid;
+	hammer2_voldata_unlock(hmp);
+}
+
+/*
+ * Linux: the instrument's count of the PFS's two queues, with the first
+ * four inode numbers of each, copied under the list lock and printed
+ * after it.
+ */
+static void
+hammer2_snap_queues(hammer2_pfs_t *pmp, const char *name)
+{
+	hammer2_depend_t *depend;
+	hammer2_inode_t *qip;
+	hammer2_tid_t side[4] = { 0 }, sync[4] = { 0 };
+	int nside = 0, nsync = 0;
+
+	hammer2_spin_ex(&pmp->list_spin);
+	TAILQ_FOREACH(depend, &pmp->depq, entry) {
+		TAILQ_FOREACH(qip, &depend->sideq, qentry) {
+			if (nside < 4)
+				side[nside] = qip->meta.inum;
+			nside++;
+		}
+	}
+	TAILQ_FOREACH(qip, &pmp->syncq, qentry) {
+		if (nsync < 4)
+			sync[nsync] = qip->meta.inum;
+		nsync++;
+	}
+	hammer2_spin_unex(&pmp->list_spin);
+	kprintf("lever2: queues %s sideq %d first %016llx %016llx %016llx %016llx syncq %d first %016llx %016llx %016llx %016llx\n",
+	    name, nside, (unsigned long long)side[0],
+	    (unsigned long long)side[1], (unsigned long long)side[2],
+	    (unsigned long long)side[3], nsync, (unsigned long long)sync[0],
+	    (unsigned long long)sync[1], (unsigned long long)sync[2],
+	    (unsigned long long)sync[3]);
+}
+#endif
+
 /*
  * XXX Linux: the body of the snapshot ioctl, callable from the
  * synchronization thread, which snapshots the master element it reads
@@ -866,6 +922,12 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 	hammer2_inode_data_t *wipdata;
 	hammer2_tid_t mtid, starting_inum;
 	int error;
+#if defined(HAMMER2_LOCKDEBUG)
+	hammer2_tid_t gen_s[2] = { 0 }, gen_t[2] = { 0 }, gen_e[2] = { 0 };
+	int dirty_s = 0, dirty_t = 0, dirty_e = 0;
+	unsigned int rootq0 = 0, rootq1 = 0;
+	int lever2 = (hammer2_debug & 0x8000) != 0;
+#endif
 
 	/*
 	 * XXX Linux: hammer2_sync() needs the mount; the PFS sync does not,
@@ -915,13 +977,33 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 			hammer2_vfs_sync_pmp(pmp, MNT_WAIT);
 		else
 			hammer2_sync(pmp->mp, MNT_WAIT);
+#if defined(HAMMER2_LOCKDEBUG)
+		if (lever2) {
+			hammer2_snap_gen(hmp, gen_s);
+			dirty_s = hammer2_count_chain_modified;
+		}
+#endif
 		hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
 	}
+#if defined(HAMMER2_LOCKDEBUG)
+	if (lever2) {
+		hammer2_snap_gen(hmp, gen_t);
+		dirty_t = hammer2_count_chain_modified;
+	}
+#endif
 	mtid = hammer2_trans_sub(pmp);
 	if (mtidp)		/* Linux */
 		*mtidp = mtid;
 	hammer2_inode_lock(ip, 0);
+#if defined(HAMMER2_LOCKDEBUG)
+	if (lever2)
+		rootq0 = ip->flags & (HAMMER2_INODE_SIDEQ | HAMMER2_INODE_SYNCQ);
+#endif
 	hammer2_inode_modify(ip);
+#if defined(HAMMER2_LOCKDEBUG)
+	if (lever2)
+		rootq1 = ip->flags & (HAMMER2_INODE_SIDEQ | HAMMER2_INODE_SYNCQ);
+#endif
 	ip->meta.pfs_lsnap_tid = mtid;
 
 	chain = hammer2_inode_chain(ip, clindex, HAMMER2_RESOLVE_ALWAYS);
@@ -1086,6 +1168,27 @@ done:
 		hammer2_chain_unlock(chain);
 	hammer2_chain_drop(chain);
 
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * Linux: the instrument's end of the window, after the copy and
+	 * before its transaction closes (a flush transaction unless
+	 * HAMMER2_PFSFLAGS_NOSYNC, under which the sync read stays 0; the
+	 * flags are printed).  hmp is the element's device here as at the
+	 * reads above (chain->hmp, the same device).  A call ending at the
+	 * chainless element's ENOENT above prints nothing.
+	 */
+	if (lever2) {
+		hammer2_snap_gen(hmp, gen_e);
+		dirty_e = hammer2_count_chain_modified;
+		kprintf("lever2: snapshot %s clindex %d flags %08x tid %016llx error %08x gen sync %016llx/%016llx trans %016llx/%016llx end %016llx/%016llx dirty %d/%d/%d root %04x/%04x\n",
+		    name, clindex, flags, (unsigned long long)mtid, error,
+		    (unsigned long long)gen_s[0], (unsigned long long)gen_s[1],
+		    (unsigned long long)gen_t[0], (unsigned long long)gen_t[1],
+		    (unsigned long long)gen_e[0], (unsigned long long)gen_e[1],
+		    dirty_s, dirty_t, dirty_e, rootq0, rootq1);
+		hammer2_snap_queues(pmp, name);
+	}
+#endif
 	hammer2_inode_unlock(ip);
 	if (flags & HAMMER2_PFSFLAGS_NOSYNC)
 		hammer2_trans_done(pmp, 0);
