@@ -1012,10 +1012,50 @@ rm -f "$leak_forms"
 	echo "       provenance check above read nothing"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $fail finding(s)"
-[ "$fail" = 0 ] || exit 1
-# Ensure STATUS_SNAPSHOT and other operator documents exist and are indexed.
+# The operator documents exist and README.md names each. This check sat
+# after the summary line and its exit until 2026-11-01, so a missing
+# document printed FAIL and the gate still exited 0.
+nops=0
 for d in doc/STATUS_SNAPSHOT.md doc/CAPABILITIES_MATRIX.md doc/SECURITY_MODEL.md doc/PACKAGING_NOTES.md doc/PERFORMANCE.md doc/REPRODUCIBILITY.md doc/RELEASE_POLICY.md doc/UPSTREAM_ENGAGEMENT.md doc/ROOTFS_MILESTONES.md; do
-	[ -f "$d" ] || { echo "inventory: FAIL: mandatory document $d missing"; fail=$((fail+1)); }
-	command grep -qF "$(basename "$d")" README.md || { echo "inventory: FAIL: README.md does not index $d"; fail=$((fail+1)); }
+	nops=$((nops + 1))
+	[ -f "$d" ] || { echo "  FAIL $d: an operator document README.md indexes is missing"; fail=$((fail+1)); }
+	command grep -qF "$(basename "$d")" README.md || { echo "  FAIL $d: README.md does not index it"; fail=$((fail+1)); }
 done
+
+# A summary may say the cluster link runs over kernel TLS only once src/
+# requests a handshake. A documentation sweep at 2253223 rewrote the
+# Replication row to say it did while nothing in the module called the
+# handshake upcall, and every gate passed. A mention inside a sentence that
+# makes it a condition ("closes once that link runs over kernel TLS") is
+# not a claim. Prose is joined before matching, since a claim split across
+# lines is invisible to a line matcher. The population is README.md,
+# CONTRIBUTING.md and doc/*.md, asserted non-empty.
+ntlsdocs=0; ntlscond=0
+if ! command grep -qE 'tls_(client|server)_hello' "$DIR"/*.c 2>/dev/null; then
+	for d in README.md CONTRIBUTING.md doc/*.md; do
+		[ -f "$d" ] || continue
+		ntlsdocs=$((ntlsdocs + 1))
+		out=$(awk '{ s = s " " $0 } END {
+			gsub(/[ \t]+/, " ", s)
+			while ((i = index(s, "over kernel TLS")) > 0) {
+				b = i > 120 ? i - 120 : 1
+				pre = substr(s, b, i - b)
+				if (pre ~ /(once|when|until|after|before|whether|if) [^.]*$/) print "cond"
+				else print "claim " substr(s, b + 60, 100)
+				s = substr(s, i + 15)
+			}
+		}' "$d")
+		ntlscond=$((ntlscond + $(printf '%s\n' "$out" | command grep -c '^cond' || true)))
+		printf '%s\n' "$out" | command grep '^claim' | while read -r _ rest; do
+			echo "  FAIL $d: says the link runs over kernel TLS, and no file in $DIR requests a handshake: ...$rest..."
+		done
+		n=$(printf '%s\n' "$out" | command grep -c '^claim' || true)
+		fail=$((fail + ${n:-0}))
+	done
+	[ "$ntlsdocs" -ge 10 ] || {
+		echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
+		fail=$((fail + 1)); }
+fi
+
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlscond conditional), $fail finding(s)"
+[ "$fail" = 0 ] || exit 1
