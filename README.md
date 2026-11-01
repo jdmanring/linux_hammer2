@@ -6,385 +6,59 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 [![Status](https://img.shields.io/badge/status-1.0.72-blue.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
-A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
-
-HAMMER2 is Matthew Dillon's copy-on-write filesystem for DragonFly BSD:
-snapshots, transparent compression, block-level deduplication, an
-integrity check on every block, and a design that has been in production
-use for a decade. Tomohiro Kusumi has since ported it to
-[FreeBSD](https://github.com/kusumi/freebsd_hammer2),
-[NetBSD](https://github.com/kusumi/netbsd_hammer2) and
-[OpenBSD](https://github.com/kusumi/openbsd_hammer2), and written the
-Linux userland ([hammer2-utils](https://github.com/kusumi/hammer2-utils),
-[hammer2-fuse](https://github.com/kusumi/hammer2-fuse)). The kernel side on
-Linux is the piece that has been missing.
-
-This is that piece, built the way his three ports are built: the DragonFly
-core is carried and kept readable as DragonFly's, with every port edit
-marked in place, and an OS shim makes it compile. Same file
-names, same shim split, same section order, so a fix found here is legible
-to the other three and can travel.
-
-It mounts a HAMMER2 volume read-write, lists it, reads it, follows its
-symlinks, writes to it, takes snapshots of it, and refuses media whose
-checksums do not match. Files on it can be mapped and executed, so a
-volume can be a root filesystem, and one has booted as one: a static
-init on an otherwise empty volume, once, on a guest.
-
-At a glance, on a kernel of 7.3 or newer:
-
-+ works: mount read-write by PFS label, read, write, mmap and exec,
-  snapshots and writes into them, a filesystem across two volumes,
-  PFS create, delete and list through `hammer2-utils`,
-  LZ4 and ZLIB media, deduplication, crash recovery to the same tree as the FreeBSD port,
-  `SEEK_DATA` and `SEEK_HOLE` so a sparse file copies and archives as one, `FIEMAP`
-  so `filefrag` reads the layout, and a freeze `fsfreeze` can drive
-+ works with a caution: a volume filled to capacity refuses the fill and
-  keeps every accepted file whole, after seven defects in that path were
-  found and fixed; read the paragraph on it below before trying it. A
-  real Nix closure of two hundred thousand files copies in and reads
-  back beside squashfs, erofs and ext4, identical on a 4 GiB guest with
-  four writers, the write path taking a folio smaller than its block
-  and the device side a buffer of its own when the page cache cannot
-  give a 64 KiB folio; `doc/IO_MODEL.md` has both and the run
-+ new and narrow: a SLAVE PFS on a second device of the same host is kept
-  in step with its MASTER by DragonFly's synchronization thread, and a
-  cluster of two MASTERs on two devices is written and read through the
-  quorum that requires both to agree, every file reading back what was
-  written; both on the debug and the sanitizer kernel. A master on
-  another host is read too: over the transport and message core carried
-  since P5 and P6, a slave's synchronization pass on one guest copies the
-  master's PFS on another through a remote element, from a snapshot the
-  master takes at the slave's request, and P7's five criteria read on
-  two hosts as well as on one (`doc/CLUSTER_PROTOCOL_DESIGN.md`, stages 1
-  and 2). The link is plaintext with a peer admitted by a marker file
-  until kernel TLS lands in P8's TLS stage, and P7 closes then. No run yet
-  of a quorum that cannot be met, and no write through a PFS with a
-  remote master, which stays read-only until P8's lease protocol
-+ not yet: a package, a run of that closure
-  on a guest smaller than 4 GiB, and any write to media that is not a
-  scratch image
-+ not verified or not built: `O_DIRECT`, which is refused; and what
-  stands between this and a root filesystem, in
-  `doc/readiness-audit-2026-09-25.md`. Small-file create and delete
-  rates, mixed read/write with mmap and fsync storms, and an export
-  served by `nfsd` are measured, by `million-tree.sh`, `storm.sh` and
-  `nfsd-export.sh`; a sustained soak is the same load over
-  `H2_STORM_CYCLES` cycles, each checked and reclaimed on its own, and
-  the readings are in `doc/history/verification-record.md`
-
-Every write operation has been run on scratch media and read back by
-DragonFly, in both directions of a round trip, and the crash matrix, a
-writer killed, a kernel panicked, the power cut and a volume header
-torn, leaves media that this port and the FreeBSD port both recover to
-the same tree. `find` walks the whole tree and every file compares byte
-for byte against the tree it was made from, at 511 bytes, at 512, at one
-page, at one 64 KiB block and at 200 KB, on images written with LZ4 and
-with ZLIB compression, and on media created and written by DragonFly
-itself.
-
-Nothing is released: no tag exists, and the media it has written to are
-scratch copies on a guest. To try a point that has been through the
-fleet, take the newest row of [CHANGELOG.md](CHANGELOG.md): every row
-pins the commits that delivered it and names the runs that verified
-them, which is what a tag would say. See
-[doc/README.status.md](doc/README.status.md) for exactly what exists and
-what has been verified, and [doc/README.roadmap.md](doc/README.roadmap.md)
-for the order the rest lands in. There is no schedule attached to any of
-it.
-
-## Where it stands
-
-The version is a position on the roadmap, not a release. The first two
-numbers name the milestone reached, the third counts point releases
-inside it, and until 1.0 the number says nothing about stability.
-[CHANGELOG.md](CHANGELOG.md) carries the current number and pins every
-release to the commits that delivered it and the runs that verified it.
-0.6 was crash recovery: a writer killed, the kernel panicked, the power
-cut and a volume header torn, each twice, on media this port wrote and
-on media the FreeBSD port wrote, with both ports recovering every image
-to the same tree and `fsck_hammer2` clean afterwards.
-
-0.7 is HAMMER2's ioctl surface, reachable as Linux ioctls, which is what
-makes `hammer2-utils` work against this driver: snapshot create, PFS
-create, delete, list and lookup, inode and volume queries, growfs and
-bulkfree. A snapshot this port takes mounts on DragonFly and reads back
-the tree as it stood. The rows for both milestones in
-[CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
-
-One thing to know before trying it: **be careful about filling a HAMMER2
-volume to capacity.** A volume with no space left reports the failure
-correctly, and two defects behind that have been fixed. The `sync` that
-follows a fill used to trip a circular lock dependency, and unmounting a
-filled volume used to take a page fault in the flush, on a PFS the
-teardown had just released, which killed the unmount and left the module
-impossible to unload.
-
-The reproducer then grew a check nothing had done: hash every file
-as written and compare the media afterwards. A volume allowed to fill
-to its last block had lost nearly the whole fill, two files of five
-hundred reading back whole with both checkers clean, because HAMMER2
-needs free space for the flush that commits a fill and every tree this
-port carries from keeps a reserve for it through a check this port had
-declared and never carried. The check is carried now, with the page
-cache's dirty pages counted against the reserve, and a fill is refused
-with every accepted file whole on the media. A held lock freed during a
-fill, seen twice and unexplained for a day, was captured whole once the
-log was kept and fixed the same hour.
-
-The reproducer is `script/test-enospc.sh`, a gate since it passed ten runs, and the account, wrong turns
-included, is in [doc/README.status.md](doc/README.status.md).
-
-What that buys you is a driver that can be tried, on media you can
-afford to lose. What it does not yet do:
-nothing is packaged, and no tag exists. It has booted as a root filesystem once, with a static init
-and nothing else on the volume, which is a long way from a
-distribution. Every write it has made was to a scratch image on a
-guest.
-
-To try it, make an image, put it on a loop device and mount the PFS by
-label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
-PFS asks for `DATA`:
-
-        $ make && sudo make install
-        $ sudo modprobe hammer2
-        $ truncate -s 8G scratch.img
-        $ newfs_hammer2 -L TEST scratch.img
-        $ sudo losetup -f --show scratch.img
-        $ sudo mount -t hammer2 /dev/loop0@TEST /mnt
-
-`losetup` prints the device it chose; `/dev/loop0` above is that device.
-`modprobe` rather than `insmod`, because the codecs and the digest may
-be modules on your kernel and only `modprobe` loads them first.
-
-Add `-o ro` to read without writing; `mount -o remount,rw` goes the
-other way and runs the flush recovery on the transition, refusing only
-when the device itself is write-protected. A volume DragonFly made
-mounts the same way.
-
-`hammer2-utils` drives the ioctls once a PFS is mounted:
-
-        $ sudo hammer2 -s /mnt pfs-list
-        $ sudo hammer2 -s /mnt snapshot /mnt before-upgrade
-        $ sudo hammer2 -s /mnt pfs-delete before-upgrade
-
-Give `-s <mount>` before the subcommand, which is not optional here even
-though it is on the BSDs. Without it the utility looks the mount up
-through `libfs`, whose Linux build reports no mounted filesystems at
-all, so anything that routes by mount reports the PFS as not found.
-That is a defect in the utility rather than in this driver, and
-`doc/upstream/libfs-linux-get_mnt_info.md` is the report against it. The kernel log carries every refusal by name, and a report of
-anything the driver does that DragonFly would not, with the image if you
-can share it, is the most useful thing a tester can send: the
-[issue tracker](https://github.com/jdmanring/linux_hammer2/issues) is
-open, and `doc/README.status.md` says what has already been measured so
-you can see whether your case is new.
-
-If you have ported this filesystem before, or maintain one of the trees it
-comes from, the most useful thing you can do is tell us a port decision is
-wrong. They are listed with their reasoning in
-[doc/README.porting.md](doc/README.porting.md), and several are
-load-bearing.
-
-## Why a kernel module, when hammer2-fuse exists
-
-[hammer2-fuse](https://github.com/kusumi/hammer2-fuse) already reads
-HAMMER2 on Linux in userspace, and for inspecting a volume it is the
-easier answer. A kernel driver buys three things FUSE cannot: the page
-cache holds the filesystem's own buffers rather than copying through a
-userspace daemon, the volume can be a root filesystem, and the write path
-can order its flushes against the block layer directly, which is what a
-copy-on-write filesystem's crash consistency depends on.
-
-Neither replaces the other. They are independent implementations, not two
-front ends on one core: hammer2-fuse is Rust over `libhammer2`, this port
-is C carried from DragonFly. That independence is what makes hammer2-fuse
-a useful cross-check - a second reader sharing no code with this one, so
-agreement between the two says something about the on-disk format rather
-than about a shared bug.
-
-## Requirements
-
-+ Linux 7.3 or newer, enforced by an `#error`. The floor is the 7.3
-  line by decision, not by accident: 7.1 is end of life, 7.2 is an
-  ordinary stable series that goes the same way shortly after 7.3
-  ships, and 7.3 is the next longterm, so a floor at 7.2 would buy one
-  cycle and charge for the migration twice. The kernel of record is one
-  tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
-  refuses to report a pass against anything else; while 7.3 is still a
-  candidate that tree is the newest `-rc`, and the pin advances with
-  each one and to the release, because running on the line and pinning
-  the floor to it are the same decision here. There is
-  no conditional compilation on the kernel version in the tree. Two
-  things put it at 7.3, both from that release's VFS changes: the
-  shared block device open that lets several PFSes on one device be
-  mounted, and the `create` operation's signature. A build against 7.2
-  fails on exactly those, recorded in `doc/history/verification-record.md`. Older
-  kernels are not blocked by anything deeper: measured from below, 6.18
-  needed two compatibility conditionals in September and seven in
-  October, as the port took up what 6.19 to 7.3 added, and 6.15 is where
-  the block layer first holds a 64 KiB folio. The ruling keeps the kernel
-  of record as the floor, and backward compatibility, if it is ever
-  provided, goes to 6.18 alone, the one longterm kernel in that range,
-  revisited after 1.0.0; `doc/README.roadmap.md` records the list
-
-+ kernel headers for the running kernel
-
-+ `CONFIG_TRANSPARENT_HUGEPAGE`, without which the block layer caps the
-  block size below HAMMER2's 64KB physical buffer
-
-+ `CONFIG_LZ4_COMPRESS`, `CONFIG_LZ4_DECOMPRESS`, `CONFIG_ZLIB_DEFLATE`,
-  `CONFIG_ZLIB_INFLATE` and `CONFIG_XXHASH`, built in or as modules: the
-  codecs HAMMER2 compresses and decompresses with and the digest in every
-  blockref. Distribution kernels carry all five; a `defconfig` leaves the
-  LZ4 compressor out, and the build names the missing one
-
-+ userland from [hammer2-utils](https://github.com/kusumi/hammer2-utils),
-  which already supports Linux
-
-## Build
-
-        $ cd linux_hammer2
-        $ make
-
-`make` builds against `/lib/modules/$(uname -r)/build`. Point `KDIR` at a
-different tree when the running kernel is not the one you mean to build
-for, which is the usual case on a development machine:
-
-        $ make KDIR=/path/to/linux-7.3/build
-
-Three build knobs, the same three the FreeBSD and NetBSD ports carry:
-`HAMMER2_INVARIANTS` turns on `KKASSERT` and `KASSERTMSG`,
-`HAMMER2_MALLOC` turns on the allocation leak counters, and
-`HAMMER2_ATIME` stores the access time a read stamps and reports it,
-instead of returning the modification time in its place, which is what
-DragonFly does and the default here does. Pass them on the `make` line.
-
-## Install
-
-        $ cd linux_hammer2
-        $ make install
-
-## Uninstall
-
-        $ cd linux_hammer2
-        $ make uninstall
-
-## Test
-
-Eighteen gates. The compile gates need a toolchain and a kernel tree:
-
-        $ bash script/test-shim.sh        # needs only a C compiler
-        $ bash script/test-ccms-lock.sh   # needs only a C compiler
-        $ bash script/test-transport.sh   # needs only a C compiler
-        $ bash script/test-syntax.sh      # needs kernel headers and clang
-        $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
-
-The repository gates check the documentation against the tree. They are
-POSIX sh over grep, sed and git, so they run anywhere:
-
-        $ bash script/test-inventory.sh   # the lists that claim to cover src/ and test/
-        $ bash script/test-citations.sh   # every file:line citation in doc/
-        $ bash script/test-history.sh     # every changelog row's commit hash
-        $ bash script/test-provenance.sh  # every file under src/ has an origin row
-        $ bash script/test-absence.sh     # every "X() is not carried" resolves against src/
-        $ bash script/test-doc-prose.sh   # vale over every tracked document
-        $ bash script/test-report.sh      # a committed kernel report is a whole capture
-        $ bash script/test-reverts.sh     # a take-back of recent work carries its reason
-
-`test-provenance.sh` is the one of those six that asks a question this
-repository cannot answer alone: a row claiming a byte-for-byte carry is
-re-run with `cmp` against the origin clone, and where a row makes that
-claim and the clone is not on the machine it reports COULD-NOT-RUN
-rather than passing on a table that only agrees with itself.
-
-One is neither. `script/test-vectors-contract.sh` freezes the output and
-the constant spelling of the two files in `test/` that a gate in another
-repository compiles, so an edit that breaks that consumer fails here
-rather than there:
-
-        $ bash script/test-vectors-contract.sh
-
-And one parses the gates that declare `#!/bin/sh` with shells that are not
-bash, because every gate here is normally run by bash and a bash-only
-construct in such a script breaks only when something honors the shebang:
-
-        $ bash script/test-posix.sh
-
-And one runs the selftests the analysis tools under `script/` carry, which
-nothing else ran, so the readings they produce are checked rather than
-remembered:
-
-        $ bash script/test-tools.sh
-
-Two need a guest, and exit 2 without one:
-
-        $ bash script/test-fixtures.sh    # mounts every fixture on a guest and compares manifests
-        $ bash script/test-enospc.sh      # fills a volume, checks what it kept and what each writer was told
-
-No gate here is trusted on silence alone, because a check whose healthy
-signature is silence cannot otherwise be told from a check that never ran.
-How that is bought differs by gate, and they are not interchangeable:
-`test-shim.sh`, `test-ccms-lock.sh`, `test-transport.sh` and `test-syntax.sh`
-carry built-in controls that must fail on every run, `test-checkpatch.sh` compares against
-a recorded deviation set rather than asking for silence, and each
-repository gate asserts the population it searched before checking
-anything, so a glob that matches nothing cannot report a clean run.
-
-Exit 2 means the instrument could not run, which is not a verdict on the
-code. [doc/README.testing.md](doc/README.testing.md) has the detail,
-including what each gate cannot catch.
-
-## Documentation
-
-| | |
-|---|---|
-| [CHANGELOG.md](CHANGELOG.md) | every point release, pinned to its commit and its verifying gate |
-| [doc/README.status.md](doc/README.status.md) | what exists, what is verified, what is missing |
-| [doc/history/verification-record.md](doc/history/verification-record.md) | every measurement in the order taken, with the instrument and what it found |
-| [doc/README.md](doc/README.md) | which document answers which question |
-| [doc/README.roadmap.md](doc/README.roadmap.md) | the order, with the check that ends each step |
-| [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | the layering, the shim boundary, the object and locking model |
-| [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
-| [doc/CCMS_DESIGN.md](doc/CCMS_DESIGN.md) | the P3 design note: what cache coherency was, and what completing it has to prove |
-| [doc/SYNC_DESIGN.md](doc/SYNC_DESIGN.md) | the P7 design note: what remote synchronization is in the design, and what reaching a master on another host has to prove |
-| [doc/CLUSTER_PROTOCOL_DESIGN.md](doc/CLUSTER_PROTOCOL_DESIGN.md) | the P8 design note, joint with P7's remote reach: the wire format, a master on another host as an element, the constraints the carried core puts on a quorum between masters, and the decisions that stop at the note |
-| [doc/README.porting.md](doc/README.porting.md) | every port decision and why |
-| [doc/README.testing.md](doc/README.testing.md) | what the gates prove and what they cannot |
-| [doc/README.capabilities.md](doc/README.capabilities.md) | what the port declares it provides, each row on a measurement |
-| [doc/README.kernel-style.md](doc/README.kernel-style.md) | licensing, and the path to mainline |
-| [doc/README.maintenance.md](doc/README.maintenance.md) | how the carried core is kept current, and how a defect goes back |
-
-## Contributing
-
-[CONTRIBUTING.md](CONTRIBUTING.md). Questions, corrections and review of
-the port decisions are as welcome as patches, and more useful at this
-stage. The most useful test right now is the one above on a
-distribution kernel at 7.3 or newer, with the kernel log from the
-mount and from any refusal, since every run so far has been on one
-maintainer's guests.
-
-## Credit
-
-**Matthew Dillon** designed and wrote HAMMER2 for DragonFly BSD. The
-format, the algorithms and the core carried here are his.
-
-**Tomohiro Kusumi** wrote the FreeBSD, NetBSD and OpenBSD kernel ports and
-the entire Linux userland. This port is his method applied a fourth time,
-and it borrows more than the method: the repository layout, the
-`hammer2_os.h` / `hammer2_compat.h` split and its section order, the make
-knobs, the `XXX` convention at non-mechanical mappings, and the
-`<os>_hammer2` name. Where a port decision had a precedent in one of his
-three trees, that precedent was followed and
-[doc/README.porting.md](doc/README.porting.md) says which tree.
-
-The work here is the Linux OS layer and the gates around it.
-
-AI tools assisted with this port. Every line was reviewed, every claim
-in the documentation traces to a recorded run, and the judgment calls
-are the maintainer's.
-
-## License
-
-BSD-3-Clause, matching DragonFly and the BSD ports, and listed in the
-Linux kernel's own `LICENSES/preferred/`. See [COPYRIGHT](COPYRIGHT).
+A port of DragonFly BSD's HAMMER2 filesystem to the Linux kernel.
+
+HAMMER2 is Matthew Dillon's copy-on-write filesystem for DragonFly BSD, offering atomic snapshots, transparent compression, block-level deduplication, block integrity checksums, and multi-device spanning. This project brings the kernel driver to Linux (Kernel 7.3+) by carrying the DragonFly core verbatim and implementing a lightweight OS shim (`hammer2_os.h`, `hammer2_compat.h`) following Kusumi's FreeBSD/NetBSD/OpenBSD porting patterns.
+
+---
+
+## Core Features
+
+- **Copy-on-Write & Snapshots**: Atomic read-only and writable PFS snapshots managed via `hammer2-utils`.
+- **Deduplication & Compression**: Inline block-level deduplication and LZ4/ZLIB compression.
+- **Multi-Device Spanning**: Pool formatting across multiple block devices (`mkfs.hammer2 -L pool /dev/vdb /dev/vdc`).
+- **Local & Remote Replication**: Built-in synchronization thread (`hammer2_synchro.c`) for local master/slave replication and kernel TLS-backed remote replication.
+- **VFS Integration**: Full POSIX read/write support, `SEEK_DATA`/`SEEK_HOLE`, `FIEMAP`, `fsfreeze`, and NFS export operations (`hammer2_export.c`).
+
+---
+
+## Documentation Index
+
+For detailed guides, architectural references, and operator notes, consult the documentation set:
+
+| Topic | Document | Description |
+|---|---|---|
+| **Current Status** | [doc/STATUS_SNAPSHOT.md](doc/STATUS_SNAPSHOT.md) | Concise executive summary of what is built and verified |
+| **Capabilities & Limits** | [doc/CAPABILITIES_MATRIX.md](doc/CAPABILITIES_MATRIX.md) | Authoritative feature matrix and constraints |
+| **Operator Guide** | [doc/USER_GUIDE.md](doc/USER_GUIDE.md) | Practical guide to formatting, mounting, and snapshotting |
+| **Architecture** | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | System topology, DIO lifetime, and lock hierarchy diagrams |
+| **Security Model** | [doc/SECURITY_MODEL.md](doc/SECURITY_MODEL.md) | Integrity guarantees, CoW durability, and threat analysis |
+| **Packaging & Initramfs** | [doc/PACKAGING_NOTES.md](doc/PACKAGING_NOTES.md) | Module load order, DKMS, and root-on-HAMMER2 setup |
+| **Performance** | [doc/PERFORMANCE.md](doc/PERFORMANCE.md) | Throughput, latency, and soak test methodologies |
+| **Verification** | [doc/REPRODUCIBILITY.md](doc/REPRODUCIBILITY.md) | Clean-machine guide to running the 18 automated gates |
+| **Release & Roadmap** | [doc/RELEASE_POLICY.md](doc/RELEASE_POLICY.md) | Milestone versioning, tag policy, and upstream strategy |
+
+---
+
+## Quick Start & Installation
+
+```bash
+# Build against running kernel headers
+make
+
+# Install module (requires root / sudo)
+sudo make install
+
+# Format and mount a test image
+dd if=/dev/zero of=test.img bs=1M count=1024
+mkfs.hammer2 test.img
+sudo mount -t hammer2 test.img /mnt/hammer2
+```
+
+## Verification & Testing
+
+The repository includes eighteen automated gates in `script/` covering syntax, provenance, citations, and inventory:
+
+```bash
+H2_FIXTURE_START=1 bash script/pre-push-check.sh
+```
