@@ -1014,3 +1014,8 @@ rm -f "$leak_forms"
 
 echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
+# Ensure STATUS_SNAPSHOT and other operator documents exist and are indexed.
+for d in doc/STATUS_SNAPSHOT.md doc/CAPABILITIES_MATRIX.md doc/SECURITY_MODEL.md doc/PACKAGING_NOTES.md doc/PERFORMANCE.md doc/REPRODUCIBILITY.md doc/RELEASE_POLICY.md doc/UPSTREAM_ENGAGEMENT.md doc/ROOTFS_MILESTONES.md; do
+	[ -f "$d" ] || { echo "inventory: FAIL: mandatory document $d missing"; fail=$((fail+1)); }
+	command grep -qF "$(basename "$d")" README.md || { echo "inventory: FAIL: README.md does not index $d"; fail=$((fail+1)); }
+done

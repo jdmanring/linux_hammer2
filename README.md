@@ -365,6 +365,8 @@ including what each gate cannot catch.
 | [doc/PERFORMANCE.md](doc/PERFORMANCE.md) | what rates to expect, with the methodology and controls |
 | [doc/REPRODUCIBILITY.md](doc/REPRODUCIBILITY.md) | stock Linux plus QEMU to green gates |
 | [doc/RELEASE_POLICY.md](doc/RELEASE_POLICY.md) | what the version number means, and the upstream plan |
+| [doc/UPSTREAM_ENGAGEMENT.md](doc/UPSTREAM_ENGAGEMENT.md) | upstream maintenance protocol and handover plan |
+| [doc/ROOTFS_MILESTONES.md](doc/ROOTFS_MILESTONES.md) | P0 root-filesystem readiness milestones and exit criteria |
 
 ## Contributing
 
