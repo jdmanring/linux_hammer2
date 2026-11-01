@@ -16,8 +16,8 @@ shape around it.
 +-----------------------------------------------------------------------+
 |                 VFS entry points (the port's own half)                |
 |   - hammer2_vfsops.c   (mount API, superblock operations)             |
-|   - hammer2_vnops.c    (inode and file operations)                    |
-|   - hammer2_strategy.c (address-space operations, read-ahead)         |
+|   - hammer2_vnops.c    (inode, file and address-space operations)     |
+|   - hammer2_strategy.c (read_folio, readahead, strategy XOPs)         |
 |   - hammer2_export.c   (export_operations, file handles)              |
 +-----------------------------------------------------------------------+
                                    |
@@ -85,8 +85,8 @@ The two-file shim split is Kusumi's, from the FreeBSD and NetBSD ports, and
 it is followed here rather than invented: `hammer2_compat.h` holds things
 that look like DragonFly kernel facilities and are implemented on Linux
 primitives, `hammer2_os.h` holds the primitives themselves. Section order
-inside `hammer2_os.h` follows the other ports exactly, so the three read
-side by side.
+inside `hammer2_os.h` follows the other ports exactly, so this file and
+theirs read side by side.
 
 ## The vendored headers must not collide with the kernel's
 
@@ -109,12 +109,12 @@ any warning in a file under `src/`, which is what keeps the class closed.
 
 Three objects matter and only one of them is ours.
 
-`hammer2_chain` is the core's, carried byte for byte but its marked
-lines (the debug build's chain list and the lockdep class set where a
-chain lock is initialized), and its lifetime is DragonFly's.
+`hammer2_chain` is the core's, carried byte for byte but the `XXX`
+lines the origin table lists, and its lifetime is DragonFly's.
 
 `hammer2_io` is the boundary object. It wraps one 64 KiB physical buffer and
-is the only place the filesystem meets Linux memory. See `doc/IO_MODEL.md`
+is where the core's metadata meets Linux memory; the strategy write
+path also hands the core a whole-block folio's address. See `doc/IO_MODEL.md`
 for its lifetime, which is where the port's real design decisions are.
 
 `hammer2_dev` holds the per-device state, the `struct file` for each
@@ -122,7 +122,8 @@ volume and the dio hash under its one `iohash_lock`, which
 `doc/IO_MODEL.md` explains against DragonFly's lockless io layer. A
 block device's lives from the first mount of a PFS on it to the last
 unmount; a cluster link has one with no media, the connection device,
-which lives as long as the link. After each unmount `hammer2_kill_sb()`
+made at the link's first registration and freed after its last chain,
+which the chain cache and the inode clusters can hold past the link. After each unmount `hammer2_kill_sb()`
 prints the module's allocation counters, which describe the whole
 module rather than that superblock; `test-enospc.sh` prints the line
 when a run fails and asserts nothing on it.
@@ -172,11 +173,13 @@ remount.
 These three are the knobs a user builds with, and all three are
 Kusumi's names from the other ports. Do not add one that none of them
 has without saying why in the same commit. The Makefile also defines
-test builds that are never installed: `HAMMER2_LOCKDEBUG` for the fault
-and probe parameters, `HAMMER2_CCMS_LOCKTEST`, and negative controls
-such as `HAMMER2_FOLIO_CONTROL` and the `HAMMER2_NO*` set, each of
-which takes back one check so that a harness can show the check is what
-passes it.
+test builds, which its comments say never to install and nothing
+enforces, since `make install` installs the last module built:
+`HAMMER2_LOCKDEBUG` for the fault and probe parameters,
+`HAMMER2_CCMS_LOCKTEST`, `HAMMER2_CONNWAIT`, a delay, and negative
+controls such as `HAMMER2_FOLIO_CONTROL` and the `HAMMER2_NO*` set,
+each of which takes back a check so that a harness can show the check
+is what passes it.
 
 ## The mount, and what is deliberately not `get_tree_bdev()`
 
