@@ -8,8 +8,6 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
 
-> **Recommended Evaluation Point**: Because there are no stable release tags yet (historical baseline `v1.0.4` only), external testers and reviewers should evaluate against the commit hash pinned in the newest row of [CHANGELOG.md](CHANGELOG.md) (currently roadmap position `1.0.72`). Consult [doc/RELEASE_POLICY.md](doc/RELEASE_POLICY.md) for details.
-
 HAMMER2 is Matthew Dillon's copy-on-write filesystem for DragonFly BSD:
 snapshots, transparent compression, block-level deduplication, an
 integrity check on every block, and a design that has been in production
@@ -111,9 +109,8 @@ to the same tree and `fsck_hammer2` clean afterwards.
 makes `hammer2-utils` work against this driver: snapshot create, PFS
 create, delete, list and lookup, inode and volume queries, growfs and
 bulkfree. A snapshot this port takes mounts on DragonFly and reads back
-the tree as it stood. 
-
-Since 0.7, milestones 0.8 through 1.0.72 have added the free allocator, the multi-device span path, the local synchronization thread (`hammer2_synchro.c`), and remote P7/P8 replication over kernel TLS. The rows for every milestone in [CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
+the tree as it stood. The rows for both milestones in
+[CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
 
 One thing to know before trying it: **be careful about filling a HAMMER2
 volume to capacity.** A volume with no space left reports the failure
@@ -147,7 +144,7 @@ guest.
 
 To try it, make an image, put it on a loop device and mount the PFS by
 label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
-PFS asks for `DATA` (see [doc/USER_GUIDE.md](doc/USER_GUIDE.md) for full formatting, snapshot, and multi-device guides):
+PFS asks for `DATA`:
 
         $ make && sudo make install
         $ sudo modprobe hammer2
@@ -209,10 +206,15 @@ than about a shared bug.
 ## Requirements
 
 + Linux 7.3 or newer, enforced by an `#error`. The floor is the 7.3
-  line by decision, not by accident: 7.3 is the long-term stable
-  kernel of record. The kernel of record is one tree, the version
-  `script/test-syntax.sh` pins as `KERNEL_REF` and refuses to report a
-  pass against anything else; the pin advances with releases. There is
+  line by decision, not by accident: 7.1 is end of life, 7.2 is an
+  ordinary stable series that goes the same way shortly after 7.3
+  ships, and 7.3 is the next longterm, so a floor at 7.2 would buy one
+  cycle and charge for the migration twice. The kernel of record is one
+  tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
+  refuses to report a pass against anything else; while 7.3 is still a
+  candidate that tree is the newest `-rc`, and the pin advances with
+  each one and to the release, because running on the line and pinning
+  the floor to it are the same decision here. There is
   no conditional compilation on the kernel version in the tree. Two
   things put it at 7.3, both from that release's VFS changes: the
   shared block device open that lets several PFSes on one device be
@@ -223,7 +225,7 @@ than about a shared bug.
   October, as the port took up what 6.19 to 7.3 added, and 6.15 is where
   the block layer first holds a 64 KiB folio. The ruling keeps the kernel
   of record as the floor, and backward compatibility, if it is ever
-  provided, goes to 6.18 alone, the one long-term kernel in that range,
+  provided, goes to 6.18 alone, the one longterm kernel in that range,
   revisited after 1.0.0; `doc/README.roadmap.md` records the list
 
 + kernel headers for the running kernel
