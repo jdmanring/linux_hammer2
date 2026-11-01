@@ -56,6 +56,347 @@
 # starts the guest beside another running domain, as test-fixtures.sh
 # does; otherwise another domain is a reason not to.
 set -u
+# --selftest: every reading of this script is a count of kernel-log lines,
+# and a pattern that stops matching its print reads 0 on every run while
+# the equality checks pass, as one of test-enospc.sh's readings did, a
+# banner spelled from memory. Each print a reading counts is declared once
+# below as a sample line, copied from a kept klog where a run has printed
+# it, and a sample marked f must match, whole, a format string of a
+# kprintf or hprintf under src/sys/fs/hammer2 outside a comment, with each
+# conversion read as the text it prints, so a word after a conversion is
+# checked as well as one before it (a kernel line or this script's own
+# echo is checked where it comes from; a reading keyed on a function's
+# name checks the print is in that function). Each pattern is then
+# counted over every sample and a few ordinary lines, against a count
+# written for it here: its own sampled print and no other, unless it is
+# meant to take in several. A print no sample holds is not seen by that
+# count. Then the population, both ways: every pattern the rest of this
+# file reads, through klog, grep, an awk pattern or a sed range, quoted
+# or not, is either counted here or listed as reading something other
+# than the kernel log, and nothing is counted here that the run no longer
+# reads. Last, the report's branches that a zero or a missing value
+# steers are driven with literal values. Exit 0 pass, 1 fail, 2 with no
+# source tree. H2_SRC names another tree, which is how the controls run.
+if [ "${1:-}" = "--selftest" ]; then
+	src=${H2_SRC:-$(dirname "$0")/../src}/sys/fs/hammer2
+	ls "$src"/*.c >/dev/null 2>&1 || {
+		echo "cluster: COULD-NOT-RUN: no source tree at $src" >&2; exit 2; }
+	t=$(mktemp -d) || exit 2
+	trap 'rm -rf "$t"' EXIT
+	sfail=0 nsamp=0 npat=0
+	# This file without the selftest and without comment lines, so a
+	# pattern is looked for where the run uses it.
+	command sed '/^if \[ "${1:-}" = "--selftest" \]; then$/,/^fi$/d' "$0" |
+	    command grep -v '^[[:space:]]*#' > "$t/rest"
+	[ -s "$t/rest" ] || {
+		echo "cluster: FAIL: the selftest could not separate itself" >&2
+		exit 1; }
+	: > "$t/all"; : > "$t/sel"; : > "$t/nk"
+	bad() { echo "  FAIL  $*"; sfail=$((sfail + 1)); }
+	# Every format string in the tree as an anchored-later ERE, one per
+	# line: #if 0 blocks dropped (an #else in one is kept), comments
+	# removed (newlines held as \001 so a // comment ends where it did),
+	# adjacent literals joined, each conversion turned into the text it
+	# prints. A format with no three-letter word of its own matches too
+	# much to vouch for a line and is left out.
+	awk '/^#[ \t]*if[ \t]+0[ \t]*(\/[*\/].*)?$/ && !d { d = 1; next }
+	    d && /^#[ \t]*if/ { d++; next } d && /^#[ \t]*endif/ { d--; next }
+	    d == 1 && /^#[ \t]*(else|elif)/ { d = 0; next } !d' "$src"/*.c |
+	    command sed 's/\x01//g' | tr '\n' '\001' |
+	    command sed -E 's:/\*([^*]|\*+[^*/])*\*+/::g; s://[^\x01]*::g' | tr '\001' ' ' |
+	    command grep -oE 'printf\(("([^"\\]|\\.)*"[[:space:]]*)+' |
+	    awk '{
+		s = $0; sub(/^printf\(/, "", s); gsub(/"[[:space:]]*"/, "", s)
+		sub(/^"/, "", s); sub(/"[[:space:]]*$/, "", s)
+		r = ""; lit = ""
+		for (i = 1; i <= length(s); i++) {
+			c = substr(s, i, 1)
+			if (c == "\\") {
+				i++; c = substr(s, i, 1)
+				if (c == "n") continue
+				if (c == "t") c = "\t"
+			} else if (c == "%" && match(substr(s, i), /^%[-+ #0]*[0-9*]*(\.[0-9*]+)?(hh|h|ll|l|z|j|t)?[a-zA-Z%]/)) {
+				v = substr(s, i + RLENGTH - 1, 1); i += RLENGTH - 1
+				if (v == "d" || v == "i") r = r "-?[0-9]+"
+				else if (v == "u") r = r "[0-9]+"
+				else if (v == "x" || v == "p") r = r "[0-9a-f]+"
+				else if (v == "X") r = r "[0-9A-F]+"
+				else if (v == "s") r = r "[^ ]*"
+				else if (v == "%") { r = r "%"; lit = lit "%" }
+				else r = r ".*"
+				lit = lit " "
+				continue
+			}
+			lit = lit c
+			if (index("[.()*+?{}|$/", c)) r = r "[" c "]"
+			else if (c == "^" || c == "\\") r = r "\\" c
+			else r = r c
+		}
+		if (lit ~ /[A-Za-z][A-Za-z][A-Za-z]/) print r
+	    }' > "$t/fmt"
+	[ "$(wc -l < "$t/fmt")" -ge 100 ] ||
+	    bad "the tree yields $(wc -l < "$t/fmt") format string(s); the extraction has stopped seeing them"
+	# sample <origin> <line>: origin f[|<argument word>...] for a print of
+	# the module, k for the kernel's own line, h for this script's echo to
+	# /dev/kmsg. hprintf's "hammer2: <function>: " lead is allowed before
+	# the format.
+	sample() {
+		nsamp=$((nsamp + 1))
+		printf '%s\n' "$2" >> "$t/all"
+		case $1 in
+		f|f\|*)
+			# An argument word must be a string literal in the tree;
+			# in the line it stands as one word, as a %s reads.
+			l=${2#*] }; o=$1
+			while [ "$o" != "${o#*|}" ]; do
+				o=${o#*|}; w=${o%%|*}
+				command grep -qF "\"$w\"" "$src"/*.c ||
+				    bad "no argument \"$w\" in $src for \"${2#*] }\""
+				case $l in *"$w"*) l=${l%%"$w"*}ARG${l#*"$w"} ;; esac
+			done
+			L=$l awk 'BEGIN { l = ENVIRON["L"]; p = "^(hammer2: [a-z0-9_]+(\\([^)]*\\))?: )?" }
+			    l ~ (p $0 "$") { f = 1; exit } END { exit !f }' "$t/fmt" ||
+			    bad "no format string in $src prints \"${2#*] }\"" ;;
+		h)
+			command grep -qF "echo \"${2#*] }\" > /dev/kmsg" "$t/rest" ||
+			    bad "this script no longer echoes \"${2#*] }\"" ;;
+		k) ;;
+		*) bad "sample with no origin: $2" ;;
+		esac
+	}
+	# pat <kind> <pattern> <count>: g grep, E grep -E, s grep on the line
+	# without its stamp, a awk; count is how many samples it must match.
+	pat() {
+		npat=$((npat + 1))
+		printf '%s\n' "$2" >> "$t/sel"
+		case $1 in
+		g) n=$(command grep -c -- "$2" "$t/all") ;;
+		E) n=$(command grep -c -E -- "$2" "$t/all") ;;
+		s) n=$(command sed 's/^\[[^]]*\] //' "$t/all" | command grep -c -- "$2") ;;
+		a) n=$(RE=$2 awk 'BEGIN { re = ENVIRON["RE"] } $0 ~ re { n++ } END { print n + 0 }' "$t/all") ;;
+		*) n=x ;;
+		esac
+		[ "$n" = "$3" ] || bad "'$2' matches $n sample line(s), $3 expected"
+	}
+	nk() { printf '%s\n' "$1" >> "$t/nk"; }	# a pattern that reads no kernel log
+	# Ordinary lines no pattern may match, from a healthy run's klog.
+	sample k '[   27.989326] hammer2: loading out-of-tree module taints kernel.'
+	sample k '[   28.108847] hammer2: hammer2_pfsfree: freeing pmp ffff8e4d59600000'
+	sample k '[  118.888555] hammer2: h2_bulkfree_sync: range 0000000014400c00-0000000200000000'
+	# The prints, each from a kept klog unless marked.
+	sample 'f' '[   44.396232] hammer2_sync_slaves: error 524288'
+	sample 'f' '[   74.858182] sync_slaves pfs CL clindex 0'
+	sample 'f' '[   74.858321] sync_slaves error 0 defer 0000000000000000'
+	sample 'f' '[  311.165932] syncsnap: collapse of 0000000000005200/9 on demand at 1'
+	sample 'f' '[   80.080920] syncsnap: begin clindex 0'
+	sample 'f' '[   23.697866] syncsnap: stale CL.h2sync-src deleted'
+	sample 'f|taken' '[   80.134010] syncsnap: target CL.h2sync-tgt taken'
+	sample 'f|kept' '[ 1079.518307] syncsnap: target CL.h2sync-tgt kept'
+	# Built from the format: no kept run has printed it.
+	sample 'f' '[   80.134010] syncsnap: target CL.h2sync-tgt error 28'
+	sample 'f' '[   80.137678] syncsnap: pass clindex 0 src 1 tid 0000000000000757'
+	sample 'f' '[   80.265529] START_SCAN IP=cfe0d9759ca98001 chain=0000000000000000 (ffffffffffffffff) end ffffffffffffffff beg 0000000000000000'
+	sample 'f' '[   80.322416] filekeys n<0 0  n==0 0  n>0 7  acted 315 failed 0 last 0 kept 0 sweep 0 iters 316 exit 1 replaced 0 destroyed 0 rescan 0 feed_ms 126 first_ms 0 merge_ms 56 fifo 512'
+	sample 'f' '[   80.327580] syncthr: update inode 00000000d397a5d8 (0x0000000000000533)'
+	sample 'f' '[   81.949975] syncsnap: root stamp without a rescan'
+	sample 'f' '[   68.138483] syncsnap: root stamp failed on demand'
+	sample 'f' '[   82.013652] syncsnap: verify clindex 0 round 1 acted 626 failed 0 kept 0 error 0'
+	sample 'f|keys over' '[   82.013657] syncsnap: carried round clindex 0 round 2: keys over'
+	sample 'f' '[  109.043185] syncsnap: narrowed clindex 0 round 2 keys 7'
+	sample 'f' '[   82.223111] syncsnap: verified clindex 0 rounds 2'
+	sample 'f' '[  431.890130] syncsnap: newer clindex 1 rounds 1 kept 24 acted 13'
+	sample 'f' '[   44.391628] syncsnap: unverified clindex 0 rounds 1 acted 616 failed 0 error 524288'
+	sample 'f' '[ 1054.337312] syncsnap: interrupted clindex 1 rounds 1 acted 43516'
+	sample 'f' '[ 1129.577815] syncsnap: detached clindex 1 rounds 2 acted 0'
+	sample 'f' '[   82.253859] syncsnap: end clindex 0'
+	sample 'f' '[   87.760589] syncsnap: idle clindex 0 master 0000000000000752 slave 0000000000000160'
+	sample 'f' '[   87.760594] syncsnap: idlestamp clindex 0 tid 0000000000000752'
+	sample 'f' '[  390.497355] syncsnap: kept absent 000000000001b7e0/1 tid 00000000000c4241 cut 0000000000000009 focus e47f9043743c8001'
+	sample 'f' '[  436.972415] destroy focus 0000000000000000/-1 local 0000000000020000/3 last 0000000000010000'
+	sample 'f' '[26306.449813] destroy rec 000000006c06e41c/00000000ecff1376 slave 1 4.952c5ca9c9858001'
+	sample 'f' '[  395.018300] didbreak'
+	# Built from the format: no kept run has printed either.
+	sample 'f' '[  432.000000] syncsnap: newer inode 0000000000000534'
+	sample 'f' '[  433.000000] syncsnap: reinsert 0000000000000534/1 under newer inode 0000000000000532'
+	sample 'f|deleted' '[ 1050.934917] syncsnap: scan parent 0000000000008000/15 deleted, scan ended'
+	sample 'f' '[ 1054.347917] syncsnap: unmount deleted CL.h2sync-src error 0'
+	sample 'f' '[ 1286.780555] syncsnap: narrow alter destroyed 0000000000002b74 error 0'
+	sample 'f' '[   49.829250] syncthr: rescan all clindex 1'
+	sample 'f' '[  886.179769] hammer2: hammer2_unmount_scrap: scrapping unflushed indirect 8000000000000000/62 flags 00046102'
+	# Built from the format: the lead hprintf prints under HAMMER2_INVARIANTS,
+	# which no kept run has printed.
+	sample 'f' '[  886.179769] hammer2: hammer2_unmount_scrap(umount|1234): scrapping unflushed indirect 8000000000000000/62 flags 00046102'
+	sample k '[  576.057410] hammer2_unmount_scrap: 22201 callbacks suppressed'
+	# The scrap count's suppressed lines key on the function's name, which
+	# the ratelimit's line carries and no format does, so the print must be
+	# in that function.
+	F=hammer2_unmount_scrap awk 'BEGIN { f = ENVIRON["F"] } index($0, f "(") == 1 { in_f = 1 }
+	    in_f && /printf\("scrapping unflushed / { n++ } in_f && /^}/ { in_f = 0 } END { exit !n }' "$src"/*.c ||
+	    bad "no hprintf \"scrapping unflushed\" inside hammer2_unmount_scrap() in $src"
+	sample k '[   40.907752] WARNING: possible circular locking dependency detected'
+	sample k '[43173.515795] WARNING: drivers/gpu/drm/drm_atomic_helper.c:1927 at drm_atomic_helper_wait_for_vblanks.part.0+0x22e/0x270, CPU#4: kworker/4:2/6661'
+	sample k '[25202.064358] WARNING: possible recursive locking detected'
+	sample k '[25486.472663] BUG: KASAN: vmalloc-out-of-bounds in hammer2_chain_drop+0x147e/0x1ac0 [hammer2]'
+	sample k '[  953.750790] UBSAN: shift-out-of-bounds in hammer2_bulkfree.c:1222:10'
+	sample h '[  489.031291] h2probe: bigdir write start'
+	sample h '[  757.721149] h2probe: bigdir write end'
+	# The patterns, with how many of the lines above each must match.
+	pat g 'hammer2_sync_slaves: error' 1
+	pat g 'sync_slaves pfs CL' 1
+	pat g 'syncsnap: collapse of .* on demand' 1
+	pat g 'syncsnap: stale CL.h2sync-src deleted' 1
+	pat g 'syncsnap: target .* taken' 1
+	pat g 'syncsnap: target .* kept' 1
+	pat g 'syncsnap: target .* error' 1
+	pat g 'syncsnap: pass clindex' 1
+	pat g 'filekeys' 1
+	pat s '^filekeys' 1
+	pat g 'syncthr: update inode' 1
+	pat g 'root stamp failed on demand' 1
+	pat g 'syncsnap: verified' 1
+	pat g 'syncsnap: verified clindex' 1
+	pat g 'syncsnap: newer clindex' 1
+	pat g 'syncsnap: unverified' 1
+	pat g 'syncsnap: unverified clindex' 1
+	pat g 'syncsnap: interrupted' 1
+	pat g 'syncsnap: interrupted clindex' 1
+	pat g 'syncsnap: detached clindex' 1
+	pat g 'syncsnap: end clindex' 1
+	pat g 'syncsnap: idle clindex' 1
+	pat g 'syncsnap: idlestamp' 1
+	pat g 'syncsnap: kept absent' 1
+	pat g 'destroy rec' 1
+	pat g 'syncsnap: newer inode' 1
+	pat g 'syncsnap: reinsert' 1
+	pat g 'syncsnap: scan parent .* deleted' 1
+	pat g 'syncsnap: unmount deleted CL.h2sync-src error 0' 1
+	pat g 'syncsnap: narrow alter destroyed [0-9a-f]* error 0$' 1
+	pat g 'syncthr: rescan all' 1
+	pat g 'scrapping unflushed' 2
+	pat g 'unmount_scrap: [0-9]* callbacks suppressed' 1
+	pat g 'WARNING.*drivers/gpu/drm/' 1
+	pat g 'drivers/gpu/drm/' 1
+	pat E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' 5
+	pat g 'didbreak' 1
+	# A display filter for the crash run's last lines: begin, stale, three
+	# target lines, pass, verify, verified, unverified, newer clindex,
+	# newer inode, end.
+	pat E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' 12
+	pat g 'h2probe: bigdir write start' 1
+	pat g 'h2probe: bigdir write end' 1
+	pat a 'START_SCAN' 1
+	pat a 'root stamp without a rescan' 1
+	pat a 'sync_slaves error' 1
+	pat a 'syncsnap: begin' 1
+	pat a 'syncsnap: begin clindex' 1
+	pat a 'syncsnap: pass clindex' 1
+	pat a 'syncsnap: target' 3
+	pat a 'syncsnap: verify clindex' 1
+	pat a 'syncsnap: verify clindex .* round 1 ' 1
+	pat a 'syncsnap: carried round clindex' 1
+	pat a 'syncsnap: narrowed clindex' 1
+	pat a 'syncsnap: (verified|newer|unverified|interrupted|detached) clindex' 5
+	pat a 'syncsnap: end clindex' 1
+	pat a 'syncsnap: idle clindex' 1
+	pat a 'syncsnap: idlestamp' 1
+	pat a 'syncsnap: kept absent ' 1
+	pat a 'syncsnap: scan parent .* deleted' 1
+	pat a '^\[[^]]*\] filekeys ' 1
+	pat a 'destroy focus 0000000000000000\/-1 local .* last ' 1
+	# Resets the kept-absent reading: filekeys, START_SCAN, the two
+	# sync_slaves lines with a space after the name, pass, update inode.
+	pat a 'filekeys |START_SCAN|sync_slaves |syncsnap: pass |syncthr: update inode' 6
+	# What else this file greps or matches, none of it the kernel log.
+	nk '"$1"'; nk '"^$1( |$)"'; nk '"$GUEST"'	# the helpers' own argument, the guest's name
+	nk "'^<'"; nk "'^>'"; nk "'^[<>]'"; nk "' FILE\$'"	# diff and file(1) output
+	nk "'__asan'"; nk "'__ubsan'"; nk "'CONFIG_KASAN=y'"	# nm and the kernel config
+	nk "'^cluster-umount ok'"; nk "'^rmmod ok'"; nk "'^crash-armed'"; nk '"COULD-NOT-RUN"'	# this run's own output
+	nk "'^h2nod'"; nk "'^h2nod-CL'"; nk "'^h2nod-LONE'"; nk "'^hammer2'"; nk "' type hammer2'"; nk '" type hammer2"'	# ps, lsmod, mount
+	nk "'h2sync-src'"; nk "'h2sync-tgt'"	# pfs-list
+	nk "'blockref ('"; nk "'^data '"; nk "'^dirent \"q[0-9]*\" '"; nk "'([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)'"	# show and fsck
+	nk "'filename \"CL\"'"; nk "'filename \"CL.h2sync-src\"'"; nk "'filename \"CL.h2sync-tgt\"'"; nk "'filename \"m[0-9]\"\$'"; nk "'filename \"new[0-9]\"\$'"
+	nk '/^ *data\.[0-9]/'; nk '/^ *dirent\.[0-9]/'; nk '/^ *(indirect|empty)\.[0-9]/'; nk '/^ *inode\.[0-9]/'
+	nk '/^ *} \(inode\.[0-9]*, "CL"\)/'; nk '/filename "CL"$/'; nk '/filename "[^"]*\.h2sync-(src|tgt)"$/'; nk '/xxh=/'
+	nk '/^MemAvailable:/'; nk '/^Slab:/'; nk '/debug_locks:/'	# /proc/meminfo and lockdep_stats
+	# The clear's marker is spelled in two pieces: test-inventory.sh allows
+	# it named only at the host's read, and this line reads nothing.
+	nk 'hammer2'; nk 'kmemleak-''cleared'; nk '.'	# kmemleak's report, this run's output, a count of domains
+	nk "'FAIL'"	# the selftest's own output, read by the guard below
+	# The population. Each read is extracted in the quoting it has in the
+	# rest of the file, an unquoted one included, klog's argument
+	# normalized to the PFS it names.
+	{
+		command grep -oE "(^|[[:space:](])klog +('[^']+'|\"[^\"]+\"|[^'\"[:space:]][^[:space:])\"';|]*)" "$t/rest" |
+		    command sed -E "s/^[[:space:](]*klog +//; s/^['\"](.*)['\"]\$/\\1/; s/\\\$1/CL/"
+		command grep -oE "grep( +-[a-zA-Z0-9]+| +-[mABC] +[0-9]+| +--)* +('[^']+'|\"[^\"]+\"|[^-'\"[:space:]][^[:space:])|;]*)" "$t/rest" |
+		    command sed -E "s/^grep( +-[a-zA-Z0-9]+| +-[mABC] +[0-9]+| +--)* +//" | while IFS= read -r q; do
+			case $q in \'*) q=${q#?}; q=${q%?}; command grep -qxF -- "$q" "$t/sel" && { echo "$q"; continue; }; q="'$q'" ;; esac
+			echo "$q"; done
+		command grep -oE "(^|[{};'&|(])[[:space:]]*!?/([^/\\]|\\\\.)+/[[:space:]]*(\\{|&&)|&&[[:space:]]*/([^/\\]|\\\\.)+/" "$t/rest" |
+		    command sed -E "s/^[{};'&|([:space:]]*!?//; s/[[:space:]]*(\\{|&&)\$//; s/^&&[[:space:]]*//" |
+		    while IFS= read -r q; do
+			r=${q#/}; r=${r%/}; command grep -qxF -- "$r" "$t/sel" && echo "$r" || echo "$q"; done
+		command grep -oE "sed -n '/[^/]+/,/[^/]+/p'" "$t/rest" |
+		    command sed -E "s|^sed -n '/([^/]+)/,/([^/]+)/p'|\\1\\n\\2|"
+	} | sort -u > "$t/read"
+	[ "$(wc -l < "$t/read")" -ge 40 ] || bad "the population is $(wc -l < "$t/read") read(s); the extraction has stopped seeing them"
+	while IFS= read -r q; do
+		command grep -qxF -- "$q" "$t/sel" || command grep -qxF -- "$q" "$t/nk" ||
+		    bad "the run reads $q and nothing here counts or lists it"
+	done < "$t/read"
+	sort -u "$t/sel" "$t/nk" | while IFS= read -r q; do
+		command grep -qxF -- "$q" "$t/read" || echo "$q"; done > "$t/gone"
+	while IFS= read -r q; do bad "counted or listed here, read nowhere in the run: $q"; done < "$t/gone"
+	# The report's branches, driven with literal values through the
+	# functions the report calls.
+	W=$t/w; mkdir "$W"
+	eval "$(command sed -n '/^val() {/p; /^memline() {/,/^}/p; /^keptabsent() {/,/^}/p' "$0")"
+	command -v memline >/dev/null && command -v keptabsent >/dev/null ||
+	    bad "the report's memline and keptabsent functions are not found"
+	fail=0; checks=0
+	check() { checks=$((checks + 1)); [ "$2" = 0 ] || fail=$((fail + 1)); }
+	for v in 5 0 missing x; do
+		if [ $v = missing ]; then : > "$W/out"; else
+			printf 'change-1-mem-samples %s\nchange-1-mem-baseline-kb 1 2\nchange-1-mem-avail-min-slab-max-kb 3 4\n' $v > "$W/out"; fi
+		l=$(memline 1)
+		case $v:$l in
+		5:*baseline*samples=5*) ;; 0:*void*|missing:*void*|x:*void*) ;;
+		*) bad "memline with samples $v printed: $l" ;;
+		esac
+	done
+	for v in missing:missing 0:missing 3:0 3:2 3:missing; do
+		: > "$W/out"
+		[ "${v%:*}" = missing ] || echo "kept-absent ${v%:*}" >> "$W/out"
+		[ "${v#*:}" = missing ] || echo "kept-absent-skips ${v#*:}" >> "$W/out"
+		fail=0; checks=0; l=$(keptabsent; echo "checks=$checks fail=$fail")
+		case $v:$l in
+		missing:missing:*"did not run: none"*checks=0*|0:missing:*"did not run: 0"*checks=0*) ;;
+		3:0:*checks=1\ fail=0) ;;
+		3:2:*checks=1\ fail=1|3:missing:*checks=1\ fail=1) ;;
+		*) bad "keptabsent with $v gave: $l" ;;
+		esac
+	done
+	echo "cluster: selftest, $nsamp sample(s), $npat pattern(s), $(wc -l < "$t/read") read(s), $sfail failure(s)"
+	[ "$sfail" -eq 0 ]
+	exit $?
+fi
+# Every run checks its own patterns first, before the build or a guest:
+# a pattern that no longer matches its print would read clean by not
+# seeing. The prints are checked against this tree's src/, also under
+# H2_KO, and never against an H2_SRC left in the environment; the
+# selftest's last line goes into the report.
+selftest=$(H2_SRC= bash "$0" --selftest 2>&1)
+case $? in
+0) selftest=$(printf '%s\n' "$selftest" | tail -n 1) ;;
+2)	echo "cluster: COULD-NOT-RUN: no source tree beside this script to check" >&2
+	echo "          its readings against; run it from the repository." >&2
+	exit 2 ;;
+*)	printf '%s\n' "$selftest" | command grep 'FAIL' >&2
+	echo "cluster: COULD-NOT-RUN: a reading no longer matches the line it" >&2
+	echo "          reads, so this run could report clean by not seeing." >&2
+	echo "          Run: bash $0 --selftest" >&2
+	exit 2 ;;
+esac
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
@@ -298,6 +639,7 @@ else
 	ko=built
 fi
 echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty srcdiff=$srcdiff ko=$ko harness=$(sha256sum < "$0" | cut -c1-16)"
+echo "  raw   ${selftest#cluster: }, the prints read from this tree's src/"
 cp "$0" "$FIXDIR/cluster-run-$STAMP.sh"
 
 if [ -n "${H2_KO:-}" ]; then
@@ -469,7 +811,7 @@ finish() {
 	echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
 	# The scrap print is rate-limited, so the lines under-read it: one run
 	# printed 20 and "22201 callbacks suppressed" (2026-10-18). Both counted.
-	echo "scrapped $(( $(grep -c 'unmount_scrap: scrapping' $K) + $(grep 'unmount_scrap: [0-9]* callbacks suppressed' $K | awk '{s += $(NF-2)} END {print s + 0}') ))"
+	echo "scrapped $(( $(grep -c 'scrapping unflushed' $K) + $(grep 'unmount_scrap: [0-9]* callbacks suppressed' $K | awk '{s += $(NF-2)} END {print s + 0}') ))"
 	# The guest's virtual GPU times out waiting for a vblank under a heavy
 	# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
@@ -1391,6 +1733,26 @@ check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
 }
+# The two report lines a zero or a missing value steers, functions so
+# --selftest can drive each branch with literal values.
+# A pass that ended before the sampler's first line leaves awk's "0 0",
+# which is no reading; say so in the line a reader quotes.
+memline() {	# memline <change>
+	if [ "$(val change-$1-mem-samples)" -gt 0 ] 2>/dev/null; then
+		echo "  raw   change $1 memory kB: baseline (MemAvailable Slab)=$(val change-$1-mem-baseline-kb) samples=$(val change-$1-mem-samples) MemAvailable-min Slab-max=$(val change-$1-mem-avail-min-slab-max-kb)"
+	else
+		echo "  raw   change $1 memory kB: void, samples=$(val change-$1-mem-samples) (none taken during the pass)"
+	fi
+}
+# No kept-absent line is a read, not a pass: the arm did not run.
+keptabsent() {
+	a=$(val kept-absent)
+	if [ "${a:-0}" -gt 0 ] 2>/dev/null; then
+		b=$(val kept-absent-skips); [ "${b:-1}" = 0 ]; check "no kept-absent line or sweep destroy shows a source key passed over" $? "${b:-none} in $a kept-absent line(s)"
+	else
+		echo "  read  the kept-absent arm did not run: ${a:-none} line(s)"
+	fi
+}
 if [ "$TREE" != 0 ]; then
 # The tree arm's reading is each changed pass's time against the cadence,
 # printed rather than checked: a pass past 5120 ms is the finding the arm
@@ -1404,13 +1766,7 @@ a=$(val tree-files); [ "${a:-0}" = "$TREE" ]; check "the tree holds its $TREE fi
 a=$(val tree-settle-idles); [ "${a:-0}" -ge 2 ] 2>/dev/null; check "the thread is idle on the tree before the change" $? "${a:-none} idle pass(es) after $(val tree-settle-seconds) s"
 c=1
 while [ $c -le "$PASS_CHANGES" ]; do
-	# A pass that ended before the sampler's first line leaves awk's
-	# "0 0", which is no reading; say so in the line a reader quotes.
-	if [ "$(val change-$c-mem-samples)" -gt 0 ] 2>/dev/null; then
-		echo "  raw   change $c memory kB: baseline (MemAvailable Slab)=$(val change-$c-mem-baseline-kb) samples=$(val change-$c-mem-samples) MemAvailable-min Slab-max=$(val change-$c-mem-avail-min-slab-max-kb)"
-	else
-		echo "  raw   change $c memory kB: void, samples=$(val change-$c-mem-samples) (none taken during the pass)"
-	fi
+	memline $c
 	a=$(val change-$c-threads-down); [ "${a:-1}" = 0 ]; check "change $c: the slave element leaves while the master is written" $? "${a:-none} thread(s)"
 	set -- $(val change-$c-pass)
 	if [ $c = 2 ] && [ "$FAIL_STAMP" = 1 ]; then
@@ -1495,12 +1851,7 @@ while [ $c -le "$PASS_CHANGES" ]; do
 	c=$((c + 1))
 done
 a=$(val tree-errors); [ "${a:-1}" = 0 ]; check "no pass reports an error" $? "${a:-none}"
-a=$(val kept-absent)
-if [ "${a:-0}" -gt 0 ] 2>/dev/null; then
-	b=$(val kept-absent-skips); [ "${b:-1}" = 0 ]; check "no kept-absent line or sweep destroy shows a source key passed over" $? "${b:-none} in $a kept-absent line(s)"
-else
-	echo "  read  the kept-absent arm did not run: ${a:-none} line(s)"
-fi
+keptabsent
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 else
 t=$(val lone-thread)

@@ -199,9 +199,15 @@ fi
 
 # Anchored on the implementation and not on the name, the way CI does it:
 # matching the bare flag picks up a gate that only MENTIONS --selftest in
-# a comment.
-for g in $(command grep -l '"${1:-}" = "--selftest"' script/test-*.sh); do
+# a comment. Every script, not only the gates: a fleet harness's selftest
+# needs no guest, and one under script/test-*.sh alone went unrun. This
+# file names the anchor in the line below, so it is the one excluded.
+nself=0
+for g in $(command grep -l '"${1:-}" = "--selftest"' script/*.sh); do
+	[ "$g" = script/pre-push-check.sh ] && continue
+	w0=$warned
 	run_gate "$g" --selftest
+	[ "$warned" = "$w0" ] && nself=$((nself + 1))
 done
 
 if [ "$rc" != 0 ]; then
@@ -210,5 +216,5 @@ if [ "$rc" != 0 ]; then
 	exit 1
 fi
 
-printf 'pre-push: gates and selftests pass, %d could not run\n' "$warned" >&2
+printf 'pre-push: gates and %d selftest(s) pass, %d could not run\n' "$nself" "$warned" >&2
 exit 0

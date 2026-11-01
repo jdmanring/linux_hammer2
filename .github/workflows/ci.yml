@@ -105,14 +105,20 @@ jobs:
           [ "$rc" = 0 ] || exit 1
           [ "$ran" -gt 0 ] || { echo "::error::every gate declined"; exit 1; }
 
-      # The selftests check the provenance prints a loosened run depends on.
-      - name: Gate selftests (the provenance prints)
+      # The selftests check what each gate and harness reads: the gates'
+      # provenance prints, a fleet harness's kernel-log patterns.
+      - name: Selftests (gates and fleet harnesses)
         run: |
           set +e
           rc=0
           # Matched on the implementing test, not the flag name, which a
-          # comment elsewhere also carries.
-          for g in $(command grep -l '"${1:-}" = "--selftest"' script/test-*.sh); do
+          # comment elsewhere also carries. Every script, so a fleet
+          # harness's selftest runs too; the pre-push hook names the
+          # anchor in its own loop and is skipped.
+          n=0
+          for g in $(command grep -l '"${1:-}" = "--selftest"' script/*.sh); do
+            [ "$g" = script/pre-push-check.sh ] && continue
+            n=$((n+1))
             bash "$g" --selftest
             s=$?
             case "$s" in
@@ -121,4 +127,6 @@ jobs:
               *) rc=1; echo "::error::$g selftest failed with $s" ;;
             esac
           done
+          echo "$n selftest(s) ran"
+          [ "$n" -gt 0 ] || { echo "::error::no selftest found"; exit 1; }
           exit "$rc"
