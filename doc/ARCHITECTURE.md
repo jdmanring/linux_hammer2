@@ -4,6 +4,57 @@ How the DragonFly source is carried on Linux: what is vendored unchanged,
 what is shimmed, and where the boundary is. `doc/IO_MODEL.md` covers the I/O layer specifically; this is the
 shape around it.
 
+## System Topology and Data Flow
+
+```
++-----------------------------------------------------------------------+
+|                        Linux VFS Layer                                |
+|   (sys_open, sys_read, sys_write, sys_mmap, ->fsync, ->freeze_fs)     |
++-----------------------------------------------------------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                    Linux / OS Shim Layer                              |
+|   - hammer2_os.h      (locks, allocations, print primitives)          |
+|   - hammer2_compat.h  (KKASSERT, atomics, kernel look-alikes)         |
+|   - hammer2_export.c  (NFS export_operations & file handle mapping)   |
++-----------------------------------------------------------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                 DragonFly BSD HAMMER2 Core                            |
+|   - hammer2_chain.c   (block reference tree, modify, lookup, delete)  |
+|   - hammer2_inode.c   (inode lifecycle, direct data, PFS root create) |
+|   - hammer2_flush.c   (topology flush, mirror_tid advancement)        |
+|   - hammer2_freemap.c (block allocator, ref-counts, recovery)         |
+|   - hammer2_xops.c    (synchronous extended operations / scanall)     |
++-----------------------------------------------------------------------+
+           |                                           |
+           v                                           v
++-----------------------+                   +---------------------------+
+| Synchronization Pass  |                   | Cluster Message Core      |
+|   - hammer2_synchro.c |                   |   - kern_dmsg.c (dmsg)    |
+|   - Snapshots (.src/.t)|                   |   - hammer2_iocom.c       |
+|   - Lever 1a/1b walks |                   |   - hammer2_remote.c      |
+|   - Lever 2 (prune)   |                   |   - XOP API (PROTO_2)     |
++-----------------------+                   +---------------------------+
+           |                                           |
+           +-----------------------+-------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                      Boundary I/O Layer                               |
+|   - hammer2_io.c      (64 KiB physical buffers, dio hash, bvecs)      |
+|   - hammer2_ondisk.c  (block device open, lookup_bdev, superblock)    |
++-----------------------------------------------------------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                   Linux Block Layer & Storage                         |
+|           (blkdev_issue_flush, submit_bio_wait, physical disks)       |
++-----------------------------------------------------------------------+
+```
+
 ## The rule the whole port turns on
 
 The filesystem core is DragonFly's and is kept readable as DragonFly's. The
