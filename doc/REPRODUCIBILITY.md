@@ -6,6 +6,18 @@ How to take a stock Linux machine (Kernel 7.3 or newer, QEMU/KVM, root access) a
 - **Operating System**: Linux kernel 7.3.0 or newer (or kernel of record source tree configured via `KDIR`).
 - **Dependencies**: `make`, `gcc`, `clang`, `git`, `bash`, `coreutils`, `qemu-system-x86_64`, `libvirt` (`virsh`), `bc`, `jq`.
 - **Kernel of Record Source**: The kernel of record (7.3) is obtained from upstream Linux (`git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git` at tag `v7.3` or equivalent pinned in `script/test-syntax.sh` as `KERNEL_REF`). Configure with standard x86_64 defconfig plus `CONFIG_TRANSPARENT_HUGEPAGE=y`, `CONFIG_LZ4_COMPRESS=y`, `CONFIG_LZ4_DECOMPRESS=y`, `CONFIG_ZLIB_DEFLATE=y`, `CONFIG_ZLIB_INFLATE=y`, and `CONFIG_XXHASH=y`.
+
+Pinned kernel `.config` fragment (append to `arch/x86/configs/x86_64_defconfig` before `make olddefconfig`):
+```
+CONFIG_TRANSPARENT_HUGEPAGE=y
+CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y
+CONFIG_LZ4_COMPRESS=y
+CONFIG_LZ4_DECOMPRESS=y
+CONFIG_ZLIB_DEFLATE=y
+CONFIG_ZLIB_INFLATE=y
+CONFIG_XXHASH=y
+```
+
 - **Source Clone**:
   ```bash
   git clone https://github.com/jdmanring/linux_hammer2.git
@@ -31,6 +43,26 @@ A clean run verifies module compilation, checkpatch compliance, shim stubs, and 
 
 ## 4. Setting up QEMU/KVM Guest Fleet for Fleet Gates
 Fleet gates (`cluster-sync.sh`, `cluster-wire.sh`, `test-enospc.sh`, `test-fixtures.sh`) require QEMU/KVM guest virtual machines:
+
+Minimal `guest.xml` example (one guest, 4 GiB RAM, 12 vCPUs, virtio disk):
+```xml
+<domain type='kvm'>
+  <name>hammer2-guest-a</name>
+  <memory unit='GiB'>4</memory>
+  <vcpu>12</vcpu>
+  <os><type arch='x86_64'>hvm</type><boot dev='hd'/></os>
+  <devices>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='/var/lib/libvirt/images/hammer2-guest-a.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <interface type='network'><source network='default'/></interface>
+  </devices>
+</domain>
+```
+
+Provision and run:
 1. Define and start two guest domains (e.g., `hammer2-guest-a` and `hammer2-guest-b`) via `virsh`:
    ```bash
    virsh define guest-a.xml
@@ -46,4 +78,5 @@ Fleet gates (`cluster-sync.sh`, `cluster-wire.sh`, `test-enospc.sh`, `test-fixtu
    ```bash
    virsh shutdown hammer2-guest-a
    ```
+
 
