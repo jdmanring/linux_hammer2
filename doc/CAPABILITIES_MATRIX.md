@@ -12,5 +12,8 @@ A single authoritative matrix of supported features, operational flags, and know
 | **Compression** | Supported | `-o compress=lz4` or `zlib` | LZ4 and ZLIB supported for block storage. |
 | **Local Synchronization** | Supported | Automatic via `hammer2_synchro.c` | Requires matching cluster ID between local MASTER and SLAVE PFS. |
 | **NFS Export** | Supported | standard `exportfs` over exported mount | Uses `export_operations` (`hammer2_export.c`) for handle mapping. |
-| **Clustering / Remote XOPs** | Experimental / Scratch | `script/cluster-wire.sh`, `script/cluster-sync.sh` | Plaintext transport currently; TLS staging underway. |
+| **Clustering / Remote XOPs** | Experimental / Scratch | `script/cluster-wire.sh`, `script/cluster-sync.sh` | Plaintext transport currently; kernel TLS staging underway (Stage 5). |
+| **O_DIRECT** | Refused | N/A | Explicitly refused by VFS boundary logic; not implemented. |
+| **Fallocate (Punch Hole)** | Experimental | `fallocate -p` | Mapped via bmap XOP / zeroing; requires ongoing workload soak verification. |
+| **Remote Write Replication** | Not Yet (Read-Only) | N/A | Remote master volumes remain read-only until P8 lease protocol lands. |
 | **Atime Recording** | Opt-In | `HAMMER2_INVARIANTS=1` or atime build flags | Defaults to returning mtime per Dragonfly BSD spec unless atime mount/build knob is active. |

@@ -177,8 +177,59 @@ table has a row for every file here. The `DEFER` markers, four at this
 writing, are collected in that document's ledger, which
 `test-inventory.sh` compares against the source in both directions.
 
-## DIO lifetime
+## Visual Reference & Diagrams
 
+### 1. System Topology and Data Flow
+```
++-----------------------------------------------------------------------+
+|                        Linux VFS Layer                                |
+|   (sys_open, sys_read, sys_write, sys_mmap, ->fsync, ->freeze_fs)     |
++-----------------------------------------------------------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                    Linux / OS Shim Layer                              |
+|   - hammer2_os.h      (locks, allocations, print primitives)          |
+|   - hammer2_compat.h  (KKASSERT, atomics, kernel look-alikes)         |
+|   - hammer2_export.c  (NFS export_operations & file handle mapping)   |
++-----------------------------------------------------------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                 DragonFly BSD HAMMER2 Core                            |
+|   - hammer2_chain.c   (block reference tree, modify, lookup, delete)  |
+|   - hammer2_inode.c   (inode lifecycle, direct data, PFS root create) |
+|   - hammer2_flush.c   (topology flush, mirror_tid advancement)        |
+|   - hammer2_freemap.c (block allocator, ref-counts, recovery)         |
+|   - hammer2_xops.c    (synchronous extended operations / scanall)     |
++-----------------------------------------------------------------------+
+           |                                           |
+           v                                           v
++-----------------------+                   +---------------------------+
+| Synchronization Pass  |                   | Cluster Message Core      |
+|   - hammer2_synchro.c |                   |   - kern_dmsg.c (dmsg)    |
+|   - Snapshots (.src/.t)|                   |   - hammer2_iocom.c       |
+|   - Lever 1a/1b walks |                   |   - hammer2_remote.c      |
+|   - Lever 2 (prune)   |                   |   - XOP API (PROTO_2)     |
++-----------------------+                   +---------------------------+
+           |                                           |
+           +-----------------------+-------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                      Boundary I/O Layer                               |
+|   - hammer2_io.c      (64 KiB physical buffers, dio hash, bvecs)      |
+|   - hammer2_ondisk.c  (block device open, lookup_bdev, superblock)    |
++-----------------------------------------------------------------------+
+                                   |
+                                   v
++-----------------------------------------------------------------------+
+|                   Linux Block Layer & Storage                         |
+|           (blkdev_issue_flush, submit_bio_wait, physical disks)       |
++-----------------------------------------------------------------------+
+```
+
+### 2. DIO Lifetime Model
 ```
 write folio (page cache, up to 64 KiB)
   |
@@ -190,26 +241,18 @@ hammer2_io (one per 64 KiB physical buffer, dio hash under iohash_lock)
   v
 block device (physical storage)
 ```
+*A `hammer2_io` lives from first reference to last put. Fleet gates verify zero allocations remain on unmount.*
 
-A `hammer2_io` lives from first reference to last put. The fleet gates
-read the unload print as zero allocations left.
-
-## Lock hierarchy (leaf to root)
-
+### 3. Lock Hierarchy (Leaf to Root)
 ```
 chain lock (per hammer2_chain, sleeping, lockdep subclass by level)
   < inode lock (per hammer2_inode, same primitive)
     < pfs lock (per PFS mount state)
       < mntlk (per hammer2_mnt, serializes mount, remount, cluster reconnect)
 ```
+*Order is strictly bottom-up: a chain lock never nests outside an inode lock held at the same level.*
 
-Order is bottom-up: a chain lock never nests outside an inode lock held
-at the same level, and nothing under `mntlk` waits on a chain. The
-flusher collapses a released indirect parent only where the scan holds
-no lock the collapse needs, which the 1.0.65 guard reads.
-
-## Cluster stages (local to remote)
-
+### 4. Cluster Stages (Local to Remote)
 ```
 stage 1: span table (PROTO_2 announce, peer spans listed)
 stage 2a: read XOP server (peer reads served from this host)
@@ -217,6 +260,3 @@ stage 2b: remote element (proxy chains, slave pass over the link)
 stage 5:  kernel TLS on the link (peer admitted by key)
 P8 lease: holder election, verified-at acknowledgment, demotion
 ```
-
-Each stage builds on the one above it. The wire harness reads stages
-1 through 2b today; stage 5 and the lease are the active work.

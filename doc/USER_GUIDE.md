@@ -12,6 +12,11 @@ To format a block device or image as a HAMMER2 volume:
 mkfs.hammer2 /dev/vdb
 ```
 
+On Linux, `newfs_hammer2` in `hammer2-utils` performs the same operation:
+```bash
+sudo newfs_hammer2 -L TEST /dev/vdb
+```
+
 ### Formatting Across Multiple Devices (Multi-Device)
 To format a filesystem across two volumes:
 ```bash
@@ -22,6 +27,19 @@ mkfs.hammer2 -L mypool /dev/vdb /dev/vdc
 HAMMER2 organizes filesystems into Pseudo-Filesystems (PFS). Mount a PFS by its label:
 ```bash
 mount -t hammer2 -o label=ROOT /dev/vdb /mnt/hammer2
+```
+
+Loop devices use the `@LABEL` selector:
+```bash
+sudo losetup -f --show scratch.img
+sudo mount -t hammer2 /dev/loop0@TEST /mnt
+```
+
+### Mounting with the Correct Utility Syntax
+Give `-s <mount>` before the subcommand, which is required on Linux even though it is optional on the BSDs. Without it the utility looks the mount up through `libfs`, whose Linux build reports no mounted filesystems at all:
+```bash
+sudo hammer2 -s /mnt pfs-list
+sudo hammer2 -s /mnt snapshot /mnt before-upgrade
 ```
 
 ## 2. Taking and Managing Snapshots
