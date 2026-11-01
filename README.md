@@ -176,11 +176,10 @@ than about a shared bug.
 ## Requirements
 
 + Linux 7.3 or newer, enforced by an `#error`. The floor is the 7.3
-  line by decision, not by accident: 7.1 is end of life, 7.2 is an
-  ordinary stable series that goes the same way shortly after 7.3,
-  which shipped on 2026-10-18 and is expected to be the next longterm,
-  so a floor at 7.2 would buy one cycle and charge for the migration
-  twice. The kernel of record is one
+  line by decision, not by accident: 7.2 is an ordinary stable series,
+  and 7.3, which shipped on 2026-10-18, is expected to be the next
+  longterm, so a floor at 7.2 would buy one cycle and charge for the
+  migration twice. The kernel of record is one
   tree, the version `script/test-syntax.sh` pins as `KERNEL_REF` and
   refuses to report a pass against anything else; the pin moved
   through 7.3's release candidates to the release, because running on
@@ -190,8 +189,8 @@ than about a shared bug.
   shared block device open that lets several PFSes on one device be
   mounted, and the `create` operation's signature. A build against 7.2
   failed on exactly those on 2026-09-05, recorded in
-  `doc/history/verification-record.md`; nothing has rebuilt against 7.2
-  since. Older
+  `doc/history/verification-record.md`; no later 7.2 build is
+  recorded. Older
   kernels are not blocked by anything deeper: measured from below, 6.18
   needed two compatibility conditionals in September and seven in
   October, as the port took up what 6.19 to 7.3 added, and 6.15 is where

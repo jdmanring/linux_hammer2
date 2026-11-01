@@ -113,8 +113,9 @@ Three objects matter and only one of them is ours.
 lines the origin table lists, and its lifetime is DragonFly's.
 
 `hammer2_io` is the boundary object. It wraps one 64 KiB physical buffer and
-is where the core's metadata meets Linux memory; the strategy write
-path also hands the core a whole-block folio's address. See `doc/IO_MODEL.md`
+is where the core's blocks, metadata and data, meet Linux memory; the
+write path also hands the core a file folio's address for the block it
+writes. See `doc/IO_MODEL.md`
 for its lifetime, which is where the port's real design decisions are.
 
 `hammer2_dev` holds the per-device state, the `struct file` for each
@@ -173,8 +174,9 @@ remount.
 These three are the knobs a user builds with, and all three are
 Kusumi's names from the other ports. Do not add one that none of them
 has without saying why in the same commit. The Makefile also defines
-test builds, which its comments say never to install and nothing
-enforces, since `make install` installs the last module built:
+test builds, whose negative controls' comments say never to install
+them, which nothing enforces, since `make install` installs the last
+module built:
 `HAMMER2_LOCKDEBUG` for the fault and probe parameters,
 `HAMMER2_CCMS_LOCKTEST`, `HAMMER2_CONNWAIT`, a delay, and negative
 controls such as `HAMMER2_FOLIO_CONTROL` and the `HAMMER2_NO*` set,
