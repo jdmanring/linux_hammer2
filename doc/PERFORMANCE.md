@@ -1,23 +1,19 @@
-# Performance Expectations
+# Performance
 
-Dated performance guidance for `linux_hammer2` (version 1.0.72, recorded 2026-10-31).
+Dated readings, each with the record entry or changelog row that holds
+its run, its kernel and its caveats. A rate here is one run's reading on the
+maintainer's guests, not a benchmark; it moves with the kernel build,
+the guest and the host's load, and every figure below says which.
 
-## Methodology and Environment
-- **Environment**: Guest fleet running on KVM/QEMU with 12 vCPUs and 4 to 8 GiB RAM per guest, under host load of ~0.7 load average on 24 cores (93 GiB host memory).
-- **Kernels Tested**: Kernel of record `7.3` across debug (`h2debug-7.3`), sanitizer/KASAN (`h2kasan-7.3`), and release (`h2release-7.3`) builds.
-- **Exercisers**: `script/throughput.sh` (single large-file timing), `script/latency.sh` (fsync/read beside ext4 and btrfs), `script/storm.sh` (mapped and fsync writers against readers on one file set), and `script/nix-closure.sh` (cold read of a real package closure beside squashfs and erofs).
-- **Controls**: Rates are meaningful only beside an in-run control on the same host and kernel; a host-cache read is guarded by the ext4 control in the same boot.
-
-## Controlled Rate Measurements
-| Workload / Instrument | Kernel / Guest Config | Measured Performance | Baseline Reference |
+| what | reading | kernel | where it is recorded |
 |---|---|---|---|
-| **Sequential throughput** (`throughput.sh`) | `h2release-7.3` (Release build) | 1 large file: matches or approaches ext4 on write after block allocator stabilization; read rates exceed host cache primitive | `ext4` control in-run |
-| **Snapshot pass cost** (`cluster-sync.sh`) | `h2release-7.3` at 1,000,000 files | Lever 1 narrowed pass: **12.7 s** (compared to carried ~32.8 s unoptimized); 100,000 files: **0.90 to 0.95 s** | Carried baseline (~32.8 s / ~2.3 s) |
-| **Read and fsync latency** (`latency.sh`) | `h2debug-7.3` / `h2release-7.3` | Fsync cost follows the volume flush path (`->fsync` / `blkdev_issue_flush`) | `ext4` and `btrfs` in-run |
-| **Mixed mapped plus fsync writers** (`storm.sh`) | `h2kasan-7.3` (KASAN build) | 800 cycles of storm load with `writepages` queuing inodes | Same shape on `ext4` |
-| **Cold package closure read** (`nix-closure.sh`) | `h2release-7.3` | 200,000 files copied and read back cold | `squashfs` and `erofs` in-run |
+| one large file, sequential | writes at twice the rate of ext4 and btrfs, reads at six times the rate of DragonFly's own kernel on the same volume, every block verified | `7.3.0-rc1-release`, 2026-09-07; the read figure re-read with the readahead workers of 0.9.19 | `doc/README.status.md`, "one large file"; the record, "One large file, and what the BSD buffer cache gave for free" |
+| per-operation latency | median `randread4k` 49 us against ext4's 11; median write-and-`fsync` 384 us against ext4's 7119 and btrfs's 7824 | 7.3.0-rc1, 2026-09-26 | the record, "Per-operation latency, the half that was never measured", which reads the read cost as a 64 KiB block against a 4 KiB page and the fsync figure against what `fsync` writes |
+| a million files | written by four writers in 248 s and counted on both sides | debug build, kmemleak off, September 2026 | the record, "A million files, and where the writer stopped" |
+| mixed mapped, fsync and fdatasync writers against readers | 800 cycles, 0 failures, 2 h 39 min on the debug build and 6 h 14 min on the KASAN build | `h2debug-rc5`, `h2kasan-rc5` | the record, "The 800-cycle soak" and "The 800-cycle KASAN soak" |
+| a snapshot pass for one changed file, 1,000,000 files | 32.7 to 33.0 s carried (1.0.60); 12.7 s with lever 1 (1.0.71); 11.3 s on the TLS-capable build (1.0.72) | release build of 7.3, then `h2release-7.3tls` | `CHANGELOG.md` rows 1.0.60, 1.0.71, 1.0.72 |
+| the same at 100,000 files | 2.5 to 3.8 s carried; 0.90 to 0.95 s with lever 1; 0.82 to 0.83 s on the TLS-capable build | as above | as above |
 
-## Caveats
-- No single committed number ships here: rates move with the kernel of record (7.3), the guest kind (`h2debug`, `h2kasan`, `h2release`), and host load. Each record entry in `doc/history/verification-record.md` carries its build hash, start state, and repeat count beside any number it cites.
-- Sequential device mapping read-ahead uses `page_cache_sync_ra` with the BSD hint; a measured jump (353 to 683 MiB/s in one dated reading) held only after the host cache was primed, so an unprimed host-cache read is not a result.
-
+The snapshot pass is P7's synchronization, read against the thread's
+5.12 s cadence; why it matters and what comes next is P8's plan in
+`doc/README.roadmap.md`.
