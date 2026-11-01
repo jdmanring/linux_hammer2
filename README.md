@@ -109,8 +109,9 @@ to the same tree and `fsck_hammer2` clean afterwards.
 makes `hammer2-utils` work against this driver: snapshot create, PFS
 create, delete, list and lookup, inode and volume queries, growfs and
 bulkfree. A snapshot this port takes mounts on DragonFly and reads back
-the tree as it stood. The rows for both milestones in
-[CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
+the tree as it stood. 
+
+Since 0.7, milestones 0.8 through 1.0.72 have added the free allocator, the multi-device span path, the local synchronization thread (`hammer2_synchro.c`), and remote P7/P8 replication over kernel TLS. The rows for every milestone in [CHANGELOG.md](CHANGELOG.md) pin the commits and the runs.
 
 One thing to know before trying it: **be careful about filling a HAMMER2
 volume to capacity.** A volume with no space left reports the failure
@@ -144,7 +145,7 @@ guest.
 
 To try it, make an image, put it on a loop device and mount the PFS by
 label. `newfs_hammer2` is in hammer2-utils, and a mount that names no
-PFS asks for `DATA`:
+PFS asks for `DATA` (see [doc/USER_GUIDE.md](doc/USER_GUIDE.md) for full formatting, snapshot, and multi-device guides):
 
         $ make && sudo make install
         $ sudo modprobe hammer2
