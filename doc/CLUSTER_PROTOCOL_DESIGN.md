@@ -2388,7 +2388,8 @@ print as its witness; and the refetch fills the dio
 `hammer2_io_putblk()` leaves in the hash rather than entering a second.
 Its two notes without a finding, that `nresolve`'s hardlink arm indexes
 the server's own slot and that a bulkfree scan holding the lock delays
-a detach for its run, are recorded where they apply. The fifth audit (Claude Opus 5.5, 22 tool uses, 6.8 min) found four of
+a detach for its run (for its sync only, as the scan's code has it and
+the detach paragraph now says), are recorded where they apply. The fifth audit (Claude Opus 5.5, 22 tool uses, 6.8 min) found four of
 round four's six fixes holding and returned NO SIGN-OFF on six findings,
 one blocking: the chain-level test compared parents and inode chains
 whose `modify_tid` each host's flush raises on its own schedule, so a
