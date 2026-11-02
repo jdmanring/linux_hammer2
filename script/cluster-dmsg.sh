@@ -379,7 +379,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		sed "s/^/$1-out /" /tmp/h2peer-$1.out
 		t=0; while [ "$(threads)" != 0 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
 		after $1
-		echo "$1-lines dropped=$(klog 'TLS peer sent handshake message 4, dropped') keyupdate=$(klog 'TLS peer sent KeyUpdate') alert=$(klog 'TLS peer sent alert 2/80') ended=$(klog 'TLS peer ended the link (alert 90)') other=$(klog 'TLS peer sent a record of type') rekey=$(($(tstat TlsRxRekeyReceived) - rk0))"
+		echo "$1-lines dropped=$(klog 'TLS peer sent handshake message 4, dropped') keyupdate=$(klog 'TLS peer sent KeyUpdate') alert=$(klog 'TLS peer sent alert 2/80') ended=$(klog 'TLS peer ended the link (alert 90)') other=$(klog 'TLS peer sent a record of type\|TLS peer.s record unreadable') rekey=$(($(tstat TlsRxRekeyReceived) - rk0))"
 	}
 	tpeer arm10 none 7988
 	tpeer arm11 ticket 7987
@@ -817,11 +817,11 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	x=$(po arm11 'send=')
 	[ "$(field " $x" shell2)" = 1 ] && [ "$(field " $x" err2)" = 32 ] && [ "$(lc arm11 dropped)$(lc arm11 keyupdate)$(lc arm11 alert)$(lc arm11 ended)$(lc arm11 other)" = 10000 ]; check "arm 11: a NewSessionTicket is dropped with its line and the link serves on" $? "shell2 $(field " $x" shell2) err2 $(field " $x" err2); $(val arm11-lines)"
 	x=$(po arm12 'send=')
-	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm12 keyupdate)$(lc arm12 alert)$(lc arm12 ended)$(lc arm12 other)" = 1000 ] && [ "$(lc arm12 rekey)" = 1 ]; check "arm 12: a KeyUpdate ends the link with its line, kTLS counting it received" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm12-lines)"
+	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm12 dropped)$(lc arm12 keyupdate)$(lc arm12 alert)$(lc arm12 ended)$(lc arm12 other)" = 11000 ] && [ "$(lc arm12 rekey)" = 1 ]; check "arm 12: a KeyUpdate ends the link with its line, kTLS counting it received" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm12-lines)"
 	x=$(po arm13 'send=')
-	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm13 keyupdate)$(lc arm13 alert)$(lc arm13 ended)$(lc arm13 other)" = 1100 ]; check "arm 13: a fatal alert ends the link with its line" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm13-lines)"
+	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm13 dropped)$(lc arm13 keyupdate)$(lc arm13 alert)$(lc arm13 ended)$(lc arm13 other)" = 11100 ]; check "arm 13: a fatal alert ends the link with its line" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm13-lines)"
 	x=$(po arm14 'send=')
-	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm14 keyupdate)$(lc arm14 alert)$(lc arm14 ended)$(lc arm14 other)" = 1110 ]; check "arm 14: user_canceled then close_notify end the link cleanly, with no error line" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm14-lines)"
+	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm14 dropped)$(lc arm14 keyupdate)$(lc arm14 alert)$(lc arm14 ended)$(lc arm14 other)" = 11110 ]; check "arm 14: user_canceled then close_notify end the link cleanly, with no error line" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm14-lines)"
 
 	w5=$(val arm5-wait-refused); case "$(val arm5-line)" in *'the handshake failed'*) l5=1 ;; *) l5=0 ;; esac
 	[ "$l5" = 1 ] && [ "$(num "$(val arm5-keyfail)" 0)" -ge 1 ] && [ "${w5%%.*}" -lt 10 ] 2>/dev/null; check "arm 5: the refusal is a failed handshake within 10 s, tlshd unable to read the revoked key" $? "line '$(val arm5-line | sed 's/.*refused: //')', $(val arm5-keyfail) revoked-key line(s) in tlshd, after $w5 s"
