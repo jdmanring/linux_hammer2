@@ -211,6 +211,27 @@
 # with the master all the same; a pass that took the block beneath the
 # directory would leave a data block on B's media the master's has not.
 #
+# H2_WIRE_TLS=1 runs the link over kernel TLS with a pre-shared key, stage
+# 5 of the cluster note: the relay copies bytes (h2loop --raw 1), which it
+# must, since it cannot read TLS records, and each kernel's handshake runs
+# end to end through it with the tlshd on its own guest. One identity and
+# one 32-byte payload are made here per run and carried into each guest's
+# keyring over ssh's stdin, never written to a file; the payload is the
+# secret both guests share, so it cannot stay on one of them as the
+# one-guest harness's keys do. A dials as the server, admitting its own
+# key's serial, and B as the client. Each guest captures its end of the
+# relay's port, which must hold TLS records and no dmsg header, and the
+# relay counts the same in the bytes it copied; the link must reach the
+# message threads on both sides after a handshake its tlshd completed,
+# with kTLS installed both ways. Each side's TLS dial with only a .none
+# marker present is refused first, the daemon's .pub rule. H2_WIRE_RAW=1
+# is the plaintext control: the same raw relay with no TLS, whose captures
+# and counts must hold the header. H2_WIRE_TLS_WRONG=1 gives B the same
+# identity with another payload: no link, a refusal line on each side and
+# no element. The raw relay acts on no frame, so the frame controls are
+# refused beside it; H2_WIRE_PASS=1 runs over it, and the keepalive's
+# round trip, read from frame stamps, is not read.
+#
 # Exit 2 is COULD-NOT-RUN. Needs both guests (H2_GUEST_A, H2_GUEST_B), a
 # kernel tree at KDIR matching the kernel both run, newfs_hammer2 here and
 # hammer2 on the guests. Every run keeps both kernel logs and the relay's
@@ -255,6 +276,7 @@ SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CON
 LINKDEV=${H2_WIRE_LINKDEV:-0}
 STALE=${H2_WIRE_STALE:-0}
 RETYPE=${H2_WIRE_RETYPE:-0}
+TLS=${H2_WIRE_TLS:-0}; RAW=${H2_WIRE_RAW:-0}; TLSWRONG=${H2_WIRE_TLS_WRONG:-0}
 # H2_WIRE_CUT=disconnect ends the link inside the pass: the relay closes
 # both sides at the close of the first scanall call from the Kth on
 # (H2_WIRE_CUT_AT) that fed 2 to 15 chains, so the scan stops partway; then,
@@ -303,6 +325,11 @@ case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an i
 [ -z "$CUT" ] || [ "$POWER" = 1 ] || [ -n "$CUTAT" ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT needs H2_WIRE_CUT_AT" >&2; exit 2; }
 [ -n "$CUT" ] || [ -z "$CUTAT" ] || [ "$CUTAT" -ge 1000000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT without H2_WIRE_CUT only traces, at 1000000" >&2; exit 2; }
 case $RETYPE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_RETYPE is 1" >&2; exit 2;; esac
+for c in "$TLS" "$RAW" "$TLSWRONG"; do
+	case $c in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_TLS, H2_WIRE_RAW and H2_WIRE_TLS_WRONG are 1" >&2; exit 2;; esac
+done
+[ "$TLSWRONG" = 0 ] || [ "$TLS" = 1 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_TLS_WRONG rides H2_WIRE_TLS=1" >&2; exit 2; }
+[ "$TLS" = 0 ] || RAW=1
 case $STALE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_STALE is 1" >&2; exit 2;; esac
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
 case $DETACHWRITE in 0) ;; 1) [ "$SILENCE" = 1 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_DETACHWRITE rides H2_WIRE_SILENCE=1" >&2; exit 2; };; *) echo "wire: COULD-NOT-RUN: H2_WIRE_DETACHWRITE is 1" >&2; exit 2;; esac
@@ -331,6 +358,14 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ -z "$CUT" ] || nctl=$((nctl + 1))
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$SRCGATE" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
+# The raw relay acts on no frame, so a control that needs one is refused
+# beside it; the pass is not a relay control, and a wrong key leaves no
+# link to pass over.
+if [ "$RAW" = 1 ]; then
+	[ "$((nctl - $([ "$PASS" = 1 ] && echo 1 || echo 0)))" = 0 ] && [ -z "${H2_WIRE_DELAY:-}${H2_WIRE_LOSS:-}${H2_WIRE_DUP:-}" ] && [ "$SEQ" = 0 ] || {
+		echo "wire: COULD-NOT-RUN: H2_WIRE_TLS and H2_WIRE_RAW run alone or under H2_WIRE_PASS=1" >&2; exit 2; }
+	[ "$TLSWRONG" = 0 ] || [ "$PASS" = 0 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_TLS_WRONG leaves no link for H2_WIRE_PASS" >&2; exit 2; }
+fi
 # the two snapshot controls, the stale element and the retype run under the pass
 { [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ] || [ -n "$CUT" ]; } && PASS=1
 # the pass the retype or the cut fails ends unverified, once
@@ -521,6 +556,7 @@ relay_start() {	# relay_start <trace>: a relay on the port, its output appended
 	    --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
 	    --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src)" \
 	    ${CUTAT:+--cut-on-scan "$CUTAT" --cut-fault "$FAULT"} \
+	    $([ "$RAW" = 1 ] && echo --raw 1) \
 	    --trace "$1" >> "$W/relay.out" 2>&1 &
 	RELAY_PID=$!
 	sleep 0.5
@@ -543,6 +579,8 @@ klog() { kl | grep -c "$1"; }
 # $K can trail the print, so wait for one, at most 5 s
 klog1() { n=0; until [ "$(klog "$1")" -ge 1 ] || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done; klog "$1"; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
+# a dial's TLS arguments, which tls.sh key writes; none on a plaintext run
+TA=$(cat /tmp/h2tls.args 2>/dev/null)
 GUEST
 # clmode.awk -v n='"<name>"': the mode of <name> in CL, from a show on
 # stdin; an inode prints its mode before its inum, a dirent no mode, so the
@@ -566,6 +604,9 @@ fi
 dmesg -C
 pkill -f 'dmesg -w' 2>/dev/null
 setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
+# an earlier run's markers and TLS arguments: a .pub left by a TLS run
+# would admit the plaintext dial H2_WIRE_ADMIT=1 must see refused
+rm -f /tmp/h2keys/peer.none /tmp/h2keys/peer.pub /tmp/h2tls.args
 SNAP=${3:-1}	# sync_snapshot
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko sync_snapshot=$SNAP || { echo "insmod failed"; exit 1; }
@@ -614,6 +655,12 @@ if [ "$4" = ro ]; then
 	umount $R && mount -t hammer2 -o ro /dev/vdb@ROOT $R || { echo "ROOT read-only failed"; exit 1; }
 	echo "root-ro 1"
 fi
+# A TLS dial admits by .pub alone: refused with .none present first
+if [ -n "$TA" ]; then
+	/tmp/h2service dial $L --keys /tmp/h2keys $TA > /tmp/h2wire.dialpub 2>&1; echo "tls-nonepub-rc $?"
+	echo "tls-nonepub-refused $(grep -c 'which a TLS dial needs' /tmp/h2wire.dialpub)"
+	rm -f /tmp/h2keys/peer.none; touch /tmp/h2keys/peer.pub
+fi
 if [ "${5:-}" = noadmit ]; then
 	rm -f /tmp/h2keys/peer.none
 	/tmp/h2service dial $L --keys /tmp/h2keys > /tmp/h2wire.dial0 2>&1; r=$?
@@ -624,7 +671,7 @@ if [ "${5:-}" = noadmit ]; then
 	[ "$r" = 0 ] && { echo "dial-rc 0"; exit 0; }
 fi
 # the dial's own status, not a pipe's
-/tmp/h2service dial $L --keys /tmp/h2keys > /tmp/h2wire.dial 2>&1; r=$?
+/tmp/h2service dial $L --keys /tmp/h2keys $TA > /tmp/h2wire.dial 2>&1; r=$?
 sed 's/^/dial /' /tmp/h2wire.dial
 echo "dial-rc $r"
 GUEST
@@ -801,7 +848,7 @@ if [ "$1" = down ]; then
 	mount -t hammer2 -o ro /dev/vdb@ROOT $R || { echo "stale ROOT read-only failed"; exit 1; }
 	exit 0
 fi
-/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; r=$?
+/tmp/h2service dial $R --keys /tmp/h2keys $TA > /tmp/h2wire.dial2 2>&1; r=$?
 sed 's/^/redial /' /tmp/h2wire.dial2
 echo "stale-dial-rc $r"
 n=0; until [ "$(klog 'remote element CL registered at clindex 1')" -ge 2 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
@@ -813,7 +860,7 @@ cat > "$W/redial.sh" <<'GUEST'
 # unmount ended has let its message threads go
 n=0; until [ "$(threads)" = 0 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
 echo "redial-threads-before $(threads)"
-/tmp/h2service dial $R --keys /tmp/h2keys > /tmp/h2wire.dial2 2>&1; echo "redial-rc $?"
+/tmp/h2service dial $R --keys /tmp/h2keys $TA > /tmp/h2wire.dial2 2>&1; echo "redial-rc $?"
 GUEST
 cat > "$W/cut.sh" <<'GUEST'
 # cut <go|arm|mark|up|silent|wait|redial|resumed|peer [after]>: the link the relay closed inside
@@ -1287,8 +1334,87 @@ echo "conn-warnings $(kl | grep 'WARNING' | grep -c -E 'hammer2_io_getblk_conn|h
 echo "threads-final $(threads)"
 pkill -f 'dmesg -w' 2>/dev/null
 GUEST
+cat > "$W/tls.sh" <<'GUEST'
+# tls <check|key ROLE IDENTITY|cap PORT|wait|stat|down>: kernel TLS on the
+# link, provisioned as cluster-dmsg.sh's H2_DMSG_TLS=1 provisions one
+# guest. check: what a handshake needs, COULD-NOT-RUN on any lack. key:
+# the PSK read from stdin into ring hammer2-tls under @u, with the
+# permissions tlshd needs to read it from its own session, read back from
+# a session that reaches no ring, and the dial's arguments into
+# /tmp/h2tls.args. cap: a capture of this guest's end of the relay's
+# port. wait: the link's outcome line, bounded past the intake's 10 s.
+# stat: what crossed and what the handshake left, read with the link up.
+# down: the ring unlinked.
+TL=/var/log/tlshd/current
+CONF=/etc/tlshd/config; [ -e /etc/tlshd.conf ] && CONF=/etc/tlshd.conf
+cnr() { echo "wire: COULD-NOT-RUN: $*"; exit 2; }
+tstat() { v=$(awk -v k=$1 '$1 == k { print $2 }' /proc/net/tls_stat 2>/dev/null); echo "${v:--1}"; }
+tlog() { tail -n +$(( $(cat /tmp/h2tls.tl0 2>/dev/null || echo 0) + 1 )) $TL | grep -cE "Handshake (with .*|request) $1"; }
+ccount() { od -An -v -tx1 /tmp/h2tls-cap.pcap 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -o " $1" | wc -l; }
+case $1 in
+check)
+	up=
+	for p in $(pgrep -x tlshd); do
+		[ "$(ps -o comm= -p "$(ps -o ppid= -p $p | tr -d ' ')")" = s6-supervise ] && up=$p
+	done
+	[ "$(grep -c ' handshake_req_alloc$' /proc/kallsyms)" = 1 ] || cnr "H2_WIRE_TLS needs a kernel with the handshake upcall"
+	[ -n "$up" ] || cnr "no tlshd running as a child of s6-supervise"
+	ll=$(awk -F= '/^\[/ { s = $0 } s == "[debug]" && $1 ~ /^[ \t]*loglevel[ \t]*$/ { gsub(/[ \t]/, "", $2); print $2 }' $CONF | tail -1)
+	[ "${ll:-0}" -ge 1 ] 2>/dev/null || cnr "$CONF [debug] loglevel is '${ll:-unset}', below 1, so tlshd writes no completion line"
+	[ -r $TL ] || cnr "no tlshd log at $TL"
+	modprobe nvme-keyring || cnr "modprobe nvme-keyring failed"
+	command -v keyctl >/dev/null 2>&1 || cnr "no keyctl"
+	echo "tls-tlshd $up loglevel $ll"
+	echo "tls-timeout-ms $(cat /sys/module/hammer2/parameters/cluster_tls_timeout_ms)"
+	;;
+key)
+	read -r psk
+	[ "${#psk}" = 64 ] || cnr "the key step read no 64-digit payload on stdin"
+	ring=$(keyctl newring hammer2-tls @u) && keyctl setperm $ring 0x3f1b0000 || cnr "the keyring could not be made"
+	echo $ring > /tmp/h2tls.ring
+	k=$(printf %s "$psk" | keyctl padd psk "$3" $ring) && keyctl setperm $k 0x3f0b0000 || cnr "the key could not be made"
+	[ "$(keyctl session - keyctl pipe $k 2>/dev/null)" = "$psk" ] || cnr "key $k does not read back from a session that reaches no ring"
+	wc -l < $TL > /tmp/h2tls.tl0
+	if [ "$2" = server ]; then echo "--tls-role server --tls-keyring $ring --tls-key $k"
+	else echo "--tls-role client --tls-key $k"; fi > /tmp/h2tls.args
+	echo "tls-key $2 ring $ring key $k identity $3 read=ok"
+	;;
+cap)
+	command -v tcpdump >/dev/null 2>&1 || cnr "no tcpdump on the guest"
+	rm -f /tmp/h2tls-cap.pcap /tmp/h2tls-cap.err
+	setsid -f sh -c "echo \$\$ > /tmp/h2tls-cap.pid; exec tcpdump -i any -U -w /tmp/h2tls-cap.pcap 'tcp port $2' </dev/null >/dev/null 2>/tmp/h2tls-cap.err"
+	n=0; until grep -q listening /tmp/h2tls-cap.err 2>/dev/null || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "tls-cap-listening $(grep -c listening /tmp/h2tls-cap.err 2>/dev/null)"
+	;;
+wait)
+	n=0
+	until [ $(( $(klog 'cluster link handed to the message threads') + $(klog 'cluster link refused') )) -ge 1 ] || [ $n -ge 150 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "tls-wait-tenths $n"
+	;;
+stat)
+	pid=$(cat /tmp/h2tls-cap.pid 2>/dev/null)
+	[ -n "$pid" ] && kill -INT $pid 2>/dev/null && timeout 5 tail --pid=$pid -f /dev/null
+	echo "tls-cap-bytes $(wc -c < /tmp/h2tls-cap.pcap 2>/dev/null || echo 0)"
+	echo "tls-cap-magic $(ccount '32 48 00 00')"
+	echo "tls-cap-appdata $(ccount '17 03 03')"
+	echo "tls-handed $(klog 'cluster link handed to the message threads')"
+	echo "tls-refused $(klog 'cluster link refused')"
+	echo "tls-refused-line $(kl | grep -m1 'cluster link refused' | sed 's/.*cluster link refused: //')"
+	echo "tls-hs-ok $(tlog succeeded)"
+	echo "tls-hs-failed $(tlog failed)"
+	echo "tls-txsw $(tstat TlsCurrTxSw)"
+	echo "tls-rxsw $(tstat TlsCurrRxSw)"
+	;;
+down)
+	r=$(cat /tmp/h2tls.ring 2>/dev/null)
+	[ -z "$r" ] || keyctl unlink $r @u >/dev/null 2>&1
+	rm -f /tmp/h2tls.args /tmp/h2tls.ring
+	echo "tls-down 1"
+	;;
+esac
+GUEST
 to_scripts() {	# to_scripts <ssh>
-	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/walks.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$1:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/walks.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$W/tls.sh" "$1:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $1 failed" >&2; exit 2; }
 }
 to_scripts "$SA"
@@ -1321,8 +1447,21 @@ phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1
 [ -z "$WALKS" ] || phase B walks.sh "$WALKS"
 phase A fill.sh $([ "$POWER" = 1 ] && echo bulk)
 phase B lone.sh
+if [ "$TLS" = 1 ]; then
+	# the payload lives in these variables and the ssh pipes alone
+	PSK=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n'); PSKB=$PSK
+	[ "$TLSWRONG" = 0 ] || PSKB=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+	TLSID=hammer2-psk-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+	phase A tls.sh check
+	phase B tls.sh check
+	echo "$PSK" | { phase A tls.sh key server "$TLSID"; } || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+	echo "$PSKB" | { phase B tls.sh key client "$TLSID"; } || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+	PSK= PSKB=
+fi
+[ "$RAW" = 0 ] || { phase A tls.sh cap "$PORT"; phase B tls.sh cap "$PORT"; }
 phase A dial.sh "$clid" "$HOST_ADDR" "$PORT" rw
 phase B dial.sh "$clid" "$HOST_ADDR" "$PORT" $([ "$PASS" = 1 ] && [ -z "$CUT" ] && echo rw || echo ro) $([ "$ADMIT" = 0 ] || echo noadmit) $([ "$LINKDEV" = 1 ] && echo linkdev)
+[ "$TLS" = 0 ] || { phase A tls.sh wait; phase B tls.sh wait; }
 sleep 3
 phase A link.sh "$clid" 3	# A sees B's SLAVE CL
 phase B link.sh "$clid" 6	# B sees A's MASTER CL
@@ -1381,7 +1520,8 @@ fault_wait() {
 # falls 1 to 2 s into it); B's ROOT remounted read-write starts the pass.
 # Then where the cut fell, and A's snapshot before any dial; the cell dials
 # A and then B, and the resumed pass is read as a plain one is.
-phase B ro.sh && case $PASSES in
+# a wrong key leaves no link, so nothing is read over one
+[ "$TLSWRONG" = 1 ] || { phase B ro.sh && case $PASSES in
 	cut)	phase B cut.sh go && { [ "$PROTO" = 0 ] || fault_wait; } &&
 		if [ "$SEQ" = control ]; then phase B cut.sh up && phase B cut.sh hm2; else
 		phase B cut.sh wait && { [ "$PROTO" = 0 ] || phase B cut.sh hm2; } && phase A cut.sh peer &&
@@ -1402,15 +1542,25 @@ phase B ro.sh && case $PASSES in
 		{ [ "$CUT" = slave ] || phase A cut.sh peer after; } &&
 		phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
 	*)	true;;
-esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)" "$DETACHWRITE"
+esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)" "$DETACHWRITE"; }
+# what crossed, read with the link still up, so kTLS's counts are the link's
+[ "$RAW" = 0 ] || { phase A tls.sh stat; phase B tls.sh stat; }
 phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
 phase A down.sh
+[ "$TLS" = 0 ] || { phase A tls.sh down; phase B tls.sh down; }
+# the raw pair's counts print once both ends are gone, which A's unmount
+# makes; the relay is not stopped before its line, 5 s at most
+if [ "$RAW" = 1 ]; then
+	n=0; until grep -q 'pair done raw' "$W/relay.out" || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	scp -q "$SA:/tmp/h2tls-cap.pcap" "$FIXDIR/wire-run-$stamp-a.pcap" 2>/dev/null
+	scp -q "$SB:/tmp/h2tls-cap.pcap" "$FIXDIR/wire-run-$stamp-b.pcap" 2>/dev/null
+fi
 kill "$RELAY_PID" 2>/dev/null; wait "$RELAY_PID" 2>/dev/null; RELAY_PID=
 scp -q "$SA:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null
 scp -q "$SB:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-b.klog" 2>/dev/null
-{ echo "source $SRC_REV"; echo "relay-sha256 $RELAY_SUM"; echo "harness-sha256 $WIRE_SUM"; echo "module-sha256 $KO_SUM"; echo "module-a-sha256 $KO_A_SUM"; echo "h2service-b-sha256 $SVC_B_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO_B" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
+{ echo "source $SRC_REV"; echo "tls $TLS raw $RAW wrong $TLSWRONG"; echo "relay-sha256 $RELAY_SUM"; echo "harness-sha256 $WIRE_SUM"; echo "module-sha256 $KO_SUM"; echo "module-a-sha256 $KO_A_SUM"; echo "h2service-b-sha256 $SVC_B_SUM"; echo "guest-kernel $ko_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO_B" 2>/dev/null)"; cat "$W/out"; cat "$W/relay.out"; } > "$FIXDIR/wire-run-$stamp.out" 2>/dev/null
 echo "  kept  both kernel logs and the relay trace beside the images as wire-run-$stamp-{a,b}.klog and .trace"
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
@@ -1443,6 +1593,15 @@ nlb=$npb
 [ "$LINKDEV" = 1 ] && { nlb=$(num "$(val B link-pfs-count)" 0); slv=0; }
 [ "$npa" -ge 3 ] && [ "$npb" -ge 3 ]; check "each volume has ROOT, LOCAL and CL" $? "A $npa, B $npb"
 [ "$(num "$(val A dial-rc)" 1)" = 0 ] && [ "$(num "$(val B dial-rc)" 1)" = 0 ]; check "link: both dials hand a connected TCP socket in" $? "A rc $(val A dial-rc), B rc $(val B dial-rc)"
+# A wrong key: the intake refuses the link on each side with its line and
+# hands nothing to the message threads, and B registers no element; every
+# reading of a link below has none to read.
+if [ "$TLSWRONG" = 1 ]; then
+	for sd in A B; do
+		[ "$(num "$(val $sd tls-refused)" 0)" -ge 1 ] && [ "$(num "$(val $sd tls-handed)" 1)" = 0 ] && [ "$(num "$(val $sd threads)" 1)" = 0 ]; check "wrong: $sd's intake refuses the link with its line and hands nothing in" $? "refused $(val $sd tls-refused) ($(val $sd tls-refused-line)), handed $(val $sd tls-handed), tlshd failures $(val $sd tls-hs-failed) and completions $(val $sd tls-hs-ok), message threads $(val $sd threads)"
+	done
+	[ "$(num "$(val B log-registered)" 1)" = 0 ]; check "wrong: B registers no element" $? "registered $(val B log-registered)"
+else
 # The callback's install off: B's reader answers A's LNK_CONN, read in the
 # hold, with no callback, so B never reads PROTO_2 and closes every span of
 # A's while A, whose CONN from B came after B's install, reads B's whole.
@@ -1830,7 +1989,9 @@ fi
 # answer is the relay's leg through A, A's to B's the leg through B, and
 # the round trip is the two medians summed. A median under ten times the
 # 1 us stamp says nothing, and fails.
-if [ "$LINKLOST" != 1 ] && [ "$SILENCE" = 0 ]; then
+if [ "$RAW" = 1 ]; then
+	echo "  read  the round trip is not read: the raw relay stamps no frame"
+elif [ "$LINKLOST" != 1 ] && [ "$SILENCE" = 0 ]; then
 	tr=$FIXDIR/wire-run-$stamp.trace
 	legs() {	# legs <pinger>: count, median, least, most of its pings' answers in us
 		awk -v me="$1" '/ deliver / { c = u = m = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^cmd=/) c = substr($i, 5); else if ($i ~ /^us=/) u = substr($i, 4); else if ($i ~ /^msgid=/) m = substr($i, 7) }
@@ -1976,6 +2137,21 @@ lr=$(val B lockdep-remote)
 lbad=$(printf '%s\n' $lr | grep -v -x -E 'h2ch_remote_(inode/[12]|dirent/[23]|data/3)' | tr '\n' ' ')
 case "$lr" in *h2ch_remote_inode/1*h2ch_remote_inode/2*) [ -z "$lbad" ];; *) false;; esac; check "remote: B classes its proxies apart, at their level on the peer" $? "${lr:-unread}${lbad:+; wrong level: $lbad}"
 fi
+fi
+# The raw relay: each guest's capture of the relay's port and, under TLS,
+# what its intake and tlshd say of the link. A plaintext link through the
+# raw relay is the control, whose captures hold the dmsg header.
+if [ "$RAW" = 1 ]; then
+	for sd in A B; do
+		if [ "$TLS" = 1 ]; then
+			[ "$(num "$(val $sd tls-nonepub-rc)" 0)" = 1 ] && [ "$(num "$(val $sd tls-nonepub-refused)" 0)" = 1 ]; check "tls: $sd's TLS dial refuses a row marked only .none" $? "rc $(val $sd tls-nonepub-rc), refusal lines $(val $sd tls-nonepub-refused)"
+			[ "$TLSWRONG" = 1 ] || { [ "$(num "$(val $sd tls-handed)" 0)" = 1 ] && [ "$(num "$(val $sd tls-refused)" 1)" = 0 ] && [ "$(num "$(val $sd tls-hs-ok)" 0)" -ge 1 ] && [ "$(num "$(val $sd tls-txsw)" 0)" = 1 ] && [ "$(num "$(val $sd tls-rxsw)" 0)" = 1 ]; check "tls: $sd's link reaches the message threads after a handshake its tlshd completed, kTLS on both directions" $? "handed $(val $sd tls-handed), refused $(val $sd tls-refused), tlshd completions $(val $sd tls-hs-ok) and failures $(val $sd tls-hs-failed), kTLS tx $(val $sd tls-txsw) rx $(val $sd tls-rxsw), wait $(val $sd tls-wait-tenths) tenths"; }
+			[ "$(num "$(val $sd tls-cap-listening)" 0)" = 1 ] && [ "$(num "$(val $sd tls-cap-bytes)" 0)" -gt 0 ] && [ "$(num "$(val $sd tls-cap-magic)" 1)" = 0 ] && { [ "$TLSWRONG" = 1 ] || [ "$(num "$(val $sd tls-cap-appdata)" 0)" -gt 0 ]; }; check "tls: $sd's capture of the relay port holds no dmsg header$([ "$TLSWRONG" = 1 ] || echo ", and TLS application records")" $? "$(val $sd tls-cap-bytes) bytes, dmsg headers $(val $sd tls-cap-magic), application records $(val $sd tls-cap-appdata)"
+		else
+			[ "$(num "$(val $sd tls-cap-listening)" 0)" = 1 ] && [ "$(num "$(val $sd tls-cap-magic)" 0)" -ge 8 ]; check "control: $sd's capture of a plaintext link through the raw relay holds the dmsg header" $? "$(val $sd tls-cap-bytes) bytes, dmsg headers $(val $sd tls-cap-magic)"
+		fi
+	done
+fi
 for sd in A B; do
 	# The report check below says nothing on a sanitizer kernel unless the
 	# module loaded there carries the instrumentation.
@@ -1996,8 +2172,24 @@ for sd in A B; do
 	[ "$c" = "$cw" ] && [ "$k" = 0 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "$sd: kmemleak finds nothing of hammer2's" $? "cleared $c time(s), $k printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)"
 	[ "$(val $sd rmmod)" = ok ] && [ "$(num "$(val $sd threads-final)" 9)" = 0 ]; check "$sd: the module unloads with no message thread" $? "rmmod $(val $sd rmmod), threads $(val $sd threads-final)"
 done
+if [ "$RAW" = 1 ]; then
+	set -- $(sed -n 's/.*pair done raw bytes a>b \([0-9]*\) b>a \([0-9]*\) magic a>b \([0-9]*\) b>a \([0-9]*\).*/\1 \2 \3 \4/p' "$W/relay.out" | tail -1)
+	rab=$(num "${1:-}" 0) rba=$(num "${2:-}" 0) mab=${3:-none} mba=${4:-none}
+	if [ "$TLSWRONG" = 1 ]; then
+		# The server checks the PSK binder before any ServerHello, and
+		# tlshd 1.5.0 sends no alert on a failed handshake
+		# (src/tlshd/handshake.c:105-123), so only the ClientHello
+		# crosses: A's side may read 0.
+		[ "$rba" -gt 0 ] && [ "$mab" = 0 ] && [ "$mba" = 0 ]; check "relay: B's ClientHello crosses the raw relay and no dmsg header either way" $? "a>b $rab bytes, b>a $rba, headers $mab and $mba, trace wire-run-$stamp.trace"
+	elif [ "$TLS" = 1 ]; then
+		[ "$rab" -gt 0 ] && [ "$rba" -gt 0 ] && [ "$mab" = 0 ] && [ "$mba" = 0 ]; check "relay: bytes cross both ways through the raw relay and no dmsg header among them" $? "a>b $rab bytes, b>a $rba, headers $mab and $mba, trace wire-run-$stamp.trace"
+	else
+		[ "$rab" -gt 0 ] && [ "$rba" -gt 0 ] && [ "$(num "$mab" 0)" -ge 8 ] && [ "$(num "$mba" 0)" -ge 8 ]; check "control: the raw relay counts the dmsg header in a plaintext link's bytes both ways" $? "a>b $rab bytes, b>a $rba, headers $mab and $mba, trace wire-run-$stamp.trace"
+	fi
+else
 relay_frames=$(sed -n 's/.*pair done frames \([0-9]*\).*/\1/p' "$W/relay.out" | tail -1)
 [ "$(num "$relay_frames" 0)" -ge 8 ]; check "relay: the trace holds the exchange, every frame a decision line" $? "$relay_frames frames, trace wire-run-$stamp.trace"
+fi
 
 echo "wire: $checks check(s), $fail failed"
 [ "$fail" = 0 ] || exit 1
