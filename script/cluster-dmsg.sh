@@ -241,7 +241,9 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ -r $TL ] || { echo "dmsg: COULD-NOT-RUN: no tlshd log at $TL" >&2; exit 2; }
 	# tlshd is stopped for arms 6 to 9; whatever ends the run brings it back.
 	# The keys go with the run: both rings and the .nvme key are unlinked.
-	trap 'kill $KPID 2>/dev/null; s6-rc -u change tlshd-srv >/dev/null 2>&1; for k in ${RING:-} ${WRING:-}; do keyctl unlink $k @u >/dev/null 2>&1; done; [ -n "${K3:-}" ] && keyctl unlink $K3 $((0x$NV)) >/dev/null 2>&1' EXIT
+	# A signal ends the run through exit, so the EXIT trap runs for it too.
+	trap 'kill $KPID ${CPID:-} ${STPID:-} ${CLPID:-} 2>/dev/null; s6-rc -u change tlshd-srv >/dev/null 2>&1; for k in ${RING:-} ${WRING:-}; do keyctl unlink $k @u >/dev/null 2>&1; done; [ -n "${K3:-}" ] && keyctl unlink $K3 $((0x$NV)) >/dev/null 2>&1' EXIT
+	trap 'exit 1' HUP INT TERM
 	echo "tlshd-loglevel $ll ($CONF)"
 	echo "remote-timeout $(echo 3000 > /sys/module/hammer2/parameters/remote_timeout_ms && cat /sys/module/hammer2/parameters/remote_timeout_ms)"
 	echo "tls-timeout-ms $(cat /sys/module/hammer2/parameters/cluster_tls_timeout_ms)"
@@ -274,6 +276,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "tls-key K2 $K2 $I1 read=$(rdback $K2 $P2)"
 	if [ -n "$K3" ]; then echo "tls-key K3 $K3 $I3 read=$(rdback $K3 $P3)"
 	else echo "tls-key K3 none $I3 read=fail refused=$(tr '\n' ' ' < /tmp/h2k3.err)"; fi
+	echo "tls-key K4-before-revoke $K4 $I4 read=$(rdback $K4 $P4)"
 	keyctl revoke $K4
 	echo "tls-key K4 $K4 $I4 read=$(rdback $K4 $P4)"
 
@@ -287,7 +290,10 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 
 	TL0=$(wc -l < $TL)
 	tlog() { tail -n +$((TL0 + 1)) $TL | grep -cE "Handshake (with .*|request) $1"; }
-	tstat() { awk -v k=$1 '$1 == k { print $2 }' /proc/net/tls_stat 2>/dev/null | grep . || echo 0; }
+	tlog_any() { tail -n +$((TL0 + 1)) $TL | grep -c "$1"; }
+	tstat() {	# a counter of /proc/net/tls_stat, -1 when it cannot be read
+		v=$(awk -v k=$1 '$1 == k { print $2 }' /proc/net/tls_stat 2>/dev/null); echo "${v:--1}"
+	}
 	handed() { klog 'cluster link handed to the message threads'; }
 	refused() { klog "cluster link refused: ${1:-}"; }
 	until_n() {	# until_n <tenths> <target> <command...>: wait for the count, print the seconds
@@ -362,11 +368,11 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	client_end() { wait $CLPID; echo "$1-client rc=$? $(grep 'eof=' /tmp/h2tls-$1.out)"; }
 
 	# arm 5, a revoked client key
-	snap arm5
+	snap arm5; kf0=$(tlog_any 'Key has been revoked')
 	client arm5 $M $K4 7993
 	echo "arm5-wait-refused $(until_n 150 $((r0 + 1)) refused)"
 	sleep 1; after arm5; client_end arm5
-	tail -n +$((TL0 + 1)) $TL | tail -20 | sed 's/^/arm5-tlshd /'
+	echo "arm5-keyfail $(($(tlog_any 'Key has been revoked') - kf0))"
 	grep 'cluster link refused' $K | tail -1 | sed 's/^/arm5-line /'
 
 	# arm 6, no agent at all
@@ -401,7 +407,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	grep 'cluster link refused: the handshake timed out' $K | tail -n +$((to0 + 1)) | sed 's/^/arm7-line /'
 
 	# arm 8, an unmount under a pending request
-	: > $T/trace; snap arm8; to0=$(refused 'the handshake timed out')
+	: > $T/trace; snap arm8; to0=$(refused 'the handshake timed out'); late0=$to0
 	client arm8 $M $K1 7990
 	sleep 2
 	t0=$(date +%s%N); timeout 60 umount $M; urc=$?; t1=$(date +%s%N)
@@ -415,7 +421,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	# arm 9, an unmount under a request the stub accepted and never answers
 	stub 1
 	: > $T/trace; snap arm9; to0=$(refused 'the handshake timed out')
-	client arm9 $M2 $K1 7989
+	client arm9 $M2 $K1 7989; t9=$(date +%s)
 	n=0; until grep -q 'accepted fd=' /tmp/h2stub-1.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
 	echo "arm9-accepted $(grep -m1 'accepted fd=' /tmp/h2stub-1.out)"
 	sleep 2
@@ -426,11 +432,18 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "arm9-cancels $(cancels) timedout-new=$(($(refused 'the handshake timed out') - to0))"
 	stub_end 1
 	echo 0 > $T/events/handshake/handshake_cancel/enable
+	# The timed-out count of arms 8 and 9 read again once the later
+	# intake's deadline has passed: read right after the unmounts it is a
+	# zero that could not have been anything else.
+	w=$((t9 + $(cat /sys/module/hammer2/parameters/cluster_tls_timeout_ms) / 1000 + 2 - $(date +%s)))
+	[ "$w" -gt 0 ] && sleep "$w"
+	echo "late-timedout waited=${w}s new=$(($(refused 'the handshake timed out') - late0))"
 
 	s6-rc -u change tlshd-srv
 	t=0; while [ -z "$(tlshd_up)" ] && [ $t -lt 100 ]; do sleep 0.1; t=$((t + 1)); done
 	echo "tlshd-restored $(tlshd_up | grep -c .)"
 	echo "threads-end $(threads)"
+	tail -n +$((TL0 + 1)) $TL | sed 's/^/tlshd-log /'	# kept whole in the report
 	finish
 	exit 0
 fi
@@ -719,18 +732,21 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	ser() { sed -n "s/^tls-key $1 \([^ ]*\) .*/\1/p" "$W/out" | head -1; }
 	d() { echo $(( $(num "$(field " $(val "$1-after")" "$3")" -99) - $(num "$(field " $(val "$2-before")" "$3")" 99) )); }	# d <after-arm> <before-arm> <field>
 	a() { num "$(field " $(val "$1-after")" "$2")" -1; }
-	[ "$(rd K1)" = ok ] && [ "$(rd K2)" = ok ] && [ "$(rd K4)" = fail ]; check "the keys read back from a fresh session, the revoked one refused" $? "K1 $(rd K1), K2 $(rd K2), K4 $(rd K4) after its revoke"
+	k4b=$(sed -n 's/^tls-key K4-before-revoke .* read=\([a-z]*\).*/\1/p' "$W/out" | head -1)
+	[ "$(rd K1)" = ok ] && [ "$(rd K2)" = ok ] && [ "$k4b" = ok ] && [ "$(rd K4)" = fail ]; check "the keys read back from a fresh session, the revoked one refused after reading before" $? "K1 $(rd K1), K2 $(rd K2), K4 ${k4b:-unread} before its revoke and $(rd K4) after"
 	nb=$(num "$(val pfs-count-b)" 0); nc=$(num "$(val pfs-count-c)" 0)
 
 	r=$(val arm1)
 	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ]; check "arm 1: both TLS intakes return 0" $? "$r"
 	[ "$(d arm1-up arm1 handed)" = 2 ]; check "arm 1: both ends are handed to the message threads" $? "$(d arm1-up arm1 handed) line(s) in $(val arm1-wait-handed) s"
 	[ "$(d arm1 arm1 ok)" = 2 ] && [ "$(d arm1 arm1 failed)" = 0 ]; check "arm 1: tlshd completes both handshakes and fails none" $? "$(d arm1 arm1 ok) succeeded, $(d arm1 arm1 failed) failed"
-	[ "$(a arm1-up tx)" = 2 ] && [ "$(a arm1-up rx)" = 2 ]; check "arm 1: kTLS is installed on both sockets" $? "TlsCurrTxSw $(a arm1-up tx), TlsCurrRxSw $(a arm1-up rx)"
+	[ "$(d arm1-up arm1 tx)" = 2 ] && [ "$(d arm1-up arm1 rx)" = 2 ]; check "arm 1: kTLS is installed on both sockets" $? "TlsCurrTxSw and TlsCurrRxSw up by $(d arm1-up arm1 tx) and $(d arm1-up arm1 rx)"
 	[ "$(a arm1-up rxspan)" = $((nb + nc)) ] && [ "$(a arm1-up proto2)" = 2 ]; check "arm 1: each end receives the other volume's spans over PROTO_2" $? "$(a arm1-up rxspan) spans against $nb + $nc PFSs, $(a arm1-up proto2) PROTO_2 line(s)"
 	[ "$(a arm1 threads)" = 4 ] && [ "$(d arm1 arm1 silent)" = 0 ] && [ "$(d arm1 arm1 terminated)" = 0 ]; check "arm 1: the link is up after five keepalive intervals" $? "threads $(a arm1 threads), peer-silent $(d arm1 arm1 silent), terminated $(d arm1 arm1 terminated)"
 	c=$(val arm1-capture)
-	[ "$(field " $c" magic)" = 0 ] && [ "$(num "$(field " $c" tlsapp)" 0)" -ge 2 ]; check "arm 1: the capture holds TLS records and no frame magic" $? "$c"
+	# The handshake's own encrypted messages are three type-23 records
+	# (EncryptedExtensions and two Finished), so data needs a fourth.
+	[ "$(field " $c" magic)" = 0 ] && [ "$(num "$(field " $c" tlsapp)" 0)" -ge 4 ]; check "arm 1: the capture holds type-23 TLS records past the handshake's three and no frame magic" $? "$c"
 
 	r=$(val arm2)
 	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ]; check "arm 2: the wrong-PSK intakes return 0, the handshake being asynchronous" $? "$r"
@@ -754,6 +770,8 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ "$(num "$(field " $c" magic)" 0)" -ge 2 ]; check "arm 3: the plaintext capture holds the frame magic, so the reading in arm 1 can see it" $? "$c"
 	[ "$(a arm3 tx)" = 0 ] && [ "$(a arm3 rx)" = 0 ]; check "arm 3: kTLS is released with the TLS sockets" $? "TlsCurrTxSw $(a arm3 tx), TlsCurrRxSw $(a arm3 rx)"
 
+	w5=$(val arm5-wait-refused); case "$(val arm5-line)" in *'the handshake failed'*) l5=1 ;; *) l5=0 ;; esac
+	[ "$l5" = 1 ] && [ "$(num "$(val arm5-keyfail)" 0)" -ge 1 ] && [ "${w5%%.*}" -lt 10 ] 2>/dev/null; check "arm 5: the refusal is a failed handshake within 10 s, tlshd unable to read the revoked key" $? "line '$(val arm5-line | sed 's/.*refused: //')', $(val arm5-keyfail) revoked-key line(s) in tlshd, after $w5 s"
 	[ "$(field "$(val arm5-intake)" errno)" = 0 ] && [ "$(d arm5 arm5 refused)" = 1 ] && [ "$(d arm5 arm5 handed)" = 0 ] && [ "$(a arm5 threads)" = "$(num "$(field " $(val arm5-before)" threads)" -2)" ]; check "arm 5: a revoked key is refused once, nothing handed, the link kept" $? "$(val arm5-intake), $(d arm5 arm5 refused) refusal(s), handed $(d arm5 arm5 handed), threads $(a arm5 threads)"
 	echo "        arm 5 line: $(val arm5-line)"
 
@@ -767,9 +785,12 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 
 	for arm in arm8 arm9; do
 		u=$(val $arm-umount); c=$(val $arm-cancels)
-		[ "$(field " $u" rc)" = 0 ] && [ "$(num "$(field " $u" ms)" 99999)" -lt 5000 ] && [ "$(echo "$c" | cut -d' ' -f1)" = 1 ] && [ "$(field "$c" timedout-new)" = 0 ]; check "$arm: the unmount under a pending request returns and cancels it once" $? "$u, $c"
+		case $arm in arm8) what="arm 8: the unmount under a pending request" ;; *) what="arm 9: the unmount under an accepted request" ;; esac
+		[ "$(field " $u" rc)" = 0 ] && [ "$(num "$(field " $u" ms)" 99999)" -lt 5000 ] && [ "$(echo "$c" | cut -d' ' -f1)" = 1 ]; check "$what returns and cancels it once" $? "$u, $(echo "$c" | cut -d' ' -f1) handshake_cancel event(s)"
 	done
 	[ "$(a arm8 threads)" = 0 ]; check "arm 8: no message thread is left after the unmount" $? "$(a arm8 threads)"
+	lt=$(val late-timedout)
+	[ "$(num "$(field " $lt" new)" 1)" = 0 ] && [ "$(echo "$lt" | sed -n 's/^waited=\(-*[0-9]*\)s.*/\1/p')" != "" ]; check "arms 8 and 9: no timed-out line once the later deadline has passed" $? "$lt"
 	[ "$(num "$(sed -n 's/.*accepted fd=\([0-9-]*\).*/\1/p' "$W/out" | head -1)" -1)" -ge 0 ]; check "arm 9: the stub accepted the request and held its descriptor" $? "$(val arm9-accepted)"
 	[ "$(val tlshd-restored)" = 1 ]; check "tlshd is running again under s6-supervise" $? "$(val tlshd-restored)"
 	final_checks

@@ -931,6 +931,7 @@ stub_term(int sig)
 	    (char *)(a) + (a)->nla_len <= (char *)(start) + (len);	\
 	    (a) = (struct nlattr *)((char *)(a) + NLA_ALIGN((a)->nla_len)))
 #define NLA_DATA(a)	((char *)(a) + NLA_HDRLEN)
+#define NLA_PLEN(a)	((int)(a)->nla_len - NLA_HDRLEN)	/* the payload's length */
 
 static int
 genl_send(int s, int family, int cmd, int attr, const void *data, int dlen)
@@ -982,17 +983,21 @@ hsstub(int accept_it, long hold_ms)
 			continue;
 		NLA_EACH(a, (char *)NLMSG_DATA(n) + GENL_HDRLEN,
 		    NLMSG_PAYLOAD(n, GENL_HDRLEN)) {
-			if ((a->nla_type & NLA_TYPE_MASK) == CTRL_ATTR_FAMILY_ID)
+			if ((a->nla_type & NLA_TYPE_MASK) == CTRL_ATTR_FAMILY_ID &&
+			    NLA_PLEN(a) >= (int)sizeof(uint16_t))
 				fam = *(uint16_t *)NLA_DATA(a);
 			if ((a->nla_type & NLA_TYPE_MASK) != CTRL_ATTR_MCAST_GROUPS)
 				continue;
 			NLA_EACH(g, NLA_DATA(a), a->nla_len - NLA_HDRLEN) {
 				int id = -1, match = 0;
 				NLA_EACH(f, NLA_DATA(g), g->nla_len - NLA_HDRLEN) {
-					if (f->nla_type == CTRL_ATTR_MCAST_GRP_ID)
+					if (f->nla_type == CTRL_ATTR_MCAST_GRP_ID &&
+					    NLA_PLEN(f) >= (int)sizeof(uint32_t))
 						id = *(uint32_t *)NLA_DATA(f);
 					if (f->nla_type == CTRL_ATTR_MCAST_GRP_NAME &&
-					    !strcmp(NLA_DATA(f), HANDSHAKE_MCGRP_TLSHD))
+					    NLA_PLEN(f) == (int)sizeof(HANDSHAKE_MCGRP_TLSHD) &&
+					    !memcmp(NLA_DATA(f), HANDSHAKE_MCGRP_TLSHD,
+					    sizeof(HANDSHAKE_MCGRP_TLSHD)))
 						match = 1;
 				}
 				if (match)
@@ -1009,7 +1014,12 @@ hsstub(int accept_it, long hold_ms)
 	printf("h2attach hsstub: joined family=%d group=%d accept=%d\n", fam,
 	    grp, accept_it);
 	fflush(stdout);
-	while (!stub_stop && readable(s, deadline)) {
+	/* Each poll is bounded, so a SIGTERM landing just before one ends
+	 * the loop within 250 ms rather than at the deadline. */
+	while (!stub_stop && now_ms() < deadline) {
+		long step = now_ms() + 250;
+		if (!readable(s, step < deadline ? step : deadline))
+			continue;
 		if ((len = recv(s, buf, sizeof(buf), 0)) < 0)
 			continue;
 		for (n = (struct nlmsghdr *)buf; NLMSG_OK(n, (unsigned)len);
@@ -1033,7 +1043,8 @@ hsstub(int accept_it, long hold_ms)
 			} else if (gh->cmd == HANDSHAKE_CMD_ACCEPT) {
 				NLA_EACH(a, (char *)gh + GENL_HDRLEN,
 				    NLMSG_PAYLOAD(n, GENL_HDRLEN)) {
-					if (a->nla_type == HANDSHAKE_A_ACCEPT_SOCKFD)
+					if (a->nla_type == HANDSHAKE_A_ACCEPT_SOCKFD &&
+					    NLA_PLEN(a) >= (int)sizeof(int32_t))
 						fd = *(int32_t *)NLA_DATA(a);
 				}
 				printf("h2attach hsstub: accepted fd=%d\n", fd);
