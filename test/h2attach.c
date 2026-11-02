@@ -47,6 +47,13 @@
  *             printed
  *   refuse    a pipe end and an unconnected stream socket are each handed
  *             to RECLUSTER and each must be refused EINVAL by holdfp()
+ *   tlsrefuse each refusal of hammer2_link_check() driven once with its
+ *             own socket: PSK on an AF_UNIX pair, an unknown mode, six
+ *             keys, a client with none, a server with no keyring, an
+ *             unknown role, a TCP socket already carrying the tls ULP
+ *             (EBUSY), and no TLS with cluster_tls_required set (the
+ *             parameter set to 1 for that one call and back to 0); the
+ *             errno of each printed, with the parameter read around it
  *
  * Stage 1 of doc/CLUSTER_PROTOCOL_DESIGN.md: every frame this end sends
  * carries both CRCs, and these actions play a DMSG_SPAN_PROTO_2 peer,
@@ -74,6 +81,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -221,6 +230,94 @@ recluster(int fd_to_pass)
 	if (ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0)
 		return (errno);
 	return (0);
+}
+
+/* The same with a TLS request; key serials are arbitrary, since every
+ * call here must be refused before a serial is looked at. */
+static int
+recluster_tls(int fd_to_pass, int mode, int role, int keyring, int nkeys)
+{
+	struct hammer2_ioc_recluster recl;
+	int i;
+
+	memset(&recl, 0, sizeof(recl));
+	recl.fd = fd_to_pass;
+	recl.tls.mode = mode;
+	recl.tls.role = role;
+	recl.tls.keyring = keyring;
+	recl.tls.nkeys = nkeys;
+	for (i = 0; i < nkeys && i < HAMMER2_LINK_TLS_MAXKEYS; ++i)
+		recl.tls.keys[i] = 1000 + i;
+	if (ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0)
+		return (errno);
+	return (0);
+}
+
+/* A connected TCP pair over IPv4 loopback; the accepted end in *peer. */
+static int
+tcp_pair(int *peer)
+{
+	struct sockaddr_in a;
+	socklen_t al = sizeof(a);
+	int l, c;
+
+	memset(&a, 0, sizeof(a));
+	a.sin_family = AF_INET;
+	a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	l = socket(AF_INET, SOCK_STREAM, 0);
+	if (l < 0 || bind(l, (struct sockaddr *)&a, sizeof(a)) < 0 ||
+	    listen(l, 1) < 0 || getsockname(l, (struct sockaddr *)&a, &al) < 0) {
+		perror("tcp_pair: listen");
+		exit(2);
+	}
+	c = socket(AF_INET, SOCK_STREAM, 0);
+	if (c < 0 || connect(c, (struct sockaddr *)&a, sizeof(a)) < 0 ||
+	    (*peer = accept(l, NULL, NULL)) < 0) {
+		perror("tcp_pair: connect");
+		exit(2);
+	}
+	close(l);
+	return (c);
+}
+
+/* One TLS intake on a fresh TCP pair; ulp names a ULP set first. */
+static int
+tls_tcp(const char *ulp, int *ulp_errno, int mode, int role, int keyring,
+    int nkeys)
+{
+	int c, p, e;
+
+	c = tcp_pair(&p);
+	if (ulp != NULL)
+		*ulp_errno = setsockopt(c, IPPROTO_TCP, TCP_ULP, ulp,
+		    strlen(ulp)) < 0 ? errno : 0;
+	e = recluster_tls(c, mode, role, keyring, nkeys);
+	close(c);
+	close(p);
+	return (e);
+}
+
+/* Write the parameter and read it back; "?" when either fails. */
+static void
+tls_required(const char *v, char *out, size_t outlen)
+{
+	const char *path = "/sys/module/hammer2/parameters/cluster_tls_required";
+	FILE *f;
+
+	snprintf(out, outlen, "?");
+	if (v != NULL) {
+		if ((f = fopen(path, "w")) == NULL)
+			return;
+		fputs(v, f);
+		if (fclose(f) != 0)
+			return;
+	}
+	if ((f = fopen(path, "r")) == NULL)
+		return;
+	if (fgets(out, (int)outlen, f) == NULL)
+		snprintf(out, outlen, "?");
+	fclose(f);
+	out[strcspn(out, "\n")] = '\0';
 }
 
 static int
@@ -820,6 +917,37 @@ main(int argc, char **argv)
 		close(s);
 		printf("h2attach refuse: pipe_errno=%d sock_errno=%d\n", e_pipe, e_sock);
 		return (e_pipe == EINVAL && e_sock == EINVAL ? 0 : 1);
+	}
+
+	if (!strcmp(action, "tlsrefuse")) {
+		const int P = HAMMER2_LINK_TLS_PSK, C = HAMMER2_LINK_TLS_CLIENT;
+		const int S = HAMMER2_LINK_TLS_SERVER;
+		int sv[2], e_unix, e_mode, e_nkeys, e_client, e_server, e_role;
+		int e_ulp, ulp_set = -1, e_req;
+		char before[16], set[16], after[16];
+
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) { perror("socketpair"); return (2); }
+		e_unix = recluster_tls(sv[0], P, C, 0, 1);
+		close(sv[0]); close(sv[1]);
+		e_mode = tls_tcp(NULL, NULL, 7, C, 0, 1);
+		e_nkeys = tls_tcp(NULL, NULL, P, C, 0, HAMMER2_LINK_TLS_MAXKEYS + 1);
+		e_client = tls_tcp(NULL, NULL, P, C, 0, 0);
+		e_server = tls_tcp(NULL, NULL, P, S, 0, 1);
+		e_role = tls_tcp(NULL, NULL, P, 9, 0, 1);
+		e_ulp = tls_tcp("tls", &ulp_set, P, C, 0, 1);
+		tls_required(NULL, before, sizeof(before));
+		tls_required("1", set, sizeof(set));
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) { perror("socketpair"); return (2); }
+		e_req = recluster_tls(sv[0], HAMMER2_LINK_TLS_NONE, C, 0, 0);
+		close(sv[0]); close(sv[1]);
+		tls_required("0", after, sizeof(after));
+		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s\n",
+		    e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_ulp,
+		    ulp_set, e_req, before, set, after);
+		return (e_unix == EINVAL && e_mode == EINVAL && e_nkeys == EINVAL &&
+		    e_client == EINVAL && e_server == EINVAL && e_role == EINVAL &&
+		    ulp_set == 0 && e_ulp == EBUSY && e_req == EINVAL &&
+		    !strcmp(set, "1") && !strcmp(after, "0") ? 0 : 1);
 	}
 
 	if (attach_pair() < 0)
