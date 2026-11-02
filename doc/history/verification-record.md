@@ -20785,91 +20785,121 @@ fix, returned SIGN-OFF with no finding.
 
 ## The first live handshake on the cluster link, 2026-11-02
 
-`script/cluster-dmsg.sh` with `H2_DMSG_TLS=1` (`7033864`), one guest
+`script/cluster-dmsg.sh` with `H2_DMSG_TLS=1`, one guest
 (`artix-s6-kde`), `vdb` and `vdc` each mounted `@ROOT`, `tlshd` 1.5.0
 answering arms 1 to 5 and nothing or `h2attach`'s stub agent arms 6 to
 9. The expected readings and their fake passes were written before the
 first run (`p7-notes/n9-2-expected.md` in the data tree, with an
-addendum written before the fourth). The green runs built the tree at
-`7033864` byte for byte: harness sha256 `2ff9ad32af10`, `h2attach.c`
-`da56ad4e7287`, and the source diff from `397bb14` hashing as
-`61822a7`'s (`720cb442cee0`), each named on line 1 of its log. Logs
-under `p7-notes/`, reports, kernel logs and both captures under
-`fixtures/` as `dmsg-run-<stamp>`:
-- `h2debug-7.3tls`, `n9-2-run-debug-20261102-090016.log`, 30 checks,
-  0 failed (line 37). Arm 1: tlshd 2 succeeded, 0 failed (line 9),
-  `TlsCurrTxSw` and `TlsCurrRxSw` 2 (line 10), 5 spans received
-  against 3 + 2 PFSs and 2 `PROTO_2` lines (line 11), 4 message
-  threads with no peer-silent or terminated line after five keepalive
-  intervals (line 12), and the capture of port 7997 holding 41 TLS
-  application record headers and no frame magic (line 13). tlshd's
-  own log names the session `(TLS1.3)--(CHACHA20-POLY1305)` on both
-  ends.
-- `h2kasan-7.3tls`, `n9-2-run-kasan-20261102-090306.log`, 30 checks,
-  0 failed (line 37): the same arm 1 readings with 45 record headers
-  (line 13), no KASAN, UBSAN or lockdep report (line 34), kmemleak 0
-  of hammer2's before and after the unload (line 35).
+addendum written before the fourth). The runs this entry rests on built
+the tree at `7016b73` byte for byte: harness sha256 `8f93dad070e0`,
+`h2attach.c` `cd07ba3f1f42`, and the source diff from `31a265f` hashing
+as `a2594b5`'s (`bfbfd624993f`), each named on line 1 of its log, with
+QEMU cores in `/var/crash` read on lines 2 and 42 (0 and 0). Logs under
+`p7-notes/`; reports with tlshd's log slice, kernel logs and both
+captures under `fixtures/` as `dmsg-run-<stamp>`:
+- `h2debug-7.3tls`, `n9-2-run2-debug-20261102-094320.log` (report
+  `dmsg-run-20261102-094449`), 32 checks, 0 failed (line 40). Arm 1:
+  both ends handed (line 9), tlshd 2 succeeded and 0 failed (line 10),
+  `TlsCurrTxSw` and `TlsCurrRxSw` each up by 2 across the arm (line
+  11), 5 spans received against 3 + 2 PFSs and 2 `PROTO_2` lines (line
+  12), 4 message threads with no peer-silent or terminated line after
+  five keepalive intervals (line 13), and the capture of port 7997
+  holding 41 records of outer type 23, more than the handshake's own
+  three encrypted messages, and no frame magic (line 14). tlshd names
+  both sessions `(TLS1.3)--(CHACHA20-POLY1305)` (report lines 97-100).
+- `h2kasan-7.3tls`, `n9-2-run2-kasan-20261102-094320.log` (report
+  `dmsg-run-20261102-094740`), 32 checks, 0 failed (line 40): the same
+  arm 1 readings with 45 type-23 records (line 14), no KASAN, UBSAN or
+  lockdep report (line 37), kmemleak 0 of hammer2's before and after
+  the unload (line 38).
 - The capture's control is arm 3 of each run, the same pair in
-  plaintext: the magic 18 times, no TLS record header (line 21).
+  plaintext: the magic 18 times, no type-23 record (line 22).
 - Arm 2, a wrong PSK under the admitted identity during the live link:
-  both ends refused with statuses -13 and -110, tlshd failing both,
-  the first link's threads and kTLS counts unchanged (lines 15-16).
+  both ends refused with a nonzero status, tlshd failing both, its
+  server with "An illegal parameter has been received (-55)" (report
+  lines 111-114), and the first link's threads and kTLS counts
+  unchanged (lines 16-17).
 - Arm 4, a client key held only in `.nvme`: tlshd completed both
   handshakes and the server refused the serial it reported, the line
-  naming K3 (304720296 on debug, 399604053 on KASAN, line 18), and the
-  client end, whose handshake succeeded, handed.
-- Arm 5, a revoked key: one refusal at status -5, nothing handed;
-  arm 6, tlshd stopped: `RECLUSTER` returned `ESRCH` with the
-  not-submitted line.
+  naming K3 (239382983 on debug, 770093499 on KASAN, line 19), and the
+  client end, whose handshake succeeded, handed (line 20).
+- Arm 5, a revoked key: the refusal a failed handshake at status -5
+  within 10 s, tlshd logging the revoked key (line 24, report line
+  133), nothing handed (line 25); K4 read back before its revoke and
+  refused after (line 7). Arm 6, tlshd stopped: `RECLUSTER` returned
+  `ESRCH` with the not-submitted line.
 - Arms 7 to 9, the stub agent: a request no agent accepts timed out
-  10549 and 10155 ms after the intake against 10000, each with one
-  `handshake_cancel` event (lines 27-28); an unmount under a pending
-  request returned in 914 and 1595 ms, and under a request the stub
-  had accepted in 28 and 79 ms, each canceling once with no timed-out
-  line (lines 29-30).
+  10231 and 10203 ms after the client process started, against 10000,
+  each with one `handshake_cancel` event (lines 29-30); an unmount under
+  a pending request returned in 1172 and 1494 ms, and under a request
+  the stub had accepted in 28 and 89 ms, each canceling once (lines
+  31-32); and no timed-out line from either once the later intake's
+  deadline and two seconds had passed (line 34).
 
-The control the design required, placed where the order executes: a
-scratch tree (`ctl/n9-2-reader-first` in the data tree, never
-committed) starting the message reader at the intake, before
-`hammer2_link_submit()`.
-`n9-2-run-control-readerfirst-20261102-090603.log`: arm 1 reads 0
-succeeded and 2 failed, no kTLS, no spans and no TLS record (lines
-9-13), and arm 4's handshakes fail too (line 18). Its kernel log has
-`kdmsg: bad magic: 0001` and `0316`, the reader taking handshake
-records as frames, and tlshd's server "Received packet with illegal
-length: 17060". So the handshake finishing before the reader starts is
-what the arm 1 reading rests on.
+The control the design required: a scratch tree
+(`ctl/n9-2-reader-first` in the data tree, never committed) starting
+the message reader in `hammer2_cluster_reconnect()` before
+`hammer2_link_submit()`, which is where the order executes; the
+expected file had named the tail order of `hammer2_link_work()`, whose
+reader start is the one moved. It ran the harness committed at
+`7033864` (`2ff9ad32af10`), whose arm 1 mechanism the later harness
+changes do not touch:
+`n9-2-run-control-readerfirst-20261102-090603.log`, arm 1 reading 0
+succeeded and 2 failed, no kTLS, no spans and no type-23 record (lines
+9-13), its capture holding one handshake record, the ClientHello, and
+nothing after it, and arm 4's handshakes failing too (line 18). Its
+kernel log has `kdmsg: bad magic: 0001` and `0316`, the reader taking
+handshake records as frames, and tlshd's server "Received packet with
+illegal length: 17060". Arms 2 and 5 fail there as well (lines 16, 23),
+since the scratch reader replaces a device's link at each intake. So
+the handshake finishing before the reader starts is what the arm 1
+reading rests on.
 
-Three earlier runs found what the green ones needed:
-- `n9-2-run-debug-20261102-084514.log`, every arm run: both tlshd
-  children completed TLS 1.3 with CHACHA20-POLY1305 and then logged
-  "The kernel does not support the requested algorithm". The three
-  `-tls` kernels set `CRYPTO_GCM` and not `CRYPTO_CHACHA20POLY1305` or
-  `CRYPTO_CCM`, and tlshd offers every kTLS cipher its headers define
-  without asking the running kernel (ktls-utils 1.5.0
-  `src/tlshd/ktls.c:427-447`). All three were rebuilt with both
-  (`~/kernels/build-7.3-tls.sh`, 432 s; the 2026-10-27 build logs and
-  config diffs kept beside it with that date) and installed on
-  `artix-s6-kde`, the guest's image hashes reading the host's. The
-  `-tls` rate and wire baselines of 1.0.72 were not re-read on the
-  rebuilt kernels; they ran no TLS, and two AEADs built in move no
-  code they reach, which is a candidate and not a reading.
-- The same run lost one of arm 1's two refusal lines: "1 callbacks
-  suppressed" in its kernel log. Fixed at `61822a7` (`hprintf_each`).
-- The same run's harness defects (`refused()` under `set -u`, a
-  separator `field` needs, refusal lines quoted from the whole log,
-  `setperm` refused on a key added straight into `.nvme`) are fixed in
-  `7033864` before its first commit.
+The runs before these found what they needed:
+- `n9-2-run-debug-20261102-084514.log`, every arm run but arm 4: both
+  tlshd children completed TLS 1.3 with CHACHA20-POLY1305 and then
+  logged "The kernel does not support the requested algorithm" (on the
+  guest's tlshd log at 08:45:32; that run's report kept only arm 5's
+  tlshd lines). The three `-tls` kernels set `CRYPTO_GCM` and not
+  `CRYPTO_CHACHA20POLY1305` or `CRYPTO_CCM`, and tlshd offers every
+  kTLS cipher its headers define without asking the running kernel
+  (ktls-utils 1.5.0 `src/tlshd/ktls.c:427-447`). All three were rebuilt
+  with both (`~/kernels/build-7.3-tls.sh`, 432 s; the 2026-10-27 build
+  logs and config diffs kept beside it with that date) and installed on
+  both guests under the same grub names, each guest's image hashes
+  reading the host's (`p8-notes/n9-ktls-guests.md`). The `-tls` rate
+  and wire baselines of 1.0.72 were not re-read on the rebuilt kernels;
+  they ran no TLS, and that two built-in AEADs move no code they reach
+  is a candidate, not a reading.
+- The same run lost one of arm 1's two refusal lines ("1 callbacks
+  suppressed" in its kernel log). Fixed at `61822a7` for the four
+  outcome lines and at `a2594b5` for six more of the same class.
+- `n9-2-run-debug-20261102-090016.log` and
+  `n9-2-run-kasan-20261102-090306.log`, 30 checks and 0 failed each on
+  the tree at `7033864`, read arm 1 as above; a hostile audit then
+  found that harness's arms 8 and 9 reading "no timed-out line" three
+  seconds after an intake whose deadline is ten, a zero that could not
+  have been anything else, and checks weaker than their text, fixed at
+  `7016b73` before the runs above.
 - `-084010` and `-084244` exited 2 on the harness's own prerequisites:
-  tlshd at `loglevel=0`, then no tcpdump. On the guest: the loglevel
-  set to 1; tcpdump 4.99.6-1 installed; tracefs, not mounted at boot,
-  mounted by the harness; and `tlshd-log`, which started before
-  `/var/log` was mounted and so wrote every line since boot to the
-  root subvolume's directory under the mount (open file 31:1079343,
-  visible 43:13274), ordered after `mount-filesystems`, read from a
-  cold boot as the open and visible files agreeing. Recorded in
-  `p8-notes/n9-ktls-guests.md`; `artix-s6-h2b` has the loglevel and the
-  logger ordering still to change.
+  tlshd at `loglevel=0`, then no tcpdump. Recorded with the guest
+  changes in `p8-notes/n9-ktls-guests.md`: the loglevel set to 1;
+  tcpdump 4.99.6-1 installed; tracefs, not mounted at boot, mounted by
+  the harness; and `tlshd-log`, which started before `/var/log` was
+  mounted and so wrote every line since boot to the root subvolume's
+  directory under the mount (open file 31:1079343, visible 43:13274),
+  ordered after `mount-filesystems`. Each guest read the open and
+  visible files agreeing after a cold boot. On `artix-s6-h2b`,
+  `s6-rc-update` failed ("Broken pipe") and the new database came live
+  by a boot instead, with the same 63 active services as
+  `artix-s6-kde`.
+
+The frontend gates, run by hand on `h2debug-7.3tls` at `17540ae`,
+since `a2594b5` changes `src/`: `test-fixtures.sh` 11 images, 0
+failures (`p7-notes/n9-2-fixtures-20261102-095014.log`, line 23) and
+`test-enospc.sh` filled 2G with 0 failures
+(`n9-2-enospc-20261102-095014.log`, line 336), QEMU cores 0 before and
+after each (lines 2 and 30, 2 and 338).
 
 Read on the source for N9.0 and not changed, each with its reason in
 the plan's N9.0: the works `hammer2_remote_connected()` enables after
@@ -20877,17 +20907,10 @@ an early-returned autoinitiate are those a link dying just after
 autoinitiate leaves, and the next quiesce disables both
 (`hammer2_remote.c:2776-2777`); `hammer2_volconf_update()`'s unlocked
 `conn_state` read is upstream's, marked `XXX interlock against
-connection state termination` at DragonFly's `hammer2_iocom.c:376`,
+connection state termination` at DragonFly's `hammer2_iocom.c:375`,
 and moves to 6a.3; the `kmemleak-cleared` marker is a canonical form
 across six harnesses, and a failed clear leaves older leaks to be
 reported, so it fails toward a fault.
-
-The frontend gates, run by hand on `h2debug-7.3tls` at `7033864` since
-`61822a7` changes `src/`: `test-fixtures.sh` 11 images, 0 failures
-(`p7-notes/n9-2-fixtures-20261102-090903.log`, line 22) and
-`test-enospc.sh` filled 2G with 0 failures
-(`n9-2-enospc-20261102-090903.log`, line 335). QEMU cores in
-`/var/crash` 0 before and after every run.
 
 Not read here: any link between two guests; any record type but data
 records over a link (the reader is still `kernel_read()`, so a
