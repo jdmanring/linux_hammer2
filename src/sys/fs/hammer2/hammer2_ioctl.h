@@ -70,9 +70,30 @@ struct hammer2_ioc_version {
 
 typedef struct hammer2_ioc_version hammer2_ioc_version_t;
 
+/*
+ * Linux: the cluster link's TLS, the inputs of both intakes, RECLUSTER
+ * and the mount's cluster_tls options.  Zeroed asks for no TLS.  The
+ * serials are key serials; the kernel holds no key material.  See
+ * doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link section.
+ */
+#define HAMMER2_LINK_TLS_NONE	0
+#define HAMMER2_LINK_TLS_PSK	1
+#define HAMMER2_LINK_TLS_CLIENT	0
+#define HAMMER2_LINK_TLS_SERVER	1
+#define HAMMER2_LINK_TLS_MAXKEYS 5
+
+struct hammer2_link_tls {
+	int			mode;		/* HAMMER2_LINK_TLS_NONE, _PSK */
+	int			role;		/* HAMMER2_LINK_TLS_CLIENT, _SERVER */
+	int			keyring;	/* a server's keyring serial */
+	int			nkeys;
+	int			keys[HAMMER2_LINK_TLS_MAXKEYS];	/* a client's one, a server's admitted */
+};
+
 struct hammer2_ioc_recluster {
 	int			fd;
-	char			reserved[256 - 4];
+	struct hammer2_link_tls	tls;	/* XXX Linux: in the reserved bytes */
+	char			reserved[256 - 4 - sizeof(struct hammer2_link_tls)];
 };
 
 typedef struct hammer2_ioc_recluster hammer2_ioc_recluster_t;

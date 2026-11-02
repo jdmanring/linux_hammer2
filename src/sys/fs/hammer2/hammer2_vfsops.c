@@ -197,6 +197,17 @@ module_param_named(sync_walks, hammer2_sync_walks, int, 0644);
  */
 int hammer2_remote_timeout_ms = 10000;
 module_param_named(remote_timeout_ms, hammer2_remote_timeout_ms, int, 0644);
+/*
+ * Linux: the cluster link's TLS.  The bound on a PSK handshake, read once
+ * by each intake, and whether an intake asking for no TLS is refused.  See
+ * hammer2_iocom.c and doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link section.
+ */
+unsigned int hammer2_cluster_tls_timeout_ms = 10000;
+module_param_named(cluster_tls_timeout_ms, hammer2_cluster_tls_timeout_ms,
+    uint, 0644);
+int hammer2_cluster_tls_required;
+module_param_named(cluster_tls_required, hammer2_cluster_tls_required, int,
+    0644);
 module_param_named(alloc_data_bytes, hammer2_alloc_data_bytes, ulong, 0444);
 module_param_named(alloc_meta_bytes, hammer2_alloc_meta_bytes, ulong, 0444);
 module_param_named(data_rewrites, hammer2_data_rewrites, ulong, 0444);
@@ -1066,11 +1077,31 @@ hammer2_init_limits(void)
 enum hammer2_param {
 	Opt_emerg,
 	Opt_cluster_fd,
+	Opt_cluster_tls,		/* Linux: the link's TLS, as RECLUSTER's */
+	Opt_cluster_tls_role,
+	Opt_cluster_tls_keyring,
+	Opt_cluster_tls_key,
+};
+
+static const struct constant_table hammer2_param_tls[] = {
+	{ "psk",	HAMMER2_LINK_TLS_PSK },
+	{}
+};
+
+static const struct constant_table hammer2_param_tls_role[] = {
+	{ "client",	HAMMER2_LINK_TLS_CLIENT },
+	{ "server",	HAMMER2_LINK_TLS_SERVER },
+	{}
 };
 
 static const struct fs_parameter_spec hammer2_fs_parameters[] = {
 	fsparam_flag("emerg", Opt_emerg),
 	fsparam_s32("cluster_fd", Opt_cluster_fd),
+	fsparam_enum("cluster_tls", Opt_cluster_tls, hammer2_param_tls),
+	fsparam_enum("cluster_tls_role", Opt_cluster_tls_role,
+	    hammer2_param_tls_role),
+	fsparam_s32("cluster_tls_keyring", Opt_cluster_tls_keyring),
+	fsparam_s32("cluster_tls_key", Opt_cluster_tls_key),
 	{}
 };
 
@@ -1083,6 +1114,7 @@ static const struct fs_parameter_spec hammer2_fs_parameters[] = {
 struct hammer2_fs_context {
 	int	hflags;
 	int	cluster_fd;	/* -1 unless the mount passed one */
+	struct hammer2_link_tls tls;	/* zeroed is no TLS */
 };
 
 static int
@@ -1102,6 +1134,21 @@ hammer2_parse_param(struct fs_context *fc, struct fs_parameter *param)
 		break;
 	case Opt_cluster_fd:
 		ctx->cluster_fd = result.int_32;
+		break;
+	case Opt_cluster_tls:
+		ctx->tls.mode = result.uint_32;
+		break;
+	case Opt_cluster_tls_role:
+		ctx->tls.role = result.uint_32;
+		break;
+	case Opt_cluster_tls_keyring:
+		ctx->tls.keyring = result.int_32;
+		break;
+	case Opt_cluster_tls_key:
+		if (ctx->tls.nkeys == HAMMER2_LINK_TLS_MAXKEYS)
+			return (invalfc(fc, "more than %d cluster_tls_key",
+			    HAMMER2_LINK_TLS_MAXKEYS));
+		ctx->tls.keys[ctx->tls.nkeys++] = result.int_32;
 		break;
 	default:
 		return (-EINVAL);
@@ -1580,7 +1627,8 @@ next_hmp:
 			fp = holdfp(curthread, ctx->cluster_fd, -1);
 			if (fp) {
 				/* XXX Linux: the mount completes with no link */
-				lerr = hammer2_cluster_reconnect(hmp, fp);
+				lerr = hammer2_cluster_reconnect(hmp, fp,
+				    &ctx->tls);
 				if (lerr)
 					hprintf("cluster_fd: no link, error %d\n",
 					    lerr);

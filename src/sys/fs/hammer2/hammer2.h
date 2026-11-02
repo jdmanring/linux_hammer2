@@ -1183,6 +1183,8 @@ extern int hammer2_debug;
 extern int hammer2_sync_snapshot;	/* XXX Linux: see hammer2_synchro.c */
 extern int hammer2_sync_walks;		/* XXX Linux: see hammer2_synchro.c */
 extern int hammer2_remote_timeout_ms;	/* Linux: see hammer2_remote.c */
+extern unsigned int hammer2_cluster_tls_timeout_ms; /* Linux: see hammer2_iocom.c */
+extern int hammer2_cluster_tls_required;	/* Linux: see hammer2_iocom.c */
 hammer2_dev_t *hammer2_pfs_first_bdev(hammer2_pfs_t *);	/* Linux */
 extern int hammer2_io_buf_only;		/* Linux */
 extern int hammer2_cluster_meta_read;
@@ -1503,7 +1505,8 @@ int hammer2_msg_adhoc_input(kdmsg_msg_t *);
 /* hammer2_iocom.c */
 void hammer2_iocom_init(hammer2_dev_t *);
 void hammer2_iocom_uninit(hammer2_dev_t *);
-int hammer2_cluster_reconnect(hammer2_dev_t *, struct file *);
+int hammer2_cluster_reconnect(hammer2_dev_t *, struct file *,
+    const struct hammer2_link_tls *);	/* XXX Linux: the TLS inputs */
 void hammer2_link_devinit(hammer2_dev_t *);	/* XXX Linux */
 void hammer2_volconf_update(hammer2_dev_t *, int);
 

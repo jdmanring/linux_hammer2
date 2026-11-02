@@ -109,7 +109,8 @@ hammer2_ioctl_recluster(hammer2_inode_t *ip, void *data)
 			cluster = &ip->pmp->iroot->cluster;
 			if (hmp != NULL) {
 				/* XXX Linux: the intake's errno, was 0 */
-				error = hammer2_cluster_reconnect(hmp, fp);
+				error = hammer2_cluster_reconnect(hmp, fp,
+				    &recl->tls);
 			} else {
 				kprintf("hammer2: recluster: "
 					"nchains=%d no block device\n",

@@ -274,6 +274,21 @@ fewer: `braces {} are not necessary for any arm of this statement`
 moved from 1 to 0, at the mount's `cluster_fd=` intake, whose arm now
 holds the intake's error and its print. No category is new.
 
+1,606 to 1,614 with the link's PSK handshake. Three more `return (x);`
+in `hammer2_iocom.c`: `hammer2_link_check()`'s, and the intake's
+plaintext success and failed submit beside the PSK success that held
+the old one. Four more second lines indented by spaces, the KNF
+continuation: `cluster_tls_timeout_ms` and `cluster_tls_required`'s
+`module_param_named()` in `hammer2_vfsops.c`, and
+`hammer2_cluster_reconnect()`'s definition and declaration. One more
+unnamed prototype argument, that declaration's TLS inputs. One more
+`EOPNOTSUPP` in the errno row, `hammer2_link_submit()`'s on a kernel
+without `NET_HANDSHAKE`, which the intake's check refuses first, and one
+`ENOMEM` fewer, since the intake now assigns its allocation failure to
+the error it drops the file on. An assignment inside the check's `if`
+chain and a log string split across lines were fixed rather than
+baselined. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

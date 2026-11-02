@@ -58,6 +58,10 @@
 #include <linux/file.h>	/* Linux: fget, fput, the transport descriptor */
 #include <linux/net.h>	/* Linux: sock_from_file, kernel_sock_shutdown */
 #include <linux/utsname.h>	/* Linux: the node name hammer2_iocom.c labels its peer with */
+#include <linux/delay.h>	/* Linux: before ssleep() is renamed below */
+#include <linux/key.h>		/* Linux: key_serial_t, for the link's handshake */
+#include <net/handshake.h>	/* Linux: the link's TLS handshake upcall */
+#include <net/inet_connection_sock.h>	/* Linux: inet_csk_has_ulp, at the intake */
 
 #include "hammer2_compat.h"
 
@@ -1028,8 +1032,14 @@ hammer2_spin_unsh(hammer2_spin_t *p)
  * what makes this expressible at all: releasing it to sleep is legal
  * because it was never a spin lock.  README.porting.md records that as
  * FreeBSD's choice, whose sx(9) sleeps too, and not a Linux liberty.
+ *
+ * <linux/delay.h> declares ssleep(unsigned int) for seconds, and the
+ * networking headers the cluster link includes pull it in, so the name
+ * is moved aside here after that header is in and the carried callers
+ * keep DragonFly's spelling.
  */
 /* Linux */
+#define ssleep	hammer2_ssleep
 static inline void
 ssleep(const void *chan, hammer2_spin_t *spin,
     int pri __always_unused, const char *wmesg __always_unused, int timo)

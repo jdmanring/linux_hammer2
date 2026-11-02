@@ -550,16 +550,144 @@ hammer2_volconf_update(hammer2_dev_t *hmp, int index)
  * then waits again, and complete() would release only one of the two.
  * The status is the handshake core's, a negative errno against the
  * module's positive convention (net/handshake/netlink.c), and
- * -EINPROGRESS until it is known.  doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link section, is the design, of
- * which this is the plaintext half.
+ * -EINPROGRESS until it is known.  doc/CLUSTER_PROTOCOL_DESIGN.md, the
+ * TLS link section, is the design.
  */
 struct hammer2_link {
 	hammer2_dev_t		*hmp;
 	struct file		*fp;
+	struct hammer2_link_tls	tls;		/* the intake's inputs */
+	unsigned long		deadline;	/* jiffies, a PSK attempt's */
+	key_serial_t		peerid;		/* the key the peer proved */
 	int			status;		/* the handshake's, negative */
 	int			submitted;
 	struct completion	done;
 };
+
+static int
+hammer2_link_psk(const struct hammer2_link *l)
+{
+	return (l->tls.mode == HAMMER2_LINK_TLS_PSK);
+}
+
+/*
+ * The intake's refusals, made before anything is submitted or torn down,
+ * so a refused intake leaves the current link alone.  A positive errno,
+ * with the reason printed.
+ */
+static int
+hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
+{
+	struct socket *so = sock_from_file(fp);
+	const char *why = NULL;
+	int error = EINVAL;
+
+	if (tls->mode == HAMMER2_LINK_TLS_NONE) {
+		if (READ_ONCE(hammer2_cluster_tls_required))
+			why = "cluster_tls_required is set and no TLS was asked for";
+	} else if (tls->mode != HAMMER2_LINK_TLS_PSK) {
+		why = "unknown cluster_tls mode";
+	} else if (!IS_ENABLED(CONFIG_NET_HANDSHAKE)) {
+		why = "this kernel has no handshake upcall (NET_HANDSHAKE)";
+		error = EOPNOTSUPP;
+	} else if (so == NULL || !sk_is_tcp(so->sk)) {
+		why = "TLS needs a TCP socket over IPv4 or IPv6";
+	} else if (inet_csk_has_ulp(so->sk)) {
+		why = "the socket already carries an upper-layer protocol";
+		error = EBUSY;
+	} else if (tls->nkeys < 0 || tls->nkeys > HAMMER2_LINK_TLS_MAXKEYS) {
+		why = "more key serials than the intake takes";
+	} else if (tls->role == HAMMER2_LINK_TLS_CLIENT) {
+		if (tls->nkeys != 1)
+			why = "a client takes exactly one key serial";
+	} else if (tls->role == HAMMER2_LINK_TLS_SERVER) {
+		if (tls->keyring == 0 || tls->nkeys == 0)
+			why = "a server needs a keyring serial and a key serial";
+	} else {
+		why = "unknown cluster_tls_role";
+	}
+	if (why == NULL)
+		return (0);
+	hprintf("cluster link refused: %s\n", why);
+	return (error);
+}
+
+/* A server admits only a peer whose key is one the intake named. */
+static int
+hammer2_link_admitted(const struct hammer2_link *l)
+{
+	int i;
+
+	if (!hammer2_link_psk(l) || l->tls.role != HAMMER2_LINK_TLS_SERVER)
+		return (1);
+	for (i = 0; i < l->tls.nkeys; ++i) {
+		if (l->peerid == l->tls.keys[i])
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * The handshake core's done function, called in process context from
+ * tlshd's netlink request or a namespace's drain.  It blocks on nothing,
+ * touches nothing of the device but link_spin and link_work, and signals
+ * done as its last act, since every owner waits on done before freeing.
+ */
+static void
+hammer2_link_done(void *data, int status, key_serial_t peerid)
+{
+	struct hammer2_link *l = data;
+	hammer2_dev_t *hmp = l->hmp;
+
+	hammer2_spin_ex(&hmp->link_spin);
+	l->status = status;
+	l->peerid = peerid;
+	hammer2_spin_unex(&hmp->link_spin);
+	mod_delayed_work(system_dfl_long_wq, &hmp->link_work, 0);
+	complete_all(&l->done);
+}
+
+/*
+ * Cancel an owned PSK attempt's handshake.  True means the request was
+ * still pending and done will never be called, so the caller signals it;
+ * false means done has run or is running, since the request stays hashed
+ * until the socket is destructed and the owned file keeps it alive.
+ */
+static void
+hammer2_link_cancel(struct hammer2_link *l)
+{
+	if (IS_ENABLED(CONFIG_NET_HANDSHAKE) && hammer2_link_psk(l) &&
+	    tls_handshake_cancel(sock_from_file(l->fp)->sk))
+		complete_all(&l->done);
+}
+
+/*
+ * Submit a PSK attempt's handshake.  A client names its one key, which
+ * tlshd sends as its identity; a server names the keyring the core links
+ * into tlshd's, and the work checks the key tlshd reports against the
+ * intake's list.  Without the upcall the calls compile away, and
+ * hammer2_link_check() has refused already.
+ */
+static int
+hammer2_link_submit(struct hammer2_link *l)
+{
+	struct tls_handshake_args args = {
+		.ta_sock	= sock_from_file(l->fp),
+		.ta_done	= hammer2_link_done,
+		.ta_data	= l,
+		.ta_timeout_ms	= READ_ONCE(hammer2_cluster_tls_timeout_ms),
+	};
+
+	if (!IS_ENABLED(CONFIG_NET_HANDSHAKE))
+		return (EOPNOTSUPP);
+	if (l->tls.role == HAMMER2_LINK_TLS_SERVER) {
+		args.ta_keyring = l->tls.keyring;
+		return (-tls_server_hello_psk(&args, GFP_KERNEL));
+	}
+	args.ta_num_peerids = 1;
+	args.ta_my_peerids[0] = l->tls.keys[0];
+	return (-tls_client_hello_psk(&args, GFP_KERNEL));
+}
 
 void
 hammer2_link_devinit(hammer2_dev_t *hmp)
@@ -591,7 +719,8 @@ hammer2_link_end(struct hammer2_link *l, const char *why)
 {
 	wait_for_completion(&l->done);
 	if (why != NULL)
-		hprintf("cluster link refused: %s (%d)\n", why, l->status);
+		hprintf("cluster link refused: %s (status %d, peer key %d)\n",
+		    why, l->status, l->peerid);
 	fp_shutdown(l->fp, SHUT_RDWR);
 	fdrop(l->fp);
 	kfree(l);
@@ -613,8 +742,10 @@ hammer2_link_teardown(hammer2_dev_t *hmp)
 	l = hmp->link;
 	hmp->link = NULL;
 	hammer2_spin_unex(&hmp->link_spin);
-	if (l != NULL)
+	if (l != NULL) {
+		hammer2_link_cancel(l);
 		wait_for_completion(&l->done);
+	}
 	cancel_delayed_work_sync(&hmp->link_work);
 	if (l != NULL)
 		hammer2_link_end(l, NULL);
@@ -626,20 +757,42 @@ hammer2_link_work(struct work_struct *work)
 	hammer2_dev_t *hmp = container_of(to_delayed_work(work),
 	    hammer2_dev_t, link_work);
 	struct hammer2_link *l;
-	int status = 0, submitted = 0;
+	unsigned long deadline = 0;
+	int status = 0, submitted = 0, admitted = 1;
 
 	hammer2_spin_ex(&hmp->link_spin);
 	if (hmp->link != NULL) {
 		status = hmp->link->status;
 		submitted = hmp->link->submitted;
+		deadline = hmp->link->deadline;
+		admitted = hammer2_link_admitted(hmp->link);
 	}
 	hammer2_spin_unex(&hmp->link_spin);
 	if (!submitted)
 		return;
-	if (status != 0) {
+	if (status == -EINPROGRESS) {
+		/*
+		 * A timer armed for an earlier attempt, or spent by a work
+		 * that found nothing, is re-armed at this attempt's deadline.
+		 */
+		if (time_before(jiffies, deadline)) {
+			queue_delayed_work(system_dfl_long_wq, &hmp->link_work,
+			    deadline - jiffies);
+			return;
+		}
+		l = hammer2_link_claim(hmp);
+		if (l != NULL) {
+			hammer2_link_cancel(l);
+			hammer2_link_end(l, "the handshake timed out");
+		}
+		return;
+	}
+	if (status != 0 || !admitted) {
 		l = hammer2_link_claim(hmp);
 		if (l != NULL)
-			hammer2_link_end(l, "the handshake failed");
+			hammer2_link_end(l, status != 0 ?
+			    "the handshake failed" :
+			    "the peer's key is not one the intake admits");
 		return;
 	}
 	while (!hammer2_lk_tryex(&hammer2_mntlk)) {
@@ -673,28 +826,81 @@ hammer2_link_work(struct work_struct *work)
  * means the link is queued, not that LNK_CONN is.
  */
 int
-hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
+hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp,
+    const struct hammer2_link_tls *tls)
 {
+	static const struct hammer2_link_tls none;
 	struct hammer2_link *l;
+	unsigned long deadline;
+	int error, status;
 
-	l = kzalloc_obj(*l);
-	if (l == NULL) {
+	if (tls == NULL)
+		tls = &none;
+	error = hammer2_link_check(fp, tls);
+	if (error == 0) {
+		l = kzalloc_obj(*l);
+		if (l == NULL)
+			error = ENOMEM;
+	}
+	if (error) {
 		fdrop(fp);
-		return (ENOMEM);
+		return (error);
 	}
 	l->hmp = hmp;
 	l->fp = fp;
+	l->tls = *tls;
 	l->status = -EINPROGRESS;
 	init_completion(&l->done);
 	hammer2_mtx_ex(&hmp->link_mtx);
 	hammer2_link_teardown(hmp);
-	complete_all(&l->done);	/* plaintext: no handshake to wait for */
+	if (!hammer2_link_psk(l)) {
+		complete_all(&l->done);	/* no handshake to wait for */
+		hammer2_spin_ex(&hmp->link_spin);
+		l->status = 0;
+		l->submitted = 1;
+		hmp->link = l;
+		hammer2_spin_unex(&hmp->link_spin);
+		mod_delayed_work(system_dfl_long_wq, &hmp->link_work, 0);
+		hammer2_mtx_unlock(&hmp->link_mtx);
+		return (0);
+	}
+
+	/*
+	 * PSK.  The attempt's file is the caller's reference the submit
+	 * requires for its duration, and nothing drops it before the attempt
+	 * is marked submitted, since a teardown takes link_mtx.  The deadline
+	 * is copied first: once the attempt is marked submitted the work may
+	 * free it.
+	 */
+	deadline = jiffies +
+	    msecs_to_jiffies(READ_ONCE(hammer2_cluster_tls_timeout_ms));
+	l->deadline = deadline;
 	hammer2_spin_ex(&hmp->link_spin);
-	l->status = 0;
-	l->submitted = 1;
 	hmp->link = l;
 	hammer2_spin_unex(&hmp->link_spin);
-	mod_delayed_work(system_dfl_long_wq, &hmp->link_work, 0);
+	error = hammer2_link_submit(l);
+	if (error) {
+		/* Done is never called; nothing else ever saw it hooked. */
+		hammer2_spin_ex(&hmp->link_spin);
+		hmp->link = NULL;
+		hammer2_spin_unex(&hmp->link_spin);
+		hammer2_mtx_unlock(&hmp->link_mtx);
+		hprintf("cluster link refused: the handshake was not submitted (%d)\n",
+		    error);
+		fp_shutdown(fp, SHUT_RDWR);
+		fdrop(fp);
+		kfree(l);
+		return (error);
+	}
+	hammer2_spin_ex(&hmp->link_spin);
+	l->submitted = 1;
+	status = l->status;
+	hammer2_spin_unex(&hmp->link_spin);
+	if (status != -EINPROGRESS)
+		mod_delayed_work(system_dfl_long_wq, &hmp->link_work, 0);
+	else
+		queue_delayed_work(system_dfl_long_wq, &hmp->link_work,
+		    time_before(jiffies, deadline) ? deadline - jiffies : 0);
 	hammer2_mtx_unlock(&hmp->link_mtx);
 	return (0);
 }
