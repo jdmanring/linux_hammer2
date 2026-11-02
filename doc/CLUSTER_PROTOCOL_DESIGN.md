@@ -97,9 +97,9 @@ task", which is P9.
 
 The kernel verifies no CRC and keeps no span table. `kdmsg_iocom_thread_rd()`
 checks the magic, the header size and the 1 MiB aux bound
-(`kern_dmsg.c:342-378`); the CRCs are generated on transmit over the
+(`kern_dmsg.c:357-393`); the CRCs are generated on transmit over the
 aligned header with `hdr_crc` zeroed and over the aligned aux
-(`:2053-2060`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
+(`:2085-2092`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
 `iscsi_crc32`, the port's CRC-32C mapping (`hammer2_compat.h:156`).
 Received spans are open transactions under `state0`, and
 `hammer2_autodmsg()` monitors them (`hammer2_iocom.c:313`): a span whose
@@ -110,7 +110,7 @@ announced it, is left open with a result (`:374-410`). The kernel fills its own
 spans with `peer_id` set to the PFS's `pfs_clid`, `pfs_id` to its
 `pfs_fsid`, `pfs_type` from the root inode and `proto_version` 1
 before stage 2a, `PROTO_2` since (`:473-480`); a span carries no root inode. `msgid` is the kernel
-address of the transaction's state (`kern_dmsg.c:1849`), and
+address of the transaction's state (`kern_dmsg.c:1865`), and
 `link_verifier` is read nowhere in `kern_dmsg.c`.
 
 Two kernels are needed to test remoteness, since `hammer2_pfsalloc()`
@@ -408,7 +408,7 @@ the lock every walker of `hammer2_pfslist` holds (`:395`, `:797`,
 `:1351`), and therefore never on the connection's reader thread: the
 device unmount holds that lock through `hammer2_iocom_uninit()`
 (`:2852`), which waits for the reader and writer threads to exit
-(`kern_dmsg.c:257`), so a reader blocked on the lock would hang the
+(`kern_dmsg.c:272`), so a reader blocked on the lock would hang the
 unmount with no bound. The reader queues the detach to the connection's
 work item (the one registration uses). The work item takes the lock by
 try-lock and requeues itself after a delay when refused, as the sync
@@ -963,8 +963,8 @@ the round trip; a remote master registered after a local slave runs last
 by construction. That cost is measured in stage 2b against the local
 pass. **A silent loss is detected within the bound, not at the next
 request.** `kern_dmsg` has no keepalive: `LNK_PING` is sent only to
-unstick the reader at teardown (`kern_dmsg.c:265-273`) and is otherwise
-only answered (`:1175-1183`), and a span carries no status (C10), so a
+unstick the reader at teardown (`kern_dmsg.c:280-288`) and is otherwise
+only answered (`:1190-1198`), and a span carries no status (C10), so a
 partition that drops frames and keeps the socket would be seen only
 when a request timed out. A `PROTO_2` connection carries a second work item for the
 keepalive alone, delayed work that neither the registration and detach
@@ -974,7 +974,7 @@ a state callback, since the carried kernel answers no one-way `PING`
 (C15) and a transaction without `DELETE` would leak a state per ping,
 takes the reader's `DMSG_ERR_NOSUPP` reply as the answer, and when one
 goes unanswered for the bound ends the connection by the reader's own
-shutdown path (`KILLRX`, `kern_dmsg.c:121-133`), never by the teardown,
+shutdown path (`KILLRX`, `kern_dmsg.c:124-136`), never by the teardown,
 which disables the items and would wait on itself. That is what
 `hammer2_remote_keepalive()` does since 2026-10-26, armed by the peer's
 `PROTO_2` announcement on both ends of a link and stopped by the same
@@ -1309,7 +1309,7 @@ rather than from the design document alone.
   (`:197`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
   receive path builds its switch from `msg->state->icmd`
-  (`kern_dmsg.c:1166`), which is zero on `state0`, so a bare `PING`
+  (`kern_dmsg.c:1181`), which is zero on `state0`, so a bare `PING`
   falls through to `hammer2_rcvdmsg()`, which ignores a one-way message
   and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:270-283`).
   A keepalive is either a transaction whose refusal is the answer, or
@@ -1721,7 +1721,7 @@ functionality is exposed. Each item, and where the answer lives:
 | peer authentication | kernel TLS through the handshake upcall on the socket `RECLUSTER` or `cluster_fd=` hands in, PSK, requested by the intake and required of every intake by the module parameter `cluster_tls_required` (the TLS link section; a `copyinfo` row flag waits for 3.1; x509 is deferred there with its reasons and trigger); a peer is admitted only by a key serial the intake listed; no frame is read before the handshake completes, since the reader starts after it; `tlshd` holds the key material and the kernel only serials, DragonFly's boundary kept |
 | peer identity | the span's `peer_id`, bound to the key serial `tlshd` reports for the PSK the peer proved once stage 5 lands; before it, self-asserted and admitted only by an explicit `.none` marker, as DragonFly's `.none` admits a peer with no key |
 | cluster id validation | a span registers only against a local `pmp` whose `pfs_clid` the span's `peer_id` names and a `copyinfo[]` row with that `pfs_clid` admits, and only after the fetched root inode's `pfs_clid`, `pfs_fsid` and `pfs_type` match the span's `peer_id`, `pfs_id` and `pfs_type`; a reply frame carries no id, and binds to the element by the connection and the open request |
-| replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1849`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
+| replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1865`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
 | message freshness | the request's bound, `remote_timeout_ms`; a reply after its request aborted matches the abandoned state and is dropped there |
 | authorization by node type | a MASTER accepts modifying requests only from a MASTER of the same cluster id; a SLAVE's requests are read commands only and a modifying command from one is `DMSG_ERR_NOSUPP`; for a MASTER the check is its `pfs_type` as the fetched root inode states it, cross-checked against its span at registration; a SLAVE's span registers no slot and fetches no root, so a slave requester is admitted by its `copyinfo[]` row and its span alone, and the commands it may send are the read set in either case |
 | connection admission | closed by default: `h2service` dials only a peer with a `.pub` key or an explicit `.none` marker in its directory, as `libdmsg` refuses "unknown host"; the kernel registers a span only with a matching `copyinfo[]` row; everything else is monitored and logged, not registered |
@@ -1984,7 +1984,7 @@ ended the same way, with the line naming the reason, and without the
 mount lock. A success takes the lock, claims and quiesces as above; a
 claim that finds nothing hooked drops the lock and returns. The claimed
 file goes to `kdmsg_iocom_reconnect()`, which owns the reference from
-then on (`kern_dmsg.c:109-111`).
+then on (`kern_dmsg.c:112-114`).
 
 The teardown, run by an intake that finds an attempt hooked and by
 `hammer2_iocom_uninit()` before its quiesce, holds the mutex, so it never
@@ -2013,7 +2013,7 @@ holds the lock, and takes it no more afterwards.
 **The quiesce runs in the work item**, so the old link keeps serving
 until the new handshake has succeeded, and a pending or failed attempt
 costs nothing; `kdmsg_iocom_reconnect()` then replaces the descriptor
-as it does today (`kern_dmsg.c:114-149`). The control of the plan's
+as it does today (`kern_dmsg.c:117-152`). The control of the plan's
 5.3, a second `RECLUSTER` with a wrong PSK during a live link, reads
 the first link still up.
 

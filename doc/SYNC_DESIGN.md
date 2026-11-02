@@ -1125,7 +1125,7 @@ source before it was applied, and no lever-2 code precedes it.
    in `flags`, set only when the candidate is valid as item 2 defines
    it. A peer that predates the field sends zeroed reserved bytes and
    no flag, since a message is allocated zeroed
-   (`hammer2/kern_dmsg.c:1822-1823`),
+   (`hammer2/kern_dmsg.c:1838-1839`),
    so the slave adopts nothing and never prunes; the request needs no
    version for this field. The slave adopts the candidate in its own
    verified arm under item 2, and never one the master's legs refused,

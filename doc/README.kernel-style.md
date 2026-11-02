@@ -289,6 +289,13 @@ the error it drops the file on. An assignment inside the check's `if`
 chain and a log string split across lines were fixed rather than
 baselined. No category is new.
 
+1,614 to 1,615 with DragonFly's `7a91466016` carried into `kern_dmsg.c`.
+Its two `kdmsg_msg_alloc()` wrappers are two more `return (x);`, upstream's
+own text, and the same upstream commit removed one of the two lines of
+trailing whitespace the 2026-10-16 carry baselined, the one after
+`kdio_printf()`'s first argument in `kdmsg_state_abort()`. No category
+is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

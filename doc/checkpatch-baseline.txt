@@ -236,6 +236,12 @@
 # and hammer2_cluster_reconnect()'s second lines, its third prototype
 # argument; the intake's ENOMEM is now assigned, not returned. No
 # category is new. See README.kernel-style.md.
+# 1,614 to 1,615: `return is not a function` 378 -> 380 and `trailing
+# whitespace` 2 -> 1, DragonFly's 7a91466016 carried into kern_dmsg.c: its
+# two kdmsg_msg_alloc() wrappers return `return (x);` as upstream wrote them,
+# and the same commit removed the trailing space after kdio_printf()'s first
+# argument in kdmsg_state_abort(). No category is new. See
+# README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -266,7 +272,7 @@
 4 please, no space before tabs
 243 please, no spaces at the start of a line
 86 quoted string split across lines
-378 return is not a function, parentheses are not required
+380 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
@@ -293,4 +299,4 @@
 1 suspect code indent for conditional statements (16, 16)
 3 suspect code indent for conditional statements (8, 8)
 2 trailing statements should be on next line
-2 trailing whitespace
+1 trailing whitespace
