@@ -37,13 +37,13 @@ has been read back by DragonFly and the other way round
 
 ## Known limits
 
-- **Cluster link**: plaintext. A PSK handshake can be asked for at the
-  intake, whose refusals are read on both guest kernels; none has
-  completed, since no run has asked for one (both guests run `tlshd`,
-  and every intake a harness drives is refused before its request or
-  asks for no TLS), so no link here has carried
-  traffic encrypted, and a link that completes one would end at the
-  first TLS record that is not data, which the reader cannot yet read.
+- **Cluster link**: plaintext between guests, since the userland
+  service `test/h2service.c` asks for no handshake. A PSK handshake can
+  be asked for at the intake: on one guest, a link between two volumes
+  over TCP loopback completes it with `tlshd` and runs over kTLS, and a
+  wrong or unadmitted key is refused, read on both guest kernels. A
+  link would still end at the first TLS record that is not data, which
+  the reader cannot yet read.
   On a plaintext link the kernel verifies no peer identity and
   the serving side checks no `copyinfo` row, so whoever the userland
   service connects is a peer; an enabled row gates only the registration

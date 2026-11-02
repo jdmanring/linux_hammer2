@@ -129,7 +129,10 @@ promotes the socket to the TLS ULP, so the kernel never sees a key.
 depending on `SUNRPC || NVME_TARGET_TCP || NVME_TCP`, none of which the
 plain guest kernels set, and `CONFIG_TLS` and `CONFIG_CRYPTO_GCM` are unset in
 them; the three `-tls` builds of 1.0.72 set `CONFIG_NET_HANDSHAKE`,
-`CONFIG_TLS` and `CONFIG_CRYPTO_GCM`. DragonFly's
+`CONFIG_TLS` and `CONFIG_CRYPTO_GCM`, and since 2026-11-02
+`CONFIG_CRYPTO_CHACHA20POLY1305` and `CONFIG_CRYPTO_CCM`, since `tlshd`
+negotiates any cipher kTLS defines whether or not the kernel can
+install it. DragonFly's
 `/etc/hammer2/remote/<name>.pub` and `<name>.none`,
 with "auth failure: unknown host" when neither exists
 (`lib/libdmsg/crypto.c:390-398` upstream), are the admission semantics
@@ -2054,9 +2057,12 @@ the intake is, and `fp_read()` still reads every link through
 `kernel_read()` (`hammer2_os.h:1648`). Until it is, a completed PSK link
 ends silently at the first record that is not data: the reader stops on
 the read's error with no line of its own (its only error print,
-`kern_dmsg.c:457-459`, is compiled out) and serves nothing after it; no handshake has completed on a guest yet, since
-no run has asked for one: both guests run `tlshd`, and every intake a
-harness drives is refused before its request or asks for no TLS.
+`kern_dmsg.c:457-459`, is compiled out) and serves nothing after it.
+One PSK link has completed, on one guest between two volumes over TCP
+loopback with `tlshd` answering (`cluster-dmsg.sh H2_DMSG_TLS=1`): kTLS
+installed on both sockets, spans exchanged, and the link up after five
+keepalive intervals with no record but data on it, since `tlshd` sends
+no session ticket. No link between two guests has asked for one.
 
 **Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
 relay mode parses frames (`relay_pair()` reads each through

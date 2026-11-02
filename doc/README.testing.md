@@ -1118,7 +1118,12 @@ Three TLS builds sit beside them since 2026-10-29: `7.3.0-tls` from
 `~/kernels/linux-7.3-tls`, `7.3.0-release-tls` from
 `~/kernels/linux-7.3-release-tls`, and `7.3.0-kasan-tls` from
 `~/kernels/linux-7.3-kasan-tls`, each its plain twin's configuration plus
-`TLS`, `CRYPTO_GCM`, and `NVME_TCP` with `NET_HANDSHAKE`, chosen at
+`TLS`, `CRYPTO_GCM`, and `NVME_TCP` with `NET_HANDSHAKE`, and since
+2026-11-02 `CRYPTO_CHACHA20POLY1305` and `CRYPTO_CCM` as well, the other
+AEADs kTLS installs: `tlshd` offers every cipher its headers define
+without asking the running kernel, so a build without one completed a
+handshake on ChaCha20-Poly1305 and then failed to install it. The
+recipe is `~/kernels/build-7.3-tls.sh`. They are chosen at
 boot by `setkernel-7.3tls.sh` under the grub names `h2debug-7.3tls`,
 `h2release-7.3tls` and `h2kasan-7.3tls`. The old three stay installed
 as the comparison, and a reading names the build it ran on.

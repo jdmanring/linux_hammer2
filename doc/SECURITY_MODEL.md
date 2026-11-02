@@ -72,14 +72,15 @@ latency, the half that was never measured").
   the kernel's handshake upcall (`cluster_tls=psk`, or `RECLUSTER`'s TLS
   inputs), with `tlshd` holding the keys and the kernel only their
   serials, and a server intake then admits only a peer whose key serial
-  it named. The intake's refusals are read on both guest kernels; no
-  handshake has completed, since no run has asked for one (both guests
-  run `tlshd`, and every intake a harness drives is refused before its
-  request or asks for no TLS), so no link here
-  has carried traffic encrypted, and a link that completes one would end
+  it named. Read on both guest kernels on one guest: a link between
+  two volumes over TCP loopback completes the handshake with `tlshd`,
+  runs with kTLS on both sockets and carries no frame in the clear; a
+  wrong PSK is refused at both ends; and a server refuses a peer whose
+  key `tlshd` found but the intake did not name. A link would still end
   at the first TLS record that is not data, which the reader cannot yet
-  read. Every link `test/h2service.c` dials is plaintext, since it asks
-  for no handshake. The
+  read. No link between two guests runs TLS: every link
+  `test/h2service.c` dials is plaintext, since it asks for no
+  handshake. The
   `cluster_tls_required` module parameter (0 by default) refuses a
   plaintext intake when set to 1. The rest is P8's TLS stage.
 
