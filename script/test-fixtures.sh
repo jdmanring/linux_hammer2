@@ -317,7 +317,8 @@ foreign-type -25
 zero-size -22'
 IOCTL_UNPRIV_EXPECT='version 0
 unpriv-pfs-get -1
-unpriv-inode-set -1'
+unpriv-inode-set -1
+unpriv-bulkfree -1'
 
 fail=0
 images=0

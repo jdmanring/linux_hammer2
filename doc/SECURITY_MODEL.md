@@ -37,6 +37,17 @@ device keeps its write order, and the cache flush comes with the next
 volume flush (`doc/history/verification-record.md`, "Per-operation
 latency, the half that was never measured").
 
+## Local callers
+
+Every HAMMER2 ioctl wants `CAP_SYS_ADMIN` except the version query and
+`HAMMER2IOC_INODE_GET`, which any user with a file open on the volume
+may issue. DragonFly also lets any user start a bulkfree scan; the port
+does not, since a scan syncs every PFS on the device holding the global
+mount lock (`hammer2_mntlk`), during which mounts, unmounts, pfs-delete
+and every cluster request on the host wait, and then holds the device's
+bulkfree lock across a pass over its metadata, which delays any other
+scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
+
 ## The cluster link
 
 - **Transport**: plaintext TCP carrying DragonFly's `dmsg` frames. On a

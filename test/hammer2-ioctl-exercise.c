@@ -62,6 +62,7 @@ main(int argc, char **argv)
 	struct hammer2_ioc_pfs pfs;
 	struct hammer2_ioc_inode ino;
 	struct hammer2_ioc_volume_list2 vol;
+	hammer2_ioc_bulkfree_t bfi;
 	int unpriv = 0, npfs = 0;
 
 	memset(&pfs, 0, sizeof(pfs));
@@ -82,7 +83,7 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * VERSION_GET is one of the three commands the entry point lets an
+	 * VERSION_GET is one of the two commands the entry point lets an
 	 * unprivileged caller issue, so it is the control that says the
 	 * dropped-privilege run reached the module at all. Without it an
 	 * EPERM below could equally mean the mount was never opened.
@@ -137,6 +138,15 @@ main(int argc, char **argv)
 	} else {
 		say("unpriv-pfs-get", ioctl(fd, HAMMER2IOC_PFS_GET, &pfs));
 		say("unpriv-inode-set", ioctl(fd, HAMMER2IOC_INODE_SET, &ino));
+		/*
+		 * DragonFly lets any user start a bulkfree scan; the port
+		 * does not, since the scan syncs every PFS under the global
+		 * mount lock and then holds the device's bulkfree lock.  On
+		 * the read-only fixtures the module without that check
+		 * answers EROFS before scanning, so EPERM here is the check.
+		 */
+		memset(&bfi, 0, sizeof(bfi));
+		say("unpriv-bulkfree", ioctl(fd, HAMMER2IOC_BULKFREE_SCAN, &bfi));
 	}
 
 	close(fd);

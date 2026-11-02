@@ -926,12 +926,15 @@ const struct inode_operations hammer2_dir_iops = {
  * Linux: the ioctl entry.  FreeBSD's hammer2_ioctl() hands the command
  * to hammer2_ioctl_impl() with the argument already copied in by the
  * syscall layer; here the copy is this function's, sized by the command
- * word, and the result copied back for a command that reads.  The
- * privilege rule is DragonFly's: every command wants root except
- * HAMMER2IOC_VERSION_GET and HAMMER2IOC_INODE_GET, which any user may
- * issue, and HAMMER2IOC_BULKFREE_SCAN, which DragonFly leaves open too.
- * The FreeBSD port checks nothing, and a snapshot or a PFS deletion is
- * not an operation to hand to every user with a file open.
+ * word, and the result copied back for a command that reads.  Every
+ * command wants CAP_SYS_ADMIN except HAMMER2IOC_VERSION_GET and
+ * HAMMER2IOC_INODE_GET, which any user may issue.  DragonFly leaves
+ * HAMMER2IOC_BULKFREE_SCAN open as well, but a scan syncs every PFS on
+ * the device under hammer2_mntlk and then holds the device's bulkfree
+ * lock for its pass, so any user with a file open could repeat both; it
+ * wants the capability here, as ext4's FITRIM does (fs/ext4/ioctl.c).  The
+ * FreeBSD port checks nothing, and a snapshot or a PFS deletion is not
+ * an operation to hand to every user with a file open.
  */
 static long
 hammer2_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -945,7 +948,6 @@ hammer2_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 	case HAMMER2IOC_VERSION_GET:
 	case HAMMER2IOC_INODE_GET:
-	case HAMMER2IOC_BULKFREE_SCAN:
 		break;
 	default:
 		if (!capable(CAP_SYS_ADMIN))
