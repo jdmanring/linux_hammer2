@@ -6,10 +6,16 @@
  * volume's copyinfo[] rows, dials each remote, authenticates it against
  * /etc/hammer2/remote/<name>.pub, and hands the kernel one end of the
  * link.  This program does the same with the admission reduced to the
- * marker the note names for every stage before 5: a peer is dialed only
- * when KEYDIR holds <label>.none, the explicit plaintext opt-out, or
- * <label>.pub, which stage 5 will read; with neither the dial is refused
- * and the line says so, which is libdmsg's "auth failure: unknown host".
+ * marker the note names for every stage before 5: a plaintext dial goes
+ * ahead only when KEYDIR holds <label>.none, the explicit plaintext
+ * opt-out, or <label>.pub; with neither the dial is refused and the line
+ * says so, which is libdmsg's "auth failure: unknown host".  A dial with
+ * --tls-role asks the kernel for a PSK handshake on the socket and admits
+ * the row by its .pub alone, upstream's marker for a keyed peer, so a row
+ * marked only plaintext is never handed in as a TLS link.  The key
+ * material stays in the keyring; only the serials cross the ioctl, the
+ * fields of struct hammer2_link_tls that test/h2attach.c's
+ * recluster_key() fills the same way.
  *
  * The socket itself is the link.  kern_dmsg reads and writes the file it
  * is handed with kernel_read() and kernel_write(), which a TCP socket's
@@ -24,7 +30,8 @@
  *                      [--type master|slave]     one row; prints its copyid
  *   h2service del  MNT (--copyid N | --path P)
  *   h2service dial MNT [--keys DIR] [--copyid N] [--timeout-ms N]
- *                                                dial one admitted row
+ *                      [--tls-role server|client [--tls-keyring SERIAL]
+ *                       --tls-key SERIAL ...]   dial one admitted row
  *
  * The rows are the on-disk hammer2_volconf_t of the volume's header, so
  * `add` is a volume header write and needs a read-write mount of a PFS on
@@ -53,14 +60,16 @@
 #define __packed	__attribute__((__packed__))
 #include "hammer2_ioctl.h"
 
-static void
+static void __attribute__((__noreturn__))
 usage(void)
 {
 	fprintf(stderr,
 	    "usage: h2service scan MNT\n"
 	    "       h2service add  MNT --clid UUID --label L --path span:HOST:PORT [--type master|slave]\n"
 	    "       h2service del  MNT (--copyid N | --path P)\n"
-	    "       h2service dial MNT [--keys DIR] [--copyid N] [--timeout-ms N]\n");
+	    "       h2service dial MNT [--keys DIR] [--copyid N] [--timeout-ms N]\n"
+	    "                     [--tls-role server|client [--tls-keyring SERIAL]\n"
+	    "                      --tls-key SERIAL ...]\n");
 	exit(2);
 }
 
@@ -218,19 +227,21 @@ cmd_del(int mfd, int copyid, const char *path)
 	return (0);
 }
 
-/* The admission test: the marker file for the row's label. */
+/* The admission test: the marker file for the row's label.  A TLS dial
+ * takes only .pub. */
 static const char *
-admitted(const char *keys, const char *label)
+admitted(const char *keys, const char *label, int tls)
 {
 	static char p[4096];
 	struct stat st;
 
 #ifdef H2SERVICE_NOADMIT
 	/* the negative control, script/cluster-wire.sh's: every row admitted */
+	(void)tls;
 	return ("control");
 #endif
 	snprintf(p, sizeof(p), "%s/%s.none", keys, label);
-	if (stat(p, &st) == 0)
+	if (!tls && stat(p, &st) == 0)
 		return ("none");
 	snprintf(p, sizeof(p), "%s/%s.pub", keys, label);
 	if (stat(p, &st) == 0)
@@ -274,7 +285,8 @@ dial_tcp(const char *host, const char *port, int timeout_ms)
 }
 
 static int
-cmd_dial(int mfd, const char *keys, int want, int timeout_ms)
+cmd_dial(int mfd, const char *keys, int want, int timeout_ms,
+    const struct hammer2_link_tls *tls)
 {
 	struct hammer2_ioc_remote r;
 	struct hammer2_ioc_recluster recl;
@@ -300,12 +312,13 @@ cmd_dial(int mfd, const char *keys, int want, int timeout_ms)
 	}
 	r.copy1.label[sizeof(r.copy1.label) - 1] = 0;
 	r.copy1.path[sizeof(r.copy1.path) - 1] = 0;
-	how = admitted(keys, (const char *)r.copy1.label);
+	how = admitted(keys, (const char *)r.copy1.label, tls->mode);
 	if (how == NULL) {
 		fprintf(stderr, "h2service: refused copyid=%d label=%s: "
-		    "auth failure: unknown host (no %s/%s.none or .pub)\n",
+		    "auth failure: unknown host (no %s/%s%s)\n",
 		    r.copy1.copyid, (const char *)r.copy1.label, keys,
-		    (const char *)r.copy1.label);
+		    (const char *)r.copy1.label,
+		    tls->mode ? ".pub, which a TLS dial needs" : ".none or .pub");
 		return (1);
 	}
 	memcpy(host, r.copy1.path + 5, sizeof(host) - 5);
@@ -322,14 +335,17 @@ cmd_dial(int mfd, const char *keys, int want, int timeout_ms)
 		return (1);
 	memset(&recl, 0, sizeof(recl));
 	recl.fd = fd;
+	recl.tls = *tls;
 	if (ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0) {
 		fprintf(stderr, "h2service: RECLUSTER: %s\n", strerror(errno));
 		close(fd);
 		return (1);
 	}
 	close(fd);	/* the kernel holds its own reference */
-	printf("h2service: dialed copyid=%d label=%s %s:%s key=%s handed in\n",
-	    r.copy1.copyid, (const char *)r.copy1.label, host, colon + 1, how);
+	printf("h2service: dialed copyid=%d label=%s %s:%s key=%s tls=%s handed in\n",
+	    r.copy1.copyid, (const char *)r.copy1.label, host, colon + 1, how,
+	    !tls->mode ? "none" : tls->role == HAMMER2_LINK_TLS_SERVER ?
+	    "psk-server" : "psk-client");
 	return (0);
 }
 
@@ -339,11 +355,13 @@ main(int argc, char **argv)
 	const char *cmd, *mnt, *clid = NULL, *label = NULL, *path = NULL;
 	const char *type = NULL, *keys = "/etc/hammer2/remote";
 	int copyid = -1, timeout_ms = 5000, mfd, rc;
+	struct hammer2_link_tls tls;
 
 	if (argc < 3)
 		usage();
 	cmd = argv[1];
 	mnt = argv[2];
+	memset(&tls, 0, sizeof(tls));
 	for (int i = 3; i + 1 < argc; i += 2) {
 		const char *a = argv[i], *v = argv[i + 1];
 		if (!strcmp(a, "--clid")) clid = v;
@@ -353,9 +371,22 @@ main(int argc, char **argv)
 		else if (!strcmp(a, "--keys")) keys = v;
 		else if (!strcmp(a, "--copyid")) copyid = atoi(v);
 		else if (!strcmp(a, "--timeout-ms")) timeout_ms = atoi(v);
-		else usage();
+		else if (!strcmp(a, "--tls-role")) {
+			tls.mode = HAMMER2_LINK_TLS_PSK;
+			if (!strcmp(v, "server")) tls.role = HAMMER2_LINK_TLS_SERVER;
+			else if (!strcmp(v, "client")) tls.role = HAMMER2_LINK_TLS_CLIENT;
+			else usage();
+		} else if (!strcmp(a, "--tls-keyring")) tls.keyring = atoi(v);
+		else if (!strcmp(a, "--tls-key")) {
+			if (tls.nkeys >= HAMMER2_LINK_TLS_MAXKEYS)
+				usage();
+			tls.keys[tls.nkeys++] = atoi(v);
+		} else usage();
 	}
-	if ((argc - 3) % 2)
+	/* a serial without a role would be dropped by a plaintext intake;
+	 * what a role needs beyond that is the kernel's to refuse, with the
+	 * line hammer2_link_check() prints */
+	if ((argc - 3) % 2 || (!tls.mode && (tls.keyring || tls.nkeys)))
 		usage();
 	mfd = open_mount(mnt);
 	if (!strcmp(cmd, "scan"))
@@ -365,7 +396,7 @@ main(int argc, char **argv)
 	else if (!strcmp(cmd, "del"))
 		rc = cmd_del(mfd, copyid, path);
 	else if (!strcmp(cmd, "dial"))
-		rc = cmd_dial(mfd, keys, copyid, timeout_ms);
+		rc = cmd_dial(mfd, keys, copyid, timeout_ms, &tls);
 	else
 		usage();
 	close(mfd);
