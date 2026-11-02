@@ -127,8 +127,10 @@ sunrpc, where the agent `tlshd` holds the certificates or PSKs and
 promotes the socket to the TLS ULP, so the kernel never sees a key.
 `CONFIG_NET_HANDSHAKE` is a `bool` with `default y` and no prompt,
 depending on `SUNRPC || NVME_TARGET_TCP || NVME_TCP`, none of which the
-guest kernels set, and `CONFIG_TLS` and `CONFIG_CRYPTO_GCM` are unset in
-them. DragonFly's `/etc/hammer2/remote/<name>.pub` and `<name>.none`,
+plain guest kernels set, and `CONFIG_TLS` and `CONFIG_CRYPTO_GCM` are unset in
+them; the three `-tls` builds of 1.0.72 set `CONFIG_NET_HANDSHAKE`,
+`CONFIG_TLS` and `CONFIG_CRYPTO_GCM`. DragonFly's
+`/etc/hammer2/remote/<name>.pub` and `<name>.none`,
 with "auth failure: unknown host" when neither exists
 (`lib/libdmsg/crypto.c:390-398` upstream), are the admission semantics
 to preserve.
@@ -1716,8 +1718,8 @@ functionality is exposed. Each item, and where the answer lives:
 
 | item | answer |
 |---|---|
-| peer authentication | kernel TLS through the handshake upcall on the socket `RECLUSTER` hands in, x509 or PSK, requested when the mount option `cluster_tls=x509|psk` or the `copyinfo` row says so; a frame before the handshake completes is refused; `tlshd` holds the keys and the kernel none, DragonFly's boundary kept |
-| peer identity | the span's `peer_id`, bound to the authenticated TLS identity once stage 5 lands; before it, self-asserted and admitted only by an explicit `.none` marker, as DragonFly's `.none` admits a peer with no key |
+| peer authentication | kernel TLS through the handshake upcall on the socket `RECLUSTER` or `cluster_fd=` hands in, PSK, requested by the intake and required of every intake by the module parameter `cluster_tls_required` (the TLS link section; a `copyinfo` row flag waits for 3.1; x509 is deferred there with its reasons and trigger); a peer is admitted only by a key serial the intake listed; no frame is read before the handshake completes, since the reader starts after it; `tlshd` holds the key material and the kernel only serials, DragonFly's boundary kept |
+| peer identity | the span's `peer_id`, bound to the key serial `tlshd` reports for the PSK the peer proved once stage 5 lands; before it, self-asserted and admitted only by an explicit `.none` marker, as DragonFly's `.none` admits a peer with no key |
 | cluster id validation | a span registers only against a local `pmp` whose `pfs_clid` the span's `peer_id` names and a `copyinfo[]` row with that `pfs_clid` admits, and only after the fetched root inode's `pfs_clid`, `pfs_fsid` and `pfs_type` match the span's `peer_id`, `pfs_id` and `pfs_type`; a reply frame carries no id, and binds to the element by the connection and the open request |
 | replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1849`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
 | message freshness | the request's bound, `remote_timeout_ms`; a reply after its request aborted matches the abandoned state and is dropped there |
@@ -1727,6 +1729,331 @@ functionality is exposed. Each item, and where the answer lives:
 | key storage | `tlshd`'s, outside the kernel and outside this tree; `h2service`'s key directory is the harness's for stages before 5 |
 | encrypted transport | kernel TLS, stage 5; `tcpdump` on the relay port must show no `0x4832` magic in the clear with TLS on and must show it with TLS off |
 | a stale node rejoining as current | decision B: what reads "behind" on a reconnecting master is the protocol note's, with the durable record it carries; this note records that no tid the flush moves can read it (C1, C2, C8, C9) and that a fence one coordinator holds is not one (C10); until then a master whose PFS is unmounted on its host is offline and registers nothing |
+
+## The TLS link (stage 5, designed before its code)
+
+Kernel TLS reaches the link through the handshake upcall, and the upcall
+fixes most of the shape. The citations in this section to `net/`,
+`include/net/`, `kernel/` and `drivers/` are to `~/kernels/linux-7.3`;
+those to `src/tlshd/` are to ktls-utils 1.5.0 (GPL-2.0, the release of
+2026-09-23), whose tarball, sha256
+`221631ac1c10578a9cd03c45ace5f73491688661486b90969634dcda6511ac69`, sits
+in the data tree beside its extraction `src-ktls-utils-1.5.0/`.
+`tls_client_hello_psk()` and its siblings submit a request that pins the
+socket's file (`net/handshake/request.c:274`) and return before any
+handshake runs; the pin is dropped by whichever side owns the end
+(`:336`, `:383`), and the request itself lives until the socket is
+destructed (`:86-100`), so a second submit on the same socket fails
+`EBUSY` (`:293-295`). `tlshd` accepts the request, which installs a
+descriptor for the socket in `tlshd`, runs the handshake in userland,
+installs the kernel TLS state on the socket, and reports through a
+netlink command. The consumer's done function is called by
+`handshake_complete()` (`:324-339`) from three sites, each in process
+context: the accept handler with `-EIO` and no peer information when the
+accept fails (`net/handshake/netlink.c:125-127`), `tlshd`'s report
+(`:162`), and a network namespace's exit with `-ETIMEDOUT` (`:215`). One
+bit, `HANDSHAKE_F_REQ_COMPLETED`, decides who owns the end: whichever of
+completion and cancellation sets it first. `tls_handshake_cancel()`
+returning true means this call set it, so the done function will never
+run; false means either that the done function has run or is running,
+or that no request is hashed for the socket at all (`net/handshake/request.c:359-363`),
+which is the case for a socket never submitted and for one whose submit
+failed, since the failure path destroys and unhashes the request without
+calling the done function (`:314-318`). An accepted request that is
+canceled leaves `tlshd` holding its descriptor and working on the
+socket, and its own report later finds the bit set and does nothing.
+
+
+**The intake.** Both intakes, `HAMMER2IOC_RECLUSTER` and the mount's
+`cluster_fd=`, gain the same inputs: the mode (none or PSK), the role
+(client or server), a keyring serial, and up to five key serials. The
+ioctl carries them in its reserved bytes (`hammer2_ioctl.h:73-76`, 252
+bytes unused), so the ioctl number and size do not change and a caller
+that zeroes the structure asks for no TLS. The mount carries them as
+`cluster_tls=psk`, `cluster_tls_role=client|server`,
+`cluster_tls_keyring=<serial>` and `cluster_tls_key=<serial>`, the last
+repeatable, as NFS takes its key serials as mount options
+(`fs/nfs/fs_context.c:226-227`). The role cannot be the dialing side,
+since both guests dial the relay, nor the cluster id, which both ends
+share by construction, and the caller that hands the socket in is the
+one that knows which end it is, so the role is an input of the intake.
+Before anything is submitted the intake refuses, each with one named
+line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
+connected stream socket, `hammer2_os.h:1743-1760`, and the submit any
+socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
+pair would fail only when `tlshd` installed kernel TLS); a socket already
+carrying an upper-layer protocol (`inet_csk_has_ulp()`,
+`include/net/inet_connection_sock.h:346-349`); a client with other than
+one key serial; a server with no keyring serial or no key serial. A
+refusal, or any error the submit returns (`ESRCH` when no `tlshd` is
+listening, `net/handshake/netlink.c:47-49`, among them), is
+`RECLUSTER`'s return value; the mount prints the line and completes with
+no link, as it does today on a bad `cluster_fd=`
+(`hammer2_vfsops.c:1582`). The mount intake exists only on a device's
+first mount (`:1575`, inside the branch that allocates the device;
+`:1585-1593` is a later mount's), so these options on a later mount are
+ignored as `cluster_fd=` is, and `RECLUSTER` is the intake for a device
+already mounted. The security table's "or the `copyinfo` row says so" is
+not built in stage 5: a row flag is a change of media meaning, and the
+row's reserved bytes are the lease note's (stage 3.1) to assign, since
+`REMOTE_ADD` copies a whole row from userland (`hammer2_ioctl.c:216`).
+What stage 5 enforces instead is a module parameter,
+`cluster_tls_required`: set, an intake asking for no TLS is refused the
+same way, `EINVAL` from the ioctl and a named line with no link from the
+mount. It defaults to 0, since the relay's content-keyed fault cells
+read frames and stay plaintext.
+
+**The keys.** The kernel holds serials and `tlshd` the key material, so
+the table's "the kernel none" is restated as "the kernel no key
+material". A client passes its one key serial as the request's peer
+identity, which `tls_client_hello_psk()` refuses to submit without
+(`net/handshake/tlshd.c:347-349`). `tlshd` reads the key by serial,
+whatever its type, the identity being the key's description
+(`src/tlshd/keyring.c:56-83`) and the PSK its payload (`:95-113`). One
+serial and not several: `tlshd` tries a further serial only after a
+handshake that failed with `EACCES`, with a new ClientHello on the same
+socket (`src/tlshd/client.c:675-680`), and by then the server's side
+has reported its failure and ended the attempt. A server passes the
+keyring serial, which the kernel links into `tlshd`'s process keyring
+when `tlshd` accepts (`net/handshake/tlshd.c:112-143`, called at
+`:204-206`); a serial `tlshd` may not link fails the accept, and so
+reaches the done function as `-EIO`, not as a handshake failure. The
+server then searches for a key of type `psk` whose description matches
+the client's identity, first in its process keyring and then in its
+session keyring (`src/tlshd/server.c:509-517`, `:540`), reporting the
+serial it found (`:554`). That search is not confined to the keyring the
+intake named: the session keyring holds NVMe's `.nvme` keyring
+unconditionally (`src/tlshd/config.c:120-123`) and any keyring
+`tlshd`'s configuration names, and the `psk` type matches a key whose
+description begins with the identity sent
+(`drivers/nvme/common/keyring.c:50-69`). So a server also passes the
+serials it admits, up to five, and the work refuses a peer serial that
+is not among them, with a named line, which is what makes a client
+holding some other PSK `tlshd` can reach fail; and the harness gives
+every hammer2 identity one fixed length, so none is a prefix of another.
+The reported serial names the key the peer proved, so binding the span's
+`peer_id` to it (the plan's 5.5) has an identity to bind to. The `psk`
+key type is registered only by the `nvme-keyring` module
+(`drivers/nvme/common/keyring.c:79, 268`), built as a module in the
+`-tls` kernels. The server's search needs it; a client's key may be of
+any type `tlshd` can read. Either guest can take the server role, so
+the harness loads `nvme-keyring` on both; this module calls nothing in
+it, and the dependency is stated in the testing page and the
+capabilities row.
+
+**x509 is not built in stage 5.** Three properties of the upcall and of
+`tlshd` 1.5.0, each read on the source, leave it without what PSK gives.
+An x509 server asks for a client certificate and does not require one
+(`src/tlshd/server.c:462`): a client offering none completes with
+success and no peer identity (`:341-343`, `net/handshake/tlshd.c:100`),
+and every verified certificate reports the same value, `UINT_MAX`,
+whatever its subject (`src/tlshd/server.c:378`), so the kernel could
+refuse the first but could learn only membership of the trust store's
+authority, never which peer, and nfsd reads it no further
+(`net/sunrpc/svcsock.c:468-469`). Both sides check against `tlshd`'s
+configured trust store or, with none, the system's
+(`src/tlshd/client.c:62-67`, `src/tlshd/server.c:291-296`), which the
+kernel cannot see. And an x509 client must pass the name the server's
+certificate carries, since without one `tlshd` takes the reverse lookup
+of the socket's peer (`src/tlshd/netlink.c:749-762`), which through the
+relay names the relay or nothing; the handshake core keeps that name as
+the caller's pointer (`net/handshake/tlshd.c:53`) and reads it in the
+accept (`:222-224`) after the request has left the pending list
+(`net/handshake/request.c:195-218`), where a cancel still returns true,
+so the string must outlive an accept the caller has no way to wait for.
+It is deferred with a trigger, a deployment that cannot distribute one
+PSK per link, and building it then needs the client's peer name stored
+for the module's life, the server refusing a client with no certificate,
+the identity read from the certificate by a means the upcall does not
+have today, and both trust stores named in the guests' configuration.
+
+**One tail, run by one work item.** Every intake, plaintext included,
+ends in the device's work item, which runs what
+`hammer2_cluster_reconnect()` runs today: the quiesce,
+`kdmsg_iocom_reconnect()`, `hammer2_ctl_connwait()`, the `LNK_CONN`
+fields, `kdmsg_iocom_autoinitiate()` and `hammer2_remote_connected()`
+(`hammer2_iocom.c:169-230`). The plaintext case goes through it too,
+because the `cluster_fd=` intake holds `hammer2_mntlk` from
+`hammer2_vfsops.c:1258` to past the intake at `:1575-1580`, and the
+tail's quiesce takes it again in `hammer2_remote_conn_end()`
+(`hammer2_remote.c:2777`, a `down_write()`, `hammer2_os.h:188-191`) on
+the same task, which hangs the mount. `0d0717d` added that take, and
+`cluster-dmsg.sh`'s `H2_DMSG_CLUSTERFD=1` drives it: on `h2debug-7.3tls`
+the mount stayed in D state at `hammer2_remote_quiesce()` under
+`hammer2_get_tree()`, and lockdep reported `h2_mnt`, the lock's name,
+acquired while already held (two runs, 2026-11-01). `RECLUSTER` is
+called without the lock and is unaffected today. The work item is a
+delayed work of the device, on `system_dfl_long_wq`
+(`include/linux/workqueue.h:476`), since its wait for the lock can
+outlast a bulkfree run; `system_unbound_wq` is deprecated in 7.3 and
+warns on first use (`kernel/workqueue.c:2333-2336, 8229`), and the
+device's `rm->wq` is flushed by the quiesce (`hammer2_remote.c:187`).
+The work, the device's spinlock and its mutex (both below) are
+initialized with the device at its allocation (`hammer2_vfsops.c:1343`),
+because `hammer2_iocom_uninit()`, which runs the teardown, runs on
+mount-failure paths before `hammer2_iocom_init()` (`:1359, 1468, 1480`).
+For a successful attempt, in this order, the work takes `hammer2_mntlk`
+by try-lock in a loop that sleeps 10 ms and leaves when no attempt is
+hooked on the device, as the server's lookup does
+(`hammer2_remote.c:684-694`); claims the attempt; calls the quiesce with
+the lock held, `hammer2_remote_conn_end()` gaining a held-lock argument
+apart from `final`, which today means both "closed" and "held"; and
+drops the lock, as `conn_end` does today (`:2794-2795`). Claiming before
+the quiesce means a teardown that unhooks the attempt first leaves the
+old link alone. The rest of the tail takes no `hammer2_mntlk`: a server
+request leaves its try-lock loop once the state is not open (`:684-686`)
+and the quiesce has flushed their queue, and registration, the other
+taker (`:2706`), is disabled in `conn_end` (`:2774`) until
+`hammer2_remote_connected()` enables it again. The intake returns once
+the request is submitted or, in plaintext, once the work is queued, so a
+return from `RECLUSTER` no longer means `LNK_CONN` is queued; the
+harnesses wait on the line the tail prints.
+
+**The attempt and its owner.** Each intake allocates an attempt holding
+the device, the file, the inputs, a status that starts at
+`-EINPROGRESS`, the peer serial the done function reports, a completion,
+a deadline, and a submitted flag. The device has a spinlock of its own,
+under which it points at its current attempt and under which the
+attempt's status and submitted flag are written and read, and a mutex
+that serializes its intakes and its teardown; the mount intake and the
+unmount take the mutex inside `hammer2_mntlk`, and the work never takes
+the mutex. One rule governs the file: whoever unhooks the attempt from
+the device under the spinlock owns it, with its file and socket, and no
+other path touches either; the work unhooks only an attempt marked
+submitted. A second rule governs the memory: the completion of any
+attempt that can be waited on is signaled exactly once, by the done
+function as its last act, by the intake for a plaintext attempt, or,
+after a cancel that returned true, by whichever of the teardown and the
+work's timeout made the cancel, and every owner waits on it before
+freeing the attempt, since the done function queues the work before it
+signals. A failed submit's attempt is never signaled and never waited
+on.
+
+The intake, holding the mutex, tears down any attempt still hooked and
+hooks the new one. A plaintext attempt has its completion signaled, is
+then marked submitted with status 0, and the work is queued now. A PSK
+attempt is
+submitted; the attempt's own reference to the file is the caller's
+reference the submit requires for its duration
+(`net/handshake/request.c:245-249`), and nothing can drop it before the
+attempt is marked submitted. A failed submit never reaches the done
+function and has dropped its own pin (`:314-318`); the intake, still
+holding the mutex, unhooks the attempt itself, so no teardown ever sees
+it, then shuts the socket down, drops the file, frees the attempt and
+returns the error. After a successful submit the intake, under the
+spinlock, marks the attempt submitted and reads its status, and from
+then on touches the attempt no more: with the status already set it
+moves the work to now, and otherwise arms the work with
+`queue_delayed_work()` at the deadline it copied before the submit,
+which leaves a work already pending alone. The done function, under the
+spinlock, records the status and the peer serial, then moves the work to
+now with `mod_delayed_work()` and signals the completion; it blocks on
+nothing and touches nothing of the device but its spinlock and its work.
+The work reads the
+hooked attempt under the spinlock and returns if there is none or it is
+not yet marked submitted. A status still `-EINPROGRESS` before the
+deadline re-arms the work at that deadline with `queue_delayed_work()`,
+so a timer armed for an earlier attempt, or spent by a work that found
+nothing, never leaves this one unbounded; past the deadline, the work
+claims the attempt and ends it as a timeout: the cancel, the completion
+signaled itself on true, the wait on the completion, a named line, the
+socket shut down, the file dropped, the attempt freed. A failed status,
+or a server's peer serial outside the intake's list, is claimed and
+ended the same way, with the line naming the reason, and without the
+mount lock. A success takes the lock, claims and quiesces as above; a
+claim that finds nothing hooked drops the lock and returns. The claimed
+file goes to `kdmsg_iocom_reconnect()`, which owns the reference from
+then on (`kern_dmsg.c:109-111`).
+
+The teardown, run by an intake that finds an attempt hooked and by
+`hammer2_iocom_uninit()` before its quiesce, holds the mutex, so it never
+finds a PSK attempt that is hooked and not yet submitted, and, in order:
+1. under the spinlock, unhook the attempt if one is hooked, which makes
+   the teardown its owner;
+2. for an owned PSK attempt, `tls_handshake_cancel()` on its socket,
+   signaling the completion itself on true; false means the done
+   function has run or is running, since the request stays hashed until
+   the socket is destructed and the owned file keeps the socket alive;
+3. for an owned attempt, wait on the completion;
+4. always, `cancel_delayed_work_sync()` on the device's work, which
+   waits for a work past its claim, lets one queued by the done function
+   find nothing hooked and return, and leaves the work disabled while it
+   waits, so a done function racing it cannot queue it again;
+5. for an owned attempt, `kernel_sock_shutdown(SHUT_RDWR)`, which ends
+   a handshake `tlshd` still holds after a cancel that returned true;
+6. for an owned attempt, drop the file and free the attempt.
+
+The unmount runs this holding `hammer2_mntlk`. Step 4 cannot wait on a
+work blocked on that lock: a work in its try-lock loop finds nothing
+hooked after step 1 and returns, and a work past its claim holds the
+lock only through the quiesce, which it cannot be in while the unmount
+holds the lock, and takes it no more afterwards.
+
+**The quiesce runs in the work item**, so the old link keeps serving
+until the new handshake has succeeded, and a pending or failed attempt
+costs nothing; `kdmsg_iocom_reconnect()` then replaces the descriptor
+as it does today (`kern_dmsg.c:114-149`). The control of the plan's
+5.3, a second `RECLUSTER` with a wrong PSK during a live link, reads
+the first link still up.
+
+**A failed handshake** prints one line naming the status or the reason,
+registers nothing, shuts the socket down and drops the file. Nothing
+redials: `h2service` hands the socket in, closes its descriptor and
+exits, and nothing in userland reads the socket (`test/h2service.c:14-18,
+323-331`), so an asynchronous intake that returned 0 reports the failure
+only in that line, and recovery is the next intake. The harness reads the
+line and runs `h2service` again; a supervisor that redials is the
+production daemon's, which this plan leaves out of scope. The bound is
+the kernel's own, `cluster_tls_timeout_ms` (10000), as sunrpc and
+NVMe-TCP each wait on their own timeout of ten seconds and then cancel
+(`net/sunrpc/xprtsock.c:197, 2650-2665`, `drivers/nvme/host/tcp.c:50,
+1811-1819`). It is read-only once the module is loaded, so deadlines,
+copied while the intake holds the device's mutex, rise in intake order,
+and a timer still pending for an earlier attempt expires no later than a
+new attempt's deadline, where the re-arm takes over. The same value goes
+to `tlshd` as `ta_timeout_ms`, which
+reaches only `gnutls_handshake_set_timeout()` after the accept
+(`src/tlshd/handshake.c:100`, `src/tlshd/netlink.c:741-742`) and so
+bounds neither a request `tlshd` never accepts nor one whose handshake
+child, forked per request (`src/tlshd/netlink.c:475-488`), dies without
+reporting.
+
+**The reader on a TLS link** stops calling `kernel_read()`, which on a
+record that is not data returns `EIO` (`net/tls/tls_sw.c:1598-1615`),
+and reads with `sock_recvmsg()` and a control buffer, dispatching on the
+record type as sunrpc does (`net/sunrpc/xprtsock.c:360-417`): data is
+the frame stream; an alert ends the link with a named line unless it is
+`close_notify` or `user_canceled`, which end it cleanly; a handshake
+record other than KeyUpdate, such as NewSessionTicket, is dropped;
+KeyUpdate sets `key_update_pending` (`net/tls/tls_sw.c:1551-1555`), after which
+every read returns `-EKEYEXPIRED` (`net/tls/tls_sw.c:1104-1105`), and since nothing
+rekeys after the handshake the link ends with a named line. The plaintext
+reader is unchanged. Writes need no change.
+
+**Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
+relay mode parses frames (`relay_pair()` reads each through
+`frame_read()`, `test/h2loop.c:1556`, which checks the magic at `:453`),
+so a TLS stream through the relay ends at its first record as a torn
+frame; the controls that cross the relay run through the raw
+pass-through mode of the plan's 5.6. Two need an agent other than
+`tlshd`, a stub on the handshake netlink family that subscribes to its
+group, since with no listener the submit fails at once: one that never
+accepts, so the request stays pending, and one that accepts and never
+answers, so the cancel finds an accepted request. The reader started
+before the handshake in a scratch build, which must make the handshake
+fail; `cluster_fd=` with `cluster_tls=psk`, with `tcpdump` showing no
+plaintext frame on that link; with no `tlshd` running, the intake
+refused `ESRCH`; with the stub that never accepts, the attempt ending
+in the timeout line at the bound; an unmount with a handshake pending
+under each stub, with the `handshake_cancel` tracepoint
+(`net/handshake/request.c:381`) read and kmemleak 0 on the KASAN kernel;
+a second `RECLUSTER` with a wrong PSK during a live link, the first
+link still up; a server whose client's identity matches only a key in
+`.nvme`, which completes in `tlshd` and is refused by the serial check;
+an `AF_UNIX` socket pair with `cluster_tls` set, refused at the intake;
+a missing key, one named line and no element; `cluster_tls_required`
+set and a plaintext intake refused; and `H2_DMSG_CLUSTERFD=1`, whose
+checks fail before the work item and must pass after it.
 
 ## The failure matrix
 
