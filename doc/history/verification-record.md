@@ -20807,6 +20807,10 @@ captures under `fixtures/` as `dmsg-run-<stamp>`:
   holding 41 records of outer type 23, more than the handshake's own
   three encrypted messages, and no frame magic (line 14). tlshd names
   both sessions `(TLS1.3)--(CHACHA20-POLY1305)` (report lines 97-100).
+  This run shared its boot with the reader-first control below (both
+  kernel logs put the boot at about 09:06); the harness clears dmesg
+  and kmemleak at its start, and the control's own run read 0 kernel
+  warnings. The KASAN run below booted fresh, through the kernel switch.
 - `h2kasan-7.3tls`, `n9-2-run2-kasan-20261102-094320.log` (report
   `dmsg-run-20261102-094740`), 32 checks, 0 failed (line 40): the same
   arm 1 readings with 45 type-23 records (line 14), no KASAN, UBSAN or
@@ -20841,9 +20845,13 @@ The control the design required: a scratch tree
 the message reader in `hammer2_cluster_reconnect()` before
 `hammer2_link_submit()`, which is where the order executes; the
 expected file had named the tail order of `hammer2_link_work()`, whose
-reader start is the one moved. It ran the harness committed at
-`7033864` (`2ff9ad32af10`), whose arm 1 mechanism the later harness
-changes do not touch:
+reader start is the one moved. Its source is `61822a7`'s plus the
+break, without `a2594b5`, which changes only print macros, and it ran
+the harness committed at `7033864` (`2ff9ad32af10`). `7016b73` made
+arm 1's checks stricter (kTLS as a change across the arm, at least four
+type-23 records, an unreadable counter as -1) and changed nothing the
+control's readings pass through: 0 succeeded, no kTLS change, no type-23
+record and no spans fail arm 1 under either harness:
 `n9-2-run-control-readerfirst-20261102-090603.log`, arm 1 reading 0
 succeeded and 2 failed, no kTLS, no spans and no type-23 record (lines
 9-13), its capture holding one handshake record, the ClientHello, and
