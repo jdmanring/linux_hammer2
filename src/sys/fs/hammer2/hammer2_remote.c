@@ -665,11 +665,11 @@ hammer2_remote_snaps_drop(struct hammer2_remote *rm)
  * and pfs-delete takes.  It is taken by try-lock to the bound, because the
  * unmount holds it while it waits for this queue to drain, so a blocking
  * take here would wait on the unmount waiting on it; a closed state ends the
- * wait.  A bulkfree scan holds the lock for its whole run and a request
- * started under one fails at the bound.  Returns with the lock held when
- * a PFS is found and released otherwise, with *errorp saying why: 0 when
- * this device has no such PFS mounted, a refusal, and ABORTED or ETIMEDOUT
- * when the lock was not had, which says nothing of what the device holds.
+ * wait.  A bulkfree scan holds it across its sync of the PFSes, and a request
+ * that sync outlasts fails at the bound.  Returns with the lock held when a PFS
+ * is found and released otherwise, with *errorp saying why: 0 when this device
+ * has no such PFS mounted, a refusal, and ABORTED or ETIMEDOUT when the lock
+ * was not had, which says nothing of what the device holds.
  */
 static hammer2_pfs_t *
 hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,

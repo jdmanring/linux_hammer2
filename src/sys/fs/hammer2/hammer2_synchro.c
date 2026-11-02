@@ -1222,9 +1222,9 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 	/*
 	 * A target whose delete a verified pass could not finish, the lock
 	 * being held by something other than an unmount (a bulkfree scan
-	 * holds it for its whole run): deleted now, so the pass below takes a
-	 * fresh one and a later unverified pass is not left with a stale
-	 * target marked for the unmount to delete.
+	 * holds it across its sync of the device): deleted now, so the pass
+	 * below takes a fresh one and a later unverified pass is not left
+	 * with a stale target marked for the unmount to delete.
 	 */
 	if (thr->tgt_left) {
 		derror = hammer2_pfs_delete_byname(pmp->pfs_hmps[idx], tname,

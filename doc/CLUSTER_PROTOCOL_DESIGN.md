@@ -438,7 +438,8 @@ teardown runs where `hammer2_mntlk` can be taken: in
 replaces a connection, on the ioctl caller's thread, never on the
 reader.
 A long holder of the lock delays a detach that long: a bulkfree scan
-holds it for its whole run (the comment at `hammer2_synchro.c:1224`), and
+holds it across its synchronous sync of every PFS on the device, though
+not across the pass that follows (`hammer2_ioctl_bulkfree_scan()`), and
 the reader is not blocked by it. The detach runs on a span
 `DELETE`, on a lost connection (`kern_dmsg.c` simulates the `DELETE`s at
 link loss), and from `hammer2_pfsfree_scan()`, under the same lock,
@@ -877,8 +878,9 @@ mount, unmount and pfs-delete takes is what holds the PFS, and a request
 runs in milliseconds. The lock is taken by try-lock within the bound,
 since the unmount holds it while it waits for the server's queue to
 drain and a blocking take there would wait on the unmount waiting on it;
-a bulkfree scan holds it for its whole run, so a request started under
-one fails at the bound. A request that does not get the lock, at the
+a bulkfree scan holds it across its synchronous sync of every PFS on
+the device, so a request started during that sync fails at the bound if
+the sync outlasts it (not measured). A request that does not get the lock, at the
 bound or because the request or the connection ended while it tried, is
 answered with its transaction's closing frame carrying `ETIMEDOUT` or
 `ABORTED`, and its log line says which, since neither says anything of
