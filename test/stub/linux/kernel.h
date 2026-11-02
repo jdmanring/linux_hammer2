@@ -30,6 +30,7 @@ typedef unsigned int gfp_t;
 typedef uint8_t u8;	/* include/asm-generic/int-ll64.h:17 */
 /* include/linux/minmax.h:105, without its type check */
 #define min(x, y)	((x) < (y) ? (x) : (y))
+#define min_t(t, x, y)	((t)(x) < (t)(y) ? (t)(x) : (t)(y))
 
 #define GFP_KERNEL	((gfp_t)0x01)
 #define GFP_NOFS	((gfp_t)0x02)

@@ -1632,13 +1632,20 @@ hammer2_dev_cache_flush(struct file *bdev_file)
  * error, and an alert is two bytes (section 6).  A NewSessionTicket is
  * dropped, the one post-handshake message a TLS 1.3 server sends that
  * needs nothing back; it is dropped in either role, since nothing here
- * tells the reader its role.  Any other handshake message, any other
- * record type and a malformed record end the link with a line, where
+ * tells the reader its role, and only when the record holds that one
+ * message whole, its four-byte header's length (section 4) and nothing
+ * after it, so no message rides behind a ticket unread.  The header is
+ * gathered across reads, which kTLS may split.  Any other handshake
+ * message, any other record type and a malformed record end the link
+ * with a line, where
  * section 5 also asks for an unexpected_message alert, which is not sent:
  * tls_alert_send() is not exported at the kernel of record.
  * DEFER(a peer that sends KeyUpdate in practice): KeyUpdate ends the
  * link, since nothing here rekeys and every read after it returns
- * -EKEYEXPIRED.  The handshake upcall is tested with IS_ENABLED() as the
+ * -EKEYEXPIRED.
+ * DEFER(a peer that coalesces or splits handshake messages): a record
+ * holding two, or part of one, ends the link; GnuTLS, which tlshd links,
+ * sends each in a record of its own.  The handshake upcall is tested with IS_ENABLED() as the
  * intake tests it, so the module links on a kernel without it, where no
  * socket reaching here carries kTLS from this module.  The lines a peer
  * can repeat are limited.
@@ -1655,7 +1662,7 @@ hammer2_fp_tlsrec(struct file *fp)
 	} u;
 	struct msghdr msg;
 	struct kvec kv;
-	u8 rec[64], first[2] = { 0, 0 }, type = 0;
+	u8 rec[64], hdr[4] = { 0, 0, 0, 0 }, type = 0;
 	int n, got = 0;
 
 	if (!IS_ENABLED(CONFIG_NET_HANDSHAKE) || so == NULL ||
@@ -1670,41 +1677,42 @@ hammer2_fp_tlsrec(struct file *fp)
 		kv.iov_len = sizeof(rec);
 		iov_iter_kvec(&msg.msg_iter, ITER_DEST, &kv, 1, sizeof(rec));
 		n = sock_recvmsg(so, &msg, MSG_DONTWAIT);
-		if (n < 0 || (n == 0 && got == 0)) {
+		if (n <= 0) {
 			pr_warn("hammer2: TLS peer's record unreadable (%d after %d bytes), ending the link\n",
 			    n, got);
 			return (EPROTO);
 		}
-		if (got == 0) {
+		if (got == 0)
 			type = tls_get_record_type(so->sk, &u.cmsg);
-			memcpy(first, rec, min(n, 2));
-		}
+		if (got < (int)sizeof(hdr))
+			memcpy(hdr + got, rec, min_t(int, n, sizeof(hdr) - got));
 		got += n;
 	} while ((msg.msg_flags & MSG_EOR) == 0);
 
 	if (type == TLS_RECORD_TYPE_ALERT && got == 2) {
-		if (first[1] == TLS_ALERT_DESC_CLOSE_NOTIFY ||
-		    first[1] == TLS_ALERT_DESC_USER_CANCELED) {
+		if (hdr[1] == TLS_ALERT_DESC_CLOSE_NOTIFY ||
+		    hdr[1] == TLS_ALERT_DESC_USER_CANCELED) {
 			pr_info("hammer2: TLS peer ended the link (alert %u)\n",
-			    first[1]);
+			    hdr[1]);
 			return (-1);
 		}
 		pr_warn("hammer2: TLS peer sent alert %u/%u, ending the link\n",
-		    first[0], first[1]);
+		    hdr[0], hdr[1]);
 		return (ECONNRESET);
 	}
-	if (type == TLS_RECORD_TYPE_HANDSHAKE && first[0] == TLS_HANDSHAKE_KEYUPDATE) {
+	if (type == TLS_RECORD_TYPE_HANDSHAKE && hdr[0] == TLS_HANDSHAKE_KEYUPDATE) {
 		pr_warn("hammer2: TLS peer sent KeyUpdate, which nothing here answers, ending the link\n");
 		return (EKEYEXPIRED);
 	}
 	if (type == TLS_RECORD_TYPE_HANDSHAKE &&
-	    first[0] == HAMMER2_TLS_NEWSESSIONTICKET) {
+	    hdr[0] == HAMMER2_TLS_NEWSESSIONTICKET && got >= (int)sizeof(hdr) &&
+	    got == (int)sizeof(hdr) + (hdr[1] << 16 | hdr[2] << 8 | hdr[3])) {
 		pr_info_ratelimited("hammer2: TLS peer sent handshake message %u, dropped\n",
-		    first[0]);
+		    hdr[0]);
 		return (0);
 	}
 	pr_warn("hammer2: TLS peer sent a record of type %u (first byte %u, %d bytes), ending the link\n",
-	    type, first[0], got);
+	    type, hdr[0], got);
 	return (EPROTO);
 }
 

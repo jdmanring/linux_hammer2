@@ -1782,7 +1782,7 @@ share by construction, and the caller that hands the socket in is the
 one that knows which end it is, so the role is an input of the intake.
 Before anything is submitted the intake refuses, each with one named
 line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
-connected stream socket, `hammer2_os.h:1871-1888`, and the submit any
+connected stream socket, `hammer2_os.h:1879-1896`, and the submit any
 socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
 pair would fail only when `tlshd` installed kernel TLS); a socket already
 carrying an upper-layer protocol (`inet_csk_has_ulp()`,
@@ -2057,7 +2057,12 @@ upcall, `fp_read()` reads the queued record again through
 the link with a named line unless it is `close_notify` or
 `user_canceled`, which end it cleanly as end of stream; a
 NewSessionTicket is dropped with a limited line and the read goes on,
-in either role, since nothing tells the reader its role; KeyUpdate sets
+in either role, since nothing tells the reader its role, but only when
+its record holds that one message whole by its header's length, so no
+message rides behind a ticket unread (GnuTLS writes each handshake
+message in a record of its own, and a record of two, or of part of one,
+ends the link, a `DEFER` with that trigger); the header is gathered
+across reads, and a read that returns nothing ends the link; KeyUpdate sets
 `key_update_pending` as it is decrypted (`net/tls/tls_sw.c:1551-1555`),
 after which every read returns `-EKEYEXPIRED`
 (`net/tls/tls_sw.c:1104-1105`), and since nothing rekeys after the
