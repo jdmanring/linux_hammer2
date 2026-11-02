@@ -127,7 +127,9 @@
 /*
  * Linux: the same line, never limited, for an event a privileged caller
  * bounds, one per call: each cluster link intake's outcome, which is the
- * only place an operator learns why a link did not come up.
+ * only place an operator learns why a link did not come up.  A link's
+ * end in hammer2_remote.c is the same class, one per link, and prints
+ * through pr_warn unlimited for the same reason.
  */
 #define hprintf_each(X, ...)	pr_info(KBUILD_MODNAME ": " HFMT X,	\
 				    HARGS, ## __VA_ARGS__)
@@ -1763,9 +1765,9 @@ holdfp(thread_t td __always_unused, int fd, int flags __always_unused)
 		return (NULL);
 	sock = sock_from_file(fp);
 	if (sock == NULL) {
-		hprintf("cluster descriptor %d is not a socket, refused\n", fd);
+		hprintf_each("cluster descriptor %d is not a socket, refused\n", fd);
 	} else if (sock->type != SOCK_STREAM) {
-		hprintf("cluster descriptor %d is not a stream socket, "
+		hprintf_each("cluster descriptor %d is not a stream socket, "
 		    "refused\n", fd);
 	} else if (kernel_getpeername(sock, (struct sockaddr *)&peer) < 0) {
 		/*
@@ -1775,7 +1777,7 @@ holdfp(thread_t td __always_unused, int fd, int flags __always_unused)
 		 * a check on it refused every socketpair the first fleet
 		 * run handed in.  A listening socket has no peer either.
 		 */
-		hprintf("cluster descriptor %d is not connected, refused\n",
+		hprintf_each("cluster descriptor %d is not connected, refused\n",
 		    fd);
 	} else {
 		return (fp);

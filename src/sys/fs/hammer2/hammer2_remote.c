@@ -1254,7 +1254,7 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 	int feed, lost = 0;
 
 	if (call == NULL) {
-		pr_warn_ratelimited("hammer2: HM2 peer sent a frame after its reply closed, ending the link\n");
+		pr_warn("hammer2: HM2 peer sent a frame after its reply closed, ending the link\n");
 		atomic_set_int(&state->iocom->msg_ctl, KDMSG_CLUSTERCTL_KILLRX);
 		return (0);
 	}
@@ -1348,10 +1348,10 @@ hammer2_rcall_reply(kdmsg_state_t *state, kdmsg_msg_t *msg)
 
 	if (lost) {
 		if (bad)
-			pr_warn_ratelimited("hammer2: HM2 peer %s, ending the link\n",
+			pr_warn("hammer2: HM2 peer %s, ending the link\n",
 			    bad);
 		else
-			pr_warn_ratelimited("hammer2: HM2 no memory for a feed, ending the link\n");
+			pr_warn("hammer2: HM2 no memory for a feed, ending the link\n");
 		atomic_set_int(&state->iocom->msg_ctl, KDMSG_CLUSTERCTL_KILLRX);
 	}
 	if (cmd & DMSGF_DELETE)

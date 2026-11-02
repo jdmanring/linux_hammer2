@@ -603,11 +603,18 @@ by nothing but the inode count. A filesystem that floods the kernel log
 when a disk fills is a defect in the eyes of anyone reading that log to
 find out why the disk filled.
 
-The limit is printk's, so its state is per call site: a line printed
-once at mount is untouched, only a flood is suppressed, and the printk
-layer reports its own suppression, so a reader is told what was dropped
-rather than shown a quiet log. 58 files under `fs/` in the kernel of
-record limit their printks the same way. The alternative, editing the
+The limit is printk's, so its state is per call site: a flood is
+suppressed, and the printk layer reports its own suppression, so a
+reader is told what was dropped rather than shown a quiet log. 58 files
+under `fs/` in the kernel of record limit their printks the same way.
+It is not exact below the burst. On a call site's first use the state
+is set up under a trylock, and a second CPU that loses it is counted
+suppressed (`lib/ratelimit.c`, `___ratelimit()`): two cluster link
+refusals made at once on two devices lost one that way, with nine of
+the ten slots unused. So a line a privileged caller bounds to one per
+call, each cluster link intake's outcome and each link's end, prints
+unlimited, through `hprintf_each` or `pr_warn`, and a line a peer or
+the media can repeat without bound keeps the limit. The alternative, editing the
 call sites in the carried core, is the edit this tree exists to avoid,
 and the shim is where a Linux answer belongs.
 
@@ -633,7 +640,7 @@ verbatim. This port follows both.
 |---|---|
 | `hammer2_compat.h:94` | `KKASSERT`, `BUG_ON` under `HAMMER2_INVARIANTS`, nothing without |
 | `hammer2_compat.h:96` | `KASSERTMSG`, `pr_emerg` and `BUG()` under the same knob |
-| `hammer2_os.h:167` | `hpanic`, `pr_emerg`, the device-in-error mark and a `WARN_ONCE`, then a return; `hammer2_os.h:161` is the `HAMMER2_INVARIANTS` form, which is `BUG()` after the mark |
+| `hammer2_os.h:169` | `hpanic`, `pr_emerg`, the device-in-error mark and a `WARN_ONCE`, then a return; `hammer2_os.h:163` is the `HAMMER2_INVARIANTS` form, which is `BUG()` after the mark |
 
 Measured 2026-08-26: eight `BUG_ON` and four `panic()` sites under `src/`.
 On 2026-09-05 the two `panic()` macros became `BUG()` and none remain.
