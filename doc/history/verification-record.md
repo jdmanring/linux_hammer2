@@ -21021,8 +21021,9 @@ lock across its pass (`hammer2_ioctl_bulkfree_scan()`); `ef488c6` puts
 it behind `CAP_SYS_ADMIN`. An automated security review raised it,
 saying the scan held the global lock for its whole run; that was the
 design note's wording, also repeated by the hostile audit of 1.0.76,
-and the scan's own code shows the lock released after the sync, so
-five places saying otherwise were corrected first (`2700f49`). The expected readings and the control were written
+and the scan's own code shows the lock released after the sync, six places saying otherwise were corrected (five at `2700f49`, before
+the change, and a sixth, in the design note's audit history, at
+`d2efef2`). The expected readings and the control were written
 before the run (`p7-notes/bulkfree-priv-expected.md` in the data tree).
 Runs on `h2debug-7.3tls`, `KDIR` the `-tls` tree, from frozen copies;
 each log's line 1 names the tree, the main tree's head and whether its
