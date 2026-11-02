@@ -178,7 +178,12 @@ since no warnings and a pattern that stopped matching print the same number.
 The floor and the kernel of record are the same release, 7.3, built on
 the maintainer's machine, so the syntax gate and `build-check.sh` against
 that tree, both run by the pre-push hook on every push, are the only
-builds there are. Hosted CI builds nothing: the runner has neither that
+builds there are. The hook builds against the tree of the kernel the
+guest booted, a `-tls` build today, and also against the plain 7.3
+tree, first, when that is a different tree: a module built only on a
+`-tls` tree called into the handshake upcall where the plain kernels,
+built without it, cannot link it, and the push that carried it was
+green. Hosted CI builds nothing: the runner has neither that
 tree nor headers at the floor, and fetching and building a kernel there
 only repeated what the push had done. From 2026-09-03 to 2026-09-05 a second CI job fetched a 6.15
 tarball, built the kernel and linked the module against it, because the

@@ -170,6 +170,16 @@ fi
 # own, before any gate: build-check.sh against the tree chosen above,
 # warning-clean or the push is refused. A clean build took 12 s on the
 # maintainer's machine on 2026-11-01.
+# The tree chosen above is the guest's, which is a -tls build today, and
+# a module built only there can call into the handshake upcall where a
+# kernel without it cannot link: 3e3a8c9 shipped that way, green, and a
+# hostile audit found it by building against the plain tree. So the plain
+# tree of record is built too, when it is a different tree, and first, so
+# the build left behind is the chosen tree's.
+plain=$HOME/kernels/linux-7.3
+if [ -n "${KDIR:-}" ] && [ "$KDIR" != "$plain" ] && [ -f "$plain/Makefile" ]; then
+	run_gate script/build-check.sh "$plain"
+fi
 if [ -n "${KDIR:-}" ]; then
 	run_gate script/build-check.sh "$KDIR"
 else
