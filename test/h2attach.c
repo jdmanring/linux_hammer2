@@ -47,6 +47,13 @@
  *             printed
  *   refuse    a pipe end and an unconnected stream socket are each handed
  *             to RECLUSTER and each must be refused EINVAL by holdfp()
+ *   tlslink   a TCP pair whose server end goes into this mount (--keyring,
+ *             --admit) and client end into --attach2's (--key), --tls none
+ *             for the plaintext control; prints both RECLUSTER errnos
+ *   tlsclient a client intake with --key, the peer end held unanswered
+ *             until EOF or --hold-max-ms; prints the errno, then whether
+ *             EOF came, the bytes read and the milliseconds
+ *   hsstub    a handshake agent that is not tlshd (see hsstub()), no mount
  *   tlsrefuse each refusal of hammer2_link_check() driven once with its
  *             own socket: PSK on an AF_UNIX pair, an unknown mode, six
  *             keys, a client with none, a server with no keyring, an
@@ -94,6 +101,9 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/genetlink.h>
+#include <linux/handshake.h>
+#include <linux/netlink.h>
 
 #define __packed	__attribute__((__packed__))
 #include "hammer2_ioctl.h"	/* HAMMER2IOC_RECLUSTER, as the module sees it */
@@ -257,18 +267,24 @@ recluster_tls(int fd_to_pass, int mode, int role, int keyring, int nkeys)
 	return (0);
 }
 
-/* A connected TCP pair over IPv4 loopback; the accepted end in *peer. */
+/* A connected TCP pair over IPv4 loopback; the accepted end in *peer.
+ * The listener takes tcp_port, 0 for any, so a capture can name it. */
+static int tcp_port;
+
 static int
 tcp_pair(int *peer)
 {
 	struct sockaddr_in a;
 	socklen_t al = sizeof(a);
-	int l, c;
+	int l, c, one = 1;
 
 	memset(&a, 0, sizeof(a));
 	a.sin_family = AF_INET;
 	a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	a.sin_port = htons(tcp_port);
 	l = socket(AF_INET, SOCK_STREAM, 0);
+	if (l >= 0)
+		setsockopt(l, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 	if (l < 0 || bind(l, (struct sockaddr *)&a, sizeof(a)) < 0 ||
 	    listen(l, 1) < 0 || getsockname(l, (struct sockaddr *)&a, &al) < 0) {
 		perror("tcp_pair: listen");
@@ -845,6 +861,191 @@ hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
 	return (r->closed ? 0 : -1);
 }
 
+/* ---- the TLS link, kernel to kernel ------------------------------------ */
+
+/* An intake with real key serials into the mount open at mnt: a client
+ * names its one key, a server its keyring and the one key it admits;
+ * mode none sends neither, which is today's plaintext intake. */
+static int
+recluster_key(int mnt, int fd, int mode, int role, int ring, int key)
+{
+	struct hammer2_ioc_recluster recl;
+
+	memset(&recl, 0, sizeof(recl));
+	recl.fd = fd;
+	recl.tls.mode = mode;
+	if (mode == HAMMER2_LINK_TLS_PSK) {
+		recl.tls.role = role;
+		recl.tls.keyring = role == HAMMER2_LINK_TLS_SERVER ? ring : 0;
+		recl.tls.nkeys = 1;
+		recl.tls.keys[0] = key;
+	}
+	if (ioctl(mnt, HAMMER2IOC_RECLUSTER, &recl) < 0)
+		return (errno);
+	return (0);
+}
+
+/* Read and drop bytes until EOF or the bound; 1 at EOF or a reset, with
+ * the byte count, since a TLS peer's records are not frames. */
+static int
+wait_close(int fd, long ms, long *bytes)
+{
+	char buf[4096];
+	long deadline = now_ms() + ms;
+	ssize_t n;
+
+	*bytes = 0;
+	while (readable(fd, deadline)) {
+		n = read(fd, buf, sizeof(buf));
+		if (n == 0 || (n < 0 && errno == ECONNRESET))
+			return (1);
+		if (n < 0 && errno != EINTR)
+			return (0);
+		if (n > 0)
+			*bytes += n;
+	}
+	return (0);
+}
+
+/*
+ * A handshake agent that is not tlshd: it joins the "tlshd" multicast group
+ * of the "handshake" generic netlink family, which is all genl_has_listeners()
+ * asks (net/handshake/netlink.c), counts the READY notifications, and with
+ * accept set answers the first with HANDSHAKE_CMD_ACCEPT and holds the
+ * descriptor the kernel installs, never sending DONE.  It runs until SIGTERM
+ * or the bound, then prints its counts.
+ */
+static volatile sig_atomic_t stub_stop;
+
+static void
+stub_term(int sig)
+{
+	(void)sig;
+	stub_stop = 1;
+}
+
+#define NLA_EACH(a, start, len)						\
+	for ((a) = (struct nlattr *)(start);				\
+	    (char *)(a) + NLA_HDRLEN <= (char *)(start) + (len) &&	\
+	    (a)->nla_len >= NLA_HDRLEN &&				\
+	    (char *)(a) + (a)->nla_len <= (char *)(start) + (len);	\
+	    (a) = (struct nlattr *)((char *)(a) + NLA_ALIGN((a)->nla_len)))
+#define NLA_DATA(a)	((char *)(a) + NLA_HDRLEN)
+
+static int
+genl_send(int s, int family, int cmd, int attr, const void *data, int dlen)
+{
+	static uint32_t seq;
+	char buf[256];
+	struct nlmsghdr *n = (struct nlmsghdr *)buf;
+	struct genlmsghdr *g = NLMSG_DATA(n);
+	struct nlattr *a = (struct nlattr *)((char *)g + GENL_HDRLEN);
+
+	memset(buf, 0, sizeof(buf));
+	g->cmd = cmd;
+	g->version = 1;
+	a->nla_type = attr;
+	a->nla_len = NLA_HDRLEN + dlen;
+	memcpy(NLA_DATA(a), data, dlen);
+	n->nlmsg_len = NLMSG_HDRLEN + GENL_HDRLEN + NLA_ALIGN(a->nla_len);
+	n->nlmsg_type = family;
+	n->nlmsg_flags = NLM_F_REQUEST;
+	n->nlmsg_seq = ++seq;
+	return (send(s, buf, n->nlmsg_len, 0) < 0 ? errno : 0);
+}
+
+static int
+hsstub(int accept_it, long hold_ms)
+{
+	static char buf[16384];
+	struct sigaction sa;
+	struct nlmsghdr *n;
+	struct nlattr *a, *g, *f;
+	long deadline = now_ms() + hold_ms;
+	int s, len, fam = -1, grp = -1, readies = 0, fd = -1, aerr = 0;
+	uint32_t class = HANDSHAKE_HANDLER_CLASS_TLSHD;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = stub_term;	/* no SA_RESTART: poll returns EINTR */
+	sigaction(SIGTERM, &sa, NULL);
+	s = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_GENERIC);
+	if (s < 0 || genl_send(s, GENL_ID_CTRL, CTRL_CMD_GETFAMILY,
+	    CTRL_ATTR_FAMILY_NAME, HANDSHAKE_FAMILY_NAME,
+	    sizeof(HANDSHAKE_FAMILY_NAME)) != 0 ||
+	    (len = recv(s, buf, sizeof(buf), 0)) < 0) {
+		perror("hsstub: nlctrl");
+		return (2);
+	}
+	for (n = (struct nlmsghdr *)buf; NLMSG_OK(n, (unsigned)len);
+	    n = NLMSG_NEXT(n, len)) {
+		if (n->nlmsg_type != GENL_ID_CTRL)
+			continue;
+		NLA_EACH(a, (char *)NLMSG_DATA(n) + GENL_HDRLEN,
+		    NLMSG_PAYLOAD(n, GENL_HDRLEN)) {
+			if ((a->nla_type & NLA_TYPE_MASK) == CTRL_ATTR_FAMILY_ID)
+				fam = *(uint16_t *)NLA_DATA(a);
+			if ((a->nla_type & NLA_TYPE_MASK) != CTRL_ATTR_MCAST_GROUPS)
+				continue;
+			NLA_EACH(g, NLA_DATA(a), a->nla_len - NLA_HDRLEN) {
+				int id = -1, match = 0;
+				NLA_EACH(f, NLA_DATA(g), g->nla_len - NLA_HDRLEN) {
+					if (f->nla_type == CTRL_ATTR_MCAST_GRP_ID)
+						id = *(uint32_t *)NLA_DATA(f);
+					if (f->nla_type == CTRL_ATTR_MCAST_GRP_NAME &&
+					    !strcmp(NLA_DATA(f), HANDSHAKE_MCGRP_TLSHD))
+						match = 1;
+				}
+				if (match)
+					grp = id;
+			}
+		}
+	}
+	if (fam < 0 || grp < 0 || setsockopt(s, SOL_NETLINK,
+	    NETLINK_ADD_MEMBERSHIP, &grp, sizeof(grp)) < 0) {
+		printf("h2attach hsstub: family=%d group=%d join_errno=%d\n",
+		    fam, grp, fam < 0 || grp < 0 ? 0 : errno);
+		return (2);
+	}
+	printf("h2attach hsstub: joined family=%d group=%d accept=%d\n", fam,
+	    grp, accept_it);
+	fflush(stdout);
+	while (!stub_stop && readable(s, deadline)) {
+		if ((len = recv(s, buf, sizeof(buf), 0)) < 0)
+			continue;
+		for (n = (struct nlmsghdr *)buf; NLMSG_OK(n, (unsigned)len);
+		    n = NLMSG_NEXT(n, len)) {
+			struct genlmsghdr *gh = NLMSG_DATA(n);
+			if (n->nlmsg_type == NLMSG_ERROR) {
+				struct nlmsgerr *e = NLMSG_DATA(n);
+				if (e->error)
+					aerr = -e->error;
+				continue;
+			}
+			if (n->nlmsg_type != fam)
+				continue;
+			if (gh->cmd == HANDSHAKE_CMD_READY) {
+				readies++;
+				if (accept_it && fd < 0)
+					aerr = genl_send(s, fam,
+					    HANDSHAKE_CMD_ACCEPT,
+					    HANDSHAKE_A_ACCEPT_HANDLER_CLASS,
+					    &class, sizeof(class));
+			} else if (gh->cmd == HANDSHAKE_CMD_ACCEPT) {
+				NLA_EACH(a, (char *)gh + GENL_HDRLEN,
+				    NLMSG_PAYLOAD(n, GENL_HDRLEN)) {
+					if (a->nla_type == HANDSHAKE_A_ACCEPT_SOCKFD)
+						fd = *(int32_t *)NLA_DATA(a);
+				}
+				printf("h2attach hsstub: accepted fd=%d\n", fd);
+				fflush(stdout);
+			}
+		}
+	}
+	printf("h2attach hsstub: readies=%d accepted=%d accept_errno=%d"
+	    " stopped=%d\n", readies, fd >= 0, aerr, (int)stub_stop);
+	return (0);
+}
+
 /* ---- the actions ------------------------------------------------------- */
 
 static void
@@ -857,7 +1058,10 @@ usage(void)
 	    " span2on1 hm2proto1 hm2proto2 hm2root hm2readdir hm2nresolve"
 	    " hm2read hm2scanall hm2lookup hm2bmap hm2scanlhc hm2refuse\n"
 	    "       hm2 options: [--pfs LABEL] [--inum N] [--key K] [--name S]"
-	    " [--count N] [--nmax N] [--out FILE] [--nocont 1]\n");
+	    " [--count N] [--nmax N] [--out FILE] [--nocont 1]\n"
+	    "       tls: tlslink --attach2 M2 --keyring R --admit K --key K2"
+	    " [--tls psk|none] [--port P]; tlsclient --key K [--port P];\n"
+	    "            hsstub --accept 0|1 (no --attach) [--hold-max-ms N]\n");
 	exit(2);
 }
 
@@ -866,7 +1070,9 @@ main(int argc, char **argv)
 {
 	crc_init();
 	const char *mnt = NULL, *action = NULL, *tr = NULL;
-	const char *pfs = "ROOT", *name = NULL, *out = NULL;
+	const char *pfs = "ROOT", *name = NULL, *out = NULL, *mnt2 = NULL;
+	const char *tlsmode = "psk";
+	int ring = 0, admit = 0, hsaccept = 0;
 	uint64_t inum = 1, key = 0;
 	/*
 	 * The server holds a readdir count to 1..255, its frontend's own
@@ -893,8 +1099,16 @@ main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--count")) count = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--nmax")) nmax = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--nocont")) nocont = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--attach2")) mnt2 = argv[i + 1];
+		else if (!strcmp(argv[i], "--tls")) tlsmode = argv[i + 1];
+		else if (!strcmp(argv[i], "--keyring")) ring = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--admit")) admit = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--port")) tcp_port = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--accept")) hsaccept = atoi(argv[i + 1]);
 		else usage();
 	}
+	if (action != NULL && !strcmp(action, "hsstub"))
+		return (hsstub(hsaccept, hold_max_ms));
 	if (mnt == NULL || action == NULL)
 		usage();
 	if (tr) {
@@ -967,6 +1181,57 @@ main(int argc, char **argv)
 		    e_client == EINVAL && e_server == EINVAL && e_role == EINVAL &&
 		    e_key == EINVAL && ulp_set == 0 && e_ulp == EBUSY && e_req == EINVAL &&
 		    e_plain == 0 && !strcmp(set, "1") && !strcmp(after, "0") ? 0 : 1);
+	}
+
+	/*
+	 * tlslink: one TCP pair, the server end into this mount with the keyring
+	 * and the one admitted serial, the client end into --attach2's with
+	 * --key; --tls none hands both in plaintext.  Both ends belong to the
+	 * kernel after the two calls, so nothing here holds the link.
+	 */
+	if (!strcmp(action, "tlslink")) {
+		int m2, c, p, e_srv, e_cli;
+		int mode = strcmp(tlsmode, "none") ? HAMMER2_LINK_TLS_PSK :
+		    HAMMER2_LINK_TLS_NONE;
+
+		if (mnt2 == NULL || (m2 = open(mnt2, O_RDONLY | O_DIRECTORY)) < 0) {
+			perror(mnt2 ? mnt2 : "--attach2");
+			return (2);
+		}
+		c = tcp_pair(&p);
+		e_srv = recluster_key(mfd, p, mode, HAMMER2_LINK_TLS_SERVER, ring,
+		    admit);
+		e_cli = recluster_key(m2, c, mode, HAMMER2_LINK_TLS_CLIENT, 0,
+		    (int)key);
+		close(c); close(p); close(m2); close(mfd);
+		printf("h2attach tlslink: mode=%s port=%d server=%d client=%d\n",
+		    tlsmode, tcp_port, e_srv, e_cli);
+		return (e_srv == 0 && e_cli == 0 ? 0 : 1);
+	}
+
+	/*
+	 * tlsclient: a client intake with --key on one end of a TCP pair, the
+	 * other end held here and never answered, read until EOF or
+	 * --hold-max-ms; the mount is closed first so the harness can unmount
+	 * under a pending handshake.
+	 */
+	if (!strcmp(action, "tlsclient")) {
+		int c, p, e, eof = 0;
+		long bytes = 0, t0;
+
+		c = tcp_pair(&p);
+		e = recluster_key(mfd, c, HAMMER2_LINK_TLS_PSK,
+		    HAMMER2_LINK_TLS_CLIENT, 0, (int)key);
+		close(c); close(mfd);
+		printf("h2attach tlsclient: port=%d errno=%d\n", tcp_port, e);
+		fflush(stdout);
+		t0 = now_ms();
+		if (e == 0)
+			eof = wait_close(p, hold_max_ms, &bytes);
+		printf("h2attach tlsclient: eof=%d bytes=%ld ms=%ld\n", eof, bytes,
+		    now_ms() - t0);
+		close(p);
+		return (0);
 	}
 
 	if (attach_pair() < 0)

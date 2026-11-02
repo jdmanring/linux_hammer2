@@ -42,16 +42,29 @@
 # The pipe refusal is the port's own decision and is read too: a pipe end
 # and an unconnected stream socket handed to RECLUSTER must each be EINVAL.
 #
+# H2_DMSG_TLS=1 runs only the TLS link, on a second volume attached as
+# vdc: a PSK handshake answered by the guest's tlshd between a server end
+# into vdb's mount and a client end into vdc's, with kTLS, tlshd's log and
+# a capture of the loopback port as three readings of one claim, then a
+# wrong PSK, a key only in .nvme, a plaintext control for the capture and
+# a revoked key, and with tlshd stopped a missing agent and a stub agent
+# that never answers, under a timeout and two unmounts. The host block
+# below lists the arms.
+#
 # Exit 2 is COULD-NOT-RUN. Needs the guest fleet, a kernel tree at KDIR
 # matching the guest's kernel, newfs_hammer2 and hammer2 on this host,
-# and hammer2 on the guest.
+# and hammer2 on the guest; H2_DMSG_TLS=1 also needs tlshd supervised by
+# s6 at a debug loglevel of 1 or more, nvme-keyring, tcpdump, keyctl and
+# the handshake tracepoints.
 set -u
 cd "$(dirname "$0")/.." || exit 2
-# H2_DMSG_CLUSTERFD is written into the guest's ssh command line, so it is
-# 0 or 1 before anything else reads it.
-case ${H2_DMSG_CLUSTERFD:-0} in
-0|1) ;;
-*) echo "dmsg: COULD-NOT-RUN: H2_DMSG_CLUSTERFD is 0 or 1" >&2; exit 2 ;;
+# H2_DMSG_CLUSTERFD and H2_DMSG_TLS are written into the guest's ssh
+# command line, so each is 0 or 1 before anything else reads it, and they
+# name two modes, so at most one is set.
+case ${H2_DMSG_CLUSTERFD:-0}${H2_DMSG_TLS:-0} in
+00|01|10) ;;
+11) echo "dmsg: COULD-NOT-RUN: H2_DMSG_CLUSTERFD and H2_DMSG_TLS are two modes; set one" >&2; exit 2 ;;
+*) echo "dmsg: COULD-NOT-RUN: H2_DMSG_CLUSTERFD and H2_DMSG_TLS are each 0 or 1" >&2; exit 2 ;;
 esac
 
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
@@ -77,10 +90,12 @@ state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "dmsg: COULD-NOT-RUN: no
 detach_disk() {
 	if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" = running ]; then
 		timeout 45 ssh -o ConnectTimeout=5 -o BatchMode=yes "$GUEST_SSH" \
-		    'umount -f /mnt/h2d 2>/dev/null; rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
+		    'umount -f /mnt/h2d 2>/dev/null; umount -f /mnt/h2e 2>/dev/null; rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
 	fi
-	$VIRSH detach-disk "$GUEST" vdb --live >/dev/null 2>&1
-	$VIRSH detach-disk "$GUEST" vdb --config >/dev/null 2>&1
+	for t in vdb vdc; do
+		$VIRSH detach-disk "$GUEST" $t --live >/dev/null 2>&1
+		$VIRSH detach-disk "$GUEST" $t --config >/dev/null 2>&1
+	done
 }
 
 make -s clean >/dev/null 2>&1
@@ -99,6 +114,16 @@ rm -f "$IMG"
 truncate -s 1G "$IMG" && "$NEWFS" -L ROOT "$IMG" >/dev/null 2>&1 || {
 	echo "dmsg: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
 if [ "$state" = running ]; then how=--live; else how=--config; fi
+# The TLS mode's second volume, the client end's mount, attached first so
+# a guest that is off boots with both.
+if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
+	IMGC=$FIXDIR/cluster-dmsg-c.img
+	rm -f "$IMGC"
+	truncate -s 1G "$IMGC" && "$NEWFS" -L ROOT "$IMGC" >/dev/null 2>&1 || {
+		echo "dmsg: COULD-NOT-RUN: newfs_hammer2 failed on $IMGC" >&2; exit 2; }
+	err=$($VIRSH attach-disk "$GUEST" "$IMGC" vdc --targetbus virtio $how 2>&1) || {
+		echo "dmsg: COULD-NOT-RUN: could not attach the second volume: $err" >&2; exit 2; }
+fi
 err=$($VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio $how 2>&1) || {
 	echo "dmsg: COULD-NOT-RUN: could not attach the volume: $err" >&2; exit 2; }
 if [ "$state" != running ]; then
@@ -145,6 +170,270 @@ M=/mnt/h2d
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
+# The end of every mode: warnings, kmemleak before and after the unload.
+finish() {
+echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive' $K)"
+# Before rmmod, so the report's %pS resolves the module's own symbols, and
+# after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
+# 5000 ms), as cluster-sync.sh does. The message core allocates a state and
+# a message per frame and frees them from two threads that exit on their
+# own, which is where a leak would sit.
+sleep 6
+if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
+	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
+else
+	echo "kmemleak unusable"
+fi
+# hammer2's range as /proc/modules gives it before rmmod, its core text's
+# base and its total size, so the scan after the unload counts its frames
+# and not another module's; init text, freed after the load, is outside
+# it. The size is added to the base's low half alone, since a base above
+# INT64_MAX is past some shells' arithmetic, and a base printed as zero
+# (kptr_restrict) or a size that carries leaves the range unread.
+mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
+mb=${mrange% *}; ms=${mrange#* }; me=
+case $mb in
+0x00000000*|*[!0-9a-fx]*) ;;
+0x????????????????)
+	ml=$((0x${mb#0x????????} + ms))
+	[ "$ms" -gt 0 ] && [ "$ml" -le 4294967295 ] && me=$(printf '%s%08x' "${mb%????????}" "$ml") ;;
+esac
+echo "kmemleak-unloaded-range ${mb:-none} ${me:-none}"
+timeout 120 rmmod hammer2 && echo "rmmod ok"
+# Scanned again after the unload, whose frames now print as addresses: an
+# object a module global held and the unload never freed is a leak only
+# from here. Each reading scans twice, since a scan greys an object whose
+# checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
+# new object's starts at ~0, so a leak is reported at its second scan.
+# The scans wait out kmemleak's minimum age, 5 s, so an object the unload
+# itself left is old enough to be reported.
+sleep 6
+if [ -z "$me" ]; then
+	echo "kmemleak-unloaded unread"
+elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
+	h2n=$(awk -v b="$mb" -v e="$me" '{ a = $1 "" } a ~ /^0x/ && a >= b && a < e' /sys/kernel/debug/kmemleak | wc -l)
+	echo "kmemleak-unloaded $h2n"
+	[ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200
+fi
+echo "threads-final $(threads)"
+}
+# H2_DMSG_TLS=1: the TLS link with tlshd and a stub agent answering, one
+# guest, vdb and vdc each mounted @ROOT; the host side's comment lists the
+# arms and what each reads.
+if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
+	M2=/mnt/h2e
+	TL=/var/log/tlshd/current
+	T=/sys/kernel/tracing
+	CONF=/etc/tlshd/config; [ -e /etc/tlshd.conf ] && CONF=/etc/tlshd.conf
+	tlshd_up() {	# the pid of a tlshd whose parent is s6-supervise, or nothing
+		for p in $(pgrep -x tlshd); do
+			[ "$(ps -o comm= -p "$(ps -o ppid= -p $p | tr -d ' ')")" = s6-supervise ] && echo $p
+		done | head -1
+	}
+	[ "$(grep -c ' handshake_req_alloc$' /proc/kallsyms)" = 1 ] || { echo "dmsg: COULD-NOT-RUN: H2_DMSG_TLS=1 needs a kernel with the handshake upcall" >&2; exit 2; }
+	[ -n "$(tlshd_up)" ] || { echo "dmsg: COULD-NOT-RUN: no tlshd running as a child of s6-supervise" >&2; exit 2; }
+	ll=$(awk -F= '/^\[/ { s = $0 } s == "[debug]" && $1 ~ /^[ \t]*loglevel[ \t]*$/ { gsub(/[ \t]/, "", $2); print $2 }' $CONF | tail -1)
+	[ "${ll:-0}" -ge 1 ] 2>/dev/null || { echo "dmsg: COULD-NOT-RUN: $CONF [debug] loglevel is '${ll:-unset}', below 1, so tlshd writes no completion line" >&2; exit 2; }
+	modprobe nvme-keyring || { echo "dmsg: COULD-NOT-RUN: modprobe nvme-keyring failed" >&2; exit 2; }
+	for c in tcpdump keyctl od; do command -v $c >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: no $c on the guest" >&2; exit 2; }; done
+	grep -q " $T tracefs " /proc/mounts || mount -t tracefs nodev $T 2>/dev/null	# not mounted at boot on the Artix guests
+	[ -e $T/events/handshake/handshake_cancel ] || { echo "dmsg: COULD-NOT-RUN: no $T/events/handshake/handshake_cancel" >&2; exit 2; }
+	[ -r $TL ] || { echo "dmsg: COULD-NOT-RUN: no tlshd log at $TL" >&2; exit 2; }
+	# tlshd is stopped for arms 6 to 9; whatever ends the run brings it back.
+	# The keys go with the run: both rings and the .nvme key are unlinked.
+	trap 'kill $KPID 2>/dev/null; s6-rc -u change tlshd-srv >/dev/null 2>&1; for k in ${RING:-} ${WRING:-}; do keyctl unlink $k @u >/dev/null 2>&1; done; [ -n "${K3:-}" ] && keyctl unlink $K3 $((0x$NV)) >/dev/null 2>&1' EXIT
+	echo "tlshd-loglevel $ll ($CONF)"
+	echo "remote-timeout $(echo 3000 > /sys/module/hammer2/parameters/remote_timeout_ms && cat /sys/module/hammer2/parameters/remote_timeout_ms)"
+	echo "tls-timeout-ms $(cat /sys/module/hammer2/parameters/cluster_tls_timeout_ms)"
+	echo "tls-required $(cat /sys/module/hammer2/parameters/cluster_tls_required)"
+
+	# The keys: identities of one length, since the psk type matches a
+	# description by prefix; each read back from a session that reaches
+	# none of the rings, which is how tlshd reads a key by serial.
+	hex() { od -An -N$1 -tx1 /dev/urandom | tr -d ' \n'; }
+	mkkey() {	# mkkey <identity> <payload> <ring>: the serial
+		k=$(printf %s "$2" | keyctl padd psk "$1" "$3") && keyctl setperm "$k" 0x3f0b0000 && echo "$k"
+	}
+	rdback() { [ "$(keyctl session - keyctl pipe "$1" 2>/dev/null)" = "$2" ] && echo ok || echo fail; }
+	RING=$(keyctl newring hammer2-tls @u) && keyctl setperm $RING 0x3f1b0000 &&
+	WRING=$(keyctl newring hammer2-tls-wrong @u) && keyctl setperm $WRING 0x3f1b0000 || {
+		echo "dmsg: COULD-NOT-RUN: the keyrings could not be made" >&2; exit 2; }
+	I1=hammer2-psk-$(hex 4); I3=hammer2-psk-$(hex 4); I4=hammer2-psk-$(hex 4)
+	P1=$(hex 32); P2=$(hex 32); P3=$(hex 32); P4=$(hex 32)
+	K1=$(mkkey $I1 $P1 $RING) && K2=$(mkkey $I1 $P2 $WRING) && K4=$(mkkey $I4 $P4 $RING) || {
+		echo "dmsg: COULD-NOT-RUN: the keys could not be made" >&2; exit 2; }
+	NV=$(awk '$8 == "keyring" && $9 == ".nvme:" { print $1 }' /proc/keys | head -1)
+	# A key added straight into .nvme is not possessed by this session,
+	# so setperm is refused on it; it is made here, then linked there.
+	K3=
+	if [ -n "$NV" ]; then
+		K3=$(mkkey $I3 $P3 @s 2>/tmp/h2k3.err) && keyctl link $K3 $((0x$NV)) 2>>/tmp/h2k3.err && keyctl unlink $K3 @s >/dev/null 2>>/tmp/h2k3.err || K3=
+	fi
+	echo "tls-ring $RING wrong $WRING nvme ${NV:+$((0x$NV))}"
+	echo "tls-key K1 $K1 $I1 read=$(rdback $K1 $P1)"
+	echo "tls-key K2 $K2 $I1 read=$(rdback $K2 $P2)"
+	if [ -n "$K3" ]; then echo "tls-key K3 $K3 $I3 read=$(rdback $K3 $P3)"
+	else echo "tls-key K3 none $I3 read=fail refused=$(tr '\n' ' ' < /tmp/h2k3.err)"; fi
+	keyctl revoke $K4
+	echo "tls-key K4 $K4 $I4 read=$(rdback $K4 $P4)"
+
+	mkdir -p $M $M2
+	mount -t hammer2 /dev/vdb@ROOT $M || { echo "mount failed"; exit 1; }
+	mount -t hammer2 /dev/vdc@ROOT $M2 || { echo "mount vdc failed"; exit 1; }
+	hammer2 -s $M pfs-create SP >/dev/null 2>&1
+	echo "pfs-count-b $(hammer2 -s $M pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
+	echo "pfs-count-c $(hammer2 -s $M2 pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
+	echo "threads-before $(threads)"
+
+	TL0=$(wc -l < $TL)
+	tlog() { tail -n +$((TL0 + 1)) $TL | grep -cE "Handshake (with .*|request) $1"; }
+	tstat() { awk -v k=$1 '$1 == k { print $2 }' /proc/net/tls_stat 2>/dev/null | grep . || echo 0; }
+	handed() { klog 'cluster link handed to the message threads'; }
+	refused() { klog "cluster link refused: ${1:-}"; }
+	until_n() {	# until_n <tenths> <target> <command...>: wait for the count, print the seconds
+		b=$1; g=$2; shift 2; t=0
+		while [ "$("$@")" -lt "$g" ] && [ $t -lt "$b" ]; do sleep 0.1; t=$((t + 1)); done
+		echo "$((t / 10)).$((t % 10))"
+	}
+	cap_start() {	# cap_start <port>
+		tcpdump -i lo -U -w /tmp/h2tls-$1.pcap "tcp port $1" 2>/tmp/h2tls-$1.err &
+		CPID=$!
+		n=0; until grep -q listening /tmp/h2tls-$1.err 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+	}
+	cap_stop() { sleep 0.5; kill $CPID 2>/dev/null; wait $CPID 2>/dev/null; }
+	cap_count() {	# cap_count <port> <bytes>: byte-aligned occurrences in the capture
+		od -An -v -tx1 /tmp/h2tls-$1.pcap | tr '\n' ' ' | tr -s ' ' | grep -o " $2" | wc -l
+	}
+	arm_link() {	# arm_link <arm> <port> <h2attach args>
+		a=$1; p=$2; shift 2
+		out=$($A --attach $M --attach2 $M2 --action tlslink --port $p "$@" 2>&1); echo "$a-rc $?"; echo "$a $out"
+	}
+	snap() {	# snap <arm>: the counts every arm is read against
+		echo "$1-before handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw)"
+		h0=$(handed); r0=$(refused); s0=$(tlog succeeded); f0=$(tlog failed)
+	}
+	after() {	# after <arm>
+		echo "$1-after handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw) rxspan=$(klog 'H2 +RXSPAN') proto2=$(klog 'peer speaks DMSG_SPAN_PROTO_2')"
+	}
+
+	# arm 1, the link with TLS on, server vdb and client vdc
+	snap arm1; cap_start 7997
+	arm_link arm1 7997 --keyring $RING --admit $K1 --key $K1
+	echo "arm1-wait-handed $(until_n 150 $((h0 + 2)) handed)"
+	echo "arm1-wait-tlshd $(until_n 50 $((s0 + 2)) tlog succeeded)"
+	sleep 2; after arm1-up
+	sleep 8; after arm1; cap_stop
+	echo "arm1-capture magic=$(cap_count 7997 '32 48 00 00') tlsapp=$(cap_count 7997 '17 03 03') bytes=$(stat -c %s /tmp/h2tls-7997.pcap)"
+
+	# arm 2, a wrong PSK under the identity the server admits, the first link live
+	snap arm2; p0=$(refused 'the handshake failed')
+	arm_link arm2 7996 --keyring $RING --admit $K1 --key $K2
+	echo "arm2-wait-refused $(until_n 150 $((p0 + 2)) refused 'the handshake failed')"
+	sleep 8; after arm2
+	grep 'cluster link refused: the handshake failed' $K | tail -n +$((p0 + 1)) | sed 's/^/arm2-line /'
+
+	# arm 4, a client identity held only in .nvme
+	if [ -n "$K3" ]; then
+		snap arm4; p0=$(refused 'the peer.s key is not one')
+		arm_link arm4 7994 --keyring $RING --admit $K1 --key $K3
+		echo "arm4-wait-refused $(until_n 150 $((p0 + 1)) refused 'the peer.s key is not one')"
+		echo "arm4-wait-handed $(until_n 50 $((h0 + 1)) handed)"
+		sleep 2; after arm4
+		echo "arm4-k3 $K3"
+		grep 'cluster link refused: the peer.s key is not one' $K | tail -n +$((p0 + 1)) | sed 's/^/arm4-line /'
+	else
+		echo "arm4-driven 0"
+	fi
+
+	# arm 3, the plaintext control for the capture: both links replaced
+	snap arm3; cap_start 7995
+	arm_link arm3 7995 --tls none
+	echo "arm3-wait-handed $(until_n 150 $((h0 + 2)) handed)"
+	t=0; while [ "$(tstat TlsCurrTxSw)$(tstat TlsCurrRxSw)" != 00 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
+	sleep 2; after arm3; cap_stop
+	echo "arm3-capture magic=$(cap_count 7995 '32 48 00 00') tlsapp=$(cap_count 7995 '17 03 03') bytes=$(stat -c %s /tmp/h2tls-7995.pcap)"
+
+	client() {	# client <arm> <mount> <key> <port>: the intake, its peer held in the background
+		$A --attach $2 --action tlsclient --key $3 --port $4 --hold-max-ms 25000 > /tmp/h2tls-$1.out 2>&1 &
+		CLPID=$!
+		n=0; until grep -q 'errno=' /tmp/h2tls-$1.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+		echo "$1-intake $(grep -m1 'errno=' /tmp/h2tls-$1.out)"
+	}
+	client_end() { wait $CLPID; echo "$1-client rc=$? $(grep 'eof=' /tmp/h2tls-$1.out)"; }
+
+	# arm 5, a revoked client key
+	snap arm5
+	client arm5 $M $K4 7993
+	echo "arm5-wait-refused $(until_n 150 $((r0 + 1)) refused)"
+	sleep 1; after arm5; client_end arm5
+	tail -n +$((TL0 + 1)) $TL | tail -20 | sed 's/^/arm5-tlshd /'
+	grep 'cluster link refused' $K | tail -1 | sed 's/^/arm5-line /'
+
+	# arm 6, no agent at all
+	s6-rc -d change tlshd-srv
+	t=0; while pgrep -x tlshd >/dev/null && [ $t -lt 100 ]; do sleep 0.1; t=$((t + 1)); done
+	echo "arm6-tlshd $(pgrep -x tlshd | wc -l)"
+	snap arm6
+	client arm6 $M $K1 7992
+	sleep 1; after arm6; client_end arm6
+	echo "arm6-notsubmitted $(refused 'the handshake was not submitted (3)')"
+
+	# arms 7 to 9, the stub agent; the cancel tracepoint read per arm
+	echo 1 > $T/events/handshake/handshake_cancel/enable
+	cancels() { grep -c 'handshake_cancel:' $T/trace; }
+	stub() {	# stub <accept>
+		$A --action hsstub --accept $1 --hold-max-ms 120000 > /tmp/h2stub-$1.out 2>&1 &
+		STPID=$!
+		n=0; until grep -q joined /tmp/h2stub-$1.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+		echo "stub$1-start $(head -1 /tmp/h2stub-$1.out)"
+	}
+	stub_end() { kill $STPID 2>/dev/null; wait $STPID; echo "stub$1-end $(tail -1 /tmp/h2stub-$1.out)"; }
+	stub 0
+
+	# arm 7, a request no agent accepts, ended by the intake's deadline
+	: > $T/trace; snap arm7; to0=$(refused 'the handshake timed out')
+	t0=$(date +%s%N)
+	client arm7 $M $K1 7991
+	until_n 250 $((to0 + 1)) refused 'the handshake timed out' >/dev/null
+	echo "arm7-ms $(( ($(date +%s%N) - t0) / 1000000 ))"
+	sleep 1; after arm7; client_end arm7
+	echo "arm7-cancels $(cancels)"
+	grep 'cluster link refused: the handshake timed out' $K | tail -n +$((to0 + 1)) | sed 's/^/arm7-line /'
+
+	# arm 8, an unmount under a pending request
+	: > $T/trace; snap arm8; to0=$(refused 'the handshake timed out')
+	client arm8 $M $K1 7990
+	sleep 2
+	t0=$(date +%s%N); timeout 60 umount $M; urc=$?; t1=$(date +%s%N)
+	echo "arm8-umount rc=$urc ms=$(( (t1 - t0) / 1000000 ))"
+	client_end arm8
+	t=0; while [ "$(threads)" != 0 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
+	after arm8
+	echo "arm8-cancels $(cancels) timedout-new=$(($(refused 'the handshake timed out') - to0))"
+	stub_end 0
+
+	# arm 9, an unmount under a request the stub accepted and never answers
+	stub 1
+	: > $T/trace; snap arm9; to0=$(refused 'the handshake timed out')
+	client arm9 $M2 $K1 7989
+	n=0; until grep -q 'accepted fd=' /tmp/h2stub-1.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+	echo "arm9-accepted $(grep -m1 'accepted fd=' /tmp/h2stub-1.out)"
+	sleep 2
+	t0=$(date +%s%N); timeout 60 umount $M2; urc=$?; t1=$(date +%s%N)
+	echo "arm9-umount rc=$urc ms=$(( (t1 - t0) / 1000000 ))"
+	client_end arm9
+	after arm9
+	echo "arm9-cancels $(cancels) timedout-new=$(($(refused 'the handshake timed out') - to0))"
+	stub_end 1
+	echo 0 > $T/events/handshake/handshake_cancel/enable
+
+	s6-rc -u change tlshd-srv
+	t=0; while [ -z "$(tlshd_up)" ] && [ $t -lt 100 ]; do sleep 0.1; t=$((t + 1)); done
+	echo "tlshd-restored $(tlshd_up | grep -c .)"
+	echo "threads-end $(threads)"
+	finish
+	exit 0
+fi
 # H2_DMSG_CLUSTERFD=1: the mount intake alone, read and then the end of
 # the run (the host side's comment says why).
 if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
@@ -309,56 +598,13 @@ echo "ctl-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "ctl-threads-after $(threads)"
 echo "log-shitcan-final $(klog shitcanning)"
 
-echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive' $K)"
-# Before rmmod, so the report's %pS resolves the module's own symbols, and
-# after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
-# 5000 ms), as cluster-sync.sh does. The message core allocates a state and
-# a message per frame and frees them from two threads that exit on their
-# own, which is where a leak would sit.
-sleep 6
-if echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
-	echo "kmemleak $(grep -c hammer2 /sys/kernel/debug/kmemleak)"
-else
-	echo "kmemleak unusable"
-fi
-# hammer2's range as /proc/modules gives it before rmmod, its core text's
-# base and its total size, so the scan after the unload counts its frames
-# and not another module's; init text, freed after the load, is outside
-# it. The size is added to the base's low half alone, since a base above
-# INT64_MAX is past some shells' arithmetic, and a base printed as zero
-# (kptr_restrict) or a size that carries leaves the range unread.
-mrange=$(awk '$1 == "hammer2" { printf "%s %d\n", $6, $2 }' /proc/modules)
-mb=${mrange% *}; ms=${mrange#* }; me=
-case $mb in
-0x00000000*|*[!0-9a-fx]*) ;;
-0x????????????????)
-	ml=$((0x${mb#0x????????} + ms))
-	[ "$ms" -gt 0 ] && [ "$ml" -le 4294967295 ] && me=$(printf '%s%08x' "${mb%????????}" "$ml") ;;
-esac
-echo "kmemleak-unloaded-range ${mb:-none} ${me:-none}"
-timeout 120 rmmod hammer2 && echo "rmmod ok"
-# Scanned again after the unload, whose frames now print as addresses: an
-# object a module global held and the unload never freed is a leak only
-# from here. Each reading scans twice, since a scan greys an object whose
-# checksum changed since the last one (mm/kmemleak.c, kmemleak_scan) and a
-# new object's starts at ~0, so a leak is reported at its second scan.
-# The scans wait out kmemleak's minimum age, 5 s, so an object the unload
-# itself left is old enough to be reported.
-sleep 6
-if [ -z "$me" ]; then
-	echo "kmemleak-unloaded unread"
-elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kernel/debug/kmemleak; then
-	h2n=$(awk -v b="$mb" -v e="$me" '{ a = $1 "" } a ~ /^0x/ && a >= b && a < e' /sys/kernel/debug/kmemleak | wc -l)
-	echo "kmemleak-unloaded $h2n"
-	[ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200
-fi
-echo "threads-final $(threads)"
+finish
 kill $KPID 2>/dev/null
 GUEST
 
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$GUEST_SSH:/tmp/h2attach" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
 	echo "dmsg: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "H2_DMSG_CLUSTERFD=${H2_DMSG_CLUSTERFD:-0} H2_FD_TENTHS=$FDT sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "H2_DMSG_CLUSTERFD=${H2_DMSG_CLUSTERFD:-0} H2_DMSG_TLS=${H2_DMSG_TLS:-0} H2_FD_TENTHS=$FDT sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
 rc=$?
 if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
 	command grep -m1 "COULD-NOT-RUN" "$W/out" >&2 || echo "dmsg: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
@@ -425,6 +671,113 @@ check() {	# check <name> <0 ok / 1 fail> <reading>
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
 }
 num() { case "$1" in ''|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
+# The end of every mode: warnings, kmemleak and the unload.
+final_checks() {
+[ "$(num "$(val kernel-warnings)" 1)" = 0 ]; check "no kernel warning, lockdep or sanitizer report" $? "$(val kernel-warnings)"
+# Read as cluster-sync.sh reads it: a count is the reading, "unusable" is a
+# failure on the kernels this runs on, which are built with it, and no
+# value at all means the guest stopped before the scan.
+c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
+case "$l" in
+0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
+unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
+"") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
+*) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
+esac
+[ "$(val rmmod)" = ok ] && [ "$(num "$(val threads-final)" 9)" = 0 ]; check "the module unloads with no thread left" $? "rmmod $(val rmmod), $(val threads-final) threads"
+}
+
+# H2_DMSG_TLS=1, the TLS link (doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS
+# link; the expected readings were written before the first run).  One
+# guest, vdb and vdc each mounted @ROOT, keys made on the guest and read
+# back from a fresh session, tlshd answering for arms 1 to 5 and nothing
+# or a stub for 6 to 9:
+#   1  TLS on, server vdb and client vdc: both handed, tlshd's two
+#      completions, kTLS installed on both sockets, the spans of both
+#      volumes, and no frame magic in a capture holding TLS records; the
+#      link read again after five keepalive intervals
+#   2  a wrong PSK under the admitted identity, the first link live: both
+#      ends refused as a failed handshake with a status, the first link
+#      unchanged
+#   4  a client identity held only in .nvme: tlshd completes, the server
+#      refuses the reported serial as one it does not admit
+#   3  the capture's control, both ends plaintext: the frame magic present
+#   5  a revoked client key: one refusal, nothing handed
+#   6  tlshd stopped: the intake refused ESRCH, not submitted
+#   7  a stub that never accepts: the intake's deadline ends it, the
+#      handshake cancelled once
+#   8  the same, unmounted 2 s in: the unmount returns and cancels once
+#   9  a stub that accepts and never answers, unmounted: the same
+# The fake pass is two "handed" lines from two plaintext intakes, which
+# kTLS's own counters, tlshd's two lines and the capture rule out.
+if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
+	for p in 7997 7995; do
+		scp -q "$GUEST_SSH:/tmp/h2tls-$p.pcap" "$FIXDIR/dmsg-run-$stamp-$p.pcap" 2>/dev/null && echo "  kept  the port $p capture as dmsg-run-$stamp-$p.pcap"
+	done
+	echo "hammer2 TLS link on $GUEST ($guest_rel):"
+	rd() { sed -n "s/^tls-key $1 .* read=\([a-z]*\).*/\1/p" "$W/out" | head -1; }
+	ser() { sed -n "s/^tls-key $1 \([^ ]*\) .*/\1/p" "$W/out" | head -1; }
+	d() { echo $(( $(num "$(field " $(val "$1-after")" "$3")" -99) - $(num "$(field " $(val "$2-before")" "$3")" 99) )); }	# d <after-arm> <before-arm> <field>
+	a() { num "$(field " $(val "$1-after")" "$2")" -1; }
+	[ "$(rd K1)" = ok ] && [ "$(rd K2)" = ok ] && [ "$(rd K4)" = fail ]; check "the keys read back from a fresh session, the revoked one refused" $? "K1 $(rd K1), K2 $(rd K2), K4 $(rd K4) after its revoke"
+	nb=$(num "$(val pfs-count-b)" 0); nc=$(num "$(val pfs-count-c)" 0)
+
+	r=$(val arm1)
+	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ]; check "arm 1: both TLS intakes return 0" $? "$r"
+	[ "$(d arm1-up arm1 handed)" = 2 ]; check "arm 1: both ends are handed to the message threads" $? "$(d arm1-up arm1 handed) line(s) in $(val arm1-wait-handed) s"
+	[ "$(d arm1 arm1 ok)" = 2 ] && [ "$(d arm1 arm1 failed)" = 0 ]; check "arm 1: tlshd completes both handshakes and fails none" $? "$(d arm1 arm1 ok) succeeded, $(d arm1 arm1 failed) failed"
+	[ "$(a arm1-up tx)" = 2 ] && [ "$(a arm1-up rx)" = 2 ]; check "arm 1: kTLS is installed on both sockets" $? "TlsCurrTxSw $(a arm1-up tx), TlsCurrRxSw $(a arm1-up rx)"
+	[ "$(a arm1-up rxspan)" = $((nb + nc)) ] && [ "$(a arm1-up proto2)" = 2 ]; check "arm 1: each end receives the other volume's spans over PROTO_2" $? "$(a arm1-up rxspan) spans against $nb + $nc PFSs, $(a arm1-up proto2) PROTO_2 line(s)"
+	[ "$(a arm1 threads)" = 4 ] && [ "$(d arm1 arm1 silent)" = 0 ] && [ "$(d arm1 arm1 terminated)" = 0 ]; check "arm 1: the link is up after five keepalive intervals" $? "threads $(a arm1 threads), peer-silent $(d arm1 arm1 silent), terminated $(d arm1 arm1 terminated)"
+	c=$(val arm1-capture)
+	[ "$(field " $c" magic)" = 0 ] && [ "$(num "$(field " $c" tlsapp)" 0)" -ge 2 ]; check "arm 1: the capture holds TLS records and no frame magic" $? "$c"
+
+	r=$(val arm2)
+	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ]; check "arm 2: the wrong-PSK intakes return 0, the handshake being asynchronous" $? "$r"
+	n=$(grep '^arm2-line ' "$W/out" | grep -vc 'status 0,')
+	[ "$(d arm2 arm2 refused)" = 2 ] && [ "$n" = 2 ] && [ "$(d arm2 arm2 failed)" = 2 ]; check "arm 2: both ends are refused as a failed handshake with a status, tlshd failing both" $? "$(d arm2 arm2 refused) refusal(s), $n with a nonzero status, tlshd $(d arm2 arm2 failed) failed"
+	[ "$(a arm2 threads)" = 4 ] && [ "$(d arm2 arm2 silent)" = 0 ] && [ "$(d arm2 arm2 handed)" = 0 ] && [ "$(a arm2 tx)" = 2 ] && [ "$(a arm2 rx)" = 2 ]; check "arm 2: the first link carries on" $? "threads $(a arm2 threads), peer-silent $(d arm2 arm2 silent), handed $(d arm2 arm2 handed), kTLS $(a arm2 tx)/$(a arm2 rx)"
+
+	if [ "$(val arm4-driven)" = 0 ]; then
+		echo "  skip  arm 4: no key could be made in .nvme: $(sed -n 's/^tls-key K3 none .*refused=//p' "$W/out")"
+		skipped=1
+	else
+		k3=$(ser K3); r=$(val arm4)
+		[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ] && [ "$(rd K3)" = ok ]; check "arm 4: the .nvme key reads back and both intakes return 0" $? "K3 $(rd K3), $r"
+		n=$(grep '^arm4-line ' "$W/out" | grep -c "(status 0, peer key $k3)")
+		[ "$(d arm4 arm4 refused)" = 1 ] && [ "$n" = 1 ] && [ "$(d arm4 arm4 ok)" = 2 ]; check "arm 4: tlshd completes and the server refuses the .nvme serial it reports" $? "$(d arm4 arm4 refused) refusal(s), $n naming K3 $k3, tlshd $(d arm4 arm4 ok) succeeded"
+		[ "$(d arm4 arm4 handed)" = 1 ]; check "arm 4: the client end, whose handshake succeeded, is handed" $? "$(d arm4 arm4 handed)"
+	fi
+
+	r=$(val arm3); c=$(val arm3-capture)
+	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ] && [ "$(d arm3 arm3 handed)" = 2 ] && [ "$(a arm3 threads)" = 4 ]; check "arm 3: the plaintext control replaces both links" $? "$r, handed $(d arm3 arm3 handed), threads $(a arm3 threads)"
+	[ "$(num "$(field " $c" magic)" 0)" -ge 2 ]; check "arm 3: the plaintext capture holds the frame magic, so the reading in arm 1 can see it" $? "$c"
+	[ "$(a arm3 tx)" = 0 ] && [ "$(a arm3 rx)" = 0 ]; check "arm 3: kTLS is released with the TLS sockets" $? "TlsCurrTxSw $(a arm3 tx), TlsCurrRxSw $(a arm3 rx)"
+
+	[ "$(field "$(val arm5-intake)" errno)" = 0 ] && [ "$(d arm5 arm5 refused)" = 1 ] && [ "$(d arm5 arm5 handed)" = 0 ] && [ "$(a arm5 threads)" = "$(num "$(field " $(val arm5-before)" threads)" -2)" ]; check "arm 5: a revoked key is refused once, nothing handed, the link kept" $? "$(val arm5-intake), $(d arm5 arm5 refused) refusal(s), handed $(d arm5 arm5 handed), threads $(a arm5 threads)"
+	echo "        arm 5 line: $(val arm5-line)"
+
+	[ "$(val arm6-tlshd)" = 0 ] && [ "$(field "$(val arm6-intake)" errno)" = 3 ] && [ "$(val arm6-notsubmitted)" = 1 ]; check "arm 6: with no agent the intake is refused ESRCH, not submitted" $? "tlshd $(val arm6-tlshd), $(val arm6-intake), $(val arm6-notsubmitted) line(s)"
+
+	tm=$(num "$(val tls-timeout-ms)" 10000); ms=$(num "$(val arm7-ms)" 0)
+	[ "$(grep -c '^stub0-start .*joined' "$W/out")" = 1 ]; check "the stub agent joins the handshake family's tlshd group" $? "$(val stub0-start)"
+	n=$(grep '^arm7-line ' "$W/out" | grep -c '(status -115, peer key 0)')
+	[ "$(field "$(val arm7-intake)" errno)" = 0 ] && [ "$n" = 1 ] && [ "$ms" -ge $((tm - 500)) ] && [ "$ms" -le $((tm + 3000)) ]; check "arm 7: a request no agent accepts times out at the intake's deadline" $? "$n line(s) at status -115, after $ms ms against $tm"
+	[ "$(val arm7-cancels)" = 1 ]; check "arm 7: the timeout cancels the request once" $? "$(val arm7-cancels) handshake_cancel event(s)"
+
+	for arm in arm8 arm9; do
+		u=$(val $arm-umount); c=$(val $arm-cancels)
+		[ "$(field " $u" rc)" = 0 ] && [ "$(num "$(field " $u" ms)" 99999)" -lt 5000 ] && [ "$(echo "$c" | cut -d' ' -f1)" = 1 ] && [ "$(field "$c" timedout-new)" = 0 ]; check "$arm: the unmount under a pending request returns and cancels it once" $? "$u, $c"
+	done
+	[ "$(a arm8 threads)" = 0 ]; check "arm 8: no message thread is left after the unmount" $? "$(a arm8 threads)"
+	[ "$(num "$(sed -n 's/.*accepted fd=\([0-9-]*\).*/\1/p' "$W/out" | head -1)" -1)" -ge 0 ]; check "arm 9: the stub accepted the request and held its descriptor" $? "$(val arm9-accepted)"
+	[ "$(val tlshd-restored)" = 1 ]; check "tlshd is running again under s6-supervise" $? "$(val tlshd-restored)"
+	final_checks
+	echo "dmsg: TLS link, $checks check(s), $fail failed${skipped:+, arm 4 not driven}"
+	[ "$fail" -eq 0 ] || exit 1
+	[ -z "${skipped:-}" ] || exit 2
+	exit 0
+fi
 
 echo "hammer2 message core on $GUEST ($guest_rel):"
 npfs=$(num "$(val pfs-count)" 0)
@@ -435,8 +788,8 @@ r=$(val refuse); pe=$(num "$(field "$r" pipe_errno)" -1); se=$(num "$(field "$r"
 
 # The TLS intake's refusals (doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link):
 # each is made before anything is submitted, so no handshake agent is
-# needed, and each prints its own line.  hprintf is ratelimited per call
-# site, ten in five seconds, and the nine lines come from one site.
+# needed, and each prints its own line, unlimited (hprintf_each), so each
+# is counted exactly.
 t=$(val tlsrefuse); l=$(val log-tlsrefuse); hs=$(num "$(val handshake-upcall)" -1)
 [ "$(num "$(field "$t" req_set)" -1)" = 1 ] && [ "$(num "$(field "$t" req_after)" -1)" = 0 ]; check "cluster_tls_required read 1 for its call and 0 after, so the suite after it runs with it clear" $? "set $(field "$t" req_set), after $(field "$t" req_after)"
 [ "$(num "$(field "$t" plain)" -1)" = 0 ]; check "a plaintext intake with nkeys 1000 and positive bytes past keys[] is admitted, its key fields unread" $? "errno $(field "$t" plain)"
@@ -575,18 +928,7 @@ sb=$(num "$(val log-shitcan-before)" 0); sa=$(num "$(val log-shitcan-after)" 0)
 cu=$(num "$(val ctl-umount-ms)" 99999); sf=$(num "$(val log-shitcan-final)" 0)
 [ "$cu" -lt 3000 ] && [ "$sf" = "$sa" ]; check "socket_faults: control, with the daemon closed first the unmount is fast and the line is absent" $? "$cu ms, line count $sa to $sf"
 
-[ "$(num "$(val kernel-warnings)" 1)" = 0 ]; check "no kernel warning, lockdep or sanitizer report" $? "$(val kernel-warnings)"
-# Read as cluster-sync.sh reads it: a count is the reading, "unusable" is a
-# failure on the kernels this runs on, which are built with it, and no
-# value at all means the guest stopped before the scan.
-c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
-case "$l" in
-0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
-unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused" ;;
-"") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
-*) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
-esac
-[ "$(val rmmod)" = ok ] && [ "$(num "$(val threads-final)" 9)" = 0 ]; check "the module unloads with no thread left" $? "rmmod $(val rmmod), $(val threads-final) threads"
+final_checks
 
 echo "dmsg: $checks check(s), $fail failed"
 [ "$fail" -eq 0 ]
