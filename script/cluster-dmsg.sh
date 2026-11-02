@@ -112,6 +112,12 @@ ko_rel=$(modinfo -F vermagic "$KO" 2>/dev/null | cut -d' ' -f1)
 dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
 [ "$dl" = 0 ] && {
 	echo "dmsg: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
+# H2_DMSG_CLUSTERFD=1 passes on "no recursive-locking report", which a
+# kernel without lockdep satisfies by having no /proc/lockdep_stats.
+[ "${H2_DMSG_CLUSTERFD:-0}" = 1 ] && [ "$dl" != 1 ] && {
+	echo "dmsg: COULD-NOT-RUN: H2_DMSG_CLUSTERFD=1 needs lockdep on, and $GUEST reads debug_locks '${dl:-absent}'" >&2; exit 2; }
+# The mount's bound in that mode, in tenths of a second, scaled as RUNSECS is.
+FDT=300; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && FDT=$((FDT * 4))
 
 cat > "$W/guest.sh" <<'GUEST'
 set -u
@@ -133,6 +139,54 @@ M=/mnt/h2d
 insmod /tmp/hammer2.ko || { echo "insmod failed"; exit 1; }
 echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
+# H2_DMSG_CLUSTERFD=1: the mount intake alone, read and then the end of
+# the run (the host side's comment says why).
+if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
+	command -v socat >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: no socat on the guest" >&2; exit 2; }
+	command -v bash >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: no bash on the guest" >&2; exit 2; }
+	mkdir -p $M
+	socat -u TCP-LISTEN:7999,bind=127.0.0.1,reuseaddr,fork OPEN:/dev/null >/dev/null 2>&1 &
+	SPID=$!
+	i=0
+	until bash -c 'exec 3<>/dev/tcp/127.0.0.1/7999' 2>/dev/null; do
+		sleep 0.1; i=$((i + 1))
+		[ $i -gt 50 ] && { echo "dmsg: COULD-NOT-RUN: socat did not listen on 127.0.0.1:7999" >&2; kill $SPID; exit 2; }
+	done
+	bash -c 'exec 3<>/dev/tcp/127.0.0.1/7999 || exit 99; exec mount -t hammer2 -o cluster_fd=3 /dev/vdb@ROOT /mnt/h2d' > /tmp/fdmount.out 2>&1 &
+	MPID=$!
+	t=0
+	while kill -0 $MPID 2>/dev/null && [ $t -lt "${H2_FD_TENTHS:-300}" ]; do sleep 0.1; t=$((t + 1)); done
+	if kill -0 $MPID 2>/dev/null; then
+		echo "fdmount-returned no"
+	else
+		wait $MPID; echo "fdmount-returned yes rc=$?"
+	fi
+	echo "fdmount-seconds $((t / 10))"
+	sed 's/^/fdmount-said /' /tmp/fdmount.out
+	n=0
+	for s in /proc/[0-9]*/stack; do
+		grep -q hammer2_cluster_reconnect "$s" 2>/dev/null || continue
+		p=${s#/proc/}; p=${p%/stack}; n=$((n + 1))
+		echo "fdmount-task pid=$p state=$(awk '{print $3}' /proc/$p/stat) comm=$(cat /proc/$p/comm)"
+		sed 's/^/fdmount-frame /' "$s"	# whole: __sched frames such as the rwsem slowpath are not in it
+	done
+	echo "fdmount-tasks $n"
+	sleep 1
+	echo "fdmount-lockdep $(grep -c 'possible recursive locking detected' $K)"
+	echo "fdmount-mntlk-lines $(grep -c '(h2_mnt)' $K)"	# hammer2_mntlk's lockdep name
+	echo "fdmount-badfd $(grep -c 'bad cluster_fd' $K)"
+	if ! kill -0 $MPID 2>/dev/null; then
+		# The link is up when its two message threads run, which only the
+		# reconnect tail starts; the work runs after the mount returns.
+		t=0
+		while [ "$(threads)" != 2 ] && [ $t -lt "${H2_FD_TENTHS:-300}" ]; do sleep 0.1; t=$((t + 1)); done
+		echo "fdmount-threads $(threads)"
+		timeout 60 umount $M 2>/dev/null; echo "fdmount-umount $?"	# the host's detach_disk unloads
+		echo "fdmount-threads-after $(threads)"
+	fi
+	kill $SPID 2>/dev/null
+	exit 0
+fi
 mkdir -p $M
 mount -t hammer2 /dev/vdb@ROOT $M || { echo "mount failed"; exit 1; }
 hammer2 -s $M pfs-create SP >/dev/null 2>&1
@@ -293,7 +347,7 @@ GUEST
 
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$GUEST_SSH:/tmp/h2attach" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
 	echo "dmsg: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "H2_DMSG_CLUSTERFD=${H2_DMSG_CLUSTERFD:-0} H2_FD_TENTHS=$FDT sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
 rc=$?
 if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
 	command grep -m1 "COULD-NOT-RUN" "$W/out" >&2 || echo "dmsg: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
@@ -302,6 +356,46 @@ fi
 stamp=$(date +%Y%m%d-%H%M%S)
 scp -q "$GUEST_SSH:/tmp/h2dmsg.klog" "$FIXDIR/dmsg-run-$stamp.klog" 2>/dev/null && echo "  kept  the guest kernel log beside the images as dmsg-run-$stamp.klog"
 { echo "guest-kernel $guest_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; } > "$FIXDIR/dmsg-run-$stamp.out" 2>/dev/null
+# H2_DMSG_CLUSTERFD=1 runs only the mount intake, cluster_fd=, which no other
+# harness drives: a TCP connection to a silent listener on the guest's
+# loopback is handed to the mount as descriptor 3. The mount holds
+# hammer2_mntlk across that intake and the reconnect tail's quiesce takes it
+# again (hammer2_remote.c's hammer2_remote_conn_end()), so the check that the
+# mount returns is expected to fail until the TLS link section's work item
+# exists. Absence passes trivially, so two checks are positive: the link's
+# two message threads run after the mount, and the unmount then completes
+# with none left. A mount still in the kernel is called the recursion only
+# when a task sits in hammer2_cluster_reconnect() and lockdep reported it;
+# otherwise the stop line says it is stuck elsewhere, beside the whole stack.
+# Either way the guest is left as it is but for the listener, which is
+# stopped; it is read live and reset by hand, never by this script.
+if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
+	sed -n 's/^fdmount-\(task\|frame\|said\) /  guest: \1 /p' "$W/out"
+	v() { sed -n "s/^$1 //p" "$W/out" | head -1; }
+	f=0
+	r=$(v fdmount-returned)
+	if [ "$r" = "yes rc=0" ]; then echo "  ok    the cluster_fd= mount returns: $r in $(v fdmount-seconds) s"
+	else echo "  FAIL  the cluster_fd= mount returns: ${r:-unread} after $(v fdmount-seconds) s"; f=1; fi
+	if [ "$(v fdmount-badfd)" = 0 ]; then echo "  ok    the descriptor was accepted"
+	else echo "  FAIL  the descriptor was accepted: $(v fdmount-badfd) bad cluster_fd line(s)"; f=1; fi
+	if [ "$(v fdmount-lockdep)" = 0 ]; then echo "  ok    no recursive-locking report"
+	else echo "  FAIL  no recursive-locking report: $(v fdmount-lockdep), hammer2_mntlk (h2_mnt) named on $(v fdmount-mntlk-lines) line(s), $(v fdmount-tasks) task(s) in hammer2_cluster_reconnect"; f=1; fi
+	if [ "$(v fdmount-threads)" = 2 ]; then echo "  ok    the link's two message threads run after the mount"
+	else echo "  FAIL  the link's two message threads run after the mount: $(v fdmount-threads | grep . || echo unread)"; f=1; fi
+	if [ "$(v fdmount-umount)" = 0 ] && [ "$(v fdmount-threads-after)" = 0 ]; then echo "  ok    the unmount completes with no thread left"
+	else echo "  FAIL  the unmount completes with no thread left: umount $(v fdmount-umount), threads $(v fdmount-threads-after)"; f=1; fi
+	if [ "$r" = no ]; then
+		if [ "$(v fdmount-tasks)" -ge 1 ] 2>/dev/null && [ "$(v fdmount-lockdep)" -ge 1 ] 2>/dev/null; then
+			echo "dmsg: the mount is still in the kernel on $GUEST, in hammer2_cluster_reconnect() with lockdep's recursion reported; read it live, then $VIRSH destroy $GUEST and start it" >&2
+		else
+			echo "dmsg: the mount is still in the kernel on $GUEST but not as the recursion ($(v fdmount-tasks) task(s) in hammer2_cluster_reconnect(), $(v fdmount-lockdep) report(s)); read the stack above live, then $VIRSH destroy $GUEST and start it" >&2
+		fi
+		exit 1
+	fi
+	detach_disk
+	echo "dmsg: cluster_fd= intake, $f failed"
+	exit "$f"
+fi
 if [ "$rc" != 0 ]; then
 	sed 's/^/  guest: /' "$W/out" >&2
 	detach_disk
