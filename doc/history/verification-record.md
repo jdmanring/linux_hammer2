@@ -20900,7 +20900,8 @@ The runs before these found what they needed:
   visible files agreeing after a cold boot. On `artix-s6-h2b`,
   `s6-rc-update` failed ("Broken pipe") and the new database came live
   by a boot instead, with the same 63 active services as
-  `artix-s6-kde`.
+  `artix-s6-kde`, the two sorted lists kept and hashing alike
+  (`p8-notes/tls-guest-reread-20261102-100820.log`, lines 13 and 90).
 
 The frontend gates, run by hand on `h2debug-7.3tls` at `17540ae`,
 since `a2594b5` changes `src/`: `test-fixtures.sh` 11 images, 0
