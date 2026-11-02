@@ -20592,10 +20592,14 @@ device's work item, so the `cluster_fd=` mount no longer takes
 `880f2ad` changed comments and documents only. Every run below is on
 `880f2ad`'s `src/` (`srcdiff e3b0c44298fc1c14` on each log's line 1,
 the hash of an empty `git diff src`, which sees unstaged edits to
-tracked files only; that `src/` is clean rests instead on the module:
+tracked files only; for the dmsg and wire runs, which log the module's
+sha256, that `src/` is clean rests instead on the module:
 `git status --porcelain -- src` empty, `src/` unchanged from `880f2ad`
 at `1046ff1`, and builds there against the debug and KASAN trees hash
-to the two module sha256 below), from a frozen copy of its harness, on
+to the two module sha256 below; the fixtures and enospc runs log no
+module hash, and the same wrapper ran them minutes after the wire run
+with the same `KDIR` and no edit between, which is an inference, not a
+reading), from a frozen copy of its harness, on
 `artix-s6-kde` and, for the wire, `artix-s6-h2b`; logs under
 `p7-notes/` of the data tree, klogs under `fixtures/`. QEMU cores 0
 before and after each sequence.
