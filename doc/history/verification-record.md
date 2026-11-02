@@ -20925,3 +20925,77 @@ Not read here: any link between two guests; any record type but data
 records over a link (the reader is still `kernel_read()`, so a
 post-handshake record would end the link, which 5.4 answers); and the
 identity a span announces against the key that authenticated it (5.5).
+
+## The reader on a TLS link, 2026-11-02
+
+`script/cluster-dmsg.sh` with `H2_DMSG_TLS=1`, arms 10 to 14, one guest
+(`artix-s6-kde`), run after arm 3 with `tlshd` up. The kernel is the
+client on `vdb` with K1, and `h2attach`'s `tlspeer`, built on the guest
+with `-DH2_GNUTLS` against GnuTLS 3.8.13-2, is the TLS server, since in
+TLS 1.3 only a server sends NewSessionTicket. After the handshake and a
+served `DBG_SHELL` the peer sends one record per arm through GnuTLS's
+own record layer: none, a ticket, a KeyUpdate, a fatal internal_error
+alert, and `user_canceled` then `close_notify`. The expected readings,
+the fake pass and the control were written before the first run
+(`p7-notes/n9-3-expected.md` in the data tree). Both runs built the
+tree at `cded1db` byte for byte: harness sha256 `bff0e6881883`,
+`h2attach.c` `95755aa6878c`, and the source diff from `81e9b58`
+hashing `4ba9521b9a26`, which is `81e9b58..cded1db` over `src` and
+`test` less the two new stub headers that were untracked when the runs
+started and that only the host's shim gate reads. Each is on line 1 of
+its log, with QEMU cores in `/var/crash` on lines 2 and 57 (0 and 0).
+Logs under `p7-notes/`; reports and kernel logs under `fixtures/` as
+`dmsg-run-<stamp>`:
+- `h2debug-7.3tls`, `n9-3-run-debug-20261102-104406.log` (report
+  `dmsg-run-20261102-104612`), 47 checks, 0 failed (line 55). Every arm
+  completed the handshake with the peer's PSK callback matching K1's
+  identity once, `CHACHA20-POLY1305`, the kernel's `LNK_CONN` and its
+  three spans answered, and a `DBG_SHELL` served before the record; each
+  link was handed once and left no message thread (lines 24-33).
+  Arm 10, no record: a second `DBG_SHELL` served and no record line
+  (line 34). Arm 11, a ticket: `gnutls_session_ticket_send()` returned
+  0, the line `TLS peer sent handshake message 4, dropped`, and a second
+  `DBG_SHELL` served after it (line 35; klog line 118). Arm 12, a
+  KeyUpdate: the link ended 0 ms after the send (1 ms on KASAN) with the KeyUpdate
+  line, and `TlsRxRekeyReceived` rose by 1 (line 36; klog line 122).
+  Arm 13, the alert: the end 1 ms after the send (0 on KASAN) with `TLS peer sent alert
+  2/80, ending the link` (line 37; klog line 126). Arm 14: the end 0 ms after the send with
+  `TLS peer ended the link (alert 90)` and no error line (line 38; klog
+  line 130). The five lines are counted over the whole log at every
+  arm, so each arm also read the others' lines as absent or as the
+  earlier arm left them. No kernel warning (line 52), kmemleak 0 of
+  hammer2's before and after the unload (line 53).
+- `h2kasan-7.3tls`, `n9-3-run-kasan-20261102-104406.log` (report
+  `dmsg-run-20261102-104922`), 47 checks, 0 failed (line 55): the same
+  readings at lines 24-38, the four lines at klog lines 119, 123, 127
+  and 131, and no KASAN, UBSAN or lockdep report (line 52), kmemleak 0
+  (line 53).
+- Arms 1 to 9 read as in the entry above on both kernels, in the same
+  runs.
+
+The control, placed where the mechanism executes: a scratch tree
+(`ctl/n9-3-no-tlsrec` in the data tree, never committed) with
+`fp_read()`'s `n == -EIO` branch removed, so a record that is not data
+ends the read on `EIO` as before this change; run on `h2debug-7.3tls`
+(`n9-3-run-control-notlsrec-20261102-105015.log`, report
+`dmsg-run-20261102-105157`). 47 checks, 4 failed (line 55), exactly the
+record checks of arms 11 to 14 (lines 35-38). Arm 11 read the second
+`DBG_SHELL` unanswered and no line: the link ended silently at the
+ticket. Arm 12 read `TlsRxRekeyReceived` up by 1 with no line, and arms
+13 and 14 ended with none. Arm 10 passed (line 34), so the peer serves
+a second `DBG_SHELL` in that build too and the failure is the reader's.
+The klog holds no `TLS peer` line.
+
+The frontend gates, run by hand on `h2debug-7.3tls` at `cded1db`, since
+`3e3a8c9` changes `fp_read()`, which every link read goes through:
+`test-fixtures.sh` 11 images, 0 failures
+(`p7-notes/n9-3-fixtures-20261102-105220.log`, line 21) and
+`test-enospc.sh` filled 2G with 0 failures, built from `cded1db`
+(`n9-3-enospc-20261102-105220.log`, lines 2 and 334). QEMU cores in
+`/var/crash` read 0 after both.
+
+Not read here: any link between two guests; a KeyUpdate answered rather
+than ending the link (out of scope, with the trigger of a peer that
+sends one in practice); a post-handshake record from `tlshd` itself,
+which sends none under `%NO_TICKETS`; and the identity a span announces
+against the key that authenticated it (5.5).
