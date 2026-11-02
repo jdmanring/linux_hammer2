@@ -39,8 +39,10 @@ has been read back by DragonFly and the other way round
 
 - **Cluster link**: plaintext. A PSK handshake can be asked for at the
   intake, whose refusals are read on both guest kernels; none has
-  completed, since no guest runs `tlshd`, and the reader cannot yet read
-  a TLS link. On a plaintext link the kernel verifies no peer identity and
+  completed, since no guest runs `tlshd`, so no link here has carried
+  traffic encrypted, and a link that completes one would end at the
+  first TLS record that is not data, which the reader cannot yet read.
+  On a plaintext link the kernel verifies no peer identity and
   the serving side checks no `copyinfo` row, so whoever the userland
   service connects is a peer; an enabled row gates only the registration
   of a remote master, and the test harness's `h2service` chooses peers

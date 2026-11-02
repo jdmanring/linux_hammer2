@@ -73,9 +73,11 @@ latency, the half that was never measured").
   inputs), with `tlshd` holding the keys and the kernel only their
   serials, and a server intake then admits only a peer whose key serial
   it named. The intake's refusals are read on both guest kernels; no
-  handshake has completed, since no guest runs `tlshd`, and the reader
-  cannot yet read a TLS record that is not data, so no link carries
-  traffic encrypted. Every link today is plaintext. The
+  handshake has completed, since no guest runs `tlshd`, so no link here
+  has carried traffic encrypted, and a link that completes one would end
+  at the first TLS record that is not data, which the reader cannot yet
+  read. Every link `test/h2service.c` dials is plaintext, since it asks
+  for no handshake. The
   `cluster_tls_required` module parameter (0 by default) refuses a
   plaintext intake when set to 1. The rest is P8's TLS stage.
 

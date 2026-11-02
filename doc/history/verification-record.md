@@ -20652,3 +20652,131 @@ the commit (`2e8a017` with `src/` dirty, srcdiff `b2ccb53d2c11a7ef`;
 `4094467` (`n9-rerun-*-20261101-19*.log`), with the same counts. Those
 dmsg logs carry no head or module hash, which is why the runs above were
 repeated on the committed tree.
+
+## The TLS intake's PSK request and the upstream LNK_CONN fix, 2026-11-02
+
+`a7a46b0` added the intake's PSK request (the handshake asked for on
+the socket `RECLUSTER` or `cluster_fd=` hands in, asynchronous, the
+link's tail run by the work item on success), `af4fda9` the `tlsrefuse`
+arm of `cluster-dmsg.sh`, `a3163cc` carried DragonFly's `7a91466016`
+into `kern_dmsg.c`, and `74bb861` the audit's fixes (key serials and a
+server keyring refused at 0 or below, the serial check run on a PSK
+intake only, `cluster_tls_timeout_ms` read-only, and `tlsrefuse`'s key
+and plaintext cases). The reader that a TLS link also needs, one that
+reads a record other than data, is not built, and no handshake has
+completed on a guest, since neither runs `tlshd`, so no link here has
+carried traffic encrypted; a link that completed one would end at the
+first record that is not data (`doc/CLUSTER_PROTOCOL_DESIGN.md`, the
+reader paragraph of the TLS link section). `cluster_tls_required`
+defaults to 0, as the design section has it (the relay's content-keyed
+cells read frames).
+
+Every run below is on `74bb861`'s `src/`: each log's line 1 names a
+head from before the replays of these commits, which changed commit
+messages and no tree, the commit whose tree is `af4fda9`'s, and
+srcdiff `e043906dde386d44`, which is the first sixteen hex digits of
+the sha256 of
+`git diff af4fda9 74bb861 -- src`. The harness copies match the files
+committed at `74bb861` byte for byte (`cmp`): `cluster-dmsg.sh`
+`63ca32384c2df7e9`, `test-fixtures.sh` and `test-enospc.sh`, and
+`test/h2attach.c` `a3aca6cc9594ca87` on each header. One job at a time
+on `artix-s6-kde` from the wrapper `p7-notes/n9-k1.sh`, its summary
+`n9-k1-run.log`, QEMU cores 0 before and after (its lines 1 and 8);
+logs under `p7-notes/` of the data tree, klogs under `fixtures/`.
+
+- The leak's window, held open. `HAMMER2_CONNWAIT=1` holds the
+  reconnect a second after the reader starts, and the suite's own
+  `tlsrefuse` plaintext case, which closes its socket at once, is then
+  a link closed before its `LNK_CONN`. The control ran the committed
+  `cluster-dmsg.sh` with only that build flag added (harness
+  `d9a1c118d5d94b29`, `script/.run-dmsg-cw.sh`) on the tree before the
+  carry: its srcdiff `ed6b8ac936d50dd0` is the first sixteen hex digits
+  of the sha256 of `git diff af4fda9 74bb861 -- src
+  ':!src/sys/fs/hammer2/kern_dmsg.c'`, so `74bb861`'s `src/` without
+  the carry. On `h2debug-7.3tls` (`n9-leak-cw-20261101-230121.log`):
+  1 of 84 checks failed (line 88), kmemleak 3 report lines naming
+  hammer2 (line 86). Its klog (`fixtures/dmsg-run-20261101-230353.klog`)
+  holds 32 hold lines, and its report (`.out` beside it, lines 151 to
+  165) one unreferenced 192-byte object from `kworker/u50:5`, whose
+  three module frames, resolved with `addr2line -i -j .text` against
+  that run's module (kept as `ctl/hammer2-cw-probe.ko`, sha256
+  `742e5902d6425edc`) at offsets 0x81a7, 0x951e and 0xa995, are
+  `kdmsg_msg_alloc()`, `kdmsg_iocom_autoinitiate()` and
+  `hammer2_cluster_tail()` inlined into `hammer2_link_work()`.
+  The run on the carry adds six lines (a comment and five commands)
+  after the suite's last unmount and before its kernel-log checks
+  (harness `d01c12df3fb1205a`, `script/.run-dmsg-cwu.sh`), which
+  remount, run `tlsrefuse` once more and unmount, so that the last link
+  before an unmount is also one closed before its `LNK_CONN`. On `h2debug-7.3tls`
+  (`n9-k1-dmsg-cwu-20261102-000237.log`, module `42abeaec2f5374c7`):
+  84 checks, 0 failed (line 88); kmemleak nothing of hammer2's
+  (line 86); its klog (`fixtures/dmsg-run-20261102-000512.klog`) holds
+  33 hold lines, the suite's 32 and the late link's, and its report
+  reads `late-tlsrefuse-rc 0`, `late-tail 33` and `late-umount-rc 0`
+  (lines 146 to 149). Apart from those six lines the two harnesses are
+  the same file, so the difference the comparison reads is the carry;
+  the late block is not what reaches the leak, since the control
+  reached it without one.
+- `cluster-dmsg.sh` default on `h2debug-7.3tls`
+  (`n9-k1-dmsg-debug-20261102-000513.log`, module `43da021eaff8f512`)
+  and `h2kasan-7.3tls` (`n9-k1-dmsg-kasan-20261102-000924.log`, module
+  `dc652d4f6eb1be60`): 84 checks, 0 failed on each (line 88); no kernel
+  warning, lockdep or sanitizer report (line 85); kmemleak nothing of
+  hammer2's (line 86). The intake's nine refusals each named once
+  (line 10 of the debug log: `all=9`, one line per case), and a
+  plaintext intake carrying 1000 in `nkeys` and positive bytes past
+  `keys[]` admitted with its key fields unread (line 7).
+- On `h2debug-7.3` (`n9-k1-dmsg-plain-20261102-001234.log`, module
+  `d6b508f5ccfbf01a`), whose kernel has no `NET_HANDSHAKE`: 83 checks,
+  0 failed (line 87); the seven PSK cases refused at the upcall's
+  absence (line 9, `upcall=7`); kmemleak nothing of hammer2's
+  (line 85), where the tree before the carry read 3 report lines of
+  one object (`n9-b1-dmsg-plain-20261101-224003.log`, line 85).
+- `test-fixtures.sh` (`n9-k1-fixtures-20261102-000713.log`): 11 images,
+  43 files, 100 ioctl results, 0 failures (line 22), lockdep enabled
+  throughout (line 21). `test-enospc.sh`
+  (`n9-k1-enospc-20261102-000738.log`): filled 2G, 0 failures
+  (line 335), kernel warnings and module faults 0 after the run marker
+  (lines 167 and 168). Both with `H2_FIXTURE_START=1` and
+  `KDIR=~/kernels/linux-7.3-tls`.
+- On the host at `74bb861`: warning-free builds against
+  `~/kernels/linux-7.3-tls` and `~/kernels/linux-7.3`; `nm -u` lists
+  `tls_client_hello_psk`, `tls_handshake_cancel` and
+  `tls_server_hello_psk` in the `-tls` module (284 undefined symbols)
+  and no `tls_` symbol in the plain one (281). At `a3163cc` alone the
+  checkpatch gate read the deviation set unchanged at 1615 and the
+  syntax gate 97 checks, 0 failed.
+
+Recorded and not changed: `hammer2_remote_connected()` enables the
+registration and keepalive work after an autoinitiate that returned
+early, as it did after one that wrote onto a dead link;
+`hammer2_volconf_update()` reads `conn_state` without `msglk`;
+`cluster-dmsg.sh` prints its kmemleak-cleared line whether or not the
+clear succeeded.
+
+Audited by one reviewer, requested on Claude Opus 5.5 by its Patchbay
+tag and resumed across rounds; its transcript's `model` field carries
+the tag alone, so the model that served each turn was not read.
+Subject findings by reading 4, 3, 3, 1, 0, 2, 1, 0, 0; the second reading
+did not class its findings as subject or apparatus, and its 3 is this
+record's classing after the reading. The first found the reader's
+absence unstated (major); the second a key serial loop reading past
+`keys[]` on a plaintext intake (blocking); the third that DragonFly had
+fixed the `LNK_CONN` leak upstream in another shape than the port's own
+fix, which the carry replaced (blocking); the fourth a sentence dating
+the port's reconnect shutdown before DragonFly's `bcbcc84a90`, which it
+does not predate. The fifth, after that fix, found nothing and signed
+off the code and the messages of the carry and the audit fixes, the
+second reworded after it. The sixth read this entry and
+found its control described as the same harness as the run on the
+carry, when the control had no late block and reached the leak through
+the suite's own plaintext case (major), and "no link carries traffic
+encrypted" stated beyond what the code supports (minor), with two minor
+apparatus findings, the control's leaked object and the hold run's
+lines left uncited, and the second reading's count unmarked as this
+record's classing. The seventh read those fixes and the reworded
+messages of `a7a46b0` and `74bb861` and found the same overstatement in
+`doc/STATUS_SNAPSHOT.md` (minor) and this paragraph without the fifth
+reading (minor, apparatus). An eighth found one sentence of this
+paragraph naming no messages (minor, apparatus), and a ninth, on its
+fix, returned SIGN-OFF with no finding.
