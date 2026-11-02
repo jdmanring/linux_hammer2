@@ -891,8 +891,10 @@ continuing just inside it hold `hammer2_mntlk` for as many windows as
 the scan has, about three and a half hours for a 20000-entry `scanall`
 at ten seconds a window of sixteen. So a peer holds the lock for the
 bound plus the storage function's own run, which the deadline does not
-interrupt and whose length the peer chooses by the inode it names
-(not measured), during which a mount, unmount, pfs-delete or bulkfree on
+interrupt: for a read, a length the peer chooses by the inode it names;
+for a snapshot command, the PFS flush and any stale snapshot's delete,
+whose length the host's dirty state sets and whose timing the peer
+chooses (neither measured), during which a mount, unmount, pfs-delete or bulkfree on
 the host waits and the synchronization thread's try-lock fails and its
 pass is skipped to its next cadence; the bound is the host's protection
 against that peer, and stage 2b's measured default is what sets it. A

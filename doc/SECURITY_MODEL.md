@@ -70,7 +70,8 @@ latency, the half that was never measured").
   global mount lock (`hammer2_mntlk`) until it is answered, since a PFS
   carries no reference count that could hold it instead: up to
   `remote_timeout_ms` for the request plus the storage call's own run,
-  whose length the peer chooses by the inode it names, during which a
+  for a read as long as the inode it names takes and for a snapshot
+  command a flush of the PFS and any stale snapshot's delete, during which a
   mount, unmount, pfs-delete or bulkfree on the host waits and the
   synchronization thread skips its pass. A PFS with a remote master
   mounts read-only.
