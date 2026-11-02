@@ -21011,3 +21011,46 @@ only the server; a handshake record holding two messages or part of
 one, which ends the link under the `DEFER` and which no GnuTLS peer
 sends; and the identity a span announces against the key
 that authenticated it (5.5).
+
+## A bulkfree scan wants the capability, 2026-11-02
+
+`HAMMER2IOC_BULKFREE_SCAN` passed the ioctl entry's privilege switch with
+no capability, as DragonFly lets it, though a scan syncs every PFS on
+the device holding `hammer2_mntlk` and then holds the device's bulkfree
+lock across its pass (`hammer2_ioctl_bulkfree_scan()`); `ef488c6` puts
+it behind `CAP_SYS_ADMIN`. An automated security review raised it,
+saying the scan held the global lock for its whole run; that was the
+design note's wording, also repeated by the hostile audit of 1.0.76,
+and the scan's own code shows the lock released after the sync, so
+five places saying otherwise were corrected first (`2700f49`). The expected readings and the control were written
+before the run (`p7-notes/bulkfree-priv-expected.md` in the data tree).
+Runs on `h2debug-7.3tls`, `KDIR` the `-tls` tree, from frozen copies;
+each log's line 1 names the tree, the main tree's head and whether its
+`src`, `test` and `script` were clean (all three read `ef488c6`,
+clean), the hash of `hammer2_vnops.c` (`6ac94f23d57d`, the committed
+file's; the control's `adc724be188f`), the gate and the exerciser, and
+its second and last lines carry the QEMU core count, 0 and 0 in all
+three. A first set on an earlier commit with the same code and older
+comments read the same counts and is not cited:
+- `test-fixtures.sh` on the change's source
+  (`p7-notes/bfp-fixtures-20261102-125713.log`): 11 images, 0
+  failures, 110 ioctl results (line 23), 100 at 1.0.76
+  (`n9-3c-fixtures-20261102-114429.log`, line 23): the ten mountable
+  images each read one more, the unprivileged run's
+  `unpriv-bulkfree -1`, as uid 65534 under `setpriv`.
+- The control, a `git archive` of the change with the
+  `HAMMER2IOC_BULKFREE_SCAN` label restored to the open list and
+  nothing else (`ctl/bulkfree-priv-open-r2`,
+  `bfp-control-20261102-125713.log`): 10 failures (line 57), each one
+  an image's ioctl comparison reading `unpriv-bulkfree -30` where `-1`
+  is expected (lines 6-55). EROFS is `hammer2_ioctl_bulkfree_scan()`'s
+  read-only test on the fixtures, which it reaches before any scan, so
+  the reading tells the two rules apart. The expected readings said 11;
+  the eleventh image, f10, is the corrupt one the mount refuses (line
+  4), and it runs no ioctl.
+- `test-enospc.sh` on the same source (`bfp-enospc-20261102-125713.log`):
+  built from it (line 3), filled 2G with 0 failures (line 336).
+
+Not run on `h2kasan-7.3tls`: the change removes one case label from the
+privilege switch and touches no memory path. Not read here: a scan
+started by root on a writable volume, which the change does not touch.
