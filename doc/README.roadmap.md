@@ -45,7 +45,9 @@ and the `hammer2` utility, and stage 2b, complete since 1.0.59, puts two
 kernels on the wire, the second reading the first's PFS as a remote
 element of its own cluster and its synchronization pass copying from
 it. A PFS with a remote master is read-only until P8's lease, and the
-link is plaintext until P8's TLS stage.
+link between hosts is plaintext until P8's TLS stage; on one guest a
+link between two volumes completes a PSK handshake and runs over kTLS
+(1.0.75).
 
 0.9.52 and 0.9.53 open a capability the port had
 asserted away: `hammer2_assert_cluster()` required `nchains == 1` and

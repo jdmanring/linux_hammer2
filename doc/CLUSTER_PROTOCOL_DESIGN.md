@@ -2061,8 +2061,11 @@ the read's error with no line of its own (its only error print,
 One PSK link has completed, on one guest between two volumes over TCP
 loopback with `tlshd` answering (`cluster-dmsg.sh H2_DMSG_TLS=1`): kTLS
 installed on both sockets, spans exchanged, and the link up after five
-keepalive intervals with no record but data on it, since `tlshd` sends
-no session ticket. No link between two guests has asked for one.
+keepalive intervals. That no record but data reached the reader in
+that time is a candidate, resting on `tlshd` adding `%NO_TICKETS` to
+every priority string (ktls-utils 1.5.0 `src/tlshd/ktls.c:477`); the
+records are encrypted, and no reading separates their inner types. No
+link between two guests has asked for a handshake.
 
 **Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
 relay mode parses frames (`relay_pair()` reads each through
