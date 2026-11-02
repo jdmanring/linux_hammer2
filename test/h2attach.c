@@ -232,8 +232,12 @@ recluster(int fd_to_pass)
 	return (0);
 }
 
-/* The same with a TLS request; key serials are arbitrary, since every
- * call here must be refused before a serial is looked at. */
+/* The same with a TLS request.  Key serials run from tls_key_base, any
+ * positive value, since every call here must be refused before a serial is
+ * looked up; tlsrefuse sets the base to 0 for the one refusal that reads
+ * the serial's value. */
+static int tls_key_base = 1000;
+
 static int
 recluster_tls(int fd_to_pass, int mode, int role, int keyring, int nkeys)
 {
@@ -247,7 +251,7 @@ recluster_tls(int fd_to_pass, int mode, int role, int keyring, int nkeys)
 	recl.tls.keyring = keyring;
 	recl.tls.nkeys = nkeys;
 	for (i = 0; i < nkeys && i < HAMMER2_LINK_TLS_MAXKEYS; ++i)
-		recl.tls.keys[i] = 1000 + i;
+		recl.tls.keys[i] = tls_key_base + i;
 	if (ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0)
 		return (errno);
 	return (0);
@@ -922,8 +926,9 @@ main(int argc, char **argv)
 	if (!strcmp(action, "tlsrefuse")) {
 		const int P = HAMMER2_LINK_TLS_PSK, C = HAMMER2_LINK_TLS_CLIENT;
 		const int S = HAMMER2_LINK_TLS_SERVER;
-		int sv[2], e_unix, e_mode, e_nkeys, e_client, e_server, e_role;
-		int e_ulp, ulp_set = -1, e_req;
+		int sv[2], e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_key;
+		int e_ulp, ulp_set = -1, e_req, e_plain;
+		struct hammer2_ioc_recluster recl;
 		char before[16], set[16], after[16];
 
 		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) { perror("socketpair"); return (2); }
@@ -934,6 +939,9 @@ main(int argc, char **argv)
 		e_client = tls_tcp(NULL, NULL, P, C, 0, 0);
 		e_server = tls_tcp(NULL, NULL, P, S, 0, 1);
 		e_role = tls_tcp(NULL, NULL, P, 9, 0, 1);
+		tls_key_base = 0;
+		e_key = tls_tcp(NULL, NULL, P, C, 0, 1);
+		tls_key_base = 1000;
 		e_ulp = tls_tcp("tls", &ulp_set, P, C, 0, 1);
 		tls_required(NULL, before, sizeof(before));
 		tls_required("1", set, sizeof(set));
@@ -941,13 +949,24 @@ main(int argc, char **argv)
 		e_req = recluster_tls(sv[0], HAMMER2_LINK_TLS_NONE, C, 0, 0);
 		close(sv[0]); close(sv[1]);
 		tls_required("0", after, sizeof(after));
-		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s\n",
-		    e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_ulp,
-		    ulp_set, e_req, before, set, after);
+		/* Plaintext with nkeys far past keys[] and every byte after the
+		 * mode positive: the key checks are PSK's, so this is admitted
+		 * with nothing past keys[] read.  Its link ends as sv closes,
+		 * as each action's does, and the next attach replaces it. */
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) { perror("socketpair"); return (2); }
+		memset(&recl, 0x7f, sizeof(recl));
+		recl.fd = sv[0];
+		recl.tls.mode = HAMMER2_LINK_TLS_NONE;
+		recl.tls.nkeys = 1000;
+		e_plain = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
+		close(sv[0]); close(sv[1]);
+		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d key=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s plain=%d\n",
+		    e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_key, e_ulp,
+		    ulp_set, e_req, before, set, after, e_plain);
 		return (e_unix == EINVAL && e_mode == EINVAL && e_nkeys == EINVAL &&
 		    e_client == EINVAL && e_server == EINVAL && e_role == EINVAL &&
-		    ulp_set == 0 && e_ulp == EBUSY && e_req == EINVAL &&
-		    !strcmp(set, "1") && !strcmp(after, "0") ? 0 : 1);
+		    e_key == EINVAL && ulp_set == 0 && e_ulp == EBUSY && e_req == EINVAL &&
+		    e_plain == 0 && !strcmp(set, "1") && !strcmp(after, "0") ? 0 : 1);
 	}
 
 	if (attach_pair() < 0)

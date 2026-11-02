@@ -580,7 +580,7 @@ hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
 {
 	struct socket *so = sock_from_file(fp);
 	const char *why = NULL;
-	int error = EINVAL;
+	int error = EINVAL, i;
 
 	if (tls->mode == HAMMER2_LINK_TLS_NONE) {
 		if (READ_ONCE(hammer2_cluster_tls_required))
@@ -601,10 +601,20 @@ hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
 		if (tls->nkeys != 1)
 			why = "a client takes exactly one key serial";
 	} else if (tls->role == HAMMER2_LINK_TLS_SERVER) {
-		if (tls->keyring == 0 || tls->nkeys == 0)
+		if (tls->keyring <= 0 || tls->nkeys == 0)
 			why = "a server needs a keyring serial and a key serial";
 	} else {
 		why = "unknown cluster_tls_role";
+	}
+	/*
+	 * 0 is the core's "no peer" (TLS_NO_PEERID), never a key to admit.
+	 * PSK only: nkeys is range-checked above on that branch alone, and a
+	 * plaintext intake's key fields are whatever its caller left there.
+	 */
+	for (i = 0; why == NULL && tls->mode == HAMMER2_LINK_TLS_PSK &&
+	    i < tls->nkeys; ++i) {
+		if (tls->keys[i] <= 0)
+			why = "a key serial must be positive";
 	}
 	if (why == NULL)
 		return (0);

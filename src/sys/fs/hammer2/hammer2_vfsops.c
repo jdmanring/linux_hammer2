@@ -199,12 +199,13 @@ int hammer2_remote_timeout_ms = 10000;
 module_param_named(remote_timeout_ms, hammer2_remote_timeout_ms, int, 0644);
 /*
  * Linux: the cluster link's TLS.  The bound on a PSK handshake, read once
- * by each intake, and whether an intake asking for no TLS is refused.  See
- * hammer2_iocom.c and doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link section.
+ * by each intake and fixed at load, so deadlines rise in intake order, and
+ * whether an intake asking for no TLS is refused.  See hammer2_iocom.c and
+ * doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link section.
  */
 unsigned int hammer2_cluster_tls_timeout_ms = 10000;
 module_param_named(cluster_tls_timeout_ms, hammer2_cluster_tls_timeout_ms,
-    uint, 0644);
+    uint, 0444);
 int hammer2_cluster_tls_required;
 module_param_named(cluster_tls_required, hammer2_cluster_tls_required, int,
     0644);

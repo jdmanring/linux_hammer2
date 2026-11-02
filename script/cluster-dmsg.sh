@@ -224,7 +224,7 @@ out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $o
 out=$($A --attach $M --action tlsrefuse 2>&1); echo "tlsrefuse-rc $?"; echo "tlsrefuse $out"
 sleep 1
 echo "handshake-upcall $(grep -c ' handshake_req_alloc$' /proc/kallsyms)"
-echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall')"
+echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') key=$(klog 'refused: a key serial must be positive') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall')"
 for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	out=$($A --attach $M --action $act --trace /tmp/h2attach-$act.trace 2>&1); rc=$?
 	echo "$act-rc $rc"; echo "$act $out"
@@ -436,24 +436,25 @@ r=$(val refuse); pe=$(num "$(field "$r" pipe_errno)" -1); se=$(num "$(field "$r"
 # The TLS intake's refusals (doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link):
 # each is made before anything is submitted, so no handshake agent is
 # needed, and each prints its own line.  hprintf is ratelimited per call
-# site, ten in five seconds, and the eight lines come from one site.
+# site, ten in five seconds, and the nine lines come from one site.
 t=$(val tlsrefuse); l=$(val log-tlsrefuse); hs=$(num "$(val handshake-upcall)" -1)
 [ "$(num "$(field "$t" req_set)" -1)" = 1 ] && [ "$(num "$(field "$t" req_after)" -1)" = 0 ]; check "cluster_tls_required read 1 for its call and 0 after, so the suite after it runs with it clear" $? "set $(field "$t" req_set), after $(field "$t" req_after)"
+[ "$(num "$(field "$t" plain)" -1)" = 0 ]; check "a plaintext intake with nkeys 1000 and positive bytes past keys[] is admitted, its key fields unread" $? "errno $(field "$t" plain)"
 if [ "$hs" = 1 ]; then
-	ok=0; for f in unix mode nkeys client server role required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
-	check "the TLS intake refuses PSK on AF_UNIX, an unknown mode, six keys, a keyless client, a ringless server, an unknown role and no TLS under cluster_tls_required, each EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
+	ok=0; for f in unix mode nkeys client server role key required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
+	check "the TLS intake refuses PSK on AF_UNIX, an unknown mode, six keys, a keyless client, a ringless server, an unknown role, a key serial of 0 and no TLS under cluster_tls_required, each EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
 	[ "$(num "$(field "$t" ulp_set)" -1)" = 0 ] && [ "$(num "$(field "$t" ulp)" -1)" = 16 ]; check "a TCP socket already carrying the tls ULP is refused EBUSY" $? "ulp_set $(field "$t" ulp_set), errno $(field "$t" ulp)"
-	ok=0; [ "$(num "$(field "$l" all)" -1)" = 8 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
-	for f in tcp mode nkeys client server role ulp required; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
-	check "the log names each of the eight TLS intake refusals once and no other" $ok "$l"
+	ok=0; [ "$(num "$(field "$l" all)" -1)" = 9 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
+	for f in tcp mode nkeys client server role key ulp required; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
+	check "the log names each of the nine TLS intake refusals once and no other" $ok "$l"
 elif [ "$hs" = 0 ]; then
 	# No NET_HANDSHAKE: the mode and the parameter are read first, and
 	# every other PSK intake is refused EOPNOTSUPP before its socket is.
 	ok=0; for f in mode required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
-	for f in unix nkeys client server role ulp; do [ "$(num "$(field "$t" $f)" -1)" = 95 ] || ok=1; done
+	for f in unix nkeys client server role key ulp; do [ "$(num "$(field "$t" $f)" -1)" = 95 ] || ok=1; done
 	check "without the handshake upcall every PSK intake is refused EOPNOTSUPP, an unknown mode and no TLS under cluster_tls_required EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
-	ok=0; [ "$(num "$(field "$l" all)" -1)" = 8 ] && [ "$(num "$(field "$l" upcall)" -1)" = 6 ] && [ "$(num "$(field "$l" mode)" -1)" = 1 ] && [ "$(num "$(field "$l" required)" -1)" = 1 ] || ok=1
-	check "the log names six upcall refusals, the mode's and the parameter's" $ok "$l"
+	ok=0; [ "$(num "$(field "$l" all)" -1)" = 9 ] && [ "$(num "$(field "$l" upcall)" -1)" = 7 ] && [ "$(num "$(field "$l" mode)" -1)" = 1 ] && [ "$(num "$(field "$l" required)" -1)" = 1 ] || ok=1
+	check "the log names seven upcall refusals, the mode's and the parameter's" $ok "$l"
 else
 	check "the guest's kernel symbols say whether it has the handshake upcall" 1 "handshake_req_alloc lines: $(val handshake-upcall)"
 fi

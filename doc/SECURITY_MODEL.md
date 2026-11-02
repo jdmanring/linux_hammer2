@@ -45,8 +45,9 @@ latency, the half that was never measured").
   corruption, not authentication.
 - **Admission**: an enabled `copyinfo[]` row with the cluster id gates
   only the registration of a remote master, on the side that registers
-  it (`hammer2_remote_admitted()`); the serving side checks no row. The
-  kernel verifies no peer identity, and the test harness's
+  it (`hammer2_remote_admitted()`); the serving side checks no row. On
+  a plaintext link the kernel verifies no peer identity, and the test
+  harness's
   `test/h2service.c` chooses whom to connect by a marker file. Run a
   cluster only between hosts on a network you control.
 - **What a connected peer can do**: the server serves any PFS with an
@@ -67,8 +68,16 @@ latency, the half that was never measured").
   also delete a snapshot it took. Each snapshot costs space until it is
   deleted and the bulkfree scan has run. A PFS with a remote master
   mounts read-only.
-- **Next**: kernel TLS through the kernel's handshake upcall, with
-  `tlshd` holding the keys, is P8's TLS stage.
+- **TLS, in progress**: an intake can ask for a PSK handshake through
+  the kernel's handshake upcall (`cluster_tls=psk`, or `RECLUSTER`'s TLS
+  inputs), with `tlshd` holding the keys and the kernel only their
+  serials, and a server intake then admits only a peer whose key serial
+  it named. The intake's refusals are read on both guest kernels; no
+  handshake has completed, since no guest runs `tlshd`, and the reader
+  cannot yet read a TLS record that is not data, so no link carries
+  traffic encrypted. Every link today is plaintext. The
+  `cluster_tls_required` module parameter (0 by default) refuses a
+  plaintext intake when set to 1. The rest is P8's TLS stage.
 
 ## Not read here
 

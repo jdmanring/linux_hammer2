@@ -9,7 +9,7 @@ says so.
 | Feature | State | How | Limit |
 |---|---|---|---|
 | Format a volume | supported | `newfs_hammer2 -L LABEL <device or image>` (hammer2-utils) | a filesystem across two volumes is one `newfs_hammer2 -L LABEL <dev1> <dev2>`; see the next row |
-| Mount a PFS | supported | `mount -t hammer2 <device>@LABEL <dir>`; a mount naming no PFS asks for `DATA`, which `newfs_hammer2` creates only when given no `-L` | the module's own mount options are `emerg` and `cluster_fd=`; `-o ro` and `-o remount,rw` work as usual |
+| Mount a PFS | supported | `mount -t hammer2 <device>@LABEL <dir>`; a mount naming no PFS asks for `DATA`, which `newfs_hammer2` creates only when given no `-L` | the module's own mount options are `emerg`, `cluster_fd=` and the link's TLS inputs `cluster_tls=psk`, `cluster_tls_role`, `cluster_tls_keyring` and `cluster_tls_key`, which only `cluster_fd=` reads; `-o ro` and `-o remount,rw` work as usual |
 | More than one volume | supported | the device list `/dev/a:/dev/b@LABEL` | read by `script/pfs-domains.sh` with `H2_PFS_VOLUMES=2`, with DragonFly mounting the same pair; adding a volume to a mounted filesystem has not been run |
 | Snapshots | supported | `hammer2 -s <mnt> snapshot <mnt> <name>`; each is a PFS of its own, mounted by its label | space comes back only after the bulkfree scan, `hammer2 -s <mnt> bulkfree <mnt>`, runs twice (`script/bulkfree.sh`) |
 | Deduplication | on by default | the write path asks before every data block is allocated | |

@@ -27,8 +27,12 @@ Formatting, PFS management, snapshots and checking come from
 [hammer2-utils](https://github.com/kusumi/hammer2-utils):
 `newfs_hammer2`, `hammer2` and `fsck_hammer2`. No `mount.hammer2` helper
 is needed: the source is `<device>@LABEL`, or `<dev1>:<dev2>@LABEL` for
-a filesystem across volumes, and the module's own options are `emerg`
-and `cluster_fd=`.
+a filesystem across volumes, and the module's own options are `emerg`,
+`cluster_fd=` and the link's TLS inputs `cluster_tls=psk`,
+`cluster_tls_role`, `cluster_tls_keyring` and `cluster_tls_key`. Two module
+parameters bear on the link: `cluster_tls_timeout_ms` (10000, fixed at
+load) bounds a handshake, and `cluster_tls_required` (0) refuses an intake
+that asks for no TLS when set to 1.
 
 ## Root on HAMMER2
 
