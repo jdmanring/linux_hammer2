@@ -365,6 +365,18 @@ trap 'rm -rf "$dtmp"' EXIT
 # that carries it reports itself. Every real trigger is a phrase.
 defers=$(command grep -rhoE $BUILT 'DEFER\([^)]{3,}\)' src/ script/ test/ .github/ |
 	LC_ALL=C sort -u)
+# A marker whose trigger wraps onto the next comment line is invisible to
+# the line-at-a-time match above, so it went uncounted and needed no row:
+# the first such marker, in hammer2_os.h, passed this gate unseen. Each
+# trigger closes on the line it opens on. A backtick after the
+# parenthesis is prose naming the marker, as this file's own comments do.
+command grep -rnE $BUILT 'DEFER\([^)`][^)]*$' src/ script/ test/ .github/ \
+	> "$dtmp/wrapped" || :
+if [ -s "$dtmp/wrapped" ]; then
+	sed 's/^/  FAIL a DEFER trigger wraps its line, unseen by the ledger: /' \
+		"$dtmp/wrapped"
+	fail=$((fail + $(command grep -c . "$dtmp/wrapped")))
+fi
 ndefer=$(printf '%s' "$defers" | command grep -c . || true)
 if [ "$ndefer" = 0 ]; then
 	echo "  note src/ holds no DEFER markers, so the ledger check below"
