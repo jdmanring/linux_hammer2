@@ -1782,7 +1782,7 @@ share by construction, and the caller that hands the socket in is the
 one that knows which end it is, so the role is an input of the intake.
 Before anything is submitted the intake refuses, each with one named
 line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
-connected stream socket, `hammer2_os.h:1879-1896`, and the submit any
+connected stream socket, `hammer2_os.h:1881-1898`, and the submit any
 socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
 pair would fail only when `tlshd` installed kernel TLS); a socket already
 carrying an upper-layer protocol (`inet_csk_has_ulp()`,

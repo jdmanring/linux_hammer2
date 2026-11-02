@@ -1635,19 +1635,21 @@ hammer2_dev_cache_flush(struct file *bdev_file)
  * tells the reader its role, and only when the record holds that one
  * message whole, its four-byte header's length (section 4) and nothing
  * after it, so no message rides behind a ticket unread.  The header is
- * gathered across reads, which kTLS may split.  Any other handshake
- * message, any other record type and a malformed record end the link
- * with a line, where
- * section 5 also asks for an unexpected_message alert, which is not sent:
- * tls_alert_send() is not exported at the kernel of record.
+ * gathered across reads and a read of nothing ends the link, both
+ * defensive: kTLS serves a queued record's first 64 bytes in one read
+ * (net/tls/tls_sw.c, process_rx_list()).  Any other handshake message,
+ * any other record type and a malformed record end the link with a
+ * line, where section 5 also asks for an unexpected_message alert, which
+ * is not sent: tls_alert_send() is not exported at the kernel of record.
  * DEFER(a peer that sends KeyUpdate in practice): KeyUpdate ends the
  * link, since nothing here rekeys and every read after it returns
  * -EKEYEXPIRED.
  * DEFER(a peer that coalesces or splits handshake messages): a record
  * holding two, or part of one, ends the link; GnuTLS, which tlshd links,
- * sends each in a record of its own.  The handshake upcall is tested with IS_ENABLED() as the
- * intake tests it, so the module links on a kernel without it, where no
- * socket reaching here carries kTLS from this module.  The lines a peer
+ * sends each in a record of its own.  The handshake upcall is tested
+ * with IS_ENABLED() as the intake tests it, so the module links on a
+ * kernel without it, where no socket reaching here carries kTLS from
+ * this module.  The lines a peer
  * can repeat are limited.
  */
 #define HAMMER2_TLS_NEWSESSIONTICKET	4	/* RFC 8446 section 4, HandshakeType */
