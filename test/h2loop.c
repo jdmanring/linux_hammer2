@@ -246,7 +246,8 @@ static void validate(void);
 static void
 parse_args(int argc, char **argv)
 {
-	for (int i = 1; i < argc; i++) {
+	/* every option takes a value, so the pair is the step */
+	for (int i = 1; i < argc; i += 2) {
 		const char *a = argv[i];
 		const char *v = (i + 1 < argc) ? argv[i + 1] : NULL;
 		if (v == NULL)
@@ -278,7 +279,6 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--cut-fault")) opt.cut_fault = v;
 		else if (!strcmp(a, "--raw")) opt.raw = atoi(v);
 		else usage();
-		i++;
 	}
 	validate();
 }
