@@ -233,7 +233,7 @@ hammer2_cluster_tail(hammer2_dev_t *hmp, struct file *fp)
 		  init_utsname()->nodename, "hammer2-mount"); /* XXX Linux */
 	kdmsg_iocom_autoinitiate(&hmp->iocom, hammer2_autodmsg);
 	hammer2_remote_connected(hmp);	/* XXX Linux: after our LNK_CONN */
-	hprintf("cluster link handed to the message threads\n");	/* XXX Linux */
+	hprintf_each("cluster link handed to the message threads\n");	/* XXX Linux */
 }
 
 static int
@@ -618,7 +618,7 @@ hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
 	}
 	if (why == NULL)
 		return (0);
-	hprintf("cluster link refused: %s\n", why);
+	hprintf_each("cluster link refused: %s\n", why);
 	return (error);
 }
 
@@ -729,7 +729,7 @@ hammer2_link_end(struct hammer2_link *l, const char *why)
 {
 	wait_for_completion(&l->done);
 	if (why != NULL)
-		hprintf("cluster link refused: %s (status %d, peer key %d)\n",
+		hprintf_each("cluster link refused: %s (status %d, peer key %d)\n",
 		    why, l->status, l->peerid);
 	fp_shutdown(l->fp, SHUT_RDWR);
 	fdrop(l->fp);
@@ -895,7 +895,7 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp,
 		hmp->link = NULL;
 		hammer2_spin_unex(&hmp->link_spin);
 		hammer2_mtx_unlock(&hmp->link_mtx);
-		hprintf("cluster link refused: the handshake was not submitted (%d)\n",
+		hprintf_each("cluster link refused: the handshake was not submitted (%d)\n",
 		    error);
 		fp_shutdown(fp, SHUT_RDWR);
 		fdrop(fp);

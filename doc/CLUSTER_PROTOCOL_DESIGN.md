@@ -1779,7 +1779,7 @@ share by construction, and the caller that hands the socket in is the
 one that knows which end it is, so the role is an input of the intake.
 Before anything is submitted the intake refuses, each with one named
 line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
-connected stream socket, `hammer2_os.h:1753-1770`, and the submit any
+connected stream socket, `hammer2_os.h:1764-1781`, and the submit any
 socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
 pair would fail only when `tlshd` installed kernel TLS); a socket already
 carrying an upper-layer protocol (`inet_csk_has_ulp()`,
@@ -1884,7 +1884,7 @@ The plaintext case goes through it too,
 because the `cluster_fd=` intake holds `hammer2_mntlk` from
 `hammer2_vfsops.c:1306` to past the intake at `:1626-1636`, and the
 tail's quiesce took it again in `hammer2_remote_conn_end()` (a
-`down_write()`, `hammer2_os.h:192-195`) on
+`down_write()`, `hammer2_os.h:203-206`) on
 the same task, which hung the mount. `0d0717d` added that take, and
 `cluster-dmsg.sh`'s `H2_DMSG_CLUSTERFD=1` drives it: on `h2debug-7.3tls`
 the mount stayed in D state at `hammer2_remote_quiesce()` under
@@ -2051,7 +2051,7 @@ every read returns `-EKEYEXPIRED` (`net/tls/tls_sw.c:1104-1105`), and since noth
 rekeys after the handshake the link ends with a named line. The plaintext
 reader is unchanged. Writes need no change. This reader is not built:
 the intake is, and `fp_read()` still reads every link through
-`kernel_read()` (`hammer2_os.h:1637`). Until it is, a completed PSK link
+`kernel_read()` (`hammer2_os.h:1648`). Until it is, a completed PSK link
 ends silently at the first record that is not data: the reader stops on
 the read's error with no line of its own (its only error print,
 `kern_dmsg.c:457-459`, is compiled out) and serves nothing after it; no handshake has completed on a guest yet, since

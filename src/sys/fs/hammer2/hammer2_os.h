@@ -113,13 +113,24 @@
  * inserted, and 120 of them landed inside a 220-line window of one run.
  * Nothing bounds that but the inode count.  The limit is per call site,
  * which is what printk's own ratelimit state gives, so a message printed
- * once at mount is untouched and only a flood is suppressed; the
- * suppression itself is reported by the printk layer, so a reader is
- * told what was dropped rather than shown a quiet log.  58 files under
- * fs/ in the kernel of record limit their printks the same way.
+ * once at mount is untouched and a flood is suppressed; the suppression
+ * itself is reported by the printk layer, so a reader is told what was
+ * dropped rather than shown a quiet log.  58 files under fs/ in the
+ * kernel of record limit their printks the same way.  It is not exact
+ * below the burst: on a call site's first use the state is set up under
+ * a trylock, and a second CPU that loses it returns "suppressed"
+ * (lib/ratelimit.c, ___ratelimit()), which dropped one of two cluster
+ * link refusals made at once on two devices.
  */
 #define hprintf(X, ...)	pr_info_ratelimited(KBUILD_MODNAME ": " HFMT X,	\
 			    HARGS, ## __VA_ARGS__)
+/*
+ * Linux: the same line, never limited, for an event a privileged caller
+ * bounds, one per call: each cluster link intake's outcome, which is the
+ * only place an operator learns why a link did not come up.
+ */
+#define hprintf_each(X, ...)	pr_info(KBUILD_MODNAME ": " HFMT X,	\
+				    HARGS, ## __VA_ARGS__)
 /*
  * hpanic carries the name for a different reason: panic() is not a pr_*
  * macro and takes its format verbatim, so it would not read a pr_fmt even
