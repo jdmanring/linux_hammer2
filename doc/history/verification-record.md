@@ -20590,14 +20590,20 @@ device's work item, so the `cluster_fd=` mount no longer takes
 `hammer2_mntlk` a second time on its own task
 (`doc/CLUSTER_PROTOCOL_DESIGN.md`, "One tail, run by one work item").
 `880f2ad` changed comments and documents only. Every run below is on
-`880f2ad` with `src/` clean (`srcdiff e3b0c44298fc1c14`, the hash of an
-empty diff, each log's line 1), from a frozen copy of its harness, on
+`880f2ad`'s `src/` (`srcdiff e3b0c44298fc1c14` on each log's line 1,
+the hash of an empty `git diff src`, which sees unstaged edits to
+tracked files only; that `src/` is clean rests instead on the module:
+`git status --porcelain -- src` empty, `src/` unchanged from `880f2ad`
+at `1046ff1`, and builds there against the debug and KASAN trees hash
+to the two module sha256 below), from a frozen copy of its harness, on
 `artix-s6-kde` and, for the wire, `artix-s6-h2b`; logs under
 `p7-notes/` of the data tree, klogs under `fixtures/`. QEMU cores 0
 before and after each sequence.
 
 - `cluster-dmsg.sh H2_DMSG_CLUSTERFD=1`, the mode that hung the mount
-  before the work item (four runs at `b198ed3`): on `h2debug-7.3tls`
+  before the work item (four runs on `b198ed3`'s `src/`, the last with
+  its harness; the headers name commits from before a history rewrite,
+  each with `src/` equal to `b198ed3`'s): on `h2debug-7.3tls`
   (`n9-major2-dmsg-debug-fd1-20261101-200632.log`) and `h2kasan-7.3tls`
   (`n9-major2-dmsg-kasan-fd1-20261101-201012.log`) the mount returns,
   the descriptor is accepted, no recursive-locking report, the link's
@@ -20610,7 +20616,10 @@ before and after each sequence.
   `n9-major2-dmsg-kasan-fd0-20261101-201056.log`): 79 checks, 0 failed
   on each, kmemleak nothing of hammer2's, the module unloading with no
   thread; the tail's line 31 times in each klog (`-200922`, `-201318`,
-  191 lines each), one per `RECLUSTER` the suite makes.
+  191 lines each). Nothing counts the suite's `RECLUSTER` calls, and two
+  of them (a descriptor that is not a socket, one not connected) are
+  refused by `holdfp()` before the intake and run no tail, so 31 is the
+  tail's count alone.
 - Module sha256 `98837b5137f6fe87` on the debug kernel and
   `71277893ecdf9150` on KASAN, harness `6f0b68672555e65e`. The KASAN,
   UBSAN, `BUG:`, `WARNING:` and lockdep patterns match 0 lines in the
