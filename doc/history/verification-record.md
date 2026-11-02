@@ -20664,7 +20664,9 @@ server keyring refused at 0 or below, the serial check run on a PSK
 intake only, `cluster_tls_timeout_ms` read-only, and `tlsrefuse`'s key
 and plaintext cases). The reader that a TLS link also needs, one that
 reads a record other than data, is not built, and no handshake has
-completed on a guest, since neither runs `tlshd`, so no link here has
+completed on a guest, since no run has asked for one (both guests run
+`tlshd`, and every intake a harness drives is refused before its
+request or asks for no TLS), so no link here has
 carried traffic encrypted; a link that completed one would end at the
 first record that is not data (`doc/CLUSTER_PROTOCOL_DESIGN.md`, the
 reader paragraph of the TLS link section). `cluster_tls_required`

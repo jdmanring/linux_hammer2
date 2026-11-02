@@ -2055,7 +2055,8 @@ the intake is, and `fp_read()` still reads every link through
 ends silently at the first record that is not data: the reader stops on
 the read's error with no line of its own (its only error print,
 `kern_dmsg.c:457-459`, is compiled out) and serves nothing after it; no handshake has completed on a guest yet, since
-neither runs `tlshd`.
+no run has asked for one: both guests run `tlshd`, and every intake a
+harness drives is refused before its request or asks for no TLS.
 
 **Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
 relay mode parses frames (`relay_pair()` reads each through
