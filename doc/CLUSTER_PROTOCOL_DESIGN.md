@@ -1883,7 +1883,11 @@ the same task, which hung the mount. `0d0717d` added that take, and
 the mount stayed in D state at `hammer2_remote_quiesce()` under
 `hammer2_get_tree()`, and lockdep reported `h2_mnt`, the lock's name,
 acquired while already held (two runs, 2026-11-01). `RECLUSTER` was
-called without the lock and did not hang. The work item is a
+called without the lock and did not hang. With the work item
+(`4094467`) that mode's five checks pass on `h2debug-7.3tls` and
+`h2kasan-7.3tls`, and the two-host pass, whose links all arrive by
+`RECLUSTER`, reads as before; the verification record's entry "The
+link's work item, read on the committed tree" has the runs. The work item is a
 delayed work of the device, on `system_dfl_long_wq`
 (`include/linux/workqueue.h:476`), since its wait for the lock can
 outlast a bulkfree run; `system_unbound_wq` is deprecated in 7.3 and

@@ -20580,3 +20580,62 @@ and no captured line lists what else was modified.
   can print one. 1.0.72's own wire runs still have no kept tally.
 - `test-transport.sh` 35 of 35 at `864e5f5`
   (`p8-notes/test-transport-20261101.log`).
+
+## The link's work item, read on the committed tree, 2026-11-01
+
+`4094467` moved the cluster link's tail (the quiesce,
+`kdmsg_iocom_reconnect()`, `LNK_CONN`, autoinitiate and the remote
+element's registration) out of `hammer2_cluster_reconnect()` into the
+device's work item, so the `cluster_fd=` mount no longer takes
+`hammer2_mntlk` a second time on its own task
+(`doc/CLUSTER_PROTOCOL_DESIGN.md`, "One tail, run by one work item").
+`880f2ad` changed comments and documents only. Every run below is on
+`880f2ad` with `src/` clean (`srcdiff e3b0c44298fc1c14`, the hash of an
+empty diff, each log's line 1), from a frozen copy of its harness, on
+`artix-s6-kde` and, for the wire, `artix-s6-h2b`; logs under
+`p7-notes/` of the data tree, klogs under `fixtures/`. QEMU cores 0
+before and after each sequence.
+
+- `cluster-dmsg.sh H2_DMSG_CLUSTERFD=1`, the mode that hung the mount
+  before the work item (four runs at `b198ed3`): on `h2debug-7.3tls`
+  (`n9-major2-dmsg-debug-fd1-20261101-200632.log`) and `h2kasan-7.3tls`
+  (`n9-major2-dmsg-kasan-fd1-20261101-201012.log`) the mount returns,
+  the descriptor is accepted, no recursive-locking report, the link's
+  two message threads run, the unmount leaves no thread: 5 of 5 on
+  each. The tail's line, `cluster link handed to the message threads`,
+  once in each klog (`dmsg-run-20261101-200726`, `-201055`, 7 lines
+  each).
+- `cluster-dmsg.sh` default on the same two kernels
+  (`n9-major2-dmsg-debug-fd0-20261101-200726.log`,
+  `n9-major2-dmsg-kasan-fd0-20261101-201056.log`): 79 checks, 0 failed
+  on each, kmemleak nothing of hammer2's, the module unloading with no
+  thread; the tail's line 31 times in each klog (`-200922`, `-201318`,
+  191 lines each), one per `RECLUSTER` the suite makes.
+- Module sha256 `98837b5137f6fe87` on the debug kernel and
+  `71277893ecdf9150` on KASAN, harness `6f0b68672555e65e`. The KASAN,
+  UBSAN, `BUG:`, `WARNING:` and lockdep patterns match 0 lines in the
+  four klogs.
+- `cluster-wire.sh H2_WIRE_PASS=1` on `h2debug-7.3tls`
+  (`n9-major2-wirepass-20261101-200153.log`, run
+  `wire-run-20261101-200236`, source `v1.0.4-803-g880f2ad`, the same
+  module sha256 `98837b5137f6fe87`, harness `662d2a341ff9f924`, line 3),
+  where every link arrives by `RECLUSTER` through `h2service` and so
+  runs its tail on the work item: 42 checks, 0 failed (line 50); 310 of
+  310 digests equal warm and cold (lines 24 and 25); the `more` pass 7
+  narrowed scans for 7 keys (line 32); B's device unmount detaching the
+  element once by the connection's end (line 39); round trip 519 us
+  (278 + 241, 14 pings a side, line 35). The tail's line once in each
+  guest's klog, and 0 lines of the report patterns in either.
+- `test-fixtures.sh` (`n9-major2-fixtures-20261101-200444.log`): 11
+  images, 43 files, 0 failures, lockdep enabled throughout (lines 21
+  and 22). `test-enospc.sh` (`n9-major2-enospc-20261101-200509.log`):
+  filled 2G, 0 failures, kernel warnings and module faults 0 after the
+  run marker (lines 167, 168 and 335). Both with `H2_FIXTURE_START=1`
+  and `KDIR=~/kernels/linux-7.3-tls`.
+
+The same readings were taken twice before: on the working tree before
+the commit (`2e8a017` with `src/` dirty, srcdiff `b2ccb53d2c11a7ef`;
+`n9-plain-*-20261101-19*.log`), and, for `cluster-dmsg.sh` alone, on
+`4094467` (`n9-rerun-*-20261101-19*.log`), with the same counts. Those
+dmsg logs carry no head or module hash, which is why the runs above were
+repeated on the committed tree.
