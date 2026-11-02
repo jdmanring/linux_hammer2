@@ -2066,6 +2066,18 @@ link ended silently at the first record that was not data: the reader
 stopped on the read's error with no line of its own (its only error
 print, `kern_dmsg.c:457-459`, is compiled out).
 
+Its reading is a peer that sends each record type on demand, which
+`tlshd` does not. The peer is `h2attach`'s `tlspeer` action, built on
+the guest with `-DH2_GNUTLS` against GnuTLS, the library `tlshd` links;
+it is the TLS server and the kernel the client, since in TLS 1.3 only a
+server sends NewSessionTicket (RFC 8446 section 4.6.1). It answers
+`tlshd`'s handshake with the same key, read by serial, then carries the
+frames through GnuTLS's own record layer, which sends a ticket
+(`gnutls_session_ticket_send()`), a KeyUpdate, an alert and
+`close_notify` with no kTLS install on its side, so the reading tests
+the kernel's reader and nothing of the peer's. `cluster-dmsg.sh
+H2_DMSG_TLS=1` runs it as arms 10 to 14: no record, a ticket, a
+KeyUpdate, a fatal alert, and `user_canceled` then `close_notify`.
 One PSK link has completed, on one guest between two volumes over TCP
 loopback with `tlshd` answering (`cluster-dmsg.sh H2_DMSG_TLS=1`): kTLS
 installed on both sockets, spans exchanged, and the link up after five

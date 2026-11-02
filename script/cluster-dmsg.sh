@@ -108,6 +108,12 @@ make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1 HAMMER2_NOWINDOW=1} >/dev
 KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2attach" test/h2attach.c 2>"$W/cc.err" || {
 	echo "dmsg: COULD-NOT-RUN: test/h2attach.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
+# The TLS peer is built on the guest; built here too, so a source error
+# stops the run before a guest is touched.
+if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
+	cc -O2 -DH2_GNUTLS -Isrc/sys/fs/hammer2 -o "$W/h2tlspeer" test/h2attach.c -lgnutls 2>"$W/cc-peer.err" || {
+		echo "dmsg: COULD-NOT-RUN: test/h2attach.c did not build with -DH2_GNUTLS:" >&2; sed 's/^/        /' "$W/cc-peer.err" >&2; exit 2; }
+fi
 
 detach_disk
 rm -f "$IMG"
@@ -235,7 +241,13 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	ll=$(awk -F= '/^\[/ { s = $0 } s == "[debug]" && $1 ~ /^[ \t]*loglevel[ \t]*$/ { gsub(/[ \t]/, "", $2); print $2 }' $CONF | tail -1)
 	[ "${ll:-0}" -ge 1 ] 2>/dev/null || { echo "dmsg: COULD-NOT-RUN: $CONF [debug] loglevel is '${ll:-unset}', below 1, so tlshd writes no completion line" >&2; exit 2; }
 	modprobe nvme-keyring || { echo "dmsg: COULD-NOT-RUN: modprobe nvme-keyring failed" >&2; exit 2; }
-	for c in tcpdump keyctl od; do command -v $c >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: no $c on the guest" >&2; exit 2; }; done
+	for c in tcpdump keyctl od cc; do command -v $c >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: no $c on the guest" >&2; exit 2; }; done
+	# The TLS peer, h2attach built against the guest's GnuTLS, which has no
+	# static copy to build it with on the host.
+	P=/tmp/h2tlspeer
+	cc -O2 -DH2_GNUTLS -I/tmp/h2peer -o $P /tmp/h2peer/h2attach.c -lgnutls 2>/tmp/h2peer.err || {
+		echo "dmsg: COULD-NOT-RUN: the TLS peer did not build on the guest: $(head -3 /tmp/h2peer.err | tr '\n' ' ')" >&2; exit 2; }
+	echo "tls-peer-gnutls $(pacman -Q gnutls 2>/dev/null || echo unread)"
 	grep -q " $T tracefs " /proc/mounts || mount -t tracefs nodev $T 2>/dev/null	# not mounted at boot on the Artix guests
 	[ -e $T/events/handshake/handshake_cancel ] || { echo "dmsg: COULD-NOT-RUN: no $T/events/handshake/handshake_cancel" >&2; exit 2; }
 	[ -r $TL ] || { echo "dmsg: COULD-NOT-RUN: no tlshd log at $TL" >&2; exit 2; }
@@ -358,6 +370,22 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	t=0; while [ "$(tstat TlsCurrTxSw)$(tstat TlsCurrRxSw)" != 00 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
 	sleep 2; after arm3; cap_stop
 	echo "arm3-capture magic=$(cap_count 7995 '32 48 00 00') tlsapp=$(cap_count 7995 '17 03 03') bytes=$(stat -c %s /tmp/h2tls-7995.pcap)"
+
+	# arms 10 to 14, the reader on a TLS link: the kernel the client on vdb
+	# with K1, the GnuTLS peer the server, one record each on a live link
+	tpeer() {	# tpeer <arm> <record> <port>
+		snap $1; rk0=$(tstat TlsRxRekeyReceived)
+		$P --attach $M --action tlspeer --key $K1 --send $2 --port $3 > /tmp/h2peer-$1.out 2>&1; echo "$1-rc $?"
+		sed "s/^/$1-out /" /tmp/h2peer-$1.out
+		t=0; while [ "$(threads)" != 0 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
+		after $1
+		echo "$1-lines dropped=$(klog 'TLS peer sent handshake message 4, dropped') keyupdate=$(klog 'TLS peer sent KeyUpdate') alert=$(klog 'TLS peer sent alert 2/80') ended=$(klog 'TLS peer ended the link (alert 90)') other=$(klog 'TLS peer sent a record of type') rekey=$(($(tstat TlsRxRekeyReceived) - rk0))"
+	}
+	tpeer arm10 none 7988
+	tpeer arm11 ticket 7987
+	tpeer arm12 keyupdate 7986
+	tpeer arm13 alert 7985
+	tpeer arm14 close 7984
 
 	client() {	# client <arm> <mount> <key> <port>: the intake, its peer held in the background
 		$A --attach $2 --action tlsclient --key $3 --port $4 --hold-max-ms 25000 > /tmp/h2tls-$1.out 2>&1 &
@@ -617,6 +645,10 @@ GUEST
 
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$GUEST_SSH:/tmp/h2attach" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
 	echo "dmsg: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
+	$RUN "$GUEST_SSH" 'rm -rf /tmp/h2peer && mkdir /tmp/h2peer' && scp -q test/h2attach.c src/sys/fs/hammer2/hammer2_ioctl.h src/sys/fs/hammer2/hammer2_disk.h "$GUEST_SSH:/tmp/h2peer/" || {
+		echo "dmsg: COULD-NOT-RUN: copying the TLS peer's source to $GUEST failed" >&2; exit 2; }
+fi
 $RUN "$GUEST_SSH" "H2_DMSG_CLUSTERFD=${H2_DMSG_CLUSTERFD:-0} H2_DMSG_TLS=${H2_DMSG_TLS:-0} H2_FD_TENTHS=$FDT sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
 rc=$?
 if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
@@ -769,6 +801,27 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ] && [ "$(d arm3 arm3 handed)" = 2 ] && [ "$(a arm3 threads)" = 4 ]; check "arm 3: the plaintext control replaces both links" $? "$r, handed $(d arm3 arm3 handed), threads $(a arm3 threads)"
 	[ "$(num "$(field " $c" magic)" 0)" -ge 2 ]; check "arm 3: the plaintext capture holds the frame magic, so the reading in arm 1 can see it" $? "$c"
 	[ "$(a arm3 tx)" = 0 ] && [ "$(a arm3 rx)" = 0 ]; check "arm 3: kTLS is released with the TLS sockets" $? "TlsCurrTxSw $(a arm3 tx), TlsCurrRxSw $(a arm3 rx)"
+
+	# Arms 10 to 14, the reader on a TLS link.  The line counts are the
+	# whole log's, so each arm reads all five and a stray line fails it.
+	po() { sed -n "s/^$1-out h2attach tlspeer: //p" "$W/out" | grep "$2" | head -1; }
+	lc() { field " $(val $1-lines)" $2; }
+	for arm in arm10 arm11 arm12 arm13 arm14; do
+		h=$(po $arm 'handshake='); x=$(po $arm 'send=')
+		[ "$(field " $(po $arm 'errno=')" errno)" = 0 ] && [ "$(field " $h" handshake)" = 0 ] && [ "$(field " $h" match)" = 1 ] && [ "$(field " $x" conn)" = 1 ] && [ "$(field " $x" spans)" = "$nb" ] && [ "$(field " $x" shell1)" = 1 ] && [ "$(field " $x" err1)" = 32 ] && [ "$(field " $x" rc)" = 0 ]
+		check "$arm: tlshd and the GnuTLS peer agree on K1, the link serves a DBG_SHELL, and the record is sent" $? "${h:-no handshake line}; ${x:-no result line}"
+		[ "$(a $arm threads)" = 0 ] && [ "$(d $arm $arm handed)" = 1 ]; check "$arm: the link is handed once and leaves no thread" $? "handed $(d $arm $arm handed), threads $(a $arm threads)"
+	done
+	x=$(po arm10 'send=')
+	[ "$(field " $x" shell2)" = 1 ] && [ "$(field " $x" err2)" = 32 ] && [ "$(lc arm10 dropped)$(lc arm10 keyupdate)$(lc arm10 alert)$(lc arm10 ended)$(lc arm10 other)" = 00000 ]; check "arm 10: with no record sent the link serves a second DBG_SHELL and names no record" $? "shell2 $(field " $x" shell2) err2 $(field " $x" err2); $(val arm10-lines)"
+	x=$(po arm11 'send=')
+	[ "$(field " $x" shell2)" = 1 ] && [ "$(field " $x" err2)" = 32 ] && [ "$(lc arm11 dropped)$(lc arm11 keyupdate)$(lc arm11 alert)$(lc arm11 ended)$(lc arm11 other)" = 10000 ]; check "arm 11: a NewSessionTicket is dropped with its line and the link serves on" $? "shell2 $(field " $x" shell2) err2 $(field " $x" err2); $(val arm11-lines)"
+	x=$(po arm12 'send=')
+	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm12 keyupdate)$(lc arm12 alert)$(lc arm12 ended)$(lc arm12 other)" = 1000 ] && [ "$(lc arm12 rekey)" = 1 ]; check "arm 12: a KeyUpdate ends the link with its line, kTLS counting it received" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm12-lines)"
+	x=$(po arm13 'send=')
+	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm13 keyupdate)$(lc arm13 alert)$(lc arm13 ended)$(lc arm13 other)" = 1100 ]; check "arm 13: a fatal alert ends the link with its line" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm13-lines)"
+	x=$(po arm14 'send=')
+	[ "$(field " $x" eof)" = 1 ] && [ "$(num "$(field " $x" ms)" 99999)" -lt 2000 ] && [ "$(lc arm14 keyupdate)$(lc arm14 alert)$(lc arm14 ended)$(lc arm14 other)" = 1110 ]; check "arm 14: user_canceled then close_notify end the link cleanly, with no error line" $? "eof $(field " $x" eof) after $(field " $x" ms) ms; $(val arm14-lines)"
 
 	w5=$(val arm5-wait-refused); case "$(val arm5-line)" in *'the handshake failed'*) l5=1 ;; *) l5=0 ;; esac
 	[ "$l5" = 1 ] && [ "$(num "$(val arm5-keyfail)" 0)" -ge 1 ] && [ "${w5%%.*}" -lt 10 ] 2>/dev/null; check "arm 5: the refusal is a failed handshake within 10 s, tlshd unable to read the revoked key" $? "line '$(val arm5-line | sed 's/.*refused: //')', $(val arm5-keyfail) revoked-key line(s) in tlshd, after $w5 s"

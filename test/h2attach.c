@@ -54,6 +54,10 @@
  *             until EOF or --hold-max-ms; prints the errno, then whether
  *             EOF came, the bytes read and the milliseconds
  *   hsstub    a handshake agent that is not tlshd (see hsstub()), no mount
+ *   tlspeer   built with -DH2_GNUTLS: a client intake with --key, this end
+ *             the TLS server, then one record of --send's type on the live
+ *             link; prints the handshake, the DBG_SHELL replies around the
+ *             record or the EOF after it (see the action)
  *   tlsrefuse each refusal of hammer2_link_check() driven once with its
  *             own socket: PSK on an AF_UNIX pair, an unknown mode, six
  *             keys, a client with none, a server with no keyring, an
@@ -107,6 +111,16 @@
 
 #define __packed	__attribute__((__packed__))
 #include "hammer2_ioctl.h"	/* HAMMER2IOC_RECLUSTER, as the module sees it */
+
+/* -DH2_GNUTLS adds tlspeer, built on the guest against its GnuTLS, since
+ * no static copy exists to build it here; every frame then goes through
+ * tlss's record layer once it is set. */
+#ifdef H2_GNUTLS
+#include <gnutls/gnutls.h>
+#include <linux/keyctl.h>
+#include <sys/syscall.h>
+static gnutls_session_t tlss;
+#endif
 
 /* The wire constants, from sys/sys/dmsg.h, which userland here has no
  * installed copy of.  The struct copies exist for their sizes only: the
@@ -364,13 +378,55 @@ attach_pair(void)
 
 /* ---- frames ------------------------------------------------------------- */
 
-/* Wait for readable within the deadline; 1 readable, 0 timed out. */
+/* A frame's bytes, through the TLS session when tlspeer set one.  A kTLS
+ * peer sends no close_notify, so its FIN reads as GnuTLS's premature
+ * termination, which is end of stream here as it is to read(). */
+static ssize_t
+xread(int fd, void *b, size_t n)
+{
+#ifdef H2_GNUTLS
+	if (tlss != NULL) {
+		ssize_t r = gnutls_record_recv(tlss, b, n);
+		if (r >= 0)
+			return (r);
+		if (r == GNUTLS_E_PREMATURE_TERMINATION)
+			return (0);
+		errno = (r == GNUTLS_E_AGAIN || r == GNUTLS_E_INTERRUPTED) ?
+		    EINTR : EIO;
+		return (-1);
+	}
+#endif
+	return (read(fd, b, n));
+}
+
+static ssize_t
+xwrite(int fd, const void *b, size_t n)
+{
+#ifdef H2_GNUTLS
+	if (tlss != NULL) {
+		ssize_t r = gnutls_record_send(tlss, b, n);
+		if (r >= 0)
+			return (r);
+		errno = (r == GNUTLS_E_AGAIN || r == GNUTLS_E_INTERRUPTED) ?
+		    EINTR : EIO;
+		return (-1);
+	}
+#endif
+	return (write(fd, b, n));
+}
+
+/* Wait for readable within the deadline; 1 readable, 0 timed out.  Bytes
+ * GnuTLS already decrypted are readable whatever the socket says. */
 static int
 readable(int fd, long deadline)
 {
 	struct pollfd pfd = { fd, POLLIN, 0 };
 	long left = deadline - now_ms();
 	int r;
+#ifdef H2_GNUTLS
+	if (tlss != NULL && gnutls_record_check_pending(tlss) > 0)
+		return (1);
+#endif
 	if (left < 0)
 		left = 0;
 	r = poll(&pfd, 1, (int)left);
@@ -399,7 +455,7 @@ frame_read(int fd, struct dmsg_hdr *h, long deadline)
 	while (got < need) {
 		if (!readable(fd, deadline))
 			return (-1);
-		n = read(fd, buf + got, need - got);
+		n = xread(fd, buf + got, need - got);
 		if (n == 0)
 			return (got == 0 ? 0 : -1);
 		if (n < 0) {
@@ -426,7 +482,7 @@ frame_read(int fd, struct dmsg_hdr *h, long deadline)
 		while (agot < aux) {
 			if (!readable(fd, deadline))
 				return (-1);
-			n = read(fd, rx.aux + agot, aux - agot);
+			n = xread(fd, rx.aux + agot, aux - agot);
 			if (n <= 0)
 				return (-1);
 			agot += n;
@@ -475,7 +531,7 @@ frame_write_full(int fd, uint32_t cmd, uint64_t msgid, uint32_t error,
 	trace("tx cmd=%08x msgid=%016" PRIx64 " error=%u aux=%zu\n", cmd, msgid,
 	    error, auxlen);
 	while (off < len) {
-		ssize_t n = write(fd, buf + off, len - off);
+		ssize_t n = xwrite(fd, buf + off, len - off);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
@@ -907,6 +963,50 @@ wait_close(int fd, long ms, long *bytes)
 	return (0);
 }
 
+#ifdef H2_GNUTLS
+/* The key tlshd presents for the kernel, read by serial as tlshd reads it
+ * (src/tlshd/keyring.c): the payload, and the identity after the
+ * description's last ';'.  The server callback hands it to GnuTLS for that
+ * identity alone, counting each identity asked for. */
+static gnutls_datum_t psk_key;
+static char psk_id[512];
+static int psk_asked, psk_match;
+
+static int
+psk_load(int key)
+{
+	static unsigned char buf[512];
+	char d[512], *p;
+	long n;
+
+	n = syscall(SYS_keyctl, KEYCTL_DESCRIBE, key, d, sizeof(d));
+	if (n <= 0 || n > (long)sizeof(d))
+		return (-1);
+	d[sizeof(d) - 1] = '\0';
+	p = strrchr(d, ';');
+	snprintf(psk_id, sizeof(psk_id), "%s", p ? p + 1 : d);
+	n = syscall(SYS_keyctl, KEYCTL_READ, key, buf, sizeof(buf));
+	if (n <= 0 || n > (long)sizeof(buf))
+		return (-1);
+	psk_key.data = buf;
+	psk_key.size = (unsigned int)n;
+	return (0);
+}
+
+static int
+psk_cb(gnutls_session_t s, const char *user, gnutls_datum_t *k)
+{
+	(void)s;
+	psk_asked++;
+	if (strcmp(user, psk_id) || (k->data = gnutls_malloc(psk_key.size)) == NULL)
+		return (-1);
+	memcpy(k->data, psk_key.data, psk_key.size);
+	k->size = psk_key.size;
+	psk_match++;
+	return (0);
+}
+#endif
+
 /*
  * A handshake agent that is not tlshd: it joins the "tlshd" multicast group
  * of the "handshake" generic netlink family, which is all genl_has_listeners()
@@ -1072,7 +1172,9 @@ usage(void)
 	    " [--count N] [--nmax N] [--out FILE] [--nocont 1]\n"
 	    "       tls: tlslink --attach2 M2 --keyring R --admit K --key K2"
 	    " [--tls psk|none] [--port P]; tlsclient --key K [--port P];\n"
-	    "            hsstub --accept 0|1 (no --attach) [--hold-max-ms N]\n");
+	    "            hsstub --accept 0|1 (no --attach) [--hold-max-ms N];\n"
+	    "            tlspeer --key K --send ticket|keyupdate|alert|close|none"
+	    " [--port P] (-DH2_GNUTLS)\n");
 	exit(2);
 }
 
@@ -1082,7 +1184,7 @@ main(int argc, char **argv)
 	crc_init();
 	const char *mnt = NULL, *action = NULL, *tr = NULL;
 	const char *pfs = "ROOT", *name = NULL, *out = NULL, *mnt2 = NULL;
-	const char *tlsmode = "psk";
+	const char *tlsmode = "psk", *send = "none";
 	int ring = 0, admit = 0, hsaccept = 0;
 	uint64_t inum = 1, key = 0;
 	/*
@@ -1116,8 +1218,10 @@ main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--admit")) admit = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--port")) tcp_port = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--accept")) hsaccept = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--send")) send = argv[i + 1];
 		else usage();
 	}
+	(void)send;	/* read by tlspeer alone, which the static build lacks */
 	if (action != NULL && !strcmp(action, "hsstub"))
 		return (hsstub(hsaccept, hold_max_ms));
 	if (mnt == NULL || action == NULL)
@@ -1244,6 +1348,95 @@ main(int argc, char **argv)
 		close(p);
 		return (0);
 	}
+
+#ifdef H2_GNUTLS
+	/*
+	 * tlspeer: a client intake with --key into this mount, and this end the
+	 * TLS server, since the kernel is the client and only a TLS 1.3 server
+	 * sends NewSessionTicket.  GnuTLS answers tlshd with the same key, read
+	 * by serial; the frames then go through its record layer, the kernel's
+	 * handshake is answered and a DBG_SHELL read as served, and --send puts
+	 * one record on the link: ticket (a NewSessionTicket), keyupdate, alert
+	 * (fatal internal_error), close (user_canceled, then close_notify) or
+	 * none.  After ticket and none a second DBG_SHELL reads whether the
+	 * link still serves; after the others the end is read until EOF.
+	 */
+	if (!strcmp(action, "tlspeer")) {
+		gnutls_psk_server_credentials_t cred;
+		gnutls_datum_t tk;
+		gnutls_session_t s;
+		uint32_t err1 = 0, err2 = 0;
+		int c, p, e, r, sr = 0, o, f = 0, sh1 = 0, sh2 = -1, eof = -1;
+		long t0;
+
+		if (psk_load((int)key) < 0) {
+			printf("h2attach tlspeer: key %d unreadable: %s\n", (int)key,
+			    strerror(errno));
+			return (2);
+		}
+		c = tcp_pair(&p);
+		e = recluster_key(mfd, c, HAMMER2_LINK_TLS_PSK,
+		    HAMMER2_LINK_TLS_CLIENT, 0, (int)key);
+		close(c); close(mfd);
+		printf("h2attach tlspeer: port=%d errno=%d\n", tcp_port, e);
+		fflush(stdout);
+		if (e != 0)
+			return (1);
+		if (gnutls_psk_allocate_server_credentials(&cred) < 0 ||
+		    gnutls_init(&s, GNUTLS_SERVER | GNUTLS_NO_AUTO_SEND_TICKET) < 0 ||
+		    gnutls_session_ticket_key_generate(&tk) < 0 ||
+		    gnutls_session_ticket_enable_server(s, &tk) < 0 ||
+		    gnutls_priority_set_direct(s,
+		    "NORMAL:-VERS-ALL:+VERS-TLS1.3:+PSK:+ECDHE-PSK:+DHE-PSK", NULL) < 0) {
+			printf("h2attach tlspeer: GnuTLS setup failed\n");
+			return (2);
+		}
+		gnutls_psk_set_server_credentials_function(cred, psk_cb);
+		gnutls_credentials_set(s, GNUTLS_CRD_PSK, cred);
+		gnutls_transport_set_int(s, p);
+		gnutls_handshake_set_timeout(s, 15000);
+		do
+			r = gnutls_handshake(s);
+		while (r < 0 && !gnutls_error_is_fatal(r));
+		printf("h2attach tlspeer: handshake=%d asked=%d match=%d cipher=%s\n",
+		    r, psk_asked, psk_match,
+		    r == 0 ? gnutls_cipher_get_name(gnutls_cipher_get(s)) : "none");
+		fflush(stdout);
+		if (r != 0)
+			return (1);
+		tlss = s;
+		dfd = p;
+		if (handshake(dfd, &hs, settle_ms) == 0) {
+			frame_write(dfd, DMSG_DBG_SHELL, 0x1000, 0);
+			sh1 = wait_frame(dfd, 0, DMSGF_REPLY, &err1, &o);
+		}
+		if (!strcmp(send, "ticket"))
+			sr = gnutls_session_ticket_send(s, 1, 0);
+		else if (!strcmp(send, "keyupdate"))
+			sr = gnutls_session_key_update(s, 0);
+		else if (!strcmp(send, "alert"))
+			sr = gnutls_alert_send(s, GNUTLS_AL_FATAL,
+			    GNUTLS_A_INTERNAL_ERROR);
+		else if (!strcmp(send, "close") &&
+		    (sr = gnutls_alert_send(s, GNUTLS_AL_WARNING,
+		    GNUTLS_A_USER_CANCELED)) == 0)
+			sr = gnutls_bye(s, GNUTLS_SHUT_WR);
+		t0 = now_ms();
+		if (!strcmp(send, "ticket") || !strcmp(send, "none")) {
+			frame_write(dfd, DMSG_DBG_SHELL, 0x1001, 0);
+			sh2 = wait_frame(dfd, 0, DMSGF_REPLY, &err2, &o);
+		} else {
+			eof = wait_eof(dfd, 10000, &f);
+		}
+		printf("h2attach tlspeer: send=%s rc=%d conn=%d spans=%d shell1=%d"
+		    " err1=%u shell2=%d err2=%u eof=%d frames=%d ms=%ld\n", send, sr,
+		    hs.conn, hs.spans, sh1, err1, sh2, err2, eof, f, now_ms() - t0);
+		tlss = NULL;
+		gnutls_deinit(s);
+		close(p);
+		return (0);
+	}
+#endif
 
 	if (attach_pair() < 0)
 		return (1);
