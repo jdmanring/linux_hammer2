@@ -1354,6 +1354,7 @@ next_hmp:
 			deactivate_locked_super(sb);
 			return (-error);
 		}
+		hammer2_link_devinit(hmp);	/* XXX Linux: before any uninit */
 		if (!hmp->bdev_file) {
 			hprintf("failed to initialize root volume\n");
 			hammer2_unmount_helper(NULL, NULL, hmp);
@@ -1574,10 +1575,15 @@ next_hmp:
 		 */
 		if (ctx->cluster_fd >= 0) {
 			struct file *fp;
+			int lerr;
 
 			fp = holdfp(curthread, ctx->cluster_fd, -1);
 			if (fp) {
-				hammer2_cluster_reconnect(hmp, fp);
+				/* XXX Linux: the mount completes with no link */
+				lerr = hammer2_cluster_reconnect(hmp, fp);
+				if (lerr)
+					hprintf("cluster_fd: no link, error %d\n",
+					    lerr);
 			} else {
 				kprintf("hammer2_mount: bad cluster_fd!\n");
 			}
@@ -2888,6 +2894,7 @@ again:
 
 	TAILQ_REMOVE(&hammer2_mntlist, hmp, mntentry);
 	hammer2_mtx_destroy(&hmp->iohash_lock);
+	hammer2_mtx_destroy(&hmp->link_mtx);	/* XXX Linux */
 	hammer2_io_hash_destroy(hmp);
 
 	hammer2_lk_destroy(&hmp->vollk);

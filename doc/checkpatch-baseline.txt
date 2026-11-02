@@ -222,6 +222,12 @@
 # definition argument` 504 -> 505, the return and the unnamed prototype
 # argument of hammer2_remote_is_source(), which refuses a pass's source
 # snapshot any mount. No category is new. See README.kernel-style.md.
+# 1,602 to 1,606: `return is not a function` 372 -> 375, `-ENOMEM` 4 -> 5
+# and `function definition argument` 505 -> 506, the cluster link's
+# attempt in hammer2_iocom.c (hammer2_link_claim() and the intake's refusal
+# and success) and hammer2_link_devinit()'s prototype; `braces {} are not
+# necessary for any arm` 1 -> 0, the cluster_fd= intake's arm now holding
+# its error and print. No category is new. See README.kernel-style.md.
 19 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -240,7 +246,6 @@
 10 Prefer using 'X' to using 'X', this function's name, in a string
 1 Statements terminations use 1 semicolon
 2 Using vsprintf specifier 'X' potentially exposes the kernel memory layout, if you don'X'%p'.
-1 braces {} are not necessary for any arm of this statement
 8 braces {} are not necessary for single statement blocks
 1 break is not useful after a return
 4 code indent should use tabs where possible
@@ -248,12 +253,12 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-505 function definition argument 'X' should also have an identifier name
+506 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 239 please, no spaces at the start of a line
 86 quoted string split across lines
-372 return is not a function, parentheses are not required
+375 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
@@ -265,7 +270,7 @@
 14 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 5 return of an errno should typically be negative (ie: return -ENOENT)
-4 return of an errno should typically be negative (ie: return -ENOMEM)
+5 return of an errno should typically be negative (ie: return -ENOMEM)
 2 return of an errno should typically be negative (ie: return -ENOSPC)
 3 return of an errno should typically be negative (ie: return -ENOTCONN)
 1 return of an errno should typically be negative (ie: return -ENOTDIR)

@@ -37,6 +37,9 @@
 static int hammer2_rcvdmsg(kdmsg_msg_t *msg);
 static void hammer2_autodmsg(kdmsg_msg_t *msg);
 static int hammer2_lnk_span_reply(kdmsg_state_t *state, kdmsg_msg_t *msg);
+static void hammer2_link_teardown(hammer2_dev_t *hmp);	/* XXX Linux */
+static void hammer2_link_work(struct work_struct *work);	/* XXX Linux */
+static void hammer2_cluster_tail(hammer2_dev_t *hmp, struct file *fp);	/* XXX Linux */
 
 /*
  * XXX Linux: the span table, one entry per open DMSG_SPAN_PROTO_2
@@ -136,6 +139,9 @@ hammer2_iocom_uninit(hammer2_dev_t *hmp)
 	struct hammer2_span *span;
 
 	/* XXX chain depend deadlck? */
+	hammer2_mtx_ex(&hmp->link_mtx);	/* XXX Linux: no attempt left */
+	hammer2_link_teardown(hmp);
+	hammer2_mtx_unlock(&hmp->link_mtx);
 	hammer2_remote_quiesce(hmp, 1);	/* XXX Linux: no request admitted or left */
 	if (hmp->iocom.mmsg)
 		kdmsg_iocom_uninit(&hmp->iocom);
@@ -155,18 +161,17 @@ hammer2_iocom_uninit(hammer2_dev_t *hmp)
 }
 
 /*
- * Reconnect using the passed file pointer.  The caller must ref the
- * fp for us.
+ * XXX Linux: what hammer2_cluster_reconnect() ran after its quiesce,
+ * run by the work item with the quiesce done.
  */
-void
-hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
+static void
+hammer2_cluster_tail(hammer2_dev_t *hmp, struct file *fp)
 {
 	/*
 	 * Closes old comm descriptor, kills threads, cleans up
 	 * states, then installs the new descriptor and creates
 	 * new threads.
 	 */
-	hammer2_remote_quiesce(hmp, 0);	/* XXX Linux: the old connection's requests */
 	/*
 	 * XXX Linux: the callback is installed before the reader starts,
 	 * since kern_dmsg answers a peer's LNK_CONN already in the socket
@@ -228,6 +233,7 @@ hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
 		  init_utsname()->nodename, "hammer2-mount"); /* XXX Linux */
 	kdmsg_iocom_autoinitiate(&hmp->iocom, hammer2_autodmsg);
 	hammer2_remote_connected(hmp);	/* XXX Linux: after our LNK_CONN */
+	hprintf("cluster link handed to the message threads\n");	/* XXX Linux */
 }
 
 static int
@@ -530,4 +536,161 @@ hammer2_volconf_update(hammer2_dev_t *hmp, int index)
 		H2_LNK_VOLCONF(msg)->index = index;
 		kdmsg_msg_write(msg);
 	}
+}
+
+/*
+ * XXX Linux: a link attempt.  Every intake, RECLUSTER and the mount's
+ * cluster_fd=, hooks one on the device and ends in the device's work item,
+ * which runs the reconnect tail below; the mount holds hammer2_mntlk across
+ * its intake and the tail's quiesce needs that lock, so the tail cannot run
+ * on the intake's thread.  Whoever unhooks the attempt under link_spin
+ * owns it and its file; the work unhooks only a submitted one.  Every
+ * owner waits on done before freeing it, which is signaled by
+ * complete_all(), since the teardown waits and then ends the attempt.  doc/CLUSTER_PROTOCOL_DESIGN.md,
+ * the TLS link section, is the design, of which this is the plaintext half.
+ */
+struct hammer2_link {
+	hammer2_dev_t		*hmp;
+	struct file		*fp;
+	int			status;		/* -EINPROGRESS until known */
+	int			submitted;
+	struct completion	done;
+};
+
+void
+hammer2_link_devinit(hammer2_dev_t *hmp)
+{
+	hammer2_spin_init(&hmp->link_spin, "h2link");
+	hammer2_mtx_init(&hmp->link_mtx, "h2linkm");
+	INIT_DELAYED_WORK(&hmp->link_work, hammer2_link_work);
+}
+
+/* Unhook the device's attempt if it is submitted; the caller owns it. */
+static struct hammer2_link *
+hammer2_link_claim(hammer2_dev_t *hmp)
+{
+	struct hammer2_link *l;
+
+	hammer2_spin_ex(&hmp->link_spin);
+	l = hmp->link;
+	if (l != NULL && l->submitted)
+		hmp->link = NULL;
+	else
+		l = NULL;
+	hammer2_spin_unex(&hmp->link_spin);
+	return (l);
+}
+
+/* End an owned attempt that will not become the link. */
+static void
+hammer2_link_end(struct hammer2_link *l, const char *why)
+{
+	wait_for_completion(&l->done);
+	if (why != NULL)
+		hprintf("cluster link refused: %s (%d)\n", why, l->status);
+	fp_shutdown(l->fp, SHUT_RDWR);
+	fdrop(l->fp);
+	kfree(l);
+}
+
+/*
+ * The teardown, under link_mtx: an intake that finds an attempt hooked,
+ * and hammer2_iocom_uninit() before its quiesce, which holds hammer2_mntlk.
+ * A work in its try-lock loop finds nothing hooked once this unhooks and
+ * returns, and a work past its claim holds hammer2_mntlk only through the
+ * quiesce, so the cancel below never waits on the caller's own lock.
+ */
+static void
+hammer2_link_teardown(hammer2_dev_t *hmp)
+{
+	struct hammer2_link *l;
+
+	hammer2_spin_ex(&hmp->link_spin);
+	l = hmp->link;
+	hmp->link = NULL;
+	hammer2_spin_unex(&hmp->link_spin);
+	if (l != NULL)
+		wait_for_completion(&l->done);
+	cancel_delayed_work_sync(&hmp->link_work);
+	if (l != NULL)
+		hammer2_link_end(l, NULL);
+}
+
+static void
+hammer2_link_work(struct work_struct *work)
+{
+	hammer2_dev_t *hmp = container_of(to_delayed_work(work),
+	    hammer2_dev_t, link_work);
+	struct hammer2_link *l;
+	int status = 0, submitted = 0;
+
+	hammer2_spin_ex(&hmp->link_spin);
+	if (hmp->link != NULL) {
+		status = hmp->link->status;
+		submitted = hmp->link->submitted;
+	}
+	hammer2_spin_unex(&hmp->link_spin);
+	if (!submitted)
+		return;
+	if (status != 0) {
+		l = hammer2_link_claim(hmp);
+		if (l != NULL)
+			hammer2_link_end(l, "the handshake failed");
+		return;
+	}
+	while (!hammer2_lk_tryex(&hammer2_mntlk)) {
+		if (READ_ONCE(hmp->link) == NULL)
+			return;
+		schedule_timeout_uninterruptible(msecs_to_jiffies(10));
+	}
+	l = hammer2_link_claim(hmp);
+	if (l == NULL) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		return;
+	}
+	if (l->status != 0) {
+		hammer2_lk_unlock(&hammer2_mntlk);
+		hammer2_link_end(l, "the handshake failed");
+		return;
+	}
+	wait_for_completion(&l->done);
+	hammer2_remote_quiesce(hmp, 0);	/* the old connection's requests */
+	hammer2_lk_unlock(&hammer2_mntlk);
+	hammer2_cluster_tail(hmp, l->fp);	/* kdmsg owns the file now */
+	kfree(l);
+}
+
+/*
+ * Reconnect using the passed file pointer.  The caller must ref the
+ * fp for us.
+ *
+ * XXX Linux: the intake.  The file is the attempt's from here, dropped on
+ * every failure; the tail runs in the device's work item, so a return
+ * means the link is queued, not that LNK_CONN is.
+ */
+int
+hammer2_cluster_reconnect(hammer2_dev_t *hmp, struct file *fp)
+{
+	struct hammer2_link *l;
+
+	l = kzalloc_obj(*l);
+	if (l == NULL) {
+		fdrop(fp);
+		return (ENOMEM);
+	}
+	l->hmp = hmp;
+	l->fp = fp;
+	l->status = -EINPROGRESS;
+	init_completion(&l->done);
+	hammer2_mtx_ex(&hmp->link_mtx);
+	hammer2_link_teardown(hmp);
+	complete_all(&l->done);	/* plaintext: no handshake to wait for */
+	hammer2_spin_ex(&hmp->link_spin);
+	l->status = 0;
+	l->submitted = 1;
+	hmp->link = l;
+	hammer2_spin_unex(&hmp->link_spin);
+	mod_delayed_work(system_dfl_long_wq, &hmp->link_work, 0);
+	hammer2_mtx_unlock(&hmp->link_mtx);
+	return (0);
 }

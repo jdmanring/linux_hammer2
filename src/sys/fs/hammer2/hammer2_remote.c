@@ -129,7 +129,7 @@ hammer2_remote_cmd_name(int idx)
 static void hammer2_remote_serve(struct work_struct *);
 static void hammer2_remote_reconcile(struct work_struct *);
 static void hammer2_remote_keepalive(struct work_struct *);
-static void hammer2_remote_conn_end(struct hammer2_remote *, int);
+static void hammer2_remote_conn_end(struct hammer2_remote *);
 
 void
 hammer2_remote_init(hammer2_dev_t *hmp)
@@ -169,7 +169,7 @@ hammer2_remote_init(hammer2_dev_t *hmp)
  * new connection's peer lifts by announcing PROTO_2, on the reader that
  * admits (hammer2_remote_resume()); a teardown's close is CLOSED and
  * nothing lifts it, so an announcement read during the teardown admits
- * nothing.
+ * nothing.  The caller holds hammer2_mntlk.
  */
 void
 hammer2_remote_quiesce(hammer2_dev_t *hmp, int final)
@@ -185,7 +185,7 @@ hammer2_remote_quiesce(hammer2_dev_t *hmp, int final)
 		wake_up(&req->waitq);
 	spin_unlock(&rm->lock);
 	flush_workqueue(rm->wq);
-	hammer2_remote_conn_end(rm, final);	/* the client side */
+	hammer2_remote_conn_end(rm);	/* the client side */
 }
 
 /*
@@ -2752,13 +2752,15 @@ hammer2_remote_span(hammer2_dev_t *hmp)
  * The link this connection device stands for has ended, by a reconnect or
  * the device's teardown: its requests fail now, both work items are stopped
  * (disable_delayed_work_sync(), since a cancel would let one requeue), and
- * every slot on it is detached under hammer2_mntlk, which the teardown's
- * caller already holds and a reconnect, on the ioctl's thread, takes.  A
- * reconnect re-enables the items for the next link once its LNK_CONN is
- * queued, hammer2_remote_connected().  The device itself lives until its last proxy.
+ * every slot on it is detached under hammer2_mntlk, which every caller
+ * holds: the teardown's, and the reconnect's work item, which takes it by
+ * try-lock since a mount's cluster_fd= intake holds it already
+ * (hammer2_iocom.c, hammer2_link_work()).  A reconnect re-enables the items
+ * for the next link once its LNK_CONN is queued, hammer2_remote_connected().
+ * The device itself lives until its last proxy.
  */
 static void
-hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
+hammer2_remote_conn_end(struct hammer2_remote *rm)
 {
 	hammer2_dev_t *cdev;
 	hammer2_pfs_t *pmp;
@@ -2773,8 +2775,6 @@ hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
 		hammer2_remote_dev_kill(cdev);
 	disable_delayed_work_sync(&rm->regwork);
 	disable_delayed_work_sync(&rm->pingwork);
-	if (!final)
-		hammer2_lk_ex(&hammer2_mntlk);
 	if (cdev) {
 		TAILQ_FOREACH(pmp, &hammer2_pfslist, mntentry) {
 			/*
@@ -2791,8 +2791,6 @@ hammer2_remote_conn_end(struct hammer2_remote *rm, int final)
 		}
 	}
 	hammer2_remote_snaps_drop(rm);
-	if (!final)
-		hammer2_lk_unlock(&hammer2_mntlk);
 	if (cdev)
 		hammer2_remote_dev_drop(cdev);	/* the link's reference */
 	hammer2_spin_ex(&rm->hmp->span_spin);

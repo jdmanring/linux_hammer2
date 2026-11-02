@@ -263,6 +263,16 @@ snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
 argument, its declaration in `hammer2.h`. No category is new.
 
+1,602 to 1,606 with the cluster link's attempt and work item, which
+`hammer2_cluster_reconnect()` now hooks and queues. Three more
+`return (x);`, in `hammer2_link_claim()` and in the intake's refusal and
+success; one more `ENOMEM` in the errno row, the intake's refusal when
+the attempt cannot be allocated, which `RECLUSTER` returns to the caller
+and the mount prints; and one more unnamed prototype argument,
+`hammer2_link_devinit()`'s declaration in `hammer2.h`. One hit left:
+`braces {} are not necessary`, at the mount's `cluster_fd=` intake,
+whose arm now holds the intake's error and its print. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

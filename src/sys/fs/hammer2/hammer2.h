@@ -945,6 +945,10 @@ struct hammer2_dev {
 	hammer2_spin_t		span_spin;	/* XXX Linux: spanq, nspans */
 	struct hammer2_remote	*remote;	/* XXX Linux: the HM2 XOP API server */
 	struct hammer2_rconn	*rconn;		/* XXX Linux: set on a connection device */
+	struct hammer2_link	*link;		/* XXX Linux: the pending link attempt */
+	hammer2_spin_t		link_spin;	/* XXX Linux: link and its fields */
+	hammer2_mtx_t		link_mtx;	/* XXX Linux: intakes and teardown */
+	struct delayed_work	link_work;	/* XXX Linux: runs the reconnect tail */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */
@@ -1499,7 +1503,8 @@ int hammer2_msg_adhoc_input(kdmsg_msg_t *);
 /* hammer2_iocom.c */
 void hammer2_iocom_init(hammer2_dev_t *);
 void hammer2_iocom_uninit(hammer2_dev_t *);
-void hammer2_cluster_reconnect(hammer2_dev_t *, struct file *);
+int hammer2_cluster_reconnect(hammer2_dev_t *, struct file *);
+void hammer2_link_devinit(hammer2_dev_t *);	/* XXX Linux */
 void hammer2_volconf_update(hammer2_dev_t *, int);
 
 /*

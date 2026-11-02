@@ -47,6 +47,12 @@
 # and hammer2 on the guest.
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# H2_DMSG_CLUSTERFD is written into the guest's ssh command line, so it is
+# 0 or 1 before anything else reads it.
+case ${H2_DMSG_CLUSTERFD:-0} in
+0|1) ;;
+*) echo "dmsg: COULD-NOT-RUN: H2_DMSG_CLUSTERFD is 0 or 1" >&2; exit 2 ;;
+esac
 
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 GUEST=${H2_GUEST:-artix-s6-kde}
@@ -165,7 +171,7 @@ if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
 	sed 's/^/fdmount-said /' /tmp/fdmount.out
 	n=0
 	for s in /proc/[0-9]*/stack; do
-		grep -q hammer2_cluster_reconnect "$s" 2>/dev/null || continue
+		grep -qE 'hammer2_cluster_reconnect|hammer2_link_work' "$s" 2>/dev/null || continue
 		p=${s#/proc/}; p=${p%/stack}; n=$((n + 1))
 		echo "fdmount-task pid=$p state=$(awk '{print $3}' /proc/$p/stat) comm=$(cat /proc/$p/comm)"
 		sed 's/^/fdmount-frame /' "$s"	# whole: __sched frames such as the rwsem slowpath are not in it
@@ -359,13 +365,14 @@ scp -q "$GUEST_SSH:/tmp/h2dmsg.klog" "$FIXDIR/dmsg-run-$stamp.klog" 2>/dev/null 
 # H2_DMSG_CLUSTERFD=1 runs only the mount intake, cluster_fd=, which no other
 # harness drives: a TCP connection to a silent listener on the guest's
 # loopback is handed to the mount as descriptor 3. The mount holds
-# hammer2_mntlk across that intake and the reconnect tail's quiesce takes it
-# again (hammer2_remote.c's hammer2_remote_conn_end()), so the check that the
-# mount returns is expected to fail until the TLS link section's work item
-# exists. Absence passes trivially, so two checks are positive: the link's
-# two message threads run after the mount, and the unmount then completes
-# with none left. A mount still in the kernel is called the recursion only
-# when a task sits in hammer2_cluster_reconnect() and lockdep reported it;
+# hammer2_mntlk across that intake, and the reconnect tail's quiesce took it
+# again on the same task until the tail moved to the device's work item
+# (hammer2_iocom.c's hammer2_link_work()), which takes it by try-lock after
+# the mount drops it. Absence passes trivially, so two checks are positive:
+# the link's two message threads run after the mount, and the unmount then
+# completes with none left. A mount still in the kernel is called the
+# recursion only when a task sits in the intake or the link's work and
+# lockdep reported it;
 # otherwise the stop line says it is stuck elsewhere, beside the whole stack.
 # Either way the guest is left as it is but for the listener, which is
 # stopped; it is read live and reset by hand, never by this script.
@@ -379,16 +386,16 @@ if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
 	if [ "$(v fdmount-badfd)" = 0 ]; then echo "  ok    the descriptor was accepted"
 	else echo "  FAIL  the descriptor was accepted: $(v fdmount-badfd) bad cluster_fd line(s)"; f=1; fi
 	if [ "$(v fdmount-lockdep)" = 0 ]; then echo "  ok    no recursive-locking report"
-	else echo "  FAIL  no recursive-locking report: $(v fdmount-lockdep), hammer2_mntlk (h2_mnt) named on $(v fdmount-mntlk-lines) line(s), $(v fdmount-tasks) task(s) in hammer2_cluster_reconnect"; f=1; fi
+	else echo "  FAIL  no recursive-locking report: $(v fdmount-lockdep), hammer2_mntlk (h2_mnt) named on $(v fdmount-mntlk-lines) line(s), $(v fdmount-tasks) task(s) in the intake or the link's work"; f=1; fi
 	if [ "$(v fdmount-threads)" = 2 ]; then echo "  ok    the link's two message threads run after the mount"
 	else echo "  FAIL  the link's two message threads run after the mount: $(v fdmount-threads | grep . || echo unread)"; f=1; fi
 	if [ "$(v fdmount-umount)" = 0 ] && [ "$(v fdmount-threads-after)" = 0 ]; then echo "  ok    the unmount completes with no thread left"
 	else echo "  FAIL  the unmount completes with no thread left: umount $(v fdmount-umount), threads $(v fdmount-threads-after)"; f=1; fi
 	if [ "$r" = no ]; then
 		if [ "$(v fdmount-tasks)" -ge 1 ] 2>/dev/null && [ "$(v fdmount-lockdep)" -ge 1 ] 2>/dev/null; then
-			echo "dmsg: the mount is still in the kernel on $GUEST, in hammer2_cluster_reconnect() with lockdep's recursion reported; read it live, then $VIRSH destroy $GUEST and start it" >&2
+			echo "dmsg: the mount is still in the kernel on $GUEST, in the intake or the link's work with lockdep's recursion reported; read it live, then $VIRSH destroy $GUEST and start it" >&2
 		else
-			echo "dmsg: the mount is still in the kernel on $GUEST but not as the recursion ($(v fdmount-tasks) task(s) in hammer2_cluster_reconnect(), $(v fdmount-lockdep) report(s)); read the stack above live, then $VIRSH destroy $GUEST and start it" >&2
+			echo "dmsg: the mount is still in the kernel on $GUEST but not as the recursion ($(v fdmount-tasks) task(s) in the intake or the link's work, $(v fdmount-lockdep) report(s)); read the stack above live, then $VIRSH destroy $GUEST and start it" >&2
 		fi
 		exit 1
 	fi
