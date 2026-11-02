@@ -28,5 +28,10 @@
 #define EIO	5	/* I/O error */
 #define ESPIPE	29	/* Illegal seek */
 #define EDOM	33	/* Math argument out of domain of func */
+/* From include/uapi/asm-generic/errno.h at v7.3, the errnos a TLS link
+ * ends with in hammer2_fp_tlsrec(). */
+#define EPROTO	71	/* Protocol error */
+#define ECONNRESET	104	/* Connection reset by peer */
+#define EKEYEXPIRED	127	/* Key has expired */
 
 #endif

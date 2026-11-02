@@ -27,6 +27,9 @@
 #include <stdint.h>
 
 typedef unsigned int gfp_t;
+typedef uint8_t u8;	/* include/asm-generic/int-ll64.h:17 */
+/* include/linux/minmax.h:105, without its type check */
+#define min(x, y)	((x) < (y) ? (x) : (y))
 
 #define GFP_KERNEL	((gfp_t)0x01)
 #define GFP_NOFS	((gfp_t)0x02)
@@ -67,6 +70,7 @@ typedef unsigned int gfp_t;
 int pr_emerg(const char *fmt, ...);
 int pr_info(const char *fmt, ...);
 int pr_info_ratelimited(const char *fmt, ...);
+int pr_warn(const char *fmt, ...);	/* include/linux/printk.h:563 */
 int pr_cont(const char *fmt, ...);
 void panic(const char *fmt, ...) __attribute__((noreturn));
 void cpu_relax(void);

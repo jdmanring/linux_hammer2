@@ -142,6 +142,7 @@ hammer2_syntax_check_all(void)
 	 */
 	(void)fp_read(NULL, NULL, 0, NULL, 0, UIO_SYSSPACE);
 	(void)fp_write(NULL, NULL, 0, NULL, UIO_SYSSPACE);
+	(void)hammer2_fp_tlsrec(NULL);
 	/*
 	 * The cache-coherency machine's sleep: on a channel, releasing the
 	 * CST's spin lock and reacquiring it around the sleep.

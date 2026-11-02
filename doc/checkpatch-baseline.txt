@@ -272,17 +272,19 @@
 4 please, no space before tabs
 243 please, no spaces at the start of a line
 86 quoted string split across lines
-380 return is not a function, parentheses are not required
+384 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
+1 return of an errno should typically be negative (ie: return -ECONNRESET)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
 2 return of an errno should typically be negative (ie: return -EDOM)
 3 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 1 return of an errno should typically be negative (ie: return -EINTR)
 70 return of an errno should typically be negative (ie: return -EINVAL)
-14 return of an errno should typically be negative (ie: return -EIO)
+16 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
+1 return of an errno should typically be negative (ie: return -EKEYEXPIRED)
 5 return of an errno should typically be negative (ie: return -ENOENT)
 4 return of an errno should typically be negative (ie: return -ENOMEM)
 2 return of an errno should typically be negative (ie: return -ENOSPC)
@@ -290,6 +292,7 @@
 1 return of an errno should typically be negative (ie: return -ENOTDIR)
 1 return of an errno should typically be negative (ie: return -ENOTEMPTY)
 8 return of an errno should typically be negative (ie: return -EOPNOTSUPP)
+1 return of an errno should typically be negative (ie: return -EPROTO)
 12 return of an errno should typically be negative (ie: return -EROFS)
 1 return of an errno should typically be negative (ie: return -ESRCH)
 1 return of an errno should typically be negative (ie: return -ETIMEDOUT)

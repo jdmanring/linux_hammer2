@@ -236,7 +236,7 @@ strategy would meet the same format.
 | `hammer2_io.c:82` | the `BLK_MAX_BLOCK_SIZE` static assert |
 | `hammer2_io.c:96-105` | `hammer2_io_index()` assuming the mapping's minimum folio order |
 | `hammer2_io.c:148` | `hammer2_io_folio_check()`, which fails the I/O when a folio is shorter than the physical buffer |
-| `hammer2_os.h:68-80` | the version floor, 7.3, the kernel of record |
+| `hammer2_os.h:70-82` | the version floor, 7.3, the kernel of record |
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
 `HAMMER2_LIMIT_DIRTY_INODES` in `hammer2.h` is 65536 and is neither: it

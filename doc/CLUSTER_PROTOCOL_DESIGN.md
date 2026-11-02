@@ -1782,7 +1782,7 @@ share by construction, and the caller that hands the socket in is the
 one that knows which end it is, so the role is an input of the intake.
 Before anything is submitted the intake refuses, each with one named
 line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
-connected stream socket, `hammer2_os.h:1766-1783`, and the submit any
+connected stream socket, `hammer2_os.h:1855-1872`, and the submit any
 socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
 pair would fail only when `tlshd` installed kernel TLS); a socket already
 carrying an upper-layer protocol (`inet_csk_has_ulp()`,
@@ -1887,7 +1887,7 @@ The plaintext case goes through it too,
 because the `cluster_fd=` intake holds `hammer2_mntlk` from
 `hammer2_vfsops.c:1306` to past the intake at `:1626-1636`, and the
 tail's quiesce took it again in `hammer2_remote_conn_end()` (a
-`down_write()`, `hammer2_os.h:205-208`) on
+`down_write()`, `hammer2_os.h:207-210`) on
 the same task, which hung the mount. `0d0717d` added that take, and
 `cluster-dmsg.sh`'s `H2_DMSG_CLUSTERFD=1` drives it: on `h2debug-7.3tls`
 the mount stayed in D state at `hammer2_remote_quiesce()` under
@@ -2042,22 +2042,30 @@ bounds neither a request `tlshd` never accepts nor one whose handshake
 child, forked per request (`src/tlshd/netlink.c:475-488`), dies without
 reporting.
 
-**The reader on a TLS link** stops calling `kernel_read()`, which on a
-record that is not data returns `EIO` (`net/tls/tls_sw.c:1598-1615`),
-and reads with `sock_recvmsg()` and a control buffer, dispatching on the
-record type as sunrpc does (`net/sunrpc/xprtsock.c:360-417`): data is
-the frame stream; an alert ends the link with a named line unless it is
-`close_notify` or `user_canceled`, which end it cleanly; a handshake
-record other than KeyUpdate, such as NewSessionTicket, is dropped;
-KeyUpdate sets `key_update_pending` (`net/tls/tls_sw.c:1551-1555`), after which
-every read returns `-EKEYEXPIRED` (`net/tls/tls_sw.c:1104-1105`), and since nothing
-rekeys after the handshake the link ends with a named line. The plaintext
-reader is unchanged. Writes need no change. This reader is not built:
-the intake is, and `fp_read()` still reads every link through
-`kernel_read()` (`hammer2_os.h:1650`). Until it is, a completed PSK link
-ends silently at the first record that is not data: the reader stops on
-the read's error with no line of its own (its only error print,
-`kern_dmsg.c:457-459`, is compiled out) and serves nothing after it.
+**The reader on a TLS link** reads data through `kernel_read()` as
+before and reads a record that is not data the way sunrpc does
+(`net/sunrpc/xprtsock.c:420-431`, `xs_sock_recvmsg()` falling to
+`xs_sock_recv_cmsg()`). Given no control buffer, kTLS leaves such a
+record queued (`net/tls/tls_sw.c:1900`) and returns `EIO`
+(`net/tls/tls_sw.c:1598-1615`), so on that errno, and only on a socket
+with kTLS's receive context, `fp_read()` reads the queued record again
+through `sock_recvmsg()` with a control buffer, without blocking, until
+`MSG_EOR` ends it, and dispatches on its type
+(`hammer2_fp_tlsrec()` in `hammer2_os.h`): an alert ends the link with a
+named line unless it is `close_notify` or `user_canceled`, which end it
+cleanly as end of stream; a handshake message other than KeyUpdate,
+such as NewSessionTicket, is dropped with a limited line and the read
+goes on; KeyUpdate sets `key_update_pending` as it is decrypted
+(`net/tls/tls_sw.c:1551-1555`), after which every read returns
+`-EKEYEXPIRED` (`net/tls/tls_sw.c:1104-1105`), and since nothing rekeys
+after the handshake the link ends at that record with a named line; any
+other record type ends it, as RFC 8446 section 5 requires. The plaintext
+reader, and every read on a TLS link that is not that `EIO`, is
+unchanged. Writes need no change. Before this reader a completed PSK
+link ended silently at the first record that was not data: the reader
+stopped on the read's error with no line of its own (its only error
+print, `kern_dmsg.c:457-459`, is compiled out).
+
 One PSK link has completed, on one guest between two volumes over TCP
 loopback with `tlshd` answering (`cluster-dmsg.sh H2_DMSG_TLS=1`): kTLS
 installed on both sockets, spans exchanged, and the link up after five

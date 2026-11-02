@@ -62,6 +62,8 @@
 #include <linux/key.h>		/* Linux: key_serial_t, for the link's handshake */
 #include <net/handshake.h>	/* Linux: the link's TLS handshake upcall */
 #include <net/inet_connection_sock.h>	/* Linux: inet_csk_has_ulp, at the intake */
+#include <net/tls.h>		/* Linux: a TLS link's records that are not data */
+#include <net/tls_prot.h>
 
 #include "hammer2_compat.h"
 
@@ -1611,7 +1613,85 @@ hammer2_dev_cache_flush(struct file *bdev_file)
  *
  * Only UIO_SYSSPACE is reachable: the transport moves kernel buffers, so
  * the selector is asserted rather than accepted.
+ *
+ * On a link that runs over kTLS a record that is not data reaches the
+ * reader too, and kernel_read() passes no control buffer, so kTLS leaves
+ * the record queued and returns -EIO (net/tls/tls_sw.c,
+ * tls_record_content_type()).  That one errno on a socket with kTLS's
+ * receive context is read again by hammer2_fp_tlsrec() below, which is
+ * how sunrpc reads it (net/sunrpc/xprtsock.c, xs_sock_recvmsg()); every
+ * other read, and every read of a plaintext link, is the one above.
  */
+/*
+ * Linux: the record kTLS left queued, read with a control buffer for its
+ * type, in pieces until MSG_EOR marks its end and without blocking, since
+ * it is queued already.  Returns 0 when it was dropped and the read goes
+ * on, -1 for a clean end, else the errno the link ends with.  RFC 8446
+ * section 6.2 makes every alert but close_notify and user_canceled an
+ * error, and section 5 an unexpected record type fatal; a handshake
+ * message other than KeyUpdate, such as NewSessionTicket, is dropped,
+ * and KeyUpdate ends the link, since nothing here rekeys and every read
+ * after it returns -EKEYEXPIRED (doc/CLUSTER_PROTOCOL_DESIGN.md, the
+ * reader on a TLS link).  The lines a peer can repeat are limited.
+ */
+static inline int
+hammer2_fp_tlsrec(struct file *fp)
+{
+	struct socket *so = sock_from_file(fp);
+	union {
+		struct cmsghdr cmsg;
+		u8 buf[CMSG_SPACE(sizeof(u8))];
+	} u;
+	struct msghdr msg;
+	struct kvec kv;
+	u8 rec[64], first[2] = { 0, 0 }, type = 0;
+	int n, got = 0;
+
+	if (so == NULL || !tls_sw_has_ctx_rx(so->sk))
+		return (EIO);
+	do {
+		memset(&msg, 0, sizeof(msg));
+		msg.msg_control = &u;
+		msg.msg_controllen = sizeof(u);
+		kv.iov_base = rec;
+		kv.iov_len = sizeof(rec);
+		iov_iter_kvec(&msg.msg_iter, ITER_DEST, &kv, 1, sizeof(rec));
+		n = sock_recvmsg(so, &msg, MSG_DONTWAIT);
+		if (n <= 0)
+			return (EIO);
+		if (got == 0) {
+			type = tls_get_record_type(so->sk, &u.cmsg);
+			memcpy(first, rec, min(n, 2));
+		}
+		got += n;
+	} while ((msg.msg_flags & MSG_EOR) == 0);
+
+	switch (type) {
+	case TLS_RECORD_TYPE_ALERT:
+		if (first[1] == TLS_ALERT_DESC_CLOSE_NOTIFY ||
+		    first[1] == TLS_ALERT_DESC_USER_CANCELED) {
+			pr_info("hammer2: TLS peer ended the link (alert %u)\n",
+			    first[1]);
+			return (-1);
+		}
+		pr_warn("hammer2: TLS peer sent alert %u/%u, ending the link\n",
+		    first[0], first[1]);
+		return (ECONNRESET);
+	case TLS_RECORD_TYPE_HANDSHAKE:
+		if (first[0] == TLS_HANDSHAKE_KEYUPDATE) {
+			pr_warn("hammer2: TLS peer sent KeyUpdate, which nothing here answers, ending the link\n");
+			return (EKEYEXPIRED);
+		}
+		pr_info_ratelimited("hammer2: TLS peer sent handshake message %u, dropped\n",
+		    first[0]);
+		return (0);
+	default:
+		pr_warn("hammer2: TLS peer sent a record of type %u, ending the link\n",
+		    type);
+		return (EPROTO);
+	}
+}
+
 /* Linux */
 static inline int
 fp_read(struct file *fp, void *buf, size_t nbytes, long *res, int all,
@@ -1650,6 +1730,15 @@ fp_read(struct file *fp, void *buf, size_t nbytes, long *res, int all,
 		n = kernel_read(fp, (char *)buf + done, nbytes - done, ppos);
 		if (n >= 0 && ppos)
 			fp->f_pos = pos;
+		if (n == -EIO) {
+			int e = hammer2_fp_tlsrec(fp);
+
+			if (e == 0)
+				continue;	/* dropped, read on */
+			if (e > 0)
+				error = e;
+			break;			/* -1: a clean end of stream */
+		}
 		if (n < 0) {
 			error = hammer2_fp_errno(n);
 			break;
