@@ -76,9 +76,11 @@ latency, the half that was never measured").
   two volumes over TCP loopback completes the handshake with `tlshd`,
   runs with kTLS on both sockets and carries no frame in the clear; a
   wrong PSK is refused at both ends; and a server refuses a peer whose
-  key `tlshd` found but the intake did not name. A link would still end
-  at the first TLS record that is not data, which the reader cannot yet
-  read. No link between two guests runs TLS: every link
+  key `tlshd` found but the intake did not name. A TLS record that is
+  not data is read by its type: a session ticket is dropped and the
+  link serves on, and a KeyUpdate or an alert ends the
+  link with a named line, read against a GnuTLS peer on both guest
+  kernels. No link between two guests runs TLS: every link
   `test/h2service.c` dials is plaintext, since it asks for no
   handshake. The
   `cluster_tls_required` module parameter (0 by default) refuses a
