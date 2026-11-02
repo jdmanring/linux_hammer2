@@ -1140,7 +1140,10 @@ blocked in a read and one from the reader's own exit to end the far side, and
 calls `fdrop()` twice. Nothing else is called. The shim
 carries `fp_read()` and `fp_write()` over `kernel_read()` and `kernel_write()`,
 `fp_shutdown()` over `kernel_sock_shutdown()`, `fdrop()` over `fput()`, and
-`holdfp()` over `fget()`, which is where the intake below is enforced.
+`holdfp()` over `fget()`, which is where the intake below is enforced. On a
+link that runs over kTLS, `fp_read()` also reads a record that is not data
+through `sock_recvmsg()` with a control buffer, since `kernel_read()` gets
+`EIO` for one (`CLUSTER_PROTOCOL_DESIGN.md`, the reader on a TLS link).
 
 The Linux descriptor must therefore be a `SOCK_STREAM` socket, with an
 `AF_UNIX` socketpair for the loopback. `holdfp()` refuses anything else at

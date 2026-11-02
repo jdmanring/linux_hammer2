@@ -1733,7 +1733,7 @@ functionality is exposed. Each item, and where the answer lives:
 | encrypted transport | kernel TLS, stage 5; `tcpdump` on the relay port must show no `0x4832` magic in the clear with TLS on and must show it with TLS off |
 | a stale node rejoining as current | decision B: what reads "behind" on a reconnecting master is the protocol note's, with the durable record it carries; this note records that no tid the flush moves can read it (C1, C2, C8, C9) and that a fence one coordinator holds is not one (C10); until then a master whose PFS is unmounted on its host is offline and registers nothing |
 
-## The TLS link (stage 5: the intake built, the reader not yet)
+## The TLS link (stage 5: the intake and the reader built)
 
 Kernel TLS reaches the link through the handshake upcall, and the upcall
 fixes most of the shape. The citations in this section to `net/`,
@@ -1782,7 +1782,7 @@ share by construction, and the caller that hands the socket in is the
 one that knows which end it is, so the role is an input of the intake.
 Before anything is submitted the intake refuses, each with one named
 line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
-connected stream socket, `hammer2_os.h:1855-1872`, and the submit any
+connected stream socket, `hammer2_os.h:1871-1888`, and the submit any
 socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
 pair would fail only when `tlshd` installed kernel TLS); a socket already
 carrying an upper-layer protocol (`inet_csk_has_ulp()`,
@@ -2046,20 +2046,26 @@ reporting.
 before and reads a record that is not data the way sunrpc does
 (`net/sunrpc/xprtsock.c:420-431`, `xs_sock_recvmsg()` falling to
 `xs_sock_recv_cmsg()`). Given no control buffer, kTLS leaves such a
-record queued (`net/tls/tls_sw.c:1900`) and returns `EIO`
+record queued (`net/tls/tls_sw.c:1901`) and returns `EIO`
 (`net/tls/tls_sw.c:1598-1615`), so on that errno, and only on a socket
-with kTLS's receive context, `fp_read()` reads the queued record again
-through `sock_recvmsg()` with a control buffer, without blocking, until
+with kTLS's receive context in a module built with the handshake
+upcall, `fp_read()` reads the queued record again through
+`sock_recvmsg()` with a control buffer, which `process_rx_list()`
+(`net/tls/tls_sw.c:1635`) serves from the queue without blocking, until
 `MSG_EOR` ends it, and dispatches on its type
-(`hammer2_fp_tlsrec()` in `hammer2_os.h`): an alert ends the link with a
-named line unless it is `close_notify` or `user_canceled`, which end it
-cleanly as end of stream; a handshake message other than KeyUpdate,
-such as NewSessionTicket, is dropped with a limited line and the read
-goes on; KeyUpdate sets `key_update_pending` as it is decrypted
-(`net/tls/tls_sw.c:1551-1555`), after which every read returns
-`-EKEYEXPIRED` (`net/tls/tls_sw.c:1104-1105`), and since nothing rekeys
-after the handshake the link ends at that record with a named line; any
-other record type ends it, as RFC 8446 section 5 requires. The plaintext
+(`hammer2_fp_tlsrec()` in `hammer2_os.h`): an alert of two bytes ends
+the link with a named line unless it is `close_notify` or
+`user_canceled`, which end it cleanly as end of stream; a
+NewSessionTicket is dropped with a limited line and the read goes on,
+in either role, since nothing tells the reader its role; KeyUpdate sets
+`key_update_pending` as it is decrypted (`net/tls/tls_sw.c:1551-1555`),
+after which every read returns `-EKEYEXPIRED`
+(`net/tls/tls_sw.c:1104-1105`), and since nothing rekeys after the
+handshake the link ends at that record with a named line; any other
+handshake message, any other record type and a malformed record end it
+with a line. RFC 8446 section 5 also asks for an `unexpected_message`
+alert there, which is not sent, since `tls_alert_send()` is not
+exported at the kernel of record. The plaintext
 reader, and every read on a TLS link that is not that `EIO`, is
 unchanged. Writes need no change. Before this reader a completed PSK
 link ended silently at the first record that was not data: the reader
@@ -2078,14 +2084,17 @@ frames through GnuTLS's own record layer, which sends a ticket
 the kernel's reader and nothing of the peer's. `cluster-dmsg.sh
 H2_DMSG_TLS=1` runs it as arms 10 to 14: no record, a ticket, a
 KeyUpdate, a fatal alert, and `user_canceled` then `close_notify`.
-One PSK link has completed, on one guest between two volumes over TCP
-loopback with `tlshd` answering (`cluster-dmsg.sh H2_DMSG_TLS=1`): kTLS
-installed on both sockets, spans exchanged, and the link up after five
-keepalive intervals, which by the reader's behavior above is a reading
-that no record but data reached it in that time. Why none did is a
-candidate: `tlshd` adds `%NO_TICKETS` to every priority string
-(ktls-utils 1.5.0 `src/tlshd/ktls.c:477`), so it sends no session
-ticket. No link between two guests has asked for a handshake.
+
+A PSK link between two kernels has completed on one guest, two volumes
+over TCP loopback with `tlshd` answering both ends (`cluster-dmsg.sh
+H2_DMSG_TLS=1`, arm 1): kTLS installed on both sockets, spans
+exchanged, and the link up after five keepalive intervals. That reading
+was taken at 1.0.75, under the reader before this one, which ended the
+link at any record that was not data, so it reads that none reached
+either end in that time. Why none did is a candidate: `tlshd` adds
+`%NO_TICKETS` to every priority string (ktls-utils 1.5.0
+`src/tlshd/ktls.c:477`), so it sends no session ticket. No link between
+two guests has asked for a handshake.
 
 **Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
 relay mode parses frames (`relay_pair()` reads each through

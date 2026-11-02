@@ -1626,14 +1626,25 @@ hammer2_dev_cache_flush(struct file *bdev_file)
  * Linux: the record kTLS left queued, read with a control buffer for its
  * type, in pieces until MSG_EOR marks its end and without blocking, since
  * it is queued already.  Returns 0 when it was dropped and the read goes
- * on, -1 for a clean end, else the errno the link ends with.  RFC 8446
+ * on, -1 for a clean end, else the errno the link ends with
+ * (doc/CLUSTER_PROTOCOL_DESIGN.md, the reader on a TLS link).  RFC 8446
  * section 6.2 makes every alert but close_notify and user_canceled an
- * error, and section 5 an unexpected record type fatal; a handshake
- * message other than KeyUpdate, such as NewSessionTicket, is dropped,
- * and KeyUpdate ends the link, since nothing here rekeys and every read
- * after it returns -EKEYEXPIRED (doc/CLUSTER_PROTOCOL_DESIGN.md, the
- * reader on a TLS link).  The lines a peer can repeat are limited.
+ * error, and an alert is two bytes (section 6).  A NewSessionTicket is
+ * dropped, the one post-handshake message a TLS 1.3 server sends that
+ * needs nothing back; it is dropped in either role, since nothing here
+ * tells the reader its role.  Any other handshake message, any other
+ * record type and a malformed record end the link with a line, where
+ * section 5 also asks for an unexpected_message alert, which is not sent:
+ * tls_alert_send() is not exported at the kernel of record.
+ * DEFER(a peer that sends KeyUpdate in practice): KeyUpdate ends the
+ * link, since nothing here rekeys and every read after it returns
+ * -EKEYEXPIRED.  The handshake upcall is tested with IS_ENABLED() as the
+ * intake tests it, so the module links on a kernel without it, where no
+ * socket reaching here carries kTLS from this module.  The lines a peer
+ * can repeat are limited.
  */
+#define HAMMER2_TLS_NEWSESSIONTICKET	4	/* RFC 8446 section 4, HandshakeType */
+
 static inline int
 hammer2_fp_tlsrec(struct file *fp)
 {
@@ -1647,9 +1658,11 @@ hammer2_fp_tlsrec(struct file *fp)
 	u8 rec[64], first[2] = { 0, 0 }, type = 0;
 	int n, got = 0;
 
-	if (so == NULL || !tls_sw_has_ctx_rx(so->sk))
+	if (!IS_ENABLED(CONFIG_NET_HANDSHAKE) || so == NULL ||
+	    !tls_sw_has_ctx_rx(so->sk))
 		return (EIO);
 	do {
+		memset(&u, 0, sizeof(u));
 		memset(&msg, 0, sizeof(msg));
 		msg.msg_control = &u;
 		msg.msg_controllen = sizeof(u);
@@ -1657,8 +1670,11 @@ hammer2_fp_tlsrec(struct file *fp)
 		kv.iov_len = sizeof(rec);
 		iov_iter_kvec(&msg.msg_iter, ITER_DEST, &kv, 1, sizeof(rec));
 		n = sock_recvmsg(so, &msg, MSG_DONTWAIT);
-		if (n <= 0)
-			return (EIO);
+		if (n < 0 || (n == 0 && got == 0)) {
+			pr_warn("hammer2: TLS peer's record unreadable (%d after %d bytes), ending the link\n",
+			    n, got);
+			return (EPROTO);
+		}
 		if (got == 0) {
 			type = tls_get_record_type(so->sk, &u.cmsg);
 			memcpy(first, rec, min(n, 2));
@@ -1666,8 +1682,7 @@ hammer2_fp_tlsrec(struct file *fp)
 		got += n;
 	} while ((msg.msg_flags & MSG_EOR) == 0);
 
-	switch (type) {
-	case TLS_RECORD_TYPE_ALERT:
+	if (type == TLS_RECORD_TYPE_ALERT && got == 2) {
 		if (first[1] == TLS_ALERT_DESC_CLOSE_NOTIFY ||
 		    first[1] == TLS_ALERT_DESC_USER_CANCELED) {
 			pr_info("hammer2: TLS peer ended the link (alert %u)\n",
@@ -1677,19 +1692,20 @@ hammer2_fp_tlsrec(struct file *fp)
 		pr_warn("hammer2: TLS peer sent alert %u/%u, ending the link\n",
 		    first[0], first[1]);
 		return (ECONNRESET);
-	case TLS_RECORD_TYPE_HANDSHAKE:
-		if (first[0] == TLS_HANDSHAKE_KEYUPDATE) {
-			pr_warn("hammer2: TLS peer sent KeyUpdate, which nothing here answers, ending the link\n");
-			return (EKEYEXPIRED);
-		}
+	}
+	if (type == TLS_RECORD_TYPE_HANDSHAKE && first[0] == TLS_HANDSHAKE_KEYUPDATE) {
+		pr_warn("hammer2: TLS peer sent KeyUpdate, which nothing here answers, ending the link\n");
+		return (EKEYEXPIRED);
+	}
+	if (type == TLS_RECORD_TYPE_HANDSHAKE &&
+	    first[0] == HAMMER2_TLS_NEWSESSIONTICKET) {
 		pr_info_ratelimited("hammer2: TLS peer sent handshake message %u, dropped\n",
 		    first[0]);
 		return (0);
-	default:
-		pr_warn("hammer2: TLS peer sent a record of type %u, ending the link\n",
-		    type);
-		return (EPROTO);
 	}
+	pr_warn("hammer2: TLS peer sent a record of type %u (first byte %u, %d bytes), ending the link\n",
+	    type, first[0], got);
+	return (EPROTO);
 }
 
 /* Linux */

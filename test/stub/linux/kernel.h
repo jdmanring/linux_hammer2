@@ -71,6 +71,12 @@ int pr_emerg(const char *fmt, ...);
 int pr_info(const char *fmt, ...);
 int pr_info_ratelimited(const char *fmt, ...);
 int pr_warn(const char *fmt, ...);	/* include/linux/printk.h:563 */
+/*
+ * include/linux/kconfig.h:73 reads an option as built in or a module.
+ * The stub reads every option as present, so the code an IS_ENABLED()
+ * test guards is the code this gate checks.
+ */
+#define IS_ENABLED(option)	1
 int pr_cont(const char *fmt, ...);
 void panic(const char *fmt, ...) __attribute__((noreturn));
 void cpu_relax(void);

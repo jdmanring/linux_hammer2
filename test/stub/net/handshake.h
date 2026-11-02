@@ -8,6 +8,6 @@
  * transcribed from v7.3 (include/net/handshake.h:45), in
  * hammer2_fp_tlsrec().
  */
-unsigned char tls_get_record_type(const struct sock *sk,
+u8 tls_get_record_type(const struct sock *sk,
     const struct cmsghdr *msg);
 #endif
