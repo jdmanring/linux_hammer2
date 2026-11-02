@@ -66,7 +66,13 @@ latency, the half that was never measured").
   a pass's source name is its PFS's label with that suffix, so read from
   the code a pass's source can be deleted at any time. The same link can
   also delete a snapshot it took. Each snapshot costs space until it is
-  deleted and the bulkfree scan has run. A PFS with a remote master
+  deleted and the bulkfree scan has run. Each request holds the host's
+  global mount lock (`hammer2_mntlk`) until it is answered, since a PFS
+  carries no reference count that could hold it instead: up to
+  `remote_timeout_ms` for the request plus the storage call's own run,
+  whose length the peer chooses by the inode it names, during which a
+  mount, unmount, pfs-delete or bulkfree on the host waits and the
+  synchronization thread skips its pass. A PFS with a remote master
   mounts read-only.
 - **TLS, in progress**: an intake can ask for a PSK handshake through
   the kernel's handshake upcall (`cluster_tls=psk`, or `RECLUSTER`'s TLS
