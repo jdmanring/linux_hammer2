@@ -2106,11 +2106,11 @@ either end in that time. Why none did is a candidate: `tlshd` adds
 two guests has asked for a handshake.
 
 **Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
-relay mode parses frames (`relay_pair()` reads each through
-`frame_read()`, `test/h2loop.c:1556`, which checks the magic at `:453`),
-so a TLS stream through the relay ends at its first record as a torn
-frame; the controls that cross the relay run through the raw
-pass-through mode of the plan's 5.6. Two need an agent other than
+relay mode but one parses frames (`relay_pair()` reads each through
+`frame_read()`, `test/h2loop.c:1580`, which checks the magic at `:477`),
+so a TLS stream through the frame relay ends at its first record as a
+torn frame; the controls that cross the relay run through `--raw 1`,
+which copies bytes (`relay_pair_raw()`) and refuses every frame knob. Two need an agent other than
 `tlshd`, a stub on the handshake netlink family that subscribes to its
 group, since with no listener the submit fails at once: one that never
 accepts, so the request stays pending, and one that accepts and never

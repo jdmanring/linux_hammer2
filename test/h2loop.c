@@ -95,6 +95,15 @@
  * --replay refuses a relay trace rather than agreeing with it.  Stage 2b
  * of doc/CLUSTER_PROTOCOL_DESIGN.md is what runs on it.
  *
+ * --raw 1 copies the pair's bytes as they arrive instead of reading
+ * frames, for a link the relay cannot read: under kernel TLS each
+ * guest's handshake and records pass through it end to end.  Every knob
+ * above acts on a parsed frame, so each is refused beside --raw at a
+ * value other than its default.  The trace keeps the connections and
+ * their ends, and each pair's summary counts the bytes each way and the
+ * dmsg header's first four bytes found in them, at any offset and across
+ * reads, so a run reads whether frames crossed in the clear.
+ *
  * Frame layout and CRC convention are DragonFly's (sys/sys/dmsg.h,
  * sys/libkern/icrc32.c): 64-byte header, magic 0x4832, size field
  * (cmd & 0xff) in 64-byte units, aux aligned to 64, hdr_crc over the
@@ -209,8 +218,9 @@ static struct {
 	const char *rename_snapdel; /* the name the first SNAPDEL is given */
 	long cut_on_scan;	/* the scanall call from which the link is cut */
 	const char *cut_fault;	/* what the cut does: disconnect or trail */
-} opt = { 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0, 0, NULL, NULL, -1, "disconnect" };
+	int raw;		/* the relay copies bytes and parses no frame */
+} opt ={ 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
+    0, 0, 0, 0, NULL, NULL, -1, "disconnect", 0 };
 
 static void
 usage(void)
@@ -226,7 +236,8 @@ usage(void)
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
 	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
 	    "              [--cut-fault disconnect|trail|loss|dup|reorder|late]\n"
-	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n");
+	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n"
+	    "       h2loop --relay PORT --raw 1 [--seed N] [--trace FILE]\n");
 	exit(2);
 }
 
@@ -265,6 +276,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--rename-snapdel")) opt.rename_snapdel = *v ? v : NULL;
 		else if (!strcmp(a, "--cut-on-scan")) opt.cut_on_scan = atol(v);
 		else if (!strcmp(a, "--cut-fault")) opt.cut_fault = v;
+		else if (!strcmp(a, "--raw")) opt.raw = atoi(v);
 		else usage();
 		i++;
 	}
@@ -289,6 +301,18 @@ validate(void)
 	    (strcmp(opt.cut_fault, "disconnect") && strcmp(opt.cut_fault, "trail") &&
 	    strcmp(opt.cut_fault, "loss") && strcmp(opt.cut_fault, "dup") &&
 	    strcmp(opt.cut_fault, "reorder") && strcmp(opt.cut_fault, "late")))
+		usage();
+	/* --raw parses no frame, so a knob that acts on one would be
+	 * accepted and do nothing; the harness passes every knob, so only a
+	 * value off its default is refused. */
+	if (opt.raw < 0 || opt.raw > 1 || (opt.raw && (opt.relay == 0 ||
+	    opt.delay_max != 0 || opt.loss != 0 || opt.dup != 0 ||
+	    opt.partition_at != -1 || opt.partition_len != 0 ||
+	    opt.disconnect_at != -1 || opt.corrupt_at != -1 ||
+	    opt.rekey_data || opt.bare_dirent || opt.refuse_nresolve ||
+	    opt.retype_scan || opt.stall_ms || opt.end_readdir ||
+	    opt.silence_on || opt.rename_snapdel || opt.cut_on_scan != -1 ||
+	    strcmp(opt.cut_fault, "disconnect"))))
 		usage();
 }
 
@@ -1591,6 +1615,94 @@ relay_pair(struct side *a, struct side *b, long i)
 	return (i);
 }
 
+/* --raw: one direction's bytes, and the dmsg header magic as it sits on
+ * the wire (0x4832 then the zero reserved02, bytes 32 48 00 00) counted at
+ * any offset through a window that carries across reads. */
+struct rawdir {
+	long bytes, magic;
+	uint32_t win;
+	int seen;
+};
+
+static void
+raw_count(struct rawdir *d, const uint8_t *p, ssize_t n)
+{
+	for (ssize_t k = 0; k < n; k++) {
+		d->win = (d->win << 8) | p[k];
+		if (d->seen < 4)
+			d->seen++;
+		if (d->seen == 4 && d->win == 0x32480000u)
+			d->magic++;
+	}
+	d->bytes += n;
+}
+
+/* One pair under --raw: bytes copied as they come until both ends are
+ * gone.  An EOF half-shuts the far side, as relay_pair() does, so the
+ * other direction carries on; a write the far side refuses ends both. */
+static void
+relay_pair_raw(struct side *a, struct side *b, struct rawdir *dir)
+{
+	struct side *sides[2] = { a, b };
+	static uint8_t buf[65536];
+
+	for (;;) {
+		struct pollfd pfd[2];
+		int k;
+
+		for (k = 0; k < 2; k++) {
+			pfd[k].fd = sides[k]->eof ? -1 : sides[k]->fd;
+			pfd[k].events = POLLIN;
+		}
+		if (pfd[0].fd < 0 && pfd[1].fd < 0)
+			break;
+		if (hangup) {
+			hangup = 0;
+			trace("hangup t=%ld\n", now_ms());
+			ct.disconnects++;
+			break;
+		}
+		if (poll(pfd, 2, -1) < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			break;
+		}
+		for (k = 0; k < 2; k++) {
+			struct side *from = sides[k], *to = sides[1 - k];
+			ssize_t n;
+
+			if (pfd[k].fd < 0 ||
+			    !(pfd[k].revents & (POLLIN | POLLHUP | POLLERR)))
+				continue;
+			n = read(from->fd, buf, sizeof(buf));
+			if (n < 0 && errno == EINTR)
+				continue;
+			if (n > 0) {
+				raw_count(&dir[k], buf, n);
+				if (write_all(to->fd, buf, (size_t)n) == 0)
+					continue;
+				trace(">%s write error t=%ld\n", to->name, now_ms());
+				fflush(tracef);
+				ct.lost++;
+				goto out;
+			}
+			trace("%s %s t=%ld\n", from->name, n == 0 ? "eof" : "error",
+			    now_ms());
+			fflush(tracef);	/* a harness waits on it */
+			from->eof = 1;
+			if (n == 0)
+				ct.eof++;
+			else
+				ct.rejected++;
+			shutdown(to->fd, SHUT_WR);
+		}
+	}
+out:
+	side_close(a);
+	side_close(b);
+}
+
 static int
 relay(void)
 {
@@ -1617,13 +1729,13 @@ relay(void)
 		perror("bind");
 		return (2);
 	}
-	trace("h2loop relay port=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
+	trace("h2loop relay port=%d raw=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
 	    " retype-scan=%d"
 	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s"
 	    " cut-on-scan=%ld cut-fault=%s\n",
-	    opt.relay, opt.seed,
+	    opt.relay, opt.raw, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
 	    opt.refuse_nresolve, opt.retype_scan, opt.stall_ms, opt.end_readdir,
@@ -1639,6 +1751,19 @@ relay(void)
 		if (relay_accept(lfd, &b) < 0) {
 			side_close(&a);
 			break;
+		}
+		if (opt.raw) {
+			struct rawdir dir[2] = { { 0 }, { 0 } };
+
+			relay_pair_raw(&a, &b, dir);
+			trace("pair done raw a>b %ld b>a %ld magic a>b %ld b>a %ld\n",
+			    dir[0].bytes, dir[1].bytes, dir[0].magic, dir[1].magic);
+			fflush(tracef);
+			printf("h2loop: pair done raw bytes a>b %ld b>a %ld"
+			    " magic a>b %ld b>a %ld\n", dir[0].bytes, dir[1].bytes,
+			    dir[0].magic, dir[1].magic);
+			fflush(stdout);
+			continue;
 		}
 		i = relay_pair(&a, &b, i);
 		cut_reset();

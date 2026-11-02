@@ -21,7 +21,8 @@
 # CRCs the kernel leaves to userland.  doc/README.porting.md has the
 # transport contract this measures against.
 #
-# Needs nothing but a C compiler.  Runs in well under a second.
+# Needs a C compiler, and for the relay arms a loopback TCP port, which
+# bash's /dev/tcp reaches.  Runs in well under a second.
 set -u
 cd "$(dirname "$0")/.." || exit 2
 CC=${CC:-cc}
@@ -178,6 +179,105 @@ check "replay: control, an edited trace does not reproduce, exit 1" \
 sed '1s/aux-max=[0-9]*/aux-max=4000000/' "$T/delay.trace" >"$T/edited2.trace"
 timeout 10 "$T/h2loop" --replay "$T/edited2.trace" >"$T/replay3.out" 2>&1; rc=$?
 check "replay: a header past the frame cap is refused, exit 2" "$rc" = 2
+
+# --- the relay under --raw 1 ---------------------------------------------
+# Two guests whose link runs over kernel TLS dial the relay, which cannot
+# read their frames, so --raw 1 copies bytes.  A stream that is no frame
+# (its first bytes are not the magic) must cross byte for byte both ways,
+# and the frame relay, the control, must refuse the same bytes and deliver
+# none: a "raw" relay that still passed only well-formed frames would
+# fail the first, and one that parsed nothing in either mode the second.
+# The clients are bash's /dev/tcp on the loopback; the relay's stdout is a
+# FIFO, so each wait is for its line, bounded, not for seconds.
+
+# relay NAME ARGS...: a relay on a free port; P and RPID set, its stdout
+# on fd 5.  COULD-NOT-RUN after five ports refuse.
+relay() {
+	local name="$1" try line; shift
+	for try in 1 2 3 4 5; do
+		P=$((20000 + RANDOM % 20000))
+		rm -f "$T/$name.fifo"; mkfifo "$T/$name.fifo" || exit 2
+		"$T/h2loop" --relay "$P" "$@" --trace "$T/$name.trace" \
+		    >"$T/$name.fifo" 2>"$T/$name.err" &
+		RPID=$!
+		exec 5<"$T/$name.fifo"
+		line=
+		read -t 5 -r line <&5
+		case "$line" in "h2loop: relay listening on $P") return 0;; esac
+		exec 5<&-
+		kill "$RPID" 2>/dev/null; wait "$RPID" 2>/dev/null
+	done
+	echo "transport: COULD-NOT-RUN: no loopback port took the relay ($(cat "$T/$name.err"))"
+	exit 2
+}
+relay_stop() { exec 5<&-; kill "$RPID" 2>/dev/null; wait "$RPID" 2>/dev/null; }
+# A stream with three magics a>b, the third split across two writes, and
+# one b>a.  The first write is 64 bytes or more and starts "raw", so the
+# frame relay reads a whole header and refuses it by its magic.
+printf 'raw\000\377%064d\062\110\000\000zz\062\110' 0 >"$T/p1"
+printf '\000\000tail\062\110\000\000' >"$T/p2"
+printf 'back\062\110\000\000\001' >"$T/back"
+cat "$T/p1" "$T/p2" >"$T/p12"
+n1=$(wc -c <"$T/p1") n2=$(wc -c <"$T/p2") nb=$(wc -c <"$T/back")
+
+relay raw --seed 7 --raw 1
+exec 3<>"/dev/tcp/127.0.0.1/$P" 4<>"/dev/tcp/127.0.0.1/$P"
+cat "$T/p1" >&3
+timeout 5 head -c "$n1" <&4 >"$T/got1"	# the relay read p1 alone
+cat "$T/p2" >&3
+timeout 5 head -c "$n2" <&4 >"$T/got2"
+cat "$T/back" >&4
+timeout 5 head -c "$nb" <&3 >"$T/gotb"
+exec 3>&-				# A ends: B must read EOF
+timeout 5 cat <&4 >"$T/gotrest"; rc=$?
+exec 4>&-
+read -t 5 -r done <&5
+relay_stop
+cat "$T/got1" "$T/got2" >"$T/got12"
+check "raw: bytes that are no frame cross a>b byte for byte" "$(cmp -s "$T/p12" "$T/got12"; echo $?)" = 0
+check "raw: and b>a"                         "$(cmp -s "$T/back" "$T/gotb"; echo $?)" = 0
+check "raw: A's end reaches B as EOF, with nothing after" "$rc" = 0 -a ! -s "$T/gotrest"
+check "raw: the pair counts its bytes each way" \
+	"$done" = "h2loop: pair done raw bytes a>b $((n1 + n2)) b>a $nb magic a>b 3 b>a 1"
+check "raw: the trace names both ends"       "$(grep -c '^[AB] eof t=' "$T/raw.trace")" = 2
+
+relay frame --seed 7
+exec 3<>"/dev/tcp/127.0.0.1/$P" 4<>"/dev/tcp/127.0.0.1/$P"
+cat "$T/p1" >&3
+timeout 5 cat <&4 >"$T/gotf"; rc=$?
+exec 3>&- 4>&-
+relay_stop
+check "raw: control, the frame relay refuses the same bytes and delivers none" \
+	"$rc" = 0 -a ! -s "$T/gotf" -a "$(grep -c '^A magic t=' "$T/frame.trace")" = 1
+
+# Each frame knob beside --raw 1 is refused before the relay listens,
+# read with literal argument vectors; the harness's own vector, every knob
+# at its default, is accepted.
+refused=0 listened=0
+for knob in "--delay-max 1" "--loss 0.1" "--dup 0.1" "--partition-at 0" \
+    "--partition-len 1" "--disconnect-at 5" "--corrupt-at 1" "--rekey-data 1" \
+    "--bare-dirent 1" "--refuse-nresolve 1" "--retype-scan 1" "--stall-ms 10" \
+    "--end-readdir 1" "--silence-on x" "--rename-snapdel x" "--cut-on-scan 0" \
+    "--cut-fault trail"; do
+	# shellcheck disable=SC2086	# the knob is two words on purpose
+	timeout 5 "$T/h2loop" --relay 1 --raw 1 $knob >"$T/knob.out" 2>&1; rc=$?
+	# port 1 fails to bind for a user, also exit 2, so the refusal is
+	# read as the usage text and not as the status alone
+	[ "$rc" = 2 ] && grep -q '^usage: h2loop' "$T/knob.out" && refused=$((refused + 1))
+	grep -q 'relay listening\|^bind' "$T/knob.out" && listened=$((listened + 1))
+done
+check "raw: each of 17 frame knobs refused by usage, exit 2, before binding" \
+	"$refused" = 17 -a "$listened" = 0
+timeout 5 "$T/h2loop" --raw 1 >"$T/knob.out" 2>&1; rc=$?
+check "raw: refused without --relay"         "$rc" = 2
+timeout 5 "$T/h2loop" --relay 1 --raw 2 >"$T/knob.out" 2>&1; rc=$?
+check "raw: refused at a value other than 0 or 1" "$rc" = 2
+relay vector --seed 7 --rekey-data 0 --bare-dirent 0 --refuse-nresolve 0 \
+    --retype-scan 0 --stall-ms 0 --end-readdir 0 --silence-on '' \
+    --rename-snapdel '' --raw 1
+relay_stop
+check "raw: cluster-wire.sh's vector with every knob at default listens" \
+	"$(grep -c '^h2loop relay port=[0-9]* raw=1 ' "$T/vector.trace")" = 1
 
 echo "transport: $ran check(s), $fail failed"
 [ "$fail" -eq 0 ]

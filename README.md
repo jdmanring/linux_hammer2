@@ -252,7 +252,7 @@ Eighteen gates. The compile gates need a toolchain and a kernel tree:
 
         $ bash script/test-shim.sh        # needs only a C compiler
         $ bash script/test-ccms-lock.sh   # needs only a C compiler
-        $ bash script/test-transport.sh   # needs only a C compiler
+        $ bash script/test-transport.sh   # needs a C compiler and a loopback TCP port
         $ bash script/test-syntax.sh      # needs kernel headers and clang
         $ bash script/test-checkpatch.sh  # needs scripts/checkpatch.pl
 
