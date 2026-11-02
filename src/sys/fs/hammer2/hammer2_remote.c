@@ -2753,9 +2753,9 @@ hammer2_remote_span(hammer2_dev_t *hmp)
  * the device's teardown: its requests fail now, both work items are stopped
  * (disable_delayed_work_sync(), since a cancel would let one requeue), and
  * every slot on it is detached under hammer2_mntlk, which every caller
- * holds: the teardown's, and the reconnect's work item, which takes it by
- * try-lock since a mount's cluster_fd= intake holds it already
- * (hammer2_iocom.c, hammer2_link_work()).  A reconnect re-enables the items
+ * holds: hammer2_iocom_uninit(), and the reconnect's work item, which
+ * takes it by try-lock since a mount's cluster_fd= intake holds it
+ * already (hammer2_iocom.c, hammer2_link_work()).  A reconnect re-enables the items
  * for the next link once its LNK_CONN is queued, hammer2_remote_connected().
  * The device itself lives until its last proxy.
  */

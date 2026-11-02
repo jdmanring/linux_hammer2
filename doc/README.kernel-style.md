@@ -269,9 +269,10 @@ argument, its declaration in `hammer2.h`. No category is new.
 success; one more `ENOMEM` in the errno row, the intake's refusal when
 the attempt cannot be allocated, which `RECLUSTER` returns to the caller
 and the mount prints; and one more unnamed prototype argument,
-`hammer2_link_devinit()`'s declaration in `hammer2.h`. One hit left:
-`braces {} are not necessary`, at the mount's `cluster_fd=` intake,
-whose arm now holds the intake's error and its print. No category is new.
+`hammer2_link_devinit()`'s declaration in `hammer2.h`. And one hit
+fewer: `braces {} are not necessary for any arm of this statement`
+moved from 1 to 0, at the mount's `cluster_fd=` intake, whose arm now
+holds the intake's error and its print. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

@@ -10,7 +10,8 @@
  * loop; this is the kernel in the loop.
  *
  * The handshake every action starts with is the kernel's: on RECLUSTER
- * the kernel initiates LNK_CONN|CREATE (hammer2_cluster_reconnect ->
+ * the kernel initiates LNK_CONN|CREATE from the device's work item, after
+ * RECLUSTER has returned (hammer2_link_work -> hammer2_cluster_tail ->
  * kdmsg_iocom_autoinitiate); the daemon answers CONN|CREATE|REPLY with
  * REVTRANS set, since the transaction is the kernel's (kdmsg_state_msgrx
  * looks a REVTRANS frame up in the tree of transactions it initiated);

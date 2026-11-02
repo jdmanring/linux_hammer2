@@ -1882,8 +1882,8 @@ the same task, which hung the mount. `0d0717d` added that take, and
 `cluster-dmsg.sh`'s `H2_DMSG_CLUSTERFD=1` drives it: on `h2debug-7.3tls`
 the mount stayed in D state at `hammer2_remote_quiesce()` under
 `hammer2_get_tree()`, and lockdep reported `h2_mnt`, the lock's name,
-acquired while already held (two runs, 2026-11-01). `RECLUSTER` is
-called without the lock and is unaffected today. The work item is a
+acquired while already held (two runs, 2026-11-01). `RECLUSTER` was
+called without the lock and did not hang. The work item is a
 delayed work of the device, on `system_dfl_long_wq`
 (`include/linux/workqueue.h:476`), since its wait for the lock can
 outlast a bulkfree run; `system_unbound_wq` is deprecated in 7.3 and
@@ -1897,20 +1897,27 @@ mount-failure paths before `hammer2_iocom_init()` (`:1360, 1469, 1481`).
 For a successful attempt, in this order, the work takes `hammer2_mntlk`
 by try-lock in a loop that sleeps 10 ms and leaves when no attempt is
 hooked on the device, as the server's lookup does
-(`hammer2_remote.c:684-694`); claims the attempt; calls the quiesce with
-the lock held; and drops the lock. As built, `hammer2_remote_conn_end()`
-lost its `final` argument, which had meant both "closed" and "held",
-and neither takes nor drops the lock, since both callers of the quiesce
-hold it, the teardown and this work (`hammer2_remote.c:2751-2762`). Claiming before
+(`hammer2_remote.c:684-694`); claims the attempt; waits on its
+completion, signaled already for a plaintext attempt; calls the quiesce
+with the lock held; and drops the lock. As built,
+`hammer2_remote_conn_end()` lost its `final` argument, which had meant
+both "closed" and "held", and neither takes nor drops the lock, since
+both callers of the quiesce hold it, `hammer2_iocom_uninit()` and this
+work (`hammer2_remote.c:2751-2762`). Claiming before
 the quiesce means a teardown that unhooks the attempt first leaves the
 old link alone. The rest of the tail takes no `hammer2_mntlk`: a server
 request leaves its try-lock loop once the state is not open (`:684-686`)
 and the quiesce has flushed their queue, and registration, the other
-taker (`:2706`), is disabled in `conn_end` (`:2775`) until
+taker (`:2706`), is disabled in `conn_end` (`:2776-2777`) until
 `hammer2_remote_connected()` enables it again. The intake returns once
 the request is submitted or, in plaintext, once the work is queued, so a
-return from `RECLUSTER` no longer means `LNK_CONN` is queued; the
-harnesses wait on the line the tail prints.
+return from `RECLUSTER` no longer means `LNK_CONN` is queued. The
+harnesses wait on what the tail makes rather than on that return:
+`cluster-dmsg.sh`'s `cluster_fd=` mode on the link's two message
+threads, which the tail starts, `h2attach` on the kernel's `LNK_CONN`,
+and `cluster-wire.sh` on the remote element's registration line, which
+follows `hammer2_remote_connected()`. The tail's own line,
+"cluster link handed to the message threads", is read by none of them.
 
 **The attempt and its owner.** Each intake allocates an attempt holding
 the device, the file, the inputs, a status that starts at

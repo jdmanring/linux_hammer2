@@ -545,14 +545,18 @@ hammer2_volconf_update(hammer2_dev_t *hmp, int index)
  * its intake and the tail's quiesce needs that lock, so the tail cannot run
  * on the intake's thread.  Whoever unhooks the attempt under link_spin
  * owns it and its file; the work unhooks only a submitted one.  Every
- * owner waits on done before freeing it, which is signaled by
- * complete_all(), since the teardown waits and then ends the attempt.  doc/CLUSTER_PROTOCOL_DESIGN.md,
- * the TLS link section, is the design, of which this is the plaintext half.
+ * owner waits on done before freeing it.  It is signaled by
+ * complete_all() because the teardown waits on it and hammer2_link_end()
+ * then waits again, and complete() would release only one of the two.
+ * The status is the handshake core's, a negative errno against the
+ * module's positive convention (net/handshake/netlink.c), and
+ * -EINPROGRESS until it is known.  doc/CLUSTER_PROTOCOL_DESIGN.md, the TLS link section, is the design, of
+ * which this is the plaintext half.
  */
 struct hammer2_link {
 	hammer2_dev_t		*hmp;
 	struct file		*fp;
-	int			status;		/* -EINPROGRESS until known */
+	int			status;		/* the handshake's, negative */
 	int			submitted;
 	struct completion	done;
 };
