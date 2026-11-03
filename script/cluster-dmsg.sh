@@ -90,7 +90,7 @@ state=$($VIRSH domstate "$GUEST" 2>/dev/null) || { echo "dmsg: COULD-NOT-RUN: no
 detach_disk() {
 	if [ "$($VIRSH domstate "$GUEST" 2>/dev/null)" = running ]; then
 		timeout 45 ssh -o ConnectTimeout=5 -o BatchMode=yes "$GUEST_SSH" \
-		    'umount -f /mnt/h2d 2>/dev/null; umount -f /mnt/h2e 2>/dev/null; rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
+		    'for m in /mnt/h2sl /mnt/h2cl /mnt/h2ll /mnt/h2opt /mnt/h2d /mnt/h2e; do umount -f $m 2>/dev/null; done; rmmod hammer2 2>/dev/null; true' >/dev/null 2>&1
 	fi
 	for t in vdb vdc; do
 		$VIRSH detach-disk "$GUEST" $t --live >/dev/null 2>&1
