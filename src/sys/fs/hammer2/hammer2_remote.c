@@ -62,8 +62,13 @@ struct hammer2_remote_snap {
 	char			name[HAMMER2_INODE_MAXNAME];
 };
 
-/* The suffix of a synchronization pass's source snapshot, hammer2_synchro.c. */
+/*
+ * The suffixes of the synchronization pass's snapshots: a local pass's
+ * source and the client's proxy of a remote one (hammer2_synchro.c), and
+ * the snapshot a server takes for a peer, which the server names.
+ */
 #define HAMMER2_REMOTE_SNAP_SUFFIX	".h2sync-src"
+#define HAMMER2_REMOTE_PEER_SUFFIX	".h2sync-peer"
 
 #define HAMMER2_REMOTE_OPEN	0	/* requests admitted */
 #define HAMMER2_REMOTE_QUIESCED	1	/* refused until the next announcement */
@@ -534,34 +539,43 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
 	return (0);
 }
 
-/*
- * Whether a name is one of the synchronization pass's source snapshots,
- * the only PFS a peer may have this server create or delete.  What a peer
- * may read unmounted is decided by cluster id, in hammer2_remote_pfs().
- */
 static int
-hammer2_remote_snap_name(const char *name)
+hammer2_remote_suffixed(const char *name, const char *suffix)
 {
-	size_t len, slen = strlen(HAMMER2_REMOTE_SNAP_SUFFIX);
+	size_t len, slen = strlen(suffix);
 
 	if (name == NULL)
 		return (0);
 	len = strlen(name);
 	return (len > slen && len < HAMMER2_INODE_MAXNAME &&
-	    strcmp(name + len - slen, HAMMER2_REMOTE_SNAP_SUFFIX) == 0);
+	    strcmp(name + len - slen, suffix) == 0);
 }
 
 /*
- * The snapshot commands, under hammer2_mntlk with the PFS found.  SNAPSHOT
- * takes the pass's source snapshot of this device's element by the body the
- * local pass uses, a stale one of the name deleted first as the local pass
- * deletes it, records the name against the link, and feeds the snapshot
- * root's chain with the transaction id on the closing frame; SNAPDEL
- * deletes a snapshot this link took and forgets it.  The name is the aux,
- * only a name under the pass's suffix is taken and only this link's is
- * deleted, so a peer cannot have a PFS of its choosing deleted.  Returns
- * the final error, with *chainp the chain
- * to feed, held and unlocked, and *tidp the id.
+ * Whether a name is one the synchronization pass's snapshots take, which
+ * no PFS of this port's making may carry otherwise: the mount gate, the
+ * pfs-create and snapshot ioctls refuse it (stage 5.5, rule 5).
+ */
+int
+hammer2_remote_reserved_name(const char *name)
+{
+	return (hammer2_remote_suffixed(name, HAMMER2_REMOTE_SNAP_SUFFIX) ||
+	    hammer2_remote_suffixed(name, HAMMER2_REMOTE_PEER_SUFFIX));
+}
+
+/*
+ * The snapshot commands, under hammer2_mntlk with the PFS found and
+ * admitted by hammer2_remote_pfs().  The name the peer sends is not read
+ * (stage 5.5, rule 5).  SNAPSHOT is served only from a MASTER element; the
+ * server names the snapshot <label>.h2sync-peer itself, deletes a stale
+ * snapshot of that name, keeping a PFS of the name that is not one, drops
+ * the link's entry of the name, so a link holds one per source, takes the
+ * snapshot by the body the local pass uses, records the name and the
+ * snapshot's cluster id against the link, and feeds its root's chain with
+ * the transaction id on the closing frame.  SNAPDEL finds the link's entry
+ * by the cluster id the request names and deletes by the name the entry
+ * records.  Returns the final error, with *chainp the chain to feed, held
+ * and unlocked, and *tidp the id.
  */
 static uint32_t
 hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
@@ -571,40 +585,40 @@ hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
 	struct hammer2_remote *rm = hmp->remote;
 	struct hammer2_remote_snap *snap, *n;
 	hammer2_pfs_t *spmp = NULL;
+	const char *label = pmp->pfs_names[clindex];
 	char name[HAMMER2_INODE_MAXNAME];
-	int error;
+	int error, taken = 0;
 
 	*chainp = NULL;
 	*tidp = 0;
-	if (req->aux.aux_data == NULL || req->aux.aux_size == 0 ||
-	    req->aux.aux_size >= sizeof(name))
-		return (HAMMER2_ERROR_EINVAL);
-	memcpy(name, req->aux.aux_data, req->aux.aux_size);
-	name[req->aux.aux_size] = 0;
-	if (!hammer2_remote_snap_name(name) || strchr(name, '/'))
-		return (HAMMER2_ERROR_EINVAL);
 
 	if (req->idx == DMSG_HM2_SNAPDEL_IDX) {
 		/*
-		 * Only a snapshot this link took is deleted: a name it never
-		 * took, a crash's leftover or another pass's live source, is
-		 * left as it is and the peer is told nothing was there.  A
-		 * leftover goes at the next SNAPSHOT's stale delete.  The peer
-		 * names the snapshot by its own cluster id, so the PFS found
-		 * is the one freed here; the caller reads nothing of it after.
+		 * Only a snapshot this link took is deleted: a cluster id it
+		 * never took, a mounted PFS's or another link's, is left as it
+		 * is and the peer is told nothing was there.  The PFS found is
+		 * the one freed here; the caller reads nothing of it after.
+		 * HAMMER2_NOSNAPSCOPE, a control build, deletes the PFS the
+		 * request resolved, by its own name.
 		 */
-		int taken = 0;
-
 		spin_lock(&rm->lock);
-		list_for_each_entry(snap, &rm->snaps, entry)
-			if (strcmp(snap->name, name) == 0)
+		list_for_each_entry(snap, &rm->snaps, entry) {
+			if (bcmp(&snap->clid, &req->req.pfs_clid,
+			    sizeof(snap->clid)) == 0) {
+				strscpy(name, snap->name, sizeof(name));
 				taken = 1;
+				break;
+			}
+		}
 		spin_unlock(&rm->lock);
-		if (!taken && !HAMMER2_CTL_NOSNAPSCOPE) {
-			if (hammer2_debug & 0x8000)
-				kprintf("syncsnap: peer named %s, not this link's\n",
-				    name);
-			return (0);
+		if (!taken) {
+			if (!HAMMER2_CTL_NOSNAPSCOPE || label == NULL) {
+				if (hammer2_debug & 0x8000)
+					kprintf("syncsnap: peer named %s, not this link's\n",
+					    label ? label : "(none)");
+				return (0);
+			}
+			strscpy(name, label, sizeof(name));
 		}
 		error = hammer2_pfs_delete_byname(hmp, name,
 		    HAMMER2_PFSDEL_LOCKED);
@@ -626,17 +640,39 @@ hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
 		return (0);
 	}
 
+	if (pmp->pfs_types[clindex] != HAMMER2_PFSTYPE_MASTER || pmp->mp == NULL ||
+	    label == NULL) {
+		hprintf("cluster link refused a snapshot of %s, which is not a mounted MASTER element\n",
+		    label ? label : "(none)");
+		return (HAMMER2_ERROR_EOPNOTSUPP);
+	}
+	if (strlen(label) >= DMSG_LABEL_SIZE) {
+		hprintf("cluster link refused a snapshot of a PFS whose label is %zu bytes, past a span's\n",
+		    strlen(label));
+		return (HAMMER2_ERROR_EINVAL);
+	}
+	snprintf(name, sizeof(name), "%s%s", label, HAMMER2_REMOTE_PEER_SUFFIX);
+
+	error = hammer2_pfs_delete_byname(hmp, name,
+	    HAMMER2_PFSDEL_LOCKED | HAMMER2_PFSDEL_SNAPONLY);
+	if (error && error != ENOENT)
+		return (error == EEXIST ? HAMMER2_ERROR_EEXIST :
+		    HAMMER2_ERROR_EIO);
+	if (error == 0 && (hammer2_debug & 0x8000))
+		kprintf("syncsnap: stale %s deleted for a peer\n", name);
+	spin_lock(&rm->lock);
+	list_for_each_entry_safe(snap, n, &rm->snaps, entry) {
+		if (strcmp(snap->name, name) == 0) {
+			list_del(&snap->entry);
+			kfree(snap);
+		}
+	}
+	spin_unlock(&rm->lock);
+
 	snap = kzalloc_obj(*snap);
 	if (snap == NULL)
 		return (HAMMER2_ERROR_ENOSPC);
 	strscpy(snap->name, name, sizeof(snap->name));
-	error = hammer2_pfs_delete_byname(hmp, name, HAMMER2_PFSDEL_LOCKED);
-	if (error && error != ENOENT) {
-		kfree(snap);
-		return (HAMMER2_ERROR_EIO);
-	}
-	if (error == 0 && (hammer2_debug & 0x8000))
-		kprintf("syncsnap: stale %s deleted for a peer\n", name);
 	error = hammer2_pfs_snapshot(pmp, clindex, name,
 	    HAMMER2_PFSSNAP_PMPSYNC, tidp, &spmp);
 	if (error || spmp == NULL || spmp->iroot == NULL) {
@@ -2213,15 +2249,17 @@ struct hammer2_rcand {
  * The pass's source snapshot of a remote master, what hammer2_pfs_snapshot()
  * gives the local pass and routes here for an element on a connection
  * device (hammer2_sync_pass_snap()): the master takes it on its own device
- * at SNAPSHOT, the name as the request's aux, a stale one of the name
- * deleted first as the local pass deletes it, and feeds the snapshot root
- * with the transaction id on the closing frame.  The root is registered
- * here as the local one is, by hammer2_pfsalloc() under hammer2_mntlk,
- * which the caller holds: a PFS of its own by the snapshot's fresh cluster
- * id, its one element the proxy on this device, so the pass's reads of it
- * go over the wire under that id as the element's do, and the master
- * serves it unmounted by its suffix.  The root is taken only as a snapshot
- * of that name, since a peer could feed any inode.  The wait is the
+ * at SNAPSHOT, names it <label>.h2sync-peer itself whatever name the
+ * request's aux carries, deletes a stale snapshot of that name first, and
+ * feeds the snapshot root with the transaction id on the closing frame.
+ * The root is registered here as the local one is, by hammer2_pfsalloc()
+ * under hammer2_mntlk, which the caller holds: a PFS of its own by the
+ * snapshot's fresh cluster id and under the name the pass asked for, its
+ * one element the proxy on this device, so the pass's reads of it go over
+ * the wire under that id as the element's do, and the master serves it
+ * unmounted as a snapshot that link took.  The root is taken only as a
+ * snapshot of the name the master gives it, since a peer could feed any
+ * inode.  The wait is the
  * request's bound, under the lock as the local snapshot's sync and flush
  * are.  Errnos, as hammer2_pfs_snapshot() returns them.
  */
@@ -2230,6 +2268,7 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
     const char *name, hammer2_tid_t *tidp, hammer2_pfs_t **spmpp)
 {
 	const hammer2_inode_data_t *ripdata;
+	hammer2_inode_data_t *local;
 	hammer2_dev_t *cdev = NULL;
 	struct hammer2_rcall *call;
 	struct hammer2_rframe *f;
@@ -2237,7 +2276,8 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
 	hammer2_tid_t tid = 0;
 	struct uuid clid;
 	unsigned long deadline;
-	size_t len = strlen(name);
+	char want[HAMMER2_INODE_MAXNAME];
+	size_t len = strlen(name), wlen;
 	int error;
 
 	if (tidp)
@@ -2246,6 +2286,17 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
 		*spmpp = NULL;
 	if (pmp->iroot == NULL || len == 0 || len >= HAMMER2_INODE_MAXNAME)
 		return (EINVAL);
+	/*
+	 * The server names the snapshot from the label of its element, which
+	 * is this slot's name, the master's span's peer_label (stage 5.5,
+	 * rule 5); names are freed under hammer2_mntlk, which the caller
+	 * holds.
+	 */
+	if (pmp->pfs_names[clindex] == NULL ||
+	    snprintf(want, sizeof(want), "%s%s", pmp->pfs_names[clindex],
+	    HAMMER2_REMOTE_PEER_SUFFIX) >= (int)sizeof(want))
+		return (EINVAL);
+	wlen = strlen(want);
 	hammer2_spin_sh(&pmp->iroot->cluster_spin);
 	if (hammer2_dev_is_conn(pmp->pfs_hmps[clindex])) {
 		cdev = pmp->pfs_hmps[clindex];
@@ -2294,24 +2345,33 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
 		ripdata = &chain->data->ipdata;
 		if (ripdata->meta.pfs_type == HAMMER2_PFSTYPE_MASTER &&
 		    ripdata->meta.pfs_subtype == HAMMER2_PFSSUBTYPE_SNAPSHOT &&
-		    ripdata->meta.name_len == len &&
-		    memcmp(ripdata->filename, name, len) == 0)
+		    ripdata->meta.name_len == wlen &&
+		    memcmp(ripdata->filename, want, wlen) == 0)
 			error = 0;
 	}
-	if (error) {
-		kprintf("syncsnap: remote snapshot %s fed a root that is not it\n",
-		    name);
+	local = error ? NULL : kmalloc(sizeof(*local), GFP_KERNEL);
+	if (local == NULL) {
+		if (error)
+			kprintf("syncsnap: remote snapshot %s fed a root that is not %s\n",
+			    name, want);
 		hammer2_chain_unlock(chain);
 		hammer2_chain_drop(chain);
 		hammer2_remote_dev_drop(cdev);
-		return (error);
+		return (error ? error : ENOMEM);
 	}
 	/*
 	 * Registered as hammer2_pfs_snapshot() registers the local one, the
 	 * chain locked for the blockset it copies out; nothing merges with
-	 * it, its cluster id being fresh, so one element and no thread.
+	 * it, its cluster id being fresh, so one element and no thread.  The
+	 * proxy keeps the name the pass asked for, by which the pass deletes
+	 * it, on a copy of the root's data, since the chain's is the feed's.
 	 */
-	hammer2_pfsalloc(chain, &chain->data->ipdata, NULL);
+	memcpy(local, &chain->data->ipdata, sizeof(*local));
+	memset(local->filename, 0, sizeof(local->filename));
+	memcpy(local->filename, name, len);
+	local->meta.name_len = len;
+	hammer2_pfsalloc(chain, local, NULL);
+	kfree(local);
 	if (spmpp)
 		*spmpp = chain->pmp;
 	if (tidp)
@@ -2327,8 +2387,8 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
 }
 
 /*
- * SNAPDEL over the link: the master deletes the snapshot of that name on
- * its device.  Sent by hammer2_pfs_delete_byname() for a snapshot PFS on a
+ * SNAPDEL over the link: the master deletes the snapshot it took for this
+ * link, found by its cluster id, by the name it recorded.  Sent by hammer2_pfs_delete_byname() for a snapshot PFS on a
  * connection device after it has freed the PFS here, under no lock, by
  * the snapshot's own cluster id, which is how the master finds a PFS it
  * serves unmounted.  A link that has ended sends nothing, and the master
@@ -2671,8 +2731,9 @@ hammer2_remote_has_slot(hammer2_pfs_t *pmp)
 
 /*
  * Whether a PFS is a synchronization pass's source snapshot, by its name:
- * the local pass's own, one this server holds for a peer's pass, or one a
- * crash left, which the next pass deletes by that name.  A pass reads its
+ * the local pass's own or the client's proxy (.h2sync-src), one this
+ * server holds for a peer's pass (.h2sync-peer), or one a crash left,
+ * which the next stale delete of that name takes.  A pass reads its
  * source as immutable, so the mount gate refuses it any mount; the caller
  * holds hammer2_mntlk, under which a PFS's names are freed.
  */
@@ -2682,7 +2743,7 @@ hammer2_remote_is_source(hammer2_pfs_t *pmp)
 	int j;
 
 	for (j = 0; j < HAMMER2_MAXCLUSTER; ++j)
-		if (hammer2_remote_snap_name(pmp->pfs_names[j]))
+		if (hammer2_remote_reserved_name(pmp->pfs_names[j]))
 			return (1);
 	return (0);
 }

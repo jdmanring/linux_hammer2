@@ -267,21 +267,21 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-510 function definition argument 'X' should also have an identifier name
+511 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 244 please, no spaces at the start of a line
 86 quoted string split across lines
-387 return is not a function, parentheses are not required
+389 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)
 1 return of an errno should typically be negative (ie: return -EDEADLK)
 2 return of an errno should typically be negative (ie: return -EDOM)
-3 return of an errno should typically be negative (ie: return -EEXIST)
+4 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 1 return of an errno should typically be negative (ie: return -EINTR)
-70 return of an errno should typically be negative (ie: return -EINVAL)
+73 return of an errno should typically be negative (ie: return -EINVAL)
 15 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 1 return of an errno should typically be negative (ie: return -EKEYEXPIRED)

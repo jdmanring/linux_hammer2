@@ -518,6 +518,9 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	if (pfs->name[0] == 0)
 		return (EINVAL);
 	pfs->name[sizeof(pfs->name) - 1] = 0;
+	/* XXX Linux: the synchronization pass's names (stage 5.5, rule 5) */
+	if (hammer2_remote_reserved_name(pfs->name))
+		return (EINVAL);
 
 	if (hammer2_is_rdonly(ip->pmp->mp))
 		return (EROFS);
@@ -755,6 +758,21 @@ hammer2_pfs_delete_byname(hammer2_dev_t *hmp, const char *name, int flags)
 			hammer2_lk_unlock(&hammer2_mntlk);
 		return (EBUSY);
 	}
+	/*
+	 * XXX Linux: a stale delete of a synchronization pass's name takes
+	 * only a snapshot, so a PFS of the name made by another utility, or
+	 * before this port reserved the names, is kept and the pass or the
+	 * peer's SNAPSHOT refused (stage 5.5, rule 5).  Rate-limited, since
+	 * a pass retries every cadence and a peer chooses how often it asks.
+	 */
+	if ((flags & HAMMER2_PFSDEL_SNAPONLY) && (pmp->iroot == NULL ||
+	    pmp->iroot->meta.pfs_subtype != HAMMER2_PFSSUBTYPE_SNAPSHOT)) {
+		if ((flags & HAMMER2_PFSDEL_LOCKED) == 0)
+			hammer2_lk_unlock(&hammer2_mntlk);
+		hprintf("PFS %s kept: a stale delete takes only a snapshot\n",
+		    name);
+		return (EEXIST);
+	}
 
 	/*
 	 * Ok, we found the pmp and we have the index.  Permanently remove
@@ -833,6 +851,9 @@ hammer2_ioctl_pfs_snapshot(hammer2_inode_t *ip, void *data)
 	if (pfs->name[0] == 0)
 		return (EINVAL);
 	pfs->name[sizeof(pfs->name) - 1] = 0;
+	/* XXX Linux: the synchronization pass's names (stage 5.5, rule 5) */
+	if (hammer2_remote_reserved_name(pfs->name))
+		return (EINVAL);
 
 	if (hammer2_is_rdonly(ip->pmp->mp))
 		return (EROFS);

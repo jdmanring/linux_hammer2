@@ -259,7 +259,7 @@ hits, read by line number. No category is new.
 
 1,600 to 1,602 with the refusal of any mount of a pass's source
 snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
-(`hammer2_remote.c:2687`), the same form checkpatch reads at
+(`hammer2_remote.c:2748`), the same form checkpatch reads at
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
 argument, its declaration in `hammer2.h`. No category is new.
 
@@ -311,6 +311,15 @@ continuation of its refusal print in `hammer2_span_add()`, and one more
 
 1,630 to 1,631 with the server's row check of stage 5.5: one more
 `return (x);`, `hammer2_remote_snap_taken()`'s. No category is new.
+
+1,631 to 1,638 with the server's naming of a peer's snapshot. One more
+`function definition argument` is the prototype of
+`hammer2_remote_reserved_name()`, two more `return (x);` are its own and
+`hammer2_remote_suffixed()`'s, and four more positive errnos are the
+recorded convention at new call sites: `EEXIST` from the stale delete
+that keeps a PFS which is not a snapshot, and `EINVAL` from the
+`pfs-create` and snapshot ioctls refusing the pass's names and from the
+client's refusal of a slot with no name. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

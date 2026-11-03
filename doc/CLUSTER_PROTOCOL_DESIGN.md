@@ -655,7 +655,7 @@ in progress", the element counted in progress
 `H2_WIRE_END=lost` the relay sets the closing frames' byte count
 instead, a closing feed carrying a chain, a shape the protocol gives no
 meaning; the slave does not take it and ends the link at that frame
-(`hammer2_remote.c:1327-1328`, `:1413-1419`), as it does for any frame it
+(`hammer2_remote.c:1363-1364`, `:1449-1455`), as it does for any frame it
 cannot take, so no later frame is fed past the key the lost one held,
 and the second call's request never reaches the wire, ending `ENOTCONN`
 at the slave with no frame; the listing fails not connected, the first
@@ -850,8 +850,8 @@ inode is. `hammer2_inode_get()` is not used,
 since it needs a collected XOP on the parent and that XOP takes the
 dependency. The proof obligation, listed function by function in stage
 2a's record, is that each read storage function reads nothing of `ip1`
-but its cluster slot; the call sites are `hammer2_xops.c:141, 173, 244,
-807, 906` and `hammer2_strategy.c`'s read. One of them indexes by slot:
+but its cluster slot; the call sites are
+`hammer2_xops.c:141, 173, 244, 807, 908` and `hammer2_strategy.c`'s read. One of them indexes by slot:
 `nresolve`'s hardlink arm calls `hammer2_chain_inode_find()` with the
 request's `clindex` on the server's own `pmp` (`hammer2_xops.c:271`),
 which reads that `pmp`'s inode at that slot (`hammer2_chain.c:5524`), so
@@ -956,7 +956,7 @@ is a constraint on the write-capable pass of stage 3, which must either
 raise the bound with the size it asks for or ask in pieces, and stage
 2b's read-only pass never reaches it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1664-1665`), and retires normally; a connection that closes fails every
+(`:1666-1667`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:483` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
@@ -1068,7 +1068,7 @@ becomes writable only under the protocol a later note settles.
 **The slave's pass over a remote master takes its source from the
 master.** The default pass snapshots its source on the source element's
 device (`hammer2_synchro.c:1199`, `:1215`), and `hammer2_pfs_snapshot()`
-takes `hmp` from `pfs_hmps[clindex]` (`hammer2_ioctl.c:946`): on the
+takes `hmp` from `pfs_hmps[clindex]` (`hammer2_ioctl.c:967`): on the
 connection device, where a create is refused, that would be at best a
 pass that copies nothing and at worst its assertion that the modify
 succeeded. So two commands past the 21 descriptors, built 2026-10-26,
@@ -1101,7 +1101,7 @@ reads after that no run has driven. A second pass per source is the
 trigger for a name that carries the requester, the slave's `pfs_fsid`,
 and this note is where that decision is recorded. On the slave, `hammer2_pfs_snapshot()` routes an element on a
 connection device to `hammer2_remote_snapshot_take()`
-(`hammer2_ioctl.c:958-961`), which registers the fed root as the local
+(`hammer2_ioctl.c:979-982`), which registers the fed root as the local
 snapshot is registered, by `hammer2_pfsalloc()` under the lock the thread
 holds, a PFS of its own by the snapshot's fresh cluster id with the
 proxy as its one element, so the pass reads it through the carried XOPs
@@ -1111,7 +1111,7 @@ subtype snapshot, since a peer could feed any inode. The thread deletes
 it as it deletes the local one, by name on the snapshot's own device
 (`hammer2_synchro.c:1441`), where `hammer2_pfs_delete_byname()` frees
 the PFS here and sends `SNAPDEL` by the snapshot's cluster id
-(`hammer2_ioctl.c:797`) instead of unlinking under a super-root; a delete
+(`hammer2_ioctl.c:815`) instead of unlinking under a super-root; a delete
 the lock refuses is left to the unmount's cleanup, which finds the
 snapshot's device by its name since the element's slot may no longer
 name the link. A link that ends leaves the thread's snapshot PFS to the
@@ -1266,7 +1266,7 @@ rather than from the design document alone.
   otherwise succeeds, and any other collect error ends the listing from
   that position on.
 - **C8. PFS roots are stamped from each host's super-root counter at
-  creation** (`hammer2_ioctl.c:559-560`, `:567`), and a mount-time repair of
+  creation** (`hammer2_ioctl.c:562-563`, `:570`), and a mount-time repair of
   a mis-flagged root re-stamps its `mirror_tid` on one host, keeping
   `modify_tid` (`hammer2_vfsops.c:2162-2163`), so two roots of one
   cluster differ on `modify_tid` and `mirror_tid` from birth, and a
@@ -1275,7 +1275,7 @@ rather than from the design document alone.
 - **C9. The slave's pass re-stamps an inode copy at the replace with the
   master's propagated tid** (`hammer2_synchro.c:1892`, `:2754`, `:3272`),
   and it snapshots its source on the source element's own device
-  (`:1199`, `:1215`; `hammer2_ioctl.c:904`), which for a remote source is
+  (`:1199`, `:1215`; `hammer2_ioctl.c:925`), which for a remote source is
   the master's, taken at the pass's request by the snapshot command.
 - **C10. A span carries no status update** (the only `LNK_SPAN` arms
   are `CREATE` and `DELETE`, `hammer2_iocom.c:425`, `:463`), so a
@@ -1615,7 +1615,7 @@ issues it twice.
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1633-1677`), and the collect turns `ESRCH` and `EDEADLK` at
+(`hammer2.h:1635-1679`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:353-366`, before pass 3,
 and `RDHARD` is set for a MASTER only in pass 3 (`:409-410`), so there is
@@ -1690,7 +1690,7 @@ state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
 2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
-errno map has no `pmp` (`hammer2.h:1639-1640`), the collect's skip (C7)
+errno map has no `pmp` (`hammer2.h:1641-1642`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
 **Taken: `ENOTCONN` for an uncached read with no quorum
@@ -1906,7 +1906,7 @@ delayed work of the device, on `system_dfl_long_wq`
 (`include/linux/workqueue.h:476`), since its wait for the lock can
 outlast a bulkfree run; `system_unbound_wq` is deprecated in 7.3 and
 warns on first use (`kernel/workqueue.c:2333-2336, 8229`), and the
-device's `rm->wq` is flushed by the quiesce (`hammer2_remote.c:192`).
+device's `rm->wq` is flushed by the quiesce (`hammer2_remote.c:197`).
 The work, the device's spinlock and its mutex (both below) are
 initialized with the device once its volumes are read, before the first
 failure path that tears it down (`hammer2_vfsops.c:1419`),
@@ -1915,18 +1915,18 @@ mount-failure paths before `hammer2_iocom_init()` (`:1422, 1531, 1543`).
 For a successful attempt, in this order, the work takes `hammer2_mntlk`
 by try-lock in a loop that sleeps 10 ms and leaves when no attempt is
 hooked on the device, as the server's lookup does
-(`hammer2_remote.c:735-745`); claims the attempt; waits on its
+(`hammer2_remote.c:771-781`); claims the attempt; waits on its
 completion, signaled already for a plaintext attempt; calls the quiesce
 with the lock held; and drops the lock. As built,
 `hammer2_remote_conn_end()` lost its `final` argument, which had meant
 both "closed" and "held", and neither takes nor drops the lock, since
 both callers of the quiesce hold it, `hammer2_iocom_uninit()` and this
-work (`hammer2_remote.c:2823-2834`). Claiming before
+work (`hammer2_remote.c:2884-2895`). Claiming before
 the quiesce means a teardown that unhooks the attempt first leaves the
 old link alone. The rest of the tail takes no `hammer2_mntlk`: a server
-request leaves its try-lock loop once the state is not open (`:735-737`)
+request leaves its try-lock loop once the state is not open (`:771-773`)
 and the quiesce has flushed their queue, and registration, the other
-taker (`:2778`), is disabled in `conn_end` (`:2848-2849`) until
+taker (`:2839`), is disabled in `conn_end` (`:2909-2910`) until
 `hammer2_remote_connected()` enables it again. The intake returns once
 the request is submitted or, in plaintext, once the work is queued, so a
 return from `RECLUSTER` no longer means `LNK_CONN` is queued. The
@@ -2027,8 +2027,8 @@ the first link still up.
 **A failed handshake** prints one line naming the status or the reason,
 registers nothing, shuts the socket down and drops the file. Nothing
 redials: `h2service` hands the socket in, closes its descriptor and
-exits, and nothing in userland reads the socket (`test/h2service.c:14-18,
-323-331`), so an asynchronous intake that returned 0 reports the failure
+exits, and nothing in userland reads the socket
+(`test/h2service.c:20-24, 336-346`), so an asynchronous intake that returned 0 reports the failure
 only in that line, and recovery is the next intake. The harness reads the
 line and runs `h2service` again; a supervisor that redials is the
 production daemon's, which this plan leaves out of scope. The bound is
@@ -2186,11 +2186,11 @@ The rules, audited before any code:
    the hook against the old record, or the new connection's, running
    after it against the new one: no frame is read, and no span or
    request is admitted, against a record that is empty or another
-   connection's. The quiesce's comment (`hammer2_remote.c:163-178`)
+   connection's. The quiesce's comment (`hammer2_remote.c:168-183`)
    says only the new connection's peer lifts QUIESCED, but today the
    CONN callback calls `hammer2_remote_resume()` on every `PROTO_2`
    CREATE (`hammer2_iocom.c:387-391`), lifting QUIESCED to OPEN
-   (`hammer2_remote.c:221-235`). The old peer can send such a CONN
+   (`hammer2_remote.c:226-240`). The old peer can send such a CONN
    between the quiesce (`hammer2_iocom.c:937`) and the reap, whether or
    not its connection announced `PROTO_2` before, and a SNAPSHOT
    admitted then is served after `:939` and lands in `rm->snaps` after
@@ -2227,7 +2227,7 @@ The rules, audited before any code:
    reader takes `link_spin` and compares inside it. `link_spin` and
    `rm->lock` are never held together: the hook takes `rm->lock` to set
    AWAITING and releases it before it takes `link_spin`, and admission
-   (`hammer2_remote.c:377`) reads no record under `rm->lock`.
+   (`hammer2_remote.c:382`) reads no record under `rm->lock`.
    Nothing clears the record when a link ends, since a peer's close or
    the keepalive's kill runs no hook that could. It names a connection
    that is gone until the next swap replaces it, and no frame can arrive
@@ -2271,7 +2271,7 @@ The rules, audited before any code:
    `hammer2_remote_admitted()`, in `hammer2_remote_pfs()`. An unmounted
    PFS is served only as a snapshot this link took, found in `rm->snaps`
    by the cluster id its entry now records (`spmp->pfs_clid`, written at
-   the entry's insert, `hammer2_remote.c:650`, before the root is fed,
+   the entry's insert, `hammer2_remote.c:686`, before the root is fed,
    and read under `rm->lock`); a snapshot carries a cluster id of its own
    that no row names. The name no longer admits anything to serving.
    Registration also requires the row's `remote_pfs_type` to be MASTER,
@@ -2281,8 +2281,9 @@ The rules, audited before any code:
    and gain one, and `cluster-wire.sh`'s rows (`:649`, `:1213`) take
    `--type` explicitly.
 5. **The server names a peer's snapshot.** SNAPSHOT is served only from
-   a source that passes 3 and 4 and whose own `pfs_types[]` entry is
-   MASTER. The server names the snapshot `<source label>.h2sync-peer`
+   a source that passes 3 and 4, is mounted, and whose own `pfs_types[]`
+   entry is MASTER; a snapshot the link took passes 4 unmounted, and the
+   mount test keeps it from being a source. The server names the snapshot `<source label>.h2sync-peer`
    itself and ignores the name the peer sends, so a peer chooses no
    prefix and takes at most one snapshot per source PFS. A source label
    of `DMSG_LABEL_SIZE` (128) bytes or more is refused with a line: a
@@ -2295,8 +2296,8 @@ The rules, audited before any code:
    deletes an unmounted PFS of the name only when its root's
    `pfs_subtype` is SNAPSHOT (the root's `meta`, copied at
    `hammer2_vfsops.c:446`), as every snapshot this code makes is
-   (`hammer2_ioctl.c:1090`). The lines naming what each deleted stay as
-   they are (`hammer2_remote.c:639`, `hammer2_synchro.c:1202`, under
+   (`hammer2_ioctl.c:1111`). The lines naming what each deleted stay as
+   they are (`hammer2_remote.c:662`, `hammer2_synchro.c:1202`, under
    `hammer2_debug` `0x8000`), unlimited, since `cluster-wire.sh` counts
    them exactly (`:1014`). A PFS of that name of any other subtype is
    kept, and the SNAPSHOT, or the local pass, is refused with a line
@@ -2307,21 +2308,21 @@ The rules, audited before any code:
    finds its entry by the cluster id the request names and deletes by
    the name the entry records, ignoring the peer's. The client still
    sends its own name, so the request's shape is unchanged; its check of
-   the fed root (`hammer2_remote.c:2292-2299`) compares the root's name
+   the fed root (`hammer2_remote.c:2343-2350`) compares the root's name
    exactly with `<label>.h2sync-peer`, the label being the `peer_label`
    of the master's span, where today it compares the name it sent, and
    its local proxy on the connection device keeps `.h2sync-src`. The
    suffix test splits in two: `.h2sync-src` for the local pass and the
    client's proxy, `.h2sync-peer` for a server's snapshot. The mount
-   gate (`hammer2_remote_is_source()`, `:2680`, called at
+   gate (`hammer2_remote_is_source()`, `:2741`, called at
    `hammer2_vfsops.c:1843`) refuses both, so neither is ever mounted;
-   `pfs-create` and the snapshot ioctl (`hammer2_ioctl.c:504`, `:826`)
+   `pfs-create` and the snapshot ioctl (`hammer2_ioctl.c:504`, `:844`)
    refuse a name ending in either (XXX). What remains is a PFS with such
    a name made before this change, or on the same media by DragonFly's
    or a BSD port's utility, which no ioctl here can refuse. It is never
    mounted here, and if its subtype is SNAPSHOT, which `hammer2
    snapshot` gives and `pfs-create` can be asked for
-   (`hammer2_ioctl.c:572`), the next stale delete of its name deletes
+   (`hammer2_ioctl.c:575`), the next stale delete of its name deletes
    it. Version skew: a client older than this change compares the fed
    root with the name it sent, so every remote pass it runs fails at
    that check with its line, and the snapshot goes at the link's end;
@@ -2481,13 +2482,13 @@ below.
   committed, rule 4 refuses it before SNAPDEL's body runs and the decoy
   is kept. With rule 4's unmounted gate removed, the body finds no entry
   for that cluster id and prints the not-ours line
-  (`hammer2_remote.c:605`), the decoy kept. With SNAPDEL's scope removed
+  (`hammer2_remote.c:617`), the decoy kept. With SNAPDEL's scope removed
   alone (`HAMMER2_NOSNAPSCOPE=1`, now deleting the PFS the request
   resolved, by its own name), rule 4 refuses as committed. With both
   removed, the decoy is deleted. So behind rule 4 the scope check is
   redundant for an unmounted PFS. It stays for a mounted one: SNAPDEL
   naming CL's cluster id prints the not-ours line, and with the scope
-  removed the delete fails `EBUSY` (`hammer2_ioctl.c:722`) and CL is
+  removed the delete fails `EBUSY` (`hammer2_ioctl.c:725`) and CL is
   kept.
 - `pfs-create` and the snapshot ioctl of `a.h2sync-src` and of
   `a.h2sync-peer`: each refused. Removed: each made.
@@ -2506,7 +2507,7 @@ to 2069):
 - The klog patterns on `CL.h2sync-src` (`:782` to `:1003`) match the
   client's prints, `syncsnap: snapshot ... error` (`:782`, `:784`;
   `hammer2_synchro.c:1219`) and `syncsnap: remote snapshot ... tid`
-  (`hammer2_remote.c:2323`), which keep the name the client sends, and
+  (`hammer2_remote.c:2383`), which keep the name the client sends, and
   stay.
 - The SNAPDEL decoy (`cluster-wire.sh:147-151`, `:557`, `:1255-1256`,
   `:1442`, `:2061-2071`): the server now ignores the name the relay's
@@ -2637,9 +2638,9 @@ peer with no `.none` and no key; the stage 2 read-only mount off must land
 a write on the slave alone; the pass's refusal under `hmp->rdonly` off
 must write a `CL`-alone volume silently, read by its fingerprint; the
 snapshot command's
-routing at `hammer2_ioctl.c:958` off must make the wire pass's snapshot
+routing at `hammer2_ioctl.c:979` off must make the wire pass's snapshot
 reach the connection device and read `EOPNOTSUPP` on every attempt, the
-refusal at `:963`, never a fault in the body below it; the master's limit
+refusal at `:984`, never a fault in the body below it; the master's limit
 of `SNAPDEL` to the link's own snapshots off must delete a snapshot the
 link never took; the callback that reads the peer's `LNK_CONN` installed
 where upstream installs it, with the reconnect held a second after the
@@ -2673,7 +2674,7 @@ callback first a span read in the hold ran the registration and its
 first HM2 frame reached the peer ahead of the announcement, which the
 peer reads as a `PROTO_1` connection and ends; in `hammer2_ioctl.c`, the snapshot of a remote
 master's element routed to that master and any other snapshot on a
-connection device refused with `EOPNOTSUPP` (`:958`, `:963`); in
+connection device refused with `EOPNOTSUPP` (`:979`, `:984`); in
 `hammer2_synchro.c`, the remote element's blockset taken from the
 master's answer (`:1092`) and a remote master's snapshot counted as a
 source (`:1115`), the pass's refusal on a device opened read-only

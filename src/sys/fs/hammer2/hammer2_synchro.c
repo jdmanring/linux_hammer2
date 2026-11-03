@@ -1197,7 +1197,7 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 #endif
 	error = hammer2_dev_is_conn(pmp->pfs_hmps[m]) ? ENOENT :
 	    hammer2_pfs_delete_byname(pmp->pfs_hmps[m], name,
-	    HAMMER2_PFSDEL_TRYLOCK);
+	    HAMMER2_PFSDEL_TRYLOCK | HAMMER2_PFSDEL_SNAPONLY);
 	if (error == 0) {
 		if (hammer2_debug & 0x8000)
 			kprintf("syncsnap: stale %s deleted\n", name);

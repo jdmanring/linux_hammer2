@@ -1467,6 +1467,7 @@ int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
 #define HAMMER2_PFSSNAP_PMPSYNC		0x40000000
 #define HAMMER2_PFSDEL_TRYLOCK		0x00000001
 #define HAMMER2_PFSDEL_LOCKED		0x00000002
+#define HAMMER2_PFSDEL_SNAPONLY		0x00000004	/* a stale delete: snapshots only */
 
 int hammer2_pfs_snapshot(hammer2_pfs_t *, int, const char *, int,
     hammer2_tid_t *, hammer2_pfs_t **);
@@ -1551,6 +1552,7 @@ int hammer2_remote_snapshot_del(hammer2_dev_t *, const struct uuid *,
     const char *);
 int hammer2_remote_has_slot(hammer2_pfs_t *);
 int hammer2_remote_is_source(hammer2_pfs_t *);
+int hammer2_remote_reserved_name(const char *);
 void hammer2_remote_block_freed(hammer2_dev_t *, int);
 void hammer2_remote_dev_ref(hammer2_dev_t *);
 void hammer2_remote_dev_drop(hammer2_dev_t *);
