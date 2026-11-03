@@ -1774,7 +1774,7 @@ socket, and its own report later finds the bit set and does nothing.
 **The intake.** Both intakes, `HAMMER2IOC_RECLUSTER` and the mount's
 `cluster_fd=`, gain the same inputs: the mode (none or PSK), the role
 (client or server), a keyring serial, and up to five key serials. The
-ioctl carries them in its reserved bytes (`hammer2_ioctl.h:106-110`, 252
+ioctl carries them in its reserved bytes (`hammer2_ioctl.h:107-111`, 252
 bytes unused), so the ioctl number and size do not change and a caller
 that zeroes the structure asks for no TLS. The mount carries them as
 `cluster_tls=psk`, `cluster_tls_role=client|server`,
@@ -2211,10 +2211,10 @@ The rules, audited before any code:
    Linux), since `kdmsg_msg_write()` takes `msglk` itself
    (`kern_dmsg.c:2011`) and the lock is not recursive. `conn_state` is
    set and cleared with `msglk` held (`kern_dmsg.c:197-200`, `:242-246`),
-   the CONN DELETE's reply is queued under the same hold (`:248`), and
-   the hook runs with it held, so the frame is queued on the connection
-   whose record filtered it and ahead of that connection's DELETE, or
-   not at all. That answers the race upstream's `XXX interlock` names
+   the CONN DELETE's reply is queued after that clear (`:248`, once the
+   lock is released at `:247`), and the hook runs with it held, so the
+   frame is queued on the connection whose record filtered it and ahead
+   of that connection's DELETE, or not at all. That answers the race upstream's `XXX interlock` names
    (`hammer2_iocom.c:586`): a write queued after the DELETE trips the
    `KKASSERT` at `kern_dmsg.c:2060` under `HAMMER2_INVARIANTS`, and
    without it is discarded as a write to a dying circuit (`:2061`),

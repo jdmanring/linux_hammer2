@@ -85,7 +85,8 @@ typedef struct hammer2_ioc_version hammer2_ioc_version_t;
 
 /*
  * A cluster id a key's link may carry: spans, VOLCONF rows and requests of
- * any other cluster id are refused on a link that key proved.  slot indexes
+ * any other cluster id are refused on a link that key proved, except a
+ * request for a snapshot that link took.  slot indexes
  * keys[]; a client's pairs all name slot 0.  Stage 5.5 of the cluster note.
  */
 struct hammer2_link_bind {
