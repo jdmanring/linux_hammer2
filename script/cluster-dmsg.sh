@@ -108,6 +108,9 @@ make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1 HAMMER2_NOWINDOW=1} >/dev
 KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2attach" test/h2attach.c 2>"$W/cc.err" || {
 	echo "dmsg: COULD-NOT-RUN: test/h2attach.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
+# the copyinfo[] row the server requires for each cluster it serves (stage 5.5)
+cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2service" test/h2service.c 2>"$W/cc.err" || {
+	echo "dmsg: COULD-NOT-RUN: test/h2service.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
 # The TLS peer is built on the guest; built here too, so a source error
 # stops the run before a guest is touched.
 if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
@@ -331,7 +334,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		h0=$(handed); r0=$(refused); s0=$(tlog succeeded); f0=$(tlog failed)
 	}
 	after() {	# after <arm>
-		echo "$1-after handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw) rxspan=$(klog 'H2 +RXSPAN') proto2=$(klog 'peer speaks DMSG_SPAN_PROTO_2')"
+		echo "$1-after handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw) rxspan=$(klog 'H2 +RXSPAN') spanrefused=$(klog 'cluster link refused a span of cluster') proto2=$(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 	}
 
 	# arm 1, the link with TLS on, server vdb and client vdc
@@ -538,6 +541,9 @@ mkdir -p $M/d
 i=1; while [ $i -le 40 ]; do echo "$i" > $M/d/f$i; i=$((i + 1)); done
 dd if=/dev/urandom of=$M/big bs=65536 count=3 2>/dev/null
 sync
+# The server serves a mounted PFS only with an enabled copyinfo[] row for
+# its cluster id (stage 5.5, rule 4); the path is never dialed here.
+echo "hm2-row $(/tmp/h2service add $M --clid "$(hammer2 -s $M pfs-clid ROOT 2>/dev/null)" --label peer --path span:127.0.0.1:1 2>&1 | tr '\n' ' ')"
 echo 3000 > /sys/module/hammer2/parameters/remote_timeout_ms 2>/dev/null
 echo "remote-timeout $(cat /sys/module/hammer2/parameters/remote_timeout_ms 2>/dev/null)"
 RI=$(stat -c %i $M); DI=$(stat -c %i $M/d); BI=$(stat -c %i $M/big)
@@ -643,7 +649,7 @@ finish
 kill $KPID 2>/dev/null
 GUEST
 
-scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$GUEST_SSH:/tmp/h2attach" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
+scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$W/h2service" "$GUEST_SSH:/tmp/" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
 	echo "dmsg: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	$RUN "$GUEST_SSH" 'rm -rf /tmp/h2peer && mkdir /tmp/h2peer' && scp -q test/h2attach.c src/sys/fs/hammer2/hammer2_ioctl.h src/sys/fs/hammer2/hammer2_disk.h "$GUEST_SSH:/tmp/h2peer/" || {
@@ -773,7 +779,9 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ "$(d arm1-up arm1 handed)" = 2 ]; check "arm 1: both ends are handed to the message threads" $? "$(d arm1-up arm1 handed) line(s) in $(val arm1-wait-handed) s"
 	[ "$(d arm1 arm1 ok)" = 2 ] && [ "$(d arm1 arm1 failed)" = 0 ]; check "arm 1: tlshd completes both handshakes and fails none" $? "$(d arm1 arm1 ok) succeeded, $(d arm1 arm1 failed) failed"
 	[ "$(d arm1-up arm1 tx)" = 2 ] && [ "$(d arm1-up arm1 rx)" = 2 ]; check "arm 1: kTLS is installed on both sockets" $? "TlsCurrTxSw and TlsCurrRxSw up by $(d arm1-up arm1 tx) and $(d arm1-up arm1 rx)"
-	[ "$(a arm1-up rxspan)" = $((nb + nc)) ] && [ "$(a arm1-up proto2)" = 2 ]; check "arm 1: each end receives the other volume's spans over PROTO_2" $? "$(a arm1-up rxspan) spans against $nb + $nc PFSs, $(a arm1-up proto2) PROTO_2 line(s)"
+	# Each key is bound to both ROOTs (stage 5.5), so each end announces
+	# its ROOT alone, whatever else its volume holds.
+	[ "$(a arm1-up rxspan)" = 2 ] && [ "$(a arm1-up spanrefused)" = 0 ] && [ "$(a arm1-up proto2)" = 2 ]; check "arm 1: each end receives the other volume's bound span, its ROOT, over PROTO_2" $? "$(a arm1-up rxspan) spans of 2, against $nb + $nc PFSs on the volumes, $(a arm1-up spanrefused) refused, $(a arm1-up proto2) PROTO_2 line(s)"
 	[ "$(a arm1 threads)" = 4 ] && [ "$(d arm1 arm1 silent)" = 0 ] && [ "$(d arm1 arm1 terminated)" = 0 ]; check "arm 1: the link is up after five keepalive intervals" $? "threads $(a arm1 threads), peer-silent $(d arm1 arm1 silent), terminated $(d arm1 arm1 terminated)"
 	c=$(val arm1-capture)
 	# The handshake's own encrypted messages are three type-23 records
@@ -808,7 +816,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	lc() { field " $(val $1-lines)" $2; }
 	for arm in arm10 arm11 arm12 arm13 arm14; do
 		h=$(po $arm 'handshake='); x=$(po $arm 'send=')
-		[ "$(field " $(po $arm 'errno=')" errno)" = 0 ] && [ "$(field " $h" handshake)" = 0 ] && [ "$(field " $h" match)" = 1 ] && [ "$(field " $x" conn)" = 1 ] && [ "$(field " $x" spans)" = "$nb" ] && [ "$(field " $x" shell1)" = 1 ] && [ "$(field " $x" err1)" = 32 ] && [ "$(field " $x" rc)" = 0 ]
+		[ "$(field " $(po $arm 'errno=')" errno)" = 0 ] && [ "$(field " $h" handshake)" = 0 ] && [ "$(field " $h" match)" = 1 ] && [ "$(field " $x" conn)" = 1 ] && [ "$(field " $x" spans)" = 1 ] && [ "$(field " $x" shell1)" = 1 ] && [ "$(field " $x" err1)" = 32 ] && [ "$(field " $x" rc)" = 0 ]
 		check "$arm: tlshd and the GnuTLS peer agree on K1, the link serves a DBG_SHELL, and the record is sent" $? "${h:-no handshake line}; ${x:-no result line}"
 		[ "$(a $arm threads)" = 0 ] && [ "$(d $arm $arm handed)" = 1 ]; check "$arm: the link is handed once and leaves no thread" $? "handed $(d $arm $arm handed), threads $(a $arm threads)"
 	done
@@ -943,6 +951,8 @@ done
 # beside the guest's own reading of the same volume (stat, sha256sum and
 # the hammer2 utility), never beside the kernel alone.
 hexfield() { printf '%s\n' "$1" | sed -n "s/.*[ :]$2=\([0-9a-f]*\).*/\1/p" | head -1; }
+case "$(val hm2-row)" in *'added copyid='*) r=0 ;; *) r=1 ;; esac
+check "stage 2a: the root's copyinfo row is added, which the server requires (stage 5.5)" $r "$(val hm2-row)"
 m=$(val hm2root)
 [ "$(num "$(field "$m" conn_proto)" 0)" = 2 ] && [ "$(num "$(field "$m" span_proto)" 0)" = 2 ] && [ "$(num "$(field "$m" found)" 0)" = 1 ] && [ "$(num "$(field "$m" fsid_match)" 0)" = 1 ] && [ "$(num "$(field "$m" error)" 1)" = 0 ]; check "stage 2a: the kernel announces PROTO_2 and serves the PFS root inode, whose pfs_fsid is the span's" $? "conn_proto $(field "$m" conn_proto), span_proto $(field "$m" span_proto), found $(field "$m" found), fsid_match $(field "$m" fsid_match), error $(field "$m" error)"
 m=$(val hm2readdir)

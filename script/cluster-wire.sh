@@ -144,11 +144,15 @@
 # with EOPNOTSUPP, the snapshot failing by that errno alone and the slave
 # copying nothing. Without that refusal the body faults under KASAN, which
 # is how the refusal came to exist; any kernel warning fails the run.
-# H2_WIRE_SNAPDEL=1 runs the pass with a PFS ZZ.h2sync-src made on A, a
-# name of the pass's suffix the link never took, and the relay gives the
-# first SNAPDEL that name: A must delete nothing and say so, the PFS still
-# on A's image at the end. H2_WIRE_SNAPDEL=control builds A with
-# HAMMER2_NOSNAPSCOPE, which must delete it.
+# H2_WIRE_SNAPDEL=1 runs the pass with ZZ.decoy-snap made on A by
+# `hammer2 snapshot`, an unmounted snapshot the link never took, and the
+# relay gives the first SNAPDEL that name in place of the link's own, 13
+# bytes as CL.h2sync-src is, since the relay renames only to a name of
+# the sent length. The server reads no name since stage 5.5: it deletes
+# the link's own snapshot, found by cluster id, and the decoy stays on
+# A's image with no not-ours line. H2_WIRE_SNAPDEL=control needs
+# H2_WIRE_KO_A, a scratch module whose SNAPDEL deletes by the peer's
+# name, which must delete the decoy; one guest reads the cluster-id scope.
 # H2_WIRE_KO_A=<ko> and H2_WIRE_KO_B=<ko> load a prebuilt module on that
 # side instead of building one, for a scratch-build control; the header
 # names it by sha256 and says it was given. Each side's module is read
@@ -158,14 +162,15 @@
 # read from its begin to its end line as cluster-sync.sh's tree arm reads
 # a change, and every run reads the keepalive's leg through A from the
 # relay's microsecond us= field; both are described in README.testing.md.
-# H2_WIRE_SRCGATE=1 makes the same ZZ.h2sync-src on A and, before any
-# link, asks for it read-write, then read-only: a PFS of the pass's
-# suffix is the source a pass reads as immutable, and a mount of either
-# kind would hold it against the next pass's delete, so both must be
-# refused with A's line each, and A's image must name the PFS and hold no
-# file written there. mount -w, since without it mount(8) retries
-# read-only on EROFS. H2_WIRE_SRCGATE=control builds A with
-# HAMMER2_NOSRCGATE, under which the source mounts both ways and the file
+# H2_WIRE_SRCGATE=1 makes A's image with ZZ.h2sync-src and ZZ.h2sync-peer
+# beside ROOT, at newfs_hammer2, since pfs-create refuses both suffixes,
+# and before any link asks for each read-write, then read-only: a PFS of
+# either suffix is a source a pass reads as immutable, and a mount of
+# either kind would hold it against the next pass's delete, so all four
+# must be refused with A's line each, and A's image must name both PFSs
+# and hold no file written there. mount -w, since without it mount(8)
+# retries read-only on EROFS. H2_WIRE_SRCGATE=control builds A with
+# HAMMER2_NOSRCGATE, under which each mounts both ways and the file
 # written there is on A's image.
 # H2_WIRE_ADMIT=1 removes B's .none marker before its dial: h2service
 # must refuse the row as DragonFly's daemon refuses an unknown host, and
@@ -454,7 +459,9 @@ AFLAGS=; BFLAGS=
 [ "$SILENCE" = control ] && AFLAGS=HAMMER2_NOKEEPALIVE=1 BFLAGS=HAMMER2_NOKEEPALIVE=1
 [ "$WINDOW" = 0 ] || AFLAGS=HAMMER2_NOWINDOW=1
 [ "$WINDOW" = control ] && BFLAGS=HAMMER2_NOCLIENTWINDOW=1
-[ "$SNAPDEL" = control ] && AFLAGS=HAMMER2_NOSNAPSCOPE=1
+if [ "$SNAPDEL" = control ] && [ -z "${H2_WIRE_KO_A:-}" ]; then
+	echo "wire: COULD-NOT-RUN: H2_WIRE_SNAPDEL=control needs H2_WIRE_KO_A, a scratch module whose SNAPDEL deletes by the peer's name" >&2; exit 2
+fi
 [ "$SRCGATE" = control ] && AFLAGS=HAMMER2_NOSRCGATE=1
 [ "$ROGATE" = control ] && BFLAGS=HAMMER2_NOROGATE=1
 [ "$PASSREFUSE" = control ] && BFLAGS=HAMMER2_NOPASSREFUSE=1
@@ -497,7 +504,8 @@ guest_off "$GB" "$SB"
 for g in a b $([ "$LINKDEV" = 1 ] && echo k); do
 	img=$FIXDIR/wire-$g.img
 	rm -f "$img"
-	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
+	labels=ROOT; [ "$g" = a ] && [ "$SRCGATE" != 0 ] && labels=ROOT,ZZ.h2sync-src,ZZ.h2sync-peer
+	truncate -s 2G "$img" && "$NEWFS" -L "$labels" "$img" >/dev/null 2>&1 || {
 		echo "wire: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
 attach() {	# attach <domain> <image> [target]: a guest that is off starts after vdb
@@ -554,7 +562,7 @@ relay_start() {	# relay_start <trace>: a relay on the port, its output appended
 	    --refuse-nresolve "$REFUSE" --retype-scan "$RETYPE" --stall-ms "$STALL" \
 	    --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
 	    --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
-	    --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.h2sync-src)" \
+	    --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.decoy-snap)" \
 	    ${CUTAT:+--cut-on-scan "$CUTAT" --cut-fault "$FAULT"} \
 	    $([ "$RAW" = 1 ] && echo --raw 1) \
 	    --trace "$1" >> "$W/relay.out" 2>&1 &
@@ -601,7 +609,8 @@ END { print (inum in mode) ? mode[inum] : "none" }
 AWK
 cat > "$W/setup.sh" <<'GUEST'
 # setup <type> [<clid> [<sync_snapshot> [<decoy>]]]: load, mount ROOT,
-# create CL, and on a master a PFS of the name <decoy>, print CL's id
+# create CL, and on a master a snapshot of ROOT named <decoy>, or with
+# srcgate count the two PFSs newfs made, print CL's id
 if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "wire: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
@@ -624,9 +633,11 @@ mkdir -p $R $C /tmp/h2keys
 mount -t hammer2 /dev/vdb@ROOT $R || { echo "mount failed"; exit 1; }
 if [ "$1" = master ]; then
 	hammer2 -s $R pfs-create CL >/dev/null 2>&1 || { echo "pfs-create failed"; exit 1; }
-	if [ -n "${4:-}" ]; then
-		hammer2 -s $R pfs-create "$4" >/dev/null 2>&1; echo "decoy-rc $?"
-	fi
+	case "${4:-}" in
+	"") ;;
+	srcgate) echo "srcgate-pfs $(hammer2 -s $R pfs-list 2>/dev/null | grep -cE 'ZZ\.h2sync-(src|peer)')";;
+	*) hammer2 snapshot $R "$4" >/dev/null 2>&1; echo "decoy-rc $?";;
+	esac
 else
 	hammer2 -s $R -t SLAVE -u "$2" pfs-create CL >/dev/null 2>&1 || { echo "slave pfs-create failed"; exit 1; }
 fi
@@ -753,20 +764,22 @@ mount -t hammer2 -o ro /dev/vdb@CL $C || { echo "mount CL ro failed"; exit 1; }
 echo "ro-mounted 1"
 GUEST
 cat > "$W/srcgate.sh" <<'GUEST'
-# srcgate: A's ZZ.h2sync-src asked for read-write, then read-only; each
-# state read from /proc/mounts
+# srcgate: A's ZZ.h2sync-src and ZZ.h2sync-peer each asked for
+# read-write, then read-only; each state read from /proc/mounts
 S=/mnt/h2src; mkdir -p $S
 st() { awk -v m=$S '$2 == m { split($4, o, ","); print o[1]; f = 1 } END { if (!f) print "none" }' /proc/mounts; }
 n0=$(dmesg | grep -c 'refused: a synchronization source')
-mount -t hammer2 -w /dev/vdb@ZZ.h2sync-src $S 2>/dev/null; echo "srcgate-rw-rc $?"
-echo "srcgate-rw-state $(st)"
-if [ "$(st)" != none ]; then
-	echo x > $S/written 2>/dev/null; echo "srcgate-rw-write-rc $?"
-	sync; umount $S
-fi
-mount -t hammer2 -o ro /dev/vdb@ZZ.h2sync-src $S 2>/dev/null; echo "srcgate-ro-rc $?"
-echo "srcgate-ro-state $(st)"
-[ "$(st)" = none ] || umount $S
+for x in src peer; do
+	mount -t hammer2 -w /dev/vdb@ZZ.h2sync-$x $S 2>/dev/null; echo "srcgate-$x-rw-rc $?"
+	echo "srcgate-$x-rw-state $(st)"
+	if [ "$(st)" != none ]; then
+		echo x > $S/written-$x 2>/dev/null; echo "srcgate-$x-rw-write-rc $?"
+		sync; umount $S
+	fi
+	mount -t hammer2 -o ro /dev/vdb@ZZ.h2sync-$x $S 2>/dev/null; echo "srcgate-$x-ro-rc $?"
+	echo "srcgate-$x-ro-state $(st)"
+	[ "$(st)" = none ] || umount $S
+done
 echo "srcgate-lines $(( $(dmesg | grep -c 'refused: a synchronization source') - n0 ))"
 GUEST
 cat > "$W/pass.sh" <<'GUEST'
@@ -1254,10 +1267,12 @@ echo "spantab-end $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //'
 # one a lost link left for it to delete, both printed unconditionally
 echo "snap-peer-errors $(klog 'syncsnap: snapshot .* for a peer error')"
 echo "snap-link-left $(klog 'snapshot .* left by the link deleted')"
-# a SNAPDEL for a name the link never took, refused or (in the control)
-# carried out
-echo "snapdel-not-ours $(klog 'syncsnap: peer named ZZ.h2sync-src, not this link')"
-echo "snapdel-decoy-deleted $(klog 'syncsnap: peer deleted ZZ.h2sync-src')"
+# a SNAPDEL the relay renamed to a snapshot the link never took: the
+# server deletes the link's own by cluster id, or (in the scratch control)
+# the decoy by the peer's name
+echo "snapdel-not-ours $(klog 'syncsnap: peer named .*, not this link')"
+echo "snapdel-decoy-deleted $(klog 'syncsnap: peer deleted ZZ.decoy-snap')"
+echo "snapdel-own-deleted $(klog 'syncsnap: peer deleted CL.h2sync-peer')"
 # blocks read through a page-cache folio larger than the block, which
 # read-ahead on the device mapping makes; a block then sits at its offset
 # in the folio, not at the folio's start
@@ -1452,7 +1467,8 @@ nval() {	# nval <A|B> <name>: how many lines carry it, with or without a value
 	grep -c -E "^$1 $2( |$)" "$W/out"
 }
 : > "$W/out"
-phase A setup.sh master 0 1 $({ [ "$SNAPDEL" = 0 ] && [ "$SRCGATE" = 0 ]; } || echo ZZ.h2sync-src) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
+adecoy=; [ "$SNAPDEL" = 0 ] || adecoy=ZZ.decoy-snap; [ "$SRCGATE" = 0 ] || adecoy=srcgate	# one control a run
+phase A setup.sh master 0 1 $adecoy || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 [ "$SRCGATE" = 0 ] || phase A srcgate.sh
 clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
@@ -1495,7 +1511,7 @@ power_cut() {
 	"$FSCK" "$ci" > "$FIXDIR/wire-run-$stamp-fsck-cut.txt" 2>&1; echo "H cut-fsck-rc $?" >> "$W/out"
 	"$HAMMER2" -v show "$ci" > "$W/show.cut" 2>/dev/null
 	{ echo "H cut-image-tgt $(grep -c 'filename "CL.h2sync-tgt"' "$W/show.cut")"
-	  echo "H cut-image-src $(grep -c 'filename "CL.h2sync-src"' "$W/show.cut")"
+	  echo "H cut-image-peer $(grep -c 'filename "CL.h2sync-peer"' "$W/show.cut")"
 	  echo "H cut-image-bulk $(grep -c 'filename "b[0-9]' "$W/show.cut")"
 	  echo "H cut-precut-updates $(grep -c 'syncthr: update inode' "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null)"
 	  echo "H cut-precut-verdicts $(grep -c -E 'syncsnap: (verified|newer|unverified|interrupted) clindex' "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null)"
@@ -1624,8 +1640,15 @@ if [ "$CONNWAIT" = control ]; then
 else
 [ "$CONNWAIT" = 1 ] && { [ "$(num "$(val B conn-held)" 0)" = 1 ]; check "control: B's reconnect held a second after its reader's start" $? "hold lines $(val B conn-held)"; }
 [ "$(num "$(val A log-proto2)" 0)" = 1 ] && [ "$(num "$(val B log-proto2)" 0)" = 1 ]; check "link: each kernel reads the peer's PROTO_2 announcement once" $? "A $(val A log-proto2), B $(val B log-proto2)"
+# over TLS each end announces only CL, the one cluster id the dial binds
+# its key to (stage 5.5), whatever else the volume holds
+if [ "$TLS" = 1 ]; then
+	[ "$(num "$(val A spantab)" 0)" = 1 ]; check "link: A's span table holds B's one bound span, CL, of B's $nlb PFSs" $? "$(val A spantab) spans, $nlb PFSs"
+	[ "$(num "$(val B spantab)" 0)" = 1 ]; check "link: B's span table holds A's one bound span, CL, of A's $npa PFSs" $? "$(val B spantab) spans, $npa PFSs"
+else
 [ "$(num "$(val A spantab)" 0)" = "$nlb" ]; check "link: A's span table holds one span per PFS of B's link device, counted against its pfs-list" $? "$(val A spantab) spans, $nlb PFSs"
 [ "$(num "$(val B spantab)" 0)" = "$npa" ]; check "link: B's span table holds one span per PFS of A" $? "$(val B spantab) spans, $npa PFSs"
+fi
 [ "$(num "$(val A span-cl)" 9)" = "$slv" ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl) of $slv, B sees MASTER $(val B span-cl)"
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
@@ -1637,8 +1660,9 @@ nlk=$((STALE + 1)); case $CUT in disconnect|master|loss|dup|reorder|trail|late) 
 # the cut left it there; the stale delete that follows sends no span
 # DELETE, as upstream's spans go out once at the LNK_CONN, so B holds it
 # to the unmount
-nsx=0; [ "$CUT" = master ] && nsx=$(num "$(val H cut-image-src)" 0)
-[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = $((npa * nlk + nsx)) ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $npa times $nlk and $nsx left on the cut media"
+nsx=0; [ "$CUT" = master ] && nsx=$(num "$(val H cut-image-peer)" 0)
+nsa=$npa; [ "$TLS" = 1 ] && nsa=1	# A's spans B holds: CL alone over TLS
+[ "$(num "$(val2 A spantab)" 9)" = 0 ] && [ "$(num "$(val B spans-del)" 0)" = $((nsa * nlk + nsx)) ]; check "unmount: B's unmount deletes its spans and A's table empties" $? "A's table $(val2 A spantab) after, B deleted $(val B spans-del) of A's $nsa times $nlk and $nsx left on the cut media"
 # The read side: B's empty SLAVE answers nothing, so every file B reads
 # came through the remote element; the digests are A's own, taken on A.
 sums() { sed -n "s/^$1 $2 //p" "$W/out" | sort; }
@@ -1709,8 +1733,8 @@ if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ] && [ -z "$CUT" ]; then
 	# the master's, deleted at B's request, and the target on the slave's,
 	# deleted when a pass verified; a lost link's leftovers would show as
 	# A's own deletion line.
-	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
-	[ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 1)" = 0 ]; check "pass: neither image holds a snapshot of the pass at the end" $? "CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, left by the link $(val A snap-link-left)"
+	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-peer"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
+	[ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 1)" = 0 ]; check "pass: neither image holds a snapshot of the pass at the end" $? "CL.h2sync-peer on A $sa, CL.h2sync-tgt on B $sb, left by the link $(val A snap-link-left)"
 elif [ "$POWER" = 1 ]; then
 	# Where the power cut fell: past the first snapshot the pass read, with
 	# no verdict before it, and B's inode updates above the count at the
@@ -1727,7 +1751,7 @@ elif [ "$POWER" = 1 ]; then
 	[ "$(num "$(val B cut-arm-updates)" 0)" -ge "$DEPTH" ] && [ "$(num "$(val B cut-arm-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-arm-snap)" 0)" -ge 1 ] && [ "$vc" = 0 ] && [ $((uc - ub)) -gt 0 ] && [ $((uc - ub)) -lt 5000 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "power: $CUT's power is cut inside the pass, its snapshot read and no verdict, with inodes still to copy" $? "armed at $(val B cut-arm-updates) updates of depth $DEPTH, $((uc - ub)) by the cut of 5310 files, verdicts at the arm $(val B cut-arm-verdicts) and by the cut $vc, snapshots read $(val B cut-arm-snap), printk $(val B cut-printk)"
 	[ "$(num "$(val H cut-fsck-rc)" 1)" = 0 ] && [ "$(num "$(val H cut-precut-warnings)" 1)" = 0 ] && { [ "$CUT" = master ] || [ "$(num "$(val H cut-image-tgt)" 0)" = 1 ]; }; rc=$?
 	# the status is taken before the name, whose substitution would set $?
-	check "power: the cut image is clean by fsck_hammer2$([ "$CUT" = slave ] && echo " and holds the pass's target")" $rc "fsck rc $(val H cut-fsck-rc), CL.h2sync-tgt $(val H cut-image-tgt), CL.h2sync-src $(val H cut-image-src), bulk entries $(val H cut-image-bulk), warnings before the cut $(val H cut-precut-warnings), HM2 lines before it $(val H cut-precut-hm2)"
+	check "power: the cut image is clean by fsck_hammer2$([ "$CUT" = slave ] && echo " and holds the pass's target")" $rc "fsck rc $(val H cut-fsck-rc), CL.h2sync-tgt $(val H cut-image-tgt), CL.h2sync-peer $(val H cut-image-peer), bulk entries $(val H cut-image-bulk), warnings before the cut $(val H cut-precut-warnings), HM2 lines before it $(val H cut-precut-hm2)"
 	if [ "$CUT" = slave ]; then
 		# A's keepalive ends its side, with no element to detach; B boots
 		# on its cut media, its thread keeps the target the cut left, and
@@ -1747,11 +1771,11 @@ elif [ "$POWER" = 1 ]; then
 		# A pass that stops at its first failed call sends none, so the
 		# count is printed and only their speed is checked.
 		[ "$(num "$(val B cut-after-slow)" 1)" = 0 ]; check "power: every request B's pass sends after the link's end is refused at once" $? "calls started after the link's end $(val B cut-after-calls), 400 ms or longer $(val B cut-after-slow), longest $(val B cut-after-max-ms) ms"
-		x=$(num "$(val H cut-image-src)" -1)
+		x=$(num "$(val H cut-image-peer)" -1)
 		[ "$(num "$(val A restart-debug)" 0)" = 33024 ] && [ "$(num "$(val A restart-rows)" 0)" -ge 1 ] && [ "$(num "$(val A restart-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B cut-registered)" 0)" = 2 ] && [ "$(num "$(val A cut-stale-deleted-after)" -1)" = "$x" ] && [ "$(num "$(val A cut-link-left-after)" 1)" = 0 ] && [ "$(num "$(val A cut-peer-hm2-after)" 1)" = 0 ]; check "power: A boots on the cut media and deletes the stale source once per copy the cut left, with no link to drop" $? "debug $(val A restart-debug), rows $(val A restart-rows), dial rc $(val A restart-dial-rc), B registered $(val B cut-registered), stale deletions $(val A cut-stale-deleted-after) of $x on the cut image, left-by-the-link $(val A cut-link-left-after), A's HM2 lines $(val A cut-peer-hm2-after)"
 		[ "$(num "$(val B cut-resumed-target)" 1)" = 0 ]; check "power: B's thread keeps its own target over the link's end, taking none" $? "target lines after $(val B cut-resumed-target)"
 	fi
-	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
+	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-peer"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
 	nl=0; [ "$CUT" = slave ] && nl=1; nu=1; [ "$CUT" = slave ] && nu=0
 	# The resumed pass keeps a key whose slave tid is above the source's
 	# (hammer2_synchro.c, the two kept arms) and reads `newer`; on a
@@ -1763,7 +1787,7 @@ elif [ "$POWER" = 1 ]; then
 	case "$(val B cut-resumed-verdicts)" in "verified "*|"newer verified ") rv=0;; *) rv=1;; esac
 	[ "$rv" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "power: the resumed pass verifies, or reads newer and the next pass verifies" $? "verdicts $(val B cut-resumed-verdicts)after a wait of $(val B cut-resumed-second-wait) s, keys kept by tid $(val B cut-resumed-kept-keys), HM2 lines after $(val B cut-resumed-hm2), deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors), end after $(val B pass-end-seconds) s"
 	[ "$(num "$(val A more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val A more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val B more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 9)" = "$nu" ]; check "power: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files) beside $(val A more-media-snaps) snapshot(s), B $(val B more-media-files) beside $(val B more-media-snaps) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) of $nu"
-	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5310 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
+	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5310 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-peer on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
 elif [ "$SEQ" = control ]; then
 	# The sequence checks compiled out: the fault, placed as the cut's, is
 	# taken, and the link stays up to B's unmount: no line of B's ending it,
@@ -1858,12 +1882,12 @@ elif [ -n "$CUT" ]; then
 	# Neither kernel says HM2 at a link the relay ended; A keeps the link's
 	# snapshot until its next connection's end.
 	{ [ "$PROTO" = 1 ] || [ "$(num "$(val B cut-hm2)" 1)" = 0 ]; } && [ "$(num "$(val A cut-peer-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-link-left)" 1)" = 0 ]; check "cut: no HM2 line on A$([ "$PROTO" = 1 ] || echo " or B"), and A keeps the link's snapshot past the cut" $? "B $(val B cut-hm2), A $(val A cut-peer-hm2) HM2 lines, A's left-by-the-link deletions $(val A cut-link-left)"
-	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-src"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
+	sa=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "CL.h2sync-peer"'); sb=$("$HAMMER2" -v show "$FIXDIR/wire-b.img" 2>/dev/null | grep -c 'filename "CL.h2sync-tgt"')
 	[ "$fa" = 0 ] && [ "$fb" = 0 ]; check "cut: both volumes are clean by fsck_hammer2" $? "A rc $fa, B rc $fb"
 	if [ "$CUT" = control ]; then
 		# No dial: the slave stays short of the master, its target listed,
 		# and A deletes the link's snapshot at its own unmount.
-		[ "$nfa" -ge 300 ] && [ "$nfpb" -lt "$nfpa" ] && [ "$sb" = 1 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "control: with no dial after the cut the slave stays short of the master and keeps its target" $? "file entries A $nfpa B $nfpb, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions at its unmount $(val A snap-link-left), CL.h2sync-src on A $sa"
+		[ "$nfa" -ge 300 ] && [ "$nfpb" -lt "$nfpa" ] && [ "$sb" = 1 ] && [ "$(num "$(val A snap-link-left)" 0)" = 1 ]; check "control: with no dial after the cut the slave stays short of the master and keeps its target" $? "file entries A $nfpa B $nfpb, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions at its unmount $(val A snap-link-left), CL.h2sync-peer on A $sa"
 	else
 		[ "$(num "$(val A cut-link-left-after)" 0)" = $((1 - pv)) ] && [ "$(num "$(val A cut-peer-hm2-after)" 1)" = 0 ] && [ "$(num "$(val B cut-threads-before)" 1)" = 0 ] && [ "$(num "$(val B cut-dial-rc)" 1)" = 0 ] && [ "$(num "$(val B cut-registered)" 0)" = 2 ]; check "cut: A deletes the link's snapshot at its dial, and B dials again and registers A's root a second time" $? "A's deletions $(val A cut-link-left-after), A's HM2 lines $(val A cut-peer-hm2-after), B's threads before $(val B cut-threads-before), B rc $(val B cut-dial-rc), registered $(val B cut-registered)"
 		{ [ "$(val B cut-resumed-verdict)" = verified ] || { [ "$pv" = 1 ] && [ -z "$(val B cut-resumed-verdict)" ]; }; } && { [ "$pa" = 1 ] || [ "$(num "$(val B cut-resumed-target)" 1)" = 0 ]; } && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-media-files)" 0)" -ge 300 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; rc=$?
@@ -1871,7 +1895,7 @@ elif [ -n "$CUT" ]; then
 		[ "$pv" = 1 ] && lbl="cut: the cut pass verified inside the relay's wait and deleted its own target"
 		check "$lbl" $rc "resumed verdict $(val B cut-resumed-verdict), targets taken after $(val B cut-resumed-target), HM2 lines after $(val B cut-resumed-hm2), $(val B pass-media-files) of A's files on B's media, deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors)"
 		[ "$(num "$(val A more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val A more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val B more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && { [ "$pa" = 1 ] || [ "$(num "$(val B more-snap-unverified)" 0)" = 1 ]; }; check "cut: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files) beside $(val A more-media-snaps) snapshot(s), B $(val B more-media-files) beside $(val B more-media-snaps) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) in all"
-		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = $((1 - pv)) ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-src on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
+		[ "$nfa" -ge 300 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 0)" = $((1 - pv)) ]; check "cut: the slave's CL matches the master's on the media and neither image holds a snapshot of the pass" $? "A $nfpa file entries and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-peer on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left)"
 	fi
 elif [ "$PASSREFUSE" = control ]; then
 	# The refusal off: the live pass writes the device opened read-only,
@@ -2056,30 +2080,40 @@ if [ "$ROGATE" = control ]; then
 else
 [ "$LINKLOST" = 1 ] || [ "$SILENCE" = 1 ] || { [ "$(num "$(val B rw-mount-rc)" 0)" != 0 ] && [ "$(num "$(val B log-mount-refused)" 0)" -ge 1 ]; check "remote: a read-write mount of B's CL is refused while the element is registered" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"; }
 fi
-# A PFS of the pass's suffix asked for read-write on A, and what A's
+# A PFS of either pass suffix asked for read-write on A, and what A's
 # image holds of the files written there.
 if [ "$SRCGATE" != 0 ]; then
-	# the decoy's own name in the same read, so a show that failed
+	# the PFSs' own names in the same read, so a show that failed
 	# cannot read as no file written
 	zs=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null)
-	zn=$(printf '%s\n' "$zs" | grep -c 'filename "ZZ.h2sync-src"')
-	zw=$(printf '%s\n' "$zs" | grep -c 'filename "written"')
-	sg="decoy rc $(val A decoy-rc); rw rc $(val A srcgate-rw-rc) $(val A srcgate-rw-state); ro rc $(val A srcgate-ro-rc) $(val A srcgate-ro-state); refusal lines $(val A srcgate-lines); decoy named on A's image $zn, files written there $zw"
+	zn=$(printf '%s\n' "$zs" | grep -cE 'filename "ZZ\.h2sync-(src|peer)"')
+	zw=$(printf '%s\n' "$zs" | grep -c 'filename "written-')
+	sv() { val A "srcgate-$1-$2"; }
+	sg="PFSs made at newfs $(val A srcgate-pfs); src rw rc $(sv src rw-rc) $(sv src rw-state), ro rc $(sv src ro-rc) $(sv src ro-state); peer rw rc $(sv peer rw-rc) $(sv peer rw-state), ro rc $(sv peer ro-rc) $(sv peer ro-state); refusal lines $(val A srcgate-lines); named on A's image $zn, files written there $zw"
+	ok=0
 	if [ "$SRCGATE" = 1 ]; then
-		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 0)" != 0 ] && [ "$(val A srcgate-rw-state)" = none ] && [ "$(num "$(val A srcgate-ro-rc)" 0)" != 0 ] && [ "$(val A srcgate-ro-state)" = none ] && [ "$(num "$(val A srcgate-lines)" 0)" = 2 ] && [ "$zn" -ge 1 ] && [ "$zw" = 0 ]; check "a pass's source snapshot is refused a mount, read-write and read-only" $? "$sg"
+		for x in src peer; do
+			[ "$(num "$(sv $x rw-rc)" 0)" != 0 ] && [ "$(sv $x rw-state)" = none ] && [ "$(num "$(sv $x ro-rc)" 0)" != 0 ] && [ "$(sv $x ro-state)" = none ] || ok=1
+		done
+		[ "$ok" = 0 ] && [ "$(num "$(val A srcgate-pfs)" 0)" = 2 ] && [ "$(num "$(val A srcgate-lines)" 0)" = 4 ] && [ "$zn" -ge 2 ] && [ "$zw" = 0 ]; check "a PFS of either pass suffix is refused a mount, read-write and read-only" $? "$sg"
 	else
-		[ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-rw-rc)" 1)" = 0 ] && [ "$(val A srcgate-rw-state)" = rw ] && [ "$(num "$(val A srcgate-rw-write-rc)" 1)" = 0 ] && [ "$(num "$(val A srcgate-ro-rc)" 1)" = 0 ] && [ "$(val A srcgate-ro-state)" = ro ] && [ "$(num "$(val A srcgate-lines)" 1)" = 0 ] && [ "$zn" -ge 1 ] && [ "$zw" -ge 1 ]; check "control: without the gate a pass's source snapshot mounts read-write and read-only, and a file written there reaches A's image" $? "$sg"
+		for x in src peer; do
+			[ "$(num "$(sv $x rw-rc)" 1)" = 0 ] && [ "$(sv $x rw-state)" = rw ] && [ "$(num "$(sv $x rw-write-rc)" 1)" = 0 ] && [ "$(num "$(sv $x ro-rc)" 1)" = 0 ] && [ "$(sv $x ro-state)" = ro ] || ok=1
+		done
+		[ "$ok" = 0 ] && [ "$(num "$(val A srcgate-pfs)" 0)" = 2 ] && [ "$(num "$(val A srcgate-lines)" 1)" = 0 ] && [ "$zn" -ge 2 ] && [ "$zw" -ge 2 ]; check "control: without the gate a PFS of either pass suffix mounts read-write and read-only, and a file written there reaches A's image" $? "$sg"
 	fi
 fi
-# SNAPDEL for a name of the pass's suffix on A that the link never took:
-# A says so and the PFS stays, or in the control A deletes it.
+# A SNAPDEL the relay renamed to ZZ.decoy-snap, an unmounted snapshot the
+# link never took: the server deletes the link's own snapshot, found by
+# cluster id, and the decoy stays; in the scratch control the decoy goes.
 if [ "$SNAPDEL" != 0 ]; then
 	rn=$(grep -c ' rename-snapdel ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
-	za=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "ZZ.h2sync-src"')
+	za=$("$HAMMER2" -v show "$FIXDIR/wire-a.img" 2>/dev/null | grep -c 'filename "ZZ.decoy-snap"')
+	sd="renames $(num "$rn" 0), decoy snapshot rc $(val A decoy-rc), A's not-ours lines $(val A snapdel-not-ours), decoy deleted $(val A snapdel-decoy-deleted), own deleted $(val A snapdel-own-deleted), ZZ.decoy-snap on A's image $za"
 	if [ "$SNAPDEL" = 1 ]; then
-		[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A snapdel-not-ours)" 0)" = 1 ] && [ "$(num "$(val A snapdel-decoy-deleted)" 1)" = 0 ] && [ "$za" = 1 ]; check "control: a SNAPDEL naming a snapshot the link never took deletes nothing" $? "renames $(num "$rn" 0), decoy created rc $(val A decoy-rc), A's not-ours lines $(val A snapdel-not-ours), deleted $(val A snapdel-decoy-deleted), ZZ.h2sync-src on A's image $za"
+		[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A snapdel-not-ours)" 1)" = 0 ] && [ "$(num "$(val A snapdel-decoy-deleted)" 1)" = 0 ] && [ "$(num "$(val A snapdel-own-deleted)" 0)" -ge 1 ] && [ "$za" = 1 ]; check "a SNAPDEL whose name the relay changed deletes the link's own snapshot, by cluster id, and not the PFS it names" $? "$sd"
 	else
-		[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A snapdel-not-ours)" 1)" = 0 ] && [ "$(num "$(val A snapdel-decoy-deleted)" 0)" = 1 ] && [ "$za" = 0 ]; check "control: with SNAPDEL's scope off the master deletes a snapshot its link never took" $? "renames $(num "$rn" 0), decoy created rc $(val A decoy-rc), A's not-ours lines $(val A snapdel-not-ours), deleted $(val A snapdel-decoy-deleted), ZZ.h2sync-src on A's image $za"
+		[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val A decoy-rc)" 1)" = 0 ] && [ "$(num "$(val A snapdel-decoy-deleted)" 0)" = 1 ] && [ "$za" = 0 ]; check "control: a module whose SNAPDEL deletes by the peer's name deletes a snapshot its link never took" $? "$sd"
 	fi
 fi
 # Admission in the daemon: a row whose label has no .none and no key.

@@ -336,6 +336,17 @@ cmd_dial(int mfd, const char *keys, int want, int timeout_ms,
 	memset(&recl, 0, sizeof(recl));
 	recl.fd = fd;
 	recl.tls = *tls;
+	/*
+	 * A TLS link carries only the cluster ids its key is bound to (the
+	 * cluster note's stage 5.5): each key is bound to the dialed row's,
+	 * the one cluster this link is for.
+	 */
+	for (int i = 0; tls->mode && i < tls->nkeys; ++i) {
+		recl.tls.bind[i].slot = i;
+		memcpy(&recl.tls.bind[i].clid, &r.copy1.pfs_clid,
+		    sizeof(recl.tls.bind[i].clid));	/* the row is packed */
+		recl.tls.nbind = i + 1;
+	}
 	if (ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0) {
 		fprintf(stderr, "h2service: RECLUSTER: %s\n", strerror(errno));
 		close(fd);

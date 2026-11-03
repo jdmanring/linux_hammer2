@@ -919,13 +919,37 @@ hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
 
 /* ---- the TLS link, kernel to kernel ------------------------------------ */
 
+/* The cluster ids a TLS intake binds its key to (the cluster note's stage
+ * 5.5): the ROOT of each mount the action opened, read by PFS_LOOKUP, so
+ * each end announces its own ROOT and accepts the other's. */
+static struct uuid bind_clid[2];
+static int nbind_clid;
+
+static void
+bind_root(int mnt)
+{
+	struct hammer2_ioc_pfs pfs;
+
+	memset(&pfs, 0, sizeof(pfs));
+	strcpy(pfs.name, "ROOT");
+	if (mnt < 0 || nbind_clid >= 2 ||
+	    ioctl(mnt, HAMMER2IOC_PFS_LOOKUP, &pfs) < 0)
+		return;
+	if (nbind_clid == 1 && !memcmp(&bind_clid[0], &pfs.pfs_clid,
+	    sizeof(pfs.pfs_clid)))
+		return;
+	bind_clid[nbind_clid++] = pfs.pfs_clid;
+}
+
 /* An intake with real key serials into the mount open at mnt: a client
- * names its one key, a server its keyring and the one key it admits;
- * mode none sends neither, which is today's plaintext intake. */
+ * names its one key, a server its keyring and the one key it admits, each
+ * bound to bind_clid[]; mode none sends neither, which is today's plaintext
+ * intake. */
 static int
 recluster_key(int mnt, int fd, int mode, int role, int ring, int key)
 {
 	struct hammer2_ioc_recluster recl;
+	int i;
 
 	memset(&recl, 0, sizeof(recl));
 	recl.fd = fd;
@@ -935,6 +959,11 @@ recluster_key(int mnt, int fd, int mode, int role, int ring, int key)
 		recl.tls.keyring = role == HAMMER2_LINK_TLS_SERVER ? ring : 0;
 		recl.tls.nkeys = 1;
 		recl.tls.keys[0] = key;
+		for (i = 0; i < nbind_clid; ++i) {
+			recl.tls.bind[i].slot = 0;
+			recl.tls.bind[i].clid = bind_clid[i];
+		}
+		recl.tls.nbind = nbind_clid;
 	}
 	if (ioctl(mnt, HAMMER2IOC_RECLUSTER, &recl) < 0)
 		return (errno);
@@ -1239,6 +1268,7 @@ main(int argc, char **argv)
 		perror(mnt);
 		return (2);
 	}
+	bind_root(mfd);
 
 	if (!strcmp(action, "refuse")) {
 		int p[2], s, e_pipe, e_sock;
@@ -1313,6 +1343,7 @@ main(int argc, char **argv)
 			perror(mnt2 ? mnt2 : "--attach2");
 			return (2);
 		}
+		bind_root(m2);
 		c = tcp_pair(&p);
 		e_srv = recluster_key(mfd, p, mode, HAMMER2_LINK_TLS_SERVER, ring,
 		    admit);
