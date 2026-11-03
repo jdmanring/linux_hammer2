@@ -222,6 +222,15 @@ module_param_named(io_large_folios, hammer2_io_large_folios, ulong, 0444);
  */
 int hammer2_debug_hpanic;
 module_param_named(debug_hpanic, hammer2_debug_hpanic, int, 0644);
+/*
+ * XXX Linux: stage 5.5's controls (doc/CLUSTER_PROTOCOL_DESIGN.md): a hold
+ * in the link work after its quiesce, and one in hammer2_volconf_update()
+ * between its alloc and its queue.  Debug build only; zero holds nothing.
+ */
+unsigned int hammer2_link_hold_ms;
+module_param_named(link_hold_ms, hammer2_link_hold_ms, uint, 0644);
+unsigned int hammer2_volconf_hold_ms;
+module_param_named(volconf_hold_ms, hammer2_volconf_hold_ms, uint, 0644);
 static int hammer2_debug_syncs;
 /*
  * XXX Linux: the freemap allocator refuses every allocation past this

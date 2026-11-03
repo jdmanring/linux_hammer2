@@ -1222,6 +1222,8 @@ extern unsigned long hammer2_io_large_folios;	/* Linux */
 #if defined(HAMMER2_LOCKDEBUG)
 extern int hammer2_fail_alloc_after;	/* Linux */
 extern int hammer2_debug_hpanic;	/* Linux */
+extern unsigned int hammer2_link_hold_ms;	/* Linux */
+extern unsigned int hammer2_volconf_hold_ms;	/* Linux */
 extern int hammer2_alloc_count;		/* Linux */
 extern int hammer2_fail_alloc_count;	/* Linux */
 extern int hammer2_sync_force_rescan;	/* Linux */

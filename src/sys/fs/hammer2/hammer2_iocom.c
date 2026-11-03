@@ -598,6 +598,22 @@ hammer2_volconf_update(hammer2_dev_t *hmp, int index)
 		H2_LNK_VOLCONF(msg)->copy = hmp->voldata.copyinfo[index];
 		H2_LNK_VOLCONF(msg)->mediaid = hmp->voldata.fsid;
 		H2_LNK_VOLCONF(msg)->index = index;
+#if defined(HAMMER2_LOCKDEBUG)
+		/*
+		 * Linux: stage 5.5's controls, a hold between the alloc and
+		 * the queue with msglk held, and whether the circuit queued
+		 * on is already dying, read under that hold.
+		 */
+		if (READ_ONCE(hammer2_volconf_hold_ms)) {
+			unsigned int ms = READ_ONCE(hammer2_volconf_hold_ms);
+
+			kprintf("hammer2: volconf held %u ms\n", ms);
+			schedule_timeout_uninterruptible(msecs_to_jiffies(ms));
+			kprintf("hammer2: volconf hold ended\n");
+		}
+		if (msg->state->flags & KDMSG_STATE_DYING)
+			kprintf("hammer2: volconf queued on a dying circuit\n");
+#endif
 		kdmsg_msg_write_locked(&hmp->iocom, msg);
 	}
 	lockmgr(&hmp->iocom.msglk, LK_RELEASE);
@@ -935,6 +951,19 @@ hammer2_link_work(struct work_struct *work)
 	}
 	wait_for_completion(&l->done);
 	hammer2_remote_quiesce(hmp, 0);	/* the old connection's requests */
+#if defined(HAMMER2_LOCKDEBUG)
+	/*
+	 * Linux: stage 5.5's controls, a hold after the quiesce with
+	 * hammer2_mntlk held and the old connection still up.
+	 */
+	if (READ_ONCE(hammer2_link_hold_ms)) {
+		unsigned int ms = READ_ONCE(hammer2_link_hold_ms);
+
+		kprintf("hammer2: cluster link held %u ms after the quiesce\n", ms);
+		schedule_timeout_uninterruptible(msecs_to_jiffies(ms));
+		kprintf("hammer2: cluster link hold ended\n");
+	}
+#endif
 	hammer2_link_stage(hmp, l);	/* installed at the swap */
 	hammer2_lk_unlock(&hammer2_mntlk);
 	hammer2_cluster_tail(hmp, l->fp);	/* kdmsg owns the file now */
