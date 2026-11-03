@@ -21082,9 +21082,10 @@ signed off in round 1 with four minor findings and asked for the first
 two before the next round: a refused span answered as accepted and left
 open, and a server key that could be bound to nothing. Both were fixed
 at `20d437e`, the other two (a design sentence and a header comment) at
-`524258d` and `15fc25e`. Round 2 confirmed the four and found one more
-minor, the no-binding errno masked by the new per-key check, answered at
-`9b6d40d` and read below; SIGN-OFF. The operator pages that still said
+`524258d`. Round 2 confirmed the four and found one more minor, the
+no-binding errno masked by the new per-key check, answered at `9b6d40d`
+and read below, and a cosmetic note on the design sentence, answered at
+`15fc25e`; SIGN-OFF. The operator pages that still said
 the server checks no row were corrected at `4f0ff92`.
 
 The expected readings, fake passes and controls were written before
@@ -21193,19 +21194,28 @@ except where said below:
   passing at `nobind 22` (`n9-5-ctl-n9-5-nobind-plain-20261102-nobind.log`
   lines 11-12, report `dmsg-run-20261102-224523`, QEMU cores 0).
 
-Six refusals stage 5.5 added (`a945367` to `20d437e`) have no control
-above. Two are not driven by any run: the server's refusal of a request
-for a cluster the link did not prove (`hammer2_remote_pfs()`) and
-registration's (`hammer2_remote_reconcile()`). Every `h2attach` request
-arm runs over a plaintext pair, where the link binds every cluster id,
-the wire's TLS arm requests only the bound cluster, and a TLS peer's span
-for an unproved cluster is refused at `hammer2_span_add()` before
-registration sees it. The intake's bounds on the binding count and on a
-binding's key slot (`hammer2_link_check()`) are not driven either. The
-mount's refusal of a `.h2sync-peer` name (`hammer2_remote_is_source()`)
-is read by the wire's srcgate arm below and has no control, and the
-local pass's snapshot-only stale delete (`hammer2_sync_pass_snap()`) is
-neither driven nor controlled here.
+Ten refusals stage 5.5 added (`a945367` to `20d437e`, read from every
+branch those commits add) have no control above, and nine of them no
+run drives:
+- the server's refusal of a request for a cluster the link did not
+  prove (`hammer2_remote_pfs()`) and registration's
+  (`hammer2_remote_reconcile()`). Every `h2attach` request arm runs over
+  a plaintext pair, where the link binds every cluster id, the wire's
+  TLS arm requests only the bound cluster, and a TLS peer's span for an
+  unproved cluster is refused at `hammer2_span_add()` before
+  registration sees it;
+- the intake's bounds on the binding count and on a binding's key slot
+  (`hammer2_link_check()`), and the mount path's on the count of
+  `cluster_tls_clid` and on its form as a uuid (`hammer2_parse_param()`);
+- the client's two checks on a peer snapshot (`hammer2_remote_snapshot_take()`):
+  a server-chosen name that does not fit, and a fed root that does not
+  carry that name, whose line no kept wire log holds;
+- the local pass's snapshot-only stale delete (`hammer2_sync_pass_snap()`),
+  since no `cluster-sync.sh` run is part of this increment.
+
+The tenth, the mount's refusal of a `.h2sync-peer` name
+(`hammer2_remote_is_source()`), is read by the wire's srcgate arm below
+and has no control.
 
 **Two guests, `cluster-wire.sh`**, at `15fc25e` for the first five arms
 and `9b6d40d` for the raw and wrong-key arms (source `7ff1a87`'s
@@ -21249,8 +21259,7 @@ with 0 failures (`n9-5-enospc-20261102-214846.log`), QEMU cores 0
 before and after each.
 
 Not read here: the two-host synchronization pass over TLS, which is
-N9.6's; the request and registration refusals of an unproved cluster
-and the intake's two binding bounds, which no run drives (above); a
+N9.6's; the nine refusals above that no run drives; a
 revoked key's live link ended without an unmount, which needs
 a revocation callback or a rekey, neither built (rule 7); a relaying
 daemon carrying several peers over one link, whose binding stage 4
