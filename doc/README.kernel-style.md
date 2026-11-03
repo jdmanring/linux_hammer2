@@ -259,7 +259,7 @@ hits, read by line number. No category is new.
 
 1,600 to 1,602 with the refusal of any mount of a pass's source
 snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
-(`hammer2_remote.c:2644`), the same form checkpatch reads at
+(`hammer2_remote.c:2687`), the same form checkpatch reads at
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
 argument, its declaration in `hammer2.h`. No category is new.
 
@@ -308,6 +308,9 @@ definition argument` are the prototype of `hammer2_link_binds()` in
 `hammer2.h`, one more `no spaces at the start of a line` is the
 continuation of its refusal print in `hammer2_span_add()`, and one more
 `return (x);` is its own. No category is new.
+
+1,630 to 1,631 with the server's row check of stage 5.5: one more
+`return (x);`, `hammer2_remote_snap_taken()`'s. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

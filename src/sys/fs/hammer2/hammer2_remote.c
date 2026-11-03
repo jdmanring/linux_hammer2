@@ -58,6 +58,7 @@ struct hammer2_remote {
  */
 struct hammer2_remote_snap {
 	struct list_head	entry;
+	struct uuid		clid;		/* the snapshot's own, served by it */
 	char			name[HAMMER2_INODE_MAXNAME];
 };
 
@@ -131,6 +132,7 @@ static void hammer2_remote_serve(struct work_struct *);
 static void hammer2_remote_reconcile(struct work_struct *);
 static void hammer2_remote_keepalive(struct work_struct *);
 static void hammer2_remote_conn_end(struct hammer2_remote *);
+static int hammer2_remote_admitted(hammer2_dev_t *, const struct uuid *, int);
 
 void
 hammer2_remote_init(hammer2_dev_t *hmp)
@@ -534,7 +536,8 @@ hammer2_remote_window(struct hammer2_remote_req *req, int fed)
 
 /*
  * Whether a name is one of the synchronization pass's source snapshots,
- * the only PFS a peer may have this server create, delete or read unmounted.
+ * the only PFS a peer may have this server create or delete.  What a peer
+ * may read unmounted is decided by cluster id, in hammer2_remote_pfs().
  */
 static int
 hammer2_remote_snap_name(const char *name)
@@ -642,6 +645,7 @@ hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
 		    error);
 		return (HAMMER2_ERROR_EIO);
 	}
+	snap->clid = spmp->pfs_clid;	/* before the root is fed */
 	spin_lock(&rm->lock);
 	list_add_tail(&snap->entry, &rm->snaps);
 	spin_unlock(&rm->lock);
@@ -681,6 +685,28 @@ hammer2_remote_snaps_drop(struct hammer2_remote *rm)
 }
 
 /*
+ * Whether this link took the snapshot of a cluster id, by the id its entry
+ * recorded at the insert, under rm->lock.
+ */
+static int
+hammer2_remote_snap_taken(struct hammer2_remote *rm, const struct uuid *clid)
+{
+	struct hammer2_remote_snap *snap;
+	int taken = 0;
+
+	spin_lock(&rm->lock);
+	list_for_each_entry(snap, &rm->snaps, entry) {
+		if (bcmp(&snap->clid, clid, sizeof(*clid)) == 0) {
+			taken = 1;
+			break;
+		}
+	}
+	spin_unlock(&rm->lock);
+
+	return (taken);
+}
+
+/*
  * The PFS a request names: a mounted one whose cluster id matches with an
  * element on this device, found on hammer2_pfslist under hammer2_mntlk,
  * which the request then holds until it is answered, since hammer2_pfs
@@ -692,11 +718,12 @@ hammer2_remote_snaps_drop(struct hammer2_remote *rm)
  * that sync outlasts fails at the bound.  Returns with the lock held when a PFS
  * is found and released otherwise, with *errorp saying why: 0 when this device
  * has no such PFS mounted, a refusal, and ABORTED or ETIMEDOUT when the lock
- * was not had, which says nothing of what the device holds.
+ * was not had, which says nothing of what the device holds.  A refusal's
+ * reason is *whyp.
  */
 static hammer2_pfs_t *
 hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,
-    uint32_t *errorp)
+    uint32_t *errorp, const char **whyp)
 {
 	hammer2_dev_t *hmp = req->hmp;
 	struct hammer2_remote *rm = hmp->remote;
@@ -704,6 +731,7 @@ hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,
 	int i;
 
 	*errorp = 0;
+	*whyp = "no mounted PFS of that cluster on this device";
 	while (!hammer2_lk_tryex(&hammer2_mntlk)) {
 		if (READ_ONCE(req->cancelled) || READ_ONCE(rm->state) != HAMMER2_REMOTE_OPEN) {
 			*errorp = HAMMER2_ERROR_ABORTED;
@@ -727,13 +755,25 @@ hammer2_remote_pfs(struct hammer2_remote_req *req, int *clindexp,
 		if (i == pmp->iroot->cluster.nchains)
 			continue;
 		/*
-		 * A mounted PFS, or an unmounted one this server snapshotted
-		 * for a peer's pass, which is never mounted and is named by
-		 * its suffix; every other unmounted PFS of the device is not
-		 * served, whatever cluster id a peer names.
+		 * Stage 5.5, rules 3 and 4.  A snapshot this link took is
+		 * served by the cluster id its entry recorded, mounted or not;
+		 * a snapshot's id is its own and no row names it.  Otherwise
+		 * only a mounted PFS whose cluster id the link proved and an
+		 * enabled copyinfo[] row of this device names.  The name
+		 * admits nothing.
 		 */
-		if (pmp->mp == NULL && !hammer2_remote_snap_name(pmp->pfs_names[i]))
-			continue;
+		if (!hammer2_remote_snap_taken(rm, &pmp->pfs_clid)) {
+			if (pmp->mp == NULL)
+				break;
+			if (!hammer2_link_binds(hmp, &pmp->pfs_clid)) {
+				*whyp = "the link did not prove that cluster";
+				break;
+			}
+			if (!hammer2_remote_admitted(hmp, &pmp->pfs_clid, -1)) {
+				*whyp = "no enabled copyinfo row for that cluster";
+				break;
+			}
+		}
 		*clindexp = i;
 		return (pmp);	/* hammer2_mntlk held */
 	}
@@ -758,6 +798,7 @@ hammer2_remote_serve(struct work_struct *work)
 	hammer2_tid_t tid = 0;
 	unsigned long t0 = jiffies;
 	uint32_t error = 0;
+	const char *why = NULL;
 	int clindex = 0, fed = 0, nerror, refused = 0, eof = 1;
 
 	/*
@@ -769,7 +810,7 @@ hammer2_remote_serve(struct work_struct *work)
 		error = HAMMER2_ERROR_ABORTED;
 		goto out;
 	}
-	pmp = hammer2_remote_pfs(req, &clindex, &error);
+	pmp = hammer2_remote_pfs(req, &clindex, &error, &why);
 	if (pmp == NULL && error) {
 		pr_warn_ratelimited("hammer2: HM2 %s not served: %s\n",
 		    hammer2_remote_cmd_name(req->idx),
@@ -779,8 +820,8 @@ hammer2_remote_serve(struct work_struct *work)
 		goto out;
 	}
 	if (pmp == NULL) {
-		pr_warn_ratelimited("hammer2: HM2 %s refused: no mounted PFS of that cluster on this device\n",
-		    hammer2_remote_cmd_name(req->idx));
+		pr_warn_ratelimited("hammer2: HM2 %s refused: %s\n",
+		    hammer2_remote_cmd_name(req->idx), why);
 		refused = 1;
 		goto out;
 	}
@@ -2324,10 +2365,11 @@ hammer2_remote_snapshot_del(hammer2_dev_t *cdev, const struct uuid *clid,
 
 /*
  * The kernel's own admission, beside h2service's: a copyinfo[] row of this
- * volume, enabled, with the span's cluster id.
+ * volume, enabled, with the span's cluster id, and with remote_pfs_type
+ * equal to type unless type is -1 (stage 5.5, rule 4).
  */
 static int
-hammer2_remote_admitted(hammer2_dev_t *hmp, const struct uuid *clid)
+hammer2_remote_admitted(hammer2_dev_t *hmp, const struct uuid *clid, int type)
 {
 	hammer2_volconf_t *v;
 	int i, ok = 0;
@@ -2336,6 +2378,7 @@ hammer2_remote_admitted(hammer2_dev_t *hmp, const struct uuid *clid)
 	for (i = 0; i < HAMMER2_COPYID_COUNT; ++i) {
 		v = &hmp->voldata.copyinfo[i];
 		if (v->copyid && (v->flags & DMSG_VOLF_ENABLED) &&
+		    (type < 0 || v->remote_pfs_type == type) &&
 		    bcmp(&v->pfs_clid, clid, sizeof(*clid)) == 0) {
 			ok = 1;
 			break;
@@ -2712,8 +2755,8 @@ hammer2_remote_reconcile(struct work_struct *work)
 	hammer2_spin_unex(&hmp->span_spin);
 
 	for (i = 0; i < n; ++i) {
-		if (!hammer2_remote_admitted(hmp, &cand[i].peer_id)) {
-			kprintf("HAMMER2: remote %s monitored: no enabled copyinfo row for its cluster\n",
+		if (!hammer2_remote_admitted(hmp, &cand[i].peer_id, HAMMER2_PFSTYPE_MASTER)) {
+			kprintf("HAMMER2: remote %s monitored: no enabled MASTER copyinfo row for its cluster\n",
 			    cand[i].name);
 			hammer2_remote_span_mark(hmp, &cand[i], 0);
 			continue;
