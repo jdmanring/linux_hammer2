@@ -29,7 +29,9 @@ Formatting, PFS management, snapshots and checking come from
 is needed: the source is `<device>@LABEL`, or `<dev1>:<dev2>@LABEL` for
 a filesystem across volumes, and the module's own options are `emerg`,
 `cluster_fd=` and the link's TLS inputs `cluster_tls=psk`,
-`cluster_tls_role`, `cluster_tls_keyring` and `cluster_tls_key`. Two module
+`cluster_tls_role`, `cluster_tls_keyring`, `cluster_tls_key` and
+`cluster_tls_clid`, which binds a cluster id to the key before it (up to
+ten). Two module
 parameters bear on the link: `cluster_tls_timeout_ms` (10000, fixed at
 load) bounds a handshake, and `cluster_tls_required` (0) refuses an intake
 that asks for no TLS when set to 1.
