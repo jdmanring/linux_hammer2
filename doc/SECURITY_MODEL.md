@@ -117,8 +117,7 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   same TLS inputs, and `script/cluster-wire.sh H2_WIRE_TLS=1` runs that
   link through a relay that copies bytes, read on `h2debug-7.3tls` at
   1.0.78 (37 checks with 0 failed, run `wire-run-20261102-221701`, kept
-  under `p7-notes/n9-5-wire-20261102-214846/` in the data tree); the two-host
-  synchronization pass over TLS is not read yet. Each key an intake
+  under `p7-notes/n9-5-wire-20261102-214846/` in the data tree); the two-host synchronization pass over TLS was read at 1.0.80. Each key an intake
   admits is bound to the cluster ids the intake names for it
   (`RECLUSTER`'s key and cluster-id pairs, or `cluster_tls_clid=` after
   its `cluster_tls_key=` on the mount path); an intake naming a serial

@@ -59,9 +59,10 @@ At a glance, on a kernel of 7.3 or newer:
   two hosts as well as on one (`doc/CLUSTER_PROTOCOL_DESIGN.md`, stages 1
   and 2). The link between hosts can run over kTLS with a pre-shared
   key, its peer then admitted by key and held to the cluster ids that
-  key is bound to; the synchronization pass P7 closes on has so far
-  been read only over a plaintext link, whose peer is admitted by a
-  marker file, and P7 closes once the pass is read over TLS. No run yet
+  key is bound to. The synchronization pass P7 closes on was read over
+  that link between two guests at 1.0.80, the images equal and both
+  volumes clean on the debug and KASAN builds, and P7 closes once that
+  reading and the five criteria are mapped in its closure. No run yet
   of a quorum that cannot be met, and no write through a PFS with a
   remote master, which stays read-only until P8's lease protocol
 + not yet: a package, and any write to media that is not a scratch

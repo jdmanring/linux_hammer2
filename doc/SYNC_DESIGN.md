@@ -1414,9 +1414,9 @@ counter.
   cluster the snapshot is of one element, and whether that is the right
   source is P8's question as much as P7's.
 - Who holds the keys. The harness's daemon, `test/h2service.c`, dials
-  only a peer with a `.pub` or `.none` file in its key directory, and
-  every link today is the `.none` kind, plaintext; keys move to `tlshd`
-  with kernel TLS in P8's TLS stage, after which P7 closes.
+  only a peer with a `.pub` or `.none` file in its key directory, and a `.none` link is plaintext; since 1.0.78 a `.pub` link runs over
+  kernel TLS with its key held by `tlshd`, and the pass ran over it at
+  1.0.80.
 - The `copyinfo[]` array the document retired and the format kept now
   has a role: the kernel registers a remote master's span only against
   an enabled row whose cluster id matches (`hammer2_remote_admitted()`,

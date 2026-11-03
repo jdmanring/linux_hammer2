@@ -2111,8 +2111,9 @@ failed over TLS (`wire-run-20261102-145555`, harness
 `e4ecb958c7135c5e`), 33 with 0 failed through the same relay in
 plaintext (`wire-run-20261102-145723`), and 18 with 0 failed with B
 given a wrong key (`wire-run-20261102-145849`). None of the three runs
-the synchronization pass, so the two-host pass over TLS is not read
-yet.
+the synchronization pass; the two-host pass over TLS was first read at
+1.0.80 (`wire-run-20261103-111156` on
+`h2debug-7.3tls`, `wire-run-20261103-113404` on `h2kasan-7.3tls`).
 
 **The identity a link proved, and what it admits (stage 5.5; designed,
 and built in parts).** What the code did before it, at `3341563`, each on

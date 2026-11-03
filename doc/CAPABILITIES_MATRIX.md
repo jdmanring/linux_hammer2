@@ -15,7 +15,7 @@ says so.
 | Deduplication | on by default | the write path asks before every data block is allocated | |
 | Compression | supported | per directory, `hammer2 setcomp lz4 <dir>` (or `zlib`, `autozero`, `none`) | no mount option; LZ4 and ZLIB read and written both ways with DragonFly; `setcomp` is run here only by `test/hammer2-seek.c`, with `none` and `zlib:9` |
 | Local replication | limited | a second PFS created with the first's cluster id, `hammer2 -s <mnt> -t SLAVE -u <clid> pfs-create <name>`, both volumes mounted | a master that changes while the slave is mounted reaches the slave's media at its unmount |
-| Replication from another host | limited | the remote element of `doc/CLUSTER_PROTOCOL_DESIGN.md`, driven by the test harness (`test/h2service.c`, `script/cluster-wire.sh`) | the pass read only over a plaintext link, though the link also runs over kTLS with a pre-shared key; the PFS is read-only; no shipped daemon |
+| Replication from another host | limited | the remote element of `doc/CLUSTER_PROTOCOL_DESIGN.md`, driven by the test harness (`test/h2service.c`, `script/cluster-wire.sh`) | the pass read over a plaintext link and, since 1.0.80, over kTLS with a pre-shared key; the PFS is read-only; no shipped daemon |
 | NFS export | supported | `exportfs` of a mounted PFS | read by `script/nfsd-export.sh` under both subtree modes |
 | `fallocate` | supported | `fallocate(1)`, including punch and zero range | no collapse or insert range (`EOPNOTSUPP`); an allocated range reserves no space and reads back as a hole, since the format stores no zero block |
 | `O_DIRECT` | not served | | by decision, `doc/README.roadmap.md`, "Not on the roadmap" |

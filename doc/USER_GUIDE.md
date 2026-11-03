@@ -89,8 +89,8 @@ A master changed while the slave is mounted reaches the slave's media
 at the slave's unmount.
 
 Replication from a master on another host exists, read-only, its pass
-read so far over a plaintext link (the link itself also runs over kTLS
-with a pre-shared key), and is driven today by the test harness
+read over a plaintext link and, since 1.0.80, over kTLS with a
+pre-shared key, and is driven today by the test harness
 (`script/cluster-wire.sh`); `doc/STATUS_SNAPSHOT.md` says where it stops.
 
 ## Export
