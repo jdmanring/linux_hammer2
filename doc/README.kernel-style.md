@@ -259,7 +259,7 @@ hits, read by line number. No category is new.
 
 1,600 to 1,602 with the refusal of any mount of a pass's source
 snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
-(`hammer2_remote.c:2621`), the same form checkpatch reads at
+(`hammer2_remote.c:2644`), the same form checkpatch reads at
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
 argument, its declaration in `hammer2.h`. No category is new.
 
@@ -295,6 +295,13 @@ own text, and the same upstream commit removed one of the two lines of
 trailing whitespace the 2026-10-16 carry baselined, the one after
 `kdio_printf()`'s first argument in `kdmsg_state_abort()`. No category
 is new.
+
+The moves from 1,615 to 1,625 were baselined without an entry here.
+
+1,625 to 1,626 with the descriptor swap's hook of stage 5.5. One more
+`function definition argument` is the hook's member in `struct
+kdmsg_iocom`, unnamed as its neighbor `exit_func` is. No category is
+new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

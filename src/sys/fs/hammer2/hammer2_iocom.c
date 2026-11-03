@@ -161,6 +161,20 @@ hammer2_iocom_uninit(hammer2_dev_t *hmp)
 }
 
 /*
+ * XXX Linux: the descriptor swap's hook, called by kdmsg_iocom_reconnect()
+ * with msglk held once the old connection's threads are reaped and before
+ * the new ones start, so whatever it installs is seen by every reader of
+ * the new connection and by none of the old.  Spinlocks only.
+ */
+static void
+hammer2_link_swap(kdmsg_iocom_t *iocom)
+{
+	hammer2_dev_t *hmp = iocom->handle;
+
+	hammer2_remote_swap(hmp);
+}
+
+/*
  * XXX Linux: what hammer2_cluster_reconnect() ran after its quiesce,
  * run by the work item with the quiesce done.
  */
@@ -181,6 +195,7 @@ hammer2_cluster_tail(hammer2_dev_t *hmp, struct file *fp)
 	 * the link up and every span closed.
 	 */
 	hmp->iocom.auto_callback = HAMMER2_CTL_NOCONNFIX ? NULL : hammer2_autodmsg;
+	hmp->iocom.swap_callback = hammer2_link_swap;	/* XXX Linux */
 	kdmsg_iocom_reconnect(&hmp->iocom, fp, "hammer2");
 	hammer2_ctl_connwait();	/* XXX Linux: the control's window, else nothing */
 
@@ -337,7 +352,7 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 		    msg->any.lnk_conn.proto_version == DMSG_SPAN_PROTO_2) {
 			msg->state->iocom->flags |= KDMSG_IOCOMF_PROTO2;
 			kprintf("HAMMER2: peer speaks DMSG_SPAN_PROTO_2\n");
-			hammer2_remote_resume(hmp);	/* XXX Linux: admits from here */
+			hammer2_remote_resume(hmp);	/* XXX Linux: lifts AWAITING */
 		}
 		break;
 	case DMSG_LNK_CONN | DMSGF_CREATE | DMSGF_REPLY:

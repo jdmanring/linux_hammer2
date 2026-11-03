@@ -154,6 +154,13 @@ kdmsg_iocom_reconnect(kdmsg_iocom_t *iocom, struct file *fp,
 	iocom->flags &= ~KDMSG_IOCOMF_EXITNOACC;
 	/* XXX Linux: the peer's protocol is a property of the connection. */
 	iocom->flags &= ~KDMSG_IOCOMF_PROTO2;
+	/*
+	 * XXX Linux: the old connection's threads are gone and the new ones
+	 * not yet made, so the caller installs what belongs to the new
+	 * connection here, with msglk held; it may take spinlocks only.
+	 */
+	if (iocom->swap_callback)
+		iocom->swap_callback(iocom);
 
 	lwkt_create(kdmsg_iocom_thread_rd, iocom, &iocom->msgrd_td,
 		    NULL, 0, -1, "%s-msgrd", subsysname);

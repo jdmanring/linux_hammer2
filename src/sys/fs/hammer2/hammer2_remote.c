@@ -67,6 +67,7 @@ struct hammer2_remote_snap {
 #define HAMMER2_REMOTE_OPEN	0	/* requests admitted */
 #define HAMMER2_REMOTE_QUIESCED	1	/* refused until the next announcement */
 #define HAMMER2_REMOTE_CLOSED	2	/* refused for good, the device is going */
+#define HAMMER2_REMOTE_AWAITING	3	/* refused until the new connection's announcement */
 
 struct hammer2_remote_req {
 	struct work_struct	work;
@@ -166,8 +167,10 @@ hammer2_remote_init(hammer2_dev_t *hmp)
  * admission closes under the same lock the reader queues under, and why
  * the queue itself is freed only by hammer2_remote_uninit(), after the
  * message threads are gone.  A reconnect's close is QUIESCED, which the
- * new connection's peer lifts by announcing PROTO_2, on the reader that
- * admits (hammer2_remote_resume()); a teardown's close is CLOSED and
+ * descriptor swap turns to AWAITING once the old reader is reaped
+ * (hammer2_remote_swap()) and the new connection's peer then lifts by
+ * announcing PROTO_2, on the reader that admits
+ * (hammer2_remote_resume()); a teardown's close is CLOSED and
  * nothing lifts it, so an announcement read during the teardown admits
  * nothing.  The caller holds hammer2_mntlk.
  */
@@ -189,8 +192,28 @@ hammer2_remote_quiesce(hammer2_dev_t *hmp, int final)
 }
 
 /*
+ * The descriptor swap, with msglk held: the old connection's reader is
+ * gone, so a reconnect's QUIESCED becomes AWAITING, which only the new
+ * connection's announcement lifts.  A teardown's CLOSED is left alone.
+ */
+void
+hammer2_remote_swap(hammer2_dev_t *hmp)
+{
+	struct hammer2_remote *rm = hmp->remote;
+
+	if (rm == NULL)
+		return;
+	spin_lock(&rm->lock);
+	if (rm->state == HAMMER2_REMOTE_QUIESCED)
+		rm->state = HAMMER2_REMOTE_AWAITING;
+	spin_unlock(&rm->lock);
+}
+
+/*
  * The peer announced PROTO_2, on the reader thread: requests are admitted
- * and the keepalive starts, its first ping half a bound from now.
+ * and the keepalive starts, its first ping half a bound from now.  Only
+ * AWAITING is lifted, so an announcement the old connection's peer sends
+ * between the quiesce and the swap admits nothing.
  */
 void
 hammer2_remote_resume(hammer2_dev_t *hmp)
@@ -200,7 +223,7 @@ hammer2_remote_resume(hammer2_dev_t *hmp)
 	if (rm == NULL)
 		return;
 	spin_lock(&rm->lock);
-	if (rm->state == HAMMER2_REMOTE_QUIESCED)
+	if (rm->state == HAMMER2_REMOTE_AWAITING)
 		rm->state = HAMMER2_REMOTE_OPEN;
 	rm->ping_sent = 0;
 	spin_unlock(&rm->lock);

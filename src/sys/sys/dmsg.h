@@ -886,6 +886,7 @@ struct kdmsg_iocom {
 	void			(*auto_callback)(kdmsg_msg_t *);
 	int			(*rcvmsg)(kdmsg_msg_t *);
 	void			(*exit_func)(struct kdmsg_iocom *);
+	void			(*swap_callback)(struct kdmsg_iocom *); /* XXX Linux */
 	struct kdmsg_state	state0;		/* root state for stacking */
 	struct kdmsg_state	*conn_state;	/* active LNK_CONN state */
 	struct kdmsg_state	*freerd_state;	/* allocation cache */
