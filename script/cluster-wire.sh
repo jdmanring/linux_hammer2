@@ -1731,7 +1731,7 @@ fi
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
 # under STALE B's device is unmounted twice, each time with A's spans held,
 # and under the cut's disconnect B holds them over two links
-nlk=$((STALE + 1)); case $CUT in disconnect|master|loss|dup|reorder|trail|late) nlk=2;; esac
+nlk=$((STALE + 1)); case $CUT in disconnect|master|loss|dup|reorder|trail|late|withdraw) nlk=2;; esac
 [ "$SEQ" = control ] && nlk=1
 # A restarted on the cut media advertises the pass's source snapshot when
 # the cut left it there; the stale delete that follows sends no span
@@ -1929,6 +1929,7 @@ elif [ -n "$CUT" ]; then
 		dup) el='peer sent a feed out of sequence, ending the link';;
 		late) el="peer sent another call's feed, ending the link";;
 		trail) el='peer sent a frame after its reply closed, ending the link';;
+		withdraw) el='no line: the link stays up';;
 		esac
 		nh=$(grep -c '^hangup ' "$tr" 2>/dev/null)
 		bk=$FIXDIR/wire-run-$stamp-b.klog
@@ -1941,7 +1942,9 @@ elif [ -n "$CUT" ]; then
 		else to=other; fi
 		# B's pings A answered between the withdrawal and the relay's hangup:
 		# the link up while the element left
-		wp=$(awk '/ withdraw t=/ { s = 1; next } /^hangup / { exit } s && /^A>B .* deliver / && / cmd=[ef].0001/ { n++ } END { print n + 0 }' "$tr" 2>/dev/null)
+		wp=$(awk '/ withdraw t=/ { s = 1; next } /^hangup / { exit } !s || !/ deliver / { next } { c = m = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^cmd=/) c = substr($i, 5); else if ($i ~ /^msgid=/) m = substr($i, 7) } }
+		    /^B>A / && substr(c, 3, 4) == "0001" && substr(c, 1, 1) ~ /^[cd]$/ { p[m] = 1 }
+		    /^A>B / && substr(c, 1, 1) ~ /^[ef]$/ && (m in p) { n++; delete p[m] } END { print n + 0 }' "$tr" 2>/dev/null)
 		# A silent copy leaves the pass running through the wait, and a
 		# pass that verifies there deletes the source by its own path: A
 		# has no snapshot left for the link, and with the master idle no
