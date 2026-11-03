@@ -56,9 +56,10 @@ has been read back by DragonFly and the other way round
   is itself a snapshot. A TLS key is bound to cluster ids at the intake,
   and the link refuses spans, registrations and requests outside that
   set. A revoked key is refused at its next handshake, but a link already
-  up stays up until the volume is unmounted or the cluster's row is
-  removed, and an intake that fails leaves the old link and its binding
-  running. On a plaintext link the kernel verifies no peer identity, so
+  up stays up until the volume is unmounted; removing or disabling the
+  cluster's row stops that cluster's service on every link at the next
+  request, at the cost of every peer of that cluster. An intake that
+  fails leaves the old link and its binding running. On a plaintext link the kernel verifies no peer identity, so
   whoever the userland service connects is admitted to every cluster the
   device has a row for and is sent every configured peer row as
   `VOLCONF`, dial paths included; the test harness's `h2service` chooses
