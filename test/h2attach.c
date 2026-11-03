@@ -1317,7 +1317,7 @@ usage(void)
 	    " hm2read hm2scanall hm2lookup hm2bmap hm2scanlhc hm2refuse hm2snap\n"
 	    "       hm2 options: [--pfs LABEL] [--inum N] [--key K] [--name S]"
 	    " [--count N] [--nmax N] [--out FILE] [--nocont 1]\n"
-	    "       hm2snap: [--clid UUID] [--snapdel 1] [--delclid UUID]\n"
+	    "       hm2snap: [--clid UUID] [--snapdel 1] [--delclid UUID] [--snapself 1]\n"
 	    "       tls: tlslink --attach2 M2 --keyring R --admit K --key K2"
 	    " [--tls psk|none] [--port P]; tlsclient --key K [--port P];\n"
 	    "            tlslink, the server's keys: [--admit2 K] [--sbind SLOT:UUID]...,"
@@ -1337,7 +1337,7 @@ main(int argc, char **argv)
 	const char *pfs = "ROOT", *name = NULL, *out = NULL, *mnt2 = NULL;
 	const char *tlsmode = "psk", *send = "none";
 	const char *clid_opt = NULL, *delclid_opt = NULL, *bindclid_opt = NULL;
-	int ring = 0, admit = 0, hsaccept = 0, snapdel = 0, spans = 0;
+	int ring = 0, admit = 0, hsaccept = 0, snapdel = 0, snapself = 0, spans = 0;
 	long linger_ms = 0;
 	struct uuid uclid, udelclid;
 	uint64_t inum = 1, key = 0;
@@ -1376,17 +1376,21 @@ main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--clid")) clid_opt = argv[i + 1];
 		else if (!strcmp(argv[i], "--delclid")) delclid_opt = argv[i + 1];
 		else if (!strcmp(argv[i], "--snapdel")) snapdel = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--snapself")) snapself = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--spans")) spans = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--linger-ms")) linger_ms = atol(argv[i + 1]);
 		else if (!strcmp(argv[i], "--bindclid")) bindclid_opt = argv[i + 1];
 		else if (!strcmp(argv[i], "--admit2")) admit2 = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--sbind")) {
-			const char *u = strchr(argv[i + 1], ':');
+			char *u;
+			long sl = strtol(argv[i + 1], &u, 10);
 
-			if (nsbind == HAMMER2_LINK_TLS_MAXBIND || u == NULL ||
+			/* a slot names one of the server's two keys */
+			if (nsbind == HAMMER2_LINK_TLS_MAXBIND || u == argv[i + 1] ||
+			    *u != ':' || sl < 0 || sl > 1 ||
 			    uuid_parse_text(u + 1, &sbind[nsbind].clid) < 0)
 				usage();
-			sbind[nsbind++].slot = atoi(argv[i + 1]);
+			sbind[nsbind++].slot = (int)sl;
 		} else if (!strcmp(argv[i], "--cbind")) {
 			if (ncbind == HAMMER2_LINK_TLS_MAXBIND ||
 			    uuid_parse_text(argv[i + 1], &cbind[ncbind]) < 0)
@@ -1402,6 +1406,10 @@ main(int argc, char **argv)
 	}
 	if (bindclid_opt)	/* the intake binds this id alone */
 		nbind_clid = bind_fixed = 1;
+	if (admit2 && nsbind == 0) {	/* recluster_key() reads it only with --sbind */
+		fprintf(stderr, "h2attach: --admit2 needs --sbind\n");
+		return (2);
+	}
 	(void)send;	/* read by tlspeer alone, which the static build lacks */
 	(void)spans; (void)linger_ms;
 	if (action != NULL && !strcmp(action, "hsstub"))
@@ -1440,6 +1448,7 @@ main(int argc, char **argv)
 		const int S = HAMMER2_LINK_TLS_SERVER;
 		int sv[2], e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_key;
 		int e_ulp, ulp_set = -1, e_req, e_plain, e_dup, e_nobind, e_keynobind, c, p;
+		int e_toomany, e_noslot;
 		struct hammer2_ioc_recluster recl;
 		char before[16], set[16], after[16];
 
@@ -1485,6 +1494,29 @@ main(int argc, char **argv)
 		recl.tls.nbind = 1;
 		e_keynobind = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
 		close(c); close(p);
+		/* a client with one more binding than an intake holds, each
+		 * of its key; bind[] has MAXBIND entries, so the count alone
+		 * is past it */
+		c = tcp_pair(&p);
+		memset(&recl, 0, sizeof(recl));
+		recl.fd = c;
+		recl.tls.mode = P;
+		recl.tls.role = C;
+		recl.tls.nkeys = 1;
+		recl.tls.keys[0] = tls_key_base;
+		recl.tls.nbind = HAMMER2_LINK_TLS_MAXBIND + 1;
+		e_toomany = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
+		close(c); close(p);
+		/* a binding naming slot 1 of one key, beside one that binds
+		 * key 0, so only the slot's range refuses it */
+		c = tcp_pair(&p);
+		recl.fd = c;
+		recl.tls.nbind = 2;
+		recl.tls.bind[0].clid = bind_clid[0];
+		recl.tls.bind[1].slot = 1;
+		recl.tls.bind[1].clid = bind_clid[0];
+		e_noslot = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
+		close(c); close(p);
 		/* Plaintext with nkeys far past keys[] and every byte after the
 		 * mode positive: the key checks are PSK's, so this is admitted
 		 * with nothing past keys[] read.  Its link ends as sv closes,
@@ -1496,15 +1528,16 @@ main(int argc, char **argv)
 		recl.tls.nkeys = 1000;
 		e_plain = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
 		close(sv[0]); close(sv[1]);
-		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d key=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s plain=%d nobind=%d dup=%d keynobind=%d\n",
+		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d key=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s plain=%d nobind=%d dup=%d keynobind=%d toomany=%d noslot=%d\n",
 		    e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_key, e_ulp,
 		    ulp_set, e_req, before, set, after, e_plain, e_nobind, e_dup,
-		    e_keynobind);
+		    e_keynobind, e_toomany, e_noslot);
 		return (e_unix == EINVAL && e_mode == EINVAL && e_nkeys == EINVAL &&
 		    e_client == EINVAL && e_server == EINVAL && e_role == EINVAL &&
 		    e_key == EINVAL && ulp_set == 0 && e_ulp == EBUSY && e_req == EINVAL &&
 		    e_plain == 0 && !strcmp(set, "1") && !strcmp(after, "0") &&
-		    e_nobind == EINVAL && e_dup == EINVAL && e_keynobind == EINVAL ? 0 : 1);
+		    e_nobind == EINVAL && e_dup == EINVAL && e_keynobind == EINVAL &&
+		    e_toomany == EINVAL && e_noslot == EINVAL ? 0 : 1);
 	}
 
 	/*
@@ -1568,7 +1601,7 @@ main(int argc, char **argv)
 	if (!strcmp(action, "tlsaccept")) {
 		struct sockaddr_in a;
 		struct pollfd pf;
-		int l, p = -1, e = -1;
+		int l, p = -1, e = -1, r;
 
 		l = tcp_listen(&a);
 		printf("h2attach tlsaccept: listening port=%d\n",
@@ -1576,8 +1609,14 @@ main(int argc, char **argv)
 		fflush(stdout);
 		pf.fd = l;
 		pf.events = POLLIN;
-		if (poll(&pf, 1, (int)hold_max_ms) == 1)
-			p = accept(l, NULL, NULL);
+		r = poll(&pf, 1, (int)hold_max_ms);
+		if (r < 0)
+			perror("h2attach tlsaccept: poll");
+		else if (r == 0)
+			fprintf(stderr, "h2attach tlsaccept: no connection in %ld ms\n",
+			    hold_max_ms);
+		else if ((p = accept(l, NULL, NULL)) < 0)
+			perror("h2attach tlsaccept: accept");
 		close(l);
 		if (p >= 0) {
 			e = recluster_key(mfd, p, HAMMER2_LINK_TLS_PSK,
@@ -1671,18 +1710,40 @@ main(int argc, char **argv)
 		printf("h2attach tlspeer: send=%s rc=%d conn=%d spans=%d shell1=%d"
 		    " err1=%u shell2=%d err2=%u eof=%d frames=%d ms=%ld\n", send, sr,
 		    hs.conn, hs.spans, sh1, err1, sh2, err2, eof, f, now_ms() - t0);
-		if ((spans || linger_ms) && eof != 1) {
+		if (clid_opt && !spans && !linger_ms && eof != 1) {
+			/*
+			 * Stage 5.5: one HM2 request for --clid, which the
+			 * kernel serves once the PROTO_2 prelude opens it,
+			 * whatever its TLS role; a cluster its intake did not
+			 * bind is refused however mounted and rowed.
+			 */
+			struct hm2ctx hc;
+			struct hm2reply hr;
+			uint32_t cerr = 0;
+			int c2 = proto2_prelude(dfd, &cerr, &o);
+
+			memset(&hc, 0, sizeof(hc));
+			hm2_request(dfd, 0, (const uint8_t *)&uclid, 1, 0, 0, 0,
+			    NULL, &hc, &hr);
+			printf("h2attach tlspeer: request conn2=%d clid=%s found=%d"
+			    " closed=%d refused=%d error=%u ms=%ld", c2,
+			    uuid_text(&uclid), hc.inodes, hr.closed, hr.refused,
+			    hr.error, hr.ms);
+		} else if ((spans || linger_ms) && eof != 1) {
 			/*
 			 * Stage 5.5: with --spans 1, a MASTER span for the
-			 * cluster id the kernel's intake bound and one for an
-			 * id it did not; then --linger-ms of whatever the
+			 * cluster id the kernel's intake bound and one for
+			 * --clid's or a fixed id, which it did not; then
+			 * --linger-ms of whatever the
 			 * kernel sends, an HM2 request among it being
 			 * registration's fetch of the bound span's root, until
 			 * the bound or the link's end.  Every VOLCONF of the
 			 * session is printed by cluster id.
 			 */
-			static const uint8_t other[16] = { 0x0e, 0x7e, 0x55, 0xa5,
+			static const uint8_t fixed[16] = { 0x0e, 0x7e, 0x55, 0xa5,
 			    0x5a, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 };
+			const uint8_t *other = clid_opt ? (const uint8_t *)&uclid :
+			    fixed;
 			uint8_t body[432 - 64];
 			struct dmsg_hdr h;
 			uint32_t e1 = 0, e2 = 0, cerr = 0;
@@ -2049,12 +2110,15 @@ main(int argc, char **argv)
 			snprintf(want, sizeof(want), "%s.h2sync-peer", pfs);
 			for (i = 0; i < count; i++) {
 				memset(&c, 0, sizeof(c));
-				hm2_request(dfd, DMSG_HM2_SNAPSHOT_IDX, clid, 1, 0,
+				/* --snapself 1: once one is taken, name it */
+				hm2_request(dfd, DMSG_HM2_SNAPSHOT_IDX,
+				    snapself && ok ? taken : clid, 1, 0,
 				    0, 0, "h2attach-snap", &c, &r);
 				served = r.closed && !r.refused && r.error == 0 &&
 				    c.inodes == 1;
-				if (served) {
-					ok++;
+				/* the first taken is the one --snapself names and
+				 * --snapdel deletes */
+				if (served && ok++ == 0) {
 					memcpy(taken, &c.meta.pfs_clid, 16);
 				}
 				memset(&lk, 0, sizeof(lk));

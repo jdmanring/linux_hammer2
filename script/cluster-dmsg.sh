@@ -342,6 +342,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		echo "$((t / 10)).$((t % 10))"
 	}
 	cap_start() {	# cap_start <port>
+		: > /tmp/h2tls-$1.err
 		tcpdump -i lo -U -w /tmp/h2tls-$1.pcap "tcp port $1" 2>/tmp/h2tls-$1.err &
 		CPID=$!
 		n=0; until grep -q listening /tmp/h2tls-$1.err 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
@@ -396,6 +397,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		# quiesce while a row for Y is added; the old peer must read no
 		# VOLCONF for Y, the new one Y's row, and the new peer's span
 		# for Y is not refused
+		: > /tmp/h2peer-s1a.out	# before the child, or the wait reads a previous run's
 		$P --attach $M --action tlspeer --key $K1 --send none --port 7971 --linger-ms 30000 > /tmp/h2peer-s1a.out 2>&1 &
 		PA=$!
 		n=0; until grep -q 'send=none' /tmp/h2peer-s1a.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 150 ] && break; done
@@ -513,6 +515,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	tpeer arm14 close 7984
 
 	client() {	# client <arm> <mount> <key> <port>: the intake, its peer held in the background
+		: > /tmp/h2tls-$1.out	# before the child, or the wait reads a previous run's
 		$A --attach $2 --action tlsclient --key $3 --port $4 --hold-max-ms 25000 > /tmp/h2tls-$1.out 2>&1 &
 		CLPID=$!
 		n=0; until grep -q 'errno=' /tmp/h2tls-$1.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
@@ -526,7 +529,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "arm5-wait-refused $(until_n 150 $((r0 + 1)) refused)"
 	sleep 1; after arm5; client_end arm5
 	echo "arm5-keyfail $(($(tlog_any 'Key has been revoked') - kf0))"
-	grep 'cluster link refused' $K | tail -1 | sed 's/^/arm5-line /'
+	grep 'cluster link refused:' $K | tail -1 | sed 's/^/arm5-line /'
 
 	# arm 6, no agent at all
 	s6-rc -d change tlshd-srv
@@ -541,6 +544,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo 1 > $T/events/handshake/handshake_cancel/enable
 	cancels() { grep -c 'handshake_cancel:' $T/trace; }
 	stub() {	# stub <accept>
+		: > /tmp/h2stub-$1.out	# before the child, or the wait reads a previous run's
 		$A --action hsstub --accept $1 --hold-max-ms 120000 > /tmp/h2stub-$1.out 2>&1 &
 		STPID=$!
 		n=0; until grep -q joined /tmp/h2stub-$1.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
@@ -634,8 +638,13 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	# a MASTER span for XB and one for an unbound id; a row for W added
 	# and deleted while the link lingers
 	echo "s55peer-rows $($S add $M --clid $XB --label xb --path span:127.0.0.1:1 --type slave 2>&1 | tr '\n' ' ')$($S add $M --clid $Z --label z --path span:127.0.0.1:2 2>&1 | tr '\n' ' ')"
-	snap s55peer; sr0=$(klog 'cluster link refused a span of cluster'); mon0=$(klog 'monitored: no enabled MASTER copyinfo row')
-	$P --attach $M --action tlspeer --key $K1 --send none --port 7981 --spans 1 --linger-ms 9000 > /tmp/h2peer-s55.out 2>&1 &
+	# The unbound span is Z's, a MASTER row, so registration's own
+	# binding test (hammer2_remote_reconcile()) is the next to decide
+	# once hammer2_span_add()'s is gone: unreachable while it stands,
+	# read by the regbind control alone.
+	snap s55peer; sr0=$(klog 'cluster link refused a span of cluster'); mon0=$(klog 'monitored: no enabled MASTER copyinfo row'); rg0=$(klog 'monitored: the link did not prove its cluster')
+	: > /tmp/h2peer-s55.out	# before the child, or the wait reads a previous run's
+	$P --attach $M --action tlspeer --key $K1 --send none --port 7981 --spans 1 --linger-ms 9000 --clid $Z > /tmp/h2peer-s55.out 2>&1 &
 	PPID5=$!
 	n=0; until grep -q 'handshake=' /tmp/h2peer-s55.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 150 ] && break; done
 	sleep 4
@@ -646,7 +655,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	lines s55peer-out < /tmp/h2peer-s55.out
 	t=0; while [ "$(threads)" != 0 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
 	after s55peer
-	echo "s55peer-lines spanrefused=$(($(klog 'cluster link refused a span of cluster') - sr0)) monitored=$(($(klog 'monitored: no enabled MASTER copyinfo row') - mon0)) listed21=$(klog 'label=h2attach-span-21 ') listed22=$(klog 'label=h2attach-span-22 ')"
+	echo "s55peer-lines spanrefused=$(($(klog 'cluster link refused a span of cluster') - sr0)) monitored=$(($(klog 'monitored: no enabled MASTER copyinfo row') - mon0)) listed21=$(klog 'label=h2attach-span-21 ') listed22=$(klog 'label=h2attach-span-22 ') regrefused=$(($(klog 'monitored: the link did not prove its cluster') - rg0))"
 	for p in 1 2; do $S del $M --path span:127.0.0.1:$p >/dev/null 2>&1; done
 
 	# the row requirement on a plaintext link: refused with no row,
@@ -657,6 +666,14 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "s55a-row $($S add $M --clid $XB --label xb --path span:127.0.0.1:1 2>&1 | tr '\n' ' ')"
 	out=$($A --attach $M --action hm2root 2>&1); echo "s55a-row-rc $?"; echo "s55a-served $out"
 	echo "s55a-lines norow=$(($(klog 'refused: no enabled copyinfo row for that cluster') - nr0))"
+
+	# The request bind: XB is mounted and has a row, and the TLS peer's
+	# link proved only Z, so its request for XB is refused at the bind
+	sleep 1; nb0=$(klog 'refused: the link did not prove that cluster')
+	out=$($P --attach $M --action tlspeer --key $K1 --send none --port 7987 --bindclid $Z --clid $XB 2>&1); echo "s55o-rc $?"
+	echo "$out" | lines s55o-out
+	t=0; while [ "$(threads)" != 0 ] && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
+	echo "s55o-lines unproved=$(($(klog 'refused: the link did not prove that cluster') - nb0))"
 
 	# SNAPSHOT of ROOT twice on one link, then once with SNAPDEL.  A
 	# link's snapshots go at its teardown, which a reconnect or the
@@ -671,6 +688,13 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	sleep 2
 	echo "s55b-left n=$(($(klog 'left by the link deleted') - lb)) err0=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | grep -c 'ROOT.h2sync-peer left by the link deleted, error 0')"
 	echo "s55c-left listed=$(pl ROOT.h2sync-peer) deleted=$(klog 'peer deleted ROOT.h2sync-peer error 0')"
+
+	# a SNAPSHOT naming the link's own snapshot: served by its entry
+	# though unmounted, so only the snapshot's mount test refuses it; the
+	# SNAPDEL after leaves the teardown nothing, as s55c's
+	sleep 1; us0=$(klog 'refused a snapshot of ROOT.h2sync-peer, which is not a mounted MASTER element')
+	hsnap s55l --pfs ROOT --count 2 --snapself 1 --snapdel 1
+	echo "s55l-lines unmounted=$(($(klog 'refused a snapshot of ROOT.h2sync-peer, which is not a mounted MASTER element') - us0)) double=$(pl ROOT.h2sync-peer.h2sync-peer) listed=$(pl ROOT.h2sync-peer)"
 
 	# a SLAVE source: SL a MASTER on vdc and a SLAVE on vdb, one cluster
 	# mounted through vdc
@@ -707,6 +731,16 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	out=$($A --attach $M --action hm2root --clid "$XCL" 2>&1); echo "s55k-unmounted $out"
 	echo "s55k-lines unmounted=$(($(klog 'refused: no mounted PFS of that cluster on this device') - um0))"
 
+	# the source gate on vdb's two newfs PFSs under the pass's names, a
+	# read-only mount each; after s55f, whose peer name a mount would hold
+	mkdir -p /mnt/h2q; sg0=$(klog 'mount refused: a synchronization source')
+	for s in peer src; do
+		rc=0; mount -t hammer2 -o ro /dev/vdb@CL.h2sync-$s /mnt/h2q 2>/dev/null || rc=$?
+		echo "s55q-$s rc=$rc"
+		mountpoint -q /mnt/h2q && umount /mnt/h2q
+	done
+	echo "s55q-lines refused=$(($(klog 'mount refused: a synchronization source') - sg0))"
+
 	# a source whose label is 128 bytes
 	LL=$(printf '%0128d' 0 | tr 0 L)
 	hammer2 -s $M pfs-create "$LL" >/dev/null 2>&1; XLL=$(pc $M "$LL")
@@ -732,6 +766,18 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	mkdir -p /mnt/h2opt
 	out=$(mount -t hammer2 -o "cluster_tls_clid=$XB,cluster_tls_key=5" /dev/vdb@ROOT /mnt/h2opt 2>&1); rc=$?
 	echo "s55j rc=$rc said=$(echo "$out" | tr '\n' ' ') klog=$(klog 'cluster_tls_clid before any cluster_tls_key')"
+	mountpoint -q /mnt/h2opt && umount /mnt/h2opt
+	# the option parser's bounds: an eleventh binding, and a binding
+	# that is not a uuid.  Eleven distinct ids: eleven copies of one
+	# never reached the parser's bound, the mount failing later as
+	# already mounted (n9-6-drive-tls-h2debug-7.3tls-20261103-100848.log:78),
+	# which a repeated option dropped in userland would explain
+	o=cluster_tls_key=5; i=0; while [ $i -lt 11 ]; do o=$o,cluster_tls_clid=$(printf '5a5a5a5a-0000-4000-8000-%012d' $i); i=$((i + 1)); done
+	out=$(mount -t hammer2 -o "$o" /dev/vdb@ROOT /mnt/h2opt 2>&1); rc=$?
+	echo "s55r-many rc=$rc said=$(echo "$out" | tr '\n' ' ') klog=$(klog 'more than 10 cluster_tls_clid')"
+	mountpoint -q /mnt/h2opt && umount /mnt/h2opt
+	out=$(mount -t hammer2 -o cluster_tls_key=5,cluster_tls_clid=not-a-uuid /dev/vdb@ROOT /mnt/h2opt 2>&1); rc=$?
+	echo "s55r-uuid rc=$rc said=$(echo "$out" | tr '\n' ' ') klog=$(klog 'cluster_tls_clid is not a uuid')"
 	mountpoint -q /mnt/h2opt && umount /mnt/h2opt
 
 	# A link's cluster ids are those its intake bound to the key it
@@ -763,16 +809,33 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		arm_link $1 $2 --keyring $RING --admit $K1 --admit2 $K6 --sbind 0:$XCL --sbind 1:$XB --sbind 1:$XC --key $3 --cbind $XB --cbind $XC --cbind $XCL
 		keysel_lines $1
 	done
-	umount $M
-	snap s55n; rx0
-	$A --attach $M2 --action tlsaccept --port 7986 --key $K6 --cbind $XB --cbind $XC --cbind $XCL --hold-max-ms 20000 > /tmp/h2acc.out 2>&1 &
-	APID=$!
-	n=0; until grep -q listening /tmp/h2acc.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+	# s55n2 is the same mount with the client proving K1, the mount
+	# path's twin of s55m2.
 	o=cluster_fd=3,cluster_tls=psk,cluster_tls_role=server,cluster_tls_keyring=$RING,cluster_tls_key=$K1,cluster_tls_clid=$XCL,cluster_tls_key=$K6,cluster_tls_clid=$XB,cluster_tls_clid=$XC
-	bash -c "exec 3<>/dev/tcp/127.0.0.1/7986 || exit 99; exec mount -t hammer2 -o $o /dev/vdb@ROOT $M"; echo "s55n-mount rc=$?"
-	wait $APID; echo "s55n-accept rc=$? $(tr '\n' ' ' < /tmp/h2acc.out)"
-	keysel_lines s55n
+	for k in s55n:7986:$K6 s55n2:7988:$K1; do
+		set -- $(echo $k | tr : ' ')
+		mountpoint -q $M && umount $M
+		snap $1; rx0
+		: > /tmp/h2acc.out	# before the child, or the wait reads a previous run's
+		$A --attach $M2 --action tlsaccept --port $2 --key $3 --cbind $XB --cbind $XC --cbind $XCL --hold-max-ms 20000 > /tmp/h2acc.out 2>&1 &
+		APID=$!
+		n=0; until grep -q listening /tmp/h2acc.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+		bash -c "exec 3<>/dev/tcp/127.0.0.1/$2 || exit 99; exec mount -t hammer2 -o $o /dev/vdb@ROOT $M"; echo "$1-mount rc=$?"
+		wait $APID; echo "$1-accept rc=$? $(tr '\n' ' ' < /tmp/h2acc.out)"
+		keysel_lines $1
+	done
 	mountpoint -q $M || mount -t hammer2 /dev/vdb@ROOT $M
+	umount $M2; umount $M
+
+	# The local pass's stale delete takes only a snapshot: vdb's newfs
+	# CL.h2sync-src is none, and a SLAVE of CL on vdc starts the pass.
+	# Both mounts again with no link, so vdc's new CL is announced to no
+	# peer; the unmount of both stops the thread, the tree arm's path.
+	mount -t hammer2 /dev/vdb@ROOT $M && mount -t hammer2 /dev/vdc@ROOT $M2 || { echo "s55p remount failed"; exit 1; }
+	sk0=$(klog 'PFS CL.h2sync-src kept: a stale delete takes only a snapshot'); se0=$(klog 'syncsnap: stale CL.h2sync-src error 17'); sd0=$(klog 'syncsnap: stale CL.h2sync-src deleted')
+	hammer2 -s $M2 -t SLAVE -u "$XCL" pfs-create CL >/dev/null 2>&1; echo "s55p-create $?"
+	echo "s55p-wait $(until_n 300 $((se0 + 1)) klog 'syncsnap: stale CL.h2sync-src error 17')"
+	echo "s55p-lines kept=$(($(klog 'PFS CL.h2sync-src kept: a stale delete takes only a snapshot') - sk0)) error17=$(($(klog 'syncsnap: stale CL.h2sync-src error 17') - se0)) deleted=$(($(klog 'syncsnap: stale CL.h2sync-src deleted') - sd0)) listed=$(pl 'CL\.h2sync-src')"
 	umount $M2; umount $M
 	echo "s55-left-total n=$(($(klog 'left by the link deleted') - lb)) lines=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | tr '\n' '|')"
 	echo $((0x100)) > /sys/module/hammer2/parameters/debug
@@ -863,7 +926,7 @@ out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $o
 out=$($A --attach $M --action tlsrefuse 2>&1); echo "tlsrefuse-rc $?"; echo "tlsrefuse $out"
 sleep 1
 echo "handshake-upcall $(grep -c ' handshake_req_alloc$' /proc/kallsyms)"
-echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') key=$(klog 'refused: a key serial must be positive') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall') nobind=$(klog 'refused: a TLS intake binds no cluster id') dup=$(klog 'refused: a key serial is listed twice') keynobind=$(klog 'refused: an admitted key binds no cluster id')"
+echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') key=$(klog 'refused: a key serial must be positive') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall') nobind=$(klog 'refused: a TLS intake binds no cluster id') dup=$(klog 'refused: a key serial is listed twice') keynobind=$(klog 'refused: an admitted key binds no cluster id') toomany=$(klog 'refused: too many cluster id bindings') noslot=$(klog 'refused: a cluster id binding names no key')"
 for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	out=$($A --attach $M --action $act --trace /tmp/h2attach-$act.trace 2>&1); rc=$?
 	echo "$act-rc $rc"; echo "$act $out"
@@ -918,6 +981,7 @@ echo "log-shitcan-before $(klog shitcanning)"
 
 # the held connection: the daemon neither reads nor writes while the
 # volume is unmounted under it
+: > /tmp/hold.out	# before the child, or the wait reads a previous run's
 $A --attach $M --action hold --hold-max-ms 40000 > /tmp/hold.out 2>&1 &
 HPID=$!
 n=0; until grep -q holding /tmp/hold.out 2>/dev/null; do sleep 0.2; n=$((n+1)); [ $n -gt 50 ] && break; done
@@ -1206,11 +1270,13 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	check "s55peer: the unbound row W is added and deleted while the link lingers" $r "$(val s55peer-w-add) / $(val s55peer-w-del)"
 	[ -n "$xb" ] && [ "$vcs" = "$xb:1" ]; check "s55peer: the TLS link carries the bound cluster's row once, and no row of Z or W" $? "volconf $vcs, bound $xb"
 	l=$(val s55peer-lines)
-	[ "$(num "$(field " $sp" conn2)" 0)" = 1 ] && [ "$(num "$(field " $l" spanrefused)" -1)" = 1 ] && [ "$(num "$(field " $l" listed22)" -1)" = 0 ] && [ "$(num "$(field " $l" listed21)" 0)" -ge 1 ] && [ "$(num "$(field " $sp" other_answered)" 0)" = 1 ] && [ "$(num "$(field " $sp" other_open)" 1)" = 0 ] && [ "$(num "$(field " $sp" bound_open)" 0)" = 1 ]; check "s55peer: a span for a cluster the key does not bind is refused, closed and never listed, the bound one listed and open" $? "$l; other_answered $(field " $sp" other_answered) other_open $(field " $sp" other_open) bound_open $(field " $sp" bound_open)"
+	[ "$(num "$(field " $sp" conn2)" 0)" = 1 ] && [ "$(num "$(field " $l" spanrefused)" -1)" = 1 ] && [ "$(num "$(field " $l" listed22)" -1)" = 0 ] && [ "$(num "$(field " $l" listed21)" 0)" -ge 1 ] && [ "$(num "$(field " $sp" other_answered)" 0)" = 1 ] && [ "$(num "$(field " $sp" other_open)" 1)" = 0 ] && [ "$(num "$(field " $sp" bound_open)" 0)" = 1 ] && [ "$(num "$(field " $l" regrefused)" -1)" = 0 ]; check "s55peer: a span for a cluster the key does not bind is refused, closed and never listed, the bound one listed and open, and registration never sees it" $? "$l; other_answered $(field " $sp" other_answered) other_open $(field " $sp" other_open) bound_open $(field " $sp" bound_open)"
 	[ "$(num "$(field " $l" monitored)" -1)" = 1 ] && [ "$(num "$(field " $sp" hm2rx)" -1)" = 0 ]; check "s55peer: a MASTER span over a SLAVE row is monitored, not registered" $? "monitored $(field " $l" monitored), HM2 requests received $(field " $sp" hm2rx)"
 	n=$(val s55a-norow); s=$(val s55a-served)
 	[ "$(num "$(field "$n" refused)" 0)" = 1 ] && [ "$(num "$(val s55a-lines | sed 's/.*norow=//')" 0)" = 1 ]; check "s55a: a plaintext peer is refused a mounted PFS with no copyinfo row, with its line" $? "$n; $(val s55a-lines)"
 	[ "$(num "$(field "$s" found)" 0)" = 1 ] && [ "$(num "$(field "$s" error)" 1)" = 0 ]; check "s55a: with an enabled row for its cluster the same request is served" $? "$s"
+	o=$(sed -n 's/^s55o-out-[0-9]* h2attach tlspeer: request //p' "$W/out" | head -1)
+	[ "$(val s55o-rc)" = 0 ] && [ "$(num "$(field " $o" conn2)" 0)" = 1 ] && [ "$(num "$(field " $o" closed)" 0)" = 1 ] && [ "$(num "$(field " $o" refused)" 0)" = 1 ] && [ "$(num "$(field " $o" found)" 1)" = 0 ] && [ "$(num "$(val s55o-lines | sed 's/.*unproved=//')" 0)" = 1 ]; check "s55o: a TLS peer whose key binds Z is refused a request for XB, mounted and rowed, with its line" $? "rc $(val s55o-rc); $o; $(val s55o-lines)"
 	sb() { sed -n "s/^$1-[0-9]* h2attach hm2snap: //p" "$W/out" | grep -- "$2" | head -1; }
 	served() { [ "$(num "$(field "$1" closed)" 0)" = 1 ] && [ "$(num "$(field "$1" refused)" 1)" = 0 ] && [ "$(num "$(field "$1" error)" 1)" = 0 ] && [ "$(num "$(field "$1" inodes)" 0)" = 1 ]; }
 	unserved() { [ "$(num "$(field "$1" closed)" 0)" = 1 ] && [ "$(num "$(field "$1" error)" 0)" != 0 ] && [ "$(num "$(field "$1" inodes)" 1)" = 0 ]; }
@@ -1221,6 +1287,9 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ "$(num "$(field " $bl" n)" -1)" = 1 ] && [ "$(num "$(field " $bl" err0)" -1)" = 1 ]; check "s55b: the teardown at the next attach deletes that snapshot once, error 0" $? "$bl"
 	c1=$(sb s55c 'n=1 '); cd=$(sb s55c 'done '); cl=$(val s55c-left)
 	served "$c1" && [ "$(num "$(field " $cd" del_closed)" 0)" = 1 ] && [ "$(num "$(field " $cd" del_refused)" 1)" = 0 ] && [ "$(num "$(field " $cd" after_del)" 1)" = 0 ] && [ "$(num "$(field " $cl" listed)" -1)" = 0 ] && [ "$(num "$(field " $lt" n)" -1)" = 1 ]; check "s55c: SNAPDEL by the snapshot's own cluster id deletes it, and no teardown after finds anything of it" $? "$c1 / $cd / $cl / $lt"
+	l1=$(sb s55l 'n=1 '); l2=$(sb s55l 'n=2 '); ll=$(val s55l-lines)
+	ld=$(sb s55l 'done ')
+	served "$l1" && unserved "$l2" && [ "$(num "$(field " $ll" unmounted)" -1)" = 1 ] && [ "$(num "$(field " $ll" double)" -1)" = 0 ] && [ "$(num "$(field " $ll" listed)" -1)" = 0 ] && [ "$(num "$(field " $ld" del_closed)" 0)" = 1 ] && [ "$(num "$(field " $ld" del_refused)" 1)" = 0 ] && [ "$(num "$(field " $ld" after_del)" 1)" = 0 ]; check "s55l: a SNAPSHOT naming the link's own snapshot, unmounted, is refused by the mount test, with its line, and the SNAPDEL of the first leaves neither name" $? "$l1 / $l2 / $ld; $ll"
 	d1=$(sb s55d 'n=1 '); dl=$(val s55d-lines)
 	[ "$(val s55d-mount | cut -d' ' -f1)" = 0 ] && unserved "$d1" && [ "$(num "$(field " $dl" notmaster)" -1)" = 1 ] && [ "$(num "$(field " $dl" listed)" -1)" = 0 ]; check "s55d: a mounted SLAVE element with a row is refused a snapshot, with its line" $? "mount $(val s55d-mount); $d1; $dl"
 	e1=$(sb s55e 'n=1 ')
@@ -1231,6 +1300,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ "$(num "$(field " $h2" del_closed)" 0)" = 1 ] && [ "$(num "$(field " $h2" del_error)" 1)" = 0 ] && [ "$(num "$(field " $hl" notours)" -1)" = 1 ] && [ "$(num "$(field " $hl" cl-listed)" -1)" = 1 ]; check "s55h2: SNAPDEL naming a mounted PFS the link never took deletes nothing" $? "$h2; $hl"
 	km=$(val s55k-mounted); ku=$(val s55k-unmounted)
 	[ "$(num "$(field "$km" found)" 0)" = 1 ] && [ "$(num "$(field "$km" error)" 1)" = 0 ] && [ "$(num "$(field "$ku" refused)" 0)" = 1 ] && [ "$(num "$(val s55k-lines | sed 's/.*unmounted=//')" 0)" = 1 ]; check "s55k: a PFS with a row is served mounted and refused once unmounted, with its line" $? "$km / $ku; $(val s55k-lines)"
+	[ "$(num "$(field " $(val s55q-peer)" rc)" 0)" != 0 ] && [ "$(num "$(field " $(val s55q-src)" rc)" 0)" != 0 ] && [ "$(num "$(val s55q-lines | sed 's/.*refused=//')" 0)" = 2 ]; check "s55q: a read-only mount of either reserved name is refused by the source gate, a line each" $? "peer $(val s55q-peer), src $(val s55q-src); $(val s55q-lines)"
 	g1=$(sb s55g 'n=1 '); gl=$(val s55g-lines)
 	[ "$(val s55g-mount | cut -d' ' -f1)" = 0 ] && unserved "$g1" && [ "$(num "$(field " $gl" long)" -1)" = 1 ] && [ "$(num "$(field " $gl" listed)" -1)" = 0 ]; check "s55g: a source labeled 128 bytes is refused a snapshot, with its line" $? "mount $(val s55g-mount); $g1; $gl"
 	h1=$(sb s55h1 'done ')
@@ -1241,6 +1311,10 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	check "s55i: pfs-create and the snapshot ioctl refuse both reserved suffixes" $ok "$i"
 	j=$(val s55j)
 	[ "$(num "$(field " $j" rc)" 0)" != 0 ] && printf '%s\n' "$j" | grep -q 'cluster_tls_clid before any cluster_tls_key'; check "s55j: a mount naming cluster_tls_clid before any cluster_tls_key is refused, with its reason" $? "$j"
+	j=$(val s55r-many)
+	[ "$(num "$(field " $j" rc)" 0)" != 0 ] && printf '%s\n' "$j" | grep -q 'more than 10 cluster_tls_clid'; check "s55r: a mount with an eleventh cluster_tls_clid is refused, with its reason" $? "$j"
+	j=$(val s55r-uuid)
+	[ "$(num "$(field " $j" rc)" 0)" != 0 ] && printf '%s\n' "$j" | grep -q 'cluster_tls_clid is not a uuid'; check "s55r: a mount whose cluster_tls_clid is not a uuid is refused, with its reason" $? "$j"
 	keysel() {	# keysel <arm> <ROOT spans> <CL spans> <vdb's refusals> <name>
 		l=$(val "$1-lines")
 		[ "$(num "$(field " $l" handed)" -1)" = 2 ] && [ "$(num "$(field " $l" root)" -1)" = "$2" ] && [ "$(num "$(field " $l" cl)" -1)" = "$3" ] && [ "$(num "$(field " $l" spanrefused)" -1)" = "$4" ]
@@ -1248,8 +1322,13 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	}
 	keysel s55m1 2 0 0 "s55m1: a server admitting two keys installs the second key's clusters when the peer proves it: a ROOT each way and no CL"
 	keysel s55m2 1 1 1 "s55m2: the same server installs the first key's clusters when the peer proves that one: vdc receives CL and not ROOT, and vdb refuses vdc's ROOT"
-	[ "$(val s55n-mount)" = rc=0 ] && printf '%s\n' "$(val s55n-accept)" | grep -q '^rc=0 .*accepted=1 errno=0'; check "s55n: a mount's cluster_fd= dials a client intake, which accepts it" $? "mount $(val s55n-mount); accept $(val s55n-accept)"
+	for a in s55n s55n2; do
+		[ "$(val $a-mount)" = rc=0 ] && printf '%s\n' "$(val $a-accept)" | grep -q '^rc=0 .*accepted=1 errno=0'; check "$a: the cluster_fd= mount returns 0 and tlsaccept hands its end in (the spans below are the reading)" $? "mount $(val $a-mount); accept $(val $a-accept)"
+	done
 	keysel s55n 2 0 0 "s55n: the mount path binds each cluster_tls_clid to the cluster_tls_key before it: the peer proving the second key gets a ROOT each way and no CL"
+	keysel s55n2 1 1 1 "s55n2: the same mount with the peer proving the first key: vdc receives CL and not ROOT, and vdb refuses vdc's ROOT"
+	pp=$(val s55p-lines)
+	[ "$(val s55p-create)" = 0 ] && [ "$(num "$(field " $pp" error17)" 0)" -ge 1 ] && [ "$(num "$(field " $pp" kept)" 0)" -ge 1 ] && [ "$(num "$(field " $pp" deleted)" 1)" = 0 ] && [ "$(num "$(field " $pp" listed)" 0)" = 1 ]; check "s55p: the local pass keeps a newfs CL.h2sync-src, which is no snapshot, and stops at EEXIST" $? "create $(val s55p-create), waited $(val s55p-wait) s; $pp"
 	final_checks
 	echo "dmsg: TLS link, $checks check(s), $fail failed${skipped:+, arm 4 not driven}"
 	[ "$fail" -eq 0 ] || exit 1
@@ -1279,17 +1358,18 @@ if [ "$hs" = 1 ]; then
 	# one, which also refuses an intake binding nothing; the line count
 	# below names each refusal and is that check's control.
 	[ "$(num "$(field "$t" nobind)" -1)" = 22 ] && [ "$(num "$(field "$t" dup)" -1)" = 22 ] && [ "$(num "$(field "$t" keynobind)" -1)" = 22 ]; check "stage 5.5: a TLS intake binding no cluster id, a server's listing one key serial twice, and a server's key bound to nothing are each refused EINVAL" $? "nobind $(field "$t" nobind), dup $(field "$t" dup), keynobind $(field "$t" keynobind)"
-	ok=0; [ "$(num "$(field "$l" all)" -1)" = 12 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
-	for f in tcp mode nkeys client server role key ulp required nobind dup keynobind; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
-	check "the log names each of the twelve TLS intake refusals once and no other" $ok "$l"
+	[ "$(num "$(field "$t" toomany)" -1)" = 22 ] && [ "$(num "$(field "$t" noslot)" -1)" = 22 ]; check "stage 5.5: an intake with one binding past MAXBIND, and one binding a key slot it lacks beside one that binds its key, are each refused EINVAL" $? "toomany $(field "$t" toomany), noslot $(field "$t" noslot)"
+	ok=0; [ "$(num "$(field "$l" all)" -1)" = 14 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
+	for f in tcp mode nkeys client server role key ulp required nobind dup keynobind toomany noslot; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
+	check "the log names each of the fourteen TLS intake refusals once and no other" $ok "$l"
 elif [ "$hs" = 0 ]; then
 	# No NET_HANDSHAKE: the mode and the parameter are read first, and
 	# every other PSK intake is refused EOPNOTSUPP before its socket is.
 	ok=0; for f in mode required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
-	for f in unix nkeys client server role key ulp nobind dup keynobind; do [ "$(num "$(field "$t" $f)" -1)" = 95 ] || ok=1; done
+	for f in unix nkeys client server role key ulp nobind dup keynobind toomany noslot; do [ "$(num "$(field "$t" $f)" -1)" = 95 ] || ok=1; done
 	check "without the handshake upcall every PSK intake is refused EOPNOTSUPP, an unknown mode and no TLS under cluster_tls_required EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
-	ok=0; [ "$(num "$(field "$l" all)" -1)" = 12 ] && [ "$(num "$(field "$l" upcall)" -1)" = 10 ] && [ "$(num "$(field "$l" mode)" -1)" = 1 ] && [ "$(num "$(field "$l" required)" -1)" = 1 ] || ok=1
-	check "the log names ten upcall refusals, the mode's and the parameter's" $ok "$l"
+	ok=0; [ "$(num "$(field "$l" all)" -1)" = 14 ] && [ "$(num "$(field "$l" upcall)" -1)" = 12 ] && [ "$(num "$(field "$l" mode)" -1)" = 1 ] && [ "$(num "$(field "$l" required)" -1)" = 1 ] || ok=1
+	check "the log names twelve upcall refusals, the mode's and the parameter's" $ok "$l"
 else
 	check "the guest's kernel symbols say whether it has the handshake upcall" 1 "handshake_req_alloc lines: $(val handshake-upcall)"
 fi
