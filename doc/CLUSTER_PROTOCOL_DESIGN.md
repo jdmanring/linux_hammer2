@@ -1726,13 +1726,13 @@ functionality is exposed. Each item, and where the answer lives:
 | item | answer |
 |---|---|
 | peer authentication | kernel TLS through the handshake upcall on the socket `RECLUSTER` or `cluster_fd=` hands in, PSK, requested by the intake and required of every intake by the module parameter `cluster_tls_required` (the TLS link section; a `copyinfo` row flag waits for 3.1; x509 is deferred there with its reasons and trigger); a peer is admitted only by a key serial the intake listed; no frame is read before the handshake completes, since the reader starts after it; `tlshd` holds the key material and the kernel only serials, DragonFly's boundary kept |
-| peer identity | the span's `peer_id`, bound to the key serial `tlshd` reports for the PSK the peer proved once stage 5 lands; before it, self-asserted and admitted only by an explicit `.none` marker, as DragonFly's `.none` admits a peer with no key |
+| peer identity | the span's `peer_id`, on a TLS link admitted only when it is a cluster id the intake bound to the key serial the handshake reported, the link's record holding both (stage 5.5); on a plaintext link, self-asserted and admitted only by an explicit `.none` marker, as DragonFly's `.none` admits a peer with no key |
 | cluster id validation | a span registers only against a local `pmp` whose `pfs_clid` the span's `peer_id` names and a `copyinfo[]` row with that `pfs_clid` admits, and only after the fetched root inode's `pfs_clid`, `pfs_fsid` and `pfs_type` match the span's `peer_id`, `pfs_id` and `pfs_type`; a reply frame carries no id, and binds to the element by the connection and the open request |
 | replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1865`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
 | message freshness | the request's bound, `remote_timeout_ms`; a reply after its request aborted matches the abandoned state and is dropped there |
-| authorization by node type | a MASTER accepts modifying requests only from a MASTER of the same cluster id; a SLAVE's requests are read commands only and a modifying command from one is `DMSG_ERR_NOSUPP`; for a MASTER the check is its `pfs_type` as the fetched root inode states it, cross-checked against its span at registration; a SLAVE's span registers no slot and fetches no root, so a slave requester is admitted by its `copyinfo[]` row and its span alone, and the commands it may send are the read set in either case |
-| connection admission | closed by default: `h2service` dials only a peer with a `.pub` key or an explicit `.none` marker in its directory, as `libdmsg` refuses "unknown host"; the kernel registers a span only with a matching `copyinfo[]` row; everything else is monitored and logged, not registered |
-| removal and revocation | `REMOTE_DEL` clears the row, which under membership (2) is a membership change on one host (decision B); the slot is detached as the remote element section defines; the daemon drops the dial; a `.pub` removed revokes at the next handshake |
+| authorization by node type | a MASTER accepts modifying requests only from a MASTER of the same cluster id; a SLAVE's requests are read commands only and a modifying command from one is `DMSG_ERR_NOSUPP`; for a MASTER the check is its `pfs_type` as the fetched root inode states it, cross-checked against its span at registration; a SLAVE's span registers no slot and fetches no root, so a slave requester is admitted by an enabled `copyinfo[]` row for the mounted PFS it names, whose cluster id a TLS link must also bind, or as a snapshot that link took (stage 5.5), and the commands it may send are the read set in either case, plus SNAPSHOT and SNAPDEL, which write the serving side's media and are bounded per link: one snapshot per MASTER source, named by the server, deletable only by the link that took it, deleted at the link's end (stage 5.5) |
+| connection admission | closed by default: `h2service` dials only a peer with a `.pub` key or an explicit `.none` marker in its directory, as `libdmsg` refuses "unknown host"; the kernel registers a master's span only with a matching `copyinfo[]` row whose `remote_pfs_type` is MASTER, and serves a mounted PFS only with an enabled row for its cluster id and an unmounted one only as a snapshot that link took (stage 5.5); everything else is monitored and logged, not registered |
+| removal and revocation | `REMOTE_DEL` clears the row, which under membership (2) is a membership change on one host (decision B); the slot is detached as the remote element section defines; the daemon drops the dial; a `.pub` removed or a key revoked takes effect at the next handshake, a live link staying up, with its record, until the volume is unmounted; without an unmount, `REMOTE_DEL` or disabling the cluster's row stops that cluster's service and registration on every link at the next request, at the cost of every peer of that cluster (stage 5.5) |
 | key storage | `tlshd`'s, outside the kernel and outside this tree; `h2service`'s key directory is the harness's for stages before 5 |
 | encrypted transport | kernel TLS, stage 5; `tcpdump` on the relay port must show no `0x4832` magic in the clear with TLS on and must show it with TLS off |
 | a stale node rejoining as current | decision B: what reads "behind" on a reconnecting master is the protocol note's, with the durable record it carries; this note records that no tid the flush moves can read it (C1, C2, C8, C9) and that a fence one coordinator holds is not one (C10); until then a master whose PFS is unmounted on its host is offline and registers nothing |
@@ -2102,8 +2102,445 @@ was taken at 1.0.75, under the reader before this one, which ended the
 link at any record that was not data, so it reads that none reached
 either end in that time. Why none did is a candidate: `tlshd` adds
 `%NO_TICKETS` to every priority string (ktls-utils 1.5.0
-`src/tlshd/ktls.c:477`), so it sends no session ticket. No link between
-two guests has asked for a handshake.
+`src/tlshd/ktls.c:477`), so it sends no session ticket. Between two
+guests, `h2service dial` takes the TLS inputs and `cluster-wire.sh
+H2_WIRE_TLS=1` runs the link through `h2loop --raw 1` (stage 5.6). That
+was read once on `h2debug-7.3tls` at source `v1.0.4-853-g2761848-dirty`
+(`p8-notes/n9-4-20261102-145536/` in the data tree): 37 checks with 0
+failed over TLS (`wire-run-20261102-145555`, harness
+`e4ecb958c7135c5e`), 33 with 0 failed through the same relay in
+plaintext (`wire-run-20261102-145723`), and 18 with 0 failed with B
+given a wrong key (`wire-run-20261102-145849`). None of the three runs
+the synchronization pass, so the two-host pass over TLS is not read
+yet.
+
+**The identity a link proved, and what it admits (stage 5.5; designed,
+not built).** What the code does today, each on its source:
+- The handshake reports one serial (`hammer2_link_done()`,
+  `hammer2_iocom.c:647`). On a server it is the key the peer proved,
+  chosen among the intake's admitted list (`hammer2_link_admitted()`,
+  `:627`); on a client it is the client's own one key (`:600-602`),
+  which a completed handshake shows the server also holds. The work
+  frees the attempt that holds it after the tail has run (`:827`), so
+  nothing records past the handshake which key a live link proved.
+- A PSK proves only that both ends hold one key. Every holder of a key
+  can stand for every other holder, so a key is one pair's, never shared
+  across pairs; the harnesses make one key per pair per run.
+- A span's `peer_id` is a cluster id. The kernel announces every inode
+  under the super-root, each PFS, local pass snapshot and pass target
+  alike, with `peer_id` set to its `pfs_clid` (`hammer2_update_spans()`,
+  `:476`), and `hammer2_span_add()` copies a peer's from the frame
+  unread (`:75`).
+- The client side's registration admits a master's span by an enabled
+  `copyinfo[]` row with its cluster id (`hammer2_remote_admitted()`,
+  `hammer2_remote.c:2307`, whose one caller is `:2692`) and by the root
+  it fetches; the row's `remote_pfs_type` is not read. That is the only
+  admission check that reads a row.
+- The device sends a peer every `copyinfo[]` row with a nonzero copyid
+  as `VOLCONF`, label and path included: on the peer's reply to this
+  end's `LNK_CONN` (`hammer2_iocom.c:343-364`) and again on each `REMOTE_ADD`
+  and `REMOTE_DEL` (`hammer2_ioctl.c:218`, `:261`), all three through
+  `hammer2_volconf_update()` (`hammer2_iocom.c:523`). No kernel reads
+  it (upstream's comment, "go through the motions", `:293-296`), but
+  DragonFly's `hammer2 service` does: it dials each row's `span:` path
+  (`sbin/hammer2/cmd_service.c`, "VOLCONF CONNECT").
+- The server reads a request's shape and nothing of who sent it.
+  `hammer2_remote_pfs()` (`hammer2_remote.c:675`) serves any mounted PFS
+  with an element on the device whose cluster id the request names, and
+  any unmounted one named with the pass's suffix (`:712`). SNAPSHOT takes
+  the name the peer sends, under that suffix (`:558`), and first deletes
+  an unmounted PFS of that name (`:607`), whatever it is:
+  `hammer2_pfs_delete_byname()` (`hammer2_ioctl.c:722`) refuses only a
+  mounted PFS and reads no subtype. A local pass's source on the same
+  device carries the same suffix (`hammer2_synchro.c:1127`). A
+  snapshot's record on the link (`rm->snaps`) holds its name alone
+  (`hammer2_remote.c:59-62`), and nothing bounds how many a peer takes.
+- One device has one link: one iocom per `hammer2_dev_t`, `RECLUSTER`
+  reaching the first block device of the mount, and the connection
+  device made without one.
+- Upstream binds nothing to a key: libdmsg admits a host by its address
+  (`lib/libdmsg/crypto.c`, `dmsg_crypto_negotiate()`), and a span's
+  `peer_id` is the peer's word. What follows is new design.
+
+The rules, audited before any code:
+1. **A link records what it proved, from the moment its connection
+   exists.** The device embeds the record by value: the mode, the serial
+   the handshake reported and the cluster ids the intake bound to that
+   serial. Its zeroed state, as the device is allocated
+   (`hammer2_vfsops.c:1391`), is a mode of its own, nothing proved, under
+   which every span and every request is refused; a plaintext link
+   records mode none, which admits as today. Every intake, plaintext
+   included, reaches the descriptor swap through one path:
+   `hammer2_link_work()` (`hammer2_iocom.c:826`) calls
+   `hammer2_cluster_tail()`, the one caller of `kdmsg_iocom_reconnect()`
+   (`:184`). The work item stages the record on the device, and
+   `kdmsg_iocom_reconnect()` installs it through a new swap hook, called
+   with `msglk` held after the old threads are reaped and the flag is
+   cleared (`kern_dmsg.c:135-156`) and before the new threads are created
+   (`:158-161`), the hook set beside `auto_callback` (`hammer2_iocom.c:183`;
+   XXX Linux at the call). The hook takes `link_spin` to install the
+   record. So every reader is either the old connection's, running before
+   the hook against the old record, or the new connection's, running
+   after it against the new one: no frame is read, and no span or
+   request is admitted, against a record that is empty or another
+   connection's. The quiesce's comment (`hammer2_remote.c:160-173`)
+   says only the new connection's peer lifts QUIESCED, but today the
+   CONN callback calls `hammer2_remote_resume()` on every `PROTO_2`
+   CREATE (`hammer2_iocom.c:336-340`), lifting QUIESCED to OPEN
+   (`hammer2_remote.c:196-210`). The old peer can send such a CONN
+   between the quiesce (`hammer2_iocom.c:824`) and the reap, whether or
+   not its connection announced `PROTO_2` before, and a SNAPSHOT
+   admitted then is served after `:825` and lands in `rm->snaps` after
+   the conn end's drop, owned by the new link. That is a defect in
+   today's quiesce, read from the code and not driven. So the same hook
+   moves the queue from QUIESCED to a new state, AWAITING, under
+   `rm->lock`, and the resume lifts only AWAITING to OPEN: before the
+   hook, no reader of the old connection can admit a request; after it,
+   none exists. The senders read the record where their connection is
+   fixed. The reader thread (`hammer2_span_add()`, and
+   `hammer2_update_spans()` with the `VOLCONF` dump on the peer's reply to
+   this end's `LNK_CONN`, `:343-367`) belongs to one connection.
+   `hammer2_volconf_update()` is also called from `REMOTE_ADD` and
+   `REMOTE_DEL`, which hold the volume lock and not `hammer2_mntlk`
+   (`hammer2_ioctl.c:204-220`, `:244-263`), so it reads `conn_state` and
+   the record, filters, allocates and queues the frame within one hold
+   of `msglk`, through `kdmsg_msg_write_locked()` made extern (XXX
+   Linux), since `kdmsg_msg_write()` takes `msglk` itself
+   (`kern_dmsg.c:2005`) and the lock is not recursive. `conn_state` is
+   set and cleared with `msglk` held (`kern_dmsg.c:191-194`, `:236-240`),
+   the CONN DELETE's reply is queued under the same hold (`:242`), and
+   the hook runs with it held, so the frame is queued on the connection
+   whose record filtered it and ahead of that connection's DELETE, or
+   not at all. That answers the race upstream's `XXX interlock` names
+   (`hammer2_iocom.c:527`): a write queued after the DELETE trips the
+   `KKASSERT` at `kern_dmsg.c:2053` under `HAMMER2_INVARIANTS`, and
+   without it is discarded as a write to a dying circuit (`:2054`),
+   since the reap's simulated failure marks every substate DYING
+   (`:1428`); the message's reference keeps the state from being freed,
+   so the frame never reaches another connection. The server's queue (`hammer2_remote_pfs()`, with
+   `hammer2_mntlk` held, nesting outside `link_spin`) admits only in
+   OPEN, which only the new connection reaches, and the registration
+   work runs only after `hammer2_remote_connected()` (`hammer2_iocom.c:235`). Every
+   reader takes `link_spin` and compares inside it. `link_spin` and
+   `rm->lock` are never held together: the hook takes `rm->lock` to set
+   AWAITING and releases it before it takes `link_spin`, and admission
+   (`hammer2_remote.c:352`) reads no record under `rm->lock`.
+   Nothing clears the record when a link ends, since a peer's close or
+   the keepalive's kill runs no hook that could. It names a connection
+   that is gone until the next swap replaces it, and no frame can arrive
+   on that connection. Being embedded, it lives as long as the device,
+   past `kdmsg_iocom_uninit()`.
+2. **A key is bound to cluster ids by the intake, several per key.**
+   `RECLUSTER`'s reserved bytes gain up to ten pairs of a key slot and a
+   cluster id (20 bytes each, 204 with their count, of the 216 the
+   argument reserves); a client's pairs all name its one key, so one
+   link carries every cluster the pair shares, as one plaintext link does
+   today. On the mount path `cluster_tls_clid=` binds to the
+   `cluster_tls_key=` before it, and one before any key refuses the
+   mount. `hammer2_link_check()` also refuses a serial listed twice,
+   which it does not today, so a proved serial names one set, and a TLS
+   intake that binds no cluster id at all, whose link would admit
+   nothing; each refusal is a named line before any handshake is
+   requested. `h2service` binds, in either role, the cluster id of the
+   row it dials to each key it passes: in `cluster-wire.sh` A holds the
+   key as server (`:1457`) and B as client (`:1458`), each dialing for
+   the one cluster id its row names (`:1462-1463`). The binding stays with the intake and off the media:
+   `copyinfo`'s reserved bytes are the lease note's to assign.
+3. **On a TLS link the bound set limits both directions.** Each end
+   announces only a PFS whose cluster id its record binds, and sends
+   `VOLCONF` only for a row whose cluster id its record binds. The test
+   sits in `hammer2_volconf_update()`, so the `LNK_CONN` reply and both
+   ioctls are covered (XXX: upstream sends every row). DragonFly's
+   `hammer2 service` dials from those rows, and stage 4 decides what its
+   hub receives; this port's `h2service` dials from its own directory
+   and reads none. A plaintext link still receives every row, which
+   `doc/SECURITY_MODEL.md` states. A span whose `peer_id` is not bound
+   is refused at `hammer2_span_add()` with a named line and kept out of
+   the table, and registration requires the same. A well-behaved peer
+   therefore draws no refusal; a peer that announces past the bound set
+   (an older module, or a hostile peer) draws one line per span through
+   the rate-limited `hprintf`, since the peer chooses how many it sends.
+   The server refuses a request naming a cluster id that is neither
+   bound nor a snapshot this link took.
+4. **On every link, plaintext included, the server checks the row.** A
+   mounted PFS is served only with an enabled `copyinfo[]` row for its
+   cluster id on the device: a second caller of
+   `hammer2_remote_admitted()`, in `hammer2_remote_pfs()`. An unmounted
+   PFS is served only as a snapshot this link took, found in `rm->snaps`
+   by the cluster id its entry now records (`spmp->pfs_clid`, written at
+   the entry's insert, `hammer2_remote.c:623`, before the root is fed,
+   and read under `rm->lock`); a snapshot carries a cluster id of its own
+   that no row names. The name no longer admits anything to serving.
+   Registration also requires the row's `remote_pfs_type` to be MASTER,
+   so a peer bound to X whose PFS is a SLAVE cannot register as X's
+   master where the row says otherwise. Every harness that reaches the
+   server adds the row first: `cluster-dmsg.sh`'s HM2 arms add none today
+   and gain one, and `cluster-wire.sh`'s rows (`:649`, `:1213`) take
+   `--type` explicitly.
+5. **The server names a peer's snapshot.** SNAPSHOT is served only from
+   a source that passes 3 and 4 and whose own `pfs_types[]` entry is
+   MASTER. The server names the snapshot `<source label>.h2sync-peer`
+   itself and ignores the name the peer sends, so a peer chooses no
+   prefix and takes at most one snapshot per source PFS. A source label
+   of `DMSG_LABEL_SIZE` (128) bytes or more is refused with a line: a
+   span carries the label cut to 127 bytes (`hammer2_iocom.c:481-486`),
+   so the client could not name the result, and the bound also keeps
+   the name and its 12-byte suffix inside `HAMMER2_INODE_MAXNAME`. Both
+   stale deletes, this one and the local pass's
+   (`hammer2_synchro.c:1199`), pass a new flag to
+   `hammer2_pfs_delete_byname()` (XXX at the function), which then
+   deletes an unmounted PFS of the name only when its root's
+   `pfs_subtype` is SNAPSHOT (the root's `meta`, copied at
+   `hammer2_vfsops.c:446`), as every snapshot this code makes is
+   (`hammer2_ioctl.c:1090`). The lines naming what each deleted stay as
+   they are (`hammer2_remote.c:613`, `hammer2_synchro.c:1202`, under
+   `hammer2_debug` `0x8000`), unlimited, since `cluster-wire.sh` counts
+   them exactly (`:1014`). A PFS of that name of any other subtype is
+   kept, and the SNAPSHOT, or the local pass, is refused with a line
+   through the rate-limited `hprintf`, as rule 3's are, since the local
+   pass retries every cadence and a peer chooses how many SNAPSHOTs it
+   sends; no harness counts that line exactly. Before it adds a new entry the server drops any entry of the
+   same name, so `rm->snaps` holds at most one per source PFS. SNAPDEL
+   finds its entry by the cluster id the request names and deletes by
+   the name the entry records, ignoring the peer's. The client still
+   sends its own name, so the request's shape is unchanged; its check of
+   the fed root (`hammer2_remote.c:2228-2235`) compares the root's name
+   exactly with `<label>.h2sync-peer`, the label being the `peer_label`
+   of the master's span, where today it compares the name it sent, and
+   its local proxy on the connection device keeps `.h2sync-src`. The
+   suffix test splits in two: `.h2sync-src` for the local pass and the
+   client's proxy, `.h2sync-peer` for a server's snapshot. The mount
+   gate (`hammer2_remote_is_source()`, `:2614`, called at
+   `hammer2_vfsops.c:1829`) refuses both, so neither is ever mounted;
+   `pfs-create` and the snapshot ioctl (`hammer2_ioctl.c:504`, `:826`)
+   refuse a name ending in either (XXX). What remains is a PFS with such
+   a name made before this change, or on the same media by DragonFly's
+   or a BSD port's utility, which no ioctl here can refuse. It is never
+   mounted here, and if its subtype is SNAPSHOT, which `hammer2
+   snapshot` gives and `pfs-create` can be asked for
+   (`hammer2_ioctl.c:572`), the next stale delete of its name deletes
+   it. Version skew: a client older than this change compares the fed
+   root with the name it sent, so every remote pass it runs fails at
+   that check with its line, and the snapshot goes at the link's end;
+   both ends move together. A `.h2sync-src` left on a server by a peer
+   before the change is served no more. It is a SNAPSHOT, so if its
+   name is the one a local pass on that device uses for its own source
+   (`<label>.h2sync-src`, `hammer2_synchro.c:1127`), that pass's next
+   stale delete removes it; otherwise it stays until `hammer2
+   pfs-delete` removes it.
+6. **Node type.** SNAPSHOT and SNAPDEL write the serving side's media, so
+   they are not read commands. They are the read set's two exceptions, a
+   SLAVE's thread being the requester: a link that passes 3 and 4 may
+   send them whatever its spans' types, bounded per link by rule 5 (one
+   snapshot per MASTER source, named by the server, deletable only by
+   the link that took it, and deleted at the link's end). The modifying
+   descriptors stay refused, as today. The security table's row and
+   `doc/SECURITY_MODEL.md` say so.
+7. **Revocation takes effect at the next handshake.** A link already up
+   stays up, since TLS authenticates once per connection, and a failed
+   intake leaves the old link and its record running
+   (`hammer2_link_end()` frees only the attempt), including an older,
+   broader binding when the new one would have narrowed it. Unmounting
+   the volume ends such a link. Without an unmount, `REMOTE_DEL` of the
+   cluster's row, or disabling it, stops that cluster's service on every
+   link at the next request (rule 4), and its registration, at the cost
+   of every peer of that cluster and not only the revoked one. A
+   disconnect intake, a revocation callback from the keyring and a
+   rekey that authenticates again are the triggers that would narrow the
+   remedy to one link, none built.
+8. **One link is assumed to be one peer.** It holds while one device has
+   one link to one kernel. A relaying daemon in the style of DragonFly's
+   `hammer2 service`, the hub stage 4 defaults to, carries several peers
+   over one link, and a record per link then binds the union of their
+   keys; stage 4 moves the binding per relayed peer before it relays.
+
+Controls, each with its check removed in a scratch build and the
+opposite read where the check executes, one guest, `cluster-dmsg.sh
+H2_DMSG_TLS=1`. `tlspeer` takes only `--send ticket|keyupdate|alert|
+close|none` today (`test/h2attach.c:1176`), and the HM2 requests are
+separate actions (`:1582`), so HM2 requests and a `VOLCONF` count inside
+`tlspeer`'s GnuTLS session are harness work this stage adds; the
+plaintext arms use the existing `hm2*` actions. Every existing TLS arm
+of `cluster-dmsg.sh` binds both volumes' ROOT cluster ids on each end,
+which differ since each image is made by its own `newfs_hammer2`
+(`cluster-dmsg.sh:120`, `:128`), so each end announces its ROOT and
+accepts the other's, and rule 2's refusal of an empty binding does not
+change what the arm reads. One more `HAMMER2_LOCKDEBUG` parameter,
+`volconf_hold_ms`, holds `hammer2_volconf_update()` after its alloc. One
+`HAMMER2_LOCKDEBUG` parameter serves several arms: `link_hold_ms`, a hold
+in `hammer2_link_work()` after the quiesce (`hammer2_iocom.c:824`) with
+`hammer2_mntlk` still held, inside the window before the old reader is
+reaped. The existing build flag `HAMMER2_NOSNAPSCOPE=1`
+(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2051-2055`) is redefined
+below.
+- `tlspeer`, bound to cluster id X, announces a span for Y: refused with
+  the line, no slot. Removed: the span enters the table.
+- The server direction: the volume serving `tlslink` carries a second
+  PFS Z its peer's key does not bind, and the client reads no span for
+  Z. With the server's filter removed the client refuses Z with the
+  line; with the client's check removed as well, Z enters its table.
+- `VOLCONF`: the serving volume carries a row for X, which the key
+  binds, and a row for Z, which it does not; `tlspeer` counts the
+  `VOLCONF` frames it receives by cluster id, X's alone at the
+  `LNK_CONN` reply and again after a `REMOTE_ADD` and a `REMOTE_DEL` of
+  a third unbound row. Removed (the test in `hammer2_volconf_update()`):
+  every row, both times. A plaintext link reads every row, as today.
+- Registration's row type: a row for X whose `remote_pfs_type` is SLAVE,
+  and a peer's MASTER span for X: not registered, with its line.
+  Removed: registered.
+- The intake: a server intake listing one serial twice, a TLS intake
+  with no pair, and a mount with `cluster_tls_clid=` before any
+  `cluster_tls_key=`, each refused with its line and no handshake
+  requested. Removed: each proceeds.
+- A key revoked after one completed handshake: the next handshake fails
+  and the first link's keepalives continue.
+- The quiesce (rule 1), with `link_hold_ms` set and a second intake
+  arriving: a plaintext peer on the old connection sends a `PROTO_2`
+  `LNK_CONN` CREATE during the hold and then SNAPSHOT, in two arms, one
+  whose connection opened `PROTO_1` (`hm2proto1`) and one whose
+  connection had already announced `PROTO_2`. Each refused at admission
+  with `LOSTLINK`, no snapshot line, and no `.h2sync-peer` on the media
+  once the new link is up. Removed (AWAITING, the resume lifting
+  QUIESCED as today): in both arms the snapshot is served after the hold
+  and is on the media under the new link. Sending a CONN on demand
+  during a hold is harness work this stage adds.
+- The senders (rule 1): the old connection's record binds X and the new
+  intake's binds Y; during the hold a `REMOTE_ADD` of a row for Y, and
+  `tlspeer` on the old connection counts the `VOLCONF` frames for Y: 0.
+  Removed (the record installed by the work item, before the hold and
+  the tail): 1. A second arm drives the reap itself: a
+  `REMOTE_ADD` of a second row for X, which the old record binds, so its
+  frame is queued, with `volconf_hold_ms` set and a reconnect during that
+  hold, which as committed waits on `msglk`, so the frame precedes the
+  old connection's DELETE. Whether the old socket then carries it
+  depends on which `msglk` waiter runs next, the old writer from its
+  one-second sleep (`kern_dmsg.c:512`) or the reconnect, which shuts the
+  socket (`:124-134`), so no count at `tlspeer` is read. Two readings
+  are, both fixed by the design: the order of the hold's end line and
+  the reconnect's handed line in the klog, and a `HAMMER2_LOCKDEBUG`
+  line `volconf queued on a dying circuit`, which
+  `hammer2_volconf_update()` prints when the state it queues on carries
+  `KDMSG_STATE_DYING`, read with `msglk` held at the queue. As
+  committed: the hold's end line first, the handed line after it, and 0
+  dying-circuit lines, since the reap that sets DYING (`:1428`) cannot
+  start until the reconnect has `msglk` (`:123`). Removed (the write
+  moved after the release, the hold between them, and the same line
+  kept at the moved write), on a build without `HAMMER2_INVARIANTS`,
+  whose `KKASSERT` at `kern_dmsg.c:2053` is a `BUG_ON`
+  (`hammer2_compat.h:94`) that would kill the task holding `msglk` and
+  the volume lock and wedge every later arm: the handed line first and
+  1 dying-circuit line. In neither build does `tlspeer` on the new
+  connection count a frame for that row. Two preconditions, each read
+  before the verdict and an exit 2 when it fails. The old link was up
+  until the reconnect's intake: no `CONN WAS TERMINATED` line
+  (`hammer2_iocom.c:371`) before the intake, and its message threads
+  present during the hold (the reader leaves only through `msglk`,
+  `kern_dmsg.c:461`). The line is read up to the intake and not at the
+  hold's start, since it prints after the abort releases `msglk`, so a
+  link already dying can print it just after the hold starts. A link
+  ending on its own leaves `conn_state` set and already DYING for a
+  moment (`kern_dmsg.c:1462-1463`, cleared at `:236-240`), and a sender
+  then prints the line in the committed build too. And in the removed
+  build the handed line precedes the hold's end line, since a hold that
+  ends before the reap reaches `conn_state` reads exactly as committed;
+  nothing bounds the reap from above (its exit loop polls every half
+  second and only warns, `:617-640`), so the hold is sized from the
+  link's own intake-to-handed gap, measured and printed on an idle link
+  with no request in flight and no snapshot held, plus
+  `cluster_tls_timeout_ms` (`hammer2_vfsops.c:206`).
+- The record's order (rule 1), in a scratch build that installs the
+  record after the tail, the new reader running, with `link_hold_ms`
+  moved between the swap and that install, against the committed order
+  with the same hold. Empty: the first link on a
+  freshly mounted device, the new link's bound span refused against the
+  nothing-proved record; the committed order reads no refusal. Older: a
+  reconnect from a link whose record binds X to an intake binding Y,
+  the peer announcing Y, refused against the older record; the
+  committed order reads no refusal.
+- SNAPSHOT (`hm2snap`, a new action): for a cluster id with no row,
+  refused; for a bound cluster id with a row, served (the positive
+  control), the media holding `<label>.h2sync-peer`; for a SLAVE source
+  with a row, refused; naming a local pass's source by its cluster id,
+  refused by rule 4 (unmounted, not in `rm->snaps`), and the source
+  survives. Removed (the MASTER test): the SLAVE source is snapshotted.
+- Rule 5's bounds. Two SNAPSHOTs of one source on one link: at the
+  link's end one "left by the link deleted" line with error 0. Removed
+  (the drop before the add): two lines of one name, the second error 2.
+  A source labeled 128 bytes: refused with its line. Removed: the
+  snapshot is made. An image made with `-L ROOT,CL,CL.h2sync-peer`,
+  whose third PFS is MASTER of subtype none, then SNAPSHOT of CL:
+  refused with its line and the PFS kept. Removed (the subtype test):
+  that PFS deleted and replaced.
+- SNAPDEL of the snapshot just taken, by its cluster id: served, the PFS
+  gone. A decoy, an unmounted snapshot named `ZZ.decoy-snap` that
+  `hammer2 snapshot` made, so its subtype is SNAPSHOT and its name carries
+  neither suffix, named by its cluster id, read in four builds. As
+  committed, rule 4 refuses it before SNAPDEL's body runs and the decoy
+  is kept. With rule 4's unmounted gate removed, the body finds no entry
+  for that cluster id and prints the not-ours line
+  (`hammer2_remote.c:579`), the decoy kept. With SNAPDEL's scope removed
+  alone (`HAMMER2_NOSNAPSCOPE=1`, now deleting the PFS the request
+  resolved, by its own name), rule 4 refuses as committed. With both
+  removed, the decoy is deleted. So behind rule 4 the scope check is
+  redundant for an unmounted PFS. It stays for a mounted one: SNAPDEL
+  naming CL's cluster id prints the not-ours line, and with the scope
+  removed the delete fails `EBUSY` (`hammer2_ioctl.c:722`) and CL is
+  kept.
+- `pfs-create` and the snapshot ioctl of `a.h2sync-src` and of
+  `a.h2sync-peer`: each refused. Removed: each made.
+- A plaintext link asking for a cluster id with no row: refused, where
+  it is served today.
+
+On two guests, `cluster-wire.sh` changes where it reads names,
+enumerated from `grep -n 'h2sync-' script/cluster-wire.sh` (lines 147
+to 2069):
+- A's image read for the server's snapshot by its exact name, `filename
+  "CL.h2sync-src"` (`:1485`, `:1699`, `:1741`, `:1848`), reads
+  `CL.h2sync-peer`, so those checks do not pass on a name no longer
+  made; the checks built on those counts (`:1700`, `:1717`, `:1753`,
+  `:1853`, `:1861`) move with them. `:698` and `:797` match the prefix
+  `CL\.h2sync-` and already count both names.
+- The klog patterns on `CL.h2sync-src` (`:782` to `:1003`) match the
+  client's prints, `syncsnap: snapshot ... error` (`:782`, `:784`;
+  `hammer2_synchro.c:1219`) and `syncsnap: remote snapshot ... tid`
+  (`hammer2_remote.c:2259`), which keep the name the client sends, and
+  stay.
+- The SNAPDEL decoy (`cluster-wire.sh:147-151`, `:557`, `:1255-1256`,
+  `:1442`, `:2061-2071`): the server now ignores the name the relay's
+  `--rename-snapdel` gives the first SNAPDEL, so `H2_WIRE_SNAPDEL=1`
+  reads the link's own snapshot deleted, the decoy kept and no not-ours
+  line. Its control becomes a scratch build that deletes by the peer's
+  name, which must delete the decoy. The decoy becomes the unmounted
+  snapshot `ZZ.decoy-snap`, since both ioctls refuse the suffixes. Its
+  name is 13 bytes, as `CL.h2sync-src` is, because `h2loop` renames only
+  to a name of the length B sent (`test/h2loop.c:1047-1060`), so the
+  relay's argument (`cluster-wire.sh:557`), the decoy's name passed to
+  `setup.sh` (`:1442`), its creation, which becomes `hammer2 snapshot`
+  in place of `pfs-create` (`:624`), the klog counts (`:1255-1256`) and
+  the image reads (`:2065`) take that name. The
+  cluster-id scope is read on one guest, where `h2attach` can name any
+  cluster id.
+- The span counts under `H2_WIRE_TLS=1`: each end announces only CL, the
+  one bound cluster id, so A's table holds 1 span against `$nlb`
+  (`:1614`), B's 1 against `$npa` (`:1615`), and B's unmount deletes 1
+  times `$nlk` (`:1628`; `$nsx` comes from a cut cell, which does not run
+  under TLS). The CL check (`:1616`) is unchanged, and under plaintext
+  every count stays. On one guest, `cluster-dmsg.sh` arm 1 expects `nb +
+  nc` spans (`:776`), counted from `H2 +RXSPAN`, which prints before the
+  filter (`hammer2_iocom.c:400`, `hammer2_span_add()` at `:409`); with
+  both ROOT cluster ids bound on each end it reads 2, one each way, and
+  a count of the refusal line, read 0, is added beside it.
+- SRCGATE (`cluster-wire.sh:161-169`, `:752-763`, `:1442`,
+  `:2046-2060`): `pfs-create`
+  refuses `ZZ.h2sync-src` now, so the PFS is made at `newfs_hammer2`
+  (`:500`), which takes a comma-separated label list and passes through
+  no ioctl (read on the host: `-L ROOT,ZZ.h2sync-src,ZZ.h2sync-peer`
+  makes three MASTER PFSs, rc 0), and an arm for `ZZ.h2sync-peer` joins
+  it, each refused read-write and read-only.
+
+Stage 5.7, the two-guest readings after this code, reads
+`H2_WIRE_PASS=1 H2_WIRE_TLS=1` over kTLS, the reading that shows a
+link's own snapshot served without a row.
 
 **Controls**, each read on `h2debug-7.3tls` and `h2kasan-7.3tls`. Every
 relay mode but one parses frames (`relay_pair()` reads each through

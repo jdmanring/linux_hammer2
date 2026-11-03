@@ -64,7 +64,8 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
 - **What a connected peer can do**: the server serves any PFS with an
   element on the device whose cluster id a peer names, mounted or
   unmounted and named `*.h2sync-src` (`hammer2_remote_pfs()`), and the
-  device announces every PFS present when the link's `LNK_CONN` arrives,
+  device announces every PFS present when the peer answers the device's own
+  `LNK_CONN`,
   cluster id included. So a peer can read every PFS of those two kinds
   that existed when the link came up. A snapshot taken later carries a
   fresh random cluster id no span announces, so a local pass's source
@@ -84,8 +85,14 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   for a read as long as the inode it names takes and for a snapshot
   command a flush of the PFS and any stale snapshot's delete, during which a
   mount, unmount, pfs-delete or bulkfree on the host waits and the
-  synchronization thread skips its pass. A PFS with a remote master
-  mounts read-only.
+  synchronization thread skips its pass. The device also sends a peer
+  every `copyinfo` row with a nonzero copyid as `VOLCONF`, its label and
+  `span:HOST:PORT` path included, on the peer's reply to the device's own `LNK_CONN`
+  and again on each `REMOTE_ADD` and `REMOTE_DEL`
+  (`hammer2_volconf_update()`), so a peer learns every cluster peer the
+  host is configured to dial. No kernel reads that message, but
+  DragonFly's `hammer2 service` dials each row it receives. A PFS with a
+  remote master mounts read-only.
 - **TLS, in progress**: an intake can ask for a PSK handshake through
   the kernel's handshake upcall (`cluster_tls=psk`, or `RECLUSTER`'s TLS
   inputs), with `tlshd` holding the keys and the kernel only their
@@ -98,9 +105,19 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   not data is read by its type: a session ticket is dropped and the
   link serves on, and a KeyUpdate or an alert ends the
   link with a named line, read against a GnuTLS peer on both guest
-  kernels. No link between two guests runs TLS: every link
-  `test/h2service.c` dials is plaintext, since it asks for no
-  handshake. The
+  kernels. Between two guests, `test/h2service.c`'s dial takes the
+  same TLS inputs, and `script/cluster-wire.sh H2_WIRE_TLS=1` runs that
+  link through a relay that copies bytes, read once on `h2debug-7.3tls`
+  (37 checks with 0 failed, run `wire-run-20261102-145555`, kept under
+  `p8-notes/n9-4-20261102-145536/` in the data tree); the two-host
+  synchronization pass over TLS is not read yet. A TLS link
+  binds no span to the key it proved: once the handshake completes, the
+  peer's spans and requests are admitted exactly as on a plaintext link.
+  Stage 5.5 of `doc/CLUSTER_PROTOCOL_DESIGN.md` designs that binding, a
+  row check on the serving side, a per-link bound on the two snapshot
+  commands, and the remedies for a revoked key on a live link (unmount,
+  or removing the cluster's row at the cost of every peer of that
+  cluster); none of it is built. The
   `cluster_tls_required` module parameter (0 by default) refuses a
   plaintext intake when set to 1. The rest is P8's TLS stage.
 
