@@ -2015,7 +2015,7 @@ hm2done:
 		uint8_t body[324 - 64], rclid[16];
 		uint32_t cerr = 0, e2 = 0;
 		int o, c1 = -1, c2, sp = -1, on_media, n2;
-		long t0;
+		long t0, ts;
 
 		for (int i = 0; i < hs.nspan; i++)
 			if (!strcmp(hs.span[i].label, "ROOT"))
@@ -2035,11 +2035,12 @@ hm2done:
 		frame_write_body(old_dfd, DMSG_LNK_CONN | DMSGF_CREATE, 0x2200, 0,
 		    body, sizeof(body));
 		c2 = wait_frame(old_dfd, 0x2200, DMSGF_REPLY, &e2, &o);
+		ts = now_ms() - t0;	/* the send, not the reply: a served one waits out the hold */
 		hm2_request(old_dfd, DMSG_HM2_SNAPSHOT_IDX, rclid, 1, 0, 0, 0,
 		    "h2attach-snap", NULL, &r);
 		printf("h2attach quiesce: prelude=%d conn2_reply=%d snap_closed=%d"
 		    " snap_refused=%d snap_error=%u snap_ms=%ld since_intake_ms=%ld\n",
-		    c1, c2, r.closed, r.refused, r.error, r.ms, now_ms() - t0);
+		    c1, c2, r.closed, r.refused, r.error, r.ms, ts);
 		fflush(stdout);
 		n2 = handshake(dfd, &hs2, settle_ms) == 0;
 		memset(&lk, 0, sizeof(lk));
