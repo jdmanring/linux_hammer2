@@ -2290,8 +2290,13 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
 	 * The server names the snapshot from the label of its element, which
 	 * is this slot's name, the master's span's peer_label (stage 5.5,
 	 * rule 5); names are freed under hammer2_mntlk, which the caller
-	 * holds.
+	 * holds.  A span label is terminated inside DMSG_LABEL_SIZE at
+	 * receipt, so the length test cannot fire; the assert holds that, and
+	 * the test refuses a name from any other source rather than cut it.
 	 */
+	static_assert(DMSG_LABEL_SIZE - 1 + sizeof(HAMMER2_REMOTE_PEER_SUFFIX) <=
+	    HAMMER2_INODE_MAXNAME,
+	    "a span's label and the peer suffix no longer fit an inode name");
 	if (pmp->pfs_names[clindex] == NULL ||
 	    snprintf(want, sizeof(want), "%s%s", pmp->pfs_names[clindex],
 	    HAMMER2_REMOTE_PEER_SUFFIX) >= (int)sizeof(want))

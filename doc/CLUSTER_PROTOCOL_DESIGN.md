@@ -1921,12 +1921,12 @@ with the lock held; and drops the lock. As built,
 `hammer2_remote_conn_end()` lost its `final` argument, which had meant
 both "closed" and "held", and neither takes nor drops the lock, since
 both callers of the quiesce hold it, `hammer2_iocom_uninit()` and this
-work (`hammer2_remote.c:2884-2895`). Claiming before
+work (`hammer2_remote.c:2889-2900`). Claiming before
 the quiesce means a teardown that unhooks the attempt first leaves the
 old link alone. The rest of the tail takes no `hammer2_mntlk`: a server
 request leaves its try-lock loop once the state is not open (`:771-773`)
 and the quiesce has flushed their queue, and registration, the other
-taker (`:2839`), is disabled in `conn_end` (`:2909-2910`) until
+taker (`:2844`), is disabled in `conn_end` (`:2914-2915`) until
 `hammer2_remote_connected()` enables it again. The intake returns once
 the request is submitted or, in plaintext, once the work is queued, so a
 return from `RECLUSTER` no longer means `LNK_CONN` is queued. The
@@ -2309,13 +2309,13 @@ The rules, audited before any code:
    finds its entry by the cluster id the request names and deletes by
    the name the entry records, ignoring the peer's. The client still
    sends its own name, so the request's shape is unchanged; its check of
-   the fed root (`hammer2_remote.c:2343-2350`) compares the root's name
+   the fed root (`hammer2_remote.c:2348-2355`) compares the root's name
    exactly with `<label>.h2sync-peer`, the label being the `peer_label`
    of the master's span, where today it compares the name it sent, and
    its local proxy on the connection device keeps `.h2sync-src`. The
    suffix test splits in two: `.h2sync-src` for the local pass and the
    client's proxy, `.h2sync-peer` for a server's snapshot. The mount
-   gate (`hammer2_remote_is_source()`, `:2741`, called at
+   gate (`hammer2_remote_is_source()`, `:2746`, called at
    `hammer2_vfsops.c:1852`) refuses both, so neither is ever mounted;
    `pfs-create` and the snapshot ioctl (`hammer2_ioctl.c:504`, `:844`)
    refuse a name ending in either (XXX). What remains is a PFS with such
@@ -2508,7 +2508,7 @@ to 2069):
 - The klog patterns on `CL.h2sync-src` (`:782` to `:1003`) match the
   client's prints, `syncsnap: snapshot ... error` (`:782`, `:784`;
   `hammer2_synchro.c:1219`) and `syncsnap: remote snapshot ... tid`
-  (`hammer2_remote.c:2383`), which keep the name the client sends, and
+  (`hammer2_remote.c:2388`), which keep the name the client sends, and
   stay.
 - The SNAPDEL decoy (`cluster-wire.sh:147-151`, `:557`, `:1255-1256`,
   `:1442`, `:2061-2071`): the server now ignores the name the relay's
