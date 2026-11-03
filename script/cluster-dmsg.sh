@@ -368,7 +368,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		[ -w $PH/link_hold_ms ] && [ -w $PH/volconf_hold_ms ] || { echo "dmsg: COULD-NOT-RUN: the module has no link_hold_ms or volconf_hold_ms; it is not a HAMMER2_LOCKDEBUG build" >&2; exit 2; }
 		S=/tmp/h2service
 		lines() { awk -v p="$1" '{ print p "-" NR " " $0 }'; }
-		lnum() { grep -n "$1" $K | tail -1 | cut -d: -f1; }	# the last line naming it
+		lnum() { awk -v s="$1" -v p="$2" 'NR > s && index($0, p) { print NR; exit }' $K; }	# lnum <after line> <text>: the first line past it naming it
 		wait_n() {	# wait_n <target> <pattern> <tenths>
 			t=0; while [ "$(klog "$2")" -lt "$1" ] && [ $t -lt "$3" ]; do sleep 0.1; t=$((t + 1)); done
 		}
@@ -429,15 +429,15 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		$S add $M --clid $XB --label xb2 --path span:127.0.0.1:8 > /tmp/h2s2-add.out 2>&1 &
 		PS=$!
 		wait_n $((vh0 + 1)) 'volconf held' 100
+		echo 0 > $PH/volconf_hold_ms	# the held send keeps its own; the new link's dump is not held
 		echo "s2-in-hold held=$(($(klog 'volconf held') - vh0)) threads=$(threads) terminated=$(klog 'CONN WAS TERMINATED')"
 		ib=$(wc -l < $K)
 		$P --attach $M --action tlspeer --key $K1 --send none --port 7974 --linger-ms 2000 --wait-ms $((HOLD + 30000)) > /tmp/h2peer-s2b.out 2>&1 &
 		PB=$!
 		wait $PS; echo "s2-add-rc $? $(tr '\n' ' ' < /tmp/h2s2-add.out)"
 		wait $PB; echo "s2b-rc $?"; wait $PA; echo "s2a-rc $?"
-		echo 0 > $PH/volconf_hold_ms
 		lines s2a < /tmp/h2peer-s2a.out; lines s2b < /tmp/h2peer-s2b.out
-		echo "s2-order intake_line=$ib hold_end_line=$(lnum 'volconf hold ended') handed_line=$(lnum 'cluster link handed to the message threads') handed=$(($(handed) - h1)) dying=$(($(klog 'volconf queued on a dying circuit') - dy0))"
+		echo "s2-order intake_line=$ib hold_end_line=$(lnum $ib 'volconf hold ended') handed_line=$(lnum $ib 'cluster link handed to the message threads') handed=$(($(handed) - h1)) dying=$(($(klog 'volconf queued on a dying circuit') - dy0))"
 		$S del $M --path span:127.0.0.1:8 >/dev/null 2>&1
 
 		# E, the record on a fresh device: the first link after a
@@ -452,6 +452,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		echo "e-lines spanrefused=$(($(klog 'cluster link refused a span of cluster') - sr0))"
 
 		echo $((0x100)) > $PH/debug
+		umount $M2; umount $M
 		echo "threads-end $(threads)"
 		tail -n +$((TL0 + 1)) $TL | sed 's/^/tlshd-log /'
 		finish
@@ -1037,7 +1038,9 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		qx() { sed -n "s/^$1-[0-9]* h2attach quiesce: //p" "$W/out" | grep -- "$2" | head -1; }
 		for q in 0 1; do
 			o=$(qx q$q prelude=); n=$(qx q$q new_conn=); l=$(val q$q-lines)
-			[ "$(num "$(field " $l" held)" 0)" = 1 ] && [ "$(num "$(field " $o" since_intake_ms)" 99999)" -lt 2000 ]; check "q$q: the SNAPSHOT is asked inside the 2000 ms hold after the quiesce" $? "$o; $l"
+			# Both intakes pass the hold, the old connection's own and
+			# the second's; since_intake_ms is timed from the second.
+			[ "$(num "$(field " $l" held)" 0)" = 2 ] && [ "$(num "$(field " $o" since_intake_ms)" 99999)" -lt 2000 ]; check "q$q: the SNAPSHOT is asked inside the second intake's 2000 ms hold after its quiesce" $? "$o; $l"
 			[ "$(num "$(field " $o" snap_refused)" 0)" = 1 ] && [ "$(num "$(field " $o" snap_error)" 0)" = 33 ] && [ "$(num "$(field " $l" lostlink)" 0)" -ge 1 ] && [ "$(num "$(field " $l" snap)" -1)" = 0 ]; check "q$q: the quiesced server refuses it at admission with LOSTLINK and takes no snapshot" $? "$o; $l"
 			[ "$(num "$(field " $n" new_conn)" 0)" = 1 ] && [ "$(num "$(field " $n" on_media)" 1)" = 0 ] && [ "$(num "$(field " $l" listed)" 1)" = 0 ]; check "q$q: the new link comes up and no ROOT.h2sync-peer is on the media" $? "$n; $l"
 		done
