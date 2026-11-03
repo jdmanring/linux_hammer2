@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-1.0.77-blue.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-1.0.78-blue.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -57,10 +57,11 @@ At a glance, on a kernel of 7.3 or newer:
   master's PFS on another through a remote element, from a snapshot the
   master takes at the slave's request, and P7's five criteria read on
   two hosts as well as on one (`doc/CLUSTER_PROTOCOL_DESIGN.md`, stages 1
-  and 2). The link between hosts is plaintext with a peer admitted by a
-  marker file until kernel TLS lands in P8's TLS stage, and P7 closes
-  then; on one guest, a link between two volumes already completes a
-  PSK handshake with `tlshd` and runs over kTLS. No run yet
+  and 2). The link between hosts can run over kTLS with a pre-shared
+  key, its peer then admitted by key and held to the cluster ids that
+  key is bound to; the synchronization pass P7 closes on has so far
+  been read only over a plaintext link, whose peer is admitted by a
+  marker file, and P7 closes once the pass is read over TLS. No run yet
   of a quorum that cannot be met, and no write through a PFS with a
   remote master, which stays read-only until P8's lease protocol
 + not yet: a package, and any write to media that is not a scratch
@@ -99,7 +100,7 @@ it.
 
 The version is a position on the roadmap, not a release: the first two
 numbers name the milestone reached and the third counts point releases
-inside it. The tree is at 1.0.77, and [CHANGELOG.md](CHANGELOG.md) pins
+inside it. The tree is at 1.0.78, and [CHANGELOG.md](CHANGELOG.md) pins
 every row to the commits that delivered it and the runs that verified
 it.
 

@@ -37,11 +37,14 @@ has been read back by DragonFly and the other way round
 
 ## Known limits
 
-- **Cluster link**: plaintext between guests, since the userland
-  service `test/h2service.c` asks for no handshake. A PSK handshake can
-  be asked for at the intake: on one guest, a link between two volumes
-  over TCP loopback completes it with `tlshd` and runs over kTLS, and a
-  wrong or unadmitted key is refused, read on both guest kernels. A TLS
+- **Cluster link**: a PSK handshake can be asked for at the intake. On
+  one guest, a link between two volumes over TCP loopback completes it
+  with `tlshd` and runs over kTLS, and a wrong or unadmitted key is
+  refused, read on both guest kernels. Between two guests,
+  `test/h2service.c`'s dial asks for it too, and `cluster-wire.sh
+  H2_WIRE_TLS=1` runs the default shape through a relay that copies
+  bytes, with no frame in the clear, read on `h2debug-7.3tls`; the
+  synchronization pass over that link is not read yet. A TLS
   record that is not data is read by its type: a session ticket is
   dropped and the link serves on, and a KeyUpdate or an alert ends the
   link with a named line, read against a GnuTLS peer on both guest

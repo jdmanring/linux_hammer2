@@ -45,9 +45,10 @@ and the `hammer2` utility, and stage 2b, complete since 1.0.59, puts two
 kernels on the wire, the second reading the first's PFS as a remote
 element of its own cluster and its synchronization pass copying from
 it. A PFS with a remote master is read-only until P8's lease, and the
-link between hosts is plaintext until P8's TLS stage; on one guest a
-link between two volumes completes a PSK handshake and runs over kTLS
-(1.0.75).
+link between hosts runs over kTLS with a pre-shared key on one guest
+(1.0.75) and between two (1.0.78), each key held to the cluster ids it
+is bound to, while the synchronization pass has been read only over a
+plaintext link.
 
 0.9.52 and 0.9.53 open a capability the port had
 asserted away: `hammer2_assert_cluster()` required `nchains == 1` and
@@ -231,7 +232,7 @@ kernel and under four writers at once. 0.9.20 closed the closure
 verification: the fixed
 build copied 1978 store paths and 205871 files with four writers, kept
 lockdep enabled from the first mount through garbage collection and
-unload, and passed Linux and DragonFly checks. The driver is at 1.0.77
+unload, and passed Linux and DragonFly checks. The driver is at 1.0.78
 in `CHANGELOG.md`. The shipped module mounts
 DragonFly-written media read-write: every write operation is carried
 and read back by DragonFly, the crash matrix recovered every cell on

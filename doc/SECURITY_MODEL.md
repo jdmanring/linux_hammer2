@@ -114,9 +114,9 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   link with a named line, read against a GnuTLS peer on both guest
   kernels. Between two guests, `test/h2service.c`'s dial takes the
   same TLS inputs, and `script/cluster-wire.sh H2_WIRE_TLS=1` runs that
-  link through a relay that copies bytes, read once on `h2debug-7.3tls`
-  (37 checks with 0 failed, run `wire-run-20261102-145555`, kept under
-  `p8-notes/n9-4-20261102-145536/` in the data tree); the two-host
+  link through a relay that copies bytes, read on `h2debug-7.3tls` at
+  1.0.78 (37 checks with 0 failed, run `wire-run-20261102-221701`, kept
+  under `p7-notes/n9-5-wire-20261102-214846/` in the data tree); the two-host
   synchronization pass over TLS is not read yet. Each key an intake
   admits is bound to the cluster ids the intake names for it
   (`RECLUSTER`'s key and cluster-id pairs, or `cluster_tls_clid=` after
