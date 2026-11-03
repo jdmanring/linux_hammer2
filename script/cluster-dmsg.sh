@@ -355,7 +355,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		out=$($A --attach $M --attach2 $M2 --action tlslink --port $p "$@" 2>&1); echo "$a-rc $?"; echo "$a $out"
 	}
 	snap() {	# snap <arm>: the counts every arm is read against
-		echo "$1-before handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw)"
+		echo "$1-before handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw) rxspan=$(klog 'H2 +RXSPAN') spanrefused=$(klog 'cluster link refused a span of cluster') proto2=$(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 		h0=$(handed); r0=$(refused); s0=$(tlog succeeded); f0=$(tlog failed)
 	}
 	after() {	# after <arm>
@@ -1064,7 +1064,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		[ "$(num "$(field " $h" held)" 0)" = 1 ] && [ "$(num "$(field " $h" threads)" 0)" -ge 2 ] && [ "$(num "$(field " $h" terminated)" -1)" = "$(num "$(field " $g" terminated)" -2)" ]; check "s2: the old link was up through the intake: its threads present in the hold, no CONN WAS TERMINATED since it was handed" $? "$g; $h"
 		[ "$(num "$(field " $o" hold_end_line)" 0)" -gt "$(num "$(field " $o" intake_line)" 0)" ] && [ "$(num "$(field " $o" handed_line)" 0)" -gt "$(num "$(field " $o" hold_end_line)" 0)" ] && [ "$(num "$(field " $o" handed)" 0)" = 1 ] && [ "$(num "$(field " $o" dying)" -1)" = 0 ]; check "s2: the queued VOLCONF's hold ends before the reconnect is handed, and nothing is queued on a dying circuit" $? "$o"
 		case "$(val s2-add-rc)" in '0 '*'added copyid='*) r=0 ;; *) r=1 ;; esac; check "s2: the held REMOTE_ADD returns its row" $r "$(val s2-add-rc)"
-		[ "$(d e e handed)" = 2 ] && [ "$(num "$(val e-lines | sed 's/.*spanrefused=//')" -1)" = 0 ] && [ "$(a e rxspan)" -ge 2 ]; check "e: a fresh device's first link, held after its quiesce, admits its bound spans" $? "handed +$(d e e handed), $(val e-lines), rxspan $(a e rxspan)"
+		[ "$(d e e handed)" = 2 ] && [ "$(num "$(val e-lines | sed 's/.*spanrefused=//')" -1)" = 0 ] && [ "$(d e e rxspan)" -ge 2 ]; check "e: a fresh device's first link, held after its quiesce, admits its bound spans" $? "handed +$(d e e handed), $(val e-lines), rxspan +$(d e e rxspan)"
 		final_checks
 		echo "dmsg: TLS holds, $checks check(s), $fail failed"
 		[ "$fail" -eq 0 ] || exit 1
