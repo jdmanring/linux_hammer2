@@ -75,6 +75,10 @@
  * --rename-snapdel NAME gives the first SNAPDEL from B the name NAME, of
  * the same length as the one B sent, and signs the frame again; the
  * server must delete nothing of NAME, a snapshot its link never took.
+ * --rename-snaproot NAME gives the root A first feeds in answer to B's
+ * SNAPSHOT the filename NAME, of the same length, its check set to none
+ * so the block's own check cannot refuse it first; the client must refuse
+ * a root whose name is not the one it asked to be made.
  * --end-readdir 1 sets the error on
  * the closing frame of the first two readdir answers to
  * HAMMER2_ERROR_ABORTED, the code a server ends a request with when its
@@ -216,11 +220,12 @@ static struct {
 	int end_readdir;	/* the relay rewrites the readdir closes it sees, two at most */
 	const char *silence_on;	/* the name whose lookup's answer starts a silence */
 	const char *rename_snapdel; /* the name the first SNAPDEL is given */
+	const char *rename_snaproot; /* the name the first SNAPSHOT's root is given */
 	long cut_on_scan;	/* the scanall call from which the link is cut */
 	const char *cut_fault;	/* what the cut does: disconnect or trail */
 	int raw;		/* the relay copies bytes and parses no frame */
 } opt ={ 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
-    0, 0, 0, 0, NULL, NULL, -1, "disconnect", 0 };
+    0, 0, 0, 0, NULL, NULL, NULL, -1, "disconnect", 0 };
 
 static void
 usage(void)
@@ -236,7 +241,8 @@ usage(void)
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
 	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
 	    "              [--cut-fault disconnect|trail|loss|dup|reorder|late]\n"
-	    "              [--silence-on NAME] [--rename-snapdel NAME] [--trace FILE]\n"
+	    "              [--silence-on NAME] [--rename-snapdel NAME]\n"
+	    "              [--rename-snaproot NAME] [--trace FILE]\n"
 	    "       h2loop --relay PORT --raw 1 [--seed N] [--trace FILE]\n");
 	exit(2);
 }
@@ -275,6 +281,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--end-readdir")) opt.end_readdir = atoi(v);
 		else if (!strcmp(a, "--silence-on")) opt.silence_on = *v ? v : NULL;
 		else if (!strcmp(a, "--rename-snapdel")) opt.rename_snapdel = *v ? v : NULL;
+		else if (!strcmp(a, "--rename-snaproot")) opt.rename_snaproot = *v ? v : NULL;
 		else if (!strcmp(a, "--cut-on-scan")) opt.cut_on_scan = atol(v);
 		else if (!strcmp(a, "--cut-fault")) opt.cut_fault = v;
 		else if (!strcmp(a, "--raw")) opt.raw = atoi(v);
@@ -311,7 +318,8 @@ validate(void)
 	    opt.disconnect_at != -1 || opt.corrupt_at != -1 ||
 	    opt.rekey_data || opt.bare_dirent || opt.refuse_nresolve ||
 	    opt.retype_scan || opt.stall_ms || opt.end_readdir ||
-	    opt.silence_on || opt.rename_snapdel || opt.cut_on_scan != -1 ||
+	    opt.silence_on || opt.rename_snapdel || opt.rename_snaproot ||
+	    opt.cut_on_scan != -1 ||
 	    strcmp(opt.cut_fault, "disconnect"))))
 		usage();
 }
@@ -1065,6 +1073,51 @@ rename_snapdel(struct frame *f)
 	return (1);
 }
 
+static int snaprooted;		/* --rename-snaproot has fired */
+static uint64_t snaproot_msgid;	/* B's SNAPSHOT it watches, 0 none */
+
+/*
+ * B's SNAPSHOT request (DMSG_HM2_XOP(21)) is remembered by its msgid, and
+ * the first feed from A answering it with an inode (type 1) and its data
+ * has the filename (at byte 256 of the inode, struct hammer2_inode_data)
+ * replaced by --rename-snaproot's when name_len (byte 128) is its length.
+ * The blockref's check goes to none (methods' high nibble, byte 1),
+ * since the client tests a block's check on its first load and would
+ * refuse the edited root before its name test; then the aux CRC and the
+ * header are signed again.  An answer that ends with no root releases
+ * the msgid, so the next SNAPSHOT is watched.
+ */
+static int
+rename_snaproot(const struct side *from, struct frame *f)
+{
+	uint32_t c = f->hdr.cmd;
+	size_t n = strlen(opt.rename_snaproot);
+	uint16_t len;
+
+	if (from->name[0] == 'B' && (c & 0x00FFFF00U) == 0x00202500U &&
+	    (c & 0xA0000000U) == 0x80000000U) {
+		if (snaproot_msgid == 0)
+			snaproot_msgid = f->hdr.msgid;
+		return (0);
+	}
+	if (from->name[0] != 'A' || snaproot_msgid == 0 ||
+	    f->hdr.msgid != snaproot_msgid || (c & 0x20000000U) == 0)
+		return (0);
+	if (c & 0x40000000U)
+		snaproot_msgid = 0;
+	if ((c & 0x00FFFF00U) != 0x00203000U || f->ext_len < 2 ||
+	    f->ext[0] != 1 || f->aux == NULL || f->hdr.aux_bytes < 256 + n)
+		return (0);
+	memcpy(&len, f->aux + 128, sizeof(len));
+	if (len != n)
+		return (0);
+	memcpy(f->aux + 256, opt.rename_snaproot, n);
+	f->ext[1] &= 0x0F;
+	f->hdr.aux_crc = iscsi_crc32(f->aux, aux_alloc(&f->hdr));
+	resign(f);
+	return (1);
+}
+
 /*
  * --cut-on-scan K: B's scanall calls (DMSG_HM2_XOP(6)) are counted from the
  * first frame A answers B's first SNAPSHOT (DMSG_HM2_XOP(21)) with, so the
@@ -1401,6 +1454,11 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		trace("%s>%s i=%ld msgid=%" PRIu64 " rename-snapdel t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
+	if (opt.rename_snaproot && !snaprooted && rename_snaproot(from, f)) {
+		snaprooted = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " rename-snaproot t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
 	/* the first frame answering a readdir, the HM2 feed to B */
 	if (opt.stall_ms && !stalled && to->name[0] == 'B' &&
 	    (f->hdr.cmd & 0x00FFFF00U) == 0x00203000U &&
@@ -1734,13 +1792,14 @@ relay(void)
 	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
 	    " retype-scan=%d"
 	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s"
-	    " cut-on-scan=%ld cut-fault=%s\n",
+	    " rename-snaproot=%s cut-on-scan=%ld cut-fault=%s\n",
 	    opt.relay, opt.raw, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
 	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
 	    opt.refuse_nresolve, opt.retype_scan, opt.stall_ms, opt.end_readdir,
 	    opt.silence_on ? opt.silence_on : "-",
-	    opt.rename_snapdel ? opt.rename_snapdel : "-", opt.cut_on_scan,
+	    opt.rename_snapdel ? opt.rename_snapdel : "-",
+	    opt.rename_snaproot ? opt.rename_snaproot : "-", opt.cut_on_scan,
 	    opt.cut_fault);
 	fflush(tracef);
 	printf("h2loop: relay listening on %d\n", opt.relay);

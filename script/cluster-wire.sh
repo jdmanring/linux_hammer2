@@ -153,6 +153,12 @@
 # A's image with no not-ours line. H2_WIRE_SNAPDEL=control needs
 # H2_WIRE_KO_A, a scratch module whose SNAPDEL deletes by the peer's
 # name, which must delete the decoy; one guest reads the cluster-id scope.
+# H2_WIRE_SNAPROOT=1 runs the pass with the relay renaming the root A
+# feeds in answer to B's first SNAPSHOT: ZZ.h2sync-peer for CL.h2sync-peer,
+# the same length, its check set to none so the block's own check cannot
+# refuse it first (h2loop --rename-snaproot). B must refuse that root by
+# its name, the first snapshot failing EINVAL with the fed-a-root line,
+# and a later pass verify, the images equal.
 # H2_WIRE_KO_A=<ko> and H2_WIRE_KO_B=<ko> load a prebuilt module on that
 # side instead of building one, for a scratch-build control; the header
 # names it by sha256 and says it was given. Each side's module is read
@@ -281,6 +287,7 @@ SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CON
 LINKDEV=${H2_WIRE_LINKDEV:-0}
 STALE=${H2_WIRE_STALE:-0}
 RETYPE=${H2_WIRE_RETYPE:-0}
+SNAPROOT=${H2_WIRE_SNAPROOT:-0}
 TLS=${H2_WIRE_TLS:-0}; RAW=${H2_WIRE_RAW:-0}; TLSWRONG=${H2_WIRE_TLS_WRONG:-0}
 # H2_WIRE_CUT=disconnect ends the link inside the pass: the relay closes
 # both sides at the close of the first scanall call from the Kth on
@@ -330,6 +337,7 @@ case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an i
 [ -z "$CUT" ] || [ "$POWER" = 1 ] || [ -n "$CUTAT" ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT needs H2_WIRE_CUT_AT" >&2; exit 2; }
 [ -n "$CUT" ] || [ -z "$CUTAT" ] || [ "$CUTAT" -ge 1000000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT without H2_WIRE_CUT only traces, at 1000000" >&2; exit 2; }
 case $RETYPE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_RETYPE is 1" >&2; exit 2;; esac
+case $SNAPROOT in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SNAPROOT is 1" >&2; exit 2;; esac
 for c in "$TLS" "$RAW" "$TLSWRONG"; do
 	case $c in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_TLS, H2_WIRE_RAW and H2_WIRE_TLS_WRONG are 1" >&2; exit 2;; esac
 done
@@ -360,6 +368,7 @@ for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); do
 [ "$LINKDEV" = 0 ] || nctl=$((nctl + 1))
 [ "$STALE" = 0 ] || nctl=$((nctl + 1))
 [ "$RETYPE" = 0 ] || nctl=$((nctl + 1))
+[ "$SNAPROOT" = 0 ] || nctl=$((nctl + 1))
 [ -z "$CUT" ] || nctl=$((nctl + 1))
 for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$SRCGATE" "$ADMIT" "$CONNWAIT"; do [ "$c" = 0 ] || nctl=$((nctl + 1)); done
 [ "$nctl" -le 1 ] || { echo "wire: COULD-NOT-RUN: one control per run" >&2; exit 2; }
@@ -367,12 +376,12 @@ for c in "$ROGATE" "$PASSREFUSE" "$SNAPROUTE" "$SNAPDEL" "$SRCGATE" "$ADMIT" "$C
 # beside it; the pass is not a relay control, and a wrong key leaves no
 # link to pass over.
 if [ "$RAW" = 1 ]; then
-	[ "$((nctl - $([ "$PASS" = 1 ] && echo 1 || echo 0)))" = 0 ] && [ -z "${H2_WIRE_DELAY:-}${H2_WIRE_LOSS:-}${H2_WIRE_DUP:-}" ] && [ "$SEQ" = 0 ] || {
+	[ "$((nctl - $([ "$PASS" = 1 ] && echo 1 || echo 0)))" = 0 ] && [ -z "${H2_WIRE_DELAY:-}${H2_WIRE_LOSS:-}${H2_WIRE_DUP:-}$CUTAT" ] && [ "$SEQ" = 0 ] || {
 		echo "wire: COULD-NOT-RUN: H2_WIRE_TLS and H2_WIRE_RAW run alone or under H2_WIRE_PASS=1" >&2; exit 2; }
 	[ "$TLSWRONG" = 0 ] || [ "$PASS" = 0 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_TLS_WRONG leaves no link for H2_WIRE_PASS" >&2; exit 2; }
 fi
 # the two snapshot controls, the stale element and the retype run under the pass
-{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ] || [ -n "$CUT" ]; } && PASS=1
+{ [ "$SNAPROUTE" = control ] || [ "$SNAPDEL" != 0 ] || [ "$STALE" = 1 ] || [ "$RETYPE" = 1 ] || [ "$SNAPROOT" = 1 ] || [ -n "$CUT" ]; } && PASS=1
 # the pass the retype or the cut fails ends unverified, once
 UNV=$RETYPE; [ -z "$CUT" ] || UNV=1
 VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
@@ -419,8 +428,14 @@ grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4)
 RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} $SSH"
 W=$(mktemp -d) || exit 2
 RELAY_PID=
+GUESTS_SET=
+# A COULD-NOT-RUN after the guests are set up (the relay not listening, a
+# guest's module refused) leaves them with this run's volumes attached
+# unless the exit itself takes them off.
 cleanup() {
+	rc=$?
 	[ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null
+	[ "$rc" = 2 ] && [ -n "$GUESTS_SET" ] && { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; }
 	rm -rf "$W"
 }
 trap cleanup EXIT
@@ -501,6 +516,7 @@ cc -std=c11 -O1 -o "$W/h2loop" test/h2loop.c 2>"$W/cc.err" || {
 
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
+GUESTS_SET=1
 for g in a b $([ "$LINKDEV" = 1 ] && echo k); do
 	img=$FIXDIR/wire-$g.img
 	rm -f "$img"
@@ -563,6 +579,7 @@ relay_start() {	# relay_start <trace>: a relay on the port, its output appended
 	    --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
 	    --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
 	    --rename-snapdel "$([ "$SNAPDEL" = 0 ] || echo ZZ.decoy-snap)" \
+	    --rename-snaproot "$([ "$SNAPROOT" = 0 ] || echo ZZ.h2sync-peer)" \
 	    ${CUTAT:+--cut-on-scan "$CUTAT" --cut-fault "$FAULT"} \
 	    $([ "$RAW" = 1 ] && echo --raw 1) \
 	    --trace "$1" >> "$W/relay.out" 2>&1 &
@@ -834,6 +851,8 @@ n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -ge "${1:-1}"
 echo "pass-end-seconds $n"
 echo "pass-snap-taken $(klog 'syncsnap: remote snapshot CL.h2sync-src tid')"
 echo "pass-snap-bad $(klog 'syncsnap: remote snapshot CL.h2sync-src fed')"
+echo "pass-snap-notwant $(klog 'syncsnap: remote snapshot CL.h2sync-src fed a root that is not CL.h2sync-peer')"
+echo "pass-snap-einval $(klog 'syncsnap: snapshot CL.h2sync-src error 22$')"
 echo "pass-snap-passes $(klog 'syncsnap: pass clindex')"
 echo "pass-snap-verified $(klog 'syncsnap: verified clindex')"
 echo "pass-snap-unverified $(klog 'syncsnap: unverified clindex')"
@@ -1235,6 +1254,10 @@ echo "log-proto2 $(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 echo "log-conn-terminated $(klog 'CONN WAS TERMINATED')"
 echo "spans-rx $(klog 'H2 +RXSPAN')"
 echo "span-cl $(kl | grep 'H2 +RXSPAN' | grep -c "cl=$1 .*type=$2")"
+# +RXSPAN is upstream's print in five calls, the label in the first and the
+# cluster id and type in later ones a concurrent print can split from it,
+# so a zero is read by the label, which no split can take off its line
+echo "span-cl-label $(kl | grep -c 'H2 +RXSPAN cmd=[0-9a-f]* (CL  *) cl=')"
 echo "spantab $(kl | grep '^\[.*H2 SPANTAB' | tail -1 | sed 's/.*SPANTAB //')"
 echo "threads $(threads)"
 echo "keepalive-line $(klog 'HM2 peer silent')"
@@ -1412,7 +1435,7 @@ cap)
 	;;
 wait)
 	n=0
-	until [ $(( $(klog 'cluster link handed to the message threads') + $(klog 'cluster link refused') )) -ge 1 ] || [ $n -ge 150 ]; do sleep 0.1; n=$((n + 1)); done
+	until [ $(( $(klog 'cluster link handed to the message threads') + $(klog 'cluster link refused:') )) -ge 1 ] || [ $n -ge 150 ]; do sleep 0.1; n=$((n + 1)); done
 	echo "tls-wait-tenths $n"
 	;;
 stat)
@@ -1425,8 +1448,10 @@ stat)
 	echo "tls-cap-magic $(ccount '32 48 00 00')"
 	echo "tls-cap-appdata $(ccount '17 03 03')"
 	echo "tls-handed $(klog 'cluster link handed to the message threads')"
-	echo "tls-refused $(klog 'cluster link refused')"
-	echo "tls-refused-line $(kl | grep -m1 'cluster link refused' | sed 's/.*cluster link refused: //')"
+	# the intake's own lines, "refused:"; a refused span or snapshot is
+	# "refused a", and the pass reads those
+	echo "tls-refused $(klog 'cluster link refused:')"
+	echo "tls-refused-line $(kl | grep -m1 'cluster link refused:' | sed 's/.*cluster link refused: //')"
 	echo "tls-hs-ok $(tlog succeeded)"
 	echo "tls-hs-failed $(tlog failed)"
 	echo "tls-txsw $(tstat TlsCurrTxSw)"
@@ -1518,6 +1543,11 @@ power_cut() {
 	  echo "H cut-precut-hm2 $(grep -c 'hammer2: HM2 ' "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null)"
 	  echo "H cut-precut-warnings $(grep -v 'MAX_LOCKDEP_ENTRIES too low' "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive|enqueued on deprecated workqueue')"; } >> "$W/out"
 }
+# DEFER(the first power-cut cell run over TLS): a rebooted
+# guest has lost its keyring, and neither this nor restart.sh provisions
+# its key again or dials with /run/h2tls/args, so a power cut under
+# H2_WIRE_TLS=1 would redial in plaintext; the raw relay refuses every
+# cut today, which leaves the path unreachable.
 power_on() {
 	kill "$RELAY_PID" 2>/dev/null; wait "$RELAY_PID" 2>/dev/null; RELAY_PID=
 	relay_start "$FIXDIR/wire-run-$stamp-2.trace"
@@ -1649,7 +1679,10 @@ else
 [ "$(num "$(val A spantab)" 0)" = "$nlb" ]; check "link: A's span table holds one span per PFS of B's link device, counted against its pfs-list" $? "$(val A spantab) spans, $nlb PFSs"
 [ "$(num "$(val B spantab)" 0)" = "$npa" ]; check "link: B's span table holds one span per PFS of A" $? "$(val B spantab) spans, $npa PFSs"
 fi
-[ "$(num "$(val A span-cl)" 9)" = "$slv" ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl) of $slv, B sees MASTER $(val B span-cl)"
+# A's expected 0 under LINKDEV is read by label, which a split line keeps;
+# each expected 1 is read by cluster id and type as well, which a split
+# can only fail
+[ "$(num "$(val A span-cl-label)" 9)" = "$slv" ] && { [ "$slv" = 0 ] || [ "$(num "$(val A span-cl)" 9)" = 1 ]; } && [ "$(num "$(val B span-cl-label)" 0)" = 1 ] && [ "$(num "$(val B span-cl)" 0)" = 1 ]; check "link: each sees the other's CL span by the shared cluster id and the peer's type" $? "A sees SLAVE $(val A span-cl) of $slv ($(val A span-cl-label) by label), B sees MASTER $(val B span-cl) ($(val B span-cl-label) by label)"
 [ "$(num "$(val A log-conn-terminated)" 1)" = 0 ] && [ "$(num "$(val B log-conn-terminated)" 1)" = 0 ]; check "link: the connection outlives the VOLCONF frames" $? "terminated A $(val A log-conn-terminated), B $(val B log-conn-terminated)"
 [ "$(num "$(val A threads)" 0)" = 2 ] && [ "$(num "$(val B threads)" 0)" = 2 ]; check "link: one pair of message threads on each guest" $? "A $(val A threads), B $(val B threads)"
 # under STALE B's device is unmounted twice, each time with A's spans held,
@@ -1724,7 +1757,7 @@ if [ "$PASS" = 1 ] && [ "$SNAPROUTE" = 0 ] && [ -z "$CUT" ]; then
 	# and B had it deleted; the fake pass, a live pass, has no snapshot
 	# line and no verdict, and a snapshot the master refused leaves its
 	# error line on A.
-	[ "$(num "$(val B pass-snap-taken)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-bad)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-passes)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-unverified)" 1)" = "$UNV" ] && [ "$(num "$(val B pass-snap-noquorum)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-delete-errors)" 1)" = 0 ] && [ "$(num "$(val A snap-peer-errors)" 1)" = 0 ]; check "pass: B's pass reads a snapshot the master takes at its request, verifies against it and has it deleted" $? "snapshots taken $(val B pass-snap-taken), bad $(val B pass-snap-bad), passes $(val B pass-snap-passes), verified $(val B pass-snap-verified), unverified $(val B pass-snap-unverified), no quorum $(val B pass-snap-noquorum), deleted $(val B pass-snap-deleted), delete errors $(val B pass-snap-delete-errors), target taken $(val B pass-snap-target-taken), A's errors $(val A snap-peer-errors), end after $(val B pass-end-seconds) s"
+	[ "$(num "$(val B pass-snap-taken)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-bad)" -1)" = "$SNAPROOT" ] && [ "$(num "$(val B pass-snap-passes)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-unverified)" 1)" = "$UNV" ] && [ "$(num "$(val B pass-snap-noquorum)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B pass-snap-delete-errors)" 1)" = 0 ] && [ "$(num "$(val A snap-peer-errors)" 1)" = 0 ]; check "pass: B's pass reads a snapshot the master takes at its request, verifies against it and has it deleted" $? "snapshots taken $(val B pass-snap-taken), bad $(val B pass-snap-bad), passes $(val B pass-snap-passes), verified $(val B pass-snap-verified), unverified $(val B pass-snap-unverified), no quorum $(val B pass-snap-noquorum), deleted $(val B pass-snap-deleted), delete errors $(val B pass-snap-delete-errors), target taken $(val B pass-snap-target-taken), A's errors $(val A snap-peer-errors), end after $(val B pass-end-seconds) s"
 	# Incremental convergence: a set written on the master after the first
 	# pass reaches the slave's media by a later pass, which also verifies
 	# and deletes its snapshot; the digests read after include the set.
@@ -1934,6 +1967,10 @@ fi
 if [ "$RETYPE" = 1 ]; then
 	rt=$(grep -c ' retype ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$rt" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-scanall)" 0)" = 1 ] && [ "$(num "$(val B log-scanall-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-unverified)" 0)" = 1 ]; check "control: a directory entry a scanall feeds as a data block passes the CRCs and B's pass refuses it" $? "retype lines $(num "$rt" 0), not-proxy $(val B log-not-proxy) of which scanall $(val B log-not-proxy-scanall), scanall ended ENOTCONN $(val B log-scanall-notconn), peer-sent $(val B log-peer-sent), unverified passes $(val B pass-snap-unverified) ($(val B pass-unverified-first)), pass errors $(val B pass-errors) and $(val B pass-sync-errors)"
+fi
+if [ "$SNAPROOT" = 1 ]; then
+	rn=$(grep -c ' rename-snaproot ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val B pass-snap-notwant)" 0)" = 1 ] && [ "$(num "$(val B pass-snap-einval)" 0)" = 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ]; check "control: a SNAPSHOT's root fed under another name, its CRCs and check good, is refused by B's name test and a later pass verifies" $? "rename lines $(num "$rn" 0), fed-a-root lines $(val B pass-snap-notwant), snapshot EINVAL lines $(val B pass-snap-einval), passes verified $(val B pass-snap-verified)"
 fi
 if [ "$REKEY" = 1 ]; then
 	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)

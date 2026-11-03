@@ -257,8 +257,8 @@ refused=0 listened=0
 for knob in "--delay-max 1" "--loss 0.1" "--dup 0.1" "--partition-at 0" \
     "--partition-len 1" "--disconnect-at 5" "--corrupt-at 1" "--rekey-data 1" \
     "--bare-dirent 1" "--refuse-nresolve 1" "--retype-scan 1" "--stall-ms 10" \
-    "--end-readdir 1" "--silence-on x" "--rename-snapdel x" "--cut-on-scan 0" \
-    "--cut-fault trail"; do
+    "--end-readdir 1" "--silence-on x" "--rename-snapdel x" "--rename-snaproot x" \
+    "--cut-on-scan 0" "--cut-fault trail"; do
 	# shellcheck disable=SC2086	# the knob is two words on purpose
 	timeout 5 "$T/h2loop" --relay 1 --raw 1 $knob >"$T/knob.out" 2>&1; rc=$?
 	# port 1 fails to bind for a user, also exit 2, so the refusal is
@@ -266,15 +266,15 @@ for knob in "--delay-max 1" "--loss 0.1" "--dup 0.1" "--partition-at 0" \
 	[ "$rc" = 2 ] && grep -q '^usage: h2loop' "$T/knob.out" && refused=$((refused + 1))
 	grep -q 'relay listening\|^bind' "$T/knob.out" && listened=$((listened + 1))
 done
-check "raw: each of 17 frame knobs refused by usage, exit 2, before binding" \
-	"$refused" = 17 -a "$listened" = 0
+check "raw: each of 18 frame knobs refused by usage, exit 2, before binding" \
+	"$refused" = 18 -a "$listened" = 0
 timeout 5 "$T/h2loop" --raw 1 >"$T/knob.out" 2>&1; rc=$?
 check "raw: refused without --relay"         "$rc" = 2
 timeout 5 "$T/h2loop" --relay 1 --raw 2 >"$T/knob.out" 2>&1; rc=$?
 check "raw: refused at a value other than 0 or 1" "$rc" = 2
 relay vector --seed 7 --rekey-data 0 --bare-dirent 0 --refuse-nresolve 0 \
     --retype-scan 0 --stall-ms 0 --end-readdir 0 --silence-on '' \
-    --rename-snapdel '' --raw 1
+    --rename-snapdel '' --rename-snaproot '' --raw 1
 relay_stop
 check "raw: cluster-wire.sh's vector with every knob at default listens" \
 	"$(grep -c '^h2loop relay port=[0-9]* raw=1 ' "$T/vector.trace")" = 1
