@@ -2212,7 +2212,7 @@ The rules, audited before any code:
    (`kern_dmsg.c:2011`) and the lock is not recursive. `conn_state` is
    set and cleared with `msglk` held (`kern_dmsg.c:197-200`, `:242-246`),
    the CONN DELETE's reply is queued after that clear (`:248`, once the
-   lock is released at `:247`), and the hook runs with it held, so the
+   lock is released at `:247`), and the hook runs with `msglk` held, so the
    frame is queued on the connection whose record filtered it and ahead
    of that connection's DELETE, or not at all. That answers the race upstream's `XXX interlock` names
    (`hammer2_iocom.c:586`): a write queued after the DELETE trips the
