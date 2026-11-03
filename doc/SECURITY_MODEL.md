@@ -54,39 +54,46 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   link whose peer announced `DMSG_SPAN_PROTO_2` both CRCs of every frame
   are verified and a mismatch ends the link; that is integrity against
   corruption, not authentication.
-- **Admission**: an enabled `copyinfo[]` row with the cluster id gates
-  only the registration of a remote master, on the side that registers
-  it (`hammer2_remote_admitted()`); the serving side checks no row. On
-  a plaintext link the kernel verifies no peer identity, and the test
-  harness's
-  `test/h2service.c` chooses whom to connect by a marker file. Run a
-  cluster only between hosts on a network you control.
-- **What a connected peer can do**: the server serves any PFS with an
-  element on the device whose cluster id a peer names, mounted or
-  unmounted and named `*.h2sync-src` (`hammer2_remote_pfs()`), and the
-  device announces every PFS present when the peer answers the device's own
-  `LNK_CONN`,
-  cluster id included. So a peer can read every PFS of those two kinds
-  that existed when the link came up. A snapshot taken later carries a
-  fresh random cluster id no span announces, so a local pass's source
-  snapshot is readable only if it existed then. The server refuses every
-  modifying descriptor. Two snapshot commands outside the descriptor table do
-  write the serving side's media, whatever the peer's type or the PFS's:
-  a peer can have it snapshot any PFS it can read under any name ending
-  `.h2sync-src`, which first deletes an existing unmounted PFS of that
-  name (a mounted one makes the command fail). The delete is by name, and
-  a pass's source name is its PFS's label with that suffix, so read from
-  the code a pass's source can be deleted at any time. The same link can
-  also delete a snapshot it took. Each snapshot costs space until it is
-  deleted and the bulkfree scan has run. Each request holds the host's
+- **Admission**: the serving side serves a mounted PFS only while the
+  device holds an enabled `copyinfo[]` row for its cluster id
+  (`hammer2_remote_pfs()`, through `hammer2_remote_admitted()`), and an
+  unmounted PFS only when it is a snapshot the same link took. Registering
+  a remote master needs an enabled row whose type is MASTER. On a
+  plaintext link the kernel verifies no peer identity, so any peer the
+  userland service connects is admitted to every cluster the device has
+  a row for; the test harness's `test/h2service.c` chooses whom to
+  connect by a marker file. Run a plaintext cluster only between hosts on
+  a network you control.
+- **What a connected peer can do**: the server serves a PFS whose
+  cluster id a peer names, under the admission above. On a plaintext
+  link the device announces every PFS present when the peer answers the
+  device's own `LNK_CONN`, cluster id included; on a TLS link it
+  announces only the PFSs whose cluster ids the peer's key is bound to.
+  The server refuses every modifying descriptor. Two snapshot commands
+  outside the descriptor table do write the serving side's media,
+  whatever the peer's span type. SNAPSHOT is served only from an
+  admitted source that is mounted and is a MASTER element. The server
+  names the snapshot itself, `<source label>.h2sync-peer`, so a link
+  holds at most one per source PFS. A source label of 128 bytes or more
+  is refused. Before taking it the server deletes an unmounted PFS of
+  that name only if it is itself a snapshot; one of any other kind is
+  kept and the command refused. SNAPDEL deletes only a snapshot the same
+  link took, found by its cluster id. A link's snapshots are deleted when
+  the link is torn down, at the next intake or the unmount, not when the
+  peer closes its end. `pfs-create`, the snapshot ioctl and every mount
+  refuse a PFS name ending `.h2sync-src` or `.h2sync-peer`; a local
+  pass's own stale delete also takes only a snapshot. Each snapshot
+  costs space until it is deleted and the bulkfree scan has run. Each
+  request holds the host's
   global mount lock (`hammer2_mntlk`) until it is answered, since a PFS
   carries no reference count that could hold it instead: up to
   `remote_timeout_ms` for the request plus the storage call's own run,
   for a read as long as the inode it names takes and for a snapshot
   command a flush of the PFS and any stale snapshot's delete, during which a
   mount, unmount, pfs-delete or bulkfree on the host waits and the
-  synchronization thread skips its pass. The device also sends a peer
-  every `copyinfo` row with a nonzero copyid as `VOLCONF`, its label and
+  synchronization thread skips its pass. On a plaintext link the device
+  also sends a peer every `copyinfo` row with a nonzero copyid as
+  `VOLCONF` (on a TLS link only the rows of its key's bound clusters), its label and
   `span:HOST:PORT` path included, on the peer's reply to the device's own `LNK_CONN`
   and again on each `REMOTE_ADD` and `REMOTE_DEL`
   (`hammer2_volconf_update()`), so a peer learns every cluster peer the
@@ -110,14 +117,19 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   link through a relay that copies bytes, read once on `h2debug-7.3tls`
   (37 checks with 0 failed, run `wire-run-20261102-145555`, kept under
   `p8-notes/n9-4-20261102-145536/` in the data tree); the two-host
-  synchronization pass over TLS is not read yet. A TLS link
-  binds no span to the key it proved: once the handshake completes, the
-  peer's spans and requests are admitted exactly as on a plaintext link.
-  Stage 5.5 of `doc/CLUSTER_PROTOCOL_DESIGN.md` designs that binding, a
-  row check on the serving side, a per-link bound on the two snapshot
-  commands, and the remedies for a revoked key on a live link (unmount,
-  or removing the cluster's row at the cost of every peer of that
-  cluster); none of it is built. The
+  synchronization pass over TLS is not read yet. Each key an intake
+  admits is bound to the cluster ids the intake names for it
+  (`RECLUSTER`'s key and cluster-id pairs, or `cluster_tls_clid=` after
+  its `cluster_tls_key=` on the mount path); an intake naming a serial
+  twice, or binding no cluster id, is refused before any handshake. A
+  TLS link records the key it proved and that set when its connection
+  is installed, and refuses a span, a registration or a request for a
+  cluster id outside the set, each with a named line (stage 5.5 of
+  `doc/CLUSTER_PROTOCOL_DESIGN.md`). A revoked key is refused at its
+  next handshake, but a link already up stays up, since TLS
+  authenticates once per connection: unmounting the volume ends it, or
+  removing the cluster's row stops its service at the next request, at
+  the cost of every peer of that cluster. The
   `cluster_tls_required` module parameter (0 by default) refuses a
   plaintext intake when set to 1. The rest is P8's TLS stage.
 

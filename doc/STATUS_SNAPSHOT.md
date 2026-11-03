@@ -46,17 +46,17 @@ has been read back by DragonFly and the other way round
   dropped and the link serves on, and a KeyUpdate or an alert ends the
   link with a named line, read against a GnuTLS peer on both guest
   kernels.
-  On a plaintext link the kernel verifies no peer identity and
-  the serving side checks no `copyinfo` row, so whoever the userland
-  service connects is a peer; an enabled row gates only the registration
-  of a remote master, and the test harness's `h2service` chooses peers
-  by a marker file. A peer can read every mounted PFS, and every
-  unmounted `*.h2sync-src`, whose cluster id it names (the serving
-  device announces every PFS present when the link comes up), and can
-  have the serving side take a snapshot under any `*.h2sync-src` name,
-  first deleting any unmounted PFS of that name, a local pass's own
-  source among them. Run a cluster only on a network you control
-  (`doc/SECURITY_MODEL.md` has the rest). Kernel TLS is P8's TLS stage,
+  The serving side serves a mounted PFS only while the device holds an
+  enabled `copyinfo` row for its cluster id, and an unmounted one only as
+  a snapshot the same link took; a peer's snapshot is named by the
+  server, one per source per link, and a stale one is deleted only if it
+  is itself a snapshot. A TLS key is bound to cluster ids at the intake,
+  and the link refuses spans, registrations and requests outside that
+  set. On a plaintext link the kernel verifies no peer identity, so
+  whoever the userland service connects is admitted to every cluster the
+  device has a row for, and the test harness's `h2service` chooses peers
+  by a marker file. Run a plaintext cluster only on a network you
+  control (`doc/SECURITY_MODEL.md` has the rest). Kernel TLS is P8's TLS stage,
   and P7 closes once the pass runs over it.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
