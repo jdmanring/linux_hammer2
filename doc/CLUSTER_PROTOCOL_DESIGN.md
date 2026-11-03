@@ -99,7 +99,7 @@ The kernel verifies no CRC and keeps no span table. `kdmsg_iocom_thread_rd()`
 checks the magic, the header size and the 1 MiB aux bound
 (`kern_dmsg.c:363-399`); the CRCs are generated on transmit over the
 aligned header with `hdr_crc` zeroed and over the aligned aux
-(`:2093-2100`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
+(`:2094-2101`), which is what `libdmsg` computes too, and `dmsg_icrc32` is
 `iscsi_crc32`, the port's CRC-32C mapping (`hammer2_compat.h:156`).
 Received spans are open transactions under `state0`, and
 `hammer2_autodmsg()` monitors them (`hammer2_iocom.c:366`): a span whose
@@ -110,7 +110,7 @@ announced it, is left open with a result (`:427-466`). The kernel fills its own
 spans with `peer_id` set to the PFS's `pfs_clid`, `pfs_id` to its
 `pfs_fsid`, `pfs_type` from the root inode and `proto_version` 1
 before stage 2a, `PROTO_2` since (`:532-539`); a span carries no root inode. `msgid` is the kernel
-address of the transaction's state (`kern_dmsg.c:1872`), and
+address of the transaction's state (`kern_dmsg.c:1873`), and
 `link_verifier` is read nowhere in `kern_dmsg.c`.
 
 Two kernels are needed to test remoteness, since `hammer2_pfsalloc()`
@@ -971,7 +971,7 @@ by construction. That cost is measured in stage 2b against the local
 pass. **A silent loss is detected within the bound, not at the next
 request.** `kern_dmsg` has no keepalive: `LNK_PING` is sent only to
 unstick the reader at teardown (`kern_dmsg.c:286-294`) and is otherwise
-only answered (`:1197-1205`), and a span carries no status (C10), so a
+only answered (`:1198-1206`), and a span carries no status (C10), so a
 partition that drops frames and keeps the socket would be seen only
 when a request timed out. A `PROTO_2` connection carries a second work item for the
 keepalive alone, delayed work that neither the registration and detach
@@ -1316,7 +1316,7 @@ rather than from the design document alone.
   (`:197`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
   receive path builds its switch from `msg->state->icmd`
-  (`kern_dmsg.c:1188`), which is zero on `state0`, so a bare `PING`
+  (`kern_dmsg.c:1189`), which is zero on `state0`, so a bare `PING`
   falls through to `hammer2_rcvdmsg()`, which ignores a one-way message
   and answers a transaction `DMSG_ERR_NOSUPP` (`hammer2_iocom.c:323-336`).
   A keepalive is either a transaction whose refusal is the answer, or
@@ -1728,7 +1728,7 @@ functionality is exposed. Each item, and where the answer lives:
 | peer authentication | kernel TLS through the handshake upcall on the socket `RECLUSTER` or `cluster_fd=` hands in, PSK, requested by the intake and required of every intake by the module parameter `cluster_tls_required` (the TLS link section; a `copyinfo` row flag waits for 3.1; x509 is deferred there with its reasons and trigger); a peer is admitted only by a key serial the intake listed; no frame is read before the handshake completes, since the reader starts after it; `tlshd` holds the key material and the kernel only serials, DragonFly's boundary kept |
 | peer identity | the span's `peer_id`, on a TLS link admitted only when it is a cluster id the intake bound to the key serial the handshake reported, the link's record holding both (stage 5.5); on a plaintext link, self-asserted and admitted only by an explicit `.none` marker, as DragonFly's `.none` admits a peer with no key |
 | cluster id validation | a span registers only against a local `pmp` whose `pfs_clid` the span's `peer_id` names and a `copyinfo[]` row with that `pfs_clid` admits, and only after the fetched root inode's `pfs_clid`, `pfs_fsid` and `pfs_type` match the span's `peer_id`, `pfs_id` and `pfs_type`; a reply frame carries no id, and binds to the element by the connection and the open request |
-| replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1872`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
+| replay protection | a new mechanism, named as one: `link_verifier`, which the kernel today neither sets nor reads, is a per-connection random value chosen at `LNK_CONN` on a `PROTO_2` connection and checked on every frame, a mismatch ending the connection; a `msgid` is the kernel address of its transaction state (`kern_dmsg.c:1873`), so an aborted request's state is kept allocated, marked abandoned, until the peer's `DELETE` arrives or the connection closes, and its address cannot name a new request while a late reply can still arrive; TLS adds the record layer's protection within a connection |
 | message freshness | the request's bound, `remote_timeout_ms`; a reply after its request aborted matches the abandoned state and is dropped there |
 | authorization by node type | a MASTER accepts modifying requests only from a MASTER of the same cluster id; a SLAVE's requests are read commands only and a modifying command from one is `DMSG_ERR_NOSUPP`; for a MASTER the check is its `pfs_type` as the fetched root inode states it, cross-checked against its span at registration; a SLAVE's span registers no slot and fetches no root, so a slave requester is admitted by an enabled `copyinfo[]` row for the mounted PFS it names, whose cluster id a TLS link must also bind, or as a snapshot that link took (stage 5.5), and the commands it may send are the read set in either case, plus SNAPSHOT and SNAPDEL, which write the serving side's media and are bounded per link: one snapshot per MASTER source, named by the server, deletable only by the link that took it, deleted at the link's end (stage 5.5) |
 | connection admission | closed by default: `h2service` dials only a peer with a `.pub` key or an explicit `.none` marker in its directory, as `libdmsg` refuses "unknown host"; the kernel registers a master's span only with a matching `copyinfo[]` row whose `remote_pfs_type` is MASTER, and serves a mounted PFS only with an enabled row for its cluster id and an unmounted one only as a snapshot that link took (stage 5.5); everything else is monitored and logged, not registered |
@@ -2210,17 +2210,17 @@ The rules, audited before any code:
    the record, filters, allocates and queues the frame within one hold
    of `msglk`, through `kdmsg_msg_write_locked()` made extern (XXX
    Linux), since `kdmsg_msg_write()` takes `msglk` itself
-   (`kern_dmsg.c:2012`) and the lock is not recursive. `conn_state` is
+   (`kern_dmsg.c:2013`) and the lock is not recursive. `conn_state` is
    set and cleared with `msglk` held (`kern_dmsg.c:197-200`, `:242-246`),
    the CONN DELETE's reply is queued after that clear (`:248`, once the
    lock is released at `:247`), and the hook runs with `msglk` held, so the
    frame is queued on the connection whose record filtered it and ahead
    of that connection's DELETE, or not at all. That answers the race upstream's `XXX interlock` names
    (`hammer2_iocom.c:586`): a write queued after the DELETE trips the
-   `KKASSERT` at `kern_dmsg.c:2061` under `HAMMER2_INVARIANTS`, and
-   without it is discarded as a write to a dying circuit (`:2062`),
+   `KKASSERT` at `kern_dmsg.c:2062` under `HAMMER2_INVARIANTS`, and
+   without it is discarded as a write to a dying circuit (`:2063`),
    since the reap's simulated failure marks every substate DYING
-   (`:1435`); the message's reference keeps the state from being freed,
+   (`:1436`); the message's reference keeps the state from being freed,
    so the frame never reaches another connection. The server's queue (`hammer2_remote_pfs()`, with
    `hammer2_mntlk` held, nesting outside `link_spin`) admits only in
    OPEN, which only the new connection reaches, and the registration
@@ -2376,7 +2376,7 @@ change what the arm reads. One more `HAMMER2_LOCKDEBUG` parameter,
 in `hammer2_link_work()` after the quiesce (`hammer2_iocom.c:966`) with
 `hammer2_mntlk` still held, inside the window before the old reader is
 reaped. The existing build flag `HAMMER2_NOSNAPSCOPE=1`
-(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2068-2072`) is redefined
+(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2066-2070`) is redefined
 below.
 - `tlspeer`, bound to cluster id X, announces a span for Y: refused with
   the line, no slot. Removed: the span enters the table.
@@ -2427,11 +2427,11 @@ below.
   `hammer2_volconf_update()` prints when the state it queues on carries
   `KDMSG_STATE_DYING`, read with `msglk` held at the queue. As
   committed: the hold's end line first, the handed line after it, and 0
-  dying-circuit lines, since the reap that sets DYING (`:1435`) cannot
+  dying-circuit lines, since the reap that sets DYING (`:1436`) cannot
   start until the reconnect has `msglk` (`:122`). Removed (the write
   moved after the release, the hold between them, and the same line
   kept at the moved write), on a build without `HAMMER2_INVARIANTS`,
-  whose `KKASSERT` at `kern_dmsg.c:2061` is a `BUG_ON`
+  whose `KKASSERT` at `kern_dmsg.c:2062` is a `BUG_ON`
   (`hammer2_compat.h:94`) that would kill the task holding `msglk` and
   the volume lock and wedge every later arm: the handed line first and
   1 dying-circuit line. In neither build does `tlspeer` on the new
@@ -2444,12 +2444,12 @@ below.
   hold's start, since it prints after the abort releases `msglk`, so a
   link already dying can print it just after the hold starts. A link
   ending on its own leaves `conn_state` set and already DYING for a
-  moment (`kern_dmsg.c:1469-1470`, cleared at `:242-246`), and a sender
+  moment (`kern_dmsg.c:1470-1471`, cleared at `:242-246`), and a sender
   then prints the line in the committed build too. And in the removed
   build the handed line precedes the hold's end line, since a hold that
   ends before the reap reaches `conn_state` reads exactly as committed;
   nothing bounds the reap from above (its exit loop polls every half
-  second and only warns, `:624-647`), so the hold is sized from the
+  second and only warns, `:625-648`), so the hold is sized from the
   link's own intake-to-handed gap, measured and printed on an idle link
   with no request in flight and no snapshot held, plus
   `cluster_tls_timeout_ms` (`hammer2_vfsops.c:206`).

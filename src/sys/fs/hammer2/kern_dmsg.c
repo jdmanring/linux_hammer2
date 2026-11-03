@@ -521,6 +521,8 @@ kdmsg_iocom_thread_wr(void *arg)
 		}
 
 		while ((msg = TAILQ_FIRST(&iocom->msgq)) != NULL) {
+			if (hammer2_ctl_closewait(iocom, msg))	/* XXX Linux: a control's window, else 0 */
+				continue;
 			/*
 			 * Remove msg from the transmit queue and do
 			 * persist and half-closed state handling.
@@ -545,7 +547,6 @@ kdmsg_iocom_thread_wr(void *arg)
 			 * succeeded even if it failed.
 			 */
 			lockmgr(&iocom->msglk, LK_RELEASE);
-			hammer2_ctl_closewait(msg);	/* XXX Linux: a control's window, else nothing */
 			error = fp_write(iocom->msg_fp, &msg->any,
 					 msg->hdr_size, &res, UIO_SYSSPACE);
 			if (error || res != msg->hdr_size) {
