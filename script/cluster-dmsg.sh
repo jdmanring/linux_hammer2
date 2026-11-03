@@ -698,7 +698,14 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	sleep 1; no0=$(klog 'peer named CL, not this link')
 	hsnap s55h2 --pfs CL --count 0 --delclid "$XCL"
 	echo "s55h2-lines notours=$(($(klog 'peer named CL, not this link') - no0)) cl-listed=$(hammer2 -s $M pfs-list 2>/dev/null | awk '$NF == "CL"' | grep -c .)"
+	# rule 4's unmounted gate alone: CL keeps its row and the plaintext
+	# link binds every id, so only the mount decides; served mounted,
+	# refused once unmounted
+	out=$($A --attach $M --action hm2root --clid "$XCL" 2>&1); echo "s55k-mounted $out"
 	umount /mnt/h2cl
+	sleep 1; um0=$(klog 'refused: no mounted PFS of that cluster on this device')
+	out=$($A --attach $M --action hm2root --clid "$XCL" 2>&1); echo "s55k-unmounted $out"
+	echo "s55k-lines unmounted=$(($(klog 'refused: no mounted PFS of that cluster on this device') - um0))"
 
 	# a source whose label is 128 bytes
 	LL=$(printf '%0128d' 0 | tr 0 L)
@@ -1182,6 +1189,8 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	[ "$(val s55f-mount)" = 0 ] && unserved "$f1" && [ "$(num "$(field " $fl" kept)" -1)" = 1 ] && [ "$(num "$(field " $fl" listed)" -1)" = 1 ] && [ "$(num "$(field " $f1" subtype)" -1)" = 0 ]; check "s55f: a MASTER PFS holding the peer name is kept and the snapshot refused" $? "mount $(val s55f-mount); $f1; $fl"
 	h2=$(sb s55h2 'done '); hl=$(val s55h2-lines)
 	[ "$(num "$(field " $h2" del_closed)" 0)" = 1 ] && [ "$(num "$(field " $h2" del_error)" 1)" = 0 ] && [ "$(num "$(field " $hl" notours)" -1)" = 1 ] && [ "$(num "$(field " $hl" cl-listed)" -1)" = 1 ]; check "s55h2: SNAPDEL naming a mounted PFS the link never took deletes nothing" $? "$h2; $hl"
+	km=$(val s55k-mounted); ku=$(val s55k-unmounted)
+	[ "$(num "$(field "$km" found)" 0)" = 1 ] && [ "$(num "$(field "$km" error)" 1)" = 0 ] && [ "$(num "$(field "$ku" refused)" 0)" = 1 ] && [ "$(num "$(val s55k-lines | sed 's/.*unmounted=//')" 0)" = 1 ]; check "s55k: a PFS with a row is served mounted and refused once unmounted, with its line" $? "$km / $ku; $(val s55k-lines)"
 	g1=$(sb s55g 'n=1 '); gl=$(val s55g-lines)
 	[ "$(val s55g-mount | cut -d' ' -f1)" = 0 ] && unserved "$g1" && [ "$(num "$(field " $gl" long)" -1)" = 1 ] && [ "$(num "$(field " $gl" listed)" -1)" = 0 ]; check "s55g: a source labeled 128 bytes is refused a snapshot, with its line" $? "mount $(val s55g-mount); $g1; $gl"
 	h1=$(sb s55h1 'done ')
