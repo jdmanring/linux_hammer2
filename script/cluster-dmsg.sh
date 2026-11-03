@@ -120,10 +120,11 @@ fi
 
 detach_disk
 rm -f "$IMG"
-# The TLS mode's vdb carries stage 5.5's names from newfs, since both
-# ioctls refuse the suffixes: a MASTER CL, a MASTER of subtype none under
-# CL's peer name, and an unmounted local source.
-LABELS=ROOT; [ "${H2_DMSG_TLS:-0}" = 1 ] && LABELS=ROOT,CL,CL.h2sync-peer,CL.h2sync-src
+# The TLS mode's vdb carries stage 5.5's reserved names from newfs, since
+# both ioctls refuse the suffixes: a MASTER of subtype none under CL's
+# peer name and an unmounted local source.  newfs takes three labels, so
+# CL itself is made on the guest.
+LABELS=ROOT; [ "${H2_DMSG_TLS:-0}" = 1 ] && LABELS=ROOT,CL.h2sync-peer,CL.h2sync-src
 truncate -s 1G "$IMG" && "$NEWFS" -L "$LABELS" "$IMG" >/dev/null 2>&1 || {
 	echo "dmsg: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
 if [ "$state" = running ]; then how=--live; else how=--config; fi
@@ -493,6 +494,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		echo "$out" | lines $a
 	}
 	mount -t hammer2 /dev/vdb@ROOT $M && mount -t hammer2 /dev/vdc@ROOT $M2 || { echo "s55 remount failed"; exit 1; }
+	hammer2 -s $M pfs-create CL >/dev/null 2>&1 || { echo "s55 CL not made"; exit 1; }
 	XB=$(pc $M ROOT); XCL=$(pc $M CL); XSRC=$(pc $M CL.h2sync-src)
 	Z=5a5a5a5a-0000-4000-8000-000000000001; W=5a5a5a5a-0000-4000-8000-000000000002
 	echo "s55-clids rootb=$XB cl=$XCL src=$XSRC z=$Z w=$W pfs-b=$(hammer2 -s $M pfs-list 2>/dev/null | awk 'NR>1' | grep -c .)"
@@ -991,7 +993,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	# readings are p7-notes/n9-5-controls-expected.md in the data tree.
 	dd() { echo $(( $(a "$1" "$3") - $(a "$2" "$3") )); }	# dd <later> <earlier> <field>, both after lines
 	ids=$(val s55-clids); xb=$(printf '%s\n' "$ids" | sed -n 's/.*rootb=\([^ ]*\).*/\1/p')
-	[ "$(num "$(val pfs-count-b)" 0)" -ge 5 ] && [ "$(a arm1-up rxspan)" = 2 ]; check "stage 5.5: vdb's PFSs no key binds are not announced on the TLS link" $? "$(val pfs-count-b) PFSs on vdb, $(a arm1-up rxspan) spans received in all"
+	[ "$(num "$(val pfs-count-b)" 0)" -ge 4 ] && [ "$(a arm1-up rxspan)" = 2 ]; check "stage 5.5: vdb's PFSs no key binds are not announced on the TLS link" $? "$(val pfs-count-b) PFSs on vdb, $(a arm1-up rxspan) spans received in all"
 	[ "$(d s55rev-up s55rev handed)" = 2 ]; check "s55rev: a fresh key's link is handed at both ends" $? "handed +$(d s55rev-up s55rev handed)"
 	[ "$(dd s55rev s55rev-up handed)" = 0 ] && [ "$(dd s55rev s55rev-up refused)" -ge 1 ] && [ "$(num "$(val s55rev-keyfail)" 0)" -ge 1 ]; check "s55rev: once the key is revoked the next handshake fails and nothing is handed" $? "handed +$(dd s55rev s55rev-up handed), refused +$(dd s55rev s55rev-up refused), tlshd revoked-key lines $(val s55rev-keyfail)"
 	[ "$(a s55rev threads)" = 4 ] && [ "$(dd s55rev s55rev-up terminated)" = 0 ] && [ "$(dd s55rev s55rev-up silent)" = 0 ]; check "s55rev: the first link carries on after the revoked key's failure" $? "threads $(a s55rev threads), terminated +$(dd s55rev s55rev-up terminated), silent +$(dd s55rev s55rev-up silent)"
