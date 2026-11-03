@@ -21287,3 +21287,94 @@ daemon carrying several peers over one link, whose binding stage 4
 moves per peer (rule 8); and a `.h2sync-src` or `.h2sync-peer` PFS made
 on the same media by another implementation's utility, which no ioctl
 here can refuse.
+
+## A link with two keys installs the clusters of the key it proved, 2026-11-03
+
+The 1.0.78 entry left the binding of a link's cluster ids to the key it
+proved driven by no run, on both intakes: the serial test in
+`hammer2_link_stage()`, which every intake reaches, and the mount path's
+binding of each `cluster_tls_clid` to the `cluster_tls_key` before it
+(`hammer2_parse_param()`). Every intake a run admitted held one key, so
+a build handing a peer every key's clusters, or binding a cluster to
+the wrong key, passed every arm. `1c1964a` gives `h2attach` a server's
+second key and bindings by key slot (`--admit2`, `--sbind`), a client's
+bindings (`--cbind`) and `tlsaccept`, which accepts a connection a shell
+opens and hands a mount as `cluster_fd=`, and gives it to a client
+intake, and adds four checks to
+`cluster-dmsg.sh H2_DMSG_TLS=1`. A server on vdb admits K1 bound to CL
+and K6 bound to both ROOTs; vdc's client is bound to all three, so it
+takes whatever vdb sends, and vdb announces only what its record binds.
+The expected readings and controls were written before the first run
+(`p7-notes/n9-5-keysel-expected.md` in the data tree).
+
+**The first run read a defect of its own count** (`h2debug-7.3tls`, 74
+checks, 1 failed, report `dmsg-run-20261102-234051`): `s55m1` read no
+span of vdb's at vdc. The kept klog has vdb's ROOT span at vdc
+(line 377, printed by vdc), its cluster id split onto line 380:
+`+RXSPAN` prints the id through a second `kprintf`, and vdb's span-table
+print (lines 378-379, its continuation on line 381 naming vdc's ROOT,
+which only vdb's table holds), from the other end on the same guest a
+microsecond later, landed between them. A
+count needing `cl=<id>` on one line read 0, and for the readings that
+must be 0 a split passes. The checks now count by label, which the first
+`kprintf` prints: vdb's CL is the only CL, and each end receives only the
+other's spans, so two ROOTs are one each way. That series is not the
+readings below, which are the fixed harness's: its two controls
+(`ctl/n9-5-keysel`, `ctl/n9-5-mountslot`) and its KASAN run (report
+`dmsg-run-20261102-235113`, 74 checks with 0 failed under the old
+count, whose log's line 1 names `1c1964a` because the wrapper read the
+head at each run while the fixed commit landed mid-series; the frozen
+harness, `289a19195e19`, is the old count's). The note records a
+prediction the first series left open, `s55n` under the selection's
+control, corrected before the rerun. `cluster-wire.sh`'s span count
+(`link.sh`, `span-cl`) reads a cluster id the same way. Its check wants
+1, so a split fails it, except under `H2_WIRE_LINKDEV=1`, where A's
+wants 0 and a split would pass it.
+
+**The readings**, `cluster-dmsg.sh H2_DMSG_TLS=1` at `1c1964a` (line 1
+of each log; harness `63c6283f9f86`), QEMU cores 0 before and after
+each, logs under `p7-notes/` and reports under `fixtures/`:
+- `h2debug-7.3tls`: 74 checks, 0 failed
+  (`n9-5-keysel-tls-debug-20261103-keysel2.log` line 82, report
+  `dmsg-run-20261102-235456`). `s55m1`, the client proving K6:
+  `handed=2 root=2 cl=0 spanrefused=0` (line 75). `s55m2`, proving K1:
+  `handed=2 root=1 cl=1 spanrefused=1` (line 76), vdc receiving CL and
+  vdb refusing vdc's ROOT. `s55n`, the mount path with
+  `cluster_tls_key=K1,cluster_tls_clid=CL,cluster_tls_key=K6,cluster_tls_clid=ROOTs`,
+  the client proving K6: mount and accept 0, then `handed=2 root=2 cl=0
+  spanrefused=0` (lines 77-78). The first of those two checks passes with
+  no link: the mount returns 0 whether its intake is admitted or refused,
+  printing "cluster_fd: no link" for a refusal, and `tlsaccept`'s
+  `RECLUSTER` returns once its intake is queued. The mount-slot control
+  below reads it ok at line 77 with its intake refused
+  (`dmsg-run-20261103-000054.klog` lines 422-423); the second check is
+  the reading. No lockdep report, kmemleak nothing of
+  hammer2's (lines 79-80).
+- `h2kasan-7.3tls`: 74 checks, 0 failed, the same four readings
+  (`n9-5-keysel-tls-kasan-20261103-keysel2.log` lines 75-82, report
+  `dmsg-run-20261103-000527`), no KASAN, UBSAN or lockdep report and
+  kmemleak nothing of hammer2's.
+
+**The controls**, from `1c1964a` by `p7-notes/n9-5-make-ctl.py`, on
+`h2debug-7.3tls`:
+- `ctl/n9-5-keysel2`, the serial test made `1 ||`, so the record takes
+  every binding: 74 checks, 3 failed, exactly `s55m1`, `s55m2` and
+  `s55n`, each with `cl=1`, `s55m2` reading `root=2 spanrefused=0`
+  (`n9-5-ctl-n9-5-keysel2-tls-20261103-keysel2.log` lines 75-78,
+  report `dmsg-run-20261102-235749`). The mount path fails it too, since
+  both intakes reach the selection.
+- `ctl/n9-5-mountslot2`, every `cluster_tls_clid` bound to slot 0: 74
+  checks, 1 failed, exactly `s55n` at `handed=0`, the intake refused
+  with one "an admitted key binds no cluster id" line
+  (`n9-5-ctl-n9-5-mountslot2-tls-20261103-keysel2.log` line 78, report
+  `dmsg-run-20261103-000054`). That wrong slot leaves K6 bound to
+  nothing, which the per-key check refuses; a wrong slot that left every
+  key bound would admit, and `s55n` reads the clusters it installed.
+
+The mount path is read with K6 proved only; with K1 proved it is
+inferred from the selection both intakes share, and no run reads it.
+
+Of the 1.0.78 entry's thirteen decisions with no control, these two are
+now read and controlled; the other eleven stand as that entry lists
+them. Ten need arms, queued for N9.6; the mount's refusal of a
+`.h2sync-peer` name, read by the wire's srcgate arm, needs a control.
