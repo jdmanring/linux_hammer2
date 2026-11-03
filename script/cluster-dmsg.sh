@@ -128,18 +128,22 @@ LABELS=ROOT; [ "${H2_DMSG_TLS:-0}" = 1 ] && LABELS=ROOT,CL.h2sync-peer,CL.h2sync
 truncate -s 1G "$IMG" && "$NEWFS" -L "$LABELS" "$IMG" >/dev/null 2>&1 || {
 	echo "dmsg: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
 if [ "$state" = running ]; then how=--live; else how=--config; fi
-# The TLS mode's second volume, the client end's mount, attached first so
-# a guest that is off boots with both.
+# Each volume carries a serial the guest reads back before anything
+# runs: a guest booted with both names its disks by bus order, not by
+# the target named here, and the run of 2026-11-02 20:25 found vdb and
+# vdc swapped that way, which two identical images had hidden.  The
+# TLS mode's second volume is the client end's mount; both are attached
+# before a guest that is off boots.
+err=$($VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio --serial h2dmsg-b $how 2>&1) || {
+	echo "dmsg: COULD-NOT-RUN: could not attach the volume: $err" >&2; exit 2; }
 if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	IMGC=$FIXDIR/cluster-dmsg-c.img
 	rm -f "$IMGC"
 	truncate -s 1G "$IMGC" && "$NEWFS" -L ROOT "$IMGC" >/dev/null 2>&1 || {
 		echo "dmsg: COULD-NOT-RUN: newfs_hammer2 failed on $IMGC" >&2; exit 2; }
-	err=$($VIRSH attach-disk "$GUEST" "$IMGC" vdc --targetbus virtio $how 2>&1) || {
+	err=$($VIRSH attach-disk "$GUEST" "$IMGC" vdc --targetbus virtio --serial h2dmsg-c $how 2>&1) || {
 		echo "dmsg: COULD-NOT-RUN: could not attach the second volume: $err" >&2; exit 2; }
 fi
-err=$($VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio $how 2>&1) || {
-	echo "dmsg: COULD-NOT-RUN: could not attach the volume: $err" >&2; exit 2; }
 if [ "$state" != running ]; then
 	$VIRSH start "$GUEST" >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: $GUEST did not start" >&2; exit 2; }
 fi
@@ -167,6 +171,11 @@ FDT=300; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && FDT=$((FDT * 4
 cat > "$W/guest.sh" <<'GUEST'
 set -u
 command -v hammer2 >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: no hammer2 utility on the guest" >&2; exit 2; }
+for d in vdb:h2dmsg-b vdc:h2dmsg-c; do
+	[ "${d%%:*}" = vdc ] && [ "$H2_DMSG_TLS" != 1 ] && continue
+	sn=$(cat /sys/block/${d%%:*}/serial 2>/dev/null)
+	[ "$sn" = "${d#*:}" ] || { echo "dmsg: COULD-NOT-RUN: /dev/${d%%:*} reads serial '$sn', not ${d#*:}, so it is not this run's volume" >&2; exit 2; }
+done
 if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "dmsg: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
@@ -541,15 +550,19 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	out=$($A --attach $M --action hm2root 2>&1); echo "s55a-row-rc $?"; echo "s55a-served $out"
 	echo "s55a-lines norow=$(($(klog 'refused: no enabled copyinfo row for that cluster') - nr0))"
 
-	# SNAPSHOT of ROOT twice on one link, then once with SNAPDEL
-	sleep 1; l0=$(klog 'left by the link deleted')
+	# SNAPSHOT of ROOT twice on one link, then once with SNAPDEL.  A
+	# link's snapshots go at its teardown, which a reconnect or the
+	# unmount runs (hammer2_remote_quiesce()), so s55b's is read gone
+	# once s55c's attach has replaced its link, and s55c's, deleted by
+	# its SNAPDEL, leaves no line through the unmount at the block's end.
+	sleep 1; lb=$(klog 'left by the link deleted')
 	hsnap s55b --pfs ROOT --count 2
-	until_n 50 $((l0 + 1)) klog 'left by the link deleted' >/dev/null; sleep 1
-	echo "s55b-left n=$(($(klog 'left by the link deleted') - l0)) err0=$(grep 'left by the link deleted' $K | tail -n +$((l0 + 1)) | grep -c 'ROOT.h2sync-peer left by the link deleted, error 0') listed=$(pl ROOT.h2sync-peer)"
-	sleep 1; l0=$(klog 'left by the link deleted')
+	sleep 1
+	echo "s55b-held n=$(($(klog 'left by the link deleted') - lb)) listed=$(pl ROOT.h2sync-peer)"
 	hsnap s55c --pfs ROOT --snapdel 1
 	sleep 2
-	echo "s55c-left n=$(($(klog 'left by the link deleted') - l0)) listed=$(pl ROOT.h2sync-peer) deleted=$(klog 'peer deleted ROOT.h2sync-peer error 0')"
+	echo "s55b-left n=$(($(klog 'left by the link deleted') - lb)) err0=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | grep -c 'ROOT.h2sync-peer left by the link deleted, error 0')"
+	echo "s55c-left listed=$(pl ROOT.h2sync-peer) deleted=$(klog 'peer deleted ROOT.h2sync-peer error 0')"
 
 	# a SLAVE source: SL a MASTER on vdc and a SLAVE on vdb, one cluster
 	# mounted through vdc
@@ -606,6 +619,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "s55j rc=$rc said=$(echo "$out" | tr '\n' ' ') klog=$(klog 'cluster_tls_clid before any cluster_tls_key')"
 	mountpoint -q /mnt/h2opt && umount /mnt/h2opt
 	umount $M2; umount $M
+	echo "s55-left-total n=$(($(klog 'left by the link deleted') - lb)) lines=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | tr '\n' '|')"
 	echo $((0x100)) > /sys/module/hammer2/parameters/debug
 	echo "threads-end $(threads)"
 	tail -n +$((TL0 + 1)) $TL | sed 's/^/tlshd-log /'	# kept whole in the report
@@ -1013,9 +1027,11 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	unserved() { [ "$(num "$(field "$1" closed)" 0)" = 1 ] && [ "$(num "$(field "$1" error)" 0)" != 0 ] && [ "$(num "$(field "$1" inodes)" 1)" = 0 ]; }
 	b1=$(sb s55b 'n=1 '); b2=$(sb s55b 'n=2 '); bl=$(val s55b-left)
 	served "$b1" && served "$b2" && [ "$(num "$(field " $b2" on_media)" 0)" = 1 ] && [ "$(num "$(field " $b2" subtype)" -1)" = 1 ]; check "s55b: a MASTER source with a row is snapshotted twice on one link, as ROOT.h2sync-peer of subtype snapshot" $? "$b1 / $b2"
-	[ "$(num "$(field " $bl" n)" -1)" = 1 ] && [ "$(num "$(field " $bl" err0)" -1)" = 1 ] && [ "$(num "$(field " $bl" listed)" -1)" = 0 ]; check "s55b: the link's end deletes its one snapshot of the source once, error 0" $? "$bl"
+	bh=$(val s55b-held); lt=$(val s55-left-total)
+	[ "$(num "$(field " $bh" n)" -1)" = 0 ] && [ "$(num "$(field " $bh" listed)" -1)" = 1 ]; check "s55b: the link holds its one snapshot of the source after the peer closes, until its teardown" $? "$bh"
+	[ "$(num "$(field " $bl" n)" -1)" = 1 ] && [ "$(num "$(field " $bl" err0)" -1)" = 1 ]; check "s55b: the teardown at the next attach deletes that snapshot once, error 0" $? "$bl"
 	c1=$(sb s55c 'n=1 '); cd=$(sb s55c 'done '); cl=$(val s55c-left)
-	served "$c1" && [ "$(num "$(field " $cd" del_closed)" 0)" = 1 ] && [ "$(num "$(field " $cd" del_refused)" 1)" = 0 ] && [ "$(num "$(field " $cd" after_del)" 1)" = 0 ] && [ "$(num "$(field " $cl" n)" -1)" = 0 ] && [ "$(num "$(field " $cl" listed)" -1)" = 0 ]; check "s55c: SNAPDEL by the snapshot's own cluster id deletes it, and the link's end has nothing left" $? "$c1 / $cd / $cl"
+	served "$c1" && [ "$(num "$(field " $cd" del_closed)" 0)" = 1 ] && [ "$(num "$(field " $cd" del_refused)" 1)" = 0 ] && [ "$(num "$(field " $cd" after_del)" 1)" = 0 ] && [ "$(num "$(field " $cl" listed)" -1)" = 0 ] && [ "$(num "$(field " $lt" n)" -1)" = 1 ]; check "s55c: SNAPDEL by the snapshot's own cluster id deletes it, and no teardown after finds anything of it" $? "$c1 / $cd / $cl / $lt"
 	d1=$(sb s55d 'n=1 '); dl=$(val s55d-lines)
 	[ "$(val s55d-mount | cut -d' ' -f1)" = 0 ] && unserved "$d1" && [ "$(num "$(field " $dl" notmaster)" -1)" = 1 ] && [ "$(num "$(field " $dl" listed)" -1)" = 0 ]; check "s55d: a mounted SLAVE element with a row is refused a snapshot, with its line" $? "mount $(val s55d-mount); $d1; $dl"
 	e1=$(sb s55e 'n=1 ')
