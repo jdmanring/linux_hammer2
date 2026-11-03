@@ -51,6 +51,12 @@
 # that never answers, under a timeout and two unmounts. The host block
 # below lists the arms.
 #
+# H2_DMSG_HOLDS=1, with H2_DMSG_TLS=1, builds the module with
+# HAMMER2_LOCKDEBUG and runs only stage 5.5's hold arms: the quiesce under
+# link_hold_ms with the old connection asking for a SNAPSHOT inside the
+# hold, the record a reconnect's VOLCONF and spans are read against, the
+# reap's order under volconf_hold_ms, and a fresh device's first link.
+#
 # Exit 2 is COULD-NOT-RUN. Needs the guest fleet, a kernel tree at KDIR
 # matching the guest's kernel, newfs_hammer2 and hammer2 on this host,
 # and hammer2 on the guest; H2_DMSG_TLS=1 also needs tlshd supervised by
@@ -61,6 +67,11 @@ cd "$(dirname "$0")/.." || exit 2
 # H2_DMSG_CLUSTERFD and H2_DMSG_TLS are written into the guest's ssh
 # command line, so each is 0 or 1 before anything else reads it, and they
 # name two modes, so at most one is set.
+case ${H2_DMSG_HOLDS:-0}${H2_DMSG_TLS:-0} in
+00|01|11) ;;
+10) echo "dmsg: COULD-NOT-RUN: H2_DMSG_HOLDS=1 needs H2_DMSG_TLS=1" >&2; exit 2 ;;
+*) echo "dmsg: COULD-NOT-RUN: H2_DMSG_HOLDS is 0 or 1" >&2; exit 2 ;;
+esac
 case ${H2_DMSG_CLUSTERFD:-0}${H2_DMSG_TLS:-0} in
 00|01|10) ;;
 11) echo "dmsg: COULD-NOT-RUN: H2_DMSG_CLUSTERFD and H2_DMSG_TLS are two modes; set one" >&2; exit 2 ;;
@@ -104,7 +115,7 @@ make -s clean >/dev/null 2>&1
 # then be accepted and a reply must run past sixteen frames with no
 # continuation, and every other check must still hold.  Never install that
 # module.
-make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1 HAMMER2_NOWINDOW=1} >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
+make -s KDIR="$KDIR" ${H2_CRC_CONTROL:+HAMMER2_NOCRC=1 HAMMER2_NOWINDOW=1} $([ "${H2_DMSG_HOLDS:-0}" = 1 ] && echo HAMMER2_LOCKDEBUG=1) >/dev/null 2>&1 || { echo "dmsg: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -Isrc/sys/fs/hammer2 -o "$W/h2attach" test/h2attach.c 2>"$W/cc.err" || {
 	echo "dmsg: COULD-NOT-RUN: test/h2attach.c did not build:" >&2; sed 's/^/        /' "$W/cc.err" >&2; exit 2; }
@@ -350,6 +361,102 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	after() {	# after <arm>
 		echo "$1-after handed=$(handed) refused=$(refused) ok=$(tlog succeeded) failed=$(tlog failed) threads=$(threads) silent=$(klog 'HM2 peer silent') terminated=$(klog 'CONN WAS TERMINATED') tx=$(tstat TlsCurrTxSw) rx=$(tstat TlsCurrRxSw) rxspan=$(klog 'H2 +RXSPAN') spanrefused=$(klog 'cluster link refused a span of cluster') proto2=$(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 	}
+
+	# H2_DMSG_HOLDS=1: stage 5.5's hold arms alone, on a LOCKDEBUG module
+	if [ "${H2_DMSG_HOLDS:-0}" = 1 ]; then
+		PH=/sys/module/hammer2/parameters
+		[ -w $PH/link_hold_ms ] && [ -w $PH/volconf_hold_ms ] || { echo "dmsg: COULD-NOT-RUN: the module has no link_hold_ms or volconf_hold_ms; it is not a HAMMER2_LOCKDEBUG build" >&2; exit 2; }
+		S=/tmp/h2service
+		lines() { awk -v p="$1" '{ print p "-" NR " " $0 }'; }
+		lnum() { grep -n "$1" $K | tail -1 | cut -d: -f1; }	# the last line naming it
+		wait_n() {	# wait_n <target> <pattern> <tenths>
+			t=0; while [ "$(klog "$2")" -lt "$1" ] && [ $t -lt "$3" ]; do sleep 0.1; t=$((t + 1)); done
+		}
+		echo $((0x8100)) > $PH/debug
+		echo 10000 > $PH/remote_timeout_ms
+		XB=$(hammer2 -s $M pfs-clid ROOT 2>/dev/null)
+		Y=5a5a5a5a-0000-4000-8000-0000000000a1
+		echo "hold-row $($S add $M --clid $XB --label xb --path span:127.0.0.1:1 2>&1 | tr '\n' ' ') xb=$XB y=$Y"
+
+		# Q0 and Q1, rule 1: the old plaintext connection, PROTO_1 then
+		# PROTO_2 before the second intake, asks for a SNAPSHOT inside
+		# the hold after announcing PROTO_2
+		for q in 0 1; do
+			echo 2000 > $PH/link_hold_ms
+			hn0=$(klog 'cluster link held'); sn0=$(klog 'snapshot ROOT.h2sync-peer for a peer'); ll0=$(klog 'refused: connection closing')
+			out=$($A --attach $M --action quiesce --count $q --wait-ms 10000 2>&1); echo "q$q-rc $?"
+			echo "$out" | lines q$q
+			echo 0 > $PH/link_hold_ms
+			sleep 1
+			echo "q$q-lines held=$(($(klog 'cluster link held') - hn0)) snap=$(($(klog 'snapshot ROOT.h2sync-peer for a peer') - sn0)) lostlink=$(($(klog 'refused: connection closing') - ll0)) listed=$(hammer2 -s $M pfs-list 2>/dev/null | grep -c 'ROOT\.h2sync-peer')"
+		done
+
+		# S1, the senders and the record's age: the old TLS link's
+		# record binds XB; a new intake binding Y is held after its
+		# quiesce while a row for Y is added; the old peer must read no
+		# VOLCONF for Y, the new one Y's row, and the new peer's span
+		# for Y is not refused
+		$P --attach $M --action tlspeer --key $K1 --send none --port 7971 --linger-ms 30000 > /tmp/h2peer-s1a.out 2>&1 &
+		PA=$!
+		n=0; until grep -q 'send=none' /tmp/h2peer-s1a.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 150 ] && break; done
+		echo 4000 > $PH/link_hold_ms
+		hn0=$(klog 'cluster link held'); sr0=$(klog 'cluster link refused a span of cluster')
+		$P --attach $M --action tlspeer --key $K1 --send none --port 7972 --bindclid $Y --spans 1 --linger-ms 3000 --wait-ms 30000 > /tmp/h2peer-s1b.out 2>&1 &
+		PB=$!
+		wait_n $((hn0 + 1)) 'cluster link held' 200
+		echo "s1-held $(($(klog 'cluster link held') - hn0)) threads=$(threads)"
+		echo "s1-row-y $($S add $M --clid $Y --label y --path span:127.0.0.1:7 2>&1 | tr '\n' ' ')"
+		wait $PB; echo "s1b-rc $?"; wait $PA; echo "s1a-rc $?"
+		echo 0 > $PH/link_hold_ms
+		lines s1a < /tmp/h2peer-s1a.out; lines s1b < /tmp/h2peer-s1b.out
+		echo "s1-lines spanrefused=$(($(klog 'cluster link refused a span of cluster') - sr0))"
+		$S del $M --path span:127.0.0.1:7 >/dev/null 2>&1
+
+		# S2, the reap's order: a second row for XB queued under
+		# volconf_hold_ms with msglk held, and a reconnect arriving
+		# inside that hold.  The hold is sized from an idle link's
+		# intake-to-handed gap plus the handshake's own bound.
+		h0=$(handed); t0=$(date +%s%N)
+		$P --attach $M --action tlspeer --key $K1 --send none --port 7973 --linger-ms 60000 > /tmp/h2peer-s2a.out 2>&1 &
+		PA=$!
+		wait_n $((h0 + 1)) 'cluster link handed to the message threads' 150
+		gap=$(( ($(date +%s%N) - t0) / 1000000 ))
+		HOLD=$((gap + $(cat $PH/cluster_tls_timeout_ms)))
+		sleep 2
+		echo "s2-gap gap_ms=$gap hold_ms=$HOLD threads=$(threads) terminated=$(klog 'CONN WAS TERMINATED')"
+		echo $HOLD > $PH/volconf_hold_ms
+		vh0=$(klog 'volconf held'); dy0=$(klog 'volconf queued on a dying circuit'); h1=$(handed)
+		$S add $M --clid $XB --label xb2 --path span:127.0.0.1:8 > /tmp/h2s2-add.out 2>&1 &
+		PS=$!
+		wait_n $((vh0 + 1)) 'volconf held' 100
+		echo "s2-in-hold held=$(($(klog 'volconf held') - vh0)) threads=$(threads) terminated=$(klog 'CONN WAS TERMINATED')"
+		ib=$(wc -l < $K)
+		$P --attach $M --action tlspeer --key $K1 --send none --port 7974 --linger-ms 2000 --wait-ms $((HOLD + 30000)) > /tmp/h2peer-s2b.out 2>&1 &
+		PB=$!
+		wait $PS; echo "s2-add-rc $? $(tr '\n' ' ' < /tmp/h2s2-add.out)"
+		wait $PB; echo "s2b-rc $?"; wait $PA; echo "s2a-rc $?"
+		echo 0 > $PH/volconf_hold_ms
+		lines s2a < /tmp/h2peer-s2a.out; lines s2b < /tmp/h2peer-s2b.out
+		echo "s2-order intake_line=$ib hold_end_line=$(lnum 'volconf hold ended') handed_line=$(lnum 'cluster link handed to the message threads') handed=$(($(handed) - h1)) dying=$(($(klog 'volconf queued on a dying circuit') - dy0))"
+		$S del $M --path span:127.0.0.1:8 >/dev/null 2>&1
+
+		# E, the record on a fresh device: the first link after a
+		# remount, held after its quiesce, reads no refusal
+		umount $M && mount -t hammer2 /dev/vdb@ROOT $M || { echo "hold remount failed"; exit 1; }
+		echo 2000 > $PH/link_hold_ms
+		sr0=$(klog 'cluster link refused a span of cluster'); snap e
+		arm_link e 7975 --keyring $RING --admit $K1 --key $K1
+		echo "e-wait-handed $(until_n 150 $((h0 + 2)) handed)"
+		sleep 2; after e
+		echo 0 > $PH/link_hold_ms
+		echo "e-lines spanrefused=$(($(klog 'cluster link refused a span of cluster') - sr0))"
+
+		echo $((0x100)) > $PH/debug
+		echo "threads-end $(threads)"
+		tail -n +$((TL0 + 1)) $TL | sed 's/^/tlshd-log /'
+		finish
+		exit 0
+	fi
 
 	# arm 1, the link with TLS on, server vdb and client vdc
 	snap arm1; cap_start 7997
@@ -803,7 +910,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	$RUN "$GUEST_SSH" 'rm -rf /tmp/h2peer && mkdir /tmp/h2peer' && scp -q test/h2attach.c src/sys/fs/hammer2/hammer2_ioctl.h src/sys/fs/hammer2/hammer2_disk.h "$GUEST_SSH:/tmp/h2peer/" || {
 		echo "dmsg: COULD-NOT-RUN: copying the TLS peer's source to $GUEST failed" >&2; exit 2; }
 fi
-$RUN "$GUEST_SSH" "H2_DMSG_CLUSTERFD=${H2_DMSG_CLUSTERFD:-0} H2_DMSG_TLS=${H2_DMSG_TLS:-0} H2_FD_TENTHS=$FDT sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "H2_DMSG_CLUSTERFD=${H2_DMSG_CLUSTERFD:-0} H2_DMSG_TLS=${H2_DMSG_TLS:-0} H2_DMSG_HOLDS=${H2_DMSG_HOLDS:-0} H2_FD_TENTHS=$FDT sh /tmp/h2dmsg.sh" > "$W/out" 2>&1
 rc=$?
 if [ "$rc" = 2 ] || command grep -q "COULD-NOT-RUN" "$W/out" 2>/dev/null; then
 	command grep -m1 "COULD-NOT-RUN" "$W/out" >&2 || echo "dmsg: COULD-NOT-RUN: the guest half exited 2 without a reason" >&2
@@ -921,6 +1028,38 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	k4b=$(sed -n 's/^tls-key K4-before-revoke .* read=\([a-z]*\).*/\1/p' "$W/out" | head -1)
 	[ "$(rd K1)" = ok ] && [ "$(rd K2)" = ok ] && [ "$k4b" = ok ] && [ "$(rd K4)" = fail ]; check "the keys read back from a fresh session, the revoked one refused after reading before" $? "K1 $(rd K1), K2 $(rd K2), K4 ${k4b:-unread} before its revoke and $(rd K4) after"
 	nb=$(num "$(val pfs-count-b)" 0); nc=$(num "$(val pfs-count-c)" 0)
+
+	if [ "${H2_DMSG_HOLDS:-0}" = 1 ]; then
+		# Stage 5.5's hold arms, the committed side; expected readings in
+		# p7-notes/n9-5-holds-expected.md in the data tree.
+		ids=$(val hold-row); xb=$(printf '%s\n' "$ids" | sed -n 's/.* xb=\([^ ]*\).*/\1/p'); y=$(printf '%s\n' "$ids" | sed -n 's/.* y=\([^ ]*\).*/\1/p')
+		case "$ids" in *'added copyid='*) r=0 ;; *) r=1 ;; esac; check "holds: the root's row is added" $r "$ids"
+		qx() { sed -n "s/^$1-[0-9]* h2attach quiesce: //p" "$W/out" | grep -- "$2" | head -1; }
+		for q in 0 1; do
+			o=$(qx q$q prelude=); n=$(qx q$q new_conn=); l=$(val q$q-lines)
+			[ "$(num "$(field " $l" held)" 0)" = 1 ] && [ "$(num "$(field " $o" since_intake_ms)" 99999)" -lt 2000 ]; check "q$q: the SNAPSHOT is asked inside the 2000 ms hold after the quiesce" $? "$o; $l"
+			[ "$(num "$(field " $o" snap_refused)" 0)" = 1 ] && [ "$(num "$(field " $o" snap_error)" 0)" = 33 ] && [ "$(num "$(field " $l" lostlink)" 0)" -ge 1 ] && [ "$(num "$(field " $l" snap)" -1)" = 0 ]; check "q$q: the quiesced server refuses it at admission with LOSTLINK and takes no snapshot" $? "$o; $l"
+			[ "$(num "$(field " $n" new_conn)" 0)" = 1 ] && [ "$(num "$(field " $n" on_media)" 1)" = 0 ] && [ "$(num "$(field " $l" listed)" 1)" = 0 ]; check "q$q: the new link comes up and no ROOT.h2sync-peer is on the media" $? "$n; $l"
+		done
+		tp() { sed -n "s/^$1-[0-9]* h2attach tlspeer: spans //p" "$W/out" | head -1; }
+		vc() { printf '%s\n' "$1" | sed -n 's/.* volconf=\([^ ]*\).*/\1/p'; }
+		s1a=$(tp s1a); s1b=$(tp s1b)
+		[ "$(num "$(val s1-held | cut -d' ' -f1)" 0)" = 1 ] && [ "$(num "$(field " $s1a" ended_ms)" 99999)" -lt 30000 ]; check "s1: the new intake is held and the old link ends at the swap after it" $? "held $(val s1-held); $s1a"
+		case "$(val s1-row-y)" in *'added copyid='*) r=0 ;; *) r=1 ;; esac
+		[ $r = 0 ] && [ -n "$xb" ] && [ "$(vc "$s1a")" = "$xb:1" ]; check "s1: the old link, whose record binds the root, carries no VOLCONF of the row for Y added in the hold" $? "row $(val s1-row-y); old $(vc "$s1a")"
+		[ -n "$y" ] && [ "$(vc "$s1b")" = "$y:1" ]; check "s1: the new link, whose record binds Y, carries Y's row once" $? "new $(vc "$s1b"), y $y"
+		l=$(val s1-lines)
+		[ "$(num "$(field " $s1b" conn2)" 0)" = 1 ] && [ "$(num "$(field " $l" spanrefused)" -1)" = 1 ]; check "s1: the new peer's span for Y is admitted against the new record, its unbound one refused" $? "$l; $s1b"
+		g=$(val s2-gap); h=$(val s2-in-hold); o=$(val s2-order)
+		[ "$(num "$(field " $h" held)" 0)" = 1 ] && [ "$(num "$(field " $h" threads)" 0)" -ge 2 ] && [ "$(num "$(field " $h" terminated)" -1)" = "$(num "$(field " $g" terminated)" -2)" ]; check "s2: the old link was up through the intake: its threads present in the hold, no CONN WAS TERMINATED since it was handed" $? "$g; $h"
+		[ "$(num "$(field " $o" hold_end_line)" 0)" -gt "$(num "$(field " $o" intake_line)" 0)" ] && [ "$(num "$(field " $o" handed_line)" 0)" -gt "$(num "$(field " $o" hold_end_line)" 0)" ] && [ "$(num "$(field " $o" handed)" 0)" = 1 ] && [ "$(num "$(field " $o" dying)" -1)" = 0 ]; check "s2: the queued VOLCONF's hold ends before the reconnect is handed, and nothing is queued on a dying circuit" $? "$o"
+		case "$(val s2-add-rc)" in '0 '*'added copyid='*) r=0 ;; *) r=1 ;; esac; check "s2: the held REMOTE_ADD returns its row" $r "$(val s2-add-rc)"
+		[ "$(d e e handed)" = 2 ] && [ "$(num "$(val e-lines | sed 's/.*spanrefused=//')" -1)" = 0 ] && [ "$(a e rxspan)" -ge 2 ]; check "e: a fresh device's first link, held after its quiesce, admits its bound spans" $? "handed +$(d e e handed), $(val e-lines), rxspan $(a e rxspan)"
+		final_checks
+		echo "dmsg: TLS holds, $checks check(s), $fail failed"
+		[ "$fail" -eq 0 ] || exit 1
+		exit 0
+	fi
 
 	r=$(val arm1)
 	[ "$(field "$r" server)" = 0 ] && [ "$(field "$r" client)" = 0 ]; check "arm 1: both TLS intakes return 0" $? "$r"

@@ -1005,7 +1005,7 @@ hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
  * 5.5): the ROOT of each mount the action opened, read by PFS_LOOKUP, so
  * each end announces its own ROOT and accepts the other's. */
 static struct uuid bind_clid[2];
-static int nbind_clid;
+static int nbind_clid, bind_fixed;	/* bind_fixed: --bindclid named it */
 
 static void
 bind_root(int mnt)
@@ -1014,7 +1014,7 @@ bind_root(int mnt)
 
 	memset(&pfs, 0, sizeof(pfs));
 	strcpy(pfs.name, "ROOT");
-	if (mnt < 0 || nbind_clid >= 2 ||
+	if (mnt < 0 || nbind_clid >= 2 || bind_fixed ||
 	    ioctl(mnt, HAMMER2IOC_PFS_LOOKUP, &pfs) < 0)
 		return;
 	if (nbind_clid == 1 && !memcmp(&bind_clid[0], &pfs.pfs_clid,
@@ -1297,7 +1297,7 @@ main(int argc, char **argv)
 	const char *mnt = NULL, *action = NULL, *tr = NULL;
 	const char *pfs = "ROOT", *name = NULL, *out = NULL, *mnt2 = NULL;
 	const char *tlsmode = "psk", *send = "none";
-	const char *clid_opt = NULL, *delclid_opt = NULL;
+	const char *clid_opt = NULL, *delclid_opt = NULL, *bindclid_opt = NULL;
 	int ring = 0, admit = 0, hsaccept = 0, snapdel = 0, spans = 0;
 	long linger_ms = 0;
 	struct uuid uclid, udelclid;
@@ -1339,13 +1339,17 @@ main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--snapdel")) snapdel = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--spans")) spans = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--linger-ms")) linger_ms = atol(argv[i + 1]);
+		else if (!strcmp(argv[i], "--bindclid")) bindclid_opt = argv[i + 1];
 		else usage();
 	}
 	if ((clid_opt && uuid_parse_text(clid_opt, &uclid) < 0) ||
-	    (delclid_opt && uuid_parse_text(delclid_opt, &udelclid) < 0)) {
-		fprintf(stderr, "h2attach: --clid and --delclid take a uuid\n");
+	    (delclid_opt && uuid_parse_text(delclid_opt, &udelclid) < 0) ||
+	    (bindclid_opt && uuid_parse_text(bindclid_opt, &bind_clid[0]) < 0)) {
+		fprintf(stderr, "h2attach: --clid, --delclid and --bindclid take a uuid\n");
 		return (2);
 	}
+	if (bindclid_opt)	/* the intake binds this id alone */
+		nbind_clid = bind_fixed = 1;
 	(void)send;	/* read by tlspeer alone, which the static build lacks */
 	(void)spans; (void)linger_ms;
 	if (action != NULL && !strcmp(action, "hsstub"))
@@ -1575,14 +1579,15 @@ main(int argc, char **argv)
 		printf("h2attach tlspeer: send=%s rc=%d conn=%d spans=%d shell1=%d"
 		    " err1=%u shell2=%d err2=%u eof=%d frames=%d ms=%ld\n", send, sr,
 		    hs.conn, hs.spans, sh1, err1, sh2, err2, eof, f, now_ms() - t0);
-		if (spans && eof != 1) {
+		if ((spans || linger_ms) && eof != 1) {
 			/*
-			 * Stage 5.5: a MASTER span for the cluster id the
-			 * kernel's intake bound and one for an id it did not,
-			 * then --linger-ms of whatever the kernel sends, an HM2
-			 * request among it being registration's fetch of the
-			 * bound span's root.  Every VOLCONF of the session is
-			 * printed by cluster id.
+			 * Stage 5.5: with --spans 1, a MASTER span for the
+			 * cluster id the kernel's intake bound and one for an
+			 * id it did not; then --linger-ms of whatever the
+			 * kernel sends, an HM2 request among it being
+			 * registration's fetch of the bound span's root, until
+			 * the bound or the link's end.  Every VOLCONF of the
+			 * session is printed by cluster id.
 			 */
 			static const uint8_t other[16] = { 0x0e, 0x7e, 0x55, 0xa5,
 			    0x5a, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 };
@@ -1592,19 +1597,22 @@ main(int argc, char **argv)
 			int c2, a1, a2, o1 = 0, o2 = 0, x1, x2, hm2rx = 0, lf = 0;
 			long dl;
 
-			c2 = proto2_prelude(dfd, &cerr, &o);
-			span2_body(body, 21);
-			memcpy(body, &bind_clid[0], 16);
-			frame_write_body(dfd, DMSG_LNK_SPAN | DMSGF_CREATE, 0x3101, 0,
-			    body, sizeof(body));
-			a1 = wait_frame(dfd, 0x3101, DMSGF_REPLY, &e1, &o1);
-			x1 = a1 && (last_cmd & DMSGF_DELETE) == 0;
-			span2_body(body, 22);
-			memcpy(body, other, 16);
-			frame_write_body(dfd, DMSG_LNK_SPAN | DMSGF_CREATE, 0x3102, 0,
-			    body, sizeof(body));
-			a2 = wait_frame(dfd, 0x3102, DMSGF_REPLY, &e2, &o2);
-			x2 = a2 && (last_cmd & DMSGF_DELETE) == 0;
+			c2 = a1 = a2 = x1 = x2 = -1;
+			if (spans) {
+				c2 = proto2_prelude(dfd, &cerr, &o);
+				span2_body(body, 21);
+				memcpy(body, &bind_clid[0], 16);
+				frame_write_body(dfd, DMSG_LNK_SPAN | DMSGF_CREATE,
+				    0x3101, 0, body, sizeof(body));
+				a1 = wait_frame(dfd, 0x3101, DMSGF_REPLY, &e1, &o1);
+				x1 = a1 && (last_cmd & DMSGF_DELETE) == 0;
+				span2_body(body, 22);
+				memcpy(body, other, 16);
+				frame_write_body(dfd, DMSG_LNK_SPAN | DMSGF_CREATE,
+				    0x3102, 0, body, sizeof(body));
+				a2 = wait_frame(dfd, 0x3102, DMSGF_REPLY, &e2, &o2);
+				x2 = a2 && (last_cmd & DMSGF_DELETE) == 0;
+			}
 			dl = now_ms() + linger_ms;
 			while (frame_read(dfd, &h, dl) == 1) {
 				lf++;
@@ -1614,8 +1622,9 @@ main(int argc, char **argv)
 			}
 			printf("h2attach tlspeer: spans conn2=%d bound=%s bound_open=%d"
 			    " other=%s other_answered=%d other_open=%d hm2rx=%d"
-			    " lingered=%d", c2, uuid_text(&bind_clid[0]), x1,
-			    uuid_text(other), a2, x2, hm2rx, lf);
+			    " lingered=%d ended_ms=%ld", c2, uuid_text(&bind_clid[0]),
+			    x1, uuid_text(other), a2, x2, hm2rx, lf,
+			    linger_ms - (dl - now_ms()));
 		} else {
 			printf("h2attach tlspeer: session");
 		}
@@ -1633,7 +1642,8 @@ main(int argc, char **argv)
 	/* The daemon holds nothing on the mount once the descriptor is in:
 	 * an open directory would make the unmount the hold action waits
 	 * through EBUSY.  reconnect needs it once more and closes it then. */
-	if (strcmp(action, "reconnect") && strcmp(action, "hm2snap")) {
+	if (strcmp(action, "reconnect") && strcmp(action, "hm2snap") &&
+	    strcmp(action, "quiesce")) {
 		close(mfd);
 		mfd = -1;
 	}
@@ -1989,6 +1999,57 @@ main(int argc, char **argv)
 		}
 hm2done:
 		;
+	} else if (!strcmp(action, "quiesce")) {
+		/*
+		 * Stage 5.5, rule 1: the old connection, PROTO_2 announced
+		 * first when --count is 1, then a second intake on the mount,
+		 * whose work holds link_hold_ms after its quiesce.  Inside the
+		 * hold the old connection announces PROTO_2 and asks for a
+		 * SNAPSHOT of the root, which the quiesced server must refuse
+		 * at admission with LOSTLINK; then the new connection's CONN
+		 * is read, and the media for ROOT.h2sync-peer.
+		 */
+		struct hm2reply r;
+		struct hs hs2;
+		struct hammer2_ioc_pfs lk;
+		uint8_t body[324 - 64], rclid[16];
+		uint32_t cerr = 0, e2 = 0;
+		int o, c1 = -1, c2, sp = -1, on_media, n2;
+		long t0;
+
+		for (int i = 0; i < hs.nspan; i++)
+			if (!strcmp(hs.span[i].label, "ROOT"))
+				sp = i;
+		if (sp < 0) {
+			printf("h2attach quiesce: no ROOT span on the old connection\n");
+			return (1);
+		}
+		memcpy(rclid, hs.span[sp].clid, 16);
+		if (count == 1)
+			c1 = proto2_prelude(dfd, &cerr, &o);
+		if (attach_pair() < 0)
+			return (1);
+		t0 = now_ms();
+		usleep(300 * 1000);	/* inside the hold */
+		conn2_body(body);
+		frame_write_body(old_dfd, DMSG_LNK_CONN | DMSGF_CREATE, 0x2200, 0,
+		    body, sizeof(body));
+		c2 = wait_frame(old_dfd, 0x2200, DMSGF_REPLY, &e2, &o);
+		hm2_request(old_dfd, DMSG_HM2_SNAPSHOT_IDX, rclid, 1, 0, 0, 0,
+		    "h2attach-snap", NULL, &r);
+		printf("h2attach quiesce: prelude=%d conn2_reply=%d snap_closed=%d"
+		    " snap_refused=%d snap_error=%u snap_ms=%ld since_intake_ms=%ld\n",
+		    c1, c2, r.closed, r.refused, r.error, r.ms, now_ms() - t0);
+		fflush(stdout);
+		n2 = handshake(dfd, &hs2, settle_ms) == 0;
+		memset(&lk, 0, sizeof(lk));
+		snprintf(lk.name, sizeof(lk.name), "ROOT.h2sync-peer");
+		on_media = ioctl(mfd, HAMMER2IOC_PFS_LOOKUP, &lk) == 0;
+		printf("h2attach quiesce: new_conn=%d new_spans=%d on_media=%d"
+		    " since_intake_ms=%ld\n", n2, hs2.spans, on_media, now_ms() - t0);
+		close(mfd);
+		mfd = -1;
+		rc = n2 ? 0 : 1;
 	} else if (!strcmp(action, "halfclose")) {
 		int f, eof;
 		long t0 = now_ms();
