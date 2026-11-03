@@ -21569,3 +21569,78 @@ uuid test is read by `s55r`, but `mountbound` removes only the count
 bound. Registration's binding test is reached only in the regbind
 build, which removes the span bind before it; no build removes
 registration's test, so its refusal is read and not controlled.
+
+## The three decisions 1.0.80 left without a control, 2026-11-03
+
+The 1.0.80 entry closed on three of stage 5.5's decisions with no
+control that removes the decision and fails. Each was re-read on the
+source and closed in the way its reachability allows. The expected
+readings were written before any code and before each run
+(`p7-notes/n9-6b-uncontrolled-expected.md` in the data tree).
+
+**The client's snapshot name test**
+(`hammer2_remote_snapshot_take()`) cannot fire, and no run can read it.
+Its one caller, `hammer2_pfs_snapshot()`, routes a slot there only on a
+connection device and only under the sync thread's flag
+(`hammer2_ioctl.c:979`). A connection device holds two kinds of slot. A
+registered remote element's slot is named from its span's `peer_label`,
+terminated inside `DMSG_LABEL_SIZE`, 128 bytes, when the span is
+received (`hammer2_iocom.c:92`); 127 bytes and the 13 of
+`.h2sync-peer` with its terminator fit the 256-byte name. The remote
+snapshot's own PFS takes slot 0 on that device, named with the pass's
+name (`hammer2_vfsops.c:507`), up to 255 bytes; it is a lone MASTER, so
+it gets no sync thread (`:573-576`) and never carries the flag. The
+1.0.80 plan's long-name arm would have stopped at the server's label
+test, which `s55g` reads. `8958fd4` puts a `static_assert` on the first
+bound beside the test, which stays so that a name from another source
+is refused rather than cut short. Its control is the compiler: a copy of
+the tree with `DMSG_LABEL_SIZE` raised to 256 fails to build with the
+assert's message, and the same copy without the assert builds.
+
+**The mount parser's uuid test** (`hammer2_parse_param()`) had an arm
+and no control. `ctl/n9-6b2-uuidform`, the refusal removed with the
+parse kept, read 82 checks with 1 failed, exactly `s55r`'s malformed id:
+the mount passed the parser and failed as already mounted, rc 32, with
+no "is not a uuid" in its words or the log
+(`n9-6b2-ctl-uuidform-20261103-135410.log` line 79, report
+`dmsg-run-20261103-140035`).
+
+**Registration's binding test** (`hammer2_remote_reconcile()`) is
+reached only once the span bind before it is removed, and the regbind
+control read it refusing. `ctl/n9-6b2-regbind2` removes both binding
+tests and read 82 checks with 4 failed
+(`n9-6b2-ctl-regbind2-20261103-135410.log`, report
+`dmsg-run-20261103-140337`). The reading that decides is `s55peer`'s
+check that `tlspeer` receives no HM2 request, which read 1 against the
+committed run's 0 (line 59): registration fetched the root of the
+cluster the link did not prove. The fetch failed, `its root reads
+00040000` (klog line 190), since `tlspeer` serves no HM2. The other three
+failures follow from the span bind's removal, as under regbind:
+`s55peer`'s span check (`spanrefused=0 listed22=2 regrefused=0`),
+`s55m2` and `s55n2`. An earlier series counted the failure line as a
+field of its own; review round 1 found that it counts only a failed
+fetch while the request count sees any, and the field was dropped
+before this run.
+
+**The committed readings** at a head the squash before the push
+rewrote, whose `src/` is `8958fd4`'s and whose harness is `7947d96`'s
+(`565f46a9a69d`), `cluster-dmsg.sh H2_DMSG_TLS=1`, QEMU cores 0 before
+and after each run:
+- `h2debug-7.3tls`: 82 checks, 0 failed, `s55peer` reading
+  `regrefused=0` and no HM2 request at `tlspeer`
+  (`n9-6b2-tls-debug-20261103-135410.log`, report
+  `dmsg-run-20261103-135732`);
+- `h2kasan-7.3tls`: 82 checks, 0 failed, no warning, lockdep or
+  sanitizer report and nothing of hammer2's in kmemleak (lines 87-88,
+  report `dmsg-run-20261103-140821`).
+Since `src/` changed, `test-fixtures.sh` read 11 images with 0 failures
+and `test-enospc.sh` filled 2G with 0 failures on `h2debug-7.3tls`, both
+exit 0, at a tree whose `src/` is this one's
+(`n9-6b-fixtures-20261103-131638.log`,
+`n9-6b-enospc-20261103-131638.log`).
+
+Every decision the 1.0.78 entry listed is now read with a control:
+each by a run that removes it and fails, except the client's name test,
+held by a build that removes its bound and fails to compile. That list
+was a candidate set when it was written, and this says nothing of a
+decision it missed.
