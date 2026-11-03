@@ -289,25 +289,35 @@ recluster_tls(int fd_to_pass, int mode, int role, int keyring, int nkeys)
  * The listener takes tcp_port, 0 for any, so a capture can name it. */
 static int tcp_port;
 
+/* A loopback listener on tcp_port (0: any), its address in *a. */
+static int
+tcp_listen(struct sockaddr_in *a)
+{
+	socklen_t al = sizeof(*a);
+	int l, one = 1;
+
+	memset(a, 0, sizeof(*a));
+	a->sin_family = AF_INET;
+	a->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	a->sin_port = htons(tcp_port);
+	l = socket(AF_INET, SOCK_STREAM, 0);
+	if (l >= 0)
+		setsockopt(l, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+	if (l < 0 || bind(l, (struct sockaddr *)a, sizeof(*a)) < 0 ||
+	    listen(l, 1) < 0 || getsockname(l, (struct sockaddr *)a, &al) < 0) {
+		perror("tcp_listen");
+		exit(2);
+	}
+	return (l);
+}
+
 static int
 tcp_pair(int *peer)
 {
 	struct sockaddr_in a;
-	socklen_t al = sizeof(a);
-	int l, c, one = 1;
+	int l, c;
 
-	memset(&a, 0, sizeof(a));
-	a.sin_family = AF_INET;
-	a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	a.sin_port = htons(tcp_port);
-	l = socket(AF_INET, SOCK_STREAM, 0);
-	if (l >= 0)
-		setsockopt(l, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-	if (l < 0 || bind(l, (struct sockaddr *)&a, sizeof(a)) < 0 ||
-	    listen(l, 1) < 0 || getsockname(l, (struct sockaddr *)&a, &al) < 0) {
-		perror("tcp_pair: listen");
-		exit(2);
-	}
+	l = tcp_listen(&a);
 	c = socket(AF_INET, SOCK_STREAM, 0);
 	if (c < 0 || connect(c, (struct sockaddr *)&a, sizeof(a)) < 0 ||
 	    (*peer = accept(l, NULL, NULL)) < 0) {
@@ -1007,6 +1017,17 @@ hm2_request(int fd, int idx, const uint8_t clid[16], uint64_t inum,
 static struct uuid bind_clid[2];
 static int nbind_clid, bind_fixed;	/* bind_fixed: --bindclid named it */
 
+/* In place of bind_clid[], each repeatable: --sbind SLOT:UUID a server
+ * intake's binding by key slot, --admit2 its second key (slot 1), and
+ * --cbind UUID a client intake's binding of its one key.  What selects a
+ * link's cluster ids by the key it proved is read only with two keys. */
+static struct {
+	int slot;
+	struct uuid clid;
+} sbind[HAMMER2_LINK_TLS_MAXBIND];
+static struct uuid cbind[HAMMER2_LINK_TLS_MAXBIND];
+static int nsbind, ncbind, admit2;
+
 static void
 bind_root(int mnt)
 {
@@ -1046,6 +1067,21 @@ recluster_key(int mnt, int fd, int mode, int role, int ring, int key)
 			recl.tls.bind[i].clid = bind_clid[i];
 		}
 		recl.tls.nbind = nbind_clid;
+		if (role == HAMMER2_LINK_TLS_SERVER && nsbind) {
+			if (admit2)
+				recl.tls.keys[recl.tls.nkeys++] = admit2;
+			for (i = 0; i < nsbind; ++i) {
+				recl.tls.bind[i].slot = sbind[i].slot;
+				recl.tls.bind[i].clid = sbind[i].clid;
+			}
+			recl.tls.nbind = nsbind;
+		} else if (role == HAMMER2_LINK_TLS_CLIENT && ncbind) {
+			for (i = 0; i < ncbind; ++i) {
+				recl.tls.bind[i].slot = 0;
+				recl.tls.bind[i].clid = cbind[i];
+			}
+			recl.tls.nbind = ncbind;
+		}
 	}
 	if (ioctl(mnt, HAMMER2IOC_RECLUSTER, &recl) < 0)
 		return (errno);
@@ -1284,6 +1320,9 @@ usage(void)
 	    "       hm2snap: [--clid UUID] [--snapdel 1] [--delclid UUID]\n"
 	    "       tls: tlslink --attach2 M2 --keyring R --admit K --key K2"
 	    " [--tls psk|none] [--port P]; tlsclient --key K [--port P];\n"
+	    "            tlslink, the server's keys: [--admit2 K] [--sbind SLOT:UUID]...,"
+	    " the client's: [--cbind UUID]...;\n"
+	    "            tlsaccept --key K --port P [--cbind UUID]... [--hold-max-ms N];\n"
 	    "            hsstub --accept 0|1 (no --attach) [--hold-max-ms N];\n"
 	    "            tlspeer --key K --send ticket|keyupdate|alert|close|none"
 	    " [--port P] [--spans 1] [--linger-ms N] (-DH2_GNUTLS)\n");
@@ -1340,7 +1379,20 @@ main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--spans")) spans = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--linger-ms")) linger_ms = atol(argv[i + 1]);
 		else if (!strcmp(argv[i], "--bindclid")) bindclid_opt = argv[i + 1];
-		else usage();
+		else if (!strcmp(argv[i], "--admit2")) admit2 = atoi(argv[i + 1]);
+		else if (!strcmp(argv[i], "--sbind")) {
+			const char *u = strchr(argv[i + 1], ':');
+
+			if (nsbind == HAMMER2_LINK_TLS_MAXBIND || u == NULL ||
+			    uuid_parse_text(u + 1, &sbind[nsbind].clid) < 0)
+				usage();
+			sbind[nsbind++].slot = atoi(argv[i + 1]);
+		} else if (!strcmp(argv[i], "--cbind")) {
+			if (ncbind == HAMMER2_LINK_TLS_MAXBIND ||
+			    uuid_parse_text(argv[i + 1], &cbind[ncbind]) < 0)
+				usage();
+			ncbind++;
+		} else usage();
 	}
 	if ((clid_opt && uuid_parse_text(clid_opt, &uclid) < 0) ||
 	    (delclid_opt && uuid_parse_text(delclid_opt, &udelclid) < 0) ||
@@ -1505,6 +1557,36 @@ main(int argc, char **argv)
 		    now_ms() - t0);
 		close(p);
 		return (0);
+	}
+
+	/*
+	 * tlsaccept: the client end of a link whose server end a mount's
+	 * cluster_fd= hands in.  Listens on --port, says so, accepts one
+	 * connection within --hold-max-ms and gives it to this mount as a
+	 * client intake with --key, bound to --cbind or bind_clid[].
+	 */
+	if (!strcmp(action, "tlsaccept")) {
+		struct sockaddr_in a;
+		struct pollfd pf;
+		int l, p = -1, e = -1;
+
+		l = tcp_listen(&a);
+		printf("h2attach tlsaccept: listening port=%d\n",
+		    ntohs(a.sin_port));
+		fflush(stdout);
+		pf.fd = l;
+		pf.events = POLLIN;
+		if (poll(&pf, 1, (int)hold_max_ms) == 1)
+			p = accept(l, NULL, NULL);
+		close(l);
+		if (p >= 0) {
+			e = recluster_key(mfd, p, HAMMER2_LINK_TLS_PSK,
+			    HAMMER2_LINK_TLS_CLIENT, 0, (int)key);
+			close(p);
+		}
+		close(mfd);
+		printf("h2attach tlsaccept: accepted=%d errno=%d\n", p >= 0, e);
+		return (e == 0 ? 0 : 1);
 	}
 
 #ifdef H2_GNUTLS

@@ -733,6 +733,46 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	out=$(mount -t hammer2 -o "cluster_tls_clid=$XB,cluster_tls_key=5" /dev/vdb@ROOT /mnt/h2opt 2>&1); rc=$?
 	echo "s55j rc=$rc said=$(echo "$out" | tr '\n' ' ') klog=$(klog 'cluster_tls_clid before any cluster_tls_key')"
 	mountpoint -q /mnt/h2opt && umount /mnt/h2opt
+
+	# A link's cluster ids are those its intake bound to the key it
+	# proved.  Read only with two keys: a server admitting K1 bound to CL
+	# and K6 bound to both ROOTs; vdc's client bound to all three, so it
+	# takes whatever vdb sends, and vdb announces only what its record
+	# binds.  The spans each end receives read the record, counted by
+	# label: +RXSPAN prints the cluster id in a second kprintf, which the
+	# other end's print on this guest can split from its line
+	# (dmsg-run-20261102-234051.klog:377-380), and the label sits in the
+	# first.  Each end receives only the other's spans, so two ROOTs are
+	# one each way; vdb's CL is the only CL.
+	# s55m on the RECLUSTER intake, the client proving the second key and
+	# then the first; s55n on the mount path's cluster_fd=, the server's
+	# keys and bindings as options, which only a device's first mount
+	# reads, so vdb is unmounted first.
+	I6=hammer2-psk-$(hex 4); P6=$(hex 32); K6=$(mkkey $I6 $P6 $RING); XC=$(pc $M2 ROOT)
+	echo "s55m-key $K6 read=$(rdback $K6 $P6) xc=$XC"
+	rx() { klog " +RXSPAN cmd=[0-9a-f]* ($1 *) cl="; }
+	keysel_lines() {	# keysel_lines <arm>, after its snap and rx0
+		echo "$1-wait-handed $(until_n 150 $((h0 + 2)) handed)"
+		sleep 3
+		echo "$1-lines handed=$(($(handed) - h0)) root=$(($(rx ROOT) - root0)) cl=$(($(rx CL) - cl0)) spanrefused=$(($(klog 'cluster link refused a span of cluster') - sr0))"
+	}
+	rx0() { sr0=$(klog 'cluster link refused a span of cluster'); root0=$(rx ROOT); cl0=$(rx CL); }
+	for k in s55m1:7984:$K6 s55m2:7985:$K1; do
+		set -- $(echo $k | tr : ' ')
+		snap $1; rx0
+		arm_link $1 $2 --keyring $RING --admit $K1 --admit2 $K6 --sbind 0:$XCL --sbind 1:$XB --sbind 1:$XC --key $3 --cbind $XB --cbind $XC --cbind $XCL
+		keysel_lines $1
+	done
+	umount $M
+	snap s55n; rx0
+	$A --attach $M2 --action tlsaccept --port 7986 --key $K6 --cbind $XB --cbind $XC --cbind $XCL --hold-max-ms 20000 > /tmp/h2acc.out 2>&1 &
+	APID=$!
+	n=0; until grep -q listening /tmp/h2acc.out 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ $n -gt 50 ] && break; done
+	o=cluster_fd=3,cluster_tls=psk,cluster_tls_role=server,cluster_tls_keyring=$RING,cluster_tls_key=$K1,cluster_tls_clid=$XCL,cluster_tls_key=$K6,cluster_tls_clid=$XB,cluster_tls_clid=$XC
+	bash -c "exec 3<>/dev/tcp/127.0.0.1/7986 || exit 99; exec mount -t hammer2 -o $o /dev/vdb@ROOT $M"; echo "s55n-mount rc=$?"
+	wait $APID; echo "s55n-accept rc=$? $(tr '\n' ' ' < /tmp/h2acc.out)"
+	keysel_lines s55n
+	mountpoint -q $M || mount -t hammer2 /dev/vdb@ROOT $M
 	umount $M2; umount $M
 	echo "s55-left-total n=$(($(klog 'left by the link deleted') - lb)) lines=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | tr '\n' '|')"
 	echo $((0x100)) > /sys/module/hammer2/parameters/debug
@@ -1201,6 +1241,15 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	check "s55i: pfs-create and the snapshot ioctl refuse both reserved suffixes" $ok "$i"
 	j=$(val s55j)
 	[ "$(num "$(field " $j" rc)" 0)" != 0 ] && printf '%s\n' "$j" | grep -q 'cluster_tls_clid before any cluster_tls_key'; check "s55j: a mount naming cluster_tls_clid before any cluster_tls_key is refused, with its reason" $? "$j"
+	keysel() {	# keysel <arm> <ROOT spans> <CL spans> <vdb's refusals> <name>
+		l=$(val "$1-lines")
+		[ "$(num "$(field " $l" handed)" -1)" = 2 ] && [ "$(num "$(field " $l" root)" -1)" = "$2" ] && [ "$(num "$(field " $l" cl)" -1)" = "$3" ] && [ "$(num "$(field " $l" spanrefused)" -1)" = "$4" ]
+		check "$5" $? "$l; $(val s55m-key | sed 's/ xc=.*//')"
+	}
+	keysel s55m1 2 0 0 "s55m1: a server admitting two keys installs the second key's clusters when the peer proves it: a ROOT each way and no CL"
+	keysel s55m2 1 1 1 "s55m2: the same server installs the first key's clusters when the peer proves that one: vdc receives CL and not ROOT, and vdb refuses vdc's ROOT"
+	[ "$(val s55n-mount)" = rc=0 ] && printf '%s\n' "$(val s55n-accept)" | grep -q '^rc=0 .*accepted=1 errno=0'; check "s55n: a mount's cluster_fd= dials a client intake, which accepts it" $? "mount $(val s55n-mount); accept $(val s55n-accept)"
+	keysel s55n 2 0 0 "s55n: the mount path binds each cluster_tls_clid to the cluster_tls_key before it: the peer proving the second key gets a ROOT each way and no CL"
 	final_checks
 	echo "dmsg: TLS link, $checks check(s), $fail failed${skipped:+, arm 4 not driven}"
 	[ "$fail" -eq 0 ] || exit 1
