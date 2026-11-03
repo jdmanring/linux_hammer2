@@ -21055,3 +21055,168 @@ comments read the same counts and is not cited:
 Not run on `h2kasan-7.3tls`: the change removes one case label from the
 privilege switch and touches no memory path. Not read here: a scan
 started by root on a writable volume, which the change does not touch.
+
+## The link between two guests over TLS, and what a link proved, 2026-11-02
+
+Two increments of stage 5 (`doc/CLUSTER_PROTOCOL_DESIGN.md`), N9.4 and
+N9.5 of the plan. N9.4 gave the two-guest harness a TLS link: `h2loop
+--raw 1` copies bytes instead of parsing frames (`cf1db6a`, and
+`6f91729` for clang), `h2service dial` hands the kernel a PSK intake and
+admits a row by its `.pub` marker only (`2761848`), and `cluster-wire.sh
+H2_WIRE_TLS=1` dials both guests through the raw relay with one PSK per
+run, made on the host and written to no file (`c367d27`), its guest
+state in `/run/h2tls` (`b249334`). N9.5 is stage 5.5, designed at
+`a7aba6e` and signed off after eleven review rounds: a TLS link records
+the key it proved and the cluster ids that key is bound to, installed
+at the descriptor swap, and refuses spans, registrations, requests and
+`VOLCONF` rows outside that set (`a945367`); the server serves a
+mounted PFS only with an enabled `copyinfo` row and an unmounted one
+only as the link's own snapshot (`7fb32c8`); it names a peer's snapshot
+`<label>.h2sync-peer` itself, from a mounted MASTER source, and a stale
+delete takes only a snapshot (`3f9c433`); the old connection's peer can
+no longer reopen a reconnect's request queue (`3341563`); and two
+`HAMMER2_LOCKDEBUG` holds serve the controls (`19f2805`). An
+independent review of that code (Claude Opus 5.5, two rounds, subject
+findings 4 minor then 1 minor, SIGN-OFF) found a refused span answered
+as accepted and left open, and a server key that could be bound to
+nothing; both fixed at `20d437e`, with a design sentence and a header
+comment at `524258d` and `15fc25e`. The operator pages that still said
+the server checks no row were corrected at `4f0ff92`.
+
+The expected readings, fake passes and controls were written before
+each run (`p7-notes/n9-5-controls-expected.md`,
+`n9-5-holds-expected.md`, `n9-5-wire-expected.md` in the data tree),
+and each was corrected there, dated, where a run proved it wrong.
+
+**One guest, `cluster-dmsg.sh`, at `7ff1a87`'s source** (head `7ff1a87`,
+harness `c5e372b41945`, read on line 1 of each log; QEMU cores in
+`/var/crash` 0 before and after every run, lines 2 and last). Logs
+under `p7-notes/`, reports and kernel logs under `fixtures/`:
+- `h2kasan-7.3tls`: TLS mode 70 checks, 0 failed
+  (`n9-5-fix-tls-kasan-20261102-214846.log` line 78, report
+  `dmsg-run-20261102-215204`); default mode 86, 0 failed
+  (`n9-5-fix-plain-kasan-...` line 91, `dmsg-run-20261102-215438`);
+  holds mode 19, 0 failed (`n9-5-fix-holds-kasan-...` line 26,
+  `dmsg-run-20261102-215653`). No KASAN, UBSAN or lockdep report and
+  kmemleak nothing of hammer2's in each (lines 75-76, 88-89 and 23-24).
+- `h2debug-7.3tls`: the same three, 70, 86 and 19 checks, 0 failed
+  (`n9-5-fix-{tls,plain,holds}-debug-...`, reports
+  `dmsg-run-20261102-220017`, `-220219`, `-220404`).
+- What the arms read (TLS mode, line numbers of the KASAN log): a key
+  revoked after one handshake fails the next while the first link
+  carries on; `tlspeer --spans 1`, bound to `vdb`'s root, receives the
+  bound row's `VOLCONF` once and none of an unbound row or of one added
+  and deleted while it lingers, and its span for an unbound cluster id
+  is refused with its line, closed and never listed while the bound one
+  stays open (line 58: `spanrefused=1 listed22=0; other_answered 1
+  other_open 0 bound_open 1`); a plaintext `hm2root` is refused a
+  mounted PFS with no row and served once one is added; two SNAPSHOTs
+  of the root on one link make one `ROOT.h2sync-peer` of subtype
+  snapshot, held after the peer closes and deleted, error 0, by the
+  teardown at the next attach; a SLAVE source, an unmounted source, a
+  MASTER `CL.h2sync-peer` of subtype none and a 128-byte label are each
+  refused and what each names is kept; SNAPDEL naming a PFS the link
+  never took deletes nothing; CL with its row is served by `hm2root`
+  while mounted and refused once unmounted (`s55k`); both reserved
+  suffixes are refused by `pfs-create` and the snapshot ioctl; and a
+  `cluster_tls_clid` before any key refuses the mount. The default
+  mode's `tlsrefuse` reads an intake binding nothing, a duplicate
+  serial and a server key bound to nothing each `EINVAL` (line 11:
+  `nobind 22, dup 22, keynobind 22`), and twelve refusal lines once
+  each (line 12). The holds mode reads the old connection's SNAPSHOT,
+  sent at 301 ms inside a 2000 ms hold, refused with `LOSTLINK` and no
+  snapshot made; the record of a held second intake keeping a row for
+  another cluster off the old link; a queued `VOLCONF`'s hold ending
+  before the reconnect is handed, with nothing queued on a dying
+  circuit; and a remounted device's first held link receiving both
+  bound spans inside its own window.
+
+**The controls**, each a `git archive` of the head named in its tree's
+`CONTROL` file with the check removed where it executes, marked
+`CONTROL n9-5` on each edited line, made by `p7-notes/n9-5-make-ctl.py`,
+run on `h2debug-7.3tls`, each failing exactly the checks its expected
+note names unless said otherwise:
+- `ctl/n9-5-alpha` (thirteen checks removed together, from `1385b57`):
+  TLS 69 checks, 18 failed (`n9-5-ctl-n9-5-alpha-tls-20261102-204927.log`
+  line 77); default 86, 2 failed (the binding and duplicate refusals and
+  the line count). Two of the eighteen were not predicted and are
+  collateral, read from the lines: arms 10 to 14 received five spans
+  where one is bound, the same filter removed, and `s55c` counted five
+  "left by the link" lines, one each for the snapshots the removed
+  checks allowed.
+- `ctl/n9-5-beta-g1` and `ctl/n9-5-g2`, `ctl/n9-5-g1-g2`: beta (the
+  server's span filter) failed seven checks of 69: arm 1, with the client
+  refusing five unbound spans, the not-announced check, and arms 10 to
+  14, as in alpha; g2 (`HAMMER2_NOSNAPSCOPE`) failed `s55h2` alone, the
+  delete by CL's own name refused `EBUSY`. g1, rule 4's unmounted gate,
+  failed nothing in these runs: every arm that reached it carried a
+  cluster id the row and bind checks already refused. `s55k` was added
+  (`dfc0f83`) so the gate decides alone, and `ctl/n9-5-g1` from
+  `b790017` failed exactly `s55k`, CL served unmounted
+  (`n9-5-ctl-n9-5-g1-tls-20261102-211526.log` line 78).
+- The hold controls: `rec-early` (the record installed before the
+  hold) failed `s1`'s old-link `VOLCONF` check alone; `write-late` (the
+  queue after `msglk`'s release) failed `s2` alone, the reconnect handed
+  at klog line 70 before the hold's end at 72 with one dying-circuit
+  line. `await` (the resume lifting `QUIESCED`) failed four checks, the
+  SNAPSHOT served after the hold and `ROOT.h2sync-peer` on the media,
+  once `8896058` made the precondition stamp the send rather than the
+  reply. `rec-late` (the record installed after the tail) failed seven,
+  `e` among them at `rxspan +0` once `b790017` counted that arm's spans
+  in its own window: before it, `e` read the run's cumulative count and
+  passed with no span exchanged.
+- The review's fixes: `ctl/n9-5-spanopen` (a refused span answered as
+  accepted) failed `s55peer` alone on `other_open 1`; `ctl/n9-5-keynobind`
+  failed the `tlsrefuse` check (`keynobind 0`) and the line count
+  (eleven), and read `dup 22` with the per-key check gone, so after
+  `7ff1a87` the duplicate check alone refuses that intake. The
+  no-binding errno cannot tell its check from the per-key one, which
+  also refuses an intake binding nothing; the line count is its control
+  (`9b6d40d`).
+
+**Two guests, `cluster-wire.sh`**, at `15fc25e` (source `7ff1a87`'s),
+`h2debug-7.3tls` on both, from frozen copies
+(`p7-notes/n9-5-wire-20261102-214846/` and `n9-5-wire-20261102-222001/`), every
+arm 0 failed and QEMU cores 0 after each, and no "no enabled copyinfo
+row" line in any of the kept kernel logs (`fixtures/wire-run-<id>-{a,b}.klog`),
+since the harness adds the row on both guests:
+- plaintext default, 32 checks (`wire-run-20261102-220926`);
+- `H2_WIRE_PASS=1`, 42 checks (`-221046`): 310 of 310 digests equal, the
+  slave's CL equal to the master's entry for entry and block for block,
+  0 of 643 lines differing;
+- `H2_WIRE_SNAPDEL=1`, 43 checks (`-221313`): the relay renamed the first
+  SNAPDEL to the decoy's name, and the server deleted the link's own
+  snapshot by cluster id, the decoy kept and no not-ours line;
+- `H2_WIRE_SRCGATE=1`, 33 checks (`-221540`);
+- `H2_WIRE_TLS=1`, 37 checks (`-221701`): each guest's span table holds
+  the peer's one bound span of its three PFSs, kTLS on both directions
+  at both ends after a `tlshd` handshake, no dmsg header in either
+  guest's capture of the relay port nor in the relay's own count
+  (11545393 and 333965 bytes), 305 of 305 digests equal;
+- `H2_WIRE_RAW=1`, the plaintext control through the same raw relay, 33
+  checks (`wire-run-20261102-222023`, head `9b6d40d`, source unchanged):
+  the dmsg header in both guests' captures (4557 and 4764) and in the
+  relay's count both ways (2908 and 1862);
+- `H2_WIRE_TLS=1 H2_WIRE_TLS_WRONG=1`, 18 checks (`-222151`): each
+  intake refused with its line (A status -13, B -110), nothing handed,
+  no element registered, `tlshd` one failure and no completion on each,
+  and no dmsg header in 2329 captured bytes on either side.
+N9.4's first reading of the TLS, raw and wrong-key arms was on a dirty
+tree, `v1.0.4-853-g2761848-dirty` (`p8-notes/n9-4-20261102-145536/`,
+37, 33 and 18 checks, 0 failed), before `c367d27` and `b249334` were
+committed; the lines above are the committed tree's.
+
+**The frontend gates**, by hand on `h2debug-7.3tls` from `15fc25e`
+(`src` clean, the four changed files' hashes on line 1):
+`test-fixtures.sh` 11 images, 0 failures, 110 ioctl results
+(`n9-5-fixtures-20261102-214846.log`), and `test-enospc.sh` filled 2G
+with 0 failures (`n9-5-enospc-20261102-214846.log`), QEMU cores 0
+before and after each.
+
+Not read here: the two-host synchronization pass over TLS, which is
+N9.6's; a revoked key's live link ended without an unmount, which needs
+a revocation callback or a rekey, neither built (rule 7); a relaying
+daemon carrying several peers over one link, whose binding stage 4
+moves per peer (rule 8); and a `.h2sync-src` or `.h2sync-peer` PFS made
+on the same media by another implementation's utility, which no ioctl
+here can refuse.
