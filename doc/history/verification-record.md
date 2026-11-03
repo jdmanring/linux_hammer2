@@ -21194,16 +21194,23 @@ except where said below:
   passing at `nobind 22` (`n9-5-ctl-n9-5-nobind-plain-20261102-nobind.log`
   lines 11-12, report `dmsg-run-20261102-224523`, QEMU cores 0).
 
-Twelve decisions stage 5.5 added (`a945367` to `20d437e`) have no
-control above, and eleven of them no run drives. They were found by
-reading every added line that branches, in three audit rounds that each
-found more, so the list is a candidate set and not a proof that no
-other decision is missing:
+Thirteen decisions stage 5.5 added (`a945367` to `20d437e`) have no
+control above, and twelve of them no run drives. They were found by
+reading every added line that branches, and then every added line that
+decides without a keyword, in four audit rounds that each found more,
+so the list is a candidate set and not a proof that no other decision
+is missing:
 - the selection of a link's cluster ids by the key it proved
   (`hammer2_link_stage()`), the one line that keeps a peer proving one
-  key from receiving every key's clusters. Every arm's intake admits
-  one key, since `h2attach` binds every cluster id to key slot 0, so a
-  build without the serial test would pass every arm;
+  key from receiving every key's clusters. Every one-guest arm's intake
+  admits one key, since `h2attach` binds every cluster id to key slot 0,
+  and the wire's intakes come from `h2service`, which takes one
+  `--tls-key` there and would bind every key to the one dialed cluster
+  id, so a build without the serial test would pass every arm;
+- the mount path's binding of each `cluster_tls_clid` to the
+  `cluster_tls_key` before it (`hammer2_parse_param()`), the same
+  property on the other intake. The one mount a run makes with these
+  options, `s55j`'s, is refused before that line;
 - the server's refusal of a request for a cluster the link did not
   prove (`hammer2_remote_pfs()`) and registration's
   (`hammer2_remote_reconcile()`). Every `h2attach` request arm runs over
@@ -21224,9 +21231,9 @@ other decision is missing:
 - the local pass's snapshot-only stale delete (`hammer2_sync_pass_snap()`),
   since no `cluster-sync.sh` run is part of this increment.
 
-The twelfth, the mount's refusal of a `.h2sync-peer` name
+The thirteenth, the mount's refusal of a `.h2sync-peer` name
 (`hammer2_remote_is_source()`), is read by the wire's srcgate arm below
-and has no control. Arms for the eleven are queued for N9.6's first
+and has no control. Arms for the twelve are queued for N9.6's first
 guest session (`p7-notes/n9-5-harness-todo.md` in the data tree) and are
 not built in this increment.
 
@@ -21272,7 +21279,7 @@ with 0 failures (`n9-5-enospc-20261102-214846.log`), QEMU cores 0
 before and after each.
 
 Not read here: the two-host synchronization pass over TLS, which is
-N9.6's; the eleven decisions above that no run drives; a
+N9.6's; the twelve decisions above that no run drives; a
 revoked key's live link ended without an unmount, which needs
 a revocation callback or a rekey, neither built (rule 7); a relaying
 daemon carrying several peers over one link, whose binding stage 4
