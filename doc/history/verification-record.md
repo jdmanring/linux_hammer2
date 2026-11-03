@@ -21194,9 +21194,16 @@ except where said below:
   passing at `nobind 22` (`n9-5-ctl-n9-5-nobind-plain-20261102-nobind.log`
   lines 11-12, report `dmsg-run-20261102-224523`, QEMU cores 0).
 
-Ten refusals stage 5.5 added (`a945367` to `20d437e`, read from every
-branch those commits add) have no control above, and nine of them no
-run drives:
+Twelve decisions stage 5.5 added (`a945367` to `20d437e`) have no
+control above, and eleven of them no run drives. They were found by
+reading every added line that branches, in three audit rounds that each
+found more, so the list is a candidate set and not a proof that no
+other decision is missing:
+- the selection of a link's cluster ids by the key it proved
+  (`hammer2_link_stage()`), the one line that keeps a peer proving one
+  key from receiving every key's clusters. Every arm's intake admits
+  one key, since `h2attach` binds every cluster id to key slot 0, so a
+  build without the serial test would pass every arm;
 - the server's refusal of a request for a cluster the link did not
   prove (`hammer2_remote_pfs()`) and registration's
   (`hammer2_remote_reconcile()`). Every `h2attach` request arm runs over
@@ -21210,12 +21217,18 @@ run drives:
 - the client's two checks on a peer snapshot (`hammer2_remote_snapshot_take()`):
   a server-chosen name that does not fit, and a fed root that does not
   carry that name, whose line no kept wire log holds;
+- the server's refusal of an unmounted SNAPSHOT source
+  (`hammer2_remote_snapshot()`), which alpha's MASTER edit kept: a
+  source the server admits unmounted can only be a snapshot the link
+  took, and no arm names one;
 - the local pass's snapshot-only stale delete (`hammer2_sync_pass_snap()`),
   since no `cluster-sync.sh` run is part of this increment.
 
-The tenth, the mount's refusal of a `.h2sync-peer` name
+The twelfth, the mount's refusal of a `.h2sync-peer` name
 (`hammer2_remote_is_source()`), is read by the wire's srcgate arm below
-and has no control.
+and has no control. Arms for the eleven are queued for N9.6's first
+guest session (`p7-notes/n9-5-harness-todo.md` in the data tree) and are
+not built in this increment.
 
 **Two guests, `cluster-wire.sh`**, at `15fc25e` for the first five arms
 and `9b6d40d` for the raw and wrong-key arms (source `7ff1a87`'s
@@ -21259,7 +21272,7 @@ with 0 failures (`n9-5-enospc-20261102-214846.log`), QEMU cores 0
 before and after each.
 
 Not read here: the two-host synchronization pass over TLS, which is
-N9.6's; the nine refusals above that no run drives; a
+N9.6's; the eleven decisions above that no run drives; a
 revoked key's live link ended without an unmount, which needs
 a revocation callback or a rekey, neither built (rule 7); a relaying
 daemon carrying several peers over one link, whose binding stage 4
