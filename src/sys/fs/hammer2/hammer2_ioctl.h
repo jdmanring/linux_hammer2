@@ -81,6 +81,17 @@ typedef struct hammer2_ioc_version hammer2_ioc_version_t;
 #define HAMMER2_LINK_TLS_CLIENT	0
 #define HAMMER2_LINK_TLS_SERVER	1
 #define HAMMER2_LINK_TLS_MAXKEYS 5
+#define HAMMER2_LINK_TLS_MAXBIND 10
+
+/*
+ * A cluster id a key's link may carry: spans, VOLCONF rows and requests of
+ * any other cluster id are refused on a link that key proved.  slot indexes
+ * keys[]; a client's pairs all name slot 0.  Stage 5.5 of the cluster note.
+ */
+struct hammer2_link_bind {
+	int			slot;
+	struct uuid		clid;
+};
 
 struct hammer2_link_tls {
 	int			mode;		/* HAMMER2_LINK_TLS_NONE, _PSK */
@@ -88,6 +99,8 @@ struct hammer2_link_tls {
 	int			keyring;	/* a server's keyring serial */
 	int			nkeys;
 	int			keys[HAMMER2_LINK_TLS_MAXKEYS];	/* a client's one, a server's admitted */
+	int			nbind;
+	struct hammer2_link_bind bind[HAMMER2_LINK_TLS_MAXBIND];
 };
 
 struct hammer2_ioc_recluster {
@@ -95,6 +108,8 @@ struct hammer2_ioc_recluster {
 	struct hammer2_link_tls	tls;	/* XXX Linux: in the reserved bytes */
 	char			reserved[256 - 4 - sizeof(struct hammer2_link_tls)];
 };
+_Static_assert(sizeof(struct hammer2_ioc_recluster) == 256,
+    "RECLUSTER's argument keeps upstream's size");
 
 typedef struct hammer2_ioc_recluster hammer2_ioc_recluster_t;
 

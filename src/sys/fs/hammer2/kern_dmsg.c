@@ -53,7 +53,6 @@ MODULE_PARM_DESC(kdmsg_debug, "Set debug level for kernel dmsg layer");
 static int kdmsg_msg_receive_handling(kdmsg_msg_t *msg);
 static int kdmsg_state_msgrx(kdmsg_msg_t *msg);
 static int kdmsg_state_msgtx(kdmsg_msg_t *msg);
-static void kdmsg_msg_write_locked(kdmsg_iocom_t *iocom, kdmsg_msg_t *msg);
 static kdmsg_msg_t *kdmsg_msg_alloc_locked(kdmsg_state_t *state,
 		uint32_t cmd, int (*func)(kdmsg_state_t *, kdmsg_msg_t *),
 		void *data);
@@ -2014,7 +2013,8 @@ kdmsg_msg_write(kdmsg_msg_t *msg)
 	lockmgr(&iocom->msglk, LK_RELEASE);
 }
 
-static void
+/* XXX Linux: extern, for a caller that must queue under its own msglk hold */
+void
 kdmsg_msg_write_locked(kdmsg_iocom_t *iocom, kdmsg_msg_t *msg)
 {
 	kdmsg_state_t *state;

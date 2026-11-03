@@ -2718,6 +2718,12 @@ hammer2_remote_reconcile(struct work_struct *work)
 			hammer2_remote_span_mark(hmp, &cand[i], 0);
 			continue;
 		}
+		if (!hammer2_link_binds(hmp, &cand[i].peer_id)) {
+			kprintf("HAMMER2: remote %s monitored: the link did not prove its cluster\n",
+			    cand[i].name);
+			hammer2_remote_span_mark(hmp, &cand[i], 0);
+			continue;
+		}
 		error = hammer2_remote_root(cdev, &cand[i]);
 		if (error) {
 			kprintf("HAMMER2: remote %s monitored: its root reads %08x\n",

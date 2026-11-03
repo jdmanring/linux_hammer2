@@ -303,6 +303,12 @@ The moves from 1,615 to 1,625 were baselined without an entry here.
 kdmsg_iocom`, unnamed as its neighbor `exit_func` is. No category is
 new.
 
+1,626 to 1,630 with the link's record of stage 5.5. Two more `function
+definition argument` are the prototype of `hammer2_link_binds()` in
+`hammer2.h`, one more `no spaces at the start of a line` is the
+continuation of its refusal print in `hammer2_span_add()`, and one more
+`return (x);` is its own. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

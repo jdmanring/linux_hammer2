@@ -919,6 +919,24 @@ struct hammer2_span {
 
 TAILQ_HEAD(hammer2_span_list, hammer2_span);
 
+/*
+ * XXX Linux: what a link proved, installed at the descriptor swap and read
+ * under link_spin by every check of stage 5.5 of the cluster note.  Zeroed,
+ * as the device is allocated, it proved nothing and admits nothing; a
+ * plaintext link admits as before; a PSK link admits the cluster ids its
+ * intake bound to the key the handshake reported.
+ */
+#define HAMMER2_LINK_REC_NOTHING	0
+#define HAMMER2_LINK_REC_PLAIN		1
+#define HAMMER2_LINK_REC_PSK		2
+
+struct hammer2_link_rec {
+	int			mode;
+	int			serial;		/* the key the link proved */
+	int			nclid;
+	struct uuid		clid[HAMMER2_LINK_TLS_MAXBIND];
+};
+
 struct hammer2_dev {
 	TAILQ_ENTRY(hammer2_dev) mntentry;	/* hammer2_mntlist */
 	hammer2_devvp_list_t	devvp_list;	/* list of devices including *bdev_file */
@@ -946,6 +964,8 @@ struct hammer2_dev {
 	struct hammer2_remote	*remote;	/* XXX Linux: the HM2 XOP API server */
 	struct hammer2_rconn	*rconn;		/* XXX Linux: set on a connection device */
 	struct hammer2_link	*link;		/* XXX Linux: the pending link attempt */
+	struct hammer2_link_rec	link_rec;	/* XXX Linux: what the link proved */
+	struct hammer2_link_rec	link_next;	/* XXX Linux: staged for the swap */
 	hammer2_spin_t		link_spin;	/* XXX Linux: link and its fields */
 	hammer2_mtx_t		link_mtx;	/* XXX Linux: intakes and teardown */
 	struct delayed_work	link_work;	/* XXX Linux: runs the reconnect tail */
@@ -1517,6 +1537,7 @@ void hammer2_remote_init(hammer2_dev_t *);
 void hammer2_remote_quiesce(hammer2_dev_t *, int);
 void hammer2_remote_resume(hammer2_dev_t *);
 void hammer2_remote_swap(hammer2_dev_t *);
+int hammer2_link_binds(hammer2_dev_t *, const struct uuid *);
 void hammer2_remote_connected(hammer2_dev_t *);
 void hammer2_remote_uninit(hammer2_dev_t *);
 int hammer2_remote_rcvmsg(kdmsg_msg_t *);

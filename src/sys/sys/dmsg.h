@@ -931,6 +931,7 @@ kdmsg_msg_t *kdmsg_msg_alloc(kdmsg_state_t *state, uint32_t cmd,
 				int (*func)(kdmsg_state_t *, kdmsg_msg_t *),
 				void *data);
 void kdmsg_msg_write(kdmsg_msg_t *msg);
+void kdmsg_msg_write_locked(kdmsg_iocom_t *iocom, kdmsg_msg_t *msg); /* XXX Linux */
 void kdmsg_msg_reply(kdmsg_msg_t *msg, uint32_t error);
 void kdmsg_msg_result(kdmsg_msg_t *msg, uint32_t error);
 void kdmsg_state_reply(kdmsg_state_t *state, uint32_t error);

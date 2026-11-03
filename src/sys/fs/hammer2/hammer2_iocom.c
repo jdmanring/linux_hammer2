@@ -70,6 +70,16 @@ hammer2_span_add(hammer2_dev_t *hmp, kdmsg_msg_t *msg)
 {
 	struct hammer2_span *span;
 
+	/*
+	 * XXX Linux: a span of a cluster id the link did not prove is kept out
+	 * of the table, so nothing registers it; rate-limited, since the peer
+	 * chooses how many it sends.  Stage 5.5 of the cluster note.
+	 */
+	if (!hammer2_link_binds(hmp, &msg->any.lnk_span.peer_id)) {
+		hprintf("cluster link refused a span of cluster %pUl, which the link did not prove\n",
+		    &msg->any.lnk_span.peer_id);
+		return;
+	}
 	span = hmalloc(sizeof(*span), hmp->mmsg, M_WAITOK | M_ZERO);
 	span->state = msg->state;
 	span->peer_id = msg->any.lnk_span.peer_id;
@@ -172,6 +182,32 @@ hammer2_link_swap(kdmsg_iocom_t *iocom)
 	hammer2_dev_t *hmp = iocom->handle;
 
 	hammer2_remote_swap(hmp);
+	hammer2_spin_ex(&hmp->link_spin);
+	hmp->link_rec = hmp->link_next;
+	hammer2_spin_unex(&hmp->link_spin);
+}
+
+/*
+ * XXX Linux: whether the link may carry a cluster id: any on a plaintext
+ * link, the bound ones on a PSK link, none before a link has proved
+ * anything.  Stage 5.5 of the cluster note.
+ */
+int
+hammer2_link_binds(hammer2_dev_t *hmp, const struct uuid *clid)
+{
+	const struct hammer2_link_rec *r = &hmp->link_rec;
+	int i, ok = 0;
+
+	hammer2_spin_ex(&hmp->link_spin);
+	if (r->mode == HAMMER2_LINK_REC_PLAIN)
+		ok = 1;
+	else if (r->mode == HAMMER2_LINK_REC_PSK) {
+		for (i = 0; i < r->nclid && !ok; ++i)
+			ok = (bcmp(&r->clid[i], clid, sizeof(*clid)) == 0);
+	}
+	hammer2_spin_unex(&hmp->link_spin);
+
+	return (ok);
 }
 
 /*
@@ -484,6 +520,9 @@ hammer2_update_spans(hammer2_dev_t *hmp, kdmsg_state_t *state)
 #if 0
 		kprintf("UPDATE SPANS: %s\n", ripdata->filename);
 #endif
+		/* XXX Linux: only the cluster ids the link proved */
+		if (!hammer2_link_binds(hmp, &ripdata->meta.pfs_clid))
+			goto next;
 
 		rmsg = kdmsg_msg_alloc(&hmp->iocom.state0,
 				       DMSG_LNK_SPAN | DMSGF_CREATE,
@@ -540,8 +579,18 @@ hammer2_volconf_update(hammer2_dev_t *hmp, int index)
 	kdmsg_msg_t *msg;
 
 	/* XXX interlock against connection state termination */
+	/*
+	 * XXX Linux: conn_state, the link's record and the queue within one
+	 * hold of msglk, under which conn_state is set and cleared and the
+	 * descriptor swap installs the record, so the row goes on the
+	 * connection whose record admitted it, ahead of its DELETE, or not at
+	 * all.  A PSK link sends only the rows of cluster ids it proved.
+	 * Stage 5.5 of the cluster note.
+	 */
+	lockmgr(&hmp->iocom.msglk, LK_EXCLUSIVE);
 	kprintf("volconf update %p\n", hmp->iocom.conn_state);
-	if (hmp->iocom.conn_state) {
+	if (hmp->iocom.conn_state &&
+	    hammer2_link_binds(hmp, &hmp->voldata.copyinfo[index].pfs_clid)) {
 		kprintf("TRANSMIT VOLCONF VIA OPEN CONN TRANSACTION\n");
 		msg = kdmsg_msg_alloc(hmp->iocom.conn_state,
 				      DMSG_LNK_HAMMER2_VOLCONF,
@@ -549,8 +598,9 @@ hammer2_volconf_update(hammer2_dev_t *hmp, int index)
 		H2_LNK_VOLCONF(msg)->copy = hmp->voldata.copyinfo[index];
 		H2_LNK_VOLCONF(msg)->mediaid = hmp->voldata.fsid;
 		H2_LNK_VOLCONF(msg)->index = index;
-		kdmsg_msg_write(msg);
+		kdmsg_msg_write_locked(&hmp->iocom, msg);
 	}
+	lockmgr(&hmp->iocom.msglk, LK_RELEASE);
 }
 
 /*
@@ -595,7 +645,7 @@ hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
 {
 	struct socket *so = sock_from_file(fp);
 	const char *why = NULL;
-	int error = EINVAL, i;
+	int error = EINVAL, i, j;
 
 	if (tls->mode == HAMMER2_LINK_TLS_NONE) {
 		if (READ_ONCE(hammer2_cluster_tls_required))
@@ -630,6 +680,26 @@ hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
 	    i < tls->nkeys; ++i) {
 		if (tls->keys[i] <= 0)
 			why = "a key serial must be positive";
+		for (j = 0; why == NULL && j < i; ++j) {
+			if (tls->keys[j] == tls->keys[i])
+				why = "a key serial is listed twice";
+		}
+	}
+	/*
+	 * Stage 5.5: a PSK link carries only the cluster ids its intake bound
+	 * to the key it proves, so an intake that binds none would admit
+	 * nothing.
+	 */
+	if (why == NULL && tls->mode == HAMMER2_LINK_TLS_PSK) {
+		if (tls->nbind <= 0)
+			why = "a TLS intake binds no cluster id";
+		else if (tls->nbind > HAMMER2_LINK_TLS_MAXBIND)
+			why = "too many cluster id bindings";
+		for (i = 0; why == NULL && i < tls->nbind; ++i) {
+			if (tls->bind[i].slot < 0 ||
+			    tls->bind[i].slot >= tls->nkeys)
+				why = "a cluster id binding names no key";
+		}
 	}
 	if (why == NULL)
 		return (0);
@@ -650,6 +720,34 @@ hammer2_link_admitted(const struct hammer2_link *l)
 			return (1);
 	}
 	return (0);
+}
+
+/*
+ * What the link proved, staged by the work for the descriptor swap's hook
+ * to install: a server's key is the one tlshd reported, a client's its one
+ * key, which a completed handshake shows the server holds too.  The
+ * cluster ids are those the intake bound to that key.
+ */
+static void
+hammer2_link_stage(hammer2_dev_t *hmp, const struct hammer2_link *l)
+{
+	struct hammer2_link_rec r;
+	int i;
+
+	memset(&r, 0, sizeof(r));
+	r.mode = HAMMER2_LINK_REC_PLAIN;
+	if (hammer2_link_psk(l)) {
+		r.mode = HAMMER2_LINK_REC_PSK;
+		r.serial = (l->tls.role == HAMMER2_LINK_TLS_SERVER) ?
+		    l->peerid : l->tls.keys[0];
+		for (i = 0; i < l->tls.nbind; ++i) {
+			if (l->tls.keys[l->tls.bind[i].slot] == r.serial)
+				r.clid[r.nclid++] = l->tls.bind[i].clid;
+		}
+	}
+	hammer2_spin_ex(&hmp->link_spin);
+	hmp->link_next = r;
+	hammer2_spin_unex(&hmp->link_spin);
 }
 
 /*
@@ -837,6 +935,7 @@ hammer2_link_work(struct work_struct *work)
 	}
 	wait_for_completion(&l->done);
 	hammer2_remote_quiesce(hmp, 0);	/* the old connection's requests */
+	hammer2_link_stage(hmp, l);	/* installed at the swap */
 	hammer2_lk_unlock(&hammer2_mntlk);
 	hammer2_cluster_tail(hmp, l->fp);	/* kdmsg owns the file now */
 	kfree(l);

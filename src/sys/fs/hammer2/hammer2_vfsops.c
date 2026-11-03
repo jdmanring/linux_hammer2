@@ -1082,6 +1082,7 @@ enum hammer2_param {
 	Opt_cluster_tls_role,
 	Opt_cluster_tls_keyring,
 	Opt_cluster_tls_key,
+	Opt_cluster_tls_clid,
 };
 
 static const struct constant_table hammer2_param_tls[] = {
@@ -1103,6 +1104,7 @@ static const struct fs_parameter_spec hammer2_fs_parameters[] = {
 	    hammer2_param_tls_role),
 	fsparam_s32("cluster_tls_keyring", Opt_cluster_tls_keyring),
 	fsparam_s32("cluster_tls_key", Opt_cluster_tls_key),
+	fsparam_string("cluster_tls_clid", Opt_cluster_tls_clid),
 	{}
 };
 
@@ -1150,6 +1152,18 @@ hammer2_parse_param(struct fs_context *fc, struct fs_parameter *param)
 			return (invalfc(fc, "more than %d cluster_tls_key",
 			    HAMMER2_LINK_TLS_MAXKEYS));
 		ctx->tls.keys[ctx->tls.nkeys++] = result.int_32;
+		break;
+	case Opt_cluster_tls_clid:
+		/* binds to the cluster_tls_key before it; stage 5.5 */
+		if (ctx->tls.nkeys == 0)
+			return (invalfc(fc, "cluster_tls_clid before any cluster_tls_key"));
+		if (ctx->tls.nbind == HAMMER2_LINK_TLS_MAXBIND)
+			return (invalfc(fc, "more than %d cluster_tls_clid",
+			    HAMMER2_LINK_TLS_MAXBIND));
+		if (guid_parse(param->string,
+		    (guid_t *)&ctx->tls.bind[ctx->tls.nbind].clid))
+			return (invalfc(fc, "cluster_tls_clid is not a uuid"));
+		ctx->tls.bind[ctx->tls.nbind++].slot = ctx->tls.nkeys - 1;
 		break;
 	default:
 		return (-EINVAL);
