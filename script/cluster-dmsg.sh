@@ -823,7 +823,7 @@ out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $o
 out=$($A --attach $M --action tlsrefuse 2>&1); echo "tlsrefuse-rc $?"; echo "tlsrefuse $out"
 sleep 1
 echo "handshake-upcall $(grep -c ' handshake_req_alloc$' /proc/kallsyms)"
-echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') key=$(klog 'refused: a key serial must be positive') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall') nobind=$(klog 'refused: a TLS intake binds no cluster id') dup=$(klog 'refused: a key serial is listed twice')"
+echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') key=$(klog 'refused: a key serial must be positive') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall') nobind=$(klog 'refused: a TLS intake binds no cluster id') dup=$(klog 'refused: a key serial is listed twice') keynobind=$(klog 'refused: an admitted key binds no cluster id')"
 for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	out=$($A --attach $M --action $act --trace /tmp/h2attach-$act.trace 2>&1); rc=$?
 	echo "$act-rc $rc"; echo "$act $out"
@@ -1166,7 +1166,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	check "s55peer: the unbound row W is added and deleted while the link lingers" $r "$(val s55peer-w-add) / $(val s55peer-w-del)"
 	[ -n "$xb" ] && [ "$vcs" = "$xb:1" ]; check "s55peer: the TLS link carries the bound cluster's row once, and no row of Z or W" $? "volconf $vcs, bound $xb"
 	l=$(val s55peer-lines)
-	[ "$(num "$(field " $sp" conn2)" 0)" = 1 ] && [ "$(num "$(field " $l" spanrefused)" -1)" = 1 ] && [ "$(num "$(field " $l" listed22)" -1)" = 0 ] && [ "$(num "$(field " $l" listed21)" 0)" -ge 1 ]; check "s55peer: a span for a cluster the key does not bind is refused and never listed, the bound one listed" $? "$l"
+	[ "$(num "$(field " $sp" conn2)" 0)" = 1 ] && [ "$(num "$(field " $l" spanrefused)" -1)" = 1 ] && [ "$(num "$(field " $l" listed22)" -1)" = 0 ] && [ "$(num "$(field " $l" listed21)" 0)" -ge 1 ] && [ "$(num "$(field " $sp" other_answered)" 0)" = 1 ] && [ "$(num "$(field " $sp" other_open)" 1)" = 0 ] && [ "$(num "$(field " $sp" bound_open)" 0)" = 1 ]; check "s55peer: a span for a cluster the key does not bind is refused, closed and never listed, the bound one listed and open" $? "$l; other_answered $(field " $sp" other_answered) other_open $(field " $sp" other_open) bound_open $(field " $sp" bound_open)"
 	[ "$(num "$(field " $l" monitored)" -1)" = 1 ] && [ "$(num "$(field " $sp" hm2rx)" -1)" = 0 ]; check "s55peer: a MASTER span over a SLAVE row is monitored, not registered" $? "monitored $(field " $l" monitored), HM2 requests received $(field " $sp" hm2rx)"
 	n=$(val s55a-norow); s=$(val s55a-served)
 	[ "$(num "$(field "$n" refused)" 0)" = 1 ] && [ "$(num "$(val s55a-lines | sed 's/.*norow=//')" 0)" = 1 ]; check "s55a: a plaintext peer is refused a mounted PFS with no copyinfo row, with its line" $? "$n; $(val s55a-lines)"
@@ -1226,18 +1226,18 @@ if [ "$hs" = 1 ]; then
 	ok=0; for f in unix mode nkeys client server role key required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
 	check "the TLS intake refuses PSK on AF_UNIX, an unknown mode, six keys, a keyless client, a ringless server, an unknown role, a key serial of 0 and no TLS under cluster_tls_required, each EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
 	[ "$(num "$(field "$t" ulp_set)" -1)" = 0 ] && [ "$(num "$(field "$t" ulp)" -1)" = 16 ]; check "a TCP socket already carrying the tls ULP is refused EBUSY" $? "ulp_set $(field "$t" ulp_set), errno $(field "$t" ulp)"
-	[ "$(num "$(field "$t" nobind)" -1)" = 22 ] && [ "$(num "$(field "$t" dup)" -1)" = 22 ]; check "stage 5.5: a TLS intake binding no cluster id, and a server's listing one key serial twice, are each refused EINVAL" $? "nobind $(field "$t" nobind), dup $(field "$t" dup)"
-	ok=0; [ "$(num "$(field "$l" all)" -1)" = 11 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
-	for f in tcp mode nkeys client server role key ulp required nobind dup; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
-	check "the log names each of the eleven TLS intake refusals once and no other" $ok "$l"
+	[ "$(num "$(field "$t" nobind)" -1)" = 22 ] && [ "$(num "$(field "$t" dup)" -1)" = 22 ] && [ "$(num "$(field "$t" keynobind)" -1)" = 22 ]; check "stage 5.5: a TLS intake binding no cluster id, a server's listing one key serial twice, and a server's key bound to nothing are each refused EINVAL" $? "nobind $(field "$t" nobind), dup $(field "$t" dup), keynobind $(field "$t" keynobind)"
+	ok=0; [ "$(num "$(field "$l" all)" -1)" = 12 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
+	for f in tcp mode nkeys client server role key ulp required nobind dup keynobind; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
+	check "the log names each of the twelve TLS intake refusals once and no other" $ok "$l"
 elif [ "$hs" = 0 ]; then
 	# No NET_HANDSHAKE: the mode and the parameter are read first, and
 	# every other PSK intake is refused EOPNOTSUPP before its socket is.
 	ok=0; for f in mode required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
-	for f in unix nkeys client server role key ulp nobind dup; do [ "$(num "$(field "$t" $f)" -1)" = 95 ] || ok=1; done
+	for f in unix nkeys client server role key ulp nobind dup keynobind; do [ "$(num "$(field "$t" $f)" -1)" = 95 ] || ok=1; done
 	check "without the handshake upcall every PSK intake is refused EOPNOTSUPP, an unknown mode and no TLS under cluster_tls_required EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
-	ok=0; [ "$(num "$(field "$l" all)" -1)" = 11 ] && [ "$(num "$(field "$l" upcall)" -1)" = 9 ] && [ "$(num "$(field "$l" mode)" -1)" = 1 ] && [ "$(num "$(field "$l" required)" -1)" = 1 ] || ok=1
-	check "the log names nine upcall refusals, the mode's and the parameter's" $ok "$l"
+	ok=0; [ "$(num "$(field "$l" all)" -1)" = 12 ] && [ "$(num "$(field "$l" upcall)" -1)" = 10 ] && [ "$(num "$(field "$l" mode)" -1)" = 1 ] && [ "$(num "$(field "$l" required)" -1)" = 1 ] || ok=1
+	check "the log names ten upcall refusals, the mode's and the parameter's" $ok "$l"
 else
 	check "the guest's kernel symbols say whether it has the handshake upcall" 1 "handshake_req_alloc lines: $(val handshake-upcall)"
 fi

@@ -1387,7 +1387,7 @@ main(int argc, char **argv)
 		const int P = HAMMER2_LINK_TLS_PSK, C = HAMMER2_LINK_TLS_CLIENT;
 		const int S = HAMMER2_LINK_TLS_SERVER;
 		int sv[2], e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_key;
-		int e_ulp, ulp_set = -1, e_req, e_plain, e_dup, e_nobind, c, p;
+		int e_ulp, ulp_set = -1, e_req, e_plain, e_dup, e_nobind, e_keynobind, c, p;
 		struct hammer2_ioc_recluster recl;
 		char before[16], set[16], after[16];
 
@@ -1424,6 +1424,12 @@ main(int argc, char **argv)
 		recl.tls.bind[0].clid = bind_clid[0];
 		e_dup = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
 		close(c); close(p);
+		/* a server admitting two serials, the second bound to nothing */
+		c = tcp_pair(&p);
+		recl.fd = c;
+		recl.tls.keys[1] = tls_key_base + 1;
+		e_keynobind = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
+		close(c); close(p);
 		/* Plaintext with nkeys far past keys[] and every byte after the
 		 * mode positive: the key checks are PSK's, so this is admitted
 		 * with nothing past keys[] read.  Its link ends as sv closes,
@@ -1435,14 +1441,15 @@ main(int argc, char **argv)
 		recl.tls.nkeys = 1000;
 		e_plain = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
 		close(sv[0]); close(sv[1]);
-		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d key=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s plain=%d nobind=%d dup=%d\n",
+		printf("h2attach tlsrefuse: unix=%d mode=%d nkeys=%d client=%d server=%d role=%d key=%d ulp=%d ulp_set=%d required=%d req_before=%s req_set=%s req_after=%s plain=%d nobind=%d dup=%d keynobind=%d\n",
 		    e_unix, e_mode, e_nkeys, e_client, e_server, e_role, e_key, e_ulp,
-		    ulp_set, e_req, before, set, after, e_plain, e_nobind, e_dup);
+		    ulp_set, e_req, before, set, after, e_plain, e_nobind, e_dup,
+		    e_keynobind);
 		return (e_unix == EINVAL && e_mode == EINVAL && e_nkeys == EINVAL &&
 		    e_client == EINVAL && e_server == EINVAL && e_role == EINVAL &&
 		    e_key == EINVAL && ulp_set == 0 && e_ulp == EBUSY && e_req == EINVAL &&
 		    e_plain == 0 && !strcmp(set, "1") && !strcmp(after, "0") &&
-		    e_nobind == EINVAL && e_dup == EINVAL ? 0 : 1);
+		    e_nobind == EINVAL && e_dup == EINVAL && e_keynobind == EINVAL ? 0 : 1);
 	}
 
 	/*

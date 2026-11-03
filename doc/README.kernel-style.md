@@ -321,6 +321,10 @@ that keeps a PFS which is not a snapshot, and `EINVAL` from the
 `pfs-create` and snapshot ioctls refusing the pass's names and from the
 client's refusal of a slot with no name. No category is new.
 
+1,638 to 1,640 with the review of stage 5.5's code: two more `return
+(x);`, both `hammer2_span_add()`'s, which now says whether it admitted
+the span so that its caller closes a refused one. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

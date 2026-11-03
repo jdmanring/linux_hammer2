@@ -65,20 +65,21 @@ hammer2_span_dump(hammer2_dev_t *hmp)
 	hammer2_spin_unex(&hmp->span_spin);
 }
 
-static void
+static int
 hammer2_span_add(hammer2_dev_t *hmp, kdmsg_msg_t *msg)
 {
 	struct hammer2_span *span;
 
 	/*
 	 * XXX Linux: a span of a cluster id the link did not prove is kept out
-	 * of the table, so nothing registers it; rate-limited, since the peer
-	 * chooses how many it sends.  Stage 5.5 of the cluster note.
+	 * of the table, so nothing registers it, and the caller closes its
+	 * transaction; rate-limited, since the peer chooses how many it sends.
+	 * Stage 5.5 of the cluster note.
 	 */
 	if (!hammer2_link_binds(hmp, &msg->any.lnk_span.peer_id)) {
 		hprintf("cluster link refused a span of cluster %pUl, which the link did not prove\n",
 		    &msg->any.lnk_span.peer_id);
-		return;
+		return (0);
 	}
 	span = hmalloc(sizeof(*span), hmp->mmsg, M_WAITOK | M_ZERO);
 	span->state = msg->state;
@@ -97,6 +98,7 @@ hammer2_span_add(hammer2_dev_t *hmp, kdmsg_msg_t *msg)
 	hammer2_spin_unex(&hmp->span_spin);
 	hammer2_span_dump(hmp);
 	hammer2_remote_span(hmp);	/* a master's span may register */
+	return (1);
 }
 
 static void
@@ -456,8 +458,11 @@ hammer2_autodmsg(kdmsg_msg_t *msg)
 			printf_uuid(&msg->any.lnk_span.pfs_id);
 			kprintf(" type=%d\n", msg->any.lnk_span.pfs_type);
 		}
-		if (msg->any.lnk_span.proto_version == DMSG_SPAN_PROTO_2)
-			hammer2_span_add(hmp, msg);	/* XXX Linux */
+		if (msg->any.lnk_span.proto_version == DMSG_SPAN_PROTO_2 &&
+		    !hammer2_span_add(hmp, msg)) {	/* XXX Linux */
+			kdmsg_msg_reply(msg, DMSG_ERR_NOSUPP);
+			break;
+		}
 		kdmsg_msg_result(msg, 0);
 		break;
 	case DMSG_LNK_SPAN | DMSGF_DELETE:
@@ -715,6 +720,14 @@ hammer2_link_check(struct file *fp, const struct hammer2_link_tls *tls)
 			if (tls->bind[i].slot < 0 ||
 			    tls->bind[i].slot >= tls->nkeys)
 				why = "a cluster id binding names no key";
+		}
+		/* a key bound to nothing would prove a link that admits nothing */
+		for (i = 0; why == NULL && i < tls->nkeys; ++i) {
+			for (j = 0; j < tls->nbind; ++j)
+				if (tls->bind[j].slot == i)
+					break;
+			if (j == tls->nbind)
+				why = "an admitted key binds no cluster id";
 		}
 	}
 	if (why == NULL)
