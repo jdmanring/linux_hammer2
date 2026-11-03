@@ -1036,40 +1036,54 @@ for d in doc/ARCHITECTURE.md doc/USER_GUIDE.md doc/STATUS_SNAPSHOT.md doc/CAPABI
 	command grep -qF "| [$d]($d) |" README.md || { echo "  FAIL $d: README.md does not index it"; fail=$((fail+1)); }
 done
 
-# A summary may say the cluster link runs over kernel TLS only once src/
-# requests a handshake. A documentation sweep at 2253223 rewrote the
-# Replication row to say it did while nothing in the module called the
-# handshake upcall, and every gate passed. A mention inside a sentence that
-# makes it a condition ("closes once that link runs over kernel TLS") is
-# not a claim. Prose is joined before matching, since a claim split across
-# lines is invisible to a line matcher. The population is README.md,
-# CONTRIBUTING.md and doc/*.md, asserted non-empty.
-ntlsdocs=0; ntlscond=0
-if ! command grep -qE 'tls_(client|server)_hello' "$DIR"/*.c 2>/dev/null; then
-	for d in README.md CONTRIBUTING.md doc/*.md; do
-		[ -f "$d" ] || continue
-		ntlsdocs=$((ntlsdocs + 1))
-		out=$(awk '{ s = s " " $0 } END {
-			gsub(/[ \t]+/, " ", s)
-			while ((i = index(s, "over kernel TLS")) > 0) {
-				b = i > 120 ? i - 120 : 1
-				pre = substr(s, b, i - b)
-				if (pre ~ /(once|when|until|after|before|whether|if) [^.]*$/) print "cond"
-				else print "claim " substr(s, b + 60, 100)
-				s = substr(s, i + 15)
-			}
-		}' "$d")
-		ntlscond=$((ntlscond + $(printf '%s\n' "$out" | command grep -c '^cond' || true)))
-		printf '%s\n' "$out" | command grep '^claim' | while read -r _ rest; do
-			echo "  FAIL $d: says the link runs over kernel TLS, and no file in $DIR requests a handshake: ...$rest..."
-		done
-		n=$(printf '%s\n' "$out" | command grep -c '^claim' || true)
-		fail=$((fail + ${n:-0}))
+# A summary may say the cluster link runs over kernel TLS only while the
+# record holds the reading that says so: the two-host pass run under
+# H2_WIRE_PASS=1 H2_WIRE_TLS=1 with its wire-run id. A documentation sweep
+# at 2253223 rewrote the Replication row to say it did while nothing in the
+# module called the handshake upcall, and every gate passed. This check was
+# first keyed on that call, and read no document from 1.0.74, when the call
+# arrived, until 1.0.82: a key the tree satisfies for good turns a check
+# off. So the sweep runs on every tree and only the verdict reads the
+# record. A mention inside a sentence that makes it a condition ("closes
+# once that link runs over kernel TLS") is not a claim. Prose is joined
+# before matching, since a claim split across lines is invisible to a line
+# matcher. The population is README.md, CONTRIBUTING.md and doc/*.md,
+# asserted non-empty. A rewording without the phrase is not caught; the
+# summaries reread is the backstop.
+ntlsdocs=0; ntlscond=0; ntlsclaim=0
+tlsrun=$(awk '{ s = s " " $0 } END {
+	gsub(/[ \t]+/, " ", s)
+	while ((i = index(s, "H2_WIRE_PASS=1 H2_WIRE_TLS=1")) > 0) {
+		t = substr(s, i, 200)
+		if (match(t, /wire-run-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]/)) { print substr(t, RSTART, RLENGTH); exit }
+		s = substr(s, i + 28)
+	}
+}' doc/history/verification-record.md 2>/dev/null)
+for d in README.md CONTRIBUTING.md doc/*.md; do
+	[ -f "$d" ] || continue
+	ntlsdocs=$((ntlsdocs + 1))
+	out=$(awk '{ s = s " " $0 } END {
+		gsub(/[ \t]+/, " ", s)
+		while ((i = index(s, "over kernel TLS")) > 0) {
+			b = i > 120 ? i - 120 : 1
+			pre = substr(s, b, i - b)
+			if (pre ~ /(once|when|until|after|before|whether|if) [^.]*$/) print "cond"
+			else print "claim " substr(s, b + 60, 100)
+			s = substr(s, i + 15)
+		}
+	}' "$d")
+	ntlscond=$((ntlscond + $(printf '%s\n' "$out" | command grep -c '^cond' || true)))
+	ntlsclaim=$((ntlsclaim + $(printf '%s\n' "$out" | command grep -c '^claim' || true)))
+	[ -n "$tlsrun" ] && continue
+	printf '%s\n' "$out" | command grep '^claim' | while read -r _ rest; do
+		echo "  FAIL $d: says the link runs over kernel TLS, and doc/history/verification-record.md names no H2_WIRE_PASS=1 H2_WIRE_TLS=1 wire-run id: ...$rest..."
 	done
-	[ "$ntlsdocs" -ge 10 ] || {
-		echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
-		fail=$((fail + 1)); }
-fi
+	n=$(printf '%s\n' "$out" | command grep -c '^claim' || true)
+	fail=$((fail + ${n:-0}))
+done
+[ "$ntlsdocs" -ge 10 ] || {
+	echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
+	fail=$((fail + 1)); }
 
-echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlscond conditional), $fail finding(s)"
+echo "inventory: $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
