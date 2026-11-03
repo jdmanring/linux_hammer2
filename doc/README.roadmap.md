@@ -45,7 +45,7 @@ and the `hammer2` utility, and stage 2b, complete since 1.0.59, puts two
 kernels on the wire, the second reading the first's PFS as a remote
 element of its own cluster and its synchronization pass copying from
 it. A PFS with a remote master is read-only until P8's lease, and the
-link between hosts runs over kTLS with a pre-shared key on one guest
+link between hosts can run over kTLS with a pre-shared key, read on one guest
 (1.0.75) and between two (1.0.78), each key held to the cluster ids it
 is bound to, while the synchronization pass has been read only over a
 plaintext link.

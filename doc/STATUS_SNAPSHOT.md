@@ -55,12 +55,17 @@ has been read back by DragonFly and the other way round
   server, one per source per link, and a stale one is deleted only if it
   is itself a snapshot. A TLS key is bound to cluster ids at the intake,
   and the link refuses spans, registrations and requests outside that
-  set. On a plaintext link the kernel verifies no peer identity, so
+  set. A revoked key is refused at its next handshake, but a link already
+  up stays up until the volume is unmounted or the cluster's row is
+  removed, and an intake that fails leaves the old link and its binding
+  running. On a plaintext link the kernel verifies no peer identity, so
   whoever the userland service connects is admitted to every cluster the
-  device has a row for, and the test harness's `h2service` chooses peers
-  by a marker file. Run a plaintext cluster only on a network you
-  control (`doc/SECURITY_MODEL.md` has the rest). Kernel TLS is P8's TLS stage,
-  and P7 closes once the pass runs over it.
+  device has a row for and is sent every configured peer row as
+  `VOLCONF`, dial paths included; the test harness's `h2service` chooses
+  peers by a marker file. Each request a peer sends holds the host's
+  global mount lock until it is answered. Run a plaintext cluster only on
+  a network you control (`doc/SECURITY_MODEL.md` has the rest). Kernel
+  TLS is P8's TLS stage, and P7 closes once the pass runs over it.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
   not yet written.

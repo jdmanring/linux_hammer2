@@ -50,7 +50,8 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
 
 ## The cluster link
 
-- **Transport**: plaintext TCP carrying DragonFly's `dmsg` frames. On a
+- **Transport**: TCP carrying DragonFly's `dmsg` frames, plaintext unless
+  the intake asks for TLS (the TLS bullet below). On a
   link whose peer announced `DMSG_SPAN_PROTO_2` both CRCs of every frame
   are verified and a mismatch ends the link; that is integrity against
   corruption, not authentication.
@@ -121,13 +122,17 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   admits is bound to the cluster ids the intake names for it
   (`RECLUSTER`'s key and cluster-id pairs, or `cluster_tls_clid=` after
   its `cluster_tls_key=` on the mount path); an intake naming a serial
-  twice, or binding no cluster id, is refused before any handshake. A
+  twice, binding no cluster id, or admitting a key it binds to no cluster
+  id, is refused before any handshake. A
   TLS link records the key it proved and that set when its connection
   is installed, and refuses a span, a registration or a request for a
   cluster id outside the set, each with a named line (stage 5.5 of
   `doc/CLUSTER_PROTOCOL_DESIGN.md`). A revoked key is refused at its
   next handshake, but a link already up stays up, since TLS
-  authenticates once per connection: unmounting the volume ends it, or
+  authenticates once per connection, and an intake that fails leaves the
+  old link and its record running, an older and broader binding
+  included when the new intake would have narrowed it. Unmounting the
+  volume ends such a link, or
   removing the cluster's row stops its service at the next request, at
   the cost of every peer of that cluster. The
   `cluster_tls_required` module parameter (0 by default) refuses a
