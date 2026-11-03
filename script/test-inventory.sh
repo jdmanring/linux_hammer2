@@ -1036,15 +1036,17 @@ for d in doc/ARCHITECTURE.md doc/USER_GUIDE.md doc/STATUS_SNAPSHOT.md doc/CAPABI
 	command grep -qF "| [$d]($d) |" README.md || { echo "  FAIL $d: README.md does not index it"; fail=$((fail+1)); }
 done
 
-# A summary may say the cluster link runs over kernel TLS only while the
-# record holds the reading that says so: the two-host pass run under
-# H2_WIRE_PASS=1 H2_WIRE_TLS=1 with its wire-run id. A documentation sweep
+# A summary may say the cluster link runs over kernel TLS only while src/
+# requests a handshake and the record holds the reading that says so: the
+# two-host pass run under H2_WIRE_PASS=1 H2_WIRE_TLS=1 with its wire-run
+# id. The record is prose, so this reads that it names such a run, not the
+# run's verdict, which the record's audit reads. A documentation sweep
 # at 2253223 rewrote the Replication row to say it did while nothing in the
 # module called the handshake upcall, and every gate passed. This check was
-# first keyed on that call, and read no document from 1.0.74, when the call
-# arrived, until 1.0.82: a key the tree satisfies for good turns a check
-# off. So the sweep runs on every tree and only the verdict reads the
-# record. A mention inside a sentence that makes it a condition ("closes
+# first keyed on that call alone, and read no document from 1.0.74, when
+# the call arrived, until 1.0.82: a key the tree satisfies for good turns a
+# check off. So the sweep runs on every tree and only the verdict reads the
+# call and the record. A mention inside a sentence that makes it a condition ("closes
 # once that link runs over kernel TLS") is not a claim. Prose is joined
 # before matching, since a claim split across lines is invisible to a line
 # matcher. The population is README.md, CONTRIBUTING.md and doc/*.md,
@@ -1059,6 +1061,7 @@ tlsrun=$(awk '{ s = s " " $0 } END {
 		s = substr(s, i + 28)
 	}
 }' doc/history/verification-record.md 2>/dev/null)
+command grep -qE 'tls_(client|server)_hello' "$DIR"/*.c 2>/dev/null || tlsrun=
 for d in README.md CONTRIBUTING.md doc/*.md; do
 	[ -f "$d" ] || continue
 	ntlsdocs=$((ntlsdocs + 1))
@@ -1076,7 +1079,7 @@ for d in README.md CONTRIBUTING.md doc/*.md; do
 	ntlsclaim=$((ntlsclaim + $(printf '%s\n' "$out" | command grep -c '^claim' || true)))
 	[ -n "$tlsrun" ] && continue
 	printf '%s\n' "$out" | command grep '^claim' | while read -r _ rest; do
-		echo "  FAIL $d: says the link runs over kernel TLS, and doc/history/verification-record.md names no H2_WIRE_PASS=1 H2_WIRE_TLS=1 wire-run id: ...$rest..."
+		echo "  FAIL $d: says the link runs over kernel TLS, and doc/history/verification-record.md names no H2_WIRE_PASS=1 H2_WIRE_TLS=1 wire-run id or $DIR requests no handshake: ...$rest..."
 	done
 	n=$(printf '%s\n' "$out" | command grep -c '^claim' || true)
 	fail=$((fail + ${n:-0}))
