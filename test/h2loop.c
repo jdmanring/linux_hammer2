@@ -240,7 +240,7 @@ usage(void)
 	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
 	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
-	    "              [--cut-fault disconnect|trail|loss|dup|reorder|late]\n"
+	    "              [--cut-fault disconnect|trail|loss|dup|reorder|late|withdraw]\n"
 	    "              [--silence-on NAME] [--rename-snapdel NAME]\n"
 	    "              [--rename-snaproot NAME] [--trace FILE]\n"
 	    "       h2loop --relay PORT --raw 1 [--seed N] [--trace FILE]\n");
@@ -307,7 +307,8 @@ validate(void)
 	    opt.end_readdir < 0 || opt.end_readdir > 3 || opt.cut_on_scan < -1 ||
 	    (strcmp(opt.cut_fault, "disconnect") && strcmp(opt.cut_fault, "trail") &&
 	    strcmp(opt.cut_fault, "loss") && strcmp(opt.cut_fault, "dup") &&
-	    strcmp(opt.cut_fault, "reorder") && strcmp(opt.cut_fault, "late")))
+	    strcmp(opt.cut_fault, "reorder") && strcmp(opt.cut_fault, "late") &&
+	    strcmp(opt.cut_fault, "withdraw")))
 		usage();
 	/* --raw parses no frame, so a knob that acts on one would be
 	 * accepted and do nothing; the harness passes every knob, so only a
@@ -1145,6 +1146,14 @@ rename_snaproot(const struct side *from, struct frame *f)
  * kernel to reuse the state's address left the copy unspent on both guest
  * kernels.  A copy the pair ends holding is traced late-unspent.  Every
  * SNAPSHOT request of B's is traced, so a trace reads which pass the fault fell in.
+ *
+ * withdraw sends the feed and the close as they came, then a LNK_SPAN
+ * DELETE on the msgid of A's span for CL, the one A announced on this pair,
+ * its header CRC computed again: A's span withdrawn with the link left up,
+ * which no kernel sends (each span a kernel sends is a CREATE) and a
+ * daemon relaying spans does when a span's source goes.  B's DELETE in
+ * answer is traced and dropped, as such a daemon would, so A keeps the
+ * span it announced until the pair ends.
  */
 #define CUT_NCALL	8	/* scanall calls in flight at once; the pass has one */
 static struct cut_call {
@@ -1158,6 +1167,8 @@ static uint64_t cut_snap_msgid;	/* B's first SNAPSHOT request, 0 none yet */
 static struct frame *late_copy;	/* --cut-fault late's, kept for a reuse */
 static uint64_t late_msgid;	/* its msgid; the new call's while late_key is */
 static int late_newkey;		/* the new call's first own feed is traced next */
+static struct frame *wd_span;	/* A's span for CL on this pair, for withdraw */
+static uint64_t wd_msgid;	/* its msgid once withdrawn, 0 before */
 static int cut_armed, cut_done, cut_now;
 static long cut_ncalls;
 
@@ -1181,6 +1192,9 @@ cut_reset(void)
 		late_copy = NULL;
 	}
 	late_newkey = 0;
+	frame_free(wd_span);
+	wd_span = NULL;
+	wd_msgid = 0;
 }
 
 /* A feed's blockref key, from the extension's blockref at byte 8. */
@@ -1204,6 +1218,25 @@ cut_scan(struct side *from, struct side *to, struct frame *f, long i,
 	long t = now_ms();
 	int k;
 
+	if (!strcmp(opt.cut_fault, "withdraw")) {
+		/* dmsg_lnk_span past the base header: peer_label at 112, which
+		 * hammer2_update_spans() fills, pfs_label at 240 */
+		if (from->name[0] == 'A' && (c & 0x00FFFF00U) == 0x00001200U &&
+		    (c & 0xE0000000U) == 0x80000000U && f->ext_len >= 368 &&
+		    !strncmp((const char *)f->ext + (f->ext[240] ? 240 : 112),
+		    "CL", 3)) {
+			frame_free(wd_span);
+			wd_span = frame_dup(f);
+		}
+		if (from->name[0] == 'B' && wd_msgid && f->hdr.msgid == wd_msgid &&
+		    (c & 0x40000000U)) {
+			trace("%s>%s i=%ld msgid=%" PRIu64 " withdraw-answer t=%ld"
+			    " cmd=%08x\n", from->name, to->name, i, f->hdr.msgid,
+			    t, c);
+			frame_free(f);
+			return (1);
+		}
+	}
 	if (from->name[0] == 'B' && (c & 0xA0000000U) == 0x80000000U) {
 		if ((c & 0x00FFFF00U) == 0x00202500U) {
 			if (cut_snap_msgid == 0)
@@ -1295,6 +1328,30 @@ cut_scan(struct side *from, struct side *to, struct frame *f, long i,
 	trace("%s>%s i=%ld msgid=%" PRIu64 " close t=%ld call=%ld feeds=%d"
 	    " error=%x\n", from->name, to->name, i, f->hdr.msgid, t, cc->n,
 	    cc->feeds, error);
+	if (cc->watched && cc->feeds >= 2 && !strcmp(opt.cut_fault, "withdraw")) {
+		struct frame *del = wd_span ? frame_dup(wd_span) : NULL;
+
+		trace("%s>%s i=%ld msgid=%" PRIu64 " withdraw t=%ld call=%ld feeds=%d"
+		    " error=%x span=%" PRIu64 "\n", from->name, to->name, i,
+		    f->hdr.msgid, t, cc->n, cc->feeds, error,
+		    del ? del->hdr.msgid : 0);
+		fflush(tracef);
+		side_enqueue(to, cc->held, due);
+		side_enqueue(to, f, due);
+		if (del) {
+			del->hdr.cmd = (del->hdr.cmd & ~0xE0000000U) | 0x40000000U;
+			free(del->aux);
+			del->aux = NULL;
+			del->hdr.aux_bytes = 0;
+			del->hdr.aux_crc = 0;
+			resign(del);
+			wd_msgid = del->hdr.msgid;
+			side_enqueue(to, del, due);
+		}
+		memset(cc, 0, sizeof(*cc));
+		cut_done = 1;
+		return (1);
+	}
 	if (cc->watched && cc->feeds >= 2 && !strcmp(opt.cut_fault, "trail")) {
 		struct frame *copy = frame_dup(cc->held);
 

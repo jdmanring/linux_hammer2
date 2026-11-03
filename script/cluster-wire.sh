@@ -323,12 +323,32 @@ TLS=${H2_WIRE_TLS:-0}; RAW=${H2_WIRE_RAW:-0}; TLSWRONG=${H2_WIRE_TLS_WRONG:-0}
 # H2_WIRE_SEQ=control builds B with HAMMER2_NOCLIENTSEQ, under loss, dup
 # or late: with the tag, the index and the close's count unchecked the
 # fault is taken, the link stays up to B's unmount and nothing dials.
+#
+# H2_WIRE_CLOSEWAIT=1, under trail, builds B with HAMMER2_CLOSEWAIT, which
+# holds B's writer 20 ms before each client HM2 DELETE, so trail's copy is
+# read while its state is still in kern_dmsg's tree: the outcome must be
+# the closed-call line, with the hold's own line read, so a module built
+# without the hold passes neither. H2_WIRE_CLOSEWAIT=control loads
+# H2_WIRE_KO_B, a module built with the hold and the closed-call test
+# removed: the copy must fault B in hammer2_rcall_reply. B is left
+# faulted, unread past that and forced down by guest_off, and the cycle of
+# its guest is the wrapper's.
+#
+# H2_WIRE_CUT=withdraw passes the cut call's feed and close and then sends
+# B a LNK_SPAN DELETE for A's CL span, the link left up: a span withdrawn
+# as a daemon relaying spans withdraws one, which no kernel sends. B must
+# detach the element by the span's deletion with the link up, read on B
+# before the relay ends the pair, with B's pings answered after the
+# withdrawal; then the cut's readings and the dial as for trail's silent
+# copy.
 CUT=${H2_WIRE_CUT:-}; CUTAT=${H2_WIRE_CUT_AT:-}; DEPTH=${H2_WIRE_CUT_DEPTH:-1000}
-SEQ=${H2_WIRE_SEQ:-0}; VOID=
-case $CUT in ''|disconnect|control|loss|dup|reorder|trail|late|slave|master) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect, control, loss, dup, reorder, trail, late, slave or master" >&2; exit 2;; esac
+SEQ=${H2_WIRE_SEQ:-0}; VOID=; CLOSEWAIT=${H2_WIRE_CLOSEWAIT:-0}
+case $CUT in ''|disconnect|control|loss|dup|reorder|trail|late|withdraw|slave|master) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT is disconnect, control, loss, dup, reorder, trail, late, withdraw, slave or master" >&2; exit 2;; esac
+case $CLOSEWAIT$CUT in 0*|1trail|controltrail) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_CLOSEWAIT is 1 or control, under H2_WIRE_CUT=trail" >&2; exit 2;; esac
+[ "$CLOSEWAIT" != control ] || [ -n "${H2_WIRE_KO_B:-}" ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CLOSEWAIT=control needs H2_WIRE_KO_B, a module built with HAMMER2_CLOSEWAIT and the closed-call test removed" >&2; exit 2; }
 case $SEQ$CUT in 0*|controlloss|controldup|controllate) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SEQ is control, under H2_WIRE_CUT=loss, dup or late" >&2; exit 2;; esac
 FAULT=disconnect; PROTO=0
-case $CUT in loss|dup|reorder|trail|late) FAULT=$CUT PROTO=1;; esac
+case $CUT in loss|dup|reorder|trail|late|withdraw) FAULT=$CUT PROTO=1;; esac
 POWER=0; case $CUT in slave|master) POWER=1;; esac
 case $CUTAT in *[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT is a call count" >&2; exit 2;; esac
 case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an inode count" >&2; exit 2;; esac
@@ -484,6 +504,7 @@ fi
 [ "$CONNWAIT" = 1 ] && BFLAGS=HAMMER2_CONNWAIT=1
 [ "$CONNWAIT" = control ] && BFLAGS="HAMMER2_CONNWAIT=1 HAMMER2_NOCONNFIX=1"
 [ "$SEQ" = control ] && BFLAGS=HAMMER2_NOCLIENTSEQ=1
+[ "$CLOSEWAIT" = 1 ] && BFLAGS=HAMMER2_CLOSEWAIT=1
 # H2_WIRE_KO_A and H2_WIRE_KO_B load a prebuilt module on that side in place
 # of the build, for a scratch-build control; each is named by its sha256 in
 # the header, and a side given one builds nothing.
@@ -934,9 +955,27 @@ mark)
 	echo "cut-mark-snap $(kl | awk '/h2wire fault seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { n++ } END { print n + 0 }')"
 	echo "cut-mark-verdicts $(kl | awk -v v="$V" '/h2wire fault seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }')"
 	;;
+live)
+	# withdraw: the span withdrawn with the link up, read before the relay
+	# ends it; the detach can wait on the mount lock, 5 s at most
+	n=0; until [ "$(klog "$D")" -ge 1 ] || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-live-detached $(klog "$D")"
+	echo "cut-live-why $(kl | grep "$D" | sed 's/.*detached: //' | tr '\n' ' ')"
+	echo "cut-live-rxspan-del $(klog 'H2 -RXSPAN')"
+	echo "cut-live-ending $(klog 'ending the link')"
+	echo "cut-live-noquorum $(kl | awk -v d="$D" '$0 ~ d { s = 1 } s && /syncsnap: noquorum clindex/ { n++ } END { print n + 0 }')"
+	;;
+oops)
+	# H2_WIRE_CLOSEWAIT=control: the fault the removed test let through
+	n=0; until [ "$(klog 'BUG: ')" -ge 1 ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "cut-oops $(klog 'BUG: ')"
+	echo "cut-oops-rcall $(kl | awk '/BUG: / { r = 1 } r && /hammer2_rcall_reply/ { n++; r = 0 } END { print n + 0 }')"
+	echo "cut-closewait $(klog 'hammer2: client close held')"
+	;;
 hm2)
 	# the verdicts before B's first HM2 line, which its check prints at the
 	# frame's receipt: the fault on B's own clock, or none
+	echo "cut-closewait $(klog 'hammer2: client close held')"
 	echo "cut-hm2-verdicts $(kl | awk -v v="$V" '/hammer2: HM2 / { h = 1; exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print h ? n + 0 : "none" }')"
 	;;
 up)
@@ -1569,7 +1608,10 @@ fault_wait() {
 	lim=10000; [ "$CUT" = late ] && lim=60000
 	beof() { awk -v f=" $FAULT t=" 'index($0, f) { s = 1 } s && /^B eof / { n++ } END { print n + 0 }' "$tr"; }
 	until [ "$(beof)" -ge 1 ] || [ $(( ($(date +%s%N) - t0) / 1000000 )) -ge $lim ]; do sleep 0.1; done
-	if [ "$(beof)" -ge 1 ]; then first=eof; else first=timeout; [ "$SEQ" = control ] || kill -USR1 "$RELAY_PID"; fi
+	if [ "$(beof)" -ge 1 ]; then first=eof; else first=timeout
+		# withdraw's link is read up on B before the relay ends it
+		[ "$CUT" != withdraw ] || phase B cut.sh live
+		[ "$SEQ" = control ] || kill -USR1 "$RELAY_PID"; fi
 	echo "H fault-first $first" >> "$W/out"
 	echo "H fault-first-ms $(( ($(date +%s%N) - t0) / 1000000 ))" >> "$W/out"
 }
@@ -1582,7 +1624,8 @@ fault_wait() {
 # a wrong key leaves no link, so nothing is read over one
 [ "$TLSWRONG" = 1 ] || { phase B ro.sh && case $PASSES in
 	cut)	phase B cut.sh go && { [ "$PROTO" = 0 ] || fault_wait; } &&
-		if [ "$SEQ" = control ]; then phase B cut.sh up && phase B cut.sh hm2; else
+		if [ "$SEQ" = control ]; then phase B cut.sh up && phase B cut.sh hm2
+		elif [ "$CLOSEWAIT" = control ]; then phase B cut.sh oops; else
 		phase B cut.sh wait && { [ "$PROTO" = 0 ] || phase B cut.sh hm2; } && phase A cut.sh peer &&
 		{ [ "$CUT" = control ] || { phase A redial.sh && phase A cut.sh peer after && phase B cut.sh redial &&
 		    phase B pass.sh 1 && phase B cut.sh resumed && phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)"; }; }; fi;;
@@ -1601,10 +1644,11 @@ fault_wait() {
 		{ [ "$CUT" = slave ] || phase A cut.sh peer after; } &&
 		phase A fill.sh more && phase B pass.sh more "$(val B pass-snap-deleted)";;
 	*)	true;;
-esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)" "$DETACHWRITE"; }
+esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && [ "$CLOSEWAIT" != control ] && phase B read.sh "$STALL" "${END:-0}" "$SILENCE" "$([ "$ROGATE" = 0 ] && echo 0 || echo rogate)" "$DETACHWRITE"; }
 # what crossed, read with the link still up, so kTLS's counts are the link's
 [ "$RAW" = 0 ] || { phase A tls.sh stat; phase B tls.sh stat; }
-phase B down.sh
+# a faulted B unmounts nothing; guest_off forces it under its bound
+[ "$CLOSEWAIT" = control ] || phase B down.sh
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
 phase A down.sh
@@ -1893,7 +1937,11 @@ elif [ -n "$CUT" ]; then
 		nkr=$(num "$nkr" -1); np=$(num "$(grep -c 'not a proxy' "$bk" 2>/dev/null)" -1)
 		if [ "$(val B cut-hm2-text)" = "$el;" ] && [ "$(val H fault-first)" = eof ] && [ "$(num "$nh" 1)" = 0 ]; then to=closed
 		elif [ "$CUT" = trail ] && [ "$(num "$(val B cut-hm2)" 1)" = 0 ] && [ "$(val H fault-first)" = timeout ] && [ "$(num "$nh" 0)" = 1 ]; then to=silent; pa=1
+		elif [ "$CUT" = withdraw ] && [ "$(num "$(val B cut-hm2)" 1)" = 0 ] && [ "$(val H fault-first)" = timeout ] && [ "$(num "$nh" 0)" = 1 ]; then to=withdrawn; pa=1
 		else to=other; fi
+		# B's pings A answered between the withdrawal and the relay's hangup:
+		# the link up while the element left
+		wp=$(awk '/ withdraw t=/ { s = 1; next } /^hangup / { exit } s && /^A>B .* deliver / && / cmd=[ef].0001/ { n++ } END { print n + 0 }' "$tr" 2>/dev/null)
 		# A silent copy leaves the pass running through the wait, and a
 		# pass that verifies there deletes the source by its own path: A
 		# has no snapshot left for the link, and with the master idle no
@@ -1902,6 +1950,12 @@ elif [ -n "$CUT" ]; then
 		[ "$CUT" = trail ] && echo "  trail-outcome $to"
 		if [ "$CUT" = late ] && grep -q '^late-unspent ' "$tr" 2>/dev/null; then
 			VOID="late's copy met no scanall call after the fault before the pair ended"
+		elif [ "$CUT" = withdraw ]; then
+			[ "$to" = withdrawn ] && [ "$(num "$(val B cut-live-detached)" 0)" = 1 ] && [ "$(val B cut-live-why | sed 's/ *$//')" = "span deleted" ] && [ "$(num "$(val B cut-live-rxspan-del)" 0)" = 1 ] && [ "$(num "$(val B cut-live-ending)" 1)" = 0 ] && [ "$(grep -c ' withdraw-answer t=' "$tr" 2>/dev/null)" = 1 ] && [ "$(num "$wp" 0)" -ge 1 ] && [ "$nk" = 0 ]; check "withdraw: A's span withdrawn with the link up detaches B's element by the span's deletion, and the link stays up until the relay ends it" $? "outcome $to: detached $(val B cut-live-detached) by $(val B cut-live-why)with the link up, -RXSPAN $(val B cut-live-rxspan-del), ending the link $(val B cut-live-ending), B's answer dropped $(grep -c ' withdraw-answer t=' "$tr" 2>/dev/null), B's pings answered after it $(num "$wp" 0), no quorum by then $(val B cut-live-noquorum), first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), KASAN reports $nk"
+		elif [ "$CLOSEWAIT" = control ]; then
+			[ "$(num "$(val B cut-oops-rcall)" 0)" -ge 1 ] && [ "$(num "$(val B cut-closewait)" 0)" -ge 1 ]; check "control: with the closed-call test removed the frame after the close faults B in hammer2_rcall_reply" $? "faults $(val B cut-oops), in hammer2_rcall_reply $(val B cut-oops-rcall), the hold's line $(val B cut-closewait)"
+		elif [ "$CLOSEWAIT" = 1 ]; then
+			[ "$to" = closed ] && [ "$(num "$(val B cut-closewait)" 0)" -ge 1 ] && [ "$nk" = 0 ] && [ "$np" = 0 ]; check "trail: with the writer held, the copy finds its state and B ends the link with the closed-call line" $? "outcome $to: the hold's line $(val B cut-closewait), HM2 lines $(val B cut-hm2) ($(val B cut-hm2-text)), first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), not a proxy $np, KASAN reports $nk of which in hammer2_rcall_reply $nkr"
 		else
 			[ "$to" != other ] && [ "$nk" = 0 ] && [ "$np" = 0 ]; check "$CUT: B ends the link at the fault with the one line its check prints$([ "$CUT" = trail ] && echo ", or the copy does nothing and the relay hangs the pair up")" $? "outcome $to: HM2 lines $(val B cut-hm2) ($(val B cut-hm2-text)) of \"$el\", first $(val H fault-first) after $(val H fault-first-ms) ms, hangups $(num "$nh" 0), not a proxy $np, KASAN reports $nk of which in hammer2_rcall_reply $nkr, late keys $(sed -n 's/.* late-\(copy\|new\) t=[0-9]* key=/\1 /p' "$tr" 2>/dev/null | tr '\n' ' ')"
 		fi
@@ -1911,7 +1965,7 @@ elif [ -n "$CUT" ]; then
 	# and every pass in the gap finds no quorum. Under trail the copy can
 	# end the link between calls with none in flight, and then the pass's
 	# own ENOTCONN (0x00080000) is the reading.
-	[ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ] && { [ "$pa" = 1 ] || { { [ "$(num "$(val B cut-scanall-notconn)" 0)" -ge 1 ] || { [ "$CUT" = trail ] && [ "$(val B cut-unverified-line | sed 's/.* error //; s/ *$//')" = 524288 ]; }; } &&[ "$(num "$(val B cut-unverified)" 0)" = 1 ] && [ "$(num "$(val B cut-verified)" 1)" = 0 ] && [ "$(num "$(val B cut-other-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-target-taken)" 0)" = 1 ] && [ "$(num "$(val B cut-target-kept)" 1)" = 0 ] && [ "$(num "$(val B cut-noquorum)" 0)" -ge 1 ]; }; } && [ "$(num "$(val B cut-gap-ms)" 0)" -ge 6000 ]; check "cut: B detaches by the span's deletion, the pass ends unverified with its target kept, and the gap finds no quorum" $? "detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s, scanall ended ENOTCONN $(val B cut-scanall-notconn), verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), no quorum $(val B cut-noquorum) in $(val B cut-gap-ms) ms, source deletions refused $(val B cut-delete-errors)"
+	[ "$(num "$(val B cut-detached)" 0)" = 1 ] && [ "$(val B cut-detached-why | sed 's/ *$//')" = "span deleted" ] && { [ "$pa" = 1 ] || { { [ "$(num "$(val B cut-scanall-notconn)" 0)" -ge 1 ] || { [ "$CUT" = trail ] && [ "$(val B cut-unverified-line | sed 's/.* error //; s/ *$//')" = 524288 ]; }; } &&[ "$(num "$(val B cut-unverified)" 0)" = 1 ] && [ "$(num "$(val B cut-verified)" 1)" = 0 ] && [ "$(num "$(val B cut-other-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-target-taken)" 0)" = 1 ] && [ "$(num "$(val B cut-target-kept)" 1)" = 0 ] && [ "$(num "$(val B cut-noquorum)" 0)" -ge 1 ]; }; } && { [ "$CUT" != withdraw ] || [ "$(num "$(val B cut-noquorum)" 0)" -ge 1 ]; } && [ "$(num "$(val B cut-gap-ms)" 0)" -ge 6000 ]; check "cut: B detaches by the span's deletion, the pass ends unverified with its target kept, and the gap finds no quorum" $? "detached $(val B cut-detached) by $(val B cut-detached-why)after $(val B cut-detach-seconds) s, scanall ended ENOTCONN $(val B cut-scanall-notconn), verdicts unverified $(val B cut-unverified) ($(val B cut-unverified-line)) verified $(val B cut-verified) other $(val B cut-other-verdicts), target taken $(val B cut-target-taken) kept $(val B cut-target-kept), no quorum $(val B cut-noquorum) in $(val B cut-gap-ms) ms, source deletions refused $(val B cut-delete-errors)"
 	# Neither kernel says HM2 at a link the relay ended; A keeps the link's
 	# snapshot until its next connection's end.
 	{ [ "$PROTO" = 1 ] || [ "$(num "$(val B cut-hm2)" 1)" = 0 ]; } && [ "$(num "$(val A cut-peer-hm2)" 1)" = 0 ] && [ "$(num "$(val A cut-link-left)" 1)" = 0 ]; check "cut: no HM2 line on A$([ "$PROTO" = 1 ] || echo " or B"), and A keeps the link's snapshot past the cut" $? "B $(val B cut-hm2), A $(val A cut-peer-hm2) HM2 lines, A's left-by-the-link deletions $(val A cut-link-left)"
