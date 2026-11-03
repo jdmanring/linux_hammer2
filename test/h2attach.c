@@ -1420,14 +1420,17 @@ main(int argc, char **argv)
 		recl.tls.keyring = 1;
 		recl.tls.nkeys = 2;
 		recl.tls.keys[0] = recl.tls.keys[1] = tls_key_base;
-		recl.tls.nbind = 1;
+		recl.tls.nbind = 2;	/* both bound: only the duplicate refuses it */
 		recl.tls.bind[0].clid = bind_clid[0];
+		recl.tls.bind[1].slot = 1;
+		recl.tls.bind[1].clid = bind_clid[0];
 		e_dup = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
 		close(c); close(p);
 		/* a server admitting two serials, the second bound to nothing */
 		c = tcp_pair(&p);
 		recl.fd = c;
 		recl.tls.keys[1] = tls_key_base + 1;
+		recl.tls.nbind = 1;
 		e_keynobind = ioctl(mfd, HAMMER2IOC_RECLUSTER, &recl) < 0 ? errno : 0;
 		close(c); close(p);
 		/* Plaintext with nkeys far past keys[] and every byte after the
