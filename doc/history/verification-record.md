@@ -21378,3 +21378,194 @@ Of the 1.0.78 entry's thirteen decisions with no control, these two are
 now read and controlled; the other eleven stand as that entry lists
 them. Ten need arms, queued for N9.6; the mount's refusal of a
 `.h2sync-peer` name, read by the wire's srcgate arm, needs a control.
+
+## Stage 5.5's undriven refusals, and the pass between two guests over TLS, 2026-11-03
+
+The 1.0.78 entry listed thirteen decisions stage 5.5 added with no
+control, twelve of them driven by no run; 1.0.79 read two. `0d3c199`
+gives eight of the remaining ten an arm in `cluster-dmsg.sh`, and reads
+two more things there: the source gate on one guest and the mount
+path with the first key proved. `8fb3b01` gives the two-guest harness
+the fed-root arm and fixes three of its own instruments. The expected
+readings and controls were written before the runs they predict, each
+later section appended before its own run
+(`p7-notes/n9-6-drive-expected.md` and `p7-notes/n9-6-wire-expected.md`
+in the data tree); the files carry no timestamps, so that order is this
+entry's statement. No file under `src/` changed.
+
+**The arms.** In the TLS mode, after the links they need:
+- `s55o`, the server's request bind (`hammer2_remote_pfs()`): a peer
+  whose key binds Z asks for XB, mounted and rowed;
+- `s55l`, the server's refusal of an unmounted source
+  (`hammer2_remote_snapshot()`): a second SNAPSHOT names the snapshot
+  the link just took;
+- `s55q`, the source gate on one guest (`hammer2_remote_is_source()`):
+  `CL.h2sync-peer` and `CL.h2sync-src` mounted read-only;
+- `s55r`, the mount parser's two bounds (`hammer2_parse_param()`): an
+  eleventh `cluster_tls_clid` and a malformed one;
+- `s55n2`, the mount path with the peer proving the first key, the
+  reading 1.0.79 inferred;
+- `s55p`, the local pass's snapshot-only stale delete
+  (`hammer2_sync_pass_snap()`): vdb's newfs `CL.h2sync-src` beside a SLAVE
+  `CL` created on vdc with no link.
+In the default mode `tlsrefuse` adds two intakes for
+`hammer2_link_check()`'s bounds: one binding past the bound, and one
+binding a slot its key list lacks beside one that binds its key.
+`s55peer`'s unbound span now names Z, which has a MASTER row, so a build
+without the span bind reaches registration's own test. The shipped code
+cannot reach that test, since every span enters through the span bind,
+so the regbind control is its only reading.
+
+The two-guest harness gains `H2_WIRE_SNAPROOT=1`: `h2loop
+--rename-snaproot` renames the root fed in answer to B's SNAPSHOT, same
+length, check set to none and the aux CRC re-signed, so only the client's
+name test (`hammer2_remote_snapshot_take()`) can refuse it. The
+server-chosen name that does not fit was planned as a long-name mode
+and dropped: the server's label test and the client's name test both
+stand before it, and the mode would grow the largest harness for one
+line. It remains read by no run. Three instrument defects are fixed:
+`tls.sh` counted `cluster link refused`, which also matches a refused
+span and both refused snapshots, so under the pass a refused snapshot
+would fail a TLS check; the link check read A's zero CL span under
+`H2_WIRE_LINKDEV=1` by cluster id, which `+RXSPAN` prints in a later
+call a concurrent print can split off, and now reads it by label;
+`H2_WIRE_CUT_AT` beside the raw relay reached the relay after the
+guests booted, and is now refused before the build, with any later
+COULD-NOT-RUN detaching both guests' volumes on exit. A power cut under TLS
+would redial in plaintext, since nothing provisions the rebooted guest's
+key again; it cannot run while the raw relay refuses cuts and is a DEFER
+with its row.
+
+**The first series** (`n9-6-drive-series-20261103-100848.out`, at an
+earlier cut of `0d3c199` that the squash before the push rewrote) read the TLS mode at 82 checks, 1 failed: `s55r`'s eleven
+identical ids failed as already mounted before the parser's bound
+(log lines 78-79), an arm defect, fixed with eleven distinct ids.
+Its drive control leaked one `h2inozone` object, a kworker allocation:
+`hammer2_assert_clean: 1 inode left` and the slab warning's `used=1`
+(`dmsg-run-20261103-101747.klog` lines 569 and 575). Its check read 5,
+which is the count of hammer2 frames in that one report's backtrace,
+not of objects. The drive controls of series `20261103-102019` and at
+`8fb3b01` read kmemleak clean. One of three control runs, attributed to
+nothing; a candidate, not a result.
+
+**The committed readings**, at a head the squash before the push
+rewrote, whose tree is `8fb3b01`'s less review round 2's harness fixes
+(read separately below); the runs' headers name that head. QEMU cores 0
+before and after each run.
+
+`cluster-dmsg.sh` on artix-s6-kde (harness `e3ec9ff60920`, h2attach
+`c8603b6773fc`; logs `p7-notes/n9-6-final-dmsg-*-20261103-104639.log`):
+
+| kernel | mode | checks | failed | report |
+|---|---|---|---|---|
+| `h2debug-7.3tls` | TLS | 82 | 0 | `dmsg-run-20261103-104939` |
+| `h2debug-7.3tls` | default | 87 | 0 | `dmsg-run-20261103-105143` |
+| `h2kasan-7.3tls` | TLS | 82 | 0 | `dmsg-run-20261103-105621` |
+| `h2kasan-7.3tls` | default | 87 | 0 | `dmsg-run-20261103-105859` |
+
+Each run read no warning, lockdep or sanitizer report and nothing of
+hammer2's in kmemleak (lines 87-88 of the TLS logs, 89-90 of the
+default). On debug:
+- `s55o` refused with error 32 and one `the link did not prove that
+  cluster` line, `found=0 closed=1` (line 62);
+- `s55l` served the first SNAPSHOT and refused the second with
+  `inodes=0` and one `not a mounted MASTER element` line. Its SNAPDEL of
+  the first closed with `after_del=0`, and neither name stayed listed
+  (line 67);
+- `s55q` refused both mounts, rc 32, two lines;
+- `s55r` refused both mounts at the parser, with `more than 10
+  cluster_tls_clid` and `cluster_tls_clid is not a uuid`;
+- `s55n2` read `handed=2 root=1 cl=1 spanrefused=1`;
+- `s55p` read `kept=1 error17=1 deleted=0 listed=1`;
+- `s55peer` read `regrefused=0`.
+In the default mode, `toomany 22, noslot 22`, and the log named all
+fourteen intake refusals once each. KASAN read the same values.
+
+`cluster-wire.sh` on both guests (harness `8aa4eee395eac2d7`, one module hash across the debug arms and one across the
+KASAN arms; logs
+`p7-notes/n9-6-wire-20261103-104639/`):
+
+| arm | `h2debug-7.3tls` | `h2kasan-7.3tls` |
+|---|---|---|
+| `H2_WIRE_TLS=1` | 37, 0 failed | 37, 0 failed |
+| `H2_WIRE_RAW=1` | 33, 0 failed | 33, 0 failed |
+| `H2_WIRE_TLS=1 H2_WIRE_TLS_WRONG=1` | 18, 0 failed | 18, 0 failed |
+| plaintext default | 32, 0 failed | 32, 0 failed |
+| `H2_WIRE_PASS=1` | 42, 0 failed | 42, 0 failed |
+| `H2_WIRE_SNAPROOT=1` | 43, 0 failed | 43, 0 failed |
+| `H2_WIRE_PASS=1 H2_WIRE_TLS=1` | 47, 0 failed | 47, 0 failed |
+
+The debug plaintext run's header marks its source dirty. That is a
+script edit of mine in the run's build window; its module and harness
+hashes (`3a39e01dae8b54c5`, `8aa4eee395eac2d7`) are the clean runs'.
+`H2_WIRE_CUT_AT=1000000` beside `H2_WIRE_TLS=1` exited 2 before the build
+(`cutat-raw.log`). Under the raw relay the plaintext control read the
+dmsg header in both guests' captures (4607 and 4768 on debug) and in the
+relay's count both ways. The wrong key was refused on each side with
+its line (status -13 and -110), nothing handed. Under SNAPROOT the
+rename fired once, B logged one `fed a root that is not` line and one
+snapshot EINVAL, and a later pass verified.
+
+**The pass over TLS**, `H2_WIRE_PASS=1 H2_WIRE_TLS=1`, is the reading
+P7c cites: `wire-run-20261103-111156` on `h2debug-7.3tls` and
+`wire-run-20261103-113404` on `h2kasan-7.3tls`. On KASAN
+(`kasan-passtls.log`):
+- the slave's CL matches the master's entry for entry and block for
+  block, and both volumes are clean by `fsck_hammer2` (lines 17-18);
+- the first pass's snapshot was taken, verified and deleted with bad
+  0, the later pass's deleted too, and no snapshot remains on either
+  image (lines 19-21);
+- 310 of 310 digests equal A's, warm and after B drops its caches
+  (lines 23-24);
+- each side's link reached the message threads after a handshake its
+  `tlshd` completed, with kTLS on both directions; each capture of the
+  relay port holds no dmsg header and about 15,600 application records;
+  the relay counted 0 headers both ways (lines 39-43, 52);
+- no warning, lockdep or sanitizer report, and kmemleak nothing of
+  hammer2's on either side (lines 45-46, 49-50).
+The round trip is printed as not read, since the raw relay stamps no
+frame. Debug read the same values, with 16130 and 16301 application
+records, and no sanitizer is built into its module. Two guests on one cpuset read
+function, never a rate.
+
+**The controls**, each read failing where its committed run passes:
+- `ctl/n9-6-drive-2` (series `20261103-102019`, from the head before
+  review round 1's corrections): the
+  request bind, the unmounted-source test, the local SNAPONLY test and
+  the peer half of the source gate, each removed. TLS on debug, 82
+  checks, 5 failed: `s55o`, `s55l`, `s55q`, `s55p`, and `s55c`, whose
+  teardown count takes the extra snapshot `s55l`'s served request
+  leaves. `ctl/n9-6-drive-3`, the same edits cut at `8fb3b01`, failed
+  the same five, `s55l` reading `double=1 listed=1` (log line 67,
+  report `dmsg-run-20261103-114920`): with the second request served,
+  its doubly suffixed snapshot is listed, which round 1 of the review
+  found the check could not see.
+- `ctl/n9-6-intake-2`: both bounds of `hammer2_link_check()` removed.
+  Default mode on debug, 87 checks, 2 failed: the bounds' errno check
+  (`toomany 0, noslot 0`) and the log's line count (`all=12`).
+- `ctl/n9-6-regbind-2`: the span bind removed. TLS on debug, 82 checks,
+  3 failed. `s55peer` read `regrefused=1`, registration's own test
+  refusing. That is its only reading.
+- `ctl/n9-6-mountbound-2`: the parser's bound removed. TLS on
+  `h2kasan-7.3tls`, KASAN slab-out-of-bounds in `__uuid_parse`, a write
+  by `mount` (`dmsg-run-20261103-103357.klog` lines 424-425).
+- `ctl/n9-6-fedroot` (from the same head): the client's name test removed.
+  SNAPROOT on debug, 43 checks, 2 failed. The renamed root was taken
+  (fed-a-root 0, EINVAL 0), so the control check and the pass check,
+  which wants one bad snapshot, failed.
+
+**Review round 2's harness fixes**, read at `8fb3b01`
+(`p7-notes/n9-6-r2-20261103-114018/`):
+- With the relay's port held on the host, so that `relay_start` exits 2
+  after both images are attached, the harness without the fix left vdb
+  on both guests, and `8fb3b01`'s left it on neither.
+- `cluster-dmsg.sh H2_DMSG_TLS=1` read 82 checks, 0 failed, with
+  `cap_start` truncating its file.
+
+Of the decisions the 1.0.78 entry listed, three still have no control
+that removes the decision and fails. The client's test of a
+server-chosen name that does not fit is read by no run. The parser's
+uuid test is read by `s55r`, but `mountbound` removes only the count
+bound. Registration's binding test is reached only in the regbind
+build, which removes the span bind before it; no build removes
+registration's test, so its refusal is read and not controlled.
