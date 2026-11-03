@@ -579,8 +579,12 @@ klog() { kl | grep -c "$1"; }
 # $K can trail the print, so wait for one, at most 5 s
 klog1() { n=0; until [ "$(klog "$1")" -ge 1 ] || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done; klog "$1"; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
-# a dial's TLS arguments, which tls.sh key writes; none on a plaintext run
-TA=$(cat /tmp/h2tls.args 2>/dev/null)
+# a dial's TLS arguments, which tls.sh key writes; none on a plaintext
+# run. Read back only in the two shapes tls.sh writes, since they reach
+# h2service as root.
+TA=$(cat /run/h2tls/args 2>/dev/null)
+printf '%s\n' "$TA" | grep -qxE '|--tls-role server --tls-keyring [0-9]+ --tls-key [0-9]+|--tls-role client --tls-key [0-9]+' || {
+	echo "wire: COULD-NOT-RUN: /run/h2tls/args holds an unexpected dial argument" >&2; exit 2; }
 GUEST
 # clmode.awk -v n='"<name>"': the mode of <name> in CL, from a show on
 # stdin; an inode prints its mode before its inum, a dirent no mode, so the
@@ -606,7 +610,7 @@ pkill -f 'dmesg -w' 2>/dev/null
 setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
 # an earlier run's markers and TLS arguments: a .pub left by a TLS run
 # would admit the plaintext dial H2_WIRE_ADMIT=1 must see refused
-rm -f /tmp/h2keys/peer.none /tmp/h2keys/peer.pub /tmp/h2tls.args
+rm -f /tmp/h2keys/peer.none /tmp/h2keys/peer.pub /run/h2tls/args
 SNAP=${3:-1}	# sync_snapshot
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko sync_snapshot=$SNAP || { echo "insmod failed"; exit 1; }
@@ -1341,7 +1345,9 @@ cat > "$W/tls.sh" <<'GUEST'
 # the PSK read from stdin into ring hammer2-tls under @u, with the
 # permissions tlshd needs to read it from its own session, read back from
 # a session that reaches no ring, and the dial's arguments into
-# /tmp/h2tls.args. cap: a capture of this guest's end of the relay's
+# /run/h2tls/args. Every file of this mode lives in /run/h2tls, made fresh
+# by key with mode 700 under root's /run, so no other user can place one
+# there, and each is read back in the shape written. cap: a capture of this guest's end of the relay's
 # port. wait: the link's outcome line, bounded past the intake's 10 s.
 # stat: what crossed and what the handshake left, read with the link up.
 # down: the ring unlinked.
@@ -1349,8 +1355,9 @@ TL=/var/log/tlshd/current
 CONF=/etc/tlshd/config; [ -e /etc/tlshd.conf ] && CONF=/etc/tlshd.conf
 cnr() { echo "wire: COULD-NOT-RUN: $*"; exit 2; }
 tstat() { v=$(awk -v k=$1 '$1 == k { print $2 }' /proc/net/tls_stat 2>/dev/null); echo "${v:--1}"; }
-tlog() { tail -n +$(( $(cat /tmp/h2tls.tl0 2>/dev/null || echo 0) + 1 )) $TL | grep -cE "Handshake (with .*|request) $1"; }
-ccount() { od -An -v -tx1 /tmp/h2tls-cap.pcap 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -o " $1" | wc -l; }
+TD=/run/h2tls
+tlog() { t0=$(cat $TD/tl0 2>/dev/null); case $t0 in ''|*[!0-9]*) t0=0;; esac; tail -n +$(( t0 + 1 )) $TL | grep -cE "Handshake (with .*|request) $1"; }
+ccount() { od -An -v -tx1 $TD/cap.pcap 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -o " $1" | wc -l; }
 case $1 in
 check)
 	up=
@@ -1370,21 +1377,23 @@ check)
 key)
 	read -r psk
 	[ "${#psk}" = 64 ] || cnr "the key step read no 64-digit payload on stdin"
+	rm -rf $TD && mkdir -m 700 $TD || cnr "$TD could not be made"
 	ring=$(keyctl newring hammer2-tls @u) && keyctl setperm $ring 0x3f1b0000 || cnr "the keyring could not be made"
-	echo $ring > /tmp/h2tls.ring
+	echo $ring > $TD/ring
 	k=$(printf %s "$psk" | keyctl padd psk "$3" $ring) && keyctl setperm $k 0x3f0b0000 || cnr "the key could not be made"
 	[ "$(keyctl session - keyctl pipe $k 2>/dev/null)" = "$psk" ] || cnr "key $k does not read back from a session that reaches no ring"
-	wc -l < $TL > /tmp/h2tls.tl0
+	wc -l < $TL > $TD/tl0
 	if [ "$2" = server ]; then echo "--tls-role server --tls-keyring $ring --tls-key $k"
-	else echo "--tls-role client --tls-key $k"; fi > /tmp/h2tls.args
+	else echo "--tls-role client --tls-key $k"; fi > $TD/args
 	echo "tls-key $2 ring $ring key $k identity $3 read=ok"
 	;;
 cap)
 	command -v tcpdump >/dev/null 2>&1 || cnr "no tcpdump on the guest"
-	rm -f /tmp/h2tls-cap.pcap /tmp/h2tls-cap.err
-	setsid -f sh -c "echo \$\$ > /tmp/h2tls-cap.pid; exec tcpdump -i any -U -w /tmp/h2tls-cap.pcap 'tcp port $2' </dev/null >/dev/null 2>/tmp/h2tls-cap.err"
-	n=0; until grep -q listening /tmp/h2tls-cap.err 2>/dev/null || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
-	echo "tls-cap-listening $(grep -c listening /tmp/h2tls-cap.err 2>/dev/null)"
+	[ -d $TD ] || mkdir -m 700 $TD || cnr "$TD could not be made"
+	rm -f $TD/cap.pcap $TD/cap.err
+	setsid -f sh -c "echo \$\$ > $TD/cap.pid; exec tcpdump -i any -U -w $TD/cap.pcap 'tcp port $2' </dev/null >/dev/null 2>$TD/cap.err"
+	n=0; until grep -q listening $TD/cap.err 2>/dev/null || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	echo "tls-cap-listening $(grep -c listening $TD/cap.err 2>/dev/null)"
 	;;
 wait)
 	n=0
@@ -1392,9 +1401,12 @@ wait)
 	echo "tls-wait-tenths $n"
 	;;
 stat)
-	pid=$(cat /tmp/h2tls-cap.pid 2>/dev/null)
-	[ -n "$pid" ] && kill -INT $pid 2>/dev/null && timeout 5 tail --pid=$pid -f /dev/null
-	echo "tls-cap-bytes $(wc -c < /tmp/h2tls-cap.pcap 2>/dev/null || echo 0)"
+	# signalled only as the capture this mode started: a number whose
+	# process is tcpdump
+	pid=$(cat $TD/cap.pid 2>/dev/null)
+	case $pid in ''|*[!0-9]*) pid=;; esac
+	[ -n "$pid" ] && [ "$(cat /proc/$pid/comm 2>/dev/null)" = tcpdump ] && kill -INT $pid 2>/dev/null && timeout 5 tail --pid=$pid -f /dev/null
+	echo "tls-cap-bytes $(wc -c < $TD/cap.pcap 2>/dev/null || echo 0)"
 	echo "tls-cap-magic $(ccount '32 48 00 00')"
 	echo "tls-cap-appdata $(ccount '17 03 03')"
 	echo "tls-handed $(klog 'cluster link handed to the message threads')"
@@ -1406,9 +1418,10 @@ stat)
 	echo "tls-rxsw $(tstat TlsCurrRxSw)"
 	;;
 down)
-	r=$(cat /tmp/h2tls.ring 2>/dev/null)
+	r=$(cat $TD/ring 2>/dev/null)
+	case $r in ''|*[!0-9]*) r=;; esac
 	[ -z "$r" ] || keyctl unlink $r @u >/dev/null 2>&1
-	rm -f /tmp/h2tls.args /tmp/h2tls.ring
+	rm -f $TD/args $TD/ring
 	echo "tls-down 1"
 	;;
 esac
@@ -1554,8 +1567,8 @@ phase A down.sh
 # makes; the relay is not stopped before its line, 5 s at most
 if [ "$RAW" = 1 ]; then
 	n=0; until grep -q 'pair done raw' "$W/relay.out" || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
-	scp -q "$SA:/tmp/h2tls-cap.pcap" "$FIXDIR/wire-run-$stamp-a.pcap" 2>/dev/null
-	scp -q "$SB:/tmp/h2tls-cap.pcap" "$FIXDIR/wire-run-$stamp-b.pcap" 2>/dev/null
+	scp -q "$SA:/run/h2tls/cap.pcap" "$FIXDIR/wire-run-$stamp-a.pcap" 2>/dev/null
+	scp -q "$SB:/run/h2tls/cap.pcap" "$FIXDIR/wire-run-$stamp-b.pcap" 2>/dev/null
 fi
 kill "$RELAY_PID" 2>/dev/null; wait "$RELAY_PID" 2>/dev/null; RELAY_PID=
 scp -q "$SA:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null
