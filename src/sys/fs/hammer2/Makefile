@@ -155,6 +155,12 @@ endif
 ifdef HAMMER2_NOCONNFIX
 ccflags-y += -DHAMMER2_NOCONNFIX
 endif
+# HAMMER2_CLOSEWAIT holds the writer 20 ms before a client's HM2 DELETE, so
+# a frame trailing the peer's close finds its state still in the tree.
+# Never install it.
+ifdef HAMMER2_CLOSEWAIT
+ccflags-y += -DHAMMER2_CLOSEWAIT
+endif
 
 .PHONY: all clean
 

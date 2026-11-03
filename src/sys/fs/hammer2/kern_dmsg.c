@@ -545,6 +545,7 @@ kdmsg_iocom_thread_wr(void *arg)
 			 * succeeded even if it failed.
 			 */
 			lockmgr(&iocom->msglk, LK_RELEASE);
+			hammer2_ctl_closewait(msg);	/* XXX Linux: a control's window, else nothing */
 			error = fp_write(iocom->msg_fp, &msg->any,
 					 msg->hdr_size, &res, UIO_SYSSPACE);
 			if (error || res != msg->hdr_size) {

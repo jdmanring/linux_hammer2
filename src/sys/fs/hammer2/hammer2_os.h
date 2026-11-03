@@ -2048,6 +2048,23 @@ void __hammer2_dbg_pmp_died(const void *);
 #else
 #define hammer2_ctl_connwait()		((void)0)
 #endif
+/*
+ * 20 ms before the writer sends a client's HM2 DELETE, so a frame the peer
+ * sent after its own DELETE is read while the state is still in the tree:
+ * hammer2_rcall_reply()'s closed-call test, reached on demand.
+ */
+#ifdef HAMMER2_CLOSEWAIT
+#define hammer2_ctl_closewait(msg)	do {				\
+	uint32_t c_ = (msg)->any.head.cmd;				\
+	if ((c_ & DMSGF_PROTOS) == DMSG_PROTO_HM2 &&			\
+	    (c_ & (DMSGF_DELETE | DMSGF_REPLY)) == DMSGF_DELETE) {	\
+		pr_info_once("hammer2: client close held\n");		\
+		schedule_timeout_uninterruptible(msecs_to_jiffies(20));	\
+	}								\
+} while (0)
+#else
+#define hammer2_ctl_closewait(msg)	((void)(msg))
+#endif
 #ifdef HAMMER2_NOSNAPSCOPE	/* SNAPDEL limited to the link's own */
 #define HAMMER2_CTL_NOSNAPSCOPE		1
 #else
