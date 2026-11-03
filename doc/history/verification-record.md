@@ -21068,10 +21068,11 @@ run, made on the host and written to no file (`c367d27`), its guest
 state in `/run/h2tls` (`b249334`). N9.5 is stage 5.5, designed at
 `a7aba6e` and signed off after eleven review rounds: a TLS link records
 the key it proved and the cluster ids that key is bound to, installed
-at the descriptor swap, and refuses spans, registrations, requests and
-`VOLCONF` rows outside that set (`a945367`); the server serves a
-mounted PFS only with an enabled `copyinfo` row and an unmounted one
-only as the link's own snapshot (`7fb32c8`); it names a peer's snapshot
+at the descriptor swap, and refuses spans, registrations and `VOLCONF`
+rows outside that set (`a945367`); the server refuses a request for a
+cluster outside it, serves a mounted PFS only with an enabled
+`copyinfo` row and an unmounted one only as the link's own snapshot
+(`7fb32c8`); it names a peer's snapshot
 `<label>.h2sync-peer` itself, from a mounted MASTER source, and a stale
 delete takes only a snapshot (`3f9c433`); the old connection's peer can
 no longer reopen a reconnect's request queue (`3341563`); and two
@@ -21141,8 +21142,8 @@ under `p7-notes/`, reports and kernel logs under `fixtures/`:
   bound spans inside its own window.
 
 **The controls**, each a `git archive` of the head named in its tree's
-`CONTROL` file with one check removed, or for the four hold controls one
-step moved, where it executes, the first line of each edit marked
+`CONTROL` file with the checks its variants name removed, or for the
+four hold controls one step moved, where each executes, the first line of each edit marked
 `CONTROL n9-5`, made by `p7-notes/n9-5-make-ctl.py`, run on
 `h2debug-7.3tls`, each failing the checks its expected note names
 except where said below:
