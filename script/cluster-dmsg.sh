@@ -1226,6 +1226,9 @@ if [ "$hs" = 1 ]; then
 	ok=0; for f in unix mode nkeys client server role key required; do [ "$(num "$(field "$t" $f)" -1)" = 22 ] || ok=1; done
 	check "the TLS intake refuses PSK on AF_UNIX, an unknown mode, six keys, a keyless client, a ringless server, an unknown role, a key serial of 0 and no TLS under cluster_tls_required, each EINVAL" $ok "$(echo "$t" | sed 's/.*tlsrefuse: //')"
 	[ "$(num "$(field "$t" ulp_set)" -1)" = 0 ] && [ "$(num "$(field "$t" ulp)" -1)" = 16 ]; check "a TCP socket already carrying the tls ULP is refused EBUSY" $? "ulp_set $(field "$t" ulp_set), errno $(field "$t" ulp)"
+	# The errnos alone cannot tell the no-binding check from the per-key
+	# one, which also refuses an intake binding nothing; the line count
+	# below names each refusal and is that check's control.
 	[ "$(num "$(field "$t" nobind)" -1)" = 22 ] && [ "$(num "$(field "$t" dup)" -1)" = 22 ] && [ "$(num "$(field "$t" keynobind)" -1)" = 22 ]; check "stage 5.5: a TLS intake binding no cluster id, a server's listing one key serial twice, and a server's key bound to nothing are each refused EINVAL" $? "nobind $(field "$t" nobind), dup $(field "$t" dup), keynobind $(field "$t" keynobind)"
 	ok=0; [ "$(num "$(field "$l" all)" -1)" = 12 ] && [ "$(num "$(field "$l" upcall)" -1)" = 0 ] || ok=1
 	for f in tcp mode nkeys client server role key ulp required nobind dup keynobind; do [ "$(num "$(field "$l" $f)" -1)" = 1 ] || ok=1; done
