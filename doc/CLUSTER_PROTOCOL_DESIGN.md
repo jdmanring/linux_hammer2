@@ -277,12 +277,14 @@ receipt, in this order, and each ends the connection:
 - a closing count not the count received: `closed a reply short`.
 
 The first guards memory. A copy reaches it only when the reader looks
-the frame up before kern_dmsg's writer has sent the call's `DELETE` and
-removed its state, so the wire harness's `trail` cell reads it as a race
-goes. `HAMMER2_CLOSEWAIT` holds the writer 20 ms before it dequeues that
-`DELETE`, and under `H2_WIRE_CLOSEWAIT=1` the cell reads the line in
-every run; a module with the test removed faults on the next line,
-reading `call->cdev` through the cleared pointer (1.0.82).
+the frame up before kern_dmsg's writer dequeues the call's `DELETE`:
+the dequeue interlocks the state, and a reader that finds the interlock
+waits until the send's cleanup has removed the state, then finds
+nothing. So the wire harness's `trail` cell reads the test as a race
+goes. `HAMMER2_CLOSEWAIT` holds the writer 20 ms before that dequeue,
+and under `H2_WIRE_CLOSEWAIT=1` the cell read the line in 3 runs of 3
+on each `-tls` kernel; a module with the test removed faults on the
+next line, reading `call->cdev` through the cleared pointer (1.0.82).
 `HAMMER2_NOCLIENTSEQ`
 compiles out the other three, and is the build the wire harness's
 `H2_WIRE_SEQ=control` reads the defects under. The fields were reserved

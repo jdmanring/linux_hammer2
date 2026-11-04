@@ -21650,22 +21650,28 @@ decision it missed.
 The doc sweep that closed 1.0.81 found two decisions on P7's reach that
 the record still called uncontrolled or undriven. Each now has a run that
 reaches it on demand and a control that removes it and fails. The
-expected readings were written before any code and before each run
-(`p7-notes/n9-7a-expected.md` and `n9-7b-expected.md` in the data tree,
-each with its first reading appended). The debug runs are series
-`20261103-154314` at `ba29092`, harness `aecdcbdbaedc5051`; the KASAN
-runs are the same series at `a11bb5b`, harness `4a7f6f421f2a4a9b`, whose
-`src/` is `ba29092`'s (`a11bb5b` changes one line of the harness's
-header). QEMU cores read 0 before and after every run (the wrapper logs
-beside the series).
+expected readings were written before each run, after the code they
+read (`p7-notes/n9-7a-expected.md` and `n9-7b-expected.md` in the data
+tree, each with its first reading appended). The debug runs are series
+`20261103-154314` at `a140d39`, harness `aecdcbdbaedc5051`; the KASAN
+runs are the same series at `a320b8d`, harness `4a7f6f421f2a4a9b`, whose
+`src/` is `a140d39`'s (`a320b8d` changes one line of the harness's
+header). The runs' logs name those heads, and the refuted series below,
+by their hashes before four commit messages were corrected ahead of the
+push, which changed every hash from `d08fdbf` on and no tree; the map
+from the old hashes to these is `p7-notes/n9-7-hashmap.txt`. QEMU cores read 0
+before and after every run (the wrapper logs beside the series).
 
 **The closed-call test** (`hammer2_rcall_reply()`, `hammer2_remote.c:1356-1359`).
 The close clears the state's pointer to its call (`:1442`) before the
-transaction's reference is put (`:1456`), so a frame arriving after the
+transaction's reference is put (`:1458`), so a frame arriving after the
 close finds `call` NULL and the test ends the link. Before this entry the
-`trail` cell reached the test as a race: `closed` once, in
-`wire-run-20261027-001808`, and `silent` ten times of ten on
-`h2kasan-7.3` (both in the 1.0.59 entry). The
+`trail` cell reached the test as a race: of the four `trail` runs in
+the 1.0.59 entry, on modules carrying the test, one read `closed`
+(`wire-run-20261027-001808`) and three `silent` (`-004339`, `-005415`,
+`-005933`). The ten silent runs on `h2kasan-7.3` in the 1.0.58 entry
+were on a module from before `35e3ca2` added the test, so they say
+nothing of it. The
 reason, read in session: kern_dmsg removes the state from its tree only
 in `kdmsg_state_cleanuptx()`, after the writer's `fp_write`, and the
 writer's dequeue calls `kdmsg_state_msgtx()` under `msglk`, which sets
@@ -21674,13 +21680,13 @@ until the cleanup has removed the state, then looks again and finds
 nothing. So the copy reaches the test only when the reader looks it up
 before the writer dequeues the client's `DELETE`.
 
-`HAMMER2_CLOSEWAIT` (`ce77af8`, moved by `e8f159a`) is a build flag whose
+`HAMMER2_CLOSEWAIT` (`d08fdbf`, moved by `a81f1ba`) is a build flag whose
 shim macro is called in kern_dmsg's writer loop before the dequeue
 (`XXX Linux`). With `msglk` released it sleeps 20 ms once per client HM2
 `DELETE`, marking the message in `kdmsg_msg.flags` (0x80000000, unused by
 kern_dmsg), and prints `hammer2: client close held` once. Without the
 flag it compiles to 0. Its first placement, after the dequeue, was
-refuted by series `20261103-151915` at `d672216`: `closed` 1 and `silent`
+refuted by series `20261103-151915` at `c295e06`: `closed` 1 and `silent`
 2 on `h2debug-7.3tls`, the hold's line present in both silent runs. The
 relay trace of one (`fixtures/wire-run-20261103-152554.trace`, i=4047 to
 4050) has the held feed, the close and the copy leave in one segment at
@@ -21702,12 +21708,14 @@ H2_WIRE_CLOSEWAIT=1 H2_REPEAT=3`:
   kmemleak finding nothing of hammer2's on either guest.
 
 The control `ctl/n9-7-closedcall`, made by `n9-5-make-ctl.py closedcall`
-from `ba29092`, turns the test into `if (0 && call == NULL)` and is built
-with the flag (module `f098ee3ecb705aca`), loaded on B under
+from `a140d39`, turns the test into `if (0 && call == NULL)` and is built
+with the flag (module `f098ee3ecb705aca`, read from the wrapper's `prov`
+line for the control tree's `.ko`, since the control run's own header was
+lost to the defect `a320b8d` fixes), loaded on B under
 `H2_WIRE_CLOSEWAIT=control`. `wire-run-20261103-160942` read the control
 check ok, `faults 1, in hammer2_rcall_reply 1, the hold's line 1`, with
 43 checks and 21 failed, the cut's later checks failing since B was left
-faulted. B's klog (`fixtures/wire-run-20261103-160942-b.klog:1894-1905`)
+faulted. B's klog (`fixtures/wire-run-20261103-160942-b.klog:1894-1907`)
 has `BUG: kernel NULL pointer dereference, address: 0000000000000000` in
 `hammer2-msgrd`, RIP `hammer2_rcall_reply+0x33/0x6b0` with RBX 0.
 `faddr2line` on the control's module puts that at `hammer2_remote.c:1361`,
@@ -21715,11 +21723,19 @@ has `BUG: kernel NULL pointer dereference, address: 0000000000000000` in
 (`p7-notes/n9-7a-ctl-faddr2line.txt`). B's guest was cycled after it.
 
 The use after free in `hammer2_rcall_reply` that the 1.0.59 entry left a
-`candidate` is not reachable on this code. The pointer is cleared under
-the connection's mutex before the reference is put. The test reads it
-and returns before any use. With the writer held, the copy reached the
-test in 6 runs of 6 with no KASAN report. With the test removed, the
-same copy faults on a NULL pointer, not on a freed object.
+`candidate` is not reachable on this code. The test reads
+`state->any.any` without the connection's mutex, so the mutex is not
+what makes it safe. What does is that every callback for an HM2 call's
+state runs on the reader thread, or after the reader has exited: the
+clear and the put (`:1442`, `:1458`) and the next frame's test run on
+one thread in order. The other callers of `kdmsg_simulate_failure()`
+were read for the exception: `kern_dmsg.c:623` runs after the writer
+has waited out `msgrd_td`, `:714` only while the link drains under
+`KDMSG_IOCOMF_EXITNOACC` or in teardown, and `:1323` reaches substates
+only, never state0's children, which an HM2 call's state is. With the
+writer held, the copy reached the test in 3 runs of 3 on each kernel,
+and the 3 on `h2kasan-7.3tls` read no KASAN report. With the test
+removed, the same copy faults on a NULL pointer, not on a freed object.
 
 The plain `trail` cell, run once on `h2debug-7.3tls` without the flag
 since the cut block changed, read `closed` and 43 checks with 0 failed
@@ -21731,15 +21747,15 @@ as a CREATE (`hammer2_iocom.c:533`, `kern_dmsg.c:221`). A peer's DELETE
 reaches `hammer2_span_del()`, which queues `hammer2_remote_span()`, whose
 loop detaches each element whose span is gone, `span deleted`
 (`hammer2_remote.c:2856-2861`). Every earlier run reached that loop only
-at a link's end. `h2loop --cut-fault withdraw` (`d672216`) records A's
+at a link's end. `h2loop --cut-fault withdraw` (`c295e06`) records A's
 `CL` span CREATE as it forwards it; at the close of scanall call K it
 passes the close on, then sends B a `LNK_SPAN` DELETE on that msgid,
 signed again, and drops and traces B's answer, so A keeps its span as a
 hub that withdrew a relayed one would. `cluster-wire.sh
 H2_WIRE_CUT=withdraw` reads B live, then hangs the pair up with the
-relay's `SIGUSR1` and both sides dial again. The first run, at `d672216`
+relay's `SIGUSR1` and both sides dial again. The first run, at `c295e06`
 (`wire-run-20261103-153249`), held every predicted subject reading and
-ended at two harness defects, fixed at `ba29092`.
+ended at two harness defects, fixed at `a140d39`.
 
 With `H2_WIRE_CUT_AT=155`:
 - `h2debug-7.3tls`, both modules `1d60a9cff03a66a2`, 43 checks and 0
@@ -21759,12 +21775,22 @@ With `H2_WIRE_CUT_AT=155`:
 
 The prediction of about nine pings answered was wrong: B pings every
 5.1 s in this shape, and 2 were answered. The control `ctl/n9-7-spandetach`
-removes the detach loop (module `f4bb308560aa727b`, loaded on B by
-`H2_WIRE_KO_B`). `wire-run-20261103-160311` read 43 checks and 3 failed,
-the three the expected readings named: the withdrawal `detached 0` with
-`no quorum by then 0` and 3 pings answered; the gap `no quorum 0 in
-265584 ms`; and both detaches `connection ended`, the first at the
-link's end (`fixtures/wire-run-20261103-160311-b.klog`). The plain
+removes the detach loop (module `f4bb308560aa727b`, from the wrapper's `prov` line as above,
+loaded on B by `H2_WIRE_KO_B`). `wire-run-20261103-160311` read 43 checks
+and 3 failed, the three the expected readings named: the withdrawal
+`detached 0` with `no quorum by then 0` and 3 pings answered; the gap
+`no quorum 0 in 265584 ms`; and both detaches `connection ended`. The
+third did not fail as predicted. The expected readings had the element
+detached `connection ended` at the link's end. B's klog
+(`fixtures/wire-run-20261103-160311-b.klog`) has the link's spans gone
+at 493.88 s (`H2 -RXSPAN`, `SPANTAB 0`, lines 1973-1974) and the element
+still registered until 750.63 s, when B dialed again and the reconnect
+detached it (line 2235) just before the new link was handed to the
+message threads; the harness read `cut-detached 0` after its 240 s
+bound. `hammer2_remote_conn_end()`, which prints `connection ended`,
+runs at a reconnect or the device's teardown, not at a link's end, so
+without the span loop nothing detaches a slot whose span has gone until
+the device dials again. The plain
 `disconnect` cell, run once since `h2loop` and the cut block changed,
 read 43 checks and 0 failed (`wire-run-20261103-160044`).
 
@@ -21781,9 +21807,11 @@ since 1.0.74, so it read 0 documents from then until `3b856d4`. It now
 sweeps on every tree, and a claim passes only while `src/` calls
 `tls_(client|server)_hello` and the record names `H2_WIRE_PASS=1
 H2_WIRE_TLS=1` with a `wire-run-` id within 200 characters after it
-(`78fd11e` restored the call's half after a review). Controls in a clone
-at `a11bb5b`, `ctl/n9-7c`, each from a clean checkout
-(`p7-notes/n9-7c-controls-20261103-164424.log`):
+(`888c6c3` restored the call's half after a review). Controls in a clone
+at `a320b8d`, `ctl/n9-7c`, each from a clean checkout. The first log
+(`p7-notes/n9-7c-controls-20261103-164424.log`) cut each line at 260
+characters, so the committed tree's own fields are read from a rerun at
+`a320b8d` that keeps whole lines (`p7-notes/n9-7c-controls-full-20261103-172533.log`):
 - the tree as committed: 29 documents, 8 claims, 2 conditional, record
   `wire-run-20261103-111156`, 0 findings;
 - the record's knob string changed: 8 findings, one per claim, exit 1;
@@ -21797,5 +21825,5 @@ its backstop.
 Since `src/` changed under the flag, `test-fixtures.sh` read 11 images
 and 110 ioctl results with 0 failures, and `test-enospc.sh` filled 2G
 with 0 failures, both exit 0 on `h2debug-7.3tls` with modules built from
-`a11bb5b` (`p8-notes/n9-7-fixtures-20261103-163555.log`,
+`a320b8d` (`p8-notes/n9-7-fixtures-20261103-163555.log`,
 `n9-7-enospc-20261103-163555.log`).
