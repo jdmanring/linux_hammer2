@@ -43,8 +43,8 @@ has been read back by DragonFly and the other way round
   refused, read on both guest kernels. Between two guests,
   `test/h2service.c`'s dial asks for it too, and `cluster-wire.sh
   H2_WIRE_TLS=1` runs the default shape through a relay that copies
-  bytes, with no frame in the clear, read on `h2debug-7.3tls`; the synchronization pass over that link was read at 1.0.80 on the
-  debug and KASAN builds. A TLS
+  bytes, with no frame in the clear, read on both `-tls` builds at
+  1.0.80, as was the synchronization pass over that link. A TLS
   record that is not data is read by its type: a session ticket is
   dropped and the link serves on, and a KeyUpdate or an alert ends the
   link with a named line, read against a GnuTLS peer on both guest
@@ -65,8 +65,13 @@ has been read back by DragonFly and the other way round
   `VOLCONF`, dial paths included; the test harness's `h2service` chooses
   peers by a marker file. Each request a peer sends holds the host's
   global mount lock until it is answered. Run a plaintext cluster only on
-  a network you control (`doc/SECURITY_MODEL.md` has the rest). Kernel TLS is P8's TLS stage; the pass ran over it at 1.0.80, and
-  P7 closes when its closure maps that reading.
+  a network you control (`doc/SECURITY_MODEL.md` has the rest). Not
+  built: x509 certificates, a per-connection verifier against a frame
+  replayed onto another connection, and a rekey, so a KeyUpdate ends a
+  TLS link. A candidate read from the code and not driven: a peer that
+  never closes a request the client gave up on keeps that request's
+  state held until the link ends, with no bound found. P7 closes when its closure maps
+  the pass's reading over TLS.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
   not yet written.
