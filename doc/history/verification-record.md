@@ -21658,7 +21658,7 @@ runs are the same series at `a320b8d`, harness `4a7f6f421f2a4a9b`, whose
 `src/` is `a140d39`'s (`a320b8d` changes one line of the harness's
 header). The runs' logs name those heads, and the refuted series below,
 by their hashes before four commit messages were corrected ahead of the
-push, which changed every hash from `d08fdbf` on and no tree; the map
+push, which changed every hash from `888c6c3` on and no tree; the map
 from the old hashes to these is `p7-notes/n9-7-hashmap.txt`. QEMU cores read 0
 before and after every run (the wrapper logs beside the series).
 
@@ -21732,7 +21732,13 @@ one thread in order. The other callers of `kdmsg_simulate_failure()`
 were read for the exception: `kern_dmsg.c:623` runs after the writer
 has waited out `msgrd_td`, `:714` only while the link drains under
 `KDMSG_IOCOMF_EXITNOACC` or in teardown, and `:1323` reaches substates
-only, never state0's children, which an HM2 call's state is. With the
+only, never state0's children, which an HM2 call's state is. The one
+callback path outside that function, `kdmsg_state_cleanuptx()`'s
+deferred abort (`:1793`), runs on the writer thread, but only on a state
+already marked `KDMSG_STATE_ABORTING` or `KDMSG_STATE_DYING`, which only
+`kdmsg_state_abort()` and `kdmsg_state_dying()` set, reached from the
+paths above or from a dying parent at allocation; state0 is never
+aborted. With the
 writer held, the copy reached the test in 3 runs of 3 on each kernel,
 and the 3 on `h2kasan-7.3tls` read no KASAN report. With the test
 removed, the same copy faults on a NULL pointer, not on a freed object.
@@ -21777,10 +21783,12 @@ The prediction of about nine pings answered was wrong: B pings every
 5.1 s in this shape, and 2 were answered. The control `ctl/n9-7-spandetach`
 removes the detach loop (module `f4bb308560aa727b`, from the wrapper's `prov` line as above,
 loaded on B by `H2_WIRE_KO_B`). `wire-run-20261103-160311` read 43 checks
-and 3 failed, the three the expected readings named: the withdrawal
-`detached 0` with `no quorum by then 0` and 3 pings answered; the gap
-`no quorum 0 in 265584 ms`; and both detaches `connection ended`. The
-third did not fail as predicted. The expected readings had the element
+and 3 failed: the two checks the expected readings named, and a third
+they did not. The withdrawal read `detached 0` with `no quorum by then
+0` and 3 pings answered; the cut check read the gap `no quorum 0 in
+265584 ms`; and the check that the element is detached once at the cut
+and once at B's unmount read both detaches `connection ended`. The cut
+check did not fail as predicted. The expected readings had the element
 detached `connection ended` at the link's end. B's klog
 (`fixtures/wire-run-20261103-160311-b.klog`) has the link's spans gone
 at 493.88 s (`H2 -RXSPAN`, `SPANTAB 0`, lines 1973-1974) and the element
@@ -21807,7 +21815,7 @@ since 1.0.74, so it read 0 documents from then until `3b856d4`. It now
 sweeps on every tree, and a claim passes only while `src/` calls
 `tls_(client|server)_hello` and the record names `H2_WIRE_PASS=1
 H2_WIRE_TLS=1` with a `wire-run-` id within 200 characters after it
-(`888c6c3` restored the call's half after a review). Controls in a clone
+(`888c6c3` restored the call's half). Controls in a clone
 at `a320b8d`, `ctl/n9-7c`, each from a clean checkout. The first log
 (`p7-notes/n9-7c-controls-20261103-164424.log`) cut each line at 260
 characters, so the committed tree's own fields are read from a rerun at
