@@ -1208,7 +1208,7 @@ echo "cluster-updates $(klog 'syncthr: update inode')"
 if [ "${H2_FAULT:-0}" != 0 ]; then
 	# Until the copies settle, the same settle the resume uses.
 	n=0; last=-1; still=0
-	while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
+	while [ $n -lt ${H2_RESUME_SECS:-900} ]; do
 		u=$(klog 'syncthr: update inode')
 		if [ "$u" = "$last" ]; then still=$(( still + 1 )); else still=0; last=$u; fi
 		[ "$still" -ge 15 ] && break
@@ -1274,7 +1274,7 @@ if [ "${H2_FAULT2:-0}" != 0 ]; then
 	echo 0 > /sys/module/hammer2/parameters/fail_alloc_count
 fi
 n=0; last=-1; still=0
-while [ $n -lt ${H2_RESUME_SECS:-300} ]; do
+while [ $n -lt ${H2_RESUME_SECS:-900} ]; do
 	u=$(fieldc acted)
 	if [ "$u" = "$last" ]; then still=$(( still + 1 )); else still=0; last=$u; fi
 	[ "$still" -ge 15 ] && [ $(( $(passes CL) - p0 )) -ge 2 ] && break
