@@ -54,17 +54,69 @@ fail(const char *what, long got, long want)
 	fails++;
 }
 
+/*
+ * Where a SEEK_DATA or SEEK_HOLE leaves the file position.  lseek(2) moves
+ * the position to the answer, so a read() after `lseek(fd, 0, SEEK_DATA)`
+ * reads the data found, and a failed seek leaves the position alone.  An
+ * answer that is right with the position left behind passes every answer
+ * check above and still copies the wrong bytes.
+ *
+ * Before each probe the position is set to SENTINEL, odd and past the end
+ * of every file built here, so no answer equals it and a position the seek
+ * never moved cannot pass as one it moved to.  After a success the
+ * position must equal the answer and, below i_size, one read() must return
+ * the byte pread() finds there; after a failure it must still be SENTINEL.
+ * One check per probe, printed as "position after <what>".
+ */
+#define SENTINEL	((1L << 40) + 7)
+
+static int
+is_scan(int whence)
+{
+	return (whence == SEEK_DATA || whence == SEEK_HOLE);
+}
+
+static void
+position(int fd, const char *what, off_t want)
+{
+	struct stat st;
+	off_t cur = lseek(fd, 0, SEEK_CUR);
+	char a, b;
+
+	checks++;
+	if (cur != want) {
+		printf("seek-fail position after %s: at %ld, want %ld\n", what,
+		    (long)cur, (long)want);
+		fails++;
+		return;
+	}
+	if (want != SENTINEL && fstat(fd, &st) == 0 && want < st.st_size &&
+	    (read(fd, &a, 1) != 1 || pread(fd, &b, 1, want) != 1 || a != b)) {
+		printf("seek-fail position after %s: read() at %ld did not "
+		    "return the byte there\n", what, (long)want);
+		fails++;
+		return;
+	}
+	lseek(fd, want, SEEK_SET);	/* the read() moved it on by one */
+	printf("seek-ok   position after %s: %ld\n", what, (long)cur);
+}
+
 /* One probe: ask `whence` at `from` and compare with `want`. */
 static void
 probe(int fd, const char *what, int whence, long from, long want)
 {
-	off_t got = lseek(fd, from, whence);
+	off_t got;
 
+	if (is_scan(whence))
+		lseek(fd, SENTINEL, SEEK_SET);
+	got = lseek(fd, from, whence);
 	checks++;
 	if (got != (off_t)want)
 		fail(what, (long)got, (long)want);
 	else
 		printf("seek-ok   %s: %ld -> %ld\n", what, from, (long)got);
+	if (is_scan(whence) && got >= 0)
+		position(fd, what, got);
 }
 
 /*
@@ -79,6 +131,7 @@ probe_enxio(int fd, const char *what, int whence, long from)
 {
 	off_t got;
 
+	lseek(fd, SENTINEL, SEEK_SET);
 	checks++;
 	errno = 0;
 	got = lseek(fd, from, whence);
@@ -90,6 +143,7 @@ probe_enxio(int fd, const char *what, int whence, long from)
 		fails++;
 	} else
 		printf("seek-ok   %s: %ld -> -1 ENXIO\n", what, from);
+	position(fd, what, got == -1 ? SENTINEL : got);
 }
 
 /*
@@ -102,8 +156,10 @@ static void
 probe_range(int fd, const char *what, int whence, long from, long lo,
     long hi)
 {
-	off_t got = lseek(fd, from, whence);
+	off_t got;
 
+	lseek(fd, SENTINEL, SEEK_SET);
+	got = lseek(fd, from, whence);
 	checks++;
 	if (got < (off_t)lo || got > (off_t)hi) {
 		printf("seek-fail %s: got %ld, want %ld..%ld\n", what,
@@ -111,6 +167,8 @@ probe_range(int fd, const char *what, int whence, long from, long lo,
 		fails++;
 	} else
 		printf("seek-ok   %s: %ld -> %ld\n", what, from, (long)got);
+	if (got >= 0)
+		position(fd, what, got);
 }
 
 /* block 0: data, block 1: hole, block 2: data, then a truncate past it */
@@ -568,6 +626,51 @@ out:
 	rmdir(dz);
 }
 
+/*
+ * Two descriptors on one file.  The position is per open file, so seeks
+ * on one leave the other where it was, and each seek on the first leaves
+ * it at its own answer, not the one before.  No answer in the sequence is
+ * 0, where a fresh descriptor already stands, so a seek that never moves
+ * the position cannot pass one of these.
+ */
+static void
+descriptors(const char *path, const char *buf, long bsize, long nbytes)
+{
+	struct { int whence; long from, want; const char *what; } seq[] = {
+		{ SEEK_HOLE, 0, bsize, "two fds, SEEK_HOLE at 0" },
+		{ SEEK_DATA, bsize + 100, 2 * bsize, "two fds, SEEK_DATA in hole" },
+		{ SEEK_HOLE, 2 * bsize + 10, 3 * bsize, "two fds, SEEK_HOLE in data" },
+		{ SEEK_HOLE, bsize + 100, bsize + 100, "two fds, SEEK_HOLE in hole" },
+	};
+	int fd = build(path, buf, bsize, nbytes), fd2, i;
+
+	if (fd < 0 || fsync(fd) != 0 || (fd2 = open(path, O_RDONLY)) < 0) {
+		checks++;
+		fails++;
+		printf("seek-fail two fds: the file could not be built\n");
+		if (fd >= 0)
+			close(fd);
+		unlink(path);
+		return;
+	}
+	lseek(fd2, SENTINEL, SEEK_SET);
+	for (i = 0; i < 4; i++) {
+		off_t got = lseek(fd, seq[i].from, seq[i].whence);
+
+		if (got != (off_t)seq[i].want) {
+			checks++;
+			fail(seq[i].what, (long)got, seq[i].want);
+		} else
+			position(fd, seq[i].what, got);
+	}
+	position(fd2, "two fds, seeks on the other descriptor", SENTINEL);
+	lseek(fd2, 0, SEEK_DATA);
+	position(fd, "two fds, a seek on the other descriptor", bsize + 100);
+	close(fd2);
+	close(fd);
+	unlink(path);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -690,6 +793,8 @@ main(int argc, char **argv)
 
 	close(fd);
 	unlink(path);
+	snprintf(dpath, sizeof(dpath), "%s.fds", path);
+	descriptors(dpath, buf, bsize, nbytes);
 	printf("seek-checks %d\nseek-failures %d\n", checks, fails);
 	return fails ? 1 : 0;
 }
