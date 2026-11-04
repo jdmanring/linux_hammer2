@@ -140,7 +140,11 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   in `doc/CLUSTER_PROTOCOL_DESIGN.md`'s TLS section with their trigger;
   `link_verifier`, the per-connection value its security table designs
   against a frame replayed onto another connection; revoking a live link
-  without an unmount; and a rekey, so a KeyUpdate ends the link.
+  without an unmount; and a rekey, so a KeyUpdate ends the link. A
+  candidate, read from the code and not driven: a peer that keeps its
+  link alive and never closes a request the client gave up on leaves
+  that request's state held until the link ends, and no bound on the
+  number of such requests was found.
 
 ## Not read here
 
