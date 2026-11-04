@@ -2320,7 +2320,7 @@ for sd in A B; do
 	[ "$kw" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings) of which the connection device's refusals $(val $sd conn-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
 	be=$(num "$(val $sd snap-blockset-equal)" 0); bs=$(num "$(val $sd snap-blockset-stale)" 1)
 	bw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && bw=1	# B's pass takes a target, so its print must be read
-	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale)"
+	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale)$( [ "$bw" = 0 ] && echo ', none required: this side runs without debug bit 0x8000 unless it is a slave under the pass')"
 	case "$CUT$sd" in masterA|slaveB) cw=2;; *) cw=1;; esac	# a power-cut guest loads twice, once per boot
 	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)
