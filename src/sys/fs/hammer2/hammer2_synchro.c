@@ -638,11 +638,11 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 			/*
 			 * XXX Linux: keep the element's slot at the root this
 			 * flush wrote, as hammer2_xop_inode_flush() does for a
-			 * frontend flush.  A snapshot copies the slot, and over
-			 * the wire only this thread writes the slave, so without
-			 * this a target named the slave as of its registration
-			 * or its last frontend flush.  Not on a failed flush,
-			 * whose blockset may name blocks never written.
+			 * frontend flush.  A snapshot copies the slot, and when
+			 * only this thread writes the element (a slave over the
+			 * wire) no other flush refreshes it, so a target would
+			 * name an older root.  Not on a failed flush, whose
+			 * blockset may name blocks never written.
 			 */
 			hammer2_spin_ex(&pmp->blockset_spin);
 			pmp->pfs_iroot_blocksets[thr->clindex] =
