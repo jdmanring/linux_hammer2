@@ -968,7 +968,7 @@ source before it was applied, and no lever-2 code precedes it.
      return (`hammer2_chain.c:637`), and zeroed only when the structure
      is allocated at the device's mount. It is not tied to item 4's
      attachment instance: every snapshot registers its PFS through the
-     same join (`hammer2_ioctl.c:1178` calls `hammer2_pfsalloc()`), so an
+     same join (`hammer2_ioctl.c:1190` calls `hammer2_pfsalloc()`), so an
      attachment value moves on every pass, while the stranded chain lives
      as long as the device structure. After a flush failure, ENOSPC
      among them, lever 2 is off on that device until it is mounted
