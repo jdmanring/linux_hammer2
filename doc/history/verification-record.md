@@ -21982,8 +21982,8 @@ reads the fix commit as its `source` with no `-dirty`,
 logs beside each series). Three commit messages were reworded after
 these runs, so the hashes this entry gives are the rewritten ones, each
 with the tree the run read, and the kept reports name the earlier ones
-(`p7-notes/reword/map.txt` and `p7-notes/reword4/map.txt` in the data
-tree map them, in that order).
+(`p7-notes/reword/map.txt`, `reword4/map.txt` and `reword5/map.txt` in
+the data tree map them, in that order).
 
 **The closing re-read at `6ee2b72`** (series `n10-20261103-195223` and
 `n10b-20261103-205107`; the n10b runs are at `6529c18`, one of them
@@ -22033,7 +22033,7 @@ That floor still passed two targets taken, one unprinted, beside a third
 that printed and then errored, since the snapshot body prints before its
 read-back; `d531677` counts only the taken targets preceded by their own
 print, each outcome line closing the print before it, and its selftest
-case reads 1 of 2 where the count of prints reads 2; since `04edd1d`
+case reads 1 of 2 where the count of prints reads 2; since `3c9baef`
 the selftest also compares `cluster-wire.sh`'s copy of the program with
 its own. Re-read that way
 from their kept klogs, the eighteen closing runs below that take a
@@ -22115,8 +22115,8 @@ and 61 refusal lines in B's klog; B's `pass.sh` then ended at the run's
 not run, and 17 of 44 checks fail, the digest and listing checks among
 them on values never read. Locally (`cluster-run-20261104-104337`, 59
 checks, 24 failed, run with `H2_RESUME_SECS=60`, `H2_RUN_TIMEOUT=1800`
-and `H2_FIXTURE_SHARE=1`, the resume settles shortened from their 900 and
-300 s defaults, since a refused pass waits each settle out): 0 inode updates for the 55-file set, 0 destroyed for
+and `H2_FIXTURE_SHARE=1`, the resume settles shortened from their 900 s
+default, since a refused pass waits each settle out): 0 inode updates for the 55-file set, 0 destroyed for
 5 deleted and 0 replaced for 5 rewritten, no snapshot listed, the slave
 unequal (60225 of 120227 fingerprint lines different), 149 refusal lines
 and no `syncsnap:` line; no warning or lockdep report (a debug kernel,
