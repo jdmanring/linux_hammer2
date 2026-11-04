@@ -1135,6 +1135,28 @@ as the comparison, and a reading names the build it ran on.
 `KERNEL_REF` and the floor do not move: the kernel of record is
 still 7.3.
 
+The TLS arms of `cluster-dmsg.sh` (`H2_DMSG_TLS=1`) and `cluster-wire.sh`
+(`H2_WIRE_TLS=1`) need `tlshd` on each guest, which no Artix package
+ships. Both guests carry ktls-utils 1.5.0 (GPL-2.0, tarball sha256
+`221631ac1c10578a9cd03c45ace5f73491688661486b90969634dcda6511ac69`,
+kept in the data tree) built on the guest with `./autogen.sh`,
+`./configure --prefix=/usr/local --sysconfdir=/etc`, `make` and `make
+install` against gnutls 3.8.13, keyutils 1.6.3, glib2 2.88.3 and libnl
+3.12.0, so `tlshd` is `/usr/local/sbin/tlshd` and pacman does not know
+it. It runs as the s6 longrun `tlshd-srv` (`tlshd -s`, after `modprobe
+nvme-keyring`) logging through `tlshd-log` to `/var/log/tlshd/current`,
+and `tlshd-log` depends on `mount-filesystems`, or its file is opened
+under the `/var/log` mount and every line is hidden.
+`/etc/tlshd/config` sets `[debug] loglevel=1`, without which `tlshd`
+writes no completion line for a check to read. The service files and
+the build's record are `p8-notes/tlshd-s6/` and
+`p8-notes/n9-ktls-guests.md` in the data tree. Each harness checks
+these on the guest and exits 2 on any missing: the handshake upcall
+in `/proc/kallsyms`, a `tlshd` whose parent is `s6-supervise`, the
+loglevel, the log file, `nvme-keyring` loading, `keyctl` and `tcpdump`
+(`cluster-dmsg.sh` also wants `od`, `cc` and the handshake tracepoint). Keys are made per run and go with it: the guest's keyrings
+do not outlive a boot.
+
 Read `stat -c %b` on the result as well as the checksum. `i_blocks` is the
 on-media count, so it says which branch of the read completion each file
 took, and a set of matching checksums proves nothing about which paths
