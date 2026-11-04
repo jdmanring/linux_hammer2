@@ -1145,8 +1145,9 @@ install` against gnutls 3.8.13, keyutils 1.6.3, glib2 2.88.3 and libnl
 3.12.0, so `tlshd` is `/usr/local/sbin/tlshd` and pacman does not know
 it. It runs as the s6 longrun `tlshd-srv` (`tlshd -s`, after `modprobe
 nvme-keyring`) logging through `tlshd-log` to `/var/log/tlshd/current`,
-and `tlshd-log` depends on `mount-filesystems`, or its file is opened
-under the `/var/log` mount and every line is hidden.
+and `tlshd-log` depends on `mount-filesystems`, or it opens its file on
+the root subvolume's `/var/log` before the `@log` mount covers it, and
+every line is hidden.
 `/etc/tlshd/config` sets `[debug] loglevel=1`, without which `tlshd`
 writes no completion line for a check to read. The service files and
 the build's record are `p8-notes/tlshd-s6/` and
@@ -1154,7 +1155,8 @@ the build's record are `p8-notes/tlshd-s6/` and
 these on the guest and exits 2 on any missing: the handshake upcall
 in `/proc/kallsyms`, a `tlshd` whose parent is `s6-supervise`, the
 loglevel, the log file, `nvme-keyring` loading, `keyctl` and `tcpdump`
-(`cluster-dmsg.sh` also wants `od`, `cc` and the handshake tracepoint). Keys are made per run and go with it: the guest's keyrings
+(`cluster-dmsg.sh` also wants `od`, `cc`, the TLS peer built against
+the guest's GnuTLS, and the handshake tracepoint). Keys are made per run and go with it: the guest's keyrings
 do not outlive a boot.
 
 Read `stat -c %b` on the result as well as the checksum. `i_blocks` is the
