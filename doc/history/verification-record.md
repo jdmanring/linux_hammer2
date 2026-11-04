@@ -21950,8 +21950,11 @@ kernel TLS P8's stage, describing the between-guests link as read on one
 `-tls` build where 1.0.80 read both, and listing none of what is not
 built; it now does, with the candidate above. The capabilities page,
 the user guide and the packaging notes needed no change. The kept sweep
-(`p7-notes/n9-7d-sweep.txt`) is a rerun on the corrected tree with
-"P8's TLS stage" added to the list, the phrase the first sweep lacked. The added prose read 0 em dashes,
+(`p7-notes/n9-7d-sweep-cff91e8.txt`, by `p7-notes/n9-7d-sweep.sh`) was
+run on the committed tree `cff91e8`, which the commit pinning this entry
+changes only here and in the changelog row, with "P8's TLS stage" added
+to the list, the phrase the first sweep lacked; its 18 hits name nothing
+stale. The earlier output, `n9-7d-sweep.txt`, read an uncommitted tree. The added prose read 0 em dashes,
 0 en dashes, 0 buzzwords and 0 empty signposts by the de-ai-prose
 scanner (`p7-notes/n9-7d-deai-scan.txt`), and `test-doc-prose.sh` read 0
 findings over 50 documents.
