@@ -21881,9 +21881,11 @@ entry's audit):
   is refused by the per-call tag and sequence `hammer2_rcall_reply()`
   checks, which the wire harness's `late` cell reads with
   `HAMMER2_NOCLIENTSEQ` as its control. A late closing frame that is not
-  a feed, kern_dmsg's `LNK_ERROR`, carries neither: once the new call
-  has read its first reply, it ends that call `ENOTCONN`, which counts
-  as no vote.
+  a feed, kern_dmsg's `LNK_ERROR`, carries neither, and ends the new
+  call `ENOTCONN`, which counts as no vote: as a `REPLY|DELETE` only once
+  that call has read its first reply, since `kdmsg_state_msgrx()`
+  refuses one on a state that has not, and as an immediate refusal,
+  which `kdmsg_msg_reply()` sends with `CREATE` set, at any point.
 - Message freshness now says what a late frame meets. A call that gives
   up sends its own `DELETE` (`hammer2_rcall_end()`) and keeps its state
   until the peer's. After the peer's, a mid-stream frame on that
