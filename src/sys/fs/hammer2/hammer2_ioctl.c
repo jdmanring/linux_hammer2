@@ -1140,6 +1140,18 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		hammer2_spin_ex(&pmp->blockset_spin);
 		wipdata->u.blockset = pmp->pfs_iroot_blocksets[clindex];
 		hammer2_spin_unex(&pmp->blockset_spin);
+		/*
+		 * XXX Linux: whether the slot copied is the element's root as
+		 * its last flush left it.  The chain is locked and this
+		 * transaction is a flush, so its blockset moves only by a
+		 * flush; a slot no flush refreshed makes a snapshot older
+		 * than the element it names.
+		 */
+		if (hammer2_debug & 0x8000)
+			kprintf("syncsnap: snapshot %s blockset %s\n", name,
+			    bcmp(&wipdata->u.blockset,
+			    &chain->data->ipdata.u.blockset,
+			    sizeof(wipdata->u.blockset)) ? "stale" : "equal");
 
 		KKASSERT(wipdata == &nchain->data->ipdata);
 

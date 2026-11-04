@@ -1403,6 +1403,11 @@ sleep 2
 echo "h2wire end of unload" > /dev/kmsg
 n=0; until grep -q 'h2wire end of unload' /tmp/h2wire.klog || [ $n -ge 50 ]; do sleep 0.1; n=$((n+1)); done
 echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
+# every snapshot this side took, by whether the root it copied was its
+# element's as last flushed (a power-cut guest's first boot is in its
+# precut klog, not counted here)
+echo "snap-blockset-equal $(kl | grep -c 'syncsnap: snapshot .* blockset equal')"
+echo "snap-blockset-stale $(kl | grep -c 'syncsnap: snapshot .* blockset stale')"
 # the connection device's balance of the blocks its frames carried, printed
 # at its free: copied must equal framed plus replaced plus dropped plus
 # diofreed plus devfreed, or a block was lost between two hands
@@ -2313,6 +2318,9 @@ for sd in A B; do
 	kw=$(num "$(val $sd kernel-warnings)" 1)
 	[ "$ROGATE" = control ] && [ "$sd" = B ] && kw=$((kw - $(num "$(val B conn-warnings)" 0)))
 	[ "$kw" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings) of which the connection device's refusals $(val $sd conn-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
+	be=$(num "$(val $sd snap-blockset-equal)" 0); bs=$(num "$(val $sd snap-blockset-stale)" 1)
+	bw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && bw=1	# B's pass takes a target, so its print must be read
+	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale)"
 	case "$CUT$sd" in masterA|slaveB) cw=2;; *) cw=1;; esac	# a power-cut guest loads twice, once per boot
 	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)

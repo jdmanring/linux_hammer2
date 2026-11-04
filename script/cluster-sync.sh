@@ -194,6 +194,8 @@ if [ "${1:-}" = "--selftest" ]; then
 	sample 'f|kept' '[ 1079.518307] syncsnap: target CL.h2sync-tgt kept'
 	# Built from the format: no kept run has printed it.
 	sample 'f' '[   80.134010] syncsnap: target CL.h2sync-tgt error 28'
+	sample 'f|equal' '[   80.120411] syncsnap: snapshot CL.h2sync-tgt blockset equal'
+	sample 'f|stale' '[ 2229.540120] syncsnap: snapshot CL.h2sync-tgt blockset stale'
 	sample 'f' '[   80.137678] syncsnap: pass clindex 0 src 1 tid 0000000000000757'
 	sample 'f' '[   80.265529] START_SCAN IP=cfe0d9759ca98001 chain=0000000000000000 (ffffffffffffffff) end ffffffffffffffff beg 0000000000000000'
 	sample 'f' '[   80.322416] filekeys n<0 0  n==0 0  n>0 7  acted 315 failed 0 last 0 kept 0 sweep 0 iters 316 exit 1 replaced 0 destroyed 0 rescan 0 feed_ms 126 first_ms 0 merge_ms 56 fifo 512'
@@ -248,6 +250,8 @@ if [ "${1:-}" = "--selftest" ]; then
 	pat g 'syncsnap: target .* taken' 1
 	pat g 'syncsnap: target .* kept' 1
 	pat g 'syncsnap: target .* error' 1
+	pat g 'syncsnap: snapshot .* blockset equal' 1
+	pat g 'syncsnap: snapshot .* blockset stale' 1
 	pat g 'syncsnap: pass clindex' 1
 	pat g 'filekeys' 1
 	pat s '^filekeys' 1
@@ -788,6 +792,8 @@ finish() {
 	echo "snap-target-taken $(klog 'syncsnap: target .* taken')"
 	echo "snap-target-kept $(klog 'syncsnap: target .* kept')"
 	echo "snap-target-errors $(klog 'syncsnap: target .* error')"
+	echo "snap-blockset-equal $(klog 'syncsnap: snapshot .* blockset equal')"
+	echo "snap-blockset-stale $(klog 'syncsnap: snapshot .* blockset stale')"
 	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
 	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
 	# 1a over the whole run: the root's stamps taken alone, and the scans
@@ -2103,6 +2109,13 @@ cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's
 # 2026-10-18: the final unmount held hammer2_mntlk while the thread's delete
 # tried for it, and CL.h2sync-src stayed on the master, read first as the
 # volume holding twice the inodes of its PFS.
+# A snapshot copies its element's root from pfs_iroot_blocksets[], a slot
+# only some flushes refresh; one that copied a slot older than the root's
+# last flush names blocks the element has since replaced. Read on every
+# snapshot the thread takes, at least one when the snapshot pass is on, so
+# a print that stopped matching cannot pass.
+be=$(val snap-blockset-equal); bs=$(val snap-blockset-stale); bw=0; [ "$H2SNAP" = 1 ] && bw=1
+[ "${bs:-1}" = 0 ] && [ $(( ${be:-0} + ${bs:-0} )) -ge $bw ]; check "every snapshot copies its element's root as last flushed" $? "equal ${be:-unread}, stale ${bs:-unread}"
 sm=$(cat "$W/snaps.$(basename "$MASTER")" 2>/dev/null); ss=$(cat "$W/snaps.$(basename "$SLAVE")" 2>/dev/null)
 [ "${sm:-1}" = 0 ] && [ "${ss:-1}" = 0 ]; check "no synchronization snapshot is left on either device" $? "master ${sm:-unread}, slave ${ss:-unread} .h2sync-* PFS root(s)"
 # A fingerprint difference is only attributable while the run's images exist:
