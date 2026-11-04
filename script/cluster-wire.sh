@@ -749,6 +749,9 @@ if [ "${1:-}" = more ]; then
 	ms=$(hammer2 -v show /dev/vdb 2>/dev/null)
 	echo "more-media-files $(printf '%s\n' "$ms" | grep -c 'filename "m[0-9]')"
 	echo "more-media-snaps $(printf '%s\n' "$ms" | grep -c 'filename "CL\.h2sync-')"
+	# which snapshot was counted, and when on this guest's klog clock
+	echo "more-media-snapnames $(printf '%s\n' "$ms" | grep -o 'filename "CL\.h2sync-[a-z]*' | sed 's/filename "//' | tr '\n' ' ')"
+	echo "more-media-uptime $(cut -d' ' -f1 /proc/uptime)"
 	echo "more-files $(find $C/more -type f | grep -c .)"
 	(cd $C && find ./more -type f | sort | xargs sha256sum) | sed 's/^\([0-9a-f]*\)  \(.*\)/sum \2 \1/'
 	exit 0
@@ -850,6 +853,9 @@ if [ "${1:-}" = more ]; then
 	ms=$(hammer2 -v show /dev/vdb 2>/dev/null)
 	echo "more-media-files $(printf '%s\n' "$ms" | grep -c 'filename "m[0-9]')"
 	echo "more-media-snaps $(printf '%s\n' "$ms" | grep -c 'filename "CL\.h2sync-')"
+	# which snapshot was counted, and when on this guest's klog clock
+	echo "more-media-snapnames $(printf '%s\n' "$ms" | grep -o 'filename "CL\.h2sync-[a-z]*' | sed 's/filename "//' | tr '\n' ' ')"
+	echo "more-media-uptime $(cut -d' ' -f1 /proc/uptime)"
 	n=0; until [ "$(klog 'syncsnap: remote delete .* error 00000000')" -gt "$d0" ] || [ $n -ge 120 ]; do sleep 1; n=$((n + 1)); done
 	echo "more-end-seconds $n"
 	echo "more-snap-deleted $(( $(klog 'syncsnap: remote delete .* error 00000000') - d0 ))"
