@@ -1534,16 +1534,29 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * once -- the same idiom readdir and scanlhc use, and it has no consumer in
  * this tree.  One scan answers what the loop asks block by block.
  *
- * Returns 0 and the first allocated key (in bytes, block-aligned) at or
- * after lbn*block, or ENOENT when nothing from there to the end of the file
- * is allocated.  The caller turns that into the SEEK_DATA/SEEK_HOLE answer.
+ * With step 0, returns 0 and the first allocated key (in bytes,
+ * block-aligned) at or after key_beg, or ENOENT when nothing from there to
+ * key_end is allocated: SEEK_DATA's question.  With a step, key_beg is a
+ * block boundary and the answer is the first boundary from it, advancing
+ * by step, at which no chain begins: SEEK_HOLE's.  That is one scan whose
+ * chains are collected until one starts past the boundary expected, and
+ * past key_end it is the boundary after the last block.  It was a scan
+ * from each boundary in turn, so a SEEK_HOLE through n blocks of data
+ * started n scans: 2.4 s on a 64 MiB dense file on h2release-7.3tls, a
+ * cost a writer pays too, since the seek holds i_rwsem.
+ *
+ * The scan feeds bref keys only.  HAMMER2_LOOKUP_ALWAYS resolved every
+ * fed chain's data, up to HAMMER2_XOPFIFO blocks ahead of the one the
+ * question needed; the position is in the bref, as the carried scans that
+ * want positions alone ask with HAMMER2_LOOKUP_NODATA.
  */
 static int
 hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
-    hammer2_key_t key_end, hammer2_key_t *keyp)
+    hammer2_key_t key_end, unsigned int step, hammer2_key_t *keyp)
 {
 	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_xop_scanall_t *sxop;
+	hammer2_key_t want = key_beg, key;
 	int error;
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
@@ -1551,11 +1564,27 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
 	sxop->key_beg = key_beg;
 	sxop->key_end = key_end;
 	sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED;
-	sxop->lookup_flags = HAMMER2_LOOKUP_ALWAYS | HAMMER2_LOOKUP_SHARED;
+	sxop->lookup_flags = HAMMER2_LOOKUP_NODATA | HAMMER2_LOOKUP_SHARED;
 	hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
-	error = hammer2_xop_collect(&sxop->head, 0);
-	if (error == 0)
-		*keyp = sxop->head.cluster.focus->bref.key;
+	for (;;) {
+		error = hammer2_xop_collect(&sxop->head, 0);
+		if (error != 0)
+			break;
+		key = sxop->head.cluster.focus->bref.key;
+		if (step == 0) {
+			*keyp = key;
+			break;
+		}
+		if (key > want)		/* the boundary expected is a hole */
+			break;
+		want = key + step;
+		if (want > key_end)
+			break;
+	}
+	if (step != 0 && (error == 0 || error == HAMMER2_ERROR_ENOENT)) {
+		*keyp = want;
+		error = 0;
+	}
 	error = hammer2_error_to_errno(error);
 	hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
@@ -1695,14 +1724,13 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 	 * further along than the boundary asked means the boundary itself is
 	 * a hole.
 	 */
-	pos = offset;
-	for (;;) {
-		loff_t base = pos & ~((loff_t)bsize - 1);
+	{
+		loff_t base = offset & ~((loff_t)bsize - 1);
 		hammer2_key_t got = 0;
 		int error;
 
 		error = hammer2_bmap_next_key(inode, (hammer2_key_t)base,
-		    (hammer2_key_t)isize - 1, &got);
+		    (hammer2_key_t)isize - 1, seek_data ? 0 : bsize, &got);
 		if (error != 0 && error != ENOENT)
 			return (-error);
 
@@ -1715,21 +1743,19 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 			 */
 			if (error == ENOENT)
 				return (-ENXIO);
-			return (got <= (hammer2_key_t)base ? pos : (loff_t)got);
+			return (got <= (hammer2_key_t)base ? offset :
+			    (loff_t)got);
 		}
 		/*
-		 * SEEK_HOLE.  A key at or after the boundary that is not the
-		 * boundary itself means the boundary is a hole.  A key at the
-		 * boundary means that block holds data, so the scan moves past
-		 * it.
+		 * SEEK_HOLE.  The first boundary from the offset's block at
+		 * which no chain begins; at the offset's own block that is
+		 * the offset, which stands in the hole, and from the end of
+		 * the last block on it is i_size.
 		 */
-		if (error == ENOENT)
-			return (max(base, offset));
-		if (got > (hammer2_key_t)base)
-			return (max(base, offset));
-		pos = base + bsize;
+		pos = (loff_t)got;
 		if (pos >= isize)
 			return (isize);
+		return (max(pos, offset));
 	}
 }
 

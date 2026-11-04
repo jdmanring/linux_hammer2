@@ -272,7 +272,7 @@
 4 please, no space before tabs
 244 please, no spaces at the start of a line
 86 quoted string split across lines
-392 return is not a function, parentheses are not required
+393 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)
