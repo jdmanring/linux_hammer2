@@ -1408,6 +1408,8 @@ echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
 # precut klog, not counted here)
 echo "snap-blockset-equal $(kl | grep -c 'syncsnap: snapshot .* blockset equal')"
 echo "snap-blockset-stale $(kl | grep -c 'syncsnap: snapshot .* blockset stale')"
+echo "snap-targets-taken $(kl | grep -c 'syncsnap: target .* taken')"
+echo "snap-target-prints $(kl | grep -cE 'syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)')"
 # the connection device's balance of the blocks its frames carried, printed
 # at its free: copied must equal framed plus replaced plus dropped plus
 # diofreed plus devfreed, or a block was lost between two hands
@@ -2319,8 +2321,11 @@ for sd in A B; do
 	[ "$ROGATE" = control ] && [ "$sd" = B ] && kw=$((kw - $(num "$(val B conn-warnings)" 0)))
 	[ "$kw" = 0 ] && [ "$(num "$(val $sd lockdep-saturated)" 1)" = 0 ] && [ "$(num "$(val $sd klog-alive)" 0)" = 1 ]; check "$sd: no kernel warning, lockdep or sanitizer report" $? "$(val $sd kernel-warnings) of which the connection device's refusals $(val $sd conn-warnings), lockdep table full $(val $sd lockdep-saturated), log stream alive $(val $sd klog-alive)"
 	be=$(num "$(val $sd snap-blockset-equal)" 0); bs=$(num "$(val $sd snap-blockset-stale)" 1)
-	bw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && bw=1	# B's pass takes a target, so its print must be read
-	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale)$( [ "$bw" = 0 ] && echo ', none required: this side runs without debug bit 0x8000 unless it is a slave under the pass')"
+	# B's pass prints once per target it takes, and the defect this reads
+	# shows only on a target after a link's first, so every target taken
+	# in the same log must have its own print, and the pass at least one
+	bw=0; tw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && { bw=1; tw=$(num "$(val B snap-targets-taken)" 1); }
+	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ] && [ "$(num "$(val $sd snap-target-prints)" 0)" -ge "$tw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale), targets taken $(val $sd snap-targets-taken) with $(val $sd snap-target-prints) printed$( [ "$bw" = 0 ] && echo ', none required: only the slave under the pass is held to a print')"
 	case "$CUT$sd" in masterA|slaveB) cw=2;; *) cw=1;; esac	# a power-cut guest loads twice, once per boot
 	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)
