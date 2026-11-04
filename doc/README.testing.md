@@ -770,7 +770,15 @@ bounds are one-sided, since `lseek(2)` lets a hole be reported as data and
 never the reverse. Eighteen more follow for P1 of the completion plan: one
 byte either side of a block boundary and on it, synced and not, a file
 shrunk into its first block and grown back, and a write through a shared
-mapping with no `msync()`, 35 checks in all. A bound taken from HAMMER2's
+mapping with no `msync()`. Later cases added a file small enough to live in
+the inode, compression, a concurrent writer and negative offsets, and at
+1.0.85 a position check after every `SEEK_DATA` and `SEEK_HOLE` probe: the
+position is set to a sentinel past every file first, must sit at the answer
+after a success, with one `read()` there matching `pread()`, and must still
+be the sentinel after `ENXIO`; a two-descriptor case follows. 112 checks in
+all on this port, 101 on `tmpfs` and `btrfs`, which skip compression; on
+the module before the position was set, 46 of the 112 failed, every one a
+position check. A bound taken from HAMMER2's
 64 KiB block failed on `tmpfs` and `btrfs`, which end data at their own
 4 KiB as `lseek(2)` allows, and was corrected to the contract before the
 first run on the port. SEEK_DATA and SEEK_HOLE are the
