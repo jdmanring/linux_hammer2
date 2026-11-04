@@ -676,7 +676,7 @@ The decision, split by which half the code is in:
   and lets the message reach the disk. Measured on 2026-09-05 with the
   debug build's `debug_hpanic` parameter, which fires it at mount: the
   mount process died with `SIGSEGV`, the kernel printed the message
-  and `kernel BUG at hammer2_vfsops.c:1664!` (a line of `dd0fdf2`'s
+  and `kernel BUG at hammer2_vfsops.c:1671!` (a line of `dd0fdf2`'s
   source, quoted as printed) with the site, the guest
   answered ssh afterwards, and the module stayed pinned with one
   reference, so `rmmod` refused and the guest needed a hard stop to

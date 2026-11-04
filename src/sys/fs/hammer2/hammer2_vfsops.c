@@ -231,6 +231,13 @@ unsigned int hammer2_link_hold_ms;
 module_param_named(link_hold_ms, hammer2_link_hold_ms, uint, 0644);
 unsigned int hammer2_volconf_hold_ms;
 module_param_named(volconf_hold_ms, hammer2_volconf_hold_ms, uint, 0644);
+/*
+ * XXX Linux: a hold in SEEK_DATA/SEEK_HOLE after i_size is read, so a
+ * truncate can be aimed inside the seek.  Debug build only; zero holds
+ * nothing.
+ */
+unsigned int hammer2_seek_hold_ms;
+module_param_named(seek_hold_ms, hammer2_seek_hold_ms, uint, 0644);
 static int hammer2_debug_syncs;
 /*
  * XXX Linux: the freemap allocator refuses every allocation past this

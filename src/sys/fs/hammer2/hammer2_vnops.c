@@ -1618,6 +1618,14 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 	 */
 	if (offset < 0 || offset >= isize)
 		return (-ENXIO);
+#if defined(HAMMER2_LOCKDEBUG)
+	/* Linux: the seek's race control; i_size is read, the scan not begun. */
+	if (READ_ONCE(hammer2_seek_hold_ms)) {
+		pr_info_once("hammer2: seek held\n");
+		schedule_timeout_uninterruptible(
+		    msecs_to_jiffies(READ_ONCE(hammer2_seek_hold_ms)));
+	}
+#endif
 
 	/*
 	 * The blockref tree is the only record the scan below reads, and a

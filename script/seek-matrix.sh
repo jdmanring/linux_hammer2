@@ -27,6 +27,27 @@
 #             shape's three, because a first file costing one block makes
 #             the rule pass without the sharing being measured.
 #
+# Two modes replace the three cases and stop no guest:
+#
+#   H2_SEEK_RACE=1  a truncate aimed inside a held SEEK_HOLE (seekprobe
+#                   race). The module is built with HAMMER2_LOCKDEBUG=1
+#                   and seek_hold_ms=300 holds the seek after it reads
+#                   i_size. The line says whether the truncate returned
+#                   inside the seek or after it, and the answer; the
+#                   check is only that the hold ran (its klog line, and
+#                   the seek taking 250 ms or more), since the answer is
+#                   the reading. H2_SEEK_RACE_WANT=inside|after makes
+#                   the ordering a check.
+#   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense
+#                   and dirty, each H2_REPEAT times (5 by default) on a
+#                   file made once per repeat; raw lines and medians,
+#                   checked only for right answers. A rate, so run it on
+#                   h2release-7.3tls.
+#
+# H2_KO loads a module built elsewhere instead of building one. H2_REPEAT
+# repeats the race too (1 by default); the three cases ignore it, so it is
+# refused there.
+#
 # Exit 2 without the guest, newfs_hammer2 or a kernel tree, never 1.
 set -u
 cd "$(dirname "$0")/.." || exit 2
@@ -39,14 +60,33 @@ KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2}
 FSCK=${H2_FSCK:-$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2}
 KO=src/sys/fs/hammer2/hammer2.ko
+RACE=${H2_SEEK_RACE:-0}
+TIME=${H2_SEEK_TIME:-0}
+case "$RACE$TIME" in
+00) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE=1 or H2_SEEK_TIME=1" >&2; exit 2; } ;;
+10|01) ;;
+*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE and H2_SEEK_TIME are 0 or 1, one at a time" >&2; exit 2 ;;
+esac
+REPEAT=${H2_REPEAT:-$([ "$TIME" = 1 ] && echo 5 || echo 1)}
+case "$REPEAT" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT=$REPEAT is not a count" >&2; exit 2 ;; esac
+WANT=${H2_SEEK_RACE_WANT:-}
+case "$WANT" in ''|inside|after) ;; *) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE_WANT is inside or after" >&2; exit 2 ;; esac
 
 [ -x "$NEWFS" ] || { echo "seek-matrix: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "seek-matrix: COULD-NOT-RUN: no fsck_hammer2 at $FSCK" >&2; exit 2; }
 [ -d "$FIXDIR" ] || { echo "seek-matrix: COULD-NOT-RUN: no $FIXDIR" >&2; exit 2; }
 [ -f "$KDIR/Makefile" ] || { echo "seek-matrix: COULD-NOT-RUN: KDIR=$KDIR is not a kernel tree" >&2; exit 2; }
 command -v virsh >/dev/null 2>&1 || { echo "seek-matrix: COULD-NOT-RUN: no virsh" >&2; exit 2; }
-make KDIR="$KDIR" >/dev/null 2>&1 || { echo "seek-matrix: FAIL: the module does not build against $KDIR"; exit 1; }
+if [ -n "${H2_KO:-}" ]; then
+	[ -f "$H2_KO" ] || { echo "seek-matrix: COULD-NOT-RUN: no module at H2_KO=$H2_KO" >&2; exit 2; }
+	KO=$H2_KO
+elif [ "$RACE" = 1 ]; then
+	HAMMER2_LOCKDEBUG=1 make KDIR="$KDIR" >/dev/null 2>&1 || { echo "seek-matrix: FAIL: the module does not build against $KDIR"; exit 1; }
+else
+	make KDIR="$KDIR" >/dev/null 2>&1 || { echo "seek-matrix: FAIL: the module does not build against $KDIR"; exit 1; }
+fi
 [ -f "$KO" ] || { echo "seek-matrix: FAIL: $KO was not produced"; exit 1; }
+echo "  module $KO sha256 $(sha256sum "$KO" | cut -c1-16) head $(git rev-parse --short HEAD) src-dirty $(git status --porcelain -- src | wc -l)"
 cc -static -O2 -o /tmp/h2seekprobe.$$ test/hammer2-seekprobe.c 2>/dev/null || {
 	echo "seek-matrix: COULD-NOT-RUN: the seek probe did not compile" >&2; exit 2; }
 trap 'rm -f /tmp/h2seekprobe.$$' EXIT
@@ -82,6 +122,79 @@ detach
 attach || { echo "seek-matrix: COULD-NOT-RUN: could not attach $IMG" >&2; exit 2; }
 scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" && scp -q /tmp/h2seekprobe.$$ "$GUEST_SSH:/tmp/h2seekprobe" || {
 	detach; echo "seek-matrix: COULD-NOT-RUN: copy to the guest failed" >&2; exit 2; }
+
+# The two modes: one mounted volume, no stop, then the verdict and exit.
+mode_open='
+dmesg -C
+insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
+mkdir -p /mnt/sm
+mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP mount failed"; exit 0; }
+'
+mode_close='
+umount /mnt/sm; echo "umount exit $?"
+rmmod hammer2; echo "rmmod exit $?"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+echo "debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null)"
+'
+race_body='
+K=/sys/module/hammer2/parameters/seek_hold_ms
+[ -e $K ] || { echo "SETUP knob failed: no seek_hold_ms, the module was built without HAMMER2_LOCKDEBUG"; umount /mnt/sm; rmmod hammer2; exit 0; }
+echo 300 > $K
+i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe race /mnt/sm/race; rm -f /mnt/sm/race; i=$((i + 1)); done
+echo 0 > $K
+echo "held $(dmesg | grep -c "hammer2: seek held")"
+'
+time_body='
+for k in sparse dense dirty; do
+	case $k in dense) n=1000 ;; *) n=100 ;; esac
+	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $n; i=$((i + 1)); done
+done
+'
+if [ "$RACE$TIME" != 00 ]; then
+	if [ "$RACE" = 1 ]; then body=$race_body; else body=$time_body; fi
+	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; $mode_open $body $mode_close" 2>&1)
+	printf '%s\n' "$out" | command grep -v '^seekm-time [a-z]* [0-9]* ' | sed 's/^/  /'
+	detach
+	"$FSCK" "$IMG" >/dev/null 2>&1; fsck_rc=$?
+	fail=0
+	case $out in *SETUP*failed*) echo "  FAIL  $(printf '%s\n' "$out" | command grep -m1 'SETUP.*failed')"; fail=$((fail + 1)) ;; esac
+	for want in "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0$" "^debug_locks 1$"; do
+		printf '%s\n' "$out" | command grep -q "$want" || {
+			echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
+	done
+	bad=$(printf '%s\n' "$out" | command grep -c '^seekm-fail')
+	[ "$bad" -eq 0 ] || { echo "  FAIL  $bad seekm-fail line(s)"; fail=$((fail + 1)); }
+	if [ "$RACE" = 1 ]; then
+		lines=$(printf '%s\n' "$out" | command grep '^seekm-race ')
+		n=$(printf '%s\n' "$lines" | command grep -c '^seekm-race ')
+		[ "$n" -eq "$REPEAT" ] || { echo "  FAIL  $n race line(s) for $REPEAT run(s)"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | command grep -q '^held 1$' || {
+			echo "  FAIL  the seek hold did not print once, so nothing held"; fail=$((fail + 1)); }
+		short=$(printf '%s\n' "$lines" | awk '$5 < 250' | wc -l)
+		[ "$short" -eq 0 ] || { echo "  FAIL  $short seek(s) returned under 250 ms, so the hold did not run in them"; fail=$((fail + 1)); }
+		if [ -n "$WANT" ]; then
+			off=$(printf '%s\n' "$lines" | awk -v w="$WANT" '$9 != w' | wc -l)
+			[ "$off" -eq 0 ] || { echo "  FAIL  $off of $n truncate(s) not $WANT the seek"; fail=$((fail + 1)); }
+		fi
+		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+	else
+		for k in sparse dense dirty; do
+			m=$(printf '%s\n' "$out" | sed -n "s/^seekm-time $k median-ns \([0-9]*\) n .*/\1/p")
+			c=$(printf '%s\n' "$m" | command grep -c .)
+			[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c $k median(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
+			echo "  time $k median-ns per repeat: $(printf '%s\n' "$m" | tr '\n' ' ')median of medians $(printf '%s\n' "$m" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')"
+		done
+		raw=$(printf '%s\n' "$out" | command grep -c '^seekm-time [a-z]* [0-9]* ')
+		echo "  time: $raw raw seek line(s) kept below"
+		printf '%s\n' "$out" | command grep '^seekm-time [a-z]* [0-9]* ' | sed 's/^/  raw /'
+	fi
+	[ "$fsck_rc" -eq 0 ] && echo "  ok    fsck_hammer2 clean" || {
+		echo "  FAIL  fsck_hammer2 exit $fsck_rc"; fail=$((fail + 1)); }
+	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || echo time), $REPEAT repeat(s), $fail failure(s)"
+	rm -f "$IMG"
+	[ "$fail" -eq 0 ]
+	exit
+fi
 
 # Phase one, on the running guest: snapshot and dedup, then the crash
 # setup ending in the write the hard stop interrupts. Every line the

@@ -24,6 +24,10 @@
  *                                             any prefix of the shape:
  *                                             no range SEEK_HOLE calls a
  *                                             hole may read back nonzero
+ *     hammer2-seekprobe race <path>           a truncate against a held
+ *                                             seek, see race()
+ *     hammer2-seekprobe time <path> <kind> <n>  n timed seeks, see
+ *                                             timing()
  *
  * The shape and bounds are hammer2-seek.c's, so the two answer to one
  * contract: one 64 KiB block of 'A', one of hole, one of 'A', and a
@@ -35,10 +39,13 @@
  * because the script counts it from inside a quoted ssh command.
  */
 #define _GNU_SOURCE
+#include <sys/mman.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define BSIZE	65536L
@@ -242,6 +249,164 @@ dedup(const char *path, long n)
 	return (0);
 }
 
+static long
+now_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (ts.tv_sec * 1000000000L + ts.tv_nsec);
+}
+
+/*
+ * A truncate against a held seek.  Blocks 0 and 1 data, 2 a hole, 3 data,
+ * synced.  The module's seek_hold_ms (a HAMMER2_LOCKDEBUG build) holds the
+ * SEEK_HOLE at 0 after it reads i_size; a child truncates the file to half
+ * a block 50 ms in.  A seek that holds the inode lock keeps the truncate
+ * out until it returns, and answers the file as it was, the hole at block
+ * 2; one that does not lets the truncate land inside it.  The line says
+ * which, with both return times from the seek's start, and the size the
+ * file has after both.
+ */
+static int
+race(const char *path)
+{
+	volatile long *tt;
+	char *buf = malloc(BSIZE);
+	long t0, t1;
+	off_t got;
+	pid_t pid;
+	int fd, st;
+
+	tt = mmap(NULL, sizeof(*tt), PROT_READ | PROT_WRITE,
+	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	if (buf == NULL || tt == MAP_FAILED ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0) {
+		printf("seekm-fail race: the file could not be built\n");
+		return (1);
+	}
+	fill(buf, 0);
+	if (pwrite(fd, buf, BSIZE, 0) != BSIZE ||
+	    pwrite(fd, buf, BSIZE, BSIZE) != BSIZE ||
+	    pwrite(fd, buf, BSIZE, 3 * BSIZE) != BSIZE || fsync(fd) != 0) {
+		printf("seekm-fail race: the file could not be built\n");
+		return (1);
+	}
+	*tt = 0;
+	t0 = now_ns();
+	if ((pid = fork()) == 0) {
+		int fd2 = open(path, O_RDWR);
+
+		usleep(50000);
+		if (fd2 < 0 || ftruncate(fd2, BSIZE / 2) != 0)
+			_exit(1);
+		*tt = now_ns();
+		_exit(0);
+	}
+	got = lseek(fd, 0, SEEK_HOLE);
+	t1 = now_ns();
+	waitpid(pid, &st, 0);
+	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || *tt == 0) {
+		printf("seekm-fail race: the truncate failed\n");
+		return (1);
+	}
+	printf("seekm-race answer %ld seek-ms %ld truncate-ms %ld truncate %s "
+	    "size-after %ld\n", (long)got, (t1 - t0) / 1000000,
+	    (*tt - t0) / 1000000, *tt < t1 ? "inside" : "after",
+	    (long)lseek(fd, 0, SEEK_END));
+	close(fd);
+	free(buf);
+	return (0);
+}
+
+static int
+cmp_long(const void *a, const void *b)
+{
+	long x = *(const long *)a, y = *(const long *)b;
+
+	return (x < y ? -1 : x > y);
+}
+
+/*
+ * The cost of a seek, n times on one file made once and read once
+ * beforehand, so the first timed seek finds the tree in memory.
+ *   sparse  1 GiB, all hole but the last block, SEEK_DATA at 0
+ *   dense   64 MiB of data, SEEK_DATA and SEEK_HOLE in turn at offsets
+ *           from a fixed sequence
+ *   dirty   the dense file, one byte written at a block from that
+ *           sequence before each SEEK_DATA at 0, so each seek writes back
+ * Every answer is checked; one line per seek, then the median.
+ */
+#define DENSE	(64L << 20)
+
+static int
+timing(const char *path, const char *kind, long n)
+{
+	unsigned int seed = 4242;
+	long *ns, i, size;
+	char *buf = malloc(BSIZE);
+	int fd, k;
+
+	k = strcmp(kind, "sparse") == 0 ? 0 : strcmp(kind, "dense") == 0 ? 1 :
+	    strcmp(kind, "dirty") == 0 ? 2 : -1;
+	if (k < 0 || n < 1 || buf == NULL || (ns = calloc(n, sizeof(*ns))) ==
+	    NULL)
+		return (2);
+	size = k == 0 ? (1L << 30) : DENSE;
+	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
+		return (2);
+	fill(buf, 1);
+	if (k == 0) {
+		if (ftruncate(fd, size) != 0 ||
+		    pwrite(fd, buf, BSIZE, size - BSIZE) != BSIZE)
+			return (2);
+	} else {
+		for (i = 0; i < size; i += BSIZE)
+			if (pwrite(fd, buf, BSIZE, i) != BSIZE)
+				return (2);
+	}
+	if (fsync(fd) != 0)
+		return (2);
+	lseek(fd, 0, SEEK_DATA);
+	lseek(fd, 0, SEEK_HOLE);
+	for (i = 0; i < n; i++) {
+		long off, t0, want;
+		off_t got;
+		int whence = SEEK_DATA;
+
+		seed = seed * 1103515245u + 12345u;
+		off = (long)(seed >> 8) % size;
+		if (k == 0) {
+			off = 0;
+			want = size - BSIZE;
+		} else if (k == 1) {
+			whence = (i & 1) ? SEEK_HOLE : SEEK_DATA;
+			want = whence == SEEK_HOLE ? size : off;
+		} else {
+			if (pwrite(fd, "D", 1, off & ~(BSIZE - 1)) != 1)
+				return (2);
+			off = 0;
+			want = 0;
+		}
+		t0 = now_ns();
+		got = lseek(fd, off, whence);
+		ns[i] = now_ns() - t0;
+		if (got != (off_t)want) {
+			printf("seekm-fail time %s %ld: got %ld, want %ld\n", kind,
+			    i, (long)got, want);
+			fails++;
+		}
+		printf("seekm-time %s %ld %ld\n", kind, i, ns[i]);
+	}
+	qsort(ns, n, sizeof(*ns), cmp_long);
+	printf("seekm-time %s median-ns %ld n %ld\n", kind, ns[n / 2], n);
+	close(fd);
+	unlink(path);
+	free(ns);
+	free(buf);
+	return (fails ? 1 : 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -256,8 +421,13 @@ main(int argc, char **argv)
 		return (check(argv[2], argv[3]));
 	if (argc == 4 && strcmp(argv[1], "agree") == 0)
 		return (agree(argv[2], argv[3]));
+	if (argc == 3 && strcmp(argv[1], "race") == 0)
+		return (race(argv[2]));
+	if (argc == 5 && strcmp(argv[1], "time") == 0)
+		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what>\n",
+	    "check|agree <path> <what> | race <path> | "
+	    "time <path> sparse|dense|dirty <n>\n",
 	    argv[0]);
 	return (2);
 }
