@@ -21930,12 +21930,12 @@ made stale (the list is in the kept output) over the joined prose of the
 the README opener, the status opener, the roadmap's state section and
 the operator pages were reread. It found:
 - `doc/CAPABILITIES_MATRIX.md`'s Mount a PFS row named four of the five
-  TLS mount options, missing `cluster_tls_clid` (`29e7faa`), the
+  TLS mount options, missing `cluster_tls_clid` (`10d11c8`), the
   sibling of the packaging notes' omission `c784683` fixed;
 - `doc/README.status.md`'s sentence under the `XXX` table summed to 691
   where the table's column, which the inventory gate checks, reads 709,
   with six files' shares behind; it is rebuilt from the column
-  (`1631b89`).
+  (`054101c`).
 The audit of this entry found `doc/STATUS_SNAPSHOT.md` still calling
 kernel TLS P8's stage, describing the between-guests link as read on one
 `-tls` build where 1.0.80 read both, and listing none of what is not
