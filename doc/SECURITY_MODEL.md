@@ -101,7 +101,7 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   host is configured to dial. No kernel reads that message, but
   DragonFly's `hammer2 service` dials each row it receives. A PFS with a
   remote master mounts read-only.
-- **TLS, in progress**: an intake can ask for a PSK handshake through
+- **TLS, with a pre-shared key**: an intake can ask for a PSK handshake through
   the kernel's handshake upcall (`cluster_tls=psk`, or `RECLUSTER`'s TLS
   inputs), with `tlshd` holding the keys and the kernel only their
   serials, and a server intake then admits only a peer whose key serial
@@ -117,7 +117,8 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   same TLS inputs, and `script/cluster-wire.sh H2_WIRE_TLS=1` runs that
   link through a relay that copies bytes, read on `h2debug-7.3tls` at
   1.0.78 (37 checks with 0 failed, run `wire-run-20261102-221701`, kept
-  under `p7-notes/n9-5-wire-20261102-214846/` in the data tree); the two-host synchronization pass over TLS was read at 1.0.80. Each key an intake
+  under `p7-notes/n9-5-wire-20261102-214846/` in the data tree); the two-host synchronization pass over TLS was read at 1.0.80 on both
+  `-tls` kernels (`wire-run-20261103-111156` and `-113404`). Each key an intake
   admits is bound to the cluster ids the intake names for it
   (`RECLUSTER`'s key and cluster-id pairs, or `cluster_tls_clid=` after
   its `cluster_tls_key=` on the mount path); an intake naming a serial
@@ -135,7 +136,11 @@ scan. `test-fixtures.sh` reads the refusal as an unprivileged user.
   removing the cluster's row stops its service at the next request, at
   the cost of every peer of that cluster. The
   `cluster_tls_required` module parameter (0 by default) refuses a
-  plaintext intake when set to 1. The rest is P8's TLS stage.
+  plaintext intake when set to 1. Not built: x509 certificates, deferred
+  in `doc/CLUSTER_PROTOCOL_DESIGN.md`'s TLS section with their trigger;
+  `link_verifier`, the per-connection value its security table designs
+  against a frame replayed onto another connection; revoking a live link
+  without an unmount; and a rekey, so a KeyUpdate ends the link.
 
 ## Not read here
 
