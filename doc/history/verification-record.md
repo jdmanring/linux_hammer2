@@ -21982,7 +21982,8 @@ reads the fix commit as its `source` with no `-dirty`,
 logs beside each series). Three commit messages were reworded after
 these runs, so the hashes this entry gives are the rewritten ones, each
 with the tree the run read, and the kept reports name the earlier ones
-(`p7-notes/reword/map.txt` in the data tree maps them).
+(`p7-notes/reword/map.txt` and `p7-notes/reword4/map.txt` in the data
+tree map them, in that order).
 
 **The closing re-read at `6ee2b72`** (series `n10-20261103-195223` and
 `n10b-20261103-205107`; the n10b runs are at `6529c18`, one of them
@@ -22025,19 +22026,21 @@ compares the slot it copies with the element's root chain and prints
 and `cluster-wire.sh` count both and fail on any stale; on the wire only
 the slave under the pass is held to a print, though the master also runs
 with the bit after a restart and prints there; `ba50f85` first gave the
-wrong reason in the check's detail, and `dccde87` corrects it and requires
+wrong reason in the check's detail, and `9c6eca8` corrects it and requires
 a target print for every target taken in the same log, since the defect
 shows only on a target after a link's first and one print cannot tell.
 That floor still passed two targets taken, one unprinted, beside a third
 that printed and then errored, since the snapshot body prints before its
-read-back; `c041d62` counts only the taken targets preceded by their own
+read-back; `d531677` counts only the taken targets preceded by their own
 print, each outcome line closing the print before it, and its selftest
-case reads 1 of 2 where the count of prints reads 2. Re-read that way
+case reads 1 of 2 where the count of prints reads 2; since `04edd1d`
+the selftest also compares `cluster-wire.sh`'s copy of the program with
+its own. Re-read that way
 from their kept klogs, the eighteen closing runs below that take a
 target have every taken target paired (`p7-notes/n10-pairing-reread.txt`
 in the data tree). Its
 selftest samples join `cluster-sync.sh --selftest` (51 samples, 62
-patterns, 0 failures at `802dedf`; 63 patterns since `dccde87` counts the
+patterns, 0 failures at `802dedf`; 63 patterns since `9c6eca8` counts the
 target prints). Read on the unfixed tree, series
 `n10c-20261103-215126` on debug: the wire pass B equal 1, stale 1, the
 first target equal at 132.27 and the second stale at 158.88
@@ -22101,7 +22104,7 @@ the rerun uses 155 as 1.0.82 did):
 
 Series `n10h-20261104-093711` and `n10k-20261104-104227`, the
 convergence control (`p7-notes/n10-nopass-expected.md`): `ctl/n10-nopass`,
-`03e0c74`'s tree with one edit marked `CONTROL n10 nopass`, the pass
+`87fe61f`'s tree with one edit marked `CONTROL n10 nopass`, the pass
 dispatch in `hammer2_synchro.c` always taking the refusal branch, built
 against `linux-7.3-tls` as module sha256 `babeb8b49436468d`, loaded on B
 over the wire and on the one guest locally, on `h2debug-7.3tls`. On two
@@ -22111,15 +22114,18 @@ and 61 refusal lines in B's klog; B's `pass.sh` then ended at the run's
 300 s bound (`rc=124`, said in the run log), so the phases after it did
 not run, and 17 of 44 checks fail, the digest and listing checks among
 them on values never read. Locally (`cluster-run-20261104-104337`, 59
-checks, 24 failed): 0 inode updates for the 55-file set, 0 destroyed for
+checks, 24 failed, run with `H2_RESUME_SECS=60`, `H2_RUN_TIMEOUT=1800`
+and `H2_FIXTURE_SHARE=1`, the resume settles shortened from their 900 and
+300 s defaults, since a refused pass waits each settle out): 0 inode updates for the 55-file set, 0 destroyed for
 5 deleted and 0 replaced for 5 rewritten, no snapshot listed, the slave
 unequal (60225 of 120227 fingerprint lines different), 149 refusal lines
-and no `syncsnap:` line; no warning, lockdep, KASAN or UBSAN report, and
-kmemleak empty. Three earlier local attempts ran past the run's bound,
+and no `syncsnap:` line; no warning or lockdep report (a debug kernel,
+whose module carries no KASAN or UBSAN instrumentation), and kmemleak
+empty. Three earlier local attempts ran past the run's bound,
 twice at 600 s and once at 1800 s, each with the guest polling and no
 fault line in its kept klog; the third, read live, sat in the stop-depth
 wait, whose bound counted 50 ms polls as milliseconds (240000 of them,
-12000 s), fixed at `57bc8c4`, and the fourth run's wait ended at its
+12000 s), fixed at `a49adb1`, and the fourth run's wait ended at its
 240 s. These replace the controls an earlier version of this entry
 named for the two convergence criteria: 1.0.68's narrowing control
 reads a narrowed pass, not convergence, and the master cut's five-file
@@ -22171,7 +22177,7 @@ two guests through `h2loop`.
 The 1.0.80 TLS runs were on the source before this entry's fix, and
 each took two targets, the shape the unfixed tree read stale, so the
 pass over TLS was read again (series `n10f-20261104-090358`, harness at
-`dccde87`): `H2_WIRE_PASS=1 H2_WIRE_TLS=1`, 49 checks and 0 failed on
+`9c6eca8`): `H2_WIRE_PASS=1 H2_WIRE_TLS=1`, 49 checks and 0 failed on
 `h2debug-7.3tls` (the expected note predicted 48, one more than 1.0.80's
 47; the blockset check is per side, A's and B's, so it adds two;
 `wire-run-20261104-090616`, module sha256
@@ -22179,7 +22185,7 @@ pass over TLS was read again (series `n10f-20261104-090358`, harness at
 `ef6f3d78dd5308be`), each with B's 2 targets taken and 2 printed equal,
 no dmsg header in either guest's capture, 310 of 310 digests equal, and
 on KASAN no sanitizer report and kmemleak empty. Those are the n10d
-modules' hashes: `0b02f25` changes only comments in `src/`, keeping its
+modules' hashes: `ac5268a` changes only comments in `src/`, keeping its
 line numbers, and the module built from it is byte-identical; the run
 headers read `-dirty` from document edits outside `src/`. A debug master
 cut in the same series reads 45 checks and 0 failed under the floor, 2
