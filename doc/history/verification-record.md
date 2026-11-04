@@ -21877,20 +21877,28 @@ entry's audit):
   state's address and is reused once the state is freed. kern_dmsg
   keeps a state in its tree until both sides have sent `DELETE`,
   removing it at the second, in `kdmsg_state_msgrx()` for the peer's
-  and `kdmsg_state_cleanuptx()` for its own. After a reuse, a late frame
+  and `kdmsg_state_cleanuptx()` for its own. After a reuse, a late feed
   is refused by the per-call tag and sequence `hammer2_rcall_reply()`
   checks, which the wire harness's `late` cell reads with
-  `HAMMER2_NOCLIENTSEQ` as its control.
+  `HAMMER2_NOCLIENTSEQ` as its control. A late closing frame that is not
+  a feed, kern_dmsg's `LNK_ERROR`, carries neither: once the new call
+  has read its first reply, it ends that call `ENOTCONN`, which counts
+  as no vote.
 - Message freshness now says what a late frame meets. A call that gives
   up sends its own `DELETE` (`hammer2_rcall_end()`) and keeps its state
   until the peer's. After the peer's, a mid-stream frame on that
   `msgid` reaches state0 and `hammer2_remote_rcvmsg()` drops it as a
-  reply, and a closing frame ends the connection, since
-  `kdmsg_state_msgrx()` answers a `REPLY|DELETE` for no state `EINVAL`.
-  The closed-call test covers the other order, the peer's `DELETE` read
-  before the client's own leaves the writer. The row's first version
-  said a frame after the `DELETE` ends the link at that test, which
-  holds only in that order.
+  reply, and a closing frame is dropped too: `kdmsg_state_msgrx()`
+  answers a `REPLY|DELETE` for no state `EINVAL`, but the reader calls
+  `kdmsg_msg_receive_handling()` and reads the next frame without
+  testing that status (`kern_dmsg.c:459`), as upstream's reader does,
+  so the link stays up. The closed-call test covers the other order,
+  the peer's `DELETE` read before the client's own leaves the writer.
+  The row's first version said a frame after the `DELETE` ends the link
+  at that test, which holds only in that order; its second said a late
+  closing frame ends the connection, read from `kdmsg_state_msgrx()`
+  without the reader loop that calls it, which the audit's second round
+  traced.
 - A candidate the freshness row now names, read from the code and not
   driven: a peer that answers pings and never closes a call the client
   gave up on leaves that call's state held until the link ends, and no
@@ -21907,7 +21915,8 @@ entry's audit):
   a failed intake leaving the old, possibly broader, binding running is
   added to the revocation row; the `VOLCONF` rows a plaintext link sends
   to the encrypted-transport row; and a new row gives the mount lock a
-  peer's request holds until it is answered.
+  peer's request holds until it is answered, and what waits on it,
+  bulkfree and the synchronization pass among them.
 
 `doc/SECURITY_MODEL.md` (`1de7566`) headed its TLS bullet "in progress"
 and ended by calling the rest P8's TLS stage. The bullet now names the
