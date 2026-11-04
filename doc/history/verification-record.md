@@ -21960,3 +21960,159 @@ stale. The earlier output, `n9-7d-sweep.txt`, read an uncommitted tree. The adde
 0 en dashes, 0 buzzwords and 0 empty signposts by the de-ai-prose
 scanner (`p7-notes/n9-7d-deai-scan.txt`), and `test-doc-prose.sh` read 0
 findings over 50 documents.
+
+## P7's closure, and the slave's blockset slot the closing re-read found stale, 2026-11-04
+
+What this entry claims: P7's five criteria and its pass over kernel TLS
+each have a run locally and on two hosts with a control, mapped below;
+the closing re-read found one defect on the wire, the slave's blockset
+slot left stale by the synchronization thread's own flush (track R's R6),
+fixed at `25920b5`; and two candidates read from the code and not driven.
+Expected readings were written before each series (`p7-notes/n10-expected.md`,
+`n10-r6-expected.md` and `n10-r6-fixed-expected.md` in the data tree). Every
+run was on `h2debug-7.3tls` or `h2kasan-7.3tls` from a frozen copy of its
+harness, one job at a time, QEMU cores 0 before and after each (the wrapper
+logs beside each series).
+
+**The closing re-read at `6ee2b72`** (series `n10-20261103-195223` and
+`n10b-20261103-205107`). The local default, crash shape and control and
+the wire slave cut passed on both kernels: default 58 checks and 0 failed
+(`cluster-run-20261103-195421`, `-205957`), crash 47 and 0
+(`-200133`, `-211454`), `H2_SYNC_SNAPSHOT=0` 47 and 0 on debug
+(`-201019`), slave cut 42 and 0 (`wire-run-20261103-202200`, `-213839`).
+The wire master cut failed one check in 2 of 4 runs, "five files written
+on the master after the resumed pass reach the slave by a later pass"
+(`wire-run-20261103-201833` on debug, passing in `-205130` and
+`-205505`; `-213226` on KASAN). The harness at `6529c18` names the
+snapshots and the uptime of each media read. In `-213226` B's media read
+fell at 2232.86 inside the life of a target taken at 2229.54 and deleted
+at 2233.23, and that target did not hold the five files the slave's
+element already held.
+
+**The defect.** A snapshot copies `pmp->pfs_iroot_blocksets[clindex]`
+(`hammer2_ioctl.c`, the snapshot body). A frontend inode flush of the PFS
+root refreshes the slot (`hammer2_flush.c:1175`), and the thread's read
+refreshes a remote master's (`hammer2_synchro.c`, the focus read), but
+`hammer2_sync_flush()` wrote the slave and left its slot alone. Over the
+wire nothing but the thread writes the slave, so every target after the
+first named the slave as of its registration or its last frontend flush.
+The "target is the slave before the pass" the P7 row promises held only
+for the first target of a link, and a bulkfree between that flush and a
+later snapshot could free blocks the stale blockset names (not driven).
+
+**The instrument** (`802dedf`). Under debug bit 0x8000 the snapshot body
+compares the slot it copies with the element's root chain and prints
+`syncsnap: snapshot <name> blockset equal` or `stale`. `cluster-sync.sh`
+and `cluster-wire.sh` count both and fail on any stale; on the wire a
+side requires a print only as the slave under the pass (`ba50f85` says so
+in the check's detail), since only that side runs with the bit. Its
+selftest samples join `cluster-sync.sh --selftest` (51 samples, 62
+patterns, 0 failures). Read on the unfixed tree, series
+`n10c-20261103-215126` on debug: the wire pass B equal 1, stale 1, the
+first target equal at 132.27 and the second stale at 158.88
+(`wire-run-20261103-215433`, 44 checks, 1 failed); the master cut stale 1
+(`-215716`, 45 and 2 failed, the five-file check among them); the slave
+cut stale 1 (`-220126`, 44 and 1); the local default 59 and 0 failed with
+equal 49 and stale 0 (`cluster-run-20261103-220546`), so the defect is
+the wire's: locally the frontend writes the slave element and its flush
+keeps the slot.
+
+**The fix** (`25920b5`). `hammer2_sync_flush()` stores the flushed root's
+blockset in the slot under `blockset_spin` when the flush succeeds, as
+`hammer2_xop_inode_flush()` does, marked `XXX Linux`; a failed flush
+leaves the slot, since its blockset may name blocks never written. The
+unfixed series above is its control, placed at the slot copy.
+
+Series `n10d-20261103-225252` at `25920b5` (sync `ae1e45918f82`, wire
+`a18817b75d40`), every run 0 failed and every B stale 0:
+
+| run | `h2debug-7.3tls` | `h2kasan-7.3tls` |
+|---|---|---|
+| wire `H2_WIRE_PASS=1` | 44, equal 2 (`wire-run-20261103-225601`) | 44, equal 2 (`-234026`) |
+| wire `H2_WIRE_CUT=master`, three runs | 45 each, equal 2 (`-225833`, `-230205`, `-230553`) | 45 each, equal 2 (`-234341`, `-235002`, `-235616`) |
+| wire `H2_WIRE_CUT=slave` | 44, equal 1 (`-230940`) | 44, equal 1 (`wire-run-20261104-000321`) |
+| `cluster-sync.sh` default | 59, equal 27 (`cluster-run-20261103-231312`) | 59, equal 79 (`cluster-run-20261104-001039`) |
+| `H2_CRASH=1` | 48, equal 1 (`-232019`) | 48, equal 1 (`-002533`) |
+| `H2_SYNC_SNAPSHOT=0` | 48, equal 0, the opposite marked set: 0 of the ten deleted files on the slave's media, 10 of the ten written (`-232948`) | not run |
+
+The five-file check passed in all six master cuts. A slave cut's equal 1
+is B's second boot's klog, which holds one target. The local counts are
+read raw; a run's number of passes varies, so equal 27 against the
+unfixed 49 says nothing.
+
+Series `n10e-20261104-004753` at `25920b5` on debug (a first launch,
+`n10e-20261104-004425`, passed no `H2_WIRE_CUT_AT` and read COULD-NOT-RUN;
+the rerun uses 155 as 1.0.82 did):
+- `H2_WIRE_CUT=disconnect`, 45 checks and 0 failed
+  (`wire-run-20261104-004922`): B detached once by the span's deletion,
+  the pass unverified with its target kept and no quorum in the gap, the
+  pass after the dial verified on that target, the five files reaching
+  the slave by a later pass, 310 of 310 digests equal, B equal 2 and
+  stale 0.
+- `H2_WIRE_CUT=control`, 32 and 0 (`wire-run-20261104-005150`): with no
+  dial after the cut the slave stays short, 305 file entries on A and
+  304 on B, and keeps its target.
+- `cluster-sync.sh H2_CRASH=1 H2_SYNC_SNAPSHOT=0`, the control for
+  `crash_recovery` added in this entry, 42 checks and 2 failed
+  (`cluster-run-20261104-005421`), the two its expected reading named:
+  no target at the cut and none found by name (0 on the media, 0 kept),
+  while both media are clean by `fsck_hammer2` at the cut and the slave
+  ends equal to the master entry for entry and block for block (40055
+  entries, 0 of 120227 lines differ). The live pass converges after a
+  crash; what it loses is the last known-good copy the crash shape's
+  target checks read.
+- `test-fixtures.sh`, rc 0: 11 images, 43 files, 110 ioctl results, 0
+  failures. `test-enospc.sh`, rc 0: filled 2G, 0 failures. Both with
+  `H2_FIXTURE_START=1` and `KDIR` the booted `h2debug-7.3tls` tree.
+
+**Candidates**, read from the code and not driven:
+- `unable to fsync inode 0000000000000001` on B right after a target is
+  taken in a wire pass: of the 120 B klogs under `fixtures/` with two or
+  more targets, all 120 hold at least one such line per target, and 85
+  also hold `vnode flush failed 5` (`hammer2_vfs_sync_pmp()`), after a
+  second target. The fix leaves it unchanged: 3 such lines in B's klog in
+  the unfixed `-215433` and in the fixed `-225601`, 1 to 3 across the
+  n10d wire runs. Taking a target modifies
+  the cluster PFS's root inode, and its inode sync runs on every
+  element, the remote master's included, where the remote storage
+  function feeds `EOPNOTSUPP` for a descriptor it cannot send and sends
+  nothing (`hammer2_remote.c`, its default arm: "a request this element
+  cannot make leaves it without a vote"). That the collect's error is
+  this feed was not read. Every n10d wire run's images compared equal with these
+  lines present; the error is printed and dropped (`hammer2_inode.c`, `XXX return error somehow?`,
+  carried).
+- A second `DELETE` on a state whose peer already sent `DELETE`, while
+  the client's own has not left the writer, meets the carried
+  `KKASSERT((state->rxcmd & DMSGF_DELETE) == 0)` in kern_dmsg, compiled
+  only under `HAMMER2_INVARIANTS`. No wire harness builds with that flag
+  (`command grep` of `script/`: `cluster-sync.sh`, `sync-empty-base.sh`,
+  `test-shim.sh` and `test-syntax.sh` name it, `cluster-wire.sh` does
+  not), so no run reaches it; without it the frame meets the closed-call
+  test and the link ends.
+
+**P7's closure map.** Each criterion with the entry that first read it,
+its run at the closing commit `25920b5`, and its control. "Local" is
+`cluster-sync.sh` on one guest, "two hosts" is `cluster-wire.sh` between
+two guests through `h2loop`.
+
+| criterion | local | two hosts | control |
+|---|---|---|---|
+| `initial_convergence` | 1.0.40; `cluster-run-20261103-231312`, `cluster-run-20261104-001039` | 1.0.47 (`H2_WIRE_PASS=1`); `wire-run-20261103-225601`, `-234026` | the wire's stage-2 controls, 1.0.50 (the client's window count, admission, the read-only mount, the pass's refusal) |
+| `incremental_convergence` | 1.0.40; the same default runs | 1.0.49 (five files after the first pass reach the slave by a later one); the same pass runs | as above |
+| `snapshot_source` | 1.0.40; the same default runs | 1.0.49 (the master takes the snapshot at the slave's request); the same pass runs | local `H2_SYNC_SNAPSHOT=0`, `cluster-run-20261103-232948`: no snapshot listed, the master's state written as found; on the wire, the snapshot's routing and a `SNAPDEL` naming a snapshot the link never took (1.0.50) |
+| `interrupted_resume` | 1.0.40; the same default runs | 1.0.54 (`H2_WIRE_CUT=disconnect`); `wire-run-20261104-004922` | `H2_WIRE_CUT=control`, the dial withheld and the slave left short; `wire-run-20261104-005150` |
+| `crash_recovery` | 1.0.40 (`H2_CRASH=1`); `cluster-run-20261103-232019`, `cluster-run-20261104-002533` | 1.0.56 (`H2_WIRE_CUT=slave`, `=master`); the n10d cut runs above | `H2_CRASH=1 H2_SYNC_SNAPSHOT=0`, the cut with no kept target, its two target checks failing; `cluster-run-20261104-005421` |
+| the pass over kernel TLS, a peer admitted by key | | 1.0.80 (`H2_WIRE_PASS=1 H2_WIRE_TLS=1`): `wire-run-20261103-111156`, `-113404` | `H2_WIRE_RAW=1`, the dmsg header present in all three instruments; `H2_WIRE_TLS_WRONG=1`, no element (1.0.80) |
+
+The TLS pass was read at `7947d96`'s source, before this entry's fix, and
+is not re-run: the fix changes what a target copies, which the TLS pass
+reads as it reads it in plaintext, and the transport under it is
+unchanged. The row's title promises "a forked target, replaced only once
+verified". What is built is a kept target: the slave's snapshot taken and
+written to the media before the pass's first write, kept across a failed
+or interrupted pass, a crash and an unmount, and replaced only by a
+verified pass. The fork-and-swap of a live target stays
+`DEFER(a consumer that reads a slave element directly, a static mount or
+a standalone slave mount)` (`doc/SYNC_DESIGN.md`, "What the
+implementation decided"), and 3.1's section 11 re-reads that trigger
+under a promoted replica serving an element written in place.

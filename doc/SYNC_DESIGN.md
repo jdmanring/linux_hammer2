@@ -514,9 +514,12 @@ one the root `ipcluster` focus names; without one the live pass runs
 and copies nothing. The snapshot covers that element only, which is what
 a snapshot is in both trees. Two-master convergence stays
 `cluster-quorum.sh`'s and P8's. A thread's own flush of an element
-root (`hammer2_sync_flush()`, unconditional each pass) does not refresh
+root (`hammer2_sync_flush()`, unconditional each pass) did not refresh
 that element's blockset slot, which the idle test compares and the
-snapshot copies. On two local masters no pass reaches either: each
+snapshot copies, until 1.0.84; over the wire, where nothing else writes
+the slave, every target after a link's first copied an older slave
+(the record's entry "P7's closure"). On two local masters no pass
+reached either: each
 thread's collect excludes its own element, the other alone cannot make
 a quorum of two, and `cluster-quorum.sh` with `H2_QUORUM_IDLE=40` read
 19 passes, every one `noquorum` (18 with `EINPROGRESS`, the last with
@@ -524,8 +527,10 @@ a quorum of two, and `cluster-quorum.sh` with `H2_QUORUM_IDLE=40` read
 local element, a slave beside two masters or a third master, a thread
 makes its quorum from masters other than its own element and reads a
 slot whose master's thread may have flushed a frontend change past it,
-so the stale slot is reachable there; it is a `candidate`, argued from
-the code and unread, in the verification record's entry for 1.0.62.
+so the stale slot was reachable there, a `candidate` argued from the
+code in the verification record's entry for 1.0.62. The refresh of
+1.0.84 removes the mechanism it rested on for every element a thread
+flushes; the third-element shape itself is still unread.
 
 **The frontend writes the slave element too.** A frontend write on the
 mounted cluster lands on both elements at once, so a pass whose snapshot
@@ -975,11 +980,12 @@ source before it was applied, and no lever-2 code precedes it.
      again. That is availability, not correctness; a reading of
      `UPDATE`-pending chains by count would be finer and is not built.
    - flushed, but the copied blockset stale: the copy takes the cached
-     slot, which is refreshed only when the root's inode flush finds a
-     flush flag on the root chain (`hammer2_flush.c:1158-1178`), and a
-     stale slot is a recorded candidate (the 1.0.62 idle-test entry,
-     "The idle test on two masters", and the third-element reading the
-     plan's track R item 6 owns). The equality leg sees it.
+     slot, which is refreshed when the root's inode flush finds a
+     flush flag on the root chain (`hammer2_flush.c:1158-1178`) and,
+     since 1.0.84, when the thread's own flush of the element succeeds;
+     a stale slot was a recorded candidate (the 1.0.62 idle-test entry,
+     "The idle test on two masters") and was read on the wire's second
+     target before that fix. The equality leg sees one.
    The paragraph of this item's first draft that claimed the volume
    flush reaches every flagged path, and proposed the root chain's
    `ONFLUSH` as a third reading, was wrong on both counts: the volume

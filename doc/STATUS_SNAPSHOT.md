@@ -70,8 +70,9 @@ has been read back by DragonFly and the other way round
   replayed onto another connection, and a rekey, so a KeyUpdate ends a
   TLS link. A candidate read from the code and not driven: a peer that
   never closes a request the client gave up on keeps that request's
-  state held until the link ends, with no bound found. P7 closes when its closure maps
-  the pass's reading over TLS.
+  state held until the link ends, with no bound found. P7 is closed at
+  1.0.84, its closure mapping the pass's reading over TLS and the five
+  criteria to their runs.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
   not yet written.
