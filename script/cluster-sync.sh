@@ -1466,13 +1466,15 @@ echo "mutate-updates $(( $(copied) - u1 ))"
 # marked set, and the mutation's readings were of the next snapshot.
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 [ "$STOP_DEPTH" = 0 ] && STOP_DEPTH=$(( NBIG2 / 2 + 1000 ))
-n=0
-while [ $n -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
+# The bound is wall time: counting 50 ms polls made the 240000 default
+# 12000 s, which only a run whose pass never copies reaches.
+t0=$(date +%s)
+while [ $(( ($(date +%s) - t0) * 1000 )) -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
 	[ $(( $(copied) - u1 )) -ge "$STOP_DEPTH" ] && break
 	[ "$(verdicts)" != "$v0" ] && break
-	sleep 0.05; n=$((n + 1))
+	sleep 0.05
 done
-echo "interrupt-stop-copied $(( $(copied) - u1 )) wanted $STOP_DEPTH"
+echo "interrupt-stop-copied $(( $(copied) - u1 )) wanted $STOP_DEPTH after $(( $(date +%s) - t0 )) s"
 echo "interrupt-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 timeout 60 umount /mnt/h2c
