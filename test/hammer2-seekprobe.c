@@ -28,6 +28,9 @@
  *                                             seek, see race()
  *     hammer2-seekprobe time <path> <kind> <n>  n timed seeks, see
  *                                             timing()
+ *     hammer2-seekprobe contend <path> <n>    n timed writes alone and
+ *                                             beside a SEEK_HOLE loop,
+ *                                             see contend()
  *
  * The shape and bounds are hammer2-seek.c's, so the two answer to one
  * contract: one 64 KiB block of 'A', one of hole, one of 'A', and a
@@ -407,6 +410,94 @@ timing(const char *path, const char *kind, long n)
 	return (fails ? 1 : 0);
 }
 
+/*
+ * What a seek costs a writer.  A 64 MiB dense file, synced.  n one-block
+ * pwrite()s at blocks from a fixed sequence are timed twice: alone, then
+ * with a child looping SEEK_HOLE at 0 on its own descriptor.  A seek
+ * holding i_rwsem shared keeps write_iter's exclusive i_rwsem out for the
+ * length of the seek, so the contended worst write approaches one seek;
+ * a seek holding nothing leaves it near the alone figure.  The child
+ * counts the seeks it finished during the contended phase, and fewer than
+ * two means the phases never overlapped, which fails rather than reads.
+ */
+static int
+contend(const char *path, long n)
+{
+	volatile long *stop, *seeks;
+	unsigned int seed = 777;
+	long *ns, i, ph;
+	char *buf = malloc(BSIZE);
+	pid_t pid = -1;
+	int fd, st;
+
+	stop = mmap(NULL, 2 * sizeof(*stop), PROT_READ | PROT_WRITE,
+	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	seeks = stop + 1;
+	if (n < 1 || buf == NULL || stop == MAP_FAILED ||
+	    (ns = calloc(n, sizeof(*ns))) == NULL ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
+		return (2);
+	fill(buf, 1);
+	for (i = 0; i < DENSE; i += BSIZE)
+		if (pwrite(fd, buf, BSIZE, i) != BSIZE)
+			return (2);
+	if (fsync(fd) != 0)
+		return (2);
+	for (ph = 0; ph < 2; ph++) {
+		*stop = 0;
+		*seeks = 0;
+		if (ph == 1 && (pid = fork()) == 0) {
+			int sfd = open(path, O_RDONLY);
+
+			if (sfd < 0)
+				_exit(1);
+			while (!__atomic_load_n(stop, __ATOMIC_ACQUIRE)) {
+				if (lseek(sfd, 0, SEEK_HOLE) != DENSE)
+					_exit(1);
+				__atomic_add_fetch(seeks, 1, __ATOMIC_RELEASE);
+			}
+			_exit(0);
+		}
+		if (ph == 1)
+			usleep(20000);	/* the first seek under way */
+		for (i = 0; i < n; i++) {
+			long t0, off;
+
+			seed = seed * 1103515245u + 12345u;
+			off = ((long)(seed >> 8) % (DENSE / BSIZE)) * BSIZE;
+			t0 = now_ns();
+			if (pwrite(fd, buf, BSIZE, off) != BSIZE)
+				return (2);
+			ns[i] = now_ns() - t0;
+		}
+		qsort(ns, n, sizeof(*ns), cmp_long);
+		if (ph == 0)
+			printf("seekm-contend alone median-ns %ld max-ns %ld n %ld\n",
+			    ns[n / 2], ns[n - 1], n);
+		else {
+			long s = __atomic_load_n(seeks, __ATOMIC_ACQUIRE);
+
+			__atomic_store_n(stop, 1, __ATOMIC_RELEASE);
+			waitpid(pid, &st, 0);
+			printf("seekm-contend seeking median-ns %ld max-ns %ld n %ld "
+			    "seeks %ld\n", ns[n / 2], ns[n - 1], n, s);
+			if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+				printf("seekm-fail contend: a seek answered wrongly\n");
+				fails++;
+			} else if (s < 2) {
+				printf("seekm-fail contend: %ld seek(s) overlapped the "
+				    "writes, so nothing contended\n", s);
+				fails++;
+			}
+		}
+	}
+	close(fd);
+	unlink(path);
+	free(ns);
+	free(buf);
+	return (fails ? 1 : 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -423,11 +514,13 @@ main(int argc, char **argv)
 		return (agree(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
+	if (argc == 4 && strcmp(argv[1], "contend") == 0)
+		return (contend(argv[2], strtol(argv[3], NULL, 10)));
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
 	    "check|agree <path> <what> | race <path> | "
-	    "time <path> sparse|dense|dirty <n>\n",
+	    "time <path> sparse|dense|dirty <n> | contend <path> <n>\n",
 	    argv[0]);
 	return (2);
 }

@@ -27,7 +27,7 @@
 #             shape's three, because a first file costing one block makes
 #             the rule pass without the sharing being measured.
 #
-# Two modes replace the three cases and stop no guest:
+# Three modes replace the three cases and stop no guest:
 #
 #   H2_SEEK_RACE=1  a truncate aimed inside a held SEEK_HOLE (seekprobe
 #                   race). The module is built with HAMMER2_LOCKDEBUG=1
@@ -40,13 +40,21 @@
 #                   the ordering a check.
 #   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense
 #                   and dirty, each H2_REPEAT times (5 by default) on a
-#                   file made once per repeat; raw lines and medians,
+#                   file made once per repeat, H2_SEEK_TIME_N seeks each
+#                   (100 by default); raw lines and medians,
 #                   checked only for right answers. A rate, so run it on
 #                   h2release-7.3tls.
+#   H2_SEEK_CONTEND=1  what a seek costs a writer (seekprobe contend):
+#                   H2_SEEK_TIME_N one-block writes to a 64 MiB file,
+#                   timed alone and beside a SEEK_HOLE loop, H2_REPEAT
+#                   times (3 by default); median and worst of each, and a
+#                   run in which no seek overlapped the writes fails. A
+#                   rate, so h2release-7.3tls too.
 #
 # H2_KO loads a module built elsewhere instead of building one. H2_REPEAT
 # repeats the race too (1 by default); the three cases ignore it, so it is
-# refused there.
+# refused there. On a kernel without lockdep the modes read debug_locks as
+# none, which passes; 0, lockdep turned off by a report, fails.
 #
 # Exit 2 without the guest, newfs_hammer2 or a kernel tree, never 1.
 set -u
@@ -62,13 +70,16 @@ FSCK=${H2_FSCK:-$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer
 KO=src/sys/fs/hammer2/hammer2.ko
 RACE=${H2_SEEK_RACE:-0}
 TIME=${H2_SEEK_TIME:-0}
-case "$RACE$TIME" in
-00) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE=1 or H2_SEEK_TIME=1" >&2; exit 2; } ;;
-10|01) ;;
-*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE and H2_SEEK_TIME are 0 or 1, one at a time" >&2; exit 2 ;;
+CONTEND=${H2_SEEK_CONTEND:-0}
+case "$RACE$TIME$CONTEND" in
+000) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE, H2_SEEK_TIME or H2_SEEK_CONTEND" >&2; exit 2; } ;;
+100|010|001) ;;
+*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME and H2_SEEK_CONTEND are 0 or 1, one at a time" >&2; exit 2 ;;
 esac
-REPEAT=${H2_REPEAT:-$([ "$TIME" = 1 ] && echo 5 || echo 1)}
+REPEAT=${H2_REPEAT:-$( [ "$TIME" = 1 ] && echo 5 || { [ "$CONTEND" = 1 ] && echo 3 || echo 1; } )}
 case "$REPEAT" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT=$REPEAT is not a count" >&2; exit 2 ;; esac
+NSEEK=${H2_SEEK_TIME_N:-100}
+case "$NSEEK" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N=$NSEEK is not a count" >&2; exit 2 ;; esac
 WANT=${H2_SEEK_RACE_WANT:-}
 case "$WANT" in ''|inside|after) ;; *) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE_WANT is inside or after" >&2; exit 2 ;; esac
 
@@ -134,7 +145,7 @@ mode_close='
 umount /mnt/sm; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
-echo "debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null)"
+echo "debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null || echo none)"
 '
 race_body='
 K=/sys/module/hammer2/parameters/seek_hold_ms
@@ -146,22 +157,26 @@ echo "held $(dmesg | grep -c "hammer2: seek held")"
 '
 time_body='
 for k in sparse dense dirty; do
-	case $k in dense) n=1000 ;; *) n=100 ;; esac
-	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $n; i=$((i + 1)); done
+	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $NSEEK; i=$((i + 1)); done
 done
 '
-if [ "$RACE$TIME" != 00 ]; then
-	if [ "$RACE" = 1 ]; then body=$race_body; else body=$time_body; fi
-	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; $mode_open $body $mode_close" 2>&1)
+contend_body='
+i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe contend /mnt/sm/c $NSEEK; i=$((i + 1)); done
+'
+if [ "$RACE$TIME$CONTEND" != 000 ]; then
+	if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; else body=$contend_body; fi
+	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; $mode_open $body $mode_close" 2>&1)
 	printf '%s\n' "$out" | command grep -v '^seekm-time [a-z]* [0-9]* ' | sed 's/^/  /'
 	detach
 	"$FSCK" "$IMG" >/dev/null 2>&1; fsck_rc=$?
 	fail=0
 	case $out in *SETUP*failed*) echo "  FAIL  $(printf '%s\n' "$out" | command grep -m1 'SETUP.*failed')"; fail=$((fail + 1)) ;; esac
-	for want in "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0$" "^debug_locks 1$"; do
+	for want in "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0$" "^debug_locks [1n]"; do
 		printf '%s\n' "$out" | command grep -q "$want" || {
 			echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 	done
+	# A kernel without lockdep has no lockdep_stats and prints none, which
+	# reads nothing; 0 is lockdep turned off by a report, and fails above.
 	bad=$(printf '%s\n' "$out" | command grep -c '^seekm-fail')
 	[ "$bad" -eq 0 ] || { echo "  FAIL  $bad seekm-fail line(s)"; fail=$((fail + 1)); }
 	if [ "$RACE" = 1 ]; then
@@ -177,6 +192,13 @@ if [ "$RACE$TIME" != 00 ]; then
 			[ "$off" -eq 0 ] || { echo "  FAIL  $off of $n truncate(s) not $WANT the seek"; fail=$((fail + 1)); }
 		fi
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+	elif [ "$CONTEND" = 1 ]; then
+		for ph in alone seeking; do
+			c=$(printf '%s\n' "$out" | command grep -c "^seekm-contend $ph ")
+			[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c $ph line(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
+			echo "  contend $ph: median-ns $(printf '%s\n' "$out" | sed -n "s/^seekm-contend $ph median-ns \([0-9]*\) .*/\1/p" | tr '\n' ' ')max-ns $(printf '%s\n' "$out" | sed -n "s/^seekm-contend $ph median-ns [0-9]* max-ns \([0-9]*\) .*/\1/p" | tr '\n' ' ')"
+		done
+		echo "  contend seeks overlapped: $(printf '%s\n' "$out" | sed -n 's/^seekm-contend seeking .* seeks \([0-9]*\)$/\1/p' | tr '\n' ' ')"
 	else
 		for k in sparse dense dirty; do
 			m=$(printf '%s\n' "$out" | sed -n "s/^seekm-time $k median-ns \([0-9]*\) n .*/\1/p")
@@ -190,7 +212,7 @@ if [ "$RACE$TIME" != 00 ]; then
 	fi
 	[ "$fsck_rc" -eq 0 ] && echo "  ok    fsck_hammer2 clean" || {
 		echo "  FAIL  fsck_hammer2 exit $fsck_rc"; fail=$((fail + 1)); }
-	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || echo time), $REPEAT repeat(s), $fail failure(s)"
+	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || echo contend; }), $REPEAT repeat(s), $fail failure(s)"
 	rm -f "$IMG"
 	[ "$fail" -eq 0 ]
 	exit
