@@ -21644,3 +21644,158 @@ each by a run that removes it and fails, except the client's name test,
 held by a build that removes its bound and fails to compile. That list
 was a candidate set when it was written, and this says nothing of a
 decision it missed.
+
+## The closed-call test and a span withdrawn over a live link, each under a control, 2026-11-03
+
+The doc sweep that closed 1.0.81 found two decisions on P7's reach that
+the record still called uncontrolled or undriven. Each now has a run that
+reaches it on demand and a control that removes it and fails. The
+expected readings were written before any code and before each run
+(`p7-notes/n9-7a-expected.md` and `n9-7b-expected.md` in the data tree,
+each with its first reading appended). The debug runs are series
+`20261103-154314` at `ba29092`, harness `aecdcbdbaedc5051`; the KASAN
+runs are the same series at `a11bb5b`, harness `4a7f6f421f2a4a9b`, whose
+`src/` is `ba29092`'s (`a11bb5b` changes one line of the harness's
+header). QEMU cores read 0 before and after every run (the wrapper logs
+beside the series).
+
+**The closed-call test** (`hammer2_rcall_reply()`, `hammer2_remote.c:1356-1359`).
+The close clears the state's pointer to its call (`:1442`) before the
+transaction's reference is put (`:1456`), so a frame arriving after the
+close finds `call` NULL and the test ends the link. Before this entry the
+`trail` cell reached the test as a race: `closed` once, in
+`wire-run-20261027-001808`, and `silent` ten times of ten on
+`h2kasan-7.3` (both in the 1.0.59 entry). The
+reason, read in session: kern_dmsg removes the state from its tree only
+in `kdmsg_state_cleanuptx()`, after the writer's `fp_write`, and the
+writer's dequeue calls `kdmsg_state_msgtx()` under `msglk`, which sets
+`KDMSG_STATE_INTERLOCK`. A reader whose lookup finds the interlock sleeps
+until the cleanup has removed the state, then looks again and finds
+nothing. So the copy reaches the test only when the reader looks it up
+before the writer dequeues the client's `DELETE`.
+
+`HAMMER2_CLOSEWAIT` (`ce77af8`, moved by `e8f159a`) is a build flag whose
+shim macro is called in kern_dmsg's writer loop before the dequeue
+(`XXX Linux`). With `msglk` released it sleeps 20 ms once per client HM2
+`DELETE`, marking the message in `kdmsg_msg.flags` (0x80000000, unused by
+kern_dmsg), and prints `hammer2: client close held` once. Without the
+flag it compiles to 0. Its first placement, after the dequeue, was
+refuted by series `20261103-151915` at `d672216`: `closed` 1 and `silent`
+2 on `h2debug-7.3tls`, the hold's line present in both silent runs. The
+relay trace of one (`fixtures/wire-run-20261103-152554.trace`, i=4047 to
+4050) has the held feed, the close and the copy leave in one segment at
+t=25094 and B's own `DELETE` come back 21 ms later: the copy reached B
+inside the hold and the interlock made the reader wait it out.
+
+The committed arm, `H2_WIRE_CUT=trail H2_WIRE_CUT_AT=155
+H2_WIRE_CLOSEWAIT=1 H2_REPEAT=3`:
+- `h2debug-7.3tls`, B's module sha256 `5714c9a8b3750ae2`: `closed` 3 of
+  3, 43 checks and 0 failed in each (`wire-run-20261103-154531`,
+  `-154901`, `-155232`). Each reads the hold's line 1 and B's one HM2
+  line, `peer sent a frame after its reply closed, ending the link;`,
+  the relay's first EOF 217, 213 and 211 ms after the fault with no
+  hangup, and the pass after the dials verified on the kept target.
+- `h2kasan-7.3tls`, B's module `47e9faf58e55487c`, both modules carrying
+  18 `__asan` and 3 `__ubsan` imports: `closed` 3 of 3, 43 checks and 0
+  failed in each (`wire-run-20261103-161547`, `-162103`, `-162615`), the
+  first EOF 495, 480 and 504 ms after the fault, no KASAN report, and
+  kmemleak finding nothing of hammer2's on either guest.
+
+The control `ctl/n9-7-closedcall`, made by `n9-5-make-ctl.py closedcall`
+from `ba29092`, turns the test into `if (0 && call == NULL)` and is built
+with the flag (module `f098ee3ecb705aca`), loaded on B under
+`H2_WIRE_CLOSEWAIT=control`. `wire-run-20261103-160942` read the control
+check ok, `faults 1, in hammer2_rcall_reply 1, the hold's line 1`, with
+43 checks and 21 failed, the cut's later checks failing since B was left
+faulted. B's klog (`fixtures/wire-run-20261103-160942-b.klog:1894-1905`)
+has `BUG: kernel NULL pointer dereference, address: 0000000000000000` in
+`hammer2-msgrd`, RIP `hammer2_rcall_reply+0x33/0x6b0` with RBX 0.
+`faddr2line` on the control's module puts that at `hammer2_remote.c:1361`,
+`rc = call->cdev->rconn;`, the first read through the cleared pointer
+(`p7-notes/n9-7a-ctl-faddr2line.txt`). B's guest was cycled after it.
+
+The use after free in `hammer2_rcall_reply` that the 1.0.59 entry left a
+`candidate` is not reachable on this code. The pointer is cleared under
+the connection's mutex before the reference is put. The test reads it
+and returns before any use. With the writer held, the copy reached the
+test in 6 runs of 6 with no KASAN report. With the test removed, the
+same copy faults on a NULL pointer, not on a freed object.
+
+The plain `trail` cell, run once on `h2debug-7.3tls` without the flag
+since the cut block changed, read `closed` and 43 checks with 0 failed
+(`wire-run-20261103-155818`): the race went that way, which says nothing
+about the hold.
+
+**A span withdrawn over a live link.** The kernel sends every `LNK_SPAN`
+as a CREATE (`hammer2_iocom.c:533`, `kern_dmsg.c:221`). A peer's DELETE
+reaches `hammer2_span_del()`, which queues `hammer2_remote_span()`, whose
+loop detaches each element whose span is gone, `span deleted`
+(`hammer2_remote.c:2856-2861`). Every earlier run reached that loop only
+at a link's end. `h2loop --cut-fault withdraw` (`d672216`) records A's
+`CL` span CREATE as it forwards it; at the close of scanall call K it
+passes the close on, then sends B a `LNK_SPAN` DELETE on that msgid,
+signed again, and drops and traces B's answer, so A keeps its span as a
+hub that withdrew a relayed one would. `cluster-wire.sh
+H2_WIRE_CUT=withdraw` reads B live, then hangs the pair up with the
+relay's `SIGUSR1` and both sides dial again. The first run, at `d672216`
+(`wire-run-20261103-153249`), held every predicted subject reading and
+ended at two harness defects, fixed at `ba29092`.
+
+With `H2_WIRE_CUT_AT=155`:
+- `h2debug-7.3tls`, both modules `1d60a9cff03a66a2`, 43 checks and 0
+  failed (`wire-run-20261103-155550`). B detached its element once by
+  `span deleted` with the link up, `-RXSPAN` 1, no line ending the link,
+  B's answer dropped 1, and 2 of B's pings answered by A between the
+  withdrawal and the hangup, the relay's first timeout 10273 ms after
+  the fault with 1 hangup, its own. The gap read 3 passes without quorum
+  in 17462 ms. The faulted pass verified inside the relay's wait and
+  deleted its own target, as predicted, and B registered A's root twice.
+  The element's two detaches read `span deleted` at the cut and
+  `connection ended` at B's unmount.
+- `h2kasan-7.3tls`, both modules `fe9341c5bc13b8c2`, 43 checks and 0
+  failed (`wire-run-20261103-163107`): the same readings, first timeout
+  10668 ms, the gap 3 passes without quorum in 17888 ms, no KASAN report
+  and kmemleak finding nothing of hammer2's on either guest.
+
+The prediction of about nine pings answered was wrong: B pings every
+5.1 s in this shape, and 2 were answered. The control `ctl/n9-7-spandetach`
+removes the detach loop (module `f4bb308560aa727b`, loaded on B by
+`H2_WIRE_KO_B`). `wire-run-20261103-160311` read 43 checks and 3 failed,
+the three the expected readings named: the withdrawal `detached 0` with
+`no quorum by then 0` and 3 pings answered; the gap `no quorum 0 in
+265584 ms`; and both detaches `connection ended`, the first at the
+link's end (`fixtures/wire-run-20261103-160311-b.klog`). The plain
+`disconnect` cell, run once since `h2loop` and the cut block changed,
+read 43 checks and 0 failed (`wire-run-20261103-160044`).
+
+`doc/SYNC_DESIGN.md`'s sentence that no harness mode deletes a span with
+its link left up is corrected beside its `DEFER(3.2.7)`. The trigger
+stands: 3.2.7 needs the withdrawal at a hold between two rounds of one
+pass and a write through the opened gate, and this fault falls at the
+close of a scanall call.
+
+**The TLS-claim gate.** `test-inventory.sh`'s check fails an
+unconditional "over kernel TLS" in README.md, CONTRIBUTING.md or
+`doc/*.md`. It had been keyed on a handshake call in `src/`, which exists
+since 1.0.74, so it read 0 documents from then until `3b856d4`. It now
+sweeps on every tree, and a claim passes only while `src/` calls
+`tls_(client|server)_hello` and the record names `H2_WIRE_PASS=1
+H2_WIRE_TLS=1` with a `wire-run-` id within 200 characters after it
+(`78fd11e` restored the call's half after a review). Controls in a clone
+at `a11bb5b`, `ctl/n9-7c`, each from a clean checkout
+(`p7-notes/n9-7c-controls-20261103-164424.log`):
+- the tree as committed: 29 documents, 8 claims, 2 conditional, record
+  `wire-run-20261103-111156`, 0 findings;
+- the record's knob string changed: 8 findings, one per claim, exit 1;
+- every `wire-run-` id in the record changed: 8 findings, exit 1;
+- the document glob mistyped: `only 2 document(s) read for a TLS claim`,
+  exit 1;
+- the handshake calls renamed in `src/`: 8 findings, exit 1.
+A rewording that drops the phrase still escapes; the summaries reread is
+its backstop.
+
+Since `src/` changed under the flag, `test-fixtures.sh` read 11 images
+and 110 ioctl results with 0 failures, and `test-enospc.sh` filled 2G
+with 0 failures, both exit 0 on `h2debug-7.3tls` with modules built from
+`a11bb5b` (`p8-notes/n9-7-fixtures-20261103-163555.log`,
+`n9-7-enospc-20261103-163555.log`).

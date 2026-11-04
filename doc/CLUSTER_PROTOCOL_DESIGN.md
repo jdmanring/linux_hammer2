@@ -276,7 +276,14 @@ receipt, in this order, and each ends the connection:
 - an index not the count received: `a feed out of sequence`;
 - a closing count not the count received: `closed a reply short`.
 
-The first guards memory and is under no control. `HAMMER2_NOCLIENTSEQ`
+The first guards memory. A copy reaches it only when the reader looks
+the frame up before kern_dmsg's writer has sent the call's `DELETE` and
+removed its state, so the wire harness's `trail` cell reads it as a race
+goes. `HAMMER2_CLOSEWAIT` holds the writer 20 ms before it dequeues that
+`DELETE`, and under `H2_WIRE_CLOSEWAIT=1` the cell reads the line in
+every run; a module with the test removed faults on the next line,
+reading `call->cdev` through the cleared pointer (1.0.82).
+`HAMMER2_NOCLIENTSEQ`
 compiles out the other three, and is the build the wire harness's
 `H2_WIRE_SEQ=control` reads the defects under. The fields were reserved
 space in a frame only this port speaks, so no other implementation's
