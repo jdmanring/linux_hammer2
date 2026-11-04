@@ -417,22 +417,25 @@ timing(const char *path, const char *kind, long n)
  * holding i_rwsem shared keeps write_iter's exclusive i_rwsem out for the
  * length of the seek, so the contended worst write approaches one seek;
  * a seek holding nothing leaves it near the alone figure.  The child
- * counts the seeks it finished during the contended phase, and fewer than
- * two means the phases never overlapped, which fails rather than reads.
+ * loops until the last write has returned, so the phases overlap when its
+ * first seek began before the first write did; a run where it did not
+ * fails rather than reads.  It counts the seeks it began, not the ones it
+ * finished: one seek of seconds can outlast every write.
  */
 static int
 contend(const char *path, long n)
 {
-	volatile long *stop, *seeks;
+	volatile long *stop, *seeks, *first;
 	unsigned int seed = 777;
-	long *ns, i, ph;
+	long *ns, i, ph, w0;
 	char *buf = malloc(BSIZE);
 	pid_t pid = -1;
 	int fd, st;
 
-	stop = mmap(NULL, 2 * sizeof(*stop), PROT_READ | PROT_WRITE,
+	stop = mmap(NULL, 3 * sizeof(*stop), PROT_READ | PROT_WRITE,
 	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	seeks = stop + 1;
+	first = stop + 2;
 	if (n < 1 || buf == NULL || stop == MAP_FAILED ||
 	    (ns = calloc(n, sizeof(*ns))) == NULL ||
 	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
@@ -446,20 +449,25 @@ contend(const char *path, long n)
 	for (ph = 0; ph < 2; ph++) {
 		*stop = 0;
 		*seeks = 0;
+		*first = 0;
 		if (ph == 1 && (pid = fork()) == 0) {
 			int sfd = open(path, O_RDONLY);
 
 			if (sfd < 0)
 				_exit(1);
 			while (!__atomic_load_n(stop, __ATOMIC_ACQUIRE)) {
+				if (*first == 0)
+					__atomic_store_n(first, now_ns(),
+					    __ATOMIC_RELEASE);
+				__atomic_add_fetch(seeks, 1, __ATOMIC_RELEASE);
 				if (lseek(sfd, 0, SEEK_HOLE) != DENSE)
 					_exit(1);
-				__atomic_add_fetch(seeks, 1, __ATOMIC_RELEASE);
 			}
 			_exit(0);
 		}
 		if (ph == 1)
 			usleep(20000);	/* the first seek under way */
+		w0 = now_ns();
 		for (i = 0; i < n; i++) {
 			long t0, off;
 
@@ -476,6 +484,7 @@ contend(const char *path, long n)
 			    ns[n / 2], ns[n - 1], n);
 		else {
 			long s = __atomic_load_n(seeks, __ATOMIC_ACQUIRE);
+			long f = __atomic_load_n(first, __ATOMIC_ACQUIRE);
 
 			__atomic_store_n(stop, 1, __ATOMIC_RELEASE);
 			waitpid(pid, &st, 0);
@@ -484,9 +493,9 @@ contend(const char *path, long n)
 			if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
 				printf("seekm-fail contend: a seek answered wrongly\n");
 				fails++;
-			} else if (s < 2) {
-				printf("seekm-fail contend: %ld seek(s) overlapped the "
-				    "writes, so nothing contended\n", s);
+			} else if (s < 1 || f == 0 || f >= w0) {
+				printf("seekm-fail contend: no seek began before the "
+				    "writes, so nothing contended\n");
 				fails++;
 			}
 		}

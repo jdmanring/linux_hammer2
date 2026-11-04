@@ -48,7 +48,7 @@
 #                   H2_SEEK_TIME_N one-block writes to a 64 MiB file,
 #                   timed alone and beside a SEEK_HOLE loop, H2_REPEAT
 #                   times (3 by default); median and worst of each, and a
-#                   run in which no seek overlapped the writes fails. A
+#                   run whose seek loop began after the first write fails. A
 #                   rate, so h2release-7.3tls too.
 #
 # H2_KO loads a module built elsewhere instead of building one. H2_REPEAT
