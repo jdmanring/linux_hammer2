@@ -1409,7 +1409,8 @@ echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
 echo "snap-blockset-equal $(kl | grep -c 'syncsnap: snapshot .* blockset equal')"
 echo "snap-blockset-stale $(kl | grep -c 'syncsnap: snapshot .* blockset stale')"
 echo "snap-targets-taken $(kl | grep -c 'syncsnap: target .* taken')"
-echo "snap-target-prints $(kl | grep -cE 'syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)')"
+# taken targets with their own print, as cluster-sync.sh reads them
+echo "snap-target-prints $(kl | awk '/syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)/ { p = 1 } /syncsnap: target/ { if ($NF == "taken" && p) n++; p = 0 } END { print n + 0 }')"
 # the connection device's balance of the blocks its frames carried, printed
 # at its free: copied must equal framed plus replaced plus dropped plus
 # diofreed plus devfreed, or a block was lost between two hands
@@ -2325,7 +2326,7 @@ for sd in A B; do
 	# shows only on a target after a link's first, so every target taken
 	# in the same log must have its own print, and the pass at least one
 	bw=0; tw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && { bw=1; tw=$(num "$(val B snap-targets-taken)" 1); }
-	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ] && [ "$(num "$(val $sd snap-target-prints)" 0)" -ge "$tw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale), targets taken $(val $sd snap-targets-taken) with $(val $sd snap-target-prints) printed$( [ "$bw" = 0 ] && echo ', none required: only the slave under the pass is held to a print')"
+	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ] && [ "$(num "$(val $sd snap-target-prints)" 0)" -ge "$tw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale), targets taken $(val $sd snap-targets-taken), $(val $sd snap-target-prints) of them with their own print$( [ "$bw" = 0 ] && echo ', none required: only the slave under the pass is held to a print')"
 	case "$CUT$sd" in masterA|slaveB) cw=2;; *) cw=1;; esac	# a power-cut guest loads twice, once per boot
 	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 	u=$(val $sd kmemleak-unloaded); n=$(nval $sd kmemleak-unloaded); r=$(nval $sd kmemleak-unloaded-range)

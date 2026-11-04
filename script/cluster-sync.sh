@@ -381,6 +381,15 @@ if [ "${1:-}" = "--selftest" ]; then
 		*) bad "keptabsent with $v gave: $l" ;;
 		esac
 	done
+	# The target pairing: two targets taken, one with its print and one
+	# without, and an errored target's print between, which a count of
+	# prints against targets taken would have passed.
+	l=$(command grep -m1 '^	echo "snap-target-prints ' "$0")
+	K=$t/pair; printf '%s\n' 'syncsnap: snapshot CL.h2sync-tgt blockset equal' \
+	    'syncsnap: target CL.h2sync-tgt taken' 'syncsnap: snapshot CL.h2sync-tgt blockset stale' \
+	    'syncsnap: target CL.h2sync-tgt error 5' 'syncsnap: target CL.h2sync-tgt taken' > "$K"
+	l=$(eval "${l#	}")
+	[ "$l" = "snap-target-prints 1" ] || bad "the target pairing over taken, errored and unprinted targets gave: ${l:-nothing}"
 	echo "cluster: selftest, $nsamp sample(s), $npat pattern(s), $(wc -l < "$t/read") read(s), $sfail failure(s)"
 	[ "$sfail" -eq 0 ]
 	exit $?
@@ -795,7 +804,10 @@ finish() {
 	echo "snap-target-errors $(klog 'syncsnap: target .* error')"
 	echo "snap-blockset-equal $(klog 'syncsnap: snapshot .* blockset equal')"
 	echo "snap-blockset-stale $(klog 'syncsnap: snapshot .* blockset stale')"
-	echo "snap-target-prints $(grep -cE 'syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)' $K)"
+	# taken targets, each with the print its own snapshot made: an outcome
+	# line closes the print before it, so an errored target's print
+	# cannot stand in for a taken one's
+	echo "snap-target-prints $(awk '/syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)/ { p = 1 } /syncsnap: target/ { if ($NF == "taken" && p) n++; p = 0 } END { print n + 0 }' $K)"
 	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
 	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
 	# 1a over the whole run: the root's stamps taken alone, and the scans
@@ -2113,10 +2125,11 @@ cmp -s "$W/fp.master" "$W/fp.slave"; check "the slave's PFS matches the master's
 # flush names blocks the element has since replaced. Read on every
 # snapshot the thread takes: one when the snapshot pass is on, and every
 # target taken with its own print, so a print that stopped matching cannot
-# pass and a source print cannot stand in for a target's.
+# pass and neither a source print nor an errored target's can stand in for
+# a taken target's.
 be=$(val snap-blockset-equal); bs=$(val snap-blockset-stale); bw=0; [ "$H2SNAP" = 1 ] && bw=1
 tt=$(val snap-target-taken); tp=$(val snap-target-prints)
-[ "${bs:-1}" = 0 ] && [ $(( ${be:-0} + ${bs:-0} )) -ge $bw ] && [ "${tp:-0}" -ge "${tt:-1}" ]; check "every snapshot copies its element's root as last flushed" $? "equal ${be:-unread}, stale ${bs:-unread}, targets taken ${tt:-unread} with ${tp:-unread} printed"
+[ "${bs:-1}" = 0 ] && [ $(( ${be:-0} + ${bs:-0} )) -ge $bw ] && [ "${tp:-0}" = "${tt:-1}" ]; check "every snapshot copies its element's root as last flushed" $? "equal ${be:-unread}, stale ${bs:-unread}, targets taken ${tt:-unread}, ${tp:-unread} of them with their own print"
 # The thread's per-pass snapshot must be gone from both devices after a clean
 # unmount; one left is a PFS root the fingerprint's walk counts. MEASURED
 # 2026-10-18: the final unmount held hammer2_mntlk while the thread's delete
