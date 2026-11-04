@@ -2059,7 +2059,21 @@ void __hammer2_dbg_pmp_died(const void *);
  */
 #ifdef HAMMER2_CLOSEWAIT
 #define HAMMER2_CTL_CLOSEHELD		0x80000000U	/* kdmsg_msg flags */
-#define hammer2_ctl_closewait(iocom, msg)	({				uint32_t c_ = (msg)->any.head.cmd;					int h_ = 0;								if ((c_ & DMSGF_PROTOS) == DMSG_PROTO_HM2 &&				    (c_ & (DMSGF_DELETE | DMSGF_REPLY)) == DMSGF_DELETE &&		    ((msg)->flags & HAMMER2_CTL_CLOSEHELD) == 0) {				(msg)->flags |= HAMMER2_CTL_CLOSEHELD;					pr_info_once("hammer2: client close held\n");				lockmgr(&(iocom)->msglk, LK_RELEASE);					schedule_timeout_uninterruptible(msecs_to_jiffies(20));			lockmgr(&(iocom)->msglk, LK_EXCLUSIVE);					h_ = 1;								}									h_;								})
+#define hammer2_ctl_closewait(iocom, msg)	({			\
+	uint32_t c_ = (msg)->any.head.cmd;				\
+	int h_ = 0;							\
+	if ((c_ & DMSGF_PROTOS) == DMSG_PROTO_HM2 &&			\
+	    (c_ & (DMSGF_DELETE | DMSGF_REPLY)) == DMSGF_DELETE &&	\
+	    ((msg)->flags & HAMMER2_CTL_CLOSEHELD) == 0) {		\
+		(msg)->flags |= HAMMER2_CTL_CLOSEHELD;			\
+		pr_info_once("hammer2: client close held\n");		\
+		lockmgr(&(iocom)->msglk, LK_RELEASE);			\
+		schedule_timeout_uninterruptible(msecs_to_jiffies(20));	\
+		lockmgr(&(iocom)->msglk, LK_EXCLUSIVE);			\
+		h_ = 1;							\
+	}								\
+	h_;								\
+})
 #else
 #define hammer2_ctl_closewait(iocom, msg)	((void)(iocom), (void)(msg), 0)
 #endif

@@ -2383,7 +2383,7 @@ change what the arm reads. One more `HAMMER2_LOCKDEBUG` parameter,
 in `hammer2_link_work()` after the quiesce (`hammer2_iocom.c:966`) with
 `hammer2_mntlk` still held, inside the window before the old reader is
 reaped. The existing build flag `HAMMER2_NOSNAPSCOPE=1`
-(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2066-2070`) is redefined
+(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2080-2084`) is redefined
 below.
 - `tlspeer`, bound to cluster id X, announces a span for Y: refused with
   the line, no slot. Removed: the span enters the table.
