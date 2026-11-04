@@ -1688,7 +1688,7 @@ inpass() {
 # the one after B's unmount, so the second's values are read from the tail.
 val2() { sed -n "s/^$1 $2 //p" "$W/out" | tail -1; }
 
-echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, harness $(sha256sum < "$0" | cut -c1-16), module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM")${KO_B_GIVEN:+, B's given}${KO_A_GIVEN:+, A's given}:"
+echo "hammer2 cluster transport on the wire, $GA and $GB ($ko_rel), relay seed $SEED, source $SRC_REV, harness $(sha256sum < "$0" | cut -c1-16), module sha256 $(printf %.16s "$KO_SUM")$([ "$KO_A_SUM" = "$KO_SUM" ] || printf ', A'"'"'s %.16s' "$KO_A_SUM")${KO_B_GIVEN:+, B given}${KO_A_GIVEN:+, A given}:"
 npa=$(num "$(val A pfs-count)" 0); npb=$(num "$(val B pfs-count)" 0)
 # under LINKDEV B's link is vdc's, which spans vdc's PFSes and not B's CL
 slv=1
