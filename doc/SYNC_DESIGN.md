@@ -1063,19 +1063,17 @@ source before it was applied, and no lever-2 code precedes it.
    (`hammer2_ioctl.c:999`). Without it the target call's sync would
    leave the slave device's volume header unwritten, and that dirt would
    sit in the count at the next cut. It does not keep the slave's root
-   slot current: the previous pass's `hammer2_sync_flush()` left the
-   slave root clean without refreshing the slot (the paragraph "Two
-   masters" above), and the slot is refreshed only inside the flush-flag
-   test (`hammer2_flush.c:1161-1178`), so the exempt flush finds the root
-   clean and skips it. Under the knob that would make every target after
-   a pass that acted a copy of an old slot, and the kept target is the
-   backstop branch K and N8d rest on. So lever 2's first increment,
-   under `sync_prune` or the knob armed, so that with both off every
-   carried path is unchanged and a carried arm run in the knob's shape
-   still takes current targets, refreshes the slot in `hammer2_sync_flush()` right
-   after its root flush, under the root chain's lock as
-   `hammer2_flush.c:1170-1177` does, and applies item 1's equality test
-   to the target call too. On a mismatch the target call flushes the
+   slot current by itself: the exempt flush refreshes the slot only
+   inside the flush-flag test (`hammer2_flush.c:1161-1178`) and finds the
+   root clean after the previous pass's `hammer2_sync_flush()`. Since
+   1.0.84 that flush refreshes the slot itself on success, ungated, under
+   the root chain's lock as `hammer2_flush.c:1170-1177` does (the
+   paragraph "Two masters" above; the wire had read every target after a
+   link's first copied from an older slave). What stays lever 2's first
+   increment, under `sync_prune` or the knob armed so that with both off
+   every carried path is unchanged, is item 1's equality test applied to
+   the target call too, for a root the frontend dirtied after the pass's
+   flush. On a mismatch the target call flushes the
    slave root chain inside the body's own flush transaction, already
    open at the cut (`hammer2_ioctl.c:1008`): `hammer2_sync_setflush()` on
    the root (static in `hammer2_synchro.c` today, so it gains a prototype
@@ -1090,10 +1088,9 @@ source before it was applied, and no lever-2 code precedes it.
    never of a root the frontend dirtied after the call's sync. It
    cannot refuse the target: the thread runs no pass without one
    (`hammer2_synchro.c:1256-1258`), which would also stop the pass-end
-   flush, the slot's other refresh. The same refresh made ungated, the
-   answer to the stale-slot candidate in every build, belongs to the
-   plan's track R item 6 with its own readings on a build with lever 2
-   off. The exemption is no wider: the sync's
+   flush, the slot's other refresh. The ungated refresh of 1.0.84 is that
+   answer to the stale-slot candidate in every build; track R item 6's
+   third-element reading stays open. The exemption is no wider: the sync's
    first stage on the thread drains the frontend's queued inodes
    through the insert, destroy, sync and flush XOPs
    (`hammer2_inode.c:1879, 1917, 1822, 1947`;
