@@ -1739,6 +1739,22 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  * through vfs_setpos() once, as ext4_llseek() ends; a failure leaves the
  * position where it was.  Before this, SEEK_DATA and SEEK_HOLE returned
  * the right offset and left the position behind.
+ *
+ * The size, the writeback and the scan run under i_rwsem shared, as
+ * ext4, f2fs and btrfs hold it; DragonFly's vn_bmap_seekhole() holds the
+ * vnode exclusive, and shared is enough since the seek writes nothing.
+ * Unlocked, a truncate landing between the i_size read and the scan made
+ * the seek answer an offset past the size it returned at.  The order is
+ * the module's own: i_rwsem above the writeback's folio locks, its
+ * HAMMER2_TRANS_BUFCACHE transaction and ip->lock, and above the scan's
+ * hammer2_inode_lock().  hammer2_trans_init() sleeps only for a flush
+ * against a flush, so a writer holding its transaction while it waits
+ * for i_rwsem (hammer2_file_write_iter) blocks nothing this writeback needs,
+ * and hammer2_fallocate_locked() already writes back under i_rwsem held
+ * exclusive.  A page fault takes no i_rwsem, so an mmap write after the
+ * writeback can still dirty a folio the scan then calls a hole; lseek(2)
+ * cannot close that without the invalidate lock across faults, which
+ * iomap's seek does not take either.
  */
 static loff_t
 hammer2_llseek(struct file *file, loff_t offset, int whence)
@@ -1755,7 +1771,9 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 		return (generic_file_llseek_size(file, offset, whence,
 		    maxbytes, i_size_read(inode)));
 	}
+	inode_lock_shared(inode);
 	pos = hammer2_seek_data_hole(file, offset, whence);
+	inode_unlock_shared(inode);
 	if (pos < 0)
 		return (pos);
 	return (vfs_setpos(file, pos, maxbytes));
