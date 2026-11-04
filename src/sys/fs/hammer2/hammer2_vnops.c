@@ -1582,27 +1582,19 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
  * A file's last block may be allocated and hold data only to i_size.
  * The bytes past i_size are a hole by definition, so the scan stops
  * there and the answer is i_size.
+ *
+ * This returns the answer or a negative errno and leaves the file
+ * position alone; hammer2_llseek() sets it.
  */
 static loff_t
-hammer2_llseek(struct file *file, loff_t offset, int whence)
+hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 {
 	struct inode *inode = file->f_mapping->host;
 	loff_t isize = i_size_read(inode);
-	loff_t maxbytes = inode->i_sb->s_maxbytes;
 	unsigned int bsize = i_blocksize(inode);
-	bool seek_data;
+	bool seek_data = (whence == SEEK_DATA);
 	loff_t pos;
 
-	switch (whence) {
-	case SEEK_DATA:
-	case SEEK_HOLE:
-		break;
-	default:
-		return (generic_file_llseek_size(file, offset, whence,
-		    maxbytes, isize));
-	}
-
-	seek_data = (whence == SEEK_DATA);
 	/*
 	 * Before the start or at or past the end of the file both whences
 	 * fail with ENXIO.  That is what iomap_seek_hole() and
@@ -1739,6 +1731,34 @@ hammer2_llseek(struct file *file, loff_t offset, int whence)
 		if (pos >= isize)
 			return (isize);
 	}
+}
+
+/*
+ * Linux: lseek(2) moves the file position to the answer, so a read()
+ * after lseek(fd, 0, SEEK_DATA) reads the data found.  Every success goes
+ * through vfs_setpos() once, as ext4_llseek() ends; a failure leaves the
+ * position where it was.  Before this, SEEK_DATA and SEEK_HOLE returned
+ * the right offset and left the position behind.
+ */
+static loff_t
+hammer2_llseek(struct file *file, loff_t offset, int whence)
+{
+	struct inode *inode = file->f_mapping->host;
+	loff_t maxbytes = inode->i_sb->s_maxbytes;
+	loff_t pos;
+
+	switch (whence) {
+	case SEEK_DATA:
+	case SEEK_HOLE:
+		break;
+	default:
+		return (generic_file_llseek_size(file, offset, whence,
+		    maxbytes, i_size_read(inode)));
+	}
+	pos = hammer2_seek_data_hole(file, offset, whence);
+	if (pos < 0)
+		return (pos);
+	return (vfs_setpos(file, pos, maxbytes));
 }
 
 static sector_t
