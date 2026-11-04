@@ -423,9 +423,9 @@ for the device where DragonFly has one per bucket:
 | `hammer2_msgops.c` | 1 | 0 | 1 |
 | total | 789 | 80 | 709 |
 
-Six hundred and ninety-one are this port's, the right-hand column
+Seven hundred and nine are this port's, the right-hand column
 summed in the table's last row, which `test-inventory.sh` checks against
-the rows, and they fall in twenty-six files: one hundred and eighty-nine in `hammer2_synchro.c`, ninety-five in `hammer2_chain.c`, seventy in `hammer2_vfsops.c`, fifty in `hammer2_ioctl.c`, forty-six in `hammer2.h`, thirty-three in `hammer2_iocom.c`, twenty-seven in `hammer2_inode.c`, twenty-seven in `kern_dmsg.c`, twenty-six in `hammer2_strategy.c`, twenty-one in `hammer2_ondisk.c`, twenty in `hammer2_admin.c`, fourteen in `sys/dmsg.h`, twelve in `hammer2_freemap.c`, twelve in `hammer2_flush.c`, ten in `hammer2_io.c`, seven in `hammer2_subr.c`, seven in `hammer2_xops.c`, five in `hammer2_cluster.c`, five in `hammer2_disk.h`, four in `hammer2_vnops.c`, three in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_ccms.c`, one in `hammer2_bulkfree.c`, one in `hammer2_ioctl.h`, and one in `hammer2_msgops.c`. That is the whole of them, and
+the rows, and they fall in twenty-six files: one hundred and eighty-nine in `hammer2_synchro.c`, ninety-five in `hammer2_chain.c`, seventy-one in `hammer2_vfsops.c`, fifty-three in `hammer2_ioctl.c`, forty-nine in `hammer2.h`, thirty-nine in `hammer2_iocom.c`, thirty in `kern_dmsg.c`, twenty-seven in `hammer2_inode.c`, twenty-six in `hammer2_strategy.c`, twenty-one in `hammer2_ondisk.c`, twenty in `hammer2_admin.c`, sixteen in `sys/dmsg.h`, twelve in `hammer2_flush.c`, twelve in `hammer2_freemap.c`, ten in `hammer2_io.c`, seven in `hammer2_subr.c`, seven in `hammer2_xops.c`, five in `hammer2_cluster.c`, five in `hammer2_disk.h`, four in `hammer2_vnops.c`, three in `hammer2_os.h`, three in `hammer2_rb.h`, two in `hammer2_ccms.c`, one in `hammer2_bulkfree.c`, one in `hammer2_ioctl.h`, and one in `hammer2_msgops.c`. That is the whole of them, and
 it is the only place in this file that adds up to the column. The count
 is prose because `test-inventory.sh` checks the total column only, and
 the per-file figures here are read off that column rather than
