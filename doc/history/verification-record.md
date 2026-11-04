@@ -21845,3 +21845,65 @@ a module of that release loads only on that kernel, so the guest ran
 (`p8-notes/n9-7-fixtures-20261103-163555.log`,
 `n9-7-enospc-20261103-163555.log`) kept no exit status and is not cited
 for one.
+
+## The TLS documents and the milestone sweep, 2026-11-03
+
+What this entry claims: the documents that state the cluster link's
+security say what is built and what is not, and a sweep of the tracked
+documents after 1.0.82 found four more statements behind the tree. No
+code changed and no run was made; every claim below is a reading of
+`src/` or of an earlier entry.
+
+The protocol note's security table (`c63ae86`):
+- Peer authentication and the encrypted transport were written as the
+  plan and its instrument. Both are built. The rows now cite the
+  readings of 1.0.75, 1.0.78 and 1.0.80: under `cluster-wire.sh
+  H2_WIRE_TLS=1` no dmsg header in either guest's capture of the relay
+  port or in the relay's count, and under `H2_WIRE_RAW=1` the header in
+  all three (`wire-run-20261102-221701` and `-222023`, the 1.0.78
+  entry; both arms on both `-tls` kernels in the 1.0.80 entry), and the
+  pass over TLS, `wire-run-20261103-111156` and `-113404`.
+- Replay protection named a mark on an abandoned state, which was never
+  built, beside `link_verifier`, which `src/` neither sets nor reads.
+  The row now says replay protection is not built, keeps
+  `link_verifier` as the design, and says why the `msgid` half holds
+  without a mark: `kdmsg_state_cleanuptx()` takes a state out of its
+  tree only once both sides have sent `DELETE`, so a call that gives up
+  keeps its state's address until the peer's `DELETE` or the link's end.
+  Message freshness pointed at the same mark and now names what a late
+  frame meets, ending at the closed-call test 1.0.82 controlled.
+- Authorization by node type described a MASTER accepting modifying
+  requests from a MASTER. No modifying command is served to any peer:
+  `hammer2_remote_rcvmsg()` refuses a modifying descriptor
+  `DMSG_ERR_NOSUPP` whoever sends it. The row says so and leaves the
+  MASTER path to 3.2.
+
+`doc/SECURITY_MODEL.md` (`1de7566`) headed its TLS bullet "in progress"
+and ended by calling the rest P8's TLS stage. The bullet now names the
+pass's runs and lists what is not built: x509, deferred with its trigger
+in the protocol note's TLS section; `link_verifier`; revoking a live
+link without an unmount; and a rekey, so a KeyUpdate ends the link.
+
+`doc/README.testing.md` (`f4e77dd`) did not say how the guests run
+`tlshd`, though both TLS harnesses exit 2 without it. A paragraph beside
+the `-tls` kernels gives the ktls-utils 1.5.0 build into `/usr/local`,
+the s6 service and its logger's dependency on `mount-filesystems`, the
+debug loglevel, `nvme-keyring`, and what each harness checks on the
+guest, from `p8-notes/n9-ktls-guests.md` and the harnesses' own checks.
+
+The sweep, over every tracked `.md` by joined prose for the phrases
+1.0.82 and the TLS stage made stale, and a reread of the README opener,
+the status opener, the roadmap's state section and the operator pages,
+found:
+- `doc/CAPABILITIES_MATRIX.md`'s Mount a PFS row named four of the five
+  TLS mount options, missing `cluster_tls_clid` (`29e7faa`), the
+  sibling of the packaging notes' omission `c784683` fixed;
+- `doc/README.status.md`'s sentence under the `XXX` table summed to 691
+  where the table's column, which the inventory gate checks, reads 709,
+  with six files' shares behind; it is rebuilt from the column
+  (`1631b89`).
+`STATUS_SNAPSHOT.md`, the capabilities page, the user guide and the
+packaging notes already said what 1.0.80 read and needed no change.
+The added prose read 0 em dashes, 0 buzzwords and 0 empty signposts by
+the de-ai-prose scanner, and `test-doc-prose.sh` read 0 findings over 50
+documents.
