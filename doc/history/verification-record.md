@@ -21973,17 +21973,24 @@ fixed at `25920b5`, R6's reading on a third local element still open;
 and two candidates read from the code and not driven.
 Expected readings were written before each series (`p7-notes/n10-expected.md`,
 `n10-r6-expected.md` and `n10-r6-fixed-expected.md` in the data tree). Every
-run was on `h2debug-7.3tls` or `h2kasan-7.3tls` from a frozen copy of its
-harness, one job at a time, QEMU cores 0 before and after each (the wrapper
+cluster harness run was on `h2debug-7.3tls` or `h2kasan-7.3tls` from a
+frozen copy of its harness (`test-fixtures.sh` and `test-enospc.sh` ran
+from `script/` between 00:52:59 and 00:54:20, after a run whose report
+reads `source v1.0.4-944-g25920b5` with no `-dirty`,
+`wire-run-20261104-005150`, and before one whose build line reads
+`head=25920b5 src-dirty=0`), one job at a time, QEMU cores 0 before and after each (the wrapper
 logs beside each series).
 
 **The closing re-read at `6ee2b72`** (series `n10-20261103-195223` and
 `n10b-20261103-205107`; the n10b runs are at `6529c18`, one of them
-`-dirty` from a harness edit in its build window, and `-213226` and
+`-dirty` (`-205505`) with the clean runs' frozen-harness hash, a
+candidate for a live-tree script edit in its build window, and `-213226` and
 `-213839` at `8343a80`, every debug run loading the module of sha256
 `1d60a9cff03a66a2`, since neither commit touches `src/`; n10's KASAN default read COULD-NOT-RUN,
-"module did not build", when a harness probe ran a build inside its
-window, and n10b ran it again). The local default, crash shape and control and
+"module did not build" (`cluster-run-20261103-202711`), and n10b ran it
+again; the session attributes that failure to two `cluster-wire.sh
+--selftest` calls made during its build, a mode that script lacks, so
+each ran the harness's own build, a cause no kept artifact records). The local default, crash shape and control and
 the wire slave cut passed on both kernels: default 58 checks and 0 failed
 (`cluster-run-20261103-195421`, `-205957`), crash 47 and 0
 (`-200133`, `-211454`), `H2_SYNC_SNAPSHOT=0` 47 and 0 on debug
@@ -22003,7 +22010,8 @@ root refreshes the slot (`hammer2_flush.c:1175`), and the thread's read
 refreshes a remote master's (`hammer2_synchro.c`, the focus read), but
 `hammer2_sync_flush()` wrote the slave and left its slot alone. Over the
 wire nothing but the thread writes the slave, so every target after the
-first named the slave as of its registration or its last frontend flush.
+first named the slave as its slot stood when last set, at `hammer2_pfsalloc()`
+or a frontend flush.
 The "target is the slave before the pass" the P7 row promises held only
 for the first target of a link, and a bulkfree between that flush and a
 later snapshot could free blocks the stale blockset names (not driven).
@@ -22016,9 +22024,18 @@ the slave under the pass is held to a print, though the master also runs
 with the bit after a restart and prints there; `ba50f85` first gave the
 wrong reason in the check's detail, and `a5d6560` corrects it and requires
 a target print for every target taken in the same log, since the defect
-shows only on a target after a link's first and one print cannot tell. Its
+shows only on a target after a link's first and one print cannot tell.
+That floor still passed two targets taken, one unprinted, beside a third
+that printed and then errored, since the snapshot body prints before its
+read-back; `9534ac8` counts only the taken targets preceded by their own
+print, each outcome line closing the print before it, and its selftest
+case reads 1 of 2 where the count of prints reads 2. Re-read that way
+from their kept klogs, the eighteen closing runs below that take a
+target have every taken target paired (`p7-notes/n10-pairing-reread.txt`
+in the data tree). Its
 selftest samples join `cluster-sync.sh --selftest` (51 samples, 62
-patterns, 0 failures). Read on the unfixed tree, series
+patterns, 0 failures at `802dedf`; 63 patterns since `a5d6560` counts the
+target prints). Read on the unfixed tree, series
 `n10c-20261103-215126` on debug: the wire pass B equal 1, stale 1, the
 first target equal at 132.27 and the second stale at 158.88
 (`wire-run-20261103-215433`, 44 checks, 1 failed); the master cut stale 1
@@ -22079,6 +22096,32 @@ the rerun uses 155 as 1.0.82 did):
   failures. `test-enospc.sh`, rc 0: filled 2G, 0 failures. Both with
   `H2_FIXTURE_START=1` and `KDIR` the booted `h2debug-7.3tls` tree.
 
+Series `n10h-20261104-093711` and `n10k-20261104-104227`, the
+convergence control (`p7-notes/n10-nopass-expected.md`): `ctl/n10-nopass`,
+`a0e0881`'s tree with one edit marked `CONTROL n10 nopass`, the pass
+dispatch in `hammer2_synchro.c` always taking the refusal branch, built
+against `linux-7.3-tls` as module sha256 `babeb8b49436468d`, loaded on B
+over the wire and on the one guest locally, on `h2debug-7.3tls`. On two
+hosts (`wire-run-20261104-093931`, A on `f8195aa9b75afdb8`), 0 of A's
+files on B's media after 240 s, 626 of 626 fingerprint lines different
+and 61 refusal lines in B's klog; B's `pass.sh` then ended at the run's
+300 s bound (`rc=124`, said in the run log), so the phases after it did
+not run, and 17 of 44 checks fail, the digest and listing checks among
+them on values never read. Locally (`cluster-run-20261104-104337`, 59
+checks, 24 failed): 0 inode updates for the 55-file set, 0 destroyed for
+5 deleted and 0 replaced for 5 rewritten, no snapshot listed, the slave
+unequal (60225 of 120227 fingerprint lines different), 149 refusal lines
+and no `syncsnap:` line; no warning, lockdep, KASAN or UBSAN report, and
+kmemleak empty. Three earlier local attempts ran past the run's bound,
+twice at 600 s and once at 1800 s, each with the guest polling and no
+fault line in its kept klog; the third, read live, sat in the stop-depth
+wait, whose bound counted 50 ms polls as milliseconds (240000 of them,
+12000 s), fixed at `c37f8f8`, and the fourth run's wait ended at its
+240 s. These replace the controls an earlier version of this entry
+named for the two convergence criteria: 1.0.68's narrowing control
+reads a narrowed pass, not convergence, and the master cut's five-file
+failure at `-213226` was a stale target read beside a converged slave.
+
 **Candidates**, read from the code and not driven:
 - `unable to fsync inode 0000000000000001` on B right after a target is
   taken in a wire pass. Counted 2026-11-04 09:05 over the B klogs under
@@ -22115,8 +22158,8 @@ two guests through `h2loop`.
 
 | criterion | local | two hosts | control |
 |---|---|---|---|
-| `initial_convergence` | 1.0.40; `cluster-run-20261103-231312`, `cluster-run-20261104-001039` | 1.0.47 (`H2_WIRE_PASS=1`); `wire-run-20261103-225601`, `-234026` | on two hosts `H2_WIRE_CUT=control`, `wire-run-20261104-005150`: with the pass withheld after a cut the same comparison reads the slave short, 305 file entries on A and 304 on B; locally 1.0.68's narrowing control, which ends `detached` with the slave one inode short, its scratch build verifying that slave |
-| `incremental_convergence` | 1.0.40; the same default runs | 1.0.49 (five files after the first pass reach the slave by a later one); the same pass runs | as above; the five-file check itself failed on the unfixed tree when a stale target was read (`wire-run-20261103-213226`) |
+| `initial_convergence` | 1.0.40; `cluster-run-20261103-231312`, `cluster-run-20261104-001039` | 1.0.47 (`H2_WIRE_PASS=1`); `wire-run-20261103-225601`, `-234026` | `ctl/n10-nopass`, the pass forced to its refusal where it is dispatched: on two hosts 0 of A's files on B's media after 240 s and 626 of 626 fingerprint lines different (`wire-run-20261104-093931`); locally 0 inode updates for the 55-file set and 60225 of 120227 lines different (`cluster-run-20261104-104337`) |
+| `incremental_convergence` | 1.0.40; the same default runs | 1.0.49 (five files after the first pass reach the slave by a later one); the same pass runs | the same runs: locally 0 destroyed for 5 deleted files and 0 replaced for 5 rewritten; on two hosts B never holds A's first set, so no later pass is read |
 | `snapshot_source` | 1.0.40; the same default runs | 1.0.49 (the master takes the snapshot at the slave's request); the same pass runs | local `H2_SYNC_SNAPSHOT=0`, `cluster-run-20261103-232948`: no snapshot listed, the master's state written as found; on the wire, the snapshot's routing and a `SNAPDEL` naming a snapshot the link never took (1.0.50) |
 | `interrupted_resume` | 1.0.40; the same default runs | 1.0.54 (`H2_WIRE_CUT=disconnect`); `wire-run-20261104-004922`, `wire-run-20261104-092155` | `H2_WIRE_CUT=control`, the dial withheld and the slave left short; `wire-run-20261104-005150` |
 | `crash_recovery` | 1.0.40 (`H2_CRASH=1`); `cluster-run-20261103-232019`, `cluster-run-20261104-002533` | 1.0.56 (`H2_WIRE_CUT=slave`, `=master`); the n10d cut runs above | `H2_CRASH=1 H2_SYNC_SNAPSHOT=0`, the cut with no kept target, its target and source checks failing; `cluster-run-20261104-005421` |
@@ -22126,7 +22169,9 @@ The 1.0.80 TLS runs were on the source before this entry's fix, and
 each took two targets, the shape the unfixed tree read stale, so the
 pass over TLS was read again (series `n10f-20261104-090358`, harness at
 `a5d6560`): `H2_WIRE_PASS=1 H2_WIRE_TLS=1`, 49 checks and 0 failed on
-`h2debug-7.3tls` (`wire-run-20261104-090616`, module sha256
+`h2debug-7.3tls` (the expected note predicted 48, one more than 1.0.80's
+47; the blockset check is per side, A's and B's, so it adds two;
+`wire-run-20261104-090616`, module sha256
 `f8195aa9b75afdb8`) and on `h2kasan-7.3tls` (`wire-run-20261104-091413`,
 `ef6f3d78dd5308be`), each with B's 2 targets taken and 2 printed equal,
 no dmsg header in either guest's capture, 310 of 310 digests equal, and
