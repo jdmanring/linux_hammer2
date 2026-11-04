@@ -2004,7 +2004,8 @@ p=$(val resume-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the resumed thre
 # count. A pass whose local scan is empty handles one inode, so a backlog of
 # hundreds needs hundreds of passes and a two-pass wait measured a race. The
 # settle counter is 10 consecutive seconds with no new update-inode line; the
-# bound is H2_RESUME_SECS (300) and a run that hits it did not converge.
+# bound is H2_RESUME_SECS, 900 s by default, and a run that hits it did not
+# converge.
 s=$(val resume-settled); [ "${s:-0}" -ge 10 ] 2>/dev/null; check "the resumed thread stops advancing rather than being cut off" $? "settled ${s:-none} s after $(( $(val resume-updates) )) updates in $(val resume-converge-seconds) s"
 fi
 # The snapshot pass: every pass that took a snapshot verified against it,
