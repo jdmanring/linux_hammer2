@@ -579,35 +579,35 @@ its backstop. 1b narrows the second round, and is taken only where the
 slave element can have no writer but its own thread by construction.
 
 **1a, the root rescan after the drain.** `hammer2_sync_pass()` scans the
-root (`hammer2_synchro.c:736`), drains the inodes that scan deferred,
+root (`hammer2_synchro.c:750`), drains the inodes that scan deferred,
 and scans the root again until a root scan defers nothing. That rescan
 does two jobs. It continues a root scan that stopped at the deferral
 cap, which breaks the loop once more than 1000 deferrals are listed
-(`:2589-2625`), before either cursor advances. And it stamps the root,
-since a scan that deferred returns `EAGAIN` (`:2688-2689`) and the
-stamp is taken only by a scan that did not (`:2699`). On a snapshot
+(`:2603-2639`), before either cursor advances. And it stamps the root,
+since a scan that deferred returns `EAGAIN` (`:2702-2703`) and the
+stamp is taken only by a scan that did not (`:2713`). On a snapshot
 pass whose root scan ended at the end of both key spaces (`exit` 1;
-`exit` 2 is the source scan's error, `:2117-2120`), with nothing failed
+`exit` 2 is the source scan's error, `:2131-2134`), with nothing failed
 and `rescan_now` clear, the second job is the only one: every root key
 the scan found unequal was replaced, inserted, destroyed or deferred,
 and every deferred inode was scanned and stamped by its own call, or
-left unstamped as newer than the snapshot (`:1972-1978`, `:1993`),
+left unstamped as newer than the snapshot (`:1986-1992`, `:2007`),
 before the drain removed it. A key the scan found equal is either still
 equal, and the rescan finds nothing, or a writer changed it after the
 scan. Then the two differ: the carried rescan would put back a key the
-writer deleted (`:2432-2437`) and keep one it wrote, where 1a stamps the
-root over both. The next pass scans the root whatever its tid (`:1321`),
+writer deleted (`:2446-2451`) and keep one it wrote, where 1a stamps the
+root over both. The next pass scans the root whatever its tid (`:1335`),
 and a change the master also took is in the next snapshot. One the
 slave took alone is settled only in part, and the same under both
-forms: a key it added is destroyed by the cut rule (`:2276`) once older
+forms: a key it added is destroyed by the cut rule (`:2290`) once older
 than the cut, but a key it rewrote is kept as newer at the key
-(`:2346-2369`) and at the inode (`:1972-1978`), with no cut test, until
+(`:2360-2383`) and at the inode (`:1986-1992`), with no cut test, until
 the master writes that key again. That is carried behavior, which 1a
 neither causes nor cures. When round 1
-acted on nothing no second round runs (`:1334`), so 1a's backstop is the
+acted on nothing no second round runs (`:1348`), so 1a's backstop is the
 next pass and not the second round. The rescan is replaced by the stamp alone: the stamp block run for the root
 with no iteration, with the first scan's count of kept and failed keys
-passed to the root's rescan note (`:2795`), which a stamp with no scan
+passed to the root's rescan note (`:2809`), which a stamp with no scan
 would otherwise clear. The carried rescan counts the root's kept keys a
 second time, so `list->kept` reads lower under 1a, and the harness's
 kept readings move with it. A scan that stopped at the cap is resumed
@@ -626,22 +626,22 @@ above, fixed at 1.0.65 by a watermark of the root keys it deferred), and
 pass where the carried pass takes three.
 
 **1b, the second verify round.** Before each round the snapshot root is
-put on the rescan set (`:1321`), and the rounds end at one that acts on
-nothing (`:1334-1335`); that round is what "verified" means (`:1351`), and
+put on the rescan set (`:1335`), and the rounds end at one that acts on
+nothing (`:1348-1349`); that round is what "verified" means (`:1365`), and
 on it the target, the slave's last known-good copy, is deleted. A
 one-file pass acts in round 1 and pays a whole round 2 to show it is
 done (1.0.63, acted 2 then 0). The narrowed round compares again only
 the root keys round 1 replaced, inserted, destroyed or deferred, held in
 a set of fixed size. What it catches that round 1's own counts cannot
 was an inode stamp whose error the stamp block discarded (`nerror`,
-`:2754`), caught by that inode's root key comparing unequal again; a
+`:2768`), caught by that inode's root key comparing unequal again; a
 failed root stamp no round caught. Since 1.0.65 a failed stamp fails the
-pass (`:2766-2769`), so the narrowed round need not catch it. The
+pass (`:2780-2783`), so the narrowed round need not catch it. The
 narrowed round equals the carried one when all of these
 hold, and the carried round runs otherwise:
 
 - round 1's root scan ended with `exit` 1, every segment of it, and the
-  pass did not end on a failed key (`:817-821`);
+  pass did not end on a failed key (`:831-835`);
 - `rescan_now` and `rescan_all` are clear, since with either set the
   carried round compares every inode (`:247-248`);
 - the set of acted keys, 64 a round (`HAMMER2_SYNC_NARROW_MAX`), did not
@@ -656,30 +656,30 @@ hold, and the carried round runs otherwise:
   one function that clears a slot, reads the same at both, and
   `HAMMER2_CTL_NOROGATE` is off.
 
-The count is read a third time at the verdict (`hammer2_synchro.c:1358-1364`). If it moved
+The count is read a third time at the verdict (`hammer2_synchro.c:1372-1378`). If it moved
 since the pass began, a narrowed round that acted on nothing does
 not verify: the pass ends `detached`, a print of its own beside
-`newer` and `interrupted` (`hammer2_synchro.c:1406-1434`), so a harness does not read it
+`newer` and `interrupted` (`hammer2_synchro.c:1420-1448`), so a harness does not read it
 as a pass that ran out of rounds, the target stands, and the next pass
 decides afresh. As built the choice of each round is printed under
 `hammer2_debug` 0x8000, `syncsnap: narrowed` with its key count or
 `syncsnap: carried round` with the first condition that failed. A narrowed round that acted is followed by a round
 narrowed to the keys it replaced, inserted, destroyed or deferred, with
 the conditions read again when it is chosen, within the carried limit
-of three rounds (`hammer2_synchro.c:916`).
+of three rounds (`hammer2_synchro.c:930`).
 
 A narrowed round makes one root call per key, and only its first passes
 the root's tid gate by the rescan set: that call takes the root off the
 set, and round 1 has already stamped the slave root with the snapshot's
 tid. Each later call, and a 1a segment resumed in a round after the
 first, which meets the same gate, is let through as going on with the
-round's walk (`list->root_cont`, `hammer2_synchro.c:1952-1954`). As first
+round's walk (`list->root_cont`, `hammer2_synchro.c:1966-1968`). As first
 built the later calls returned at the gate unscanned, so a round of two
 or more keys compared only its first; every narrowed round the fleet had
 read named one key, so nothing failed, and the review that read the code
 found it. A narrowed call is bounded to its key on both cursors, and the
 slave cursor is held to that bound after every arm
-(`hammer2_synchro.c:2108-2112`), since `hammer2_sync_destroy()`
+(`hammer2_synchro.c:2122-2126`), since `hammer2_sync_destroy()`
 repositions to `HAMMER2_KEY_MAX` and the sweep would otherwise destroy
 the slave keys past the one it was given.
 
@@ -702,7 +702,7 @@ peer's span goes, and the pass's reads of its source snapshot continue
 detached and the slot can be registered again later, which is why the
 condition reads the detach count and not two samples of the slot.
 Another element's sync thread reaches only chains of its own element,
-each found by its `clindex` (`hammer2_synchro.c:307`, `:1897`, `:2051`),
+each found by its `clindex` (`hammer2_synchro.c:307`, `:1911`, `:2065`),
 and the pass's own snapshot, other threads' syncs and the remote
 server's snapshot commands (`hammer2_remote.c:106-108`) touch the slave's
 root chain (`:676`, `hammer2_ioctl.c:1024-1029`) and no root key. Under these a key round 1 found equal is still
@@ -775,15 +775,15 @@ acknowledging pass paying the full round, no saving for the lease.
 
 **The idle stamp pass stays.** After a verified pass the next cadence
 can find the master idle and run the live pass as the idle stamp
-(`hammer2_synchro.c:1165-1174`). A shortcut taking the root's stamp without that walk was
+(`hammer2_synchro.c:1179-1188`). A shortcut taking the root's stamp without that walk was
 weighed and dropped: of 336 idle stamps in the logs kept since
 2026-10-20, 23 deferred or acted, 17 of them after a pass that verified
-while keeping keys, which "verified" allows (`hammer2_synchro.c:1334-1351`). On
+while keeping keys, which "verified" allows (`hammer2_synchro.c:1348-1365`). On
 `fixtures/wire-run-20261026-151912-b.klog`, over the wire with
 read-write mounts refused, an idle stamp at 255.684 s replaced one key
 and deferred and scanned inode 0x534. The stamp pass is what settles
 those keys, and nothing would revisit them once the root's stamp
-equaled the master's (`hammer2_synchro.c:1162-1163`).
+equaled the master's (`hammer2_synchro.c:1176-1177`).
 
 **Readings and controls.** With 1a and 1b a one-file snapshot pass is
 one root walk plus the acted keys where the carried pass is three, a
@@ -814,8 +814,8 @@ at the end of every arm catch it, and each control is placed where its
 change executes:
 
 - the resume, in an arm that changes 4000 inodes, more than the 1001
-  deferrals a capped segment takes (`hammer2_synchro.c:2589`) times the
-  three verify rounds (`:916`), so the cap fires in every round, with a scratch build that drops both the resume
+  deferrals a capped segment takes (`hammer2_synchro.c:2603`) times the
+  three verify rounds (`:930`), so the cap fires in every round, with a scratch build that drops both the resume
   and 1a's end-reached test, so the stamp is taken after a capped
   segment: each round after the first must then act again on the keys
   past the break, which the round's own `acted` count reads without a
@@ -990,7 +990,7 @@ source before it was applied, and no lever-2 code precedes it.
 
 2. *Adoption.* Replaces "adopted beside that arm", which left the vetoed
    pass unstated. A pass adopts its candidate (`last_gen = cand_gen`)
-   only in the verified arm (`hammer2_synchro.c:1367`), and only when
+   only in the verified arm (`hammer2_synchro.c:1381`), and only when
    the candidate is valid: the two reads at each point agreed, the two
    points agreed, and every leg of item 1 was clear. A pass with an
    invalid candidate may still verify, unpruned, and keeps the
@@ -1002,7 +1002,7 @@ source before it was applied, and no lever-2 code precedes it.
    `hammer2_pfs_snapshot()` has four callers: the user ioctl
    (`hammer2_ioctl.c:861`), the server for a remote slave
    (`hammer2_remote.c:676`), and the thread's source and target calls
-   (`hammer2_synchro.c:1215, 1250`). It gains an out-parameter beside
+   (`hammer2_synchro.c:1229, 1264`). It gains an out-parameter beside
    `mtidp` for the candidate and its validity; the ioctl and the target
    call pass NULL and capture nothing, so a target call, which reads
    the slave device's own unrelated generation (0x12 to 0x44 against
@@ -1020,7 +1020,7 @@ source before it was applied, and no lever-2 code precedes it.
    beside `pfs_hmps[]`. The candidate records the source slot's and the
    slave slot's values; `last_gen` is used only while both slots still
    carry them, and is zeroed otherwise, as it is at thread start
-   (beside `thr->snap_cut = 0`, `hammer2_synchro.c:1547`). A volume
+   (beside `thr->snap_cut = 0`, `hammer2_synchro.c:1561`). A volume
    cannot be replaced under a mounted device, so an older image swapped
    in for either element, flushed past `last_gen` or not, arrives
    through a detach (`hammer2_vfsops.c:910`, `hammer2_remote.c:2697`)
@@ -1083,7 +1083,7 @@ source before it was applied, and no lever-2 code precedes it.
    from the refreshed slot, so the copy is always of a flushed root,
    never of a root the frontend dirtied after the call's sync. It
    cannot refuse the target: the thread runs no pass without one
-   (`hammer2_synchro.c:1242-1244`), which would also stop the pass-end
+   (`hammer2_synchro.c:1256-1258`), which would also stop the pass-end
    flush, the slot's other refresh. The same refresh made ungated, the
    answer to the stale-slot candidate in every build, belongs to the
    plan's track R item 6 with its own readings on a build with lever 2
@@ -1101,14 +1101,14 @@ source before it was applied, and no lever-2 code precedes it.
    still run on every element. The shape also reads both queues empty
    at every sync the thread starts while the knob is armed, so a stage
    1 that found work there is a reading, not an assumption. The shape has one slave; with two, the thread's
-   election XOP (`hammer2_synchro.c:1068`), which excludes only its own
+   election XOP (`hammer2_synchro.c:1082`), which excludes only its own
    index, would meet the other, and the knob's effect there is not
    designed. An inode the frontend creates under the knob gets its
    in-memory cluster from the XOP's elements, so its slave index holds
    no chain; a snapshot pass reaches the slave by inode number
    (`hammer2_sync_slave_chain()`, `hammer2_synchro.c:297`) and is not
    affected, while the live idle stamp pass reaches it through the
-   inode (`:1897`) and finds NULL, which the ternary at `:1944-1945`
+   inode (`:1911`) and finds NULL, which the ternary at `:1958-1959`
    reads as nothing to update: a skip, not a failure. The shape
    unmounts the cluster PFS before the timed pass, which evicts those
    inodes, and one idle stamp pass after a knob change is read with the
@@ -1154,10 +1154,10 @@ source before it was applied, and no lever-2 code precedes it.
 
 8. *Scope, cited.* Replaces the uncited "Scope" paragraph's assertion.
    The threshold is set only on the snapshot pass's source scan, where
-   `snap` is true (`hammer2_synchro.c:1827`, the scan's inode belonging
+   `snap` is true (`hammer2_synchro.c:1841`, the scan's inode belonging
    to the snapshot PFS rather than the thread's), never on the live
    pass nor on the idle stamp pass, which is a live pass inside a
-   snapshot thread (`:1159-1174`). A count of `syncsnap: prune` lines
+   snapshot thread (`:1173-1188`). A count of `syncsnap: prune` lines
    cannot carry the assertion, since only a snapshot pass prints one
    and it reads 0 under `H2_SYNC_SNAPSHOT=0` whatever the code does.
    The variant counts every range record it returns in a module-wide
@@ -1226,12 +1226,12 @@ below cut N, with no fixed slack bounding a stalled writer
 
 **The prune predicate and its proof.** The pass records a per-thread
 last-verified generation, sampled as a candidate around the snapshot and
-adopted only in the verified arm (`hammer2_synchro.c:1351` computes
-`verified`, `:1365` sets the next pass's cut, `:1367-1398` is the verified
+adopted only in the verified arm (`hammer2_synchro.c:1365` computes
+`verified`, `:1379` sets the next pass's cut, `:1381-1412` is the verified
 arm that deletes the target; the candidate is adopted beside that arm, and
-`thr->snap_cut` cannot serve because `:1365` runs on every pass, verified
+`thr->snap_cut` cannot serve because `:1379` runs on every pass, verified
 or not. Which pass adopts, and on what candidate, is the amendment's
-item 2; the generation is zeroed at thread start (beside `:1547`) and
+item 2; the generation is zeroed at thread start (beside `:1561`) and
 bound to the source's and the slave's attachment instances (item 4), and
 under the lease a term or holder change is another device and counter.
 The candidate is read from
@@ -1299,10 +1299,10 @@ leg vetoed or which generation read disagreed: a capture that never agrees
 (a deterministic in-window bump) then reads as a count of unpruned passes,
 not as a lever that silently never fires.
 
-Slave half: the slave side iterates its own key space
-(`hammer2_synchro.c:2125-2144, 2226-2229, 2240-2242`) and sweeps what the
-source lacks, so a skipped source range must reach the slave as an explicit
-record through the feed and collect, suppressing the sweep inside it. In
+Slave half: the slave side iterates its own key space and sweeps what
+the source lacks (`hammer2_synchro.c:2139-2158, 2240-2243, 2254-2256`), so
+a skipped source range must reach the slave as an explicit record through
+the feed and collect, suppressing the sweep inside it. In
 a local shape where the frontend writes the slave, the default shape's
 and not the knob's of amendment item 5, that record is also what the
 slave-side test reads: a slave key altered inside a pruned range
@@ -1326,9 +1326,9 @@ never prune. Where the threshold is set and what counts as the assertion
 under `H2_SYNC_SNAPSHOT=0` are the amendment's item 8.
 
 **Backstops and S5.** A wrong prune deletes the last known-good target
-(the verified arm deletes it, `hammer2_synchro.c:1386-1398`; the snapshot
+(the verified arm deletes it, `hammer2_synchro.c:1400-1412`; the snapshot
 carries `pfs_lsnap_tid`, `hammer2_ioctl.c:1029, 1113`; the next pass's cut
-is set at `hammer2_synchro.c:1365`), so the lever takes the target
+is set at `hammer2_synchro.c:1379`), so the lever takes the target
 lifecycle of branch K: the target is kept across pruned verifications and
 retaken at an unpruned one every K passes and on any `rescan_all`, with
 the target's staleness and held space stated; only an unpruned full round
@@ -1370,10 +1370,10 @@ applies within traversed ranges, and the destroy-in-a-narrowed-call shape
 the plan leaves undriven is driven here as the control: a destroy inside
 a would-be-pruned range must either keep the range unpruned or arrive
 through the traversed path, never vanish inside a skip. A
-segment the 1000-deferral cap stops (`hammer2_synchro.c:2589-2595`)
+segment the 1000-deferral cap stops (`hammer2_synchro.c:2603-2609`)
 resumes from the lowest key not yet compared on either cursor past the
 cap's break, on snapshot passes only (the resume consumer is gated on
-`walks` at `:830-836`, and `walks` is snapshot-only at `:696-704`); the
+`walks` at `:844-850`, and `walks` is snapshot-only at `:710-718`); the
 prune threshold and the resume key travel together
 per round, and a 1a segment resumed in a round after the first is read
 with pruning on, since no run has produced one.
