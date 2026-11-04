@@ -390,6 +390,11 @@ if [ "${1:-}" = "--selftest" ]; then
 	    'syncsnap: target CL.h2sync-tgt error 5' 'syncsnap: target CL.h2sync-tgt taken' > "$K"
 	l=$(eval "${l#	}")
 	[ "$l" = "snap-target-prints 1" ] || bad "the target pairing over taken, errored and unprinted targets gave: ${l:-nothing}"
+	# cluster-wire.sh carries the same program, which this case is the
+	# only run of, so the two are compared character for character.
+	l=$(command grep -m1 '^	echo "snap-target-prints ' "$0" | command sed -n "s/.*awk '\\([^']*\\)'.*/\\1/p")
+	w=$(command grep -m1 '^echo "snap-target-prints ' "$(dirname "$0")/cluster-wire.sh" 2>/dev/null | command sed -n "s/.*awk '\\([^']*\\)'.*/\\1/p")
+	[ -n "$l" ] && [ "$l" = "$w" ] || bad "cluster-wire.sh's target pairing is not this file's: ${w:-not found}"
 	echo "cluster: selftest, $nsamp sample(s), $npat pattern(s), $(wc -l < "$t/read") read(s), $sfail failure(s)"
 	[ "$sfail" -eq 0 ]
 	exit $?
