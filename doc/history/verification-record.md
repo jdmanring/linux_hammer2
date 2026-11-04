@@ -21822,8 +21822,18 @@ characters, so the committed tree's own fields are read from a rerun at
 A rewording that drops the phrase still escapes; the summaries reread is
 its backstop.
 
-Since `src/` changed under the flag, `test-fixtures.sh` read 11 images
-and 110 ioctl results with 0 failures, and `test-enospc.sh` filled 2G
-with 0 failures, both exit 0 on `h2debug-7.3tls` with modules built from
-`a320b8d` (`p8-notes/n9-7-fixtures-20261103-163555.log`,
-`n9-7-enospc-20261103-163555.log`).
+Since `src/` changed under the flag, `test-fixtures.sh` and
+`test-enospc.sh` ran on `artix-s6-kde` from frozen copies at `408a5f4`,
+whose `src/` differs from `a320b8d`'s only by `01b352b`'s layout of the
+macro, with `KDIR` the `linux-7.3-tls` tree, whose release is
+`7.3.0-tls`: `test-fixtures.sh` read 11 images and 110 ioctl results
+with 0 failures, and `test-enospc.sh` filled 2G with 0 failures, each
+log headed by the head and the script's hash and closed by `exit 0` and
+0 QEMU cores (`p8-notes/n9-7-fixtures-20261103-173025.log`,
+`n9-7-enospc-20261103-173025.log`). The wrapper's read of the guest's
+`uname -r` after each gate failed, the gate having shut the guest down;
+a module of that release loads only on that kernel, so the guest ran
+`h2debug-7.3tls`. An earlier pair at `a320b8d`
+(`p8-notes/n9-7-fixtures-20261103-163555.log`,
+`n9-7-enospc-20261103-163555.log`) kept no exit status and is not cited
+for one.
