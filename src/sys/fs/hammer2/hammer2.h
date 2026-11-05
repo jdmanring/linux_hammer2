@@ -781,6 +781,46 @@ struct hammer2_xop_bmap {
 	hammer2_off_t		offset;
 };
 
+/*
+ * Linux: hammer2_xop_seek(), the blockref walk behind SEEK_DATA, SEEK_HOLE
+ * and FIEMAP on a cluster of one local element.  It feeds no chain: the
+ * answer is in the fields below, which the one element writes before the
+ * frontend collects.
+ */
+#define HAMMER2_SEEK_MODE_DATA	1	/* Linux: the first data at or after */
+#define HAMMER2_SEEK_MODE_HOLE	2	/* Linux: the first key no block covers */
+#define HAMMER2_SEEK_MODE_MAP	3	/* Linux: every data block, into v */
+
+struct hammer2_fiemap_ref {			/* Linux */
+	hammer2_key_t	key;
+	hammer2_off_t	poff;
+	uint8_t		keybits;
+	uint8_t		methods;
+};
+
+/*
+ * Linux: a seek's or a map's question and answer.  DATA leaves the first
+ * data key at or after key_beg in key and sets found; HOLE leaves the
+ * first key at or after key_beg no block covers, past key_end when every
+ * block to there is data; MAP fills v with up to max data blocks, n of
+ * them, and leaves the key after the last in key.
+ */
+struct hammer2_seek_req {			/* Linux */
+	hammer2_key_t		key_beg;	/* inclusive */
+	hammer2_key_t		key_end;	/* inclusive */
+	int			mode;
+	struct hammer2_fiemap_ref *v;		/* MAP */
+	int			max;		/* MAP: v's entries */
+	hammer2_key_t		key;		/* the answer */
+	int			found;		/* DATA */
+	int			n;		/* MAP */
+};
+
+struct hammer2_xop_seek {			/* Linux */
+	hammer2_xop_head_t	head;
+	struct hammer2_seek_req	r;
+};
+
 typedef struct hammer2_xop_ipcluster hammer2_xop_ipcluster_t;
 typedef struct hammer2_xop_readdir hammer2_xop_readdir_t;
 typedef struct hammer2_xop_nresolve hammer2_xop_nresolve_t;
@@ -798,6 +838,7 @@ typedef struct hammer2_xop_connect hammer2_xop_connect_t;
 typedef struct hammer2_xop_flush hammer2_xop_flush_t;
 typedef struct hammer2_xop_strategy hammer2_xop_strategy_t;
 typedef struct hammer2_xop_bmap hammer2_xop_bmap_t;
+typedef struct hammer2_xop_seek hammer2_xop_seek_t;	/* Linux */
 
 union hammer2_xop {
 	hammer2_xop_head_t	head;
@@ -818,6 +859,7 @@ union hammer2_xop {
 	hammer2_xop_flush_t	xop_flush;
 	hammer2_xop_strategy_t	xop_strategy;
 	hammer2_xop_bmap_t	xop_bmap;
+	hammer2_xop_seek_t	xop_seek;	/* Linux */
 };
 
 /*
@@ -1279,6 +1321,7 @@ extern hammer2_xop_desc_t hammer2_inode_flush_desc;
 extern hammer2_xop_desc_t hammer2_strategy_read_desc;
 extern hammer2_xop_desc_t hammer2_strategy_write_desc;
 extern hammer2_xop_desc_t hammer2_bmap_desc;
+extern hammer2_xop_desc_t hammer2_seek_desc;	/* Linux */
 
 /* hammer2_admin.c */
 void *hammer2_xop_alloc(hammer2_inode_t *, int);
@@ -1638,6 +1681,7 @@ void hammer2_xop_inode_chain_sync(hammer2_xop_t *, void *, int);
 void hammer2_xop_inode_unlinkall(hammer2_xop_t *, void *, int);
 void hammer2_xop_inode_connect(hammer2_xop_t *, void *, int);
 void hammer2_xop_bmap(hammer2_xop_t *, void *, int);
+void hammer2_xop_seek(hammer2_xop_t *, void *, int);	/* Linux */
 
 /*
  * XXX no way to return multiple errnos.

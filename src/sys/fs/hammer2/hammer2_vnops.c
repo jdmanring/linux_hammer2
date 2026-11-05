@@ -1523,96 +1523,130 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 }
 
 /*
- * The next allocated key at or after key_beg, or the next hole, in one scan.
- *
- * hammer2_bmap_lbn() answers one block per XOP, so a SEEK_DATA that walks a
- * hole issues one per block: measured 0.345 s per GiB on an all-hole file,
- * 21 us per XOP and no device I/O at all, because a hole is an absent key.
- * The tree already carries a forward scan, hammer2_xop_scanall(), which
- * walks from key_beg to key_end with hammer2_chain_next() holding the parent
- * once -- the same idiom readdir and scanlhc use, and it has no consumer in
- * this tree.  One scan answers what the loop asks block by block.
- *
- * With step 0, returns 0 and the first allocated key (in bytes,
- * block-aligned) at or after key_beg, or ENOENT when nothing from there to
- * key_end is allocated: SEEK_DATA's question.  With a step, key_beg is a
- * block boundary and the answer is the first boundary from it, advancing
- * by step, at which no chain begins: SEEK_HOLE's.  That is one scan whose
- * chains are collected until one starts past the boundary expected, and
- * past key_end it is the boundary after the last block.  It was a scan
- * from each boundary in turn, so a SEEK_HOLE through n blocks of data
- * started n scans: 2.4 s on a 64 MiB dense file on h2release-7.3tls, a
- * cost a writer pays too, since the seek holds i_rwsem.
- *
- * On a local element the scan reads bref keys only.
- * HAMMER2_LOOKUP_ALWAYS resolved every fed chain's data, up to
- * HAMMER2_XOPFIFO blocks ahead of the one the question needed; the
- * position is in the bref, as the carried scans that want positions alone
- * ask with HAMMER2_LOOKUP_NODATA.  A data block's check error therefore no
- * longer reaches the seek as EIO; the read reports it.  A remote element
- * passes NODATA on (HAMMER2_REMOTE_LOOKUPF), and its server then scans
- * without LOOKUP_ALWAYS and feeds each data chain with no data; a server
- * that predates the flag still ships every block the seek passes.
- *
- * One call scans [key_beg, key_end], and hammer2_seek_data_hole() bounds
- * that range to a chunk of key space.  This port runs a XOP's storage
- * function to completion before the frontend's first collect
- * (hammer2_xop_start_except()), and hammer2_xop_feed() grows the FIFO
- * where upstream's backend blocks at HAMMER2_XOPFIFO, so one scan to EOF
- * instantiated and held every chain to EOF however early the answer came:
- * SEEK_DATA at an offset inside the data of a dense 16 GiB file took
- * 399 ms on h2release-7.3tls, as long as SEEK_HOLE.  With step 0 the
- * answer is the first key in the range, or ENOENT; with a step it is the
- * first boundary from key_beg at which no chain begins, or the boundary
- * after the range's last block.
+ * Linux: the seek's and the map's answer from hammer2_xop_scanall(), for a
+ * cluster hammer2_xop_seek() does not walk: several elements, where every
+ * key needs the quorum's agreement, or a remote one, which has no blockref
+ * array on this host.  The scan feeds every chain in its range before the
+ * frontend's first collect (hammer2_xop_start_except()), so it runs over a
+ * chunk of key space at a time and stops at the first chunk that holds the
+ * answer.  A chunk that held no data doubles up to HAMMER2_SEEK_HOLE_MAX,
+ * since an empty range costs one lookup however large; one that held data
+ * doubles only up to HAMMER2_SEEK_DATA_MAX, since each of its blocks costs
+ * a chain.
+ * DEFER(a remote dense seek of 1 GiB above 1 s, or a cluster of several local elements in use):
+ * a seek request the cluster transport carries would let each element walk.
  */
+#define HAMMER2_SEEK_CHUNK	((hammer2_key_t)HAMMER2_XOPFIFO * HAMMER2_PBUFSIZE)
+#define HAMMER2_SEEK_DATA_MAX	((hammer2_key_t)1024 * HAMMER2_PBUFSIZE)
+#define HAMMER2_SEEK_HOLE_MAX	((hammer2_key_t)1 << 30)
+
 static int
-hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
-    hammer2_key_t key_end, unsigned int step, hammer2_key_t *keyp)
+hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 {
-	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_xop_scanall_t *sxop;
-	hammer2_key_t want = key_beg, key;
+	hammer2_blockref_t *bref;
+	hammer2_key_t cur = r->key_beg, end, next, chunk = HAMMER2_SEEK_CHUNK;
+	bool held;
 	int error;
 
-	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
-	sxop = hammer2_xop_alloc(ip, 0);
-	sxop->key_beg = key_beg;
-	sxop->key_end = key_end;
-	sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED;
-	sxop->lookup_flags = HAMMER2_LOOKUP_NODATA | HAMMER2_LOOKUP_SHARED;
-	hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
+	r->key = r->key_beg;
+	r->found = 0;
+	r->n = 0;
 	for (;;) {
-		error = hammer2_xop_collect(&sxop->head, 0);
-		if (error != 0)
-			break;
-		key = sxop->head.cluster.focus->bref.key;
-		if (step == 0) {
-			*keyp = key;
-			break;
+		end = (r->key_end - cur < chunk) ? r->key_end : cur + chunk - 1;
+		held = false;
+		hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+		sxop = hammer2_xop_alloc(ip, 0);
+		sxop->key_beg = cur;
+		sxop->key_end = end;
+		sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS |
+		    HAMMER2_RESOLVE_SHARED;
+		sxop->lookup_flags = HAMMER2_LOOKUP_NODATA |
+		    HAMMER2_LOOKUP_SHARED;
+		hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
+		while ((error = hammer2_xop_collect(&sxop->head, 0)) == 0) {
+			bref = &sxop->head.cluster.focus->bref;
+			if (bref->type != HAMMER2_BREF_TYPE_DATA)
+				continue;
+			held = true;
+			next = bref->key + ((hammer2_key_t)1 << bref->keybits);
+			if (r->mode == HAMMER2_SEEK_MODE_DATA) {
+				r->key = max(bref->key, r->key);
+				r->found = 1;
+				break;
+			}
+			if (r->mode == HAMMER2_SEEK_MODE_HOLE) {
+				if (bref->key > r->key)
+					break;		/* a hole at r->key */
+				r->key = next;
+				continue;
+			}
+			if (r->n == r->max)
+				break;
+			r->v[r->n].key = bref->key;
+			r->v[r->n].keybits = bref->keybits;
+			r->v[r->n].methods = bref->methods;
+			r->v[r->n].poff = hammer2_bmap_offset(&sxop->head.cluster,
+			    HAMMER2_BMAP_UNKNOWN);
+			++r->n;
+			r->key = next;
 		}
-		if (key > want)		/* the boundary expected is a hole */
+		if (error == HAMMER2_ERROR_ENOENT)
+			error = 0;
+		hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
+		hammer2_inode_unlock(ip);
+		if (error != 0 || r->found || end == r->key_end ||
+		    (r->mode == HAMMER2_SEEK_MODE_HOLE && r->key <= end) ||
+		    (r->mode == HAMMER2_SEEK_MODE_MAP && r->n == r->max))
 			break;
-		want = key + step;
-		if (want > key_end)
-			break;
+		cur = end + 1;
+		if (chunk < (held ? HAMMER2_SEEK_DATA_MAX : HAMMER2_SEEK_HOLE_MAX))
+			chunk *= 2;
 	}
-	if (step != 0 && (error == 0 || error == HAMMER2_ERROR_ENOENT)) {
-		*keyp = want;
-		error = 0;
-	}
-	error = hammer2_error_to_errno(error);
-	hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
-	hammer2_inode_unlock(ip);
-
-	return (error);
+	return (hammer2_error_to_errno(error));
 }
 
 /*
- * Linux: the first byte in [from, to] held by a folio tagged
- * dirty or under writeback, or -1.  Such a folio holds data the blockref
- * tree does not have yet; hammer2_seek_data_hole() says why that order of
- * reading is safe.
+ * Linux: the blockref tree's answer to a seek or a map (struct
+ * hammer2_seek_req), from hammer2_xop_seek()'s walk on a cluster of one
+ * local element and from hammer2_seek_scanall() otherwise.  The element
+ * count is the XOP's own, the set hammer2_xop_start() runs, since an
+ * element can join the inode's cluster under cluster_spin, which the
+ * inode lock does not exclude.  Returns 0 or a positive errno.
+ */
+static int
+hammer2_seek_tree(struct inode *inode, struct hammer2_seek_req *r)
+{
+	hammer2_inode_t *ip = VTOI(inode);
+	hammer2_xop_seek_t *xop;
+	int error;
+
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	xop = hammer2_xop_alloc(ip, 0);
+	if (xop->head.cluster.nchains != 1 ||
+	    hammer2_remote_has_slot(ip->pmp)) {
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		hammer2_inode_unlock(ip);
+		return (hammer2_seek_scanall(ip, r));
+	}
+	xop->r = *r;
+	hammer2_xop_start(&xop->head, &hammer2_seek_desc);
+	error = hammer2_xop_collect(&xop->head, 0);
+	if (error == HAMMER2_ERROR_ENOENT) {	/* the walk fed no chain */
+		*r = xop->r;
+		error = 0;
+	}
+	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	hammer2_inode_unlock(ip);
+
+	return (hammer2_error_to_errno(error));
+}
+
+/*
+ * Linux: the first byte in [from, to] held by a folio tagged dirty or
+ * under writeback, or -1.  Such a folio holds data the blockref tree does
+ * not have yet; hammer2_seek_data_hole() says why that order of reading is
+ * safe.
  */
 static loff_t
 hammer2_seek_tagged(struct address_space *mapping, loff_t from, loff_t to)
@@ -1640,318 +1674,116 @@ hammer2_seek_tagged(struct address_space *mapping, loff_t from, loff_t to)
 }
 
 /*
- * Linux: debug-build holds (hammer2_debug_hold()).  The tag hold sits
- * between a seek's or a map's page cache tag read and its tree read, so a
- * writeback can complete between the two; the chunk hold sits between two
- * chunks with i_rwsem let go, so a truncate can land there.
+ * Linux: the debug build's hold between a seek's or a map's page cache tag
+ * read and its tree read (hammer2_debug_hold()), so a writeback can be
+ * completed between the two.
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_seek_tag_hold_ms;
 module_param_named(seek_tag_hold_ms, hammer2_seek_tag_hold_ms, uint, 0644);
-static unsigned int hammer2_seek_chunk_hold_ms;
-module_param_named(seek_chunk_hold_ms, hammer2_seek_chunk_hold_ms, uint, 0644);
 #endif
 
 /*
- * Linux: between two chunks of a seek, let a writer waiting for i_rwsem
- * have it.  Returns whether the lock was let go, after which i_size is
- * read again.  The chunk control, in a debug build, lets it go every time
- * and sleeps, so a truncate can be aimed between two chunks.
- */
-#define HAMMER2_SEEK_CHUNK	((loff_t)HAMMER2_XOPFIFO * HAMMER2_PBUFSIZE)
-#define HAMMER2_SEEK_DATA_MAX	((loff_t)1024 * HAMMER2_PBUFSIZE)
-#define HAMMER2_SEEK_HOLE_MAX	((loff_t)1 << 30)
-
-/*
- * Linux: the next chunk's size.  A chunk that held no chain doubles, to
- * HAMMER2_SEEK_HOLE_MAX, since an empty range costs one lookup however
- * large; one that held a chain doubles only to HAMMER2_SEEK_DATA_MAX,
- * since every chain in a chunk is fed before the first is collected.
- * Across a very large hole that is an XOP per GiB, about 131072 across
- * generic/490's 128 TiB, and a chunk landing on data scans up to 1 GiB
- * of it under one hold.
- * DEFER(generic/490 at 2 s or a 16 GiB contendgap write over 100 ms on h2release-7.3tls):
- * a scan the XOP layer can stop at its first chain needs neither cap.
- */
-static loff_t
-hammer2_seek_next_chunk(loff_t chunk, bool empty)
-{
-	loff_t max = empty ? HAMMER2_SEEK_HOLE_MAX : HAMMER2_SEEK_DATA_MAX;
-
-	return (chunk >= max ? max : chunk * 2);
-}
-
-static bool
-hammer2_seek_yield(struct inode *inode)
-{
-	bool hold = false;
-
-#if defined(HAMMER2_LOCKDEBUG)
-	hold = READ_ONCE(hammer2_seek_chunk_hold_ms) != 0;
-#endif
-	if (!hold && !rwsem_is_contended(&inode->i_rwsem))
-		return (false);
-	inode_unlock_shared(inode);
-	if (hold)
-		HAMMER2_DEBUG_HOLD(hammer2_seek_chunk_hold_ms, "seek chunk");
-	cond_resched();
-	inode_lock_shared(inode);
-	return (true);
-}
-
-/*
- * Linux: SEEK_DATA and SEEK_HOLE, which FreeBSD's port answers through
- * FIOSEEKDATA and FIOSEEKHOLE on the kernel's vn_bmap_seekhole(), and
- * DragonFly's, NetBSD's and OpenBSD's refuse.  Linux has no such ioctl: they
- * are whences of lseek(2), and a filesystem that does not implement them
- * gets generic_file_llseek(), which treats the whole file as data.  That
- * is not a refusal but a wrong answer, and a sparse file copied with
- * cp --sparse=always or archived with tar -S would be dense and correct
- * to look at and wrong.
+ * Linux: SEEK_DATA and SEEK_HOLE.  Called and returning with i_rwsem held
+ * shared; returns the answer or a negative errno, and leaves the file
+ * position to hammer2_llseek().
  *
- * HAMMER2's model is that a hole is an offset no chain covers, which is
- * what hammer2_xop_bmap() answers with ENOENT.  FreeBSD's port asks it one
- * block at a time through vn_bmap_seekhole(); here one forward scan of the
- * blockref tree answers it, hammer2_bmap_next_key().  There is no freelist
- * or extent map to consult instead: the blockref tree is the only record
- * of what is allocated on the media, and the page cache holds what is
- * written and not yet in it.
+ * A hole is an offset no block covers, and the bytes past i_size are a
+ * hole by definition, so no answer passes i_size.  An offset before the
+ * start or at or past the end fails with ENXIO for either whence, as
+ * iomap_seek_hole() and iomap_seek_data() fail it.  A file whose data is
+ * embedded in its inode (HAMMER2_OPFLAG_DIRECTDATA) has no blockref tree
+ * and is data from 0 to i_size.
  *
- * A file's last block may be allocated and hold data only to i_size.
- * The bytes past i_size are a hole by definition, so the scan stops
- * there and the answer is i_size.
- *
- * This returns the answer or a negative errno and leaves the file
- * position alone; hammer2_llseek() sets it.  It is called with i_rwsem
- * held shared and may let it go and take it again between chunks; it
- * returns holding it.
+ * The blockref tree records a block at its writeback, so a block written
+ * and not yet written back is held by a folio tagged dirty or under
+ * writeback, and such a block is data.  A folio leaves its tags only after
+ * its block is in the tree, and i_rwsem keeps write(2) from tagging
+ * another, so a tag read made before a tree read sees every block of data
+ * the tree read misses.  SEEK_DATA reads the tags first and asks the tree
+ * only below the first tagged block.  SEEK_HOLE asks the tree, reads the
+ * tags over the hole it found, and accepts a hole only from a tree read
+ * made after the tags called that block clean.  A mapping tagged nowhere
+ * stays so under i_rwsem, and its tags are not read.  A write through a
+ * shared mapping takes no i_rwsem, so a fault after the tag read can dirty
+ * a block the tree then calls a hole; iomap's seek leaves the same window.
  */
 static loff_t
 hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 {
 	struct inode *inode = file->f_mapping->host;
+	struct address_space *mapping = file->f_mapping;
+	struct hammer2_seek_req r = { 0 };
 	loff_t isize = i_size_read(inode);
 	unsigned int bsize = i_blocksize(inode);
-	bool seek_data = (whence == SEEK_DATA), tagged;
-	struct address_space *mapping = file->f_mapping;
-	loff_t base = offset & ~((loff_t)bsize - 1), cur = base;
-	loff_t chunk = HAMMER2_SEEK_CHUNK;
-	hammer2_key_t got = 0;
-	loff_t pos;
+	loff_t cur = offset & ~((loff_t)bsize - 1), clean = -1, pos;
+	bool tagged;
 	int error;
 
-	/*
-	 * Before the start or at or past the end of the file both whences
-	 * fail with ENXIO.  That is what iomap_seek_hole() and
-	 * iomap_seek_data() do, testing pos < 0 || pos >= size, and what
-	 * generic_file_llseek() does for both, comparing the offset as
-	 * unsigned so that a negative one reads as past the end.  tmpfs
-	 * agrees.  The implicit hole after the last byte is what a scan from
-	 * within the data reports, not what a seek already at the end
-	 * reports.
-	 *
-	 * A negative offset answered EINVAL here, which no reference does:
-	 * xfstests generic/448 asks it four ways and expects ENXIO for each.
-	 */
 	if (offset < 0 || offset >= isize)
 		return (-ENXIO);
-	/* Linux: the seek's race control; i_size is read, the scan not begun. */
+	/* Linux: the seek's race control; i_size is read, the tree not yet. */
 	HAMMER2_DEBUG_HOLD(hammer2_seek_hold_ms, "seek");
-
-	/*
-	 * A file whose data lives in the inode has no blockref tree to scan.
-	 * HAMMER2 stores up to HAMMER2_EMBEDDED_BYTES of a file in the
-	 * inode's own metadata and sets HAMMER2_OPFLAG_DIRECTDATA, and
-	 * hammer2_chain_next() reports EOF for such an inode rather than
-	 * walking sub-chains that do not exist (hammer2_chain.c, the
-	 * BREF_TYPE_INODE case).  A scan therefore finds nothing and would
-	 * answer from an unset key: measured on the guest, SEEK_DATA at 0 on
-	 * a 512-byte file returned 1339, a value that differed between two
-	 * calls on the same file, and SEEK_HOLE at 0 returned 0.
-	 *
-	 * SEEK_HOLE answering 0 is the harmful one: it says the whole file
-	 * is a hole from the start, which is what `cp` asks to decide
-	 * whether to read at all, so copying a small file wrote one of the
-	 * right length filled with zeros and reported success.  The whole
-	 * file is data from 0 to i_size and the only hole is past the end,
-	 * which is the answer for every offset below i_size.
-	 */
 	if (VTOI(inode)->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA)
-		return (seek_data ? offset : isize);
+		return (whence == SEEK_DATA ? offset : isize);
 
-	/*
-	 * The blockref tree records a written block from its writeback, in
-	 * hammer2_xop_strategy_write(), not from write(2).  Until then the
-	 * data is in a folio tagged dirty or under writeback and the tree
-	 * calls the block a hole: measured on the guest, SEEK_DATA at 0 on a
-	 * file written and not yet synced answered ENXIO, and a copy that
-	 * trusts that writes zeroes where the data was.  It is the defect
-	 * upstream disabled FIOSEEKHOLE for in 0d0182bdb4.  So a block
-	 * holding such a folio is data, at block granularity, since its
-	 * writeback writes the whole block.  iomap reads the page cache the
-	 * same way for an unwritten extent, through mapping_seek_hole_data(),
-	 * which is not exported to modules; this reads the tags with
-	 * filemap_get_folios_tag(), since here no extent records a block
-	 * before its writeback.  It replaced writing the file back from the
-	 * offset, which made lseek(2) start and wait for I/O under i_rwsem.
-	 *
-	 * The tags may make a block data and never a hole, and the order of
-	 * the two reads keeps that true while writeback runs.  A folio
-	 * leaves its tags only after its chain is in the tree, since its
-	 * writeback ends after the assignment in the same XOP, and i_rwsem
-	 * keeps write(2) from tagging another; so a tag read made before a
-	 * tree read sees every block of data the tree read misses.  SEEK_DATA
-	 * reads the tags first and scans the tree up to the first tagged
-	 * block.  SEEK_HOLE takes a hole from the tree, reads the tags over
-	 * it, and accepts it only from a tree read made after the tags said
-	 * it was clean, because a writeback that completed between the two
-	 * put a chain where the first read found none.  A mapping tagged
-	 * nowhere at entry stays so under i_rwsem, and its tags are not read.
-	 */
-	/*
-	 * The scan runs a chunk of key space at a time, the first
-	 * HAMMER2_XOPFIFO blocks, what upstream's backend feeds before it
-	 * blocks, and each chunk that ends without the answer sizes the next
-	 * (hammer2_seek_next_chunk()).  SEEK_DATA goes on past a chunk only
-	 * when it held no chain, and grows to HAMMER2_SEEK_HOLE_MAX, so a
-	 * hole of 128 TiB costs about 131072 XOPs; SEEK_HOLE goes on only
-	 * past a chunk of data, and grows to HAMMER2_SEEK_DATA_MAX, a few
-	 * milliseconds of chains.  Capped at 1024 blocks for both, the five
-	 * SEEK_DATAs across xfstests generic/490's 128 TiB hole took 648 s
-	 * on h2kasan-7.3tls, against 47 s at a 1 GiB cap.  Between two
-	 * chunks a writer waiting for i_rwsem gets it (hammer2_seek_yield());
-	 * then i_size is read again and the tags are taken afresh, since what
-	 * the last hold read of either no longer holds.  hammer2_llseek()
-	 * states what an answer then means.
-	 */
+	tagged = mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
+	    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK);
+	r.key_end = (hammer2_key_t)isize - 1;
+	if (whence == SEEK_DATA) {
+		pos = -1;
+		if (tagged) {
+			pos = hammer2_seek_tagged(mapping, cur, isize - 1);
+			if (pos >= 0) {
+				pos &= ~((loff_t)bsize - 1);
+				if (pos <= cur)
+					return (offset);
+				r.key_end = (hammer2_key_t)pos - 1;
+			}
+			HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
+		}
+		r.mode = HAMMER2_SEEK_MODE_DATA;
+		r.key_beg = (hammer2_key_t)cur;
+		error = hammer2_seek_tree(inode, &r);
+		if (error != 0)
+			return (-error);
+		if (r.found)
+			return (max_t(loff_t, (loff_t)r.key, offset));
+		return (pos >= 0 ? pos : -ENXIO);
+	}
+
+	r.mode = HAMMER2_SEEK_MODE_HOLE;
 	for (;;) {
-		loff_t end = (isize - 1 - cur < chunk) ? isize - 1 :
-		    cur + chunk - 1;
-
-		tagged = mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
-		    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK);
-		if (seek_data) {
-			/*
-			 * A key present in the tree is an allocated block.  A
-			 * key exactly at the offset's block boundary means
-			 * that block holds data and the answer is the offset
-			 * asked, which may be partway into it.
-			 */
-			loff_t limit = end;
-
-			pos = -1;
-			if (tagged) {
-				pos = hammer2_seek_tagged(mapping, cur, end);
-				if (pos >= 0) {
-					pos &= ~((loff_t)bsize - 1);
-					if (pos <= cur)
-						return (cur == base ? offset :
-						    cur);
-					limit = pos - 1;
-				}
-				HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
-			}
-			error = hammer2_bmap_next_key(inode,
-			    (hammer2_key_t)cur, (hammer2_key_t)limit, 0, &got);
-			if (error == 0)
-				return (got <= (hammer2_key_t)base ? offset :
-				    (loff_t)got);
-			if (error != ENOENT)
-				return (-error);
-			if (pos >= 0)
-				return (pos);
-		} else {
-			/*
-			 * The tree's answer, with the block size as the step,
-			 * is the first boundary from cur at which no chain
-			 * begins, or the boundary after the chunk's last
-			 * block.  A tagged run from there is data; the first
-			 * clean block after it is the next candidate, and
-			 * clean names one the tags cleared before the tree
-			 * read that follows, in this hold.  At the offset's
-			 * own block the answer is the offset, which stands in
-			 * the hole.
-			 */
-			loff_t clean = -1;
-
-			for (;;) {
-				error = hammer2_bmap_next_key(inode,
-				    (hammer2_key_t)cur, (hammer2_key_t)end,
-				    bsize, &got);
-				if (error != 0)
-					return (-error);
-				pos = (loff_t)got;
-				if (pos > end)
-					break;
-				if (!tagged || pos == clean)
-					return (max(pos, offset));
-				HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
-				while (pos <= end &&
-				    hammer2_seek_tagged(mapping, pos,
-				    pos + bsize - 1) >= 0)
-					pos += bsize;
-				if (pos > end)
-					break;
-				clean = cur = pos;
-			}
-		}
-		/*
-		 * The chunk held no answer.  From the end of the last block
-		 * SEEK_HOLE's answer is i_size, and nothing further is data.
-		 */
-		if (end == isize - 1)
-			return (seek_data ? -ENXIO : isize);
-		cur = end + 1;
-		chunk = hammer2_seek_next_chunk(chunk, seek_data);
-		if (hammer2_seek_yield(inode)) {
-			isize = i_size_read(inode);
-			if (cur >= isize)
-				return (!seek_data && isize > offset ? isize :
-				    -ENXIO);
-		}
+		r.key_beg = (hammer2_key_t)cur;
+		error = hammer2_seek_tree(inode, &r);
+		if (error != 0)
+			return (-error);
+		if (r.key >= (hammer2_key_t)isize)
+			return (isize);
+		pos = (loff_t)r.key;
+		if (!tagged || pos == clean)
+			return (max(pos, offset));
+		HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
+		while (pos < isize &&
+		    hammer2_seek_tagged(mapping, pos, pos + bsize - 1) >= 0)
+			pos += bsize;
+		if (pos >= isize)
+			return (isize);
+		clean = cur = pos;
 	}
 }
 
 /*
- * Linux: lseek(2) moves the file position to the answer, so a read()
- * after lseek(fd, 0, SEEK_DATA) reads the data found.  Every success goes
- * through vfs_setpos() once, as ext4_llseek() ends; a failure leaves the
- * position where it was.  Before this, SEEK_DATA and SEEK_HOLE returned
- * the right offset and left the position behind.
- *
- * The size, the page cache tags and the scan are read under i_rwsem
- * shared, as ext4, f2fs and btrfs hold it; FreeBSD's vn_bmap_seekhole(),
- * which its HAMMER2 port calls, holds the vnode exclusive, and shared is
- * enough since the seek writes nothing.  Unlocked, a truncate landing
- * between the i_size read and the scan made the seek answer an offset
- * past the size it returned at.  Under it the seek takes folio references
- * and no folio lock, and the scan's hammer2_inode_lock() and chain locks,
- * which sit below i_rwsem in the module's order as hammer2_vop_setattr()
- * takes them.
- *
- * The lock is held for the whole seek unless a writer waits for it.  A
- * file has a chain per block and no extents, so SEEK_HOLE through dense
- * data costs a chain per block: about 240 ms through nearly all of a
- * 16 GiB file on h2release-7.3tls, and with the lock held across all of
- * it a write beside a SEEK_HOLE loop waited 494 ms, where ext4 answers from
- * one extent.  Letting a waiting writer in took that to 6 ms at 16 GiB,
- * the rwsem's 4 ms handoff and a chunk.  So between two chunks of the
- * scan the seek lets a waiting writer have the lock, then reads i_size again;
- * an offset the file no longer reaches answers ENXIO, or i_size for
- * SEEK_HOLE past the offset.  Each chunk is classified under one hold,
- * tags and tree in order, so no answer is data called a hole when it was
- * read, and none lies past the size read under the last hold.  What a
- * contended seek gives up is one instant for the whole answer: a write
- * into a range an earlier chunk called a hole is not seen, as with
- * XFS, whose xfs_file_llseek() takes no i_rwsem and whose iomap seek
- * locks per mapping.  An uncontended seek keeps the single hold.  A page
- * fault takes no i_rwsem, so an mmap write after the tag read can still
- * dirty a folio the scan then calls a hole; lseek(2) cannot close that
- * without the invalidate lock across faults, which iomap's seek does not
- * take either.
- * DEFER(16 GiB dense SEEK_HOLE above 500 ms on h2release-7.3tls, or an interactive consumer):
- * walking the indirect blocks' blockref arrays would skip instantiating
- * a chain per block.
+ * Linux: lseek(2).  SEEK_DATA and SEEK_HOLE hold i_rwsem shared for the
+ * whole seek, as btrfs_file_llseek() holds it, so the size, the tags and
+ * the tree are read under one hold, the answer lies within the size the
+ * seek read, and a truncate waits for the seek.  Under it the seek takes
+ * the inode lock and chain locks, which sit below i_rwsem in the module's
+ * order as hammer2_vop_setattr() takes them, and no folio lock.  On a
+ * cluster of one local element the tree read is a walk of blockref arrays
+ * that makes no chain for a block on the media (hammer2_xop_seek()).  A
+ * success sets the file position through vfs_setpos(), as ext4_llseek()
+ * ends; a failure leaves it where it was.
  */
 static loff_t
 hammer2_llseek(struct file *file, loff_t offset, int whence)
@@ -2574,78 +2406,28 @@ const struct address_space_operations hammer2_file_aops = {
  * filefrag(8), lvm, and a defragmenter read to learn where a file's
  * blocks are.
  *
- * The map is the seek's walk with each chain's blockref kept: the same
- * chunked scanall over the blockref tree, under i_rwsem shared as XFS
- * holds its IOLOCK across iomap_fiemap(), letting a waiting writer in
- * between chunks (hammer2_seek_yield()), with the page cache's dirty and
- * writeback tags read before the tree in each chunk.  It was a bmap XOP
- * per block with i_size read unlocked.
+ * The map is the seek's tree read with each block's blockref kept
+ * (HAMMER2_SEEK_MODE_MAP, hammer2_seek_tree()), HAMMER2_FIEMAP_REFS blocks
+ * at a time, under i_rwsem shared for the whole call as xfs_vn_fiemap(),
+ * ext4_fiemap() and btrfs_fiemap() hold it, with the page cache's dirty and
+ * writeback tags read before the tree as SEEK_DATA reads them.
  *
- * Each chain is an extent at its own data_off with the low six bits, the
- * stored size's radix, masked off; they were reported as part of the
- * address.  A compressed block, whose stored size is not its logical one
- * and whose bytes at that address are not the file's, is reported alone
- * with FIEMAP_EXTENT_ENCODED and its logical length.  Adjacent
- * uncompressed blocks that are adjacent on the media are merged, with
- * FIEMAP_EXTENT_MERGED, since two blocks are two allocations and the
- * caller is told a physical run, not that it was allocated together.  A
- * block only a remote element holds has no address on this host and is
- * FIEMAP_EXTENT_UNKNOWN (hammer2_bmap_offset()).  A block the tree does
- * not hold whose folio is tagged dirty or under writeback is
+ * Each block is an extent at its own data_off with the low six bits, the
+ * stored size's radix, masked off.  A compressed block, whose stored size
+ * is not its logical one and whose bytes at that address are not the
+ * file's, is reported alone with FIEMAP_EXTENT_ENCODED and its logical
+ * length.  Adjacent uncompressed blocks that are adjacent on the media are
+ * merged, with FIEMAP_EXTENT_MERGED, since two blocks are two allocations
+ * and the caller is told a physical run, not that it was allocated
+ * together.  A block only a remote element holds has no address on this
+ * host and is FIEMAP_EXTENT_UNKNOWN (hammer2_bmap_offset()).  A block the
+ * tree does not hold whose folio is tagged dirty or under writeback is
  * FIEMAP_EXTENT_DELALLOC, which the kernel marks unknown as well; the map
  * writes nothing back unless the caller asks with FIEMAP_FLAG_SYNC, which
  * fiemap_prep() honours.  A hole is skipped.  The extents are copied out
  * with no hammer2 lock held, since a copy can fault.
  */
-struct hammer2_fiemap_ref {			/* Linux */
-	hammer2_key_t	key;
-	hammer2_off_t	poff;
-	uint8_t		keybits;
-	uint8_t		methods;
-};
-
-#define HAMMER2_FIEMAP_REFS	1024		/* Linux: a chunk's blocks */
-
-/*
- * Linux: the data chains from key_beg to key_end, at most max of them,
- * into v; *np is how many.
- */
-static int
-hammer2_fiemap_scan(struct inode *inode, hammer2_key_t key_beg,
-    hammer2_key_t key_end, struct hammer2_fiemap_ref *v, int max, int *np)
-{
-	hammer2_inode_t *ip = VTOI(inode);
-	hammer2_xop_scanall_t *sxop;
-	hammer2_blockref_t *bref;
-	int error = 0, n = 0;
-
-	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
-	sxop = hammer2_xop_alloc(ip, 0);
-	sxop->key_beg = key_beg;
-	sxop->key_end = key_end;
-	sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED;
-	sxop->lookup_flags = HAMMER2_LOOKUP_NODATA | HAMMER2_LOOKUP_SHARED;
-	hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
-	while (n < max && (error = hammer2_xop_collect(&sxop->head, 0)) == 0) {
-		bref = &sxop->head.cluster.focus->bref;
-		if (bref->type != HAMMER2_BREF_TYPE_DATA)
-			continue;
-		v[n].key = bref->key;
-		v[n].keybits = bref->keybits;
-		v[n].methods = bref->methods;
-		v[n].poff = hammer2_bmap_offset(&sxop->head.cluster,
-		    HAMMER2_BMAP_UNKNOWN);
-		++n;
-	}
-	if (error == HAMMER2_ERROR_ENOENT)
-		error = 0;
-	error = hammer2_error_to_errno(error);
-	hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
-	hammer2_inode_unlock(ip);
-	*np = n;
-
-	return (error);
-}
+#define HAMMER2_FIEMAP_REFS	1024		/* Linux: blocks per tree read */
 
 /*
  * Linux: the extent being built, and the step that adds one block's worth
@@ -2727,10 +2509,11 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 {
 	struct address_space *mapping = inode->i_mapping;
 	struct hammer2_fiemap_run run = { 0 };
+	struct hammer2_seek_req r = { 0 };
 	struct hammer2_fiemap_ref *v;
 	loff_t *t;
 	u32 bsize = i_blocksize(inode);
-	loff_t isize, cur, end, cend, chunk = HAMMER2_SEEK_CHUNK, next;
+	loff_t isize, cur, end, cend, next;
 	u64 llen, plen;
 	u32 flags;
 	bool tagged;
@@ -2751,10 +2534,9 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	isize = i_size_read(inode);
 	/*
 	 * A file of HAMMER2_EMBEDDED_BYTES or less keeps its data in the
-	 * inode, and the scan feeds the inode itself, no data chain: the
-	 * map reported nothing for such a file.  As the seek answers it
-	 * whole, it is one extent from 0, reported as btrfs reports an
-	 * inline extent, FIEMAP_EXTENT_DATA_INLINE at physical 0.
+	 * inode and has no data block.  As the seek answers it whole, it is
+	 * one extent from 0, reported as btrfs reports an inline extent,
+	 * FIEMAP_EXTENT_DATA_INLINE at physical 0.
 	 */
 	if (VTOI(inode)->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA) {
 		if (start < (u64)isize)
@@ -2766,8 +2548,11 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	cur = (loff_t)start & ~((loff_t)bsize - 1);
 	end = (start + len > (u64)isize || start + len < start) ? isize :
 	    (loff_t)(start + len);
+	r.mode = HAMMER2_SEEK_MODE_MAP;
+	r.v = v;
+	r.max = HAMMER2_FIEMAP_REFS;
 	while (cur < end) {
-		cend = (end - 1 - cur < chunk) ? end - 1 : cur + chunk - 1;
+		cend = end - 1;
 		tagged = mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
 		    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK);
 		/*
@@ -2777,7 +2562,7 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		 * that follows, which is the answer reported, or DELALLOC; a
 		 * tag read after the tree read could find a writeback that
 		 * ended between the two and call its block neither.  At most
-		 * HAMMER2_FIEMAP_REFS tagged blocks are kept, and the chunk
+		 * HAMMER2_FIEMAP_REFS tagged blocks are kept, and the tree read
 		 * ends before the first one left out.
 		 */
 		nt = 0;
@@ -2786,13 +2571,13 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			    HAMMER2_FIEMAP_REFS, &nt);
 			HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
 		}
-		error = hammer2_fiemap_scan(inode, (hammer2_key_t)cur,
-		    (hammer2_key_t)cend, v, HAMMER2_FIEMAP_REFS, &n);
+		r.key_beg = (hammer2_key_t)cur;
+		r.key_end = (hammer2_key_t)cend;
+		error = hammer2_seek_tree(inode, &r);
 		if (error != 0)
 			break;
-		next = (n == HAMMER2_FIEMAP_REFS) ?
-		    (loff_t)(v[n - 1].key + ((hammer2_key_t)1 << v[n - 1].keybits)) :
-		    cend + 1;
+		n = r.n;
+		next = (n == HAMMER2_FIEMAP_REFS) ? (loff_t)r.key : cend + 1;
 		for (i = 0, j = 0; i <= n && ret == 0; ++i) {
 			loff_t gap_end = (i < n) ? (loff_t)v[i].key - 1 : next - 1;
 
@@ -2826,12 +2611,6 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		if (ret != 0)
 			break;
 		cur = next;
-		chunk = hammer2_seek_next_chunk(chunk, n == 0);
-		if (cur < end && hammer2_seek_yield(inode)) {
-			isize = i_size_read(inode);
-			if (end > isize)
-				end = isize;
-		}
 	}
 	if (error == 0 && ret == 0)
 		ret = hammer2_fiemap_flush(fieinfo, &run,

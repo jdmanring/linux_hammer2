@@ -64,6 +64,7 @@ H2XOPDESCRIPTOR(inode_flush);
 H2XOPDESCRIPTOR(strategy_read);
 H2XOPDESCRIPTOR(strategy_write);
 H2XOPDESCRIPTOR(bmap);
+H2XOPDESCRIPTOR(seek);		/* Linux */
 
 /*
  * Allocate or reallocate XOP FIFO.  This doesn't exist in DragonFly

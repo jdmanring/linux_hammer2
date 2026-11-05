@@ -5167,7 +5167,7 @@ the file that declares it.
 | `folio_changed`, `debug_hpanic`, `fail_alloc_after` | several | the counters and the fault injections |
 
 `hammer2_cluster_write` is declared at `hammer2_vfsops.c:81`, exported at
-`hammer2.h:959`, and registered at `hammer2_vfsops.c:159` with mode 0644,
+`hammer2.h:1001`, and registered at `hammer2_vfsops.c:159` with mode 0644,
 so it is settable at runtime, and no code reads it. The intent was
 DragonFly's `cluster_write(bp, peof, psize, hce)`, which sets
 `B_CLUSTEROK` and asks the buffer layer to write the cluster as well as
@@ -8635,7 +8635,7 @@ print at the insert and at the unset rather than a reading of the caller.
 This section said the inode-dependency index, `inum % 32`, made the wait a
 BUCKET wait, and that unrelated inodes sharing a bucket blocked each other.
 That is false and is corrected here. `xop_testset_ipdep()` tests
-`iptmp == ip` -- POINTER equality (`hammer2_admin.c:254`, and the same test
+`iptmp == ip` -- POINTER equality (`hammer2_admin.c:255`, and the same test
 at 271 in the unset) -- so two different inodes that hash to one bucket
 both go on the list and neither waits. The index selects which LOCK guards
 the list, which is all a hash bucket is for. The same test is in the
@@ -8651,7 +8651,7 @@ in that state, so the dependency it waits on is one it took itself.
 
 The unset side is reached only on the LAST retire. `hammer2_xop_retire()`
 returns early unless the mask it is retiring completes the XOP
-(`hammer2_admin.c:489`):
+(`hammer2_admin.c:490`):
 
     omask = atomic_fetchadd_32(&xop->run_mask, -mask);
     if ((omask & HAMMER2_XOPMASK_ALLDONE) != mask)
@@ -8782,7 +8782,7 @@ and the whole population of tasks holding a hammer2 frame is that one
 `umount`. So the unmount waits for a thread-state bit that no live thread
 will set.
 
-`hammer2_thr_wait()` (`hammer2_admin.c:870`) is the wait:
+`hammer2_thr_wait()` (`hammer2_admin.c:871`) is the wait:
 
     for (;;) {
             oflags = thr->flags;
@@ -8821,7 +8821,7 @@ Three prints were added in one build, because runs here cost twenty
 minutes and the previous three runs each answered one question that the
 next run then invalidated:
 
-- `hammer2_thr_wait()` (`hammer2_admin.c:870`) prints the requested
+- `hammer2_thr_wait()` (`hammer2_admin.c:871`) prints the requested
   `flags` and `thr->td` at entry and once per return of the sleep, whose
   timeout is `hz*60`.
 - `hammer2_inode_chain_and_parent()` (`hammer2_inode.c:451`) prints the
@@ -18895,8 +18895,8 @@ gap is a `candidate`: the stamp passes' scans of the live root, with no
 snapshot element, show the same gap (115.298 to 118.157 s and 254.050
 to 256.794 s), which refutes reading it as the snapshot's element
 filling a FIFO; the elements' storage functions run inline to their end
-before the first collect (`hammer2_admin.c:471-481`) and the FIFO
-doubles rather than blocking (`:670-688`), and which element the time
+before the first collect (`hammer2_admin.c:472-482`) and the FIFO
+doubles rather than blocking (`:671-689`), and which element the time
 goes to is not measured. A verified pass is followed by one `idlestamp`
 pass only when the thread survives to its next cadence: in each run
 that was the pass before the first change and the third change's, two
@@ -19263,7 +19263,7 @@ The million-file entry above left the time before each root scan's
 `START_SCAN` line, 2.69 to 2.82 s at the million, a `candidate`: the
 elements' storage functions run inline to their end inside the XOP
 start (`hammer2_admin.c` 471-481), into a FIFO that doubles rather than
-blocks (`:670-688`), but nothing timed the start. `b2bae17` adds the
+blocks (`:671-689`), but nothing timed the start. `b2bae17` adds the
 start's time, the time from it to the first collect, the merge's time
 and the FIFO's final size to the root scan's `filekeys` line under
 debug 0x8000, with no change in behavior.
@@ -22331,7 +22331,7 @@ written and requires the twin to hold more: at `e547227` on `h2debug-7.3tls`
 was not read on HAMMER2, where the margin is one compressed block.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
-(`hammer2_vnops.c:2406`), which still asks one bmap XOP per block and reads
+(`hammer2_vnops.c:2238`), which still asks one bmap XOP per block and reads
 `i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
 block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
 the same scan, not measured.

@@ -41,7 +41,7 @@
  * THE COUNT.  Nineteen checks on a HAMMER2 volume that answers; eleven
  * until the map moved onto the scan, which added the sector alignment,
  * two DELALLOC maps and the two compression checks, and sixteen until the
- * direct-data file and the two chunk-edge checks.  The count is
+ * direct-data file and the two edge checks.  The count is
  * what carries the verdict here, because a volume that refuses FIEMAP or
  * FIFREEZE prints a LOW count and zero failures rather than a failure:
  * the assertion that the file is really sparse runs before the call is
@@ -269,20 +269,20 @@ comp_file(const char *dir, const char *sub, const char *algo,
 }
 
 /*
- * The map runs the seek's scan a chunk of key space at a time, the first
- * chunk sixteen blocks, and merges an extent across the chunk's edge.  A
- * 40-block file written in one pass in the uncompressed directory: every
- * block mapped, no two neighbouring extents that should have been one,
- * and one extent spanning block 16, which is what makes the second check
- * mean something.  Without it, blocks 15 and 16 apart on the media pass
+ * The map reads the tree HAMMER2_FIEMAP_REFS blocks at a time, 1024, and
+ * merges an extent across the edge between two reads.  A 1040-block file
+ * written in one pass in the uncompressed directory: every block mapped,
+ * no two neighbouring extents that should have been one, and one extent
+ * spanning block 1024, which is what makes the second check mean
+ * something.  Without it, blocks 1023 and 1024 apart on the media pass
  * the merge check whatever the map does, so that precondition fails
  * rather than passing vacuously.
  */
-#define EDGE_BLOCKS	40
-#define EDGE_AT		16
+#define EDGE_BLOCKS	1040
+#define EDGE_AT		1024
 
 static void
-chunk_edge(const char *dir, const char *buf, size_t blk)
+read_edge(const char *dir, const char *buf, size_t blk)
 {
 	char path[4096 + 32], b[65536];
 	unsigned long long edge = (unsigned long long)EDGE_AT * blk, sum = 0;
@@ -331,12 +331,12 @@ chunk_edge(const char *dir, const char *buf, size_t blk)
 	}
 	checks++;
 	if (span != 1) {
-		printf("fiemap-fail no extent spans the first chunk's edge at "
+		printf("fiemap-fail no extent spans the tree reads' edge at "
 		    "block %d, so the merge across it was not driven\n",
 		    EDGE_AT);
 		fails++;
 	} else {
-		printf("fiemap-ok   an extent spans the first chunk's edge at "
+		printf("fiemap-ok   an extent spans the tree reads' edge at "
 		    "block %d\n", EDGE_AT);
 	}
 	unlink(path);
@@ -416,7 +416,7 @@ encoded(const char *dir, const char *buf, size_t blk)
 	}
 	unlink(pn);
 	unlink(pz);
-	chunk_edge(dir, buf, blk);
+	read_edge(dir, buf, blk);
 	snprintf(d, sizeof(d), "%s/.h2fiemap-none", dir);
 	rmdir(d);
 	snprintf(d, sizeof(d), "%s/.h2fiemap-zlib", dir);

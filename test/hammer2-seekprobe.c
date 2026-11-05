@@ -439,76 +439,6 @@ fail:
 	return (1);
 }
 
-/*
- * A truncate between two chunks of a held seek.  64 blocks of data,
- * synced, in a file 80 blocks long, so SEEK_HOLE at 0 runs past its first
- * chunk of 16 blocks.  The module's seek_chunk_hold_ms (a
- * HAMMER2_LOCKDEBUG build) lets i_rwsem go at each chunk boundary and
- * sleeps; a child truncates the file to half a block 50 ms in, inside the
- * first sleep.  The seek reads i_size again when it takes the lock back,
- * so it answers within the size the file now has; one that kept the size
- * it began with answers past it.  The line says whether the truncate
- * returned inside the seek, which is the only case that tests anything.
- */
-static int
-chunkrace(const char *path)
-{
-	volatile long *tt;
-	char *buf = malloc(BSIZE);
-	long t0, t1, i, after;
-	off_t got;
-	pid_t pid;
-	int fd, st;
-
-	tt = mmap(NULL, sizeof(*tt), PROT_READ | PROT_WRITE,
-	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	if (buf == NULL || tt == MAP_FAILED ||
-	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
-		goto fail;
-	fill(buf, 0);
-	if (ftruncate(fd, 80L * BSIZE) != 0)
-		goto fail;
-	for (i = 0; i < 64; i++)
-		if (pwrite(fd, buf, BSIZE, i * BSIZE) != BSIZE)
-			goto fail;
-	if (fsync(fd) != 0)
-		goto fail;
-	*tt = 0;
-	t0 = now_ns();
-	if ((pid = fork()) == 0) {
-		int fd2 = open(path, O_RDWR);
-
-		usleep(50000);
-		if (fd2 < 0 || ftruncate(fd2, BSIZE / 2) != 0)
-			_exit(1);
-		*tt = now_ns();
-		_exit(0);
-	}
-	got = lseek(fd, 0, SEEK_HOLE);
-	t1 = now_ns();
-	waitpid(pid, &st, 0);
-	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || *tt == 0) {
-		printf("seekm-fail chunkrace: the truncate failed\n");
-		return (1);
-	}
-	after = (long)lseek(fd, 0, SEEK_END);
-	printf("seekm-chunkrace answer %ld size-after %ld seek-ms %ld "
-	    "truncate-ms %ld truncate %s\n", (long)got, after,
-	    (t1 - t0) / 1000000, (*tt - t0) / 1000000,
-	    *tt < t1 ? "inside" : "after");
-	if (got < 0 || (long)got > after) {
-		printf("seekm-fail chunkrace: answered %ld past the size %ld\n",
-		    (long)got, after);
-		fails++;
-	}
-	close(fd);
-	free(buf);
-	return (fails ? 1 : 0);
-fail:
-	printf("seekm-fail chunkrace: the file could not be built\n");
-	return (1);
-}
-
 static int
 cmp_long(const void *a, const void *b)
 {
@@ -528,6 +458,8 @@ cmp_long(const void *a, const void *b)
  *           turn at offsets from a fixed sequence
  *   dirty   the dense file, one byte written at a block from that
  *           sequence before each SEEK_DATA at 0, so each seek writes back
+ *   deep    the dense file, SEEK_DATA at a block in its last sixteenth,
+ *           so the seek starts above every indirect block it passes
  * Every answer is checked; one line per seek, then the median.
  */
 static long dense = 64L << 20;	/* the dense file's size, time and contend */
@@ -541,7 +473,8 @@ timing(const char *path, const char *kind, long n)
 	int fd, k;
 
 	k = strcmp(kind, "sparse") == 0 ? 0 : strcmp(kind, "dense") == 0 ? 1 :
-	    strcmp(kind, "dirty") == 0 ? 2 : strcmp(kind, "hole") == 0 ? 3 : -1;
+	    strcmp(kind, "dirty") == 0 ? 2 : strcmp(kind, "hole") == 0 ? 3 :
+	    strcmp(kind, "deep") == 0 ? 4 : -1;
 	if (k < 0 || n < 1 || buf == NULL || (ns = calloc(n, sizeof(*ns))) ==
 	    NULL)
 		return (2);
@@ -579,6 +512,10 @@ timing(const char *path, const char *kind, long n)
 		} else if (k == 1) {
 			whence = (i & 1) ? SEEK_HOLE : SEEK_DATA;
 			want = whence == SEEK_HOLE ? size : off;
+		} else if (k == 4) {
+			off = size - size / 16 +
+			    ((long)(seed >> 8) % (size / 16 / BSIZE)) * BSIZE;
+			want = off;
 		} else {
 			if (pwrite(fd, "D", 1, off & ~(BSIZE - 1)) != 1)
 				return (2);
@@ -618,13 +555,11 @@ timing(const char *path, const char *kind, long n)
  * finished: one seek of seconds can outlast every write.
  *
  * With gap set (contendgap) the data begins after a hole of the same size
- * and the child loops SEEK_DATA at 0: each seek crosses the hole in
- * growing chunks and its last chunk lands in the data, where the chunk
- * held no chain before and may be the largest a chunk gets, so the write
- * reads what that transition holds the lock for.  SEEK_DATA bounds its
- * tree scan at the first dirty block, so the writes go to the data's
- * upper half: a write into the landing chunk would shorten the scan
- * being timed.
+ * and the child loops SEEK_DATA at 0, so each seek crosses the hole into
+ * the data and the write reads what that crossing holds the lock for.
+ * SEEK_DATA bounds its tree read at the first dirty block, so the writes
+ * go to the data's upper half: a write near the data's start would
+ * shorten the read being timed.
  */
 static int gap;
 
@@ -786,8 +721,6 @@ main(int argc, char **argv)
 		return (corrupt(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
-	if (argc == 3 && strcmp(argv[1], "chunkrace") == 0)
-		return (chunkrace(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
 		return (wbrace(argv[2], argv[3]));
 	/* A trailing count of MiB sizes the dense file, a block multiple. */
@@ -807,8 +740,8 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | chunkrace <path> | corrupt <path> | "
-	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend|contendgap <path> <n> [MiB]\n",
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | corrupt <path> | "
+	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | contend|contendgap <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);
 }

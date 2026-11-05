@@ -355,6 +355,14 @@ exists only in a debug build. That is the form of XFS's
 `XFS_ERRORTAG_DELAY()` outside `DEBUG`, `fs/xfs/xfs_error.h`. No category
 is new.
 
+1,654 to 1,655 with SEEK_DATA, SEEK_HOLE and FIEMAP on a walk of the
+blockref arrays, `hammer2_xop_seek()`: its typedef, `hammer2_xop_seek_t`,
+and the three unnamed arguments of its prototype are the form of every
+carried XOP beside it, and the helpers of the chunked scan it replaced,
+`hammer2_bmap_next_key()`, `hammer2_fiemap_scan()` and
+`hammer2_seek_yield()`, took two continuation-line indents and one
+`return (x);` with them. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

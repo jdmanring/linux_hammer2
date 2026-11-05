@@ -101,7 +101,7 @@ exports rather than by assuming a filesystem carries its own compression.
 
 The port plan's third open H0 item is "the `sys/libkern` helpers from a
 full DragonFly clone". Measured: there is one, `icrc32.c`, and it needs no
-clone. HAMMER2 reaches it through two defines in `hammer2.h:1301`:
+clone. HAMMER2 reaches it through two defines in `hammer2.h:1344`:
 
     #define hammer2_icrc32(buf, size)  iscsi_crc32((buf), (size))
 

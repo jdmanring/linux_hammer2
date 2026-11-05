@@ -1513,3 +1513,149 @@ done:
 		hammer2_chain_drop(parent);
 	}
 }
+
+/*
+ * Linux: one parent's part of hammer2_xop_seek()'s walk.  The scan starts
+ * at the cursor, xop->r.key, rather than at the parent's first blockref,
+ * so a walk from deep in a file loads no indirect block it would only
+ * skip: hammer2_chain_scan() resumes after the blockref it is handed, and
+ * a key one below the cursor with no keybits resumes at the cursor itself.
+ * A blockref ending at or before the cursor is skipped all the same.
+ *
+ * hammer2_chain_scan() hands back an on-media DATA blockref with no chain
+ * and an INDIRECT one locked, and merges the parent's live children, so a
+ * block written back and not yet flushed is seen and a deleted one is
+ * not.  The walk recurses into an INDIRECT holding the parent locked
+ * shared, which keeps the parent's data, and so its blockref array,
+ * resident; the depth is bounded by the key space over the smallest
+ * indirect fan-out, about ten levels.  A live DATA chain is read for its
+ * blockref and released by the next scan call.
+ *
+ * Returns 0 to go on with the caller's parent, -1 when the answer is
+ * found, which no HAMMER2_ERROR_* bit can be, or a HAMMER2_ERROR_* code.
+ */
+static int
+hammer2_xop_seek_walk(hammer2_xop_seek_t *xop, hammer2_chain_t *parent)
+{
+	hammer2_blockref_t bref;
+	hammer2_chain_t *chain = NULL;
+	hammer2_key_t end;
+	int first, error;
+
+	cond_resched();
+	if (fatal_signal_pending(current))
+		return (HAMMER2_ERROR_ABORTED);
+	first = (xop->r.key == 0);
+	bref.key = xop->r.key - 1;
+	bref.keybits = 0;
+	for (;;) {
+		error = hammer2_chain_scan(parent, &chain, &bref, &first,
+		    HAMMER2_LOOKUP_SHARED);
+		if (error) {
+			if (error == HAMMER2_ERROR_EOF)
+				error = 0;
+			break;
+		}
+		/* past the range, or a hole at the cursor */
+		if (bref.key > xop->r.key_end ||
+		    (xop->r.mode == HAMMER2_SEEK_MODE_HOLE &&
+		    bref.key > xop->r.key)) {
+			error = -1;
+			break;
+		}
+		end = bref.key + ((hammer2_key_t)1 << bref.keybits);
+		if (end != 0 && end <= xop->r.key)
+			continue;		/* wholly below the cursor */
+		if (bref.type == HAMMER2_BREF_TYPE_INDIRECT) {
+			error = hammer2_xop_seek_walk(xop, chain);
+			if (error)
+				break;
+			continue;
+		}
+		if (bref.type != HAMMER2_BREF_TYPE_DATA)
+			continue;
+		switch (xop->r.mode) {
+		case HAMMER2_SEEK_MODE_DATA:
+			if (bref.key > xop->r.key)
+				xop->r.key = bref.key;
+			xop->r.found = 1;
+			error = -1;
+			break;
+		case HAMMER2_SEEK_MODE_HOLE:
+			xop->r.key = end;
+			error = (end == 0 || end > xop->r.key_end) ? -1 : 0;
+			break;
+		case HAMMER2_SEEK_MODE_MAP:
+			if (xop->r.n == xop->r.max) {
+				error = -1;
+				break;
+			}
+			xop->r.v[xop->r.n].key = bref.key;
+			xop->r.v[xop->r.n].keybits = bref.keybits;
+			xop->r.v[xop->r.n].methods = bref.methods;
+			xop->r.v[xop->r.n].poff = bref.data_off;
+			++xop->r.n;
+			xop->r.key = end;
+			error = (end == 0 || end > xop->r.key_end) ? -1 : 0;
+			break;
+		}
+		if (error)
+			break;
+	}
+	if (chain) {
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
+	}
+	return (error);
+}
+
+/*
+ * Linux: the backend for SEEK_DATA, SEEK_HOLE and FIEMAP on a cluster of
+ * one local element, a walk of the inode's blockref tree from key_beg that
+ * stops at the answer and makes no chain for a block on the media.  A
+ * remote element has no blockref array here, and several elements need a
+ * quorum on every key, so the frontend runs this only on one local
+ * element and takes hammer2_xop_scanall() otherwise.
+ *
+ * The answer is left in xop->r (struct hammer2_seek_req), which this one
+ * element writes before the frontend collects, as hammer2_xop_bmap()
+ * leaves its offset.  An inode whose data is embedded answers as data
+ * throughout.  It feeds no chain, so the collect returns ENOENT on success
+ * and the walk's error otherwise.
+ *
+ * The walk holds the inode chain shared throughout, so this file's
+ * writeback, which modifies it, waits for the walk.
+ */
+void
+hammer2_xop_seek(hammer2_xop_t *arg, void *scratch, int clindex)
+{
+	hammer2_xop_seek_t *xop = &arg->xop_seek;
+	hammer2_chain_t *parent;
+	int error;
+
+	xop->r.key = xop->r.key_beg;
+	xop->r.found = 0;
+	xop->r.n = 0;
+	parent = hammer2_inode_chain(xop->head.ip1, clindex,
+	    HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED);
+	if (parent == NULL) {
+		error = HAMMER2_ERROR_EIO;
+		goto done;
+	}
+	error = parent->error;
+	if (error == 0 && (parent->data->ipdata.meta.op_flags &
+	    HAMMER2_OPFLAG_DIRECTDATA)) {
+		if (xop->r.mode == HAMMER2_SEEK_MODE_DATA)
+			xop->r.found = 1;
+		else if (xop->r.mode == HAMMER2_SEEK_MODE_HOLE)
+			xop->r.key = xop->r.key_end + 1;
+	} else if (error == 0) {
+		error = hammer2_xop_seek_walk(xop, parent);
+		if (error == -1)
+			error = 0;
+	}
+	hammer2_chain_unlock(parent);
+	hammer2_chain_drop(parent);
+done:
+	hammer2_xop_feed(&xop->head, NULL, clindex, error);
+}
