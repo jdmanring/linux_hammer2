@@ -22247,12 +22247,14 @@ H2_SEEK_RACE=1` truncates the file 50 ms into a held SEEK_HOLE. At `5ee2c90`
 seek-ms 309 truncate-ms 51 truncate inside size-after 32768`, the answer past
 the size the file had when the seek returned. Fixed at `afea55d`:
 `inode_lock_shared()` across the size read, the writeback and the scan, as
-ext4, f2fs and btrfs hold it (DragonFly's `vn_bmap_seekhole()` holds the vnode
-exclusive). The lock order was read with no cycle: the module takes `i_rwsem`
+ext4, f2fs and btrfs hold it (FreeBSD's `vn_bmap_seekhole()`, which only
+FreeBSD's HAMMER2 port calls, holds the vnode exclusive). The lock order was read with no cycle: the module takes `i_rwsem`
 itself only at the top of `hammer2_file_write_iter()` and the fallocate path,
 and the VFS holds it across the module's setattr (the truncate this lock
-serializes the seek with), xattr and fileattr calls, each of which takes the
-module's locks below it; its
+serializes the seek with) and, on the child inode, across its unlink, link
+and rename (`vfs_unlink()`, `vfs_link()`, `vfs_rename()` in 7.3), each of
+which takes the module's locks below it; the module has no xattr or
+fileattr operations; its
 stated order puts `i_rwsem` above `ip->lock` (`hammer2_vfsops.c:3019`); the
 writeback takes folio locks, a `HAMMER2_TRANS_BUFCACHE` transaction and
 `ip->lock` and no `i_rwsem`; `hammer2_trans_init()` sleeps only for a flush
@@ -22266,7 +22268,11 @@ had returned would also have read `after`; it records the start since
 (`n10-5-r1-20261104-160715.log`) the truncate began 50 ms into each of three
 seeks held 302 to 308 ms and returned 0 to 1 ms after it, answer 131072. The
 hold sits after the size read and before the writeback and the scan, so this
-shows the lock spans the hold; that it spans the scan is the code's scope. The window the lock
+shows the lock spans the hold; that it spans the scan is the code's scope.
+Since `9f2fc82` a truncate must also begin in the seek's first half, since one
+beginning just before an unlocked seek returned could still pass it; at
+`9f2fc82` (`n10-5-r2-debug-20261104-165642.log`) each of three began at 50 ms
+into a seek held 302 to 308 ms, answer 131072, cores 0 before and after. The window the lock
 cannot close is stated in the comment: a page fault takes no `i_rwsem`, so a
 write through a mapping after the writeback can dirty a folio the scan calls
 a hole.
@@ -22299,7 +22305,18 @@ collects, failed 3 checks, against 2 predicted: the two deep SEEK_HOLE answers
 with 17 blocks done read SEEK_HOLE at 0 as 1048576. So a check had reached past
 the feed's depth before, under a concurrent writer; the audit's finding that
 none did, and `2d2eea0`'s message saying the same, were wrong, and the new file
-asks it without a writer.
+asks it without a writer. The control's edit is kept as
+`p7-notes/n10-5-r1-cap16.patch`, which applies at `2d2eea0`.
+
+Both of the exerciser's hole preconditions compared the block count with the
+file's size, and HAMMER2 compresses by default, so a file of 'A' held a few
+sectors whether its hole was there or not and neither check could fail on the
+volume it guards. Since `9f2fc82` each builds a twin with the hole's block
+written and requires the twin to hold more: at `9f2fc82` on `h2debug-7.3tls`
+(`n10-5-r2-debug-20261104-165642.log`) 4 sectors against 6 and 114 against
+116, one compressed block apart, and 121 checks and 0 failures; on host `tmpfs`
+256 against 384 and 5248 against 5376; and a copy whose deep file writes block
+40 fails the check, 5376 against 5376.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
 (`hammer2_vnops.c:2428`), which still asks one bmap XOP per block and reads
@@ -22376,26 +22393,45 @@ explains. So the lock costs every write beside a seek loop about 5 to 6 ms at
 the median, against 3.9 to 4.9 us unlocked, and takes the worst from seconds
 to about 6 ms only because the single scan is short.
 
-Candidates, none driven. What the unlocked write waited on at its worst: the
-scan's shared inode lock or the seek's writeback of the folio the write
-targets. The 5 to 6 ms median against a 0.7 ms seek, and the 2.4 seeks per
-write at commit 4: the rwsem's writer handoff, `RWSEM_WAIT_TIMEOUT` of
-`DIV_ROUND_UP(HZ, 250)` (`kernel/locking/rwsem.c:357`), 4 ms at this kernel's
-`CONFIG_HZ=1000`, under which readers taking the lock back to back may steal
-it from a waiting writer until the timeout sets the handoff bit; and the seek's
-writeback of the folio each write has just dirtied, which a following write
-to that folio waits on as a stable page. The reference refutes the handoff as a
-property of the shared lock and a back-to-back reader alone. ext4 and btrfs
-hold `i_rwsem` shared across SEEK_HOLE as well (`ext4_llseek()`,
-`btrfs_file_llseek()` in 7.3), and beside 30823 to 37389 seeks per repeat on
-ext4 and 52803 to 53932 on btrfs the same probe read a write median of 7.9 to
-8.6 us and 9.0 to 10.0 us, against 4.7 to 5.5 and 6.1 to 7.3 us alone, the
-worst 13 to 22 us and 16 to 79 us (`n10-5-r1-contref-20261104-161454.log`,
-`h2release-7.3tls`, the probe at `2d2eea0`, ext4 on a host-made image attached
-live since that kernel has no loop driver; the first attempt, `-161301`,
-stopped at the loop device). Their seeks answer from the page cache and write
-nothing back, so the 5 to 6 ms is HAMMER2's own: the writeback candidate
-stands, not driven, and the 2.4 seeks per write at commit 4 is not explained.
+The 5 to 6 ms is the rwsem's writer handoff, read by its own counters.
+`RWSEM_WAIT_TIMEOUT` is `DIV_ROUND_UP(HZ, 250)` (`kernel/locking/rwsem.c:357`),
+4 ms at this kernel's `CONFIG_HZ=1000`, and until a sleeping writer has waited
+that long a reader may steal the lock from it; after it the writer sets the
+handoff bit and waits out the reader holding the lock, here one seek of about
+0.7 ms. A writer that is still spinning catches a short hold instead. The
+release kernel counts these (`CONFIG_LOCK_EVENT_COUNTS`), reset before each
+window and read after (`n10-5-r2-lockevent-20261104-165426.log` at `9f2fc82`,
+module `8f1d19fed6970804`; the first attempt, `-165226`, named the debugfs
+directory wrongly and stopped COULD-NOT-RUN). Predicted beforehand in
+`n10-5-expected.md`:
+
+| window | `rwsem_wlock_handoff` | `rwsem_rlock_steal` | `rwsem_sleep_writer` | write median beside the loop |
+|---|---|---|---|---|
+| idle, 20 s | 0 | 0 | 0 | |
+| HAMMER2, `seek-matrix.sh H2_SEEK_CONTEND=1`, 50 writes | 50 | 286 | 336 | 5.84 ms, 357 seeks begun |
+| ext4, `seekprobe contend`, 50 writes | 0 | 6 | 1 | 8.7 us, 39143 seeks |
+
+One handoff per write on HAMMER2 and none on ext4. The idle window's
+`rwsem_opt_lock` of 38 shows the counters live. ext4 and btrfs hold `i_rwsem`
+shared across SEEK_HOLE as well (`ext4_llseek()`, `btrfs_file_llseek()` in
+7.3), and beside 30823 to 37389 seeks per repeat on ext4 and 52803 to 53932 on
+btrfs the same probe read a write median of 7.9 to 8.6 us and 9.0 to 10.0 us,
+against 4.7 to 5.5 and 6.1 to 7.3 us alone, the worst 13 to 22 us and 16 to
+79 us (`n10-5-r1-contref-20261104-161454.log`, `h2release-7.3tls`, the probe at
+`2d2eea0`, ext4 on a host-made image attached live since that kernel has no
+loop driver; the first attempt, `-161301`, stopped at the loop device). Their
+seeks hold the lock for microseconds, so their writers catch it spinning and
+never sleep long enough to hand off. The round-one reading of this table as
+refuting the handoff was wrong: it compared holds three orders of magnitude
+apart, the one variable the mechanism turns on.
+
+What remains a candidate. The unlocked write's seconds at its worst: the
+scan's `hammer2_inode_lock()` held shared, which the unlocked seek still takes,
+or the seek's writeback of the folio the write targets, neither driven.
+The 2.4 seeks per write at commit 4: not explained. The seek's writeback of
+the folio each write has just dirtied cannot move a median: the probe picks
+each write's block at random from 1024, so a write lands on a folio under
+writeback about once in 1024 writes.
 
 **Host instruments.** Run after this entry was first written:
 `script/analyze.sh` (`n10-5-analyze.log`) read 4 candidates over 2 files and
