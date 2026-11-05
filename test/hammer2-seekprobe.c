@@ -343,13 +343,13 @@ cmp_long(const void *a, const void *b)
  * The cost of a seek, n times on one file made once and read once
  * beforehand, so the first timed seek finds the tree in memory.
  *   sparse  1 GiB, all hole but the last block, SEEK_DATA at 0
- *   dense   64 MiB of data, SEEK_DATA and SEEK_HOLE in turn at offsets
- *           from a fixed sequence
+ *   dense   64 MiB of data, or the MiB given, SEEK_DATA and SEEK_HOLE in
+ *           turn at offsets from a fixed sequence
  *   dirty   the dense file, one byte written at a block from that
  *           sequence before each SEEK_DATA at 0, so each seek writes back
  * Every answer is checked; one line per seek, then the median.
  */
-#define DENSE	(64L << 20)
+static long dense = 64L << 20;	/* the dense file's size, time and contend */
 
 static int
 timing(const char *path, const char *kind, long n)
@@ -364,7 +364,7 @@ timing(const char *path, const char *kind, long n)
 	if (k < 0 || n < 1 || buf == NULL || (ns = calloc(n, sizeof(*ns))) ==
 	    NULL)
 		return (2);
-	size = k == 0 ? (1L << 30) : DENSE;
+	size = k == 0 ? (1L << 30) : dense;
 	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
 		return (2);
 	fill(buf, 1);
@@ -420,8 +420,9 @@ timing(const char *path, const char *kind, long n)
 }
 
 /*
- * What a seek costs a writer.  A 64 MiB dense file, synced.  n one-block
- * pwrite()s at blocks from a fixed sequence are timed twice: alone, then
+ * What a seek costs a writer.  A 64 MiB dense file, or the MiB given,
+ * synced.  n one-block pwrite()s at blocks from a fixed sequence are timed
+ * twice: alone, then
  * with a child looping SEEK_HOLE at 0 on its own descriptor.  A seek
  * holding i_rwsem shared keeps write_iter's exclusive i_rwsem out for the
  * length of the seek, so the contended worst write approaches one seek;
@@ -450,7 +451,7 @@ contend(const char *path, long n)
 	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
 		return (2);
 	fill(buf, 1);
-	for (i = 0; i < DENSE; i += BSIZE)
+	for (i = 0; i < dense; i += BSIZE)
 		if (pwrite(fd, buf, BSIZE, i) != BSIZE)
 			return (2);
 	if (fsync(fd) != 0)
@@ -469,7 +470,7 @@ contend(const char *path, long n)
 					__atomic_store_n(first, now_ns(),
 					    __ATOMIC_RELEASE);
 				__atomic_add_fetch(seeks, 1, __ATOMIC_RELEASE);
-				if (lseek(sfd, 0, SEEK_HOLE) != DENSE)
+				if (lseek(sfd, 0, SEEK_HOLE) != dense)
 					_exit(1);
 			}
 			_exit(0);
@@ -481,7 +482,7 @@ contend(const char *path, long n)
 			long t0, off;
 
 			seed = seed * 1103515245u + 12345u;
-			off = ((long)(seed >> 8) % (DENSE / BSIZE)) * BSIZE;
+			off = ((long)(seed >> 8) % (dense / BSIZE)) * BSIZE;
 			t0 = now_ns();
 			if (pwrite(fd, buf, BSIZE, off) != BSIZE)
 				return (2);
@@ -532,13 +533,21 @@ main(int argc, char **argv)
 		return (agree(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
+	/* A trailing count of MiB sizes the dense file, a block multiple. */
+	if ((argc == 5 && strcmp(argv[1], "contend") == 0) ||
+	    (argc == 6 && strcmp(argv[1], "time") == 0)) {
+		dense = strtol(argv[argc - 1], NULL, 10) << 20;
+		if (dense < BSIZE)
+			return (2);
+		argc--;
+	}
 	if (argc == 4 && strcmp(argv[1], "contend") == 0)
 		return (contend(argv[2], strtol(argv[3], NULL, 10)));
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
 	    "check|agree <path> <what> | race <path> | "
-	    "time <path> sparse|dense|dirty <n> | contend <path> <n>\n",
+	    "time <path> sparse|dense|dirty <n> [MiB] | contend <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);
 }

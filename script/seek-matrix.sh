@@ -46,6 +46,8 @@
 #                   and dirty, each H2_REPEAT times (5 by default) on a
 #                   file made once per repeat, H2_SEEK_TIME_N seeks each
 #                   (100 by default); raw lines and medians,
+#                   H2_SEEK_DENSE_MB sizing the dense file (64 MiB by
+#                   default) for this mode and the next,
 #                   checked only for right answers. A rate, so run it on
 #                   h2release-7.3tls.
 #   H2_SEEK_CONTEND=1  what a seek costs a writer (seekprobe contend):
@@ -88,6 +90,11 @@ WANT=${H2_SEEK_RACE_WANT:-}
 case "$WANT" in ''|inside|after) ;; *) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE_WANT is inside or after" >&2; exit 2 ;; esac
 [ -z "$WANT" ] || [ "$RACE" = 1 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE_WANT needs H2_SEEK_RACE=1" >&2; exit 2; }
 [ -z "${H2_SEEK_TIME_N:-}" ] || [ "$TIME$CONTEND" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N needs H2_SEEK_TIME=1 or H2_SEEK_CONTEND=1" >&2; exit 2; }
+DMB=${H2_SEEK_DENSE_MB:-}
+case "$DMB" in ''|*[!0-9]*|0) [ -z "$DMB" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DENSE_MB=$DMB is not a count of MiB" >&2; exit 2; } ;; esac
+[ -z "$DMB" ] || [ "$TIME$CONTEND" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DENSE_MB needs H2_SEEK_TIME=1 or H2_SEEK_CONTEND=1" >&2; exit 2; }
+# The scratch volume holds the dense file twice over, and 1 GiB at least.
+IMGMB=1024; [ -n "$DMB" ] && [ $((DMB * 2)) -gt $IMGMB ] && IMGMB=$((DMB * 2))
 
 [ -x "$NEWFS" ] || { echo "seek-matrix: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "seek-matrix: COULD-NOT-RUN: no fsck_hammer2 at $FSCK" >&2; exit 2; }
@@ -128,7 +135,7 @@ dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/l
 	echo "seek-matrix: COULD-NOT-RUN: lockdep is off on $GUEST since an earlier report; boot it again" >&2; exit 2; }
 
 rm -f "$IMG"
-truncate -s 1G "$IMG" && "$NEWFS" -L SM "$IMG" >/dev/null 2>&1 || {
+truncate -s "${IMGMB}M" "$IMG" && "$NEWFS" -L SM "$IMG" >/dev/null 2>&1 || {
 	echo "seek-matrix: COULD-NOT-RUN: newfs_hammer2 failed" >&2; exit 2; }
 attach() {
 	$VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio >/dev/null 2>&1 &&
@@ -163,15 +170,15 @@ echo "held $(dmesg | grep -c "hammer2: seek held")"
 '
 time_body='
 for k in sparse dense dirty; do
-	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $NSEEK; i=$((i + 1)); done
+	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $NSEEK $DMB; i=$((i + 1)); done
 done
 '
 contend_body='
-i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe contend /mnt/sm/c $NSEEK; i=$((i + 1)); done
+i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe contend /mnt/sm/c $NSEEK $DMB; i=$((i + 1)); done
 '
 if [ "$RACE$TIME$CONTEND" != 000 ]; then
 	if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; else body=$contend_body; fi
-	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; $mode_open $body $mode_close" 2>&1)
+	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; DMB=$DMB; $mode_open $body $mode_close" 2>&1)
 	printf '%s\n' "$out" | command grep -v '^seekm-time [a-z]* [0-9]* ' | sed 's/^/  /'
 	detach
 	"$FSCK" "$IMG" >/dev/null 2>&1; fsck_rc=$?
