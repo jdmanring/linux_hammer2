@@ -1598,8 +1598,9 @@ walk runs only on a cluster of one local element. Several elements need
 the quorum's agreement on every key and a remote element has no blockref
 array on this host, so those take `hammer2_seek_scanall()`, the chunked
 scan through `hammer2_xop_scanall()` that every seek used before, under
-a `DEFER` whose trigger is a remote dense seek of 1 GiB above a second or
-a cluster of several local elements in use.
+a `DEFER` whose trigger is a PFS with a remote element mounted read-write,
+or a cluster of several local elements in use. A PFS with a remote
+element is read-only today, so no writer waits behind its scan.
 
 Both hold `i_rwsem` shared for the whole call, as
 `btrfs_file_llseek()` holds it for the seek and `xfs_vn_fiemap()`,

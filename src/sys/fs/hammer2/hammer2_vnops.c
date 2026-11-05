@@ -1532,7 +1532,7 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * since an empty range costs one lookup however large; one that held data
  * doubles only up to HAMMER2_SEEK_DATA_MAX, since each of its blocks costs
  * a chain.
- * DEFER(a remote dense seek of 1 GiB above 1 s, or a cluster of several local elements in use):
+ * DEFER(a PFS with a remote element mounted read-write, or a cluster of several local elements in use):
  * a seek request the cluster transport carries would let each element walk.
  */
 #define HAMMER2_SEEK_CHUNK	((hammer2_key_t)HAMMER2_XOPFIFO * HAMMER2_PBUFSIZE)
