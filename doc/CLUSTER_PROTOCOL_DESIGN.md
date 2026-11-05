@@ -21,9 +21,11 @@ Read against the DragonFly clone at `250a8b4` with `lib/libdmsg` and
 work package and security model under `proposals/hammer2-completion-handoff/`
 (`HAMMER2_AGENT_HANDOFF.md`, sections 10 and 19), its cluster state model
 (`HAMMER2_CLUSTER_STATE_MODEL.md`, invariants S1 to S10 and L1 to L4), the
-kernel of record's `net/handshake/`, and this tree at `3ba554c`. Every
-`file:line` below was read at that commit; the ones in tables are checked
-by `script/test-citations.sh`.
+kernel of record's `net/handshake/`, and this tree at `3ba554c`. A
+`file:line` into this tree was read at that commit and is kept on the
+tree's current line as the source moves, and the ones in tables are
+checked against it by `script/test-citations.sh`; one into another tree
+names the commit it was read at.
 
 ## What the research established
 
@@ -84,7 +86,7 @@ property the remote element depends on was read:
 No tree writes the on-disk `pfs_nmasters` at creation. Upstream reads it
 into the in-memory count at mount, and on destroy decrements that count
 and leaves the field with an `XXX`
-(`sys/vfs/hammer2/hammer2_vfsops.c:534-535`, `:642-644` at `250a8b4`); the port writes it nowhere. So a master today counts
+(`sys/vfs/hammer2/hammer2_vfsops.c:527-528`, `:635-637` at `250a8b4`); the port writes it nowhere. So a master today counts
 the masters it can see, and a master cut off from its peer has a quorum of
 one. Dillon's quorum section (`DILLON_HAMMER2_DESIGN_2015.md:683-781`)
 says the hard-block form "is easy to deal with" when "your MASTERs are
