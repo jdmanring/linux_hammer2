@@ -1743,10 +1743,17 @@ module_param_named(seek_tag_hold_ms, hammer2_seek_tag_hold_ms, uint, 0644);
  * the tree read misses.  SEEK_DATA reads the tags first and asks the tree
  * only below the first tagged block.  SEEK_HOLE asks the tree, reads the
  * tags over the hole it found, and accepts a hole only from a tree read
- * made after the tags called that block clean.  A mapping tagged nowhere
- * stays so under i_rwsem, and its tags are not read.  A write through a
- * shared mapping takes no i_rwsem, so a fault after the tag read can dirty
- * a block the tree then calls a hole; iomap's seek leaves the same window.
+ * made after the tags called that block clean.  Against write(2), a
+ * mapping tagged nowhere stays so under i_rwsem, and its tags are not
+ * read.
+ *
+ * Two cases fall outside that.  A write through a shared mapping takes no
+ * i_rwsem, so a fault after the tag read can dirty a block the tree then
+ * calls a hole; iomap's seek leaves the same window.  A writeback that
+ * fails ends with the folio clean and its block not in the tree
+ * (hammer2_xop_strategy_write()), so the seek calls that block a hole
+ * while read(2) still returns the cached bytes, and fsync(2) reports the
+ * error.
  */
 static loff_t
 hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
@@ -2599,7 +2606,9 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		/*
 		 * The tags are read before the tree, as SEEK_DATA reads them.
 		 * A folio leaves its tags only after its chain is in the
-		 * tree, so a block tagged here is either in the tree read
+		 * tree, or after a failed writeback, whose block the map
+		 * omits as the seek calls it a hole (hammer2_seek_data_hole()).
+		 * So a block tagged here is either in the tree read
 		 * that follows, which is the answer reported, or DELALLOC; a
 		 * tag read after the tree read could find a writeback that
 		 * ended between the two and call its block neither.  At most

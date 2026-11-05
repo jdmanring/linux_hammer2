@@ -22331,7 +22331,7 @@ written and requires the twin to hold more: at `e547227` on `h2debug-7.3tls`
 was not read on HAMMER2, where the margin is one compressed block.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
-(`hammer2_vnops.c:2261`), which still asks one bmap XOP per block and reads
+(`hammer2_vnops.c:2285`), which still asks one bmap XOP per block and reads
 `i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
 block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
 the same scan, not measured.

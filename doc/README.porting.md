@@ -1609,8 +1609,19 @@ the same file waits for the seek it arrives behind, and the file's
 writeback, which modifies the inode chain the walk holds shared, waits
 for the walk. Until N10.6 the scan built a chain for every block and
 gave `i_rwsem` up between chunks when a writer waited, which bounded the
-writer's wait by hiding the scan's cost; the walk removed the cost
-instead, and the verification record has the readings on both sides.
+writer's wait by hiding the scan's cost. On one local element the walk
+removed the cost instead. The scan that several elements and a remote
+one still take keeps it and no longer gives the lock up, so a writer on
+a cluster of several local elements waits out the whole scan; the scan
+stops on a fatal signal between chunks, as the walk does between
+blocks. The verification record has the readings on both sides.
+
+The walk is recursive and the media bounds nothing: an indirect block
+whose array names itself passes its check. The walk refuses a blockref
+with EIO past sixteen levels, bulkfree's bound for its own recursion
+over the same tree, or one whose keybits cannot be shifted. A child
+indirect block at its parent's keybits is accepted, since the carried
+`hammer2_chain_create_indirect()` could build one before 1.0.21.
 
 The tree records a block when it is written back, so a written block not
 yet written back is data only in the page cache. The seek and the map
@@ -1618,6 +1629,9 @@ read the dirty and writeback tags with `filemap_get_folios_tag()` and
 count a tagged block as data, the map as `FIEMAP_EXTENT_DELALLOC`.
 SEEK_DATA reads the tags before the tree, and SEEK_HOLE accepts a hole
 only from a tree read made after the tags called it clean, since a folio
-leaves its tags only once its block is in the tree. A write through a
-shared mapping takes no `i_rwsem` and can dirty a block between the two
-reads; iomap's seek leaves the same window.
+leaves its tags only once its block is in the tree. Two cases fall
+outside that. A write through a shared mapping takes no `i_rwsem` and
+can dirty a block between the two reads; iomap's seek leaves the same
+window. A writeback that fails leaves its folio clean with no block in
+the tree, so the seek and the map call that block a hole while read(2)
+returns the cached bytes, and fsync(2) reports the error.
