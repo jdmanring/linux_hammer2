@@ -22811,3 +22811,59 @@ instantiation, is marked `DEFER(16 GiB dense SEEK_HOLE above 500 ms on
 h2release-7.3tls, or an interactive consumer)`. A write through a mapping
 takes no `i_rwsem`, so a fault after the tag read can dirty a folio the scan
 then calls a hole; the tags narrow that window and do not close it.
+
+## A corrupt data block seeks clean and reads EIO, 2026-11-05
+
+What this entry claims: a file whose data block fails its check answers
+SEEK_DATA and SEEK_HOLE at every block from block references and fails its
+read with EIO, on the fixture that carries such a block, and that check
+fails on a build whose seek loads block data and on a gate whose probe did
+not build. N10.5's plan named this check and the 1.0.86 entry did not carry
+it.
+
+The fixtures gate already refused `f9`'s `random128k.bin`, the LZ4 image
+with one data byte flipped on media, by requiring its read to fail; nothing
+asked it a seek. `hammer2-seekprobe corrupt` (`9cfd76a`) asks SEEK_DATA and
+SEEK_HOLE at every block, each of which must answer that block and the
+file's size, then reads the file, which must fail with EIO rather than
+another errno or the bytes. `test-fixtures.sh` builds it statically as it
+builds the getdents exerciser and runs it on every file a manifest names
+`# corrupt`, before its own reads of that file, requiring exit 0 and both
+of its summary lines. The altered block is the file's second: the
+kernel's check failure names its key, 65536
+(`n10-5-corrupt3-20261105-083306.log:28`). A first version of the probe
+asked the seeks at 0 alone; SEEK_DATA at 0 answers from the first block,
+so that half could not reach the altered one on any build, and an audit
+found it before the push. On the host, against `/etc/hostname` and a
+200000-byte random file, the probe's read check failed both, "read to the
+end", exit 1 (`n10-5-corrupt-host-20261105-083112.log`).
+
+In one boot of `h2debug-7.3tls` (`n10-5-corrupt3-20261105-083306.log`, head
+`9cfd76a` with no uncommitted change under `src`, `script` or `test`; module
+hashes are sha256 prefixes of each tree's `hammer2.ko` after its run, which
+the gate does not print):
+- head (`f204232f5e3b24c6`): the probe's two lines, both seeks at each of 2
+  blocks and the read EIO, `f9` passing, and the gate 11 images, 43 files, 1
+  corrupt file refused and seeked, 0 failures (`:25-31`);
+- the seek's scan asking `HAMMER2_LOOKUP_ALWAYS` (`ctl/n106-always`,
+  `3298db8c8d539fe4`), so it loads block data as both seeks' shared scan did
+  before 1.0.85: SEEK_HOLE at 0, SEEK_DATA at 65536 and SEEK_HOLE at 65536
+  each -1, the read still EIO, `f9` failing, the gate's one failure
+  (`:54-60`); SEEK_DATA at 0 answers from the clean first block on this
+  build too;
+- head's gate with the probe's source path broken, a frozen copy: `f9`
+  failing with "the seek probe did not build or copy", the gate's one
+  failure (`:83-85`).
+`debug_locks` read 1 and QEMU cores 0 at the start and the end. The log
+names as head the commit `9cfd76a` replaced when its message was
+reworded; the tree is the same.
+
+A first control missed its prediction. With the seek asking without
+`HAMMER2_LOOKUP_NODATA` (`ctl/n106-seeknodata` at the first version,
+`n10-5-corrupt-20261105-081415.log`, module `76f544276e58c6ea`) every check
+passed, because `hammer2_chain_lookup()` then resolves with
+`HAMMER2_RESOLVE_MAYBE` (`hammer2_chain.c:2352`), which does not load a DATA
+chain (`:1005-1006`): dropping NODATA does not make the seek read the
+block. The control that does is `HAMMER2_LOOKUP_ALWAYS`, above. The seeks
+here run on an image the gate mounted fresh, before any read of the file;
+a seek after a read, with the chains already resolved, is not asked.
