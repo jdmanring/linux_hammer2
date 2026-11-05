@@ -1468,10 +1468,9 @@ hammer2_file_mmap_prepare(struct vm_area_desc *desc)
  * Returns 0 and sets *poff, or an errno.  The errno is POSITIVE, which
  * is this module's convention inside the core: hammer2_error_to_errno()
  * returns positive values and the VFS entry points negate them.  ENOENT
- * means the block is a hole.  Getting this wrong is silent, since a
- * positive ENOENT compared against a negative one is simply never
- * equal, and the first run of this code returned ENOENT as a file
- * position for every offset in the file.
+ * means the block is a hole.  Getting the sign wrong is silent, since a
+ * positive ENOENT compared against a negative one is never equal, and
+ * the caller then takes the errno for a file position.
  *
  * The XOP's offset is whichever element ran last, which may lack the block
  * or hold an older one, so the address is the focus's own, the chain the
@@ -2424,9 +2423,10 @@ const struct address_space_operations hammer2_file_aops = {
 };
 
 /*
- * Linux: fiemap, the extent map ioctl (FIEMAP).  No BSD port has it, and
- * the three that carry a seek ioctl answer FIOSEEKDATA/FIOSEEKHOLE
- * instead, which is where ->llseek above comes from.  It is what
+ * Linux: fiemap, the extent map ioctl (FIEMAP).  Neither DragonFly nor
+ * any BSD port has it; of the four, only the FreeBSD port answers the
+ * seek ioctls FIOSEEKDATA and FIOSEEKHOLE, which ->llseek above answers
+ * here, and the other three refuse them with EOPNOTSUPP.  FIEMAP is what
  * filefrag(8), lvm, and a defragmenter read to learn where a file's
  * blocks are.
  *

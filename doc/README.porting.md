@@ -1563,3 +1563,60 @@ is the one the root's quorum focus names, and without one the live pass
 runs and copies nothing. And it is not a reader of the slave: the
 cluster mount serves reads from the master, and a slave element's
 mixed state is visible to nothing in this port.
+
+## Seeking and mapping a file
+
+`SEEK_DATA`, `SEEK_HOLE` and `FIEMAP` have no BSD source to carry.
+Neither DragonFly nor any BSD port has `FIEMAP`; of the four, only the
+FreeBSD port answers the seek ioctls `FIOSEEKDATA` and `FIOSEEKHOLE`,
+through `vn_bmap_seekhole()`, and the other three refuse them with
+`EOPNOTSUPP`. On Linux all three are written for the port: `->llseek`
+for the seek and `->fiemap` for the map, in `hammer2_vnops.c`, over one
+backend, `hammer2_xop_seek()` in `hammer2_xops.c`.
+
+They do not go through iomap, whose `iomap_seek_hole()`,
+`iomap_seek_data()` and `iomap_fiemap()` are what a mainline filesystem
+would use. iomap reads a file's mapping from `->iomap_begin` and assumes
+the kernel submits I/O to the device range it is given; the decision
+against it for file data is the "iomap versus classic address-space
+operations" row of the decisions table in `README.roadmap.md`. Taking
+iomap for the seek and the map alone would mean an `->iomap_begin` that
+describes blocks no other path reads through iomap, a compressed block
+included, whose bytes at its media address are not the file's. The seek
+reads what iomap would have read, the blockref tree, itself.
+
+The backend walks the inode's blockref arrays with
+`hammer2_chain_scan()`, which hands back a block on the media as a
+blockref with no in-memory chain and merges the parent's live children,
+so a block written back and not yet flushed is seen. Each level starts
+at the walk's cursor, so a seek from deep in a file loads no indirect
+block below it. SEEK_DATA stops at the first data block, SEEK_HOLE at the
+first key no block covers, and the map fills an array of blockrefs that
+`hammer2_fiemap()` merges into extents. The answer comes back in the
+XOP, as `hammer2_xop_bmap()` returns its offset, and no chain is fed. The
+walk runs only on a cluster of one local element. Several elements need
+the quorum's agreement on every key and a remote element has no blockref
+array on this host, so those take `hammer2_seek_scanall()`, the chunked
+scan through `hammer2_xop_scanall()` that every seek used before, under
+a `DEFER` whose trigger is a remote dense seek of 1 GiB above a second or
+a cluster of several local elements in use.
+
+Both hold `i_rwsem` shared for the whole call, as
+`btrfs_file_llseek()` holds it for the seek and `xfs_vn_fiemap()`,
+`ext4_fiemap()` and `btrfs_fiemap()` hold it for the map. A writer to
+the same file waits for the seek it arrives behind, and the file's
+writeback, which modifies the inode chain the walk holds shared, waits
+for the walk. Until N10.6 the scan built a chain for every block and
+gave `i_rwsem` up between chunks when a writer waited, which bounded the
+writer's wait by hiding the scan's cost; the walk removed the cost
+instead, and the verification record has the readings on both sides.
+
+The tree records a block when it is written back, so a written block not
+yet written back is data only in the page cache. The seek and the map
+read the dirty and writeback tags with `filemap_get_folios_tag()` and
+count a tagged block as data, the map as `FIEMAP_EXTENT_DELALLOC`.
+SEEK_DATA reads the tags before the tree, and SEEK_HOLE accepts a hole
+only from a tree read made after the tags called it clean, since a folio
+leaves its tags only once its block is in the tree. A write through a
+shared mapping takes no `i_rwsem` and can dirty a block between the two
+reads; iomap's seek leaves the same window.

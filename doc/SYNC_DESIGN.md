@@ -1100,7 +1100,7 @@ source before it was applied, and no lever-2 code precedes it.
    skip by its tid. Under the knob they skip the slave whoever starts
    them, and the pass copies the change, data included. Twenty-one
    allocation sites carry the flag, the strategy write
-   (`hammer2_vnops.c:2374`) among them; the reads, lookups and readdirs
+   (`hammer2_vnops.c:2373`) among them; the reads, lookups and readdirs
    still run on every element. The shape also reads both queues empty
    at every sync the thread starts while the knob is armed, so a stage
    1 that found work there is a reading, not an assumption. The shape has one slave; with two, the thread's
