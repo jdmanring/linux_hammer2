@@ -317,13 +317,14 @@ race(const char *path)
 	}
 	/*
 	 * "after" means the truncate began inside the seek and returned
-	 * after it, so something held it; one that began after the seek
-	 * returned is "late" and shows nothing either way.
+	 * after it, so something held it.  One that began in the second half
+	 * of the seek is "late": an unlocked seek about to return could
+	 * still be passed by it, so it shows nothing either way.
 	 */
 	printf("seekm-race answer %ld seek-ms %ld truncate-ms %ld truncate %s "
 	    "size-after %ld truncate-began-ms %ld\n", (long)got,
 	    (t1 - t0) / 1000000, (*tt - t0) / 1000000,
-	    *tb >= t1 ? "late" : *tt < t1 ? "inside" : "after",
+	    *tb > t1 - (t1 - t0) / 2 ? "late" : *tt < t1 ? "inside" : "after",
 	    (long)lseek(fd, 0, SEEK_END), (*tb - t0) / 1000000);
 	close(fd);
 	free(buf);

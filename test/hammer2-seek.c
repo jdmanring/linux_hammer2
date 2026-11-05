@@ -680,6 +680,42 @@ descriptors(const char *path, const char *buf, long bsize, long nbytes)
 }
 
 /*
+ * Whether `fd`'s hole is real on media: a twin of the file with the hole's
+ * block written must hold more.  A block count against the file's size
+ * cannot say, since HAMMER2 compresses by default and a file of 'A' then
+ * holds far less than its size whether the hole is there or not.  The twin
+ * shares the original's layout and fill, so its count differs only by the
+ * block, and is removed before this returns.  Returns 1 when the hole is
+ * real, printing both counts.
+ */
+static int
+hole_on_media(int fd, const char *path, const char *buf, long bsize,
+    long nblocks, long hole, long size)
+{
+	char tpath[4096 + 8];
+	struct stat st, tw;
+	long i;
+	int tfd, ok;
+
+	snprintf(tpath, sizeof(tpath), "%s.twin", path);
+	tfd = open(tpath, O_CREAT | O_TRUNC | O_RDWR, 0644);
+	for (i = 0; tfd >= 0 && i < nblocks; i++)
+		if (pwrite(tfd, buf, bsize, i * bsize) != bsize)
+			break;
+	ok = tfd >= 0 && i == nblocks && ftruncate(tfd, size) == 0 &&
+	    fsync(tfd) == 0 && fstat(tfd, &tw) == 0 && fstat(fd, &st) == 0 &&
+	    tw.st_blocks > st.st_blocks;
+	printf("seek-%s block %ld %s a hole on media: %ld blocks of 512 against "
+	    "%ld with it written\n", ok ? "ok  " : "fail", hole,
+	    ok ? "is" : "is not", tfd >= 0 ? (long)st.st_blocks : -1L,
+	    tfd >= 0 ? (long)tw.st_blocks : -1L);
+	if (tfd >= 0)
+		close(tfd);
+	unlink(tpath);
+	return (ok);
+}
+
+/*
  * A hole past many data blocks.  SEEK_HOLE collects one chain per block
  * from a scan that feeds HAMMER2_XOPFIFO (16) chains at a time, so a hole
  * after 40 data blocks is found only after the FIFO has drained and
@@ -691,7 +727,6 @@ descriptors(const char *path, const char *buf, long bsize, long nbytes)
 static void
 deep(const char *path, const char *buf, long bsize)
 {
-	struct stat st;
 	long i, size = (DEEP_BLOCKS + 2) * bsize;
 	int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
 
@@ -700,7 +735,8 @@ deep(const char *path, const char *buf, long bsize)
 			break;
 	checks++;
 	if (fd < 0 || i != DEEP_BLOCKS + 2 || fsync(fd) != 0 ||
-	    fstat(fd, &st) != 0 || st.st_blocks * 512 >= size) {
+	    !hole_on_media(fd, path, buf, bsize, DEEP_BLOCKS + 2, DEEP_BLOCKS,
+	    size)) {
 		printf("seek-fail deep: the file could not be built with its "
 		    "hole\n");
 		fails++;
@@ -709,7 +745,6 @@ deep(const char *path, const char *buf, long bsize)
 		unlink(path);
 		return;
 	}
-	printf("seek-ok   deep: block %d is a hole on media\n", DEEP_BLOCKS);
 	probe(fd, "deep, SEEK_HOLE at 0", SEEK_HOLE, 0, DEEP_BLOCKS * bsize);
 	probe(fd, "deep, SEEK_HOLE in block 20", SEEK_HOLE, 20 * bsize + 1,
 	    DEEP_BLOCKS * bsize);
@@ -759,21 +794,9 @@ main(int argc, char **argv)
 	fsync(fd);
 
 	/* The hole has to be real before anything below means anything. */
-	{
-		struct stat st;
-
-		fstat(fd, &st);
-		checks++;
-		if (st.st_blocks * 512 >= nbytes) {
-			printf("seek-fail the file is not sparse: %ld blocks "
-			    "of 512 for %ld bytes, so no hole was made\n",
-			    (long)st.st_blocks, nbytes);
-			fails++;
-		} else {
-			printf("seek-ok   the middle block is a hole on media "
-			    "(%ld blocks of 512)\n", (long)st.st_blocks);
-		}
-	}
+	checks++;
+	if (!hole_on_media(fd, path, buf, bsize, 3, 1, nbytes))
+		fails++;
 
 	/* Data where data is: the start of block 0. */
 	probe(fd, "SEEK_DATA at 0", SEEK_DATA, 0, 0);
