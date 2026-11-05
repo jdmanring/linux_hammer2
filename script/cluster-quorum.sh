@@ -41,6 +41,10 @@ FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/ha
 # The hold is added to the bound, so a long H2_QUORUM_IDLE is not read as a hang.
 IDLE=${H2_QUORUM_IDLE:-0}
 case $IDLE in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_IDLE is not a number of seconds without a leading zero" >&2; exit 2 ;; esac
+# H2_QUORUM_CONTEND=n prints a writer's wait beside a SEEK_HOLE loop through
+# the quorum on a dense file of n MiB, a rate, so read on h2release-7.3tls.
+QCONTEND=${H2_QUORUM_CONTEND:-0}
+case $QCONTEND in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_CONTEND is not a count of MiB without a leading zero" >&2; exit 2 ;; esac
 # The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
 # kernel is not read as a hang.
 RUNSECS=600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
@@ -71,6 +75,8 @@ make -s clean >/dev/null 2>&1
 make -s KDIR="$KDIR" >/dev/null 2>&1 || {
 	echo "quorum: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
+cc -static -O2 -o "$W/h2seekprobe" test/hammer2-seekprobe.c >/dev/null 2>&1 || {
+	echo "quorum: COULD-NOT-RUN: the seek probe did not compile" >&2; exit 2; }
 # What the module was built from, so a kept log names its own build.
 echo "  read  module from $(git rev-parse --short HEAD) with src/ $(git diff --quiet HEAD -- src/ && echo clean || echo modified), against $KDIR"
 
@@ -179,6 +185,23 @@ echo "reread-mount-rc $rc"
 [ "$rc" = 0 ] || exit 1
 ( cd /mnt/h2q/set && md5sum q* 2>/dev/null | LC_ALL=C sort ) > /tmp/q.sums
 echo "read-sums $(grep -c . /tmp/q.sums)"
+# The seek and the map through the quorum, which a cluster of several
+# elements answers by the chunked scan rather than the walk: the seek
+# probe's shape (data, hole, data, a half block) written, read after a
+# remount with the caches dropped, both seeks asked and FIEMAP dumped.
+/tmp/h2seekprobe make /mnt/h2q/seekf >/dev/null 2>&1
+sync
+umount /mnt/h2q
+echo 3 > /proc/sys/vm/drop_caches
+mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
+/tmp/h2seekprobe check /mnt/h2q/seekf "the two-master cluster" > /tmp/q.seek 2>&1
+echo "seek-ok $(grep -c '^seekm-ok' /tmp/q.seek) seek-fail $(grep -c '^seekm-fail' /tmp/q.seek)"
+grep '^seekm-fail' /tmp/q.seek | head -5
+/tmp/h2seekprobe dump /mnt/h2q/seekf > /tmp/q.dump 2>&1; s=$?
+echo "map-exit $s map-extents $(sed -n 's/^seekm-dump extents //p' /tmp/q.dump)"
+# CONTEND=n prints what a seek through the quorum costs a writer: a dense
+# file of n MiB, writes timed alone and beside a SEEK_HOLE loop.
+[ "${CONTEND:-0}" -gt 0 ] && /tmp/h2seekprobe contend /mnt/h2q/contend 20 "$CONTEND" | grep -v '^seekm-contend [a-z]* [0-9]'
 sync
 # IDLE=n holds the cluster mounted n seconds after the read-back, so each
 # thread runs several passes, whose counts are printed at the end.
@@ -234,8 +257,8 @@ dmesg | tail -40 > /tmp/q.log
 dmesg > /tmp/q.klog
 GUEST
 
-scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE sh /tmp/h2quorum.sh" > "$W/out" 2>&1
+scp -q "$KO" "$W/guest.sh" "$W/h2seekprobe" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; chmod 755 /tmp/h2seekprobe; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE CONTEND=$QCONTEND sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
 # The guest half's exit, read before anything is inferred from its output.
 # A non-zero that is not 124 means the guest or its session ended without
@@ -297,6 +320,12 @@ a=$(val read-sums); [ "${a:-0}" = 24 ]; check "every file reads back through the
 w=$(grep -c . "$W/want" 2>/dev/null); s=$(grep -c . "$W/sums" 2>/dev/null)
 [ "${w:-0}" = 24 ] && [ "${s:-0}" = 24 ] && cmp -s "$W/want" "$W/sums"
 check "every file read back holds what was written" $? "$(diff "$W/want" "$W/sums" 2>/dev/null | grep -c '^>') of ${w:-0} sum(s) differ from the source's"
+a=$(sed -n 's/^seek-ok \([0-9]*\) seek-fail \([0-9]*\)$/\1 \2/p' "$W/out"); [ "$a" = "6 0" ]
+check "both seeks through the quorum answer the probe's shape after a remount" $? "${a:-no line} (ok, failed of 6)"
+a=$(sed -n 's/^map-exit \([0-9]*\) map-extents \([0-9]*\)$/\1 \2/p' "$W/out"); [ "$a" = "0 2" ]
+check "FIEMAP through the quorum maps the shape's two data blocks" $? "${a:-no line} (exit, extents)"
+grep '^seekm-fail' "$W/out" | sed 's/^/        /'
+[ "$QCONTEND" = 0 ] || sed -n 's/^seekm-contend /  contend /p' "$W/out"
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 a=$(val threads-after); [ "${a:-1}" = 0 ]; check "no thread is left" $? "${a:-none}"
 a=$(val scrapped); [ "${a:-1}" = 0 ]; check "nothing is scrapped unwritten" $? "${a:-none} chain(s) scrapped"
