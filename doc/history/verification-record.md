@@ -22312,9 +22312,10 @@ collects, failed 3 checks, against 2 predicted: the two deep SEEK_HOLE answers
 with 17 blocks done read SEEK_HOLE at 0 as 1048576. So a check had reached past
 the feed's depth before, under a concurrent writer; the audit's finding that
 none did, and `cd1d22e`'s message saying the same, were wrong, and the new file
-asks it without a writer. The control's edit was rebuilt after the run, from
-the edit the run's wrapper applied, as `p7-notes/n10-5-r1-cap16.patch`, which
-applies at `cd1d22e`; the run's log prints only the dirty tree it built. Its
+asks it without a writer. The control's edit was rebuilt after the run to
+match its readings, as `p7-notes/n10-5-r1-cap16.patch`, which applies at
+`cd1d22e`; the edit the run used was made by hand in a worktree that was not
+kept, and the run's log prints only the dirty tree it built. Its
 readings fit a stop at 16: 1048576 is 16 blocks, and 2359296 is block 20 plus
 16.
 
