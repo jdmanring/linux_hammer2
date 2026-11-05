@@ -343,6 +343,9 @@ cmp_long(const void *a, const void *b)
  * The cost of a seek, n times on one file made once and read once
  * beforehand, so the first timed seek finds the tree in memory.
  *   sparse  1 GiB, all hole but the last block, SEEK_DATA at 0
+ *   hole    the dense file's size, all hole but the first and last
+ *           blocks, SEEK_DATA from inside the hole, so the seek crosses
+ *           the hole the size gives and only one block of data
  *   dense   64 MiB of data, or the MiB given, SEEK_DATA and SEEK_HOLE in
  *           turn at offsets from a fixed sequence
  *   dirty   the dense file, one byte written at a block from that
@@ -360,7 +363,7 @@ timing(const char *path, const char *kind, long n)
 	int fd, k;
 
 	k = strcmp(kind, "sparse") == 0 ? 0 : strcmp(kind, "dense") == 0 ? 1 :
-	    strcmp(kind, "dirty") == 0 ? 2 : -1;
+	    strcmp(kind, "dirty") == 0 ? 2 : strcmp(kind, "hole") == 0 ? 3 : -1;
 	if (k < 0 || n < 1 || buf == NULL || (ns = calloc(n, sizeof(*ns))) ==
 	    NULL)
 		return (2);
@@ -368,9 +371,10 @@ timing(const char *path, const char *kind, long n)
 	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
 		return (2);
 	fill(buf, 1);
-	if (k == 0) {
-		if (ftruncate(fd, size) != 0 ||
-		    pwrite(fd, buf, BSIZE, size - BSIZE) != BSIZE)
+	if (k == 0 || k == 3) {
+		if (size < 3 * BSIZE || ftruncate(fd, size) != 0 ||
+		    pwrite(fd, buf, BSIZE, size - BSIZE) != BSIZE ||
+		    (k == 3 && pwrite(fd, buf, BSIZE, 0) != BSIZE))
 			return (2);
 	} else {
 		for (i = 0; i < size; i += BSIZE)
@@ -390,6 +394,9 @@ timing(const char *path, const char *kind, long n)
 		off = (long)(seed >> 8) % size;
 		if (k == 0) {
 			off = 0;
+			want = size - BSIZE;
+		} else if (k == 3) {
+			off = BSIZE;
 			want = size - BSIZE;
 		} else if (k == 1) {
 			whence = (i & 1) ? SEEK_HOLE : SEEK_DATA;
@@ -547,7 +554,7 @@ main(int argc, char **argv)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
 	    "check|agree <path> <what> | race <path> | "
-	    "time <path> sparse|dense|dirty <n> [MiB] | contend <path> <n> [MiB]\n",
+	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);
 }

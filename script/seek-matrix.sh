@@ -42,8 +42,8 @@
 #                   sits after the i_size read and before the writeback
 #                   and the scan, so "after" shows the lock spans the
 #                   hold; that it spans the scan too is the code's scope.
-#   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense
-#                   and dirty, each H2_REPEAT times (5 by default) on a
+#   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense,
+#                   dirty and hole, each H2_REPEAT times (5 by default) on a
 #                   file made once per repeat, H2_SEEK_TIME_N seeks each
 #                   (100 by default); raw lines and medians,
 #                   H2_SEEK_DENSE_MB sizing the dense file (64 MiB by
@@ -169,7 +169,7 @@ echo 0 > $K
 echo "held $(dmesg | grep -c "hammer2: seek held")"
 '
 time_body='
-for k in sparse dense dirty; do
+for k in sparse dense dirty hole; do
 	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $NSEEK $DMB; i=$((i + 1)); done
 done
 '
@@ -215,7 +215,7 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 		done
 		echo "  contend seeks begun: $(printf '%s\n' "$out" | sed -n 's/^seekm-contend seeking .* seeks \([0-9]*\)$/\1/p' | tr '\n' ' ')"
 	else
-		for k in sparse dense dirty; do
+		for k in sparse dense dirty hole; do
 			m=$(printf '%s\n' "$out" | sed -n "s/^seekm-time $k median-ns \([0-9]*\) n .*/\1/p")
 			c=$(printf '%s\n' "$m" | command grep -c .)
 			[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c $k median(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
