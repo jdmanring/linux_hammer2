@@ -907,7 +907,15 @@ middle of the file itself with a sparse seek, asserts against `st_blocks`
 that the hole is real before asking, and compares the returned map against
 the shape it built, so the first fake pass is caught by the gap check and
 the second, a map whose physical addresses are all zero, by a check that
-at least one extent carries an address.
+at least one extent carries an address. Five checks came with the map's
+move onto the seek's scan: every extent's address is on a sector, which
+the blockref's radix bits in the address word broke; a fourth block
+written and not synced is a `FIEMAP_EXTENT_DELALLOC` extent, asked twice
+so a map that wrote back to answer reads it as allocated the second time;
+and on HAMMER2, files written under `hammer2 setcomp none` and `zlib:9`
+report no `FIEMAP_EXTENT_ENCODED` and two, the zlib file first shown to
+occupy fewer sectors. `btrfs` on the host passes the sector and both
+DELALLOC checks, which makes it the reference for those three.
 
 Its control is the file rather than a reference filesystem, and the reason
 is in the file: FIEMAP and the seek whences both describe this media's own
@@ -921,7 +929,7 @@ exerciser wrongly condemned: a write while frozen blocks and is released
 by the thaw, so every blocking call in the test is in a child and every
 thaw is reached by the parent that cannot block. A run in which FIEMAP or
 FIFREEZE is refused prints `fiemap-skip` and runs fewer checks rather than
-failing, so the gate pins the count at eleven: a volume that refused
+failing, so the gate pins the count at sixteen: a volume that refused
 everything prints one check and zero failures, because the assertion that
 the file is really sparse runs before the call is made. That is measured
 rather than reasoned about, being the whole output against `tmpfs` on the

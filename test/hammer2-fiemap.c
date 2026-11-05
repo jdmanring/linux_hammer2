@@ -38,13 +38,14 @@
  * the test was.  Every blocking call here is therefore in a child and
  * every thaw is reached by the parent that cannot block.
  *
- * THE COUNT.  Eleven checks on a volume that answers, which is the
- * number the changelog row and the readiness audit cite.  The count is
+ * THE COUNT.  Sixteen checks on a HAMMER2 volume that answers; eleven
+ * until the map moved onto the scan, which added the sector alignment,
+ * two DELALLOC maps and the two compression checks.  The count is
  * what carries the verdict here, because a volume that refuses FIEMAP or
  * FIFREEZE prints a LOW count and zero failures rather than a failure:
  * the assertion that the file is really sparse runs before the call is
  * made, so a run that answered nothing at all still prints a count of
- * one.  `test-enospc.sh` pins the count at eleven for that reason and
+ * one.  `test-enospc.sh` pins the count at sixteen for that reason and
  * fails any other value, and the refusal is visible twice over, in the
  * count and in the fiemap-skip lines it prints.
  *
@@ -60,6 +61,7 @@
 #define _GNU_SOURCE
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/vfs.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <signal.h>
@@ -197,6 +199,119 @@ range_is_hole(unsigned long long off, unsigned long long len)
 			return (0);		/* overlaps a data extent */
 	}
 	return (1);
+}
+
+/* The flags of the extent holding off, or 0 when none does. */
+static unsigned int
+flags_at(unsigned long long off)
+{
+	unsigned int i;
+
+	for (i = 0; i < nexts; ++i)
+		if (exts[i].fe_logical <= off &&
+		    off < exts[i].fe_logical + exts[i].fe_length)
+			return (exts[i].fe_flags);
+	return (0);
+}
+
+/*
+ * Run `hammer2 setcomp <algo> <dir>`, as test/hammer2-seek.c does.  0 when
+ * it ran and exited 0.
+ */
+static int
+setcomp(const char *algo, const char *d)
+{
+	int st;
+	pid_t pid = fork();
+
+	if (pid == 0) {
+		int nul = open("/dev/null", O_WRONLY);
+
+		if (nul >= 0) {
+			dup2(nul, 1);
+			dup2(nul, 2);
+		}
+		execlp("hammer2", "hammer2", "setcomp", algo, d, (char *)NULL);
+		_exit(127);
+	}
+	if (pid < 0 || waitpid(pid, &st, 0) != pid)
+		return (-1);
+	return (WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+}
+
+#define H2_SUPER_MAGIC	0x48414d32	/* HAMMER2_SUPER_MAGIC */
+
+/*
+ * Two blocks written and synced under algo in sub; the map of the file is
+ * left in exts and the file's 512-byte block count returned, -1 on
+ * failure.
+ */
+static long
+comp_file(const char *dir, const char *sub, const char *algo,
+    const char *buf, size_t blk, char *path, size_t pathlen)
+{
+	char d[4096];
+	struct stat st;
+	int fd;
+
+	snprintf(d, sizeof(d), "%s/%s", dir, sub);
+	snprintf(path, pathlen, "%s/f", d);
+	if ((mkdir(d, 0755) != 0 && errno != EEXIST) || setcomp(algo, d) != 0)
+		return (-1);
+	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+	if (fd < 0 || pwrite(fd, buf, blk, 0) != (ssize_t)blk ||
+	    pwrite(fd, buf, blk, (off_t)blk) != (ssize_t)blk ||
+	    fsync(fd) != 0 || close(fd) != 0 || stat(path, &st) != 0 ||
+	    get_map(path) < 0)
+		return (-1);
+	return ((long)st.st_blocks);
+}
+
+static void
+encoded(const char *dir, const char *buf, size_t blk)
+{
+	char pn[4096 + 16], pz[4096 + 16], d[4096 + 16];
+	struct statfs sfs;
+	unsigned int i, enc;
+	long bn, bz;
+
+	if (statfs(dir, &sfs) != 0 || sfs.f_type != H2_SUPER_MAGIC) {
+		printf("fiemap-note compression: not a HAMMER2 mount\n");
+		return;
+	}
+	checks++;
+	bn = comp_file(dir, ".h2fiemap-none", "none", buf, blk, pn,
+	    sizeof(pn));
+	for (i = 0, enc = 0; bn >= 0 && i < nexts; ++i)
+		enc += !!(exts[i].fe_flags & FIEMAP_EXTENT_ENCODED);
+	if (bn < 0 || nexts == 0 || enc != 0) {
+		printf("fiemap-fail an uncompressed file: blocks %ld, %u "
+		    "extent(s), %u ENCODED\n", bn, nexts, enc);
+		fails++;
+	} else {
+		printf("fiemap-ok   an uncompressed file: %u extent(s), none "
+		    "ENCODED\n", nexts);
+	}
+	checks++;
+	bz = comp_file(dir, ".h2fiemap-zlib", "zlib:9", buf, blk, pz,
+	    sizeof(pz));
+	for (i = 0, enc = 0; bz >= 0 && i < nexts; ++i)
+		enc += !!(exts[i].fe_flags & FIEMAP_EXTENT_ENCODED);
+	if (bz < 0 || bn < 0 || bz >= bn || nexts != 2 || enc != 2) {
+		printf("fiemap-fail a compressed file: %ld sectors against %ld "
+		    "uncompressed, %u extent(s), %u ENCODED, want 2 and 2\n",
+		    bz, bn, nexts, enc);
+		fails++;
+	} else {
+		printf("fiemap-ok   a compressed file: %ld sectors against %ld "
+		    "uncompressed, each of its 2 blocks ENCODED\n", bz, bn);
+	}
+	unlink(pn);
+	unlink(pz);
+	snprintf(d, sizeof(d), "%s/.h2fiemap-none", dir);
+	rmdir(d);
+	snprintf(d, sizeof(d), "%s/.h2fiemap-zlib", dir);
+	rmdir(d);
 }
 
 int
@@ -366,6 +481,80 @@ main(int argc, char **argv)
 		}
 		(void)any_zero;
 	}
+
+	/*
+	 * The address is the block's.  A blockref's data_off carries the
+	 * stored size's radix in its low six bits, and an extent reporting
+	 * the word as it stands is that many bytes past the block; every
+	 * extent with an address is sector aligned.
+	 */
+	checks++;
+	{
+		unsigned int i, odd = 0;
+
+		for (i = 0; i < nexts; ++i)
+			if (!(exts[i].fe_flags & FIEMAP_EXTENT_UNKNOWN) &&
+			    exts[i].fe_physical % 512 != 0)
+				odd++;
+		if (odd) {
+			printf("fiemap-fail %u extent(s) report an address not "
+			    "on a sector, the first %llu\n", odd,
+			    (unsigned long long)exts[0].fe_physical);
+			fails++;
+		} else {
+			printf("fiemap-ok   every extent's address is on a "
+			    "sector\n");
+		}
+	}
+
+	/*
+	 * Data not on the media yet.  A fourth block written and not synced
+	 * is in the page cache and nowhere else, and the map must show it
+	 * as an extent with FIEMAP_EXTENT_DELALLOC rather than as a hole.
+	 * Asked a second time it is still DELALLOC: the map writes nothing
+	 * back unless the caller sets FIEMAP_FLAG_SYNC, so an
+	 * implementation that wrote back to answer reads it as allocated
+	 * the second time.
+	 */
+	{
+		long off_dirty = (long)blk * 3;
+		int pass;
+
+		fd = open(path, O_WRONLY);
+		if (fd < 0 || pwrite(fd, buf, blk, off_dirty) != (ssize_t)blk) {
+			fprintf(stderr, "fiemap-setup the unsynced write "
+			    "failed\n");
+			return (2);
+		}
+		close(fd);
+		for (pass = 0; pass < 2; pass++) {
+			checks++;
+			if (get_map(path) < 0 ||
+			    !range_is_data((unsigned long long)off_dirty, blk) ||
+			    !(flags_at((unsigned long long)off_dirty) &
+			    FIEMAP_EXTENT_DELALLOC)) {
+				printf("fiemap-fail an unsynced block is not a "
+				    "DELALLOC extent (%s map)\n",
+				    pass ? "second" : "first");
+				fails++;
+			} else {
+				printf("fiemap-ok   an unsynced block is a "
+				    "DELALLOC extent (%s map)\n",
+				    pass ? "second; nothing was written back" :
+				    "first");
+			}
+		}
+	}
+
+	/*
+	 * A compressed block's bytes at its address are not the file's, so
+	 * its extent carries FIEMAP_EXTENT_ENCODED, and an uncompressed one
+	 * does not.  HAMMER2 only, whose compression is set per directory
+	 * with `hammer2 setcomp`; the zlib file has to occupy fewer sectors
+	 * than the same file under none, or nothing was compressed and the
+	 * flag's absence would read as right.
+	 */
+	encoded(dir, buf, blk);
 
 	/*
 	 * A write must still take after the map was taken, which is the

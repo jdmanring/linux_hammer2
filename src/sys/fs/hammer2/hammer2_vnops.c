@@ -1483,14 +1483,13 @@ hammer2_file_mmap_prepare(struct vm_area_desc *desc)
 #define HAMMER2_BMAP_UNKNOWN	((hammer2_off_t)-1)	/* Linux */
 
 static hammer2_off_t
-hammer2_bmap_offset(hammer2_xop_bmap_t *xop)	/* Linux */
+hammer2_bmap_offset(hammer2_cluster_t *cluster, hammer2_off_t none) /* Linux */
 {
-	hammer2_cluster_t *cluster = &xop->head.cluster;
 	hammer2_chain_t *chain;
 	int i;
 
 	if (cluster->focus == NULL)
-		return (xop->offset);
+		return (none);
 	if (!hammer2_dev_is_conn(cluster->focus->hmp))
 		return (cluster->focus->bref.data_off);
 	for (i = 0; i < cluster->nchains; ++i) {
@@ -1516,7 +1515,7 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 	hammer2_xop_start(&xop->head, &hammer2_bmap_desc);
 	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
 	if (error == 0)
-		*poff = hammer2_bmap_offset(xop);
+		*poff = hammer2_bmap_offset(&xop->head.cluster, xop->offset);
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
 
@@ -2589,116 +2588,240 @@ const struct address_space_operations hammer2_file_aops = {
  * filefrag(8), lvm, and a defragmenter read to learn where a file's
  * blocks are.
  *
- * WHAT IT CAN HONESTLY SAY.  The carried bmap XOP answers ENOENT for an
- * offset no chain covers, so a hole is exactly what ->llseek already
- * calls one: the same question, asked a block at a time.  Two things a
- * reporting filesystem must not do here, and this does neither: it must
- * not report a hole as an extent, and it must not invent a physical
- * address it does not have.  A hole is skipped, and each extent carries
- * the block's real data_off with FIEMAP_EXTENT_MERGED, since two
- * adjacent logical blocks are two allocations and the caller is being
- * told a physical run, not that the run was allocated together.
+ * The map is the seek's walk with each chain's blockref kept: the same
+ * chunked scanall over the blockref tree, under i_rwsem shared as XFS
+ * holds its IOLOCK across iomap_fiemap(), letting a waiting writer in
+ * between chunks (hammer2_seek_yield()), with the page cache's dirty and
+ * writeback tags read before the tree in each chunk.  It was a bmap XOP
+ * per block with i_size read unlocked.
  *
- * WHAT IT CANNOT SAY.  A compressed block's stored length is not its
- * logical block size, and the bmap XOP returns the physical offset alone,
- * with no length and no compression flag.  So fe_length here is the
- * logical block size, which is what the data occupies in the file, and
- * no FIEMAP_EXTENT_ENCODED is set, because nothing in this call can tell
- * whether a block is compressed.  The alternative was to refuse the
- * ioctl outright; reporting the logical length is what a caller can use
- * and is flagged in this comment as the weaker of the two answers rather
- * than dressed up as exact.  A caller that needs the stored length asks
- * the media, which is what `fsck_hammer2` does.
- *
- * A whole-file walk is O(blocks), which is what every non-iomap
- * filesystem in the tree does for this call (nilfs2 and ext2 walk
- * block by block as well), and FIEMAP_MAX_EXTENTS from the caller bounds
- * how much of it is returned.
+ * Each chain is an extent at its own data_off with the low six bits, the
+ * stored size's radix, masked off; they were reported as part of the
+ * address.  A compressed block, whose stored size is not its logical one
+ * and whose bytes at that address are not the file's, is reported alone
+ * with FIEMAP_EXTENT_ENCODED and its logical length.  Adjacent
+ * uncompressed blocks that are adjacent on the media are merged, with
+ * FIEMAP_EXTENT_MERGED, since two blocks are two allocations and the
+ * caller is told a physical run, not that it was allocated together.  A
+ * block only a remote element holds has no address on this host and is
+ * FIEMAP_EXTENT_UNKNOWN (hammer2_bmap_offset()).  A block the tree does
+ * not hold whose folio is tagged dirty or under writeback is
+ * FIEMAP_EXTENT_DELALLOC, which the kernel marks unknown as well; the map
+ * writes nothing back unless the caller asks with FIEMAP_FLAG_SYNC, which
+ * fiemap_prep() honours.  A hole is skipped.  The extents are copied out
+ * with no hammer2 lock held, since a copy can fault.
  */
+struct hammer2_fiemap_ref {			/* Linux */
+	hammer2_key_t	key;
+	hammer2_off_t	poff;
+	uint8_t		keybits;
+	uint8_t		methods;
+};
+
+#define HAMMER2_FIEMAP_REFS	1024		/* Linux: a chunk's blocks */
+
+/*
+ * Linux: the data chains from key_beg to key_end, at most max of them,
+ * into v; *np is how many.
+ */
+static int
+hammer2_fiemap_scan(struct inode *inode, hammer2_key_t key_beg,
+    hammer2_key_t key_end, struct hammer2_fiemap_ref *v, int max, int *np)
+{
+	hammer2_inode_t *ip = VTOI(inode);
+	hammer2_xop_scanall_t *sxop;
+	hammer2_blockref_t *bref;
+	int error = 0, n = 0;
+
+	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	sxop = hammer2_xop_alloc(ip, 0);
+	sxop->key_beg = key_beg;
+	sxop->key_end = key_end;
+	sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED;
+	sxop->lookup_flags = HAMMER2_LOOKUP_NODATA | HAMMER2_LOOKUP_SHARED;
+	hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
+	while (n < max && (error = hammer2_xop_collect(&sxop->head, 0)) == 0) {
+		bref = &sxop->head.cluster.focus->bref;
+		if (bref->type != HAMMER2_BREF_TYPE_DATA)
+			continue;
+		v[n].key = bref->key;
+		v[n].keybits = bref->keybits;
+		v[n].methods = bref->methods;
+		v[n].poff = hammer2_bmap_offset(&sxop->head.cluster,
+		    HAMMER2_BMAP_UNKNOWN);
+		++n;
+	}
+	if (error == HAMMER2_ERROR_ENOENT)
+		error = 0;
+	error = hammer2_error_to_errno(error);
+	hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
+	hammer2_inode_unlock(ip);
+	*np = n;
+
+	return (error);
+}
+
+/*
+ * Linux: the extent being built, and the step that adds one block's worth
+ * to it or emits it and starts the next.  Returns 1 when the caller's
+ * array is full, as fiemap_fill_next_extent() does.
+ */
+struct hammer2_fiemap_run {			/* Linux */
+	u64	logical;
+	u64	phys;
+	u64	len;
+	u32	flags;
+};
+
+static int
+hammer2_fiemap_flush(struct fiemap_extent_info *fieinfo,
+    struct hammer2_fiemap_run *r, u32 last)
+{
+	int ret = 0;
+
+	if (r->len)
+		ret = fiemap_fill_next_extent(fieinfo, r->logical, r->phys,
+		    r->len, r->flags | last);
+	r->len = 0;
+	return (ret);
+}
+
+static int
+hammer2_fiemap_add(struct fiemap_extent_info *fieinfo,
+    struct hammer2_fiemap_run *r, u64 logical, u64 phys, u64 len, u32 flags)
+{
+	int ret;
+
+	if (r->len && logical == r->logical + r->len && flags == r->flags &&
+	    !(flags & FIEMAP_EXTENT_ENCODED) &&
+	    ((flags & (FIEMAP_EXTENT_UNKNOWN | FIEMAP_EXTENT_DELALLOC)) ||
+	    phys == r->phys + r->len)) {
+		r->len += len;
+		return (0);
+	}
+	ret = hammer2_fiemap_flush(fieinfo, r, 0);
+	if (ret != 0)
+		return (ret);
+	r->logical = logical;
+	r->phys = phys;
+	r->len = len;
+	r->flags = flags;
+	return (0);
+}
+
+/*
+ * Linux: the blocks from from to to whose folios are tagged dirty or under
+ * writeback and the tree does not hold, as DELALLOC extents.
+ */
+static int
+hammer2_fiemap_delalloc(struct fiemap_extent_info *fieinfo,
+    struct hammer2_fiemap_run *r, struct address_space *mapping, loff_t from,
+    loff_t to, u32 bsize)
+{
+	loff_t pos;
+	int ret;
+
+	while (from <= to &&
+	    (pos = hammer2_seek_tagged(mapping, from, to)) >= 0) {
+		pos &= ~((loff_t)bsize - 1);
+		ret = hammer2_fiemap_add(fieinfo, r, pos, 0, bsize,
+		    FIEMAP_EXTENT_MERGED | FIEMAP_EXTENT_DELALLOC);
+		if (ret != 0)
+			return (ret);
+		from = pos + bsize;
+	}
+	return (0);
+}
+
 static int
 hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	u64 start, u64 len)
 {
-	u64 isize = i_size_read(inode);
-	hammer2_off_t poff = 0;
+	struct address_space *mapping = inode->i_mapping;
+	struct hammer2_fiemap_run run = { 0 };
+	struct hammer2_fiemap_ref *v;
 	u32 bsize = i_blocksize(inode);
-	u64 logical, end;
-	u64 run_start = 0, run_phys = 0, run_len = 0;
-	u32 run_flags = 0;	/* FIEMAP_EXTENT_UNKNOWN for a remote block */
-	int error, ret;
+	loff_t isize, cur, end, cend, chunk = HAMMER2_SEEK_CHUNK, next;
+	u64 llen, plen;
+	u32 flags;
+	bool tagged;
+	int error, ret = 0, i, n;
 
 	error = fiemap_prep(inode, fieinfo, start, &len, 0);
 	if (error)
 		return (error);
+	v = kvmalloc_array(HAMMER2_FIEMAP_REFS, sizeof(*v), GFP_KERNEL);
+	if (v == NULL)
+		return (-ENOMEM);
 
-	if (start >= isize)
-		return (0);
-	if (start + len > isize)
-		len = isize - start;
-	end = start + len;
+	inode_lock_shared(inode);
+	isize = i_size_read(inode);
+	cur = (loff_t)start & ~((loff_t)bsize - 1);
+	end = (start + len > (u64)isize || start + len < start) ? isize :
+	    (loff_t)(start + len);
+	while (cur < end) {
+		cend = (end - 1 - cur < chunk) ? end - 1 : cur + chunk - 1;
+		tagged = mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
+		    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK);
+		/*
+		 * The tags are read before the tree, as SEEK_DATA reads them:
+		 * a writeback ending between the two leaves its block in the
+		 * tree, and a block may then read both as tagged and as held,
+		 * where the tree's answer is the one reported.  So the
+		 * DELALLOC extents are taken per gap between the tree's
+		 * chains, and a gap's tags were read before the chain after it.
+		 */
+		error = hammer2_fiemap_scan(inode, (hammer2_key_t)cur,
+		    (hammer2_key_t)cend, v, HAMMER2_FIEMAP_REFS, &n);
+		if (error != 0)
+			break;
+		next = (n == HAMMER2_FIEMAP_REFS) ?
+		    (loff_t)(v[n - 1].key + ((hammer2_key_t)1 << v[n - 1].keybits)) :
+		    cend + 1;
+		for (i = 0; i <= n && ret == 0; ++i) {
+			loff_t gap_end = (i < n) ? (loff_t)v[i].key - 1 : next - 1;
 
-	/*
-	 * Walk one logical block at a time from the first block at or after
-	 * start.  A block whose XOP answer is any error other than ENOENT is
-	 * a real failure and is reported; ENOENT is a hole, which is skipped
-	 * rather than reported, and it also ends any run being accumulated.
-	 */
-	for (logical = start; logical < end; logical += bsize) {
-		int hole, unk;
-
-		error = hammer2_bmap_lbn(inode, logical >> inode->i_blkbits,
-		    &poff);
-		if (error != 0 && error != ENOENT) {
-			/* A real error: flush what is accumulated, then fail. */
-			if (run_len) {
-				ret = fiemap_fill_next_extent(fieinfo,
-				    run_start, run_phys, run_len,
-				    FIEMAP_EXTENT_MERGED | run_flags);
-				if (ret < 0)
-					return (ret);
-			}
-			return (-error);
+			if (tagged)
+				ret = hammer2_fiemap_delalloc(fieinfo, &run,
+				    mapping, cur, gap_end, bsize);
+			if (ret != 0 || i == n)
+				break;
+			llen = (u64)1 << v[i].keybits;
+			flags = FIEMAP_EXTENT_MERGED;
+			plen = 0;
+			if (v[i].poff == HAMMER2_BMAP_UNKNOWN ||
+			    (v[i].poff & ~HAMMER2_OFF_MASK_RADIX) == 0)
+				flags |= FIEMAP_EXTENT_UNKNOWN;
+			else if (v[i].poff & HAMMER2_OFF_MASK_RADIX)
+				plen = (u64)1 << (v[i].poff &
+				    HAMMER2_OFF_MASK_RADIX);
+			if (!(flags & FIEMAP_EXTENT_UNKNOWN) &&
+			    (HAMMER2_DEC_COMP(v[i].methods) != HAMMER2_COMP_NONE ||
+			    plen != llen))
+				flags |= FIEMAP_EXTENT_ENCODED;
+			ret = hammer2_fiemap_add(fieinfo, &run, v[i].key,
+			    (flags & FIEMAP_EXTENT_UNKNOWN) ? 0 :
+			    v[i].poff & ~HAMMER2_OFF_MASK_RADIX, llen, flags);
+			cur = (loff_t)(v[i].key + llen);
 		}
-		hole = (error == ENOENT);
-		unk = !hole && poff == HAMMER2_BMAP_UNKNOWN;
-
-		if (hole || (run_len && (unk != (run_flags != 0) ||
-		    (!unk && poff != run_phys + run_len)))) {
-			/*
-			 * A hole, or a physical discontinuity: the run ends
-			 * here.  Emit it and start over.
-			 */
-			if (run_len) {
-				ret = fiemap_fill_next_extent(fieinfo,
-				    run_start, run_phys, run_len,
-				    FIEMAP_EXTENT_MERGED | run_flags);
-				if (ret < 0)
-					return (ret);
-				if (ret > 0)
-					return (0);	/* array full */
-				run_len = 0;
-			}
-			if (hole)
-				continue;
+		if (ret != 0)
+			break;
+		cur = next;
+		chunk = hammer2_seek_next_chunk(chunk, n == 0);
+		if (cur < end && hammer2_seek_yield(inode)) {
+			isize = i_size_read(inode);
+			if (end > isize)
+				end = isize;
 		}
-		if (run_len == 0) {
-			run_start = logical;
-			run_phys = unk ? 0 : poff;
-			run_flags = unk ? FIEMAP_EXTENT_UNKNOWN : 0;
-		}
-		run_len += bsize;
 	}
-
-	/* The run still open at the end of the range. */
-	if (run_len) {
-		ret = fiemap_fill_next_extent(fieinfo, run_start, run_phys,
-		    run_len, FIEMAP_EXTENT_MERGED | run_flags |
-		    (end >= isize ? FIEMAP_EXTENT_LAST : 0));
-		if (ret < 0)
-			return (ret);
-	}
-
-	return (0);
+	if (error == 0 && ret == 0)
+		ret = hammer2_fiemap_flush(fieinfo, &run,
+		    run.logical + run.len >= (u64)isize ? FIEMAP_EXTENT_LAST : 0);
+	inode_unlock_shared(inode);
+	kvfree(v);
+	if (error != 0)
+		return (-error);
+	return (ret < 0 ? ret : 0);
 }
 
 /*

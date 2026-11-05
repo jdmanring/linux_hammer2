@@ -1155,7 +1155,7 @@ fi
 # and zero failures is exactly what a volume that answered NOTHING looks
 # like.  Run against tmpfs on the host, which refuses FIEMAP with
 # EOPNOTSUPP, that is the whole of its output.  So the answering volume's
-# count is the check: eleven on this port, and every refusal path loses
+# count is the check: sixteen on this port, and every refusal path loses
 # at least the four freeze checks, because the freeze block is skipped
 # whole when FIFREEZE is refused.
 mc=$(printf '%s\n' "$out" | sed -n 's/^fiemap-checks //p')
@@ -1174,9 +1174,9 @@ elif [ "${ms:-0}" -ne 0 ]; then
 	echo "        run is about what it answers and it did not answer:"
 	printf '%s\n' "$out" | sed -n 's/^fiemap-skip /        /p' | head -4
 	fail=$((fail + 1))
-elif [ "$mc" -ne 11 ]; then
+elif [ "$mc" -ne 16 ]; then
 	echo "  FAIL  the fiemap exerciser ran $mc check(s) where the"
-	echo "        answering volume runs 11, so either it stopped early or"
+	echo "        answering volume runs 16, so either it stopped early or"
 	echo "        a check moved and the count in the docs did not"
 	fail=$((fail + 1))
 else
