@@ -22461,3 +22461,353 @@ which a kernel without lockdep cannot print; such a kernel now reads `none`
 passed each multi-variable case as one variable and read wrong; re-run with
 literal vectors. Commit `408eb8b` gave `cluster-sync.sh`'s fault and diverge
 settles the 900 s fallback the launch passes.
+
+## SEEK_DATA and SEEK_HOLE at scale, the page cache, FIEMAP and the remote scan, 2026-11-04
+
+What this entry claims: four objections a kernel reviewer would raise
+against the seek of the entry before are fixed: the seek started writeback
+under `i_rwsem`; the lock's hold grew with the file; a remote element's
+server shipped every block a seek passed; and FIEMAP ran one `bmap` XOP per
+block, read `i_size` with no lock, put the size radix in its addresses,
+called a dirty block a hole and a compressed one plain. The seek's costs are
+read as timings before and after; FIEMAP's per-block XOP is replaced and was
+not timed. A check placed where a fix executes is shown failing either on
+the tree before (FIEMAP's radix, DELALLOC and ENCODED checks) or on a
+control, a build of the fixed tree with that one mechanism broken (the tag
+order, the size read after a yield, the chunk-edge merge, the direct-data
+map, the client's refusal and both halves of `NODATA`); the mixed-version
+runs use the older module itself, and the two places with no check are named
+where they arise. Six independent audits of this entry's drafts found 12,
+8, 7, 7, 4 and 2 subject faults, with nitpicks from the second on, and a
+seventh signed off (`p7-notes/audit-n10-5-round1.md` to `round7.md` in the
+data tree); the
+paragraphs below carry what each was and what was done. The runs are of
+2026-11-04 and, for the second audit's re-reading, 2026-11-05. Style is out
+of scope: the tree converts at submission or not at all. Expected readings
+were written before each run (`p7-notes/n10-5-expected.md` in the data tree,
+which keeps every log named below). QEMU cores read 0 at the start and the
+end of every series. Module hashes are sha256 prefixes. The audit round's
+logs name as head the commit `ca3ff80` replaced when `c1ca12a`'s message was
+reworded to state its reason; both trees are unchanged. Timing is on
+`h2release-7.3tls`, one boot per series; correctness on `h2debug-7.3tls` and
+`h2kasan-7.3tls`. A median the harness prints is `ns[n/2]`, the upper of the
+middle two; the dense kind's raw lines alternate whences, SEEK_DATA at even
+indices, and every split of them below takes the lower of the middle two.
+The time mode's offsets are `(seed >> 8) % size` with an unsigned 32-bit
+seed, so every one lies in the first 16 MiB: a dense SEEK_HOLE passes nearly
+every block of the file, and SEEK_DATA answers at once from wherever it
+starts.
+
+**Scale first.** `a854894` and `187d311` let the time and contention modes
+size the dense file and the hole. At `a854894`
+(`n10-5-scale-20261104-184851.log`, module `8f1d19fed6970804`) SEEK_HOLE on
+a dense file took 0.72 ms at 64 MiB, 15.8 ms at 1 GiB, 87.3 ms at 4 GiB and
+405 ms at 16 GiB, against a linear prediction of 180 ms at 16 GiB, and
+SEEK_DATA at an offset inside the data, which should answer at once, cost
+the same: 399 ms at 16 GiB. A 64 KiB write beside a SEEK_HOLE loop waited
+5.99 ms at 64 MiB and 838 ms at 16 GiB. The cause was read on the code: the
+port runs a XOP's storage function to completion before the frontend's
+first collect, and `hammer2_xop_feed()` grows the FIFO and holds every chain
+rather than blocking, so one scan to the end of the file instantiated every
+chain to the end however early the answer came.
+
+**The scan in chunks (`c8c561d`).** `hammer2_seek_data_hole()` bounds each
+`hammer2_bmap_next_key()` to a chunk of key space, starting at
+`HAMMER2_XOPFIFO` blocks and doubling to 1 GiB. In one boot
+(`n10-5-tags-20261104-195015.log`; m0 is `187d311`'s module, byte for byte
+the scale run's, m2 `c8c561d` `fc949bba7a0ab593`) SEEK_DATA on the 16 GiB
+dense file fell from 389 ms to 14.5 us and SEEK_HOLE from 391 ms to 366.6
+ms; at 64 MiB SEEK_DATA 0.677 ms to 9.0 us. SEEK_HOLE stays linear in
+blocks, one chain per 64 KiB block with no extents to skip, and its
+per-chain cost still grows with the file: about 0.67 us a chain at 64 MiB
+(627 us over the median 937 blocks passed) and 1.40 us at 16 GiB at
+`c8c561d`, and 0.65 and 0.91 us at the later trees (611 us at the drop tree,
+238.5 ms at `e26bcdb`), a candidate not driven. The first version of this
+entry halved the blocks passed and gave twice these. The price is an XOP per
+chunk across empty key space: a 1 GiB hole read 1.46 us before and 7.6 us
+after.
+
+**The page cache, not writeback (`10c9dc0`, objection 1).** The seek wrote a
+dirty range back, under `i_rwsem`, before it scanned, because the tree alone
+calls an unwritten block a hole. It now reads the page cache's dirty and
+writeback tags with `filemap_get_folios_tag()` (`hammer2_seek_tagged()`):
+SEEK_DATA reads the tags before the tree and answers the lower, and
+SEEK_HOLE takes a tree candidate only if no tag covers its block and a
+second tree read after that clean tag check still finds no chain, so a folio
+written back between the two reads is found by one of them. A dirty file's
+SEEK_DATA fell from 386 ms (m0) and 33 us (m2) to 7.9 us at 16 GiB.
+`10c9dc0`'s message says Linux filesystems answer this from the page cache
+through `mapping_seek_hole_data()`; in 7.3 iomap does so only for an
+unwritten extent (`fs/iomap/seek.c`), and XFS and ext4 report an unwritten
+dirty block from their extent records as delalloc. The code's comment said
+the same and is corrected at `c1ca12a`. `mapping_seek_hole_data()` is not
+exported to modules in 7.3. A hold, `seek_tag_hold_ms`, sits between the tag
+read and the tree read, and `seekprobe wbrace` writes the block back inside
+it. With the reads in the other order (`ctl/n105-order`, two edits, one per
+whence: SEEK_DATA reading the tree first, SEEK_HOLE taking an untagged
+candidate without the second tree read) both `wbrace` answers were wrong in
+the one run made, hole 65536 for 131072 and data 131072 for 65536, with the
+hold run and both writebacks inside it
+(`n10-5-tags-20261104-195015.log:3624-3628`, the answers at `:3634`). With
+the tag read removed (`ctl/n105-notags`) the exerciser failed 19 of its 111
+checks, the unsynced cases; its `wbrace` answers were wrong too (`:3615`),
+but no tag was read, so nothing was held and both writebacks returned after
+the seek (`:3613-3614` say so): those are plain reads of an unsynced file,
+not a race. On the tree before, `wbrace` was not run: the probe gained it at
+`10c9dc0`, and the harness fails a run whose tag hold did not print, which a
+tree with no tag read cannot print. What the tree before shows is the
+timing. At `10c9dc0` (`n10-5-tags-20261104-195015.log`, debug from line
+2225): `test-enospc.sh` 121 checks and 0 failures as root and as a user,
+`seek-matrix.sh` 31 and 0, the truncate race `after` in 3 of 3 with answer
+131072, `wbrace` data 65536 and hole 131072 in 3 of 3, xfstests' seek group
+8 of 8, fixtures 0 failures; on KASAN `test-enospc.sh` 121 and 0, xfstests 8
+of 8, 0 reports.
+
+**Letting a writer in between chunks (`8c37b4c`, objection 2).** With the
+tags, a write beside the 16 GiB SEEK_HOLE loop still waited 494 ms (m3, the
+`10c9dc0` module), since a SEEK_HOLE through dense data is linear in blocks
+and the lock was held across all of it. Between two chunks the seek now
+lets `i_rwsem` go when `rwsem_is_contended()` says a writer waits (XFS's
+llseek takes no `i_rwsem`, and its ILOCK is taken once per mapping in
+`xfs_seek_iomap_begin()`), and reads `i_size` again after, answering
+`ENXIO`, or the size for SEEK_HOLE, for an offset the file no longer
+reaches; an uncontended seek keeps one hold, and the chunk cap drops to
+1024 blocks. In one boot (`n10-5-drop-20261104-200859.log`,
+`ctl/n105-drop`, whose source differs from `8c37b4c` in one comment,
+`b4fdc0f2f788913b`, beside m3 `16ff76e2c68989ad`) the write's median fell
+from 491-497 ms to 6.02-6.20 ms in three repeats of 20 writes, its worst
+6.30-6.42 ms. The prediction of no handoff missed: the kernel's lock event
+counters read 60 handoffs for 60 writes beside 337 reader steals, so the
+seek retakes the lock before the woken writer runs and the wait is the
+rwsem's 4 ms writer handoff (`RWSEM_WAIT_TIMEOUT` at `HZ=1000`) plus a
+chunk. That wait was read at 16 GiB only, and across a hole into data below.
+A hold between chunks, `seek_chunk_hold_ms`, lets `seekprobe chunkrace`
+truncate a file inside a seek: the answer 32768 with the size 32768 in 3 of
+3, and with `i_size` not read again (`ctl/n105-dropstale`) the answer
+1048576 past that size. The first `chunkrace` reading failed on the
+harness, which read the verdict's word from the wrong field; it was fixed
+before the commit.
+
+**Sizing the next chunk (`0c14dd1`).** At the drop tree a 1024-block cap on
+every chunk made generic/490's SEEK_DATA across its 128 TiB hole cost an XOP
+per 64 MiB: 648 s on KASAN against 47 s at m3, and 138 s on debug against 11
+s. Not predicted. The next chunk is now sized on whether the last held a
+chain: an empty one doubles to 1 GiB, one holding data to 1024 blocks. That
+is still about 131072 XOPs for each crossing of generic/490's 128 TiB file,
+which five of its SEEK_DATAs cross about three times, where the one scan of
+1.0.85 made one a seek: the test took 2 s on debug and 8 s on KASAN at
+1.0.85's source (a tree before that release's message rewrite, whose `src/`
+differs from `73a8ac8` in comments only;
+`n10-5-c5-b-20261104-140657.log:501`, `:975`), and 11 s and 48 s now
+(`n10-5-audit1-20261104-231159.log:1003`, `:2386`). On release both read 0 s
+(`:37` at head, `:51` at `73a8ac8` built in `ctl/n105-v85`), so the cost is
+the instrumented kernels' per-XOP overhead; a 16 GiB hole on release reads
+17.7 us whole. A per-XOP feed bound in place of the key-space cap was ruled
+out for this step by an architect review
+(`p7-notes/n10-5-architect-chunk-ruling.md`): `hammer2_xop_feed()` serves
+the synchronization thread too, a bound would need each cluster element's
+stopping key reconciled inside `hammer2_xop_collect()`, and a remote server
+runs its scan to the end of the range it is sent. The ceiling is in the code
+above `hammer2_seek_next_chunk()` as `DEFER(generic/490 at 2 s or a 16 GiB
+contendgap write over 100 ms on h2release-7.3tls)` (`653b886`), with a scan
+the XOP layer can resume as the upgrade, and in the status page's ledger;
+both bounds are this work's own, each read by the instrument it names.
+xfstests prints the difference of two whole-second clock readings, so a test
+under 1 s reads 0 or 1 s, and 2 s is the first reading that says more than 1
+s. At the 0.68 us an XOP the 16 GiB hole reads (17.7 us over about 26), the
+test's three crossings would be near 270 ms, an estimate and not a reading;
+release read 0 s at head, as at 1.0.85, whose single scan the cap
+replaced. The transition the cap allows, a 1 GiB chunk landing
+on data with no yield inside it, is read with `H2_SEEK_CONTEND=gap`, a 16
+GiB hole then 16 GiB of data with SEEK_DATA at 0 looping beside the writes.
+Its first reading (`n10-5-audit1-20261104-231159.log:13-24`, module
+`0c736817074d6786`), a write's median 6.82-7.01 ms and worst 7.25-8.06 ms,
+did not drive that chunk: the probe's writes landed anywhere in the data,
+the first GiB among it, and SEEK_DATA bounds its tree scan at the first
+dirty block, so each seek scanned 3359 to 7366 of the chunk's 16368 blocks,
+computed from the probe's seed 777 rather than read. The probe's gap writes
+now go to the data's upper half. Read again on the worktree that became
+`eb92e42` and `b130ee0` (`n10-5-audit2-20261105-001615.log:7-25`, module
+`6a89a8c0f53b9788`, three repeats of 20): the write's median 29.6, 23.6 and
+17.2 ms, its worst 38.1, 34.4 and 36.5 ms, 20, 17 and 16 seeks begun, 48
+handoffs for 60 writes beside 1009 reader steals. The prediction of 8 to 16
+ms median and 18 to 28 ms worst missed high, and of 20 to 45 seeks low in
+two of three repeats; the 40 ms bound written beside it, past which the cost
+would not be the chain count, held. A candidate, not driven: a seek retaking
+the lock by a reader steal before the woken writer sets its handoff makes
+the writer wait out a second whole seek. The same run's debug half, after a
+reboot into `h2debug-7.3tls`, for the comment-only change to
+`hammer2_vnops.c`: `test-enospc.sh` seek 121 and fiemap 19 with 0 failures
+as root and as a user (`:433-436`, `:841-844`), fixtures 0 failures
+(`:868`), `debug_locks` 1.
+
+**FIEMAP (`e26bcdb`, `c1ca12a`, objection 4).** `->fiemap` called
+`hammer2_bmap_lbn()` once per block and read `i_size` before taking any
+lock; the address it returned carried the block's size radix in its low
+bits, a dirty block the tree had not yet got was a hole, and a compressed
+block was plain data. `e26bcdb` runs it on the seek's chunked scan under
+`i_rwsem` shared, with the size read under the hold, masks the radix,
+reports a compressed block `FIEMAP_EXTENT_ENCODED`, a dirty or writeback
+block the tree lacks `FIEMAP_EXTENT_DELALLOC`, and a block whose address
+only a remote element holds `FIEMAP_EXTENT_UNKNOWN`, merging extents across
+chunk edges. `test/hammer2-fiemap.c` grew from 11 checks to 16. The tree
+before, `0c14dd1` with the new test (`ctl/n105-oldfiemap`), failed 4: two
+extents whose address was not on a sector, the DELALLOC check on each of two
+maps, and the zlib file's 0 ENCODED extents. No check fails on the per-block
+XOP, which is a cost, or on the unlocked size, whose window no run aimed; a
+debug hold before the old size read, as `seek_hold_ms` aimed a truncate
+inside the seek at 1.0.85, would. The audit found two defects in `e26bcdb`,
+both fixed at `c1ca12a`. It read each gap's tags after the tree scan, so a
+block whose writeback ended between the two was reported as neither an
+extent nor DELALLOC; the tags of each chunk are now read first, at most 1024
+blocks of them, the chunk ending before the first one left out, and
+`seek_tag_hold_ms` holds FIEMAP between the two reads, where `seekprobe
+wbrace map` writes the block back. And a file of 512 bytes or less, whose
+data lives in its inode and is fed to the scan as the inode itself, mapped
+as nothing; it now maps as one `FIEMAP_EXTENT_DATA_INLINE` extent at
+physical 0, as btrfs reports an inline extent. The exerciser adds that file
+and a 40-block file that must map every block with no neighbouring extents
+left unmerged and one extent spanning the first chunk's edge, the
+precondition that makes the merge check able to fail; `test-enospc.sh` pins
+19. At `ca3ff80` on debug (`n10-5-audit1-20261104-231159.log`;
+`test-enospc.sh` builds its own module and prints no hash, the matrix's is
+`e53b25a06cf82f53` and the race's `b5431f0ab5263ad5`): seek 121 and fiemap
+19 with 0 failures as root and as a user (`:465-468`, `:873-876`),
+`seek-matrix.sh` 31 and 0, race mode `wbrace` hole, data and map each 3 of 3
+(map 65536), `chunkrace` and the truncate race 3 of 3, xfstests' seek group
+8 of 8, fixtures 0 failures, `debug_locks` 1. The three controls, each in
+its own worktree at `ca3ff80`: the tags read after the tree with the hold
+between (`ctl/n105-fmorder`), `wbrace map` answering -1 in 3 of 3 and hole
+and data passing (`:1086`); an extent emitted at every chunk end
+(`ctl/n105-noedge`), the two chunk-edge checks alone failing, one
+neighbouring extent unmerged and none spanning block 16 (`:1508-1509`); the
+direct-data case removed (`ctl/n105-nodirect`), the 13-byte file alone
+failing with 0 extents (`:1918`). On KASAN: seek 121 and fiemap 19 with 0
+failures, xfstests 8 of 8, 0 KASAN or UBSAN reports. FIEMAP reads `i_size`
+again after a yield, as the seek does, and no check controls it: a range a
+truncate removed holds no chain or tag, so the stale bound maps nothing
+more, and the re-read moves only `FIEMAP_EXTENT_LAST`.
+
+**The remote scan (`0da4383`, `ca3ff80`, objection 3).** The seek and the
+map ask `HAMMER2_LOOKUP_NODATA`, but `HAMMER2_REMOTE_LOOKUPF` carried only
+`NODIRECT`, so a remote element's server scanned with
+`HAMMER2_LOOKUP_ALWAYS` and shipped every block's data. It now carries
+`NODATA`; the server scans without `ALWAYS` and feeds each data chain with
+`bytes` 0, and the client accepts such a chain only from a `scanall` that
+asked. `cluster-wire.sh` seeks a 1 MiB file holding data at 0 and 512 KiB
+through the element and reads the master's `H2 SERVE` lines, which now print
+the bytes shipped. Its first check required two `NODATA` serves at `bytes=0`
+and counted only those that asked, and fiemap alone makes two, so the audit
+found that a seek which stopped asking passed it; since `ca3ff80` every
+`scanall` served for the sparse file, at least four, and for the 512 KiB
+file, at least one, must have asked and shipped nothing. `H2_WIRE_STRIP=1`
+drops the data of the first data feed carrying it, FIBMAP's `bmap`, the
+control on the client's refusal of a dataless data chain from any other
+call. On debug, two guests, at `ca3ff80`
+(`p7-notes/n10-5-wire2-20261104-231159/`, the control and old modules in its
+`prov`, the others in each run log's header): the plain run 36 checks and 0
+failures, the seek answering 65536, 524288, 589824 and `ENXIO`, the sparse
+file's 4 serves and the 512 KiB file's 1 all at `bytes=0`
+(`wire-run-20261104-233249`); `H2_WIRE_REKEY=1` 34 and 0, its moved feed now
+FIBMAP's `bmap`, which the harness asks before FIEMAP (`-233409`);
+`H2_WIRE_STRIP=1` 34 and 0, the stripped feed refused and its `bmap` ended
+`ENOTCONN` (`-233529`). Controls, each failing its one check alone: the
+client taking a dataless chain from any call (`ctl/n105-stripaccept` on B)
+refused nothing (`-233650`); the seek asking without `NODATA`
+(`ctl/n105-seeknodata` on B) left the sparse file's 4 serves not `NODATA`
+and the map's passing (`-233811`); the server ignoring `NODATA`
+(`ctl/n105-nodatactl2` on A, as the first round's `ctl/n105-nodatactl`)
+shipped data (`-233947`). Mixed versions, `e26bcdb`'s module
+(`33f3a85dbe9b57b8`) on one side: an older master ships data the newer slave
+takes, no feed refused (`-234111`); an older slave asks without `NODATA` and
+the newer master ships data, 4 of 4 and 1 of 1 not `NODATA` (`-234231`). In
+both the seek and fiemap pass and only the `NODATA` check fails, as
+predicted. On KASAN the plain run read 36 and 0, the same serves at
+`bytes=0`, and no sanitizer report on either guest (`-234539`). The check
+counts the `scanall` serves for the sparse file the seek reads and the 512
+KiB file the map reads; FIBMAP's `bmap` of the 512 KiB file is not a
+`scanall` and ships data, which the strip control relies on, and the map of
+`dir1/inner.bin` the harness asks before the seek is a `NODATA` scanall the
+check does not count. The first round, at the worktree that became `0da4383`
+(`p7-notes/n10-5-wire-20261104-211212/`), read the same with the weaker
+check, and at `0da4383` on debug (`n10-5-remote-20261104-215401.log`)
+`test-enospc.sh` seek 121 and fiemap 16 and fixtures passed with no warning
+in the guest's log.
+
+**The style gate.** `test-checkpatch.sh` failed from `10c9dc0` on and no
+run read it until this work's own: two comments named a range "from from to
+to", read as repeated words, and the FIEMAP helpers added nine hits of the
+tree's BSD style. The comments were rewritten and the style hits baselined
+(`faf3096`, 1,642 to 1,651; `c1ca12a`, 1,650).
+
+**Host instruments.** `script/analyze.sh` against `linux-7.3` reads seven
+files by default, and `hammer2_remote.c` is not one of them; the first
+version of this entry called its default run a run over every file. At
+`0da4383` the default seven (`n10-5-remote-analyze.log`) read 14 candidates
+over 7 files, none in the seek or FIEMAP code, the one charged to
+`hammer2_vnops.c` being the dead store at `hammer2_os.h:1660`; at `ca3ff80`
+`hammer2_remote.c` and `hammer2_vnops.c` named explicitly
+(`n10-5-audit1-analyze-remote.log`) read that same store once each and
+nothing else. `smatch` read 60 candidates over 22 files at `0da4383` and at
+`ca3ff80` (`n10-5-remote-smatch.log`, `n10-5-audit1-smatch.log`), none in
+`hammer2_vnops.c` or `hammer2_remote.c`, and the second audit found the
+reading weaker than it looks: 44 of the 60 are one static assertion in
+`include/net/neighbour.h` failing under sparse, twice in every file, and
+sparse's `warning()` returns early once an error is set, so the sparse
+layer's own checks (context, address space, endianness) printed nothing in
+any of the 22 files. The planted control exercises smatch's layer alone.
+What these runs show is smatch's checks finding nothing in the two files,
+not the sparse layer's.
+
+**The audit's other findings.** The first version of this entry, the
+changelog row and the performance page gave 16 GiB SEEK_DATA 12.1 us and
+SEEK_HOLE 233.7 ms for `e26bcdb`; those were the drop module's, the
+reading's split having labeled each block by the line after it. At `e26bcdb`
+(`n10-5-fiemap-20261104-204828.log:124-220`, module `3f966d6aded7200c`)
+SEEK_DATA read 12.7 us and SEEK_HOLE 238.5 ms; its other readings were taken
+by line position and stand: a dirty file's SEEK_DATA 7.7 us, SEEK_DATA from
+inside a 16 GiB hole 17.7 us (167.8 us at the drop tree), the write beside
+the SEEK_HOLE loop 6.19-6.21 ms median over three repeats against 5.0-6.7 us
+alone, 60 handoffs for 60 writes. The first version counted the work as
+seven commits; it was nine, and the first audit's two make eleven, the
+second's two thirteen, and the one the third to sixth recut fourteen. The second
+audit found the changelog row and the performance page calling the 386 ms
+dirty seek its writeback, where it was m0's scan to the end of the file; m2,
+which scanned in chunks and still wrote the block back, read 33 us, against
+its 14.5 us on a clean dense file and 7.9 us with the tags. It found the
+ceiling and the deferred walk named here as code markers that were not in
+the code: both are marked `DEFER` in `hammer2_vnops.c` now, with ledger rows
+(`b130ee0`), and the lock comment's "367 ms through half of a 16 GiB file"
+reads about 240 ms through nearly all of it. The third found the two
+triggers naming no size, the SEEK_HOLE one without the 16 GiB and the
+interactive consumer of the ruling it came from, and `b130ee0`'s message
+calling both the review's; the fourth found the SEEK_DATA trigger, once
+sized, naming a reading no instrument takes and already met on the debug
+kernels; the fifth found the 1 s trigger inside xfstests' clock quantum, the
+estimate counting one crossing of three, the contendgap clause without its
+size, and a claim that every trigger names an instrument where the SEEK_HOLE
+one names none and the interactive consumer is not a reading (its first and
+second); `c8c561d`'s message saying a hole costs an XOP per doubling, where
+past about 2 GiB the doubling has stopped at 1 GiB and a hole costs an XOP
+per GiB, as `0c14dd1` and this entry say (its third); and the trigger
+commit's message saying both bounds were set at `b130ee0`, where only the
+100 ms one was and the landing chunk had none (its fourth). `653b886` sets
+the SEEK_DATA trigger at generic/490 reading 2 s or a 16 GiB gap-mode write
+over 100 ms, both on the release kernel, the SEEK_HOLE one at the review's
+16 GiB and release kernel, and its message says which bound came from
+where; `c8c561d`'s message is corrected here rather than rewritten, since
+every later hash would move. The fourth also found "on the tree before,
+`wbrace` passes" written as a reading where no such run was made, and the
+feed-bound ruling and the audits' counts cited with no record kept; the two
+rulings and the audits' reports are now in the data tree. The sixth found
+two release readings of generic/490 counted for the capped tree where one
+was of 1.0.85, and this paragraph's account of the fifth missing two of its
+findings; the ledger row in `653b886` and this entry say so now.
+
+What remains a candidate. SEEK_HOLE through dense data is linear in blocks,
+238.5 ms at 16 GiB, with a per-chain cost that grows with the file; a walk
+of the indirect blocks' blockref arrays, which would skip the chain
+instantiation, is marked `DEFER(16 GiB dense SEEK_HOLE above 500 ms on
+h2release-7.3tls, or an interactive consumer)`. A write through a mapping
+takes no `i_rwsem`, so a fault after the tag read can dirty a folio the scan
+then calls a hole; the tags narrow that window and do not close it.
