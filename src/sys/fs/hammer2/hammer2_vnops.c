@@ -1671,7 +1671,22 @@ hammer2_seek_tag_hold(void)
  * and sleeps, so a truncate can be aimed between two chunks.
  */
 #define HAMMER2_SEEK_CHUNK	((loff_t)HAMMER2_XOPFIFO * HAMMER2_PBUFSIZE)
-#define HAMMER2_SEEK_CHUNK_MAX	((loff_t)1024 * HAMMER2_PBUFSIZE)
+#define HAMMER2_SEEK_DATA_MAX	((loff_t)1024 * HAMMER2_PBUFSIZE)
+#define HAMMER2_SEEK_HOLE_MAX	((loff_t)1 << 30)
+
+/*
+ * Linux: the next chunk's size.  A chunk that held no chain doubles, to
+ * HAMMER2_SEEK_HOLE_MAX, since an empty range costs one lookup however
+ * large; one that held a chain doubles only to HAMMER2_SEEK_DATA_MAX,
+ * since every chain in a chunk is fed before the first is collected.
+ */
+static loff_t
+hammer2_seek_next_chunk(loff_t chunk, bool empty)
+{
+	loff_t max = empty ? HAMMER2_SEEK_HOLE_MAX : HAMMER2_SEEK_DATA_MAX;
+
+	return (chunk >= max ? max : chunk * 2);
+}
 
 static bool
 hammer2_seek_yield(struct inode *inode)
@@ -1813,14 +1828,18 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 	/*
 	 * The scan runs a chunk of key space at a time, the first
 	 * HAMMER2_XOPFIFO blocks, what upstream's backend feeds before it
-	 * blocks, and each chunk that ends without the answer doubles the
-	 * next, to HAMMER2_SEEK_CHUNK_MAX.  An empty chunk costs one lookup
-	 * however large, so a hole costs a XOP per doubling, and no XOP feeds
-	 * more than the cap's blocks.  Between two chunks a writer waiting
-	 * for i_rwsem gets it (hammer2_seek_yield()); then i_size is read
-	 * again and the tags are taken afresh, since what the last hold read
-	 * of either no longer holds.  hammer2_llseek() states what an answer
-	 * then means.
+	 * blocks, and each chunk that ends without the answer sizes the next
+	 * (hammer2_seek_next_chunk()).  SEEK_DATA goes on past a chunk only
+	 * when it held no chain, and grows to HAMMER2_SEEK_HOLE_MAX, so a
+	 * hole of 128 TiB costs about 131072 XOPs; SEEK_HOLE goes on only
+	 * past a chunk of data, and grows to HAMMER2_SEEK_DATA_MAX, a few
+	 * milliseconds of chains.  Capped at 1024 blocks for both, the five
+	 * SEEK_DATAs across xfstests generic/490's 128 TiB hole took 648 s
+	 * on h2kasan-7.3tls, against 47 s at a 1 GiB cap.  Between two
+	 * chunks a writer waiting for i_rwsem gets it (hammer2_seek_yield());
+	 * then i_size is read again and the tags are taken afresh, since what
+	 * the last hold read of either no longer holds.  hammer2_llseek()
+	 * states what an answer then means.
 	 */
 	for (;;) {
 		loff_t end = (isize - 1 - cur < chunk) ? isize - 1 :
@@ -1900,8 +1919,7 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 		if (end == isize - 1)
 			return (seek_data ? -ENXIO : isize);
 		cur = end + 1;
-		if (chunk < HAMMER2_SEEK_CHUNK_MAX)
-			chunk *= 2;
+		chunk = hammer2_seek_next_chunk(chunk, seek_data);
 		if (hammer2_seek_yield(inode)) {
 			isize = i_size_read(inode);
 			if (cur >= isize)
