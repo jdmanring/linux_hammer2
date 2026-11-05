@@ -22221,7 +22221,7 @@ range's commit messages, which changed no tree. In the order of the runs, the
 commits those heads are on this history are `69e371c` (the commit-1 log),
 `5ee2c90` (commit 2), `7043c7b` (the commit-4 and time logs), `43a27db` (both
 commit-5 logs), `4b335a5` (contend2), `cd1d22e` (round one and both
-contention references) and `e547227` (both round-two logs); the data tree's
+contention references) and `e547227` (the three round-two logs); the data tree's
 `p7-notes/reword5/map.txt`, then `reword6/map.txt`, take each printed hash to
 its commit here.
 
@@ -22312,8 +22312,11 @@ collects, failed 3 checks, against 2 predicted: the two deep SEEK_HOLE answers
 with 17 blocks done read SEEK_HOLE at 0 as 1048576. So a check had reached past
 the feed's depth before, under a concurrent writer; the audit's finding that
 none did, and `cd1d22e`'s message saying the same, were wrong, and the new file
-asks it without a writer. The control's edit is kept as
-`p7-notes/n10-5-r1-cap16.patch`, which applies at `cd1d22e`.
+asks it without a writer. The control's edit was rebuilt after the run, from
+the edit the run's wrapper applied, as `p7-notes/n10-5-r1-cap16.patch`, which
+applies at `cd1d22e`; the run's log prints only the dirty tree it built. Its
+readings fit a stop at 16: 1048576 is 16 blocks, and 2359296 is block 20 plus
+16.
 
 Both of the exerciser's hole preconditions compared the block count with the
 file's size, and HAMMER2 compresses by default, so a file of 'A' held a few
@@ -22323,7 +22326,8 @@ written and requires the twin to hold more: at `e547227` on `h2debug-7.3tls`
 (`n10-5-r2-debug-20261104-165642.log`) 4 sectors against 6 and 114 against
 116, one compressed block apart, and 121 checks and 0 failures; on host `tmpfs`
 256 against 384 and 5248 against 5376; and a copy whose deep file writes block
-40 fails the check, 5376 against 5376.
+40 fails the check on host `tmpfs`, 5376 against 5376. That failing direction
+was not read on HAMMER2, where the margin is one compressed block.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
 (`hammer2_vnops.c:2428`), which still asks one bmap XOP per block and reads
@@ -22406,8 +22410,10 @@ The 5 to 6 ms is the rwsem's writer handoff, read by its own counters.
 that long a reader may steal the lock from it; after it the writer sets the
 handoff bit and waits out the reader holding the lock, here one seek of about
 0.7 ms. A writer that is still spinning catches a short hold instead. The
-release kernel counts these (`CONFIG_LOCK_EVENT_COUNTS`), reset before each
-window and read after (`n10-5-r2-lockevent-20261104-165426.log` at `e547227`,
+release kernel counts these (`CONFIG_LOCK_EVENT_COUNTS`), system-wide, reset
+before each window and read after; the HAMMER2 window also covers the module's
+load, the mount, the writes alone, the unmount and the unload, and the counts
+are put on `i_rwsem` by the match of 50 handoffs to 50 writes (`n10-5-r2-lockevent-20261104-165426.log` at `e547227`,
 module `8f1d19fed6970804`; the first attempt, `-165226`, named the debugfs
 directory wrongly and stopped COULD-NOT-RUN). Predicted beforehand in
 `n10-5-expected.md`:
