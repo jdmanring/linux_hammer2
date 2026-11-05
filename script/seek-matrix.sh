@@ -37,7 +37,11 @@
 #                   check is only that the hold ran (its klog line, and
 #                   the seek taking 250 ms or more), since the answer is
 #                   the reading. H2_SEEK_RACE_WANT=inside|after makes
-#                   the ordering a check.
+#                   the ordering a check. A truncate that began after
+#                   the seek returned reads "late" and fails. The hold
+#                   sits after the i_size read and before the writeback
+#                   and the scan, so "after" shows the lock spans the
+#                   hold; that it spans the scan too is the code's scope.
 #   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense
 #                   and dirty, each H2_REPEAT times (5 by default) on a
 #                   file made once per repeat, H2_SEEK_TIME_N seeks each
@@ -82,6 +86,8 @@ NSEEK=${H2_SEEK_TIME_N:-100}
 case "$NSEEK" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N=$NSEEK is not a count" >&2; exit 2 ;; esac
 WANT=${H2_SEEK_RACE_WANT:-}
 case "$WANT" in ''|inside|after) ;; *) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE_WANT is inside or after" >&2; exit 2 ;; esac
+[ -z "$WANT" ] || [ "$RACE" = 1 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE_WANT needs H2_SEEK_RACE=1" >&2; exit 2; }
+[ -z "${H2_SEEK_TIME_N:-}" ] || [ "$TIME$CONTEND" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N needs H2_SEEK_TIME=1 or H2_SEEK_CONTEND=1" >&2; exit 2; }
 
 [ -x "$NEWFS" ] || { echo "seek-matrix: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "seek-matrix: COULD-NOT-RUN: no fsck_hammer2 at $FSCK" >&2; exit 2; }
@@ -97,7 +103,7 @@ else
 	make KDIR="$KDIR" >/dev/null 2>&1 || { echo "seek-matrix: FAIL: the module does not build against $KDIR"; exit 1; }
 fi
 [ -f "$KO" ] || { echo "seek-matrix: FAIL: $KO was not produced"; exit 1; }
-echo "  module $KO sha256 $(sha256sum "$KO" | cut -c1-16) head $(git rev-parse --short HEAD) src-dirty $(git status --porcelain -- src | wc -l)"
+echo "  module $KO sha256 $(sha256sum "$KO" | cut -c1-16) head $(git rev-parse --short HEAD) dirty $(git status --porcelain -- src script test | wc -l) seek-matrix.sh $(sha256sum "$0" | cut -c1-16) seekprobe.c $(sha256sum test/hammer2-seekprobe.c | cut -c1-16)"
 cc -static -O2 -o /tmp/h2seekprobe.$$ test/hammer2-seekprobe.c 2>/dev/null || {
 	echo "seek-matrix: COULD-NOT-RUN: the seek probe did not compile" >&2; exit 2; }
 trap 'rm -f /tmp/h2seekprobe.$$' EXIT
@@ -187,6 +193,8 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 			echo "  FAIL  the seek hold did not print once, so nothing held"; fail=$((fail + 1)); }
 		short=$(printf '%s\n' "$lines" | awk '$5 < 250' | wc -l)
 		[ "$short" -eq 0 ] || { echo "  FAIL  $short seek(s) returned under 250 ms, so the hold did not run in them"; fail=$((fail + 1)); }
+		late=$(printf '%s\n' "$lines" | awk '$9 == "late"' | wc -l)
+		[ "$late" -eq 0 ] || { echo "  FAIL  $late truncate(s) began after the seek returned, so they read nothing"; fail=$((fail + 1)); }
 		if [ -n "$WANT" ]; then
 			off=$(printf '%s\n' "$lines" | awk -v w="$WANT" '$9 != w' | wc -l)
 			[ "$off" -eq 0 ] || { echo "  FAIL  $off of $n truncate(s) not $WANT the seek"; fail=$((fail + 1)); }

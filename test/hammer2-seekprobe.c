@@ -268,21 +268,22 @@ now_ns(void)
  * a block 50 ms in.  A seek that holds the inode lock keeps the truncate
  * out until it returns, and answers the file as it was, the hole at block
  * 2; one that does not lets the truncate land inside it.  The line says
- * which, with both return times from the seek's start, and the size the
- * file has after both.
+ * which, with both return times from the seek's start, the size the file
+ * has after both, and when the truncate began.
  */
 static int
 race(const char *path)
 {
-	volatile long *tt;
+	volatile long *tt, *tb;
 	char *buf = malloc(BSIZE);
 	long t0, t1;
 	off_t got;
 	pid_t pid;
 	int fd, st;
 
-	tt = mmap(NULL, sizeof(*tt), PROT_READ | PROT_WRITE,
+	tt = mmap(NULL, 2 * sizeof(*tt), PROT_READ | PROT_WRITE,
 	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	tb = tt + 1;
 	if (buf == NULL || tt == MAP_FAILED ||
 	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0) {
 		printf("seekm-fail race: the file could not be built\n");
@@ -295,12 +296,13 @@ race(const char *path)
 		printf("seekm-fail race: the file could not be built\n");
 		return (1);
 	}
-	*tt = 0;
+	*tt = *tb = 0;
 	t0 = now_ns();
 	if ((pid = fork()) == 0) {
 		int fd2 = open(path, O_RDWR);
 
 		usleep(50000);
+		*tb = now_ns();
 		if (fd2 < 0 || ftruncate(fd2, BSIZE / 2) != 0)
 			_exit(1);
 		*tt = now_ns();
@@ -313,10 +315,16 @@ race(const char *path)
 		printf("seekm-fail race: the truncate failed\n");
 		return (1);
 	}
+	/*
+	 * "after" means the truncate began inside the seek and returned
+	 * after it, so something held it; one that began after the seek
+	 * returned is "late" and shows nothing either way.
+	 */
 	printf("seekm-race answer %ld seek-ms %ld truncate-ms %ld truncate %s "
-	    "size-after %ld\n", (long)got, (t1 - t0) / 1000000,
-	    (*tt - t0) / 1000000, *tt < t1 ? "inside" : "after",
-	    (long)lseek(fd, 0, SEEK_END));
+	    "size-after %ld truncate-began-ms %ld\n", (long)got,
+	    (t1 - t0) / 1000000, (*tt - t0) / 1000000,
+	    *tb >= t1 ? "late" : *tt < t1 ? "inside" : "after",
+	    (long)lseek(fd, 0, SEEK_END), (*tb - t0) / 1000000);
 	close(fd);
 	free(buf);
 	return (0);
