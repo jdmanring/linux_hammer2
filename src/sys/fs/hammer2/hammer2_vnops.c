@@ -1554,44 +1554,78 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * passes only NODIRECT on (HAMMER2_REMOTE_LOOKUPF), and its server scans
  * with LOOKUP_ALWAYS and ships each chain's data in the feed, so there a
  * seek still reads every block it passes.
+ *
+ * The scan runs in chunks of key space.  This port runs a XOP's storage
+ * function to completion before the frontend's first collect
+ * (hammer2_xop_start_except()), and hammer2_xop_feed() grows the FIFO
+ * where upstream's backend blocks at HAMMER2_XOPFIFO, so one scan to
+ * key_end instantiated and held every chain to EOF however early the
+ * answer came: SEEK_DATA at an offset inside the data of a dense 16 GiB
+ * file took 399 ms on h2release-7.3tls, as long as SEEK_HOLE.  The first
+ * chunk is HAMMER2_XOPFIFO blocks, what upstream's backend feeds before it
+ * blocks, and a chunk that ends without the answer doubles the next, to
+ * HAMMER2_SEEK_CHUNK_MAX.  An empty chunk costs one lookup however large,
+ * so a hole costs a XOP per doubling rather than one per chunk, and no
+ * XOP feeds more than the cap's blocks of data.
  */
+#define HAMMER2_SEEK_CHUNK	((hammer2_key_t)HAMMER2_XOPFIFO * HAMMER2_PBUFSIZE)
+#define HAMMER2_SEEK_CHUNK_MAX	((hammer2_key_t)1 << 30)
+
 static int
 hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
     hammer2_key_t key_end, unsigned int step, hammer2_key_t *keyp)
 {
 	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_xop_scanall_t *sxop;
-	hammer2_key_t want = key_beg, key;
+	hammer2_key_t want = key_beg, key, cur = key_beg, end;
+	hammer2_key_t chunk = HAMMER2_SEEK_CHUNK;
 	int error;
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
-	sxop = hammer2_xop_alloc(ip, 0);
-	sxop->key_beg = key_beg;
-	sxop->key_end = key_end;
-	sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED;
-	sxop->lookup_flags = HAMMER2_LOOKUP_NODATA | HAMMER2_LOOKUP_SHARED;
-	hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
 	for (;;) {
-		error = hammer2_xop_collect(&sxop->head, 0);
-		if (error != 0)
-			break;
-		key = sxop->head.cluster.focus->bref.key;
-		if (step == 0) {
-			*keyp = key;
-			break;
+		end = (key_end - cur < chunk) ? key_end : cur + chunk - 1;
+		sxop = hammer2_xop_alloc(ip, 0);
+		sxop->key_beg = cur;
+		sxop->key_end = end;
+		sxop->resolve_flags = HAMMER2_RESOLVE_ALWAYS |
+		    HAMMER2_RESOLVE_SHARED;
+		sxop->lookup_flags = HAMMER2_LOOKUP_NODATA |
+		    HAMMER2_LOOKUP_SHARED;
+		hammer2_xop_start(&sxop->head, &hammer2_scanall_desc);
+		for (;;) {
+			error = hammer2_xop_collect(&sxop->head, 0);
+			if (error != 0)
+				break;
+			key = sxop->head.cluster.focus->bref.key;
+			if (step == 0) {
+				*keyp = key;
+				break;
+			}
+			if (key > want)	/* the boundary expected is a hole */
+				break;
+			want = key + step;
+			if (want > key_end)
+				break;
 		}
-		if (key > want)		/* the boundary expected is a hole */
+		hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
+		/*
+		 * An answer, an error, or the last chunk ends the scan.  A
+		 * chunk that ran out with the boundary expected inside it
+		 * has no chain beginning there, which is SEEK_HOLE's answer;
+		 * one that ran out with it just past its end goes on.
+		 */
+		if (error != HAMMER2_ERROR_ENOENT || end == key_end ||
+		    (step != 0 && want <= end))
 			break;
-		want = key + step;
-		if (want > key_end)
-			break;
+		cur = end + 1;
+		if (chunk < HAMMER2_SEEK_CHUNK_MAX)
+			chunk *= 2;
 	}
 	if (step != 0 && (error == 0 || error == HAMMER2_ERROR_ENOENT)) {
 		*keyp = want;
 		error = 0;
 	}
 	error = hammer2_error_to_errno(error);
-	hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
 
 	return (error);
