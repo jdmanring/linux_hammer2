@@ -50,6 +50,10 @@
  * carries its data 64 KiB up and signs the header again, so the frame
  * passes every CRC and only the receiving kernel's range check can
  * refuse it; the wire harness's control requires that refusal.
+ * --strip-data 1 drops the data of the first fed data block that carries
+ * it, zeroing its bytes and its aux and signing the header again: the
+ * shape a scanall asked NODATA is answered with, which the receiving
+ * kernel must refuse for any other call.
  * --bare-dirent 1 turns the inode answering the first nresolve into a
  * directory entry with no bytes, the shape a peer's lookup must refuse
  * since its caller reads the answer as an inode.
@@ -214,6 +218,7 @@ static struct {
 	long partition_at, partition_len;
 	int rekey_data;		/* the relay moves one data feed's key */
 	int bare_dirent;	/* the relay answers one nresolve with a dirent */
+	int strip_data;		/* the relay drops one data feed's data */
 	int refuse_nresolve;	/* the relay refuses one nresolve for A */
 	int retype_scan;	/* the relay retypes one entry a scanall feeds B */
 	long stall_ms;		/* the relay holds B's HM2 frames from one readdir */
@@ -224,7 +229,7 @@ static struct {
 	long cut_on_scan;	/* the scanall call from which the link is cut */
 	const char *cut_fault;	/* what the cut does: disconnect or trail */
 	int raw;		/* the relay copies bytes and parses no frame */
-} opt ={ 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0,
+} opt ={ 1, 100, 4096, 0, 0.0, 0.0, -1, -1, -1, -1, NULL, NULL, 0, -1, 0, 0, 0, 0,
     0, 0, 0, 0, NULL, NULL, NULL, -1, "disconnect", 0 };
 
 static void
@@ -237,7 +242,8 @@ usage(void)
 	    "              [--trace FILE] [--replay FILE]\n"
 	    "       h2loop --relay PORT [--seed N] [--delay-max MS] [--loss P] [--dup P]\n"
 	    "              [--partition-at K --partition-len N] [--disconnect-at K]\n"
-	    "              [--corrupt-at K] [--rekey-data 1] [--bare-dirent 1]\n"
+	    "              [--corrupt-at K] [--rekey-data 1] [--strip-data 1]\n"
+	    "              [--bare-dirent 1]\n"
 	    "              [--refuse-nresolve 1] [--retype-scan 1] [--stall-ms MS]\n"
 	    "              [--end-readdir 1|2|3] [--cut-on-scan K]\n"
 	    "              [--cut-fault disconnect|trail|loss|dup|reorder|late|withdraw]\n"
@@ -275,6 +281,7 @@ parse_args(int argc, char **argv)
 		else if (!strcmp(a, "--partition-len")) opt.partition_len = atol(v);
 		else if (!strcmp(a, "--rekey-data")) opt.rekey_data = atoi(v);
 		else if (!strcmp(a, "--bare-dirent")) opt.bare_dirent = atoi(v);
+		else if (!strcmp(a, "--strip-data")) opt.strip_data = atoi(v);
 		else if (!strcmp(a, "--refuse-nresolve")) opt.refuse_nresolve = atoi(v);
 		else if (!strcmp(a, "--retype-scan")) opt.retype_scan = atoi(v);
 		else if (!strcmp(a, "--stall-ms")) opt.stall_ms = atol(v);
@@ -301,6 +308,7 @@ validate(void)
 	    opt.dup < 0 || opt.dup > 1 || opt.relay < 0 || opt.relay > 65535 ||
 	    opt.partition_len < 0 || opt.rekey_data < 0 || opt.rekey_data > 1 ||
 	    opt.bare_dirent < 0 || opt.bare_dirent > 1 ||
+	    opt.strip_data < 0 || opt.strip_data > 1 ||
 	    opt.refuse_nresolve < 0 || opt.refuse_nresolve > 1 ||
 	    opt.retype_scan < 0 || opt.retype_scan > 1 ||
 	    opt.stall_ms < 0 || opt.stall_ms > 600000 ||
@@ -317,8 +325,8 @@ validate(void)
 	    opt.delay_max != 0 || opt.loss != 0 || opt.dup != 0 ||
 	    opt.partition_at != -1 || opt.partition_len != 0 ||
 	    opt.disconnect_at != -1 || opt.corrupt_at != -1 ||
-	    opt.rekey_data || opt.bare_dirent || opt.refuse_nresolve ||
-	    opt.retype_scan || opt.stall_ms || opt.end_readdir ||
+	    opt.rekey_data || opt.strip_data || opt.bare_dirent ||
+	    opt.refuse_nresolve || opt.retype_scan || opt.stall_ms || opt.end_readdir ||
 	    opt.silence_on || opt.rename_snapdel || opt.rename_snaproot ||
 	    opt.cut_on_scan != -1 ||
 	    strcmp(opt.cut_fault, "disconnect"))))
@@ -874,6 +882,32 @@ rekey(struct frame *f)
 	memcpy(&key, f->ext + 8, sizeof(key));
 	key += 65536;
 	memcpy(f->ext + 8, &key, sizeof(key));
+	resign(f);
+	return (1);
+}
+
+static int stripped;		/* --strip-data has fired */
+
+/*
+ * The first feed of a data block with its data aboard loses the data: its
+ * bytes field (byte 128 of the extended header) zeroed, the aux dropped,
+ * the header signed again.  The blockref is untouched, so the frame is a
+ * data chain fed with no bytes, the shape only a scanall that asked
+ * NODATA is answered with.
+ */
+static int
+strip_data(struct frame *f)
+{
+	uint32_t zero = 0;
+
+	if ((f->hdr.cmd & 0x00FFFF00U) != 0x00203000U || f->ext_len < 136 ||
+	    f->ext[0] != 3 || f->hdr.aux_bytes == 0)
+		return (0);
+	memcpy(f->ext + 128, &zero, sizeof(zero));
+	free(f->aux);
+	f->aux = NULL;
+	f->hdr.aux_bytes = 0;
+	f->hdr.aux_crc = 0;
 	resign(f);
 	return (1);
 }
@@ -1480,6 +1514,11 @@ relay_decide(struct side *from, struct side *to, struct frame *f, long i)
 		trace("%s>%s i=%ld msgid=%" PRIu64 " rekey t=%ld\n",
 		    from->name, to->name, i, f->hdr.msgid, t);
 	}
+	if (opt.strip_data && !stripped && strip_data(f)) {
+		stripped = 1;
+		trace("%s>%s i=%ld msgid=%" PRIu64 " strip t=%ld\n",
+		    from->name, to->name, i, f->hdr.msgid, t);
+	}
 	if (opt.bare_dirent && !bared && bare_dirent(f)) {
 		bared = 1;
 		trace("%s>%s i=%ld msgid=%" PRIu64 " bare-dirent t=%ld\n",
@@ -1846,13 +1885,15 @@ relay(void)
 	}
 	trace("h2loop relay port=%d raw=%d seed=%" PRIu64 " delay-max=%ld loss=%.6f"
 	    " dup=%.6f partition-at=%ld partition-len=%ld disconnect-at=%ld"
-	    " corrupt-at=%ld rekey-data=%d bare-dirent=%d refuse-nresolve=%d"
+	    " corrupt-at=%ld rekey-data=%d strip-data=%d bare-dirent=%d"
+	    " refuse-nresolve=%d"
 	    " retype-scan=%d"
 	    " stall-ms=%ld end-readdir=%d silence-on=%s rename-snapdel=%s"
 	    " rename-snaproot=%s cut-on-scan=%ld cut-fault=%s\n",
 	    opt.relay, opt.raw, opt.seed,
 	    opt.delay_max, opt.loss, opt.dup, opt.partition_at, opt.partition_len,
-	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.bare_dirent,
+	    opt.disconnect_at, opt.corrupt_at, opt.rekey_data, opt.strip_data,
+	    opt.bare_dirent,
 	    opt.refuse_nresolve, opt.retype_scan, opt.stall_ms, opt.end_readdir,
 	    opt.silence_on ? opt.silence_on : "-",
 	    opt.rename_snapdel ? opt.rename_snapdel : "-",

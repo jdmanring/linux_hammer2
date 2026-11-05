@@ -634,7 +634,10 @@ master's (`wire-run-20261024-202905`); a check refusing nothing
 would have listed the block as an extent. Since fiemap and the seek ask
 `NODATA` their feeds carry no data, so the first block fed with its
 data is FIBMAP's `bmap`, which the harness asks first with `filefrag -B`,
-and FIEMAP then answers in the same run. Under `H2_WIRE_DIRENT=1` the
+and FIEMAP then answers in the same run. Under `H2_WIRE_STRIP=1`, a
+control added after those five, the relay drops that feed's data and zeroes its bytes instead, the shape a
+`NODATA` scan is answered with, and the slave must refuse it as it
+refuses the moved key, since a `bmap` did not ask `NODATA`. Under `H2_WIRE_DIRENT=1` the
 relay turns the inode answering the first `nresolve`, the slave's stat of
 a file, into a directory entry with no bytes, and the slave refuses that
 feed and fails that one lookup `ENOTCONN`, every file then reading equal

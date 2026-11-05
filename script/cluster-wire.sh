@@ -33,6 +33,14 @@
 # since filefrag falls back to FIBMAP when FIEMAP fails (e2fsprogs
 # misc/filefrag.c).
 #
+# H2_WIRE_STRIP=1 is the control on where a data chain may come with no
+# data: the relay drops the data of the same first feed, zeroing its bytes
+# and signing it again, the shape a scanall asked NODATA is answered with.
+# B accepts that shape only from such a scanall, so the run must read one
+# strip line in the trace, that one bmap feed refused as a proxy and its
+# bmap ended ENOTCONN, and every digest still equal to A's; a client taking
+# a dataless data chain from any call refuses nothing.
+#
 # H2_WIRE_DIRENT=1 is the control on what a lookup takes: the relay turns
 # the inode answering the first nresolve, B's stat of small.txt, into a
 # directory entry with no bytes and signs it again. Its caller reads the
@@ -258,6 +266,7 @@ HOST_ADDR=${H2_HOST_ADDR:-192.168.122.1}
 PORT=${H2_RELAY_PORT:-4800}
 SEED=${H2_WIRE_SEED:-11}
 REKEY=${H2_WIRE_REKEY:-0}
+STRIP=${H2_WIRE_STRIP:-0}
 DIRENT=${H2_WIRE_DIRENT:-0}
 REFUSE=${H2_WIRE_REFUSE:-0}
 STALL=${H2_WIRE_STALL:-0}
@@ -378,7 +387,7 @@ case $END in ''|aborted|noeof|lost|onefed) ;; *) echo "wire: COULD-NOT-RUN: H2_W
 case $STALL in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_STALL is milliseconds" >&2; exit 2;; esac
 [ "$STALL" = 0 ] || [ "$STALL" -gt 2000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_STALL must exceed B's 2000 ms bound" >&2; exit 2; }
 nctl=0
-for c in "$REKEY" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); done
+for c in "$REKEY" "$STRIP" "$DIRENT" "$REFUSE"; do [ "$c" = 1 ] && nctl=$((nctl + 1)); done
 [ "$STALL" = 0 ] || nctl=$((nctl + 1))
 [ -z "$END" ] || nctl=$((nctl + 1))
 [ "$PASS" = 1 ] && nctl=$((nctl + 1))
@@ -594,7 +603,7 @@ relay_start() {	# relay_start <trace>: a relay on the port, its output appended
 	n0=$(grep -c "relay listening" "$W/relay.out")
 	"$W/h2loop" --relay "$PORT" --seed "$SEED" \
 	    ${H2_WIRE_DELAY:+--delay-max "$H2_WIRE_DELAY"} ${H2_WIRE_LOSS:+--loss "$H2_WIRE_LOSS"} \
-	    ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --bare-dirent "$DIRENT" \
+	    ${H2_WIRE_DUP:+--dup "$H2_WIRE_DUP"} --rekey-data "$REKEY" --strip-data "$STRIP" --bare-dirent "$DIRENT" \
 	    --refuse-nresolve "$REFUSE" --retype-scan "$RETYPE" --stall-ms "$STALL" \
 	    --end-readdir "$(case $END in aborted) echo 1;; noeof|onefed) echo 2;; lost) echo 3;; *) echo 0;; esac)" \
 	    --silence-on "$([ "$SILENCE" = 0 ] || echo keepalive-marker)" \
@@ -1160,6 +1169,7 @@ filefrag -v $C/dir1/inner.bin > /tmp/h2wire.frag2 2>&1; echo "fiemap2-rc $?"
 echo "fiemap2-extents $(grep -c '^ *[0-9][0-9]*:' /tmp/h2wire.frag2)"
 echo "fiemap2-unknown $(grep '^ *[0-9][0-9]*:' /tmp/h2wire.frag2 | grep -c unknown_loc)"
 sed 's/^/frag2 /' /tmp/h2wire.frag2
+echo "inum-sparse $(stat -c %i $C/sparse.bin)"; echo "inum-big $(stat -c %i $C/big.bin)"
 python3 - $C/sparse.bin <<'PY' 2>&1
 import errno, os, sys
 fd = os.open(sys.argv[1], os.O_RDONLY)
@@ -2055,11 +2065,23 @@ else
 [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs a scanall over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
 [ "$LINKLOST" = 1 ] || { [ "$(val B seek-wire)" = "65536 524288 589824 ENXIO" ]; check "remote: SEEK_HOLE and SEEK_DATA on a sparse file over the wire answer its layout" $? "answers $(val B seek-wire), want 65536 524288 589824 ENXIO"; }
 # The seek's and the map's scanalls ask NODATA; A's server says so on each
-# serve, and one that honours it ships no data. An older server, or one
-# that ignores the flag, prints no such serve.
-nd=$(grep 'H2 SERVE scanall' "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null | grep -c ' nodata')
-ndb=$(grep 'H2 SERVE scanall' "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null | grep ' nodata' | grep -vc ' bytes=0 ')
-[ "$LINKLOST" = 1 ] || { [ "$(num "$nd" 0)" -ge 2 ] && [ "$(num "$ndb" 1)" = 0 ]; check "remote: A serves the seek's and the map's scanalls without their data" $? "NODATA serves $nd, of which with data $ndb"; }
+# serve, and one that honours it ships no data. Every scanall A serves for
+# the sparse file (the seek's four) and for the 512 KiB file (fiemap's)
+# is counted, NODATA or not, so a seek or a map that stopped asking, an
+# older server, or one ignoring the flag each fails it.
+ndserve() {	# ndserve <inum>: scanall serves of that inode, then those not NODATA at bytes=0
+	h=$(printf 'inum=%016x ' "$(num "$1" 0)")
+	t=$(grep 'H2 SERVE scanall' "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null | grep -c "$h")
+	o=$(grep 'H2 SERVE scanall' "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null | grep "$h" | grep -v ' bytes=0 .* nodata ' | grep -c .)
+	echo "$t $o"
+}
+read -r nds ndso <<EOF
+$(ndserve "$(val B inum-sparse)")
+EOF
+read -r ndm ndmo <<EOF
+$(ndserve "$(val B inum-big)")
+EOF
+[ "$LINKLOST" = 1 ] || { [ "$(num "$nds" 0)" -ge 4 ] && [ "$(num "$ndm" 0)" -ge 1 ] && [ "$(num "$ndso" 1)" = 0 ] && [ "$(num "$ndmo" 1)" = 0 ]; check "remote: A serves the seek's and the map's scanalls without their data" $? "sparse file $nds serve(s), $ndso not NODATA at 0 bytes; 512 KiB file $ndm, $ndmo"; }
 fi
 if [ "$RETYPE" = 1 ]; then
 	rt=$(grep -c ' retype ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
@@ -2069,9 +2091,11 @@ if [ "$SNAPROOT" = 1 ]; then
 	rn=$(grep -c ' rename-snaproot ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$rn" 0)" = 1 ] && [ "$(num "$(val B pass-snap-notwant)" 0)" = 1 ] && [ "$(num "$(val B pass-snap-einval)" 0)" = 1 ] && [ "$(num "$(val B pass-snap-verified)" 0)" -ge 1 ]; check "control: a SNAPSHOT's root fed under another name, its CRCs and check good, is refused by B's name test and a later pass verifies" $? "rename lines $(num "$rn" 0), fed-a-root lines $(val B pass-snap-notwant), snapshot EINVAL lines $(val B pass-snap-einval), passes verified $(val B pass-snap-verified)"
 fi
-if [ "$REKEY" = 1 ]; then
-	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
-	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
+if [ "$REKEY" = 1 ] || [ "$STRIP" = 1 ]; then
+	kw=rekey; what="a data feed moved off its key passes the CRCs and B refuses it"
+	[ "$STRIP" = 1 ] && { kw=strip; what="a data feed of a bmap with its data dropped passes the CRCs and B refuses it"; }
+	rk=$(grep -c " $kw " "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
+	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: $what" $? "$kw lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
 else
 # under STALE A's digest of the rewritten file is the one taken after it
 asums() { if [ "$STALE" = 1 ]; then sums A sum | sed "s|^\./big\.bin .*|$(val A stalesum)|" | sort; else sums A sum; fi; }
@@ -2208,7 +2232,7 @@ if [ "$STALL" != 0 ]; then
 	st=$(grep -c ' stall ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
 	[ "$(num "$st" 0)" = 1 ] && [ "$(num "$(val B remote-timeout-ms)" 0)" = 2000 ] && [ "$(num "$(val B find-notconn)" 0)" -ge 1 ] && [ "$(num "$(val B log-readdir-timedout)" 0)" -ge 1 ] && [ "$(num "$(val B readdir-timedout-ms)" 0)" -ge 2000 ]; check "control: a reply held past B's bound ends the call with the master unreachable" $? "stall lines $(num "$st" 0) for $STALL ms, bound $(val B remote-timeout-ms) ms, shortest timed-out readdir $(val B readdir-timedout-ms) ms, listing not connected $(val B find-notconn), readdir ended ETIMEDOUT $(val B log-readdir-timedout), B listed $(val B files) of $nfa"
 fi
-[ "$REKEY" = 1 ] || [ "$DIRENT" = 1 ] || [ "$RETYPE" = 1 ] || [ "$LINKLOST" = 1 ] || [ "$PROTO" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
+[ "$REKEY" = 1 ] || [ "$STRIP" = 1 ] || [ "$DIRENT" = 1 ] || [ "$RETYPE" = 1 ] || [ "$LINKLOST" = 1 ] || [ "$PROTO" = 1 ] || { [ "$(num "$(val B log-not-proxy)" 1)" = 0 ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ]; check "remote: no feed refused as a proxy, no protocol error" $? "not-proxy $(val B log-not-proxy), peer-sent $(val B log-peer-sent), $(val B remote-xops) remote XOPs, $(val B refetches) refetches"; }
 if [ "$ROGATE" = control ]; then
 	[ "$(num "$(val B rw-mount-rc)" 1)" = 0 ] && [ "$(num "$(val B log-mount-refused)" 1)" = 0 ]; check "control: with the read-only gate off a read-write mount of B's CL is taken beside the remote master" $? "mount rc $(val B rw-mount-rc), refusal lines $(val B log-mount-refused)"
 else
