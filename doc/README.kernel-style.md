@@ -333,6 +333,16 @@ that the scan is `hammer2_seek_data_hole()`. No category is new.
 in `hammer2_seek_data_hole()`'s tail, which replaced the loop that
 started a scan per block. No category is new.
 
+1,642 to 1,651 with FIEMAP rebuilt on the seek's chunked scan: four
+`return (x);` and five continuation-line indents in the four helpers it
+added, `hammer2_fiemap_scan()`, `_add()`, `_flush()` and `_delalloc()`.
+The same work and the page-cache answer before it had moved `Possible
+repeated word` 3 to 7, two comments each saying "from from to to" with
+the arguments' names as words; those comments were rewritten as
+`[from, to]` rather than baselined, and the row is 3 again. The gate
+failed on both moves from the commit that made each until this one,
+none of them pushed. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

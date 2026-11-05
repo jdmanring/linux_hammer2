@@ -1609,7 +1609,7 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
 }
 
 /*
- * Linux: the first byte from from to to, inclusive, held by a folio tagged
+ * Linux: the first byte in [from, to] held by a folio tagged
  * dirty or under writeback, or -1.  Such a folio holds data the blockref
  * tree does not have yet; hammer2_seek_data_hole() says why that order of
  * reading is safe.
@@ -2710,7 +2710,7 @@ hammer2_fiemap_add(struct fiemap_extent_info *fieinfo,
 }
 
 /*
- * Linux: the blocks from from to to whose folios are tagged dirty or under
+ * Linux: the blocks in [from, to] whose folios are tagged dirty or under
  * writeback and the tree does not hold, as DELALLOC extents.
  */
 static int
