@@ -22867,3 +22867,203 @@ chain (`:1005-1006`): dropping NODATA does not make the seek read the
 block. The control that does is `HAMMER2_LOOKUP_ALWAYS`, above. The seeks
 here run on an image the gate mounted fresh, before any read of the file;
 a seek after a read, with the chains already resolved, is not asked.
+
+## SEEK_DATA, SEEK_HOLE and FIEMAP walk the blockref arrays, 2026-11-05
+
+What this entry claims: on a cluster of one local element the seek and the
+map read the blockref tree by a walk that makes no chain for a block on the
+media, holding `i_rwsem` shared for the whole call with nothing given up
+between chunks, and a dense 16 GiB SEEK_HOLE takes 14.9 ms where the scan it
+replaces took 250 ms; that each control placed in the walk or the frontend
+fails; that the syntax gate's sparse pass reads every file the module
+builds; and the readings against the predictions written before the runs
+(`p7-notes/n10-6-expected.md`, `n10-6-expected2.md`), misses included.
+
+The changes: `7a2dd0b` (one debug hold helper), `cb5245a` (the walk,
+`hammer2_xop_seek()`, and the whole-call hold), `f09e415` (the dump compare
+of walk and scan), `eae9580` (the sparse pass), and the commits after them
+named below. The design was settled by an architect review before code
+(`p7-notes/n10-6-architect-ruling.md`), which rejected the first design's
+fed chain, its re-run on error and FIEMAP's per-chunk release.
+
+**Timing, `h2release-7.3tls`** (`n10-6-seq.log`, head `f09e415` with no
+uncommitted change under `src`, `script` or `test`, module `7fe20b663954a514`,
+`H2_SEEK_DENSE_MB=16384`, 20 seeks per kind, one repeat, `:13-18`):
+SEEK_HOLE at 0 across 16 GiB of data 14.86 ms median, against the 50 ms rule
+the step set before the run and against 238.5 ms at 1.0.86; SEEK_DATA from
+inside a 16 GiB hole 1.55 us; the deep kind, SEEK_DATA in the file's last
+sixteenth, 7.0 us; a sparse file 1.35 us; a dirty file 3.17 us. The rule
+held, so the whole-call hold stays.
+- Control `scanall` (`ctl/n10-6-scanall`, every seek through
+  `hammer2_seek_scanall()`, module `6d36305998984451`, `:133-137`): the
+  dense SEEK_HOLE 250.1 ms, failing the rule, so the 14.86 ms came from the
+  walk.
+- Control `noseed` (`ctl/n10-6-noseed`, each level scanned from key 0, module
+  `4c91117025c52232`, `:252-256`): the deep kind 191.8 us, 27 times head's.
+  The prediction said 0.5 to 3 ms and at least 50 times: missed, by a
+  factor of about two. The control still separates. Candidate, not
+  measured: the indirect blocks it instantiates below the cursor were
+  resident after the first of the 20 seeks, so each cost a chain and no
+  read.
+
+**A writer beside the seek** (`:370-403`, three repeats of 20 timed 64 KiB
+`pwrite`s): beside a SEEK_HOLE loop over the 16 GiB file, 34.3, 35.1 and
+31.9 ms median, against 6.4 to 8.6 us alone; the prediction was 8 to 35 ms
+and one repeat sat 0.05 ms past it. The writes waited about two seeks each:
+42 seeks began during the 20 writes. Candidate, not measured: the rwsem
+lets the looping reader take the lock again until the waiting writer, on
+its first wake, sets the handoff flag, so the writer waits one seek before
+the flag and one after. 1.0.86's writer waited 6.2 ms because the scan gave
+`i_rwsem` up between chunks; that release had no precedent among the
+mainline callers of either operation and is gone with the cost it hid.
+Beside a SEEK_DATA loop crossing a 16 GiB hole (`contendgap`, `:387-403`):
+13.4, 18.7 and 19.3 us median, 3.9 to 4.8 ms worst, inside the predicted 0.01
+to 5 ms.
+
+**Correctness, `h2debug-7.3tls`** (same head, modules rebuilt by each
+harness):
+- the matrix, 31 probe checks, 0 failures (`:1271`);
+- the race mode, three repeats, `H2_SEEK_RACE_WANT=after`: every wbrace and
+  race answer right, and the file dumped by the walk and by the forced scan
+  identical, 2237 lines, 35 extents, the scan's print counted once
+  (`:1289-1301`);
+- xfstests `-g seek`: generic/285, 286, 436, 445, 448, 490 and 539 pass, 3 to
+  5 s each (`:1308-1378`). generic/490 ran 4 s against 11 s at 1.0.86; the
+  prediction said 0 to 1 s and missed, since every seek test takes 3 to 5 s
+  on this kernel, which is the test's own setup;
+- `test-fixtures.sh`: 11 images, 43 files, 0 failures (`:1401-1407`);
+- `debug_locks` 1 after the head's runs and after the controls (`:1408`).
+
+**The placed controls** (each a lockdebug module from `f09e415` with one
+marked edit, three repeats of the race mode, each failing 3 of 3):
+- `nolive` (the walk ignores a live DATA chain, `2401242025c4213c`): wbrace
+  hole answered 65536 for 131072 (`:1409-1441`). The prediction named wbrace
+  data as well; SEEK_DATA and the map read the tags before the tree and the
+  block in that race is still tagged when they do, so only SEEK_HOLE's tree
+  read after the tags reaches the live chain. The data and map answers stood.
+- `dataorder` (SEEK_DATA reads the tree before the tags,
+  `1902b0c90ae6b013`): wbrace data 131072 for 65536.
+- `holeaccept` (SEEK_HOLE accepts a hole without the tree read after the
+  tags, `d89765066df359ad`): wbrace hole 65536 for 131072.
+- `maporder` (the map reads the tree before the tags, `374253a1837a1b75`):
+  wbrace map -1 for 65536. Its line reads `dirty 1`: `script/test-syntax.sh`
+  was being edited during the run, which this harness does not read.
+
+**KASAN, `h2kasan-7.3tls`** (`n10-6-seq.log:1955-2032`): xfstests `-g seek`
+pass, 9 s each, generic/490 9 s against 48 s at 1.0.86 and a predicted under 5 s, the same setup cost;
+0 KASAN or UBSAN reports.
+
+**Over the wire**, both guests `h2debug-7.3tls`: `cluster-wire.sh` 36 checks,
+0 failures; SEEK_HOLE and SEEK_DATA on the sparse file through the remote
+element answer 65536 524288 589824 ENXIO, and A served those scans without
+data (`:2056-2079`). The remote element goes through
+`hammer2_seek_scanall()`.
+
+QEMU cores read 0 at the start and the end (`:1`, `:2081`).
+
+**The exerciser's edge check was the test's defect.** `test-enospc.sh`
+failed the same way as root, as a user and on KASAN (`n10-6-seq.log:813`,
+`:1225`, `:1950`): "no extent spans the tree reads' edge at block
+1024", with every block mapped in 34 extents and none left unmerged. The
+check had moved to block 1024 with the walk's 1024-blockref reads, and the
+allocator broke the file at exactly that block. `da187e1` maps once to find
+a block at or above 1024 inside an extent, then maps from 1024 blocks below
+it. In the second run (`n10-6-seq2.log`, head `eae9580` with that change
+uncommitted, `h2debug-7.3tls`): block 1025 on a map from block 1, every
+block mapped in 34 extents, the gate 0 failures (`:185-186`); block 1025
+chosen means the extent holding it starts at 1024, the break the old check
+sat on. Control `noedge` (`ctl/n10-6-noedge`, the frontend flushing its
+extent at the end of each tree read, `:995`): one neighbouring pair left unmerged
+and no extent spanning block 1025, the exerciser's two failures and the
+gate's one, as predicted.
+
+**The user-mode early refusal.** The first run's user-mode fill failed once
+with "blocks available after sync 3" (`n10-6-seq.log:1219-1221`), a check
+of the full-volume gate that touches no code this step changed. Head then
+passed it 5 of 5 under `H2_REPEAT=5` (`n10-6-seq2.log`, 12:21), so 1 in 6
+at head. `ad80733`, before this step, passed it 5 of 5 the same way
+(`ctl/n10-6-base`, 12:30), and the four user-mode runs in the N10.5 logs
+passed too, so 0 in 9 before. One event cannot tell those rates apart,
+and the fill and statfs paths are not this step's. It stands as a reading
+without a cause: a user-mode refusal that came while statfs, after the
+sync, still counted 3 blocks free.
+
+**The remote seek at size.** Nothing had timed the seek a remote element
+serves past the wire's 1 MiB sparse file, and `hammer2_seek_scanall()`'s
+DEFER named a remote dense seek of 1 GiB above 1 s. `3ecb073` adds
+`H2_WIRE_SEEKTIME=1`; on two `h2debug-7.3tls` guests
+(`n10-6-seq2.log:1195-1218`, the wire's 37 checks 0 failed, cores 0 at the
+end) SEEK_HOLE at 0 across 1 GiB through the remote element answered the
+size three times of three, 1.217 s median, 1.226 s worst, inside the
+predicted 0.2 to 5 s and past the trigger. `b95499f` rewrote the trigger
+rather than leave a fired one standing: the length is a writer's wait on
+`i_rwsem`, a PFS with a remote element refuses read-write in
+`hammer2_get_tree()` and `hammer2_reconfigure()`, and so the trigger is now
+a PFS with a remote element mounted read-write, or a cluster of several
+local elements in use.
+
+**sparse.** The step's objection was that sparse had never been read: a
+`container_of()` assertion in `include/net/neighbour.h` stops sparse's own
+checks. Read at `f09e415` (`eae9580`'s message): kernel sparse v0.6.5-rc1
+under `make C=2` over the 22 files printed nothing, and a kernel pointer
+handed to `copy_to_user()` placed after every include of `hammer2_vnops.c`
+was reported at that line (`p7-notes/n10-6-sparse-c2.log`), so the
+kernel's sparse was never silenced. The silenced layer is smatch's own: at
+smatch `master` (`5189e3fb`) and `devel` (`979575b8`) alike the assertion
+fails twice in every file (`n10-6-smatch-master.log`,
+`n10-6-smatch-devel.log`; `devel` also stopped on one file). smatch's own
+checks printed 16 findings beside the 44 assertion lines, the 60 the
+1.0.86 entry counted, none in the walk or the seek. The gate's sparse pass had named 19 of the 22 files
+and kept only lines on a `src/` path; `eae9580` reads the list from
+`hammer2-y` and fails on an error from any path, with
+`test/contract/ctl-sparse-error.c` as the control the old filter kept
+nothing of.
+
+**The analyzer** over `hammer2_xops.c` and `hammer2_vnops.c` at `eae9580`
+(`n10-6-analyze.log`): 5 candidates, the dead store at `hammer2_os.h:1660`
+once per file and three in carried XOPs (`hammer2_xops.c:118`, `:727`,
+`:1113`), none in `hammer2_xop_seek()` or the frontend.
+
+**Comments.** `ea0f69f` corrected `hammer2_fiemap()`'s header, which said
+the three BSD ports carrying a seek ioctl answer it; read in the four
+clones, only FreeBSD's does. `README.porting.md` gained "Seeking and
+mapping a file", with the reason the seek and the map do not go through
+iomap. `cpp -fpreprocessed` output of `hammer2_vnops.c` was identical
+before and after.
+
+**kmemleak around the walk** (`n10-6-seq3.log`, head `b95499f`, one boot of
+`h2debug-7.3tls`): cleared at 17.7 s of uptime, then the matrix and one
+race repeat, each loading and unloading the module; after the unload, with
+`lsmod` counting 0, two scans found 0 unreferenced objects and none of
+hammer2's. The wire's own reading, both guests, was clean in each run.
+
+**The user-mode rate of ten** (same log, 13:07): head passed 10 of 10, so
+the early refusal stands at 1 in 16 at head against 0 in 9 before.
+
+**A guest that would not power off, and why it is the guests'.** After the
+second run's seektime wire run both guests stopped sshd at `virsh shutdown`
+and never powered off, each with one vCPU at 100% in a user process's
+syscalls. Repeated in one sequence (`n10-6-seq4.log`): after the default
+wire run both guests were off in 5 s and at the first read; after
+`H2_WIRE_SEEKTIME=1` both were still running at 90 s. Read in a third
+reproduction through QEMU's gdbstub with the debug kernel's `vmlinux`
+(`n10-6-seq5.log`, notes beside it in `p7-notes/n10-6-hang/`): the spinning
+CPU's task was `s6-log`, the guest's `dmesg-log` logger, in `ppoll` (syscall
+271) on its own signalfd with a zero timeout, its stdin closed, its open
+files `/var/log/dmesg/lock` and `current`. `/var/log/dmesg` as listed is an
+empty directory: `/var/log` is the btrfs
+subvolume `@log`, mounted after the early loggers start, so the logger
+writes into the root subvolume's `/var/log/dmesg`. After a reboot the new
+logger's `lock` and `current`, inodes 280731 and 1175433, were found there
+under `subvolid=5`, beside an unfinished archive of 1,998,226 bytes written
+at 14:29:51, the stalled logger's `current`. Its directives rotate at
+2,000,000 bytes; and the rotation, which renames by
+path, resolved into `@log`'s empty directory and failed, "unable to rename
+/var/log/dmesg/current to /var/log/dmesg/previous: No such file or
+directory" 118 times in the `seq4` dump. The seektime run's per-block serve
+prints are what bring rotation due; the default run's do not. The module
+was unloaded, `rmmod ok` and no message thread, before the shutdown began,
+and the kernel printed nothing after the unload. It is the same mechanism
+as the udevd logger that held `dmsetup` on 2026-10-17, whose cause that
+entry left unknown; the fix is the guests' service order, the loggers after
+`mount-filesystems`.
