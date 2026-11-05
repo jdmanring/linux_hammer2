@@ -251,6 +251,9 @@
 # the chunked scan's helpers it replaced took two continuation indents
 # and one `return (x);` with them. No category is new. See
 # README.kernel-style.md.
+# 1,655 to 1,656: hammer2_seek_walks(), which the debug build's
+# seek_scanall parameter turns off, returns `return (x);`. No category is
+# new. See README.kernel-style.md.
 21 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -281,7 +284,7 @@
 4 please, no space before tabs
 246 please, no spaces at the start of a line
 86 quoted string split across lines
-396 return is not a function, parentheses are not required
+397 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)

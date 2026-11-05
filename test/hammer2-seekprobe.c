@@ -38,6 +38,15 @@
  *                                             seeks at every block
  *                                             answer from block
  *                                             references, the read EIO
+ *     hammer2-seekprobe layout <path>         a synced file of data
+ *                                             runs and holes across the
+ *                                             map's tree-read edge, see
+ *                                             layout()
+ *     hammer2-seekprobe dump <path>           both seeks from every block
+ *                                             and half block, then the
+ *                                             FIEMAP extents, one line
+ *                                             each, for comparing two
+ *                                             readers of the same file
  *
  * The shape and bounds are hammer2-seek.c's, so the two answer to one
  * contract: one 64 KiB block of 'A', one of hole, one of 'A', and a
@@ -703,6 +712,78 @@ corrupt(const char *path)
 	return (fails ? 1 : 0);
 }
 
+/*
+ * A file for comparing the blockref walk with hammer2_xop_scanall(), read
+ * twice by dump with the module's seek_scanall parameter off and on: 1040
+ * blocks of data, each its own bytes so none dedups, which crosses the
+ * map's tree-read edge at block 1024; a 20-block hole; one block; one of
+ * hole; eight blocks; and a size half a block past a 30-block tail hole.
+ * Synced, so neither reader meets a tag.
+ */
+#define LAYOUT_BLOCKS	1100
+
+static int
+layout(const char *path)
+{
+	char *buf = malloc(BSIZE);
+	long b;
+	int fd;
+
+	if (buf == NULL ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644)) < 0)
+		return (2);
+	fill(buf, 1);
+	for (b = 0; b < LAYOUT_BLOCKS - 30; b++) {
+		if ((b >= 1040 && b < 1060) || b == 1061)
+			continue;
+		memcpy(buf, &b, sizeof(b));
+		if (pwrite(fd, buf, BSIZE, b * BSIZE) != BSIZE)
+			return (2);
+	}
+	if (ftruncate(fd, LAYOUT_BLOCKS * BSIZE + BSIZE / 2) != 0 ||
+	    fsync(fd) != 0 || close(fd) != 0)
+		return (2);
+	free(buf);
+	printf("seekm-ok   layout: %d blocks made and synced\n", LAYOUT_BLOCKS);
+	return (0);
+}
+
+static int
+dump(const char *path)
+{
+	struct fiemap *fm;
+	unsigned int i, max = 4096;
+	long off, size;
+	int fd;
+
+	if ((fd = open(path, O_RDONLY)) < 0 ||
+	    (size = (long)lseek(fd, 0, SEEK_END)) < 0)
+		return (2);
+	for (off = 0; off < size; off += BSIZE / 2)
+		printf("seekm-dump %ld data %ld hole %ld\n", off,
+		    (long)lseek(fd, off, SEEK_DATA),
+		    (long)lseek(fd, off, SEEK_HOLE));
+	fm = calloc(1, sizeof(*fm) + max * sizeof(struct fiemap_extent));
+	if (fm == NULL)
+		return (2);
+	fm->fm_length = FIEMAP_MAX_OFFSET;
+	fm->fm_extent_count = max;
+	if (ioctl(fd, FS_IOC_FIEMAP, fm) != 0) {
+		printf("seekm-fail dump: FIEMAP errno %d\n", errno);
+		return (1);
+	}
+	for (i = 0; i < fm->fm_mapped_extents; i++)
+		printf("seekm-dump extent %llu %llu %llu %x\n",
+		    (unsigned long long)fm->fm_extents[i].fe_logical,
+		    (unsigned long long)fm->fm_extents[i].fe_physical,
+		    (unsigned long long)fm->fm_extents[i].fe_length,
+		    fm->fm_extents[i].fe_flags);
+	printf("seekm-dump extents %u\n", fm->fm_mapped_extents);
+	free(fm);
+	close(fd);
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -719,6 +800,10 @@ main(int argc, char **argv)
 		return (agree(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "corrupt") == 0)
 		return (corrupt(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "layout") == 0)
+		return (layout(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "dump") == 0)
+		return (dump(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
@@ -740,7 +825,7 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | corrupt <path> | "
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | corrupt <path> | layout|dump <path> | "
 	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | contend|contendgap <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);

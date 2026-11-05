@@ -363,6 +363,11 @@ carried XOP beside it, and the helpers of the chunked scan it replaced,
 `hammer2_seek_yield()`, took two continuation-line indents and one
 `return (x);` with them. No category is new.
 
+1,655 to 1,656 with `hammer2_seek_walks()`, the walk's guard, which the
+debug build's `seek_scanall` parameter turns off so a test can compare
+the walk with the scan on one file: one more `return (x);`. No category is
+new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

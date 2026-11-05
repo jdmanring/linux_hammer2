@@ -185,6 +185,16 @@ echo 300 > $T
 i=0; while [ $i -lt $REPEAT ]; do for w in hole data map; do /tmp/h2seekprobe wbrace /mnt/sm/wb $w; rm -f /mnt/sm/wb; done; i=$((i + 1)); done
 echo 0 > $T
 echo "tag-held $(dmesg | grep -c "hammer2: seek tag held")"
+S=/sys/module/hammer2/parameters/seek_scanall
+[ -e $S ] || { echo "SETUP knob failed: no seek_scanall"; umount /mnt/sm; rmmod hammer2; exit 0; }
+/tmp/h2seekprobe layout /mnt/sm/lay
+/tmp/h2seekprobe dump /mnt/sm/lay > /tmp/h2dump-walk; echo "dump walk exit $?"
+echo 1 > $S
+/tmp/h2seekprobe dump /mnt/sm/lay > /tmp/h2dump-scan; echo "dump scanall exit $?"
+echo 0 > $S
+echo "dump lines $(wc -l < /tmp/h2dump-walk) extents $(grep -c "^seekm-dump extent " /tmp/h2dump-walk) differ $(cmp -s /tmp/h2dump-walk /tmp/h2dump-scan && echo 0 || echo 1) forced $(dmesg | grep -c "hammer2: seek scanall forced")"
+diff /tmp/h2dump-walk /tmp/h2dump-scan | head -5 | sed "s/^/dump diff /"
+rm -f /mnt/sm/lay /tmp/h2dump-walk /tmp/h2dump-scan
 '
 time_body='
 for k in sparse dense dirty hole deep; do
@@ -232,6 +242,19 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 			echo "  FAIL  the tag hold never printed, so nothing held"; fail=$((fail + 1)); }
 		out_wb=$(printf '%s\n' "$wb" | awk '$12 != "inside"' | wc -l)
 		[ "$out_wb" -eq 0 ] || { echo "  FAIL  $out_wb writeback(s) returned after the seek, so they tested nothing"; fail=$((fail + 1)); }
+		for w in walk scanall; do
+			printf '%s\n' "$out" | command grep -q "^dump $w exit 0$" || {
+				echo "  FAIL  the $w dump did not exit 0"; fail=$((fail + 1)); }
+		done
+		# 2201 seek lines from every half block of the 1100.5-block file,
+		# at least three extents (1040 blocks, one, eight), the summary
+		dl=$(printf '%s\n' "$out" | sed -n 's/^dump lines \([0-9]*\) extents \([0-9]*\) differ \([01]\) forced \([0-9]*\)$/\1 \2 \3 \4/p')
+		set -- $dl
+		if [ $# -ne 4 ] || [ "$1" -lt 2205 ] || [ "$2" -lt 3 ] || [ "$3" -ne 0 ] || [ "$4" -lt 1 ]; then
+			echo "  FAIL  walk and scanall dumps: ${dl:-no line} (lines extents differ forced)"; fail=$((fail + 1))
+		else
+			echo "  ok    walk and scanall dumps identical: $1 lines, $2 extent(s), scanall forced"
+		fi
 		echo "  wbrace: $(printf '%s\n' "$wb" | awk '{print $2"="$4}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 	elif [ "$CONTEND" != 0 ]; then

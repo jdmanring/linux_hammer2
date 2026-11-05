@@ -1607,12 +1607,37 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 }
 
 /*
+ * Linux: whether hammer2_xop_seek() walks for this XOP: a cluster of one
+ * local element.  The element count is the XOP's own, the set
+ * hammer2_xop_start() runs, since an element can join the inode's cluster
+ * under cluster_spin, which the inode lock does not exclude.  The debug
+ * build's seek_scanall parameter sends every seek and map to
+ * hammer2_seek_scanall(), so a test can compare the two readers on one
+ * file.
+ */
+#if defined(HAMMER2_LOCKDEBUG)
+static unsigned int hammer2_seek_force_scanall;
+module_param_named(seek_scanall, hammer2_seek_force_scanall, uint, 0644);
+#endif
+
+static bool
+hammer2_seek_walks(hammer2_xop_seek_t *xop)
+{
+#if defined(HAMMER2_LOCKDEBUG)
+	if (READ_ONCE(hammer2_seek_force_scanall)) {
+		pr_info_once("hammer2: seek scanall forced\n");
+		return (false);
+	}
+#endif
+	return (xop->head.cluster.nchains == 1 &&
+	    !hammer2_remote_has_slot(xop->head.ip1->pmp));
+}
+
+/*
  * Linux: the blockref tree's answer to a seek or a map (struct
- * hammer2_seek_req), from hammer2_xop_seek()'s walk on a cluster of one
- * local element and from hammer2_seek_scanall() otherwise.  The element
- * count is the XOP's own, the set hammer2_xop_start() runs, since an
- * element can join the inode's cluster under cluster_spin, which the
- * inode lock does not exclude.  Returns 0 or a positive errno.
+ * hammer2_seek_req), from hammer2_xop_seek()'s walk where
+ * hammer2_seek_walks() and from hammer2_seek_scanall() otherwise.
+ * Returns 0 or a positive errno.
  */
 static int
 hammer2_seek_tree(struct inode *inode, struct hammer2_seek_req *r)
@@ -1623,8 +1648,7 @@ hammer2_seek_tree(struct inode *inode, struct hammer2_seek_req *r)
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	xop = hammer2_xop_alloc(ip, 0);
-	if (xop->head.cluster.nchains != 1 ||
-	    hammer2_remote_has_slot(ip->pmp)) {
+	if (!hammer2_seek_walks(xop)) {
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		hammer2_inode_unlock(ip);
 		return (hammer2_seek_scanall(ip, r));
