@@ -614,7 +614,10 @@ timing(const char *path, const char *kind, long n)
  * and the child loops SEEK_DATA at 0: each seek crosses the hole in
  * growing chunks and its last chunk lands in the data, where the chunk
  * held no chain before and may be the largest a chunk gets, so the write
- * reads what that transition holds the lock for.
+ * reads what that transition holds the lock for.  SEEK_DATA bounds its
+ * tree scan at the first dirty block, so the writes go to the data's
+ * upper half: a write into the landing chunk would shorten the scan
+ * being timed.
  */
 static int gap;
 
@@ -670,6 +673,8 @@ contend(const char *path, long n)
 
 			seed = seed * 1103515245u + 12345u;
 			off = ((long)(seed >> 8) % (dense / BSIZE)) * BSIZE;
+			if (gap)
+				off = dense / 2 + off / 2 / BSIZE * BSIZE;
 			t0 = now_ns();
 			if (pwrite(fd, buf, BSIZE, base + off) != BSIZE)
 				return (2);
