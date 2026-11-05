@@ -1527,15 +1527,37 @@ done:
  * block written back and not yet flushed is seen and a deleted one is
  * not.  The walk recurses into an INDIRECT holding the parent locked
  * shared, which keeps the parent's data, and so its blockref array,
- * resident; the depth is bounded by the key space over the smallest
- * indirect fan-out, about ten levels.  A live DATA chain is read for its
- * blockref and released by the next scan call.
+ * resident.  A live DATA chain is read for its blockref and released by
+ * the next scan call.
+ *
+ * The media bounds nothing here: an indirect block whose array names
+ * itself passes its check and recurses for good.  So the walk refuses a
+ * blockref with HAMMER2_ERROR_BADBREF, which is EIO, past
+ * HAMMER2_SEEK_DEPTH_MAX levels, or with keybits too large to shift.
+ * Sixteen is bulkfree's bound for its own recursion over the same tree
+ * (hammer2_bulkfree.c): this function's frame is 200 bytes on the kernel
+ * of record, so about 3 KiB of stack, and 392 under KASAN, whose stacks
+ * are twice the size.  A child at its parent's keybits is not refused:
+ * the carried hammer2_chain_create_indirect() could build one before
+ * 1.0.21 bounded its ncount, and media holding one must still read.
  *
  * Returns 0 to go on with the caller's parent, -1 when the answer is
  * found, which no HAMMER2_ERROR_* bit can be, or a HAMMER2_ERROR_* code.
  */
+#define HAMMER2_SEEK_DEPTH_MAX	16
+
+#if defined(HAMMER2_LOCKDEBUG)
+/* Linux: lowers the bound so a test can reach it on a well-formed file. */
+static unsigned int hammer2_seek_depth_max = HAMMER2_SEEK_DEPTH_MAX;
+module_param_named(seek_depth_max, hammer2_seek_depth_max, uint, 0644);
+#define HAMMER2_SEEK_DEPTH	READ_ONCE(hammer2_seek_depth_max)
+#else
+#define HAMMER2_SEEK_DEPTH	HAMMER2_SEEK_DEPTH_MAX
+#endif
+
 static int
-hammer2_xop_seek_walk(hammer2_xop_seek_t *xop, hammer2_chain_t *parent)
+hammer2_xop_seek_walk(hammer2_xop_seek_t *xop, hammer2_chain_t *parent,
+    unsigned int depth)
 {
 	hammer2_blockref_t bref;
 	hammer2_chain_t *chain = NULL;
@@ -1556,6 +1578,10 @@ hammer2_xop_seek_walk(hammer2_xop_seek_t *xop, hammer2_chain_t *parent)
 				error = 0;
 			break;
 		}
+		if (bref.keybits > 63) {
+			error = HAMMER2_ERROR_BADBREF;
+			break;
+		}
 		/* past the range, or a hole at the cursor */
 		if (bref.key > xop->r.key_end ||
 		    (xop->r.mode == HAMMER2_SEEK_MODE_HOLE &&
@@ -1567,7 +1593,11 @@ hammer2_xop_seek_walk(hammer2_xop_seek_t *xop, hammer2_chain_t *parent)
 		if (end != 0 && end <= xop->r.key)
 			continue;		/* wholly below the cursor */
 		if (bref.type == HAMMER2_BREF_TYPE_INDIRECT) {
-			error = hammer2_xop_seek_walk(xop, chain);
+			if (depth >= HAMMER2_SEEK_DEPTH) {
+				error = HAMMER2_ERROR_BADBREF;
+				break;
+			}
+			error = hammer2_xop_seek_walk(xop, chain, depth + 1);
 			if (error)
 				break;
 			continue;
@@ -1650,7 +1680,7 @@ hammer2_xop_seek(hammer2_xop_t *arg, void *scratch, int clindex)
 		else if (xop->r.mode == HAMMER2_SEEK_MODE_HOLE)
 			xop->r.key = xop->r.key_end + 1;
 	} else if (error == 0) {
-		error = hammer2_xop_seek_walk(xop, parent);
+		error = hammer2_xop_seek_walk(xop, parent, 0);
 		if (error == -1)
 			error = 0;
 	}

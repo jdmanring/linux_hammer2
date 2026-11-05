@@ -1567,6 +1567,10 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 			bref = &sxop->head.cluster.focus->bref;
 			if (bref->type != HAMMER2_BREF_TYPE_DATA)
 				continue;
+			if (bref->keybits > 63) {
+				error = HAMMER2_ERROR_BADBREF;
+				break;
+			}
 			held = true;
 			next = bref->key + ((hammer2_key_t)1 << bref->keybits);
 			if (r->mode == HAMMER2_SEEK_MODE_DATA) {
