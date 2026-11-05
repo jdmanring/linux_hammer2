@@ -66,7 +66,10 @@ fail(const char *what, long got, long want)
  * never moved cannot pass as one it moved to.  After a success the
  * position must equal the answer and, below i_size, one read() must return
  * the byte pread() finds there; after a failure it must still be SENTINEL.
- * One check per probe, printed as "position after <what>".
+ * One check per probe, printed as "position after <what>".  The read()
+ * cannot fail once the position equals the answer, since read() and
+ * pread() then ask the same offset; it shows the read path takes the
+ * position the seek set, and is not counted as a check of its own.
  */
 #define SENTINEL	((1L << 40) + 7)
 
@@ -664,9 +667,56 @@ descriptors(const char *path, const char *buf, long bsize, long nbytes)
 			position(fd, seq[i].what, got);
 	}
 	position(fd2, "two fds, seeks on the other descriptor", SENTINEL);
+	/*
+	 * Its own start: a failure above leaves fd wherever that seek left it,
+	 * and this check would then fail for the seek before it.
+	 */
+	lseek(fd, bsize + 100, SEEK_SET);
 	lseek(fd2, 0, SEEK_DATA);
 	position(fd, "two fds, a seek on the other descriptor", bsize + 100);
 	close(fd2);
+	close(fd);
+	unlink(path);
+}
+
+/*
+ * A hole past many data blocks.  SEEK_HOLE collects one chain per block
+ * from a scan that feeds HAMMER2_XOPFIFO (16) chains at a time, so a hole
+ * after 40 data blocks is found only after the FIFO has drained and
+ * refilled twice; the base file's data runs of one block never refill it.
+ * Blocks 0 to 39 data, 40 a hole, 41 data, synced.
+ */
+#define DEEP_BLOCKS	40
+
+static void
+deep(const char *path, const char *buf, long bsize)
+{
+	struct stat st;
+	long i, size = (DEEP_BLOCKS + 2) * bsize;
+	int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+
+	for (i = 0; fd >= 0 && i < DEEP_BLOCKS + 2; i++)
+		if (i != DEEP_BLOCKS && pwrite(fd, buf, bsize, i * bsize) != bsize)
+			break;
+	checks++;
+	if (fd < 0 || i != DEEP_BLOCKS + 2 || fsync(fd) != 0 ||
+	    fstat(fd, &st) != 0 || st.st_blocks * 512 >= size) {
+		printf("seek-fail deep: the file could not be built with its "
+		    "hole\n");
+		fails++;
+		if (fd >= 0)
+			close(fd);
+		unlink(path);
+		return;
+	}
+	printf("seek-ok   deep: block %d is a hole on media\n", DEEP_BLOCKS);
+	probe(fd, "deep, SEEK_HOLE at 0", SEEK_HOLE, 0, DEEP_BLOCKS * bsize);
+	probe(fd, "deep, SEEK_HOLE in block 20", SEEK_HOLE, 20 * bsize + 1,
+	    DEEP_BLOCKS * bsize);
+	probe(fd, "deep, SEEK_DATA in the hole", SEEK_DATA,
+	    DEEP_BLOCKS * bsize + 1, (DEEP_BLOCKS + 1) * bsize);
+	probe(fd, "deep, SEEK_HOLE in the last block", SEEK_HOLE,
+	    (DEEP_BLOCKS + 1) * bsize, size);
 	close(fd);
 	unlink(path);
 }
@@ -795,6 +845,8 @@ main(int argc, char **argv)
 	unlink(path);
 	snprintf(dpath, sizeof(dpath), "%s.fds", path);
 	descriptors(dpath, buf, bsize, nbytes);
+	snprintf(dpath, sizeof(dpath), "%s.deep", path);
+	deep(dpath, buf, bsize);
 	printf("seek-checks %d\nseek-failures %d\n", checks, fails);
 	return fails ? 1 : 0;
 }
