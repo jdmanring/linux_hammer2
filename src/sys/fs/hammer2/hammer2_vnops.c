@@ -1679,10 +1679,10 @@ hammer2_seek_tag_hold(void)
  * large; one that held a chain doubles only to HAMMER2_SEEK_DATA_MAX,
  * since every chain in a chunk is fed before the first is collected.
  * Across a very large hole that is an XOP per GiB, about 131072 across
- * generic/490's 128 TiB.
- * DEFER(a SEEK_DATA across a hole read above 100 ms on h2release-7.3tls):
- * a scan the XOP layer can stop at its first chain and resume would need
- * no key-space cap.
+ * generic/490's 128 TiB, and a chunk landing on data scans up to 1 GiB
+ * of it under one hold.
+ * DEFER(generic/490 at 2 s or a 16 GiB contendgap write over 100 ms on h2release-7.3tls):
+ * a scan the XOP layer can stop at its first chain needs neither cap.
  */
 static loff_t
 hammer2_seek_next_chunk(loff_t chunk, bool empty)
@@ -1957,11 +1957,8 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  * 16 GiB file on h2release-7.3tls, and with the lock held across all of
  * it a write beside a SEEK_HOLE loop waited 494 ms, where ext4 answers from
  * one extent.  Letting a waiting writer in took that to 6 ms at 16 GiB,
- * the rwsem's 4 ms handoff and a chunk.
- * DEFER(a dense SEEK_HOLE read above 500 ms on h2release-7.3tls):
- * walking the indirect blocks' blockref arrays would skip instantiating
- * a chain per block.  So between two chunks of the scan
- * the seek lets a waiting writer have the lock, then reads i_size again;
+ * the rwsem's 4 ms handoff and a chunk.  So between two chunks of the
+ * scan the seek lets a waiting writer have the lock, then reads i_size again;
  * an offset the file no longer reaches answers ENXIO, or i_size for
  * SEEK_HOLE past the offset.  Each chunk is classified under one hold,
  * tags and tree in order, so no answer is data called a hole when it was
@@ -1974,6 +1971,9 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  * dirty a folio the scan then calls a hole; lseek(2) cannot close that
  * without the invalidate lock across faults, which iomap's seek does not
  * take either.
+ * DEFER(16 GiB dense SEEK_HOLE above 500 ms on h2release-7.3tls, or an interactive consumer):
+ * walking the indirect blocks' blockref arrays would skip instantiating
+ * a chain per block.
  */
 static loff_t
 hammer2_llseek(struct file *file, loff_t offset, int whence)
