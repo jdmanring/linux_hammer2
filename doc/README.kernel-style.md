@@ -950,8 +950,11 @@ on every path that reads it. sparse 0.6.5 over the same build reported
 one line, the ioctl's copy-out of the volume list to a user pointer
 carried in a header the four trees share, and the port's own line
 names the address space now; the second run reports nothing. The
-syntax gate runs that pass on every source file when sparse is present,
-with kbuild's flags including `-O2`: without it the kernel's `string.h`
+syntax gate runs that pass when sparse is present, over the files
+`hammer2-y` builds, with kbuild's flags including `-O2`; until N10.6 it
+named 19 of the 22 and kept only lines on a `src/` path, so neither the
+cluster transport's three files nor an error raised inside a kernel
+header could fail it. Without `-O2` the kernel's `string.h`
 takes the out-of-line `memset()` and sparse sizes the bulkfree scan's
 6 MiB heap bitmap clear against its stack heuristic, a finding the
 kbuild pass never shows.
@@ -967,6 +970,18 @@ above and `-Wunused-macros` on `kd_printf` in the carried `kern_dmsg.c`,
 whose two uses sit under `#if KDMSG_DEBUG` as DragonFly wrote them, so
 the macro is defined and unused in every build that does not set it.
 sparse over the same build reports nothing.
+
+Read again on 2026-11-05 at `f09e415`, for N10.6: `make C=2` with sparse
+v0.6.5-rc1 checked all 22 files and printed nothing, and a kernel pointer
+handed to `copy_to_user()` at the end of `hammer2_vnops.c`, after every
+include, was reported there, so that silence is sparse reading the files
+and not an error upstream of them (`~/Projects/linux_hammer2-data/p7-notes/n10-6-sparse-c2.log`).
+smatch is another matter. Its own sparse layer fails the `container_of()`
+assertion at `include/net/neighbour.h:317` twice in every file, at
+smatch's `master` (`5189e3fb`) and at its `devel` (`979575b8`) alike, and
+reports none of its address-space or context checks after it
+(`~/Projects/linux_hammer2-data/p7-notes/n10-6-smatch-master.log`); those checks are read through the
+kernel's sparse above, and smatch is read for its own.
 
 The one that will not convert is the errno sign, and it is the one to
 raise first with any reviewer: making errnos negative inside the module

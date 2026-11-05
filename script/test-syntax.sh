@@ -596,6 +596,9 @@ if command -v sparse >/dev/null 2>&1; then
 		-Wbitwise -Wno-return-void -Wno-unknown-attribute
 		--arch=x86 -m64 -D__x86_64__)
 	sp() { sparse "${SPFLAGS[@]}" "$@" 2>&1 | command grep -E 'warning:|error:' || true; }
+	# What a file's sparse pass fails on, defined once for the files and
+	# the control below.
+	spkeep() { command grep -E ' error:|^src/.* warning:' || true; }
 	ran=$((ran + 1))
 	if sp test/contract/ctl-sparse-user.c | command grep -q 'different address spaces'; then
 		echo "  ok    negative control: sparse refuses a kernel pointer to copy_to_user (fail)"
@@ -603,27 +606,34 @@ if command -v sparse >/dev/null 2>&1; then
 		echo "  FAIL  negative control: sparse did not refuse a kernel pointer to copy_to_user"
 		fail=$((fail + 1))
 	fi
-	for f in src/sys/fs/hammer2/hammer2_io.c \
-		src/sys/fs/hammer2/hammer2_admin.c \
-		src/sys/fs/hammer2/hammer2_freemap.c \
-		src/sys/fs/hammer2/hammer2_xops.c \
-		src/sys/fs/hammer2/hammer2_bulkfree.c \
-		src/sys/fs/hammer2/hammer2_chain.c \
-		src/sys/fs/hammer2/hammer2_flush.c \
-		src/sys/fs/hammer2/hammer2_cluster.c \
-		src/sys/fs/hammer2/hammer2_subr.c \
-		src/sys/fs/hammer2/hammer2_ondisk.c \
-		src/sys/fs/hammer2/hammer2_inode.c \
-		src/sys/fs/hammer2/hammer2_vfsops.c \
-		src/sys/fs/hammer2/hammer2_strategy.c \
-		src/sys/fs/hammer2/hammer2_vnops.c \
-		src/sys/fs/hammer2/hammer2_ioctl.c \
-		src/sys/fs/hammer2/hammer2_export.c \
-		src/sys/fs/hammer2/hammer2_remote.c \
-		src/sys/fs/hammer2/hammer2_synchro.c \
-		src/sys/fs/hammer2/hammer2_ccms.c; do
+	ran=$((ran + 1))
+	if sp test/contract/ctl-sparse-error.c | spkeep | command grep -q '^test/.* error:'; then
+		echo "  ok    negative control: an error outside src/ is kept (fail)"
+	else
+		echo "  FAIL  negative control: an error outside src/ was not kept, so a header's would pass"
+		fail=$((fail + 1))
+	fi
+	# The files are the module's, read from hammer2-y: a list written
+	# here named 19 of its 22, and the three it left out were the
+	# cluster transport's, which nothing else in this pass reads. An
+	# error from any path fails, a kernel header's included: sparse
+	# stops reporting its own checks once one is set, so a header that
+	# fails under it leaves every later line of the file unread while
+	# the file reads clean. Warnings count from this tree only.
+	mk=src/sys/fs/hammer2/Makefile
+	spfiles=$(sed -n 's#^hammer2-y += \([a-z0-9_]*\)\.o$#src/sys/fs/hammer2/\1.c#p' "$mk")
+	ny=$(command grep -c '^hammer2-y' "$mk")
+	ns=$(printf '%s\n' "$spfiles" | command grep -c '\.c$')
+	ran=$((ran + 1))
+	if [ "$ns" -gt 0 ] && [ "$ns" = "$ny" ]; then
+		echo "  ok    sparse reads the $ns files hammer2-y builds (pass)"
+	else
+		echo "  FAIL  sparse file list: $ns parsed of $ny hammer2-y lines in $mk"
+		fail=$((fail + 1))
+	fi
+	for f in $spfiles; do
 		ran=$((ran + 1))
-		out=$(sp "$f" | command grep '^src/' || true)
+		out=$(sp "$f" | spkeep)
 		if [ -z "$out" ]; then
 			echo "  ok    sparse: $(basename "$f") (pass)"
 		else
