@@ -33,6 +33,11 @@
  *                                             see contend(); contendgap
  *                                             beside SEEK_DATA across a
  *                                             hole into the data
+ *     hammer2-seekprobe corrupt <path>        a file whose data block
+ *                                             fails its check: both
+ *                                             seeks at every block
+ *                                             answer from block
+ *                                             references, the read EIO
  *
  * The shape and bounds are hammer2-seek.c's, so the two answer to one
  * contract: one 64 KiB block of 'A', one of hole, one of 'A', and a
@@ -46,7 +51,9 @@
 #define _GNU_SOURCE
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -709,6 +716,58 @@ contend(const char *path, long n)
 	return (fails ? 1 : 0);
 }
 
+/*
+ * A file whose data block was altered on media, one the fixtures name
+ * `# corrupt`.  The seeks ask for block references and no data, so no
+ * check runs and they answer as for any dense file.  Both are asked at
+ * every block, so the altered one is reached wherever it sits: SEEK_DATA
+ * at a block answers that block, SEEK_HOLE answers the size.  Asked at 0
+ * alone, SEEK_DATA answers from the first block and never reaches a later
+ * one.  The read loads the blocks and must fail EIO, not some other errno
+ * and not the bytes.
+ */
+static int
+corrupt(const char *path)
+{
+	char buf[BSIZE];
+	struct stat st;
+	off_t got;
+	long off, nb = 0;
+	ssize_t n;
+	int fd;
+
+	if ((fd = open(path, O_RDONLY)) < 0 || fstat(fd, &st) != 0 ||
+	    st.st_size < 1)
+		return (2);
+	for (off = 0; off < st.st_size; off += BSIZE, nb++) {
+		if ((got = lseek(fd, off, SEEK_DATA)) != (off_t)off) {
+			printf("seekm-fail corrupt, SEEK_DATA %ld: got %ld\n",
+			    off, (long)got);
+			fails++;
+		}
+		if ((got = lseek(fd, off, SEEK_HOLE)) != st.st_size) {
+			printf("seekm-fail corrupt, SEEK_HOLE %ld: got %ld, "
+			    "want %ld\n", off, (long)got, (long)st.st_size);
+			fails++;
+		}
+	}
+	if (fails == 0)
+		printf("seekm-ok   corrupt, SEEK_DATA and SEEK_HOLE at each of "
+		    "%ld block(s)\n", nb);
+	if (lseek(fd, 0, SEEK_SET) != 0)
+		return (2);
+	while ((n = read(fd, buf, sizeof(buf))) > 0)
+		;
+	if (n == 0 || errno != EIO) {
+		printf("seekm-fail corrupt, read: %s\n", n == 0 ?
+		    "read to the end" : strerror(errno));
+		fails++;
+	} else
+		printf("seekm-ok   corrupt, read: EIO\n");
+	close(fd);
+	return (fails ? 1 : 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -723,6 +782,8 @@ main(int argc, char **argv)
 		return (check(argv[2], argv[3]));
 	if (argc == 4 && strcmp(argv[1], "agree") == 0)
 		return (agree(argv[2], argv[3]));
+	if (argc == 3 && strcmp(argv[1], "corrupt") == 0)
+		return (corrupt(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "chunkrace") == 0)
@@ -746,7 +807,7 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | chunkrace <path> | "
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | chunkrace <path> | corrupt <path> | "
 	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend|contendgap <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);

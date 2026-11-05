@@ -154,7 +154,7 @@ cleanup() {
 		$VIRSH detach-disk "$GUEST" "$d" >/dev/null 2>&1
 	done
 	[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1
-	rm -f "${tmpb:-}" "${tmpx:-}" "${tmpi:-}" "${tmpg:-}"
+	rm -f "${tmpb:-}" "${tmpx:-}" "${tmpi:-}" "${tmpg:-}" "${tmps:-}"
 	return 0
 }
 trap 'cleanup' EXIT
@@ -272,6 +272,7 @@ IOCTL_EX=
 tmpx=$(mktemp) || exit 2
 tmpi=$(mktemp) || exit 2
 tmpg=$(mktemp) || exit 2
+tmps=$(mktemp) || exit 2
 if cc -static -O2 -Isrc/sys/fs/hammer2 -o "$tmpx" \
     test/hammer2-ioctl-exercise.c >/dev/null 2>&1 &&
     scp -o ConnectTimeout=5 "$tmpx" "$GUEST_SSH:/tmp/h2ioctl" >/dev/null 2>&1
@@ -300,6 +301,19 @@ if cc -static -O2 -o "$tmpg" test/getdents-resume.c >/dev/null 2>&1 &&
 then
 	ssh "$GUEST_SSH" 'chmod 755 /tmp/h2getdents' >/dev/null 2>&1 &&
 	    GETDENTS_EX=1
+fi
+
+# The seek probe's corrupt verb, built on the same terms, for each file a
+# manifest names `# corrupt`: the seeks ask for block references and no
+# data, so a block that fails its check must not fail them, and the read
+# must fail EIO. Not building is a finding, as with the getdents one.
+SEEK_EX=
+if cc -static -O2 -o "$tmps" test/hammer2-seekprobe.c >/dev/null 2>&1 &&
+    scp -o ConnectTimeout=5 "$tmps" "$GUEST_SSH:/tmp/h2seekprobe" \
+    >/dev/null 2>&1
+then
+	ssh "$GUEST_SSH" 'chmod 755 /tmp/h2seekprobe' >/dev/null 2>&1 &&
+	    SEEK_EX=1
 fi
 
 # The recorded results, measured on the guest against the shipped module.
@@ -580,7 +594,22 @@ for m in $manifests; do
 	# F3, the file that must not read. `# corrupt relpath` names a file
 	# whose data block was altered on media; the checksum on the block
 	# has to catch it and the read has to fail, never return the bytes.
+	# The seek probe runs first, so its seeks meet chains no read has
+	# loaded: both seeks at every block must answer from block references
+	# (a summary line), and its own read must fail EIO (a second).
 	for rel in $corrupt; do
+		if [ -z "$SEEK_EX" ]; then
+			echo "  FAIL $base: the seek probe did not build or copy, so $rel's seeks were not asked"
+			fail=$((fail + 1)); continue 2
+		fi
+		sk=$(ssh "$GUEST_SSH" "/tmp/h2seekprobe corrupt '$mnt/$rel'" 2>&1)
+		sks=$?
+		printf '%s\n' "$sk" | sed 's/^/        /'
+		skok=$(printf '%s\n' "$sk" | command grep -c '^seekm-ok')
+		if [ "$sks" != 0 ] || [ "$skok" != 2 ]; then
+			echo "  FAIL $base: $rel's seeks or its read answered wrongly (exit $sks, $skok of 2 ok)"
+			fail=$((fail + 1)); continue 2
+		fi
 		err=$(ssh "$GUEST_SSH" "cd $mnt && cat '$rel' 2>&1 > /dev/null; \
 		    dmesg | grep hammer2 | tail -1" 2>/dev/null)
 		if ssh "$GUEST_SSH" "cd $mnt && cat '$rel' > /dev/null" \
@@ -588,8 +617,8 @@ for m in $manifests; do
 			echo "  FAIL $base: $rel read back, its altered block unnoticed"
 			fail=$((fail + 1)); continue 2
 		fi
-		corrupts=$((corrupts + 1))
 		printf '%s\n' "$err" | sed 's/^\[[^]]*\] //; s/^/        /'
+		corrupts=$((corrupts + 1))
 	done
 
 	# The stat fields, from the writer's own stat. A `# stat` row carries
@@ -682,7 +711,7 @@ else
 	echo "  note lockdep is not built into $guest_rel, so lock order was not validated"
 fi
 
-echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused, $ioctls ioctl result(s), $getdents getdents resume check(s), $fail failure(s)"
+echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused and seeked, $ioctls ioctl result(s), $getdents getdents resume check(s), $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
 echo "          being equal for LZ4 and ZLIB, anything a second mount of the"
 echo "          same device would show, and the writing ioctls: snapshot,"
