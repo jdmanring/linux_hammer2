@@ -22212,8 +22212,11 @@ the timing the review asked for and is fixed; the fixes cost nothing
 uncontended; and what a writer pays beside a seek is read before and after.
 Expected readings were written before each run (`p7-notes/n10-5-expected.md`
 in the data tree, which keeps every log named below). Every fleet run was
-from a frozen copy, one job at a time, QEMU cores 0 before and after each
-series; module hashes are sha256 prefixes.
+from a frozen copy, one job at a time. QEMU cores read 0 at the start and the
+end of every series that printed them: each from commit 2 on, except the first
+commit-5 attempt, which stopped before its end line; the commit-1 run and the
+reference run kept no wrapper and print no cores line. Module hashes are
+sha256 prefixes.
 
 **The file position (A).** No SEEK_DATA or SEEK_HOLE success set `f_pos`: the
 scan's answers, the inline-data answer and the failed-writeback answer were
@@ -22224,8 +22227,14 @@ sentinel past every file first, must equal the answer after a success with one
 `read()` there matching `pread()`, and must still be the sentinel after
 `ENXIO`; a two-descriptor case over answers that are never 0 follows. At
 `69e371c` on `h2debug-7.3tls` (`n10-5-c1-enospc-20261104-121709.log`) it read
-112 checks and 46 failures, as predicted: 41 position checks at the sentinel,
-1099511627783, and five two-descriptor checks at 0, every other check passing.
+112 checks and 46 failures, as predicted: of the 56 position checks the
+commit added, 41 at the sentinel, 1099511627783, and five two-descriptor
+checks at 0, every other check passing. The last of those five failed only
+because the failure before it left the position behind, so it read the check
+before it rather than its own property; it sets its own start since
+`58f14dd`. The `read()` beside each position check cannot fail once the
+position matches, since `read()` and `pread()` then ask one offset; it is part
+of the position check, not a check of its own.
 Fixed at `513d333`: the body is `hammer2_seek_data_hole()` and
 `hammer2_llseek()` sets the position once with `vfs_setpos()`, as
 `ext4_llseek()` ends.
@@ -22240,14 +22249,24 @@ the size the file had when the seek returned. Fixed at `6566b87`:
 `inode_lock_shared()` across the size read, the writeback and the scan, as
 ext4, f2fs and btrfs hold it (DragonFly's `vn_bmap_seekhole()` holds the vnode
 exclusive). The lock order was read with no cycle: the module takes `i_rwsem`
-only at the top of `hammer2_file_write_iter()` and the fallocate path; its
+itself only at the top of `hammer2_file_write_iter()` and the fallocate path,
+and the VFS holds it across the module's setattr (the truncate this lock
+serializes the seek with), xattr and fileattr calls, each of which takes the
+module's locks below it; its
 stated order puts `i_rwsem` above `ip->lock` (`hammer2_vfsops.c:3019`); the
 writeback takes folio locks, a `HAMMER2_TRANS_BUFCACHE` transaction and
 `ip->lock` and no `i_rwsem`; `hammer2_trans_init()` sleeps only for a flush
 against a flush; and `hammer2_fallocate_locked()` already wrote back under
 `i_rwsem` held exclusive. After the fix (`n10-5-c4-debug-20261104-124739.log`,
 module `c22dec4a57adfd9a`): `truncate after` in 3 of 3, the truncate returning
-1 ms after the seek, answer 131072, the file as it was. The window the lock
+1 ms after the seek, answer 131072, the file as it was. The probe then
+recorded only when the truncate returned, so one that began after the seek
+had returned would also have read `after`; it records the start since
+`78809ac` and fails a `late` truncate. At `58f14dd`
+(`n10-5-r1-20261104-160715.log`) the truncate began 50 ms into each of three
+seeks held 302 to 308 ms and returned 0 to 1 ms after it, answer 131072. The
+hold sits after the size read and before the writeback and the scan, so this
+shows the lock spans the hold; that it spans the scan is the code's scope. The window the lock
 cannot close is stated in the comment: a page fault takes no `i_rwsem`, so a
 write through a mapping after the writeback can dirty a folio the scan calls
 a hole.
@@ -22262,7 +22281,31 @@ every chain's data as it fed it (`HAMMER2_LOOKUP_ALWAYS`, up to
 block. Fixed at `93c7a0e`: one scan whose chains are collected until a key
 leaves the run of blocks, fed with `HAMMER2_LOOKUP_NODATA` as the carried
 position-only scans are; `hammer2_cluster_check()` reads only the bref and
-the chain's error.
+the chain's error. NODATA reaches a local element only: a remote element
+passes `HAMMER2_REMOTE_LOOKUPF` on, which is NODIRECT alone, and its server
+scans with `HAMMER2_LOOKUP_ALWAYS` (`hammer2_remote.c:934`) and ships every
+chain's data in the feed, so there a seek still reads each block it passes.
+No run has asked a seek on a remote element. With NODATA a data block's
+check error is reported by the read, no longer by the seek as EIO.
+
+A hole past `HAMMER2_XOPFIFO` (16) data blocks, where the feed drains and
+refills inside one answer, is asked on a synced file since `58f14dd`: 40 data
+blocks, a hole and one more block, SEEK_HOLE from the start and from inside
+the run, 9 checks. The exerciser read 121 checks and 0 failures at `58f14dd` on
+`h2debug-7.3tls` (`n10-5-r1-20261104-160715.log`) and 110 and 0 on host
+`tmpfs`. Its placed control, a worktree at `58f14dd` whose scan stops after 16
+collects, failed 3 checks, against 2 predicted: the two deep SEEK_HOLE answers
+(1048576 and 2359296 for 2621440) and the existing `concurrent` case, which
+with 17 blocks done read SEEK_HOLE at 0 as 1048576. So a check had reached past
+the feed's depth before, under a concurrent writer; the audit's finding that
+none did, and `58f14dd`'s message saying the same, were wrong, and the new file
+asks it without a writer.
+
+The sibling sweep for the per-block shape found `hammer2_fiemap()`
+(`hammer2_vnops.c:2426`), which still asks one bmap XOP per block and reads
+`i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
+block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
+the same scan, not measured.
 
 **Correctness at `93c7a0e`** (`n10-5-c5-b-20261104-140657.log`; its first
 attempt, `-135619`, stopped COULD-NOT-RUN at the matrix because
@@ -22280,10 +22323,17 @@ guest's 7.3.0-tls (`n10-5-reference-20261104-143948.log`): `tmpfs` 101 checks
 and 0 failures; `btrfs` 101 and 2, the two negative-offset SEEK_HOLE answers
 this record gives as btrfs's own above; every position check passes on both.
 
-**Cost, `h2release-7.3tls`, each table one boot.** Uncontended,
+**Cost, `h2release-7.3tls`, each column or row one boot.** Uncontended,
 `H2_SEEK_TIME=1 H2_SEEK_TIME_N=20 H2_REPEAT=5`, dense split per whence from the
 raw lines, 50 each (`n10-5-time-20261104-134016.log` for the first three
-columns, `n10-5-c5-b-20261104-140657.log` for the last two):
+columns, `n10-5-c5-b-20261104-140657.log` for the last two). The first three
+ran a `seek-matrix.sh` and seekprobe that no commit holds: the log's head is
+`6566b87`, whose script has no `H2_SEEK_TIME_N` and requires `debug_locks 1`,
+and the run printed `debug_locks none`; the instrument was `714c127`'s before
+that commit, and the provenance line then counted only a dirty `src/`. It
+counts `script/` and `test/` and prints both files' hashes since `78809ac`.
+The `6566b87` figures were read again with the committed instrument at
+`93c7a0e` (the fourth column); the `5ee2c90` ones were not.
 
 | kind | `5ee2c90` | `6566b87` | `5ee2c90` again | `6566b87` | `93c7a0e` |
 |---|---|---|---|---|---|
@@ -22297,29 +22347,61 @@ hash from the tree and from a worktree) and `062b8e6a98e675a1` (`93c7a0e`, the
 same in two boots). A and B cost nothing measurable uncontended.
 
 What a writer pays, `H2_SEEK_CONTEND=1 H2_SEEK_TIME_N=50 H2_REPEAT=3`: 64 KiB
-writes to a 64 MiB file alone, then beside a SEEK_HOLE loop. Alone every
-module's median was 3.1 to 4.1 us. Beside the loop:
+writes to a 64 MiB file alone, then beside a SEEK_HOLE loop, three repeats
+per row. Two boots: `n10-5-c5-b-20261104-140657.log` at `93c7a0e`, whose probe
+counted seeks finished, and `n10-5-contend2-20261104-143701.log` at `4a07596`,
+which counts seeks begun.
 
-| module | write median | worst write | seeks |
-|---|---|---|---|
-| `5ee2c90`, no lock, scan per block | 4.6 to 4.9 us | 3.09 to 5.25 s | 1 begun per repeat |
-| `6566b87`, lock, scan per block | 5.61 s | 5.65 to 5.69 s | 100 finished |
-| `93c7a0e`, lock, one scan | 5.04 to 5.93 ms | 5.96 to 6.65 ms | 336 to 363 |
+| boot | module | median alone | median beside | worst beside | seeks |
+|---|---|---|---|---|---|
+| c5-b | `5ee2c90`, no lock, scan per block | 3.2 to 4.1 us | 3.9 to 4.7 us | 2.92 to 3.73 s | 0 finished, the run failed |
+| c5-b | `6566b87`, lock, scan per block | 3.3 us | 5.61 s | 5.65 to 5.69 s | 100 finished |
+| c5-b | `93c7a0e`, lock, one scan | 3.1 to 3.6 us | 5.04 to 5.78 ms | 5.96 to 6.65 ms | 336 to 363 finished |
+| contend2 | `5ee2c90` | 3.2 to 3.7 us | 4.6 to 4.9 us | 3.09 to 5.25 s | 1 begun |
+| contend2 | `93c7a0e` | 3.2 to 3.3 us | 5.04 to 5.93 ms | 5.97 to 6.13 ms | 336 to 359 begun |
 
-The `5ee2c90` and second `93c7a0e` rows are `n10-5-contend2-20261104-143701.log`
-at `4a07596`; the `6566b87` row and a first `93c7a0e` reading with the same
-figures are `n10-5-c5-b-20261104-140657.log`. That first run failed
-`5ee2c90`'s arm with "0 seeks" while its worst write waited 2.9 s: the probe
-counted finished seeks, and one 2.4 s seek outlasted all 50 writes. Fixed at
-`4a07596` (seeks begun, the loop's first seek before the first write). So the
-stall predates the lock: unlocked, a write already waited seconds beside the
-slow scan; the lock made every write wait; the single scan brings the wait to
-about 6 ms. Two candidates, neither driven: what the unlocked write waited on
-(the scan's shared inode lock or the seek's writeback of the folio the write
-targets), and the 5 to 6 ms median against a 0.7 ms seek, which fits the
-rwsem's writer handoff, `RWSEM_WAIT_TIMEOUT` of `DIV_ROUND_UP(HZ, 250)`
-(`kernel/locking/rwsem.c:357`), 4 ms at this kernel's `CONFIG_HZ=1000`,
-against a reader loop that takes the lock back to back.
+c5-b's `5ee2c90` arm failed with "0 seeks" while its worst write waited 2.9 s:
+one 2.4 s seek outlasted all 50 writes, and the probe counted only finished
+seeks. Fixed at `4a07596` (seeks begun, the loop's first seek before the first
+write).
+
+Two of the three predictions missed (`n10-5-expected.md`). Commit 2's worst
+write was expected near the alone figure, milliseconds, and read 2.9 to 5.3 s,
+so the stall predates the lock: unlocked, a write already waited seconds
+beside the slow scan at its worst, while its median stayed at 3.9 to 4.9 us.
+Commit 5's worst was expected back near alone, about 10 us, and reads about
+6 ms. Commit 4's was expected of the order of one SEEK_HOLE, about 2 s, and
+read 5.6 s at the median, about 2.4 seeks per write, which nothing below
+explains. So the lock costs every write beside a seek loop about 5 to 6 ms at
+the median, against 3.9 to 4.9 us unlocked, and takes the worst from seconds
+to about 6 ms only because the single scan is short.
+
+Candidates, none driven. What the unlocked write waited on at its worst: the
+scan's shared inode lock or the seek's writeback of the folio the write
+targets. The 5 to 6 ms median against a 0.7 ms seek, and the 2.4 seeks per
+write at commit 4: the rwsem's writer handoff, `RWSEM_WAIT_TIMEOUT` of
+`DIV_ROUND_UP(HZ, 250)` (`kernel/locking/rwsem.c:357`), 4 ms at this kernel's
+`CONFIG_HZ=1000`, under which readers taking the lock back to back may steal
+it from a waiting writer until the timeout sets the handoff bit; and the seek's
+writeback of the folio each write has just dirtied, which a following write
+to that folio waits on as a stable page. The reference refutes the handoff as a
+property of the shared lock and a back-to-back reader alone. ext4 and btrfs
+hold `i_rwsem` shared across SEEK_HOLE as well (`ext4_llseek()`,
+`btrfs_file_llseek()` in 7.3), and beside 30823 to 37389 seeks per repeat on
+ext4 and 52803 to 53932 on btrfs the same probe read a write median of 7.9 to
+8.6 us and 9.0 to 10.0 us, against 4.7 to 5.5 and 6.1 to 7.3 us alone, the
+worst 13 to 22 us and 16 to 79 us (`n10-5-r1-contref-20261104-161454.log`,
+`h2release-7.3tls`, the probe at `58f14dd`, ext4 on a host-made image attached
+live since that kernel has no loop driver; the first attempt, `-161301`,
+stopped at the loop device). Their seeks answer from the page cache and write
+nothing back, so the 5 to 6 ms is HAMMER2's own: the writeback candidate
+stands, not driven, and the 2.4 seeks per write at commit 4 is not explained.
+
+**Host instruments.** Run after this entry was first written:
+`script/analyze.sh` (`n10-5-analyze.log`) read 4 candidates over 2 files and
+`smatch` (`n10-5-smatch.log`, its planted control reported) 60 over 22. None
+falls in the seek code; the one charged to `hammer2_vnops.c` is the dead store
+at `hammer2_os.h:1660`, which predates the range.
 
 **Apparatus found on the way.** The time mode's dense median mixed the two
 whences and read as neither; the raw lines are split per whence instead, and
